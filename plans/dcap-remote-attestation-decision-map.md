@@ -350,6 +350,23 @@ Is a fresh DCAP quote required for every connection?
 - A new DCAP quote is not generated per application session.
 - A quote alone is not host authorization and does not replace Noise initiator
   authorization.
+- A remote peer uses its existing persistent source `NodeHost` static as the
+  Noise IK initiator. Before the handshake, the target verifies a bounded
+  canonical authorization witness against the source's exact finalized active
+  binding and its `node_host_authorization_hash`; message 1 then proves live
+  possession of that key.
+- The target installs a bounded one-use ticket locally. Peer discovery and
+  delivery of that ticket are transport carrier concerns, not authority; V1
+  does not add another P2P/RPC protocol for them.
+- Rust visibility is defense in depth for honest composition, not a TEE trust
+  boundary: a hostile process holding the sealed local `NodeHost` key can speak
+  the wire protocol directly. The enclave therefore enforces the security
+  effect itself: a remote session is public-only and every owner/secret command
+  remains fail-closed regardless of host-side admission claims.
+- The remote-session context is distinct from the target's local owner session,
+  grants no owner command surface, and expires at the earlier of the source and
+  target leases. Secret-bearing commands still require their own exact
+  enclave-verified finalized authorization.
 
 Secret Network encrypts seed material to the quote-bound registration key,
 which is the useful proof-of-possession precedent, but it does not define
@@ -435,8 +452,11 @@ an RPC response?
 `RESOLVED`.
 
 - A validator or full node checks the registration and lease against its own
-  consensus-finalized state. An RPC response is not authority and no duplicate
-  proof is required between components sharing that node-owned finalized view.
+  consensus-finalized state. The production node-local operation reads the
+  current finalized marker and the matching canonical header/historical state
+  from the same provider; callers cannot supply or retain an older finalized
+  token. An RPC response is not authority and no duplicate proof is required
+  between components sharing that node-owned finalized view.
 - An external verifier must have a trusted genesis/checkpoint and an Outbe
   light-client view. It verifies the registration storage proof only against a
   state root that this view already recognizes as finalized. A client without
@@ -445,6 +465,10 @@ an RPC response?
   key, and `valid_until` before the handshake. A session deadline may not exceed
   `valid_until`; the verifier rejects new traffic and closes the session at
   expiry.
+  Runtime timeout enforcement uses the process clock as availability hygiene,
+  not consensus or TEE authority. A hostile target can distort its own clock,
+  but the resulting remote context still exposes only public keys; secret
+  commands require their separate finalized authorization.
 - Session admission does not run a continuous consensus light client inside
   the enclave. The enclave proves live possession of the registered responder
   key through the fresh Noise handshake.
@@ -492,6 +516,10 @@ command-capability model?
 - The responder extracts the Noise initiator static key after message 1 and
   rejects an unknown key before application request decode, dispatch, or side
   effects.
+  A local owner session accepts only the `NodeHost` key sealed in that enclave's
+  manifest. A remote peer session accepts only the source `NodeHost` key first
+  derived from its exact finalized active binding and canonical authorization
+  witness.
 - A deny-by-default, exhaustive profile-and-state command matrix is mandatory.
   Secret-bearing commands additionally verify their canonical/finalized
   protocol authorization inside the enclave.
@@ -506,6 +534,8 @@ This closes
 Secret Network has no reusable initiator-authentication model; its useful
 precedent is only that a sensitive enclave command verifies its own
 attestation/protocol authorization rather than trusting the caller.
+Its one-use attestation-bound seed wrapping is not a live or mutually
+authenticated session and therefore does not determine Outbe's initiator role.
 
 ## #15: What does expiry or emergency policy rejection disable?
 

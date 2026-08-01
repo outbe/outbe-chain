@@ -18,6 +18,8 @@ pub const ATTESTATION_EVIDENCE_DOMAIN_V1: &[u8] = b"outbe/tee/attestation-eviden
 pub const ENCLAVE_ID_DOMAIN_V1: &[u8] = b"outbe/tee/enclave-id/v1";
 pub const INITIALIZATION_MANIFEST_DOMAIN_V1: &[u8] = b"outbe/tee/initialization-manifest/v1";
 pub const NODE_HOST_AUTHORIZATION_DOMAIN_V1: &[u8] = b"outbe/tee/node-host-authorization/v1";
+/// Maximum canonical size of one stable NodeHost authorization witness.
+pub const MAX_NODE_HOST_AUTHORIZATION_WITNESS_BYTES: usize = 172;
 pub const REPORT_POLICY_DOMAIN_V1: &[u8] = b"outbe/tee/report-policy/v1";
 
 pub const MAX_QUOTE_BYTES: usize = 16 * 1024;
@@ -236,6 +238,95 @@ impl NodeIdV1 {
     }
 }
 
+/// Bounded canonical preimage of the stable `NodeHost` authorization committed
+/// by every registration. Remote peers disclose this public witness so the
+/// target can recover the exact Noise IK initiator static from finalized state
+/// without accepting a full initialization manifest or a host assertion.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NodeHostAuthorizationWitnessV1 {
+    pub chain_id: [u8; 32],
+    pub genesis_hash: B256,
+    pub enclave_profile: EnclaveProfile,
+    pub node_id: NodeIdV1,
+    pub node_host_noise_x25519: [u8; 32],
+}
+
+impl NodeHostAuthorizationWitnessV1 {
+    pub fn from_manifest(manifest: &EnclaveInitializationManifestV1) -> Result<Self, CodecError> {
+        manifest.validate()?;
+        Ok(Self {
+            chain_id: manifest.chain_id,
+            genesis_hash: manifest.genesis_hash,
+            enclave_profile: manifest.enclave_profile,
+            node_id: manifest.node_id.clone(),
+            node_host_noise_x25519: manifest.node_host_noise_x25519,
+        })
+    }
+
+    pub fn encode_canonical(&self) -> Result<Vec<u8>, CodecError> {
+        self.validate()?;
+        let mut out = Vec::with_capacity(MAX_NODE_HOST_AUTHORIZATION_WITNESS_BYTES);
+        out.push(PROTOCOL_VERSION_V1);
+        out.extend_from_slice(&self.chain_id);
+        out.extend_from_slice(self.genesis_hash.as_slice());
+        out.push(self.enclave_profile as u8);
+        self.node_id.encode_into(&mut out);
+        out.extend_from_slice(&self.node_host_noise_x25519);
+        enforce_limit(
+            "NodeHost authorization witness",
+            MAX_NODE_HOST_AUTHORIZATION_WITNESS_BYTES,
+            out.len(),
+        )?;
+        Ok(out)
+    }
+
+    pub fn decode_canonical(input: &[u8]) -> Result<Self, CodecError> {
+        enforce_limit(
+            "NodeHost authorization witness",
+            MAX_NODE_HOST_AUTHORIZATION_WITNESS_BYTES,
+            input.len(),
+        )?;
+        let mut decoder = Decoder::new(input);
+        decoder.version("NodeHostAuthorizationWitnessV1")?;
+        let value = Self {
+            chain_id: decoder.array()?,
+            genesis_hash: B256::from(decoder.array::<32>()?),
+            enclave_profile: EnclaveProfile::decode(decoder.u8()?)?,
+            node_id: NodeIdV1::decode_from(&mut decoder)?,
+            node_host_noise_x25519: decoder.array()?,
+        };
+        decoder.finish()?;
+        value.validate()?;
+        Ok(value)
+    }
+
+    pub fn authorization_hash(&self) -> Result<B256, CodecError> {
+        Ok(domain_hash(
+            NODE_HOST_AUTHORIZATION_DOMAIN_V1,
+            &self.encode_canonical()?,
+        ))
+    }
+
+    fn validate(&self) -> Result<(), CodecError> {
+        self.node_id.validate()?;
+        if self.chain_id == [0; 32]
+            || self.genesis_hash.is_zero()
+            || self.node_host_noise_x25519 == [0; 32]
+        {
+            return Err(CodecError::NonCanonical(
+                "NodeHost authorization witness contains a zero identity or commitment",
+            ));
+        }
+        match (&self.node_id, self.enclave_profile) {
+            (NodeIdV1::Validator { .. }, EnclaveProfile::Validator)
+            | (NodeIdV1::FullNode { .. }, EnclaveProfile::FullNode) => Ok(()),
+            _ => Err(CodecError::NonCanonical(
+                "NodeHost witness node kind does not match enclave profile",
+            )),
+        }
+    }
+}
+
 /// The single exact initialization manifest an enclave accepts before sealing
 /// its V1 identity. The node signature is carried separately from this canonical
 /// payload.
@@ -300,15 +391,7 @@ impl EnclaveInitializationManifestV1 {
     /// excluded; changing the persistent NodeHost key or node identity changes
     /// this commitment.
     pub fn node_host_authorization_hash(&self) -> Result<B256, CodecError> {
-        self.validate()?;
-        let mut out = Vec::with_capacity(176);
-        out.push(PROTOCOL_VERSION_V1);
-        out.extend_from_slice(&self.chain_id);
-        out.extend_from_slice(self.genesis_hash.as_slice());
-        out.push(self.enclave_profile as u8);
-        self.node_id.encode_into(&mut out);
-        out.extend_from_slice(&self.node_host_noise_x25519);
-        Ok(domain_hash(NODE_HOST_AUTHORIZATION_DOMAIN_V1, &out))
+        NodeHostAuthorizationWitnessV1::from_manifest(self)?.authorization_hash()
     }
 
     /// Stable enclave identity derived from the three persistent public keys

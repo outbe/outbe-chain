@@ -29,6 +29,7 @@ use crate::dcap_protocol::{
 };
 use crate::errors::TransportError;
 use crate::protocol::{EnclaveRequest, EnclaveResponse};
+use crate::remote_session::RemoteSessionAdmissionV1;
 use crate::NOISE_PARAMS;
 
 /// The byte carrier under the Noise-IK session: a local Unix domain socket
@@ -264,6 +265,55 @@ pub struct AuthorizedEnclaveClient {
     stream: Transport,
     noise: snow::TransportState,
     attestation_pub: [u8; 32],
+}
+
+/// One unpredictable, one-use authorization installed by the target's local
+/// NodeHost after finalized Registry verification. It contains no secret key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RemoteSessionTicketV1 {
+    ticket_id: B256,
+    initiator_static_x25519: [u8; 32],
+    responder_static_x25519: [u8; 32],
+    deadline: u64,
+    finalized_block_hash: B256,
+}
+
+impl RemoteSessionTicketV1 {
+    #[must_use]
+    pub const fn ticket_id(&self) -> B256 {
+        self.ticket_id
+    }
+
+    #[must_use]
+    pub const fn deadline(&self) -> u64 {
+        self.deadline
+    }
+
+    #[must_use]
+    pub const fn finalized_block_hash(&self) -> B256 {
+        self.finalized_block_hash
+    }
+}
+
+/// Remote peer session. Its intentionally small interface exposes only the
+/// non-secret public-key request; owner and secret-bearing commands are not
+/// part of this client surface and remain denied by the enclave matrix.
+pub struct RemoteEnclaveClient {
+    stream: Transport,
+    noise: snow::TransportState,
+}
+
+/// Public, non-secret target enclave keys available to a remote peer. Keeping
+/// this result typed prevents the narrow remote client from exposing the full
+/// owner protocol response enum.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RemoteEnclavePublicKeysV1 {
+    pub recipient_x25519_pub: [u8; 32],
+    pub attestation_pub: [u8; 32],
+    pub noise_static_pub: [u8; 32],
+    pub tee_bls_pub: Vec<u8>,
+    pub dkg_enc_pub: [u8; 32],
+    pub dkg_enc_sig: Vec<u8>,
 }
 
 /// Bound on a single blocking enclave read/write: a wedged enclave that accepts
@@ -657,7 +707,21 @@ impl AuthorizedEnclaveClient {
         Ok(response)
     }
 
+    /// Sends an ordinary authenticated owner request. Remote-ticket
+    /// installation is reserved for the opaque finalized-admission route.
     pub fn request(&mut self, request: &EnclaveRequest) -> Result<EnclaveResponse, TransportError> {
+        if matches!(request, EnclaveRequest::AuthorizeRemoteSessionV1 { .. }) {
+            return Err(TransportError::Handshake(
+                "remote session authorization requires a finalized admission capability".into(),
+            ));
+        }
+        self.request_internal(request)
+    }
+
+    fn request_internal(
+        &mut self,
+        request: &EnclaveRequest,
+    ) -> Result<EnclaveResponse, TransportError> {
         let plaintext = encode_request(request)?;
         let mut ciphertext = vec![0u8; plaintext.len() + 64];
         let length = self
@@ -669,6 +733,52 @@ impl AuthorizedEnclaveClient {
             "encrypted enclave request write",
         )?;
         self.receive_response("encrypted enclave response read")
+    }
+
+    /// Installs one one-use remote admission after the caller has verified its
+    /// source and target bindings from local or anchored finalized state.
+    /// Production node code uses the finalized facade in `outbe-node`; this
+    /// low-level transport method remains public only across the crate seam.
+    #[doc(hidden)]
+    pub fn authorize_remote_session(
+        &mut self,
+        admission: &RemoteSessionAdmissionV1,
+    ) -> Result<RemoteSessionTicketV1, TransportError> {
+        let now = unix_time_seconds()?;
+        if admission.deadline() <= now {
+            return Err(TransportError::Handshake(
+                "remote session admission is already expired".into(),
+            ));
+        }
+        let mut ticket_bytes = [0_u8; 32];
+        rand::rngs::OsRng.fill_bytes(&mut ticket_bytes);
+        if ticket_bytes == [0; 32] {
+            return Err(TransportError::Handshake(
+                "remote session ticket RNG returned zero".into(),
+            ));
+        }
+        let ticket = RemoteSessionTicketV1 {
+            ticket_id: B256::from(ticket_bytes),
+            initiator_static_x25519: admission.initiator_static_x25519(),
+            responder_static_x25519: admission.responder_static_x25519(),
+            deadline: admission.deadline(),
+            finalized_block_hash: admission.finalized_view().block_hash,
+        };
+        let response = self.request_internal(&EnclaveRequest::AuthorizeRemoteSessionV1 {
+            ticket_id: ticket.ticket_id,
+            initiator_static_x25519: ticket.initiator_static_x25519,
+            responder_static_x25519: ticket.responder_static_x25519,
+            deadline: ticket.deadline,
+            finalized_block_hash: ticket.finalized_block_hash,
+        })?;
+        match response {
+            EnclaveResponse::RemoteSessionAuthorizedV1 { ticket_id }
+                if ticket_id == ticket.ticket_id =>
+            {
+                Ok(ticket)
+            }
+            _ => Err(TransportError::UnexpectedResponse),
+        }
     }
 
     /// Generate one quote for the exact canonical intent and authenticate the
@@ -769,6 +879,93 @@ impl AuthorizedEnclaveClient {
     pub fn attestation_pub(&self) -> [u8; 32] {
         self.attestation_pub
     }
+}
+
+impl RemoteEnclaveClient {
+    pub fn connect_endpoint(
+        endpoint: &str,
+        ticket: &RemoteSessionTicketV1,
+        node_host: &NodeHostNoiseKey,
+    ) -> Result<Self, TransportError> {
+        if ticket.initiator_static_x25519 != node_host.public() {
+            return Err(TransportError::Handshake(
+                "remote ticket does not bind the supplied source NodeHost key".into(),
+            ));
+        }
+        if ticket.deadline <= unix_time_seconds()? {
+            return Err(TransportError::Handshake(
+                "remote session ticket is expired".into(),
+            ));
+        }
+        let client = AuthorizedEnclaveClient::connect_with_preamble(
+            endpoint,
+            &EnclaveRequest::OpenRemoteSessionV1 {
+                ticket_id: ticket.ticket_id,
+            },
+            ticket.responder_static_x25519,
+            node_host,
+            [0; 32],
+        )?;
+        Ok(Self {
+            stream: client.stream,
+            noise: client.noise,
+        })
+    }
+
+    pub fn public_keys(&mut self) -> Result<RemoteEnclavePublicKeysV1, TransportError> {
+        match self.request(&EnclaveRequest::GetPublicKeys)? {
+            EnclaveResponse::PublicKeys {
+                recipient_x25519_pub,
+                attestation_pub,
+                noise_static_pub,
+                tee_bls_pub,
+                dkg_enc_pub,
+                dkg_enc_sig,
+            } => Ok(RemoteEnclavePublicKeysV1 {
+                recipient_x25519_pub,
+                attestation_pub,
+                noise_static_pub,
+                tee_bls_pub,
+                dkg_enc_pub,
+                dkg_enc_sig,
+            }),
+            _ => Err(TransportError::UnexpectedResponse),
+        }
+    }
+
+    fn request(&mut self, request: &EnclaveRequest) -> Result<EnclaveResponse, TransportError> {
+        let plaintext = encode_request(request)?;
+        let mut ciphertext = vec![0_u8; plaintext.len() + 64];
+        let length = self
+            .noise
+            .write_message(&plaintext, &mut ciphertext)
+            .map_err(|error| TransportError::Noise(error.to_string()))?;
+        with_io_phase(
+            write_frame(&mut self.stream, &ciphertext[..length]),
+            "remote encrypted enclave request write",
+        )?;
+        let ciphertext = with_io_phase(
+            read_frame(&mut self.stream),
+            "remote encrypted enclave response read",
+        )?;
+        let mut plaintext = vec![0_u8; ciphertext.len()];
+        let length = self
+            .noise
+            .read_message(&ciphertext, &mut plaintext)
+            .map_err(|error| TransportError::Noise(error.to_string()))?;
+        let response = decode_response(&plaintext[..length])?;
+        if let EnclaveResponse::Error { message } = response {
+            return Err(TransportError::EnclaveError(message));
+        }
+        Ok(response)
+    }
+}
+
+fn unix_time_seconds() -> Result<u64, TransportError> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .map_err(|_| TransportError::Handshake("system time precedes Unix epoch".into()))
 }
 
 fn validate_dcap_verification_response(

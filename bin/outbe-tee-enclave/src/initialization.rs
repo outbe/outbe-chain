@@ -1,6 +1,11 @@
 //! Write-once enclave initialization and NodeHost command authorization.
 
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, Mutex},
+};
+
+use alloy_primitives::B256;
 
 use outbe_primitives::tee_attestation_v1::{
     AttestationMode, EnclaveInitializationManifestV1, EnclaveProfile, RegistrationIntentV1,
@@ -14,6 +19,8 @@ use crate::seal::{
     SealHeader, SEAL_FORMAT,
 };
 
+const MAX_PENDING_REMOTE_SESSIONS_V1: usize = 64;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InitializationMode {
     Production,
@@ -23,6 +30,42 @@ pub enum InitializationMode {
 #[derive(Clone, Debug)]
 pub struct PendingInitialization {
     manifest: EnclaveInitializationManifestV1,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PendingRemoteSessionV1 {
+    initiator_static_x25519: [u8; 32],
+    deadline: u64,
+}
+
+impl PendingRemoteSessionV1 {
+    pub const fn initiator_static_x25519(self) -> [u8; 32] {
+        self.initiator_static_x25519
+    }
+
+    pub const fn deadline(self) -> u64 {
+        self.deadline
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SessionAuthorityV1 {
+    LocalNodeHost,
+    RemoteActiveNode { deadline: u64 },
+}
+
+impl SessionAuthorityV1 {
+    pub fn ensure_live(self) -> Result<(), &'static str> {
+        self.ensure_live_at(unix_time_seconds()?)
+    }
+
+    fn ensure_live_at(self, now: u64) -> Result<(), &'static str> {
+        match self {
+            Self::LocalNodeHost => Ok(()),
+            Self::RemoteActiveNode { deadline } if now < deadline => Ok(()),
+            Self::RemoteActiveNode { .. } => Err("remote session lease expired"),
+        }
+    }
 }
 
 impl PendingInitialization {
@@ -45,6 +88,7 @@ pub struct InitializationState {
     challenge: [u8; 32],
     boot: Option<Arc<EnclaveBootConfig>>,
     stored: Mutex<Option<StoredInitialization>>,
+    remote_sessions: Mutex<BTreeMap<B256, PendingRemoteSessionV1>>,
 }
 
 impl InitializationState {
@@ -74,6 +118,7 @@ impl InitializationState {
                 manifest,
                 loaded_from_seal: true,
             })),
+            remote_sessions: Mutex::new(BTreeMap::new()),
         })
     }
 
@@ -85,6 +130,7 @@ impl InitializationState {
             challenge: [0xDD; 32],
             boot: None,
             stored: Mutex::new(None),
+            remote_sessions: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -212,9 +258,16 @@ impl InitializationState {
         &self,
         request: &EnclaveRequest,
         offer_key_ready: bool,
+        authority: SessionAuthorityV1,
     ) -> Result<(), &'static str> {
         if self.mode == InitializationMode::Development {
             return Ok(());
+        }
+        authority.ensure_live()?;
+        if matches!(authority, SessionAuthorityV1::RemoteActiveNode { .. }) {
+            return matches!(request, EnclaveRequest::GetPublicKeys)
+                .then_some(())
+                .ok_or("remote session command denied by enclave capability matrix");
         }
         let profile = self
             .manifest()
@@ -222,6 +275,71 @@ impl InitializationState {
             .ok_or("enclave is not initialized")?
             .enclave_profile;
         command_allowed(command_class(request), profile, offer_key_ready)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn authorize_remote_session(
+        &self,
+        ticket_id: B256,
+        initiator_static_x25519: [u8; 32],
+        responder_static_x25519: [u8; 32],
+        deadline: u64,
+        finalized_block_hash: B256,
+        keys: &EnclaveKeys,
+    ) -> Result<(), String> {
+        if self.mode != InitializationMode::Production || self.manifest()?.is_none() {
+            return Err(
+                "remote session authorization requires initialized production state".into(),
+            );
+        }
+        if ticket_id.is_zero()
+            || initiator_static_x25519 == [0; 32]
+            || responder_static_x25519 == [0; 32]
+            || finalized_block_hash.is_zero()
+        {
+            return Err("remote session authorization is malformed".into());
+        }
+        if responder_static_x25519 != keys.noise_public() {
+            return Err("remote session targets another Noise responder".into());
+        }
+        let now = unix_time_seconds().map_err(str::to_owned)?;
+        if deadline <= now {
+            return Err("remote session authorization is expired".into());
+        }
+        let mut sessions = self
+            .remote_sessions
+            .lock()
+            .map_err(|_| "remote session authorization lock is poisoned".to_string())?;
+        sessions.retain(|_, session| session.deadline > now);
+        if sessions.len() >= MAX_PENDING_REMOTE_SESSIONS_V1 {
+            return Err("pending remote session capacity reached".into());
+        }
+        if sessions.contains_key(&ticket_id) {
+            return Err("remote session ticket already exists".into());
+        }
+        sessions.insert(
+            ticket_id,
+            PendingRemoteSessionV1 {
+                initiator_static_x25519,
+                deadline,
+            },
+        );
+        Ok(())
+    }
+
+    pub fn take_remote_session(&self, ticket_id: B256) -> Result<PendingRemoteSessionV1, String> {
+        if self.mode != InitializationMode::Production || ticket_id.is_zero() {
+            return Err("remote session ticket is invalid".into());
+        }
+        let now = unix_time_seconds().map_err(str::to_owned)?;
+        let mut sessions = self
+            .remote_sessions
+            .lock()
+            .map_err(|_| "remote session authorization lock is poisoned".to_string())?;
+        sessions.retain(|_, session| session.deadline > now);
+        sessions
+            .remove(&ticket_id)
+            .ok_or_else(|| "remote session ticket is unavailable, expired, or already used".into())
     }
 
     fn validate_manifest(
@@ -263,6 +381,7 @@ enum CommandClass {
 fn command_class(request: &EnclaveRequest) -> CommandClass {
     match request {
         EnclaveRequest::GetPublicKeys
+        | EnclaveRequest::AuthorizeRemoteSessionV1 { .. }
         | EnclaveRequest::GenerateDcapQuote { .. }
         | EnclaveRequest::BeginDcapVerificationV1 { .. }
         | EnclaveRequest::DcapVerificationChunkV1 { .. }
@@ -288,8 +407,16 @@ fn command_class(request: &EnclaveRequest) -> CommandClass {
         | EnclaveRequest::GetInitializationChallenge
         | EnclaveRequest::Initialize { .. }
         | EnclaveRequest::OpenSession
+        | EnclaveRequest::OpenRemoteSessionV1 { .. }
         | EnclaveRequest::SessionHandshake { .. } => CommandClass::Never,
     }
+}
+
+fn unix_time_seconds() -> Result<u64, &'static str> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .map_err(|_| "system time precedes Unix epoch")
 }
 
 fn command_allowed(
@@ -302,8 +429,9 @@ fn command_allowed(
         CommandClass::Initialized => true,
         CommandClass::ValidatorKeyless => profile == EnclaveProfile::Validator && !offer_key_ready,
         CommandClass::Ready => offer_key_ready,
-        // I6 replaces this unconditional denial with verification of the exact
-        // canonical finalized proof inside the enclave, not NodeHost assertions.
+        // Remote sessions never inherit these commands. Their future protocol-
+        // specific proof/delivery path remains separately fail-closed and is
+        // intentionally outside the DCAP/session-admission slice.
         CommandClass::FinalizedAuthorizationRequired => false,
     };
     allowed
@@ -513,6 +641,96 @@ mod tests {
             .prepare(&manifest.encode_canonical().unwrap(), &signature, &keys)
             .unwrap_err()
             .contains("chain id"));
+    }
+
+    #[test]
+    fn remote_authority_has_an_exclusive_deadline_and_no_owner_command_surface() {
+        assert!(SessionAuthorityV1::RemoteActiveNode { deadline: 1_000 }
+            .ensure_live_at(999)
+            .is_ok());
+        assert!(SessionAuthorityV1::RemoteActiveNode { deadline: 1_000 }
+            .ensure_live_at(1_000)
+            .unwrap_err()
+            .contains("expired"));
+
+        let root = tempfile::tempdir().unwrap();
+        let boot = Arc::new(EnclaveBootConfig::new(
+            [0x10; 32],
+            root.path().to_path_buf(),
+            0,
+        ));
+        let keys = EnclaveKeys::new([7; 32], Some([1; 32])).unwrap();
+        let state =
+            InitializationState::production_with_challenge(boot, &keys, [0x41; 32]).unwrap();
+        let (manifest, signature) = signed_manifest(&keys, [0x41; 32]);
+        let pending = state
+            .prepare(&manifest.encode_canonical().unwrap(), &signature, &keys)
+            .unwrap();
+        state.commit(pending, &keys).unwrap();
+        let remote = SessionAuthorityV1::RemoteActiveNode { deadline: u64::MAX };
+
+        assert!(state
+            .authorize_command(&EnclaveRequest::GetPublicKeys, false, remote)
+            .is_ok());
+        for owner_request in [
+            EnclaveRequest::GenerateDcapQuote { intent: Vec::new() },
+            EnclaveRequest::AuthorizeRemoteSessionV1 {
+                ticket_id: B256::repeat_byte(0x71),
+                initiator_static_x25519: [0x72; 32],
+                responder_static_x25519: [0x73; 32],
+                deadline: u64::MAX,
+                finalized_block_hash: B256::repeat_byte(0x74),
+            },
+            EnclaveRequest::SealOfferKeyForRegistry {
+                recipient_x25519: [0x75; 32],
+            },
+        ] {
+            assert!(state
+                .authorize_command(&owner_request, true, remote)
+                .unwrap_err()
+                .contains("remote session command denied"));
+        }
+
+        let deadline = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 60;
+        assert!(state
+            .authorize_remote_session(
+                B256::repeat_byte(0x76),
+                [0x77; 32],
+                [0x78; 32],
+                deadline,
+                B256::repeat_byte(0x79),
+                &keys,
+            )
+            .unwrap_err()
+            .contains("targets another Noise responder"));
+
+        for index in 0..MAX_PENDING_REMOTE_SESSIONS_V1 {
+            state
+                .authorize_remote_session(
+                    B256::from([u8::try_from(index + 1).unwrap(); 32]),
+                    [0x77; 32],
+                    keys.noise_public(),
+                    deadline,
+                    B256::repeat_byte(0x79),
+                    &keys,
+                )
+                .unwrap();
+        }
+        assert!(state
+            .authorize_remote_session(
+                B256::repeat_byte(0xF0),
+                [0x77; 32],
+                keys.noise_public(),
+                deadline,
+                B256::repeat_byte(0x79),
+                &keys,
+            )
+            .unwrap_err()
+            .contains("capacity reached"));
     }
 
     #[test]

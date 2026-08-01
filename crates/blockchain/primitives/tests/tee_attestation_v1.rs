@@ -6,11 +6,12 @@ use k256::ecdsa::{signature::hazmat::PrehashSigner as _, SigningKey};
 use outbe_primitives::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationMode, AttestationOperationV1, CodecError,
     DcapCollateralComponentV1, DcapCollateralKind, DcapEvidenceV1, EnclaveInitializationManifestV1,
-    EnclaveProfile, NodeIdV1, PlatformTcbStatusSetV1, QvlTcbStatusV1, RegistrationIntentV1,
-    RegistryMutatorV1, ResourceScheduleV1, TeeMeasurementRuleV1, TeePolicyScheduleEntryV1,
-    TeePolicyScheduleV1, TeePolicyV1, TeeRegistryGasScheduleV1, ACTIVE_TEE_ATTESTATION_V1_MANIFEST,
-    MAX_ACTIVE_MEASUREMENT_RULES, MAX_ATTESTATION_EVIDENCE_BYTES, MAX_COLLATERAL_COMPONENT_BYTES,
-    MAX_EVIDENCE_CALL_FRAMING_BYTES, MAX_QUOTE_BYTES,
+    EnclaveProfile, NodeHostAuthorizationWitnessV1, NodeIdV1, PlatformTcbStatusSetV1,
+    QvlTcbStatusV1, RegistrationIntentV1, RegistryMutatorV1, ResourceScheduleV1,
+    TeeMeasurementRuleV1, TeePolicyScheduleEntryV1, TeePolicyScheduleV1, TeePolicyV1,
+    TeeRegistryGasScheduleV1, ACTIVE_TEE_ATTESTATION_V1_MANIFEST, MAX_ACTIVE_MEASUREMENT_RULES,
+    MAX_ATTESTATION_EVIDENCE_BYTES, MAX_COLLATERAL_COMPONENT_BYTES,
+    MAX_EVIDENCE_CALL_FRAMING_BYTES, MAX_NODE_HOST_AUTHORIZATION_WITNESS_BYTES, MAX_QUOTE_BYTES,
 };
 
 fn validator_intent(genesis_hash: B256) -> RegistrationIntentV1 {
@@ -147,6 +148,24 @@ fn node_host_authorization_survives_fresh_enclave_initialization() {
     intent.operation = AttestationOperationV1::ReplaceEnclaveBinding;
     intent.node_host_authorization_hash = original.node_host_authorization_hash().unwrap();
     replacement.validate_intent_binding(&intent).unwrap();
+}
+
+#[test]
+fn canonical_node_host_witness_opens_the_exact_manifest_authorization() {
+    let validator_key = SigningKey::from_bytes((&[0x61; 32]).into()).unwrap();
+    let manifest = validator_initialization_manifest(&validator_key);
+    let witness = NodeHostAuthorizationWitnessV1::from_manifest(&manifest).unwrap();
+
+    let encoded = witness.encode_canonical().unwrap();
+    assert_eq!(encoded.len(), MAX_NODE_HOST_AUTHORIZATION_WITNESS_BYTES);
+    assert_eq!(
+        NodeHostAuthorizationWitnessV1::decode_canonical(&encoded).unwrap(),
+        witness
+    );
+    assert_eq!(
+        witness.authorization_hash().unwrap(),
+        manifest.node_host_authorization_hash().unwrap()
+    );
 }
 
 #[test]

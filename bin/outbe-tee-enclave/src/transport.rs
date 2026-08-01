@@ -7,9 +7,10 @@
 //! preamble exists only in the separate development/mock mode.
 
 use std::io::{Read, Write};
-use std::net::TcpListener;
-use std::os::unix::net::UnixListener;
+use std::net::{TcpListener, TcpStream};
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::{Arc, OnceLock};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use zeroize::Zeroizing;
 
@@ -22,7 +23,10 @@ use crate::dcap_verifier::{
     complete_verification_response, DcapVerificationProgressV1, DcapVerificationSessionV1,
 };
 use crate::dkg::{build_ceremony_info, DkgSessionStore};
-use crate::initialization::{InitializationMode, InitializationState, PendingInitialization};
+use crate::initialization::{
+    InitializationMode, InitializationState, PendingInitialization, PendingRemoteSessionV1,
+    SessionAuthorityV1,
+};
 use crate::keys::EnclaveKeys;
 use crate::process::process_tribute_offer_batch;
 use crate::seal::{
@@ -88,6 +92,25 @@ impl DerivedTributeOfferKey {
 /// a divergent re-derivation is rejected by the `DkgRecoverTributeOffer` arm. No
 /// `StorageHandle` exists in this binary, so std sync primitives apply here.
 pub type SharedTributeOfferKey = Arc<OnceLock<DerivedTributeOfferKey>>;
+
+/// Transport carriers supported by the production enclave server. Remote
+/// sessions use the socket read timeout to close an otherwise idle connection
+/// at its exclusive finalized-lease deadline.
+pub trait EnclaveTransportStream: Read + Write {
+    fn set_session_read_timeout(&self, timeout: Option<Duration>) -> std::io::Result<()>;
+}
+
+impl EnclaveTransportStream for UnixStream {
+    fn set_session_read_timeout(&self, timeout: Option<Duration>) -> std::io::Result<()> {
+        UnixStream::set_read_timeout(self, timeout)
+    }
+}
+
+impl EnclaveTransportStream for TcpStream {
+    fn set_session_read_timeout(&self, timeout: Option<Duration>) -> std::io::Result<()> {
+        TcpStream::set_read_timeout(self, timeout)
+    }
+}
 
 /// The TSEAL sealing key + its policy, or `None` when no confidential key is
 /// available. Real `EGETKEY(MRSIGNER)` under `gramine-sgx`; a fixed mock key
@@ -223,7 +246,7 @@ fn seal_tribute_offer_and_group_sig_if_configured(
 /// Serve a single client connection end-to-end (no boot config / sealing).
 /// Thin wrapper over [`serve_connection_with`]; kept for tests and callers that
 /// do not seal.
-pub fn serve_connection<S: Read + Write>(
+pub fn serve_connection<S: EnclaveTransportStream>(
     stream: S,
     keys: &EnclaveKeys,
     offer_key: &SharedTributeOfferKey,
@@ -237,7 +260,7 @@ pub fn serve_connection<S: Read + Write>(
 /// Seam F, read by the offer-decrypt path). `boot` carries the seal/unseal
 /// configuration (chain_id / tee-dir / isv_svn); when `Some`, the sealing path
 /// persists the offer secret + threshold share after Seam F.
-pub fn serve_connection_with<S: Read + Write>(
+pub fn serve_connection_with<S: EnclaveTransportStream>(
     stream: S,
     keys: &EnclaveKeys,
     offer_key: &SharedTributeOfferKey,
@@ -259,7 +282,7 @@ pub fn serve_connection_with<S: Read + Write>(
 /// never a QVL-positive or hardware-evidence seam. The production binary is
 /// built without `mock`, so this entrypoint and generator are absent from it.
 #[cfg(feature = "mock")]
-pub fn serve_connection_with_synthetic_dcap<S: Read + Write>(
+pub fn serve_connection_with_synthetic_dcap<S: EnclaveTransportStream>(
     stream: S,
     keys: &EnclaveKeys,
     offer_key: &SharedTributeOfferKey,
@@ -276,7 +299,7 @@ pub fn serve_connection_with_synthetic_dcap<S: Read + Write>(
     )
 }
 
-fn serve_connection_with_quote_generator<S: Read + Write>(
+fn serve_connection_with_quote_generator<S: EnclaveTransportStream>(
     mut stream: S,
     keys: &EnclaveKeys,
     offer_key: &SharedTributeOfferKey,
@@ -286,6 +309,7 @@ fn serve_connection_with_quote_generator<S: Read + Write>(
 ) -> Result<(), TransportError> {
     // 1. Minimal cleartext preamble. Production never emits a quote here.
     let first = decode_request(&read_frame(&mut stream)?)?;
+    let mut remote_session: Option<PendingRemoteSessionV1> = None;
     let pending: Option<PendingInitialization> = match (initialization.mode(), first) {
         (InitializationMode::Development, EnclaveRequest::GetQuote { nonce }) => {
             write_frame(&mut stream, &encode_response(&keys.quote(nonce))?)?;
@@ -315,6 +339,14 @@ fn serve_connection_with_quote_generator<S: Read + Write>(
                 .map_err(TransportError::Handshake)?;
             None
         }
+        (InitializationMode::Production, EnclaveRequest::OpenRemoteSessionV1 { ticket_id }) => {
+            remote_session = Some(
+                initialization
+                    .take_remote_session(ticket_id)
+                    .map_err(TransportError::Handshake)?,
+            );
+            None
+        }
         (InitializationMode::Development, _) => {
             return Err(TransportError::Handshake(
                 "development transport expected legacy GetQuote before handshake".to_string(),
@@ -322,11 +354,17 @@ fn serve_connection_with_quote_generator<S: Read + Write>(
         }
         (InitializationMode::Production, _) => {
             return Err(TransportError::Handshake(
-                "production transport expected initialization discovery, Initialize, or OpenSession"
+                "production transport expected initialization discovery, Initialize, OpenSession, or OpenRemoteSessionV1"
                     .to_string(),
             ));
         }
     };
+    let session_authority = remote_session.map_or(SessionAuthorityV1::LocalNodeHost, |session| {
+        SessionAuthorityV1::RemoteActiveNode {
+            deadline: session.deadline(),
+        }
+    });
+    set_remote_read_deadline(&stream, remote_session)?;
 
     // 2. Noise-IK responder handshake.
     let params = NOISE_PARAMS
@@ -346,12 +384,15 @@ fn serve_connection_with_quote_generator<S: Read + Write>(
     // Noise IK authenticates the initiator static in message 1. Reject it here,
     // before message 2, transport mode, encrypted request decoding, or effects.
     if initialization.mode() == InitializationMode::Production {
-        let expected = pending
-            .as_ref()
-            .map(PendingInitialization::node_host_noise_x25519)
-            .map(Ok)
-            .unwrap_or_else(|| initialization.expected_node_host())
-            .map_err(TransportError::Handshake)?;
+        let expected = match remote_session {
+            Some(session) => session.initiator_static_x25519(),
+            None => pending
+                .as_ref()
+                .map(PendingInitialization::node_host_noise_x25519)
+                .map(Ok)
+                .unwrap_or_else(|| initialization.expected_node_host())
+                .map_err(TransportError::Handshake)?,
+        };
         let remote = handshake.get_remote_static().ok_or_else(|| {
             TransportError::Handshake("Noise IK message 1 omitted initiator static key".to_string())
         })?;
@@ -402,13 +443,50 @@ fn serve_connection_with_quote_generator<S: Read + Write>(
     let mut seal_attempted = false;
 
     // 3. Encrypted request/response loop. Exits when the peer closes (read EOF).
-    while let Ok(frame) = read_frame(&mut stream) {
+    // Remote traffic is checked both before and after every blocking read, so a
+    // frame arriving at or after the exclusive lease deadline is never decoded.
+    loop {
+        session_authority
+            .ensure_live()
+            .map_err(|message| TransportError::Handshake(message.to_string()))?;
+        set_remote_read_deadline(&stream, remote_session)?;
+        let frame = match read_frame(&mut stream) {
+            Ok(frame) => frame,
+            Err(TransportError::Io(error))
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::UnexpectedEof
+                        | std::io::ErrorKind::ConnectionReset
+                        | std::io::ErrorKind::BrokenPipe
+                ) =>
+            {
+                break;
+            }
+            Err(TransportError::Io(error))
+                if remote_session.is_some()
+                    && matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) =>
+            {
+                session_authority
+                    .ensure_live()
+                    .map_err(|message| TransportError::Handshake(message.to_string()))?;
+                return Err(TransportError::Io(error));
+            }
+            Err(error) => return Err(error),
+        };
+        session_authority
+            .ensure_live()
+            .map_err(|message| TransportError::Handshake(message.to_string()))?;
         let mut pt = vec![0u8; frame.len()];
         let n = noise
             .read_message(&frame, &mut pt)
             .map_err(|e| TransportError::Noise(e.to_string()))?;
         let req = decode_request(&pt[..n])?;
-        if let Err(message) = initialization.authorize_command(&req, offer_key.get().is_some()) {
+        if let Err(message) =
+            initialization.authorize_command(&req, offer_key.get().is_some(), session_authority)
+        {
             let response = EnclaveResponse::Error {
                 message: message.to_string(),
             };
@@ -469,6 +547,9 @@ fn serve_connection_with_quote_generator<S: Read + Write>(
             seal_tribute_offer_and_group_sig_if_configured(boot, offer_key);
             seal_attempted = true;
         }
+        session_authority
+            .ensure_live()
+            .map_err(|message| TransportError::Handshake(message.to_string()))?;
 
         let plain = encode_response(&resp)?;
         let mut ct = vec![0u8; plain.len() + 64];
@@ -477,6 +558,24 @@ fn serve_connection_with_quote_generator<S: Read + Write>(
             .map_err(|e| TransportError::Noise(e.to_string()))?;
         write_frame(&mut stream, &ct[..n])?;
     }
+    Ok(())
+}
+
+fn set_remote_read_deadline(
+    stream: &impl EnclaveTransportStream,
+    remote_session: Option<PendingRemoteSessionV1>,
+) -> Result<(), TransportError> {
+    let Some(session) = remote_session else {
+        return Ok(());
+    };
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| TransportError::Handshake("system time precedes Unix epoch".into()))?;
+    let remaining = Duration::from_secs(session.deadline())
+        .checked_sub(now)
+        .filter(|remaining| !remaining.is_zero())
+        .ok_or_else(|| TransportError::Handshake("remote session lease expired".into()))?;
+    stream.set_session_read_timeout(Some(remaining))?;
     Ok(())
 }
 
@@ -515,6 +614,7 @@ fn dispatch_with_initialization(
         | EnclaveRequest::GetInitializationChallenge
         | EnclaveRequest::Initialize { .. }
         | EnclaveRequest::OpenSession
+        | EnclaveRequest::OpenRemoteSessionV1 { .. }
         | EnclaveRequest::SessionHandshake { .. } => EnclaveResponse::Error {
             message: "pre-handshake request is not valid inside a Noise session".to_string(),
         },
@@ -523,6 +623,31 @@ fn dispatch_with_initialization(
         | EnclaveRequest::FinishDcapVerificationV1 { .. } => EnclaveResponse::Error {
             message: "DCAP verification requires an authenticated production session".to_string(),
         },
+        EnclaveRequest::AuthorizeRemoteSessionV1 {
+            ticket_id,
+            initiator_static_x25519,
+            responder_static_x25519,
+            deadline,
+            finalized_block_hash,
+        } => {
+            let Some(initialization) = initialization else {
+                return EnclaveResponse::Error {
+                    message: "remote session authorization requires production initialization"
+                        .into(),
+                };
+            };
+            match initialization.authorize_remote_session(
+                ticket_id,
+                initiator_static_x25519,
+                responder_static_x25519,
+                deadline,
+                finalized_block_hash,
+                keys,
+            ) {
+                Ok(()) => EnclaveResponse::RemoteSessionAuthorizedV1 { ticket_id },
+                Err(message) => EnclaveResponse::Error { message },
+            }
+        }
         EnclaveRequest::GetPublicKeys => EnclaveResponse::PublicKeys {
             // Advertise the DKG-derived offer key once available, so clients
             // encrypt to it; fall back to the dev offer key pre-DKG.
@@ -2173,6 +2298,189 @@ mod tests {
                 node_host.public()
             );
         }
+    }
+
+    #[test]
+    fn preauthenticated_remote_ticket_opens_one_live_noise_session_and_cannot_replay() {
+        use outbe_primitives::tee_attestation_v1::{
+            EnclaveProfile, NodeHostAuthorizationWitnessV1, NodeIdV1,
+        };
+        use outbe_tee::{
+            admit_remote_session_v1, AuthorizedEnclaveClient, FinalizedRegistryBindingV1,
+            FinalizedRegistryViewV1, NodeHostNoiseKey, RemoteEnclaveClient,
+            RemoteSessionExpectationV1,
+        };
+
+        let root = tempfile::tempdir().unwrap();
+        let socket = root.path().join("remote-enclave.sock");
+        let endpoint = socket.to_str().unwrap().to_string();
+        let boot = Arc::new(EnclaveBootConfig::new(
+            [0x10; 32],
+            root.path().to_path_buf(),
+            0,
+        ));
+        let keys = Arc::new(EnclaveKeys::new([0xA1; 32], Some([0xA1; 32])).unwrap());
+        let initialization =
+            Arc::new(InitializationState::production(boot.clone(), &keys).unwrap());
+        let challenge = match initialization.challenge_response(&keys).unwrap() {
+            EnclaveResponse::InitializationChallenge { challenge, .. } => challenge,
+            response => panic!("unexpected challenge response: {response:?}"),
+        };
+        let listener = UnixListener::bind(&socket).unwrap();
+        let server_keys = keys.clone();
+        let server_boot = boot.clone();
+        let server_initialization = initialization.clone();
+        let server = std::thread::spawn(move || {
+            let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
+            let mut connections = Vec::new();
+            for _ in 0..4 {
+                let (stream, _) = listener.accept().unwrap();
+                let keys = server_keys.clone();
+                let boot = server_boot.clone();
+                let initialization = server_initialization.clone();
+                let offer_key = offer_key.clone();
+                connections.push(std::thread::spawn(move || {
+                    serve_connection_with(stream, &keys, &offer_key, Some(&boot), &initialization)
+                }));
+            }
+            connections
+                .into_iter()
+                .map(|connection| connection.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+
+        let owner_path = root.path().join("owner-noise.key");
+        let owner = NodeHostNoiseKey::create_new(&owner_path).unwrap();
+        let (manifest, node_signature) = signed_initialization_manifest(
+            &keys,
+            challenge,
+            owner.public(),
+            EnclaveProfile::Validator,
+        );
+        let mut owner_client = AuthorizedEnclaveClient::initialize_endpoint(
+            &endpoint,
+            &manifest,
+            &node_signature,
+            &owner,
+        )
+        .unwrap();
+
+        let source_path = root.path().join("source-noise.key");
+        let source = NodeHostNoiseKey::create_new(&source_path).unwrap();
+        let source_node = NodeIdV1::Validator {
+            address: [0xB1; 20],
+            bls_minpk_public: [0xB2; 48],
+        };
+        let source_witness = NodeHostAuthorizationWitnessV1 {
+            chain_id: manifest.chain_id,
+            genesis_hash: manifest.genesis_hash,
+            enclave_profile: EnclaveProfile::Validator,
+            node_id: source_node.clone(),
+            node_host_noise_x25519: source.public(),
+        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        assert!(matches!(
+            owner_client.request(&EnclaveRequest::AuthorizeRemoteSessionV1 {
+                ticket_id: B256::repeat_byte(0xA2),
+                initiator_static_x25519: source.public(),
+                responder_static_x25519: manifest.noise_responder_x25519,
+                deadline: now + 60,
+                finalized_block_hash: B256::repeat_byte(0xA3),
+            }),
+            Err(outbe_tee::TransportError::Handshake(message))
+                if message.contains("finalized admission capability")
+        ));
+        let view = FinalizedRegistryViewV1 {
+            chain_id: manifest.chain_id,
+            genesis_hash: manifest.genesis_hash,
+            block_number: 101,
+            block_hash: B256::repeat_byte(0xB3),
+            state_root: B256::repeat_byte(0xB4),
+            consensus_timestamp: now.saturating_sub(1),
+        };
+        let source_binding = FinalizedRegistryBindingV1 {
+            view,
+            node_id_hash: source_node.node_id_hash().unwrap(),
+            profile: EnclaveProfile::Validator,
+            enclave_id: B256::repeat_byte(0xB5),
+            binding_id: B256::repeat_byte(0xB6),
+            intent_hash: B256::repeat_byte(0xB7),
+            valid_until: now + 600,
+            noise_responder_x25519: [0xB8; 32],
+            node_host_authorization_hash: source_witness.authorization_hash().unwrap(),
+        };
+        let target_hash = manifest.node_id.node_id_hash().unwrap();
+        let target_binding = FinalizedRegistryBindingV1 {
+            view,
+            node_id_hash: target_hash,
+            profile: EnclaveProfile::Validator,
+            enclave_id: manifest.enclave_id().unwrap(),
+            binding_id: B256::repeat_byte(0xC1),
+            intent_hash: B256::repeat_byte(0xC2),
+            valid_until: now + 500,
+            noise_responder_x25519: manifest.noise_responder_x25519,
+            node_host_authorization_hash: manifest.node_host_authorization_hash().unwrap(),
+        };
+        let admission = admit_remote_session_v1(
+            RemoteSessionExpectationV1 {
+                chain_id: manifest.chain_id,
+                genesis_hash: manifest.genesis_hash,
+                source_node_id_hash: source_binding.node_id_hash,
+                source_profile: EnclaveProfile::Validator,
+                target_node_id_hash: target_hash,
+                target_profile: EnclaveProfile::Validator,
+            },
+            &source_witness,
+            source_binding,
+            target_binding,
+        )
+        .unwrap();
+        let wrong_ticket = owner_client.authorize_remote_session(&admission).unwrap();
+        let mut wrong_stream = std::os::unix::net::UnixStream::connect(&socket).unwrap();
+        wrong_stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .unwrap();
+        write_frame(
+            &mut wrong_stream,
+            &outbe_tee::codec::encode_request(&EnclaveRequest::OpenRemoteSessionV1 {
+                ticket_id: wrong_ticket.ticket_id(),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let params = NOISE_PARAMS.parse().unwrap();
+        let mut wrong_handshake = snow::Builder::new(params)
+            .local_private_key(&[0xD1; 32])
+            .remote_public_key(&manifest.noise_responder_x25519)
+            .build_initiator()
+            .unwrap();
+        let mut message = [0_u8; 1024];
+        let message_len = wrong_handshake.write_message(&[], &mut message).unwrap();
+        write_frame(&mut wrong_stream, &message[..message_len]).unwrap();
+        assert!(read_frame(&mut wrong_stream).is_err());
+
+        let ticket = owner_client.authorize_remote_session(&admission).unwrap();
+        let mut remote = RemoteEnclaveClient::connect_endpoint(&endpoint, &ticket, &source)
+            .expect("exact registered source NodeHost must complete Noise IK");
+        let remote_keys = remote.public_keys().unwrap();
+        assert_eq!(
+            remote_keys.noise_static_pub,
+            manifest.noise_responder_x25519
+        );
+        assert_eq!(remote_keys.recipient_x25519_pub, manifest.recipient_x25519);
+        assert_eq!(remote_keys.attestation_pub, manifest.attestation_ed25519);
+        drop(remote);
+
+        assert!(RemoteEnclaveClient::connect_endpoint(&endpoint, &ticket, &source).is_err());
+        drop(owner_client);
+        let results = server.join().unwrap();
+        assert!(results[0].is_ok());
+        assert!(results[1].is_err());
+        assert!(results[2].is_ok());
+        assert!(results[3].is_err());
     }
 
     #[test]

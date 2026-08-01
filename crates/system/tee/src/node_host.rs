@@ -18,7 +18,10 @@ use outbe_primitives::tee_attestation_v1::{
     NodeIdV1, RegistrationIntentV1, MAX_ATTESTATION_EVIDENCE_BYTES,
 };
 
-use crate::{AuthorizedEnclaveClient, GeneratedDcapQuoteV1, NodeHostNoiseKey, TransportError};
+use crate::{
+    remote_session::FinalizedRegistryViewV1, AuthorizedEnclaveClient, GeneratedDcapQuoteV1,
+    NodeHostNoiseKey, TransportError,
+};
 
 pub const NODE_HOST_DIRECTORY_V1: &str = "tee-node-host-v1";
 pub const NODE_HOST_NOISE_KEY_V1: &str = "noise-initiator.key";
@@ -122,6 +125,26 @@ pub struct ReplacementCandidateSubmissionV1 {
 pub struct FinalizedReplacementAuthorizationV1 {
     intent_hash: B256,
     candidate_manifest_hash: B256,
+}
+
+/// Exact replacement binding authenticated at one consensus-finalized Registry
+/// state. Constructing the opaque promotion capability additionally proves
+/// that these fields match the durable candidate and evidence byte-for-byte.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FinalizedReplacementBindingV1 {
+    pub view: FinalizedRegistryViewV1,
+    pub profile: EnclaveProfile,
+    pub node_id_hash: B256,
+    pub enclave_id: B256,
+    pub binding_id: B256,
+    pub intent_hash: B256,
+    pub binding_version: u64,
+    pub registration_version: u64,
+    pub valid_until: u64,
+    pub recipient_x25519: [u8; 32],
+    pub attestation_ed25519: [u8; 32],
+    pub noise_responder_x25519: [u8; 32],
+    pub node_host_authorization_hash: B256,
 }
 
 impl FinalizedReplacementAuthorizationV1 {
@@ -490,6 +513,44 @@ pub fn load_replacement_candidate_submission(
     let submission = read_replacement_submission(&paths.replacement_submission)?;
     validate_durable_replacement_submission(&candidate.manifest, &submission)?;
     Ok(Some(submission))
+}
+
+/// Constructs promotion authority only when one exact consensus-finalized
+/// Registry binding matches the locally durable replacement transaction.
+///
+/// The caller must obtain `finalized` through the node-local finalized-state
+/// adapter. This function deliberately accepts neither RPC receipts nor an
+/// operator override and returns only the opaque capability consumed by
+/// [`promote_replacement_candidate`]. This low-level cross-crate seam does not
+/// itself prove that a directly constructed binding is finalized.
+#[doc(hidden)]
+pub fn construct_finalized_replacement_authorization_v1(
+    node_data_dir: &Path,
+    finalized: &FinalizedReplacementBindingV1,
+) -> Result<FinalizedReplacementAuthorizationV1, TransportError> {
+    let paths = NodeHostPaths::new(node_data_dir);
+    ensure_private_directory(&paths.root)?;
+    let _state_lock = NodeHostStateLock::acquire(&paths.state_lock)?;
+    if !path_exists(&paths.manifest)? || !path_exists(&paths.noise_key)? {
+        return Err(TransportError::Codec(
+            "replacement authorization requires committed NodeHost state".into(),
+        ));
+    }
+    let node_host = NodeHostNoiseKey::load(&paths.noise_key)?;
+    reconcile_replacement_state(&paths, &node_host)?;
+    if !path_exists(&paths.replacement_candidate)? || !path_exists(&paths.replacement_submission)? {
+        return Err(TransportError::Codec(
+            "replacement authorization requires a complete durable candidate and submission".into(),
+        ));
+    }
+
+    let active = read_manifest(&paths.manifest)?;
+    let candidate = read_replacement_candidate(&paths.replacement_candidate)?;
+    validate_replacement_candidate_state(&candidate, &active, &node_host)?;
+    let submission = read_replacement_submission(&paths.replacement_submission)?;
+    let intent = validate_durable_replacement_submission(&candidate.manifest, &submission)?;
+    validate_finalized_replacement_binding(&intent, finalized)?;
+    replacement_authorization(&candidate, &submission)
 }
 
 /// Atomically make the finalized replacement manifest the normal startup
@@ -962,6 +1023,52 @@ fn validate_durable_replacement_submission(
         ));
     }
     Ok(intent)
+}
+
+fn validate_finalized_replacement_binding(
+    intent: &RegistrationIntentV1,
+    finalized: &FinalizedReplacementBindingV1,
+) -> Result<(), TransportError> {
+    let node_id_hash = intent.node_id.node_id_hash().map_err(codec_error)?;
+    let intent_hash = intent.intent_hash().map_err(codec_error)?;
+    let expected_chain_id = intent.chain_id;
+    let view_is_well_formed = finalized.view.chain_id != [0; 32]
+        && !finalized.view.genesis_hash.is_zero()
+        && finalized.view.block_number != 0
+        && !finalized.view.block_hash.is_zero()
+        && !finalized.view.state_root.is_zero()
+        && finalized.view.consensus_timestamp != 0;
+    let binding_is_well_formed = !finalized.node_id_hash.is_zero()
+        && !finalized.enclave_id.is_zero()
+        && !finalized.binding_id.is_zero()
+        && !finalized.intent_hash.is_zero()
+        && finalized.binding_version != 0
+        && finalized.registration_version != 0
+        && finalized.valid_until > finalized.view.consensus_timestamp
+        && finalized.recipient_x25519 != [0; 32]
+        && finalized.attestation_ed25519 != [0; 32]
+        && finalized.noise_responder_x25519 != [0; 32]
+        && !finalized.node_host_authorization_hash.is_zero();
+    let exact_match = finalized.view.chain_id == expected_chain_id
+        && finalized.view.genesis_hash == intent.genesis_hash
+        && finalized.profile == intent.enclave_profile
+        && finalized.node_id_hash == node_id_hash
+        && finalized.enclave_id == intent.enclave_id
+        && finalized.binding_id == intent.binding_id
+        && finalized.intent_hash == intent_hash
+        && finalized.binding_version == intent.binding_version
+        && finalized.registration_version == intent.registration_version
+        && finalized.valid_until == intent.requested_valid_until
+        && finalized.recipient_x25519 == intent.recipient_x25519
+        && finalized.attestation_ed25519 == intent.attestation_ed25519
+        && finalized.noise_responder_x25519 == intent.noise_responder_x25519
+        && finalized.node_host_authorization_hash == intent.node_host_authorization_hash;
+    if !view_is_well_formed || !binding_is_well_formed || !exact_match {
+        return Err(TransportError::Codec(
+            "finalized Registry binding does not match the durable replacement intent".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn read_owned_bounded_file(
@@ -1616,6 +1723,63 @@ mod tests {
             read_manifest(&fixture.paths.manifest).unwrap(),
             fixture.candidate
         );
+    }
+
+    #[test]
+    fn production_authority_is_constructed_only_from_the_exact_finalized_replacement_binding() {
+        let fixture = replacement_fixture();
+        let candidate = read_replacement_candidate(&fixture.paths.replacement_candidate).unwrap();
+        let submission =
+            read_replacement_submission(&fixture.paths.replacement_submission).unwrap();
+        let intent =
+            validate_durable_replacement_submission(&candidate.manifest, &submission).unwrap();
+        let finalized = FinalizedReplacementBindingV1 {
+            view: crate::FinalizedRegistryViewV1 {
+                chain_id: intent.chain_id,
+                genesis_hash: intent.genesis_hash,
+                block_number: 90,
+                block_hash: B256::repeat_byte(0xA1),
+                state_root: B256::repeat_byte(0xA2),
+                consensus_timestamp: 19_000,
+            },
+            profile: intent.enclave_profile,
+            node_id_hash: intent.node_id.node_id_hash().unwrap(),
+            enclave_id: intent.enclave_id,
+            binding_id: intent.binding_id,
+            intent_hash: intent.intent_hash().unwrap(),
+            binding_version: intent.binding_version,
+            registration_version: intent.registration_version,
+            valid_until: 20_000,
+            recipient_x25519: intent.recipient_x25519,
+            attestation_ed25519: intent.attestation_ed25519,
+            noise_responder_x25519: intent.noise_responder_x25519,
+            node_host_authorization_hash: intent.node_host_authorization_hash,
+        };
+
+        assert_eq!(
+            construct_finalized_replacement_authorization_v1(&fixture.node_data_dir, &finalized,)
+                .unwrap(),
+            fixture.authorization
+        );
+
+        let mut wrong = finalized;
+        wrong.intent_hash = B256::repeat_byte(0xA3);
+        assert!(
+            construct_finalized_replacement_authorization_v1(&fixture.node_data_dir, &wrong,)
+                .unwrap_err()
+                .to_string()
+                .contains("finalized Registry binding does not match")
+        );
+
+        let mut wrong_lease = finalized;
+        wrong_lease.valid_until -= 1;
+        assert!(construct_finalized_replacement_authorization_v1(
+            &fixture.node_data_dir,
+            &wrong_lease,
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("finalized Registry binding does not match"));
     }
 
     #[test]

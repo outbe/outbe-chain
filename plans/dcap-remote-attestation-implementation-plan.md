@@ -330,20 +330,35 @@ responder key of an active, unexpired registration.
 
 **Includes:**
 
-- node-local verifier reading its own consensus-finalized state;
+- one production node-local facade that reads the current finalized marker,
+  canonical header and historical Registry state from the same node provider,
+  validates both bindings and installs one one-use ticket in the local enclave;
+  no caller-supplied finalized snapshot is accepted;
 - external verifier interface requiring a trusted genesis/checkpoint and
   finalized storage proof;
-- fresh Noise proof of possession and session deadline capped by lease expiry;
+- a distinct remote-session context in which the source's existing persistent
+  `NodeHost` static is bound by a canonical witness to its finalized active
+  registration; it never inherits the target's local owner commands;
+- fresh Noise proof of possession and session deadline capped by the earlier of
+  the source and target lease expiries;
 - explicit RPC-trust mode when no finalized anchor is supplied.
 - production construction of the opaque finalized replacement authorization
   consumed by I5, binding the exact active Registry replacement intent and
   candidate manifest hash.
+- ticket delivery and peer discovery are transport-neutral consumer wiring;
+  they add no authority and I6 does not introduce a new P2P/RPC protocol.
 
 **Acceptance:**
 
-- unfinalized/stale/wrong-profile/wrong-key proofs reject;
+- unfinalized/stale/wrong-profile/wrong-key proofs reject; after local finality
+  advances from `H` to `H+1`, a caller cannot retain `H` and select its old
+  still-canonical Registry state for session or replacement authorization;
+- a remote session admits only the exact source `NodeHost` static committed by
+  the finalized source binding and remains deny-by-default for owner commands;
 - sessions close at lease expiry and no fresh DCAP quote is required per
-  connection;
+  connection under the honest runtime clock; clock/timeout enforcement is
+  availability hygiene, while the hostile-host security effect is the
+  public-only remote command matrix and separate finalized checks for secrets;
 - no continuous light client is added inside the enclave for session admission;
 - secret-bearing commands keep their separate on-demand finalized proof checks.
 

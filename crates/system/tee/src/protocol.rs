@@ -360,11 +360,24 @@ pub enum EnclaveRequest {
     /// responder returns nothing until the following Noise IK message 1 proves
     /// possession of the sealed NodeHost static key.
     OpenSession,
+    /// Production pre-handshake marker for one previously authorized remote
+    /// source NodeHost. The ticket is consumed before Noise message 1, which
+    /// must prove the exact initiator static stored under this id.
+    OpenRemoteSessionV1 { ticket_id: B256 },
     /// Noise-IK handshake message.
     SessionHandshake { noise_msg: Vec<u8> },
     /// Return the enclave's public keys (recipient X25519, attestation, Noise
     /// static, tribute-BLS).
     GetPublicKeys,
+    /// Local-owner command that installs one bounded, one-use remote Noise
+    /// admission previously derived from exact finalized Registry state.
+    AuthorizeRemoteSessionV1 {
+        ticket_id: B256,
+        initiator_static_x25519: [u8; 32],
+        responder_static_x25519: [u8; 32],
+        deadline: u64,
+        finalized_block_hash: B256,
+    },
     /// Generate a fresh DCAP quote for the exact canonical registration or
     /// renewal intent. Production accepts this only inside an authenticated
     /// NodeHost session and only when the intent matches the sealed identity.
@@ -690,6 +703,9 @@ pub enum EnclaveResponse {
         enclave_id: B256,
         node_host_authorization_hash: B256,
         sealed_loaded: bool,
+    },
+    RemoteSessionAuthorizedV1 {
+        ticket_id: B256,
     },
     /// Generic acknowledgement (e.g. `DkgOpen` / `DkgDealerReceiveAck`).
     Ack,
