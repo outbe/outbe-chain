@@ -163,14 +163,9 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
     ),
   );
 
-  // --- rewards / agentreward -------------------------------------------------
-  server.tool(
-    "rewards_claim",
-    "Claim pending validator rewards. Requires OUTBE_PRIVATE_KEY.",
-    { wait: z.boolean().optional() },
-    handler(({ wait }) => submit(ctx, "rewards", "claimRewards", [], GAS_DEFAULT, wait ?? true)),
-  );
-
+  // --- agentreward -----------------------------------------------------------
+  // No `rewards_claim`: the Rewards precompile (0xEE03) exposes no callable ABI
+  // (see the note in view.ts and crates/system/rewards/src/precompile.rs).
   server.tool(
     "agentreward_claim",
     "Claim AgentReward balance. amount in COEN. Requires OUTBE_PRIVATE_KEY.",

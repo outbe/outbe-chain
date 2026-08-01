@@ -103,22 +103,60 @@ OUTBE_RPC=https://rpc.testnet.outbe.net \
 **Generic view** — `contract_call { contract, method, args[] }`: any view/pure method
 on any precompile, decoded. `contract` is a registry name or a `0x` address.
 
+The registry (`src/registry.ts`) mirrors the **full inbound ABI** — reads, writes and
+custom errors — of **every** routed precompile: all 32 exact-address routes in
+`crates/blockchain/evm/src/precompile_routes.rs`, plus the dynamic stablecoin token
+class. Each entry matches exactly the `I<Name>Calls` enum that the precompile's
+`dispatch` decodes, so an unknown selector here is an unknown selector on chain.
+Signatures are generated from the `contracts/precompiles/src/I*.sol` Foundry
+artifacts (`teeregistry` has no `.sol`; its signatures come from the
+`#[contract_public]` markers in Rust), so the registry cannot drift from the
+interfaces by hand-editing.
+
+Declaring a write here does **not** expose it as a tool — the signing surface stays
+the explicit allowlist in `src/tools/sign.ts`. Custom errors are mirrored too, so a
+revert reports `UnknownStablecoin(0x…)` instead of a bare 4-byte selector.
+
+`REWARDS_ADDRESS` (`0xEE03`) is the one routed address with no entry: its dispatch
+exposes no callable methods and always reverts. `nodfactory` and `intexfactory` are
+present but write-only — there is nothing on them to read.
+
+Factory-issued **stablecoin tokens have no fixed address**: they live in the
+genesis-reserved `0x53c0…` class (`STABLECOIN_ADDRESS_PREFIX`). Pass such a token's
+`0x` address to `contract_call` and the shared stablecoin ABI is bound to it
+automatically; `stablecoinfactory.predictTokenAddress(issuer, ticker)` derives the
+address, and `listTokens` / `tokenByTicker` / `tokenById` enumerate what exists.
+
+`intex`, `intexfactory` and `desis` appear here as their **on-chain precompile**
+surface; the separate cross-chain auction / escrow / NFT ABIs they also need live in
+`src/intex/registry.ts`.
+
 **Convenience reads** (decoded) — `tribute_get`, `tributes_by_owner`, `tributes_by_day`,
 `worldwide_day_totals`, `nod_get`, `nods_by_owner`, `gem_get`, `gems_by_owner`,
 `gratis_balance`, `promis_balance`,
 `fidelity_index`, `agentreward_claimable`, `worldwide_days_offering`, `worldwide_day_get`,
 `currency_pairs`, `currency_rate`, `currency_rate_vwap`, `validators`, `validator_get`,
-`staking_info`, `rewards_claimable`.
+`staking_info`.
+
+Tribute and Nod ids are **36-byte opaque entity ids** (`bytes` in `ITribute` / `INod`),
+not numeric ERC-721 token ids: pass them to `tribute_get` / `nod_get` as `0x` hex,
+exactly as `tributes_by_owner` / `nods_by_owner` return them.
+
+There is no `rewards_claimable` / `rewards_claim`: the Rewards precompile (`0xEE03`)
+exposes no callable ABI — validator emission is delivered as gems and per-block fees
+settle in the `LateFinalizeCredits` begin-zone phase, so there is no claimable native
+balance (`crates/system/rewards/src/precompile.rs`).
 
 **Governance reads** (canon / meta-canon / proposals) — `metacanon_get`, `canon_get`,
 `oip_get { id }`, `gip_get { id }`, `oip_list`, `gip_list`. `*_get` returns the full
 text + status. `*_list` is index-backed and **paginated**: give `author` (their
-proposals) or `status` = `accepted` (Approved or Implemented) | `rejected`, plus
+proposals) or `status` = `Draft` | `Approved` | `Rejected` | `Rework` | `Implemented`
+(the on-chain status indexes, `crates/core/governance/src/status.rs`), plus
 optional `offset` (default 0) / `limit` (default 100, max 1000); it returns
 `{ total, offset, limit, … }` with proposal metadata only (omits the text body).
 
 **Signing (allowlist, need `OUTBE_PRIVATE_KEY`)** — `tribute_offer`, `staking_stake`,
-`staking_unstake`, `staking_unbonded_claim`, `rewards_claim`, `agentreward_claim`,
+`staking_unstake`, `staking_unbonded_claim`, `agentreward_claim`,
 `oracle_feeder_delegate`, `oracle_vote_submit`. Amounts are whole COEN strings (`"100"`,
 `"1.5"`), scaled to 1e18 minor units internally. Transactions are EIP-1559 (type 2) with
 an explicit gas limit (`tribute_offer` can't be `eth_estimateGas`-simulated because the
@@ -128,9 +166,10 @@ payload is decrypted inside the enclave during execution).
 
 Reads the DKG-derived offer key from the TeeRegistry, auto-detects the OFFERING
 WorldwideDay (or takes `worldwide_day`), encrypts the payload (X25519 ECDHE +
-HKDF-SHA256, salt `[0x03;32]`, info `"tribute-factory-encryption"` +
-ChaCha20Poly1305) — **byte-identical to the enclave decrypt path** — and sends
-`offerTribute`. The token id is derived from `(caller, worldwide_day)`, so one
+HKDF-SHA256, salt `outbe_tee::OFFER_HKDF_SALT` = ASCII `"outbe/tribute/offer-salt/v1"`
+zero-padded to 32 bytes, info `"tribute-factory-encryption"` + ChaCha20Poly1305) —
+**byte-identical to the enclave decrypt path** — and sends
+`offerTribute`. The tribute id is derived from `(caller, worldwide_day)`, so one
 tribute per account per day.
 
 ## Intent (cross-chain orders)
