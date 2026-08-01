@@ -19,7 +19,7 @@ use std::sync::OnceLock;
 
 use alloy_eips::{eip7702::Authorization, BlockId, BlockNumberOrTag};
 use alloy_network::{EthereumWallet, TransactionBuilder7702};
-use alloy_primitives::{Address, Bytes, TxHash, U256};
+use alloy_primitives::{Address, Bytes, TxHash, B256, U256};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::TransactionRequest;
 use alloy_signer::SignerSync;
@@ -161,6 +161,7 @@ sol! {
         function getWorldwideDay(uint32 day) external view returns (
             uint8 f0, uint8 f1, uint64 f2, uint64 f3, uint64 f4,
             uint64 f5, uint64 f6, uint256 f7, uint256 f8);
+        function getWorldwideDaysByStatus(uint8 status) external view returns (uint32[] memory);
     }
     interface IZeroFee {
         function authorizeSponsorship(address signer) external view returns (bool);
@@ -266,6 +267,54 @@ where
     })
 }
 
+/// Require a typed view call to fail specifically as an EVM revert at the
+/// exact canonical block. Transport failures are not accepted as ABI evidence.
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn read_call_reverts_at<C: SolCall>(
+    url: &str,
+    to: Address,
+    call: &C,
+    height: u64,
+) -> Option<bool> {
+    let url = url.to_string();
+    let data = call.abi_encode();
+    block_on(async move {
+        let provider = ProviderBuilder::new().connect_http(url.parse().ok()?);
+        let tx = TransactionRequest::default()
+            .to(to)
+            .input(Bytes::from(data).into());
+        match provider.call(tx).block(BlockId::number(height)).await {
+            Ok(_) => Some(false),
+            Err(error) => {
+                let message = error.to_string().to_ascii_lowercase();
+                Some(message.contains("revert"))
+            }
+        }
+    })
+}
+
+/// `eth_call` raw calldata and return the revert payload the node reports, or
+/// `None` when the call succeeds or fails without revert data. This surfaces
+/// the machine-readable rejection bytes that transaction receipts omit.
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn call_revert_data(url: &str, to: Address, data: Vec<u8>) -> Option<Vec<u8>> {
+    let url = url.to_string();
+    block_on(async move {
+        let provider = ProviderBuilder::new().connect_http(url.parse().ok()?);
+        let tx = TransactionRequest::default()
+            .to(to)
+            .input(Bytes::from(data).into());
+        match provider.call(tx).block(BlockId::latest()).await {
+            Ok(_) => None,
+            Err(error) => {
+                let payload = error.as_error_resp()?;
+                let raw = payload.data.as_ref()?.get().trim_matches('"').to_owned();
+                hex::decode(raw.trim_start_matches("0x")).ok()
+            }
+        }
+    })
+}
+
 /// Head block number (`eth_blockNumber`).
 pub(crate) fn block_number(url: &str) -> Option<u64> {
     let url = url.to_string();
@@ -298,6 +347,23 @@ pub(crate) fn state_root(url: &str, height: u64) -> Option<String> {
             .await
             .ok()??;
         Some(format!("{:#x}", block.header.state_root))
+    })
+}
+
+/// Canonical hash, state root and protocol header artifacts for one block.
+pub(crate) fn block_commitment(url: &str, height: u64) -> Option<(B256, B256, Bytes)> {
+    let url = url.to_string();
+    block_on(async move {
+        let provider = ProviderBuilder::new().connect_http(url.parse().ok()?);
+        let block = provider
+            .get_block_by_number(BlockNumberOrTag::Number(height))
+            .await
+            .ok()??;
+        Some((
+            block.header.hash,
+            block.header.state_root,
+            block.header.extra_data.clone(),
+        ))
     })
 }
 

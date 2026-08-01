@@ -18,7 +18,11 @@ use outbe_primitives::{
     storage::StorageHandle,
 };
 
-use crate::schema::MetadosisContract;
+use crate::{
+    aggregate::ValidatedWwdAggregate,
+    reducer::{reduce_outer_wwd, OcompRetryCause, OuterWwdEvent},
+    schema::MetadosisContract,
+};
 
 use super::schema::remove_response_deadline_key;
 
@@ -26,6 +30,7 @@ const REJECT_MALFORMED_ENCODING: u16 = 1;
 const REJECT_LIMIT_EXCEEDED: u16 = 2;
 const REJECT_CALL_MODE: u16 = 3;
 const REJECT_PROTOCOL_VOTE: u16 = 4;
+pub(crate) const REJECT_LIFECYCLE_INACTIVE: u16 = 5;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RecordedResultVoteV1 {
@@ -119,7 +124,7 @@ fn map_vote_transition_error(error: PrecompileError) -> PrecompileError {
     }
 }
 
-fn vote_reject(code: u16) -> PrecompileError {
+pub(crate) fn vote_reject(code: u16) -> PrecompileError {
     let mut encoded = Vec::with_capacity(36);
     encoded.extend_from_slice(&OCOMP_RESULT_VOTE_REJECTED_SELECTOR);
     encoded.extend_from_slice(&U256::from(code).to_be_bytes::<32>());
@@ -138,8 +143,7 @@ impl MetadosisContract<'_> {
         limits: &SchemaLimits,
     ) -> Result<RecordedResultVoteV1> {
         let storage = self.storage.clone();
-        let ce_checkpoint = scope.ce_work_checkpoint()?;
-        let outcome = storage.with_checkpoint(|| {
+        let outcome = (|| {
             let response = self
                 .response_window_for_job(vote.job_id)?
                 .ok_or_else(|| reject("OCOMP result vote has no open response window"))?;
@@ -163,7 +167,6 @@ impl MetadosisContract<'_> {
                     "OCOMP result vote requires an open or quorum-certified job",
                 ));
             }
-
             let authority = self
                 .read_ocomp_activation_authority(limits)?
                 .ok_or_else(|| fatal("OCOMP result-vote committee is not installed"))?;
@@ -201,18 +204,34 @@ impl MetadosisContract<'_> {
                         .timestamp()?
                         .try_into()
                         .map_err(|_| fatal("OCOMP block timestamp does not fit u64"))?;
-                    super::activation::apply_quorum_result(
+                    let worldwide_day = outbe_common::WorldwideDay::new(record.intent.wwd);
+                    let aggregate = ValidatedWwdAggregate::load_and_validate(storage.clone())?;
+                    let outer = aggregate.record(worldwide_day).ok_or_else(|| {
+                        fatal("OCOMP q-forming vote has no persisted outer WorldwideDay")
+                    })?;
+                    let completed_transition =
+                        reduce_outer_wwd(Some(outer), OuterWwdEvent::OcompCompleted)?;
+                    let conflict_transition = reduce_outer_wwd(
+                        Some(outer),
+                        OuterWwdEvent::OcompRetryScheduled(OcompRetryCause::Conflicted),
+                    )?;
+                    let apply_context = super::activation::QuorumApplyContext::new(
                         &storage,
                         scope,
+                        &completed_transition,
+                        &conflict_transition,
+                        inclusion_height,
+                        current_time,
+                        limits,
+                    );
+                    super::activation::apply_quorum_result(
+                        apply_context,
                         self,
                         response.intent_id,
                         &record,
                         &vote.result,
                         formed,
                         &authority,
-                        inclusion_height,
-                        current_time,
-                        limits,
                     )?;
                     let applied = self
                         .ocomp_job_record(response.intent_id, limits)?
@@ -237,10 +256,7 @@ impl MetadosisContract<'_> {
 
             self.write_result_vote_accountability(&accountability, limits)?;
             Ok(RecordedResultVoteV1 { outcome, quorum })
-        });
-        if outcome.is_err() {
-            scope.restore_ce_work_checkpoint(ce_checkpoint)?;
-        }
+        })();
         outcome
     }
 
@@ -252,8 +268,7 @@ impl MetadosisContract<'_> {
         at_height: u64,
         limits: &SchemaLimits,
     ) -> Result<ResponseWindowCloseV1> {
-        let storage = self.storage.clone();
-        storage.with_checkpoint(|| {
+        (|| {
             let mut index = self.read_response_deadline_index()?;
             let Some(key) = index.first().copied() else {
                 return Ok(ResponseWindowCloseV1::NotDue);
@@ -303,7 +318,7 @@ impl MetadosisContract<'_> {
                 }
                 _ => Err(fatal("OCOMP response close found an invalid job status")),
             }
-        })
+        })()
     }
 }
 

@@ -5,6 +5,7 @@ use alloy_sol_types::SolCall;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
+use crate::api::{AuctionBriefReceipt, AuctionBriefRejectionReason};
 use crate::constants::ORIGIN_ROUTER_ADDRESS;
 use crate::runtime;
 use crate::schema::{AuctionConfig, AuctionStage, BidData, DesisContract};
@@ -50,15 +51,18 @@ fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
 }
 
 fn brief_at(s: &StorageHandle, worldwide_day: u32, supply_promis: u128, green: bool) {
-    assert!(crate::api::dispatch_auction_brief(
-        s.clone(),
-        worldwide_day,
-        U256::from(supply_promis),
-        U256::from(ENTRY_PRICE),
-        green,
-        NOW,
-    )
-    .unwrap());
+    assert_eq!(
+        crate::api::dispatch_auction_brief(
+            s.clone(),
+            worldwide_day,
+            U256::from(supply_promis),
+            U256::from(ENTRY_PRICE),
+            green,
+            NOW,
+        )
+        .unwrap(),
+        AuctionBriefReceipt::Accepted
+    );
 }
 
 fn brief(s: &StorageHandle, green: bool) {
@@ -122,7 +126,7 @@ fn bids(n: u8, rate: u32) -> Vec<BidData> {
 #[test]
 fn dispatch_auction_brief_records_the_brief() {
     with_storage(|s| {
-        let ok = crate::api::dispatch_auction_brief(
+        let receipt = crate::api::dispatch_auction_brief(
             s.clone(),
             WORLDWIDE_DAY,
             U256::from(10 * PROMIS_LOAD_MINOR),
@@ -131,7 +135,7 @@ fn dispatch_auction_brief_records_the_brief() {
             NOW,
         )
         .unwrap();
-        assert!(ok);
+        assert_eq!(receipt, AuctionBriefReceipt::Accepted);
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(WORLDWIDE_DAY).unwrap(),
@@ -156,7 +160,7 @@ fn dispatch_auction_brief_records_the_brief() {
 #[test]
 fn dispatch_auction_brief_records_a_red_day() {
     with_storage(|s| {
-        let ok = crate::api::dispatch_auction_brief(
+        let receipt = crate::api::dispatch_auction_brief(
             s.clone(),
             WORLDWIDE_DAY,
             U256::from(PROMIS_LOAD_MINOR),
@@ -165,7 +169,7 @@ fn dispatch_auction_brief_records_a_red_day() {
             NOW,
         )
         .unwrap();
-        assert!(ok);
+        assert_eq!(receipt, AuctionBriefReceipt::Accepted);
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(WORLDWIDE_DAY).unwrap(),
@@ -260,6 +264,7 @@ fn strict_request_auction_base_rejects_oversized_supply_without_state() {
             AuctionStage::None
         );
         assert_eq!(contract.sched_active_count.read().unwrap(), 0);
+        assert_no_request_brief_state(&s);
     });
 }
 
@@ -394,10 +399,7 @@ fn strict_request_auction_base_never_tops_up_a_live_auction() {
 }
 
 #[test]
-fn dispatch_auction_brief_duplicate_returns_false() {
-    use crate::precompile::IDesis;
-    use alloy_sol_types::SolEvent;
-
+fn dispatch_auction_brief_duplicate_propagates_without_committed_failure_event() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(NOW));
     storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[SRC_CHAIN]));
@@ -406,16 +408,19 @@ fn dispatch_auction_brief_duplicate_returns_false() {
         Bytes::from(vec![0u8; 32]),
     );
     StorageHandle::enter(&mut storage, |s| {
+        assert_eq!(
+            crate::api::dispatch_auction_brief(
+                s.clone(),
+                WORLDWIDE_DAY,
+                U256::from(10 * PROMIS_LOAD_MINOR),
+                U256::from(ENTRY_PRICE),
+                true,
+                NOW,
+            )
+            .unwrap(),
+            AuctionBriefReceipt::Accepted
+        );
         assert!(crate::api::dispatch_auction_brief(
-            s.clone(),
-            WORLDWIDE_DAY,
-            U256::from(10 * PROMIS_LOAD_MINOR),
-            U256::from(ENTRY_PRICE),
-            true,
-            NOW,
-        )
-        .unwrap());
-        assert!(!crate::api::dispatch_auction_brief(
             s.clone(),
             WORLDWIDE_DAY,
             U256::from(7 * PROMIS_LOAD_MINOR),
@@ -423,7 +428,7 @@ fn dispatch_auction_brief_duplicate_returns_false() {
             true,
             NOW,
         )
-        .unwrap());
+        .is_err());
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.pending_supply_promis.read(&WORLDWIDE_DAY).unwrap(),
@@ -433,39 +438,210 @@ fn dispatch_auction_brief_duplicate_returns_false() {
         assert_eq!(contract.sched_active_count.read().unwrap(), 1);
     });
 
-    let fail_sig = IDesis::AuctionDispatchFailed::SIGNATURE_HASH;
-    let found = storage
+    assert!(storage
         .get_events(outbe_primitives::addresses::DESIS_ADDRESS)
-        .iter()
-        .any(|log| {
-            log.topics().first() == Some(&fail_sig)
-                && IDesis::AuctionDispatchFailed::decode_log_data(log)
-                    .map(|ev| ev.worldwideDay == WORLDWIDE_DAY && ev.stage == "auction_brief")
-                    .unwrap_or(false)
-        });
-    assert!(
-        found,
-        "expected AuctionDispatchFailed on the duplicate brief"
+        .is_empty());
+}
+
+#[test]
+fn dispatch_auction_brief_oversized_supply_returns_typed_full_carry_over() {
+    use crate::precompile::IDesis;
+    use alloy_sol_types::SolEvent;
+
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |s| {
+        assert_eq!(
+            crate::api::dispatch_auction_brief(
+                s.clone(),
+                WORLDWIDE_DAY,
+                U256::MAX,
+                U256::from(ENTRY_PRICE),
+                true,
+                NOW,
+            )
+            .unwrap(),
+            AuctionBriefReceipt::RejectedToCarryOver {
+                reason: AuctionBriefRejectionReason::SupplyExceedsAuctionDomain,
+                supply: U256::MAX,
+                max_accepted: U256::from(u128::MAX),
+            }
+        );
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract.read_stage(WORLDWIDE_DAY).unwrap(),
+            AuctionStage::None
+        );
+        assert_eq!(contract.sched_active_count.read().unwrap(), 0);
+        assert_no_request_brief_state(&s);
+    });
+
+    let logs = storage.get_events(outbe_primitives::addresses::DESIS_ADDRESS);
+    assert_eq!(logs.len(), 1);
+    let event = IDesis::AuctionBriefRejectedToCarryOver::decode_log_data(&logs[0]).unwrap();
+    assert_eq!(event.worldwideDay, WORLDWIDE_DAY);
+    assert_eq!(event.supply, U256::MAX);
+    assert_eq!(event.maxAccepted, U256::from(u128::MAX));
+    assert_eq!(
+        event.reasonCode,
+        AuctionBriefRejectionReason::SupplyExceedsAuctionDomain.code()
     );
 }
 
 #[test]
-fn dispatch_auction_brief_oversized_supply_returns_false() {
-    with_storage(|s| {
-        assert!(!crate::api::dispatch_auction_brief(
-            s.clone(),
+fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
+    with_storage(|storage| {
+        assert_eq!(
+            crate::api::dispatch_auction_brief(
+                storage.clone(),
+                WORLDWIDE_DAY,
+                U256::from(u128::MAX),
+                U256::from(ENTRY_PRICE),
+                true,
+                NOW,
+            )
+            .unwrap(),
+            AuctionBriefReceipt::Accepted
+        );
+    });
+
+    let supply = U256::from(u128::MAX).checked_add(U256::from(1_u8)).unwrap();
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        assert_eq!(
+            crate::api::dispatch_auction_brief(
+                storage.clone(),
+                WORLDWIDE_DAY,
+                supply,
+                U256::from(ENTRY_PRICE),
+                true,
+                NOW,
+            )
+            .unwrap(),
+            AuctionBriefReceipt::RejectedToCarryOver {
+                reason: AuctionBriefRejectionReason::SupplyExceedsAuctionDomain,
+                supply,
+                max_accepted: U256::from(u128::MAX),
+            }
+        );
+        assert_no_request_brief_state(&storage);
+    });
+    use alloy_sol_types::SolEvent;
+    let logs = provider.get_events(outbe_primitives::addresses::DESIS_ADDRESS);
+    assert_eq!(logs.len(), 1);
+    let event =
+        crate::precompile::IDesis::AuctionBriefRejectedToCarryOver::decode_log_data(&logs[0])
+            .unwrap();
+    assert_eq!(event.worldwideDay, WORLDWIDE_DAY);
+    assert_eq!(event.supply, supply);
+    assert_eq!(event.maxAccepted, U256::from(u128::MAX));
+    assert_eq!(
+        event.reasonCode,
+        AuctionBriefRejectionReason::SupplyExceedsAuctionDomain.code()
+    );
+}
+
+#[test]
+fn invalid_day_duplicate_and_anchor_overflow_are_errors_without_business_events() {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        assert!(crate::api::dispatch_auction_brief(
+            storage.clone(),
+            0,
+            U256::MAX,
+            U256::from(ENTRY_PRICE),
+            true,
+            NOW,
+        )
+        .is_err());
+
+        brief_at(&storage, WORLDWIDE_DAY, 1, true);
+        assert!(crate::api::dispatch_auction_brief(
+            storage.clone(),
             WORLDWIDE_DAY,
             U256::MAX,
             U256::from(ENTRY_PRICE),
             true,
             NOW,
         )
-        .unwrap());
-        let contract = s.contract::<DesisContract>();
-        assert_eq!(
-            contract.read_stage(WORLDWIDE_DAY).unwrap(),
-            AuctionStage::None
-        );
+        .is_err());
+
+        let midnight = u64::MAX - u64::MAX % outbe_primitives::time::SECONDS_PER_DAY;
+        let late = midnight
+            + (crate::constants::COMMIT_WINDOW_SECONDS
+                - crate::constants::MIN_COMMIT_WINDOW_SECONDS)
+            + 1;
+        assert!(crate::api::dispatch_auction_brief(
+            storage,
+            WORLDWIDE_DAY + 1,
+            U256::MAX,
+            U256::from(ENTRY_PRICE),
+            true,
+            late,
+        )
+        .is_err());
+    });
+    assert!(provider
+        .get_events(outbe_primitives::addresses::DESIS_ADDRESS)
+        .is_empty());
+}
+
+#[test]
+fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
+    let mutation_count = {
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        let result = StorageHandle::enter(&mut provider, |storage| {
+            crate::api::dispatch_auction_brief(
+                storage,
+                WORLDWIDE_DAY,
+                U256::from(7 * PROMIS_LOAD_MINOR),
+                U256::from(ENTRY_PRICE),
+                true,
+                NOW,
+            )
+        });
+        assert_eq!(result.unwrap(), AuctionBriefReceipt::Accepted);
+        provider.clear_mutation_failure()
+    };
+    assert!(mutation_count > 1);
+
+    for operation in 0..mutation_count {
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        provider.fail_after_mutation_at(operation);
+        let result = StorageHandle::enter(&mut provider, |storage| {
+            crate::api::dispatch_auction_brief(
+                storage,
+                WORLDWIDE_DAY,
+                U256::from(7 * PROMIS_LOAD_MINOR),
+                U256::from(ENTRY_PRICE),
+                true,
+                NOW,
+            )
+        });
+        assert!(result.is_err(), "mutation {operation} must propagate");
+        assert_eq!(provider.clear_mutation_failure(), operation + 1);
+        StorageHandle::enter(&mut provider, |storage| {
+            assert_no_request_brief_state(&storage)
+        });
+        assert!(provider.get_ordered_events().is_empty());
+    }
+
+    let mut rejection_provider = HashMapStorageProvider::new(CHAIN_ID);
+    rejection_provider.fail_after_mutation_at(0);
+    let result = StorageHandle::enter(&mut rejection_provider, |storage| {
+        crate::api::dispatch_auction_brief(
+            storage,
+            WORLDWIDE_DAY,
+            U256::MAX,
+            U256::from(ENTRY_PRICE),
+            true,
+            NOW,
+        )
+    });
+    assert!(result.is_err());
+    assert_eq!(rejection_provider.clear_mutation_failure(), 1);
+    assert!(rejection_provider.get_ordered_events().is_empty());
+    StorageHandle::enter(&mut rejection_provider, |storage| {
+        assert_no_request_brief_state(&storage)
     });
 }
 
@@ -473,15 +649,18 @@ fn dispatch_auction_brief_oversized_supply_returns_false() {
 
 fn brief_anchor_at(now: u64) -> u64 {
     with_storage(|s| {
-        assert!(crate::api::dispatch_auction_brief(
-            s.clone(),
-            WORLDWIDE_DAY,
-            U256::from(LOAD_MINOR),
-            U256::from(ENTRY_PRICE),
-            true,
-            now,
-        )
-        .unwrap());
+        assert_eq!(
+            crate::api::dispatch_auction_brief(
+                s.clone(),
+                WORLDWIDE_DAY,
+                U256::from(LOAD_MINOR),
+                U256::from(ENTRY_PRICE),
+                true,
+                now,
+            )
+            .unwrap(),
+            AuctionBriefReceipt::Accepted
+        );
         u64::from(
             s.contract::<DesisContract>()
                 .auction_at
@@ -507,15 +686,18 @@ fn brief_defers_past_grace_to_next_midnight() {
 fn schedule_starts_a_deferred_brief_at_the_next_midnight() {
     with_storage(|s| {
         let noon = ANCHOR + 12 * 3600;
-        assert!(crate::api::dispatch_auction_brief(
-            s.clone(),
-            WORLDWIDE_DAY,
-            U256::from(10 * LOAD_MINOR),
-            U256::from(ENTRY_PRICE),
-            true,
-            noon,
-        )
-        .unwrap());
+        assert_eq!(
+            crate::api::dispatch_auction_brief(
+                s.clone(),
+                WORLDWIDE_DAY,
+                U256::from(10 * LOAD_MINOR),
+                U256::from(ENTRY_PRICE),
+                true,
+                noon,
+            )
+            .unwrap(),
+            AuctionBriefReceipt::Accepted
+        );
         assert_eq!(
             u64::from(
                 s.contract::<DesisContract>()

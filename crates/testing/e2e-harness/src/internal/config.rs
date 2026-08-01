@@ -2,8 +2,9 @@
 //!
 //! Paths and toggles for isolated localnet scenarios and
 //! `update_operator_flow.sh`. Every value comes from the CLI [`Environment`] — the
-//! harness reads no configuration from the process environment. (`PATH`/`HOME`
-//! are only read to build the child's `PATH` so `cast` resolves.)
+//! harness reads no product configuration from the process environment.
+//! (`PATH`/`HOME` are only read to build the child's `PATH` so `cast` resolves;
+//! the explicit Metadosis P0 lane separately records its removed env input.)
 
 use std::{
     collections::hash_map::DefaultHasher,

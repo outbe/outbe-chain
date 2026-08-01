@@ -18,6 +18,7 @@ ocomp-integration = [
     "dep:outbe-common",
     "dep:outbe-fidelity",
     "dep:outbe-metadosis",
+    "outbe-metadosis/test-utils",
     "dep:outbe-nod",
     "dep:outbe-nodfactory",
     "dep:outbe-node",
@@ -58,8 +59,10 @@ serde.workspace = true
 serde_yaml_ng.workspace = true
 sha2.workspace = true
 walkdir.workspace = true
+tempfile.workspace = true
 mongodb.workspace = true
 hex.workspace = true
+libc.workspace = true
 outbe-compressed-entities.workspace = true
 outbe-primitives.workspace = true
 outbe-protocol.workspace = true
@@ -132,13 +135,21 @@ path = "src/bin/outbe-release-sgx-e2e.rs"
 name = "outbe-e2e-evidence"
 path = "src/bin/outbe-e2e-evidence.rs"
 
+[[bin]]
+name = "outbe-verification-ledger"
+path = "src/bin/outbe-verification-ledger.rs"
+
+[[bin]]
+name = "outbe-metadosis-evidence"
+path = "src/bin/outbe-metadosis-evidence.rs"
+required-features = ["ocomp-integration"]
+
 [[test]]
 name = "ocomp_checkpoint_handoff"
 path = "tests/ocomp_checkpoint_handoff.rs"
 required-features = ["ocomp-integration"]
 
 [dev-dependencies]
-tempfile.workspace = true
 trybuild = "1"
 
 [[test]]

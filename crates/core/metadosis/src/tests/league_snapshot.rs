@@ -1,9 +1,10 @@
 use alloy_primitives::{address, U256};
 use outbe_ocomp_protocol::league_snapshot::{
-    league_snapshot_key, league_snapshot_slot, METADOSIS_LEAGUE_SNAPSHOT_BASE_SLOT,
+    league_snapshot_slot, METADOSIS_LEAGUE_SNAPSHOT_BASE_SLOT,
 };
 use outbe_primitives::addresses::METADOSIS_ADDRESS;
 
+use crate::fixture_kernel::FixtureKernelExt;
 use crate::tests::with_contract;
 
 /// Pins the hand-derived `METADOSIS_LEAGUE_SNAPSHOT_BASE_SLOT` against the slot
@@ -29,10 +30,8 @@ fn pure_snapshot_slot_points_at_the_dsl_written_word() {
     with_contract(|metadosis| {
         let wwd = 20_260_709u32;
         let owner = address!("7200000000000000000000000000000000000072");
-        let key = league_snapshot_key(wwd, owner);
         metadosis
-            .ocomp_fidelity_league_snapshot
-            .write(&key, 4096u16)
+            .fixture_write_league_snapshot(wwd, owner, 4096u16)
             .unwrap();
 
         let slot = league_snapshot_slot(wwd, owner);

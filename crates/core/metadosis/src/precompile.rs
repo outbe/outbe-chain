@@ -3,7 +3,10 @@ use alloy_sol_types::{sol, SolInterface};
 use outbe_primitives::dispatch::{dispatch_call, metadata, view};
 use outbe_primitives::error::Result;
 
-use crate::schema::MetadosisContract;
+use crate::{
+    aggregate::{WwdDayType, WwdStatus},
+    schema::{terminal_outcome, terminal_retirement, MetadosisContract},
+};
 
 /// Selectors on this precompile that accept native value. The route table binds
 /// this to the address's `ValuePolicy` at compile time, so a selector added here
@@ -33,6 +36,10 @@ pub fn dispatch(
                         "WorldwideDay",
                     ));
                 };
+                // Persisted bytes are validated as closed tags before they are
+                // returned through the raw ABI representation.
+                WwdStatus::try_from(day.status)?;
+                WwdDayType::try_from(day.day_type)?;
                 Ok((
                     day.status,
                     day.day_type,
@@ -51,11 +58,97 @@ pub fn dispatch(
                 Ok(wwds.into_iter().map(u32::from).collect())
             }),
             getWorldwideDaysByStatus(c) => view(c, |c| {
-                let wwds = metadosis.get_active_wwd_by_status(c.status)?;
+                let wanted = WwdStatus::try_from(c.status).map_err(|_| {
+                    outbe_primitives::error::PrecompileError::Revert(
+                        "unknown WorldwideDay status".into(),
+                    )
+                })?;
+                let wwds = metadosis.get_active_wwd_by_status(wanted)?;
                 Ok(wwds.into_iter().map(u32::from).collect())
             }),
             getBootstrapEndTime(_) => metadata::<IMetadosis::getBootstrapEndTimeCall>(|| {
                 metadosis.get_bootstrap_end_time()
+            }),
+            getWorldwideDayTerminalReceipt(c) => view(c, |c| {
+                let wwd = c.wwd.into();
+                let Some(stored) = metadosis.worldwide_day_terminal_receipts.get(wwd)? else {
+                    return Ok((
+                        terminal_outcome::NONE,
+                        U256::ZERO,
+                        U256::ZERO,
+                        U256::ZERO,
+                        terminal_retirement::NONE,
+                        0_u64,
+                    )
+                        .into());
+                };
+                match stored.outcome {
+                    terminal_outcome::MISSED_OFFERING => {
+                        metadosis.read_missed_offering_receipt(wwd)?;
+                    }
+                    terminal_outcome::CAPACITY_FORFEITURE => {
+                        metadosis.read_capacity_forfeiture_receipt(wwd)?;
+                    }
+                    _ => {
+                        return Err(outbe_primitives::error::PrecompileError::Fatal(
+                            "Metadosis WWD has an unknown terminal receipt outcome".into(),
+                        ));
+                    }
+                }
+                Ok((
+                    stored.outcome,
+                    stored.value_routed,
+                    stored.carry_over_before,
+                    stored.carry_over_after,
+                    stored.retirement,
+                    stored.block_number,
+                )
+                    .into())
+            }),
+            getCapacityForfeitureReceipt(c) => view(c, |c| {
+                let Some(receipt) = metadosis.read_capacity_forfeiture_receipt(c.wwd.into())?
+                else {
+                    return Ok((
+                        terminal_outcome::NONE,
+                        0_u32,
+                        0_u32,
+                        U256::ZERO,
+                        U256::ZERO,
+                        U256::ZERO,
+                        alloy_primitives::B256::ZERO,
+                        0_u32,
+                        U256::ZERO,
+                        0_u64,
+                        0_u64,
+                        terminal_retirement::NONE,
+                        0_u64,
+                    )
+                        .into());
+                };
+                let retirement = match receipt.retirement {
+                    outbe_compressed_entities::RetirementOutcome::NotPresent => {
+                        terminal_retirement::NOT_PRESENT
+                    }
+                    outbe_compressed_entities::RetirementOutcome::Requested => {
+                        terminal_retirement::REQUESTED
+                    }
+                };
+                Ok((
+                    terminal_outcome::CAPACITY_FORFEITURE,
+                    receipt.max_retained_wwds,
+                    receipt.retained_count_before,
+                    receipt.value_routed,
+                    receipt.carry_over_before,
+                    receipt.carry_over_after,
+                    receipt.sealed_collection_root,
+                    receipt.forfeited_count,
+                    receipt.forfeited_nominal,
+                    receipt.source_generation,
+                    receipt.retired_generation,
+                    retirement,
+                    receipt.block_number,
+                )
+                    .into())
             }),
             getOffchainJob(c) => view(c, |c| {
                 crate::ocomp::views::get_offchain_job(metadosis.storage.clone(), c.intentId)
@@ -82,8 +175,15 @@ pub fn dispatch(
                 )
                 .map(Bytes::from)
             }),
-            submitLysisResult(_) => Err(outbe_primitives::error::PrecompileError::Fatal(
-                "OCOMP result vote requires current-block execution context".into(),
+            // Reachable from arbitrary calldata whenever the OCOMP lifecycle is
+            // inactive: the EVM dispatcher routes this selector to
+            // `commands::submit_verified_result_vote` only while
+            // `ocomp_lifecycle_active` is true, so with the lifecycle active this
+            // arm is structurally unreachable. Caller-supplied ingress must
+            // revert, never `Fatal` — a `Fatal` here aborts the whole payload
+            // build for a transaction any external account can submit.
+            submitLysisResult(_) => Err(crate::ocomp::vote::vote_reject(
+                crate::ocomp::vote::REJECT_LIFECYCLE_INACTIVE,
             )),
         }
     })

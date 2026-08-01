@@ -64,7 +64,10 @@ interface IDesis {
     event AuctionCleared(uint32 indexed worldwideDay, uint32 issuedIntexCount, uint32 clearingRate, uint64 totalDemand);
     event AuctionClearedEmpty(uint32 indexed worldwideDay, uint64 totalDemand);
     event UnusedSupplyReported(uint32 indexed worldwideDay, uint256 unusedPromis);
-    /// @notice A best-effort auction-stage dispatch from Metadosis failed; the caller
-    /// falls back (e.g. routes supply to PromisLimit) instead of halting the block.
-    event AuctionDispatchFailed(uint32 indexed worldwideDay, string stage, string reason);
+    /// @notice The only committed auction-brief rejection. Technical and
+    /// invariant failures revert instead of being converted to business state.
+    /// `reasonCode == 1` means the supply exceeds Desis' uint128 auction domain.
+    event AuctionBriefRejectedToCarryOver(
+        uint32 indexed worldwideDay, uint256 supply, uint256 maxAccepted, uint8 reasonCode
+    );
 }

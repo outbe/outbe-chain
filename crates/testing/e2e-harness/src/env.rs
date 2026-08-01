@@ -20,6 +20,9 @@ use std::sync::OnceLock;
 use cucumber::gherkin::{Feature, Scenario};
 
 use crate::internal::ports::Ports;
+use crate::metadosis_p0::{
+    MetadosisP0Case, MetadosisP0EnvironmentReceiptV1, REMOVED_OWNER_FAILPOINT,
+};
 
 /// Enclave mode the localnet runs with (the `--tee` flag).
 #[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -76,8 +79,10 @@ impl TeeMode {
 /// The clap arguments that define the environment (merged with cucumber's own
 /// `--tags`/`--name`/`--input` via [`cucumber::cli::Opts`]).
 ///
-/// Everything is a CLI flag — the harness reads no configuration from the
-/// environment. Path flags are optional and default relative to `--repo`.
+/// Everything is a CLI flag. The test-only `--metadosis-p0-case` additionally
+/// validates the removed variable inherited by node children, but never uses it
+/// as product configuration. Path flags are optional and default relative to
+/// `--repo`.
 #[derive(clap::Args, Clone, Debug)]
 pub struct EnvCli {
     /// Number of committee validators to bootstrap.
@@ -133,6 +138,11 @@ pub struct EnvCli {
     /// unlike scenario data, it is retained after successful cleanup.
     #[arg(long)]
     pub evidence_dir: Option<PathBuf>,
+
+    /// Exact Metadosis P0 parity case. Test-only: validates and retains the
+    /// removed process input inherited by every node child.
+    #[arg(long, value_enum)]
+    pub metadosis_p0_case: Option<MetadosisP0Case>,
 
     /// `outbe-chain` binary. Defaults to `<repo>/target/debug/outbe-chain`.
     #[arg(long)]
@@ -197,6 +207,7 @@ pub struct Environment {
     pub repo: PathBuf,
     pub data_dir: PathBuf,
     pub evidence_dir: Option<PathBuf>,
+    pub metadosis_p0: Option<MetadosisP0EnvironmentReceiptV1>,
     pub chain_bin: PathBuf,
     pub ocomp_bin: PathBuf,
     pub upgraded_chain_bin: Option<PathBuf>,
@@ -210,9 +221,18 @@ pub struct Environment {
 
 impl Environment {
     /// Resolve from the parsed CLI. Unset path flags default relative to the
-    /// repo root. No environment variables are consulted.
+    /// repo root. The sole process-environment read is the explicit P0 evidence
+    /// receipt selected by `--metadosis-p0-case`.
     pub fn from_cli(cli: &EnvCli) -> Self {
         let repo = cli.repo.clone().unwrap_or_else(default_repo);
+        let metadosis_p0 = cli.metadosis_p0_case.map(|case| {
+            MetadosisP0EnvironmentReceiptV1::capture(case).unwrap_or_else(|error| {
+                panic!(
+                    "invalid --metadosis-p0-case environment receipt for \
+                     {REMOVED_OWNER_FAILPOINT}: {error:#}"
+                )
+            })
+        });
         Self {
             validators: cli.validators,
             ports: Ports::new(!cli.no_resolve_ports),
@@ -225,6 +245,7 @@ impl Environment {
                 std::env::temp_dir().join(format!("outbe-e2e-harness-{}", std::process::id()))
             }),
             evidence_dir: cli.evidence_dir.clone(),
+            metadosis_p0,
             chain_bin: cli
                 .chain_bin
                 .clone()
@@ -285,6 +306,7 @@ impl Default for Environment {
             repo: None,
             data_dir: None,
             evidence_dir: None,
+            metadosis_p0_case: None,
             chain_bin: None,
             ocomp_bin: None,
             upgraded_chain_bin: None,

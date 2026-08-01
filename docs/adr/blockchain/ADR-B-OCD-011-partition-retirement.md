@@ -63,7 +63,11 @@ Lysis FAILED:
   the Tribute collection remains present
 ```
 
-Whether the outer Metadosis state machine records a separate failure outcome or retries is not retirement authority. ADR-B-OCD-011 has only one authorization fact: the successful all-or-nothing completion path.
+Whether the outer Metadosis state machine records a separate failure outcome
+or retries is not retirement authority. ADR-B-OCD-011 has one normal
+authorization fact: the successful all-or-nothing completion path. Two closed
+Metadosis terminal authorities are specified below for the fresh-devnet
+Citadel contract.
 
 The successful path performs one bulk Tribute accounting transition rather than calling the generic entity `delete` operation for every body. It validates the verified input count and nominal sum against `DayTotals` before zeroing them and adjusting total supply. Mismatch is deterministic failure, not partial cleanup.
 
@@ -77,7 +81,31 @@ partition key:     canonical WWD_BE4
 trigger:           successful all-or-nothing Lysis completion
 ```
 
-`FAILED`, active, merely sealed, or otherwise unfinished WWDs cannot retire. NodItem and NodBucket are singleton domains and reject retirement.
+An arbitrary `FAILED`, active, merely sealed, or otherwise unfinished WWD
+cannot retire. NodItem and NodBucket are singleton domains and reject
+retirement.
+
+### Two closed Metadosis terminal retirement authorities
+
+Fresh-devnet Metadosis may issue exactly two non-Lysis retirement commands:
+
+1. `MissedOffering` authenticates an initialized, sealed partition with exact
+   zero count/nominal. It records at most one empty retirement outcome and
+   routes the WWD's full formed limit to Promis.
+2. `CapacityForfeiture` authenticates the sealed collection root, source
+   generation and exact aggregate count/nominal, clears Tribute aggregates and
+   total supply in constant consensus work, requests retirement and advances
+   generation. It creates no Nod/Intex and does not convert Tribute value to
+   Promis; only the WWD's formed Metadosis limit is routed.
+
+Both commands are private typed effects inside one purpose-bound Metadosis
+checkpoint. Their WWD remains `FAILED`, but that status alone is never
+retirement authority. A populated missed-offering partition, mismatched
+aggregate/root/generation, duplicate/different replay or any partial fault
+fails and restores state, events and CE work. A present effective retirement
+still emits exactly one canonical
+`TributePartitionRetired(uint32)` projection event; cap/value evidence exists
+only in the Metadosis typed receipt and terminal event.
 
 A WWD with no historical Tribute collection already has no Catalog leaf and performs no retirement operation or event when Metadosis completes it. An `EmptiedByDelete` collection is still present and is retired normally. Therefore:
 
@@ -105,7 +133,10 @@ retire_partition(
 
 `PartitionRef` is a closed typed Rust value. The module derives domain ID, canonical WWD bytes, `collection_key_f`, and `collection_key`; the caller cannot supply any of those independently. It verifies the fork-active domain policy and exact-parent Catalog membership through the same immutable `AuthenticatedCatalogView` used by ADR-B-OCD-010.
 
-There is no public mutating ABI at `0xEE0D`, no operator/CLI retirement command, and no arbitrary domain or partition bytes from user calldata. The only first-version caller is the trusted successful Lysis/Metadosis path.
+There is no public mutating ABI at `0xEE0D`, no operator/CLI retirement
+command, and no arbitrary domain or partition bytes from user calldata. The
+only first-version callers are verified OCOMP Lysis apply and the two closed
+Metadosis terminal commands above.
 
 An exact-parent absent collection returns `NotPresent` and records nothing. A duplicate request, a request for a singleton/unknown domain, a non-canonical WWD, or a request outside the active execution phase fails deterministically.
 
@@ -322,7 +353,10 @@ Every failure must preserve all input Tributes, previous Nod state, Catalog/root
 
 Verify:
 
-- active/sealed-but-incomplete/failed WWD rejection;
+- active/sealed-but-incomplete/arbitrary-failed WWD rejection;
+- sealed-empty `MissedOffering` retirement and populated-state rejection;
+- exact aggregate/root/generation `CapacityForfeiture`, including zero, one
+  and maximum-shape counts;
 - present non-empty completed collection retirement;
 - present `EmptiedByDelete` completed collection retirement;
 - never-populated completed WWD no-op without event;

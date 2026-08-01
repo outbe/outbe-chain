@@ -7,12 +7,13 @@ use eyre::{bail, ensure, Result, WrapErr};
 use walkdir::WalkDir;
 
 use super::discovery::{discover, validate_discovery};
-use super::io::{capture_source_identity, hash_file};
+use super::io::capture_source_identity;
 use super::ledger::PlanningLedger;
 use super::schema::{
     AssertionRecordV1, AssertionStatus, ClosureReportV1, EvidenceMode, MemberDigestV1,
     RunManifestV1, TestDiscoveryV1, RUNTIME_SCHEMA_VERSION,
 };
+use crate::verification_ledger::verify_member_digests;
 
 /// Verify one published manifest without trusting scenario-declared coverage.
 pub fn verify_manifest(
@@ -248,13 +249,8 @@ fn validate_members(
             "duplicate manifest member {}",
             member.path
         );
-        let actual = hash_file(&bundle_root.join(&member.path))?;
-        ensure!(
-            actual.length == member.length && actual.sha256 == member.sha256,
-            "member hash/length mismatch for {}",
-            member.path
-        );
     }
+    verify_member_digests(bundle_root, &manifest.members)?;
     ensure!(
         expected.contains_key(&manifest.assertions_path),
         "assertions file is not a manifest member"

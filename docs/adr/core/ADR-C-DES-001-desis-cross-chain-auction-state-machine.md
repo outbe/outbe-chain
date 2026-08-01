@@ -1,7 +1,7 @@
 # ADR-C-DES-001: Desis owns the cross-chain auction, bid relay and clearing FSM
 
 - **Status:** Proposed; current implementation profiled
-- **Date:** 2026-07-22
+- **Date:** 2026-07-30
 - **Owners/scope:** `crates/core/desis`, its OriginRouter ABI, the auction
   schedule, per-chain bid intake and uniform-rate clearing algorithm
 - **Depends on:** ADR-C-MET-001, ADR-S-CYC-001, ADR-C-PRM-003, ADR-C-INX-001,
@@ -35,9 +35,19 @@ day from there:
 Only the fixed OriginRouter address may submit bid batches, completeness
 markers or clearing calls through the public ABI.
 
-Every dispatch helper wraps its work in a storage checkpoint: a failed
-best-effort command rolls back all of its writes before reporting `false`, so
-no partial state survives a swallowed error.
+The Metadosis brief command returns one consumed typed receipt:
+
+- `Accepted` means the exact `u128` supply and schedule were committed;
+- `RejectedToCarryOver(SupplyExceedsAuctionDomain)` is the only committed
+  rejection and binds the exact `U256` supply plus `u128::MAX`;
+- invalid day/stage, duplicate brief, timestamp overflow, storage/index/event
+  faults and corruption return `Err` and roll back completely.
+
+The capacity check runs only after day, stage and anchor preflight. A committed
+oversize rejection creates no auction configuration, stage or schedule index,
+emits exactly `AuctionBriefRejectedToCarryOver`, and lets Metadosis route the
+receipt's full supply to Promis. There is no generic `bool`, debug-string
+failure event or best-effort catch.
 
 ## State machine
 
@@ -110,10 +120,12 @@ the router are the admission boundary. ABI structs, stage-message layout,
 generation semantics, sort/tie-break, rounding and result/refund arrays require
 coordinated activation across chains.
 
-Tests cover the schedule walk, per-chain intake/supersede, gate completion and
-deadline skip, zero bids/supply, uniform pricing and checkpointed dispatch
-failures (unit suite), plus the cross-module day walk with the production hook
-chain (`crates/core/e2e/tests/wwd_auction_clearing.rs`).
+Component tests cover schedule, intake/supersede, gate, pricing, numeric
+boundaries and rollback behavior. The Cycle production path proves that the
+typed oversize receipt routes the full value once without auction state. The
+former synchronous cross-module day walk was removed during the Metadosis
+production-path cutover; PFS-009-01 through -03 remain explicit evidence gaps
+until a production-path replacement exists.
 
 ## Consequences and rejected alternatives
 

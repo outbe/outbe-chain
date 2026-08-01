@@ -16,7 +16,7 @@ use outbe_consensus::{
     follow::decode_public_finalized_block,
     proof::{committee_snapshot_key, verify_v2_proof, CommitteeEntry, CommitteeSnapshot},
 };
-use outbe_metadosis::schema::OCOMP_JOB_RECORDS_BASE_SLOT;
+use outbe_metadosis::proof_layout::OCOMP_JOB_RECORDS_BASE_SLOT;
 use outbe_ocomp_protocol::{
     committee::POC_COMMITTEE_SIZE,
     common::{BoundedBytes, ProofBytes},
@@ -209,7 +209,7 @@ pub struct FinalizedIntentVerifier<A> {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ProductionOcompFinalizedIntentAuthority;
 
-impl outbe_metadosis::ocomp::activation::OcompFinalizedIntentAuthority
+impl outbe_metadosis::api::OcompFinalizedIntentAuthority
     for ProductionOcompFinalizedIntentAuthority
 {
     fn verify(
@@ -217,10 +217,7 @@ impl outbe_metadosis::ocomp::activation::OcompFinalizedIntentAuthority
         proof: &FinalizedIntentProofV1,
         expected: ExpectedFinalizedIntentBindingV1,
         limits: &SchemaLimits,
-    ) -> Result<
-        VerifiedFinalizedIntentV1,
-        outbe_metadosis::ocomp::activation::OcompFinalityAuthorityError,
-    > {
+    ) -> Result<VerifiedFinalizedIntentV1, outbe_metadosis::api::OcompFinalityAuthorityError> {
         proof
             .verify(
                 expected,

@@ -8,7 +8,6 @@ use outbe_ocomp_protocol::{
 };
 use outbe_oracle::api::{OcompAuctionEntryPriceSource, OcompOraclePreAdmissionProjection};
 use outbe_primitives::error::Result;
-use outbe_primitives::storage::StorageHandle;
 use outbe_tribute::TributePreAdmissionProjection;
 
 use crate::{
@@ -221,8 +220,7 @@ impl MetadosisContract<'_> {
         &mut self,
         wwd: WorldwideDay,
     ) -> Result<MetadosisPreAdmissionProjection> {
-        let storage = self.storage.clone();
-        storage.with_checkpoint(|| {
+        (|| {
             if let Some(existing) = self.ocomp_pre_admission.get(wwd)? {
                 if existing.initialized
                     && existing.state_version > 0
@@ -247,7 +245,7 @@ impl MetadosisContract<'_> {
             };
             self.ocomp_pre_admission.create(&state)?;
             self.ocomp_pre_admission_projection(wwd)
-        })
+        })()
     }
 
     pub fn ocomp_pre_admission_projection(
@@ -273,8 +271,7 @@ impl MetadosisContract<'_> {
         envelope: &PreAdmissionEnvelopeV1,
         limits: &SchemaLimits,
     ) -> Result<MetadosisPreAdmissionProjection> {
-        let storage = self.storage.clone();
-        storage.with_checkpoint(|| {
+        (|| {
             if envelope.wwd != wwd.value() {
                 return Err(MetadosisError::OcompPreAdmissionWwdMismatch {
                     expected: wwd,
@@ -315,13 +312,6 @@ impl MetadosisContract<'_> {
             state.envelope_hash = envelope_hash;
             self.ocomp_pre_admission.update(&state)?;
             self.ocomp_pre_admission_projection(wwd)
-        })
+        })()
     }
-}
-
-/// The only external mutation boundary for fresh-devnet profile setup.
-pub fn initialize_fresh_ocomp_profile(storage: StorageHandle<'_>, wwd: WorldwideDay) -> Result<()> {
-    MetadosisContract::new(storage)
-        .initialize_ocomp_pre_admission(wwd)
-        .map(|_| ())
 }

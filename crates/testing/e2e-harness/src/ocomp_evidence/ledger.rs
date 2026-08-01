@@ -1,13 +1,12 @@
 //! Strict parser and reference validator for the checked-in planning ledger.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt;
 use std::path::Path;
 
 use eyre::{bail, ensure, Result as EyreResult, WrapErr};
-use serde::de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor};
-use serde::{Deserialize, Deserializer};
-use serde_yaml_ng::Value;
+use serde::Deserialize;
+
+use crate::verification_ledger::read_yaml_strict;
 
 /// Exact ledger kind accepted by this implementation.
 pub const LEDGER_KIND: &str = "outbe_ocomp_poc_planning_ledger";
@@ -177,15 +176,7 @@ pub struct StoryRequirement {
 impl PlanningLedger {
     /// Parse YAML while rejecting duplicate mapping keys at every depth.
     pub fn parse(path: &Path) -> EyreResult<Self> {
-        let bytes = std::fs::read(path)
-            .wrap_err_with(|| format!("read planning ledger {}", path.display()))?;
-        let text = std::str::from_utf8(&bytes).wrap_err("planning ledger is not UTF-8")?;
-
-        let duplicate_check = serde_yaml_ng::Deserializer::from_str(text);
-        NoDuplicateValue::deserialize(duplicate_check)
-            .wrap_err("planning ledger contains invalid or duplicate YAML keys")?;
-
-        let ledger: Self = serde_yaml_ng::from_str(text)
+        let ledger: Self = read_yaml_strict(path)
             .wrap_err_with(|| format!("decode planning ledger {}", path.display()))?;
         ledger.validate()?;
         Ok(ledger)
@@ -655,103 +646,4 @@ fn valid_test_id(id: &str) -> bool {
 
 fn valid_task_id(id: &str) -> bool {
     id.len() == 6 && id.starts_with("OCM-") && id[4..].bytes().all(|byte| byte.is_ascii_digit())
-}
-
-/// Recursive deserialization sink that rejects duplicate YAML mapping keys.
-struct NoDuplicateValue;
-
-impl<'de> Deserialize<'de> for NoDuplicateValue {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        deserializer.deserialize_any(NoDuplicateVisitor)
-    }
-}
-
-struct NoDuplicateVisitor;
-
-impl<'de> Visitor<'de> for NoDuplicateVisitor {
-    type Value = NoDuplicateValue;
-
-    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("a YAML value without duplicate mapping keys")
-    }
-
-    fn visit_bool<E>(self, _: bool) -> Result<Self::Value, E> {
-        Ok(NoDuplicateValue)
-    }
-
-    fn visit_i64<E>(self, _: i64) -> Result<Self::Value, E> {
-        Ok(NoDuplicateValue)
-    }
-
-    fn visit_u64<E>(self, _: u64) -> Result<Self::Value, E> {
-        Ok(NoDuplicateValue)
-    }
-
-    fn visit_f64<E>(self, _: f64) -> Result<Self::Value, E> {
-        Ok(NoDuplicateValue)
-    }
-
-    fn visit_str<E>(self, _: &str) -> Result<Self::Value, E> {
-        Ok(NoDuplicateValue)
-    }
-
-    fn visit_string<E>(self, _: String) -> Result<Self::Value, E> {
-        Ok(NoDuplicateValue)
-    }
-
-    fn visit_none<E>(self) -> Result<Self::Value, E> {
-        Ok(NoDuplicateValue)
-    }
-
-    fn visit_unit<E>(self) -> Result<Self::Value, E> {
-        Ok(NoDuplicateValue)
-    }
-
-    fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        NoDuplicateValue::deserialize(deserializer)
-    }
-
-    fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
-    where
-        A: SeqAccess<'de>,
-    {
-        while sequence.next_element_seed(NoDuplicateSeed)?.is_some() {}
-        Ok(NoDuplicateValue)
-    }
-
-    fn visit_map<A>(self, mut mapping: A) -> Result<Self::Value, A::Error>
-    where
-        A: MapAccess<'de>,
-    {
-        let mut keys = Vec::<Value>::new();
-        while let Some(key) = mapping.next_key::<Value>()? {
-            if keys.contains(&key) {
-                return Err(de::Error::custom(format!(
-                    "duplicate YAML mapping key {key:?}"
-                )));
-            }
-            keys.push(key);
-            mapping.next_value_seed(NoDuplicateSeed)?;
-        }
-        Ok(NoDuplicateValue)
-    }
-}
-
-struct NoDuplicateSeed;
-
-impl<'de> DeserializeSeed<'de> for NoDuplicateSeed {
-    type Value = NoDuplicateValue;
-
-    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        NoDuplicateValue::deserialize(deserializer)
-    }
 }

@@ -433,7 +433,7 @@ pub fn worldwide_day() -> String {
 }
 
 /// `YYYYMMDD` for a UTC epoch second (Howard Hinnant's `civil_from_days`).
-fn ymd_utc(secs: u64) -> String {
+pub(crate) fn ymd_utc(secs: u64) -> String {
     let z = (secs / 86_400) as i64 + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
     let doe = z - era * 146_097;

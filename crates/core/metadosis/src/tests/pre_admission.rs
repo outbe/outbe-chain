@@ -1,12 +1,14 @@
 use alloy_primitives::{B256, U256};
 use outbe_ocomp_protocol::{codec::CodecLimits, profile::CapacityProfileV1, SchemaLimits};
 use outbe_oracle::api::{OcompAuctionEntryPriceSource, OcompOraclePreAdmissionProjection};
+use outbe_primitives::error::PrecompileError;
 use outbe_tribute::TributePreAdmissionProjection;
 
 use crate::pre_admission::{
     evaluate_pre_admission, PreAdmissionContext, PreAdmissionDecision, PreAdmissionDeferredReason,
     PreAdmissionInputs,
 };
+use crate::schema::OcompPreAdmissionState;
 use crate::tests::with_contract;
 
 const SCHEMA_LIMITS: SchemaLimits = SchemaLimits {
@@ -195,5 +197,52 @@ fn metadosis_seals_the_canonical_envelope_once_and_exposes_real_state() {
             sealed,
             "failed reseal must not mutate the committed state"
         );
+    });
+}
+
+#[test]
+fn partial_pre_admission_state_is_fatal() {
+    let wwd = inputs().tribute.worldwide_day;
+    with_contract(|metadosis| {
+        metadosis
+            .ocomp_pre_admission
+            .create(&OcompPreAdmissionState {
+                wwd,
+                initialized: true,
+                state_version: 0,
+                envelope_hash: B256::ZERO,
+            })
+            .unwrap();
+
+        assert!(matches!(
+            metadosis.initialize_ocomp_pre_admission(wwd),
+            Err(PrecompileError::Fatal(_))
+        ));
+    });
+}
+
+#[test]
+fn pre_admission_state_version_overflow_is_fatal() {
+    let PreAdmissionDecision::Eligible(envelope) =
+        evaluate_pre_admission(&context(), &inputs()).unwrap()
+    else {
+        panic!("fixture must be eligible");
+    };
+    let wwd = inputs().tribute.worldwide_day;
+    with_contract(|metadosis| {
+        metadosis
+            .ocomp_pre_admission
+            .create(&OcompPreAdmissionState {
+                wwd,
+                initialized: true,
+                state_version: u64::MAX,
+                envelope_hash: B256::ZERO,
+            })
+            .unwrap();
+
+        assert!(matches!(
+            metadosis.seal_pre_admission_envelope(wwd, &envelope, &SCHEMA_LIMITS),
+            Err(PrecompileError::Fatal(_))
+        ));
     });
 }

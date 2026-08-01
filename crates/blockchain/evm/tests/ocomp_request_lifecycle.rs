@@ -5,9 +5,9 @@ use std::{
     sync::Arc,
 };
 
-use alloy_consensus::{Block, Header, Transaction as _};
+use alloy_consensus::{Block, Header, SignableTransaction, Transaction as _, TxEip1559};
 use alloy_eips::{BlockId, BlockNumHash, BlockNumberOrTag};
-use alloy_primitives::{address, keccak256, Address, Bytes, B256, U256};
+use alloy_primitives::{address, keccak256, Address, Bytes, TxKind, B256, U256};
 use alloy_rpc_types_engine::PayloadId;
 use alloy_sol_types::{SolCall, SolEvent};
 use commonware_codec::Encode;
@@ -48,20 +48,24 @@ use outbe_evm::{
 };
 use outbe_intex::IntexContract;
 use outbe_metadosis::{
+    config::poc_schema_limits,
     constants::{
         FORMING_PERIOD_HOURS, LOOKBACK_DELAY_HOURS, OFFERING_PERIOD_HOURS, SECONDS_PER_HOUR,
         WAITING_PERIOD_HOURS,
     },
-    ocomp::{
-        fork::OcompForkInstallClassification, schema::poc_schema_limits,
-        test_support::fork_install_fixture,
-    },
+    genesis::{FreshDevnetGenesisBuilder, GenesisWorldwideDay},
     precompile::IMetadosis,
-    schema::{day_type, status, MetadosisContract, WorldwideDayEntryExt},
+    test_support::{ForkInstallScenario, ResultVotingScenario},
+    WwdDayType,
 };
 use outbe_nod::NodContract;
 use outbe_node::OutbePayloadBuilder;
-use outbe_ocomp_protocol::state::{OcompJobRecordV1, OcompJobStatus};
+use outbe_ocomp_protocol::{
+    abi::encode_submit_lysis_result_calldata,
+    receipts::AggregateActivationReceiptV1,
+    state::{ActiveGenerationV1, OcompJobRecordV1, OcompJobStatus},
+    vote::OcompVoteAccountabilityV1,
+};
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
 use outbe_oracle::contract::OracleContract;
@@ -78,7 +82,6 @@ use outbe_primitives::{
         ExecutionSummaryArtifact, OutbeBlockArtifacts,
     },
     storage::{direct::DirectStorageProvider, hashmap::HashMapStorageProvider, StorageHandle},
-    time::SECONDS_PER_DAY,
     OutbeHeader, OutbePayloadAttributes, OutbePrimitives,
 };
 use outbe_tribute::{TributeContract, TributeData};
@@ -91,14 +94,16 @@ use outbe_validatorset::{
     write_committee_snapshot, CommitteeSnapshot as StoredCommitteeSnapshot,
 };
 use rand_core::OsRng;
-use reth_basic_payload_builder::{PayloadBuilder, PayloadConfig};
-use reth_chainspec::{
-    ChainInfo, ChainSpec, ChainSpecBuilder, ChainSpecProvider, EthereumHardfork, ForkCondition,
-};
+use reth_basic_payload_builder::{BuildArguments, PayloadBuilder, PayloadConfig};
+use reth_chainspec::{ChainInfo, ChainSpec, ChainSpecBuilder, ChainSpecProvider};
+use reth_ethereum::{Transaction, TransactionSigned};
 use reth_ethereum_payload_builder::EthereumBuilderConfig;
 use reth_evm::{execute::Executor as _, ConfigureEvm, RecoveredTx};
 use reth_payload_primitives::BuiltPayload as _;
-use reth_primitives_traits::{Account, AlloyBlockHeader as _, Bytecode, SealedHeader};
+use reth_primitives_traits::{
+    crypto::secp256k1::sign_message as sign_secp256k1_message, Account, AlloyBlockHeader as _,
+    Bytecode, SealedHeader, SignedTransaction,
+};
 use reth_provider::{
     test_utils::{ExtendedAccount, MockEthProvider},
     AccountReader, BlockHashReader, BlockIdReader, BlockNumReader, BytecodeReader,
@@ -106,7 +111,10 @@ use reth_provider::{
     StateProviderFactory, StateRootProvider, StorageRootProvider,
 };
 use reth_revm::database::StateProviderDatabase;
-use reth_transaction_pool::{noop::NoopTransactionPool, EthPooledTransaction};
+use reth_transaction_pool::{
+    blobstore::InMemoryBlobStore, noop::MockTransactionValidator, CoinbaseTipOrdering,
+    EthPooledTransaction, Pool, PoolConfig, PoolTransaction, TransactionOrigin, TransactionPool,
+};
 use reth_trie::{
     test_utils::{state_root_prehashed, storage_root_prehashed},
     updates::TrieUpdates,
@@ -128,9 +136,59 @@ const TEST_CONSENSUS_PUBLIC_KEY: [u8; 48] = [0x11; 48];
 const OCOMP_UPDATE_PROPOSAL_ID: u64 = 1;
 const OCOMP_PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::from_raw(1);
 
-type TestPool = NoopTransactionPool<EthPooledTransaction>;
+type TestPool = Pool<
+    MockTransactionValidator<EthPooledTransaction>,
+    CoinbaseTipOrdering<EthPooledTransaction>,
+    InMemoryBlobStore,
+>;
 type InnerTestProvider = MockEthProvider<OutbePrimitives, ChainSpec<OutbeHeader>>;
 type HashedAccountState = BTreeMap<B256, (Account, BTreeMap<B256, U256>)>;
+
+fn test_pool(transactions: Vec<EthPooledTransaction>) -> TestPool {
+    let pool = Pool::new(
+        MockTransactionValidator::default(),
+        CoinbaseTipOrdering::default(),
+        InMemoryBlobStore::default(),
+        PoolConfig::default(),
+    );
+    for transaction in transactions {
+        futures::executor::block_on(pool.add_transaction(TransactionOrigin::Local, transaction))
+            .expect("fixture vote enters the production transaction pool");
+    }
+    pool
+}
+
+fn pooled_vote_transaction(input: Bytes, nonce: u64) -> EthPooledTransaction {
+    let transaction: Transaction = TxEip1559 {
+        chain_id: CHAIN_ID,
+        nonce,
+        gas_limit: 9_000_000,
+        max_fee_per_gas: 2_000_000_000,
+        max_priority_fee_per_gas: 1_000_000_000,
+        to: TxKind::Call(METADOSIS_ADDRESS),
+        value: U256::ZERO,
+        access_list: Default::default(),
+        input,
+    }
+    .into();
+    let signature = sign_secp256k1_message(B256::repeat_byte(0x66), transaction.signature_hash())
+        .expect("fixture EVM vote signer");
+    let signed = TransactionSigned::new_unhashed(transaction, signature);
+    EthPooledTransaction::try_from_consensus(
+        signed
+            .try_into_recovered()
+            .expect("fixture EVM vote sender recovers"),
+    )
+    .expect("fixture EVM vote converts to pooled transaction")
+}
+
+fn vote_sender() -> Address {
+    pooled_vote_transaction(Bytes::new(), 0).sender()
+}
+
+fn vote_sender_balance() -> U256 {
+    U256::from(100_000_000_000_000_000_000u128)
+}
 
 #[derive(Clone, Debug)]
 struct TestProvider {
@@ -362,7 +420,8 @@ struct PreparedParent {
 #[test]
 fn real_payload_builder_commits_atomic_request_after_ce_seal_without_lysis_effects() {
     let chain_spec: Arc<ChainSpec<OutbeHeader>> = ChainSpecBuilder::mainnet()
-        .with_fork(EthereumHardfork::Paris, ForkCondition::Block(0))
+        .reset()
+        .paris_activated()
         .build()
         .map_header(OutbeHeader::new)
         .into();
@@ -373,12 +432,11 @@ fn real_payload_builder_commits_atomic_request_after_ce_seal_without_lysis_effec
     let dkg = build_dkg();
     let snapshot = build_snapshot(&dkg);
     let prepared = prepare_parent(proposer, &snapshot);
-    let fork_install = Arc::new(fork_install_fixture(
-        OcompForkInstallClassification::Measurement,
-        REQUEST_HEIGHT,
-        CHAIN_ID,
-        B256::repeat_byte(0x11),
-    ));
+    let fork_install = Arc::new(
+        ForkInstallScenario::measurement_at(REQUEST_HEIGHT, CHAIN_ID, B256::repeat_byte(0x11))
+            .unwrap()
+            .into_install(),
+    );
     let metadata =
         finalized_parent_metadata(&dkg, &snapshot, PARENT_HEIGHT, prepared.parent.hash());
     let provider = mock_provider(&chain_spec, &prepared.parent_storage);
@@ -394,15 +452,16 @@ fn real_payload_builder_commits_atomic_request_after_ce_seal_without_lysis_effec
     );
     assert_provider_pre_fork_ocomp_inputs(&provider, prepared.wwd, prepared.nominal);
     let body_storage: StorageReaderHandle = Arc::new(MemoryStorage::new());
+    let runtime_body_readers = RuntimeBodyReaders::new(body_storage);
     let evm_config = OutbeEvmConfig::new_with_provider_and_runtime_body_readers(
         chain_spec.clone(),
         Arc::new(RethAccountedParentArtifactProvider::new(
             provider.inner.clone(),
             None,
         )),
-        RuntimeBodyReaders::new(body_storage),
+        runtime_body_readers.clone(),
     )
-    .with_evm_signer(signer)
+    .with_evm_signer(signer.clone())
     .with_compressed_tree_service(prepared.tree_service.clone())
     .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(REQUEST_HEIGHT))
     .with_ocomp_fork_install(fork_install.clone());
@@ -430,7 +489,7 @@ fn real_payload_builder_commits_atomic_request_after_ce_seal_without_lysis_effec
     .expect("signed Phase 1 transaction preserves the valid proof");
     let payload_builder = OutbePayloadBuilder::new(
         provider.clone(),
-        TestPool::new(),
+        test_pool(Vec::new()),
         evm_config.clone(),
         EthereumBuilderConfig::new().with_gas_limit(BLOCK_GAS_LIMIT),
     );
@@ -478,6 +537,21 @@ fn real_payload_builder_commits_atomic_request_after_ce_seal_without_lysis_effec
         .expect("builder exposes its exact production execution");
     let receipts = &executed.execution_output.result.receipts;
     assert_eq!(receipts.len(), body.len());
+    let cycle_receipt = &receipts[3];
+    assert!(cycle_receipt.success);
+    let accumulation = cycle_receipt
+        .logs
+        .iter()
+        .find_map(|log| IMetadosis::MetadosisAccumulation::decode_log(log).ok())
+        .expect("CycleTick receipt exposes MetadosisAccumulation");
+    let expected_cycle_day = outbe_primitives::time::previous_date_key(
+        outbe_primitives::time::timestamp_to_date_key(prepared.request_time),
+    );
+    assert_eq!(accumulation.data.date, expected_cycle_day);
+    assert!(
+        !accumulation.data.dayMetadosisLimitAmount.is_zero(),
+        "production CycleTick must route a non-zero allocation"
+    );
     let terminal_receipt = receipts.last().expect("terminal request receipt");
     assert!(terminal_receipt.success);
     let requested = terminal_receipt
@@ -550,19 +624,11 @@ fn real_payload_builder_commits_atomic_request_after_ce_seal_without_lysis_effec
             .expect("genesis-scheduled OCOMP update remains publicly readable");
         assert_eq!(scheduled.status, ScheduledUpdateStatus::Activated);
 
-        let metadosis = MetadosisContract::new(storage.clone());
-        assert_eq!(
-            metadosis
-                .read_ocomp_request_profile(&poc_schema_limits())
+        assert!(
+            outbe_metadosis::api::is_active_ocomp_fork_install(storage.clone(), &fork_install,)
                 .unwrap(),
-            Some(fork_install.request_profile.clone())
+            "fork block installs the exact complete activation authority"
         );
-        let authority = metadosis
-            .read_ocomp_activation_authority(&poc_schema_limits())
-            .unwrap()
-            .expect("fork block installs complete activation authority");
-        assert_eq!(authority.bundle, fork_install.protocol_bundle);
-        assert_eq!(authority.result_committee, fork_install.result_committee);
 
         let public_call = IMetadosis::getOffchainJobCall {
             intentId: requested.data.intentId,
@@ -664,9 +730,9 @@ fn real_payload_builder_commits_atomic_request_after_ce_seal_without_lysis_effec
     let successor_metadata =
         finalized_parent_metadata(&dkg, &snapshot, REQUEST_HEIGHT, request_hash);
     let successor_builder = OutbePayloadBuilder::new(
-        successor_provider,
-        TestPool::new(),
-        evm_config,
+        successor_provider.clone(),
+        test_pool(Vec::new()),
+        evm_config.clone(),
         EthereumBuilderConfig::new().with_gas_limit(BLOCK_GAS_LIMIT),
     );
     let successor_attributes = OutbePayloadAttributes::new(
@@ -696,10 +762,11 @@ fn real_payload_builder_commits_atomic_request_after_ce_seal_without_lysis_effec
         successor_execution.execution_output.state.state(),
     );
     StorageHandle::enter(&mut finalized_state, |storage| {
-        let record = MetadosisContract::new(storage)
-            .ocomp_job_record(requested.data.intentId, &poc_schema_limits())
-            .unwrap()
-            .expect("certified successor preserves the request record");
+        let record = OcompJobRecordV1::decode_canonical(
+            &outbe_metadosis::api::get_offchain_job(storage, requested.data.intentId).unwrap(),
+            &poc_schema_limits(),
+        )
+        .expect("certified successor preserves the request record");
         let finalized = record
             .finalized
             .expect("actual parent finalization must bind the request on-chain");
@@ -714,6 +781,156 @@ fn real_payload_builder_commits_atomic_request_after_ce_seal_without_lysis_effec
                 .intent
                 .job_id(request_hash, request_state_root, &poc_schema_limits())
                 .unwrap()
+        );
+    });
+
+    let finalized_record = StorageHandle::enter(&mut finalized_state, |storage| {
+        let encoded =
+            outbe_metadosis::api::get_offchain_job(storage, requested.data.intentId).unwrap();
+        OcompJobRecordV1::decode_canonical(&encoded, &poc_schema_limits()).unwrap()
+    });
+    let finalized = finalized_record.finalized.as_ref().unwrap();
+    let open_height = finalized.open_height;
+    let voting = ResultVotingScenario::for_intent(&finalized_record.intent, finalized.job_id);
+    let voting_result = voting.result().clone();
+
+    let successor_artifacts =
+        decode_outbe_block_artifacts(successor.block().header().extra_data().as_ref()).unwrap();
+    let successor_ce = successor_artifacts
+        .compressed_entities_root
+        .expect("certified successor carries its completed CE seal");
+    prepared
+        .tree_service
+        .apply_finalized(
+            REQUEST_HEIGHT + 1,
+            successor.block().hash(),
+            successor_ce.r_sealed,
+        )
+        .expect("certified successor CE candidate finalizes before its child");
+
+    let mut canonical_parent = Arc::new(SealedHeader::new(
+        successor.block().header().clone(),
+        successor.block().hash(),
+    ));
+    let mut canonical_storage = finalized_state.storage;
+    for height in (REQUEST_HEIGHT + 2)..open_height {
+        let built = build_canonical_ocomp_successor(
+            &chain_spec,
+            &prepared.tree_service,
+            &signer,
+            &runtime_body_readers,
+            &fork_install,
+            &dkg,
+            &snapshot,
+            proposer,
+            canonical_parent,
+            &canonical_storage,
+            height,
+            prepared.request_time + (height - REQUEST_HEIGHT),
+            requested.data.intentId,
+            Vec::new(),
+        );
+        assert_eq!(
+            built.record.status,
+            OcompJobStatus::AwaitingFinality,
+            "pre-open production lifecycle must preserve AwaitingFinality"
+        );
+        assert!(built.requested_intents.is_empty());
+        canonical_parent = built.header;
+        canonical_storage = built.storage;
+    }
+
+    let vote_transactions = (0_u8..3)
+        .map(|validator_index| {
+            let vote = voting.signed_vote(validator_index);
+            let calldata = encode_submit_lysis_result_calldata(&vote, &poc_schema_limits())
+                .expect("canonical q-forming vote calldata");
+            pooled_vote_transaction(Bytes::from(calldata), u64::from(validator_index))
+        })
+        .collect::<Vec<_>>();
+    let q_forming = build_canonical_ocomp_successor(
+        &chain_spec,
+        &prepared.tree_service,
+        &signer,
+        &runtime_body_readers,
+        &fork_install,
+        &dkg,
+        &snapshot,
+        proposer,
+        canonical_parent,
+        &canonical_storage,
+        open_height,
+        prepared.request_time + (open_height - REQUEST_HEIGHT),
+        requested.data.intentId,
+        vote_transactions,
+    );
+    assert_eq!(q_forming.user_transaction_count, 3);
+    assert_eq!(q_forming.record.status, OcompJobStatus::Completed);
+    let completed = q_forming
+        .record
+        .terminal
+        .as_ref()
+        .and_then(|terminal| terminal.completed_binding.as_ref())
+        .expect("q-forming block persists completed binding")
+        .clone();
+    let quorum = q_forming
+        .record
+        .finalized
+        .as_ref()
+        .and_then(|finalized| finalized.quorum.as_ref())
+        .expect("q-forming block persists quorum")
+        .clone();
+    assert_eq!(
+        quorum.result_digest,
+        voting_result.result_digest(&poc_schema_limits()).unwrap()
+    );
+    assert_eq!(quorum.signer_bitmap, 0b0111);
+    assert_eq!(completed.quorum_evidence_hash, quorum.evidence_hash);
+
+    let mut completed_state = HashMapStorageProvider::new(CHAIN_ID);
+    completed_state.storage = q_forming.storage;
+    StorageHandle::enter(&mut completed_state, |storage| {
+        let job_id = q_forming
+            .record
+            .finalized
+            .as_ref()
+            .expect("completed record remains finalized")
+            .job_id;
+        let accountability = OcompVoteAccountabilityV1::decode_canonical(
+            &outbe_metadosis::api::get_offchain_vote_accountability(storage.clone(), job_id)
+                .expect("public q-forming accountability"),
+            &poc_schema_limits(),
+        )
+        .unwrap();
+        assert_eq!(accountability.slots.iter().flatten().count(), 3);
+        assert_eq!(accountability.quorum.as_ref(), Some(&quorum));
+
+        let terminal_receipt = AggregateActivationReceiptV1::decode_canonical(
+            &outbe_metadosis::api::get_lysis_terminal_receipt(
+                storage.clone(),
+                requested.data.intentId,
+            )
+            .expect("public q-forming terminal receipt"),
+            &poc_schema_limits(),
+        )
+        .unwrap();
+        assert_eq!(completed.terminal_receipt, terminal_receipt);
+        let generation = ActiveGenerationV1::decode_canonical(
+            &outbe_metadosis::api::get_active_lysis_generation(storage.clone(), prepared.wwd)
+                .expect("public q-forming active generation"),
+            &poc_schema_limits(),
+        )
+        .unwrap();
+        assert_eq!(generation.job_id, voting_result.job_id);
+        assert_eq!(generation.nod_root, voting_result.roots.nod_root);
+        assert_eq!(generation.exact_counts, voting_result.counts);
+        let projection = outbe_metadosis::api::worldwide_day(storage, prepared.wwd)
+            .unwrap()
+            .unwrap();
+        assert_eq!(projection.status, outbe_metadosis::WwdStatus::Completed);
+        assert_eq!(
+            projection.membership,
+            outbe_metadosis::WwdMembership::Closed
         );
     });
 
@@ -733,6 +950,199 @@ fn real_payload_builder_commits_atomic_request_after_ce_seal_without_lysis_effec
         .logs
         .iter()
         .all(|log| log.address != TRIBUTE_FACTORY_ADDRESS));
+}
+
+struct CanonicalOcompSuccessor {
+    header: Arc<SealedHeader<OutbeHeader>>,
+    storage: HashMap<(Address, U256), U256>,
+    record: OcompJobRecordV1,
+    requested_intents: Vec<B256>,
+    user_transaction_count: usize,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_canonical_ocomp_successor(
+    chain_spec: &Arc<ChainSpec<OutbeHeader>>,
+    tree_service: &Arc<CompressedTreeService>,
+    signer: &Arc<OutbeEvmSigner>,
+    runtime_body_readers: &RuntimeBodyReaders,
+    fork_install: &Arc<outbe_metadosis::config::OcompForkInstallV1>,
+    dkg: &Dkg,
+    snapshot: &CommitteeSnapshot,
+    proposer: Address,
+    parent: Arc<SealedHeader<OutbeHeader>>,
+    parent_storage: &HashMap<(Address, U256), U256>,
+    height: u64,
+    timestamp: u64,
+    intent_id: B256,
+    user_transactions: Vec<EthPooledTransaction>,
+) -> CanonicalOcompSuccessor {
+    assert_eq!(height, parent.number() + 1);
+    let provider = mock_provider(chain_spec, parent_storage);
+    provider.inner.add_block(
+        parent.hash(),
+        Block::new(parent.header().clone(), Default::default()),
+    );
+    let evm_config = OutbeEvmConfig::new_with_provider_and_runtime_body_readers(
+        chain_spec.clone(),
+        Arc::new(RethAccountedParentArtifactProvider::new(
+            provider.inner.clone(),
+            None,
+        )),
+        runtime_body_readers.clone(),
+    )
+    .with_evm_signer(signer.clone())
+    .with_compressed_tree_service(tree_service.clone())
+    .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(REQUEST_HEIGHT))
+    .with_ocomp_fork_install(fork_install.clone());
+    let metadata = finalized_parent_metadata(dkg, snapshot, height - 1, parent.hash());
+    let user_transaction_count = user_transactions.len();
+    let transaction_pool = test_pool(user_transactions);
+    let pool_size = transaction_pool.pool_size();
+    assert_eq!(
+        pool_size.total, user_transaction_count,
+        "canonical OCOMP model pool must retain every supplied public vote: {pool_size:?}"
+    );
+    assert_eq!(
+        pool_size.pending, user_transaction_count,
+        "canonical OCOMP model pool must make every supplied public vote executable: {pool_size:?}"
+    );
+    let builder = OutbePayloadBuilder::new(
+        provider.clone(),
+        transaction_pool,
+        evm_config.clone(),
+        EthereumBuilderConfig::new().with_gas_limit(BLOCK_GAS_LIMIT),
+    );
+    let attributes = OutbePayloadAttributes::new(
+        REWARDS_ADDRESS,
+        timestamp * 1_000,
+        B256::from(U256::from(height).to_be_bytes::<32>()),
+        Some(B256::from(
+            U256::from(height.saturating_add(1)).to_be_bytes::<32>(),
+        )),
+        Bytes::new(),
+        Some(metadata),
+        Some(proposer),
+    )
+    .with_execution_read_budget(ExecutionReadBudget::new());
+    let payload_config = PayloadConfig::new(
+        parent,
+        attributes,
+        PayloadId::new([u8::try_from(height).unwrap_or(u8::MAX); 8]),
+    );
+    let payload = if user_transaction_count == 0 {
+        builder
+            .build_empty_payload(payload_config)
+            .expect("canonical OCOMP model successor builds")
+    } else {
+        builder
+            .try_build(BuildArguments::new(
+                Default::default(),
+                Default::default(),
+                None,
+                payload_config,
+                Default::default(),
+                None,
+            ))
+            .expect("canonical OCOMP model successor with public votes builds")
+            .into_payload()
+            .expect("canonical OCOMP model public-vote build returns a payload")
+    };
+    let layout = split_system_layout(&payload.block().body().transactions)
+        .expect("canonical OCOMP model block has a system layout");
+    assert!(layout
+        .begin_block_kinds()
+        .expect("canonical OCOMP model begin zone decodes")
+        .contains(&SystemTxKind::OcompLifecycleBegin));
+    assert_eq!(
+        layout.user.len(),
+        user_transaction_count,
+        "canonical OCOMP block must include every supplied public vote; \
+         block_gas_limit={} block_gas_used={} transaction_gas_limits={:?}",
+        payload.block().header().gas_limit(),
+        payload.block().header().gas_used(),
+        payload
+            .block()
+            .body()
+            .transactions
+            .iter()
+            .map(TransactionSigned::gas_limit)
+            .collect::<Vec<_>>()
+    );
+    let executed = payload
+        .executed_block()
+        .expect("canonical OCOMP model block exposes execution");
+    if user_transaction_count > 0 {
+        let user_receipts = &executed.execution_output.result.receipts
+            [layout.begin.len()..layout.begin.len() + layout.user.len()];
+        assert!(
+            user_receipts.iter().all(|receipt| receipt.success),
+            "q-forming canonical block must commit only successful receipts: {:?}",
+            user_receipts
+                .iter()
+                .map(|receipt| (receipt.success, receipt.cumulative_gas_used))
+                .collect::<Vec<_>>()
+        );
+    }
+    let import = evm_config
+        .executor(StateProviderDatabase::new(&provider))
+        .execute(executed.recovered_block.as_ref())
+        .expect("canonical OCOMP model block imports through the production executor");
+    assert_eq!(
+        import, *executed.execution_output,
+        "proposer/import must agree at OCOMP model height {height}"
+    );
+    let historical_replay = evm_config
+        .executor(StateProviderDatabase::new(&provider))
+        .execute(executed.recovered_block.as_ref())
+        .expect("canonical OCOMP model block replays from historical parent state");
+    assert_eq!(
+        historical_replay, *executed.execution_output,
+        "proposer/historical replay must agree at OCOMP model height {height}"
+    );
+    let exact_post_state = provider.hashed_post_state(&executed.execution_output.state);
+    assert_eq!(
+        payload.block().header().state_root(),
+        provider.state_root_for(exact_post_state),
+        "canonical OCOMP block state root must match its exact production state"
+    );
+
+    let mut state = HashMapStorageProvider::new(CHAIN_ID);
+    state.storage = parent_storage.clone();
+    apply_bundle(&mut state, executed.execution_output.state.state());
+    let record = StorageHandle::enter(&mut state, |storage| {
+        let encoded = outbe_metadosis::api::get_offchain_job(storage, intent_id)
+            .expect("canonical public OCOMP job query");
+        OcompJobRecordV1::decode_canonical(&encoded, &poc_schema_limits())
+            .expect("canonical public OCOMP job decodes")
+    });
+    let requested_intents = executed
+        .execution_output
+        .result
+        .receipts
+        .iter()
+        .flat_map(|receipt| &receipt.logs)
+        .filter_map(|log| IMetadosis::OffchainJobRequested::decode_log(log).ok())
+        .map(|event| event.data.intentId)
+        .collect::<Vec<_>>();
+    let artifacts =
+        decode_outbe_block_artifacts(payload.block().header().extra_data().as_ref()).unwrap();
+    let ce = artifacts
+        .compressed_entities_root
+        .expect("canonical OCOMP model block carries its completed CE seal");
+    tree_service
+        .apply_finalized(height, payload.block().hash(), ce.r_sealed)
+        .expect("canonical OCOMP model CE candidate finalizes before its child");
+    CanonicalOcompSuccessor {
+        header: Arc::new(SealedHeader::new(
+            payload.block().header().clone(),
+            payload.block().hash(),
+        )),
+        storage: state.storage,
+        record,
+        requested_intents,
+        user_transaction_count,
+    }
 }
 
 fn prepare_parent(proposer: Address, snapshot: &StoredCommitteeSnapshot) -> PreparedParent {
@@ -783,7 +1193,11 @@ fn prepare_parent(proposer: Address, snapshot: &StoredCommitteeSnapshot) -> Prep
     seed.set_block_number(PARENT_HEIGHT);
     let wwd = WorldwideDay::new(2026_0710);
     let parent_time = wwd.start_timestamp();
-    let request_time = parent_time + SECONDS_PER_DAY;
+    let request_time = parent_time
+        + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR
+        + LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR
+        + OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR
+        + WAITING_PERIOD_HOURS * SECONDS_PER_HOUR;
     let nominal = U256::from(1_000);
     let owner = address!("7300000000000000000000000000000000000073");
     let seal = StorageHandle::enter(&mut seed, |storage| {
@@ -824,28 +1238,26 @@ fn prepare_parent(proposer: Address, snapshot: &StoredCommitteeSnapshot) -> Prep
         outbe_oracle::logic::init_from_genesis(&mut oracle, &oracle_genesis).unwrap();
         outbe_oracle::api::initialize_fresh_ocomp_profile(storage.clone()).unwrap();
 
-        let mut metadosis = MetadosisContract::new(storage.clone());
-        metadosis
-            .create_worldwide_day(
-                wwd,
-                wwd.start_timestamp(),
-                LOOKBACK_DELAY_HOURS,
-                OFFERING_PERIOD_HOURS,
-            )
+        let forming_start = wwd.start_timestamp();
+        let forming_end = forming_start + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR;
+        let lookback_end = forming_end + LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR;
+        let offering_end = lookback_end + OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR;
+        FreshDevnetGenesisBuilder::new()
+            .seed_active_worldwide_day(GenesisWorldwideDay {
+                worldwide_day: wwd,
+                status: outbe_metadosis::WwdStatus::Ready,
+                day_type: WwdDayType::Green,
+                forming_start,
+                forming_end,
+                lookback_end,
+                offering_end,
+                scheduled_process_time: request_time,
+                metadosis_limit_amount: U256::from(100),
+                previous_vwap: U256::ZERO,
+                current_vwap: U256::from(2),
+            })
+            .apply(storage.clone())
             .unwrap();
-        metadosis.add_active_wwd(wwd).unwrap();
-        let scheduled = wwd.start_timestamp()
-            + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR
-            + LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR
-            + OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR
-            + WAITING_PERIOD_HOURS * SECONDS_PER_HOUR;
-        assert_eq!(
-            metadosis.update_wwd_status(wwd, scheduled).unwrap(),
-            status::READY
-        );
-        metadosis.set_wwd_day_type(wwd, day_type::GREEN).unwrap();
-        metadosis.set_wwd_vwap(wwd, U256::from(2)).unwrap();
-        metadosis.set_metadosis_limit(wwd, U256::from(100)).unwrap();
         let mut tribute = TributeContract::new(storage.clone());
         tribute.initialize_fresh_ocomp_profile().unwrap();
         tribute.unseal_day(wwd).unwrap();
@@ -977,6 +1389,10 @@ fn mock_provider(
                 .extend_storage(account_storage),
         );
     }
+    inner.add_account(
+        vote_sender(),
+        ExtendedAccount::new(0, vote_sender_balance()),
+    );
     TestProvider {
         inner,
         base_state: Arc::new(hashed_marker_state(storage)),
@@ -986,6 +1402,17 @@ fn mock_provider(
 fn hashed_marker_state(storage: &HashMap<(Address, U256), U256>) -> HashedAccountState {
     let marker_code_hash = keccak256([0xef]);
     let mut accounts = HashedAccountState::new();
+    accounts.insert(
+        keccak256(vote_sender()),
+        (
+            Account {
+                nonce: 0,
+                balance: vote_sender_balance(),
+                bytecode_hash: None,
+            },
+            BTreeMap::new(),
+        ),
+    );
     for ((address, slot), value) in storage {
         let (_, account_storage) = accounts.entry(keccak256(address)).or_insert_with(|| {
             (
@@ -1141,25 +1568,19 @@ fn assert_provider_pre_fork_ocomp_inputs(
     assert_eq!(scheduled.activation_height, REQUEST_HEIGHT);
     assert_eq!(scheduled.status, ScheduledUpdateStatus::Scheduled);
 
-    let metadosis = MetadosisContract::new(storage.clone());
+    assert!(!outbe_metadosis::api::has_active_ocomp_profile(storage.clone()).unwrap());
+    let days = outbe_metadosis::api::worldwide_days(storage.clone()).unwrap();
+    assert_eq!(days.len(), 1);
+    let projection = outbe_metadosis::api::worldwide_day(storage.clone(), wwd)
+        .unwrap()
+        .unwrap();
+    assert_eq!(projection.status, outbe_metadosis::WwdStatus::Ready);
     assert_eq!(
-        metadosis
-            .read_ocomp_request_profile(&poc_schema_limits())
-            .unwrap(),
-        None
+        projection.membership,
+        outbe_metadosis::WwdMembership::Active
     );
-    assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::READY);
-    assert_eq!(metadosis.active_wwd.read_all().unwrap(), vec![wwd]);
-    assert_eq!(metadosis.get_wwd_day_type(wwd).unwrap(), day_type::GREEN);
-    assert_eq!(
-        metadosis
-            .worldwide_days
-            .entry(wwd)
-            .metadosis_limit_amount()
-            .read()
-            .unwrap(),
-        U256::from(100)
-    );
+    assert_eq!(projection.day_type, WwdDayType::Green);
+    assert_eq!(projection.metadosis_limit_amount, U256::from(100));
     let totals = TributeContract::new(storage).get_day_totals(wwd).unwrap();
     assert_eq!(totals.tribute_count, 1);
     assert_eq!(totals.tribute_nominal_amount, expected_nominal);

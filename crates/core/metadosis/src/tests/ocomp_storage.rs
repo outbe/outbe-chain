@@ -27,14 +27,13 @@ use outbe_promislimit::schema::PromisLimitContract;
 
 use crate::precompile::IMetadosis;
 use crate::{
+    fixture_kernel::FixtureKernelExt,
     ocomp::{
         schema::{poc_schema_limits, OcompRequestProfile},
         state::{DayPhase, JobFsmLimits},
     },
-    schema::{
-        day_type, status, MetadosisContract, WorldwideDay as WorldwideDayRecord,
-        WorldwideDayEntryExt, OCOMP_JOB_RECORDS_BASE_SLOT,
-    },
+    reducer::{OcompRetryCause, OuterWwdEvent, OuterWwdTransition},
+    schema::{status, MetadosisContract, WorldwideDayEntryExt, OCOMP_JOB_RECORDS_BASE_SLOT},
 };
 
 use super::with_storage;
@@ -114,21 +113,12 @@ fn request_profile_initialization_is_exact_idempotent_and_chain_bound() {
 
 fn create_ready_day(contract: &mut MetadosisContract<'_>, wwd: WorldwideDay) {
     contract
-        .worldwide_days
-        .create(&WorldwideDayRecord {
-            wwd,
-            status: status::READY,
-            day_type: day_type::GREEN,
-            forming_start: 1,
-            forming_end: 2,
-            lookback_end: 3,
-            offering_end: 4,
-            scheduled_process_time: 5,
-            metadosis_limit_amount: DAY_LIMIT,
-            previous_vwap: U256::from(50),
-            current_vwap: U256::from(55),
-        })
+        .fixture_create_ready_day(wwd, DAY_LIMIT, U256::from(50), U256::from(55))
         .unwrap();
+}
+
+fn outer_transition(contract: &MetadosisContract<'_>, event: OuterWwdEvent) -> OuterWwdTransition {
+    crate::commit::plan_outer_transition_for_test_fixture(contract, WWD, event).unwrap()
 }
 
 fn receipt() -> RequestBudgetSplitReceiptV1 {
@@ -272,8 +262,15 @@ fn certified_parent_finality_records_only_the_exact_live_request_and_fails_close
         contract
             .enqueue_ocomp_ready(WWD, REQUEST_HEIGHT, fsm_limits)
             .unwrap();
+        let request_transition = outer_transition(&contract, OuterWwdEvent::OcompRequestCommitted);
         contract
-            .commit_ocomp_request(&requested, &receipt, &limits, fsm_limits)
+            .commit_ocomp_request(
+                &request_transition,
+                &requested,
+                &receipt,
+                &limits,
+                fsm_limits,
+            )
             .unwrap();
 
         let finality_height = REQUEST_HEIGHT + 1;
@@ -369,8 +366,15 @@ fn persisted_request_and_expiry_keep_job_indexes_status_and_budget_equivalent() 
         let receipt_hash = receipt.receipt_hash(&limits).unwrap();
         let first_intent = intent(0, REQUEST_HEIGHT, DEADLINE_HEIGHT, receipt_hash);
         let first_intent_id = first_intent.intent_id(&limits).unwrap();
+        let request_transition = outer_transition(&contract, OuterWwdEvent::OcompRequestCommitted);
         contract
-            .commit_ocomp_request(&first_intent, &receipt, &limits, fsm_limits)
+            .commit_ocomp_request(
+                &request_transition,
+                &first_intent,
+                &receipt,
+                &limits,
+                fsm_limits,
+            )
             .unwrap();
 
         assert_eq!(
@@ -393,8 +397,13 @@ fn persisted_request_and_expiry_keep_job_indexes_status_and_budget_equivalent() 
         assert_eq!(live_record.intent, first_intent);
 
         open_job(&mut contract, first_intent_id, &limits, fsm_limits);
+        let retry_transition = outer_transition(
+            &contract,
+            OuterWwdEvent::OcompRetryScheduled(OcompRetryCause::Expired),
+        );
         contract
             .expire_ocomp_job(
+                &retry_transition,
                 first_intent_id,
                 DEADLINE_HEIGHT,
                 REQUEST_TIME + 64,
@@ -447,8 +456,15 @@ fn certified_conflict_is_terminal_for_the_old_job_and_requeues_the_same_budget()
         let request_receipt_hash = request_receipt.receipt_hash(&limits).unwrap();
         let requested = intent(0, REQUEST_HEIGHT, DEADLINE_HEIGHT, request_receipt_hash);
         let intent_id = requested.intent_id(&limits).unwrap();
+        let request_transition = outer_transition(&contract, OuterWwdEvent::OcompRequestCommitted);
         contract
-            .commit_ocomp_request(&requested, &request_receipt, &limits, fsm_limits)
+            .commit_ocomp_request(
+                &request_transition,
+                &requested,
+                &request_receipt,
+                &limits,
+                fsm_limits,
+            )
             .unwrap();
 
         let finalized = open_job(&mut contract, intent_id, &limits, fsm_limits);
@@ -501,9 +517,14 @@ fn certified_conflict_is_terminal_for_the_old_job_and_requeues_the_same_budget()
             terminal_receipt,
         };
 
+        let conflict_transition = outer_transition(
+            &contract,
+            OuterWwdEvent::OcompRetryScheduled(OcompRetryCause::Conflicted),
+        );
         assert_eq!(
             contract
                 .commit_ocomp_conflict(
+                    &conflict_transition,
                     intent_id,
                     completed_binding.clone(),
                     &quorum,
@@ -584,8 +605,15 @@ fn job_record_is_physically_bound_to_the_protocol_intent_slot_key() {
         contract
             .enqueue_ocomp_ready(WWD, REQUEST_HEIGHT, fsm_limits)
             .unwrap();
+        let request_transition = outer_transition(&contract, OuterWwdEvent::OcompRequestCommitted);
         contract
-            .commit_ocomp_request(&requested, &receipt, &limits, fsm_limits)
+            .commit_ocomp_request(
+                &request_transition,
+                &requested,
+                &receipt,
+                &limits,
+                fsm_limits,
+            )
             .unwrap();
 
         assert_eq!(
@@ -643,13 +671,18 @@ fn duplicate_request_cannot_replace_a_record_at_the_protocol_intent_slot_key() {
             .enqueue_ocomp_ready(WWD, REQUEST_HEIGHT, fsm_limits)
             .unwrap();
         contract
-            .ocomp_job_records
-            .get_bytes(&protocol_key)
-            .write(&original_bytes)
+            .corrupt_ocomp_job_record(intent_id, &original_bytes)
             .unwrap();
 
+        let request_transition = outer_transition(&contract, OuterWwdEvent::OcompRequestCommitted);
         assert!(contract
-            .commit_ocomp_request(&requested, &receipt, &limits, fsm_limits)
+            .commit_ocomp_request(
+                &request_transition,
+                &requested,
+                &receipt,
+                &limits,
+                fsm_limits,
+            )
             .is_err());
         assert_eq!(
             contract
@@ -689,13 +722,23 @@ fn final_allowed_expiry_credits_full_lysis_budget_once_and_does_not_requeue() {
         let receipt_hash = receipt.receipt_hash(&limits).unwrap();
         let first_intent = intent(0, REQUEST_HEIGHT, DEADLINE_HEIGHT, receipt_hash);
         let first_intent_id = first_intent.intent_id(&limits).unwrap();
+        let request_transition = outer_transition(&contract, OuterWwdEvent::OcompRequestCommitted);
         contract
-            .commit_ocomp_request(&first_intent, &receipt, &limits, fsm_limits)
+            .commit_ocomp_request(
+                &request_transition,
+                &first_intent,
+                &receipt,
+                &limits,
+                fsm_limits,
+            )
             .unwrap();
 
         open_job(&mut contract, first_intent_id, &limits, fsm_limits);
+        let exhausted_transition =
+            outer_transition(&contract, OuterWwdEvent::OcompAttemptsExhausted);
         contract
             .expire_ocomp_job(
+                &exhausted_transition,
                 first_intent_id,
                 DEADLINE_HEIGHT,
                 REQUEST_TIME + 64,
@@ -727,6 +770,7 @@ fn final_allowed_expiry_credits_full_lysis_budget_once_and_does_not_requeue() {
 
         assert!(contract
             .expire_ocomp_job(
+                &exhausted_transition,
                 first_intent_id,
                 DEADLINE_HEIGHT + 1,
                 REQUEST_TIME + 65,
@@ -810,5 +854,160 @@ fn canonical_storage_reads_fail_closed_when_the_declared_byte_cap_overflows() {
                 Err(outbe_primitives::error::PrecompileError::Fatal(_))
             ));
         }
+    });
+}
+
+#[test]
+fn terminal_index_push_rejects_zero_overwrite_and_exact_cap() {
+    with_storage(|storage| {
+        let mut metadosis = MetadosisContract::new(storage);
+        let wwd = WorldwideDay::new(20270401);
+        let cap = 3_u16;
+
+        assert!(matches!(
+            metadosis.push_terminal_intent(wwd, B256::ZERO, cap),
+            Err(outbe_primitives::error::PrecompileError::Fatal(_))
+        ));
+
+        for index in 0..cap {
+            metadosis
+                .push_terminal_intent(wwd, B256::repeat_byte(0x10 + index as u8), cap)
+                .unwrap();
+            assert_eq!(metadosis.terminal_intent_count(wwd).unwrap(), index + 1);
+        }
+
+        // The day is exactly at its cap: the next push must be refused.
+        assert!(matches!(
+            metadosis.push_terminal_intent(wwd, B256::repeat_byte(0x77), cap),
+            Err(outbe_primitives::error::PrecompileError::Fatal(_))
+        ));
+
+        // An occupied position must never be overwritten, even if the count
+        // word is corrupted backwards.
+        metadosis.ocomp_terminal_counts.write(&wwd, 1).unwrap();
+        assert!(matches!(
+            metadosis.push_terminal_intent(wwd, B256::repeat_byte(0x78), cap),
+            Err(outbe_primitives::error::PrecompileError::Fatal(_))
+        ));
+    });
+}
+
+#[test]
+fn terminal_index_round_trips_and_fails_closed_on_sparse_or_over_cap_counts() {
+    with_storage(|storage| {
+        let mut metadosis = MetadosisContract::new(storage);
+        let wwd = WorldwideDay::new(20270402);
+        let cap = 365_u16;
+
+        assert_eq!(
+            metadosis.terminal_intents_for(wwd, cap).unwrap(),
+            Vec::<B256>::new()
+        );
+
+        let mut expected = Vec::new();
+        for index in 0..cap {
+            let id = crate::ocomp::terminal_entry_key(wwd, index);
+            metadosis.push_terminal_intent(wwd, id, cap).unwrap();
+            expected.push(id);
+            if matches!(index + 1, 1 | 364 | 365) {
+                assert_eq!(
+                    metadosis.terminal_intents_for(wwd, cap).unwrap(),
+                    expected[..usize::from(index + 1)]
+                );
+            }
+        }
+        assert_eq!(metadosis.terminal_intent_count(wwd).unwrap(), cap);
+
+        // A count above the per-day cap fails closed on read.
+        metadosis
+            .ocomp_terminal_counts
+            .write(&wwd, cap + 1)
+            .unwrap();
+        assert!(matches!(
+            metadosis.terminal_intents_for(wwd, cap),
+            Err(outbe_primitives::error::PrecompileError::Fatal(_))
+        ));
+
+        // A count pointing past the last occupied position fails closed.
+        let sparse = WorldwideDay::new(20270403);
+        metadosis
+            .push_terminal_intent(sparse, B256::repeat_byte(0x31), cap)
+            .unwrap();
+        metadosis.ocomp_terminal_counts.write(&sparse, 2).unwrap();
+        assert!(matches!(
+            metadosis.terminal_intents_for(sparse, cap),
+            Err(outbe_primitives::error::PrecompileError::Fatal(_))
+        ));
+    });
+}
+
+#[test]
+fn terminal_index_keys_are_domain_separated() {
+    let day_a = WorldwideDay::new(20270404);
+    let day_b = WorldwideDay::new(20270405);
+    assert_ne!(
+        crate::ocomp::terminal_entry_key(day_a, 0),
+        crate::ocomp::terminal_entry_key(day_b, 0)
+    );
+    assert_ne!(
+        crate::ocomp::terminal_entry_key(day_a, 0),
+        crate::ocomp::terminal_entry_key(day_a, 1)
+    );
+    // Byte-for-byte pin of the key derivation: a silent change to the domain
+    // string, field widths, or endianness must fail this assertion.
+    assert_eq!(
+        crate::ocomp::terminal_entry_key(day_a, 0),
+        alloy_primitives::keccak256({
+            let mut preimage = Vec::new();
+            preimage.extend_from_slice(b"OUTBE_OCOMP_TERMINAL_INDEX_V1");
+            preimage.extend_from_slice(&20270404_u32.to_be_bytes());
+            preimage.extend_from_slice(&0_u16.to_be_bytes());
+            preimage
+        })
+    );
+}
+
+#[test]
+fn terminal_index_is_deleted_with_its_worldwide_day() {
+    with_storage(|storage| {
+        let mut metadosis = MetadosisContract::new(storage);
+        let wwd = WorldwideDay::new(20270406);
+        let cap = 4_u16;
+        for index in 0..cap {
+            metadosis
+                .push_terminal_intent(wwd, B256::repeat_byte(0x40 + index as u8), cap)
+                .unwrap();
+        }
+
+        metadosis.delete_terminal_index(wwd).unwrap();
+
+        assert_eq!(metadosis.terminal_intent_count(wwd).unwrap(), 0);
+        for index in 0..cap {
+            assert_eq!(metadosis.terminal_intent_at(wwd, index).unwrap(), None);
+        }
+        // The vacated positions accept a fresh history.
+        metadosis
+            .push_terminal_intent(wwd, B256::repeat_byte(0x50), cap)
+            .unwrap();
+        assert_eq!(metadosis.terminal_intent_count(wwd).unwrap(), 1);
+    });
+}
+
+#[test]
+fn aggregate_rejects_closed_wwd_population_above_max_records_kept() {
+    with_storage(|storage| {
+        let metadosis = MetadosisContract::new(storage.clone());
+        for offset in 0..=u32::try_from(crate::constants::MAX_RECORDS_KEPT).unwrap() {
+            metadosis
+                .closed_wwd
+                .push_back(WorldwideDay::new(20000101 + offset))
+                .unwrap();
+        }
+        let error = crate::aggregate::ValidatedWwdAggregate::load_and_validate(storage)
+            .expect_err("closed population above the retention cap must fail closed");
+        assert!(
+            error.to_string().contains("exceeds retention cap"),
+            "unexpected error: {error}"
+        );
     });
 }

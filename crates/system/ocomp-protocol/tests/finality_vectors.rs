@@ -42,7 +42,7 @@ use outbe_consensus::{
         HybridCertificate, VrfProof,
     },
 };
-use outbe_metadosis::schema::OCOMP_JOB_RECORDS_BASE_SLOT;
+use outbe_metadosis::proof_layout::OCOMP_JOB_RECORDS_BASE_SLOT;
 use outbe_node::ocomp::finality::{
     authenticate_snapshot_handoff, FinalizedIntentVerifier, RethFinalizedIntentProofBuilder,
     TrieHistoricalCommitteeAuthority,

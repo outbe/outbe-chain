@@ -17,9 +17,9 @@ use std::{
 use alloy_primitives::{Address, B256};
 use eyre::{ensure, Context as _, Result};
 use k256::ecdsa::{signature::hazmat::PrehashSigner as _, Signature, SigningKey};
-use outbe_metadosis::ocomp::{
-    fork::{OcompForkInstallClassification, OcompForkInstallV1, OCOMP_POC_FINAL_ACTIVATION_HEIGHT},
-    schema::OcompRequestProfile,
+use outbe_metadosis::config::{
+    OcompForkInstallClassification, OcompForkInstallV1, OcompRequestProfile,
+    OCOMP_POC_FINAL_ACTIVATION_HEIGHT,
 };
 use outbe_ocomp_protocol::{
     committee::{

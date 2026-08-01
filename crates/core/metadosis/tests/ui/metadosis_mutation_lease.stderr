@@ -1,0 +1,11 @@
+error[E0432]: unresolved import `outbe_primitives::storage::MetadosisMutationLease`
+ --> tests/ui/metadosis_mutation_lease.rs:1:5
+  |
+1 | use outbe_primitives::storage::MetadosisMutationLease;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no `MetadosisMutationLease` in `storage`
+  |
+help: a similar name exists in the module
+  |
+1 - use outbe_primitives::storage::MetadosisMutationLease;
+1 + use outbe_primitives::storage::MetadosisMutationPurpose;
+  |

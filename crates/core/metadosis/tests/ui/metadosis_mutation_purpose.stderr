@@ -1,0 +1,30 @@
+error[E0277]: the trait bound `ForgedPurpose: storage::metadosis_mutation::sealed::Sealed` is not satisfied
+ --> tests/ui/metadosis_mutation_purpose.rs:5:35
+  |
+5 | impl MetadosisMutationPurpose for ForgedPurpose {
+  |                                   ^^^^^^^^^^^^^ unsatisfied trait bound
+  |
+help: the trait `storage::metadosis_mutation::sealed::Sealed` is not implemented for `ForgedPurpose`
+ --> tests/ui/metadosis_mutation_purpose.rs:3:1
+  |
+3 | struct ForgedPurpose;
+  | ^^^^^^^^^^^^^^^^^^^^
+  = note: `ForgedPurpose` implements similarly named trait `tonic::service::layered::sealed::Sealed`, but not `storage::metadosis_mutation::sealed::Sealed`
+  = help: the following other types implement trait `storage::metadosis_mutation::sealed::Sealed`:
+            MetadosisCertifiedFinality
+            MetadosisCycleLifecycle
+            MetadosisForkProfile
+            MetadosisOcompLifecycle
+            MetadosisVerifiedResultVote
+note: required by a bound in `MetadosisMutationPurpose`
+ --> $WORKSPACE/crates/blockchain/primitives/src/storage/metadosis_mutation.rs
+  |
+  | pub trait MetadosisMutationPurpose: sealed::Sealed {
+  |                                     ^^^^^^^^^^^^^^ required by this bound in `MetadosisMutationPurpose`
+  = note: `MetadosisMutationPurpose` is a "sealed trait", because to implement it you also need to implement `outbe_primitives::storage::metadosis_mutation::sealed::Sealed`, which is not accessible; this is usually done to force you to use one of the provided types that already implement it
+  = help: the following types implement the trait:
+            outbe_primitives::storage::MetadosisCycleLifecycle
+            outbe_primitives::storage::MetadosisCertifiedFinality
+            outbe_primitives::storage::MetadosisForkProfile
+            outbe_primitives::storage::MetadosisOcompLifecycle
+            outbe_primitives::storage::MetadosisVerifiedResultVote

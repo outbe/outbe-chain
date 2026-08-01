@@ -19,6 +19,8 @@ use outbe_primitives::{
 use outbe_tribute::{TributeContract, TributePreAdmissionProjection};
 
 use crate::{
+    aggregate::WwdDayType,
+    commit::plan_outer_transition,
     ocomp_budget::{
         apply_fresh_request_budget_effect, validate_replayed_request_budget_effect,
         RequestBudgetEffect, RequestBudgetSplit,
@@ -27,12 +29,13 @@ use crate::{
         evaluate_pre_admission, PreAdmissionContext, PreAdmissionDecision, PreAdmissionInputs,
     },
     precompile::IMetadosis,
-    schema::{day_type, MetadosisContract, WorldwideDayEntryExt},
+    reducer::{OuterWwdEvent, OuterWwdTransition},
+    schema::{MetadosisContract, WorldwideDayEntryExt},
 };
 
 use super::{
     schema::{poc_schema_limits, OcompRequestProfile},
-    state::{JobFsmLimits, RequestEffectMode},
+    state::RequestEffectMode,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -41,6 +44,22 @@ enum TerminalRequestOutcome {
     NoReadyJob,
     Deferred,
     IntentCreated(B256),
+}
+
+#[derive(Clone, Copy)]
+struct TerminalRequestContext<'a, 'storage> {
+    ctx: &'a BlockRuntimeContext<'storage>,
+    scope: &'a ExecutionScope,
+    profile: &'a OcompRequestProfile,
+    wwd: WorldwideDay,
+    pending_nonce: u64,
+    outer_transition: &'a OuterWwdTransition,
+}
+
+#[derive(Clone, Copy)]
+enum RequestCommitKind {
+    Fresh,
+    Retry,
 }
 
 /// Executes the bounded end-zone request transition against the exact CE seal
@@ -58,7 +77,7 @@ fn run_terminal_request_inner(
     let Some(profile) = metadosis.read_ocomp_request_profile(&schema_limits)? else {
         return Ok(TerminalRequestOutcome::Inactive);
     };
-    let fsm_limits = fsm_limits(&profile);
+    let fsm_limits = profile.fsm_limits();
     if metadosis
         .live_ocomp_fsm_states(&schema_limits, fsm_limits)?
         .len()
@@ -81,42 +100,47 @@ fn run_terminal_request_inner(
             "OCOMP READY state persisted after its terminal retry cap",
         ));
     }
+    let outer_transition = plan_outer_transition(
+        ctx.storage.clone(),
+        projection.worldwide_day,
+        OuterWwdEvent::OcompRequestCommitted,
+    )?;
 
-    let storage = ctx.storage.clone();
-    storage.with_checkpoint(|| {
+    let request = TerminalRequestContext {
+        ctx,
+        scope,
+        profile: &profile,
+        wwd: projection.worldwide_day,
+        pending_nonce: projection.pending_nonce,
+        outer_transition: &outer_transition,
+    };
+
+    (|| {
         if let Some(retained_lysis_budget) = projection.retained_lysis_budget {
-            return build_and_commit_retry(
-                &mut metadosis,
-                ctx,
-                scope,
-                &profile,
-                projection.worldwide_day,
-                projection.pending_nonce,
-                retained_lysis_budget,
-            );
+            return build_and_commit_retry(&mut metadosis, &request, retained_lysis_budget);
         }
-        let outcome = build_and_commit_request(
-            &mut metadosis,
-            ctx,
-            scope,
-            &profile,
-            projection.worldwide_day,
-            projection.pending_nonce,
-        )?;
+        let outcome = build_and_commit_request(&mut metadosis, &request)?;
         Ok(outcome)
-    })
+    })()
 }
 
+// These are the complete inputs to one atomic terminal-request transition.
+// Keeping them explicit prevents an ambient or partially initialized mutation
+// context from crossing the commit boundary.
 fn build_and_commit_request(
     metadosis: &mut MetadosisContract<'_>,
-    ctx: &BlockRuntimeContext<'_>,
-    scope: &ExecutionScope,
-    profile: &OcompRequestProfile,
-    wwd: WorldwideDay,
-    pending_nonce: u64,
+    request: &TerminalRequestContext<'_, '_>,
 ) -> Result<TerminalRequestOutcome> {
+    let TerminalRequestContext {
+        ctx,
+        scope,
+        profile,
+        wwd,
+        pending_nonce,
+        outer_transition: _,
+    } = *request;
     let schema_limits = poc_schema_limits();
-    let fsm_limits = fsm_limits(profile);
+    let fsm_limits = profile.fsm_limits();
     let exact_collection = scope.completed_partition_root(PartitionRef::TributeWwd(wwd))?;
     let ce_sealed_root = scope.completed_sealed_root()?;
 
@@ -304,37 +328,31 @@ fn build_and_commit_request(
         result_committee_snapshot_hash: profile.result_committee_snapshot_hash,
         custody_committee_epoch_hash: None,
     };
-    let intent_id = intent
-        .intent_id(&schema_limits)
-        .map_err(|error| fatal(format!("hash OCOMP intent: {error}")))?;
-    let activation_preconditions_hash = intent
-        .activation_preconditions
-        .activation_preconditions_hash(&schema_limits)
-        .map_err(|error| fatal(format!("hash OCOMP activation preconditions: {error}")))?;
-
-    metadosis.commit_ocomp_request(&intent, &receipt, &schema_limits, fsm_limits)?;
-    metadosis.emit(IMetadosis::OffchainJobRequested {
-        intentId: intent_id,
-        wwd: wwd.value(),
-        pendingNonce: pending_nonce,
-        attempt,
-        activationPreconditionsHash: activation_preconditions_hash,
-    })?;
-
-    Ok(TerminalRequestOutcome::IntentCreated(intent_id))
+    commit_and_emit_request(
+        metadosis,
+        request,
+        &intent,
+        &receipt,
+        RequestCommitKind::Fresh,
+    )
 }
 
+// A retry additionally carries the retained budget that must be rebound and
+// checked against the terminal record inside the same checkpoint.
 fn build_and_commit_retry(
     metadosis: &mut MetadosisContract<'_>,
-    ctx: &BlockRuntimeContext<'_>,
-    scope: &ExecutionScope,
-    profile: &OcompRequestProfile,
-    wwd: WorldwideDay,
-    pending_nonce: u64,
+    request: &TerminalRequestContext<'_, '_>,
     retained_lysis_budget: U256,
 ) -> Result<TerminalRequestOutcome> {
+    let TerminalRequestContext {
+        ctx,
+        scope,
+        profile,
+        wwd,
+        pending_nonce,
+        outer_transition: _,
+    } = *request;
     let schema_limits = poc_schema_limits();
-    let fsm_limits = fsm_limits(profile);
     let (_, previous) = metadosis
         .latest_terminal_job_record(wwd, &schema_limits)?
         .ok_or_else(|| fatal("OCOMP retry has no retained terminal job"))?;
@@ -443,20 +461,53 @@ fn build_and_commit_retry(
     intent.logical_evaluation_height = ctx.block.block_number;
     intent.logical_evaluation_time = ctx.block.timestamp;
     intent.activation_preconditions.metadosis.pending_nonce = pending_nonce;
-    let intent_id = intent
-        .intent_id(&schema_limits)
-        .map_err(|error| fatal(format!("hash OCOMP retry intent: {error}")))?;
+    commit_and_emit_request(
+        metadosis,
+        request,
+        &intent,
+        &receipt,
+        RequestCommitKind::Retry,
+    )
+}
+
+fn commit_and_emit_request(
+    metadosis: &mut MetadosisContract<'_>,
+    request: &TerminalRequestContext<'_, '_>,
+    intent: &JobIntentV1,
+    receipt: &RequestBudgetSplitReceiptV1,
+    kind: RequestCommitKind,
+) -> Result<TerminalRequestOutcome> {
+    let schema_limits = poc_schema_limits();
+    let intent_id = intent.intent_id(&schema_limits).map_err(|error| {
+        let operation = match kind {
+            RequestCommitKind::Fresh => "hash OCOMP intent",
+            RequestCommitKind::Retry => "hash OCOMP retry intent",
+        };
+        fatal(format!("{operation}: {error}"))
+    })?;
     let activation_preconditions_hash = intent
         .activation_preconditions
         .activation_preconditions_hash(&schema_limits)
-        .map_err(|error| fatal(format!("hash OCOMP retry preconditions: {error}")))?;
+        .map_err(|error| {
+            let operation = match kind {
+                RequestCommitKind::Fresh => "hash OCOMP activation preconditions",
+                RequestCommitKind::Retry => "hash OCOMP retry preconditions",
+            };
+            fatal(format!("{operation}: {error}"))
+        })?;
 
-    metadosis.commit_ocomp_request(&intent, &receipt, &schema_limits, fsm_limits)?;
+    metadosis.commit_ocomp_request(
+        request.outer_transition,
+        intent,
+        receipt,
+        &schema_limits,
+        request.profile.fsm_limits(),
+    )?;
     metadosis.emit(IMetadosis::OffchainJobRequested {
         intentId: intent_id,
-        wwd: wwd.value(),
-        pendingNonce: pending_nonce,
-        attempt,
+        wwd: request.wwd.value(),
+        pendingNonce: request.pending_nonce,
+        attempt: intent.attempt,
         activationPreconditionsHash: activation_preconditions_hash,
     })?;
     Ok(TerminalRequestOutcome::IntentCreated(intent_id))
@@ -523,21 +574,15 @@ fn defer_ready(
         at_height,
         next_check_height,
         &poc_schema_limits(),
-        fsm_limits(profile),
+        profile.fsm_limits(),
     )
 }
 
-pub(crate) const fn fsm_limits(profile: &OcompRequestProfile) -> JobFsmLimits {
-    JobFsmLimits {
-        max_terminal_records: profile.capacity_profile.max_terminal_job_records,
-    }
-}
-
-fn protocol_day_type(value: u8) -> Result<DayType> {
+fn protocol_day_type(value: WwdDayType) -> Result<DayType> {
     match value {
-        day_type::GREEN => Ok(DayType::Green),
-        day_type::RED => Ok(DayType::Red),
-        _ => Err(fatal("OCOMP request requires a resolved day type")),
+        WwdDayType::Green => Ok(DayType::Green),
+        WwdDayType::Red => Ok(DayType::Red),
+        WwdDayType::Unknown => Err(fatal("OCOMP request requires a resolved day type")),
     }
 }
 

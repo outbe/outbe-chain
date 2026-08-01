@@ -2176,16 +2176,10 @@ where
     // these options.
     let chain_id = node.chain_spec().chain().id();
     let ocomp_fork_install =
-        outbe_node::ocomp::fork::load_ocomp_fork_install(node.chain_spec().as_ref())?;
-    let ocomp_lifecycle_activation = ocomp_fork_install
-        .as_deref()
-        .map_or(OcompLifecycleActivation::Disabled, |install| {
-            OcompLifecycleActivation::at_block(install.activation_height)
-        });
-    let ocomp_install_hash = ocomp_fork_install
-        .as_deref()
-        .map(|install| install.install_hash(&poc_schema_limits()))
-        .transpose()?;
+        outbe_node::ocomp::fork::require_startup_ocomp_fork_install(node.chain_spec().as_ref())?;
+    let ocomp_lifecycle_activation =
+        OcompLifecycleActivation::at_block(ocomp_fork_install.activation_height);
+    let ocomp_install_hash = Some(ocomp_fork_install.install_hash(&poc_schema_limits())?);
     validate_testnet_only_flags(
         args.trust_el_head,
         args.force_dkg,
@@ -3560,12 +3554,10 @@ where
         .as_ref()
         .expect("storage_dir was required above");
     let ocomp_retention_dir = ocomp_storage_root.join("ocomp_retention");
-    let ocomp_result_deadline_blocks = ocomp_fork_install.as_deref().map_or(0, |install| {
-        install
-            .request_profile
-            .capacity_profile
-            .result_deadline_blocks
-    });
+    let ocomp_result_deadline_blocks = ocomp_fork_install
+        .request_profile
+        .capacity_profile
+        .result_deadline_blocks;
     let pending_receipts_provider = node.provider.clone();
     let ocomp_proof_source = Arc::new(
         outbe_node::ocomp::retention::RethFinalizedInputProofSource::new(
@@ -3590,9 +3582,7 @@ where
     );
     let mut ocomp_snapshot_armer = None;
     let _ocomp_control_runtime = if let Some(config) = args.ocomp.node_control()? {
-        let install = ocomp_fork_install.as_deref().ok_or_else(|| {
-            eyre::eyre!("OCOMP node control requires an armed chain-manifest fork install")
-        })?;
+        let install = ocomp_fork_install.as_ref();
         if config.protocol_bundle_hash != install.request_profile.protocol_bundle_hash {
             return Err(eyre::eyre!(
                 "OCOMP node-control bundle {} differs from chain manifest {}",

@@ -14,6 +14,14 @@ pub struct OcompPublicCapacityObservationV1 {
     pub q_forming_transaction_hash: alloy_primitives::B256,
     pub q_forming_block_number: u64,
     pub q_forming_block_hash: alloy_primitives::B256,
+    pub q_forming_receipt_success: bool,
+    pub q_forming_receipt_sha256: String,
+    pub q_forming_validator_receipt_sha256: Vec<String>,
+    pub q_forming_state_root: alloy_primitives::B256,
+    pub q_forming_ce_root: alloy_primitives::B256,
+    pub q_forming_validator_commitments: Vec<crate::world::rpc::BlockCommitmentV1>,
+    pub canonical_import_validator_count: u8,
+    pub canonical_import_verified: bool,
     pub finalized_block_number: u64,
     pub finalized_block_hash: alloy_primitives::B256,
     pub tribute_count: u64,
@@ -35,6 +43,49 @@ pub struct OcompHistoricalReplayObservationV1 {
     pub recovery: crate::world::localnet::CeStartupReplayObservationV1,
     pub recovered_result_digest: alloy_primitives::B256,
     pub recovered_generation: crate::world::rpc::OcompCertifiedGenerationV1,
+}
+
+/// One canonical finalized point observed by a validator around a controlled
+/// testnet logical-time restart.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct MetadosisFinalizedPointV1 {
+    pub validator_index: u8,
+    pub block_number: u64,
+    pub block_hash: alloy_primitives::B256,
+    pub block_timestamp: u64,
+}
+
+/// Exact evidence for one committee-wide logical-time epoch. The restart changes
+/// only the existing testnet time source; genesis, datadirs and chain history
+/// remain continuous.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct MetadosisTimeControlEpochV1 {
+    pub requested_timestamp: u64,
+    pub unix_time_offset_secs: i64,
+    pub before_restart: Vec<MetadosisFinalizedPointV1>,
+    pub after_restart: Vec<MetadosisFinalizedPointV1>,
+}
+
+/// Same-chain lifecycle evidence for the fresh Metadosis process lane.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct MetadosisFreshLifecycleObservationV1 {
+    pub worldwide_day: u32,
+    pub genesis_hash: alloy_primitives::B256,
+    pub initial_timestamp: u64,
+    pub initial_unix_time_offset_secs: i64,
+    pub forming_start: u64,
+    pub forming_end: u64,
+    pub lookback_end: u64,
+    pub offering_end: u64,
+    pub scheduled_process_time: u64,
+    pub started: crate::world::rpc::MetadosisWorldwideDayStartedV1,
+    pub status_changes: Vec<crate::world::rpc::MetadosisWorldwideDayStatusChangeV1>,
+    pub time_control_epochs: Vec<MetadosisTimeControlEpochV1>,
+    pub created_validator_count: u8,
+    pub unknown_status_revert_validator_count: u8,
+    pub offering_validator_count: u8,
+    pub ready_validator_count: u8,
+    pub completed_validator_count: u8,
 }
 
 /// Runtime proof that proposal, canonical import and late historical replay
@@ -80,6 +131,7 @@ pub struct OcompPublicScenarioEvidenceV1 {
     pub capacity_resources: Option<crate::ocomp_capacity::OcompCapacityResourceObservationV1>,
     pub capacity_public_path: Option<OcompPublicCapacityObservationV1>,
     pub capacity_historical_replay: Option<OcompHistoricalReplayObservationV1>,
+    pub metadosis_fresh_lifecycle: Option<MetadosisFreshLifecycleObservationV1>,
     pub execution_trace: Option<OcompExecutionTraceObservationV1>,
     pub restart_replay_verified: Option<bool>,
 }
@@ -144,6 +196,9 @@ pub struct FixtureState {
         Option<crate::world::mongodb::TributeProjectionSnapshot>,
     /// Finalized height immediately before one typed OCOMP process fault.
     pub ocomp_finality_before_fault: Option<u64>,
+    /// Immutable activation height loaded from the scenario's prepared genesis
+    /// install. Fresh Measurement uses block 1; the frozen Final fixture uses 32.
+    pub ocomp_activation_height: Option<u64>,
     /// Public, finalized Metadosis request observed identically on all four
     /// validators. This is evidence only; the harness cannot create the job.
     pub ocomp_job_request: Option<crate::world::rpc::OcompPublicJobRequestV1>,
@@ -178,8 +233,17 @@ pub struct FixtureState {
     pub ocomp_late_vote_inclusion_height: Option<u64>,
     pub ocomp_capacity_observation: Option<OcompPublicCapacityObservationV1>,
     pub ocomp_historical_replay_observation: Option<OcompHistoricalReplayObservationV1>,
+    pub metadosis_fresh_lifecycle_observation: Option<MetadosisFreshLifecycleObservationV1>,
+    pub metadosis_fresh_initial_timestamp: Option<u64>,
+    pub metadosis_fresh_initial_unix_time_offset_secs: Option<i64>,
     pub ocomp_execution_trace_observation: Option<OcompExecutionTraceObservationV1>,
     pub ocomp_restart_replay_verified: Option<bool>,
+    /// Public pre-activation `submitLysisResult` outcome: inclusion evidence
+    /// that the selector reverts (never aborts payload building) while the
+    /// OCOMP lifecycle is inactive.
+    pub metadosis_inactive_lysis_vote_hash: Option<String>,
+    pub metadosis_inactive_lysis_vote_block: Option<u64>,
+    pub metadosis_inactive_lysis_reject_code: Option<u64>,
 
     // ---- L2Registry zk-gate scenarios (PFS-001-10 / -11) ----
     /// Encoded BLS MinPk private key the harness registered as the L2 network key.
@@ -272,6 +336,7 @@ impl Default for FixtureState {
             duplicate_tribute_tx_hash: None,
             tribute_projection_before_duplicate: None,
             ocomp_finality_before_fault: None,
+            ocomp_activation_height: None,
             ocomp_job_request: None,
             ocomp_activation: None,
             ocomp_certified_generation: None,
@@ -290,8 +355,14 @@ impl Default for FixtureState {
             ocomp_held_late_vote_hash: None,
             ocomp_late_vote_reverted: None,
             ocomp_late_vote_inclusion_height: None,
+            metadosis_inactive_lysis_vote_hash: None,
+            metadosis_inactive_lysis_vote_block: None,
+            metadosis_inactive_lysis_reject_code: None,
             ocomp_capacity_observation: None,
             ocomp_historical_replay_observation: None,
+            metadosis_fresh_lifecycle_observation: None,
+            metadosis_fresh_initial_timestamp: None,
+            metadosis_fresh_initial_unix_time_offset_secs: None,
             ocomp_execution_trace_observation: None,
             ocomp_restart_replay_verified: None,
             l2_bls_private_hex: None,
@@ -350,6 +421,7 @@ impl FixtureState {
             capacity_resources: None,
             capacity_public_path: self.ocomp_capacity_observation.clone(),
             capacity_historical_replay: self.ocomp_historical_replay_observation.clone(),
+            metadosis_fresh_lifecycle: self.metadosis_fresh_lifecycle_observation.clone(),
             execution_trace: self.ocomp_execution_trace_observation.clone(),
             restart_replay_verified: self.ocomp_restart_replay_verified,
         }

@@ -24,6 +24,7 @@ pub struct CycleLifecycleContext<'a, 'storage> {
     pub runtime: BlockRuntimeContext<'storage>,
     pub scope: &'a ExecutionScope,
     parent: ParentBodySourceRef<'a>,
+    metadosis_genesis_activation_height: u64,
 }
 
 impl<'a, 'storage> CycleLifecycleContext<'a, 'storage> {
@@ -37,7 +38,19 @@ impl<'a, 'storage> CycleLifecycleContext<'a, 'storage> {
             runtime,
             scope,
             parent: ParentBodySourceRef::new(parent),
+            metadosis_genesis_activation_height: 1,
         }
+    }
+
+    /// Bind genesis-day initialization to the immutable OCOMP install carried
+    /// by the selected chain manifest. The supported fresh-devnet contract
+    /// always supplies block 1; the frozen OCOMP evidence profile retains its
+    /// existing Final/32 activation without becoming a second Metadosis
+    /// compatibility target.
+    #[must_use]
+    pub fn with_metadosis_genesis_activation_height(mut self, height: u64) -> Self {
+        self.metadosis_genesis_activation_height = height;
+        self
     }
 }
 
@@ -46,8 +59,8 @@ impl BlockLifecycle for CycleLifecycle {
     type EndBlockResult = ();
 
     fn begin_block(ctx: &Self::Context<'_, '_>) -> Result<()> {
-        if ctx.runtime.block.block_number == 1 {
-            outbe_metadosis::runtime::init_genesis_day(&ctx.runtime)?;
+        if ctx.runtime.block.block_number == ctx.metadosis_genesis_activation_height {
+            outbe_metadosis::commands::init_genesis_day(&ctx.runtime)?;
         }
         crate::runtime::dispatch_triggers(&ctx.runtime, ctx.scope, &ctx.parent)
     }

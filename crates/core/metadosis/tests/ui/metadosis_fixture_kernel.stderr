@@ -1,0 +1,13 @@
+error[E0603]: module `fixture_kernel` is private
+ --> tests/ui/metadosis_fixture_kernel.rs:1:22
+  |
+1 | use outbe_metadosis::fixture_kernel::FixtureKernelExt;
+  |                      ^^^^^^^^^^^^^^  ---------------- trait `FixtureKernelExt` is not publicly re-exported
+  |                      |
+  |                      private module
+  |
+note: the module `fixture_kernel` is defined here
+ --> src/lib.rs
+  |
+  | mod fixture_kernel;
+  | ^^^^^^^^^^^^^^^^^^

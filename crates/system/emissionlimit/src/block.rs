@@ -36,14 +36,10 @@ pub fn dispatch_terminal_remainder_at(
     amount: U256,
     timestamp: u64,
 ) -> Result<()> {
-    if amount.is_zero() {
-        return Ok(());
-    }
-
     let mut terminal_block = ctx.block.clone();
     terminal_block.timestamp = timestamp;
     let terminal_ctx = BlockRuntimeContext::new(terminal_block, ctx.storage.clone());
-    let unused = outbe_metadosis::emission_sink::apply(&terminal_ctx, amount)?;
+    let unused = outbe_metadosis::commands::apply_cycle_day_limit(&terminal_ctx, amount)?;
     if !unused.is_zero() {
         return Err(PrecompileError::Revert(
             "terminal emission sink returned unused amount".into(),
@@ -55,9 +51,9 @@ pub fn dispatch_terminal_remainder_at(
 /// Recycles a late fee-settlement residue into terminal Metadosis headroom.
 ///
 /// This is deliberately distinct from [`dispatch_terminal_remainder_at`]:
-/// after OCOMP activation only the daily Cycle amount may form a base day
-/// limit, while late residues accumulate as carry-over for the next unformed
-/// limit. Before OCOMP activation both paths retain the same legacy behavior.
+/// the genesis-active OCOMP profile permits only the daily Cycle amount to form
+/// a base day limit, while late residues accumulate as carry-over for the next
+/// unformed limit. Startup rejects a missing profile before either path runs.
 pub fn dispatch_late_settlement_residue_at(
     ctx: &BlockRuntimeContext,
     amount: U256,
@@ -70,8 +66,7 @@ pub fn dispatch_late_settlement_residue_at(
     let mut terminal_block = ctx.block.clone();
     terminal_block.timestamp = timestamp;
     let terminal_ctx = BlockRuntimeContext::new(terminal_block, ctx.storage.clone());
-    let unused =
-        outbe_metadosis::emission_sink::apply_late_settlement_headroom(&terminal_ctx, amount)?;
+    let unused = outbe_metadosis::commands::apply_late_settlement_headroom(&terminal_ctx, amount)?;
     if !unused.is_zero() {
         return Err(PrecompileError::Revert(
             "late-settlement terminal sink returned unused amount".into(),
