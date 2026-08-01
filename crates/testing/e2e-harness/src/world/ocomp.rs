@@ -2874,7 +2874,10 @@ mod tests {
             .parse::<WorldwideDay>()
             .unwrap();
         StorageHandle::enter(&mut provider, |storage| {
-            assert!(outbe_metadosis::api::is_fresh_ocomp_state_empty(storage, seeded).unwrap());
+            assert!(
+                outbe_metadosis::test_support::fresh_devnet_sentinel_is_pristine(storage, seeded)
+                    .unwrap()
+            );
         });
         assert_eq!(
             prepared.install.activation_height,

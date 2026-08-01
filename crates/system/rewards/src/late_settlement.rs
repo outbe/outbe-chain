@@ -523,13 +523,10 @@ mod tests {
             outbe_emissionlimit::block::dispatch_terminal_remainder_at(&ctx, daily_base, timestamp)
                 .unwrap();
 
-            let formation =
-                match outbe_metadosis::api::day_limit_formation_receipt(ctx.storage.clone(), wwd)
+            let outbe_metadosis::DayLimitFormationReceipt::Formed(formation) =
+                outbe_metadosis::api::day_limit_formation_receipt(ctx.storage.clone(), wwd)
                     .unwrap()
-                    .unwrap()
-                {
-                    outbe_metadosis::DayLimitFormationReceipt::Formed(formation) => formation,
-                };
+                    .unwrap();
             assert_eq!(formation.base_limit, daily_base);
             assert_eq!(formation.carry_over_taken, expected_residue);
             assert_eq!(

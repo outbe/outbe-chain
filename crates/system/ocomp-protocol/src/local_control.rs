@@ -685,8 +685,8 @@ pub fn effective_uid() -> Result<u32, ControlError> {
     // SAFETY: `geteuid` has no preconditions and only reads the credentials of
     // the current process. Unlike `/proc/self/status`, it is available on both
     // Unix targets supported by local peer credentials (Linux and macOS).
-    let uid = unsafe { libc::geteuid() };
-    u32::try_from(uid).map_err(|_| ControlError::EffectiveUidUnavailable)
+    // `uid_t` is `u32` on both supported targets, so no conversion is needed.
+    Ok(unsafe { libc::geteuid() })
 }
 
 pub fn uid_for_user(user: &str) -> Result<u32, ControlError> {
