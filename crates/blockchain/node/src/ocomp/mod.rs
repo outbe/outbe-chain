@@ -8,6 +8,7 @@ pub(crate) mod attestation;
 pub mod control;
 pub mod finality;
 pub mod fork;
+pub mod measurement;
 mod openings;
 pub mod retention;
 pub mod service;

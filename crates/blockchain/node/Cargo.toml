@@ -18,6 +18,7 @@ outbe-common.workspace = true
 outbe-metadosis.workspace = true
 outbe-ocomp-protocol.workspace = true
 outbe-oracle.workspace = true
+outbe-update.workspace = true
 outbe-tribute.workspace = true
 outbe-validatorset.workspace = true
 outbe-zerofee.workspace = true
@@ -55,6 +56,8 @@ alloy-rpc-types-engine.workspace = true
 alloy-sol-types.workspace = true
 either.workspace = true
 eyre.workspace = true
+serde_json.workspace = true
+hex.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 futures.workspace = true
@@ -76,8 +79,6 @@ reth-node-core.workspace = true
 reth-rpc-server-types.workspace = true
 reth-tracing.workspace = true
 reth-tasks.workspace = true
-serde_json.workspace = true
-hex.workspace = true
 tempfile.workspace = true
 
 [lints]
