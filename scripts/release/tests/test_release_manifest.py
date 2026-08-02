@@ -132,6 +132,12 @@ class ReleaseManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "production enclave.*mock"):
             self.build()
 
+    def test_production_enclave_rejects_compiled_test_or_dev_marker(self) -> None:
+        path = self.artifact_dir / "outbe-tee-enclave"
+        path.write_bytes(path.read_bytes() + b"outbe-tee-enclave-mock: MOCK ENCLAVE")
+        with self.assertRaisesRegex(ValueError, "forbidden test/dev marker"):
+            self.build()
+
     def test_production_enclave_requires_exact_native_dcap_feature(self) -> None:
         self.spec["artifacts"][1]["features"] = []
         with self.assertRaisesRegex(ValueError, "exactly native-dcap"):

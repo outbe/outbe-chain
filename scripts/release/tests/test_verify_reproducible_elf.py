@@ -136,6 +136,17 @@ class ReproducibleElfVerifierTests(unittest.TestCase):
         self.assertEqual(evidence["result"], "failed")
         self.assertTrue(any("forbidden absolute build path" in item for item in evidence["differences"]))
 
+    def test_compiled_test_or_dev_marker_is_rejected_even_when_builds_match(self) -> None:
+        for output in (self.first, self.second):
+            path = output / "bin/outbe-tee-enclave"
+            path.write_bytes(path.read_bytes() + b"outbe-tee-enclave-mock: MOCK ENCLAVE")
+            self._write_checksums(output)
+        evidence = verifier.verify_outputs(self.first, self.second, REPO_ROOT)
+        self.assertEqual(evidence["result"], "failed")
+        self.assertTrue(
+            any("forbidden production TEE marker" in item for item in evidence["differences"])
+        )
+
     def test_build_spec_remaps_cargo_git_checkout_paths(self) -> None:
         environment = self.build_spec["environment"]
         rustflags = environment["rustflags"]

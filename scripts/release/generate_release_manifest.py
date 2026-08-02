@@ -21,6 +21,15 @@ from typing import Any
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 PINNED_IMAGE_RE = re.compile(r"^[^@\s]+@sha256:[0-9a-f]{64}$")
+PRODUCTION_TEE_FORBIDDEN_MARKERS = (
+    b"outbe-tee-enclave-mock: MOCK ENCLAVE",
+    b"outbe-dcap-capture-enclave",
+    b"OUTBE_QVL_TEST_TRACE",
+    b"OUTBE_QVL_BEGIN",
+    b"OUTBE_QVL_END",
+    b"explicit development seed",
+    b"development offer-secret fallback",
+)
 
 
 def canonical_json(value: Any) -> bytes:
@@ -74,6 +83,14 @@ def _artifact_record(spec: dict[str, Any], artifact_dir: Path, target: str) -> d
         and "mock" in features
     ):
         raise ValueError("production enclave must not enable the mock feature")
+    if spec.get("role") == "tee-enclave" and spec.get("classification") == "production":
+        raw = path.read_bytes()
+        for marker in PRODUCTION_TEE_FORBIDDEN_MARKERS:
+            if marker in raw:
+                raise ValueError(
+                    "production enclave contains forbidden test/dev marker: "
+                    + marker.decode("ascii")
+                )
 
     record: dict[str, Any] = {
         "classification": spec["classification"],
