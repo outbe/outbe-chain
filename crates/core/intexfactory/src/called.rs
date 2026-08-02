@@ -5,6 +5,8 @@
 //! closes before the CycleTick that drives this scan. Driven by the Cycle daily
 //! trigger.
 
+use std::collections::BTreeMap;
+
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
 use outbe_oracle::contract::OracleContract;
@@ -64,6 +66,9 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     };
     let mut factory = IntexFactoryContract::new(ctx.storage.clone());
 
+    let mut vwaps: BTreeMap<u32, Option<U256>> = BTreeMap::new();
+    vwaps.insert(last_closed_day, Some(last_closed_vwap));
+
     let mut called: u32 = 0;
     let mut cursor: u32 = 0;
     loop {
@@ -91,6 +96,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
                     &ctx.storage,
                     &mut factory,
                     &oracle,
+                    &mut vwaps,
                     series_id,
                     pair_id,
                     last_closed_day,
@@ -120,12 +126,30 @@ pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
     Ok(())
 }
 
+/// Finalized VWAP of `day` for the scan's pair, read once and reused across
+/// every series in the scan.
+fn day_vwap(
+    oracle: &OracleContract,
+    vwaps: &mut BTreeMap<u32, Option<U256>>,
+    pair_id: u32,
+    day: u32,
+) -> Result<Option<U256>> {
+    if let Some(v) = vwaps.get(&day) {
+        return Ok(*v);
+    }
+    let v = oracle.get_utc_day_vwap_for_pair_id(day, pair_id)?;
+    vwaps.insert(day, v);
+    Ok(v)
+}
+
 /// Force-call one series if Qualified and its VWAP breached the call trigger on
 /// at least `threshold_days` of the last `window_days` completed days.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn try_call(
     storage: &StorageHandle<'_>,
     factory: &mut IntexFactoryContract,
     oracle: &OracleContract,
+    vwaps: &mut BTreeMap<u32, Option<U256>>,
     series_id: u32,
     pair_id: u32,
     last_closed_day: u32,
@@ -153,7 +177,7 @@ pub(crate) fn try_call(
         if day < issued_day {
             break;
         }
-        if let Some(v) = oracle.get_utc_day_vwap_for_pair_id(day, pair_id)? {
+        if let Some(v) = day_vwap(oracle, vwaps, pair_id, day)? {
             if v > trigger {
                 breaches += 1;
             }

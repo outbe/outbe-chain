@@ -658,7 +658,7 @@ fn try_call_marks_called_when_threshold_met() {
         fill_days(&oracle, last_closed_day, pair_id, 30, breach);
 
         assert!(
-            called::try_call(&s, &mut f, &oracle, 7, pair_id, last_closed_day, scan_ts).unwrap()
+            called::try_call(&s, &mut f, &oracle, &mut Default::default(), 7, pair_id, last_closed_day, scan_ts).unwrap()
         );
         assert_eq!(
             outbe_intex::api::read_series(&s, 7)
@@ -694,7 +694,7 @@ fn try_call_skips_when_below_threshold() {
         }
 
         assert!(
-            !called::try_call(&s, &mut f, &oracle, 7, pair_id, last_closed_day, scan_ts).unwrap()
+            !called::try_call(&s, &mut f, &oracle, &mut Default::default(), 7, pair_id, last_closed_day, scan_ts).unwrap()
         );
         assert_eq!(
             outbe_intex::api::read_series(&s, 7)
@@ -746,7 +746,7 @@ fn try_call_excludes_pre_issuance_days() {
         fill_days(&oracle, last_closed_day, pair_id, 30, breach);
 
         assert!(
-            !called::try_call(&s, &mut f, &oracle, 8, pair_id, last_closed_day, scan_ts).unwrap()
+            !called::try_call(&s, &mut f, &oracle, &mut Default::default(), 8, pair_id, last_closed_day, scan_ts).unwrap()
         );
         assert_eq!(
             outbe_intex::api::read_series(&s, 8)
@@ -853,7 +853,7 @@ fn call_survives_router_failure() {
         );
 
         assert!(
-            called::try_call(&s, &mut f, &oracle, 7, pair_id, last_closed_day, scan_ts).unwrap()
+            called::try_call(&s, &mut f, &oracle, &mut Default::default(), 7, pair_id, last_closed_day, scan_ts).unwrap()
         );
         assert_eq!(
             outbe_intex::api::read_series(&s, 7)
