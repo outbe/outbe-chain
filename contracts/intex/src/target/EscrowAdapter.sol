@@ -5,6 +5,7 @@ import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/acce
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC6909} from "@openzeppelin/contracts/interfaces/IERC6909.sol";
 import {IEscrowAdapter} from "./interfaces/IEscrowAdapter.sol";
@@ -59,6 +60,9 @@ contract EscrowAdapter is
     ///         (`revealEnd + UNREVEALED_BOND_LOCK_PERIOD`), which holds while auction schedules span
     ///         less than 29 days (daily series span ~2).
     uint32 public constant COMMIT_BOND_ABANDON_DELAY = 30 days;
+
+    /// @notice Decimals every payment token must report.
+    uint8 public constant PAYMENT_TOKEN_DECIMALS = 18;
 
     /// @notice Canonical dead address receiving burned proceeds (the payment token has no burn()).
     address public constant BURN_ADDRESS = 0x000000000000000000000000000000000000dEaD;
@@ -197,6 +201,10 @@ contract EscrowAdapter is
         if (_intexAuction == address(0)) revert ZeroAddress("intexAuction");
         if (_compact == address(0)) revert ZeroAddress("compact");
         if (_paymentToken == address(0)) revert ZeroAddress("paymentToken");
+
+        // Escrow locks and the commit bond arrive as 18-decimal minor units.
+        uint8 tokenDecimals = IERC20Metadata(_paymentToken).decimals();
+        if (tokenDecimals != PAYMENT_TOKEN_DECIMALS) revert PaymentTokenDecimals(tokenDecimals);
 
         EscrowAdapterStorage storage $ = _s();
 
