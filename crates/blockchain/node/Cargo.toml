@@ -22,7 +22,6 @@ outbe-tribute.workspace = true
 outbe-tee.workspace = true
 outbe-teeregistry.workspace = true
 outbe-validatorset.workspace = true
-outbe-zerofee.workspace = true
 
 # Reth
 reth-ethereum = { workspace = true, features = ["node", "cli", "exex"] }
