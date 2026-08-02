@@ -402,8 +402,9 @@ pub fn settle(
     intex_holder: Address,
     settler: Address,
     amount: U256,
+    payment_token: Address,
 ) -> Result<()> {
-    if intex_holder.is_zero() || settler.is_zero() {
+    if intex_holder.is_zero() || settler.is_zero() || payment_token.is_zero() {
         return Err(IntexFactoryError::ZeroAddress.into());
     }
     if amount.is_zero() {
@@ -443,7 +444,12 @@ pub fn settle(
         return Err(IntexFactoryError::NotAuthorized.into());
     }
 
-    let payment_token = vault_asset(storage)?;
+    // TODO: accept the issuance currency once an FX rule converts the amount.
+    let iso = asset_reference_currency(storage, payment_token)?;
+    if iso != series.reference_currency {
+        return Err(IntexFactoryError::SettlementCurrencyMismatch(iso).into());
+    }
+
     let payment = derived_cost_amount(
         series.entry_price_minor,
         series.promis_load_minor,
@@ -528,20 +534,41 @@ fn nft_balance_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Re
         .map_err(|_| PrecompileError::Revert("NFT balanceOf undecodable".into()))
 }
 
-fn vault_asset(storage: &StorageHandle<'_>) -> Result<Address> {
-    // TODO pick up the asset ERC20 address properly
+/// Reference currency the router recorded for `asset`, via its first vault.
+pub(crate) fn asset_reference_currency(
+    storage: &StorageHandle<'_>,
+    asset: Address,
+) -> Result<u16> {
     let ret = storage.staticcall(
         VAULT_ROUTER_ADDRESS,
-        IVaultRouter::assetAtCall { index: U256::ZERO }
+        IVaultRouter::assetVaultsCountCall { asset }.abi_encode().into(),
+    )?;
+    let count = IVaultRouter::assetVaultsCountCall::abi_decode_returns(&ret)
+        .map_err(|_| PrecompileError::Revert("assetVaultsCount undecodable".into()))?;
+    if count.is_zero() {
+        return Err(IntexFactoryError::PaymentTokenNotRegistered(asset).into());
+    }
+
+    let ret = storage.staticcall(
+        VAULT_ROUTER_ADDRESS,
+        IVaultRouter::assetVaultAtCall {
+            asset,
+            index: U256::ZERO,
+        }
+        .abi_encode()
+        .into(),
+    )?;
+    let vault = IVaultRouter::assetVaultAtCall::abi_decode_returns(&ret)
+        .map_err(|_| PrecompileError::Revert("assetVaultAt undecodable".into()))?;
+
+    let ret = storage.staticcall(
+        VAULT_ROUTER_ADDRESS,
+        IVaultRouter::vaultReferenceCurrencyCall { vault }
             .abi_encode()
             .into(),
     )?;
-    let asset = IVaultRouter::assetAtCall::abi_decode_returns(&ret)
-        .map_err(|_| PrecompileError::Revert("assetAt undecodable".into()))?;
-    if asset.is_zero() {
-        return Err(IntexFactoryError::NotWired.into());
-    }
-    Ok(asset)
+    IVaultRouter::vaultReferenceCurrencyCall::abi_decode_returns(&ret)
+        .map_err(|_| PrecompileError::Revert("vaultReferenceCurrency undecodable".into()))
 }
 
 fn erc20_balance_of(storage: &StorageHandle<'_>, token: Address, account: Address) -> Result<U256> {

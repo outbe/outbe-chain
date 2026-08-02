@@ -22,6 +22,10 @@ fn holder() -> Address {
     address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
 }
 
+fn payment_token() -> Address {
+    address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC")
+}
+
 const CHAIN_ID: u64 = 1;
 const ISSUED_AT: u32 = 1_700_000_000;
 const PROMIS_LOAD_MINOR: u128 = 1_000_000_000_000_000_000; // 1e18
@@ -213,14 +217,14 @@ fn cost_amount_rejects_decimals_above_the_product_scale() {
 #[test]
 fn settle_rejects_zero_amount() {
     with_factory(|s| {
-        assert!(runtime::settle(&s, 7, holder(), holder(), U256::ZERO).is_err());
+        assert!(runtime::settle(&s, 7, holder(), holder(), U256::ZERO, payment_token()).is_err());
     });
 }
 
 #[test]
 fn settle_rejects_missing_series() {
     with_factory(|s| {
-        assert!(runtime::settle(&s, 7, holder(), holder(), U256::from(1)).is_err());
+        assert!(runtime::settle(&s, 7, holder(), holder(), U256::from(1), payment_token()).is_err());
     });
 }
 
@@ -229,7 +233,7 @@ fn settle_rejects_wrong_state_issued() {
     with_factory(|s| {
         // Born Issued; settlement is only valid in Qualified/Called.
         runtime::issue(&s, sample(7)).unwrap();
-        let err = runtime::settle(&s, 7, holder(), holder(), U256::from(1)).unwrap_err();
+        let err = runtime::settle(&s, 7, holder(), holder(), U256::from(1), payment_token()).unwrap_err();
         assert!(err.to_string().to_lowercase().contains("settleable"));
     });
 }
@@ -253,7 +257,7 @@ fn settle_rejects_expired_deadline() {
         runtime::issue(&s, sample(7)).unwrap();
         // deadline = ISSUED_AT + CALL_PERIOD < now
         outbe_intex::api::mark_called(&s, 7, ISSUED_AT).unwrap();
-        let err = runtime::settle(&s, 7, holder(), holder(), U256::from(1)).unwrap_err();
+        let err = runtime::settle(&s, 7, holder(), holder(), U256::from(1), payment_token()).unwrap_err();
         assert!(err.to_string().to_lowercase().contains("deadline"));
     });
 }
@@ -1613,6 +1617,7 @@ fn unpublished_selectors_refuse_native_value() {
             seriesId: 0u32,
             intexHolder: Address::ZERO,
             amount: U256::ZERO,
+            paymentToken: Address::ZERO,
         }
         .abi_encode(),
         IIntexFactory::setAuthorizedSettlerCall {

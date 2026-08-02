@@ -41,7 +41,14 @@ pub fn dispatch(
             use IIntexFactory::IIntexFactoryCalls::*;
             match call {
                 settle(c) => mutate_void(c, caller, |sender, c| {
-                    runtime::settle(&storage, c.seriesId, c.intexHolder, sender, c.amount)
+                    runtime::settle(
+                        &storage,
+                        c.seriesId,
+                        c.intexHolder,
+                        sender,
+                        c.amount,
+                        c.paymentToken,
+                    )
                 }),
                 // Off-chain the holder brute-forces `nonce` so the work hash
                 // SHA256(hex(holder ++ promisAmount ++ seriesId ++ seq) ++ nonce_be8)
