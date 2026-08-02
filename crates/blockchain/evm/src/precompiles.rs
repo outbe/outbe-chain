@@ -36,6 +36,7 @@ use crate::{
     gas::SubcallGasMeter,
     precompile_routes,
     storage::{CtxStorageProvider, CtxStorageProviderConfig, ReentrancyStack},
+    tee_attestation_activation::TeeAttestationChainSpecStateV1,
 };
 
 /// Shared marker retained in the sub-call context while q-forming apply
@@ -116,16 +117,27 @@ pub fn outbe_precompile_addresses() -> &'static [Address] {
 }
 
 /// Immutable protocol context shared by every Outbe precompile dispatch.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OutbePrecompileExecutionContext {
     spec: SpecId,
     genesis_hash: B256,
+    tee_attestation_v1: TeeAttestationChainSpecStateV1,
 }
 
 impl OutbePrecompileExecutionContext {
     #[must_use]
     pub const fn new(spec: SpecId, genesis_hash: B256) -> Self {
-        Self { spec, genesis_hash }
+        Self {
+            spec,
+            genesis_hash,
+            tee_attestation_v1: TeeAttestationChainSpecStateV1::Unbound,
+        }
+    }
+
+    #[must_use]
+    pub fn with_tee_attestation_v1(mut self, state: TeeAttestationChainSpecStateV1) -> Self {
+        self.tee_attestation_v1 = state;
+        self
     }
 }
 
@@ -152,7 +164,11 @@ pub fn extend_outbe_precompiles<DB>(
     DB: Database + Debug,
     DB::Error: Debug,
 {
-    let OutbePrecompileExecutionContext { spec, genesis_hash } = execution_context;
+    let OutbePrecompileExecutionContext {
+        spec,
+        genesis_hash,
+        tee_attestation_v1,
+    } = execution_context;
     let ocomp_activation_block_meter = Arc::new(OcompActivationBlockMeter);
     precompiles.set_ctx_dispatch_hook(
         // handles: claim every outbe address.
@@ -174,6 +190,7 @@ pub fn extend_outbe_precompiles<DB>(
                 OutbeDispatchRuntime {
                     spec,
                     genesis_hash,
+                    tee_attestation_v1: &tee_attestation_v1,
                     runtime_body_readers: runtime_body_readers.as_ref(),
                     execution_scope: &execution_scope,
                     ocomp_finality_authority: ocomp_finality_authority.clone(),
@@ -190,6 +207,7 @@ pub fn extend_outbe_precompiles<DB>(
 struct OutbeDispatchRuntime<'a> {
     spec: SpecId,
     genesis_hash: B256,
+    tee_attestation_v1: &'a TeeAttestationChainSpecStateV1,
     runtime_body_readers: Option<&'a RuntimeBodyReaders>,
     execution_scope: &'a Arc<ExecutionScope>,
     ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
@@ -211,6 +229,7 @@ where
     let OutbeDispatchRuntime {
         spec,
         genesis_hash,
+        tee_attestation_v1,
         runtime_body_readers,
         execution_scope,
         ocomp_finality_authority,
@@ -327,21 +346,18 @@ where
                 execution_scope.as_ref(),
                 readers,
                 ocomp_fork_install.as_deref(),
+                tee_attestation_v1,
                 data.as_ref(),
                 caller,
                 value,
             )
         } else {
-            route.dispatch(
+            crate::begin_block_precompile::dispatch_with_tee_attestation(
                 storage,
-                execution_scope.as_ref(),
-                runtime_body_readers,
-                precompile_routes::RouteCall {
-                    callee: address,
-                    data: data.as_ref(),
-                    caller,
-                    value,
-                },
+                tee_attestation_v1,
+                data.as_ref(),
+                caller,
+                value,
             )
         }
     } else {
@@ -411,6 +427,7 @@ pub(crate) struct OutbeSubCallPrecompiles<DB> {
     /// EVM spec id, forwarded to [`outbe_ctx_dispatch`].
     spec: SpecId,
     genesis_hash: B256,
+    tee_attestation_v1: TeeAttestationChainSpecStateV1,
     runtime_body_readers: Option<RuntimeBodyReaders>,
     execution_scope: Arc<ExecutionScope>,
     ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
@@ -433,6 +450,7 @@ impl<DB> OutbeSubCallPrecompiles<DB> {
             eth: EthPrecompiles::new(spec),
             spec,
             genesis_hash,
+            tee_attestation_v1: TeeAttestationChainSpecStateV1::Unbound,
             runtime_body_readers,
             execution_scope,
             ocomp_finality_authority,
@@ -472,6 +490,7 @@ where
             OutbeDispatchRuntime {
                 spec: self.spec,
                 genesis_hash: self.genesis_hash,
+                tee_attestation_v1: &self.tee_attestation_v1,
                 runtime_body_readers: self.runtime_body_readers.as_ref(),
                 execution_scope: &self.execution_scope,
                 ocomp_finality_authority: self.ocomp_finality_authority.clone(),

@@ -359,9 +359,9 @@ impl DkgSession {
         let group_sig =
             threshold::recover::<Variant, _, N3f1>(output.public(), partials.iter(), &Sequential)
                 .map_err(|e| dkg_err("recover offer group signature", e))?;
-        // `sigma` (the encoded group signature) is retained resident by the caller:
-        // it re-derives any epoch's offer key locally and is the sealed key-handoff
-        // payload that onboards a new committee member.
+        // `sigma` (the encoded group signature) is retained resident by the caller
+        // so the exact permanent key survives restart and can be delivered through
+        // the deterministic one-time registry onboarding artifact.
         let sigma = Zeroizing::new(group_sig.encode().to_vec());
         let (secret, public) = crate::crypto::derive_tribute_offer_secret_from_group_sig(
             sigma.as_ref(),
@@ -521,9 +521,8 @@ impl DkgSession {
         // distinct dealers to cover the full committee — otherwise an untrusted host
         // feeding different dealer subsets to different enclaves would diverge the
         // derived offer key across validators. (Each verified dealer is a committee
-        // member, so a full distinct count equals full coverage. A reshare DKG would
-        // relax this to the recovery threshold, but onboarding uses key-handoff, not a
-        // reshare DKG, so every ceremony reaching here is an all-n initial DKG.)
+        // member, so a full distinct count equals full coverage. Scheduled rolling
+        // reshare is a separate consensus ceremony; this founding path is all-n.)
         let expected = max.get() as usize;
         if distinct_dealers.len() != expected {
             return Err(TeeError::Dkg(format!(

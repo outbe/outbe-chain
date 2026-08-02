@@ -376,9 +376,11 @@ struct BridgeState {
     consensus_status: ConsensusStatus,
     execution_summary_cache: VecDeque<ExecutionSummaryCacheEntry>,
     /// One-time TEE bootstrap payload produced by the consensus-thread TEE DKG
-    /// coordination, handed to the payload builder so the proposer injects it
-    /// (slice 5.1). `take`-semantics: consumed once by the next proposal.
-    pending_tee_bootstrap: Option<crate::tee_bootstrap::TeeBootstrapPayload>,
+    /// coordination, handed to the payload builder so every block-1 proposal
+    /// attempt injects the same bytes (slice 5.1). It must remain available
+    /// across rejected or abandoned proposal candidates; the block-number guard
+    /// in the payload builder makes it unreachable after block 1.
+    pending_tee_bootstrap: Option<crate::tee_bootstrap_v2::TeeBootstrapV2>,
     /// Channel to the consensus-side drainer that answers `outbe_getFinalization`
     /// RPC requests from the marshal. Set once at marshal-start; `None` on a
     /// node that does not serve finalizations (e.g. before consensus is up).
@@ -433,14 +435,18 @@ impl ConsensusExecutionBridge {
 
     /// Stores the one-time TEE bootstrap payload for the payload builder to inject.
     /// Set by the consensus thread once the TEE DKG bootstrap coordination completes.
-    pub fn set_pending_tee_bootstrap(&self, payload: crate::tee_bootstrap::TeeBootstrapPayload) {
+    pub fn set_pending_tee_bootstrap(&self, payload: crate::tee_bootstrap_v2::TeeBootstrapV2) {
         self.lock_state().pending_tee_bootstrap = Some(payload);
     }
 
-    /// Takes the pending TEE bootstrap payload (consumes it). The payload builder
-    /// calls this when building a proposal; `None` once already taken or never set.
-    pub fn take_pending_tee_bootstrap(&self) -> Option<crate::tee_bootstrap::TeeBootstrapPayload> {
-        self.lock_state().pending_tee_bootstrap.take()
+    /// Returns a clone of the pending TEE bootstrap payload for a block-1 proposal.
+    ///
+    /// Proposal construction is retryable: consuming this value while building a
+    /// candidate would make a rejected first candidate permanently prevent every
+    /// later block-1 proposal. The payload is bounded and immutable after startup,
+    /// so cloning it preserves identical bytes across retries.
+    pub fn pending_tee_bootstrap(&self) -> Option<crate::tee_bootstrap_v2::TeeBootstrapV2> {
+        self.lock_state().pending_tee_bootstrap.clone()
     }
 
     /// Records a summary from a successfully executed block header.

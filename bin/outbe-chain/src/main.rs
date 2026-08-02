@@ -45,6 +45,8 @@ use std::{path::PathBuf, sync::Arc, thread};
 use tokio::sync::oneshot;
 use tracing::info;
 
+mod tee_genesis;
+
 #[derive(Debug, Clone, Default)]
 struct OutbeChainSpecParser;
 
@@ -85,6 +87,11 @@ impl ChainSpecParser for OutbeChainSpecParser {
                 .clone()
                 .map_header(OutbeHeader::new)
                 .into();
+        outbe_evm::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
+            chain_spec.as_ref(),
+        )
+        .activation()
+        .map_err(|error| eyre::eyre!("invalid mandatory teeAttestationV1 ChainSpec: {error}"))?;
         outbe_node::ocomp::fork::load_ocomp_fork_install(chain_spec.as_ref())?;
         Ok(chain_spec)
     }
@@ -160,8 +167,9 @@ enum DkgCommand {
         #[arg(long)]
         storage_dir: std::path::PathBuf,
     },
-    /// Force-restart DKG by deleting saved threshold material.
-    /// The node will run a fresh DKG ceremony on next startup.
+    /// Delete only the local consensus threshold material.
+    /// This never modifies or recovers the permanent TEE offer key; normal
+    /// genesis or live-join gates still decide whether startup may proceed.
     ForceRestart {
         /// Storage directory containing DKG material.
         #[arg(long)]
@@ -170,10 +178,13 @@ enum DkgCommand {
 }
 
 fn main() -> eyre::Result<()> {
-    // Intercept `dkg` subcommand before reth CLI parsing.
+    // Intercept Outbe-owned subcommands before reth CLI parsing.
     let args: Vec<String> = std::env::args().collect();
     if args.len() > 1 && args[1] == "dkg" {
         return run_dkg_command(&args);
+    }
+    if args.len() > 1 && args[1] == "tee" {
+        return tee_genesis::run(&args);
     }
 
     // Intercept `--version` / `-V` so that the user sees Outbe-side build
@@ -471,6 +482,22 @@ fn run_node() -> eyre::Result<()> {
 
     cli.run_with_components::<OutbeNode>(components, async move |builder, args| {
         args.validate()?;
+        let tee_attestation_v1 =
+            outbe_evm::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
+                builder.config().chain.as_ref(),
+            );
+        let tee_activation = tee_attestation_v1.activation().map_err(|error| {
+            eyre::eyre!("invalid mandatory teeAttestationV1 ChainSpec: {error}")
+        })?;
+        let initial_tee_policy = tee_activation
+            .policy_at(outbe_evm::tee_attestation_activation::TEE_ATTESTATION_V1_ACTIVATION_HEIGHT)
+            .map_err(eyre::Report::msg)?;
+        info!(
+            attestation_mode = ?initial_tee_policy.attestation_mode,
+            activation_height = tee_activation.manifest.activation_height,
+            policy_schedule_hash = %tee_activation.manifest.policy_schedule_hash,
+            "validated mandatory TEE attestation ChainSpec authority"
+        );
         let ocomp_fork_install =
             outbe_node::ocomp::fork::load_ocomp_fork_install(builder.config().chain.as_ref())?;
         if let Some(install) = &ocomp_fork_install {
@@ -533,13 +560,22 @@ fn run_node() -> eyre::Result<()> {
             None
         };
 
-        // If a TEE enclave sidecar is configured, connect + attest it and install
-        // the global offer-decryption client. Offers route through the enclave on
-        // every node (validators and full nodes execute offer txs), so a node
-        // started with `--tee-enclave-socket` requires a healthy, attested enclave
-        // (fail-fast). When unset, offerTribute() uses the in-process TEE stub.
-        if let Some(socket) = args.tee_enclave_socket.clone() {
-            if args.is_validator {
+        // Every network declares exactly one TEE mode in genesis and every node
+        // must connect to the corresponding enclave transport before execution
+        // or consensus starts. GramineDirectDev is a separate network mode, not
+        // a fallback when production initialization or DCAP fails.
+        let socket = args.tee_enclave_socket.clone().ok_or_else(|| {
+            eyre::eyre!(
+                "mandatory {:?} ChainSpec requires --tee-enclave-socket before node startup",
+                initial_tee_policy.attestation_mode
+            )
+        })?;
+        let endpoint = socket
+            .to_str()
+            .ok_or_else(|| eyre::eyre!("TEE enclave endpoint is not valid UTF-8"))?;
+        match initial_tee_policy.attestation_mode {
+            outbe_primitives::tee_attestation_v1::AttestationMode::DcapRequired => {
+                if args.is_validator {
                 let signing_key_path = args.signing_key.as_deref().ok_or_else(|| {
                     eyre::eyre!("validator TEE initialization requires --consensus.signing-key")
                 })?;
@@ -556,9 +592,6 @@ fn run_node() -> eyre::Result<()> {
                 let signer = evm_signer.as_ref().ok_or_else(|| {
                     eyre::eyre!("validator EVM signer unavailable during TEE initialization")
                 })?;
-                let endpoint = socket
-                    .to_str()
-                    .ok_or_else(|| eyre::eyre!("TEE enclave endpoint is not valid UTF-8"))?;
                 let client = outbe_tee::connect_or_initialize_validator_enclave(
                     endpoint,
                     &node_data_dir,
@@ -572,46 +605,89 @@ fn run_node() -> eyre::Result<()> {
                 )
                 .wrap_err("validator NodeHost enclave initialization failed")?;
                 outbe_tee::install_authorized_enclave_client(client).map_err(eyre::Report::msg)?;
-            } else {
-                use k256::ecdsa::signature::hazmat::PrehashSigner as _;
+                } else {
+                    use k256::ecdsa::signature::hazmat::PrehashSigner as _;
 
-                // Resolve the identity through the same Reth API and default
-                // discovery-secret path used later by the network builder.
-                let (signing, reth_p2p_public) = load_reth_p2p_node_host_signer(
-                    &builder.config().network,
-                    builder.config().datadir().p2p_secret(),
-                )?;
-                let endpoint = socket
-                    .to_str()
-                    .ok_or_else(|| eyre::eyre!("TEE enclave endpoint is not valid UTF-8"))?;
-                let client = outbe_tee::connect_or_initialize_full_node_enclave(
+                    // Resolve the identity through the same Reth API and default
+                    // discovery-secret path used later by the network builder.
+                    let (signing, reth_p2p_public) = load_reth_p2p_node_host_signer(
+                        &builder.config().network,
+                        builder.config().datadir().p2p_secret(),
+                    )?;
+                    let client = outbe_tee::connect_or_initialize_full_node_enclave(
+                        endpoint,
+                        &node_data_dir,
+                        outbe_tee::FullNodeNodeHostIdentityV1 {
+                            chain_id: builder.config().chain.chain().id(),
+                            genesis_hash: builder.config().chain.genesis_hash(),
+                            reth_p2p_public,
+                        },
+                        |hash| {
+                            let (signature, recovery): (
+                                k256::ecdsa::Signature,
+                                k256::ecdsa::RecoveryId,
+                            ) = signing
+                                .sign_prehash(hash.as_slice())
+                                .map_err(|error| error.to_string())?;
+                            let mut bytes = [0_u8; 65];
+                            bytes[..64].copy_from_slice(signature.to_bytes().as_slice());
+                            bytes[64] = recovery.to_byte();
+                            Ok(bytes)
+                        },
+                    )
+                    .wrap_err("full-node NodeHost enclave initialization failed")?;
+                    outbe_tee::install_authorized_enclave_client(client)
+                        .map_err(eyre::Report::msg)?;
+                }
+            }
+            outbe_primitives::tee_attestation_v1::AttestationMode::GramineDirectDev => {
+                let client = outbe_tee::EnclaveClient::connect_endpoint(
                     endpoint,
-                    &node_data_dir,
-                    outbe_tee::FullNodeNodeHostIdentityV1 {
-                        chain_id: builder.config().chain.chain().id(),
-                        genesis_hash: builder.config().chain.genesis_hash(),
-                        reth_p2p_public,
-                    },
-                    |hash| {
-                        let (signature, recovery): (
-                            k256::ecdsa::Signature,
-                            k256::ecdsa::RecoveryId,
-                        ) = signing
-                            .sign_prehash(hash.as_slice())
-                            .map_err(|error| error.to_string())?;
-                        let mut bytes = [0_u8; 65];
-                        bytes[..64].copy_from_slice(signature.to_bytes().as_slice());
-                        bytes[64] = recovery.to_byte();
-                        Ok(bytes)
-                    },
+                    &outbe_tee::QuotePolicy::dev_accept_any(),
                 )
-                .wrap_err("full-node NodeHost enclave initialization failed")?;
-                outbe_tee::install_authorized_enclave_client(client).map_err(eyre::Report::msg)?;
+                .wrap_err(
+                    "GramineDirectDev enclave connection failed; production transport is not a fallback",
+                )?;
+                outbe_tee::install_enclave_client(client).map_err(eyre::Report::msg)?;
+            }
+        }
+        info!(
+            socket = %socket.display(),
+            validator_node_host = args.is_validator,
+            attestation_mode = ?initial_tee_policy.attestation_mode,
+            "mandatory TEE enclave sidecar connected before execution launch",
+        );
+
+        // A follower re-executes every protected transaction and therefore must
+        // already hold the exact permanent offer key committed by the running
+        // chain. Prove that invariant before Reth opens networking, RPC, sync or
+        // execution. Losing the key is terminal for this node identity: startup
+        // never invokes recovery, replacement or another bootstrap path.
+        if !args.is_validator {
+            let upstream = args.upstream.as_deref().ok_or_else(|| {
+                eyre::eyre!(
+                    "full-node startup requires --upstream to authenticate the chain offer key"
+                )
+            })?;
+            let expected_offer = outbe_engine::read_upstream_tribute_offer_public_key(upstream)
+                .await
+                .wrap_err("failed to read mandatory offer key from the selected upstream")?;
+            if expected_offer.is_zero() {
+                return Err(eyre::eyre!(
+                    "selected upstream has no mandatory OST3 offer key; refusing full-node startup"
+                ));
+            }
+            let resident_offer = outbe_tee::resident_offer_public_key_v1()
+                .wrap_err("failed to read the local enclave resident offer key")?;
+            if resident_offer != expected_offer {
+                return Err(eyre::eyre!(
+                    "local enclave does not hold the selected chain's exact offer key; refusing execution startup (no recovery or fallback)"
+                ));
             }
             info!(
-                socket = %socket.display(),
-                validator_node_host = args.is_validator,
-                "TEE enclave sidecar connected",
+                offer_public_key = %resident_offer,
+                %upstream,
+                "full-node resident offer key matched upstream before execution launch"
             );
         }
 
@@ -1186,7 +1262,7 @@ mod tests {
     }
 
     #[test]
-    fn test_dkg_force_restart() {
+    fn test_dkg_force_restart_only_removes_consensus_material() {
         let dir = tempfile::tempdir().unwrap();
         let dir_str = dir.path().to_str().unwrap();
         let args = dkg_args(&["bootstrap", "--output-dir", dir_str, "--validators", "3"]);
@@ -1201,6 +1277,17 @@ mod tests {
         )
         .unwrap();
         std::fs::write(v0.join("dkg_output.hex"), "placeholder").unwrap();
+        let tee_sentinels = [
+            ("sealed_root.bin", b"permanent-offer-key".as_slice()),
+            ("sealed_identity.bin", b"enclave-identity".as_slice()),
+            (
+                "sealed_node_authorization_v1.bin",
+                b"node-host-authorization".as_slice(),
+            ),
+        ];
+        for (name, bytes) in tee_sentinels {
+            std::fs::write(v0.join(name), bytes).unwrap();
+        }
         assert!(v0.join("dkg_share.hex").exists());
         assert!(v0.join("dkg_output.hex").exists());
 
@@ -1210,6 +1297,9 @@ mod tests {
         assert!(!v0.join("dkg_share.hex").exists());
         assert!(!v0.join("dkg_polynomial.hex").exists());
         assert!(!v0.join("dkg_output.hex").exists());
+        for (name, bytes) in tee_sentinels {
+            assert_eq!(std::fs::read(v0.join(name)).unwrap(), bytes);
+        }
     }
 
     #[test]

@@ -100,8 +100,8 @@ fn node_killed_and_restarted(world: &mut World) {
 }
 
 /// Stop every committee node and enclave, then relaunch them from the same
-/// datadirs. Unlike the single-node restart above, no live enclave remains to
-/// answer a key-handoff request: recovery therefore depends on sealed state.
+/// datadirs. Each identity must unseal its own permanent key; there is no peer
+/// redelivery path.
 #[when("the entire committee and its enclaves are stopped and restarted")]
 fn committee_and_enclaves_restarted(world: &mut World) {
     let primary = world.validators.primary_port();
@@ -136,12 +136,6 @@ fn committee_recovers_sealed_tee_state(world: &mut World) {
                 "unsealed offer key + group signature <- /tee/sealed_root.bin (restart fast-path)"
             ),
             "validator-{index} enclave did not recover its sealed offer key"
-        );
-        assert!(
-            !world
-                .localnet
-                .log_has(index, "TEE key-handoff did not complete"),
-            "validator-{index} fell back to a timed-out TEE handoff"
         );
     }
     assert_eq!(
@@ -489,6 +483,12 @@ fn restart_registered_joiner_before_staking(world: &mut World) {
     );
     assert!(!world.rpc.is_participant(primary, &addr));
     assert_eq!(world.rpc.active_count(primary), Some(4));
+    world.state.joiner_offer_public_before_restart = Some(
+        world
+            .localnet
+            .joiner_offer_public(idx)
+            .expect("registered joiner offer key must match canonical chain state"),
+    );
     world.state.marker_height = world.rpc.head(primary);
     world.state.marker_count = world
         .rpc
@@ -529,6 +529,18 @@ fn registered_restart_then_join_activates(world: &mut World) {
     assert_eq!(
         world.rpc.epoch_on(primary),
         Some(u64::try_from(old_epoch).expect("epoch fits u64"))
+    );
+    let before = world
+        .state
+        .joiner_offer_public_before_restart
+        .expect("pre-restart joiner offer key");
+    let after = world
+        .localnet
+        .joiner_offer_public(idx)
+        .expect("restarted joiner offer key must match canonical chain state");
+    assert_eq!(
+        after, before,
+        "registered joiner restart changed the permanent resident offer key"
     );
     assert!(
         world

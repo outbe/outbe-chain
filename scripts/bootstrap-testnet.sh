@@ -10,8 +10,9 @@
 #
 # This script:
 #   1. Runs DKG bootstrap to generate threshold keys + individual signing keys + polynomial + validators.json
-#   2. Generates genesis.json (chain ID 54322345, pre-funds validators)
+#   2. Generates a GramineDirectDev genesis (reserved chain ID 54322345)
 #   2b. (Optional) Seeds genesis with precompile storage from SEED_FILE
+#   2c. Canonically binds teeAttestationV1 after every genesis mutation
 #   3. Prints startup commands for each validator
 
 set -euo pipefail
@@ -133,6 +134,7 @@ echo
 
 # Step 2: Generate genesis.json
 echo "--- Step 2: Generate Genesis ---"
+GENESIS_WORK="$OUTPUT_DIR/genesis.seeded.json"
 
 # Extract validator addresses from validators.json
 ALLOC=""
@@ -166,7 +168,7 @@ else
     GENESIS_TIME=$(date -u -v-1d +"%Y-%m-%dT%H:%M:%SZ")
 fi
 
-cat > "$OUTPUT_DIR/genesis.json" <<GENESIS
+cat > "$GENESIS_WORK" <<GENESIS
 {
   "config": {
     "chainId": 54322345,
@@ -203,7 +205,7 @@ cat > "$OUTPUT_DIR/genesis.json" <<GENESIS
 }
 GENESIS
 
-echo "  Genesis written to $OUTPUT_DIR/genesis.json"
+echo "  Mutable genesis work file written to $GENESIS_WORK"
 echo "  Pre-funded $NUM_VALIDATORS validators with 10000 liquid COEN each"
 echo
 
@@ -212,11 +214,11 @@ if [ -n "$SEED_FILE" ]; then
     echo "--- Step 2b: Seed Genesis ---"
     echo "  Seed: $SEED_FILE"
     python3 "$SCRIPT_DIR/seed_genesis.py" \
-        --genesis "$OUTPUT_DIR/genesis.json" \
+        --genesis "$GENESIS_WORK" \
         --seed "$SEED_FILE" \
         --validators "$OUTPUT_DIR/validators.json" \
         --worldwide-day "$WORLDWIDE_DAY" \
-        --output "$OUTPUT_DIR/genesis.json"
+        --output "$GENESIS_WORK"
     echo "  Worldwide-day retargeted to genesis date $WORLDWIDE_DAY (tracks wall-clock)"
     echo "  Seeded genesis validator stake from $OUTPUT_DIR/validators.json"
     echo
@@ -237,7 +239,7 @@ if [ "$DEV_FELONY_THRESHOLD" -ge "$TESTNET_EPOCH_LENGTH_BLOCKS" ]; then
     echo "Error: DEV_FELONY_THRESHOLD ($DEV_FELONY_THRESHOLD) must be < epoch length ($TESTNET_EPOCH_LENGTH_BLOCKS)" >&2
     exit 1
 fi
-python3 - "$OUTPUT_DIR/genesis.json" "$DEV_FELONY_THRESHOLD" <<'PY'
+python3 - "$GENESIS_WORK" "$DEV_FELONY_THRESHOLD" <<'PY'
 import json, sys
 path, thr = sys.argv[1], int(sys.argv[2])
 g = json.load(open(path))
@@ -252,6 +254,16 @@ st["0x" + format(13, "064x")] = "0x" + format(thr, "064x")  # config_voter_felon
 json.dump(g, open(path, "w"), indent=2)
 PY
 echo "  Dev felony thresholds set to $DEV_FELONY_THRESHOLD blocks (< epoch $TESTNET_EPOCH_LENGTH_BLOCKS) for observable localnet slashing"
+echo
+
+# teeAttestationV1 binds the final genesis header hash, so it is added only
+# after seed/felony mutations. The command validates the complete output and
+# refuses either production measurements or a production-mode fallback.
+echo "--- Step 2d: Bind GramineDirectDev TEE Manifest ---"
+"$OUTBE_CHAIN_BINARY" tee genesis \
+    --input "$GENESIS_WORK" \
+    --output "$OUTPUT_DIR/genesis.json" \
+    --mode gramine-direct-dev
 echo
 
 # Step 3: Print startup commands
@@ -301,6 +313,7 @@ for i in $(seq 0 $((NUM_VALIDATORS - 1))); do
     echo "  --log.file.directory $VALIDATOR_DIR/logs \\"
     echo "  --consensus.signing-key $VALIDATOR_DIR/signing-key.hex \\"
     echo "  --validator.evm-key $VALIDATOR_DIR/evm-key.hex \\"
+    echo "  --tee-enclave-socket 127.0.0.1:$((7000 + PORT_OFFSET + i)) \\"
     echo "  --consensus.signing-share $VALIDATOR_DIR/signing-share.hex \\"
     echo "  --consensus.public-polynomial $OUTPUT_DIR/polynomial.hex \\"
     echo "  --consensus.dkg-output $OUTPUT_DIR/dkg-output.hex \\"

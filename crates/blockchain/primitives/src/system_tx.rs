@@ -52,7 +52,6 @@ use crate::{
         decode_boundary_artifact, decode_late_finalize_credits_artifact, encode_boundary_artifact,
         encode_late_finalize_credits_artifact, LateFinalizeCreditsArtifact,
     },
-    tee_bootstrap::TeeBootstrapPayload,
 };
 
 pub use crate::addresses::OUTBE_SYSTEM_TX_ADDRESS;
@@ -74,11 +73,12 @@ pub const CYCLE_TICK_SELECTOR: [u8; 4] = [b'O', b'S', b'C', b'2'];
 pub const BOUNDARY_OUTCOME_SELECTOR: [u8; 4] = [b'O', b'S', b'B', b'2'];
 /// Selector for [`SystemTxKind::OracleSlashWindow`] (V2 OSO2).
 pub const ORACLE_SLASH_WINDOW_SELECTOR: [u8; 4] = [b'O', b'S', b'O', b'2'];
-/// Selector for [`SystemTxKind::TeeBootstrap`] (legacy OST2, Phase 3b).
-pub const TEE_BOOTSTRAP_SELECTOR: [u8; 4] = [b'O', b'S', b'T', b'2'];
-/// Selector for the evidence-carrying DCAP bootstrap payload.
-#[cfg(feature = "tee-attestation-v1")]
-pub const TEE_BOOTSTRAP_DCAP_SELECTOR: [u8; 4] = [b'O', b'S', b'T', b'3'];
+/// Selector for the evidence-carrying V1 TEE bootstrap payload.
+///
+/// `OST2` was never a valid selector for this greenfield chain. Only `OST3`
+/// is produced or accepted, in both `DcapRequired` and `GramineDirectDev`
+/// networks.
+pub const TEE_BOOTSTRAP_SELECTOR: [u8; 4] = [b'O', b'S', b'T', b'3'];
 /// Selector for [`SystemTxKind::LateFinalizeCredits`].
 pub const LATE_FINALIZE_CREDITS_SELECTOR: [u8; 4] = [b'O', b'S', b'L', b'2'];
 /// Selector for [`SystemTxKind::HookEvents`] (V2 OSH2).
@@ -299,10 +299,6 @@ pub enum SystemTxInputV2 {
         artifact: DkgBoundaryArtifact,
     },
     TeeBootstrap {
-        payload: TeeBootstrapPayload,
-    },
-    #[cfg(feature = "tee-attestation-v1")]
-    TeeBootstrapDcap {
         payload: crate::tee_bootstrap_v2::TeeBootstrapV2,
     },
     OracleSlashWindow,
@@ -319,8 +315,6 @@ impl SystemTxInputV2 {
             Self::CycleTick => SystemTxKind::CycleTick,
             Self::BoundaryOutcome { .. } => SystemTxKind::BoundaryOutcome,
             Self::TeeBootstrap { .. } => SystemTxKind::TeeBootstrap,
-            #[cfg(feature = "tee-attestation-v1")]
-            Self::TeeBootstrapDcap { .. } => SystemTxKind::TeeBootstrap,
             Self::OracleSlashWindow => SystemTxKind::OracleSlashWindow,
             Self::HookEvents => SystemTxKind::HookEvents,
             Self::OcompTerminalRequest => SystemTxKind::OcompTerminalRequest,
@@ -330,13 +324,6 @@ impl SystemTxInputV2 {
     /// Encode as `selector(4) || version(1) || canonical_body`.
     pub fn encode(&self) -> Result<Bytes, SystemTxError> {
         let mut out = Vec::new();
-        #[cfg(feature = "tee-attestation-v1")]
-        let selector = if matches!(self, Self::TeeBootstrapDcap { .. }) {
-            TEE_BOOTSTRAP_DCAP_SELECTOR
-        } else {
-            self.kind().selector()
-        };
-        #[cfg(not(feature = "tee-attestation-v1"))]
         let selector = self.kind().selector();
         out.extend_from_slice(&selector);
         out.push(SYSTEM_TX_INPUT_VERSION);
@@ -370,16 +357,7 @@ impl SystemTxInputV2 {
                         .as_ref(),
                 );
             }
-            Self::TeeBootstrap { payload } => {
-                out.extend_from_slice(
-                    payload
-                        .encode()
-                        .map_err(SystemTxError::from_precompile)?
-                        .as_ref(),
-                );
-            }
-            #[cfg(feature = "tee-attestation-v1")]
-            Self::TeeBootstrapDcap { payload } => out.extend_from_slice(
+            Self::TeeBootstrap { payload } => out.extend_from_slice(
                 payload
                     .encode_canonical()
                     .map_err(|error| SystemTxError::Codec(error.to_string()))?
@@ -465,19 +443,10 @@ impl SystemTxInputV2 {
                 };
                 Ok(Self::BoundaryOutcome { artifact })
             }
-            SystemTxKind::TeeBootstrap => {
-                #[cfg(feature = "tee-attestation-v1")]
-                if selector == TEE_BOOTSTRAP_DCAP_SELECTOR {
-                    return Ok(Self::TeeBootstrapDcap {
-                        payload: crate::tee_bootstrap_v2::TeeBootstrapV2::decode_canonical(body)
-                            .map_err(|error| SystemTxError::Codec(error.to_string()))?,
-                    });
-                }
-                Ok(Self::TeeBootstrap {
-                    payload: TeeBootstrapPayload::decode(body)
-                        .map_err(SystemTxError::from_precompile)?,
-                })
-            }
+            SystemTxKind::TeeBootstrap => Ok(Self::TeeBootstrap {
+                payload: crate::tee_bootstrap_v2::TeeBootstrapV2::decode_canonical(body)
+                    .map_err(|error| SystemTxError::Codec(error.to_string()))?,
+            }),
         }
     }
 }
@@ -840,8 +809,6 @@ pub fn system_tx_kind_from_selector(selector: [u8; 4]) -> Result<SystemTxKind, S
         CYCLE_TICK_SELECTOR => Ok(SystemTxKind::CycleTick),
         BOUNDARY_OUTCOME_SELECTOR => Ok(SystemTxKind::BoundaryOutcome),
         TEE_BOOTSTRAP_SELECTOR => Ok(SystemTxKind::TeeBootstrap),
-        #[cfg(feature = "tee-attestation-v1")]
-        TEE_BOOTSTRAP_DCAP_SELECTOR => Ok(SystemTxKind::TeeBootstrap),
         ORACLE_SLASH_WINDOW_SELECTOR => Ok(SystemTxKind::OracleSlashWindow),
         HOOK_EVENTS_SELECTOR => Ok(SystemTxKind::HookEvents),
         OCOMP_TERMINAL_REQUEST_SELECTOR => Ok(SystemTxKind::OcompTerminalRequest),
@@ -1032,14 +999,8 @@ impl SystemTxVisibleGasPlan {
     }
 }
 
-#[cfg(not(feature = "tee-attestation-v1"))]
-fn system_tx_protocol_precharge(_input: &SystemTxInputV2) -> Result<u64, SystemTxError> {
-    Ok(0)
-}
-
-#[cfg(feature = "tee-attestation-v1")]
 fn system_tx_protocol_precharge(input: &SystemTxInputV2) -> Result<u64, SystemTxError> {
-    let SystemTxInputV2::TeeBootstrapDcap { payload } = input else {
+    let SystemTxInputV2::TeeBootstrap { payload } = input else {
         return Ok(0);
     };
     payload
@@ -1485,41 +1446,7 @@ mod tests {
         }
     }
 
-    fn sample_tee_bootstrap() -> crate::tee_bootstrap::TeeBootstrapPayload {
-        use crate::tee_bootstrap::{
-            TeeBootstrapPayload, TeeRegistrationBundle, TeeValidatorSignature,
-        };
-        let validator = address!("0x2222222222222222222222222222222222222222");
-        TeeBootstrapPayload {
-            policy_hash: B256::repeat_byte(0xB1),
-            committee_snapshot_hash: B256::repeat_byte(0xB2),
-            committee_snapshot_block: 1,
-            key_epoch: 0,
-            tribute_offer_epoch: 0,
-            dkg_transcript_hash: B256::repeat_byte(0xB3),
-            tribute_offer_public_key: B256::repeat_byte(0xB4),
-            tribute_offer_group_public_key: alloy_primitives::Bytes::from(vec![0xB5; 96]),
-            registrations: vec![TeeRegistrationBundle {
-                validator,
-                recipient_x25519: B256::repeat_byte(0x21),
-                attestation_pub: B256::repeat_byte(0x22),
-                noise_static_pub: B256::repeat_byte(0x23),
-                mrenclave: B256::repeat_byte(0x24),
-                mrsigner: B256::repeat_byte(0x25),
-                isv_svn: 3,
-                keys_hash: B256::repeat_byte(0x26),
-            }],
-            policy: crate::tee_bootstrap::TeePolicy::default(),
-            validator_signatures: vec![TeeValidatorSignature {
-                validator,
-                signature: [0x41; 65],
-            }],
-        }
-    }
-
-    #[cfg(feature = "tee-attestation-v1")]
-    #[allow(dead_code)]
-    fn sample_tee_bootstrap_dcap() -> crate::tee_bootstrap_v2::TeeBootstrapV2 {
+    fn sample_tee_bootstrap() -> crate::tee_bootstrap_v2::TeeBootstrapV2 {
         use crate::{
             tee_attestation_v1::{
                 AttestationMode, AttestationOperationV1, DcapCollateralComponentV1,
@@ -1528,7 +1455,8 @@ mod tests {
                 TeePolicyV1,
             },
             tee_bootstrap_v2::{
-                TeeBootstrapCommitteeSignatureV2, TeeBootstrapParticipantV2, TeeBootstrapV2,
+                TeeBootstrapCommitteeSignatureV2, TeeBootstrapParticipantEvidenceV2,
+                TeeBootstrapParticipantV2, TeeBootstrapV2,
             },
         };
 
@@ -1613,8 +1541,10 @@ mod tests {
                 .collect(),
             participants: vec![TeeBootstrapParticipantV2 {
                 intent,
-                quote: vec![0x41; 64],
-                collateral_component_indices: [0, 1, 2, 3, 4, 5, 6, 7],
+                evidence: TeeBootstrapParticipantEvidenceV2::Dcap {
+                    quote: vec![0x41; 64],
+                    collateral_component_indices: [0, 1, 2, 3, 4, 5, 6, 7],
+                },
                 node_signature: [0x42; 65],
                 enclave_signature: [0x43; 64],
             }],

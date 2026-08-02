@@ -38,6 +38,7 @@ use std::sync::Arc;
 use crate::{
     create_guard::{self, ReservedNamespaceHandler},
     precompiles::{extend_outbe_precompiles, OutbePrecompileExecutionContext},
+    tee_attestation_activation::TeeAttestationChainSpecStateV1,
 };
 
 #[cfg(test)]
@@ -333,6 +334,7 @@ where
 pub struct OutbeEvmFactory {
     /// Immutable chain identity installed by `OutbeEvmConfig`.
     genesis_hash: B256,
+    tee_attestation_v1: TeeAttestationChainSpecStateV1,
     runtime_body_readers: Option<RuntimeBodyReaders>,
     compressed_tree_service:
         Arc<std::sync::RwLock<Option<Arc<outbe_compressed_entities::CompressedTreeService>>>>,
@@ -347,6 +349,7 @@ impl core::fmt::Debug for OutbeEvmFactory {
         formatter
             .debug_struct("OutbeEvmFactory")
             .field("genesis_hash", &self.genesis_hash)
+            .field("tee_attestation_v1", &self.tee_attestation_v1)
             .field("runtime_body_readers", &self.runtime_body_readers.is_some())
             .field(
                 "compressed_tree_service",
@@ -404,11 +407,18 @@ impl OutbeEvmFactory {
         self.genesis_hash
     }
 
+    #[must_use]
+    pub fn with_tee_attestation_v1(mut self, state: TeeAttestationChainSpecStateV1) -> Self {
+        self.tee_attestation_v1 = state;
+        self
+    }
+
     /// Constructs an EVM factory with read-only Tribute and Nod body authority.
     #[must_use]
     pub fn with_runtime_body_readers(runtime_body_readers: RuntimeBodyReaders) -> Self {
         Self {
             genesis_hash: B256::ZERO,
+            tee_attestation_v1: TeeAttestationChainSpecStateV1::Unbound,
             runtime_body_readers: Some(runtime_body_readers),
             compressed_tree_service: Arc::default(),
             ocomp_finality_authority: Arc::default(),
@@ -512,7 +522,8 @@ impl EvmFactory for OutbeEvmFactory {
         // Register Outbe stateful precompiles via dynamic lookup.
         extend_outbe_precompiles::<DB>(
             &mut precompiles,
-            OutbePrecompileExecutionContext::new(spec, self.genesis_hash),
+            OutbePrecompileExecutionContext::new(spec, self.genesis_hash)
+                .with_tee_attestation_v1(self.tee_attestation_v1.clone()),
             runtime_body_readers.clone(),
             execution_scope.clone(),
             ocomp_finality_authority,

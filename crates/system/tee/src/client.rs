@@ -18,7 +18,9 @@ use std::os::unix::net::UnixStream;
 use std::path::Path;
 
 use alloy_primitives::{keccak256, B256};
-use outbe_primitives::tee_attestation_v1::{EnclaveInitializationManifestV1, RegistrationIntentV1};
+use outbe_primitives::tee_attestation_v1::{
+    AttestationMode, EnclaveInitializationManifestV1, RegistrationIntentV1,
+};
 use rand::RngCore as _;
 use zeroize::Zeroizing;
 
@@ -74,14 +76,6 @@ pub struct QuotePolicy {
     /// Dev/test escape hatch: accept any MRENCLAVE/MRSIGNER (still enforces the
     /// REPORT_DATA key binding). MUST be false in production.
     pub dev_accept_any_measurement: bool,
-    /// Mode gate: when true, an **unattested** enclave (empty quote, e.g.
-    /// gramine-direct / no SGX hardware) is accepted with only the REPORT_DATA key
-    /// binding enforced. A **real** (non-empty) quote is ALWAYS strictly verified
-    /// regardless of this flag — measurement allowlist + min SVN + DCAP signature.
-    /// This lets one policy be strict under gramine-sgx yet still run on the
-    /// gramine-direct dev box. Independent of `dev_accept_any_measurement`, which
-    /// relaxes even a real quote (dev/test only).
-    pub dev_fallback_if_unattested: bool,
 }
 
 impl QuotePolicy {
@@ -95,7 +89,6 @@ impl QuotePolicy {
             allowed_mrsigner,
             min_isv_svn,
             dev_accept_any_measurement: false,
-            dev_fallback_if_unattested: false,
         }
     }
 
@@ -106,26 +99,6 @@ impl QuotePolicy {
             allowed_mrsigner: Vec::new(),
             min_isv_svn: 0,
             dev_accept_any_measurement: true,
-            dev_fallback_if_unattested: true,
-        }
-    }
-
-    /// Strict policy built from the genesis `teePolicy` allowlist: a real
-    /// SGX quote MUST satisfy the measurement allowlist + min SVN + DCAP signature;
-    /// an unattested enclave (gramine-direct / no SGX) is still accepted on the dev
-    /// box via `dev_fallback_if_unattested`, logged as not-confidential by the
-    /// caller. Under gramine-sgx this is the real measurement gate.
-    pub fn from_genesis_strict(
-        allowed_mrenclave: Vec<B256>,
-        allowed_mrsigner: Vec<B256>,
-        min_isv_svn: u16,
-    ) -> Self {
-        Self {
-            allowed_mrenclave,
-            allowed_mrsigner,
-            min_isv_svn,
-            dev_accept_any_measurement: false,
-            dev_fallback_if_unattested: true,
         }
     }
 }
@@ -137,9 +110,7 @@ struct QuoteIdentity {
     mrenclave: B256,
     mrsigner: B256,
     isv_svn: u16,
-    recipient_x25519: [u8; 32],
     attestation_pub: [u8; 32],
-    noise_static_pub: [u8; 32],
     /// The attestation environment the enclave self-reported (e.g.
     /// `none (gramine-direct / no SGX)`).
     attestation: String,
@@ -151,8 +122,8 @@ pub struct EnclaveClient {
     noise: snow::TransportState,
     identity: QuoteIdentity,
     /// The raw `EnclaveResponse::Quote` this session verified at connect. Retained
-    /// so a key-handoff newcomer can forward its own attested quote to a server
-    /// (which re-verifies it via [`verify_peer_quote`] before sealing).
+    /// for development/bootstrap flows that must relay the exact quote bytes after
+    /// local verification; it grants no key-delivery capability by itself.
     raw_quote: EnclaveResponse,
 }
 
@@ -308,6 +279,7 @@ pub struct RemoteEnclaveClient {
 /// owner protocol response enum.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RemoteEnclavePublicKeysV1 {
+    pub offer_key_ready: bool,
     pub recipient_x25519_pub: [u8; 32],
     pub attestation_pub: [u8; 32],
     pub noise_static_pub: [u8; 32],
@@ -485,8 +457,7 @@ impl EnclaveClient {
         })
     }
 
-    /// This session's attested quote (verified at connect). A key-handoff newcomer
-    /// forwards it to a server so the server can authenticate it independently.
+    /// This session's attested quote, already verified at connect.
     pub fn quote(&self) -> &EnclaveResponse {
         &self.raw_quote
     }
@@ -520,22 +491,43 @@ impl EnclaveClient {
         Ok(resp)
     }
 
-    /// This validator's TEE registration, built from the attested quote captured
-    /// at connect (recipient X25519 / attestation / noise keys + measurements).
-    /// `keys_hash` is derived by the bootstrap builder; `validator` is the L1
-    /// validator address this enclave serves.
-    pub fn enclave_registration(
-        &self,
-        validator: alloy_primitives::Address,
-    ) -> crate::bootstrap::EnclaveRegistration {
-        crate::bootstrap::EnclaveRegistration {
-            validator,
-            recipient_x25519: B256::from(self.identity.recipient_x25519),
-            attestation_pub: B256::from(self.identity.attestation_pub),
-            noise_static_pub: B256::from(self.identity.noise_static_pub),
-            mrenclave: self.identity.mrenclave,
-            mrsigner: self.identity.mrsigner,
-            isv_svn: self.identity.isv_svn,
+    /// Ask the separate development enclave to sign one exact canonical
+    /// GramineDirectDev registration intent. No quote or DCAP verdict is
+    /// produced by this path.
+    pub fn sign_registration_intent_dev_v1(
+        &mut self,
+        intent: &RegistrationIntentV1,
+    ) -> Result<[u8; 64], TransportError> {
+        if intent.attestation_mode != AttestationMode::GramineDirectDev
+            || intent.attestation_ed25519 != self.attestation_pub()
+        {
+            return Err(TransportError::Attestation(
+                "development registration intent does not bind this enclave and mode".into(),
+            ));
+        }
+        let canonical = intent
+            .encode_canonical()
+            .map_err(|error| TransportError::Codec(error.to_string()))?;
+        match self.request(&EnclaveRequest::SignRegistrationIntentDevV1 {
+            intent: canonical.clone(),
+        })? {
+            EnclaveResponse::RegistrationIntentSignedDevV1 {
+                intent: echoed,
+                enclave_signature,
+            } if echoed == canonical => {
+                let signature: [u8; 64] = enclave_signature.try_into().map_err(|_| {
+                    TransportError::Attestation(
+                        "development enclave returned a non-canonical Ed25519 signature".into(),
+                    )
+                })?;
+                if !intent.verify_enclave_signature(&signature) {
+                    return Err(TransportError::Attestation(
+                        "development enclave returned an invalid intent signature".into(),
+                    ));
+                }
+                Ok(signature)
+            }
+            _ => Err(TransportError::UnexpectedResponse),
         }
     }
 }
@@ -915,6 +907,7 @@ impl RemoteEnclaveClient {
     pub fn public_keys(&mut self) -> Result<RemoteEnclavePublicKeysV1, TransportError> {
         match self.request(&EnclaveRequest::GetPublicKeys)? {
             EnclaveResponse::PublicKeys {
+                offer_key_ready,
                 recipient_x25519_pub,
                 attestation_pub,
                 noise_static_pub,
@@ -922,6 +915,7 @@ impl RemoteEnclaveClient {
                 dkg_enc_pub,
                 dkg_enc_sig,
             } => Ok(RemoteEnclavePublicKeysV1 {
+                offer_key_ready,
                 recipient_x25519_pub,
                 attestation_pub,
                 noise_static_pub,
@@ -1086,9 +1080,7 @@ fn quote_identity(quote: &EnclaveResponse) -> Result<QuoteIdentity, TransportErr
         mrenclave,
         mrsigner,
         isv_svn,
-        recipient_x25519_pub,
         attestation_pub,
-        noise_static_pub,
         attestation,
         ..
     } = quote
@@ -1099,9 +1091,7 @@ fn quote_identity(quote: &EnclaveResponse) -> Result<QuoteIdentity, TransportErr
         mrenclave: *mrenclave,
         mrsigner: *mrsigner,
         isv_svn: *isv_svn,
-        recipient_x25519: *recipient_x25519_pub,
         attestation_pub: *attestation_pub,
-        noise_static_pub: *noise_static_pub,
         attestation: attestation.clone(),
     })
 }
@@ -1116,10 +1106,9 @@ pub struct AttestedPeerKeys {
     pub noise_static_pub: [u8; 32],
 }
 
-/// Verify a peer enclave's quote standalone and return its attested keys. Used at
-/// connect time (the connect path takes `noise_static_pub` to pin) and to
-/// authenticate a key-handoff newcomer whose quote arrives over P2P (the server
-/// then seals to the attested `recipient_x25519`).
+/// Verify an enclave quote standalone and return its attested keys. The connect
+/// path pins `noise_static_pub`; callers may also bind a one-time registration
+/// recipient without gaining any peer key-recovery surface.
 ///
 /// Chain: (1) the cleartext public keys must hash to `report_data` (key
 /// binding); (2) if the enclave produced a real SGX quote, the cleartext
@@ -1180,8 +1169,8 @@ pub fn verify_peer_quote(
             ));
         }
         // Strict path (real quote, not dev-accept-any): DCAP signature/TCB +
-        // measurement allowlist + min SVN. `dev_fallback_if_unattested` does NOT
-        // relax a real quote — only `dev_accept_any_measurement` does.
+        // measurement allowlist + min SVN. Only the explicit development policy
+        // relaxes a real quote.
         if !policy.dev_accept_any_measurement {
             crate::quote::verify_dcap_signature(quote_body)
                 .map_err(|e| TransportError::Attestation(format!("DCAP verify: {e}")))?;
@@ -1202,9 +1191,8 @@ pub fn verify_peer_quote(
                 )));
             }
         }
-    } else if !policy.dev_accept_any_measurement && !policy.dev_fallback_if_unattested {
-        // No SGX hardware quote (gramine-direct / bare) under a strict policy with
-        // no unattested fallback.
+    } else if !policy.dev_accept_any_measurement {
+        // No SGX hardware quote under a strict policy.
         return Err(TransportError::Attestation(
             "enclave is unattested (no SGX quote) but policy is strict".to_string(),
         ));
@@ -1512,58 +1500,6 @@ mod tests {
         let q = quote_with([1; 32], [2; 32], [3; 32], B256::ZERO, B256::ZERO, 0, vec![]);
         let policy = QuotePolicy::new(vec![B256::ZERO], vec![B256::ZERO], 0);
         assert!(verify_quote(&q, &policy).is_err());
-    }
-
-    /// Mode gate: `from_genesis_strict` accepts an unattested enclave (empty
-    /// quote, gramine-direct dev box) via the fallback, but a REAL quote always
-    /// hits the strict DCAP path — without the `dcap` feature the stub rejects it,
-    /// proving the strict path is reached (it would also require the allowlist).
-    #[test]
-    fn from_genesis_strict_fallback_and_real_quote_paths() {
-        let strict = QuotePolicy::from_genesis_strict(
-            vec![B256::repeat_byte(0xAA)],
-            vec![B256::repeat_byte(0xBB)],
-            0,
-        );
-
-        // Unattested empty quote → accepted via dev_fallback_if_unattested.
-        let empty = quote_with([1; 32], [2; 32], [3; 32], B256::ZERO, B256::ZERO, 0, vec![]);
-        assert!(
-            verify_quote(&empty, &strict).is_ok(),
-            "empty quote accepted via unattested fallback"
-        );
-
-        // A real (non-empty) quote with consistent measurements + report_data is
-        // always strictly verified → reaches DCAP, which errors here (no `dcap`
-        // feature / no collateral).
-        let (noise, offer, attest) = ([1u8; 32], [2u8; 32], [3u8; 32]);
-        let me = B256::repeat_byte(0xAA);
-        let ms = B256::repeat_byte(0xBB);
-        let mut body = vec![0u8; MIN_QUOTE_LEN];
-        body[RB + 64..RB + 96].copy_from_slice(me.as_slice());
-        body[RB + 128..RB + 160].copy_from_slice(ms.as_slice());
-        let mut p = Vec::new();
-        p.extend_from_slice(&noise);
-        p.extend_from_slice(&offer);
-        p.extend_from_slice(&attest);
-        let binding = keccak256(&p);
-        body[RB + 320..RB + 352].copy_from_slice(binding.as_slice());
-        let q = EnclaveResponse::Quote {
-            mrenclave: me,
-            mrsigner: ms,
-            isv_svn: 0,
-            report_data: binding,
-            recipient_x25519_pub: offer,
-            attestation_pub: attest,
-            noise_static_pub: noise,
-            quote_body: body,
-            attestation: "dcap (test)".to_string(),
-        };
-        let err = verify_quote(&q, &strict).unwrap_err();
-        assert!(
-            format!("{err}").contains("DCAP"),
-            "real quote under strict policy must reach DCAP verification: {err}"
-        );
     }
 
     /// A valid per-offer attestation tag verifies; tampering with the

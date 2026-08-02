@@ -1,13 +1,10 @@
 //! `TeeRegistry` — storage-backed KV precompile (`0x…EE0A`).
 //!
-//! Records the per-validator TEE registration bundle and the global
-//! `tribute_offer_public_key`, written once by the `TeeBootstrap` system
-//! transaction (Phase 3b). The public ABI ([`precompile`]) is **read-only** —
-//! clients fetch the offer key via `eth_call`; the initial write is performed
-//! natively by the system-tx handler through `StorageHandle::contract`, not via
-//! the public ABI (see [`runtime::TeeRegistry::write_bootstrap`]).
+//! Records V1 validator/full-node enclave bindings and the global
+//! `tribute_offer_public_key`, written once by the OST3 block-1 system
+//! transaction. [`v1_precompile`] is the only public ABI; there is no
+//! caller-authorized registration dispatcher or fallback admission path.
 
-pub mod precompile;
 pub mod runtime;
 pub mod schema;
 pub mod v1;

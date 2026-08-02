@@ -1,4 +1,8 @@
-//! Canonical block-1 bootstrap payload with deduplicated DCAP collateral.
+//! Canonical block-1 TEE bootstrap payload.
+//!
+//! Production `DcapRequired` payloads deduplicate complete Intel collateral.
+//! A separate `GramineDirectDev` chain uses the same OST3 envelope with direct
+//! development evidence and an empty collateral pool.
 
 use std::{cmp::Ordering, collections::BTreeMap};
 
@@ -9,10 +13,11 @@ use crate::system_tx::{
 };
 use crate::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationMode, AttestationOperationV1, CodecError,
-    DcapCollateralComponentV1, DcapCollateralKind, DcapEvidenceV1, EnclaveProfile, NodeIdV1,
-    RegistrationIntentV1, SystemGasScheduleV1, TeeBootstrapGasInputV1, TeePolicyV1,
-    TeeRegistryGasScheduleV1, MAX_ATTESTATION_EVIDENCE_BYTES, MAX_COLLATERAL_COMPONENT_BYTES,
-    MAX_EVIDENCE_CALL_FRAMING_BYTES, MAX_QUOTE_BYTES, MAX_TEE_BOOTSTRAP_BYTES,
+    DcapCollateralComponentV1, DcapCollateralKind, DcapEvidenceV1, EnclaveProfile,
+    GramineDirectEvidenceV1, NodeIdV1, RegistrationIntentV1, SystemGasScheduleV1,
+    TeeBootstrapGasInputV1, TeePolicyV1, TeeRegistryGasScheduleV1, MAX_ATTESTATION_EVIDENCE_BYTES,
+    MAX_COLLATERAL_COMPONENT_BYTES, MAX_EVIDENCE_CALL_FRAMING_BYTES, MAX_QUOTE_BYTES,
+    MAX_TEE_BOOTSTRAP_BYTES,
 };
 
 const MAGIC: &[u8; 4] = b"TTB2";
@@ -23,10 +28,21 @@ const MAX_COLLATERAL_POOL_COMPONENTS: usize = MAX_BOOTSTRAP_PARTICIPANTS * 8;
 const MAX_GROUP_PUBLIC_KEY_BYTES: usize = 32 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TeeBootstrapParticipantEvidenceV2 {
+    Dcap {
+        quote: Vec<u8>,
+        collateral_component_indices: [u16; 8],
+    },
+    GramineDirectDev {
+        dev_attestation_public: [u8; 32],
+        dev_signature: [u8; 64],
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TeeBootstrapParticipantV2 {
     pub intent: RegistrationIntentV1,
-    pub quote: Vec<u8>,
-    pub collateral_component_indices: [u16; 8],
+    pub evidence: TeeBootstrapParticipantEvidenceV2,
     pub node_signature: [u8; 65],
     pub enclave_signature: [u8; 64],
 }
@@ -91,18 +107,19 @@ impl TeeBootstrapV2 {
                 "TEE bootstrap participant set is empty",
             ));
         }
+        let attestation_mode = authority.policy.attestation_mode;
         let mut ordered = submissions
             .into_iter()
             .map(|submission| {
-                let AttestationEvidenceV1::Dcap(evidence) = submission.evidence else {
+                if submission.evidence.mode() != attestation_mode {
                     return Err(CodecError::NonCanonical(
-                        "TEE bootstrap submission is not DCAP evidence",
+                        "TEE bootstrap submission mode does not match policy",
                     ));
-                };
-                let validator = validator_address(&evidence.intent)?;
+                }
+                let validator = validator_address(evidence_intent(&submission.evidence))?;
                 Ok((
                     validator,
-                    evidence,
+                    submission.evidence,
                     submission.node_signature,
                     submission.enclave_signature,
                 ))
@@ -116,34 +133,54 @@ impl TeeBootstrapV2 {
         let mut component_indices = BTreeMap::<(u8, Vec<u8>), u16>::new();
         let mut participants = Vec::with_capacity(ordered.len());
         for (_, evidence, node_signature, enclave_signature) in ordered {
-            let DcapEvidenceV1 {
-                intent,
-                quote,
-                components,
-            } = evidence;
-            let components: [DcapCollateralComponentV1; 8] =
-                components.try_into().map_err(|_| {
-                    CodecError::NonCanonical(
-                        "TEE bootstrap evidence does not contain exactly eight components",
+            let (intent, evidence) = match evidence {
+                AttestationEvidenceV1::Dcap(DcapEvidenceV1 {
+                    intent,
+                    quote,
+                    components,
+                }) => {
+                    let components: [DcapCollateralComponentV1; 8] =
+                        components.try_into().map_err(|_| {
+                            CodecError::NonCanonical(
+                                "TEE bootstrap evidence does not contain exactly eight components",
+                            )
+                        })?;
+                    let mut temporary_indices = [0_u16; 8];
+                    for (expected_kind, component) in components.into_iter().enumerate() {
+                        if component.kind as u8 != (expected_kind + 1) as u8 {
+                            return Err(CodecError::NonCanonical(
+                                "TEE bootstrap collateral component kind mismatch",
+                            ));
+                        }
+                        let next_index = u16::try_from(component_indices.len())
+                            .map_err(|_| CodecError::ArithmeticOverflow)?;
+                        temporary_indices[expected_kind] = *component_indices
+                            .entry((component.kind as u8, component.bytes))
+                            .or_insert(next_index);
+                    }
+                    (
+                        intent,
+                        TeeBootstrapParticipantEvidenceV2::Dcap {
+                            quote,
+                            collateral_component_indices: temporary_indices,
+                        },
                     )
-                })?;
-            let mut temporary_indices = [0_u16; 8];
-            for (expected_kind, component) in components.into_iter().enumerate() {
-                if component.kind as u8 != (expected_kind + 1) as u8 {
-                    return Err(CodecError::NonCanonical(
-                        "TEE bootstrap collateral component kind mismatch",
-                    ));
                 }
-                let next_index = u16::try_from(component_indices.len())
-                    .map_err(|_| CodecError::ArithmeticOverflow)?;
-                temporary_indices[expected_kind] = *component_indices
-                    .entry((component.kind as u8, component.bytes))
-                    .or_insert(next_index);
-            }
+                AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
+                    intent,
+                    dev_attestation_public,
+                    dev_signature,
+                }) => (
+                    intent,
+                    TeeBootstrapParticipantEvidenceV2::GramineDirectDev {
+                        dev_attestation_public,
+                        dev_signature,
+                    },
+                ),
+            };
             participants.push(TeeBootstrapParticipantV2 {
                 intent,
-                quote,
-                collateral_component_indices: temporary_indices,
+                evidence,
                 node_signature,
                 enclave_signature,
             });
@@ -163,10 +200,16 @@ impl TeeBootstrapV2 {
             })
             .collect::<Result<Vec<_>, CodecError>>()?;
         for participant in &mut participants {
-            for index in &mut participant.collateral_component_indices {
-                *index = *canonical_index_by_temporary
-                    .get(usize::from(*index))
-                    .ok_or(CodecError::ArithmeticOverflow)?;
+            if let TeeBootstrapParticipantEvidenceV2::Dcap {
+                collateral_component_indices,
+                ..
+            } = &mut participant.evidence
+            {
+                for index in collateral_component_indices {
+                    *index = *canonical_index_by_temporary
+                        .get(usize::from(*index))
+                        .ok_or(CodecError::ArithmeticOverflow)?;
+                }
             }
         }
         let committee_signatures = participants
@@ -270,11 +313,14 @@ impl TeeBootstrapV2 {
                     .len(),
             );
         }
-        let collateral_component_count = self
-            .participants
-            .len()
-            .checked_mul(8)
-            .ok_or(CodecError::ArithmeticOverflow)?;
+        let collateral_component_count = match self.policy.attestation_mode {
+            AttestationMode::DcapRequired => self
+                .participants
+                .len()
+                .checked_mul(8)
+                .ok_or(CodecError::ArithmeticOverflow)?,
+            AttestationMode::GramineDirectDev => 0,
+        };
         system_schedule.tee_bootstrap_precharge(
             tee_registry_schedule,
             TeeBootstrapGasInputV1 {
@@ -309,9 +355,24 @@ impl TeeBootstrapV2 {
         put_len_u16(&mut out, self.participants.len())?;
         for participant in &self.participants {
             put_bytes_u32(&mut out, &participant.intent.encode_canonical()?)?;
-            put_bytes_u32(&mut out, &participant.quote)?;
-            for index in participant.collateral_component_indices {
-                put_u16(&mut out, index);
+            out.push(participant.intent.attestation_mode as u8);
+            match &participant.evidence {
+                TeeBootstrapParticipantEvidenceV2::Dcap {
+                    quote,
+                    collateral_component_indices,
+                } => {
+                    put_bytes_u32(&mut out, quote)?;
+                    for index in collateral_component_indices {
+                        put_u16(&mut out, *index);
+                    }
+                }
+                TeeBootstrapParticipantEvidenceV2::GramineDirectDev {
+                    dev_attestation_public,
+                    dev_signature,
+                } => {
+                    out.extend_from_slice(dev_attestation_public);
+                    out.extend_from_slice(dev_signature);
+                }
             }
             out.extend_from_slice(&participant.node_signature);
             out.extend_from_slice(&participant.enclave_signature);
@@ -338,10 +399,18 @@ impl TeeBootstrapV2 {
             let intent_len = participant.intent.encode_canonical()?.len();
             checked_add_len(&mut len, 4)?;
             checked_add_len(&mut len, intent_len)?;
-            checked_add_len(&mut len, 4)?;
-            checked_add_len(&mut len, participant.quote.len())?;
-            // eight u16 collateral references + node signature + enclave signature
-            checked_add_len(&mut len, 8 * 2 + 65 + 64)?;
+            checked_add_len(&mut len, 1)?;
+            match &participant.evidence {
+                TeeBootstrapParticipantEvidenceV2::Dcap { quote, .. } => {
+                    checked_add_len(&mut len, 4)?;
+                    checked_add_len(&mut len, quote.len())?;
+                    checked_add_len(&mut len, 8 * 2)?;
+                }
+                TeeBootstrapParticipantEvidenceV2::GramineDirectDev { .. } => {
+                    checked_add_len(&mut len, 32 + 64)?;
+                }
+            }
+            checked_add_len(&mut len, 65 + 64)?;
         }
         Ok(len)
     }
@@ -397,17 +466,31 @@ impl TeeBootstrapV2 {
             let intent = RegistrationIntentV1::decode_canonical(
                 decoder.bounded_bytes("registration intent", MAX_EVIDENCE_CALL_FRAMING_BYTES)?,
             )?;
-            let quote = decoder
-                .bounded_bytes("SGX quote", MAX_QUOTE_BYTES)?
-                .to_vec();
-            let mut collateral_component_indices = [0_u16; 8];
-            for index in &mut collateral_component_indices {
-                *index = decoder.u16()?;
-            }
+            let mode = AttestationMode::decode(decoder.u8()?)?;
+            let evidence = match mode {
+                AttestationMode::DcapRequired => {
+                    let quote = decoder
+                        .bounded_bytes("SGX quote", MAX_QUOTE_BYTES)?
+                        .to_vec();
+                    let mut collateral_component_indices = [0_u16; 8];
+                    for index in &mut collateral_component_indices {
+                        *index = decoder.u16()?;
+                    }
+                    TeeBootstrapParticipantEvidenceV2::Dcap {
+                        quote,
+                        collateral_component_indices,
+                    }
+                }
+                AttestationMode::GramineDirectDev => {
+                    TeeBootstrapParticipantEvidenceV2::GramineDirectDev {
+                        dev_attestation_public: decoder.array()?,
+                        dev_signature: decoder.array()?,
+                    }
+                }
+            };
             participants.push(TeeBootstrapParticipantV2 {
                 intent,
-                quote,
-                collateral_component_indices,
+                evidence,
                 node_signature: decoder.array()?,
                 enclave_signature: decoder.array()?,
             });
@@ -453,26 +536,40 @@ impl TeeBootstrapV2 {
                 .ok_or(CodecError::NonCanonical(
                     "TEE bootstrap participant index is out of range",
                 ))?;
-        let mut components = Vec::with_capacity(8);
-        for (expected_kind, index) in participant.collateral_component_indices.iter().enumerate() {
-            let component =
-                self.collateral_pool
-                    .get(usize::from(*index))
-                    .ok_or(CodecError::NonCanonical(
-                        "TEE bootstrap collateral reference is out of range",
-                    ))?;
-            if component.kind as u8 != (expected_kind + 1) as u8 {
-                return Err(CodecError::NonCanonical(
-                    "TEE bootstrap collateral reference kind mismatch",
-                ));
+        let evidence = match &participant.evidence {
+            TeeBootstrapParticipantEvidenceV2::Dcap {
+                quote,
+                collateral_component_indices,
+            } => {
+                let mut components = Vec::with_capacity(8);
+                for (expected_kind, index) in collateral_component_indices.iter().enumerate() {
+                    let component = self.collateral_pool.get(usize::from(*index)).ok_or(
+                        CodecError::NonCanonical(
+                            "TEE bootstrap collateral reference is out of range",
+                        ),
+                    )?;
+                    if component.kind as u8 != (expected_kind + 1) as u8 {
+                        return Err(CodecError::NonCanonical(
+                            "TEE bootstrap collateral reference kind mismatch",
+                        ));
+                    }
+                    components.push(component.clone());
+                }
+                AttestationEvidenceV1::Dcap(DcapEvidenceV1 {
+                    intent: participant.intent.clone(),
+                    quote: quote.clone(),
+                    components,
+                })
             }
-            components.push(component.clone());
-        }
-        let evidence = AttestationEvidenceV1::Dcap(DcapEvidenceV1 {
-            intent: participant.intent.clone(),
-            quote: participant.quote.clone(),
-            components,
-        });
+            TeeBootstrapParticipantEvidenceV2::GramineDirectDev {
+                dev_attestation_public,
+                dev_signature,
+            } => AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
+                intent: participant.intent.clone(),
+                dev_attestation_public: *dev_attestation_public,
+                dev_signature: *dev_signature,
+            }),
+        };
         evidence.encode_canonical()?;
         Ok(evidence)
     }
@@ -513,6 +610,19 @@ impl TeeBootstrapV2 {
                 "TEE bootstrap signatures do not cover every participant",
             ));
         }
+        match self.policy.attestation_mode {
+            AttestationMode::DcapRequired if self.collateral_pool.is_empty() => {
+                return Err(CodecError::NonCanonical(
+                    "DCAP TEE bootstrap collateral pool is empty",
+                ));
+            }
+            AttestationMode::GramineDirectDev if !self.collateral_pool.is_empty() => {
+                return Err(CodecError::NonCanonical(
+                    "GramineDirectDev TEE bootstrap must not carry DCAP collateral",
+                ));
+            }
+            _ => {}
+        }
 
         for component in &self.collateral_pool {
             if component.bytes.is_empty() {
@@ -541,7 +651,7 @@ impl TeeBootstrapV2 {
         let mut previous_validator = None;
         for (participant_index, participant) in self.participants.iter().enumerate() {
             if participant.intent.operation != AttestationOperationV1::RegisterEnclave
-                || participant.intent.attestation_mode != AttestationMode::DcapRequired
+                || participant.intent.attestation_mode != self.policy.attestation_mode
                 || participant.intent.enclave_profile != EnclaveProfile::Validator
                 || participant.intent.policy_hash != policy_hash
             {
@@ -561,26 +671,49 @@ impl TeeBootstrapV2 {
                     "TEE bootstrap committee signatures do not match participants",
                 ));
             }
-            if participant.quote.is_empty() {
-                return Err(CodecError::NonCanonical("TEE bootstrap quote is empty"));
-            }
-            enforce_limit("SGX quote", MAX_QUOTE_BYTES, participant.quote.len())?;
-            for (expected_kind, index) in
-                participant.collateral_component_indices.iter().enumerate()
-            {
-                let index = usize::from(*index);
-                let component = self
-                    .collateral_pool
-                    .get(index)
-                    .ok_or(CodecError::NonCanonical(
-                        "TEE bootstrap collateral reference is out of range",
-                    ))?;
-                if component.kind as u8 != (expected_kind + 1) as u8 {
+            match &participant.evidence {
+                TeeBootstrapParticipantEvidenceV2::Dcap {
+                    quote,
+                    collateral_component_indices,
+                } if self.policy.attestation_mode == AttestationMode::DcapRequired => {
+                    if quote.is_empty() {
+                        return Err(CodecError::NonCanonical("TEE bootstrap quote is empty"));
+                    }
+                    enforce_limit("SGX quote", MAX_QUOTE_BYTES, quote.len())?;
+                    for (expected_kind, index) in collateral_component_indices.iter().enumerate() {
+                        let index = usize::from(*index);
+                        let component =
+                            self.collateral_pool
+                                .get(index)
+                                .ok_or(CodecError::NonCanonical(
+                                    "TEE bootstrap collateral reference is out of range",
+                                ))?;
+                        if component.kind as u8 != (expected_kind + 1) as u8 {
+                            return Err(CodecError::NonCanonical(
+                                "TEE bootstrap collateral reference kind mismatch",
+                            ));
+                        }
+                        used_components[index] = true;
+                    }
+                }
+                TeeBootstrapParticipantEvidenceV2::GramineDirectDev {
+                    dev_attestation_public,
+                    dev_signature,
+                } if self.policy.attestation_mode == AttestationMode::GramineDirectDev => {
+                    if dev_attestation_public != &participant.intent.attestation_ed25519
+                        || dev_signature != &participant.enclave_signature
+                        || !participant.intent.verify_enclave_signature(dev_signature)
+                    {
+                        return Err(CodecError::NonCanonical(
+                            "GramineDirectDev evidence does not prove the intent attestation key",
+                        ));
+                    }
+                }
+                _ => {
                     return Err(CodecError::NonCanonical(
-                        "TEE bootstrap collateral reference kind mismatch",
+                        "TEE bootstrap participant evidence mode does not match policy",
                     ));
                 }
-                used_components[index] = true;
             }
             let evidence = self.logical_evidence(participant_index)?;
             enforce_limit(
@@ -603,6 +736,13 @@ fn checked_add_len(total: &mut usize, value: usize) -> Result<(), CodecError> {
         .checked_add(value)
         .ok_or(CodecError::ArithmeticOverflow)?;
     Ok(())
+}
+
+fn evidence_intent(evidence: &AttestationEvidenceV1) -> &RegistrationIntentV1 {
+    match evidence {
+        AttestationEvidenceV1::Dcap(value) => &value.intent,
+        AttestationEvidenceV1::GramineDirectDev(value) => &value.intent,
+    }
 }
 
 fn validator_address(intent: &RegistrationIntentV1) -> Result<Address, CodecError> {

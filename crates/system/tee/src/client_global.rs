@@ -1,7 +1,7 @@
 //! Process-global enclave client shared by every enclave-using module.
 //!
 //! Production installs an [`AuthorizedEnclaveClient`] after node-signed,
-//! write-once initialization; the separate dev/mock path may install the legacy
+//! write-once initialization; the separate dev/mock path may install the development
 //! [`EnclaveClient`]. Both expose only requests and the manifest/quote-bound
 //! attestation key needed by runtime consumers. The offer-decrypt and key-delivery
 //! paths reach the single connection through [`try_with_enclave`]. TEE transport
@@ -14,6 +14,8 @@
 //! spawns a thread.
 
 use std::sync::{Mutex, OnceLock};
+
+use alloy_primitives::B256;
 
 use crate::client::{AuthorizedEnclaveClient, EnclaveClient};
 use crate::dcap_protocol::DcapVerificationOutcomeV1;
@@ -48,7 +50,7 @@ pub fn is_enclave_configured() -> bool {
     ENCLAVE_CLIENT.get().is_some()
 }
 
-/// Install the separate dev/mock legacy client once.
+/// Install the separate dev/mock client once.
 pub fn install_enclave_client(client: EnclaveClient) -> Result<(), &'static str> {
     ENCLAVE_CLIENT
         .set(Mutex::new(RuntimeEnclaveClient::Development(client)))
@@ -96,15 +98,57 @@ pub fn verify_dcap_evidence_v1(
     result
 }
 
+/// Read whether the permanent tribute-offer key is ready in the mandatory local
+/// enclave. `None` is a fresh/keyless state, not a replacement or recovery path.
+pub fn resident_offer_public_key_state_v1() -> Result<Option<B256>, TransportError> {
+    let Some(result) = try_with_enclave(|client| client.request(&EnclaveRequest::GetPublicKeys))
+    else {
+        return Err(TransportError::EnclaveError(
+            "mandatory enclave client is not configured or its lock is poisoned".into(),
+        ));
+    };
+    match result? {
+        EnclaveResponse::PublicKeys {
+            offer_key_ready,
+            recipient_x25519_pub,
+            ..
+        } => {
+            if !offer_key_ready {
+                return Ok(None);
+            }
+            let public = B256::from(recipient_x25519_pub);
+            if public.is_zero() {
+                return Err(TransportError::EnclaveError(
+                    "local enclave reports a ready but zero permanent offer key".into(),
+                ));
+            }
+            Ok(Some(public))
+        }
+        EnclaveResponse::Error { message } => Err(TransportError::EnclaveError(message)),
+        _ => Err(TransportError::UnexpectedResponse),
+    }
+}
+
+/// Require the permanent tribute-offer key. A keyless enclave is fatal to an
+/// existing identity and never triggers recovery, replacement, or fallback.
+pub fn resident_offer_public_key_v1() -> Result<B256, TransportError> {
+    resident_offer_public_key_state_v1()?.ok_or_else(|| {
+        TransportError::EnclaveError(
+            "local enclave permanent offer key is not ready; no recovery or fallback exists".into(),
+        )
+    })
+}
+
 /// DETERMINISTICALLY seal the resident tribute offer key to `recipient_x25519` via
 /// the enclave (`SealOfferKeyForRegistry`), for committing the sealed blob on-chain
 /// (on-chain offer-key delivery to a joining validator). Every committee
 /// node's enclave returns the same blob (static-static ECDH), so the on-chain write
 /// is consensus-deterministic.
 ///
-/// Returns `Ok(None)` when no enclave is configured (non-TEE node — the caller skips
-/// the seal), `Ok(Some(blob))` on success, and `Err` when the enclave is configured
-/// but the seal failed (e.g. no resident offer key yet, or the sidecar errored).
+/// Returns `Ok(None)` only to represent an unconfigured process. The production V1
+/// registry caller maps that state to a fatal execution invariant; it never skips
+/// the event. `Ok(Some(blob))` is success and `Err` reports an enclave or transport
+/// failure.
 pub fn seal_offer_key_for_registry(recipient_x25519: [u8; 32]) -> Result<Option<Vec<u8>>, String> {
     let Some(result) = try_with_enclave(|client| {
         client.request(&EnclaveRequest::SealOfferKeyForRegistry { recipient_x25519 })

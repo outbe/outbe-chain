@@ -7231,6 +7231,7 @@ dependencies = [
 name = "outbe-chain"
 version = "0.1.0"
 dependencies = [
+ "alloy-primitives",
  "clap",
  "commonware-codec",
  "commonware-consensus",
@@ -7239,6 +7240,7 @@ dependencies = [
  "commonware-storage",
  "commonware-utils",
  "eyre",
+ "hex",
  "k256 0.13.4",
  "outbe-compressed-entities",
  "outbe-consensus",
@@ -7285,8 +7287,10 @@ dependencies = [
  "ring",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "x25519-dalek",
+ "zeroize",
 ]
 
 [[package]]
@@ -7591,6 +7595,7 @@ dependencies = [
  "metrics-util",
  "outbe-compressed-entities",
  "outbe-consensus",
+ "outbe-evm",
  "outbe-node",
  "outbe-ocomp-protocol",
  "outbe-primitives",
@@ -7695,6 +7700,7 @@ dependencies = [
  "reth-transaction-pool",
  "reth-trie",
  "revm",
+ "serde",
  "serde_json",
  "tempfile",
  "tracing",

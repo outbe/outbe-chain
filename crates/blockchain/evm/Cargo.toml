@@ -78,6 +78,7 @@ reth-rpc-eth-api.workspace = true
 
 alloy-sol-types.workspace = true
 eyre.workspace = true
+serde.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
@@ -87,7 +88,7 @@ outbe-nod = { workspace = true, features = ["test-utils"] }
 alloy-sol-types.workspace = true
 alloy-rpc-types-engine.workspace = true
 outbe-offchain-storage.workspace = true
-outbe-primitives = { workspace = true, features = [] }
+outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-validatorset.workspace = true
 reth-basic-payload-builder.workspace = true
 reth-chainspec.workspace = true

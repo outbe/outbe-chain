@@ -44,7 +44,7 @@ fn fresh_lifecycle_localnet(world: &mut World, window: u64) {
 
 /// Shared localnet setup used by every flow: cleanup, bootstrap N (with optional
 /// `TESTNET_*` tuning), start with the environment's TEE mode, and prove the
-/// chain is up (TEE bootstrapped, or RPC reachable tee-less). Also captures the
+/// chain is up with its mandatory enclave. Also captures the
 /// chain's worldwide-day so tribute-offer steps target the OFFERING day.
 pub(crate) fn boot_localnet(world: &mut World, window: u64, tuning: &[(&str, String)]) {
     boot_localnet_with_opts(world, window, tuning, StartOpts::with_voting_window(window));
@@ -87,6 +87,10 @@ pub(crate) fn bootstrap_final_ocomp_localnet(world: &mut World, window: u64) {
         .localnet
         .bootstrap_ocomp_final()
         .expect("materialize canonical OCOMP Final fixture");
+    world
+        .localnet
+        .bind_dev_tee_genesis()
+        .expect("bind canonical GramineDirectDev fixture manifest");
     world.state.wwd = Some(
         world
             .localnet
@@ -106,22 +110,17 @@ pub(crate) fn start_bootstrapped_localnet(world: &mut World, opts: &StartOpts) {
             .shift_genesis_timestamp(offset)
             .expect("shift debug genesis timestamp with node clock");
     }
+    world
+        .localnet
+        .bind_dev_tee_genesis()
+        .expect("bind canonical GramineDirectDev genesis manifest");
     world.localnet.start(opts).expect("start localnet");
 
-    if world.localnet.tee_enabled() {
-        let bootstrap_wait_attempts = world.localnet.tee_bootstrap_wait_attempts();
-        assert!(
-            world.rpc.wait_bootstrapped(bootstrap_wait_attempts),
-            "TEE chain did not bootstrap"
-        );
-    } else {
-        // Tee-less: just prove the primary RPC is reachable (E2E_NO_TEE branch).
-        let port = world.validators.primary_port();
-        assert!(
-            world.rpc.wait_block(port, 1, 18).is_some(),
-            "tee-less chain RPC not reachable"
-        );
-    }
+    let bootstrap_wait_attempts = world.localnet.tee_bootstrap_wait_attempts();
+    assert!(
+        world.rpc.wait_bootstrapped(bootstrap_wait_attempts),
+        "mandatory TEE chain did not bootstrap"
+    );
 }
 
 /// Wait for the committee to reach a usable height (>= 5), like the

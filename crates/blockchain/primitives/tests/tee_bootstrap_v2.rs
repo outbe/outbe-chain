@@ -8,7 +8,7 @@ use outbe_primitives::{
     system_tx::{
         build_unsigned_system_tx_with_gas_limit, protocol_block_gas_limit, system_tx_intrinsic_gas,
         SystemTxInputV2, SystemTxKind, SystemTxVisibleGasPlan, BOOTSTRAP_BLOCK_GAS_LIMIT,
-        STEADY_BLOCK_GAS_LIMIT, TEE_BOOTSTRAP_DCAP_SELECTOR,
+        STEADY_BLOCK_GAS_LIMIT, TEE_BOOTSTRAP_SELECTOR,
     },
     tee_attestation_v1::{
         AttestationEvidenceV1, AttestationMode, AttestationOperationV1, CodecError,
@@ -19,7 +19,8 @@ use outbe_primitives::{
     },
     tee_bootstrap_v2::{
         TeeBootstrapAuthorityV2, TeeBootstrapCommitteeSignatureV2,
-        TeeBootstrapParticipantSubmissionV2, TeeBootstrapParticipantV2, TeeBootstrapV2,
+        TeeBootstrapParticipantEvidenceV2, TeeBootstrapParticipantSubmissionV2,
+        TeeBootstrapParticipantV2, TeeBootstrapV2,
     },
 };
 
@@ -103,8 +104,10 @@ fn fixture() -> TeeBootstrapV2 {
         .into_iter()
         .map(|address| TeeBootstrapParticipantV2 {
             intent: intent(address, policy_hash),
-            quote: vec![address; 64],
-            collateral_component_indices: [0, 1, 2, 3, 4, 5, 6, 7],
+            evidence: TeeBootstrapParticipantEvidenceV2::Dcap {
+                quote: vec![address; 64],
+                collateral_component_indices: [0, 1, 2, 3, 4, 5, 6, 7],
+            },
             node_signature: [address; 65],
             enclave_signature: [address; 64],
         })
@@ -138,8 +141,10 @@ fn fixture_with_participant_count(count: u8) -> TeeBootstrapV2 {
     payload.participants = (1..=count)
         .map(|address| TeeBootstrapParticipantV2 {
             intent: intent(address, policy_hash),
-            quote: vec![address; 64],
-            collateral_component_indices: [0, 1, 2, 3, 4, 5, 6, 7],
+            evidence: TeeBootstrapParticipantEvidenceV2::Dcap {
+                quote: vec![address; 64],
+                collateral_component_indices: [0, 1, 2, 3, 4, 5, 6, 7],
+            },
             node_signature: [address; 65],
             enclave_signature: [address; 64],
         })
@@ -235,7 +240,12 @@ fn signing_hash_binds_the_complete_body_but_not_committee_signature_bytes() {
     assert_eq!(signature_changed.signing_hash().unwrap(), signing_hash);
 
     let mut evidence_changed = payload;
-    evidence_changed.participants[0].quote[0] ^= 1;
+    let TeeBootstrapParticipantEvidenceV2::Dcap { quote, .. } =
+        &mut evidence_changed.participants[0].evidence
+    else {
+        panic!("fixture must carry DCAP evidence");
+    };
+    quote[0] ^= 1;
     assert_ne!(evidence_changed.signing_hash().unwrap(), signing_hash);
 }
 
@@ -276,16 +286,16 @@ fn gas_charges_each_logical_evidence_despite_collateral_deduplication() {
 #[test]
 fn ost3_system_calldata_roundtrips_the_canonical_bootstrap() {
     let payload = fixture();
-    let calldata = SystemTxInputV2::TeeBootstrapDcap {
+    let calldata = SystemTxInputV2::TeeBootstrap {
         payload: payload.clone(),
     }
     .encode()
     .unwrap();
     assert_eq!(&calldata[..4], b"OST3");
-    assert_eq!(TEE_BOOTSTRAP_DCAP_SELECTOR, *b"OST3");
+    assert_eq!(TEE_BOOTSTRAP_SELECTOR, *b"OST3");
     assert_eq!(
         SystemTxInputV2::decode(&calldata).unwrap(),
-        SystemTxInputV2::TeeBootstrapDcap { payload }
+        SystemTxInputV2::TeeBootstrap { payload }
     );
 }
 
@@ -299,9 +309,7 @@ fn visible_gas_plan_reserves_ost3_precharge_before_assigning_cycle_remainder() {
         )
         .unwrap();
     let cycle = SystemTxInputV2::CycleTick.encode().unwrap();
-    let bootstrap = SystemTxInputV2::TeeBootstrapDcap { payload }
-        .encode()
-        .unwrap();
+    let bootstrap = SystemTxInputV2::TeeBootstrap { payload }.encode().unwrap();
     let cycle_intrinsic = system_tx_intrinsic_gas(&cycle).unwrap();
     let bootstrap_intrinsic = system_tx_intrinsic_gas(&bootstrap).unwrap();
     let cycle_remainder = 77_777;
@@ -433,7 +441,7 @@ fn thirty_two_validator_near_cap_bootstrap_fits_five_transaction_block() {
     let inputs = vec![
         SystemTxInputV2::CycleTick,
         SystemTxInputV2::BoundaryOutcome { artifact },
-        SystemTxInputV2::TeeBootstrapDcap { payload },
+        SystemTxInputV2::TeeBootstrap { payload },
         SystemTxInputV2::OracleSlashWindow,
         SystemTxInputV2::HookEvents,
     ];

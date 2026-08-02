@@ -68,9 +68,10 @@ hash, status, target and expected event topics/data, then waits for the configur
 finality boundary. Reorged receipts restart tracking. Postconditions use finalized
 state or verified CE proof where applicable.
 
-TEE join accepts only an `OfferKeySealed` log from the submitted successful
-registration receipt, then verifies validator, key epoch, chain id and expected
-on-chain offer public key before enclave ingestion. Tribute offer success verifies
+TEE join accepts only an `OfferKeySealedForRegistryV1` log whose transaction hash
+and canonical node-id topic match the submitted registration, then verifies chain
+id, active policy, lease and expected on-chain offer public key before enclave
+ingestion. Tribute offer success verifies
 receipt, derives the canonical owner/day id and confirms authenticated/finalized
 presence; Mongo projection is a separate optional demonstration check.
 

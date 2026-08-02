@@ -1,9 +1,8 @@
-//! Inactive-until-I9 ABI for TeeRegistry V1 node-enclave registration.
+//! Active TeeRegistry V1 node-enclave registration ABI.
 //!
-//! The production EVM route deliberately continues to point at the legacy ABI.
-//! I3/I4 expose this dispatcher only through the `tee-attestation-v1` feature so
-//! its canonical framing, gas and state-machine boundary can be tested before
-//! the A0 activation owned by I9.
+//! A0 routes the production precompile address here exclusively. The global
+//! bootstrap views retain their established selectors, but the former
+//! caller-authorized registration selector is not decoded or accepted.
 
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{sol, SolCall, SolInterface};
@@ -12,7 +11,7 @@ use outbe_primitives::{
     error::{PrecompileError, Result},
     storage::{gas::PRECOMPILE_BASE_GAS, StorageHandle},
     tee_attestation_v1::{
-        AttestationMode, RegistryMutatorV1, TeeRegistryGasScheduleV1,
+        AttestationEvidenceV1, AttestationMode, RegistryMutatorV1, TeeRegistryGasScheduleV1,
         MAX_ATTESTATION_EVIDENCE_BYTES, MAX_EVIDENCE_CALL_FRAMING_BYTES,
     },
 };
@@ -49,6 +48,13 @@ sol! {
     }
 
     interface ITeeRegistryV1 {
+        function isBootstrapped() external view returns (bool);
+        function tributeOfferPublicKey() external view returns (uint256);
+        function policyHash() external view returns (uint256);
+        function keyEpoch() external view returns (uint256);
+        function tributeOfferEpoch() external view returns (uint256);
+        function activePolicyV1() external view returns (bytes memory);
+
         function registerEnclave(
             bytes calldata evidence,
             bytes calldata nodeSignature,
@@ -145,6 +151,7 @@ pub fn dispatch(
             data.len(),
             preflight.evidence.len(),
             policy.measurement_rules.len(),
+            policy.attestation_mode,
         )?;
         Some(policy)
     } else {
@@ -158,6 +165,32 @@ pub fn dispatch(
             use ITeeRegistryV1::ITeeRegistryV1Calls::*;
             let mut registry = TeeRegistry::new(storage);
             match call {
+                isBootstrapped(call) => view(call, |_| registry.is_bootstrapped()),
+                tributeOfferPublicKey(call) => view(call, |_| {
+                    registry
+                        .offer_public_key()
+                        .map(|value| U256::from_be_bytes(value.0))
+                }),
+                policyHash(call) => view(call, |_| {
+                    registry
+                        .policy_hash()
+                        .map(|value| U256::from_be_bytes(value.0))
+                }),
+                keyEpoch(call) => view(call, |_| registry.key_epoch().map(U256::from)),
+                tributeOfferEpoch(call) => {
+                    view(call, |_| registry.tribute_offer_epoch().map(U256::from))
+                }
+                activePolicyV1(call) => view(call, |_| {
+                    registry
+                        .active_policy_v1()?
+                        .encode_canonical()
+                        .map(Bytes::from)
+                        .map_err(|error| {
+                            PrecompileError::Fatal(format!(
+                                "active V1 policy cannot be encoded: {error}"
+                            ))
+                        })
+                }),
                 registerEnclave(_) => {
                     let policy = active_policy.as_ref().ok_or_else(|| {
                         PrecompileError::Fatal("V1 registration preflight was bypassed".into())
@@ -173,11 +206,18 @@ pub fn dispatch(
                         preflight.enclave_signature.try_into().map_err(|_| {
                             PrecompileError::Fatal("preflight enclave signature mismatch".into())
                         })?;
+                    let (node_id_hash, recipient_x25519) =
+                        registration_onboarding_target(preflight.evidence)?;
                     let outcome = registry.register_enclave_with_active_policy_v1(
                         preflight.evidence,
                         &node_signature,
                         &enclave_signature,
                         policy,
+                    )?;
+                    registry.emit_offer_key_sealed_for_registry_v1(
+                        outcome,
+                        node_id_hash,
+                        recipient_x25519,
                     )?;
                     Ok(Bytes::from(
                         ITeeRegistryV1::registerEnclaveCall::abi_encode_returns(&matches!(
@@ -291,12 +331,27 @@ pub fn dispatch(
     )
 }
 
+fn registration_onboarding_target(evidence: &[u8]) -> Result<(B256, [u8; 32])> {
+    let decoded = AttestationEvidenceV1::decode_canonical(evidence).map_err(|error| {
+        PrecompileError::Revert(format!("attestation evidence is not canonical: {error}"))
+    })?;
+    let intent = match decoded {
+        AttestationEvidenceV1::Dcap(value) => value.intent,
+        AttestationEvidenceV1::GramineDirectDev(value) => value.intent,
+    };
+    let node_id_hash = intent.node_id.node_id_hash().map_err(|error| {
+        PrecompileError::Revert(format!("registration node identity is invalid: {error}"))
+    })?;
+    Ok((node_id_hash, intent.recipient_x25519))
+}
+
 fn deduct_mutator_protocol_gas(
     storage: &StorageHandle<'_>,
     kind: RegistryMutatorV1,
     input_len: usize,
     evidence_len: usize,
     active_rule_count: usize,
+    attestation_mode: AttestationMode,
 ) -> Result<()> {
     let schedule = TeeRegistryGasScheduleV1::normative();
     let maximum_transaction_gas = schedule
@@ -305,7 +360,7 @@ fn deduct_mutator_protocol_gas(
             input_len,
             evidence_len,
             active_rule_count,
-            AttestationMode::DcapRequired,
+            attestation_mode,
         )
         .map_err(|error| {
             PrecompileError::Revert(format!("invalid V1 registry gas dimensions: {error}"))
@@ -425,6 +480,34 @@ pub(crate) fn dispatch_register_after_verifier_for_test(
     )
 }
 
+/// Hardware-free coverage of the public registration path after the typed
+/// post-verifier boundary, including mandatory one-time enclave onboarding.
+#[cfg(test)]
+pub(crate) fn dispatch_register_with_onboarding_after_verifier_for_test<F>(
+    storage: StorageHandle<'_>,
+    data: &[u8],
+    intent: &outbe_primitives::tee_attestation_v1::RegistrationIntentV1,
+    capability: crate::v1::PostVerifierDcapCapabilityV1,
+    seal: F,
+) -> Result<V1RegistrationOutcome>
+where
+    F: FnOnce([u8; 32]) -> std::result::Result<Option<Vec<u8>>, String>,
+{
+    let onboarding_storage = storage.clone();
+    let outcome = dispatch_register_after_verifier_for_test(storage, data, intent, capability)?;
+    let node_id_hash = intent.node_id.node_id_hash().map_err(|error| {
+        PrecompileError::Revert(format!("registration node identity is invalid: {error}"))
+    })?;
+    TeeRegistry::new(onboarding_storage)
+        .emit_offer_key_sealed_for_registry_v1_after_sealer_for_test(
+            outcome,
+            node_id_hash,
+            intent.recipient_x25519,
+            seal,
+        )?;
+    Ok(outcome)
+}
+
 #[cfg(test)]
 pub(crate) fn dispatch_renew_after_verifier_for_test(
     storage: StorageHandle<'_>,
@@ -496,6 +579,7 @@ fn dispatch_mutator_after_verifier_for_test(
         data.len(),
         preflight.evidence.len(),
         policy.measurement_rules.len(),
+        policy.attestation_mode,
     )?;
     let node_signature: [u8; 65] = preflight
         .node_signature
@@ -656,8 +740,10 @@ mod tests {
     use outbe_primitives::{
         storage::{hashmap::HashMapStorageProvider, PrecompileStorageProvider},
         tee_attestation_v1::{
-            EnclaveProfile, PlatformTcbStatusSetV1, QvlTcbStatusV1, ResourceScheduleV1,
-            TeeMeasurementRuleV1, TeePolicyV1,
+            AttestationEvidenceV1, AttestationOperationV1, DcapCollateralComponentV1,
+            DcapCollateralKind, DcapEvidenceV1, EnclaveProfile, NodeIdV1, PlatformTcbStatusSetV1,
+            QvlTcbStatusV1, RegistrationIntentV1, ResourceScheduleV1, TeeMeasurementRuleV1,
+            TeePolicyV1,
         },
     };
 
@@ -751,6 +837,56 @@ mod tests {
         }
     }
 
+    fn canonical_dcap_evidence(kind: RegistryMutatorV1) -> Vec<u8> {
+        let policy = policy();
+        let node_key = k256::ecdsa::SigningKey::from_bytes((&[0x61; 32]).into()).unwrap();
+        let reth_p2p_public = node_key.verifying_key().to_encoded_point(true);
+        let mut intent = RegistrationIntentV1 {
+            chain_id: policy.chain_id,
+            genesis_hash: policy.genesis_hash,
+            operation: match kind {
+                RegistryMutatorV1::RegisterEnclave => AttestationOperationV1::RegisterEnclave,
+                RegistryMutatorV1::RenewEnclave => AttestationOperationV1::RenewEnclave,
+                RegistryMutatorV1::TransitionEnclaveMeasurement => {
+                    AttestationOperationV1::TransitionEnclaveMeasurement
+                }
+                RegistryMutatorV1::ReplaceEnclaveBinding => {
+                    AttestationOperationV1::ReplaceEnclaveBinding
+                }
+            },
+            attestation_mode: AttestationMode::DcapRequired,
+            policy_hash: policy.policy_hash().unwrap(),
+            enclave_profile: EnclaveProfile::FullNode,
+            node_id: NodeIdV1::FullNode {
+                reth_p2p_public: reth_p2p_public.as_bytes().try_into().unwrap(),
+            },
+            enclave_id: B256::repeat_byte(1),
+            binding_id: B256::repeat_byte(2),
+            binding_version: 1,
+            registration_version: 0,
+            renewal_nonce: 0,
+            transition_nonce: 0,
+            requested_valid_until: 7_200,
+            recipient_x25519: [3; 32],
+            attestation_ed25519: [4; 32],
+            noise_responder_x25519: [5; 32],
+            node_host_authorization_hash: B256::repeat_byte(6),
+        };
+        intent.enclave_id = intent.derived_enclave_id().unwrap();
+        AttestationEvidenceV1::Dcap(DcapEvidenceV1 {
+            intent,
+            quote: vec![7],
+            components: (1_u8..=8)
+                .map(|value| DcapCollateralComponentV1 {
+                    kind: DcapCollateralKind::try_from(value).unwrap(),
+                    bytes: vec![value],
+                })
+                .collect(),
+        })
+        .encode_canonical()
+        .unwrap()
+    }
+
     #[test]
     fn canonical_register_preflight_is_borrowed_and_rejects_noncanonical_framing() {
         let encoded = call(vec![1, 2, 3], 65, 64);
@@ -802,12 +938,15 @@ mod tests {
 
         // Actual production-shaped storage gas consumes the allowance already
         // included in `register_fixed`; it must never sit above the normative
-        // maximum. No state write is reachable when the production enclave
-        // verifier is unavailable.
+        // maximum. The malformed canonical evidence is rejected before verifier
+        // invocation and no state write is reachable.
         provider.set_gas_limit(u64::MAX);
         let result = provider
             .enter(|storage| dispatch(storage, &input, Address::repeat_byte(0x77), U256::ZERO));
-        assert!(matches!(result, Err(PrecompileError::Fatal(_))));
+        assert!(
+            matches!(result, Err(PrecompileError::Revert(_))),
+            "malformed canonical evidence framing must revert: {result:?}"
+        );
         let (policy_reads, writes) = provider.metered_storage_operations();
         assert!(policy_reads > 0);
         assert_eq!(writes, 0);
@@ -824,7 +963,10 @@ mod tests {
         provider.set_gas_limit(exact_dispatch_gas);
         let result = provider
             .enter(|storage| dispatch(storage, &input, Address::repeat_byte(0x88), U256::ZERO));
-        assert!(matches!(result, Err(PrecompileError::Fatal(_))));
+        assert!(
+            matches!(result, Err(PrecompileError::Revert(_))),
+            "exact-gas malformed evidence must still revert: {result:?}"
+        );
         assert_eq!(provider.gas_used(), exact_dispatch_gas);
         assert_eq!(provider.metered_storage_operations(), (policy_reads, 0));
 
@@ -833,6 +975,64 @@ mod tests {
             .enter(|storage| dispatch(storage, &input, Address::repeat_byte(0x99), U256::ZERO));
         assert!(matches!(result, Err(PrecompileError::OutOfGas)));
         assert_eq!(provider.gas_used(), storage_gas);
+        assert_eq!(provider.metered_storage_operations(), (policy_reads, 0));
+    }
+
+    #[test]
+    fn gramine_direct_dev_register_precharge_uses_active_policy_mode() {
+        let mut active_policy = policy();
+        active_policy.attestation_mode = AttestationMode::GramineDirectDev;
+        let mut provider = HashMapStorageProvider::new_with_chain_identity(31337, GENESIS);
+        provider.set_block_number(1);
+        provider
+            .enter(|storage| TeeRegistry::new(storage).install_initial_policy_v1(&active_policy))
+            .unwrap();
+        provider.enable_production_storage_gas_metering();
+
+        // Canonical outer ABI with malformed development evidence reaches the
+        // mode-selected precharge and then reverts during evidence decoding.
+        // The exact GramineDirectDev maximum must be sufficient; charging the
+        // production DCAP schedule here makes the reachable dev transaction
+        // consume its entire signed gas limit before validation.
+        let input = call(vec![1, 1, 0, 0, 0, 0], 65, 64);
+        let schedule = TeeRegistryGasScheduleV1::normative();
+        let total = schedule
+            .maximum_transaction_gas(
+                RegistryMutatorV1::RegisterEnclave,
+                input.len(),
+                6,
+                active_policy.measurement_rules.len(),
+                AttestationMode::GramineDirectDev,
+            )
+            .unwrap();
+        let intrinsic = schedule
+            .maximum_calldata_intrinsic_gas(input.len())
+            .unwrap();
+        let storage_allowance = schedule.register_storage_gas_allowance();
+        let dispatch_charge = total - intrinsic - PRECOMPILE_BASE_GAS - storage_allowance;
+
+        provider.set_gas_limit(u64::MAX);
+        let result = provider
+            .enter(|storage| dispatch(storage, &input, Address::repeat_byte(0xA7), U256::ZERO));
+        assert!(
+            matches!(result, Err(PrecompileError::Revert(_))),
+            "malformed development evidence must revert after its mode-selected precharge: {result:?}"
+        );
+        let (policy_reads, writes) = provider.metered_storage_operations();
+        assert!(policy_reads > 0);
+        assert_eq!(writes, 0);
+        let storage_gas = policy_reads * 100;
+        let exact_dispatch_gas = dispatch_charge + storage_gas;
+        assert_eq!(provider.gas_used(), exact_dispatch_gas);
+
+        provider.set_gas_limit(exact_dispatch_gas);
+        let result = provider
+            .enter(|storage| dispatch(storage, &input, Address::repeat_byte(0xA8), U256::ZERO));
+        assert!(
+            matches!(result, Err(PrecompileError::Revert(_))),
+            "exact GramineDirectDev gas must reach canonical evidence rejection: {result:?}"
+        );
+        assert_eq!(provider.gas_used(), exact_dispatch_gas);
         assert_eq!(provider.metered_storage_operations(), (policy_reads, 0));
     }
 
@@ -850,10 +1050,18 @@ mod tests {
             provider.enable_production_storage_gas_metering();
             provider.set_gas_limit(u64::MAX);
 
-            let input = mutator_call(kind, vec![1, 1, 0, 0, 0, 0], 65, 64);
+            let evidence = canonical_dcap_evidence(kind);
+            let evidence_len = evidence.len();
+            let input = mutator_call(kind, evidence, 65, 64);
             let schedule = TeeRegistryGasScheduleV1::normative();
             let total = schedule
-                .maximum_transaction_gas(kind, input.len(), 6, 1, AttestationMode::DcapRequired)
+                .maximum_transaction_gas(
+                    kind,
+                    input.len(),
+                    evidence_len,
+                    1,
+                    AttestationMode::DcapRequired,
+                )
                 .unwrap();
             let intrinsic = schedule
                 .maximum_calldata_intrinsic_gas(input.len())
@@ -862,7 +1070,10 @@ mod tests {
 
             let result = provider
                 .enter(|storage| dispatch(storage, &input, Address::repeat_byte(0xA1), U256::ZERO));
-            assert!(matches!(result, Err(PrecompileError::Fatal(_))));
+            assert!(
+                matches!(result, Err(PrecompileError::Fatal(_))),
+                "unexpected pre-verifier result for {kind:?}: {result:?}"
+            );
             let (reads, writes) = provider.metered_storage_operations();
             assert!(reads > 0);
             assert_eq!(writes, 0, "verifier outage must not extend registry state");

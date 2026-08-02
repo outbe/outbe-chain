@@ -275,6 +275,19 @@ pub(crate) fn block_number(url: &str) -> Option<u64> {
     })
 }
 
+/// Consensus timestamp of the canonical head block.
+pub(crate) fn latest_block_timestamp(url: &str) -> Option<u64> {
+    let url = url.to_string();
+    block_on(async move {
+        let provider = ProviderBuilder::new().connect_http(url.parse().ok()?);
+        let block = provider
+            .get_block_by_number(BlockNumberOrTag::Latest)
+            .await
+            .ok()??;
+        Some(block.header.timestamp)
+    })
+}
+
 /// Number of the finalized block.
 pub(crate) fn finalized_number(url: &str) -> Option<u64> {
     let url = url.to_string();

@@ -44,6 +44,46 @@ const OCOMP_FINAL_VALIDATOR_FILES: &[&str] = &[
 ];
 
 impl Localnet {
+    /// Add the canonical GramineDirectDev block-1 manifest after every scenario
+    /// has finished mutating genesis. The product binary constructs and
+    /// validates the bytes; the harness never reimplements the policy codec.
+    pub(crate) fn bind_dev_tee_genesis(&self) -> Result<()> {
+        let genesis = self.cfg.dir.join("genesis.json");
+        let value: serde_json::Value = serde_json::from_slice(&fs::read(&genesis)?)?;
+        if value
+            .get("config")
+            .and_then(|config| config.get("teeAttestationV1"))
+            .is_some()
+        {
+            return Ok(());
+        }
+        let seeded = self.cfg.dir.join("genesis.seeded.json");
+        if seeded.exists() {
+            bail!(
+                "refusing to overwrite existing mutable genesis input {}",
+                seeded.display()
+            );
+        }
+        fs::rename(&genesis, &seeded)?;
+        let mut command = Command::new(&self.cfg.bin_chain);
+        command
+            .arg("tee")
+            .arg("genesis")
+            .arg("--input")
+            .arg(&seeded)
+            .arg("--output")
+            .arg(&genesis)
+            .arg("--mode")
+            .arg("gramine-direct-dev");
+        if let Err(error) = self.run_setup(&mut command, "outbe-chain tee genesis") {
+            if !genesis.exists() {
+                let _ = fs::rename(&seeded, &genesis);
+            }
+            return Err(error);
+        }
+        Ok(())
+    }
+
     /// Offset the debug-node wall clock to the immutable timestamp baked into
     /// the canonical OCOMP fixture without rewriting that fixture.
     #[cfg(feature = "ocomp-integration")]

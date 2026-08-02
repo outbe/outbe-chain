@@ -1,5 +1,5 @@
 use alloy_primitives::{Address, B256, U256};
-use alloy_sol_types::{sol, SolCall};
+use alloy_sol_types::{sol, SolCall, SolEvent};
 use ed25519_dalek::Signer as _;
 use k256::ecdsa::signature::hazmat::PrehashSigner as _;
 use outbe_primitives::{
@@ -17,10 +17,12 @@ use outbe_validatorset::contract::ValidatorSet;
 
 use crate::{
     schema::TeeRegistry,
-    v1::{PostVerifierDcapCapabilityV1, V1RegistrationOutcome},
+    v1::{OfferKeySealedForRegistryV1, PostVerifierDcapCapabilityV1, V1RegistrationOutcome},
     v1_precompile::{
-        dispatch_register_after_verifier_for_test, dispatch_renew_after_verifier_for_test,
-        dispatch_replace_after_verifier_for_test, dispatch_transition_after_verifier_for_test,
+        dispatch_register_after_verifier_for_test,
+        dispatch_register_with_onboarding_after_verifier_for_test,
+        dispatch_renew_after_verifier_for_test, dispatch_replace_after_verifier_for_test,
+        dispatch_transition_after_verifier_for_test,
     },
 };
 
@@ -113,6 +115,12 @@ fn storage(genesis_hash: B256) -> HashMapStorageProvider {
     storage.set_block_number(10);
     storage.set_timestamp(U256::from(NOW));
     storage
+}
+
+fn sealed_offer_artifact(offer_public: B256, fill: u8) -> Vec<u8> {
+    let mut sealed = vec![fill; outbe_tee::protocol::MIN_SEALED_OFFER_KEY_FOR_REGISTRY_BYTES];
+    sealed[..32].copy_from_slice(offer_public.as_slice());
+    sealed
 }
 
 fn register_validator(
@@ -682,6 +690,164 @@ fn full_node_proposer_validator_and_follower_apply_identical_abi_state_and_gas()
 }
 
 #[test]
+fn public_v1_registration_emits_onboarding_only_for_created_binding() {
+    let genesis_hash = B256::repeat_byte(0x2A);
+    let active_policy = policy(
+        genesis_hash,
+        PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+    );
+    let node_signer = OutbeEvmSigner::from_secret_bytes([0x31; 32]).unwrap();
+    let enclave_signer = ed25519_dalek::SigningKey::from_bytes(&[0x32; 32]);
+    let intent = registration_intent(
+        &active_policy,
+        &node_signer,
+        CONSENSUS_KEY,
+        &enclave_signer,
+        0x33,
+        0x34,
+    );
+    let (node_signature, enclave_signature) = signatures(&intent, &node_signer, &enclave_signer);
+    let call = IRegisterEnclaveV1Test::registerEnclaveCall {
+        evidence: vec![0xA8; 4_096].into(),
+        nodeSignature: node_signature.to_vec().into(),
+        enclaveSignature: enclave_signature.to_vec().into(),
+    }
+    .abi_encode();
+    let offer_public = B256::repeat_byte(0x41);
+    let sealed = sealed_offer_artifact(offer_public, 0x42);
+    let node_id_hash = intent.node_id.node_id_hash().unwrap();
+    let mut provider = storage(genesis_hash);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        register_validator(storage.clone(), &node_signer, CONSENSUS_KEY);
+        let mut registry = TeeRegistry::new(storage);
+        registry.install_initial_policy_v1(&active_policy).unwrap();
+        registry
+            .tribute_offer_public_key
+            .write(offer_public)
+            .unwrap();
+    });
+
+    let created = StorageHandle::enter(&mut provider, |storage| {
+        dispatch_register_with_onboarding_after_verifier_for_test(
+            storage,
+            &call,
+            &intent,
+            PostVerifierDcapCapabilityV1::new(verdict(DcapPlatformTcbStatusV1::UpToDate)),
+            |recipient| {
+                assert_eq!(recipient, intent.recipient_x25519);
+                Ok(Some(sealed.clone()))
+            },
+        )
+        .unwrap()
+    });
+    assert_eq!(created, V1RegistrationOutcome::Created);
+
+    let onboarding = provider
+        .get_ordered_events()
+        .iter()
+        .filter(|log| log.topics().first() == Some(&OfferKeySealedForRegistryV1::SIGNATURE_HASH))
+        .collect::<Vec<_>>();
+    assert_eq!(onboarding.len(), 1);
+    let decoded = OfferKeySealedForRegistryV1::decode_log(onboarding[0]).unwrap();
+    assert_eq!(decoded.nodeIdHash, node_id_hash);
+    assert_eq!(decoded.sealedOfferKey.as_ref(), sealed.as_slice());
+
+    let idempotent = StorageHandle::enter(&mut provider, |storage| {
+        dispatch_register_with_onboarding_after_verifier_for_test(
+            storage,
+            &call,
+            &intent,
+            PostVerifierDcapCapabilityV1::new(verdict(DcapPlatformTcbStatusV1::UpToDate)),
+            |_| panic!("idempotent registration must not ask the enclave to reseal the offer key"),
+        )
+        .unwrap()
+    });
+    assert_eq!(idempotent, V1RegistrationOutcome::Idempotent);
+    assert_eq!(
+        provider
+            .get_ordered_events()
+            .iter()
+            .filter(|log| {
+                log.topics().first() == Some(&OfferKeySealedForRegistryV1::SIGNATURE_HASH)
+            })
+            .count(),
+        1,
+        "idempotent replay must not redeliver the permanent offer key"
+    );
+}
+
+#[test]
+fn onboarding_artifact_fails_closed_for_missing_enclave_and_malformed_output() {
+    let offer_public = B256::repeat_byte(0x51);
+    let node_id_hash = B256::repeat_byte(0x52);
+    let recipient = [0x53; 32];
+    let too_small = vec![0x54; outbe_tee::protocol::MIN_SEALED_OFFER_KEY_FOR_REGISTRY_BYTES - 1];
+    let too_large = vec![0x55; outbe_tee::protocol::MAX_SEALED_OFFER_KEY_FOR_REGISTRY_BYTES + 1];
+    let wrong_prefix = sealed_offer_artifact(B256::repeat_byte(0x56), 0x57);
+    let cases = [
+        ("missing enclave", None, "mandatory enclave is unavailable"),
+        (
+            "below minimum",
+            Some(too_small),
+            "malformed V1 offer-key onboarding artifact",
+        ),
+        (
+            "above maximum",
+            Some(too_large),
+            "malformed V1 offer-key onboarding artifact",
+        ),
+        (
+            "wrong offer prefix",
+            Some(wrong_prefix),
+            "malformed V1 offer-key onboarding artifact",
+        ),
+    ];
+
+    for (case, supplied, expected) in cases {
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        let error = StorageHandle::enter(&mut provider, |storage| {
+            let mut registry = TeeRegistry::new(storage);
+            registry
+                .tribute_offer_public_key
+                .write(offer_public)
+                .unwrap();
+            registry
+                .emit_offer_key_sealed_for_registry_v1_after_sealer_for_test(
+                    V1RegistrationOutcome::Created,
+                    node_id_hash,
+                    recipient,
+                    |_| Ok(supplied),
+                )
+                .unwrap_err()
+        });
+        assert!(
+            matches!(error, PrecompileError::Fatal(ref message) if message.contains(expected)),
+            "unexpected {case} outcome: {error:?}"
+        );
+        assert!(provider.get_ordered_events().is_empty(), "{case}");
+    }
+
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let error = StorageHandle::enter(&mut provider, |storage| {
+        TeeRegistry::new(storage)
+            .emit_offer_key_sealed_for_registry_v1_after_sealer_for_test(
+                V1RegistrationOutcome::Created,
+                node_id_hash,
+                recipient,
+                |_| panic!("zero commitment must fail before contacting the enclave"),
+            )
+            .unwrap_err()
+    });
+    assert!(matches!(
+        error,
+        PrecompileError::Fatal(message)
+            if message.contains("requires the OST3 offer-key commitment")
+    ));
+    assert!(provider.get_ordered_events().is_empty());
+}
+
+#[test]
 fn full_node_binding_is_idempotent_expires_and_rejects_validator_credentials() {
     let genesis_hash = B256::repeat_byte(0x19);
     let active_policy = policy(
@@ -1207,14 +1373,14 @@ fn initial_policy_is_state_authority_and_is_write_once() {
         PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
     );
     let mut provider = storage(genesis_hash);
-    let legacy_policy_hash = B256::repeat_byte(0xD1);
+    let bootstrap_policy_hash = B256::repeat_byte(0xD1);
     StorageHandle::enter(&mut provider, |storage| {
         let mut registry = TeeRegistry::new(storage);
-        registry.policy_hash.write(legacy_policy_hash).unwrap();
+        registry.policy_hash.write(bootstrap_policy_hash).unwrap();
         registry.install_initial_policy_v1(&first).unwrap();
         registry.install_initial_policy_v1(&first).unwrap();
         assert_eq!(registry.active_policy_v1().unwrap(), first);
-        assert_eq!(registry.policy_hash.read().unwrap(), legacy_policy_hash);
+        assert_eq!(registry.policy_hash.read().unwrap(), bootstrap_policy_hash);
         assert_eq!(
             registry.active_v1_policy_hash.read().unwrap(),
             first.policy_hash().unwrap()

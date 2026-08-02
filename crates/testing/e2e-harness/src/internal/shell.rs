@@ -10,6 +10,7 @@ use eyre::{bail, Result};
 use xshell::Shell;
 
 use super::config::Config;
+use super::proc::redact_args_for_log;
 
 pub(crate) struct Sh<'a> {
     cfg: &'a Config,
@@ -67,7 +68,8 @@ impl<'a> Sh<'a> {
             }
         }
 
-        let cmdline = format!("{} {}", self.cfg.bin_cli.display(), argv.join(" "));
+        let safe_argv = redact_args_for_log(&argv);
+        let cmdline = format!("{} {}", self.cfg.bin_cli.display(), safe_argv.join(" "));
         if !out.status.success() {
             eprintln!(
                 "[cli] FAILED {cmdline}\n      exit: {}\n      stdout: {}\n      stderr: {}",
@@ -77,6 +79,46 @@ impl<'a> Sh<'a> {
             );
         } else if self.cfg.debug {
             eprintln!("[cli] {cmdline}");
+        }
+        Ok(stdout)
+    }
+
+    /// Run an `outbe-cli` command whose success is required for the scenario.
+    /// Unlike [`Self::cli`], a non-zero status is returned to the calling step
+    /// immediately, so a failed registration cannot be followed by node launch.
+    pub fn cli_required<I, S>(&self, args: I) -> Result<String>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        let argv: Vec<String> = args
+            .into_iter()
+            .map(|a| a.as_ref().to_string_lossy().into_owned())
+            .collect();
+        let out = self.cli_output(&argv)?;
+        let mut stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+        if stdout.ends_with('\n') {
+            stdout.pop();
+            if stdout.ends_with('\r') {
+                stdout.pop();
+            }
+        }
+        if !out.status.success() {
+            let safe_argv = redact_args_for_log(&argv);
+            let cmdline = format!("{} {}", self.cfg.bin_cli.display(), safe_argv.join(" "));
+            bail!(
+                "required outbe-cli command failed: {cmdline}\nexit: {}\nstdout: {}\nstderr: {}",
+                out.status,
+                stdout.trim(),
+                String::from_utf8_lossy(&out.stderr).trim(),
+            );
+        }
+        if self.cfg.debug {
+            eprintln!(
+                "[cli] {} {}",
+                self.cfg.bin_cli.display(),
+                redact_args_for_log(&argv).join(" ")
+            );
         }
         Ok(stdout)
     }

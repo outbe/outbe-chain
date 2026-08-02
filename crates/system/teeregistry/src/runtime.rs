@@ -4,7 +4,7 @@ use outbe_primitives::error::{PrecompileError, Result};
 use crate::schema::TeeRegistry;
 
 /// Domain label binding the per-validator `keys_hash` (mirrors the bootstrap
-/// bundle's `outbe/tee/keys/v1`), so a mid-chain `registerEnclave` produces the
+/// bundle's `outbe/tee/keys/v1`), so a V1 `registerEnclave` produces the
 /// same `keysHash(addr)` shape as the block-1 bootstrap registration.
 const TEE_KEYS_HASH_DOMAIN: &[u8] = b"outbe/tee/keys/v1";
 
@@ -74,17 +74,22 @@ impl TeeRegistry<'_> {
         self.tribute_offer_public_key.read()
     }
 
+    /// Current TEE key epoch committed by OST3 and later canonical lifecycle
+    /// artifacts.
+    pub fn key_epoch(&self) -> Result<u64> {
+        self.key_epoch.read()
+    }
+
     /// The current tribute-offer epoch (slot 4). The enclave derives the resident
     /// offer key for this epoch from `group_sig`; `0` until an offer-key rotation
-    /// advances it. Read by the key-handoff so a newcomer derives the right epoch.
+    /// advances it. Bound into one-time registry onboarding ingestion.
     pub fn tribute_offer_epoch(&self) -> Result<u64> {
         self.tribute_offer_epoch.read()
     }
 
-    /// The genesis-seeded TEE policy hash (`TeePolicy::compute_hash`), read from
-    /// slot 2. `B256::ZERO` means no policy was seeded at genesis, so Phase 3b
-    /// skips measurement enforcement (backward-compatible). After bootstrap this
-    /// slot holds the verified policy hash the bootstrap committed to.
+    /// The policy hash committed by the mandatory block-1 OST3 payload. The active
+    /// canonical V1 policy is installed before bootstrap and zero is never an
+    /// accepted production authority.
     pub fn policy_hash(&self) -> Result<B256> {
         self.policy_hash.read()
     }
@@ -222,113 +227,5 @@ impl TeeRegistry<'_> {
             self.noise_static_pub.write(validator, *noise_static_pub)?;
         }
         Ok(())
-    }
-
-    /// On-chain attestation verification for a mid-chain `registerEnclave` call.
-    ///
-    /// A node submits its enclave keys + attestation quote and the chain verifies
-    /// the RA proof on-chain. The
-    /// real verification — DCAP signature + `REPORT_DATA` key binding + measurement
-    /// allowlist (genesis `teePolicy`) + caller ∈ active validator set — is **NOT
-    /// YET wired** (same posture as the dev `dev_accept_any` policy + the `dcap`
-    /// feature gate). For now it ACCEPTS any registration. The whole registration
-    /// mechanism is real; only this gate is a stub to fill in later.
-    ///
-    // TODO(tee): replace the stub body with real on-chain attestation verification.
-    #[allow(clippy::too_many_arguments)]
-    fn verify_enclave_registration(
-        &self,
-        _caller: Address,
-        _recipient_x25519: B256,
-        _attestation_pub: B256,
-        _noise_static_pub: B256,
-        _mrenclave: B256,
-        _mrsigner: B256,
-        _isv_svn: u16,
-    ) -> Result<bool> {
-        Ok(true)
-    }
-
-    /// Mid-chain enclave registration: a validator records its enclave keys
-    /// on-chain (canonical committee record + handoff binding). Verifies the
-    /// attestation via [`Self::verify_enclave_registration`] (currently a stub that
-    /// accepts), then writes the per-validator slots and counts a first-time
-    /// registrant. A re-registration overwrites (key rotation) and does not
-    /// double-count. Returns `true` on success.
-    #[allow(clippy::too_many_arguments)]
-    pub fn register_enclave(
-        &mut self,
-        caller: Address,
-        recipient_x25519: B256,
-        attestation_pub: B256,
-        noise_static_pub: B256,
-        mrenclave: B256,
-        mrsigner: B256,
-        isv_svn: u16,
-    ) -> Result<bool> {
-        if !self.verify_enclave_registration(
-            caller,
-            recipient_x25519,
-            attestation_pub,
-            noise_static_pub,
-            mrenclave,
-            mrsigner,
-            isv_svn,
-        )? {
-            return Err(PrecompileError::Revert(
-                "enclave registration attestation verification failed".to_string(),
-            ));
-        }
-        let first_time = self.recipient_x25519.read(&caller)?.is_zero();
-        let keys_hash = compute_keys_hash(
-            caller,
-            recipient_x25519,
-            attestation_pub,
-            noise_static_pub,
-            mrenclave,
-            mrsigner,
-            isv_svn,
-        );
-        self.recipient_x25519.write(&caller, recipient_x25519)?;
-        self.attestation_pub.write(&caller, attestation_pub)?;
-        self.noise_static_pub.write(&caller, noise_static_pub)?;
-        self.mrenclave.write(&caller, mrenclave)?;
-        self.mrsigner.write(&caller, mrsigner)?;
-        self.isv_svn.write(&caller, u64::from(isv_svn))?;
-        self.keys_hash.write(&caller, keys_hash)?;
-        if first_time {
-            let count = self.registered_count.read()?.saturating_add(1);
-            self.registered_count.write(count)?;
-        }
-
-        // On-chain offer-key delivery: on a TEE-bootstrapped
-        // chain, deterministically seal the resident tribute offer key to the
-        // registrant's recipient X25519 key (inside the enclave) and EMIT it as an
-        // `OfferKeySealed` event, so the joining validator reads the blob from THIS
-        // tx's receipt and installs the offer key in its enclave before its node
-        // starts executing offer blocks. Skipped when the chain has no offer key yet
-        // (non-TEE chain) or this node has no enclave configured (unit tests). The
-        // seal is deterministic, so every committee enclave emits the same log and
-        // the receipts root agrees; a TEE node without a working enclave cannot
-        // execute offer blocks anyway, so its divergence here is its own fault.
-        if !self.tribute_offer_public_key.read()?.is_zero() {
-            match outbe_tee::seal_offer_key_for_registry(recipient_x25519.0) {
-                Ok(Some(sealed)) => {
-                    self.emit(crate::precompile::OfferKeySealed {
-                        validator: caller,
-                        sealedOfferKey: sealed.into(),
-                    })?;
-                }
-                Ok(None) => {
-                    // No enclave on this node (unit test / non-TEE) — nothing to seal.
-                }
-                Err(e) => {
-                    return Err(PrecompileError::Revert(format!(
-                        "offer-key seal for registration failed: {e}"
-                    )))
-                }
-            }
-        }
-        Ok(true)
     }
 }

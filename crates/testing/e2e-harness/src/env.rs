@@ -29,16 +29,14 @@ pub enum TeeMode {
     /// Production enclave binary under `gramine-direct` (no SGX).
     GramineDirect,
     /// Test-only mock enclave binary under `gramine-direct` (no SGX).
-    Mock,
-    /// No enclave at all — the chain runs tee-less.
     #[default]
-    None,
+    Mock,
 }
 
 impl TeeMode {
     /// Whether an enclave is launched.
-    pub fn enabled(self) -> bool {
-        !matches!(self, TeeMode::None)
+    pub const fn enabled(self) -> bool {
+        true
     }
 
     /// Whether the test-only mock enclave binary is selected.
@@ -62,7 +60,6 @@ impl TeeMode {
             Self::Real => "real",
             Self::GramineDirect => "gramine-direct",
             Self::Mock => "mock",
-            Self::None => "none",
         }
     }
 
@@ -96,7 +93,7 @@ pub struct EnvCli {
     pub no_resolve_ports: bool,
 
     /// Enclave mode for the localnet.
-    #[arg(long, value_enum, default_value_t = TeeMode::None)]
+    #[arg(long, value_enum, default_value_t = TeeMode::Mock)]
     pub tee: TeeMode,
 
     /// Run docker/process/script steps without `sudo`.
@@ -278,7 +275,7 @@ impl Default for Environment {
             // not remove anything (it is used by unit tests).
             no_resolve_ports: true,
             no_cleanup: true,
-            tee: TeeMode::None,
+            tee: TeeMode::Mock,
             no_sudo: false,
             all: false,
             debug: false,
@@ -344,9 +341,6 @@ pub fn unmet(feature: &Feature, scenario: &Scenario, env: &Environment) -> Optio
         if env.validators < n {
             return Some(format!("needs >={n} validators, have {}", env.validators));
         }
-    }
-    if requires_tee(feature, scenario) && !env.tee_mode.enabled() {
-        return Some("needs a TEE enclave (@tee), but --tee none".to_string());
     }
     if has_tag(feature, scenario, "gramine-direct")
         && !env.tee_mode.satisfies_gramine_direct_requirement()

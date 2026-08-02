@@ -18,6 +18,7 @@ default = []
 # Internal
 outbe-consensus.workspace = true
 outbe-compressed-entities.workspace = true
+outbe-evm.workspace = true
 outbe-ocomp-protocol.workspace = true
 outbe-node.workspace = true
 outbe-primitives.workspace = true

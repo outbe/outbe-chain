@@ -114,6 +114,9 @@ pub struct FixtureState {
     pub marker_height: Option<u64>,
     /// A log-line count captured before an action (e.g. DKG ceremony count).
     pub marker_count: Option<usize>,
+    /// Exact offer public key observed from a registered joiner's enclave and
+    /// matched against canonical chain state before an enclave restart.
+    pub joiner_offer_public_before_restart: Option<[u8; 32]>,
     /// VRF expiry observed while a permanently stalled frozen DKG target is live.
     pub vrf_expiry_height: Option<u64>,
     /// Worldwide-day status byte captured before a tribute offer (invariant check).
@@ -256,6 +259,7 @@ impl Default for FixtureState {
             wwd: None,
             marker_height: None,
             marker_count: None,
+            joiner_offer_public_before_restart: None,
             vrf_expiry_height: None,
             wwd_status_before: None,
             lifecycle_stake_before_exit: None,

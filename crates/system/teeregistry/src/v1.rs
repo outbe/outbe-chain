@@ -1,8 +1,8 @@
-//! Inactive-until-I9 TeeRegistry V1 node-enclave registration state machine.
+//! TeeRegistry V1 node-enclave registration state machine.
 //!
-//! The production entry point exists only with the tee-attestation-v1 feature;
-//! default builds retain the legacy route until A0 activation. Accepted
-//! hardware-free tests enter through the private typed post-verifier capability.
+//! A0 activates this schema through the production precompile route. Accepted
+//! hardware-free tests still enter only through the private typed post-verifier
+//! capability and cannot replace enclave-resident production verification.
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::sol;
@@ -70,6 +70,14 @@ sol! {
         uint64 transitionNonce
     );
 
+    /// One-time permanent offer-key onboarding artifact for a newly created
+    /// V1 binding. Renewal, replacement and idempotent replay never emit it.
+    #[derive(Debug)]
+    event OfferKeySealedForRegistryV1(
+        bytes32 indexed nodeIdHash,
+        bytes sealedOfferKey
+    );
+
     #[derive(Debug)]
     event TeePolicyActivatedV1(
         uint256 indexed proposalId,
@@ -83,6 +91,39 @@ sol! {
 pub enum V1RegistrationOutcome {
     Created,
     Idempotent,
+}
+
+#[cfg(feature = "tee-attestation-v1")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct VerifiedEnclaveClaimsV1 {
+    mrenclave: B256,
+    mrsigner: B256,
+    isv_prod_id: u16,
+    isv_svn: u16,
+    collateral_valid_until: u64,
+    platform_tcb_status: u8,
+    verdict_hash: B256,
+}
+
+#[cfg(feature = "tee-attestation-v1")]
+impl VerifiedEnclaveClaimsV1 {
+    fn from_dcap(verdict: &DcapVerdictV1) -> Result<Self> {
+        let verdict_bytes = verdict.encode_canonical().map_err(|code| {
+            PrecompileError::Fatal(format!(
+                "verified DCAP verdict cannot be encoded: {:#06x}",
+                code.code()
+            ))
+        })?;
+        Ok(Self {
+            mrenclave: verdict.mrenclave,
+            mrsigner: verdict.mrsigner,
+            isv_prod_id: verdict.isv_prod_id,
+            isv_svn: verdict.isv_svn,
+            collateral_valid_until: verdict.collateral_valid_until,
+            platform_tcb_status: verdict.platform_tcb_status as u8,
+            verdict_hash: keccak256(verdict_bytes),
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -673,6 +714,90 @@ impl TeeRegistry<'_> {
 
 #[cfg(feature = "tee-attestation-v1")]
 impl TeeRegistry<'_> {
+    /// Emit the bounded deterministic offer-key artifact for one newly created
+    /// V1 binding. Missing local enclave state is a fatal execution invariant,
+    /// never a reason to omit a consensus-visible log.
+    pub(crate) fn emit_offer_key_sealed_for_registry_v1(
+        &mut self,
+        outcome: V1RegistrationOutcome,
+        node_id_hash: B256,
+        recipient_x25519: [u8; 32],
+    ) -> Result<()> {
+        self.emit_offer_key_sealed_for_registry_v1_with(
+            outcome,
+            node_id_hash,
+            recipient_x25519,
+            |recipient| {
+                outbe_tee::seal_offer_key_for_registry(recipient).map_err(|error| error.to_string())
+            },
+        )
+    }
+
+    fn emit_offer_key_sealed_for_registry_v1_with<F>(
+        &mut self,
+        outcome: V1RegistrationOutcome,
+        node_id_hash: B256,
+        recipient_x25519: [u8; 32],
+        seal: F,
+    ) -> Result<()>
+    where
+        F: FnOnce([u8; 32]) -> std::result::Result<Option<Vec<u8>>, String>,
+    {
+        if outcome == V1RegistrationOutcome::Idempotent {
+            return Ok(());
+        }
+        let offer_public = self.offer_public_key()?;
+        if offer_public.is_zero() {
+            return Err(PrecompileError::Fatal(
+                "V1 registration requires the OST3 offer-key commitment".into(),
+            ));
+        }
+        let sealed = seal(recipient_x25519)
+            .map_err(|error| {
+                PrecompileError::Fatal(format!(
+                    "mandatory V1 offer-key onboarding seal failed: {error}"
+                ))
+            })?
+            .ok_or_else(|| {
+                PrecompileError::Fatal(
+                    "mandatory enclave is unavailable during V1 offer-key onboarding".into(),
+                )
+            })?;
+        if sealed.len() < outbe_tee::protocol::MIN_SEALED_OFFER_KEY_FOR_REGISTRY_BYTES
+            || sealed.len() > outbe_tee::protocol::MAX_SEALED_OFFER_KEY_FOR_REGISTRY_BYTES
+            || sealed.get(..32) != Some(offer_public.as_slice())
+        {
+            return Err(PrecompileError::Fatal(
+                "enclave returned a malformed V1 offer-key onboarding artifact".into(),
+            ));
+        }
+        self.emit(OfferKeySealedForRegistryV1 {
+            nodeIdHash: node_id_hash,
+            sealedOfferKey: sealed.into(),
+        })
+    }
+
+    /// Test-only seam around the enclave call. Production and tests share all
+    /// Created/Idempotent, commitment, size, prefix and event logic.
+    #[cfg(test)]
+    pub(crate) fn emit_offer_key_sealed_for_registry_v1_after_sealer_for_test<F>(
+        &mut self,
+        outcome: V1RegistrationOutcome,
+        node_id_hash: B256,
+        recipient_x25519: [u8; 32],
+        seal: F,
+    ) -> Result<()>
+    where
+        F: FnOnce([u8; 32]) -> std::result::Result<Option<Vec<u8>>, String>,
+    {
+        self.emit_offer_key_sealed_for_registry_v1_with(
+            outcome,
+            node_id_hash,
+            recipient_x25519,
+            seal,
+        )
+    }
+
     /// Production verifier boundary. The caller/relay is intentionally absent.
     pub fn register_enclave_v1(
         &mut self,
@@ -798,63 +923,93 @@ impl TeeRegistry<'_> {
         enclave_signature: &[u8; 64],
         policy: &TeePolicyV1,
     ) -> Result<V1RegistrationOutcome> {
-        let policy_bytes = policy.encode_canonical().map_err(|error| {
-            PrecompileError::Fatal(format!("active V1 policy cannot be encoded: {error}"))
-        })?;
-        let outcome = outbe_tee::verify_dcap_evidence_v1(
-            evidence,
-            &policy_bytes,
-            consensus_timestamp(&self.storage)?,
-        )
-        .map_err(|error| {
-            PrecompileError::Fatal(format!(
-                "enclave-resident DCAP verifier is unavailable or unauthenticated: {error}"
-            ))
-        })?;
-        let verdict = match outcome {
-            DcapVerificationOutcomeV1::Accepted(verdict) => verdict,
-            DcapVerificationOutcomeV1::Rejected(code) => {
-                return Err(PrecompileError::Revert(format!(
-                    "DCAP evidence rejected with code {:#06x}",
-                    code.code()
-                )))
+        let decoded = AttestationEvidenceV1::decode_canonical(evidence)
+            .map_err(|error| revert_codec("attestation evidence is not canonical", error))?;
+        if decoded.mode() != policy.attestation_mode {
+            return Err(PrecompileError::Revert(
+                "attestation evidence mode does not match the active V1 policy".into(),
+            ));
+        }
+
+        let (intent, claims, evidence_hash) = match &decoded {
+            AttestationEvidenceV1::Dcap(dcap) => {
+                let policy_bytes = policy.encode_canonical().map_err(|error| {
+                    PrecompileError::Fatal(format!("active V1 policy cannot be encoded: {error}"))
+                })?;
+                let outcome = outbe_tee::verify_dcap_evidence_v1(
+                    evidence,
+                    &policy_bytes,
+                    consensus_timestamp(&self.storage)?,
+                )
+                .map_err(|error| {
+                    PrecompileError::Fatal(format!(
+                        "enclave-resident DCAP verifier is unavailable or unauthenticated: {error}"
+                    ))
+                })?;
+                let verdict = match outcome {
+                    DcapVerificationOutcomeV1::Accepted(verdict) => verdict,
+                    DcapVerificationOutcomeV1::Rejected(code) => {
+                        return Err(PrecompileError::Revert(format!(
+                            "DCAP evidence rejected with code {:#06x}",
+                            code.code()
+                        )))
+                    }
+                };
+                let evidence_hash = dcap_evidence_hash_v1(evidence).map_err(|code| {
+                    PrecompileError::Fatal(format!(
+                        "accepted DCAP evidence cannot be hashed: {:#06x}",
+                        code.code()
+                    ))
+                })?;
+                (
+                    dcap.intent.clone(),
+                    VerifiedEnclaveClaimsV1::from_dcap(&verdict)?,
+                    evidence_hash,
+                )
+            }
+            AttestationEvidenceV1::GramineDirectDev(dev) => {
+                if dev.dev_attestation_public != dev.intent.attestation_ed25519
+                    || dev.dev_signature != *enclave_signature
+                    || !dev.intent.verify_enclave_signature(&dev.dev_signature)
+                {
+                    return Err(PrecompileError::Revert(
+                        "GramineDirectDev evidence signature does not bind the registration intent"
+                            .into(),
+                    ));
+                }
+                let evidence_hash = decoded.evidence_hash().map_err(|error| {
+                    revert_codec("GramineDirectDev evidence is not canonical", error)
+                })?;
+                let height =
+                    if expected_operation == AttestationOperationV1::TransitionEnclaveMeasurement {
+                        policy.activation_height
+                    } else {
+                        self.storage.block_number()?
+                    };
+                let claims =
+                    direct_dev_claims(policy, dev.intent.enclave_profile, height, evidence_hash)?;
+                (dev.intent.clone(), claims, evidence_hash)
             }
         };
-        let evidence_hash = dcap_evidence_hash_v1(evidence).map_err(|code| {
-            PrecompileError::Fatal(format!(
-                "accepted DCAP evidence cannot be hashed: {:#06x}",
-                code.code()
-            ))
-        })?;
-        let decoded = AttestationEvidenceV1::decode_canonical(evidence).map_err(|error| {
-            PrecompileError::Fatal(format!(
-                "enclave accepted non-canonical DCAP evidence: {error}"
-            ))
-        })?;
-        let AttestationEvidenceV1::Dcap(evidence) = decoded else {
-            return Err(PrecompileError::Fatal(
-                "enclave accepted non-DCAP evidence for node registration".into(),
-            ));
-        };
-        self.apply_verified_mutation_v1(
+        self.apply_verified_claims_mutation_v1(
             expected_operation,
-            &evidence.intent,
+            &intent,
             node_signature,
             enclave_signature,
             policy,
-            &verdict,
+            &claims,
             evidence_hash,
         )
     }
 
-    fn apply_verified_mutation_v1(
+    fn apply_verified_claims_mutation_v1(
         &mut self,
         expected_operation: AttestationOperationV1,
         intent: &RegistrationIntentV1,
         node_signature: &[u8; 65],
         enclave_signature: &[u8; 64],
         policy: &TeePolicyV1,
-        verdict: &DcapVerdictV1,
+        claims: &VerifiedEnclaveClaimsV1,
         evidence_hash: B256,
     ) -> Result<V1RegistrationOutcome> {
         intent
@@ -867,10 +1022,10 @@ impl TeeRegistry<'_> {
             )
             .map_err(|error| revert_codec("registration intent chain mismatch", error))?;
         if intent.operation != expected_operation
-            || intent.attestation_mode != AttestationMode::DcapRequired
+            || intent.attestation_mode != policy.attestation_mode
         {
             return Err(PrecompileError::Revert(
-                "attestation intent operation does not match the DCAP registry mutator".into(),
+                "attestation intent operation or mode does not match the registry mutator".into(),
             ));
         }
         let policy_hash = policy
@@ -936,18 +1091,20 @@ impl TeeRegistry<'_> {
         };
         if policy.measurement_rule_match_count(
             intent.enclave_profile,
-            verdict.mrenclave,
-            verdict.mrsigner,
-            verdict.isv_prod_id,
-            verdict.isv_svn,
+            claims.mrenclave,
+            claims.mrsigner,
+            claims.isv_prod_id,
+            claims.isv_svn,
             height,
         ) != 1
         {
             return Err(PrecompileError::Revert(
-                "QVL verdict must match exactly one active profile measurement rule".into(),
+                "verified enclave claims must match exactly one active profile measurement rule"
+                    .into(),
             ));
         }
-        if verdict.platform_tcb_status == DcapPlatformTcbStatusV1::SWHardeningNeeded
+        if policy.attestation_mode == AttestationMode::DcapRequired
+            && claims.platform_tcb_status == DcapPlatformTcbStatusV1::SWHardeningNeeded as u8
             && policy.accepted_platform_tcb_statuses
                 != PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded
         {
@@ -1003,7 +1160,7 @@ impl TeeRegistry<'_> {
                         "renewal changes the registered enclave profile".into(),
                     ));
                 }
-                ensure_continuous_binding(current, intent, verdict)?;
+                ensure_continuous_binding(current, intent, claims)?;
                 if intent.binding_version != current.binding_version
                     || intent.registration_version
                         != next_counter(current.registration_version, "registration version")?
@@ -1093,18 +1250,20 @@ impl TeeRegistry<'_> {
                 "requested lease is outside active policy bounds".into(),
             ));
         }
-        let collateral_limit = verdict
-            .collateral_valid_until
-            .checked_sub(policy.collateral_margin)
-            .ok_or_else(|| {
-                PrecompileError::Revert(
-                    "verified collateral leaves no mandatory safety margin".into(),
-                )
-            })?;
-        if intent.requested_valid_until > collateral_limit {
-            return Err(PrecompileError::Revert(
-                "requested lease exceeds verified collateral validity".into(),
-            ));
+        if policy.attestation_mode == AttestationMode::DcapRequired {
+            let collateral_limit = claims
+                .collateral_valid_until
+                .checked_sub(policy.collateral_margin)
+                .ok_or_else(|| {
+                    PrecompileError::Revert(
+                        "verified collateral leaves no mandatory safety margin".into(),
+                    )
+                })?;
+            if intent.requested_valid_until > collateral_limit {
+                return Err(PrecompileError::Revert(
+                    "requested lease exceeds verified collateral validity".into(),
+                ));
+            }
         }
         if expected_operation == AttestationOperationV1::RegisterEnclave && current.is_some() {
             return Err(PrecompileError::Revert(
@@ -1152,13 +1311,6 @@ impl TeeRegistry<'_> {
             }
         }
 
-        let verdict_bytes = verdict.encode_canonical().map_err(|code| {
-            PrecompileError::Fatal(format!(
-                "verified DCAP verdict cannot be encoded: {:#06x}",
-                code.code()
-            ))
-        })?;
-        let verdict_hash = keccak256(verdict_bytes);
         let recipient = B256::from(intent.recipient_x25519);
         let attestation = B256::from(intent.attestation_ed25519);
         let noise = B256::from(intent.noise_responder_x25519);
@@ -1193,7 +1345,7 @@ impl TeeRegistry<'_> {
         self.v1_node_valid_until
             .write(&node_id_hash, intent.requested_valid_until)?;
         self.v1_node_collateral_valid_until
-            .write(&node_id_hash, verdict.collateral_valid_until)?;
+            .write(&node_id_hash, claims.collateral_valid_until)?;
         self.v1_node_recipient_x25519
             .write(&node_id_hash, recipient)?;
         self.v1_node_attestation_ed25519
@@ -1201,17 +1353,17 @@ impl TeeRegistry<'_> {
         self.v1_node_noise_responder_x25519
             .write(&node_id_hash, noise)?;
         self.v1_node_mrenclave
-            .write(&node_id_hash, verdict.mrenclave)?;
+            .write(&node_id_hash, claims.mrenclave)?;
         self.v1_node_mrsigner
-            .write(&node_id_hash, verdict.mrsigner)?;
+            .write(&node_id_hash, claims.mrsigner)?;
         self.v1_node_isv_prod_id
-            .write(&node_id_hash, u64::from(verdict.isv_prod_id))?;
+            .write(&node_id_hash, u64::from(claims.isv_prod_id))?;
         self.v1_node_isv_svn
-            .write(&node_id_hash, u64::from(verdict.isv_svn))?;
+            .write(&node_id_hash, u64::from(claims.isv_svn))?;
         self.v1_node_platform_tcb_status
-            .write(&node_id_hash, verdict.platform_tcb_status as u64)?;
+            .write(&node_id_hash, u64::from(claims.platform_tcb_status))?;
         self.v1_node_verdict_hash
-            .write(&node_id_hash, verdict_hash)?;
+            .write(&node_id_hash, claims.verdict_hash)?;
         self.v1_node_host_authorization_hash.write(
             &node_id_hash,
             B256::from(intent.node_host_authorization_hash),
@@ -1222,9 +1374,9 @@ impl TeeRegistry<'_> {
             self.recipient_x25519.write(&validator, recipient)?;
             self.attestation_pub.write(&validator, attestation)?;
             self.noise_static_pub.write(&validator, noise)?;
-            self.mrenclave.write(&validator, verdict.mrenclave)?;
-            self.mrsigner.write(&validator, verdict.mrsigner)?;
-            self.isv_svn.write(&validator, u64::from(verdict.isv_svn))?;
+            self.mrenclave.write(&validator, claims.mrenclave)?;
+            self.mrsigner.write(&validator, claims.mrsigner)?;
+            self.isv_svn.write(&validator, u64::from(claims.isv_svn))?;
             self.keys_hash.write(
                 &validator,
                 compute_keys_hash(
@@ -1232,9 +1384,9 @@ impl TeeRegistry<'_> {
                     recipient,
                     attestation,
                     noise,
-                    verdict.mrenclave,
-                    verdict.mrsigner,
-                    verdict.isv_svn,
+                    claims.mrenclave,
+                    claims.mrsigner,
+                    claims.isv_svn,
                 ),
             )?;
             if first_registration {
@@ -1287,6 +1439,29 @@ impl TeeRegistry<'_> {
             }
         }
         Ok(V1RegistrationOutcome::Created)
+    }
+
+    #[cfg(test)]
+    fn apply_verified_mutation_v1(
+        &mut self,
+        expected_operation: AttestationOperationV1,
+        intent: &RegistrationIntentV1,
+        node_signature: &[u8; 65],
+        enclave_signature: &[u8; 64],
+        policy: &TeePolicyV1,
+        verdict: &DcapVerdictV1,
+        evidence_hash: B256,
+    ) -> Result<V1RegistrationOutcome> {
+        let claims = VerifiedEnclaveClaimsV1::from_dcap(verdict)?;
+        self.apply_verified_claims_mutation_v1(
+            expected_operation,
+            intent,
+            node_signature,
+            enclave_signature,
+            policy,
+            &claims,
+            evidence_hash,
+        )
     }
 
     #[cfg(test)]
@@ -1441,7 +1616,7 @@ impl TeeRegistry<'_> {
 fn ensure_continuous_binding(
     current: &NodeEnclaveBindingV1,
     intent: &RegistrationIntentV1,
-    verdict: &DcapVerdictV1,
+    claims: &VerifiedEnclaveClaimsV1,
 ) -> Result<()> {
     if intent.enclave_id != current.enclave_id
         || intent.binding_id != current.binding_id
@@ -1454,16 +1629,51 @@ fn ensure_continuous_binding(
             "renewal targets a superseded or different enclave identity".into(),
         ));
     }
-    if verdict.mrenclave != current.mrenclave
-        || verdict.mrsigner != current.mrsigner
-        || verdict.isv_prod_id != current.isv_prod_id
-        || verdict.isv_svn != current.isv_svn
+    if claims.mrenclave != current.mrenclave
+        || claims.mrsigner != current.mrsigner
+        || claims.isv_prod_id != current.isv_prod_id
+        || claims.isv_svn != current.isv_svn
     {
         return Err(PrecompileError::Revert(
             "renewal cannot replace the admitted enclave measurement".into(),
         ));
     }
     Ok(())
+}
+
+#[cfg(feature = "tee-attestation-v1")]
+fn direct_dev_claims(
+    policy: &TeePolicyV1,
+    profile: EnclaveProfile,
+    height: u64,
+    evidence_hash: B256,
+) -> Result<VerifiedEnclaveClaimsV1> {
+    let mut matching = policy.measurement_rules.iter().filter(|rule| {
+        rule.enclave_profile == profile
+            && height >= rule.admit_from_height
+            && height < rule.admit_until_height_exclusive
+    });
+    let rule = matching.next().ok_or_else(|| {
+        PrecompileError::Revert(
+            "GramineDirectDev policy has no active measurement projection for the enclave profile"
+                .into(),
+        )
+    })?;
+    if matching.next().is_some() {
+        return Err(PrecompileError::Revert(
+            "GramineDirectDev policy has overlapping measurement projections for the enclave profile"
+                .into(),
+        ));
+    }
+    Ok(VerifiedEnclaveClaimsV1 {
+        mrenclave: rule.mrenclave,
+        mrsigner: rule.mrsigner,
+        isv_prod_id: rule.isv_prod_id,
+        isv_svn: rule.minimum_isv_svn,
+        collateral_valid_until: u64::MAX,
+        platform_tcb_status: 0,
+        verdict_hash: evidence_hash,
+    })
 }
 
 #[cfg(feature = "tee-attestation-v1")]

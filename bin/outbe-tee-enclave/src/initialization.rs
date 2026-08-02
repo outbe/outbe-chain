@@ -383,6 +383,7 @@ fn command_class(request: &EnclaveRequest) -> CommandClass {
         EnclaveRequest::GetPublicKeys
         | EnclaveRequest::AuthorizeRemoteSessionV1 { .. }
         | EnclaveRequest::GenerateDcapQuote { .. }
+        | EnclaveRequest::SignRegistrationIntentDevV1 { .. }
         | EnclaveRequest::BeginDcapVerificationV1 { .. }
         | EnclaveRequest::DcapVerificationChunkV1 { .. }
         | EnclaveRequest::FinishDcapVerificationV1 { .. } => CommandClass::Initialized,
@@ -393,14 +394,13 @@ fn command_class(request: &EnclaveRequest) -> CommandClass {
         | EnclaveRequest::DkgDealerFinalize { .. }
         | EnclaveRequest::DkgPlayerFinalize { .. }
         | EnclaveRequest::DkgTributeOfferPartial { .. }
-        | EnclaveRequest::DkgRecoverTributeOffer { .. } => CommandClass::ValidatorKeyless,
+        | EnclaveRequest::DkgFinalizeTributeOffer { .. } => CommandClass::ValidatorKeyless,
         EnclaveRequest::ProcessTributeOfferBatch { .. }
         | EnclaveRequest::ApplyGratisOp { .. }
         | EnclaveRequest::ApplyPromisOp { .. }
         | EnclaveRequest::DeriveAccountKeys { .. } => CommandClass::Ready,
-        EnclaveRequest::SealTributeOfferHandoff { .. }
-        | EnclaveRequest::SealOfferKeyForRegistry { .. }
-        | EnclaveRequest::IngestTributeOfferHandoff { .. } => {
+        EnclaveRequest::SealOfferKeyForRegistry { .. }
+        | EnclaveRequest::IngestSealedOfferKeyForRegistry { .. } => {
             CommandClass::FinalizedAuthorizationRequired
         }
         EnclaveRequest::GetQuote { .. }
@@ -922,5 +922,21 @@ mod tests {
             ];
             assert_eq!(actual, expected, "matrix mismatch for {class:?}");
         }
+    }
+
+    #[test]
+    fn founding_offer_finalization_is_validator_keyless_only() {
+        let request = EnclaveRequest::DkgFinalizeTributeOffer {
+            ceremony_id: B256::repeat_byte(0x91),
+            sealed_partials: Vec::new(),
+            chain_id: B256::repeat_byte(0x92),
+            tribute_offer_epoch: 0,
+        };
+        let class = command_class(&request);
+        assert_eq!(class, CommandClass::ValidatorKeyless);
+        assert!(command_allowed(class, EnclaveProfile::Validator, false).is_ok());
+        assert!(command_allowed(class, EnclaveProfile::Validator, true).is_err());
+        assert!(command_allowed(class, EnclaveProfile::FullNode, false).is_err());
+        assert!(command_allowed(class, EnclaveProfile::FullNode, true).is_err());
     }
 }

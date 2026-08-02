@@ -227,10 +227,9 @@ impl EnclaveKeys {
     pub fn tribute_offer_public(&self) -> [u8; 32] {
         self.tribute_offer_public
     }
-    /// The X25519 secret behind `tribute_offer_public` — the key a keyless enclave
-    /// advertises as its `recipient_x25519` (REPORT_DATA-bound, per-enclave). A
-    /// key-handoff is sealed to that public, so the newcomer decrypts the handed-off
-    /// group signature with this secret.
+    /// The X25519 secret behind the one-time onboarding recipient advertised by a
+    /// keyless enclave. The finalized registry artifact is sealed to this
+    /// REPORT_DATA-bound public key and can be ingested only by this enclave.
     pub fn tribute_offer_x25519_secret(&self) -> &[u8; 32] {
         &self.tribute_offer_secret
     }

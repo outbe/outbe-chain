@@ -33,7 +33,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use eyre::{bail, Result, WrapErr};
 
 use crate::internal::config::Config;
-use crate::internal::proc::{args, ChildGuard, DockerImageId, EnclaveGuard};
+use crate::internal::proc::{args, redact_args_for_log, ChildGuard, DockerImageId, EnclaveGuard};
 use crate::internal::shell::Sh;
 
 /// Per-node execution cache for the four validators co-located by the PoC
@@ -170,7 +170,7 @@ impl Localnet {
         self.cfg.validators
     }
 
-    /// Whether the environment runs an enclave (mock or real) vs. tee-less.
+    /// Every reachable harness mode runs an enclave.
     pub fn tee_enabled(&self) -> bool {
         self.cfg.tee_mode.enabled()
     }
@@ -304,6 +304,7 @@ impl Localnet {
                 .get_args()
                 .map(|a| a.to_string_lossy().into_owned())
                 .collect();
+            let rest = redact_args_for_log(&rest);
             eprintln!("[localnet] launch {label}: {prog} {}", rest.join(" "));
             eprintln!("           log: {}", node_dir.join("node.log").display());
         }
@@ -468,7 +469,7 @@ mod tests {
 
         assert_eq!(configured_timeout(TeeMode::Real).as_deref(), Some("120"));
         assert_eq!(configured_timeout(TeeMode::Mock), None);
-        assert_eq!(configured_timeout(TeeMode::None), None);
+        assert_eq!(configured_timeout(TeeMode::GramineDirect), None);
     }
 
     #[test]

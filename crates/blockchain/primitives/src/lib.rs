@@ -26,11 +26,12 @@ pub mod stablecoin;
 pub mod stablecoin_fork;
 pub mod storage;
 pub mod system_tx;
-#[cfg(feature = "tee-attestation-v1")]
 pub mod tee_attestation_v1;
-pub mod tee_bootstrap;
-#[cfg(feature = "tee-attestation-v1")]
 pub mod tee_bootstrap_v2;
+pub mod tee_genesis_v1;
+pub mod tee_signatures;
+#[cfg(feature = "test-utils")]
+pub mod tee_test_utils;
 pub mod time;
 pub mod units;
 pub mod validators;

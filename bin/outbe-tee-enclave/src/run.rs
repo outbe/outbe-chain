@@ -124,22 +124,29 @@ pub fn run(opts: RunOpts) -> i32 {
         }
     };
 
-    // Optional seal/unseal boot configuration. Present only when the
-    // launcher passes `--tee-dir`; absent → sealing disabled and the offer key is
-    // re-derived from the DKG each boot.
+    // Seal/unseal boot configuration. Production requires it; an explicitly
+    // selected development process may omit it and starts as a fresh keyless
+    // identity on its separate chain.
     let boot = match build_boot_config(&args, &keys) {
         Ok(boot) => boot,
         Err(code) => return code,
     };
 
-    // Shared, write-once DKG-derived offer-key slot. If a sealed blob
-    // exists (and a sealing key is available), restore it now — the restart
-    // fast-path that skips the DKG ceremony; otherwise the ceremony populates it.
+    // Shared, write-once permanent offer-key slot. A valid sealed blob restores
+    // it. An existing blob that cannot be unsealed is terminal and is never
+    // converted into a fresh ceremony or another key.
     let offer_key: crate::transport::SharedTributeOfferKey =
         std::sync::Arc::new(std::sync::OnceLock::new());
     if let Some(cfg) = boot.as_deref() {
-        if let Some(derived) = crate::transport::unseal_tribute_offer_and_group_sig_on_boot(cfg) {
-            let _ = offer_key.set(derived);
+        match crate::transport::unseal_tribute_offer_and_group_sig_on_boot(cfg) {
+            Ok(Some(derived)) => {
+                let _ = offer_key.set(derived);
+            }
+            Ok(None) => {}
+            Err(error) => {
+                eprintln!("outbe-tee-enclave: {error}");
+                return 1;
+            }
         }
     }
 
@@ -332,10 +339,10 @@ fn resolve_enclave_identity_seed(
 ///
 /// Returns `Ok(Some)` only when `--tee-dir <path>` is supplied; the directory is
 /// created (best-effort 0700) and `--chain-id <hex32>` binds the sealing AAD.
-/// Absent `--tee-dir` → `Ok(None)`: sealing is disabled and behavior is unchanged
-/// (the offer key is re-derived from the DKG each boot). `Err(code)` propagates a
-/// fatal setup failure as a process exit code. `isv_svn` is the running enclave's
-/// SVN, the anti-rollback floor for unseal.
+/// Absent `--tee-dir` is permitted only for the explicitly selected development
+/// process and returns `Ok(None)` with no durable permanent key. Production
+/// rejects that configuration before serving. `Err(code)` propagates a fatal
+/// setup failure; `isv_svn` is the anti-rollback floor for unseal.
 fn build_boot_config(
     args: &[String],
     keys: &EnclaveKeys,

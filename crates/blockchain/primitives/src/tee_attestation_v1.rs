@@ -78,7 +78,7 @@ pub enum AttestationMode {
 }
 
 impl AttestationMode {
-    fn decode(value: u8) -> Result<Self, CodecError> {
+    pub(crate) fn decode(value: u8) -> Result<Self, CodecError> {
         match value {
             0x01 => Ok(Self::DcapRequired),
             0x02 => Ok(Self::GramineDirectDev),
@@ -414,12 +414,12 @@ impl EnclaveInitializationManifestV1 {
         };
         match &self.node_id {
             NodeIdV1::Validator { address, .. } => {
-                crate::tee_bootstrap::recover_signer(&hash, signature)
+                crate::tee_signatures::recover_signer(&hash, signature)
                     .map(|recovered| recovered.as_slice() == address)
                     .unwrap_or(false)
             }
             NodeIdV1::FullNode { reth_p2p_public } => {
-                crate::tee_bootstrap::recover_signer_public_key(&hash, signature)
+                crate::tee_signatures::recover_signer_public_key(&hash, signature)
                     .map(|recovered| &recovered == reth_p2p_public)
                     .unwrap_or(false)
             }
@@ -565,12 +565,12 @@ impl RegistrationIntentV1 {
         };
         match &self.node_id {
             NodeIdV1::Validator { address, .. } => {
-                crate::tee_bootstrap::recover_signer(&hash, signature)
+                crate::tee_signatures::recover_signer(&hash, signature)
                     .map(|recovered| recovered.as_slice() == address)
                     .unwrap_or(false)
             }
             NodeIdV1::FullNode { reth_p2p_public } => {
-                crate::tee_bootstrap::recover_signer_public_key(&hash, signature)
+                crate::tee_signatures::recover_signer_public_key(&hash, signature)
                     .map(|recovered| &recovered == reth_p2p_public)
                     .unwrap_or(false)
             }
@@ -1444,7 +1444,7 @@ impl TeePolicyScheduleV1 {
     }
 }
 
-const MAX_TEE_POLICY_SCHEDULE_BYTES: usize =
+pub const MAX_TEE_POLICY_SCHEDULE_BYTES: usize =
     1 + 32 + 32 + 2 + MAX_TEE_POLICY_SCHEDULE_ENTRIES * (8 + 4 + MAX_TEE_POLICY_BYTES + 32);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

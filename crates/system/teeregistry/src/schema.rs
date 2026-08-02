@@ -4,10 +4,10 @@ use outbe_primitives::addresses::TEE_REGISTRY_ADDRESS;
 
 /// EVM storage layout for the TEE Registry.
 ///
-/// Global scalars (slots 0..=8) hold the legacy bootstrap result that clients
-/// and verifiers read. Legacy per-validator maps occupy slots 9..=18. Inactive
-/// V1 policy and leased-binding state is appended at slots 19..=53. The layout
-/// is append-only; new fields take the next `order`.
+/// Global scalars (slots 0..=8) hold the block-1 OST3 bootstrap result that clients
+/// and verifiers read. Bootstrap committee projections occupy slots 9..=18. Active
+/// V1 policy and leased-binding state occupies slots 19..=53. The layout is
+/// append-only; new fields take the next `order`.
 #[storage_schema]
 #[contract(addr = TEE_REGISTRY_ADDRESS)]
 pub struct TeeRegistry {

@@ -61,8 +61,10 @@ The entrypoint is the `outbe-e2e` binary. **All configuration is via CLI flags �
 the harness reads no configuration from the environment.** Flags:
 
 - `--validators <N>` — committee size to bootstrap (default 4).
-- `--tee <real|gramine-direct|mock|none>` — enclave mode (default `none` =
-  tee-less); `gramine-direct` uses the production enclave binary without SGX.
+- `--tee <real|gramine-direct|mock>` — mandatory enclave mode (default `mock`);
+  `gramine-direct` uses the production enclave binary without SGX. Both non-SGX
+  modes run only on the isolated `GramineDirectDev` chain and are not hardware
+  evidence.
 - `--no-sudo` — run scripts/docker without `sudo`.
 - `--all` — treat an unsatisfiable scenario as a failure instead of skipping it.
 - `--debug` — stream localnet setup output (bootstrap / run-testnet / docker) live;
@@ -97,10 +99,7 @@ Then, e.g.:
 
 ```sh
 # Omit --projection-mongodb-uri to use the harness-owned replica set.
-# tee-less run of the update flow
-cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
-  --tee none --validators 4
-# through the mock enclave
+# Through the mock enclave on an isolated GramineDirectDev chain.
 cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
   --tee mock --validators 4
 # a fully-capable box: everything must run (unmet ⇒ fail, not skip)
@@ -124,7 +123,7 @@ Run only ZeroFee's native Alloy EIP-7702 set-code and sponsorship vertical slice
 
 ```sh
 cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
-  --tee none --validators 4 --all \
+  --tee mock --validators 4 --all \
   --input crates/testing/e2e-harness/features/zerofee.feature
 ```
 

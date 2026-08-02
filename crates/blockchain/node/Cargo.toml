@@ -67,6 +67,7 @@ k256.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-metadosis = { workspace = true, features = ["test-utils"] }
 outbe-tee-enclave = { workspace = true, features = ["mock"] }
 alloy-provider.workspace = true

@@ -14,6 +14,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use zeroize::Zeroizing;
 
+use outbe_primitives::tee_attestation_v1::{AttestationMode, RegistrationIntentV1};
 use outbe_tee::codec::{decode_request, encode_response, read_frame, write_frame};
 use outbe_tee::errors::TransportError;
 use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
@@ -36,12 +37,9 @@ use crate::seal::{
 
 /// The tribute offer key derived once from the DKG group threshold signature
 /// (Seam F): the secret stays resident, clients encrypt to `public`. Written on
-/// the DKG connection's `DkgRecoverTributeOffer`, read by the offer-decrypt path on a
-/// different connection — hence shared across connection threads. Also carries the
-/// resident **group threshold signature** `group_sig` (the Seam F output): it seals
-/// on restart so the boot fast-path restores the offer key without re-running the
-/// DKG, AND it is the payload a committee key-handoff seals to a newcomer so
-/// the new member derives the byte-identical offer key for any epoch locally.
+/// the founding DKG connection's `DkgFinalizeTributeOffer`, then read by the
+/// offer-decrypt path on other connections. Also carries the resident group
+/// threshold signature so the restart fast-path restores the same permanent key.
 pub struct DerivedTributeOfferKey {
     secret: Zeroizing<[u8; 32]>,
     public: [u8; 32],
@@ -57,13 +55,13 @@ impl DerivedTributeOfferKey {
     pub fn public(&self) -> [u8; 32] {
         self.public
     }
-    /// The resident group threshold signature (Seam F output). Never leaves the
-    /// enclave unsealed; sealed for restart and handed off (sealed) to newcomers.
+    /// The resident group threshold signature (Seam F output). It never leaves
+    /// the enclave unsealed and is persisted only inside sealed restart state.
     fn group_sig(&self) -> &[u8] {
         &self.group_sig
     }
-    /// Build from an explicit secret + public + group signature (the
-    /// `DkgRecoverTributeOffer` / handoff-ingest arms, which already hold the public).
+    /// Build from explicit founding-finalization or registry-onboarding material,
+    /// whose enclave-only path already holds the public component.
     fn from_parts(
         secret: Zeroizing<[u8; 32]>,
         public: [u8; 32],
@@ -89,7 +87,7 @@ impl DerivedTributeOfferKey {
 
 /// Process-wide, write-once slot for the DKG-derived offer key, shared across
 /// every connection thread. `OnceLock` makes the first ceremony's key canonical;
-/// a divergent re-derivation is rejected by the `DkgRecoverTributeOffer` arm. No
+/// a divergent founding finalization is rejected by the enclave request arm. No
 /// `StorageHandle` exists in this binary, so std sync primitives apply here.
 pub type SharedTributeOfferKey = Arc<OnceLock<DerivedTributeOfferKey>>;
 
@@ -149,42 +147,45 @@ pub(crate) fn write_once_0600(path: &std::path::Path, data: &[u8]) -> std::io::R
     Ok(())
 }
 
-/// Restore the offer key + group signature from the sealed blob at boot (restart
-/// fast-path). Returns `None` when there is no blob, no sealing key, or unseal
-/// fails — the caller then runs the DKG ceremony (or a key-handoff) to obtain the
-/// key. The `chain_id` AAD and the running `isv_svn` floor (anti-rollback) come
-/// from the boot config.
+/// Restore the permanent offer key + group signature from the sealed blob at
+/// boot. A missing blob is the only keyless result and is valid only for a fresh
+/// identity whose startup context will prove founding/onboarding eligibility.
+/// Any existing blob that cannot be read or unsealed is terminal: a permanent
+/// key is never recovered, replaced, or regenerated for the same identity.
 pub fn unseal_tribute_offer_and_group_sig_on_boot(
     cfg: &EnclaveBootConfig,
-) -> Option<DerivedTributeOfferKey> {
+) -> Result<Option<DerivedTributeOfferKey>, String> {
     let path = cfg.sealed_root_path();
-    let blob = std::fs::read(&path).ok()?;
-    let (key, _policy) = sealing_key()?;
+    let blob = match std::fs::read(&path) {
+        Ok(blob) => blob,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(format!(
+                "read sealed permanent offer key {}: {error}; no recovery or fallback exists",
+                path.display()
+            ));
+        }
+    };
+    let (key, _policy) = sealing_key().ok_or_else(|| {
+        format!(
+            "sealed permanent offer key {} exists but no SGX sealing key is available; no recovery or fallback exists",
+            path.display()
+        )
+    })?;
     match unseal_tribute_offer_and_group_sig(&blob, &key, cfg.chain_id, cfg.isv_svn) {
         Ok((secret, group_sig, _header)) => {
             eprintln!(
                 "outbe-tee-enclave: unsealed offer key + group signature <- {} (restart fast-path)",
                 path.display()
             );
-            Some(DerivedTributeOfferKey::from_secret_and_group_sig(
+            Ok(Some(DerivedTributeOfferKey::from_secret_and_group_sig(
                 secret, group_sig,
-            ))
+            )))
         }
-        Err(e) => {
-            // A persistent failure here usually means a STALE sealed blob written by a
-            // pre-upgrade binary (incompatible seal format / wrong MRSIGNER / rolled-back
-            // isv_svn), not a transient error. This node recovers by re-deriving the key
-            // (fresh-chain DKG, or a key-handoff on an existing chain) — but if EVERY
-            // committee node carries a stale blob, none can serve the handoff and the
-            // offer key is unrecoverable. If this recurs across restarts, delete the
-            // sealed blob (clear `--tee-dir`) and re-bootstrap from a clean state.
-            eprintln!(
-                "outbe-tee-enclave: unseal {} failed ({e}); will re-derive via DKG/handoff. \
-                 If this persists after an upgrade, the blob is stale — clear --tee-dir and re-bootstrap.",
-                path.display()
-            );
-            None
-        }
+        Err(error) => Err(format!(
+            "unseal permanent offer key {} failed: {error}; this identity has lost its key and no recovery or fallback exists",
+            path.display()
+        )),
     }
 }
 
@@ -649,8 +650,10 @@ fn dispatch_with_initialization(
             }
         }
         EnclaveRequest::GetPublicKeys => EnclaveResponse::PublicKeys {
+            offer_key_ready: offer_key.get().is_some(),
             // Advertise the DKG-derived offer key once available, so clients
-            // encrypt to it; fall back to the dev offer key pre-DKG.
+            // encrypt to it. Before readiness the same field carries only the
+            // one-time onboarding recipient and is never permanent chain state.
             recipient_x25519_pub: offer_key
                 .get()
                 .map(|k| k.public())
@@ -679,6 +682,43 @@ fn dispatch_with_initialization(
                 Ok((quote_body, enclave_signature)) => EnclaveResponse::DcapQuote {
                     intent,
                     quote_body,
+                    enclave_signature,
+                },
+                Err(message) => EnclaveResponse::Error { message },
+            }
+        }
+        EnclaveRequest::SignRegistrationIntentDevV1 { intent } => {
+            let Some(initialization) = initialization else {
+                return EnclaveResponse::Error {
+                    message: "development intent signing requires the development transport"
+                        .to_string(),
+                };
+            };
+            if initialization.mode() != InitializationMode::Development {
+                return EnclaveResponse::Error {
+                    message: "production enclave cannot sign GramineDirectDev evidence".to_string(),
+                };
+            }
+            let result = (|| -> Result<Vec<u8>, String> {
+                let decoded = RegistrationIntentV1::decode_canonical(&intent)
+                    .map_err(|error| error.to_string())?;
+                if decoded.attestation_mode != AttestationMode::GramineDirectDev
+                    || decoded.attestation_ed25519 != keys.attestation_pub()
+                    || decoded
+                        .derived_enclave_id()
+                        .map_err(|error| error.to_string())?
+                        != decoded.enclave_id
+                {
+                    return Err(
+                        "GramineDirectDev intent does not bind this enclave identity".into(),
+                    );
+                }
+                let intent_hash = decoded.intent_hash().map_err(|error| error.to_string())?;
+                Ok(keys.sign_attestation(intent_hash.as_slice()).to_vec())
+            })();
+            match result {
+                Ok(enclave_signature) => EnclaveResponse::RegistrationIntentSignedDevV1 {
+                    intent,
                     enclave_signature,
                 },
                 Err(message) => EnclaveResponse::Error { message },
@@ -796,7 +836,7 @@ fn dispatch_with_initialization(
                     alloy_primitives::B256::from(requester_ephemeral_pubkey),
                 ),
             );
-            match outbe_primitives::tee_bootstrap::recover_signer(&prehash, &sig65) {
+            match outbe_primitives::tee_signatures::recover_signer(&prehash, &sig65) {
                 Ok(signer) if signer == account => {}
                 _ => {
                     return EnclaveResponse::Error {
@@ -826,33 +866,13 @@ fn dispatch_with_initialization(
                 },
             }
         }
-        EnclaveRequest::SealTributeOfferHandoff { recipient_x25519 } => {
-            // Key-handoff SERVER: seal the resident group signature to the
-            // newcomer's attested X25519 key. The host already verified the
-            // newcomer's quote + committee membership. The plaintext group
-            // signature never leaves the enclave — only the sealed blob is returned.
-            let Some(derived) = offer_key.get() else {
-                return EnclaveResponse::Error {
-                    message: "SealTributeOfferHandoff: no resident offer key to hand off"
-                        .to_string(),
-                };
-            };
-            match crate::crypto::encrypt_share(&recipient_x25519, derived.group_sig()) {
-                Ok(blob) => EnclaveResponse::SealedTributeOfferHandoff {
-                    sealed: blob.to_bytes(),
-                },
-                Err(e) => EnclaveResponse::Error {
-                    message: e.to_string(),
-                },
-            }
-        }
         EnclaveRequest::SealOfferKeyForRegistry { recipient_x25519 } => {
             // On-chain key delivery SERVER: DETERMINISTICALLY
             // seal the resident group signature to `recipient_x25519` so the blob can
             // be committed on-chain. static-static ECDH from the resident offer secret
             // makes every committee enclave produce a byte-identical blob; the
-            // plaintext group signature never leaves the enclave. The newcomer opens
-            // it with `IngestTributeOfferHandoff`.
+            // plaintext group signature never leaves the enclave. The registered
+            // recipient opens it with `IngestSealedOfferKeyForRegistry`.
             let Some(derived) = offer_key.get() else {
                 return EnclaveResponse::Error {
                     message: "SealOfferKeyForRegistry: no resident offer key to seal".to_string(),
@@ -871,23 +891,21 @@ fn dispatch_with_initialization(
                 },
             }
         }
-        EnclaveRequest::IngestTributeOfferHandoff {
+        EnclaveRequest::IngestSealedOfferKeyForRegistry {
             sealed,
             expected_tribute_offer_public,
             chain_id,
             tribute_offer_epoch,
         } => {
-            // Key-handoff NEWCOMER: decrypt the handed-off group signature
-            // with this enclave's X25519 share-decryption secret, derive the offer
-            // key, and accept it ONLY if the derived public matches the on-chain
-            // registered key — a malicious server cannot install a wrong key. On
-            // success the group signature becomes resident (write-once); the serve
-            // loop then seals it for restart.
+            // One-time on-chain onboarding: decrypt the registry artifact with this
+            // enclave's recipient secret and accept it only if its derived public key
+            // matches the chain commitment. The key becomes resident write-once and
+            // is then sealed for restart; there is no peer or recovery path.
             let derived = (|| -> crate::errors::Result<DerivedTributeOfferKey> {
                 let blob = crate::crypto::EncryptedShare::from_bytes(&sealed)?;
                 // Decrypt with the secret behind this enclave's advertised
                 // `recipient_x25519` (its `tribute_offer` X25519 key) — the key the
-                // server sealed the handoff to.
+                // finalized registry artifact was sealed to.
                 let group_sig = Zeroizing::new(crate::crypto::decrypt_share(
                     keys.tribute_offer_x25519_secret(),
                     &blob,
@@ -899,7 +917,7 @@ fn dispatch_with_initialization(
                 )?;
                 if public != expected_tribute_offer_public {
                     return Err(crate::errors::TeeError::Dkg(
-                        "handoff rejected: derived offer key != on-chain registered key"
+                        "sealed offer key rejected: derived public key != on-chain commitment"
                             .to_string(),
                     ));
                 }
@@ -915,13 +933,13 @@ fn dispatch_with_initialization(
                     if let Err(rejected) = offer_key.set(d) {
                         if offer_key.get().map(|k| k.public) != Some(rejected.public) {
                             return EnclaveResponse::Error {
-                                message: "offer key divergence: handed-off key differs from \
+                                message: "offer key divergence: registry key differs from \
                                           the resident offer key"
                                     .to_string(),
                             };
                         }
                     }
-                    EnclaveResponse::TributeOfferHandoffIngested {
+                    EnclaveResponse::OfferKeyForRegistryIngested {
                         tribute_offer_public: public,
                     }
                 }
@@ -973,7 +991,7 @@ fn dispatch_with_initialization(
             signed_logs,
         } => {
             // The session stays resident after finalize: Seam F (below) needs the
-            // recovered share. It is released by `DkgRecoverTributeOffer`.
+            // recovered share. It is released by `DkgFinalizeTributeOffer`.
             into_response(dkg.get_mut(&ceremony_id.0).and_then(|s| {
                 let (group_public, share_commitment) = s.player_finalize_encoded(&signed_logs)?;
                 Ok(EnclaveResponse::DkgPlayerFinalized {
@@ -997,15 +1015,15 @@ fn dispatch_with_initialization(
                 Ok(EnclaveResponse::DkgTributeOfferPartial { sealed })
             }))
         }
-        EnclaveRequest::DkgRecoverTributeOffer {
+        EnclaveRequest::DkgFinalizeTributeOffer {
             ceremony_id,
             sealed_partials,
             chain_id,
             tribute_offer_epoch,
         } => {
-            // Recover the offer secret AND retain the group threshold signature
-            // (`group_sig`, Seam F): it seals for restart and is the key-handoff
-            // payload that onboards a new committee member.
+            // Complete founding Seam F and retain the group threshold signature
+            // in sealed restart state. Authorization has already proved this is
+            // a keyless Validator; a ready enclave cannot enter this arm.
             let result = dkg.get_mut(&ceremony_id.0).and_then(|s| {
                 // The group public KEY (constant term) is the public verification key
                 // carried into the bootstrap payload for later reshare-endorsement
@@ -1714,7 +1732,7 @@ mod tests {
                 .filter(|(recipient_bls, _)| *recipient_bls == participant_bls[i])
                 .map(|(_, blob)| blob.clone())
                 .collect();
-            match e.call(EnclaveRequest::DkgRecoverTributeOffer {
+            match e.call(EnclaveRequest::DkgFinalizeTributeOffer {
                 ceremony_id,
                 sealed_partials,
                 chain_id,
@@ -1726,11 +1744,11 @@ mod tests {
                 } => {
                     assert!(
                         !group_public_key.is_empty(),
-                        "group public key must be emitted at offer recovery"
+                        "group public key must be emitted at founding offer finalization"
                     );
                     tribute_offer_keys.push(tribute_offer_public);
                 }
-                other => panic!("DkgRecoverTributeOffer: {other:?}"),
+                other => panic!("DkgFinalizeTributeOffer: {other:?}"),
             }
         }
         // Every enclave derives the byte-identical shared offer public key.
@@ -1742,7 +1760,7 @@ mod tests {
         );
         assert_ne!(tribute_offer_keys[0], [0u8; 32]);
 
-        // The ceremony session is released after offer-key recovery.
+        // The ceremony session is released after founding offer-key finalization.
         assert!(enclaves.iter().all(|e| e.dkg.is_empty()));
     }
 
@@ -1753,6 +1771,43 @@ mod tests {
             ceremony_id: B256::repeat_byte(0xEE),
         });
         assert!(matches!(resp, EnclaveResponse::Error { .. }), "{resp:?}");
+    }
+
+    #[test]
+    fn public_keys_distinguish_onboarding_recipient_from_permanent_offer_key() {
+        let mut enclave = Enclave::new(0x31);
+        let onboarding_recipient = enclave.keys.tribute_offer_public();
+        match enclave.call(EnclaveRequest::GetPublicKeys) {
+            EnclaveResponse::PublicKeys {
+                offer_key_ready,
+                recipient_x25519_pub,
+                ..
+            } => {
+                assert!(!offer_key_ready);
+                assert_eq!(recipient_x25519_pub, onboarding_recipient);
+            }
+            other => panic!("unexpected pre-ready response: {other:?}"),
+        }
+
+        let permanent = DerivedTributeOfferKey::from_secret_and_group_sig(
+            Zeroizing::new([0x6a; 32]),
+            Zeroizing::new(vec![0x44; 96]),
+        );
+        let permanent_public = permanent.public();
+        assert!(enclave.offer_key.set(permanent).is_ok(), "install once");
+
+        match enclave.call(EnclaveRequest::GetPublicKeys) {
+            EnclaveResponse::PublicKeys {
+                offer_key_ready,
+                recipient_x25519_pub,
+                ..
+            } => {
+                assert!(offer_key_ready);
+                assert_eq!(recipient_x25519_pub, permanent_public);
+                assert_ne!(recipient_x25519_pub, onboarding_recipient);
+            }
+            other => panic!("unexpected ready response: {other:?}"),
+        }
     }
 
     // ---- Seal / unseal offer secret + share (cfg(test) mock sealing key) ----
@@ -1784,7 +1839,9 @@ mod tests {
         seal_tribute_offer_and_group_sig_if_configured(Some(&cfg), &offer_key);
         assert!(cfg.sealed_root_path().exists(), "sealed blob written");
 
-        let restored = unseal_tribute_offer_and_group_sig_on_boot(&cfg).expect("unseal on boot");
+        let restored = unseal_tribute_offer_and_group_sig_on_boot(&cfg)
+            .expect("read sealed state")
+            .expect("unseal on boot");
         assert_eq!(restored.public(), public);
         assert_eq!(
             restored.group_sig(),
@@ -1805,8 +1862,9 @@ mod tests {
         seal_tribute_offer_and_group_sig_if_configured(Some(&cfg_a), &offer_key);
 
         let cfg_b = EnclaveBootConfig::new(chain, dir.path().to_path_buf(), 2);
-        let restored =
-            unseal_tribute_offer_and_group_sig_on_boot(&cfg_b).expect("vB unseals vA blob");
+        let restored = unseal_tribute_offer_and_group_sig_on_boot(&cfg_b)
+            .expect("read sealed state")
+            .expect("vB unseals vA blob");
         assert_eq!(restored.public(), public);
     }
 
@@ -1820,11 +1878,40 @@ mod tests {
         seal_tribute_offer_and_group_sig_if_configured(Some(&cfg), &offer_key);
 
         let cfg_wrong = EnclaveBootConfig::new([0x02; 32], dir.path().to_path_buf(), 1);
-        assert!(unseal_tribute_offer_and_group_sig_on_boot(&cfg_wrong).is_none());
+        let error = match unseal_tribute_offer_and_group_sig_on_boot(&cfg_wrong) {
+            Err(error) => error,
+            Ok(_) => panic!("wrong-chain sealed state must fail closed"),
+        };
+        assert!(error.contains("lost its key"), "{error}");
+        assert!(error.contains("no recovery or fallback"), "{error}");
     }
 
-    /// Sealing is write-once: a second call does not overwrite the blob (so a
-    /// later re-derived key cannot silently replace the persisted one).
+    #[test]
+    fn ws_c_missing_blob_is_the_only_keyless_boot_result() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = EnclaveBootConfig::new([0x18; 32], dir.path().to_path_buf(), 1);
+        assert!(unseal_tribute_offer_and_group_sig_on_boot(&cfg)
+            .expect("missing file is not corruption")
+            .is_none());
+    }
+
+    #[test]
+    fn ws_c_corrupt_blob_is_terminal_and_is_not_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = EnclaveBootConfig::new([0x19; 32], dir.path().to_path_buf(), 1);
+        let corrupt = b"corrupt-permanent-offer-key";
+        std::fs::write(cfg.sealed_root_path(), corrupt).unwrap();
+
+        let error = match unseal_tribute_offer_and_group_sig_on_boot(&cfg) {
+            Err(error) => error,
+            Ok(_) => panic!("corrupt sealed state must fail closed"),
+        };
+        assert!(error.contains("lost its key"), "{error}");
+        assert!(error.contains("no recovery or fallback"), "{error}");
+        assert_eq!(std::fs::read(cfg.sealed_root_path()).unwrap(), corrupt);
+    }
+
+    /// Sealing is write-once: a second call cannot replace the persisted key.
     #[test]
     fn ws_c_seal_is_write_once() {
         let dir = tempfile::tempdir().unwrap();
@@ -1841,6 +1928,7 @@ mod tests {
         // The persisted key is still the first one.
         assert_eq!(
             unseal_tribute_offer_and_group_sig_on_boot(&cfg)
+                .unwrap()
                 .unwrap()
                 .public(),
             public
@@ -1864,13 +1952,13 @@ mod tests {
         );
     }
 
-    // ---- Tribute offer key-handoff ----
+    // ---- One-time on-chain offer-key onboarding ----
 
-    /// A server enclave with a resident group signature seals it to a newcomer's
-    /// X25519 key; the newcomer ingests it, verifies it against the on-chain
-    /// expected offer public, and ends up with the byte-identical resident key.
+    /// A committee enclave deterministically seals the resident group signature
+    /// to the registered recipient. The recipient verifies the installed key
+    /// against the on-chain commitment.
     #[test]
-    fn handoff_seals_and_ingests_offer_key() {
+    fn registry_artifact_seals_and_installs_offer_key() {
         let chain_id = B256::repeat_byte(0xC1);
         let epoch = 0u64;
         // Any bytes act as the group signature for the HKDF derivation.
@@ -1892,35 +1980,35 @@ mod tests {
             .expect("install server offer key");
 
         // Newcomer: fresh enclave, no offer key; its X25519 recipient key is the
-        // handoff target.
+        // one-time registry artifact target.
         let mut newcomer = Enclave::new(2);
         let newcomer_enc = newcomer.keys.tribute_offer_public();
 
-        let sealed = match server.call(EnclaveRequest::SealTributeOfferHandoff {
+        let sealed = match server.call(EnclaveRequest::SealOfferKeyForRegistry {
             recipient_x25519: newcomer_enc,
         }) {
-            EnclaveResponse::SealedTributeOfferHandoff { sealed } => sealed,
-            other => panic!("expected SealedTributeOfferHandoff, got {other:?}"),
+            EnclaveResponse::SealedOfferKeyForRegistry { sealed } => sealed,
+            other => panic!("expected SealedOfferKeyForRegistry, got {other:?}"),
         };
 
-        match newcomer.call(EnclaveRequest::IngestTributeOfferHandoff {
+        match newcomer.call(EnclaveRequest::IngestSealedOfferKeyForRegistry {
             sealed,
             expected_tribute_offer_public: public,
             chain_id,
             tribute_offer_epoch: epoch,
         }) {
-            EnclaveResponse::TributeOfferHandoffIngested {
+            EnclaveResponse::OfferKeyForRegistryIngested {
                 tribute_offer_public,
             } => assert_eq!(tribute_offer_public, public),
-            other => panic!("expected TributeOfferHandoffIngested, got {other:?}"),
+            other => panic!("expected OfferKeyForRegistryIngested, got {other:?}"),
         }
         assert_eq!(newcomer.offer_key.get().map(|k| k.public()), Some(public));
     }
 
-    /// The newcomer rejects a handoff whose derived offer key does not match the
-    /// on-chain expected public — a malicious server cannot install a wrong key.
+    /// The recipient rejects a registry artifact whose derived key does not match
+    /// the on-chain commitment.
     #[test]
-    fn handoff_ingest_rejects_wrong_expected_public() {
+    fn registry_artifact_rejects_wrong_expected_public() {
         let chain_id = B256::repeat_byte(0xC2);
         let epoch = 0u64;
         let group_sig = vec![0x44_u8; 96];
@@ -1941,15 +2029,15 @@ mod tests {
 
         let mut newcomer = Enclave::new(4);
         let newcomer_enc = newcomer.keys.tribute_offer_public();
-        let sealed = match server.call(EnclaveRequest::SealTributeOfferHandoff {
+        let sealed = match server.call(EnclaveRequest::SealOfferKeyForRegistry {
             recipient_x25519: newcomer_enc,
         }) {
-            EnclaveResponse::SealedTributeOfferHandoff { sealed } => sealed,
+            EnclaveResponse::SealedOfferKeyForRegistry { sealed } => sealed,
             other => panic!("got {other:?}"),
         };
 
         // Claim a different expected public than the one the group signature yields.
-        match newcomer.call(EnclaveRequest::IngestTributeOfferHandoff {
+        match newcomer.call(EnclaveRequest::IngestSealedOfferKeyForRegistry {
             sealed,
             expected_tribute_offer_public: [0xEE_u8; 32],
             chain_id,
@@ -1963,7 +2051,7 @@ mod tests {
     }
 
     /// An enclave with a resident group key installed, so `DeriveAccountKeys` can
-    /// derive per-account keys (mirrors the handoff tests' setup).
+    /// exercise the ready-state capability in isolation.
     fn resident_enclave(seed: u8) -> Enclave {
         let group_sig = vec![0x5a_u8; 96];
         let e = Enclave::new(seed);

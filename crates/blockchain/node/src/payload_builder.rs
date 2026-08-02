@@ -185,10 +185,11 @@ where
                 });
 
         // One-time TEE bootstrap: the consensus thread's TEE DKG coordination
-        // stashes the assembled `TeeBootstrapPayload` in the bridge; the proposer
-        // consumes it here and injects it into the begin-zone (slice 5.1). Only
+        // stashes the assembled `TeeBootstrapV2` in the bridge; the proposer
+        // clones it here and injects it into the begin-zone (slice 5.1). Only
         // the proposer's bridge is read; validators verify the body-carried
-        // payload (slice 5.2). `take` so a single proposal carries it.
+        // payload (slice 5.2). Candidate construction is retryable, so a rejected
+        // first candidate must not consume the only copy needed by later views.
         //
         // Guard to block 1 (the fixed `committee_snapshot_block` target): every
         // node stashes its pending payload at startup, but only the block-1
@@ -201,7 +202,7 @@ where
             self.evm_config
                 .bridge
                 .as_ref()
-                .and_then(|bridge| bridge.take_pending_tee_bootstrap())
+                .and_then(|bridge| bridge.pending_tee_bootstrap())
         } else {
             None
         };
@@ -797,7 +798,7 @@ mod tests {
         keccak256(bytes)
     }
 
-    fn genesis_boundary_artifacts(proposer: alloy_primitives::Address) -> Bytes {
+    fn genesis_boundary_artifacts(proposer: alloy_primitives::Address) -> (Bytes, B256) {
         let active_set = vec![proposer];
         let vrf_group_public_key_bytes = vec![0x42u8; 96];
         let snapshot = outbe_validatorset::CommitteeSnapshot {
@@ -809,7 +810,8 @@ mod tests {
             vrf_group_public_key_bytes: vrf_group_public_key_bytes.clone(),
             vrf_public_polynomial_hash: B256::ZERO,
         };
-        encode_outbe_block_artifacts(&OutbeBlockArtifacts {
+        let committee_snapshot_hash = outbe_validatorset::committee_set_hash_v2(0, &snapshot);
+        let artifacts = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
             execution_summary: None,
             consensus_header_artifact: Some(ConsensusHeaderArtifact::BoundaryOutcome(
                 DkgBoundaryArtifact {
@@ -821,7 +823,7 @@ mod tests {
                     vrf_material_version: 0,
                     vrf_group_public_key: keccak256(&vrf_group_public_key_bytes),
                     vrf_group_public_key_bytes: Bytes::from(vrf_group_public_key_bytes),
-                    committee_set_hash: outbe_validatorset::committee_set_hash_v2(0, &snapshot),
+                    committee_set_hash: committee_snapshot_hash,
                     is_validator_set_change: true,
                     outcome: Bytes::new(),
                     is_full_dkg: false,
@@ -838,47 +840,32 @@ mod tests {
             late_finalize_credits: None,
             compressed_entities_root: None,
         })
-        .expect("genesis boundary artifacts encode")
+        .expect("genesis boundary artifacts encode");
+        (artifacts, committee_snapshot_hash)
     }
 
-    fn genesis_legacy_tee_bootstrap(
-        proposer: alloy_primitives::Address,
-        signer: &OutbeEvmSigner,
-    ) -> outbe_primitives::tee_bootstrap::TeeBootstrapPayload {
-        use outbe_primitives::tee_bootstrap::{
-            TeeBootstrapPayload, TeePolicy, TeeRegistrationBundle, TeeValidatorSignature,
+    fn genesis_dev_tee_bootstrap(
+        chain_id: u64,
+        genesis_hash: B256,
+        committee_snapshot_hash: B256,
+    ) -> outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2 {
+        use outbe_primitives::tee_test_utils::{
+            gramine_direct_bootstrap_v2, gramine_direct_policy_v1, DevValidatorV1,
         };
 
-        let mut registration = TeeRegistrationBundle {
-            validator: proposer,
-            recipient_x25519: B256::repeat_byte(0x21),
-            attestation_pub: B256::repeat_byte(0x22),
-            noise_static_pub: B256::repeat_byte(0x23),
-            mrenclave: B256::repeat_byte(0x24),
-            mrsigner: B256::repeat_byte(0x25),
-            isv_svn: 1,
-            keys_hash: B256::ZERO,
-        };
-        registration.keys_hash = registration.computed_keys_hash();
-        let policy = TeePolicy::default();
-        let mut payload = TeeBootstrapPayload {
-            policy_hash: policy.compute_hash(),
-            committee_snapshot_hash: B256::ZERO,
-            committee_snapshot_block: 1,
-            key_epoch: 0,
-            tribute_offer_epoch: 0,
-            dkg_transcript_hash: B256::ZERO,
-            tribute_offer_public_key: B256::repeat_byte(0x27),
-            tribute_offer_group_public_key: Bytes::new(),
-            registrations: vec![registration],
+        let policy = gramine_direct_policy_v1(chain_id, genesis_hash)
+            .expect("test GramineDirectDev policy is canonical");
+        gramine_direct_bootstrap_v2(
             policy,
-            validator_signatures: Vec::new(),
-        };
-        payload.validator_signatures = vec![TeeValidatorSignature {
-            validator: proposer,
-            signature: signer.sign_hash(&payload.signing_hash()).unwrap(),
-        }];
-        payload
+            committee_snapshot_hash,
+            1,
+            ACTIVE_PAYLOAD_BLOCK_TIMESTAMP + 7_200,
+            &[DevValidatorV1 {
+                evm_secret: [1; 32],
+                bls_minpk_public: TEST_CONSENSUS_PUBLIC_KEY,
+            }],
+        )
+        .expect("test GramineDirectDev OST3 payload is canonical")
     }
 
     fn active_ocomp_provider(
@@ -972,25 +959,47 @@ mod tests {
     const ACTIVE_PAYLOAD_BLOCK_TIMESTAMP: u64 = 1_700_000_000;
 
     struct ActivePayloadCase {
-        payload: OutbeBuiltPayload,
+        payloads: Vec<OutbeBuiltPayload>,
         evm_config: OutbeEvmConfig,
         provider: TestProvider,
         rejected: Arc<AtomicUsize>,
     }
 
-    fn build_active_payload_case(user_gas_over_boundary: u64) -> ActivePayloadCase {
-        let chain_spec: Arc<ChainSpec<OutbeHeader>> = ChainSpecBuilder::mainnet()
+    fn build_active_payload_case(
+        user_gas_over_boundary: u64,
+        proposal_attempts: usize,
+    ) -> ActivePayloadCase {
+        assert!(
+            proposal_attempts > 0,
+            "test must build at least one proposal"
+        );
+        use outbe_primitives::tee_test_utils::{
+            gramine_direct_policy_v1, tee_attestation_v1_extra_field,
+        };
+
+        let mut chain_spec = ChainSpecBuilder::mainnet()
             .with_fork(EthereumHardfork::Paris, ForkCondition::Block(0))
-            .build()
-            .map_header(OutbeHeader::new)
-            .into();
+            .build();
+        let policy = gramine_direct_policy_v1(chain_spec.chain().id(), chain_spec.genesis_hash())
+            .expect("test GramineDirectDev policy is canonical");
+        chain_spec.genesis.config.extra_fields.insert(
+            "teeAttestationV1".to_owned(),
+            tee_attestation_v1_extra_field(&policy)
+                .expect("test TEE activation manifest is canonical"),
+        );
+        let chain_spec: Arc<ChainSpec<OutbeHeader>> =
+            chain_spec.map_header(OutbeHeader::new).into();
         let signer = Arc::new(
             OutbeEvmSigner::from_secret_bytes([1u8; 32]).expect("test proposer key is valid"),
         );
         let proposer = signer.address();
-        let prefinal_extra_data = genesis_boundary_artifacts(proposer);
+        let (prefinal_extra_data, committee_snapshot_hash) = genesis_boundary_artifacts(proposer);
         let bridge = ConsensusExecutionBridge::new();
-        let bootstrap = genesis_legacy_tee_bootstrap(proposer, &signer);
+        let bootstrap = genesis_dev_tee_bootstrap(
+            chain_spec.chain().id(),
+            chain_spec.genesis_hash(),
+            committee_snapshot_hash,
+        );
         bridge.set_pending_tee_bootstrap(bootstrap.clone());
         let body_storage: StorageReaderHandle = Arc::new(MemoryStorage::new());
         let evm_config = OutbeEvmConfig::new_with_bridge_and_runtime_body_readers(
@@ -1086,26 +1095,32 @@ mod tests {
         .with_execution_read_budget(ExecutionReadBudget::new());
         let payload_config = PayloadConfig::new(parent, attributes, PayloadId::new([0x07; 8]));
         let rejected = Arc::new(AtomicUsize::new(0));
-        let rejected_by_builder = rejected.clone();
-        let outcome = payload_builder
-            .build_payload(
-                BuildArguments::new(
-                    Default::default(),
-                    Default::default(),
-                    None,
-                    payload_config,
-                    Default::default(),
-                    None,
-                ),
-                |_| TestBestTransactions::one(pooled_user, rejected_by_builder),
-            )
-            .expect("production payload builder succeeds");
-        let payload = outcome
-            .into_payload()
-            .expect("production payload builder returns a payload");
+        let mut payloads = Vec::with_capacity(proposal_attempts);
+        for _ in 0..proposal_attempts {
+            let rejected_by_builder = rejected.clone();
+            let pooled_user = pooled_user.clone();
+            let outcome = payload_builder
+                .build_payload(
+                    BuildArguments::new(
+                        Default::default(),
+                        Default::default(),
+                        None,
+                        payload_config.clone(),
+                        Default::default(),
+                        None,
+                    ),
+                    |_| TestBestTransactions::one(pooled_user, rejected_by_builder),
+                )
+                .expect("every block-1 proposal attempt must retain the OST3 payload");
+            payloads.push(
+                outcome
+                    .into_payload()
+                    .expect("production payload builder returns a payload"),
+            );
+        }
 
         ActivePayloadCase {
-            payload,
+            payloads,
             evm_config,
             provider,
             rejected,
@@ -1114,8 +1129,8 @@ mod tests {
 
     #[test]
     fn bootstrap_payload_builder_ignores_nonempty_pool_and_replays_exactly() {
-        let case = build_active_payload_case(0);
-        let payload = &case.payload;
+        let case = build_active_payload_case(0, 1);
+        let payload = &case.payloads[0];
         let body = &payload.block().body().transactions;
         let layout = split_system_layout(body).expect("built payload has canonical system layout");
 
@@ -1153,8 +1168,8 @@ mod tests {
 
     #[test]
     fn bootstrap_payload_builder_does_not_even_evaluate_oversized_pool_candidate() {
-        let case = build_active_payload_case(1);
-        let payload = &case.payload;
+        let case = build_active_payload_case(1, 1);
+        let payload = &case.payloads[0];
         let body = &payload.block().body().transactions;
         let layout = split_system_layout(body).expect("built payload has canonical system layout");
 
@@ -1176,6 +1191,31 @@ mod tests {
         assert_eq!(
             replay, *executed.execution_output,
             "the block that rejected the boundary+1 user must replay exactly"
+        );
+    }
+
+    #[test]
+    fn bootstrap_payload_survives_repeated_block_one_proposal_attempts() {
+        let case = build_active_payload_case(0, 2);
+        let first_body = &case.payloads[0].block().body().transactions;
+        let retry_body = &case.payloads[1].block().body().transactions;
+
+        assert_eq!(
+            retry_body, first_body,
+            "a rejected block-1 candidate must not consume the mandatory OST3 payload"
+        );
+        assert_eq!(
+            split_system_layout(retry_body)
+                .expect("retry payload has canonical system layout")
+                .begin_block_kinds()
+                .expect("retry begin inputs decode"),
+            vec![
+                SystemTxKind::CycleTick,
+                SystemTxKind::BoundaryOutcome,
+                SystemTxKind::TeeBootstrap,
+                SystemTxKind::OracleSlashWindow,
+                SystemTxKind::HookEvents,
+            ]
         );
     }
 

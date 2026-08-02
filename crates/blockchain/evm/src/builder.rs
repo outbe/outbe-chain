@@ -258,6 +258,7 @@ mod tests {
         ConsensusHeaderArtifact, ExecutionSummaryArtifact, OutbeBlockArtifacts,
     };
     use outbe_primitives::storage::{direct::DirectStorageProvider, StorageHandle};
+    use outbe_primitives::tee_genesis_v1::GRAMINE_DIRECT_DEV_CHAIN_ID;
     use outbe_primitives::OutbeHeader;
     use reth_ethereum::chainspec::ChainSpec;
     use reth_ethereum::{
@@ -512,53 +513,30 @@ mod tests {
         )
     }
 
-    fn genesis_legacy_tee_bootstrap() -> outbe_primitives::tee_bootstrap::TeeBootstrapPayload {
-        use k256::ecdsa::signature::hazmat::PrehashSigner as _;
-        use outbe_primitives::tee_bootstrap::{
-            TeeBootstrapPayload, TeePolicy, TeeRegistrationBundle, TeeValidatorSignature,
+    fn genesis_dev_tee_bootstrap(
+        committee_snapshot_hash: B256,
+    ) -> outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2 {
+        use outbe_primitives::tee_test_utils::{
+            gramine_direct_bootstrap_v2, gramine_direct_policy_v1, DevValidatorV1,
         };
 
-        let mut registration = TeeRegistrationBundle {
-            validator: GENESIS_OWNER,
-            recipient_x25519: B256::repeat_byte(0x21),
-            attestation_pub: B256::repeat_byte(0x22),
-            noise_static_pub: B256::repeat_byte(0x23),
-            mrenclave: B256::repeat_byte(0x24),
-            mrsigner: B256::repeat_byte(0x25),
-            isv_svn: 1,
-            keys_hash: B256::ZERO,
-        };
-        registration.keys_hash = registration.computed_keys_hash();
-        let policy = TeePolicy::default();
-        let mut payload = TeeBootstrapPayload {
-            policy_hash: policy.compute_hash(),
-            committee_snapshot_hash: B256::ZERO,
-            committee_snapshot_block: 1,
-            key_epoch: 0,
-            tribute_offer_epoch: 0,
-            dkg_transcript_hash: B256::repeat_byte(0x26),
-            tribute_offer_public_key: B256::repeat_byte(0x27),
-            tribute_offer_group_public_key: Bytes::new(),
-            registrations: vec![registration],
-            policy,
-            validator_signatures: Vec::new(),
-        };
         let mut secret = [0_u8; 32];
         secret[31] = 1;
-        let signing_key =
-            k256::ecdsa::SigningKey::from_slice(&secret).expect("genesis test signing key");
-        let (signature, recovery_id): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) =
-            signing_key
-                .sign_prehash(payload.signing_hash().as_slice())
-                .expect("sign genesis bootstrap");
-        let mut recoverable = [0_u8; 65];
-        recoverable[..64].copy_from_slice(signature.to_bytes().as_slice());
-        recoverable[64] = recovery_id.to_byte();
-        payload.validator_signatures = vec![TeeValidatorSignature {
-            validator: GENESIS_OWNER,
-            signature: recoverable,
-        }];
-        payload
+        let mut consensus_public = [0_u8; 48];
+        consensus_public[0] = 1;
+        let policy = gramine_direct_policy_v1(GRAMINE_DIRECT_DEV_CHAIN_ID, MAINNET.genesis_hash())
+            .expect("test GramineDirectDev policy is canonical");
+        gramine_direct_bootstrap_v2(
+            policy,
+            committee_snapshot_hash,
+            1,
+            7_201,
+            &[DevValidatorV1 {
+                evm_secret: secret,
+                bls_minpk_public: consensus_public,
+            }],
+        )
+        .expect("test GramineDirectDev OST3 payload is canonical")
     }
 
     fn test_config(bridge: ConsensusExecutionBridge) -> OutbeEvmConfig {
@@ -574,7 +552,7 @@ mod tests {
             directory.path(),
             EnvironmentIdentity {
                 local_storage_schema_version: LOCAL_STORAGE_SCHEMA_VERSION,
-                chain_id: MAINNET.chain().id(),
+                chain_id: GRAMINE_DIRECT_DEV_CHAIN_ID,
                 genesis_hash: parent_hash,
                 commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
                 topology: outbe_compressed_entities::CeTopologyV1.encode(),
@@ -603,7 +581,21 @@ mod tests {
     }
 
     fn test_chain_spec() -> Arc<ChainSpec<OutbeHeader>> {
-        MAINNET.as_ref().clone().map_header(OutbeHeader::new).into()
+        use outbe_primitives::tee_test_utils::{
+            gramine_direct_policy_v1, tee_attestation_v1_extra_field,
+        };
+
+        let mut spec = MAINNET.as_ref().clone();
+        spec.chain = GRAMINE_DIRECT_DEV_CHAIN_ID.into();
+        spec.genesis.config.chain_id = GRAMINE_DIRECT_DEV_CHAIN_ID;
+        let policy = gramine_direct_policy_v1(spec.chain().id(), spec.genesis_hash())
+            .expect("test GramineDirectDev policy is canonical");
+        spec.genesis.config.extra_fields.insert(
+            "teeAttestationV1".to_owned(),
+            tee_attestation_v1_extra_field(&policy)
+                .expect("test TEE activation manifest is canonical"),
+        );
+        spec.map_header(OutbeHeader::new).into()
     }
 
     fn test_parent() -> SealedHeader<OutbeHeader> {
@@ -780,7 +772,7 @@ mod tests {
         let phase1 = config
             .build_signed_phase1_tx(
                 2,
-                MAINNET.chain().id(),
+                GRAMINE_DIRECT_DEV_CHAIN_ID,
                 parent.hash(),
                 attrs.parent_consensus_metadata.clone(),
                 attrs.proposer_evm_address,
@@ -904,7 +896,7 @@ mod tests {
             let begin_system_txs = config
                 .build_begin_system_txs(
                     2,
-                    MAINNET.chain().id(),
+                    GRAMINE_DIRECT_DEV_CHAIN_ID,
                     30_000_000,
                     parent.hash(),
                     &attrs.inner.extra_data,
@@ -1071,7 +1063,7 @@ mod tests {
 
         let mut attrs = next_block_attrs(encoded);
         attrs.inner.gas_limit = outbe_primitives::system_tx::protocol_block_gas_limit(1);
-        attrs.pending_tee_bootstrap = Some(genesis_legacy_tee_bootstrap());
+        attrs.pending_tee_bootstrap = Some(genesis_dev_tee_bootstrap(committee_set_hash));
         let mut builder = config
             .builder_for_next_block(&mut proposer_state, &parent, attrs.clone())
             .expect("builder must be created");
@@ -1081,7 +1073,7 @@ mod tests {
         let begin_system_txs = config
             .build_begin_system_txs(
                 1,
-                MAINNET.chain().id(),
+                GRAMINE_DIRECT_DEV_CHAIN_ID,
                 outbe_primitives::system_tx::protocol_block_gas_limit(1),
                 parent.hash(),
                 &attrs.inner.extra_data,

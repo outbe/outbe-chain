@@ -45,6 +45,24 @@ impl EnclaveChannel for crate::EnclaveClient {
     }
 }
 
+impl EnclaveChannel for crate::AuthorizedEnclaveClient {
+    fn request(
+        &mut self,
+        req: &EnclaveRequest,
+    ) -> core::result::Result<EnclaveResponse, TransportError> {
+        crate::AuthorizedEnclaveClient::request(self, req)
+    }
+}
+
+impl EnclaveChannel for crate::RuntimeEnclaveClient {
+    fn request(
+        &mut self,
+        req: &EnclaveRequest,
+    ) -> core::result::Result<EnclaveResponse, TransportError> {
+        crate::RuntimeEnclaveClient::request(self, req)
+    }
+}
+
 /// A dealer's sealed dealing to one recipient (dealer -> player).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DealerBundle {
@@ -338,7 +356,7 @@ pub async fn run_tee_dkg_ceremony<C: EnclaveChannel, G: DkgGossip>(
     while sealed_for_me.len() < n {
         let Some((_from, msg)) = gossip.recv().await else {
             return Err(CeremonyError::UnexpectedResponse(
-                "gossip closed before offer-key recovery completed",
+                "gossip closed before founding offer-key finalization completed",
             ));
         };
         if let DkgWireMessage::TributeOfferPartial {
@@ -357,7 +375,7 @@ pub async fn run_tee_dkg_ceremony<C: EnclaveChannel, G: DkgGossip>(
 
     let partials: Vec<Vec<u8>> = sealed_for_me.into_values().collect();
     let (tribute_offer_public, tribute_offer_group_public_key) =
-        coord.recover_tribute_offer(enclave, &partials, chain_id, tribute_offer_epoch)?;
+        coord.finalize_tribute_offer(enclave, &partials, chain_id, tribute_offer_epoch)?;
     outcome.tribute_offer_public = tribute_offer_public;
     outcome.tribute_offer_group_public_key = tribute_offer_group_public_key;
     Ok(outcome)
@@ -564,18 +582,17 @@ impl CeremonyCoordinator {
         }
     }
 
-    /// Seam F: recover the group threshold signature from the **sealed partials
-    /// addressed to this enclave** (decrypted in-SGX) and derive the shared offer
-    /// public key (the offer secret stays resident in the enclave). Releases the
-    /// ceremony session.
-    pub fn recover_tribute_offer<C: EnclaveChannel>(
+    /// Founding Seam F: finalize the group threshold signature from the sealed
+    /// partials addressed to this enclave and install the permanent offer key.
+    /// The enclave capability matrix rejects this request once the key is ready.
+    pub fn finalize_tribute_offer<C: EnclaveChannel>(
         &self,
         ch: &mut C,
         sealed_partials: &[Vec<u8>],
         chain_id: B256,
         tribute_offer_epoch: u64,
     ) -> Result<([u8; 32], Vec<u8>)> {
-        match ch.request(&EnclaveRequest::DkgRecoverTributeOffer {
+        match ch.request(&EnclaveRequest::DkgFinalizeTributeOffer {
             ceremony_id: self.ceremony_id,
             sealed_partials: sealed_partials.to_vec(),
             chain_id,
@@ -586,7 +603,7 @@ impl CeremonyCoordinator {
                 group_public_key,
             } => Ok((tribute_offer_public, group_public_key)),
             EnclaveResponse::Error { message } => Err(CeremonyError::EnclaveError(message)),
-            _ => Err(CeremonyError::UnexpectedResponse("DkgRecoverTributeOffer")),
+            _ => Err(CeremonyError::UnexpectedResponse("DkgFinalizeTributeOffer")),
         }
     }
 }

@@ -10,10 +10,10 @@
 //!   payload = tribute_offer_secret(32) ‖ group_sig_len u16 LE ‖ group_sig_bytes
 //! ```
 //!
-//! The blob seals the DKG-derived offer secret **and** the group threshold
-//! signature (Seam F output), so a restart restores both: the offer key re-derives
-//! immediately, and the resident `group_sig` lets the enclave re-derive any epoch's
-//! offer key and serve a committee key-handoff without re-running the DKG.
+//! The blob seals the DKG-derived offer secret and group threshold signature
+//! (Seam F output), so restart restores the exact permanent key. The resident
+//! signature is also the enclave-only input to deterministic registry onboarding;
+//! it is never a peer recovery or key-replacement capability.
 //!
 //! The sealing key comes from SGX `EGETKEY` with `KEYPOLICY=MRSIGNER` (so a new
 //! enclave of the same signer can unseal across updates). In mock mode it is a
@@ -33,9 +33,9 @@ use crate::errors::{Result, TeeError};
 /// Boot-time configuration the sealing path needs, built once at startup from CLI
 /// args and consumed by the seal-on-bootstrap / unseal-on-restart path:
 /// which chain the seed is bound to (AAD), where the sealed blob lives,
-/// and the running enclave SVN (anti-rollback floor). When absent (no
-/// `--tee-dir`), sealing is disabled and the offer key is re-derived from the DKG
-/// each boot.
+/// and the running enclave SVN (anti-rollback floor). Production requires this
+/// configuration; only the separate development process may omit it and remain
+/// non-durable/keyless until its fresh founding ceremony.
 #[derive(Clone, Debug)]
 pub struct EnclaveBootConfig {
     pub chain_id: B256,
@@ -212,10 +212,9 @@ fn decode_sealed_payload(pt: &[u8]) -> Result<(Zeroizing<[u8; 32]>, Zeroizing<Ve
     Ok((tribute_offer_secret, group_sig))
 }
 
-/// Seal the DKG-derived offer secret together with the group threshold signature
-/// into the on-disk blob. `group_sig` is the encoded Seam F signature; sealing it
-/// lets a restarted enclave re-derive the offer key for any epoch without re-running
-/// the DKG. `header.format_version` must be [`SEAL_FORMAT`].
+/// Seal the permanent DKG-derived offer secret together with the founding Seam F
+/// signature. Restart restores these exact bytes; it never derives a replacement
+/// key. `header.format_version` must be [`SEAL_FORMAT`].
 pub fn seal_tribute_offer_and_group_sig(
     tribute_offer_secret: &[u8; 32],
     group_sig: &[u8],

@@ -22,6 +22,40 @@ use eyre::{bail, eyre, Result, WrapErr};
 
 const TEST_ENCLAVE_IMAGE: &str = "outbe-tee-enclave-gramine-test";
 
+const SENSITIVE_ARG_FLAGS: &[&str] = &[
+    "--private-key",
+    "--node-private-key",
+    "--p2p-secret-key-hex",
+    "--dkg-seed",
+];
+
+/// Preserve a command's diagnostic shape without emitting secret argument
+/// values into CI logs, evidence capture, or agent transcripts.
+pub(crate) fn redact_args_for_log(argv: &[String]) -> Vec<String> {
+    let mut redacted = Vec::with_capacity(argv.len());
+    let mut redact_next = false;
+    for arg in argv {
+        if redact_next {
+            redacted.push("<redacted>".to_owned());
+            redact_next = false;
+            continue;
+        }
+        if SENSITIVE_ARG_FLAGS.iter().any(|flag| arg == flag) {
+            redacted.push(arg.clone());
+            redact_next = true;
+            continue;
+        }
+        if let Some((flag, _)) = arg.split_once('=') {
+            if SENSITIVE_ARG_FLAGS.contains(&flag) {
+                redacted.push(format!("{flag}=<redacted>"));
+                continue;
+            }
+        }
+        redacted.push(arg.clone());
+    }
+    redacted
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct DockerImageId(String);
 
@@ -261,9 +295,9 @@ fn build_enclave_command(spec: &EnclaveSpec) -> Result<Command> {
         "host",
     ]);
 
-    // Real SGX: fail closed when no enclave device exists. The test image has a
-    // deliberate gramine-direct fallback, so silently omitting the device here
-    // would record a false hardware-mode observation.
+    // Real SGX: fail closed when no enclave device exists. The same test image
+    // also supports the separately selected GramineDirectDev lane, so silently
+    // omitting the device here would record a false hardware-mode observation.
     if let Some(enclave_device) = select_sgx_enclave_device(
         spec.pass_sgx_devices,
         Path::new("/dev/sgx_enclave").exists(),
@@ -344,6 +378,7 @@ pub(crate) fn spawn_enclave(spec: EnclaveSpec) -> Result<EnclaveGuard> {
             .get_args()
             .map(|a| a.to_string_lossy().into_owned())
             .collect();
+        let rest = redact_args_for_log(&rest);
         eprintln!(
             "[localnet] enclave {} (tee {}): {prog} {}",
             spec.name,
@@ -560,6 +595,38 @@ mod tests {
             a,
             vec!["node", "--http.port", "8545", "--datadir", "/tmp/x/data"]
         );
+    }
+
+    #[test]
+    fn diagnostic_argv_redacts_secret_values_in_both_supported_forms() {
+        let argv = vec![
+            "node".to_owned(),
+            "--private-key".to_owned(),
+            "secret-a".to_owned(),
+            "--p2p-secret-key-hex=secret-b".to_owned(),
+            "--dkg-seed".to_owned(),
+            "secret-c".to_owned(),
+            "--rpc-url".to_owned(),
+            "http://127.0.0.1:8545".to_owned(),
+        ];
+        let redacted = redact_args_for_log(&argv);
+        assert_eq!(
+            redacted,
+            vec![
+                "node",
+                "--private-key",
+                "<redacted>",
+                "--p2p-secret-key-hex=<redacted>",
+                "--dkg-seed",
+                "<redacted>",
+                "--rpc-url",
+                "http://127.0.0.1:8545",
+            ]
+        );
+        let rendered = redacted.join(" ");
+        for secret in ["secret-a", "secret-b", "secret-c"] {
+            assert!(!rendered.contains(secret), "leaked {secret}");
+        }
     }
 
     #[test]

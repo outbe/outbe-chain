@@ -17,6 +17,15 @@
 
 use alloy_primitives::{Address, B256, U256};
 
+/// Hard cap for the deterministic registry onboarding artifact. The current
+/// X25519/nonce/AEAD envelope is substantially smaller; this prevents a
+/// malformed enclave response from creating an unbounded consensus log.
+pub const MAX_SEALED_OFFER_KEY_FOR_REGISTRY_BYTES: usize = 512;
+
+/// Minimum canonical framing: the committed 32-byte offer public key plus the
+/// ephemeral public key, nonce and authenticated ciphertext framing.
+pub const MIN_SEALED_OFFER_KEY_FOR_REGISTRY_BYTES: usize = 60;
+
 /// A single offer handed to the enclave.
 ///
 /// Fields mirror the part of `ITributeFactory.offerTribute` the enclave needs,
@@ -382,6 +391,10 @@ pub enum EnclaveRequest {
     /// renewal intent. Production accepts this only inside an authenticated
     /// NodeHost session and only when the intent matches the sealed identity.
     GenerateDcapQuote { intent: Vec<u8> },
+    /// Sign one exact GramineDirectDev registration intent inside the enclave.
+    /// This command is accepted only by the separate development transport and
+    /// never returns an SGX quote or hardware-attestation claim.
+    SignRegistrationIntentDevV1 { intent: Vec<u8> },
 
     /// Start one bounded, request-committed DCAP verification upload. Evidence
     /// and policy bytes follow in strictly sequential chunks on this same
@@ -446,12 +459,12 @@ pub enum EnclaveRequest {
     /// cannot recover the group signature (and hence the offer key) itself.
     /// Requires `DkgPlayerFinalize` first.
     DkgTributeOfferPartial { ceremony_id: B256 },
-    /// Seam F (offer key): recover the group threshold signature from the sealed
-    /// partials addressed to THIS enclave (decrypted in-SGX) and derive the shared
-    /// offer X25519 keypair from it (`HKDF` bound to `chain_id` + `tribute_offer_epoch`).
-    /// The offer secret is stored resident in the enclave; only the public key is
-    /// returned. Releases the ceremony session.
-    DkgRecoverTributeOffer {
+    /// Founding Seam F: finalize the initial group threshold signature from the
+    /// sealed partials addressed to THIS enclave (decrypted in-SGX) and install
+    /// the one permanent offer X25519 keypair. The capability matrix permits
+    /// this request only to a keyless Validator; it is not a lost-key recovery
+    /// or post-genesis replacement surface. Releases the ceremony session.
+    DkgFinalizeTributeOffer {
         ceremony_id: B256,
         /// Sealed partials addressed to this enclave (one `EncryptedShare` blob per
         /// signer); decrypted with the enclave's X25519 share-decryption secret.
@@ -469,25 +482,15 @@ pub enum EnclaveRequest {
     /// computes economics + Poseidon `token_id`, and returns `TributeOfferResult`).
     ProcessTributeOfferBatch { offers: Vec<EncryptedTributeOffer> },
 
-    /// Key-handoff, SERVER side: seal this enclave's resident group threshold
-    /// signature to a newcomer's attested X25519 key. The host has already verified
-    /// the newcomer's quote (so `recipient_x25519` is attested) and that the
-    /// requester is in the active committee. Returns `SealedTributeOfferHandoff`
-    /// (an opaque `EncryptedShare` blob the host relays); the enclave only seals to
-    /// the supplied key — it never exports the group signature in plaintext.
-    SealTributeOfferHandoff { recipient_x25519: [u8; 32] },
-
-    /// Key-handoff, NEWCOMER side: ingest a sealed group signature received
-    /// from a current committee member. The enclave decrypts it with its X25519
-    /// share-decryption secret, derives the offer keypair, and accepts it ONLY if the
-    /// derived public matches `expected_tribute_offer_public` (the on-chain registered
-    /// key) — so a malicious server cannot install a wrong key. On success the group
-    /// signature becomes resident (and seals for restart); returns
-    /// `TributeOfferHandoffIngested`.
-    IngestTributeOfferHandoff {
-        /// Opaque `EncryptedShare` blob (the sealed group signature).
+    /// One-time on-chain onboarding: ingest the deterministic sealed offer-key
+    /// artifact committed by `TeeRegistry`. This is not a peer handoff or a lost-key
+    /// recovery path. The enclave decrypts with its recipient key, derives the offer
+    /// keypair and accepts it only when the public key equals the chain commitment.
+    /// The resident key is write-once and sealed for restart.
+    IngestSealedOfferKeyForRegistry {
+        /// Opaque deterministic `EncryptedShare` from `TeeRegistry`.
         sealed: Vec<u8>,
-        /// The on-chain registered offer public key to verify the handoff against.
+        /// The on-chain offer public key to verify the installed key against.
         expected_tribute_offer_public: [u8; 32],
         chain_id: B256,
         tribute_offer_epoch: u64,
@@ -495,11 +498,11 @@ pub enum EnclaveRequest {
 
     /// On-chain key delivery, SERVER side: DETERMINISTICALLY
     /// seal this enclave's resident group signature to `recipient_x25519` so the
-    /// sealed blob can be COMMITTED ON-CHAIN. Unlike `SealTributeOfferHandoff` (a
-    /// per-reply P2P seal with a random ephemeral key + nonce), every committee
-    /// enclave returns a BYTE-IDENTICAL blob for the same recipient — the prerequisite
-    /// for storing it in `TeeRegistry` as a consensus-validated artifact. Returns
-    /// `SealedOfferKeyForRegistry`. The newcomer opens it with `IngestTributeOfferHandoff`.
+    /// sealed blob can be committed on-chain. Every committee enclave returns a
+    /// byte-identical blob for the same recipient, which lets `TeeRegistry` retain
+    /// it as a consensus-validated onboarding artifact. Returns
+    /// `SealedOfferKeyForRegistry`; the recipient opens it exactly once with
+    /// `IngestSealedOfferKeyForRegistry`.
     SealOfferKeyForRegistry { recipient_x25519: [u8; 32] },
 
     /// Apply a Gratis write op over encrypted per-account state. The enclave
@@ -669,6 +672,13 @@ pub enum EnclaveResponse {
         /// attestation key over `RegistrationIntentV1::intent_hash()`.
         enclave_signature: Vec<u8>,
     },
+    /// Development-only proof of possession over the exact canonical intent.
+    /// The echoed bytes prevent a host from associating the signature with a
+    /// different registration.
+    RegistrationIntentSignedDevV1 {
+        intent: Vec<u8>,
+        enclave_signature: Vec<u8>,
+    },
     DcapVerificationStartedV1 {
         request_hash: B256,
     },
@@ -687,6 +697,10 @@ pub enum EnclaveResponse {
         noise_msg: Vec<u8>,
     },
     PublicKeys {
+        /// True only after the permanent tribute-offer key has been installed.
+        /// Before that point `recipient_x25519_pub` is the one-time onboarding
+        /// recipient key and must never be treated as permanent chain state.
+        offer_key_ready: bool,
         recipient_x25519_pub: [u8; 32],
         attestation_pub: [u8; 32],
         noise_static_pub: [u8; 32],
@@ -747,20 +761,15 @@ pub enum EnclaveResponse {
         /// verified on-chain against this committee's key.
         group_public_key: Vec<u8>,
     },
-    /// Key-handoff SERVER result: the resident group signature sealed to the
-    /// newcomer's X25519 key (an opaque `EncryptedShare` blob the host relays).
-    SealedTributeOfferHandoff {
-        sealed: Vec<u8>,
-    },
     /// On-chain key delivery SERVER result: the resident group signature
     /// DETERMINISTICALLY sealed to `recipient_x25519` — byte-identical across all
     /// committee enclaves, for committing to `TeeRegistry`.
     SealedOfferKeyForRegistry {
         sealed: Vec<u8>,
     },
-    /// Key-handoff NEWCOMER result: the offer public derived from the
-    /// ingested group signature (it matched the on-chain expected key).
-    TributeOfferHandoffIngested {
+    /// One-time onboarding result: the installed offer public key matched the
+    /// on-chain commitment.
+    OfferKeyForRegistryIngested {
         tribute_offer_public: [u8; 32],
     },
     TributeOfferBatch {

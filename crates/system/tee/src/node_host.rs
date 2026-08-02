@@ -371,6 +371,35 @@ where
     )
 }
 
+/// Load the one committed production manifest after applying the same bounded,
+/// owner-only NodeHost state checks used by startup. Missing, pending or
+/// inconsistent state is an error; this function never creates or recovers an
+/// enclave identity.
+pub fn load_committed_enclave_manifest_v1(
+    node_data_dir: &Path,
+) -> Result<EnclaveInitializationManifestV1, TransportError> {
+    let paths = NodeHostPaths::new(node_data_dir);
+    ensure_private_directory(&paths.root)?;
+    let _state_lock = NodeHostStateLock::acquire(&paths.state_lock)?;
+    if !path_exists(&paths.manifest)?
+        || !path_exists(&paths.noise_key)?
+        || path_exists(&paths.pending_manifest)?
+    {
+        return Err(TransportError::Codec(
+            "one committed production NodeHost manifest is required".into(),
+        ));
+    }
+    let node_host = NodeHostNoiseKey::load(&paths.noise_key)?;
+    reconcile_replacement_state(&paths, &node_host)?;
+    let manifest = read_manifest(&paths.manifest)?;
+    if manifest.node_host_noise_x25519 != node_host.public() {
+        return Err(TransportError::Codec(
+            "committed manifest does not match the persistent NodeHost key".into(),
+        ));
+    }
+    Ok(manifest)
+}
+
 /// Stage one fresh validator enclave under the already committed node identity
 /// and persistent NodeHost key. The committed enclave remains the normal
 /// startup target.

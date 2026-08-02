@@ -119,18 +119,32 @@ impl Localnet {
         self.start_joiner_enclave(index)?;
         let port = self.cfg.tee_port(index);
         let sock = format!("127.0.0.1:{port}");
-        let _ = Sh::new(&self.cfg).cli([
+        let binding_id = random_hex_32()?;
+        let valid_until = eth::latest_block_timestamp(&self.cfg.rpc0)
+            .ok_or_else(|| eyre!("cannot read canonical head timestamp for V1 tee join"))?
+            .checked_add(7_200)
+            .ok_or_else(|| eyre!("V1 tee join lease deadline overflow"))?
+            .to_string();
+        Sh::new(&self.cfg).cli_required([
             "tee",
             "join",
             "--enclave-socket",
             &sock,
+            "--profile",
+            "validator",
+            "--consensus-bls-public",
+            &bls,
+            "--binding-id",
+            &binding_id,
+            "--valid-until",
+            &valid_until,
             "--rpc-url",
             self.cfg.rpc0.as_str(),
             "--private-key",
             &key,
             "--timeout-secs",
             "60",
-        ]);
+        ])?;
         Ok(())
     }
 
@@ -140,6 +154,34 @@ impl Localnet {
     pub fn restart_joiner_enclave(&mut self, index: usize) -> Result<()> {
         self.enclaves.remove(&index);
         self.start_joiner_enclave(index)
+    }
+
+    /// Query the joiner's exact resident offer public key and require the CLI's
+    /// authoritative chain comparison to report MATCH.
+    pub fn joiner_offer_public(&self, index: usize) -> Result<[u8; 32]> {
+        let output = Sh::new(&self.cfg).cli([
+            "tee",
+            "pubkey",
+            "--enclave-socket",
+            &format!("127.0.0.1:{}", self.cfg.tee_port(index)),
+            "--diff-chain",
+            "--rpc-url",
+            self.cfg.rpc0.as_str(),
+        ])?;
+        if !output.contains("✓ MATCH") {
+            return Err(eyre!(
+                "joiner enclave offer key did not match canonical chain state: {output}"
+            ));
+        }
+        let encoded = first_hex(&output, 64)
+            .ok_or_else(|| eyre!("joiner pubkey output has no 32-byte key: {output}"))?;
+        let decoded = hex::decode(encoded)?;
+        decoded.try_into().map_err(|value: Vec<u8>| {
+            eyre!(
+                "joiner pubkey output must contain exactly 32 bytes, got {}",
+                value.len()
+            )
+        })
     }
 
     fn start_joiner_enclave(&mut self, index: usize) -> Result<()> {

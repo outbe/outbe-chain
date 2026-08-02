@@ -3,8 +3,11 @@
 //! Outbe keeps the EVM timestamp in seconds, but stores a millisecond remainder
 //! in [`OutbeHeader`]. Reth's stock `EthBeaconConsensus` validates parent/child
 //! timestamp monotonicity through `BlockHeader::timestamp()` seconds, which
-//! rejects valid sub-second Outbe blocks. `OutbeBeaconConsensus` delegates the
-//! stock Ethereum checks and overrides only the parent timestamp relation.
+//! rejects valid sub-second Outbe blocks. Outbe also fixes a height-selected gas
+//! schedule whose evidence-heavy block 1 deliberately expands beyond Ethereum's
+//! parent/1024 ramp and contracts again at block 2. `OutbeBeaconConsensus`
+//! delegates the remaining stock Ethereum checks and replaces those two parent
+//! relations with their deterministic Outbe protocol rules.
 //!
 //! # V2 stateless layout / version / fork checks
 //!
@@ -40,7 +43,7 @@ use outbe_primitives::{
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_consensus_common::validation::{
     validate_against_parent_4844, validate_against_parent_eip1559_base_fee,
-    validate_against_parent_gas_limit, validate_against_parent_hash_number,
+    validate_against_parent_hash_number,
 };
 use reth_ethereum::consensus::{
     Consensus, ConsensusError, EthBeaconConsensus, FullConsensus, HeaderValidator,
@@ -149,6 +152,9 @@ where
 {
     fn validate_header(&self, header: &SealedHeader<OutbeHeader>) -> Result<(), ConsensusError> {
         validate_header_timestamp_millis_part(header.header())?;
+        if !self.skip_gas_limit_ramp_check {
+            validate_protocol_gas_limit(header.header())?;
+        }
         self.inner.validate_header(header)
     }
 
@@ -161,7 +167,7 @@ where
         validate_against_parent_timestamp_millis(header.header(), parent.header())?;
 
         if !self.skip_gas_limit_ramp_check {
-            validate_against_parent_gas_limit(header, parent, self.chain_spec.as_ref())?;
+            validate_protocol_gas_limit(header.header())?;
         }
 
         validate_against_parent_eip1559_base_fee(
@@ -179,6 +185,25 @@ where
 
         Ok(())
     }
+}
+
+/// Enforce the genesis-fixed Outbe gas schedule by height.
+///
+/// Ethereum's parent-relative ramp cannot represent the intentional 30M → 500M
+/// block-1 bootstrap expansion or the 500M → 30M block-2 contraction. Exact
+/// height selection is stronger here: a proposer cannot choose any intermediate
+/// or oversized value, and every node derives the same limit without parent or
+/// host input.
+fn validate_protocol_gas_limit(header: &OutbeHeader) -> Result<(), ConsensusError> {
+    let expected = outbe_primitives::system_tx::protocol_block_gas_limit(header.number());
+    let actual = header.gas_limit();
+    if actual != expected {
+        return Err(consensus_other(format!(
+            "block {} protocol gas limit mismatch: expected {expected}, got {actual}",
+            header.number()
+        )));
+    }
+    Ok(())
 }
 
 impl<ChainSpec> Consensus<OutbeBlock> for OutbeBeaconConsensus<ChainSpec>
@@ -544,6 +569,24 @@ mod tests {
         parent_hash: B256,
         beneficiary: Address,
     ) -> SealedHeader<OutbeHeader> {
+        header_with_beneficiary_and_gas_limit(
+            number,
+            timestamp_seconds,
+            timestamp_millis_part,
+            parent_hash,
+            beneficiary,
+            outbe_primitives::system_tx::protocol_block_gas_limit(number),
+        )
+    }
+
+    fn header_with_beneficiary_and_gas_limit(
+        number: u64,
+        timestamp_seconds: u64,
+        timestamp_millis_part: u64,
+        parent_hash: B256,
+        beneficiary: Address,
+        gas_limit: u64,
+    ) -> SealedHeader<OutbeHeader> {
         let extra_data = outbe_primitives::reshare_artifact::encode_outbe_block_artifacts(
             &outbe_primitives::reshare_artifact::OutbeBlockArtifacts {
                 timestamp_millis_part,
@@ -560,7 +603,7 @@ mod tests {
             withdrawals_root: None,
             logs_bloom: Bloom::default(),
             number,
-            gas_limit: 30_000_000,
+            gas_limit,
             gas_used: 0,
             timestamp: timestamp_seconds,
             mix_hash: B256::ZERO,
@@ -707,6 +750,74 @@ mod tests {
         consensus
             .validate_header_against_parent(&child, &parent)
             .unwrap();
+    }
+
+    #[test]
+    fn accepts_protocol_bootstrap_gas_limit_expansion_and_contraction() {
+        use outbe_primitives::system_tx::{BOOTSTRAP_BLOCK_GAS_LIMIT, STEADY_BLOCK_GAS_LIMIT};
+
+        let consensus = OutbeBeaconConsensus::new(test_chain_spec());
+        let genesis = header_with_beneficiary_and_gas_limit(
+            0,
+            100,
+            0,
+            B256::ZERO,
+            Address::ZERO,
+            STEADY_BLOCK_GAS_LIMIT,
+        );
+        let bootstrap = header_with_beneficiary_and_gas_limit(
+            1,
+            101,
+            0,
+            genesis.hash(),
+            REWARDS_ADDRESS,
+            BOOTSTRAP_BLOCK_GAS_LIMIT,
+        );
+        let steady = header_with_beneficiary_and_gas_limit(
+            2,
+            102,
+            0,
+            bootstrap.hash(),
+            REWARDS_ADDRESS,
+            STEADY_BLOCK_GAS_LIMIT,
+        );
+
+        consensus
+            .validate_header_against_parent(&bootstrap, &genesis)
+            .expect("the protocol-defined evidence-heavy block 1 must bypass the Ethereum ramp");
+        consensus
+            .validate_header_against_parent(&steady, &bootstrap)
+            .expect("the protocol-defined steady block 2 must contract to its fixed limit");
+    }
+
+    #[test]
+    fn rejects_gas_limit_not_selected_by_protocol_height() {
+        use outbe_primitives::system_tx::STEADY_BLOCK_GAS_LIMIT;
+
+        let consensus = OutbeBeaconConsensus::new(test_chain_spec());
+        let genesis = header_with_beneficiary_and_gas_limit(
+            0,
+            100,
+            0,
+            B256::ZERO,
+            Address::ZERO,
+            STEADY_BLOCK_GAS_LIMIT,
+        );
+        let wrong_bootstrap = header_with_beneficiary_and_gas_limit(
+            1,
+            101,
+            0,
+            genesis.hash(),
+            REWARDS_ADDRESS,
+            STEADY_BLOCK_GAS_LIMIT,
+        );
+
+        let error = consensus
+            .validate_header_against_parent(&wrong_bootstrap, &genesis)
+            .expect_err("block 1 must use the protocol bootstrap gas limit");
+        assert!(
+            matches!(error, ConsensusError::Other(message) if message.to_string().contains("protocol gas limit"))
+        );
     }
 
     #[test]
