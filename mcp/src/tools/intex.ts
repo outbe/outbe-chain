@@ -866,14 +866,50 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       "not to holder; since the MCP signs with one key, to land them on a different wallet that wallet must " +
       "settle/mine itself — Issued is transferable on BSC only while the series is Issued/Qualified (Called " +
       "freezes transfers), so move it before the call. Requires OUTBE_PRIVATE_KEY.",
-    { series: seriesArg, amount: amountArg, holder: accountArg, network: networkArg.optional(), wait: waitArg },
-    handler(async ({ series, amount, holder, network, wait }) => {
+    {
+      series: seriesArg,
+      amount: amountArg,
+      holder: accountArg,
+      payment_token: z.string().optional().describe("0x address of the stable to pay in; defaults to the first accepted token"),
+      network: networkArg.optional(),
+      wait: waitArg,
+    },
+    handler(async ({ series, amount, holder, payment_token, network, wait }) => {
       const n = await resolveNetwork(network ?? "outbe-testnet");
       const account = requireAccount();
       const intexHolder = holder ? getAddress(holder) : account.address;
-      const data = encodeFunctionData({ abi: FACTORY_ABI, functionName: "settle", args: [series, intexHolder, BigInt(amount)] });
+
+      const [tokens, costs] = (await n.client.readContract({
+        address: addr(n, "factory"),
+        abi: FACTORY_ABI,
+        functionName: "settlementQuote",
+        args: [series],
+      })) as [readonly `0x${string}`[], readonly bigint[]];
+      if (tokens.length === 0) {
+        throw new Error(`no settlement token is registered for series ${series}`);
+      }
+      const token = payment_token ? getAddress(payment_token) : tokens[0];
+      const idx = tokens.findIndex((t) => getAddress(t) === token);
+      if (idx === -1) {
+        throw new Error(`token ${token} is not accepted for series ${series}; accepted: ${tokens.join(", ")}`);
+      }
+
+      const data = encodeFunctionData({
+        abi: FACTORY_ABI,
+        functionName: "settle",
+        args: [series, intexHolder, BigInt(amount), token],
+      });
       const receipt = await submit(n, addr(n, "factory"), data, 0n, wait);
-      return ok({ network: n.name, series, intexHolder, amount, self: intexHolder === account.address, ...receipt });
+      return ok({
+        network: n.name,
+        series,
+        intexHolder,
+        amount,
+        paymentToken: token,
+        costPerIntex: costs[idx].toString(),
+        self: intexHolder === account.address,
+        ...receipt,
+      });
     }),
   );
 
@@ -918,16 +954,14 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       });
       const seq = logs.length;
       const pow = grindNonce(holder, promisAmount, series, seq);
-      const data = encodeFunctionData({ abi: FACTORY_ABI, functionName: "minePromis", args: [series, amt, pow.nonce] });
-      const receipt = await submit(n, addr(n, "factory"), data, 0n, wait);
-      return ok({
-        network: n.name,
-        series,
-        amount: amt.toString(),
-        promisAmount: promisAmount.toString(),
-        pow: { nonce: pow.nonce.toString(), iterations: pow.iterations, hash: pow.hash, difficulty: POW_DIFFICULTY, seq },
-        ...receipt,
-      });
+      throw new Error(
+        "minePromis also requires a Promis modify-auth mac and opNonce, which this server cannot produce: " +
+          "the modify key is sealed to an ephemeral X25519 key by outbe_deriveKeys(Promis, ...) and no unsealing " +
+          "or mac derivation is implemented here. " +
+          `Proof of work is done — nonce ${pow.nonce} (seq ${seq}, ${pow.iterations} iterations, hash ${pow.hash}) ` +
+          `for ${promisAmount} Promis on series ${series}. Submit minePromis(${series}, ${amt}, ${pow.nonce}, mac, opNonce) ` +
+          "with a client that holds the modify key.",
+      );
     }),
   );
 
