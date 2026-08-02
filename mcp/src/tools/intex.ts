@@ -164,6 +164,29 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     metaCache.set(n.name, meta);
     return meta;
   }
+  /** Per-token NFT metadata URIs for a series; undefined when the chain has no NFT deployed. */
+  async function seriesMetadata(
+    n: Network,
+    series: number,
+  ): Promise<{ collection: string; issued: string; settled: string } | undefined> {
+    try {
+      const nft = addr(n, "nft");
+      const [issuedId, settledId] = (await n.client.readContract({
+        address: nft,
+        abi: NFT_ABI,
+        functionName: "tokenIds",
+        args: [series],
+      })) as [bigint, bigint];
+      const [collection, issued, settled] = (await Promise.all([
+        n.client.readContract({ address: nft, abi: NFT_ABI, functionName: "contractURI" }),
+        n.client.readContract({ address: nft, abi: NFT_ABI, functionName: "uri", args: [issuedId] }),
+        n.client.readContract({ address: nft, abi: NFT_ABI, functionName: "uri", args: [settledId] }),
+      ])) as [string, string, string];
+      return { collection, issued, settled };
+    } catch {
+      return undefined;
+    }
+  }
   /** Bid rate as a fraction of strike ("0.8" = 80%) to the uint32 1e6 fixed-point the contract expects. */
   function toBidRate(rate: string): bigint {
     const raw = parseUnits(rate, 6);
@@ -201,6 +224,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       })) as Record<string, bigint | number>;
       const u256 = (v: bigint | number) => v as bigint;
       const callDeadlineSec = Number(d.calledAt) > 0 ? Number(d.calledAt) + Number(d.intexCallPeriod) : 0;
+      const metadata = await seriesMetadata(n, series);
       return ok({
         network: n.name,
         seriesId: Number(d.seriesId),
@@ -220,6 +244,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         calledAt: epochIso(d.calledAt),
         callDeadline: epochIso(callDeadlineSec),
         expired: callDeadlineSec > 0 && Math.floor(Date.now() / 1000) > callDeadlineSec,
+        metadata,
       });
     }),
   );
