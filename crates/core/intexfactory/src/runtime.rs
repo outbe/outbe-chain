@@ -534,6 +534,56 @@ fn nft_balance_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Re
         .map_err(|_| PrecompileError::Revert("NFT balanceOf undecodable".into()))
 }
 
+/// Payment tokens accepted for `series_id` and the per-Intex cost in each.
+/// Assets the router cannot report on are skipped rather than failing the quote.
+pub fn settlement_quote(
+    storage: &StorageHandle<'_>,
+    series_id: u32,
+) -> Result<(Vec<Address>, Vec<U256>)> {
+    let series = outbe_intex::api::read_series(storage, series_id)?;
+    let count = assets_count(storage)?;
+
+    let mut tokens = Vec::new();
+    let mut costs = Vec::new();
+    let mut index = U256::ZERO;
+    while index < count {
+        let asset = asset_at(storage, index)?;
+        index += U256::from(1u8);
+
+        if asset_reference_currency(storage, asset).ok() != Some(series.reference_currency) {
+            continue;
+        }
+        let Ok(decimals) = erc20_decimals(storage, asset) else {
+            continue;
+        };
+        costs.push(derived_cost_amount(
+            series.entry_price_minor,
+            series.promis_load_minor,
+            decimals,
+        )?);
+        tokens.push(asset);
+    }
+    Ok((tokens, costs))
+}
+
+fn assets_count(storage: &StorageHandle<'_>) -> Result<U256> {
+    let ret = storage.staticcall(
+        VAULT_ROUTER_ADDRESS,
+        IVaultRouter::assetsCountCall {}.abi_encode().into(),
+    )?;
+    IVaultRouter::assetsCountCall::abi_decode_returns(&ret)
+        .map_err(|_| PrecompileError::Revert("assetsCount undecodable".into()))
+}
+
+fn asset_at(storage: &StorageHandle<'_>, index: U256) -> Result<Address> {
+    let ret = storage.staticcall(
+        VAULT_ROUTER_ADDRESS,
+        IVaultRouter::assetAtCall { index }.abi_encode().into(),
+    )?;
+    IVaultRouter::assetAtCall::abi_decode_returns(&ret)
+        .map_err(|_| PrecompileError::Revert("assetAt undecodable".into()))
+}
+
 /// Reference currency the router recorded for `asset`, via its first vault.
 pub(crate) fn asset_reference_currency(
     storage: &StorageHandle<'_>,

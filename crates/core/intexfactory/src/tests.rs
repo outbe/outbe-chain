@@ -210,6 +210,38 @@ fn cost_amount_rejects_decimals_above_the_product_scale() {
     assert!(err.to_string().contains("unsupported decimals"), "{err}");
 }
 
+#[test]
+fn settlement_quote_is_empty_without_registered_assets() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(ISSUED_AT as u64));
+    storage.stub_sub_call_at(
+        crate::constants::INTEX_NFT1155_ADDRESS,
+        alloy_primitives::Bytes::from(vec![0u8; 32]),
+    );
+    storage.stub_sub_call_at(
+        crate::constants::ORIGIN_ROUTER_ADDRESS,
+        alloy_primitives::Bytes::from(vec![0u8; 32]),
+    );
+    storage.stub_sub_call_at(
+        outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
+        alloy_primitives::Bytes::from(vec![0u8; 32]),
+    );
+
+    StorageHandle::enter(&mut storage, |s| {
+        runtime::issue(&s, sample(7)).unwrap();
+        let (tokens, costs) = runtime::settlement_quote(&s, 7).unwrap();
+        assert!(tokens.is_empty());
+        assert!(costs.is_empty());
+    });
+}
+
+#[test]
+fn settlement_quote_rejects_missing_series() {
+    with_factory(|s| {
+        assert!(runtime::settlement_quote(&s, 7).is_err());
+    });
+}
+
 // ---------------------------------------------------------------------
 // settle gating (value movement is localnet-exercised, not unit tested)
 // ---------------------------------------------------------------------
