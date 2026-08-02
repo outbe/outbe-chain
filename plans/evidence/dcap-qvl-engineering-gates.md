@@ -367,6 +367,26 @@ QVL_DCAP =
   + 10,000 * active_rule_count
 ```
 
+The normative block-1 bootstrap precharge is:
+
+```text
+OST3 =
+    300,000
+  + 1 * full_calldata_len
+  + 100,000 * participant_count
+  + sum(QVL_DCAP(logical_evidence_len_i, active_rule_count))
+  + 15,000 * logical_collateral_component_ref_count
+  + 10,000 * committee_signature_count
+```
+
+The 1,310,720-byte limit is over complete system calldata, including the
+four-byte selector and one-byte version. Deduplicated collateral bytes reduce
+only `full_calldata_len`; the logical component count and QVL work remain
+per-participant. `SystemGasScheduleV1` canonically encodes and hashes the five
+OST3 coefficients, while `ResourceScheduleV1` rejects any other System or
+TeeRegistry schedule hash. Bounded state mutation/storage work is included in
+this precharge and is not charged a second time.
+
 At the 896-KiB evidence cap and 64 rules:
 
 - `QVL_DCAP = 9,405,024`;
@@ -387,6 +407,18 @@ evidence. I9 must benchmark the exact-release enclave-resident native QVL and
 full block path on the published minimum supported validator profile. If that
 path cannot satisfy the documented block budgets, production activation stops
 instead of silently changing the schedule or weakening verification.
+
+I8 wires OST3 as a distinct canonical variant through validator routing,
+visible receipt gas accounting and the DCAP bootstrap handler. It deliberately
+leaves the existing OST2 startup/DKG producer unchanged. I9/A0 owns the atomic
+producer/ChainSpec switch to OST3 and the corresponding rejection of OST2;
+pre-A0 compatibility is evidence, not a production DCAP activation claim.
+OST3 assembly computes its exact checked canonical length before allocating the
+aggregate body and refuses worst-case intrinsic gas plus normative precharge
+above the 500-million block-1 cap before committee signing. Genesis zero key and
+offer epochs and a zero transcript hash remain valid because they are the
+existing DKG/registry genesis representation; non-zero committee snapshot and
+offer-key authority are still mandatory.
 
 ## Implementation evidence split
 

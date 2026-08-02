@@ -788,6 +788,16 @@ The exact QVL charge is
 is checked `u64`; batch deduplication never removes per-participant logical QVL
 work.
 
+The exact `OST3` protocol precharge is
+`300,000 + full_calldata_len + 100,000*participant_count + sum(QVL_i) +
+15,000*logical_component_ref_count + 10,000*committee_signature_count`.
+`full_calldata_len` includes the four-byte selector and one-byte version;
+collateral references are counted logically for every participant even when
+their encoded component bytes are batch-deduplicated. The canonical
+`SystemGasScheduleV1` commits coefficients `300,000 / 1 / 100,000 / 15,000 /
+10,000`, and `ResourceScheduleV1` binds its exact hash together with the
+normative TeeRegistry schedule hash.
+
 The `600,000` fixed registration term includes a `300,000` gas allowance for
 production warm-SLOAD/SSTORE-reset charges. The allowance has no independent
 consensus constant: it is exactly one half of the canonical, schedule-hashed
@@ -798,6 +808,8 @@ protocol-only subtotal.
 For 32 participants at the evidence cap and 64 rules, OST3 precharge is
 `309,931,488`, maximum intrinsic gas is `20,992,520`, and combined OST3 leaves
 `169,075,992` gas for the other mandatory block-1 work.
+The OST3 precharge is inclusive of its bounded state mutation/storage work; no
+third storage charge is added above the pinned combined budget.
 
 Secret Network's opaque host-call pricing and permissive section allocation are
 not suitable precedent. I1 owns deterministic cap boundaries, pre-allocation,
@@ -805,6 +817,16 @@ checked gas arithmetic and real Processor QVL correctness; I8 owns the bounded
 32-participant state transition. I9 owns empirical exact-release
 `gramine-sgx`, full-block timing and fresh actual Processor/Platform/root CRL
 capacity on the published minimum supported validator profile.
+
+I8 introduces evidence-carrying OST3 alongside, rather than by reinterpreting,
+legacy OST2. The current startup/DKG producer remains byte-compatible and emits
+OST2 before A0. I9 activation must switch the producer and ChainSpec to OST3 in
+the same manifest change that rejects OST2; therefore no mixed interpretation
+or partially activated producer state exists.
+The OST3 assembly seam preserves the existing genesis representation
+(`key_epoch=0`, `tribute_offer_epoch=0`, zero transcript hash) and performs
+checked aggregate-length plus worst-case 500-million gas preflight before
+committee signing. This closes capacity without introducing a DKG redesign.
 
 Intel controls the signed CRL population. There is no undefined "large real
 CRL" requirement and synthetic cap-boundary inputs are never represented as

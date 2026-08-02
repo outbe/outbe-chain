@@ -177,6 +177,10 @@ fn dispatch_inner(
             let ctx = block_runtime_context_from_storage(storage, true)?;
             run_tee_bootstrap(&ctx, &payload)?;
         }
+        SystemTxInputV2::TeeBootstrapDcap { payload } => {
+            let ctx = block_runtime_context_from_storage(storage, true)?;
+            run_tee_bootstrap_v1(&ctx, &payload)?;
+        }
         SystemTxInputV2::OracleSlashWindow => {
             let ctx = block_runtime_context_from_storage(storage, false)?;
             run_oracle_slash_window(&ctx)?;
@@ -197,6 +201,133 @@ fn dispatch_inner(
     }
 
     Ok(Bytes::new())
+}
+
+/// DCAP block-1 bootstrap. The canonical payload already proves bounded shape;
+/// this handler binds it to the exact active committee and epoch-0 snapshot,
+/// verifies every validator through the production enclave-resident QVL path,
+/// and only then finalizes the existing offer-key bootstrap state.
+pub(crate) fn run_tee_bootstrap_v1(
+    ctx: &BlockRuntimeContext,
+    payload: &outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2,
+) -> Result<()> {
+    use outbe_primitives::{tee_attestation_v1::NodeIdV1, tee_bootstrap::recover_signer};
+    use outbe_teeregistry::{TeeBootstrapData, TeeRegistry};
+    use std::collections::BTreeSet;
+
+    let mut registry = TeeRegistry::new(ctx.storage.clone());
+    if registry.is_bootstrapped()? {
+        return Err(PrecompileError::Revert(
+            "TeeBootstrapV2: registry already bootstrapped".into(),
+        ));
+    }
+    if payload.committee_snapshot_block != ctx.block.block_number {
+        return Err(PrecompileError::Revert(format!(
+            "TeeBootstrapV2: committee snapshot block {} does not equal current block {}",
+            payload.committee_snapshot_block, ctx.block.block_number
+        )));
+    }
+
+    let active_policy = registry.active_policy_v1()?;
+    if active_policy != payload.policy {
+        return Err(PrecompileError::Revert(
+            "TeeBootstrapV2: payload policy is not the authoritative active V1 policy".into(),
+        ));
+    }
+
+    let committee: BTreeSet<Address> =
+        outbe_validatorset::contract::ValidatorSet::new(ctx.storage.clone())
+            .get_active_consensus_set()?
+            .into_iter()
+            .map(|record| record.validator_address)
+            .collect();
+    if committee.is_empty() {
+        return Err(PrecompileError::Revert(
+            "TeeBootstrapV2: active consensus committee is empty".into(),
+        ));
+    }
+    let participant_validators = payload
+        .participants
+        .iter()
+        .map(|participant| match participant.intent.node_id {
+            NodeIdV1::Validator { address, .. } => Ok(Address::from(address)),
+            NodeIdV1::FullNode { .. } => Err(PrecompileError::Revert(
+                "TeeBootstrapV2: bootstrap participant is not a validator".into(),
+            )),
+        })
+        .collect::<Result<BTreeSet<_>>>()?;
+    if participant_validators != committee || payload.participants.len() != committee.len() {
+        return Err(PrecompileError::Revert(
+            "TeeBootstrapV2: participants must equal the complete active consensus committee"
+                .into(),
+        ));
+    }
+
+    let signing_hash = payload.signing_hash().map_err(|error| {
+        PrecompileError::Fatal(format!(
+            "canonical TeeBootstrapV2 cannot produce its signing hash: {error}"
+        ))
+    })?;
+    for signature in &payload.committee_signatures {
+        let recovered = recover_signer(&signing_hash, &signature.signature)?;
+        if recovered != signature.validator || !committee.contains(&signature.validator) {
+            return Err(PrecompileError::Revert(format!(
+                "TeeBootstrapV2: invalid committee signature for {}",
+                signature.validator
+            )));
+        }
+    }
+
+    let snapshot =
+        outbe_validatorset::state::read_committee_snapshot_for_epoch(ctx.storage.clone(), 0)?
+            .ok_or_else(|| {
+                PrecompileError::Revert(
+                    "TeeBootstrapV2: epoch-0 committee snapshot is missing".into(),
+                )
+            })?;
+    let committee_snapshot_hash = outbe_validatorset::committee_set_hash_v2(0, &snapshot);
+    if payload.committee_snapshot_hash != committee_snapshot_hash {
+        return Err(PrecompileError::Revert(
+            "TeeBootstrapV2: committee snapshot hash mismatch".into(),
+        ));
+    }
+
+    for (index, participant) in payload.participants.iter().enumerate() {
+        let evidence = payload
+            .logical_evidence(index)
+            .and_then(|evidence| evidence.encode_canonical())
+            .map_err(|error| {
+                PrecompileError::Fatal(format!(
+                    "canonical TeeBootstrapV2 cannot reconstruct evidence {index}: {error}"
+                ))
+            })?;
+        registry.register_enclave_v1(
+            &evidence,
+            &participant.node_signature,
+            &participant.enclave_signature,
+        )?;
+    }
+
+    let registrations = committee
+        .iter()
+        .map(|validator| registry.registration(*validator))
+        .collect::<Result<Vec<_>>>()?;
+    let policy_hash = payload.policy.policy_hash().map_err(|error| {
+        PrecompileError::Fatal(format!(
+            "authoritative TeeBootstrapV2 policy cannot be hashed: {error}"
+        ))
+    })?;
+    registry.write_bootstrap(&TeeBootstrapData {
+        tribute_offer_public_key: payload.tribute_offer_public_key,
+        policy_hash,
+        key_epoch: payload.key_epoch,
+        tribute_offer_epoch: payload.tribute_offer_epoch,
+        dkg_transcript_hash: payload.dkg_transcript_hash,
+        committee_snapshot_block: payload.committee_snapshot_block,
+        committee_snapshot_hash,
+        tribute_offer_group_public_key: payload.tribute_offer_group_public_key.clone(),
+        registrations,
+    })
 }
 
 /// Phase 3b: one-time TEE registry bootstrap. Authenticates the payload against
@@ -1577,6 +1708,16 @@ mod tests {
     use outbe_primitives::tee_bootstrap::{
         TeeBootstrapPayload, TeePolicy, TeeRegistrationBundle, TeeValidatorSignature,
     };
+    use outbe_primitives::{
+        tee_attestation_v1::{
+            AttestationMode, AttestationOperationV1, DcapCollateralComponentV1, DcapCollateralKind,
+            EnclaveProfile, NodeIdV1, PlatformTcbStatusSetV1, QvlTcbStatusV1, RegistrationIntentV1,
+            ResourceScheduleV1, TeeMeasurementRuleV1, TeePolicyV1,
+        },
+        tee_bootstrap_v2::{
+            TeeBootstrapCommitteeSignatureV2, TeeBootstrapParticipantV2, TeeBootstrapV2,
+        },
+    };
 
     fn tee_signing_key(seed: u8) -> k256::ecdsa::SigningKey {
         k256::ecdsa::SigningKey::from_slice(&[seed; 32]).expect("non-zero scalar")
@@ -1600,7 +1741,8 @@ mod tests {
     /// Storage seeded with `members` as ACTIVE consensus participants (status
     /// ACTIVE + BLS share present), which is exactly `get_active_consensus_set`.
     fn tee_committee_storage(block_number: u64, members: &[Address]) -> HashMapStorageProvider {
-        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        let mut provider =
+            HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, B256::repeat_byte(0x11));
         provider.set_block_number(block_number);
         provider.set_timestamp(U256::from(block_number.max(1)));
         provider.set_beneficiary(members[0]);
@@ -1733,6 +1875,198 @@ mod tests {
             outbe_validatorset::state::write_committee_snapshot(storage, 0, &snapshot).unwrap();
         });
         outbe_validatorset::committee_set_hash_v2(0, &snapshot)
+    }
+
+    fn tee_policy_v1() -> TeePolicyV1 {
+        TeePolicyV1 {
+            policy_version: 1,
+            chain_id: U256::from(CHAIN_ID).to_be_bytes(),
+            genesis_hash: B256::repeat_byte(0x11),
+            activation_height: 1,
+            predecessor_policy_hash: B256::ZERO,
+            attestation_mode: AttestationMode::DcapRequired,
+            intel_root_der_hash: B256::repeat_byte(0x72),
+            quote_version: 3,
+            tee_type: 0,
+            attestation_key_type: 2,
+            qe_vendor_id: [
+                0x93, 0x9a, 0x72, 0x33, 0xf7, 0x9c, 0x4c, 0xa9, 0x94, 0x0a, 0x0d, 0xb3, 0x95, 0x7f,
+                0x06, 0x07,
+            ],
+            certification_data_type: 5,
+            tcb_info_schema_version: 3,
+            qe_identity_schema_version: 2,
+            minimum_tcb_evaluation_data_number: 1,
+            accepted_platform_tcb_statuses: PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+            accepted_qe_tcb_status: QvlTcbStatusV1::UpToDate,
+            minimum_lease: 3_600,
+            maximum_lease: 604_800,
+            collateral_margin: 3_600,
+            resource_schedule_hash: ResourceScheduleV1::normative()
+                .unwrap()
+                .schedule_hash()
+                .unwrap(),
+            measurement_rules: vec![TeeMeasurementRuleV1 {
+                enclave_profile: EnclaveProfile::Validator,
+                mrenclave: B256::repeat_byte(0x81),
+                mrsigner: B256::repeat_byte(0x82),
+                isv_prod_id: 1,
+                minimum_isv_svn: 2,
+                admit_from_height: 1,
+                admit_until_height_exclusive: 1_000,
+            }],
+        }
+    }
+
+    fn install_v1_policy(provider: &mut HashMapStorageProvider, policy: &TeePolicyV1) {
+        provider.enter(|storage| {
+            outbe_teeregistry::TeeRegistry::new(storage)
+                .install_initial_policy_v1(policy)
+                .unwrap();
+        });
+    }
+
+    fn tee_payload_v1(
+        block_number: u64,
+        keys: &[k256::ecdsa::SigningKey],
+        policy: TeePolicyV1,
+        committee_snapshot_hash: B256,
+    ) -> TeeBootstrapV2 {
+        let mut ordered = keys.iter().collect::<Vec<_>>();
+        ordered.sort_by_key(|key| tee_evm_address(key));
+        let policy_hash = policy.policy_hash().unwrap();
+        let collateral_pool = (1_u8..=8)
+            .map(|kind| DcapCollateralComponentV1 {
+                kind: DcapCollateralKind::try_from(kind).unwrap(),
+                bytes: vec![kind],
+            })
+            .collect();
+        let participants = ordered
+            .iter()
+            .enumerate()
+            .map(|(index, key)| {
+                let validator = tee_evm_address(key);
+                let mut consensus_pubkey = [7_u8; 48];
+                consensus_pubkey[0] = index as u8;
+                TeeBootstrapParticipantV2 {
+                    intent: RegistrationIntentV1 {
+                        chain_id: U256::from(CHAIN_ID).to_be_bytes(),
+                        genesis_hash: B256::repeat_byte(0x11),
+                        operation: AttestationOperationV1::RegisterEnclave,
+                        attestation_mode: AttestationMode::DcapRequired,
+                        policy_hash,
+                        enclave_profile: EnclaveProfile::Validator,
+                        node_id: NodeIdV1::Validator {
+                            address: validator.into_array(),
+                            bls_minpk_public: consensus_pubkey,
+                        },
+                        enclave_id: B256::repeat_byte(0x41 + index as u8),
+                        binding_id: B256::repeat_byte(0x51 + index as u8),
+                        binding_version: 1,
+                        registration_version: 0,
+                        renewal_nonce: 0,
+                        transition_nonce: 0,
+                        requested_valid_until: 7_200,
+                        recipient_x25519: [0x61 + index as u8; 32],
+                        attestation_ed25519: [0x71 + index as u8; 32],
+                        noise_responder_x25519: [0x81 + index as u8; 32],
+                        node_host_authorization_hash: B256::repeat_byte(0x91 + index as u8),
+                    },
+                    quote: vec![0xA1 + index as u8; 64],
+                    collateral_component_indices: [0, 1, 2, 3, 4, 5, 6, 7],
+                    node_signature: [0xB1 + index as u8; 65],
+                    enclave_signature: [0xC1 + index as u8; 64],
+                }
+            })
+            .collect::<Vec<_>>();
+        let committee_signatures = ordered
+            .iter()
+            .map(|key| TeeBootstrapCommitteeSignatureV2 {
+                validator: tee_evm_address(key),
+                signature: [0; 65],
+            })
+            .collect();
+        let mut payload = TeeBootstrapV2 {
+            policy,
+            committee_snapshot_hash,
+            committee_snapshot_block: block_number,
+            key_epoch: 0,
+            tribute_offer_epoch: 0,
+            dkg_transcript_hash: B256::ZERO,
+            tribute_offer_public_key: B256::repeat_byte(0x23),
+            tribute_offer_group_public_key: Bytes::from(vec![0x24; 96]),
+            collateral_pool,
+            participants,
+            committee_signatures,
+        };
+        let signing_hash = payload.signing_hash().unwrap();
+        for (signature, key) in payload.committee_signatures.iter_mut().zip(ordered) {
+            signature.signature = tee_sign(key, &signing_hash);
+        }
+        payload
+    }
+
+    fn run_bootstrap_v1(
+        provider: &mut HashMapStorageProvider,
+        payload: TeeBootstrapV2,
+    ) -> Result<()> {
+        provider.enter(|storage| {
+            let input = SystemTxInputV2::TeeBootstrapDcap { payload }
+                .encode()
+                .unwrap();
+            dispatch(storage, &input, SYSTEM_ADDRESS, U256::ZERO).map(|_| ())
+        })
+    }
+
+    #[test]
+    fn tee_bootstrap_v1_rejects_committee_subset_before_qvl_and_writes_nothing() {
+        let all_keys = keys(&[0x11, 0x22, 0x33]);
+        let mut sorted_members = members(&all_keys);
+        sorted_members.sort();
+        let mut provider = tee_committee_storage(1, &sorted_members);
+        let snapshot_hash = write_epoch0_snapshot(&mut provider, &sorted_members);
+        let policy = tee_policy_v1();
+        install_v1_policy(&mut provider, &policy);
+        let payload = tee_payload_v1(1, &all_keys[..2], policy, snapshot_hash);
+
+        let error = run_bootstrap_v1(&mut provider, payload)
+            .expect_err("a committee subset must fail before DCAP verification");
+        assert!(error
+            .to_string()
+            .contains("complete active consensus committee"));
+        assert!(!is_bootstrapped(&mut provider));
+        provider.enter(|storage| {
+            let registry = outbe_teeregistry::TeeRegistry::new(storage);
+            for validator in sorted_members {
+                assert!(registry
+                    .validator_enclave_binding_v1(validator)
+                    .unwrap()
+                    .is_none());
+            }
+        });
+    }
+
+    #[test]
+    fn tee_bootstrap_v1_routes_canonical_invalid_evidence_and_writes_nothing() {
+        let all_keys = keys(&[0x11]);
+        let mut sorted_members = members(&all_keys);
+        sorted_members.sort();
+        let mut provider = tee_committee_storage(1, &sorted_members);
+        let snapshot_hash = write_epoch0_snapshot(&mut provider, &sorted_members);
+        let policy = tee_policy_v1();
+        install_v1_policy(&mut provider, &policy);
+        let payload = tee_payload_v1(1, &all_keys, policy, snapshot_hash);
+
+        run_bootstrap_v1(&mut provider, payload)
+            .expect_err("synthetic quote must reach and fail the public DCAP verifier");
+        assert!(!is_bootstrapped(&mut provider));
+        provider.enter(|storage| {
+            assert!(outbe_teeregistry::TeeRegistry::new(storage)
+                .validator_enclave_binding_v1(sorted_members[0])
+                .unwrap()
+                .is_none());
+        });
+        assert!(outbe_primitives::system_tx::SystemTxKind::TeeBootstrap.revert_fails_block());
     }
 
     /// B2: a non-zero `committee_snapshot_hash` that disagrees with the on-chain

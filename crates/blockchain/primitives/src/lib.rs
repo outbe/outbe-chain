@@ -29,6 +29,8 @@ pub mod system_tx;
 #[cfg(feature = "tee-attestation-v1")]
 pub mod tee_attestation_v1;
 pub mod tee_bootstrap;
+#[cfg(feature = "tee-attestation-v1")]
+pub mod tee_bootstrap_v2;
 pub mod time;
 pub mod units;
 pub mod validators;

@@ -590,6 +590,22 @@ impl OutbeEvmConfig {
         }
     }
 
+    /// Creates a config with both the consensus bootstrap bridge and the
+    /// mandatory runtime body readers used by receipt-visible system phases.
+    pub fn new_with_bridge_and_runtime_body_readers(
+        chain_spec: Arc<ChainSpec<OutbeHeader>>,
+        bridge: ConsensusExecutionBridge,
+        runtime_body_readers: RuntimeBodyReaders,
+    ) -> Self {
+        let summary_cache = bridge.clone();
+        Self::new_with_bridge_and_summary_provider(
+            chain_spec,
+            bridge,
+            Arc::new(BridgeAccountedParentArtifactProvider::new(summary_cache)),
+            runtime_body_readers,
+        )
+    }
+
     fn new_with_bridge_and_summary_provider(
         chain_spec: Arc<ChainSpec<OutbeHeader>>,
         bridge: ConsensusExecutionBridge,

@@ -439,6 +439,78 @@ fn validator_binding_is_active_idempotent_and_expires_without_relay_authority() 
 }
 
 #[test]
+fn bootstrap_fixture_registers_exactly_thirty_two_validators_after_private_verifier() {
+    let genesis_hash = B256::repeat_byte(0x19);
+    let active_policy = policy(
+        genesis_hash,
+        PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+    );
+    let fixtures = (1_u8..=32)
+        .map(|index| {
+            let node_signer = OutbeEvmSigner::from_secret_bytes([index; 32]).unwrap();
+            let enclave_signer =
+                ed25519_dalek::SigningKey::from_bytes(&[index.wrapping_add(64); 32]);
+            let consensus_key = [index; 48];
+            let intent = registration_intent(
+                &active_policy,
+                &node_signer,
+                consensus_key,
+                &enclave_signer,
+                index,
+                index.wrapping_add(96),
+            );
+            let (node_signature, enclave_signature) =
+                signatures(&intent, &node_signer, &enclave_signer);
+            (
+                node_signer,
+                consensus_key,
+                intent,
+                node_signature,
+                enclave_signature,
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut provider = storage(genesis_hash);
+    provider.set_block_number(1);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        for (node_signer, consensus_key, ..) in &fixtures {
+            register_validator(storage.clone(), node_signer, *consensus_key);
+        }
+        let mut registry = TeeRegistry::new(storage.clone());
+        registry.install_initial_policy_v1(&active_policy).unwrap();
+
+        let started = std::time::Instant::now();
+        for (index, (node_signer, _, intent, node_signature, enclave_signature)) in
+            fixtures.iter().enumerate()
+        {
+            assert_eq!(
+                registry
+                    .register_enclave_after_verifier_for_test(
+                        intent,
+                        node_signature,
+                        enclave_signature,
+                        PostVerifierDcapCapabilityV1::with_evidence_hash(
+                            verdict(DcapPlatformTcbStatusV1::UpToDate),
+                            B256::repeat_byte(u8::try_from(index + 1).unwrap()),
+                        ),
+                    )
+                    .unwrap(),
+                V1RegistrationOutcome::Created
+            );
+            assert!(registry
+                .is_validator_enclave_ready_v1(node_signer.address())
+                .unwrap());
+        }
+        assert_eq!(registry.registered_count.read().unwrap(), 32);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "hardware-free post-verifier bootstrap fixture exceeded its test budget"
+        );
+    });
+}
+
+#[test]
 fn proposer_validator_and_follower_apply_identical_full_state_verdict_and_gas() {
     let genesis_hash = B256::repeat_byte(0x18);
     let active_policy = policy(

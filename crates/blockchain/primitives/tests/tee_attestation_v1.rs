@@ -8,10 +8,11 @@ use outbe_primitives::tee_attestation_v1::{
     DcapCollateralComponentV1, DcapCollateralKind, DcapEvidenceV1, EnclaveInitializationManifestV1,
     EnclaveProfile, NodeHostAuthorizationWitnessV1, NodeIdV1, PlatformTcbStatusSetV1,
     QvlTcbStatusV1, RegistrationIntentV1, RegistryMutatorV1, ResourceScheduleV1,
-    TeeMeasurementRuleV1, TeePolicyScheduleEntryV1, TeePolicyScheduleV1, TeePolicyV1,
-    TeeRegistryGasScheduleV1, ACTIVE_TEE_ATTESTATION_V1_MANIFEST, MAX_ACTIVE_MEASUREMENT_RULES,
-    MAX_ATTESTATION_EVIDENCE_BYTES, MAX_COLLATERAL_COMPONENT_BYTES,
+    SystemGasScheduleV1, TeeBootstrapGasInputV1, TeeMeasurementRuleV1, TeePolicyScheduleEntryV1,
+    TeePolicyScheduleV1, TeePolicyV1, TeeRegistryGasScheduleV1, ACTIVE_TEE_ATTESTATION_V1_MANIFEST,
+    MAX_ACTIVE_MEASUREMENT_RULES, MAX_ATTESTATION_EVIDENCE_BYTES, MAX_COLLATERAL_COMPONENT_BYTES,
     MAX_EVIDENCE_CALL_FRAMING_BYTES, MAX_NODE_HOST_AUTHORIZATION_WITNESS_BYTES, MAX_QUOTE_BYTES,
+    MAX_TEE_BOOTSTRAP_BYTES,
 };
 
 fn validator_intent(genesis_hash: B256) -> RegistrationIntentV1 {
@@ -353,12 +354,14 @@ fn node_id_codec_rejects_trailing_unknown_and_noncanonical_keys() {
 
 #[test]
 fn resource_schedule_has_a_fixed_golden_vector() {
-    let schedule = ResourceScheduleV1::new(B256::repeat_byte(0xaa), B256::repeat_byte(0xbb));
+    let schedule = ResourceScheduleV1::normative().unwrap();
     let encoded = schedule.encode_canonical().unwrap();
-    let expected = format!(
-        "01{}{}000000001dcd65000000000001c9c380",
-        "aa".repeat(32),
-        "bb".repeat(32)
+    let expected = concat!(
+        "01",
+        "8879dd524fc4c5ccfc1c353b1f6840502f6e4f1eebc9825b27a8039bedf029a9",
+        "11edf34f5614ee89ceb28c4597c309ad055cc67a752e335affa69fbc177c3da8",
+        "000000001dcd6500",
+        "0000000001c9c380"
     );
 
     assert_eq!(hex::encode(&encoded), expected);
@@ -379,6 +382,28 @@ fn resource_schedule_has_a_fixed_golden_vector() {
     assert_eq!(
         non_normative.encode_canonical().unwrap_err(),
         CodecError::NonCanonical("non-normative block gas limits")
+    );
+}
+
+#[test]
+fn resource_schedule_binds_the_normative_system_and_registry_schedules() {
+    let schedule = ResourceScheduleV1::normative().unwrap();
+    assert_eq!(
+        schedule.system_gas_schedule_hash,
+        SystemGasScheduleV1::normative().schedule_hash().unwrap()
+    );
+    assert_eq!(
+        schedule.tee_registry_gas_schedule_hash,
+        TeeRegistryGasScheduleV1::normative()
+            .schedule_hash()
+            .unwrap()
+    );
+
+    let mut wrong_system_hash = schedule.encode_canonical().unwrap();
+    wrong_system_hash[1] ^= 1;
+    assert_eq!(
+        ResourceScheduleV1::decode_canonical(&wrong_system_hash).unwrap_err(),
+        CodecError::NonCanonical("non-normative resource schedule hashes")
     );
 }
 
@@ -466,6 +491,111 @@ fn normative_qvl_and_registry_gas_match_engineering_gate_vectors() {
         )
         .unwrap(),
         29_133_784
+    );
+}
+
+#[test]
+fn dense_ost3_precharge_matches_the_consensus_vector() {
+    let system = SystemGasScheduleV1::normative();
+    let registry = TeeRegistryGasScheduleV1::normative();
+    let logical_evidence_lengths = [MAX_ATTESTATION_EVIDENCE_BYTES; 32];
+
+    assert_eq!(
+        system
+            .tee_bootstrap_precharge(
+                &registry,
+                TeeBootstrapGasInputV1 {
+                    full_calldata_len: MAX_TEE_BOOTSTRAP_BYTES,
+                    logical_evidence_lengths: &logical_evidence_lengths,
+                    active_rule_count: MAX_ACTIVE_MEASUREMENT_RULES,
+                    collateral_component_count: 32 * 8,
+                    committee_signature_count: 32,
+                },
+            )
+            .unwrap(),
+        309_931_488
+    );
+}
+
+#[test]
+fn system_gas_schedule_has_canonical_bytes() {
+    let schedule = SystemGasScheduleV1::normative();
+    let encoded = schedule.encode_canonical().unwrap();
+    assert_eq!(
+        hex::encode(&encoded),
+        concat!(
+            "01",
+            "00000000000493e0",
+            "0000000000000001",
+            "00000000000186a0",
+            "0000000000003a98",
+            "0000000000002710"
+        )
+    );
+    assert_eq!(
+        SystemGasScheduleV1::decode_canonical(&encoded).unwrap(),
+        schedule
+    );
+    assert_eq!(
+        hex::encode(schedule.schedule_hash().unwrap()),
+        "8879dd524fc4c5ccfc1c353b1f6840502f6e4f1eebc9825b27a8039bedf029a9"
+    );
+
+    let mut trailing = encoded.clone();
+    trailing.push(0);
+    assert_eq!(
+        SystemGasScheduleV1::decode_canonical(&trailing).unwrap_err(),
+        CodecError::TrailingBytes(1)
+    );
+
+    let mut non_normative = encoded;
+    non_normative[8] ^= 1;
+    assert_eq!(
+        SystemGasScheduleV1::decode_canonical(&non_normative).unwrap_err(),
+        CodecError::NonCanonical("non-normative system gas schedule")
+    );
+}
+
+#[test]
+fn ost3_gas_rejects_caps_and_checked_overflow() {
+    let system = SystemGasScheduleV1::normative();
+    let registry = TeeRegistryGasScheduleV1::normative();
+    let one_evidence = [1_usize];
+
+    let calculate = |full_calldata_len, logical_evidence_lengths: &[usize], component_count| {
+        system.tee_bootstrap_precharge(
+            &registry,
+            TeeBootstrapGasInputV1 {
+                full_calldata_len,
+                logical_evidence_lengths,
+                active_rule_count: 1,
+                collateral_component_count: component_count,
+                committee_signature_count: 1,
+            },
+        )
+    };
+
+    assert!(matches!(
+        calculate(MAX_TEE_BOOTSTRAP_BYTES + 1, &one_evidence, 8),
+        Err(CodecError::LimitExceeded {
+            field: "TeeBootstrapV2 full calldata",
+            ..
+        })
+    ));
+    assert!(matches!(
+        calculate(
+            MAX_TEE_BOOTSTRAP_BYTES,
+            &[MAX_ATTESTATION_EVIDENCE_BYTES + 1],
+            8,
+        ),
+        Err(CodecError::LimitExceeded {
+            field: "attestation evidence",
+            ..
+        })
+    ));
+    assert_eq!(
+        calculate(MAX_TEE_BOOTSTRAP_BYTES, &one_evidence, usize::MAX).unwrap_err(),
+        CodecError::ArithmeticOverflow
     );
 }
 
@@ -671,8 +801,7 @@ fn policy(
     activation_height: u64,
     predecessor_policy_hash: B256,
 ) -> TeePolicyV1 {
-    let gas = TeeRegistryGasScheduleV1::normative();
-    let resources = ResourceScheduleV1::new(B256::repeat_byte(0x71), gas.schedule_hash().unwrap());
+    let resources = ResourceScheduleV1::normative().unwrap();
     TeePolicyV1 {
         policy_version,
         chain_id: [0; 32],
@@ -711,7 +840,7 @@ fn policy_and_schedule_roundtrip_with_height_selection() {
     let first_hash = first.policy_hash().unwrap();
     assert_eq!(
         hex::encode(first_hash),
-        "4dbc61a63c5c3107b56a75eb3a38f640e22650a34ad25cb52060726b1f7baacd"
+        "65a7eea620112d21f4d2e8e3c08082475812965fc44e21272c1af2159835f13c"
     );
     let mut second = policy(2, 100, first_hash);
     second.accepted_platform_tcb_statuses = PlatformTcbStatusSetV1::UpToDateOnly;
@@ -733,7 +862,7 @@ fn policy_and_schedule_roundtrip_with_height_selection() {
     let encoded = schedule.encode_canonical().unwrap();
     assert_eq!(
         hex::encode(schedule.schedule_hash().unwrap()),
-        "ff3de6da76820b4a84e27f68d0de81b28278b1244c62cf3962707e409660786c"
+        "83015a5531a87b9c5d782a06bdc270c67c73364a4e5c644f728ae23fc0a50e0b"
     );
     assert_eq!(
         TeePolicyScheduleV1::decode_canonical(&encoded).unwrap(),

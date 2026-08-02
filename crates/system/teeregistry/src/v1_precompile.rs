@@ -664,9 +664,7 @@ mod tests {
     const GENESIS: B256 = B256::repeat_byte(0x31);
 
     fn policy() -> TeePolicyV1 {
-        let gas = TeeRegistryGasScheduleV1::normative();
-        let resources =
-            ResourceScheduleV1::new(B256::repeat_byte(0x42), gas.schedule_hash().unwrap());
+        let resources = ResourceScheduleV1::normative().unwrap();
         let mut chain_id = [0_u8; 32];
         chain_id[24..].copy_from_slice(&31337_u64.to_be_bytes());
         TeePolicyV1 {

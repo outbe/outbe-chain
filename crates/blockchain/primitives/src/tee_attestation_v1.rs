@@ -11,6 +11,7 @@ pub const PROTOCOL_VERSION_V1: u8 = 1;
 pub const POLICY_DOMAIN_V1: &[u8] = b"outbe/tee/policy/v1";
 pub const POLICY_SCHEDULE_DOMAIN_V1: &[u8] = b"outbe/tee/policy-schedule/v1";
 pub const TEE_REGISTRY_GAS_SCHEDULE_DOMAIN_V1: &[u8] = b"outbe/tee-registry-gas-schedule/v1";
+pub const SYSTEM_GAS_SCHEDULE_DOMAIN_V1: &[u8] = b"outbe/system-gas-schedule/v1";
 pub const RESOURCE_SCHEDULE_DOMAIN_V1: &[u8] = b"outbe/resource-schedule/v1";
 pub const NODE_ID_DOMAIN_V1: &[u8] = b"outbe/tee/node-id/v1";
 pub const REGISTRATION_INTENT_DOMAIN_V1: &[u8] = b"outbe/tee/registration-intent/v1";
@@ -30,8 +31,7 @@ pub const MAX_ACTIVE_MEASUREMENT_RULES: usize = 64;
 pub const MAX_TEE_POLICY_BYTES: usize = 32 * 1024;
 pub const MAX_TEE_POLICY_SCHEDULE_ENTRIES: usize = 64;
 pub const MAX_TEE_BOOTSTRAP_BYTES: usize = 1_310_720;
-pub const BOOTSTRAP_BLOCK_GAS_LIMIT: u64 = 500_000_000;
-pub const STEADY_BLOCK_GAS_LIMIT: u64 = 30_000_000;
+pub use crate::system_tx::{BOOTSTRAP_BLOCK_GAS_LIMIT, STEADY_BLOCK_GAS_LIMIT};
 
 /// The stage-I0 feature exposes codecs to direct harnesses only.
 ///
@@ -1455,6 +1455,135 @@ pub enum RegistryMutatorV1 {
     ReplaceEnclaveBinding,
 }
 
+/// Canonical dimensions used to charge one block-1 `OST3` system call.
+///
+/// `full_calldata_len` includes the four-byte selector and one-byte version.
+/// Collateral deduplication affects that encoded length only: every entry in
+/// `logical_evidence_lengths` is charged as a complete QVL verification.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TeeBootstrapGasInputV1<'a> {
+    pub full_calldata_len: usize,
+    pub logical_evidence_lengths: &'a [usize],
+    pub active_rule_count: usize,
+    pub collateral_component_count: usize,
+    pub committee_signature_count: usize,
+}
+
+/// Focused canonical system-gas schedule for the V1 `OST3` bootstrap path.
+///
+/// The fixed/count terms include the bounded state mutation work. Storage is
+/// not charged a second time on top of this protocol precharge.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SystemGasScheduleV1 {
+    tee_bootstrap_fixed: u64,
+    tee_bootstrap_input_byte: u64,
+    tee_bootstrap_participant: u64,
+    tee_bootstrap_collateral_component: u64,
+    tee_bootstrap_committee_signature: u64,
+}
+
+impl SystemGasScheduleV1 {
+    pub const fn normative() -> Self {
+        Self {
+            tee_bootstrap_fixed: 300_000,
+            tee_bootstrap_input_byte: 1,
+            tee_bootstrap_participant: 100_000,
+            tee_bootstrap_collateral_component: 15_000,
+            tee_bootstrap_committee_signature: 10_000,
+        }
+    }
+
+    pub fn encode_canonical(&self) -> Result<Vec<u8>, CodecError> {
+        self.validate()?;
+        let mut out = Vec::with_capacity(41);
+        out.push(PROTOCOL_VERSION_V1);
+        for value in self.values() {
+            put_u64(&mut out, value);
+        }
+        Ok(out)
+    }
+
+    pub fn decode_canonical(input: &[u8]) -> Result<Self, CodecError> {
+        let mut decoder = Decoder::new(input);
+        decoder.version("SystemGasScheduleV1")?;
+        let schedule = Self {
+            tee_bootstrap_fixed: decoder.u64()?,
+            tee_bootstrap_input_byte: decoder.u64()?,
+            tee_bootstrap_participant: decoder.u64()?,
+            tee_bootstrap_collateral_component: decoder.u64()?,
+            tee_bootstrap_committee_signature: decoder.u64()?,
+        };
+        decoder.finish()?;
+        schedule.validate()?;
+        Ok(schedule)
+    }
+
+    pub fn schedule_hash(&self) -> Result<B256, CodecError> {
+        Ok(domain_hash(
+            SYSTEM_GAS_SCHEDULE_DOMAIN_V1,
+            &self.encode_canonical()?,
+        ))
+    }
+
+    pub fn tee_bootstrap_precharge(
+        &self,
+        tee_registry: &TeeRegistryGasScheduleV1,
+        input: TeeBootstrapGasInputV1<'_>,
+    ) -> Result<u64, CodecError> {
+        enforce_limit(
+            "TeeBootstrapV2 full calldata",
+            MAX_TEE_BOOTSTRAP_BYTES,
+            input.full_calldata_len,
+        )?;
+        let participant_count = checked_usize(input.logical_evidence_lengths.len())?;
+        let qvl =
+            input
+                .logical_evidence_lengths
+                .iter()
+                .try_fold(0_u64, |total, evidence_len| {
+                    total
+                        .checked_add(tee_registry.qvl_dcap(*evidence_len, input.active_rule_count)?)
+                        .ok_or(CodecError::ArithmeticOverflow)
+                })?;
+        checked_sum(&[
+            self.tee_bootstrap_fixed,
+            checked_mul(
+                self.tee_bootstrap_input_byte,
+                checked_usize(input.full_calldata_len)?,
+            )?,
+            checked_mul(self.tee_bootstrap_participant, participant_count)?,
+            qvl,
+            checked_mul(
+                self.tee_bootstrap_collateral_component,
+                checked_usize(input.collateral_component_count)?,
+            )?,
+            checked_mul(
+                self.tee_bootstrap_committee_signature,
+                checked_usize(input.committee_signature_count)?,
+            )?,
+        ])
+    }
+
+    fn values(&self) -> [u64; 5] {
+        [
+            self.tee_bootstrap_fixed,
+            self.tee_bootstrap_input_byte,
+            self.tee_bootstrap_participant,
+            self.tee_bootstrap_collateral_component,
+            self.tee_bootstrap_committee_signature,
+        ]
+    }
+
+    fn validate(&self) -> Result<(), CodecError> {
+        if *self != Self::normative() {
+            return Err(CodecError::NonCanonical(
+                "non-normative system gas schedule",
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TeeRegistryGasScheduleV1 {
     pub input_byte: u64,
@@ -1698,13 +1827,14 @@ pub struct ResourceScheduleV1 {
 }
 
 impl ResourceScheduleV1 {
-    pub const fn new(system_gas_schedule_hash: B256, tee_registry_gas_schedule_hash: B256) -> Self {
-        Self {
-            system_gas_schedule_hash,
-            tee_registry_gas_schedule_hash,
+    pub fn normative() -> Result<Self, CodecError> {
+        Ok(Self {
+            system_gas_schedule_hash: SystemGasScheduleV1::normative().schedule_hash()?,
+            tee_registry_gas_schedule_hash: TeeRegistryGasScheduleV1::normative()
+                .schedule_hash()?,
             bootstrap_block_gas_limit: BOOTSTRAP_BLOCK_GAS_LIMIT,
             steady_block_gas_limit: STEADY_BLOCK_GAS_LIMIT,
-        }
+        })
     }
 
     pub fn encode_canonical(&self) -> Result<Vec<u8>, CodecError> {
@@ -1741,10 +1871,12 @@ impl ResourceScheduleV1 {
     }
 
     fn validate(&self) -> Result<(), CodecError> {
-        if self.system_gas_schedule_hash.is_zero() || self.tee_registry_gas_schedule_hash.is_zero()
+        let normative = Self::normative()?;
+        if self.system_gas_schedule_hash != normative.system_gas_schedule_hash
+            || self.tee_registry_gas_schedule_hash != normative.tee_registry_gas_schedule_hash
         {
             return Err(CodecError::NonCanonical(
-                "resource schedule contains a zero schedule hash",
+                "non-normative resource schedule hashes",
             ));
         }
         if self.bootstrap_block_gas_limit != BOOTSTRAP_BLOCK_GAS_LIMIT

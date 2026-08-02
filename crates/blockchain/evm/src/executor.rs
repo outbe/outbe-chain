@@ -73,7 +73,7 @@ struct SystemFailureReceiptInput {
     log_address: Address,
     code: u16,
     reason: String,
-    intrinsic_gas: u64,
+    visible_base_gas: u64,
     compressed_entities_gas: u64,
     signed_gas_limit: u64,
     internal_gas_used: u64,
@@ -1683,18 +1683,19 @@ where
     /// and visible gas accounting.
     ///
     /// The precompile executes under the internal 100M system-call budget.
-    /// The public Ethereum block gas lane charges only the signed envelope's
-    /// visible intrinsic gas, keeping system transactions replay/import
-    /// compatible without exposing the 100M execution lane.
+    /// The public Ethereum block gas lane charges the signed envelope's visible
+    /// base gas (intrinsic plus any schedule-hashed protocol precharge) and any
+    /// explicit compressed-entity gas, without exposing the internal execution
+    /// lane.
     fn commit_system_transaction(
         &mut self,
         output: EthTxResult<E::HaltReason, alloy_consensus::TxType>,
-        intrinsic_gas: u64,
+        visible_base_gas: u64,
         compressed_entities_gas: u64,
         signed_gas_limit: u64,
     ) -> Result<GasOutput, BlockExecutionError> {
         let visible_gas_used = self.visible_system_gas_with_compressed_entities(
-            intrinsic_gas,
+            visible_base_gas,
             compressed_entities_gas,
             signed_gas_limit,
         )?;
@@ -1732,11 +1733,11 @@ where
 
     fn visible_system_gas_with_compressed_entities(
         &self,
-        intrinsic_gas: u64,
+        visible_base_gas: u64,
         compressed_entities_gas: u64,
         signed_gas_limit: u64,
     ) -> Result<u64, BlockExecutionError> {
-        let visible_gas = intrinsic_gas
+        let visible_gas = visible_base_gas
             .checked_add(compressed_entities_gas)
             .ok_or_else(|| {
                 BlockExecutionError::Internal(InternalBlockExecutionError::Other(
@@ -1748,7 +1749,7 @@ where
                 InternalBlockExecutionError::Other(
                     format!(
                         "system tx receipt gas exceeds signed gas limit: visible={visible_gas}, \
-                         signed_limit={signed_gas_limit}, intrinsic={intrinsic_gas}, \
+                         signed_limit={signed_gas_limit}, visible_base={visible_base_gas}, \
                          compressed_entities={compressed_entities_gas}"
                     )
                     .into(),
@@ -1770,7 +1771,7 @@ where
                 InternalBlockExecutionError::Other(
                     format!(
                         "system tx visible gas exceeds block gas limit: cumulative={cumulative}, \
-                         block_limit={block_gas_limit}, intrinsic={intrinsic_gas}, \
+                         block_limit={block_gas_limit}, visible_base={visible_base_gas}, \
                          compressed_entities={compressed_entities_gas}"
                     )
                     .into(),
@@ -1788,7 +1789,7 @@ where
         input: SystemFailureReceiptInput,
     ) -> Result<GasOutput, BlockExecutionError> {
         let visible_gas_used = self.visible_system_gas_with_compressed_entities(
-            input.intrinsic_gas,
+            input.visible_base_gas,
             input.compressed_entities_gas,
             input.signed_gas_limit,
         )?;
@@ -2188,14 +2189,12 @@ where
         // the bootstrap producer — identically to `build_begin_system_txs` so the
         // proposer's signed body and the executor's expected inputs match.
         if verifier_mode {
-            if let Ok(SystemTxInputV2::TeeBootstrap { payload }) =
-                self.expected_begin_input(ordinal)
+            if let Ok(
+                input @ (SystemTxInputV2::TeeBootstrap { .. }
+                | SystemTxInputV2::TeeBootstrapDcap { .. }),
+            ) = self.expected_begin_input(ordinal)
             {
-                system_txs.push((
-                    SystemTxKind::TeeBootstrap,
-                    SystemTxInputV2::TeeBootstrap { payload },
-                    None,
-                ));
+                system_txs.push((SystemTxKind::TeeBootstrap, input, None));
                 ordinal += 1;
             }
         } else if let Some(payload) = self.pending_tee_bootstrap.clone() {
@@ -2295,6 +2294,19 @@ where
                     .into(),
             ))
         })?;
+        let protocol_precharge = gas_plan.protocol_precharge(body_index).ok_or_else(|| {
+            BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                format!("visible gas plan missing protocol precharge for body_index={body_index}")
+                    .into(),
+            ))
+        })?;
+        let visible_base_gas = intrinsic_gas
+            .checked_add(protocol_precharge)
+            .ok_or_else(|| {
+                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                    format!("visible base gas overflow for body_index={body_index}").into(),
+                ))
+            })?;
         let gas_limit = gas_plan.gas_limit(body_index).ok_or_else(|| {
             BlockExecutionError::Internal(InternalBlockExecutionError::Other(
                 format!("visible gas plan missing gas limit for body_index={body_index}").into(),
@@ -2303,7 +2315,7 @@ where
         system_txs
             .into_iter()
             .nth(body_index)
-            .map(|(kind, input, summary)| (kind, input, summary, intrinsic_gas, gas_limit))
+            .map(|(kind, input, summary)| (kind, input, summary, visible_base_gas, gas_limit))
             .ok_or_else(|| {
             let has_boundary_outcome = matches!(
                 block_artifacts.consensus_header_artifact,
@@ -2876,7 +2888,7 @@ where
             ));
         };
         let body_index_usize = usize::from(body_index);
-        let (resolved_kind, input, finalized_summary, intrinsic_gas, gas_limit) =
+        let (resolved_kind, input, finalized_summary, visible_base_gas, gas_limit) =
             self.expected_system_tx_at_body_index(body_index_usize, block_number, block_artifacts)?;
         if let Some(expected_kind) = cursor.expected_kind() {
             if expected_kind != resolved_kind {
@@ -2895,7 +2907,7 @@ where
             resolved_kind,
             input,
             finalized_summary,
-            intrinsic_gas,
+            visible_base_gas,
             gas_limit,
         ))
     }
@@ -3293,7 +3305,7 @@ where
                     expected_phase,
                     expected_input,
                     finalized_summary,
-                    intrinsic_gas,
+                    visible_base_gas,
                     planned_gas_limit,
                 ) = self.expected_system_tx_for_cursor(block_number, &block_artifacts)?;
                 let actual_input =
@@ -3377,7 +3389,7 @@ where
                     let has_tee_bootstrap = self.block_has_tee_bootstrap();
                     let logs = std::mem::take(&mut self.whitelisted_hook_event_logs);
                     let commit_outcome = self
-                        .push_hook_events_receipt(tx.tx_type(), logs, intrinsic_gas)
+                        .push_hook_events_receipt(tx.tx_type(), logs, visible_base_gas)
                         .map(Some);
                     if commit_outcome.is_ok() {
                         self.system_tx_phase_cursor =
@@ -3414,12 +3426,12 @@ where
                 // produces for itself.
                 let ce_gas_limit =
                     visible_gas_limit
-                        .checked_sub(intrinsic_gas)
+                        .checked_sub(visible_base_gas)
                         .ok_or_else(|| {
                             BlockExecutionError::Internal(InternalBlockExecutionError::Other(
                                 format!(
-                            "system tx signed gas below intrinsic at body_index={body_index}: \
-                         signed={visible_gas_limit}, intrinsic={intrinsic_gas}"
+                            "system tx signed gas below visible base at body_index={body_index}: \
+                         signed={visible_gas_limit}, visible_base={visible_base_gas}"
                         )
                                 .into(),
                             ))
@@ -3529,7 +3541,7 @@ where
                             log_address: outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
                             code,
                             reason,
-                            intrinsic_gas,
+                            visible_base_gas,
                             compressed_entities_gas: receipt_ce_gas,
                             signed_gas_limit: visible_gas_limit,
                             internal_gas_used: result.result.tx_gas_used(),
@@ -3556,7 +3568,7 @@ where
                 let commit_outcome = self
                     .commit_system_transaction(
                         output,
-                        intrinsic_gas,
+                        visible_base_gas,
                         compressed_entities_gas,
                         visible_gas_limit,
                     )
@@ -4307,7 +4319,7 @@ mod tests {
                 .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
             block_env: BlockEnv {
                 number: U256::from(block_number),
-                gas_limit: 30_000_000,
+                gas_limit: outbe_primitives::system_tx::protocol_block_gas_limit(block_number),
                 basefee: 1_000_000_000,
                 beneficiary,
                 timestamp: U256::from(block_number),
@@ -4638,7 +4650,7 @@ mod tests {
             .build_begin_system_txs(
                 block_number,
                 MAINNET.chain().id(),
-                30_000_000,
+                outbe_primitives::system_tx::protocol_block_gas_limit(block_number),
                 parent_hash,
                 extra_data,
                 parent_consensus_metadata,
@@ -4660,7 +4672,7 @@ mod tests {
             tribute_offer_epoch: 0,
             dkg_transcript_hash: B256::ZERO,
             tribute_offer_public_key: B256::ZERO,
-            tribute_offer_group_public_key: alloy_primitives::Bytes::new(),
+            tribute_offer_group_public_key: Bytes::new(),
             registrations: Vec::new(),
             policy: outbe_primitives::tee_bootstrap::TeePolicy::default(),
             validator_signatures: Vec::new(),
@@ -6579,7 +6591,7 @@ mod tests {
     }
 
     #[test]
-    fn system_ce_visible_gas_is_published_and_block_limited_before_receipt_commit() {
+    fn system_protocol_precharge_and_ce_gas_are_published_and_block_limited() {
         let signer = test_evm_signer();
         let proposer = signer.address();
         let mut state = state_with_active_proposer(proposer);
@@ -6587,7 +6599,9 @@ mod tests {
         let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
         let mut executor = config.create_executor(evm, execution_ctx(Some(0), Bytes::new()));
 
-        let envelope_gas = 21_000;
+        let intrinsic_gas = 21_000;
+        let protocol_precharge = 300_000;
+        let visible_base_gas = intrinsic_gas + protocol_precharge;
         let compressed_entities_gas = 70_000;
         let output = executor
             .push_system_failure_receipt(SystemFailureReceiptInput {
@@ -6595,13 +6609,13 @@ mod tests {
                 log_address: outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
                 code: 299,
                 reason: "deterministic test failure".into(),
-                intrinsic_gas: envelope_gas,
+                visible_base_gas,
                 compressed_entities_gas,
-                signed_gas_limit: envelope_gas + compressed_entities_gas,
+                signed_gas_limit: visible_base_gas + compressed_entities_gas,
                 internal_gas_used: 123,
             })
             .expect("visible envelope plus CE gas should fit");
-        let expected_visible = envelope_gas + compressed_entities_gas;
+        let expected_visible = intrinsic_gas + protocol_precharge + compressed_entities_gas;
         assert_eq!(output.tx_gas_used(), expected_visible);
         assert_eq!(
             executor.receipts().last().unwrap().cumulative_gas_used,
@@ -6622,7 +6636,7 @@ mod tests {
                 log_address: outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
                 code: 299,
                 reason: "must not commit".into(),
-                intrinsic_gas: remaining,
+                visible_base_gas: remaining,
                 compressed_entities_gas: 1,
                 signed_gas_limit: remaining + 1,
                 internal_gas_used: 456,
@@ -9175,7 +9189,11 @@ mod tests {
             (SystemTxKind::OracleSlashWindow, oracle_input.clone()),
             (SystemTxKind::HookEvents, hook_events_input.clone()),
         ];
-        let gas_plan = SystemTxVisibleGasPlan::new(30_000_000, &gas_inputs).unwrap();
+        let gas_plan = SystemTxVisibleGasPlan::new(
+            outbe_primitives::system_tx::protocol_block_gas_limit(1),
+            &gas_inputs,
+        )
+        .unwrap();
         let unsigned = build_unsigned_system_tx_with_gas_limit(
             SystemTxKind::CycleTick,
             0,
@@ -9246,8 +9264,8 @@ mod tests {
         StorageHandle::enter(&mut seed_storage, |storage| {
             seed_registered_active_validator(storage.clone(), validator, &pk);
 
-            let oracle = outbe_oracle::contract::OracleContract::new(storage.clone());
-            oracle.feeder_delegation.write(&validator, feeder)?;
+            let mut oracle = outbe_oracle::contract::OracleContract::new(storage.clone());
+            oracle.delegate_feeder(validator, feeder)?;
             Ok::<_, outbe_primitives::error::PrecompileError>(())
         })
         .expect("test genesis state must be seeded");

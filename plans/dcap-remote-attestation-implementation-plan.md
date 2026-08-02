@@ -405,16 +405,27 @@ activation state machine.
 
 ## I8 — Bootstrap 32 validator enclaves with full block-1 attestation
 
-**Outcome:** block 1 verifies every initial validator's complete DCAP evidence
-before committing bootstrap state.
+**Outcome:** the OST3 block-1 path verifies every initial validator's complete
+DCAP evidence before committing bootstrap state.
 
 **Includes:**
 
 - V1 `TeeBootstrap` integration with the existing committee/DKG result, without
   redesigning DKG/BLS/reshare;
 - encoded collateral deduplication with per-participant logical QVL charging;
+- canonical, schedule-hashed `OST3` precharge
+  `300,000 + full_calldata_len + 100,000*participant_count + sum(QVL_i) +
+  15,000*logical_component_ref_count + 10,000*committee_signature_count`;
+  the 1,310,720-byte cap covers full system calldata including selector/version,
+  and bounded bootstrap storage work is included rather than charged again;
 - 1,310,720-byte bootstrap cap, five exact system transactions, no user tx;
 - height-selected 500-million/30-million gas limits and full block-size checks.
+
+I8 adds OST3 as a separate canonical system-transaction variant and makes the
+validator/executor path ready for it. It does not silently reinterpret OST2 or
+switch the existing bootstrap producer: pre-A0 startup continues to emit and
+execute legacy OST2. I9/A0 atomically switches the producer and ChainSpec to
+OST3 and makes OST2 invalid for the activated production manifest.
 
 **Acceptance:**
 
@@ -425,7 +436,16 @@ before committing bootstrap state.
 - missing/invalid evidence or committee mismatch makes block 1 invalid;
 - dense vector charges `309,931,488` OST3 precharge at the 896-KiB logical
   evidence cap and leaves the documented bootstrap headroom;
-- genesis/startup refuses a committee that its actual bytes/counts cannot fit.
+- OST3 assembly/preflight refuses a committee whose actual bytes/counts cannot
+  fit the canonical calldata and gas caps: exact checked encoded length is
+  bounded before aggregate allocation or signing, and worst-case intrinsic gas
+  plus normative precharge must fit 500 million; I9 wires that preflight into
+  startup;
+- the seam accepts the existing genesis DKG authority values
+  `key_epoch=0`, `tribute_offer_epoch=0` and zero transcript hash; those values
+  are genesis state, not missing authority, and I9 does not redesign DKG;
+- pre-A0 OST2 producer/startup compatibility remains covered; no I8 test or
+  checkpoint claims that production is already emitting OST3.
 
 ## I9 — Activate production DCAP and make the release gate fail closed
 
@@ -435,7 +455,9 @@ determinism, capacity and x86_64 SGX real-hardware evidence passes.
 **Includes:**
 
 - separate `DcapRequired` and `GramineDirectDev` chain specs/genesis;
-- A0 activation of V1 selectors, schema, gas and policy schedule;
+- A0 activation of V1 selectors, schema, gas and policy schedule, including an
+  atomic producer/ChainSpec switch from legacy OST2 to OST3 and rejection of
+  OST2 under the activated manifest;
 - real SGX quote generation, canonical collateral packaging, registration,
   renewal, candidate replacement, finalized lookup and Noise handshake in the
   release hardware job;

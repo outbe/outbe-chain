@@ -512,6 +512,55 @@ mod tests {
         )
     }
 
+    fn genesis_legacy_tee_bootstrap() -> outbe_primitives::tee_bootstrap::TeeBootstrapPayload {
+        use k256::ecdsa::signature::hazmat::PrehashSigner as _;
+        use outbe_primitives::tee_bootstrap::{
+            TeeBootstrapPayload, TeePolicy, TeeRegistrationBundle, TeeValidatorSignature,
+        };
+
+        let mut registration = TeeRegistrationBundle {
+            validator: GENESIS_OWNER,
+            recipient_x25519: B256::repeat_byte(0x21),
+            attestation_pub: B256::repeat_byte(0x22),
+            noise_static_pub: B256::repeat_byte(0x23),
+            mrenclave: B256::repeat_byte(0x24),
+            mrsigner: B256::repeat_byte(0x25),
+            isv_svn: 1,
+            keys_hash: B256::ZERO,
+        };
+        registration.keys_hash = registration.computed_keys_hash();
+        let policy = TeePolicy::default();
+        let mut payload = TeeBootstrapPayload {
+            policy_hash: policy.compute_hash(),
+            committee_snapshot_hash: B256::ZERO,
+            committee_snapshot_block: 1,
+            key_epoch: 0,
+            tribute_offer_epoch: 0,
+            dkg_transcript_hash: B256::repeat_byte(0x26),
+            tribute_offer_public_key: B256::repeat_byte(0x27),
+            tribute_offer_group_public_key: Bytes::new(),
+            registrations: vec![registration],
+            policy,
+            validator_signatures: Vec::new(),
+        };
+        let mut secret = [0_u8; 32];
+        secret[31] = 1;
+        let signing_key =
+            k256::ecdsa::SigningKey::from_slice(&secret).expect("genesis test signing key");
+        let (signature, recovery_id): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) =
+            signing_key
+                .sign_prehash(payload.signing_hash().as_slice())
+                .expect("sign genesis bootstrap");
+        let mut recoverable = [0_u8; 65];
+        recoverable[..64].copy_from_slice(signature.to_bytes().as_slice());
+        recoverable[64] = recovery_id.to_byte();
+        payload.validator_signatures = vec![TeeValidatorSignature {
+            validator: GENESIS_OWNER,
+            signature: recoverable,
+        }];
+        payload
+    }
+
     fn test_config(bridge: ConsensusExecutionBridge) -> OutbeEvmConfig {
         OutbeEvmConfig::new_with_bridge(test_chain_spec(), bridge)
             .with_evm_signer(test_evm_signer())
@@ -1020,7 +1069,9 @@ mod tests {
             .with_bundle_update()
             .build();
 
-        let attrs = next_block_attrs(encoded);
+        let mut attrs = next_block_attrs(encoded);
+        attrs.inner.gas_limit = outbe_primitives::system_tx::protocol_block_gas_limit(1);
+        attrs.pending_tee_bootstrap = Some(genesis_legacy_tee_bootstrap());
         let mut builder = config
             .builder_for_next_block(&mut proposer_state, &parent, attrs.clone())
             .expect("builder must be created");
@@ -1031,13 +1082,13 @@ mod tests {
             .build_begin_system_txs(
                 1,
                 MAINNET.chain().id(),
-                30_000_000,
+                outbe_primitives::system_tx::protocol_block_gas_limit(1),
                 parent.hash(),
                 &attrs.inner.extra_data,
                 attrs.parent_consensus_metadata.clone(),
                 attrs.proposer_evm_address,
                 None,
-                None,
+                attrs.pending_tee_bootstrap.clone(),
             )
             .expect("begin-zone system txs must build");
         for tx in begin_system_txs {

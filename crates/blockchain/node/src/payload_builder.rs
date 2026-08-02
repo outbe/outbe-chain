@@ -9,6 +9,7 @@ use outbe_primitives::{
     consensus::OUTBE_MAX_BLOCK_SIZE,
     error::PrecompileError,
     reshare_artifact::{decode_outbe_block_artifacts, sanitize_prefinal_outbe_block_artifacts},
+    system_tx::GENESIS_BOOTSTRAP_BLOCK_NUMBER,
     OutbeBuiltPayload, OutbeHeader, OutbePayloadAttributes, OutbePrimitives, OutbeTxEnvelope,
 };
 use reth_basic_payload_builder::{
@@ -215,7 +216,9 @@ where
                         timestamp: inner.timestamp,
                         suggested_fee_recipient: inner.suggested_fee_recipient,
                         prev_randao: inner.prev_randao,
-                        gas_limit: self.builder_config.gas_limit(parent_header.gas_limit()),
+                        gas_limit: outbe_primitives::system_tx::protocol_block_gas_limit(
+                            block_number,
+                        ),
                         parent_beacon_block_root: inner.parent_beacon_block_root,
                         withdrawals: inner.withdrawals.clone().map(Into::into),
                         extra_data: prefinal_extra_data.clone(),
@@ -373,169 +376,171 @@ where
             );
         }
 
-        while let Some(pool_tx) = best_txs.next() {
-            if cumulative_gas_used
-                .saturating_add(pool_tx.gas_limit())
-                .saturating_add(reserved_end_gas)
-                > block_gas_limit
-            {
-                best_txs.mark_invalid(
-                    &pool_tx,
-                    &InvalidPoolTransactionError::ExceedsGasLimit(
-                        pool_tx.gas_limit(),
-                        block_gas_limit,
-                    ),
-                );
-                continue;
-            }
-
-            if cancel.is_cancelled() {
-                return Ok(BuildOutcome::Cancelled);
-            }
-
-            let tx = pool_tx.to_consensus();
-            let tx_rlp_len = tx.inner().length();
-            let estimated_block_size = block_transactions_rlp_length
-                + tx_rlp_len
-                + reserved_end_rlp_length
-                + withdrawals_rlp_length
-                + 1024;
-
-            if is_osaka && estimated_block_size > MAX_RLP_BLOCK_SIZE {
-                best_txs.mark_invalid(
-                    &pool_tx,
-                    &InvalidPoolTransactionError::OversizedData {
-                        size: estimated_block_size,
-                        limit: MAX_RLP_BLOCK_SIZE,
-                    },
-                );
-                continue;
-            }
-
-            // Outbe transport cap (always on, independent of the Osaka fork): a
-            // block must fit one consensus P2P message. Skip txs that would push
-            // the block over `OUTBE_MAX_BLOCK_SIZE` so the proposer never builds
-            // a block validators would reject as undisseminable.
-            if estimated_block_size > OUTBE_MAX_BLOCK_SIZE {
-                best_txs.mark_invalid(
-                    &pool_tx,
-                    &InvalidPoolTransactionError::OversizedData {
-                        size: estimated_block_size,
-                        limit: OUTBE_MAX_BLOCK_SIZE,
-                    },
-                );
-                continue;
-            }
-
-            let mut blob_tx_sidecar = None;
-            let tx_blob_count = tx.blob_count();
-            if let Some(tx_blob_count) = tx_blob_count {
-                if block_blob_count + tx_blob_count > max_blob_count {
+        if block_number != GENESIS_BOOTSTRAP_BLOCK_NUMBER {
+            while let Some(pool_tx) = best_txs.next() {
+                if cumulative_gas_used
+                    .saturating_add(pool_tx.gas_limit())
+                    .saturating_add(reserved_end_gas)
+                    > block_gas_limit
+                {
                     best_txs.mark_invalid(
                         &pool_tx,
-                        &InvalidPoolTransactionError::Eip4844(
-                            Eip4844PoolTransactionError::TooManyEip4844Blobs {
-                                have: block_blob_count + tx_blob_count,
-                                permitted: max_blob_count,
-                            },
+                        &InvalidPoolTransactionError::ExceedsGasLimit(
+                            pool_tx.gas_limit(),
+                            block_gas_limit,
                         ),
                     );
                     continue;
                 }
 
-                let sidecar = match self
-                    .pool
-                    .get_blob(*tx.hash())
-                    .map_err(PayloadBuilderError::other)?
-                {
-                    Some(sidecar) if is_osaka && sidecar.is_eip7594() => Some(sidecar),
-                    Some(sidecar) if !is_osaka && sidecar.is_eip4844() => Some(sidecar),
-                    Some(sidecar) if is_osaka && !sidecar.is_eip7594() => {
+                if cancel.is_cancelled() {
+                    return Ok(BuildOutcome::Cancelled);
+                }
+
+                let tx = pool_tx.to_consensus();
+                let tx_rlp_len = tx.inner().length();
+                let estimated_block_size = block_transactions_rlp_length
+                    + tx_rlp_len
+                    + reserved_end_rlp_length
+                    + withdrawals_rlp_length
+                    + 1024;
+
+                if is_osaka && estimated_block_size > MAX_RLP_BLOCK_SIZE {
+                    best_txs.mark_invalid(
+                        &pool_tx,
+                        &InvalidPoolTransactionError::OversizedData {
+                            size: estimated_block_size,
+                            limit: MAX_RLP_BLOCK_SIZE,
+                        },
+                    );
+                    continue;
+                }
+
+                // Outbe transport cap (always on, independent of the Osaka fork): a
+                // block must fit one consensus P2P message. Skip txs that would push
+                // the block over `OUTBE_MAX_BLOCK_SIZE` so the proposer never builds
+                // a block validators would reject as undisseminable.
+                if estimated_block_size > OUTBE_MAX_BLOCK_SIZE {
+                    best_txs.mark_invalid(
+                        &pool_tx,
+                        &InvalidPoolTransactionError::OversizedData {
+                            size: estimated_block_size,
+                            limit: OUTBE_MAX_BLOCK_SIZE,
+                        },
+                    );
+                    continue;
+                }
+
+                let mut blob_tx_sidecar = None;
+                let tx_blob_count = tx.blob_count();
+                if let Some(tx_blob_count) = tx_blob_count {
+                    if block_blob_count + tx_blob_count > max_blob_count {
                         best_txs.mark_invalid(
                             &pool_tx,
                             &InvalidPoolTransactionError::Eip4844(
-                                Eip4844PoolTransactionError::UnexpectedEip4844SidecarAfterOsaka,
+                                Eip4844PoolTransactionError::TooManyEip4844Blobs {
+                                    have: block_blob_count + tx_blob_count,
+                                    permitted: max_blob_count,
+                                },
                             ),
                         );
-                        trace!(target: "payload_builder", ?sidecar, "skipping unexpected pre-Osaka sidecar");
                         continue;
                     }
-                    Some(_) => {
-                        best_txs.mark_invalid(
+
+                    let sidecar = match self
+                        .pool
+                        .get_blob(*tx.hash())
+                        .map_err(PayloadBuilderError::other)?
+                    {
+                        Some(sidecar) if is_osaka && sidecar.is_eip7594() => Some(sidecar),
+                        Some(sidecar) if !is_osaka && sidecar.is_eip4844() => Some(sidecar),
+                        Some(sidecar) if is_osaka && !sidecar.is_eip7594() => {
+                            best_txs.mark_invalid(
+                                &pool_tx,
+                                &InvalidPoolTransactionError::Eip4844(
+                                    Eip4844PoolTransactionError::UnexpectedEip4844SidecarAfterOsaka,
+                                ),
+                            );
+                            trace!(target: "payload_builder", ?sidecar, "skipping unexpected pre-Osaka sidecar");
+                            continue;
+                        }
+                        Some(_) => {
+                            best_txs.mark_invalid(
                             &pool_tx,
                             &InvalidPoolTransactionError::Eip4844(
                                 Eip4844PoolTransactionError::UnexpectedEip7594SidecarBeforeOsaka,
                             ),
                         );
+                            continue;
+                        }
+                        None => {
+                            best_txs.mark_invalid(
+                                &pool_tx,
+                                &InvalidPoolTransactionError::Eip4844(
+                                    Eip4844PoolTransactionError::MissingEip4844BlobSidecar,
+                                ),
+                            );
+                            continue;
+                        }
+                    };
+                    blob_tx_sidecar = sidecar;
+                }
+
+                let miner_fee = tx.effective_tip_per_gas(base_fee);
+                let tx_hash = *tx.tx_hash();
+                let gas_used = match builder.execute_transaction(tx) {
+                    Ok(gas_used) => gas_used.tx_gas_used(),
+                    Err(err)
+                        if matches!(
+                            ce_work_admission_error(&err),
+                            Some(PrecompileError::BlockCeWorkCapacityExhausted)
+                        ) =>
+                    {
+                        trace!(target: "payload_builder", ?tx_hash, "deferring transaction because the payload CE work budget is exhausted");
                         continue;
                     }
-                    None => {
-                        best_txs.mark_invalid(
-                            &pool_tx,
-                            &InvalidPoolTransactionError::Eip4844(
-                                Eip4844PoolTransactionError::MissingEip4844BlobSidecar,
-                            ),
-                        );
+                    Err(err)
+                        if matches!(
+                            ce_work_admission_error(&err),
+                            Some(PrecompileError::TransactionCeWorkLimitExceeded)
+                        ) =>
+                    {
+                        trace!(target: "payload_builder", ?tx_hash, "skipping transaction that cannot fit the full CE work limit");
                         continue;
                     }
+                    Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
+                        error,
+                        ..
+                    })) => {
+                        if !error.is_nonce_too_low() {
+                            best_txs.mark_invalid(
+                                &pool_tx,
+                                &InvalidPoolTransactionError::Consensus(
+                                    InvalidTransactionError::TxTypeNotSupported,
+                                ),
+                            );
+                        }
+                        trace!(target: "payload_builder", %error, ?tx_hash, "skipping invalid transaction");
+                        continue;
+                    }
+                    Err(err) => return Err(PayloadBuilderError::evm(err)),
                 };
-                blob_tx_sidecar = sidecar;
-            }
 
-            let miner_fee = tx.effective_tip_per_gas(base_fee);
-            let tx_hash = *tx.tx_hash();
-            let gas_used = match builder.execute_transaction(tx) {
-                Ok(gas_used) => gas_used.tx_gas_used(),
-                Err(err)
-                    if matches!(
-                        ce_work_admission_error(&err),
-                        Some(PrecompileError::BlockCeWorkCapacityExhausted)
-                    ) =>
-                {
-                    trace!(target: "payload_builder", ?tx_hash, "deferring transaction because the payload CE work budget is exhausted");
-                    continue;
-                }
-                Err(err)
-                    if matches!(
-                        ce_work_admission_error(&err),
-                        Some(PrecompileError::TransactionCeWorkLimitExceeded)
-                    ) =>
-                {
-                    trace!(target: "payload_builder", ?tx_hash, "skipping transaction that cannot fit the full CE work limit");
-                    continue;
-                }
-                Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
-                    error,
-                    ..
-                })) => {
-                    if !error.is_nonce_too_low() {
-                        best_txs.mark_invalid(
-                            &pool_tx,
-                            &InvalidPoolTransactionError::Consensus(
-                                InvalidTransactionError::TxTypeNotSupported,
-                            ),
-                        );
+                if let Some(blob_count) = tx_blob_count {
+                    block_blob_count += blob_count;
+                    if block_blob_count == max_blob_count {
+                        best_txs.skip_blobs();
                     }
-                    trace!(target: "payload_builder", %error, ?tx_hash, "skipping invalid transaction");
-                    continue;
                 }
-                Err(err) => return Err(PayloadBuilderError::evm(err)),
-            };
 
-            if let Some(blob_count) = tx_blob_count {
-                block_blob_count += blob_count;
-                if block_blob_count == max_blob_count {
-                    best_txs.skip_blobs();
+                block_transactions_rlp_length += tx_rlp_len;
+                let miner_fee = miner_fee.unwrap_or_default();
+                total_fees += U256::from(miner_fee) * U256::from(gas_used);
+                cumulative_gas_used += gas_used;
+
+                if let Some(sidecar) = blob_tx_sidecar {
+                    blob_sidecars.push_sidecar_variant(sidecar.as_ref().clone());
                 }
-            }
-
-            block_transactions_rlp_length += tx_rlp_len;
-            let miner_fee = miner_fee.unwrap_or_default();
-            total_fees += U256::from(miner_fee) * U256::from(gas_used);
-            cumulative_gas_used += gas_used;
-
-            if let Some(sidecar) = blob_tx_sidecar {
-                blob_sidecars.push_sidecar_variant(sidecar.as_ref().clone());
             }
         }
 
@@ -715,16 +720,14 @@ mod tests {
         LOCAL_STORAGE_SCHEMA_VERSION,
     };
     use outbe_evm::{
-        system_tx::{
-            split_system_layout, system_tx_intrinsic_gas, OcompLifecycleActivation, SystemTxKind,
-        },
+        system_tx::{split_system_layout, system_tx_intrinsic_gas, SystemTxKind},
         OutbeEvmSigner,
     };
     use outbe_offchain_data::RuntimeBodyReaders;
     use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
     use outbe_primitives::{
         addresses::{COMPRESSED_ENTITIES_ADDRESS, REWARDS_ADDRESS},
-        consensus::{DkgBoundaryArtifact, ReshareResult},
+        consensus::{ConsensusExecutionBridge, DkgBoundaryArtifact, ReshareResult},
         projection::ExecutionReadBudget,
         reshare_artifact::{
             encode_outbe_block_artifacts, ConsensusHeaderArtifact, OutbeBlockArtifacts,
@@ -838,6 +841,46 @@ mod tests {
         .expect("genesis boundary artifacts encode")
     }
 
+    fn genesis_legacy_tee_bootstrap(
+        proposer: alloy_primitives::Address,
+        signer: &OutbeEvmSigner,
+    ) -> outbe_primitives::tee_bootstrap::TeeBootstrapPayload {
+        use outbe_primitives::tee_bootstrap::{
+            TeeBootstrapPayload, TeePolicy, TeeRegistrationBundle, TeeValidatorSignature,
+        };
+
+        let mut registration = TeeRegistrationBundle {
+            validator: proposer,
+            recipient_x25519: B256::repeat_byte(0x21),
+            attestation_pub: B256::repeat_byte(0x22),
+            noise_static_pub: B256::repeat_byte(0x23),
+            mrenclave: B256::repeat_byte(0x24),
+            mrsigner: B256::repeat_byte(0x25),
+            isv_svn: 1,
+            keys_hash: B256::ZERO,
+        };
+        registration.keys_hash = registration.computed_keys_hash();
+        let policy = TeePolicy::default();
+        let mut payload = TeeBootstrapPayload {
+            policy_hash: policy.compute_hash(),
+            committee_snapshot_hash: B256::ZERO,
+            committee_snapshot_block: 1,
+            key_epoch: 0,
+            tribute_offer_epoch: 0,
+            dkg_transcript_hash: B256::ZERO,
+            tribute_offer_public_key: B256::repeat_byte(0x27),
+            tribute_offer_group_public_key: Bytes::new(),
+            registrations: vec![registration],
+            policy,
+            validator_signatures: Vec::new(),
+        };
+        payload.validator_signatures = vec![TeeValidatorSignature {
+            validator: proposer,
+            signature: signer.sign_hash(&payload.signing_hash()).unwrap(),
+        }];
+        payload
+    }
+
     fn active_ocomp_provider(
         chain_spec: &Arc<ChainSpec<OutbeHeader>>,
         proposer: alloy_primitives::Address,
@@ -925,17 +968,13 @@ mod tests {
         provider
     }
 
-    const ACTIVE_PAYLOAD_BLOCK_GAS_LIMIT: u64 = 30_000_000;
+    const ACTIVE_PAYLOAD_BLOCK_GAS_LIMIT: u64 = 500_000_000;
     const ACTIVE_PAYLOAD_BLOCK_TIMESTAMP: u64 = 1_700_000_000;
 
     struct ActivePayloadCase {
         payload: OutbeBuiltPayload,
         evm_config: OutbeEvmConfig,
         provider: TestProvider,
-        user_hash: B256,
-        admission_boundary_gas: u64,
-        candidate_gas_limit: u64,
-        terminal_reserved_gas: u64,
         rejected: Arc<AtomicUsize>,
     }
 
@@ -950,13 +989,16 @@ mod tests {
         );
         let proposer = signer.address();
         let prefinal_extra_data = genesis_boundary_artifacts(proposer);
+        let bridge = ConsensusExecutionBridge::new();
+        let bootstrap = genesis_legacy_tee_bootstrap(proposer, &signer);
+        bridge.set_pending_tee_bootstrap(bootstrap.clone());
         let body_storage: StorageReaderHandle = Arc::new(MemoryStorage::new());
-        let evm_config = OutbeEvmConfig::new_with_runtime_body_readers(
+        let evm_config = OutbeEvmConfig::new_with_bridge_and_runtime_body_readers(
             chain_spec.clone(),
+            bridge,
             RuntimeBodyReaders::new(body_storage),
         )
-        .with_evm_signer(signer)
-        .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(1));
+        .with_evm_signer(signer);
         let parent = Arc::new(SealedHeader::seal_slow(OutbeHeader::new(
             alloy_consensus::Header {
                 number: 0,
@@ -977,13 +1019,13 @@ mod tests {
                 None,
                 Some(proposer),
                 None,
-                None,
+                Some(bootstrap),
             )
             .expect("active begin zone builds");
         let end = evm_config
             .build_end_system_txs(1, chain_spec.chain().id(), begin.len(), Some(proposer))
             .expect("active terminal zone builds");
-        assert_eq!(end.len(), 1);
+        assert!(end.is_empty());
         let begin_visible_gas = begin
             .iter()
             .map(|transaction| {
@@ -991,10 +1033,8 @@ mod tests {
                     .expect("system transaction has valid intrinsic gas")
             })
             .sum::<u64>();
-        let terminal_reserved_gas = end[0].tx().gas_limit();
         let admission_boundary_gas = ACTIVE_PAYLOAD_BLOCK_GAS_LIMIT
             .checked_sub(begin_visible_gas)
-            .and_then(|remaining| remaining.checked_sub(terminal_reserved_gas))
             .expect("system zones fit inside the block gas limit");
         let candidate_gas_limit = admission_boundary_gas
             .checked_add(user_gas_over_boundary)
@@ -1013,7 +1053,6 @@ mod tests {
         }
         .into_signed(Signature::test_signature())
         .into();
-        let user_hash = *user_tx.tx_hash();
         let encoded_length = user_tx.encode_2718_len();
         let recovered_user = user_tx
             .try_into_recovered()
@@ -1069,16 +1108,12 @@ mod tests {
             payload,
             evm_config,
             provider,
-            user_hash,
-            admission_boundary_gas,
-            candidate_gas_limit,
-            terminal_reserved_gas,
             rejected,
         }
     }
 
     #[test]
-    fn active_payload_builder_preserves_terminal_reservation_and_replays_exactly() {
+    fn bootstrap_payload_builder_ignores_nonempty_pool_and_replays_exactly() {
         let case = build_active_payload_case(0);
         let payload = &case.payload;
         let body = &payload.block().body().transactions;
@@ -1087,42 +1122,23 @@ mod tests {
         assert_eq!(
             layout.begin_block_kinds().expect("begin inputs decode"),
             vec![
-                SystemTxKind::OcompLifecycleBegin,
                 SystemTxKind::CycleTick,
                 SystemTxKind::BoundaryOutcome,
+                SystemTxKind::TeeBootstrap,
                 SystemTxKind::OracleSlashWindow,
                 SystemTxKind::HookEvents,
             ]
         );
-        assert_eq!(layout.user.len(), 1);
-        assert_eq!(*layout.user[0].tx_hash(), case.user_hash);
-        assert_eq!(layout.end.len(), 1);
-        assert_eq!(
-            layout.end_block_kinds().expect("terminal input decodes"),
-            vec![SystemTxKind::OcompTerminalRequest]
-        );
+        assert!(layout.user.is_empty());
+        assert!(layout.end.is_empty());
 
         let executed = payload
             .executed_block()
             .expect("builder exposes the exact executed payload");
         let receipts = &executed.execution_output.result.receipts;
         assert_eq!(receipts.len(), body.len());
-        assert_eq!(
-            receipts[layout.begin.len() - 1]
-                .cumulative_gas_used
-                .checked_add(case.admission_boundary_gas)
-                .and_then(|used| used.checked_add(case.terminal_reserved_gas)),
-            Some(ACTIVE_PAYLOAD_BLOCK_GAS_LIMIT),
-            "the user transaction is admitted exactly at the OSR2 reservation boundary"
-        );
+        assert_eq!(receipts.len(), 5);
         assert_eq!(case.rejected.load(Ordering::Relaxed), 0);
-        assert!(
-            decode_outbe_block_artifacts(payload.block().header().extra_data().as_ref())
-                .expect("built header artifacts decode")
-                .compressed_entities_root
-                .is_some(),
-            "the active payload publishes the CE seal committed before OSR2"
-        );
 
         let replay = case
             .evm_config
@@ -1136,7 +1152,7 @@ mod tests {
     }
 
     #[test]
-    fn active_payload_builder_rejects_a_user_that_spends_one_unit_of_terminal_reserve() {
+    fn bootstrap_payload_builder_does_not_even_evaluate_oversized_pool_candidate() {
         let case = build_active_payload_case(1);
         let payload = &case.payload;
         let body = &payload.block().body().transactions;
@@ -1146,32 +1162,12 @@ mod tests {
             layout.user.is_empty(),
             "the candidate that consumes one unit of OSR2 reserve must not enter the block"
         );
-        assert_eq!(
-            layout.end_block_kinds().expect("terminal input decodes"),
-            vec![SystemTxKind::OcompTerminalRequest],
-            "rejecting the user must preserve the sole terminal request"
-        );
-        assert_eq!(case.rejected.load(Ordering::Relaxed), 1);
+        assert!(layout.end.is_empty());
+        assert_eq!(case.rejected.load(Ordering::Relaxed), 0);
 
         let executed = payload
             .executed_block()
             .expect("builder exposes the exact executed payload");
-        let receipts = &executed.execution_output.result.receipts;
-        let begin_cumulative_gas = receipts[layout.begin.len() - 1].cumulative_gas_used;
-        assert!(
-            begin_cumulative_gas
-                .checked_add(case.candidate_gas_limit)
-                .is_some_and(|used| used <= ACTIVE_PAYLOAD_BLOCK_GAS_LIMIT),
-            "the candidate would fit if the builder forgot the terminal reservation"
-        );
-        assert!(
-            begin_cumulative_gas
-                .checked_add(case.candidate_gas_limit)
-                .and_then(|used| used.checked_add(case.terminal_reserved_gas))
-                .is_some_and(|used| used > ACTIVE_PAYLOAD_BLOCK_GAS_LIMIT),
-            "the candidate must cross the block limit only when OSR2 gas is reserved"
-        );
-
         let replay = case
             .evm_config
             .executor(StateProviderDatabase::new(&case.provider))

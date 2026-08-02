@@ -31,7 +31,7 @@ outbe-governance.workspace = true
 outbe-stablecoinpolicy.workspace = true
 outbe-stablecoin.workspace = true
 outbe-stablecoinfactory.workspace = true
-outbe-teeregistry.workspace = true
+outbe-teeregistry = { workspace = true, features = ["tee-attestation-v1"] }
 outbe-l2registry.workspace = true
 outbe-tee.workspace = true
 outbe-vote.workspace = true
