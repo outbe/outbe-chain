@@ -62,6 +62,7 @@ fn zero_fee_priority_class(hook: ZeroFeeHookId) -> Option<u8> {
     match hook {
         ZeroFeeHookId::OracleSubmitVote => Some(1),
         ZeroFeeHookId::OcompSubmitResultVote => Some(1),
+        ZeroFeeHookId::IntexFactoryPayContributorBatch => Some(1),
     }
 }
 

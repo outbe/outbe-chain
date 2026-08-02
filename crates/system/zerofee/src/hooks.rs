@@ -1,6 +1,7 @@
 use alloy_primitives::{Address, U256};
 use outbe_primitives::{error::PrecompileError, storage::StorageHandle};
 
+use crate::intexfactory::IntexFactoryPayContributorBatchHook;
 use crate::ocomp::OcompSubmitResultVoteHook;
 use crate::oracle::OracleSubmitVoteHook;
 
@@ -30,6 +31,8 @@ pub enum ZeroFeeHookId {
     OracleSubmitVote,
     /// `Metadosis.submitLysisResult(bytes)`.
     OcompSubmitResultVote,
+    /// `IntexFactory.payContributorBatch(uint32,uint32,ContributorLeaf[],bytes32[])`.
+    IntexFactoryPayContributorBatch,
 }
 
 /// A transaction that matched a hook's stateless zero-fee envelope.
@@ -319,8 +322,13 @@ impl ZeroFeeRegistry {
 
 static ORACLE_SUBMIT_VOTE_HOOK: OracleSubmitVoteHook = OracleSubmitVoteHook;
 static OCOMP_SUBMIT_RESULT_VOTE_HOOK: OcompSubmitResultVoteHook = OcompSubmitResultVoteHook;
-static ZERO_FEE_HOOKS: &[&dyn ZeroFeeHook] =
-    &[&ORACLE_SUBMIT_VOTE_HOOK, &OCOMP_SUBMIT_RESULT_VOTE_HOOK];
+static INTEX_FACTORY_PAY_CONTRIBUTOR_BATCH_HOOK: IntexFactoryPayContributorBatchHook =
+    IntexFactoryPayContributorBatchHook;
+static ZERO_FEE_HOOKS: &[&dyn ZeroFeeHook] = &[
+    &ORACLE_SUBMIT_VOTE_HOOK,
+    &OCOMP_SUBMIT_RESULT_VOTE_HOOK,
+    &INTEX_FACTORY_PAY_CONTRIBUTOR_BATCH_HOOK,
+];
 
 /// Returns the Outbe system zero-fee hook registry.
 pub const fn registry() -> ZeroFeeRegistry {
