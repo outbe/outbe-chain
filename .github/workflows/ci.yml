@@ -106,6 +106,64 @@ jobs:
         with:
           path: code-coverage-results.md
 
+  dcap-replay:
+    name: DCAP replay (x86_64)
+    if: github.event_name == 'push' || !github.event.pull_request.draft
+    runs-on: depot-ubuntu-24.04-4
+    timeout-minutes: 30
+    env:
+      RUSTC_WRAPPER: "sccache"
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install exact-pinned Intel DCAP stack
+        shell: bash
+        run: |
+          set -euo pipefail
+          intel_key="${RUNNER_TEMP}/intel-sgx-deb.asc"
+          curl -fsSL \
+            https://download.01.org/intel-sgx/sgx_repo/ubuntu/intel-sgx-deb.key \
+            -o "${intel_key}"
+          echo \
+            "92f96f84281031d889deb81060c44325f0481aee621ae47a15ae1df4431b4a23  ${intel_key}" \
+            | sha256sum --check -
+          sudo install -d -m 0755 /etc/apt/keyrings
+          sudo install -m 0644 "${intel_key}" /etc/apt/keyrings/intel-sgx-deb.asc
+          echo \
+            'deb [arch=amd64 signed-by=/etc/apt/keyrings/intel-sgx-deb.asc] https://download.01.org/intel-sgx/sgx_repo/ubuntu noble main' \
+            | sudo tee /etc/apt/sources.list.d/intel-sgx.list >/dev/null
+          sudo apt-get update
+
+          pin=release/project-toolchain-v1.json
+          qvl_runtime="$(jq -er '.system_packages["libsgx-dcap-quote-verify"]' "${pin}")"
+          qvl_devel="$(jq -er '.system_packages["libsgx-dcap-quote-verify-dev"]' "${pin}")"
+          sgx_headers="$(jq -er '.system_packages["libsgx-headers"]' "${pin}")"
+          cxx_runtime="$(jq -er '.system_packages["libstdc++6"]' "${pin}")"
+          gcc_runtime="$(jq -er '.system_packages["libgcc-s1"]' "${pin}")"
+          libcxx_devel="$(jq -er '.system_packages["libc++-dev"]' "${pin}")"
+          libcxxabi_devel="$(jq -er '.system_packages["libc++abi-dev"]' "${pin}")"
+          sudo apt-get install -y --no-install-recommends --allow-downgrades \
+            "libsgx-dcap-quote-verify=${qvl_runtime}" \
+            "libsgx-dcap-quote-verify-dev=${qvl_devel}" \
+            "libsgx-headers=${sgx_headers}" \
+            "libstdc++6=${cxx_runtime}" \
+            "libgcc-s1=${gcc_runtime}" \
+            "libc++-dev=${libcxx_devel}" \
+            "libc++abi-dev=${libcxxabi_devel}"
+      - uses: rui314/setup-mold@v1
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: jdx/mise-action@v2
+        with:
+          install: true
+          cache: true
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      # Populate only the Cargo source cache. The verifier itself then runs
+      # offline with caller-supplied collateral and no QPL/PCCS package.
+      - run: cargo fetch --locked
+      - name: Replay immutable DCAP evidence offline
+        run: bash scripts/release/test_dcap_replay_ci.sh
+
   doctests:
     name: doctests
     if: github.event_name == 'push' || !github.event.pull_request.draft

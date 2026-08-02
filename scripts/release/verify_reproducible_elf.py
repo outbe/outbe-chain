@@ -21,6 +21,7 @@ EXPECTED_ARTIFACTS = (
     "outbe-keygen",
     "outbe-feeder",
     "outbe-tee-enclave",
+    "outbe-ocomp",
 )
 FORBIDDEN_PATHS = (b"/workspace", b"/usr/local/cargo", b"/usr/local/rustup")
 EXPECTED_CHECKSUM_PATHS = frozenset(
@@ -200,9 +201,13 @@ def verify_outputs(
     first_records = _manifest_artifacts(first_manifest)
     second_records = _manifest_artifacts(second_manifest)
     if tuple(first_records) != EXPECTED_ARTIFACTS:
-        differences.append("builder-a manifest does not declare the exact five-ELF release matrix")
+        differences.append(
+            "builder-a manifest does not declare the exact production ELF release matrix"
+        )
     if tuple(second_records) != EXPECTED_ARTIFACTS:
-        differences.append("builder-b manifest does not declare the exact five-ELF release matrix")
+        differences.append(
+            "builder-b manifest does not declare the exact production ELF release matrix"
+        )
 
     for label, output, manifest in (
         ("builder-a", first, first_manifest),
@@ -343,7 +348,7 @@ def verify_outputs(
         "checks": [
             "manifest-schema-draft-2020-12",
             "manifest-canonical-bytes",
-            "exact-five-elf-matrix",
+            "exact-production-elf-matrix",
             "per-artifact-manifest-digest-and-size",
             "source-input-manifest-digest-and-size",
             "resolved-package-inventory-digest-and-size",

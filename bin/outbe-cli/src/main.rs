@@ -174,6 +174,12 @@ mod tests {
             "join",
             "--enclave-socket",
             "/tmp/enclave.sock",
+            "--profile",
+            "validator",
+            "--binding-id",
+            "0101010101010101010101010101010101010101010101010101010101010101",
+            "--valid-until",
+            "1234567890",
         ]);
         assert!(cli.is_ok());
     }

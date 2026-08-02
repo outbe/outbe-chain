@@ -339,7 +339,7 @@ closed on missing or corrupt evidence before production work begins.
 **Files/symbols:**
 
 - `outbe-plan/off-chain-poc-evidence-ledger.yaml`;
-- `crates/testing/e2e-harness/src/evidence.rs`;
+- `testing/e2e-harness/src/evidence.rs`;
 - new OCOMP-specific evidence schema/writer modules under the same package;
 - new test-only `outbe-e2e-evidence` binary;
 - `mise.toml` command placeholders and fail-closed discovery checks;
@@ -1729,10 +1729,10 @@ can emit one hash-indexed multi-scenario evidence bundle.
 
 **Files/symbols:**
 
-- `crates/testing/e2e-harness/src/world/ocomp.rs`;
-- `crates/testing/e2e-harness/src/world/{mod,state,rpc,mongodb}.rs` and the
+- `testing/e2e-harness/src/world/ocomp.rs`;
+- `testing/e2e-harness/src/world/{mod,state,rpc,mongodb}.rs` and the
   existing `Localnet` modules;
-- `crates/testing/e2e-harness/src/features/ocomp.rs`, registered by
+- `testing/e2e-harness/src/features/ocomp.rs`, registered by
   `src/features/mod.rs`;
 - the existing `features/tribute_projection.feature` and
   `src/features/tribute_projection.rs` as the executable public-Tribute
@@ -1827,7 +1827,7 @@ capacity generation.
 - `bin/outbe-ocomp/src/{supervisor_job,vote_submitter}.rs`;
 - `crates/blockchain/node/src/ocomp/control.rs` restricted inner attestation seam;
 - `xtask/src/ocomp/task.rs` public-path task runner and exact PUB-ID gate;
-- `crates/testing/e2e-harness/features/ocomp_public_path.feature`;
+- `testing/e2e-harness/features/ocomp_public_path.feature`;
 - OCOMP step definitions and exact block/state proof collectors;
 - `mise run ocomp-poc-public-path`;
 - measurement-only network/profile generator inputs.
@@ -1895,7 +1895,7 @@ fresh four-validator devnet.
   32;
 - final bundle/genesis/cap golden vectors;
 - genesis/network/profile consumers, the checked-in
-  `crates/testing/e2e-harness/fixtures/ocomp-final-v1/{base,artifacts}` fixture
+  `testing/e2e-harness/fixtures/ocomp-final-v1/{base,artifacts}` fixture
   and `mise` capacity command.
 
 **Changes:** start with worker-shard `S<=256`, construct maximum-shaped
@@ -1967,8 +1967,8 @@ verification.
 
 **Files/symbols:**
 
-- `crates/testing/e2e-harness/features/ocomp_poc.feature`;
-- `crates/testing/e2e-harness/src/features/ocomp.rs` and its single
+- `testing/e2e-harness/features/ocomp_poc.feature`;
+- `testing/e2e-harness/src/features/ocomp.rs` and its single
   `src/features/mod.rs` registration;
 - OCOMP scenario steps and evidence correlation, including the mandatory
   public-Tribute prefix frozen by `OCM-24`;

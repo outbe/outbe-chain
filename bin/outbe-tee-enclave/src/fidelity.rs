@@ -353,7 +353,7 @@ pub fn query_index(
         req.account,
         req.expiry,
     ));
-    match outbe_primitives::tee_bootstrap::recover_signer(&prehash, &sig65) {
+    match outbe_primitives::tee_signatures::recover_signer(&prehash, &sig65) {
         Ok(signer) if signer == req.account => {}
         _ => return Err(err("owner signature does not control account")),
     }

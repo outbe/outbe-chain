@@ -47,6 +47,7 @@ hex.workspace = true
 
 [dev-dependencies]
 alloy-primitives = { workspace = true, features = ["rand"] }
+ed25519-dalek.workspace = true
 proptest.workspace = true
 tempfile.workspace = true
 trybuild = "1"
@@ -54,6 +55,7 @@ trybuild = "1"
 [features]
 default = []
 test-utils = []
+tee-attestation-v1 = []
 
 [lints]
 workspace = true

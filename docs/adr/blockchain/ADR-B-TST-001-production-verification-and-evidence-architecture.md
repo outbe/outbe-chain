@@ -186,7 +186,7 @@ domain policy. It admits exactly two packs in this change:
   `outbe-plan/metadosis-evidence-ledger.yaml`.
 
 The reusable parser/verifier in
-`crates/testing/e2e-harness/src/verification_ledger` owns duplicate-key
+`testing/e2e-harness/src/verification_ledger` owns duplicate-key
 rejection, namespace/schema/path binding, global duplicate-ID rejection,
 fail-closed local references, source/toolchain identity, member digests,
 discovery, assertion status, exact revision/profile and executed Linux lane.
@@ -205,7 +205,7 @@ closure. A syntactically valid manifest without the referenced bytes is not a
 closure verdict.
 
 Metadosis adds a narrow policy adapter at
-`crates/testing/e2e-harness/src/metadosis_evidence` and the
+`testing/e2e-harness/src/metadosis_evidence` and the
 `outbe-metadosis-evidence` CLI. Its runner owns the fixed command plan, records
 one attempt with exact argv/timestamps/exit output digests, and independently
 lists normal and ignored Cargo tests. Its assembler accepts no assertion
@@ -286,7 +286,7 @@ architecture changes because they can silently stop executing claims.
 ## Production-interface verification evidence
 
 Inspected workspace tests, main CI/nightly workflows, `mise` commands, the Rust
-Cucumber harness/features, `crates/core/e2e`, Commonware deterministic harness,
+Cucumber harness/features, `testing/e2e`, Commonware deterministic harness,
 EVM/CE/Mongo integration and conformance suites, ignored tests and Forge lanes.
 There is strong real evidence for multi-validator bootstrap/restart and encrypted
 Tribute-to-Mongo/CE proof flow, plus extensive component-level parity/property tests.
@@ -322,7 +322,7 @@ fast unit/model suites.
    ADR/PFS invariant, transition and debt claim to exact tests, production
    interfaces and CI lanes remains deliberately incomplete; do not infer
    whole-project coverage from these two closed packs.
-2. **Critical:** `crates/core/e2e` uses `HashMapStorageProvider`, `MemoryStorage` and
+2. **Critical:** `testing/e2e` uses `HashMapStorageProvider`, `MemoryStorage` and
    explicit noop settlement in important flows. Reclassify it as execution/module
    integration and add process-level production tests for the undisproved seams.
 3. **Critical:** several Mongo production-backend tests are `#[ignore]` even though CI

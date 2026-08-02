@@ -351,7 +351,7 @@ pub struct PublicAccountProofV1 {
 }
 
 impl PublicAccountProofV1 {
-    fn to_reth_proof(&self) -> AccountProof {
+    pub(crate) fn to_reth_proof(&self) -> AccountProof {
         AccountProof {
             address: self.address,
             info: Some(Account {
@@ -376,7 +376,10 @@ impl PublicAccountProofV1 {
         }
     }
 
-    fn storage_value(&self, key: B256) -> Result<U256, PublicFinalizedIntentProofBuildError> {
+    pub(crate) fn storage_value(
+        &self,
+        key: B256,
+    ) -> Result<U256, PublicFinalizedIntentProofBuildError> {
         let mut matching = self.storage_proofs.iter().filter(|proof| proof.key == key);
         let value = matching
             .next()
@@ -705,7 +708,7 @@ fn historical_committee_full_slot_keys(
     slots
 }
 
-fn verify_public_account_proof(
+pub(crate) fn verify_public_account_proof(
     proof: &PublicAccountProofV1,
     expected_address: Address,
     expected_slots: &[B256],

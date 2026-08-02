@@ -288,7 +288,9 @@ export const CONTRACTS: Record<string, ContractEntry> = {
     abi: parseAbi([
       "function isBootstrapped() view returns (bool)",
       "function tributeOfferPublicKey() view returns (uint256)",
-      "function registeredCount() view returns (uint256)",
+      "function tributeOfferEpoch() view returns (uint256)",
+      "function keyEpoch() view returns (uint256)",
+      "function activePolicyV1() view returns (bytes)",
     ]),
   },
 

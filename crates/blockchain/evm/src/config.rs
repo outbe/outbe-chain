@@ -334,7 +334,7 @@ pub struct OutbeBlockExecutionCtx<'a> {
     /// the validator path (the body carries the bootstrap, read via
     /// `expected_begin_system_txs`). Flows into the executor and into
     /// `build_begin_system_txs` so both proposer paths inject it identically.
-    pub pending_tee_bootstrap: Option<outbe_primitives::tee_bootstrap::TeeBootstrapPayload>,
+    pub pending_tee_bootstrap: Option<outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2>,
     /// Local request budget for synchronous off-chain body reads.
     pub execution_read_budget: Option<ExecutionReadBudget>,
 }
@@ -358,7 +358,7 @@ pub struct OutbeNextBlockEnvAttributes {
     /// optional one-time Phase 3b `TeeBootstrap` payload from the proposer's
     /// tribute-DKG bootstrap producer. Flows into
     /// [`OutbeBlockExecutionCtx::pending_tee_bootstrap`].
-    pub pending_tee_bootstrap: Option<outbe_primitives::tee_bootstrap::TeeBootstrapPayload>,
+    pub pending_tee_bootstrap: Option<outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2>,
     /// Local request budget for synchronous off-chain body reads.
     pub execution_read_budget: Option<ExecutionReadBudget>,
 }
@@ -451,6 +451,7 @@ impl BlockAssembler<OutbeEvmConfig> for OutbeBlockAssembler {
 pub struct OutbeEvmConfig {
     pub(crate) inner: EthEvmConfig<ChainSpec<OutbeHeader>, OutbeEvmFactory>,
     block_assembler: OutbeBlockAssembler,
+    tee_attestation_v1: crate::tee_attestation_activation::TeeAttestationChainSpecStateV1,
     /// Optional bridge to the consensus layer for finalization data.
     pub bridge: Option<ConsensusExecutionBridge>,
     accounted_parent_artifact_provider: Option<Arc<dyn AccountedParentArtifactProvider>>,
@@ -467,6 +468,7 @@ impl std::fmt::Debug for OutbeEvmConfig {
         f.debug_struct("OutbeEvmConfig")
             .field("inner", &self.inner)
             .field("block_assembler", &self.block_assembler)
+            .field("tee_attestation_v1", &self.tee_attestation_v1)
             .field("bridge", &self.bridge)
             .field(
                 "accounted_parent_artifact_provider",
@@ -523,9 +525,19 @@ impl OutbeEvmConfig {
     /// Creates a new [`OutbeEvmConfig`] with the given chain spec.
     pub fn new(chain_spec: Arc<ChainSpec<OutbeHeader>>) -> Self {
         Self::install_consensus_chain_id(&chain_spec);
+        let tee_attestation_v1 =
+            crate::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
+                &chain_spec,
+            );
         Self {
-            inner: EthEvmConfig::new_with_evm_factory(chain_spec.clone(), OutbeEvmFactory::new()),
+            inner: EthEvmConfig::new_with_evm_factory(
+                chain_spec.clone(),
+                OutbeEvmFactory::new()
+                    .with_genesis_hash(chain_spec.genesis_hash())
+                    .with_tee_attestation_v1(tee_attestation_v1.clone()),
+            ),
             block_assembler: OutbeBlockAssembler::new(chain_spec),
+            tee_attestation_v1,
             bridge: None,
             accounted_parent_artifact_provider: None,
             evm_signer: None,
@@ -543,12 +555,19 @@ impl OutbeEvmConfig {
         runtime_body_readers: RuntimeBodyReaders,
     ) -> Self {
         Self::install_consensus_chain_id(&chain_spec);
+        let tee_attestation_v1 =
+            crate::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
+                &chain_spec,
+            );
         Self {
             inner: EthEvmConfig::new_with_evm_factory(
                 chain_spec.clone(),
-                OutbeEvmFactory::with_runtime_body_readers(runtime_body_readers.clone()),
+                OutbeEvmFactory::with_runtime_body_readers(runtime_body_readers.clone())
+                    .with_genesis_hash(chain_spec.genesis_hash())
+                    .with_tee_attestation_v1(tee_attestation_v1.clone()),
             ),
             block_assembler: OutbeBlockAssembler::new(chain_spec),
+            tee_attestation_v1,
             bridge: None,
             accounted_parent_artifact_provider: None,
             evm_signer: None,
@@ -566,9 +585,19 @@ impl OutbeEvmConfig {
     ) -> Self {
         Self::install_consensus_chain_id(&chain_spec);
         let summary_cache = bridge.clone();
+        let tee_attestation_v1 =
+            crate::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
+                &chain_spec,
+            );
         Self {
-            inner: EthEvmConfig::new_with_evm_factory(chain_spec.clone(), OutbeEvmFactory::new()),
+            inner: EthEvmConfig::new_with_evm_factory(
+                chain_spec.clone(),
+                OutbeEvmFactory::new()
+                    .with_genesis_hash(chain_spec.genesis_hash())
+                    .with_tee_attestation_v1(tee_attestation_v1.clone()),
+            ),
             block_assembler: OutbeBlockAssembler::new(chain_spec),
+            tee_attestation_v1,
             bridge: Some(bridge),
             accounted_parent_artifact_provider: Some(Arc::new(
                 BridgeAccountedParentArtifactProvider::new(summary_cache),
@@ -581,6 +610,22 @@ impl OutbeEvmConfig {
         }
     }
 
+    /// Creates a config with both the consensus bootstrap bridge and the
+    /// mandatory runtime body readers used by receipt-visible system phases.
+    pub fn new_with_bridge_and_runtime_body_readers(
+        chain_spec: Arc<ChainSpec<OutbeHeader>>,
+        bridge: ConsensusExecutionBridge,
+        runtime_body_readers: RuntimeBodyReaders,
+    ) -> Self {
+        let summary_cache = bridge.clone();
+        Self::new_with_bridge_and_summary_provider(
+            chain_spec,
+            bridge,
+            Arc::new(BridgeAccountedParentArtifactProvider::new(summary_cache)),
+            runtime_body_readers,
+        )
+    }
+
     fn new_with_bridge_and_summary_provider(
         chain_spec: Arc<ChainSpec<OutbeHeader>>,
         bridge: ConsensusExecutionBridge,
@@ -588,12 +633,19 @@ impl OutbeEvmConfig {
         runtime_body_readers: RuntimeBodyReaders,
     ) -> Self {
         Self::install_consensus_chain_id(&chain_spec);
+        let tee_attestation_v1 =
+            crate::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
+                &chain_spec,
+            );
         Self {
             inner: EthEvmConfig::new_with_evm_factory(
                 chain_spec.clone(),
-                OutbeEvmFactory::with_runtime_body_readers(runtime_body_readers.clone()),
+                OutbeEvmFactory::with_runtime_body_readers(runtime_body_readers.clone())
+                    .with_genesis_hash(chain_spec.genesis_hash())
+                    .with_tee_attestation_v1(tee_attestation_v1.clone()),
             ),
             block_assembler: OutbeBlockAssembler::new(chain_spec),
+            tee_attestation_v1,
             bridge: Some(bridge),
             accounted_parent_artifact_provider: Some(accounted_parent_artifact_provider),
             evm_signer: None,
@@ -616,9 +668,19 @@ impl OutbeEvmConfig {
         accounted_parent_artifact_provider: Arc<dyn AccountedParentArtifactProvider>,
     ) -> Self {
         Self::install_consensus_chain_id(&chain_spec);
+        let tee_attestation_v1 =
+            crate::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
+                &chain_spec,
+            );
         Self {
-            inner: EthEvmConfig::new_with_evm_factory(chain_spec.clone(), OutbeEvmFactory::new()),
+            inner: EthEvmConfig::new_with_evm_factory(
+                chain_spec.clone(),
+                OutbeEvmFactory::new()
+                    .with_genesis_hash(chain_spec.genesis_hash())
+                    .with_tee_attestation_v1(tee_attestation_v1.clone()),
+            ),
             block_assembler: OutbeBlockAssembler::new(chain_spec),
+            tee_attestation_v1,
             bridge: None,
             accounted_parent_artifact_provider: Some(accounted_parent_artifact_provider),
             evm_signer: None,
@@ -642,12 +704,19 @@ impl OutbeEvmConfig {
         runtime_body_readers: RuntimeBodyReaders,
     ) -> Self {
         Self::install_consensus_chain_id(&chain_spec);
+        let tee_attestation_v1 =
+            crate::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
+                &chain_spec,
+            );
         Self {
             inner: EthEvmConfig::new_with_evm_factory(
                 chain_spec.clone(),
-                OutbeEvmFactory::with_runtime_body_readers(runtime_body_readers.clone()),
+                OutbeEvmFactory::with_runtime_body_readers(runtime_body_readers.clone())
+                    .with_genesis_hash(chain_spec.genesis_hash())
+                    .with_tee_attestation_v1(tee_attestation_v1.clone()),
             ),
             block_assembler: OutbeBlockAssembler::new(chain_spec),
+            tee_attestation_v1,
             bridge: None,
             accounted_parent_artifact_provider: Some(accounted_parent_artifact_provider),
             evm_signer: None,
@@ -767,9 +836,16 @@ impl OutbeEvmConfig {
         parent_consensus_metadata: Option<CertifiedParentAccountingMetadata>,
         proposer_evm_address: Option<Address>,
         prebuilt_phase1_tx: Option<Recovered<TransactionSigned>>,
-        pending_tee_bootstrap: Option<outbe_primitives::tee_bootstrap::TeeBootstrapPayload>,
+        pending_tee_bootstrap: Option<outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2>,
     ) -> Result<Vec<Recovered<TransactionSigned>>, BlockExecutionError> {
         if block_number == 0 {
+            if pending_tee_bootstrap.is_some() {
+                return Err(BlockExecutionError::Internal(
+                    alloy_evm::block::InternalBlockExecutionError::Other(
+                        "OST3 bootstrap payload is invalid at genesis".into(),
+                    ),
+                ));
+            }
             return Ok(Vec::new());
         }
 
@@ -832,14 +908,44 @@ impl OutbeEvmConfig {
         {
             inputs.push(SystemTxInputV2::BoundaryOutcome { artifact });
         }
-        // Optional Phase 3b: one-time `TeeBootstrap`, after `BoundaryOutcome`
-        // (begin_order 3) and before `OracleSlashWindow` (begin_order 4). The
-        // payload is supplied by the proposer's tribute-DKG bootstrap producer
-        // once the ceremony completes; `None` for every block otherwise. Must
-        // match the executor's `begin_block_system_tx_inputs` proposer branch
-        // exactly so the proposer does not reject its own block.
-        if let Some(payload) = pending_tee_bootstrap {
+        // The greenfield network has exactly one bootstrap wire path: canonical
+        // OST3 is mandatory at block 1 and forbidden at every other height.
+        if block_number == 1 {
+            let payload = pending_tee_bootstrap.ok_or_else(|| {
+                BlockExecutionError::Internal(alloy_evm::block::InternalBlockExecutionError::Other(
+                    "missing mandatory block-1 OST3 bootstrap payload".into(),
+                ))
+            })?;
+            payload.preflight().map_err(|error| {
+                BlockExecutionError::Internal(alloy_evm::block::InternalBlockExecutionError::Other(
+                    format!("invalid block-1 OST3 bootstrap payload: {error}").into(),
+                ))
+            })?;
+            let activation = self.tee_attestation_v1.activation().map_err(|error| {
+                BlockExecutionError::Internal(alloy_evm::block::InternalBlockExecutionError::Other(
+                    format!("invalid mandatory TEE ChainSpec authority: {error}").into(),
+                ))
+            })?;
+            let expected_policy = activation.policy_at(block_number).map_err(|error| {
+                BlockExecutionError::Internal(alloy_evm::block::InternalBlockExecutionError::Other(
+                    error.into(),
+                ))
+            })?;
+            if &payload.policy != expected_policy {
+                return Err(BlockExecutionError::Internal(
+                    alloy_evm::block::InternalBlockExecutionError::Other(
+                        "block-1 OST3 policy does not match the immutable ChainSpec schedule"
+                            .into(),
+                    ),
+                ));
+            }
             inputs.push(SystemTxInputV2::TeeBootstrap { payload });
+        } else if pending_tee_bootstrap.is_some() {
+            return Err(BlockExecutionError::Internal(
+                alloy_evm::block::InternalBlockExecutionError::Other(
+                    format!("OST3 bootstrap payload is forbidden at block {block_number}").into(),
+                ),
+            ));
         }
         if block_number >= 1 {
             inputs.push(SystemTxInputV2::OracleSlashWindow);
@@ -1848,6 +1954,18 @@ mod tests {
 
     fn test_chain_spec() -> std::sync::Arc<ChainSpec<OutbeHeader>> {
         MAINNET.as_ref().clone().map_header(OutbeHeader::new).into()
+    }
+
+    #[test]
+    fn evm_config_binds_factory_to_canonical_chain_spec_genesis() {
+        let chain_spec = test_chain_spec();
+        let expected = chain_spec.genesis_hash();
+        let config = OutbeEvmConfig::new(chain_spec);
+
+        assert_eq!(
+            config.inner.executor_factory.evm_factory().genesis_hash(),
+            expected
+        );
     }
 
     fn test_parent() -> SealedHeader<OutbeHeader> {

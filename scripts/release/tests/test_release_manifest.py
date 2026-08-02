@@ -215,9 +215,10 @@ class RepositoryBuildSpecTests(unittest.TestCase):
                 "outbe-keygen",
                 "outbe-feeder",
                 "outbe-tee-enclave",
+                "outbe-ocomp",
             ],
         )
-        enclave = artifacts[-1]
+        enclave = next(artifact for artifact in artifacts if artifact["role"] == "tee-enclave")
         self.assertEqual(enclave["classification"], "production")
         self.assertNotIn("mock", enclave["features"])
         self.assertIs(spec["cargo"]["auditable"], False)

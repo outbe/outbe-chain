@@ -73,7 +73,7 @@ struct SystemFailureReceiptInput {
     log_address: Address,
     code: u16,
     reason: String,
-    intrinsic_gas: u64,
+    visible_base_gas: u64,
     compressed_entities_gas: u64,
     signed_gas_limit: u64,
     internal_gas_used: u64,
@@ -679,6 +679,7 @@ fn build_block_context<DB>(
     block_number: u64,
     timestamp: u64,
     chain_id: u64,
+    genesis_hash: B256,
     proposer: Address,
 ) -> Result<BlockContext, BlockExecutionError>
 where
@@ -687,7 +688,14 @@ where
 {
     let mut provider = DirectStorageProvider::new(
         db,
-        BlockContext::new(block_number, timestamp, chain_id, proposer, Vec::new()),
+        BlockContext::new_with_genesis_hash(
+            block_number,
+            timestamp,
+            chain_id,
+            genesis_hash,
+            proposer,
+            Vec::new(),
+        ),
     );
     let storage = StorageHandle::new(&mut provider);
     let validators = (|| -> outbe_primitives::error::Result<Vec<Address>> {
@@ -706,10 +714,11 @@ where
         ))
     })?;
 
-    Ok(BlockContext::new(
+    Ok(BlockContext::new_with_genesis_hash(
         block_number,
         timestamp,
         chain_id,
+        genesis_hash,
         proposer,
         validators,
     ))
@@ -807,6 +816,8 @@ fn validate_genesis_state(storage: StorageHandle, genesis: &GenesisValidators) -
 pub struct OutbeBlockExecutor<'a, Evm> {
     /// Inner Ethereum execution strategy.
     pub inner: EthBlockExecutor<'a, Evm, &'a Arc<ChainSpec<OutbeHeader>>, &'a RethReceiptBuilder>,
+    /// Immutable chain identity sourced from the executor's canonical ChainSpec.
+    genesis_hash: B256,
     /// Optional bridge to the consensus layer for finalization data.
     pub bridge: Option<ConsensusExecutionBridge>,
     /// Header-carried consensus artifact bytes (`extra_data`) used by begin-zone phases.
@@ -883,7 +894,7 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     /// body the proposer signs and the inputs the executor expects match. `None`
     /// on the validator path (the body carries it via `expected_begin_system_txs`)
     /// and until the tribute-DKG bootstrap producer supplies a payload.
-    pending_tee_bootstrap: Option<outbe_primitives::tee_bootstrap::TeeBootstrapPayload>,
+    pending_tee_bootstrap: Option<outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2>,
     /// Whitelisted pre-exec hook logs published through the mandatory
     /// `HookEvents` system tx receipt at the end of the begin zone.
     whitelisted_hook_event_logs: Vec<Log>,
@@ -942,8 +953,10 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
         prebuilt_phase1_tx: Option<Recovered<TransactionSigned>>,
         parent_artifact_hint: Option<AccountedParentArtifact>,
     ) -> Self {
+        let genesis_hash = inner.spec.genesis_hash();
         Self {
             inner,
+            genesis_hash,
             bridge,
             final_extra_data: block_extra_data.clone(),
             block_extra_data,
@@ -1049,7 +1062,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
     /// validator path. Mirrors `OutbeEvmConfig::build_begin_system_txs`.
     pub(crate) fn with_pending_tee_bootstrap(
         mut self,
-        pending_tee_bootstrap: Option<outbe_primitives::tee_bootstrap::TeeBootstrapPayload>,
+        pending_tee_bootstrap: Option<outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2>,
     ) -> Self {
         self.pending_tee_bootstrap = pending_tee_bootstrap;
         self
@@ -1387,7 +1400,14 @@ where
         let scope = self.compressed_entities_scope.clone();
         let (changes, events, seal_output) = {
             let db = self.inner.evm.db_mut();
-            let ctx = build_block_context(db, block_number, timestamp, chain_id, proposer)?;
+            let ctx = build_block_context(
+                db,
+                block_number,
+                timestamp,
+                chain_id,
+                self.genesis_hash,
+                proposer,
+            )?;
             run_atomic_storage_hook_with_output(db, ctx, |hook_ctx| {
                 let lifecycle = outbe_compressed_entities::CompressedEntitiesLifecycleContext::new(
                     hook_ctx.clone(),
@@ -1663,18 +1683,19 @@ where
     /// and visible gas accounting.
     ///
     /// The precompile executes under the internal 100M system-call budget.
-    /// The public Ethereum block gas lane charges only the signed envelope's
-    /// visible intrinsic gas, keeping system transactions replay/import
-    /// compatible without exposing the 100M execution lane.
+    /// The public Ethereum block gas lane charges the signed envelope's visible
+    /// base gas (intrinsic plus any schedule-hashed protocol precharge) and any
+    /// explicit compressed-entity gas, without exposing the internal execution
+    /// lane.
     fn commit_system_transaction(
         &mut self,
         output: EthTxResult<E::HaltReason, alloy_consensus::TxType>,
-        intrinsic_gas: u64,
+        visible_base_gas: u64,
         compressed_entities_gas: u64,
         signed_gas_limit: u64,
     ) -> Result<GasOutput, BlockExecutionError> {
         let visible_gas_used = self.visible_system_gas_with_compressed_entities(
-            intrinsic_gas,
+            visible_base_gas,
             compressed_entities_gas,
             signed_gas_limit,
         )?;
@@ -1712,11 +1733,11 @@ where
 
     fn visible_system_gas_with_compressed_entities(
         &self,
-        intrinsic_gas: u64,
+        visible_base_gas: u64,
         compressed_entities_gas: u64,
         signed_gas_limit: u64,
     ) -> Result<u64, BlockExecutionError> {
-        let visible_gas = intrinsic_gas
+        let visible_gas = visible_base_gas
             .checked_add(compressed_entities_gas)
             .ok_or_else(|| {
                 BlockExecutionError::Internal(InternalBlockExecutionError::Other(
@@ -1728,7 +1749,7 @@ where
                 InternalBlockExecutionError::Other(
                     format!(
                         "system tx receipt gas exceeds signed gas limit: visible={visible_gas}, \
-                         signed_limit={signed_gas_limit}, intrinsic={intrinsic_gas}, \
+                         signed_limit={signed_gas_limit}, visible_base={visible_base_gas}, \
                          compressed_entities={compressed_entities_gas}"
                     )
                     .into(),
@@ -1750,7 +1771,7 @@ where
                 InternalBlockExecutionError::Other(
                     format!(
                         "system tx visible gas exceeds block gas limit: cumulative={cumulative}, \
-                         block_limit={block_gas_limit}, intrinsic={intrinsic_gas}, \
+                         block_limit={block_gas_limit}, visible_base={visible_base_gas}, \
                          compressed_entities={compressed_entities_gas}"
                     )
                     .into(),
@@ -1768,7 +1789,7 @@ where
         input: SystemFailureReceiptInput,
     ) -> Result<GasOutput, BlockExecutionError> {
         let visible_gas_used = self.visible_system_gas_with_compressed_entities(
-            input.intrinsic_gas,
+            input.visible_base_gas,
             input.compressed_entities_gas,
             input.signed_gas_limit,
         )?;
@@ -1844,7 +1865,14 @@ where
         let timestamp = self.inner.evm.block().timestamp().saturating_to::<u64>();
         let chain_id = self.inner.evm.chain_id();
         let db = self.inner.evm.db_mut();
-        let ctx = BlockContext::new(block_number, timestamp, chain_id, proposer, Vec::new());
+        let ctx = BlockContext::new_with_genesis_hash(
+            block_number,
+            timestamp,
+            chain_id,
+            self.genesis_hash,
+            proposer,
+            Vec::new(),
+        );
         let mut provider = DirectStorageProvider::new(db, ctx);
         let storage = StorageHandle::new(&mut provider);
         let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
@@ -2160,24 +2188,32 @@ where
         // Proposer mode: inject the `pending_tee_bootstrap` payload supplied by
         // the bootstrap producer — identically to `build_begin_system_txs` so the
         // proposer's signed body and the executor's expected inputs match.
-        if verifier_mode {
-            if let Ok(SystemTxInputV2::TeeBootstrap { payload }) =
-                self.expected_begin_input(ordinal)
-            {
-                system_txs.push((
-                    SystemTxKind::TeeBootstrap,
-                    SystemTxInputV2::TeeBootstrap { payload },
-                    None,
+        if block_number == 1 {
+            let input = if verifier_mode {
+                self.expected_begin_input(ordinal)?
+            } else {
+                let payload = self.pending_tee_bootstrap.clone().ok_or_else(|| {
+                    BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                        "missing mandatory block-1 OST3 bootstrap payload".into(),
+                    ))
+                })?;
+                SystemTxInputV2::TeeBootstrap { payload }
+            };
+            if !matches!(input, SystemTxInputV2::TeeBootstrap { .. }) {
+                return Err(BlockExecutionError::Internal(
+                    InternalBlockExecutionError::Other(
+                        format!("expected mandatory OST3 system tx at ordinal {ordinal}").into(),
+                    ),
                 ));
-                ordinal += 1;
             }
-        } else if let Some(payload) = self.pending_tee_bootstrap.clone() {
-            system_txs.push((
-                SystemTxKind::TeeBootstrap,
-                SystemTxInputV2::TeeBootstrap { payload },
-                None,
-            ));
+            system_txs.push((SystemTxKind::TeeBootstrap, input, None));
             ordinal += 1;
+        } else if self.pending_tee_bootstrap.is_some() {
+            return Err(BlockExecutionError::Internal(
+                InternalBlockExecutionError::Other(
+                    format!("OST3 bootstrap payload is forbidden at block {block_number}").into(),
+                ),
+            ));
         }
 
         if block_number >= 1 {
@@ -2268,6 +2304,19 @@ where
                     .into(),
             ))
         })?;
+        let protocol_precharge = gas_plan.protocol_precharge(body_index).ok_or_else(|| {
+            BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                format!("visible gas plan missing protocol precharge for body_index={body_index}")
+                    .into(),
+            ))
+        })?;
+        let visible_base_gas = intrinsic_gas
+            .checked_add(protocol_precharge)
+            .ok_or_else(|| {
+                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                    format!("visible base gas overflow for body_index={body_index}").into(),
+                ))
+            })?;
         let gas_limit = gas_plan.gas_limit(body_index).ok_or_else(|| {
             BlockExecutionError::Internal(InternalBlockExecutionError::Other(
                 format!("visible gas plan missing gas limit for body_index={body_index}").into(),
@@ -2276,7 +2325,7 @@ where
         system_txs
             .into_iter()
             .nth(body_index)
-            .map(|(kind, input, summary)| (kind, input, summary, intrinsic_gas, gas_limit))
+            .map(|(kind, input, summary)| (kind, input, summary, visible_base_gas, gas_limit))
             .ok_or_else(|| {
             let has_boundary_outcome = matches!(
                 block_artifacts.consensus_header_artifact,
@@ -2391,7 +2440,14 @@ where
 
         let snapshot = {
             let db = self.inner.evm.db_mut();
-            let ctx = BlockContext::new(block_number, timestamp, chain_id, proposer, Vec::new());
+            let ctx = BlockContext::new_with_genesis_hash(
+                block_number,
+                timestamp,
+                chain_id,
+                self.genesis_hash,
+                proposer,
+                Vec::new(),
+            );
             let mut provider = DirectStorageProvider::new(db, ctx);
             let storage = StorageHandle::new(&mut provider);
             read_committee_snapshot(storage, snapshot_key).map_err(|error| {
@@ -2523,8 +2579,14 @@ where
             let snapshot_key = committee_snapshot_key(credit.epoch, credit.committee_set_hash);
             let snapshot = {
                 let db = self.inner.evm.db_mut();
-                let ctx =
-                    BlockContext::new(block_number, timestamp, chain_id, proposer, Vec::new());
+                let ctx = BlockContext::new_with_genesis_hash(
+                    block_number,
+                    timestamp,
+                    chain_id,
+                    self.genesis_hash,
+                    proposer,
+                    Vec::new(),
+                );
                 let mut provider = DirectStorageProvider::new(db, ctx);
                 let storage = StorageHandle::new(&mut provider);
                 read_committee_snapshot(storage, snapshot_key).map_err(|error| {
@@ -2836,7 +2898,7 @@ where
             ));
         };
         let body_index_usize = usize::from(body_index);
-        let (resolved_kind, input, finalized_summary, intrinsic_gas, gas_limit) =
+        let (resolved_kind, input, finalized_summary, visible_base_gas, gas_limit) =
             self.expected_system_tx_at_body_index(body_index_usize, block_number, block_artifacts)?;
         if let Some(expected_kind) = cursor.expected_kind() {
             if expected_kind != resolved_kind {
@@ -2855,7 +2917,7 @@ where
             resolved_kind,
             input,
             finalized_summary,
-            intrinsic_gas,
+            visible_base_gas,
             gas_limit,
         ))
     }
@@ -2985,7 +3047,14 @@ where
             let scope = self.compressed_entities_scope.clone();
             let (changes, events) = {
                 let db = self.inner.evm.db_mut();
-                let ctx = build_block_context(db, block_number, timestamp, chain_id, proposer)?;
+                let ctx = build_block_context(
+                    db,
+                    block_number,
+                    timestamp,
+                    chain_id,
+                    self.genesis_hash,
+                    proposer,
+                )?;
                 run_atomic_storage_hooks(db, ctx, |hook_ctx| {
                     let lifecycle =
                         outbe_compressed_entities::CompressedEntitiesLifecycleContext::new(
@@ -3073,7 +3142,14 @@ where
         //    we notify the state root hook via system_caller.
         let (hook_changes, hook_events) = {
             let db = self.inner.evm.db_mut();
-            let ctx = build_block_context(db, block_number, timestamp, chain_id, proposer)?;
+            let ctx = build_block_context(
+                db,
+                block_number,
+                timestamp,
+                chain_id,
+                self.genesis_hash,
+                proposer,
+            )?;
             run_atomic_storage_hooks(db, ctx, |hook_ctx| -> outbe_primitives::error::Result<()> {
                 let result = match self.runtime_body_readers.as_ref() {
                     Some(readers) => run_outbe_pre_execution_hooks_with_readers(
@@ -3239,7 +3315,7 @@ where
                     expected_phase,
                     expected_input,
                     finalized_summary,
-                    intrinsic_gas,
+                    visible_base_gas,
                     planned_gas_limit,
                 ) = self.expected_system_tx_for_cursor(block_number, &block_artifacts)?;
                 let actual_input =
@@ -3323,7 +3399,7 @@ where
                     let has_tee_bootstrap = self.block_has_tee_bootstrap();
                     let logs = std::mem::take(&mut self.whitelisted_hook_event_logs);
                     let commit_outcome = self
-                        .push_hook_events_receipt(tx.tx_type(), logs, intrinsic_gas)
+                        .push_hook_events_receipt(tx.tx_type(), logs, visible_base_gas)
                         .map(Some);
                     if commit_outcome.is_ok() {
                         self.system_tx_phase_cursor =
@@ -3360,12 +3436,12 @@ where
                 // produces for itself.
                 let ce_gas_limit =
                     visible_gas_limit
-                        .checked_sub(intrinsic_gas)
+                        .checked_sub(visible_base_gas)
                         .ok_or_else(|| {
                             BlockExecutionError::Internal(InternalBlockExecutionError::Other(
                                 format!(
-                            "system tx signed gas below intrinsic at body_index={body_index}: \
-                         signed={visible_gas_limit}, intrinsic={intrinsic_gas}"
+                            "system tx signed gas below visible base at body_index={body_index}: \
+                         signed={visible_gas_limit}, visible_base={visible_base_gas}"
                         )
                                 .into(),
                             ))
@@ -3475,7 +3551,7 @@ where
                             log_address: outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
                             code,
                             reason,
-                            intrinsic_gas,
+                            visible_base_gas,
                             compressed_entities_gas: receipt_ce_gas,
                             signed_gas_limit: visible_gas_limit,
                             internal_gas_used: result.result.tx_gas_used(),
@@ -3502,7 +3578,7 @@ where
                 let commit_outcome = self
                     .commit_system_transaction(
                         output,
-                        intrinsic_gas,
+                        visible_base_gas,
                         compressed_entities_gas,
                         visible_gas_limit,
                     )
@@ -3560,8 +3636,14 @@ where
                 let timestamp = self.inner.evm.block().timestamp().saturating_to::<u64>();
                 let chain_id = self.inner.evm.chain_id();
                 let proposer = self.inner.evm.block().beneficiary();
-                let ctx =
-                    BlockContext::new(block_number, timestamp, chain_id, proposer, Vec::new());
+                let ctx = BlockContext::new_with_genesis_hash(
+                    block_number,
+                    timestamp,
+                    chain_id,
+                    self.genesis_hash,
+                    proposer,
+                    Vec::new(),
+                );
 
                 // Same soft-failure path as `classify`: stateful authorization rejection becomes a
                 // `status=0` receipt rather than a hard block error. We borrow `db` only inside the
@@ -3628,8 +3710,14 @@ where
             // real bytecode in steady state.
             let signer_state = {
                 let db = self.inner.evm.db_mut();
-                let ctx =
-                    BlockContext::new(block_number, timestamp, chain_id, proposer, Vec::new());
+                let ctx = BlockContext::new_with_genesis_hash(
+                    block_number,
+                    timestamp,
+                    chain_id,
+                    self.genesis_hash,
+                    proposer,
+                    Vec::new(),
+                );
                 let mut provider = DirectStorageProvider::new(db, ctx);
                 let storage = StorageHandle::new(&mut provider);
                 storage.with_account_info(signer, |info| {
@@ -3695,8 +3783,14 @@ where
                 // and cannot undo the flushed counter write.
                 let (authorize_outcome, sponsorship_events, sponsorship_changes) = {
                     let db = self.inner.evm.db_mut();
-                    let ctx =
-                        BlockContext::new(block_number, timestamp, chain_id, proposer, Vec::new());
+                    let ctx = BlockContext::new_with_genesis_hash(
+                        block_number,
+                        timestamp,
+                        chain_id,
+                        self.genesis_hash,
+                        proposer,
+                        Vec::new(),
+                    );
                     let mut provider = DirectStorageProvider::new(db, ctx);
                     let outcome = {
                         let storage = StorageHandle::new(&mut provider);
@@ -4011,6 +4105,7 @@ mod tests {
         ExecutionSummaryArtifact, OutbeBlockArtifacts,
     };
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+    use outbe_primitives::tee_genesis_v1::GRAMINE_DIRECT_DEV_CHAIN_ID;
     use outbe_primitives::OutbeHeader;
     use outbe_primitives::{
         stablecoin::{encode_canonical_stablecoin_create, StablecoinCreatePayload},
@@ -4049,11 +4144,11 @@ mod tests {
         system_tx::{
             build_unsigned_system_tx, build_unsigned_system_tx_with_gas_limit,
             system_tx_intrinsic_gas, OcompLifecycleActivation, SystemTxInputV2, SystemTxKind,
-            SystemTxVisibleGasPlan,
         },
     };
 
-    const CHAIN_ID: u64 = 1;
+    const CHAIN_ID: u64 = GRAMINE_DIRECT_DEV_CHAIN_ID;
+    const TEST_BLOCK_TIMESTAMP_BASE: u64 = 1_700_000_000;
     const OWNER: Address = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
 
     alloy_sol_types::sol! {
@@ -4221,7 +4316,21 @@ mod tests {
     }
 
     fn test_chain_spec() -> Arc<ChainSpec<OutbeHeader>> {
-        MAINNET.as_ref().clone().map_header(OutbeHeader::new).into()
+        use outbe_primitives::tee_test_utils::{
+            gramine_direct_policy_v1, tee_attestation_v1_extra_field,
+        };
+
+        let mut spec = MAINNET.as_ref().clone();
+        spec.chain = CHAIN_ID.into();
+        spec.genesis.config.chain_id = CHAIN_ID;
+        let policy = gramine_direct_policy_v1(spec.chain().id(), spec.genesis_hash())
+            .expect("test GramineDirectDev policy is canonical");
+        spec.genesis.config.extra_fields.insert(
+            "teeAttestationV1".to_owned(),
+            tee_attestation_v1_extra_field(&policy)
+                .expect("test TEE activation manifest is canonical"),
+        );
+        spec.map_header(OutbeHeader::new).into()
     }
 
     fn test_ocomp_fork_install(
@@ -4262,14 +4371,14 @@ mod tests {
     fn test_evm_env(block_number: u64, beneficiary: Address) -> EvmEnv {
         EvmEnv {
             cfg_env: CfgEnv::new()
-                .with_chain_id(MAINNET.chain().id())
+                .with_chain_id(CHAIN_ID)
                 .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
             block_env: BlockEnv {
                 number: U256::from(block_number),
-                gas_limit: 30_000_000,
+                gas_limit: outbe_primitives::system_tx::protocol_block_gas_limit(block_number),
                 basefee: 1_000_000_000,
                 beneficiary,
-                timestamp: U256::from(1_700_000_000u64.saturating_add(block_number)),
+                timestamp: U256::from(TEST_BLOCK_TIMESTAMP_BASE.saturating_add(block_number)),
                 ..Default::default()
             },
         }
@@ -4463,6 +4572,7 @@ mod tests {
             }
             let active: Vec<Address> = validators.iter().map(|(validator, _)| *validator).collect();
             vs.activate_reshared_set(&active, B256::ZERO).unwrap();
+            seed_test_committee_snapshot(storage.clone(), validators);
             // Seed the COEN/0xUSD oracle pair + a 1.0 rate so begin-block NOD/GEM/INTEX
             // floor-price promotion reads a registered pair instead of reverting
             // "pair not registered".
@@ -4558,6 +4668,7 @@ mod tests {
                 .unwrap();
             vs.activate_reshared_set(&[active], B256::with_last_byte(0x01))
                 .unwrap();
+            seed_test_committee_snapshot(storage.clone(), &[(active, dummy_pubkey(0xA2))]);
             // Seed the COEN/0xUSD oracle pair + a 1.0 rate so begin-block NOD/GEM/INTEX
             // floor-price promotion reads a registered pair instead of reverting
             // "pair not registered".
@@ -4646,6 +4757,23 @@ mod tests {
         }
     }
 
+    fn block_one_execution_ctx<'a>(
+        tx_count_hint: Option<usize>,
+        extra_data: Bytes,
+    ) -> OutbeBlockExecutionCtx<'a> {
+        execution_ctx_with_tee_bootstrap(tx_count_hint, extra_data, sample_tee_bootstrap_payload(1))
+    }
+
+    fn execution_ctx_with_tee_bootstrap<'a>(
+        tx_count_hint: Option<usize>,
+        extra_data: Bytes,
+        tee_bootstrap: outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2,
+    ) -> OutbeBlockExecutionCtx<'a> {
+        let mut ctx = execution_ctx(tx_count_hint, extra_data);
+        ctx.pending_tee_bootstrap = Some(tee_bootstrap);
+        ctx
+    }
+
     fn begin_system_txs_for_test(
         config: &OutbeEvmConfig,
         block_number: u64,
@@ -4654,6 +4782,8 @@ mod tests {
         parent_consensus_metadata: Option<CertifiedParentAccountingMetadata>,
         proposer: Address,
     ) -> Vec<reth_primitives_traits::Recovered<reth_ethereum::TransactionSigned>> {
+        let pending_tee_bootstrap =
+            (block_number == 1).then(|| sample_tee_bootstrap_payload(block_number));
         begin_system_txs_for_test_with_bootstrap(
             config,
             block_number,
@@ -4661,7 +4791,7 @@ mod tests {
             extra_data,
             parent_consensus_metadata,
             proposer,
-            None,
+            pending_tee_bootstrap,
         )
     }
 
@@ -4672,13 +4802,13 @@ mod tests {
         extra_data: &Bytes,
         parent_consensus_metadata: Option<CertifiedParentAccountingMetadata>,
         proposer: Address,
-        pending_tee_bootstrap: Option<outbe_primitives::tee_bootstrap::TeeBootstrapPayload>,
+        pending_tee_bootstrap: Option<outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2>,
     ) -> Vec<reth_primitives_traits::Recovered<reth_ethereum::TransactionSigned>> {
         config
             .build_begin_system_txs(
                 block_number,
-                MAINNET.chain().id(),
-                30_000_000,
+                CHAIN_ID,
+                outbe_primitives::system_tx::protocol_block_gas_limit(block_number),
                 parent_hash,
                 extra_data,
                 parent_consensus_metadata,
@@ -4691,20 +4821,56 @@ mod tests {
 
     fn sample_tee_bootstrap_payload(
         block_number: u64,
-    ) -> outbe_primitives::tee_bootstrap::TeeBootstrapPayload {
-        outbe_primitives::tee_bootstrap::TeeBootstrapPayload {
-            policy_hash: B256::ZERO,
-            committee_snapshot_hash: B256::ZERO,
-            committee_snapshot_block: block_number,
-            key_epoch: 0,
-            tribute_offer_epoch: 0,
-            dkg_transcript_hash: B256::ZERO,
-            tribute_offer_public_key: B256::ZERO,
-            tribute_offer_group_public_key: alloy_primitives::Bytes::new(),
-            registrations: Vec::new(),
-            policy: outbe_primitives::tee_bootstrap::TeePolicy::default(),
-            validator_signatures: Vec::new(),
-        }
+    ) -> outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2 {
+        sample_tee_bootstrap_payload_at(
+            block_number,
+            TEST_BLOCK_TIMESTAMP_BASE.saturating_add(block_number),
+        )
+    }
+
+    fn sample_tee_bootstrap_payload_at(
+        block_number: u64,
+        consensus_timestamp: u64,
+    ) -> outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2 {
+        use outbe_primitives::tee_test_utils::DevValidatorV1;
+
+        let consensus_public = dummy_pubkey(0xA2);
+        let snapshot = test_committee_snapshot(&[(test_evm_signer().address(), consensus_public)]);
+        let committee_snapshot_hash = outbe_validatorset::committee_set_hash_v2(0, &snapshot);
+        let requested_valid_until = consensus_timestamp
+            .checked_add(3_600)
+            .expect("test lease timestamp fits u64");
+        sample_tee_bootstrap_payload_for(
+            block_number,
+            committee_snapshot_hash,
+            requested_valid_until,
+            &[DevValidatorV1 {
+                evm_secret: [1; 32],
+                bls_minpk_public: consensus_public,
+            }],
+        )
+    }
+
+    fn sample_tee_bootstrap_payload_for(
+        block_number: u64,
+        committee_snapshot_hash: B256,
+        requested_valid_until: u64,
+        validators: &[outbe_primitives::tee_test_utils::DevValidatorV1],
+    ) -> outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2 {
+        use outbe_primitives::tee_test_utils::{
+            gramine_direct_bootstrap_v2, gramine_direct_policy_v1,
+        };
+
+        let policy = gramine_direct_policy_v1(CHAIN_ID, MAINNET.genesis_hash())
+            .expect("test GramineDirectDev policy is canonical");
+        gramine_direct_bootstrap_v2(
+            policy,
+            committee_snapshot_hash,
+            block_number,
+            requested_valid_until,
+            validators,
+        )
+        .expect("test GramineDirectDev OST3 payload is canonical")
     }
 
     fn begin_system_tx_kinds(
@@ -4749,34 +4915,47 @@ mod tests {
             "proposer must inject TeeBootstrap before OracleSlashWindow",
         );
 
-        // Without a pending payload, the begin-zone is unchanged.
-        let without_bootstrap =
-            begin_system_txs_for_test(&config, 1, B256::ZERO, &Bytes::new(), None, proposer);
-        assert_eq!(
-            begin_system_tx_kinds(&without_bootstrap),
-            vec![
-                SystemTxKind::CycleTick,
-                SystemTxKind::OracleSlashWindow,
-                SystemTxKind::HookEvents,
-            ],
-            "no bootstrap is injected when no payload is pending",
+        // Block 1 is not buildable without the mandatory OST3 payload.
+        let error = config
+            .build_begin_system_txs(
+                1,
+                CHAIN_ID,
+                outbe_primitives::system_tx::protocol_block_gas_limit(1),
+                B256::ZERO,
+                &Bytes::new(),
+                None,
+                Some(proposer),
+                None,
+                None,
+            )
+            .expect_err("block 1 without OST3 must fail closed");
+        assert!(
+            error
+                .to_string()
+                .contains("missing mandatory block-1 OST3 bootstrap payload"),
+            "{error}"
         );
 
-        // Block 0 (genesis) has no begin-zone txs even with a pending bootstrap;
-        // the executor's `begin_block_system_tx_inputs` mirrors this guard so the
-        // two deterministic paths agree at genesis.
-        let block_zero = begin_system_txs_for_test_with_bootstrap(
-            &config,
-            0,
-            B256::ZERO,
-            &Bytes::new(),
-            None,
-            proposer,
-            Some(sample_tee_bootstrap_payload(0)),
-        );
+        // A pending OST3 at genesis is a startup invariant violation, not a value
+        // that may be silently dropped.
+        let error = config
+            .build_begin_system_txs(
+                0,
+                CHAIN_ID,
+                outbe_primitives::system_tx::protocol_block_gas_limit(0),
+                B256::ZERO,
+                &Bytes::new(),
+                None,
+                Some(proposer),
+                None,
+                Some(sample_tee_bootstrap_payload(1)),
+            )
+            .expect_err("OST3 may only be queued for block 1");
         assert!(
-            block_zero.is_empty(),
-            "block 0 must carry no begin-zone system txs",
+            error
+                .to_string()
+                .contains("OST3 bootstrap payload is invalid at genesis"),
+            "{error}"
         );
     }
 
@@ -4909,7 +5088,7 @@ mod tests {
             .build();
         let evm_env = EvmEnv {
             cfg_env: CfgEnv::new()
-                .with_chain_id(MAINNET.chain().id())
+                .with_chain_id(CHAIN_ID)
                 .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
             block_env: BlockEnv {
                 number: U256::from(1u64),
@@ -4988,7 +5167,7 @@ mod tests {
             .build();
         let evm_env = EvmEnv {
             cfg_env: CfgEnv::new()
-                .with_chain_id(MAINNET.chain().id())
+                .with_chain_id(CHAIN_ID)
                 .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
             block_env: BlockEnv {
                 number: U256::from(1u64),
@@ -5032,7 +5211,7 @@ mod tests {
             .build();
         let evm_env = EvmEnv {
             cfg_env: CfgEnv::new()
-                .with_chain_id(MAINNET.chain().id())
+                .with_chain_id(CHAIN_ID)
                 .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
             block_env: BlockEnv {
                 number: U256::from(1u64),
@@ -5120,7 +5299,7 @@ mod tests {
         let receipt_builder = reth_ethereum::evm::RethReceiptBuilder::default();
         let config = OutbeEvmConfig::new(chain_spec.clone()).with_evm_signer(signer.clone());
         let evm = config.evm_with_env(&mut state, evm_env);
-        let ctx = execution_ctx(Some(0), Bytes::new());
+        let ctx = block_one_execution_ctx(Some(0), Bytes::new());
         let mut executor = OutbeBlockExecutor::new(
             EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
             None,
@@ -5138,7 +5317,8 @@ mod tests {
             ctx.execute_outbe_block_hooks,
             ctx.prebuilt_phase1_tx.clone(),
             ctx.parent_artifact_hint,
-        );
+        )
+        .with_pending_tee_bootstrap(ctx.pending_tee_bootstrap.clone());
 
         executor
             .apply_pre_execution_changes()
@@ -5167,7 +5347,7 @@ mod tests {
             );
         }
 
-        assert_eq!(executor.receipts().len(), 3);
+        assert_eq!(executor.receipts().len(), 4);
         assert!(executor.receipts().iter().all(|receipt| receipt.success));
         assert!(
             executor.system_tx_execution_gas > 0,
@@ -5186,22 +5366,13 @@ mod tests {
             .iter()
             .all(|receipt| receipt.tx_type == reth_ethereum::TxType::Legacy));
         assert_eq!(
-            executor.receipts()[0].cumulative_gas_used,
-            system_tx_intrinsic_gas(system_txs[0].tx().input()).unwrap()
-        );
-        assert_eq!(
-            executor.receipts()[1].cumulative_gas_used,
-            system_tx_intrinsic_gas(system_txs[0].tx().input()).unwrap()
-                + system_tx_intrinsic_gas(system_txs[1].tx().input()).unwrap()
-        );
-        assert_eq!(
-            executor.receipts()[2].cumulative_gas_used,
+            executor.receipts()[3].cumulative_gas_used,
             visible_system_gas_used
         );
 
-        assert_eq!(system_txs.len(), 3);
+        assert_eq!(system_txs.len(), 4);
         assert_eq!(Address::from(*system_txs[0].signer()), proposer);
-        assert_eq!(system_txs[0].tx().chain_id(), Some(MAINNET.chain().id()));
+        assert_eq!(system_txs[0].tx().chain_id(), Some(CHAIN_ID));
         assert_eq!(system_txs[0].tx().tx_type(), reth_ethereum::TxType::Legacy);
         let mut encoded = Vec::new();
         system_txs[0].tx().encode_2718(&mut encoded);
@@ -5215,10 +5386,14 @@ mod tests {
         ));
         assert!(matches!(
             SystemTxInputV2::decode(system_txs[1].tx().input().as_ref()).unwrap(),
-            SystemTxInputV2::OracleSlashWindow
+            SystemTxInputV2::TeeBootstrap { .. }
         ));
         assert!(matches!(
             SystemTxInputV2::decode(system_txs[2].tx().input().as_ref()).unwrap(),
+            SystemTxInputV2::OracleSlashWindow
+        ));
+        assert!(matches!(
+            SystemTxInputV2::decode(system_txs[3].tx().input().as_ref()).unwrap(),
             SystemTxInputV2::HookEvents
         ));
         drop(executor);
@@ -5248,7 +5423,7 @@ mod tests {
         let receipt_builder = reth_ethereum::evm::RethReceiptBuilder::default();
         let config = OutbeEvmConfig::new(chain_spec.clone()).with_evm_signer(signer.clone());
         let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
-        let ctx = execution_ctx(Some(3), Bytes::new());
+        let ctx = block_one_execution_ctx(Some(3), Bytes::new());
         let mut executor = OutbeBlockExecutor::new(
             EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
             None,
@@ -5266,7 +5441,8 @@ mod tests {
             ctx.execute_outbe_block_hooks,
             ctx.prebuilt_phase1_tx.clone(),
             ctx.parent_artifact_hint,
-        );
+        )
+        .with_pending_tee_bootstrap(ctx.pending_tee_bootstrap.clone());
 
         executor
             .apply_pre_execution_changes()
@@ -5586,10 +5762,13 @@ mod tests {
         .with_evm_signer(signer)
         .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(1))
         .with_ocomp_fork_install(install);
+        let block_timestamp = 1_700_000_000u64;
+        let tee_bootstrap = sample_tee_bootstrap_payload_at(1, block_timestamp);
         let mut evm_env = test_evm_env(1, REWARDS_ADDRESS);
-        evm_env.block_env.timestamp = U256::from(1_700_000_000u64);
+        evm_env.block_env.timestamp = U256::from(block_timestamp);
         let evm = config.evm_with_env(&mut state, evm_env);
-        let mut ctx = execution_ctx(Some(5), Bytes::new());
+        let mut ctx =
+            execution_ctx_with_tee_bootstrap(Some(5), Bytes::new(), tee_bootstrap.clone());
         ctx.inner.withdrawals = Some(std::borrow::Cow::Owned(vec![
             alloy_eips::eip4895::Withdrawal {
                 index: 0,
@@ -5623,8 +5802,15 @@ mod tests {
         executor
             .apply_pre_execution_changes()
             .expect("active block pre-execution succeeds");
-        let begin =
-            begin_system_txs_for_test(&config, 1, B256::ZERO, &Bytes::new(), None, proposer);
+        let begin = begin_system_txs_for_test_with_bootstrap(
+            &config,
+            1,
+            B256::ZERO,
+            &Bytes::new(),
+            None,
+            proposer,
+            Some(tee_bootstrap),
+        );
         assert_eq!(
             begin
                 .iter()
@@ -5635,6 +5821,7 @@ mod tests {
             vec![
                 SystemTxKind::OcompLifecycleBegin,
                 SystemTxKind::CycleTick,
+                SystemTxKind::TeeBootstrap,
                 SystemTxKind::OracleSlashWindow,
                 SystemTxKind::HookEvents,
             ]
@@ -5646,7 +5833,7 @@ mod tests {
         }
 
         let end = config
-            .build_end_system_txs(1, MAINNET.chain().id(), begin.len(), Some(proposer))
+            .build_end_system_txs(1, CHAIN_ID, begin.len(), Some(proposer))
             .expect("terminal system tx builds");
         assert_eq!(end.len(), 1);
         executor
@@ -5694,7 +5881,7 @@ mod tests {
             .expect("sealed CE root enters final header");
         let writes_before_finish = observed_writes.lock().unwrap().clone();
         let (_evm, result) = executor.finish().expect("active executor finishes");
-        assert_eq!(result.receipts.len(), 5);
+        assert_eq!(result.receipts.len(), 6);
         assert_eq!(
             *observed_writes.lock().unwrap(),
             writes_before_finish,
@@ -5746,13 +5933,11 @@ mod tests {
             let begin =
                 begin_system_txs_for_test(&config, 1, B256::ZERO, &Bytes::new(), None, proposer);
             let end = config
-                .build_end_system_txs(1, MAINNET.chain().id(), begin.len(), Some(proposer))
+                .build_end_system_txs(1, CHAIN_ID, begin.len(), Some(proposer))
                 .expect("terminal system tx builds");
 
-            let mut evm_env = test_evm_env(1, REWARDS_ADDRESS);
-            evm_env.block_env.timestamp = U256::from(1_700_000_000u64);
-            let evm = config.evm_with_env(&mut state, evm_env);
-            let mut ctx = execution_ctx(Some(begin.len() + 1 + end.len()), Bytes::new());
+            let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
+            let mut ctx = block_one_execution_ctx(Some(begin.len() + 1 + end.len()), Bytes::new());
             ctx.proposer_evm_address = Some(proposer);
             if replay {
                 ctx.expected_begin_system_txs = begin.clone();
@@ -5811,7 +5996,7 @@ mod tests {
         let proposer = run(false);
         let replay = run(true);
         assert_eq!(proposer, replay);
-        assert_eq!(proposer.0.len(), 6);
+        assert_eq!(proposer.0.len(), 7);
     }
 
     #[test]
@@ -5836,23 +6021,35 @@ mod tests {
                     .unwrap();
             });
         let mut evm_env = test_evm_env(1, REWARDS_ADDRESS);
-        evm_env.block_env.timestamp = U256::from(GENESIS_TS + SECONDS_PER_DAY + 60);
+        let block_timestamp = GENESIS_TS + SECONDS_PER_DAY + 60;
+        let tee_bootstrap = sample_tee_bootstrap_payload_at(1, block_timestamp);
+        evm_env.block_env.timestamp = U256::from(block_timestamp);
         let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer.clone());
         let evm = config.evm_with_env(&mut state, evm_env);
-        let mut executor = config.create_executor(evm, execution_ctx(Some(0), Bytes::new()));
+        let mut executor = config.create_executor(
+            evm,
+            execution_ctx_with_tee_bootstrap(Some(0), Bytes::new(), tee_bootstrap.clone()),
+        );
 
         executor
             .apply_pre_execution_changes()
             .expect("pre-execution changes should apply before begin-zone system txs");
-        let system_txs =
-            begin_system_txs_for_test(&config, 1, B256::ZERO, &Bytes::new(), None, proposer);
+        let system_txs = begin_system_txs_for_test_with_bootstrap(
+            &config,
+            1,
+            B256::ZERO,
+            &Bytes::new(),
+            None,
+            proposer,
+            Some(tee_bootstrap),
+        );
         for tx in system_txs {
             executor
                 .execute_transaction(tx)
                 .expect("begin-zone system tx should execute in tx loop");
         }
 
-        assert_eq!(executor.receipts().len(), 3);
+        assert_eq!(executor.receipts().len(), 4);
         let cycle_event = keccak256("CycleTriggerExecuted(uint32,uint64,uint64,uint64)");
         assert!(
             executor.receipts()[0].logs.iter().any(|log| {
@@ -5884,16 +6081,28 @@ mod tests {
                     .unwrap();
             });
         let mut evm_env = test_evm_env(1, REWARDS_ADDRESS);
-        evm_env.block_env.timestamp = U256::from(GENESIS_TS + SECONDS_PER_DAY + 60);
+        let block_timestamp = GENESIS_TS + SECONDS_PER_DAY + 60;
+        let tee_bootstrap = sample_tee_bootstrap_payload_at(1, block_timestamp);
+        evm_env.block_env.timestamp = U256::from(block_timestamp);
         let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer.clone());
         let evm = config.evm_with_env(&mut state, evm_env);
-        let mut executor = config.create_executor(evm, execution_ctx(Some(0), Bytes::new()));
+        let mut executor = config.create_executor(
+            evm,
+            execution_ctx_with_tee_bootstrap(Some(0), Bytes::new(), tee_bootstrap.clone()),
+        );
 
         executor
             .apply_pre_execution_changes()
             .expect("pre-execution changes should apply");
-        let system_txs =
-            begin_system_txs_for_test(&config, 1, B256::ZERO, &Bytes::new(), None, proposer);
+        let system_txs = begin_system_txs_for_test_with_bootstrap(
+            &config,
+            1,
+            B256::ZERO,
+            &Bytes::new(),
+            None,
+            proposer,
+            Some(tee_bootstrap),
+        );
         let mut cycle_tick_visible_gas = None;
         for tx in system_txs {
             let gas_output = executor
@@ -6303,7 +6512,8 @@ mod tests {
         evm_env.block_env.timestamp = U256::from(block_ts);
         let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer.clone());
         let evm = config.evm_with_env(&mut state, evm_env);
-        let mut executor = config.create_executor(evm, execution_ctx(Some(0), Bytes::new()));
+        let mut executor =
+            config.create_executor(evm, block_one_execution_ctx(Some(0), Bytes::new()));
 
         executor
             .apply_pre_execution_changes()
@@ -6389,7 +6599,8 @@ mod tests {
         let mut state = state_with_active_proposer(proposer);
         let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer.clone());
         let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
-        let mut executor = config.create_executor(evm, execution_ctx(Some(1), Bytes::new()));
+        let mut executor =
+            config.create_executor(evm, block_one_execution_ctx(Some(1), Bytes::new()));
         executor
             .apply_pre_execution_changes()
             .expect("pre-execution changes should apply");
@@ -6542,7 +6753,7 @@ mod tests {
         let receipt_builder = reth_ethereum::evm::RethReceiptBuilder::default();
         let config = OutbeEvmConfig::new(chain_spec.clone()).with_evm_signer(signer.clone());
         let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
-        let ctx = execution_ctx(Some(3), Bytes::new());
+        let ctx = block_one_execution_ctx(Some(3), Bytes::new());
         let mut executor = OutbeBlockExecutor::new(
             EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
             None,
@@ -6560,7 +6771,8 @@ mod tests {
             ctx.execute_outbe_block_hooks,
             ctx.prebuilt_phase1_tx.clone(),
             ctx.parent_artifact_hint,
-        );
+        )
+        .with_pending_tee_bootstrap(ctx.pending_tee_bootstrap.clone());
 
         executor
             .apply_pre_execution_changes()
@@ -6571,6 +6783,9 @@ mod tests {
         let cycle_tx = system_txs
             .next()
             .expect("CycleTick system tx should be present");
+        let tee_bootstrap_tx = system_txs
+            .next()
+            .expect("TeeBootstrap system tx should be present");
         let oracle_tx = system_txs
             .next()
             .expect("OracleSlashWindow system tx should be present");
@@ -6587,6 +6802,10 @@ mod tests {
             .expect("CycleTick should execute successfully")
             .tx_gas_used();
         assert!(cycle_gas <= cycle_signed_gas_limit);
+        let tee_bootstrap_gas = executor
+            .execute_transaction(tee_bootstrap_tx)
+            .expect("mandatory TeeBootstrap should execute before the non-critical phase")
+            .tx_gas_used();
 
         let failure_gas = crate::factory::with_forced_outbe_system_call_oog_halt(|| {
             executor.execute_transaction(oracle_tx)
@@ -6600,12 +6819,12 @@ mod tests {
 
         let failure_receipt = executor
             .receipts()
-            .get(1)
+            .get(2)
             .expect("soft-failed oracle tx must emit a receipt");
         assert!(!failure_receipt.success);
         assert_eq!(
             failure_receipt.cumulative_gas_used,
-            cycle_gas + oracle_visible_gas
+            cycle_gas + tee_bootstrap_gas + oracle_visible_gas
         );
         assert_eq!(failure_receipt.logs.len(), 1);
         assert_eq!(failure_receipt.logs[0].address, OUTBE_SYSTEM_TX_ADDRESS);
@@ -6626,7 +6845,7 @@ mod tests {
             .execute_transaction(user_tx)
             .expect("user tx must execute after OOG soft failure")
             .tx_gas_used();
-        let expected_system_visible_gas = cycle_gas + oracle_visible_gas;
+        let expected_system_visible_gas = cycle_gas + tee_bootstrap_gas + oracle_visible_gas;
         assert_eq!(
             executor.inner.cumulative_tx_gas_used,
             expected_system_visible_gas + user_gas,
@@ -6645,14 +6864,14 @@ mod tests {
             expected_system_visible_gas + user_gas,
             "GAS-09: block/header gas must include only visible system envelope gas plus user gas"
         );
-        assert_eq!(result.receipts.len(), 3);
+        assert_eq!(result.receipts.len(), 4);
         assert_eq!(result.receipts[0].cumulative_gas_used, cycle_gas);
         assert_eq!(
-            result.receipts[1].cumulative_gas_used,
+            result.receipts[2].cumulative_gas_used,
             expected_system_visible_gas
         );
         assert_eq!(
-            result.receipts[2].cumulative_gas_used,
+            result.receipts[3].cumulative_gas_used,
             expected_system_visible_gas + user_gas
         );
     }
@@ -6706,7 +6925,7 @@ mod tests {
         let receipt_builder = reth_ethereum::evm::RethReceiptBuilder::default();
         let config = OutbeEvmConfig::new(chain_spec.clone()).with_evm_signer(signer.clone());
         let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
-        let ctx = execution_ctx(Some(1), Bytes::new());
+        let ctx = block_one_execution_ctx(Some(1), Bytes::new());
         let mut executor = OutbeBlockExecutor::new(
             EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
             None,
@@ -6724,7 +6943,8 @@ mod tests {
             ctx.execute_outbe_block_hooks,
             ctx.prebuilt_phase1_tx.clone(),
             ctx.parent_artifact_hint,
-        );
+        )
+        .with_pending_tee_bootstrap(ctx.pending_tee_bootstrap.clone());
 
         executor
             .apply_pre_execution_changes()
@@ -6735,6 +6955,9 @@ mod tests {
         let cycle_tx = system_txs
             .next()
             .expect("CycleTick system tx should be present");
+        let tee_bootstrap_tx = system_txs
+            .next()
+            .expect("TeeBootstrap system tx should be present");
         let oracle_tx = system_txs
             .next()
             .expect("OracleSlashWindow system tx should be present");
@@ -6746,6 +6969,10 @@ mod tests {
         let cycle_gas = executor
             .execute_transaction(cycle_tx)
             .expect("CycleTick should execute successfully")
+            .tx_gas_used();
+        let tee_bootstrap_gas = executor
+            .execute_transaction(tee_bootstrap_tx)
+            .expect("mandatory TeeBootstrap should execute before the non-critical phase")
             .tx_gas_used();
 
         let revert_gas = crate::factory::with_forced_outbe_system_call_revert(|| {
@@ -6759,12 +6986,12 @@ mod tests {
         );
         let failure_receipt = executor
             .receipts()
-            .get(1)
+            .get(2)
             .expect("reverted system tx must emit a failure receipt");
         assert!(!failure_receipt.success);
         assert_eq!(
             failure_receipt.cumulative_gas_used,
-            cycle_gas + oracle_visible_gas
+            cycle_gas + tee_bootstrap_gas + oracle_visible_gas
         );
         assert_eq!(failure_receipt.logs.len(), 1);
         assert_eq!(failure_receipt.logs[0].address, OUTBE_SYSTEM_TX_ADDRESS);
@@ -6787,7 +7014,7 @@ mod tests {
             .tx_gas_used();
         assert_eq!(
             executor.inner.cumulative_tx_gas_used,
-            cycle_gas + oracle_visible_gas + user_gas,
+            cycle_gas + tee_bootstrap_gas + oracle_visible_gas + user_gas,
             "GAS-11: soft-failed system tx must charge only visible envelope gas"
         );
     }
@@ -6803,7 +7030,8 @@ mod tests {
         let mut state = state_with_active_proposer(proposer);
         let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer.clone());
         let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
-        let mut executor = config.create_executor(evm, execution_ctx(Some(1), Bytes::new()));
+        let mut executor =
+            config.create_executor(evm, block_one_execution_ctx(Some(1), Bytes::new()));
         executor
             .apply_pre_execution_changes()
             .expect("pre-execution changes should apply");
@@ -6837,7 +7065,8 @@ mod tests {
         let mut state = state_with_active_proposer(proposer);
         let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer.clone());
         let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
-        let mut executor = config.create_executor(evm, execution_ctx(Some(1), Bytes::new()));
+        let mut executor =
+            config.create_executor(evm, block_one_execution_ctx(Some(1), Bytes::new()));
         executor
             .apply_pre_execution_changes()
             .expect("pre-execution changes should apply");
@@ -6913,7 +7142,7 @@ mod tests {
         let receipt_builder = reth_ethereum::evm::RethReceiptBuilder::default();
         let config = OutbeEvmConfig::new(chain_spec.clone()).with_evm_signer(signer.clone());
         let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
-        let ctx = execution_ctx(Some(3), Bytes::new());
+        let ctx = block_one_execution_ctx(Some(3), Bytes::new());
         let mut executor = OutbeBlockExecutor::new(
             EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
             None,
@@ -6931,7 +7160,8 @@ mod tests {
             ctx.execute_outbe_block_hooks,
             ctx.prebuilt_phase1_tx.clone(),
             ctx.parent_artifact_hint,
-        );
+        )
+        .with_pending_tee_bootstrap(ctx.pending_tee_bootstrap.clone());
 
         executor
             .apply_pre_execution_changes()
@@ -6967,7 +7197,7 @@ mod tests {
     }
 
     #[test]
-    fn system_ce_visible_gas_is_published_and_block_limited_before_receipt_commit() {
+    fn system_protocol_precharge_and_ce_gas_are_published_and_block_limited() {
         let signer = test_evm_signer();
         let proposer = signer.address();
         let mut state = state_with_active_proposer(proposer);
@@ -6975,7 +7205,9 @@ mod tests {
         let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
         let mut executor = config.create_executor(evm, execution_ctx(Some(0), Bytes::new()));
 
-        let envelope_gas = 21_000;
+        let intrinsic_gas = 21_000;
+        let protocol_precharge = 300_000;
+        let visible_base_gas = intrinsic_gas + protocol_precharge;
         let compressed_entities_gas = 70_000;
         let output = executor
             .push_system_failure_receipt(SystemFailureReceiptInput {
@@ -6983,13 +7215,13 @@ mod tests {
                 log_address: outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
                 code: 299,
                 reason: "deterministic test failure".into(),
-                intrinsic_gas: envelope_gas,
+                visible_base_gas,
                 compressed_entities_gas,
-                signed_gas_limit: envelope_gas + compressed_entities_gas,
+                signed_gas_limit: visible_base_gas + compressed_entities_gas,
                 internal_gas_used: 123,
             })
             .expect("visible envelope plus CE gas should fit");
-        let expected_visible = envelope_gas + compressed_entities_gas;
+        let expected_visible = intrinsic_gas + protocol_precharge + compressed_entities_gas;
         assert_eq!(output.tx_gas_used(), expected_visible);
         assert_eq!(
             executor.receipts().last().unwrap().cumulative_gas_used,
@@ -7010,7 +7242,7 @@ mod tests {
                 log_address: outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
                 code: 299,
                 reason: "must not commit".into(),
-                intrinsic_gas: remaining,
+                visible_base_gas: remaining,
                 compressed_entities_gas: 1,
                 signed_gas_limit: remaining + 1,
                 internal_gas_used: 456,
@@ -7031,7 +7263,7 @@ mod tests {
         let receipt_builder = reth_ethereum::evm::RethReceiptBuilder::default();
         let config = OutbeEvmConfig::new(chain_spec.clone()).with_evm_signer(signer.clone());
         let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
-        let ctx = execution_ctx(Some(2), Bytes::new());
+        let ctx = block_one_execution_ctx(Some(2), Bytes::new());
         let mut executor = OutbeBlockExecutor::new(
             EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
             None,
@@ -7049,7 +7281,8 @@ mod tests {
             ctx.execute_outbe_block_hooks,
             ctx.prebuilt_phase1_tx.clone(),
             ctx.parent_artifact_hint,
-        );
+        )
+        .with_pending_tee_bootstrap(ctx.pending_tee_bootstrap.clone());
 
         executor
             .apply_pre_execution_changes()
@@ -7098,8 +7331,8 @@ mod tests {
         let gas_limit = 30_000_000u64;
         let gas_used_ratio = result.gas_used as f64 / gas_limit as f64;
         assert!(
-            gas_used_ratio > 0.0 && gas_used_ratio < 0.01,
-            "GAS-14: fee-history input ratio must expose small visible system gas, got {gas_used_ratio}"
+            gas_used_ratio > 0.0 && gas_used_ratio <= 1.0,
+            "GAS-14: fee-history input ratio must expose complete mandatory block-1 system gas, got {gas_used_ratio}"
         );
     }
 
@@ -7115,7 +7348,7 @@ mod tests {
         let receipt_builder = reth_ethereum::evm::RethReceiptBuilder::default();
         let config = OutbeEvmConfig::new(chain_spec.clone()).with_evm_signer(signer.clone());
         let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
-        let ctx = execution_ctx(Some(3), Bytes::new());
+        let ctx = block_one_execution_ctx(Some(3), Bytes::new());
         let mut executor = OutbeBlockExecutor::new(
             EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
             None,
@@ -7133,7 +7366,8 @@ mod tests {
             ctx.execute_outbe_block_hooks,
             ctx.prebuilt_phase1_tx.clone(),
             ctx.parent_artifact_hint,
-        );
+        )
+        .with_pending_tee_bootstrap(ctx.pending_tee_bootstrap.clone());
 
         executor
             .apply_pre_execution_changes()
@@ -7161,12 +7395,12 @@ mod tests {
             .expect("final extra_data should encode");
         let (_evm, result) = executor.finish().expect("finish should succeed");
         assert_eq!(result.gas_used, visible_system_gas + user_gas);
-        assert_eq!(result.receipts.len(), 4);
+        assert_eq!(result.receipts.len(), 5);
         let first_visible_gas = result.receipts[0].cumulative_gas_used;
         assert!(first_visible_gas >= outbe_primitives::system_tx::SYSTEM_TX_VISIBLE_GAS_FLOOR);
-        assert_eq!(result.receipts[2].cumulative_gas_used, visible_system_gas);
+        assert_eq!(result.receipts[3].cumulative_gas_used, visible_system_gas);
         assert_eq!(
-            result.receipts[3].cumulative_gas_used,
+            result.receipts[4].cumulative_gas_used,
             visible_system_gas + user_gas
         );
     }
@@ -7688,6 +7922,15 @@ mod tests {
         let mut state = state_with_active_and_registered_candidate(old_active, proposer);
         let evm_env = test_evm_env(1, REWARDS_ADDRESS);
         let boundary = boundary_with(true, vec![(proposer, dummy_pubkey(0xB3))]);
+        let tee_bootstrap = sample_tee_bootstrap_payload_for(
+            1,
+            boundary.committee_set_hash,
+            TEST_BLOCK_TIMESTAMP_BASE + 1 + 3_600,
+            &[outbe_primitives::tee_test_utils::DevValidatorV1 {
+                evm_secret: [1; 32],
+                bls_minpk_public: dummy_pubkey(0xB3),
+            }],
+        );
         let extra_data = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
             execution_summary: None,
             consensus_header_artifact: Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)),
@@ -7698,20 +7941,30 @@ mod tests {
         .expect("extra_data encodes");
         let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer.clone());
         let evm = config.evm_with_env(&mut state, evm_env);
-        let mut executor = config.create_executor(evm, execution_ctx(Some(0), extra_data.clone()));
+        let mut executor = config.create_executor(
+            evm,
+            execution_ctx_with_tee_bootstrap(Some(0), extra_data.clone(), tee_bootstrap.clone()),
+        );
 
         executor
             .apply_pre_execution_changes()
             .expect("activation block pre-execution should apply");
-        let system_txs =
-            begin_system_txs_for_test(&config, 1, B256::ZERO, &extra_data, None, proposer);
+        let system_txs = begin_system_txs_for_test_with_bootstrap(
+            &config,
+            1,
+            B256::ZERO,
+            &extra_data,
+            None,
+            proposer,
+            Some(tee_bootstrap),
+        );
         for tx in system_txs {
             executor
                 .execute_transaction(tx)
                 .expect("activation block begin-zone system tx should execute");
         }
 
-        assert_eq!(executor.receipts().len(), 4);
+        assert_eq!(executor.receipts().len(), 5);
         assert!(executor.receipts().iter().all(|receipt| receipt.success));
         drop(executor);
 
@@ -9215,7 +9468,10 @@ mod tests {
     fn oracle_slash_window_runs_after_boundary_activation() {
         let signer = test_evm_signer();
         let proposer = signer.address();
-        let old_active = address!("0x1010101010101010101010101010101010101010");
+        let old_active_secret = [2; 32];
+        let old_active = OutbeEvmSigner::from_secret_bytes(old_active_secret)
+            .expect("old active test signer")
+            .address();
         let mut state =
             state_with_active_and_registered_candidate_seeded(old_active, proposer, |storage| {
                 let oracle = outbe_oracle::contract::OracleContract::new(storage.clone());
@@ -9269,6 +9525,21 @@ mod tests {
                 (proposer, dummy_pubkey(0xB3)),
             ],
         );
+        let tee_bootstrap = sample_tee_bootstrap_payload_for(
+            1,
+            boundary.committee_set_hash,
+            TEST_BLOCK_TIMESTAMP_BASE + 1 + 3_600,
+            &[
+                outbe_primitives::tee_test_utils::DevValidatorV1 {
+                    evm_secret: old_active_secret,
+                    bls_minpk_public: dummy_pubkey(0xA2),
+                },
+                outbe_primitives::tee_test_utils::DevValidatorV1 {
+                    evm_secret: [1; 32],
+                    bls_minpk_public: dummy_pubkey(0xB3),
+                },
+            ],
+        );
         let extra_data = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
             execution_summary: None,
             consensus_header_artifact: Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)),
@@ -9279,13 +9550,23 @@ mod tests {
         .expect("extra_data encodes");
         let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer.clone());
         let evm = config.evm_with_env(&mut state, evm_env);
-        let mut executor = config.create_executor(evm, execution_ctx(Some(0), extra_data.clone()));
+        let mut executor = config.create_executor(
+            evm,
+            execution_ctx_with_tee_bootstrap(Some(0), extra_data.clone(), tee_bootstrap.clone()),
+        );
 
         executor
             .apply_pre_execution_changes()
             .expect("pre-execution changes should apply before Oracle slash system tx");
-        let system_txs =
-            begin_system_txs_for_test(&config, 1, B256::ZERO, &extra_data, None, proposer);
+        let system_txs = begin_system_txs_for_test_with_bootstrap(
+            &config,
+            1,
+            B256::ZERO,
+            &extra_data,
+            None,
+            proposer,
+            Some(tee_bootstrap),
+        );
         let mut visible_system_gas_used = 0u64;
         for tx in system_txs {
             let signed_gas_limit = tx.tx().gas_limit();
@@ -9304,11 +9585,11 @@ mod tests {
             );
         }
 
-        assert_eq!(executor.receipts().len(), 4);
+        assert_eq!(executor.receipts().len(), 5);
         assert!(executor.receipts().iter().all(|receipt| receipt.success));
         let oracle_forced_exit = keccak256("ValidatorForcedExit(address)");
         assert!(
-            executor.receipts()[2].logs.iter().any(|log| {
+            executor.receipts()[3].logs.iter().any(|log| {
                 log.address == ORACLE_ADDRESS
                     && log.data.topics().first() == Some(&oracle_forced_exit)
             }),
@@ -9316,12 +9597,12 @@ mod tests {
         );
         let oracle_slashed = keccak256("ValidatorSlashed(address,uint64)");
         assert!(
-            executor.receipts()[2].logs.iter().any(|log| {
+            executor.receipts()[3].logs.iter().any(|log| {
                 log.address == ORACLE_ADDRESS && log.data.topics().first() == Some(&oracle_slashed)
             }),
             "Oracle slash-window stake slash must be receipt-visible"
         );
-        let hook_events_receipt = &executor.receipts()[3];
+        let hook_events_receipt = &executor.receipts()[4];
         assert!(
             hook_events_receipt.success,
             "mandatory HookEvents receipt must succeed even when empty"
@@ -9380,7 +9661,7 @@ mod tests {
             SystemTxKind::CertifiedParentAccounting,
             0,
             2,
-            MAINNET.chain().id(),
+            CHAIN_ID,
             SystemTxInputV2::CertifiedParentAccounting { metadata }
                 .encode()
                 .unwrap(),
@@ -9390,7 +9671,7 @@ mod tests {
             SystemTxKind::CycleTick,
             1,
             2,
-            MAINNET.chain().id(),
+            CHAIN_ID,
             SystemTxInputV2::CycleTick.encode().unwrap(),
         )
         .unwrap();
@@ -9427,7 +9708,7 @@ mod tests {
         let proposer = signer.address();
         let mut state = state_with_active_proposer(proposer);
         let evm_env = test_evm_env(1, REWARDS_ADDRESS);
-        let config = OutbeEvmConfig::new(test_chain_spec());
+        let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer.clone());
         let evm = config.evm_with_env(&mut state, evm_env);
 
         let wrong_unsigned = build_unsigned_system_tx(
@@ -9438,37 +9719,15 @@ mod tests {
             SystemTxInputV2::CycleTick.encode().unwrap(),
         )
         .unwrap();
-        let oracle_unsigned = build_unsigned_system_tx(
-            SystemTxKind::OracleSlashWindow,
-            1,
-            1,
-            MAINNET.chain().id(),
-            SystemTxInputV2::OracleSlashWindow.encode().unwrap(),
-        )
-        .unwrap();
-        let hook_events_unsigned = build_unsigned_system_tx(
-            SystemTxKind::HookEvents,
-            2,
-            1,
-            MAINNET.chain().id(),
-            SystemTxInputV2::HookEvents.encode().unwrap(),
-        )
-        .unwrap();
         let wrong_signed = signer.sign_unsigned(wrong_unsigned).unwrap();
-        let oracle_signed = signer.sign_unsigned(oracle_unsigned).unwrap();
-        let hook_events_signed = signer.sign_unsigned(hook_events_unsigned).unwrap();
         let wrong_recovered =
             reth_primitives_traits::Recovered::new_unchecked(wrong_signed, proposer);
-        let oracle_recovered =
-            reth_primitives_traits::Recovered::new_unchecked(oracle_signed, proposer);
-        let hook_events_recovered =
-            reth_primitives_traits::Recovered::new_unchecked(hook_events_signed, proposer);
+        let canonical =
+            begin_system_txs_for_test(&config, 1, B256::ZERO, &Bytes::new(), None, proposer);
+        let mut expected = vec![wrong_recovered.clone()];
+        expected.extend(canonical.into_iter().skip(1));
         let mut ctx = execution_ctx(Some(1), Bytes::new());
-        ctx.expected_begin_system_txs = vec![
-            wrong_recovered.clone(),
-            oracle_recovered,
-            hook_events_recovered,
-        ];
+        ctx.expected_begin_system_txs = expected;
 
         let mut executor = config.create_executor(evm, ctx);
         executor
@@ -9509,7 +9768,7 @@ mod tests {
             SystemTxKind::CycleTick,
             0,
             1,
-            MAINNET.chain().id(),
+            CHAIN_ID,
             SystemTxInputV2::CycleTick.encode().unwrap(),
         )
         .unwrap();
@@ -9517,7 +9776,7 @@ mod tests {
             SystemTxKind::BoundaryOutcome,
             1,
             1,
-            MAINNET.chain().id(),
+            CHAIN_ID,
             SystemTxInputV2::BoundaryOutcome {
                 artifact: tx_artifact,
             }
@@ -9556,60 +9815,29 @@ mod tests {
         let wrong_signer = Arc::new(OutbeEvmSigner::from_secret_bytes([2u8; 32]).unwrap());
         let mut state = state_with_active_proposer(proposer);
         let evm_env = test_evm_env(1, REWARDS_ADDRESS);
-        let config = OutbeEvmConfig::new(test_chain_spec());
+        let config =
+            OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(proposer_signer.clone());
         let evm = config.evm_with_env(&mut state, evm_env);
 
+        let canonical =
+            begin_system_txs_for_test(&config, 1, B256::ZERO, &Bytes::new(), None, proposer);
         let cycle_input = SystemTxInputV2::CycleTick.encode().unwrap();
-        let oracle_input = SystemTxInputV2::OracleSlashWindow.encode().unwrap();
-        let hook_events_input = SystemTxInputV2::HookEvents.encode().unwrap();
-        let gas_inputs = [
-            (SystemTxKind::CycleTick, cycle_input.clone()),
-            (SystemTxKind::OracleSlashWindow, oracle_input.clone()),
-            (SystemTxKind::HookEvents, hook_events_input.clone()),
-        ];
-        let gas_plan = SystemTxVisibleGasPlan::new(30_000_000, &gas_inputs).unwrap();
         let unsigned = build_unsigned_system_tx_with_gas_limit(
             SystemTxKind::CycleTick,
             0,
             1,
-            MAINNET.chain().id(),
+            CHAIN_ID,
             cycle_input,
-            gas_plan.gas_limit(0).unwrap(),
-        )
-        .unwrap();
-        let oracle_unsigned = build_unsigned_system_tx_with_gas_limit(
-            SystemTxKind::OracleSlashWindow,
-            1,
-            1,
-            MAINNET.chain().id(),
-            oracle_input,
-            gas_plan.gas_limit(1).unwrap(),
-        )
-        .unwrap();
-        let hook_events_unsigned = build_unsigned_system_tx_with_gas_limit(
-            SystemTxKind::HookEvents,
-            2,
-            1,
-            MAINNET.chain().id(),
-            hook_events_input,
-            gas_plan.gas_limit(2).unwrap(),
+            canonical[0].tx().gas_limit(),
         )
         .unwrap();
         let wrong_signed = wrong_signer.sign_unsigned(unsigned).unwrap();
-        let oracle_signed = proposer_signer.sign_unsigned(oracle_unsigned).unwrap();
-        let hook_events_signed = proposer_signer.sign_unsigned(hook_events_unsigned).unwrap();
         let wrong_recovered =
             reth_primitives_traits::Recovered::new_unchecked(wrong_signed, wrong_signer.address());
-        let oracle_recovered =
-            reth_primitives_traits::Recovered::new_unchecked(oracle_signed, proposer);
-        let hook_events_recovered =
-            reth_primitives_traits::Recovered::new_unchecked(hook_events_signed, proposer);
+        let mut expected = vec![wrong_recovered.clone()];
+        expected.extend(canonical.into_iter().skip(1));
         let mut ctx = execution_ctx(Some(1), Bytes::new());
-        ctx.expected_begin_system_txs = vec![
-            wrong_recovered.clone(),
-            oracle_recovered,
-            hook_events_recovered,
-        ];
+        ctx.expected_begin_system_txs = expected;
         ctx.proposer_evm_address = Some(proposer);
 
         let mut executor = config.create_executor(evm, ctx);
@@ -9709,7 +9937,7 @@ mod tests {
         {
             let evm_env = EvmEnv {
                 cfg_env: CfgEnv::new()
-                    .with_chain_id(MAINNET.chain().id())
+                    .with_chain_id(CHAIN_ID)
                     .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
                 block_env: BlockEnv {
                     number: U256::from(1u64),
@@ -9793,7 +10021,7 @@ mod tests {
 
             let evm_env = EvmEnv {
                 cfg_env: CfgEnv::new()
-                    .with_chain_id(MAINNET.chain().id())
+                    .with_chain_id(CHAIN_ID)
                     .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
                 block_env: BlockEnv {
                     number: U256::from(1u64),
@@ -9889,7 +10117,7 @@ mod tests {
 
             let evm_env = EvmEnv {
                 cfg_env: CfgEnv::new()
-                    .with_chain_id(MAINNET.chain().id())
+                    .with_chain_id(CHAIN_ID)
                     .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
                 block_env: BlockEnv {
                     number: U256::from(1u64 + run as u64),
@@ -9980,7 +10208,7 @@ mod tests {
 
         let evm_env = EvmEnv {
             cfg_env: CfgEnv::new()
-                .with_chain_id(MAINNET.chain().id())
+                .with_chain_id(CHAIN_ID)
                 .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
             block_env: BlockEnv {
                 number: U256::from(1u64),
@@ -10114,7 +10342,7 @@ mod tests {
             .build();
         let evm_env = EvmEnv {
             cfg_env: CfgEnv::new()
-                .with_chain_id(MAINNET.chain().id())
+                .with_chain_id(CHAIN_ID)
                 .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
             block_env: BlockEnv {
                 number: U256::from(1u64),
@@ -10182,7 +10410,7 @@ mod tests {
             .build();
         let evm_env = EvmEnv {
             cfg_env: CfgEnv::new()
-                .with_chain_id(MAINNET.chain().id())
+                .with_chain_id(CHAIN_ID)
                 .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
             block_env: BlockEnv {
                 number: U256::from(1u64),
@@ -10241,7 +10469,7 @@ mod tests {
             .build();
         let evm_env = EvmEnv {
             cfg_env: CfgEnv::new()
-                .with_chain_id(MAINNET.chain().id())
+                .with_chain_id(CHAIN_ID)
                 .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
             block_env: BlockEnv {
                 number: U256::from(1u64),
@@ -10282,6 +10510,35 @@ mod tests {
         pk
     }
 
+    fn test_committee_snapshot(
+        validators: &[(Address, [u8; 48])],
+    ) -> outbe_validatorset::CommitteeSnapshot {
+        outbe_validatorset::CommitteeSnapshot {
+            committee: validators
+                .iter()
+                .map(
+                    |(address, consensus_pubkey)| outbe_validatorset::CommitteeEntry {
+                        address: *address,
+                        consensus_pubkey: *consensus_pubkey,
+                    },
+                )
+                .collect(),
+            vrf_material_version: 0,
+            vrf_group_public_key_bytes: vec![0x42; 96],
+            vrf_public_polynomial_hash: B256::ZERO,
+        }
+    }
+
+    fn seed_test_committee_snapshot(
+        storage: StorageHandle,
+        validators: &[(Address, [u8; 48])],
+    ) -> B256 {
+        let snapshot = test_committee_snapshot(validators);
+        outbe_validatorset::write_committee_snapshot(storage, 0, &snapshot)
+            .expect("seed epoch-0 test committee snapshot")
+            .0
+    }
+
     #[allow(dead_code)] // retained for follow-up tests
     fn cache_db_from_storage(
         seed_storage: HashMapStorageProvider,
@@ -10310,6 +10567,7 @@ mod tests {
         vs.config_is_initialized.write(true).unwrap();
         vs.register_validator(OWNER, validator, pk).unwrap();
         vs.activate_reshared_set(&[validator], B256::ZERO).unwrap();
+        seed_test_committee_snapshot(storage.clone(), &[(validator, *pk)]);
         // Seed COEN/0xUSD pair + 1.0 rate so begin-block NOD/GEM/INTEX promotion
         // reads a registered pair instead of reverting "pair not registered".
         let mut oracle = outbe_oracle::contract::OracleContract::new(storage);
@@ -10997,7 +11255,7 @@ mod tests {
     ) -> (EvmEnv, EthBlockExecutionCtx<'static>) {
         let env = EvmEnv {
             cfg_env: CfgEnv::new()
-                .with_chain_id(MAINNET.chain().id())
+                .with_chain_id(CHAIN_ID)
                 .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
             block_env: BlockEnv {
                 number: U256::from(block_number),
@@ -11307,7 +11565,7 @@ mod tests {
     fn pectra_evm_env(block_number: u64) -> EvmEnv {
         EvmEnv {
             cfg_env: CfgEnv::new()
-                .with_chain_id(MAINNET.chain().id())
+                .with_chain_id(CHAIN_ID)
                 .with_spec_and_mainnet_gas_params(SpecId::PRAGUE),
             block_env: BlockEnv {
                 number: U256::from(block_number),

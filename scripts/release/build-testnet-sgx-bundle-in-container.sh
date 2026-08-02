@@ -33,6 +33,10 @@ prepare() {
     "${installed}/gramine/libpal.so"
   cp -aL /usr/lib/x86_64-linux-gnu/gramine/runtime/glibc/. \
     "${installed}/gramine/runtime/glibc/"
+  python3 /source/scripts/release/verify_dcap_native_qvl.py \
+    --manifest /source/release/dcap-native-qvl-v1.json \
+    --root / \
+    --install-dir "${installed}/gramine/runtime/qvl"
   install -m 0644 /lib/x86_64-linux-gnu/libprotobuf-c.so.1 \
     "${installed}/host-libs/libprotobuf-c.so.1"
   install -m 0755 /lib/x86_64-linux-gnu/libc.so.6 \

@@ -123,6 +123,16 @@ pub(crate) fn validate_system_tx_leader_binding_for_activation(
     committee_provider: &CommitteeProvider,
 ) -> Result<(), String> {
     let raw_block = block.clone().into_inner().into_block();
+    let expected_gas_limit =
+        outbe_primitives::system_tx::protocol_block_gas_limit(raw_block.header.number());
+    if raw_block.header.gas_limit() != expected_gas_limit {
+        return Err(format!(
+            "protocol gas limit mismatch at block {}: expected {}, got {}",
+            raw_block.header.number(),
+            expected_gas_limit,
+            raw_block.header.gas_limit()
+        ));
+    }
     let artifacts = outbe_primitives::reshare_artifact::decode_outbe_block_artifacts(
         raw_block.header.extra_data().as_ref(),
     )
@@ -427,6 +437,47 @@ mod tests {
             &committee_provider,
         )
         .expect("validator must accept the payload builder's visible gas plan");
+    }
+
+    #[test]
+    fn system_tx_leader_binding_rejects_bootstrap_gas_limit_after_block_one() {
+        let (keys, _) = participants();
+        let signer = OutbeEvmSigner::from_secret_bytes([7u8; 32]).unwrap();
+        let mut validator_set = validator_set_from_keys(&keys);
+        validator_set.addresses[0] = signer.address();
+        let (scheme_provider, committee_provider) =
+            leader_binding_providers(Epoch::new(0), &validator_set);
+        let parent_hash = B256::ZERO;
+        let block = block_with_gas_planned_system_inputs(
+            &signer,
+            2,
+            parent_hash,
+            Bytes::new(),
+            vec![
+                SystemTxInputV2::CertifiedParentAccounting {
+                    metadata: finalized_metadata(parent_hash),
+                },
+                SystemTxInputV2::LateFinalizeCredits {
+                    artifact: Default::default(),
+                },
+                SystemTxInputV2::CycleTick,
+                SystemTxInputV2::OracleSlashWindow,
+                SystemTxInputV2::HookEvents,
+            ],
+            outbe_primitives::chain::CHAIN_ID,
+            outbe_primitives::system_tx::BOOTSTRAP_BLOCK_GAS_LIMIT,
+        );
+
+        let error = validate_system_tx_leader_binding(
+            &block,
+            Round::new(Epoch::new(0), View::new(1)),
+            &keys[0].public_key(),
+            outbe_primitives::chain::CHAIN_ID,
+            &scheme_provider,
+            &committee_provider,
+        )
+        .expect_err("500M is valid only at block 1");
+        assert!(error.contains("protocol gas limit"));
     }
 
     #[test]

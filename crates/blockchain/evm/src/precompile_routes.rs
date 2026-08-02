@@ -390,7 +390,7 @@ define_exact_routes! {
     DEBUG_SUBCALL_PRECOMPILE_ADDRESS => (DispatchAdapter::Basic(crate::debug_subcall::dispatch), default_base_gas, ValuePolicy::Reject, crate::debug_subcall::PAYABLE_SELECTORS),
     ZKPROOF_POSEIDON_ADDRESS => (DispatchAdapter::Basic(outbe_zkproof::dispatch_poseidon), outbe_zkproof::poseidon_base_gas, ValuePolicy::Reject, outbe_zkproof::precompile::POSEIDON_PAYABLE_SELECTORS),
     ZKPROOF_GROTH16_ADDRESS => (DispatchAdapter::Basic(outbe_zkproof::dispatch_groth16), outbe_zkproof::groth16_base_gas, ValuePolicy::Reject, outbe_zkproof::precompile::GROTH16_PAYABLE_SELECTORS),
-    TEE_REGISTRY_ADDRESS => (DispatchAdapter::Basic(outbe_teeregistry::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_teeregistry::precompile::PAYABLE_SELECTORS),
+    TEE_REGISTRY_ADDRESS => (DispatchAdapter::Basic(outbe_teeregistry::v1_precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_teeregistry::v1_precompile::PAYABLE_SELECTORS),
     L2_REGISTRY_ADDRESS => (DispatchAdapter::Basic(outbe_l2registry::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_l2registry::precompile::PAYABLE_SELECTORS),
     STABLECOIN_FACTORY_ADDRESS => (DispatchAdapter::Basic(stablecoin_factory_dispatch), default_base_gas, ValuePolicy::Reject, outbe_stablecoinfactory::precompile::PAYABLE_SELECTORS),
     STABLECOIN_POLICY_REGISTRY_ADDRESS => (DispatchAdapter::Basic(stablecoin_policy_dispatch), default_base_gas, ValuePolicy::Reject, outbe_stablecoinpolicy::precompile::PAYABLE_SELECTORS),
@@ -472,7 +472,8 @@ fn validate_exact_addresses(addresses: &[Address]) -> std::result::Result<(), Va
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_sol_types::SolCall;
+    use alloy_primitives::b256;
+    use alloy_sol_types::{sol, SolCall};
     use outbe_primitives::stablecoin::StablecoinCreatePayload;
     use outbe_stablecoin::{FactoryTokenInitialization, StablecoinFactoryApi as TokenFactoryApi};
     use outbe_stablecoinfactory::{
@@ -480,6 +481,15 @@ mod tests {
     };
     use outbe_stablecoinpolicy::precompile::IStablecoinPolicyRegistry;
     use revm::state::Bytecode;
+
+    sol! {
+        interface ITeeRegistryRouteTest {
+            function isFullNodeEnclaveReady(uint8 rethP2pPrefix, bytes32 rethP2pX)
+                external
+                view
+                returns (bool);
+        }
+    }
 
     #[test]
     fn production_exact_routes_validate() {
@@ -544,6 +554,51 @@ mod tests {
             lookup(&VOTE_ADDRESS).unwrap().reader_mode(),
             ReaderMode::None
         );
+    }
+
+    #[test]
+    fn tee_route_accepts_v1_and_rejects_the_legacy_registration_selector() {
+        let mut provider = outbe_primitives::storage::hashmap::HashMapStorageProvider::new(1);
+        let route = lookup(&TEE_REGISTRY_ADDRESS).unwrap();
+
+        let v1 = ITeeRegistryRouteTest::isFullNodeEnclaveReadyCall {
+            rethP2pPrefix: 2,
+            // SEC1 compressed secp256k1 generator point.
+            rethP2pX: b256!("79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"),
+        }
+        .abi_encode();
+        let output = route
+            .dispatch(
+                StorageHandle::new(&mut provider),
+                &ExecutionScope::new(),
+                None,
+                &v1,
+                Address::ZERO,
+                U256::ZERO,
+            )
+            .unwrap();
+        assert!(
+            !ITeeRegistryRouteTest::isFullNodeEnclaveReadyCall::abi_decode_returns(&output)
+                .unwrap()
+        );
+
+        // Use the exact legacy signature rather than the Rust method name.
+        let mut legacy = vec![0_u8; 4 + 32 * 6];
+        legacy[..4].copy_from_slice(
+            &alloy_primitives::keccak256(
+                b"registerEnclave(uint256,uint256,uint256,uint256,uint256,uint16)",
+            )[..4],
+        );
+        assert!(route
+            .dispatch(
+                StorageHandle::new(&mut provider),
+                &ExecutionScope::new(),
+                None,
+                &legacy,
+                Address::ZERO,
+                U256::ZERO,
+            )
+            .is_err());
     }
 
     #[test]

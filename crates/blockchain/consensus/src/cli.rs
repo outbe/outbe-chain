@@ -349,8 +349,11 @@ pub fn execute_dkg_export_share(
 
 /// Force-restart DKG by removing saved threshold material.
 ///
-/// Deletes the signing share, polynomial, and DKG output files from the storage directory.
-/// On next node startup, a fresh DKG ceremony will be triggered over P2P.
+/// Deletes only the consensus signing share, polynomial, and DKG output files.
+///
+/// This maintenance command never touches enclave state or the permanent offer
+/// key. The next node startup still passes the normal founding or existing-chain
+/// gates; an existing identity without its exact offer key remains terminal.
 pub fn execute_dkg_force_restart(storage_dir: &Path) -> Result<()> {
     let material_paths = [
         storage_dir.join(DKG_SHARE_FILE),
@@ -371,7 +374,9 @@ pub fn execute_dkg_force_restart(storage_dir: &Path) -> Result<()> {
 
     if removed {
         println!();
-        println!("DKG material removed. A fresh DKG ceremony will run on next startup.");
+        println!(
+            "Consensus DKG material removed. Permanent TEE offer-key state was not modified; normal startup gates still apply."
+        );
     } else {
         println!("No DKG material found in: {}", storage_dir.display());
     }

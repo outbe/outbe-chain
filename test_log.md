@@ -129,7 +129,7 @@ end-to-end coverage. Commands are run from the repository root unless noted.
 ### ZeroFee Rust migration and real-SGX startup hardening
 
 - Superseded the interim shell integration above: migrated PFS-007-01 through
-  PFS-007-06 into `crates/testing/e2e-harness/features/zerofee.feature` and
+  PFS-007-06 into `testing/e2e-harness/features/zerofee.feature` and
   deleted `e2e/zerofee-e2e.sh` plus its separate mise/CI entrypoints.
 - The Rust World now signs the EIP-7702 authorization and transactions natively
   with Alloy, then asserts the marker/schema/views, exact delegation designator,

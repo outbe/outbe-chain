@@ -70,7 +70,7 @@ Exactly two new workspace packages are justified:
 Node-owned `OcompControl`, retention and attestation code remains in the
 existing node/system ownership selected by later lifecycle tasks. Pure Lysis V1
 semantics remains in `crates/core/lysis`; it is not copied into a process crate.
-The E2E process owner remains `crates/testing/e2e-harness`.
+The E2E process owner remains `testing/e2e-harness`.
 
 Using one executable for three roles is not an authority shortcut:
 

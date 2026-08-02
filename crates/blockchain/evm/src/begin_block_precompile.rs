@@ -102,7 +102,15 @@ pub fn dispatch(
     caller: Address,
     value: U256,
 ) -> Result<Bytes> {
-    dispatch_inner(storage, data, caller, value, None, None)
+    dispatch_inner(
+        storage,
+        data,
+        caller,
+        value,
+        None,
+        None,
+        &crate::tee_attestation_activation::TeeAttestationChainSpecStateV1::Unbound,
+    )
 }
 
 /// Dispatches begin-block work with explicit read-only body authority.
@@ -114,7 +122,29 @@ pub fn dispatch_with_readers(
     caller: Address,
     value: U256,
 ) -> Result<Bytes> {
-    dispatch_inner(storage, data, caller, value, Some((scope, parent)), None)
+    dispatch_inner(
+        storage,
+        data,
+        caller,
+        value,
+        Some((scope, parent)),
+        None,
+        &crate::tee_attestation_activation::TeeAttestationChainSpecStateV1::Unbound,
+    )
+}
+
+/// Dispatches begin-block work without body readers while preserving the
+/// immutable TEE authority derived from ChainSpec. Offline/component execution
+/// does not install [`RuntimeBodyReaders`], but it must verify block-1 OST3
+/// against the same genesis-fixed authority as the live node.
+pub fn dispatch_with_tee_attestation(
+    storage: StorageHandle,
+    tee_attestation_v1: &crate::tee_attestation_activation::TeeAttestationChainSpecStateV1,
+    data: &[u8],
+    caller: Address,
+    value: U256,
+) -> Result<Bytes> {
+    dispatch_inner(storage, data, caller, value, None, None, tee_attestation_v1)
 }
 
 /// Production dispatch with both finalized body readers and the immutable
@@ -124,6 +154,7 @@ pub fn dispatch_with_readers_and_ocomp_install(
     scope: &outbe_compressed_entities::ExecutionScope,
     parent: &outbe_offchain_data::RuntimeBodyReaders,
     ocomp_fork_install: Option<&outbe_metadosis::config::OcompForkInstallV1>,
+    tee_attestation_v1: &crate::tee_attestation_activation::TeeAttestationChainSpecStateV1,
     data: &[u8],
     caller: Address,
     value: U256,
@@ -135,6 +166,7 @@ pub fn dispatch_with_readers_and_ocomp_install(
         value,
         Some((scope, parent)),
         ocomp_fork_install,
+        tee_attestation_v1,
     )
 }
 
@@ -148,6 +180,7 @@ fn dispatch_inner(
         &outbe_offchain_data::RuntimeBodyReaders,
     )>,
     ocomp_fork_install: Option<&outbe_metadosis::config::OcompForkInstallV1>,
+    tee_attestation_v1: &crate::tee_attestation_activation::TeeAttestationChainSpecStateV1,
 ) -> Result<Bytes> {
     if caller != SYSTEM_ADDRESS {
         return Err(PrecompileError::Revert(
@@ -201,7 +234,8 @@ fn dispatch_inner(
         }
         SystemTxInputV2::TeeBootstrap { payload } => {
             let ctx = block_runtime_context_from_storage(storage, true)?;
-            run_tee_bootstrap(&ctx, &payload)?;
+            prepare_tee_bootstrap(&ctx, &payload, tee_attestation_v1)?;
+            run_tee_bootstrap_v1(&ctx, &payload)?;
         }
         SystemTxInputV2::OracleSlashWindow => {
             let ctx = block_runtime_context_from_storage(storage, false)?;
@@ -225,65 +259,64 @@ fn dispatch_inner(
     Ok(Bytes::new())
 }
 
-/// Phase 3b: one-time TEE registry bootstrap. Authenticates the payload against
-/// the active consensus committee, then writes `TeeRegistry` (read-only
-/// thereafter for clients).
-///
-/// Enforced here (consensus-critical, identical on proposer and verifier paths):
-///
-/// - the registry is still empty (idempotent one-shot);
-/// - `committee_snapshot_block` is this block (Phase 3a's `BoundaryOutcome` wrote
-///   the committee snapshot earlier in the same block);
-/// - every registration's `keys_hash` recomputes from its own key material;
-/// - every registration's validator is in the active consensus set, with no
-///   duplicates;
-/// - every `validator_signatures` entry recovers (recoverable secp256k1 ECDSA
-///   over [`TeeBootstrapPayload::signing_hash`]) to its declared validator, which
-///   is in the active consensus set, with no duplicates;
-/// - registrations and signatures cover exactly the same validator set (1:1);
-/// - the signers form a strict supermajority (`> 2/3`) of the active consensus
-///   set.
-/// - the payload's signed `policy` allowlist commits to its `policy_hash`,
-///   and — when a genesis `teePolicy` is seeded (`TeeRegistry.policy_hash` slot 2
-///   != ZERO) — the allowlist matches that genesis hash and every registration's
-///   MRSIGNER/MRENCLAVE/isv_svn satisfies the AND-policy. The policy hash is read
-///   from EVM storage so the gate is deterministic on proposer + verifier.
-/// - `committee_snapshot_hash` binds the bootstrap to the epoch-0
-///   `CommitteeSnapshotStore` that Phase 3's `BoundaryOutcome` wrote earlier in
-///   this block: the gate recomputes `committee_set_hash_v2(0, snapshot)`, stores
-///   it as the authoritative value, and rejects a non-zero payload value that
-///   disagrees. Resolves `arch_debt` `tee_bootstrap_policy_and_snapshot_binding`
-///   (commit `af7cdb8`); the producer still sends `ZERO`, which the verifier
-///   recompute accepts and overwrites — cosmetic, not a binding gap.
-pub(crate) fn run_tee_bootstrap(
+fn prepare_tee_bootstrap(
     ctx: &BlockRuntimeContext,
-    payload: &outbe_primitives::tee_bootstrap::TeeBootstrapPayload,
+    payload: &outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2,
+    state: &crate::tee_attestation_activation::TeeAttestationChainSpecStateV1,
 ) -> Result<()> {
-    use outbe_primitives::tee_bootstrap::recover_signer;
-    use outbe_teeregistry::{TeeBootstrapData, TeeRegistration, TeeRegistry};
+    let activation = state.activation().map_err(|error| {
+        PrecompileError::Fatal(format!("invalid TEE ChainSpec authority: {error}"))
+    })?;
+    if ctx.block.block_number < activation.manifest.activation_height {
+        return Err(PrecompileError::Revert(
+            "OST3 is not active at the current block".into(),
+        ));
+    }
+    let expected_policy = activation
+        .policy_at(ctx.block.block_number)
+        .map_err(|error| PrecompileError::Fatal(format!("invalid active TEE policy: {error}")))?;
+    if &payload.policy != expected_policy {
+        return Err(PrecompileError::Revert(
+            "OST3 policy does not match the active ChainSpec schedule".into(),
+        ));
+    }
+    outbe_teeregistry::TeeRegistry::new(ctx.storage.clone())
+        .install_initial_policy_v1(expected_policy)?;
+    Ok(())
+}
+
+/// DCAP block-1 bootstrap. The canonical payload already proves bounded shape;
+/// this handler binds it to the exact active committee and epoch-0 snapshot,
+/// verifies every validator through the production enclave-resident QVL path,
+/// and only then finalizes the existing offer-key bootstrap state.
+pub(crate) fn run_tee_bootstrap_v1(
+    ctx: &BlockRuntimeContext,
+    payload: &outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2,
+) -> Result<()> {
+    use outbe_primitives::{tee_attestation_v1::NodeIdV1, tee_signatures::recover_signer};
+    use outbe_teeregistry::{TeeBootstrapData, TeeRegistry};
     use std::collections::BTreeSet;
 
-    // Idempotency: the one-time bootstrap is valid only while the registry is
-    // empty. This durable lock makes the tx un-repeatable.
     let mut registry = TeeRegistry::new(ctx.storage.clone());
     if registry.is_bootstrapped()? {
         return Err(PrecompileError::Revert(
-            "TeeBootstrap: registry already bootstrapped".to_string(),
+            "TeeBootstrapV2: registry already bootstrapped".into(),
         ));
     }
-
-    // The snapshot the payload binds to must be this block's (Phase 3a wrote the
-    // CommitteeSnapshotStore earlier in the same block).
     if payload.committee_snapshot_block != ctx.block.block_number {
         return Err(PrecompileError::Revert(format!(
-            "TeeBootstrap: committee_snapshot_block {} != current block {}",
+            "TeeBootstrapV2: committee snapshot block {} does not equal current block {}",
             payload.committee_snapshot_block, ctx.block.block_number
         )));
     }
 
-    // The active consensus set at this block is the authority that may bootstrap
-    // the TEE registry. EXITING members retain current-epoch accountability and
-    // are included by `get_active_consensus_set`.
+    let active_policy = registry.active_policy_v1()?;
+    if active_policy != payload.policy {
+        return Err(PrecompileError::Revert(
+            "TeeBootstrapV2: payload policy is not the authoritative active V1 policy".into(),
+        ));
+    }
+
     let committee: BTreeSet<Address> =
         outbe_validatorset::contract::ValidatorSet::new(ctx.storage.clone())
             .get_active_consensus_set()?
@@ -292,161 +325,83 @@ pub(crate) fn run_tee_bootstrap(
             .collect();
     if committee.is_empty() {
         return Err(PrecompileError::Revert(
-            "TeeBootstrap: no active consensus committee to authorize bootstrap".to_string(),
+            "TeeBootstrapV2: active consensus committee is empty".into(),
         ));
     }
-
-    // Registrations: key-material integrity + committee membership + uniqueness.
-    let mut registrants: BTreeSet<Address> = BTreeSet::new();
-    for reg in &payload.registrations {
-        if reg.computed_keys_hash() != reg.keys_hash {
-            return Err(PrecompileError::Revert(format!(
-                "TeeBootstrap: keys_hash mismatch for registration {}",
-                reg.validator
-            )));
-        }
-        if !committee.contains(&reg.validator) {
-            return Err(PrecompileError::Revert(format!(
-                "TeeBootstrap: registration for non-committee validator {}",
-                reg.validator
-            )));
-        }
-        if !registrants.insert(reg.validator) {
-            return Err(PrecompileError::Revert(format!(
-                "TeeBootstrap: duplicate registration for validator {}",
-                reg.validator
-            )));
-        }
-    }
-
-    // Signatures: each must recover to its declared, committee-member validator,
-    // with no duplicates. All signatures cover the same domain-separated digest.
-    let signing_hash = payload.signing_hash();
-    let mut signers: BTreeSet<Address> = BTreeSet::new();
-    for sig in &payload.validator_signatures {
-        let recovered = recover_signer(&signing_hash, &sig.signature)?;
-        if recovered != sig.validator {
-            return Err(PrecompileError::Revert(format!(
-                "TeeBootstrap: signature signer {recovered} does not match declared validator {}",
-                sig.validator
-            )));
-        }
-        if !committee.contains(&sig.validator) {
-            return Err(PrecompileError::Revert(format!(
-                "TeeBootstrap: signature from non-committee validator {}",
-                sig.validator
-            )));
-        }
-        if !signers.insert(sig.validator) {
-            return Err(PrecompileError::Revert(format!(
-                "TeeBootstrap: duplicate signature for validator {}",
-                sig.validator
-            )));
-        }
-    }
-
-    // Registrations and signatures must describe exactly the same participant
-    // set: a registration without a signature is unauthorized; a signature
-    // without a registration commits to keys that were never recorded.
-    if registrants != signers {
-        return Err(PrecompileError::Revert(
-            "TeeBootstrap: registrations and signatures cover different validator sets".to_string(),
-        ));
-    }
-
-    // Strict supermajority (> 2/3) of the active consensus set must authorize the
-    // one-time bootstrap. `signers.len() * 3 > committee.len() * 2`, computed with
-    // saturating multiplication (bounded by `MAX_TEE_REGISTRATIONS`).
-    if signers.len().saturating_mul(3) <= committee.len().saturating_mul(2) {
-        return Err(PrecompileError::Revert(format!(
-            "TeeBootstrap: insufficient validator signatures: {} of {} (need > 2/3)",
-            signers.len(),
-            committee.len()
-        )));
-    }
-
-    // Policy enforcement. The payload carries the signed attestation
-    // allowlist; bind it to its committed `policy_hash`, then — when a genesis
-    // policy is seeded (TeeRegistry slot 2 != ZERO) — require the allowlist to
-    // hash to the genesis-committed value and enforce the AND-policy against
-    // every registration's measurements. The policy hash is read from EVM storage
-    // (not node config), so the gate is identical on proposer and verifier.
-    let computed_policy_hash = payload.policy.compute_hash();
-    if payload.policy_hash != computed_policy_hash {
-        return Err(PrecompileError::Revert(
-            "TeeBootstrap: policy_hash does not commit to the payload policy allowlist".to_string(),
-        ));
-    }
-    let genesis_policy_hash = registry.policy_hash()?;
-    if genesis_policy_hash != B256::ZERO {
-        if payload.policy_hash != genesis_policy_hash {
-            return Err(PrecompileError::Revert(format!(
-                "TeeBootstrap: payload policy_hash {} does not match genesis teePolicy {genesis_policy_hash}",
-                payload.policy_hash
-            )));
-        }
-        for reg in &payload.registrations {
-            if !payload
-                .policy
-                .admits(reg.mrsigner, reg.mrenclave, reg.isv_svn)
-            {
-                return Err(PrecompileError::Revert(format!(
-                    "TeeBootstrap: registration {} fails genesis teePolicy (mrsigner {} / mrenclave {} / isv_svn {})",
-                    reg.validator, reg.mrsigner, reg.mrenclave, reg.isv_svn
-                )));
-            }
-        }
-    } else {
-        tracing::warn!(
-            target: "outbe::system_tx",
-            block_number = ctx.block.block_number,
-            "TeeBootstrap: no genesis teePolicy seeded (TeeRegistry.policy_hash == 0); enclave measurements UNCHECKED (PoC/dev)"
-        );
-    }
-
-    let registrations = payload
-        .registrations
+    let participant_validators = payload
+        .participants
         .iter()
-        .map(|reg| TeeRegistration {
-            validator: reg.validator,
-            recipient_x25519: reg.recipient_x25519,
-            attestation_pub: reg.attestation_pub,
-            noise_static_pub: reg.noise_static_pub,
-            mrenclave: reg.mrenclave,
-            mrsigner: reg.mrsigner,
-            isv_svn: u64::from(reg.isv_svn),
-            keys_hash: reg.keys_hash,
+        .map(|participant| match participant.intent.node_id {
+            NodeIdV1::Validator { address, .. } => Ok(Address::from(address)),
+            NodeIdV1::FullNode { .. } => Err(PrecompileError::Revert(
+                "TeeBootstrapV2: bootstrap participant is not a validator".into(),
+            )),
         })
-        .collect();
+        .collect::<Result<BTreeSet<_>>>()?;
+    if participant_validators != committee || payload.participants.len() != committee.len() {
+        return Err(PrecompileError::Revert(
+            "TeeBootstrapV2: participants must equal the complete active consensus committee"
+                .into(),
+        ));
+    }
 
-    // B2: bind the bootstrap to the on-chain committee snapshot. Block 1's mandatory
-    // BoundaryOutcome (Phase 3) runs before this Phase 3b tx and is the single writer
-    // of the epoch-0 CommitteeSnapshotStore, so recompute that committee's canonical
-    // V2 identity hash and bind it as the source of truth. Genesis-safe: a ZERO payload
-    // value (the producer does not yet compute it) is accepted; a non-zero payload value
-    // must match the on-chain snapshot, so a forged committee binding is rejected.
-    let committee_snapshot_hash =
-        match outbe_validatorset::state::read_committee_snapshot_for_epoch(ctx.storage.clone(), 0)?
-        {
-            Some(snapshot) => {
-                let recomputed = outbe_validatorset::committee_set_hash_v2(0, &snapshot);
-                if payload.committee_snapshot_hash != B256::ZERO
-                    && payload.committee_snapshot_hash != recomputed
-                {
-                    return Err(PrecompileError::Revert(
-                        "TeeBootstrap committee_snapshot_hash does not match the on-chain \
-                         committee snapshot"
-                            .to_string(),
-                    ));
-                }
-                recomputed
-            }
-            None => payload.committee_snapshot_hash,
-        };
+    let signing_hash = payload.signing_hash().map_err(|error| {
+        PrecompileError::Fatal(format!(
+            "canonical TeeBootstrapV2 cannot produce its signing hash: {error}"
+        ))
+    })?;
+    for signature in &payload.committee_signatures {
+        let recovered = recover_signer(&signing_hash, &signature.signature)?;
+        if recovered != signature.validator || !committee.contains(&signature.validator) {
+            return Err(PrecompileError::Revert(format!(
+                "TeeBootstrapV2: invalid committee signature for {}",
+                signature.validator
+            )));
+        }
+    }
 
+    let snapshot =
+        outbe_validatorset::state::read_committee_snapshot_for_epoch(ctx.storage.clone(), 0)?
+            .ok_or_else(|| {
+                PrecompileError::Revert(
+                    "TeeBootstrapV2: epoch-0 committee snapshot is missing".into(),
+                )
+            })?;
+    let committee_snapshot_hash = outbe_validatorset::committee_set_hash_v2(0, &snapshot);
+    if payload.committee_snapshot_hash != committee_snapshot_hash {
+        return Err(PrecompileError::Revert(
+            "TeeBootstrapV2: committee snapshot hash mismatch".into(),
+        ));
+    }
+
+    for (index, participant) in payload.participants.iter().enumerate() {
+        let evidence = payload
+            .logical_evidence(index)
+            .and_then(|evidence| evidence.encode_canonical())
+            .map_err(|error| {
+                PrecompileError::Fatal(format!(
+                    "canonical TeeBootstrapV2 cannot reconstruct evidence {index}: {error}"
+                ))
+            })?;
+        registry.register_enclave_v1(
+            &evidence,
+            &participant.node_signature,
+            &participant.enclave_signature,
+        )?;
+    }
+
+    let registrations = committee
+        .iter()
+        .map(|validator| registry.registration(*validator))
+        .collect::<Result<Vec<_>>>()?;
+    let policy_hash = payload.policy.policy_hash().map_err(|error| {
+        PrecompileError::Fatal(format!(
+            "authoritative TeeBootstrapV2 policy cannot be hashed: {error}"
+        ))
+    })?;
     registry.write_bootstrap(&TeeBootstrapData {
         tribute_offer_public_key: payload.tribute_offer_public_key,
-        policy_hash: payload.policy_hash,
+        policy_hash,
         key_epoch: payload.key_epoch,
         tribute_offer_epoch: payload.tribute_offer_epoch,
         dkg_transcript_hash: payload.dkg_transcript_hash,
@@ -717,8 +672,8 @@ pub(crate) fn run_boundary_outcome(
         // Reshare authority (membership gate): every re-registered enclave key must
         // belong to a validator in the committee this boundary activates. The host
         // relays the artifact; an injected registration for a non-member would
-        // otherwise place an attacker-controlled enclave key into the registry (and
-        // let it request the offer-key handoff). `new_active_set` is part of the
+        // otherwise place an attacker-controlled enclave key into the registry.
+        // `new_active_set` is part of the
         // hash-committed artifact, so this gate is byte-deterministic across
         // validators. This bounds a malicious host / below-quorum collusion; the
         // prior-committee endorsement below is still required to bound a malicious
@@ -1076,6 +1031,7 @@ fn block_runtime_context_from_storage(
     let block_number = storage.block_number()?;
     let timestamp = u256_to_u64("block timestamp", storage.timestamp()?)?;
     let chain_id = storage.chain_id()?;
+    let genesis_hash = storage.genesis_hash()?;
     let proposer = current_preloaded_system_tx_context()
         .map(|context| context.proposer)
         .unwrap_or(storage.beneficiary()?);
@@ -1096,7 +1052,14 @@ fn block_runtime_context_from_storage(
     };
 
     Ok(BlockRuntimeContext::new(
-        BlockContext::new(block_number, timestamp, chain_id, proposer, validators),
+        BlockContext::new_with_genesis_hash(
+            block_number,
+            timestamp,
+            chain_id,
+            genesis_hash,
+            proposer,
+            validators,
+        ),
         storage,
     ))
 }
@@ -1629,8 +1592,18 @@ mod tests {
 
     // ---- Phase 3b: TeeBootstrap handler verification ----
 
-    use outbe_primitives::tee_bootstrap::{
-        TeeBootstrapPayload, TeePolicy, TeeRegistrationBundle, TeeValidatorSignature,
+    use outbe_primitives::{
+        tee_attestation_v1::{
+            AttestationMode, AttestationOperationV1, DcapCollateralComponentV1, DcapCollateralKind,
+            EnclaveProfile, NodeIdV1, PlatformTcbStatusSetV1, QvlTcbStatusV1, RegistrationIntentV1,
+            ResourceScheduleV1, TeeAttestationManifestV1, TeeMeasurementRuleV1,
+            TeePolicyScheduleEntryV1, TeePolicyScheduleV1, TeePolicyV1,
+        },
+        tee_bootstrap_v2::{
+            TeeBootstrapCommitteeSignatureV2, TeeBootstrapParticipantEvidenceV2,
+            TeeBootstrapParticipantV2, TeeBootstrapV2,
+        },
+        tee_test_utils::{gramine_direct_bootstrap_v2, gramine_direct_policy_v1, DevValidatorV1},
     };
 
     fn tee_signing_key(seed: u8) -> k256::ecdsa::SigningKey {
@@ -1655,7 +1628,8 @@ mod tests {
     /// Storage seeded with `members` as ACTIVE consensus participants (status
     /// ACTIVE + BLS share present), which is exactly `get_active_consensus_set`.
     fn tee_committee_storage(block_number: u64, members: &[Address]) -> HashMapStorageProvider {
-        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        let mut provider =
+            HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, B256::repeat_byte(0x11));
         provider.set_block_number(block_number);
         provider.set_timestamp(U256::from(block_number.max(1)));
         provider.set_beneficiary(members[0]);
@@ -1676,67 +1650,6 @@ mod tests {
         provider
     }
 
-    fn tee_registration(validator: Address, salt: u8) -> TeeRegistrationBundle {
-        let mut reg = TeeRegistrationBundle {
-            validator,
-            recipient_x25519: B256::repeat_byte(salt),
-            attestation_pub: B256::repeat_byte(salt.wrapping_add(1)),
-            noise_static_pub: B256::repeat_byte(salt.wrapping_add(2)),
-            mrenclave: B256::repeat_byte(0x50),
-            mrsigner: B256::repeat_byte(0x60),
-            isv_svn: 1,
-            keys_hash: B256::ZERO,
-        };
-        reg.keys_hash = reg.computed_keys_hash();
-        reg
-    }
-
-    /// A payload registering and signed by exactly `signers`. Signatures are
-    /// produced over `signing_hash()` after the body is final, so they validate.
-    fn tee_payload(block_number: u64, signers: &[k256::ecdsa::SigningKey]) -> TeeBootstrapPayload {
-        let registrations = signers
-            .iter()
-            .enumerate()
-            .map(|(i, key)| tee_registration(tee_evm_address(key), 0x20 + i as u8))
-            .collect();
-        // Default (unconfigured) policy; `policy_hash` derives from it so the
-        // handler's consistency check passes. With no genesis policy_hash seeded
-        // (slot 2 == ZERO) the handler skips measurement enforcement.
-        let policy = TeePolicy::default();
-        let mut payload = TeeBootstrapPayload {
-            policy_hash: policy.compute_hash(),
-            committee_snapshot_hash: B256::repeat_byte(0x71),
-            committee_snapshot_block: block_number,
-            key_epoch: 0,
-            tribute_offer_epoch: 0,
-            dkg_transcript_hash: B256::repeat_byte(0x72),
-            tribute_offer_public_key: B256::repeat_byte(0x73),
-            tribute_offer_group_public_key: alloy_primitives::Bytes::new(),
-            registrations,
-            policy,
-            validator_signatures: Vec::new(),
-        };
-        let signing_hash = payload.signing_hash();
-        payload.validator_signatures = signers
-            .iter()
-            .map(|key| TeeValidatorSignature {
-                validator: tee_evm_address(key),
-                signature: tee_sign(key, &signing_hash),
-            })
-            .collect();
-        payload
-    }
-
-    fn run_bootstrap(
-        provider: &mut HashMapStorageProvider,
-        payload: &TeeBootstrapPayload,
-    ) -> Result<()> {
-        provider.enter(|storage| {
-            let ctx = runtime_ctx(storage);
-            run_tee_bootstrap(&ctx, payload)
-        })
-    }
-
     fn is_bootstrapped(provider: &mut HashMapStorageProvider) -> bool {
         provider.enter(|storage| {
             outbe_teeregistry::TeeRegistry::new(storage)
@@ -1751,16 +1664,6 @@ mod tests {
 
     fn members(keys: &[k256::ecdsa::SigningKey]) -> Vec<Address> {
         keys.iter().map(tee_evm_address).collect()
-    }
-
-    #[test]
-    fn tee_bootstrap_accepts_supermajority_and_writes_registry() {
-        let ks = keys(&[0x11, 0x22, 0x33, 0x44]);
-        let mut provider = tee_committee_storage(5, &members(&ks));
-        // 3 of 4 sign: 3*3 = 9 > 4*2 = 8.
-        let payload = tee_payload(5, &ks[..3]);
-        run_bootstrap(&mut provider, &payload).expect("supermajority accepted");
-        assert!(is_bootstrapped(&mut provider));
     }
 
     /// Write an epoch-0 `CommitteeSnapshot` (as block 1's `BoundaryOutcome` would)
@@ -1790,285 +1693,284 @@ mod tests {
         outbe_validatorset::committee_set_hash_v2(0, &snapshot)
     }
 
-    /// B2: a non-zero `committee_snapshot_hash` that disagrees with the on-chain
-    /// epoch-0 snapshot must revert (forged committee binding rejected).
-    #[test]
-    fn tee_bootstrap_rejects_committee_snapshot_hash_mismatch() {
-        let ks = keys(&[0x11, 0x22, 0x33, 0x44]);
-        let mut provider = tee_committee_storage(5, &members(&ks));
-        write_epoch0_snapshot(&mut provider, &members(&ks));
-        // `tee_payload` sets committee_snapshot_hash = 0x71, which cannot equal the
-        // recomputed snapshot hash, so the bind must reject.
-        let payload = tee_payload(5, &ks[..3]);
-        let err = run_bootstrap(&mut provider, &payload).expect_err(
-            "a committee_snapshot_hash disagreeing with the on-chain snapshot must revert",
-        );
-        assert!(
-            format!("{err:?}").contains("committee_snapshot_hash does not match"),
-            "must reject on the snapshot bind, got: {err:?}"
-        );
-        assert!(!is_bootstrapped(&mut provider));
-    }
-
-    /// B2: a `committee_snapshot_hash` equal to the recomputed on-chain snapshot
-    /// hash is accepted and the bootstrap completes.
-    #[test]
-    fn tee_bootstrap_accepts_matching_committee_snapshot_hash() {
-        let ks = keys(&[0x11, 0x22, 0x33, 0x44]);
-        let mut provider = tee_committee_storage(5, &members(&ks));
-        let csh = write_epoch0_snapshot(&mut provider, &members(&ks));
-        let mut payload = tee_payload(5, &ks[..3]);
-        payload.committee_snapshot_hash = csh;
-        // Re-sign: committee_snapshot_hash is part of the signed body.
-        let signing_hash = payload.signing_hash();
-        payload.validator_signatures = ks[..3]
-            .iter()
-            .map(|key| TeeValidatorSignature {
-                validator: tee_evm_address(key),
-                signature: tee_sign(key, &signing_hash),
-            })
-            .collect();
-        run_bootstrap(&mut provider, &payload).expect("matching snapshot hash accepted");
-        assert!(is_bootstrapped(&mut provider));
-    }
-
-    /// Seed the genesis teePolicy hash into `TeeRegistry` slot 2 (simulating
-    /// `scripts/seed_genesis.py`), so Phase 3b enforces the allowlist.
-    fn seed_genesis_policy(provider: &mut HashMapStorageProvider, policy: &TeePolicy) {
-        provider.enter(|storage| {
-            let reg = outbe_teeregistry::TeeRegistry::new(storage);
-            reg.policy_hash.write(policy.compute_hash()).unwrap();
-        });
-    }
-
-    /// A supermajority-signed payload carrying `policy` (policy_hash derived from
-    /// it). The registrations use the fixed test measurements (mrsigner 0x60,
-    /// mrenclave 0x50, isv_svn 1) from [`tee_registration`].
-    fn tee_payload_with_policy(
-        block_number: u64,
-        signers: &[k256::ecdsa::SigningKey],
-        policy: TeePolicy,
-    ) -> TeeBootstrapPayload {
-        let registrations = signers
-            .iter()
-            .enumerate()
-            .map(|(i, key)| tee_registration(tee_evm_address(key), 0x20 + i as u8))
-            .collect();
-        let mut payload = TeeBootstrapPayload {
-            policy_hash: policy.compute_hash(),
-            committee_snapshot_hash: B256::repeat_byte(0x71),
-            committee_snapshot_block: block_number,
-            key_epoch: 0,
-            tribute_offer_epoch: 0,
-            dkg_transcript_hash: B256::repeat_byte(0x72),
-            tribute_offer_public_key: B256::repeat_byte(0x73),
-            tribute_offer_group_public_key: alloy_primitives::Bytes::new(),
-            registrations,
-            policy,
-            validator_signatures: Vec::new(),
-        };
-        let signing_hash = payload.signing_hash();
-        payload.validator_signatures = signers
-            .iter()
-            .map(|key| TeeValidatorSignature {
-                validator: tee_evm_address(key),
-                signature: tee_sign(key, &signing_hash),
-            })
-            .collect();
-        payload
-    }
-
-    /// The policy that admits the fixed test registration measurements.
-    fn matching_policy(min_isv_svn: u16) -> TeePolicy {
-        TeePolicy {
-            allowed_mrsigner: vec![B256::repeat_byte(0x60)],
-            allowed_mrenclave: vec![B256::repeat_byte(0x50)],
-            min_isv_svn,
+    fn tee_policy_v1() -> TeePolicyV1 {
+        TeePolicyV1 {
+            policy_version: 1,
+            chain_id: U256::from(CHAIN_ID).to_be_bytes(),
+            genesis_hash: B256::repeat_byte(0x11),
+            activation_height: 1,
+            predecessor_policy_hash: B256::ZERO,
+            attestation_mode: AttestationMode::DcapRequired,
+            intel_root_der_hash: B256::repeat_byte(0x72),
+            quote_version: 3,
+            tee_type: 0,
+            attestation_key_type: 2,
+            qe_vendor_id: [
+                0x93, 0x9a, 0x72, 0x33, 0xf7, 0x9c, 0x4c, 0xa9, 0x94, 0x0a, 0x0d, 0xb3, 0x95, 0x7f,
+                0x06, 0x07,
+            ],
+            certification_data_type: 5,
+            tcb_info_schema_version: 3,
+            qe_identity_schema_version: 2,
+            minimum_tcb_evaluation_data_number: 1,
+            accepted_platform_tcb_statuses: PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+            accepted_qe_tcb_status: QvlTcbStatusV1::UpToDate,
+            minimum_lease: 3_600,
+            maximum_lease: 604_800,
+            collateral_margin: 3_600,
+            resource_schedule_hash: ResourceScheduleV1::normative()
+                .unwrap()
+                .schedule_hash()
+                .unwrap(),
+            measurement_rules: vec![TeeMeasurementRuleV1 {
+                enclave_profile: EnclaveProfile::Validator,
+                mrenclave: B256::repeat_byte(0x81),
+                mrsigner: B256::repeat_byte(0x82),
+                isv_prod_id: 1,
+                minimum_isv_svn: 2,
+                admit_from_height: 1,
+                admit_until_height_exclusive: 1_000,
+            }],
         }
     }
 
-    #[test]
-    fn tee_bootstrap_enforces_genesis_policy_accepts_matching() {
-        let ks = keys(&[0x11, 0x22, 0x33, 0x44]);
-        let mut provider = tee_committee_storage(5, &members(&ks));
-        let policy = matching_policy(1); // floor 1 == registration isv_svn
-        seed_genesis_policy(&mut provider, &policy);
-        let payload = tee_payload_with_policy(5, &ks[..3], policy);
-        run_bootstrap(&mut provider, &payload).expect("policy-compliant payload accepted");
-        assert!(is_bootstrapped(&mut provider));
-    }
-
-    #[test]
-    fn tee_bootstrap_rejects_registration_below_isv_floor() {
-        let ks = keys(&[0x11, 0x22, 0x33, 0x44]);
-        let mut provider = tee_committee_storage(5, &members(&ks));
-        // Floor 5 > the registration's isv_svn (1): the AND-policy must reject.
-        let policy = matching_policy(5);
-        seed_genesis_policy(&mut provider, &policy);
-        let payload = tee_payload_with_policy(5, &ks[..3], policy);
-        let err = run_bootstrap(&mut provider, &payload).unwrap_err();
-        assert!(err.to_string().contains("fails genesis teePolicy"), "{err}");
-        assert!(!is_bootstrapped(&mut provider));
-    }
-
-    #[test]
-    fn tee_bootstrap_rejects_mrsigner_not_in_genesis_allowlist() {
-        let ks = keys(&[0x11, 0x22, 0x33, 0x44]);
-        let mut provider = tee_committee_storage(5, &members(&ks));
-        // Genesis allows a different MRSIGNER than the registrations carry (0x60).
-        let policy = TeePolicy {
-            allowed_mrsigner: vec![B256::repeat_byte(0xAA)],
-            allowed_mrenclave: vec![B256::repeat_byte(0x50)],
-            min_isv_svn: 0,
+    fn tee_payload_v1(
+        block_number: u64,
+        keys: &[k256::ecdsa::SigningKey],
+        policy: TeePolicyV1,
+        committee_snapshot_hash: B256,
+    ) -> TeeBootstrapV2 {
+        let mut ordered = keys.iter().collect::<Vec<_>>();
+        ordered.sort_by_key(|key| tee_evm_address(key));
+        let policy_hash = policy.policy_hash().unwrap();
+        let collateral_pool = (1_u8..=8)
+            .map(|kind| DcapCollateralComponentV1 {
+                kind: DcapCollateralKind::try_from(kind).unwrap(),
+                bytes: vec![kind],
+            })
+            .collect();
+        let participants = ordered
+            .iter()
+            .enumerate()
+            .map(|(index, key)| {
+                let validator = tee_evm_address(key);
+                let mut consensus_pubkey = [7_u8; 48];
+                consensus_pubkey[0] = index as u8;
+                TeeBootstrapParticipantV2 {
+                    intent: RegistrationIntentV1 {
+                        chain_id: U256::from(CHAIN_ID).to_be_bytes(),
+                        genesis_hash: B256::repeat_byte(0x11),
+                        operation: AttestationOperationV1::RegisterEnclave,
+                        attestation_mode: AttestationMode::DcapRequired,
+                        policy_hash,
+                        enclave_profile: EnclaveProfile::Validator,
+                        node_id: NodeIdV1::Validator {
+                            address: validator.into_array(),
+                            bls_minpk_public: consensus_pubkey,
+                        },
+                        enclave_id: B256::repeat_byte(0x41 + index as u8),
+                        binding_id: B256::repeat_byte(0x51 + index as u8),
+                        binding_version: 1,
+                        registration_version: 0,
+                        renewal_nonce: 0,
+                        transition_nonce: 0,
+                        requested_valid_until: 7_200,
+                        recipient_x25519: [0x61 + index as u8; 32],
+                        attestation_ed25519: [0x71 + index as u8; 32],
+                        noise_responder_x25519: [0x81 + index as u8; 32],
+                        node_host_authorization_hash: B256::repeat_byte(0x91 + index as u8),
+                    },
+                    evidence: TeeBootstrapParticipantEvidenceV2::Dcap {
+                        quote: vec![0xA1 + index as u8; 64],
+                        collateral_component_indices: [0, 1, 2, 3, 4, 5, 6, 7],
+                    },
+                    node_signature: [0xB1 + index as u8; 65],
+                    enclave_signature: [0xC1 + index as u8; 64],
+                }
+            })
+            .collect::<Vec<_>>();
+        let committee_signatures = ordered
+            .iter()
+            .map(|key| TeeBootstrapCommitteeSignatureV2 {
+                validator: tee_evm_address(key),
+                signature: [0; 65],
+            })
+            .collect();
+        let mut payload = TeeBootstrapV2 {
+            policy,
+            committee_snapshot_hash,
+            committee_snapshot_block: block_number,
+            key_epoch: 0,
+            tribute_offer_epoch: 0,
+            dkg_transcript_hash: B256::ZERO,
+            tribute_offer_public_key: B256::repeat_byte(0x23),
+            tribute_offer_group_public_key: Bytes::from(vec![0x24; 96]),
+            collateral_pool,
+            participants,
+            committee_signatures,
         };
-        seed_genesis_policy(&mut provider, &policy);
-        let payload = tee_payload_with_policy(5, &ks[..3], policy);
-        let err = run_bootstrap(&mut provider, &payload).unwrap_err();
-        assert!(err.to_string().contains("fails genesis teePolicy"), "{err}");
-        assert!(!is_bootstrapped(&mut provider));
+        let signing_hash = payload.signing_hash().unwrap();
+        for (signature, key) in payload.committee_signatures.iter_mut().zip(ordered) {
+            signature.signature = tee_sign(key, &signing_hash);
+        }
+        payload
     }
 
-    #[test]
-    fn tee_bootstrap_rejects_policy_hash_not_matching_genesis() {
-        let ks = keys(&[0x11, 0x22, 0x33, 0x44]);
-        let mut provider = tee_committee_storage(5, &members(&ks));
-        // Genesis seeds policy A; the payload carries (and is signed over) policy B.
-        seed_genesis_policy(&mut provider, &matching_policy(1));
-        let payload = tee_payload_with_policy(5, &ks[..3], matching_policy(9));
-        let err = run_bootstrap(&mut provider, &payload).unwrap_err();
-        assert!(
-            err.to_string().contains("does not match genesis teePolicy"),
-            "{err}"
+    fn run_bootstrap_v1(
+        provider: &mut HashMapStorageProvider,
+        payload: TeeBootstrapV2,
+    ) -> Result<()> {
+        let policy_schedule = TeePolicyScheduleV1 {
+            chain_id: payload.policy.chain_id,
+            genesis_hash: payload.policy.genesis_hash,
+            entries: vec![TeePolicyScheduleEntryV1 {
+                activation_height: payload.policy.activation_height,
+                policy: payload.policy.clone(),
+            }],
+        };
+        let activation = crate::tee_attestation_activation::TeeAttestationChainSpecStateV1::Active(
+            std::sync::Arc::new(
+                crate::tee_attestation_activation::TeeAttestationActivationV1 {
+                    manifest: TeeAttestationManifestV1 {
+                        activation_height: 1,
+                        policy_schedule_hash: policy_schedule.schedule_hash().unwrap(),
+                        resource_schedule_hash: payload.policy.resource_schedule_hash,
+                    },
+                    policy_schedule,
+                },
+            ),
         );
-        assert!(!is_bootstrapped(&mut provider));
-    }
-
-    #[test]
-    fn tee_bootstrap_skips_enforcement_when_no_genesis_policy() {
-        // No seeded policy (slot 2 == ZERO): a payload whose registrations carry
-        // any measurements is accepted (backward-compatible PoC/dev path).
-        let ks = keys(&[0x11, 0x22, 0x33, 0x44]);
-        let mut provider = tee_committee_storage(5, &members(&ks));
-        let payload = tee_payload_with_policy(5, &ks[..3], matching_policy(99));
-        run_bootstrap(&mut provider, &payload).expect("unconfigured policy accepts");
-        assert!(is_bootstrapped(&mut provider));
-    }
-
-    #[test]
-    fn tee_bootstrap_rejects_below_supermajority() {
-        let ks = keys(&[0x11, 0x22, 0x33, 0x44]);
-        let mut provider = tee_committee_storage(5, &members(&ks));
-        // 2 of 4: 2*3 = 6 <= 4*2 = 8.
-        let payload = tee_payload(5, &ks[..2]);
-        let err = run_bootstrap(&mut provider, &payload).unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("insufficient validator signatures"),
-            "{err}"
-        );
-        assert!(!is_bootstrapped(&mut provider));
-    }
-
-    #[test]
-    fn tee_bootstrap_rejects_tampered_signature() {
-        let ks = keys(&[0x11, 0x22, 0x33]);
-        let mut provider = tee_committee_storage(5, &members(&ks));
-        let mut payload = tee_payload(5, &ks);
-        payload.validator_signatures[0].signature[10] ^= 0xFF;
-        let err = run_bootstrap(&mut provider, &payload).unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            msg.contains("does not match declared validator")
-                || msg.contains("signature recovery failed")
-                || msg.contains("non-committee"),
-            "{msg}"
-        );
-        assert!(!is_bootstrapped(&mut provider));
-    }
-
-    #[test]
-    fn tee_bootstrap_rejects_non_committee_signer() {
-        let ks = keys(&[0x11, 0x22, 0x33]);
-        // Only the first two are registered; the third is an outsider.
-        let mut provider = tee_committee_storage(5, &members(&ks[..2]));
-        let payload = tee_payload(5, &ks);
-        let err = run_bootstrap(&mut provider, &payload).unwrap_err();
-        assert!(err.to_string().contains("non-committee"), "{err}");
-        assert!(!is_bootstrapped(&mut provider));
-    }
-
-    #[test]
-    fn tee_bootstrap_rejects_keys_hash_mismatch() {
-        let ks = keys(&[0x11, 0x22, 0x33]);
-        let mut provider = tee_committee_storage(5, &members(&ks));
-        let mut payload = tee_payload(5, &ks);
-        payload.registrations[1].keys_hash = B256::repeat_byte(0xAB);
-        let err = run_bootstrap(&mut provider, &payload).unwrap_err();
-        assert!(err.to_string().contains("keys_hash mismatch"), "{err}");
-        assert!(!is_bootstrapped(&mut provider));
-    }
-
-    #[test]
-    fn tee_bootstrap_rejects_registration_signature_set_mismatch() {
-        let ks = keys(&[0x11, 0x22, 0x33, 0x44]);
-        let mut provider = tee_committee_storage(5, &members(&ks));
-        // 4 registrations + 4 valid signatures, then drop one signature so the
-        // registrant set (4) and signer set (3) differ. The remaining signatures
-        // stay valid (the body, hence signing_hash, is unchanged by the drop).
-        let mut payload = tee_payload(5, &ks);
-        payload.validator_signatures.pop();
-        let err = run_bootstrap(&mut provider, &payload).unwrap_err();
-        assert!(
-            err.to_string().contains("cover different validator sets"),
-            "{err}"
-        );
-        assert!(!is_bootstrapped(&mut provider));
-    }
-
-    #[test]
-    fn tee_bootstrap_is_idempotent_one_shot() {
-        let ks = keys(&[0x11, 0x22, 0x33]);
-        let mut provider = tee_committee_storage(5, &members(&ks));
-        let payload = tee_payload(5, &ks);
-        run_bootstrap(&mut provider, &payload).expect("first bootstrap accepted");
-        assert!(is_bootstrapped(&mut provider));
-        let err = run_bootstrap(&mut provider, &payload).unwrap_err();
-        assert!(err.to_string().contains("already bootstrapped"), "{err}");
-    }
-
-    #[test]
-    fn tee_bootstrap_rejects_wrong_snapshot_block() {
-        let ks = keys(&[0x11, 0x22, 0x33]);
-        let mut provider = tee_committee_storage(5, &members(&ks));
-        // Body binds committee_snapshot_block = 99, but the current block is 5.
-        let payload = tee_payload(99, &ks);
-        let err = run_bootstrap(&mut provider, &payload).unwrap_err();
-        assert!(
-            err.to_string().contains("committee_snapshot_block"),
-            "{err}"
-        );
-        assert!(!is_bootstrapped(&mut provider));
-    }
-
-    #[test]
-    fn tee_bootstrap_rejects_empty_committee() {
-        let ks = keys(&[0x11, 0x22, 0x33]);
-        // Config present but no registered validators -> empty consensus set.
-        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-        provider.set_block_number(5);
-        provider.set_timestamp(U256::from(5u64));
-        provider.set_beneficiary(OWNER);
         provider.enter(|storage| {
-            let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
-            vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
-            vs.config_epoch_length_blocks.write(10).unwrap();
+            let input = SystemTxInputV2::TeeBootstrap { payload }.encode().unwrap();
+            dispatch_inner(
+                storage,
+                &input,
+                SYSTEM_ADDRESS,
+                U256::ZERO,
+                None,
+                None,
+                &activation,
+            )
+            .map(|_| ())
+        })
+    }
+
+    #[test]
+    fn tee_bootstrap_v1_rejects_committee_subset_before_qvl_and_writes_nothing() {
+        let all_keys = keys(&[0x11, 0x22, 0x33]);
+        let mut sorted_members = members(&all_keys);
+        sorted_members.sort();
+        let mut provider = tee_committee_storage(1, &sorted_members);
+        let snapshot_hash = write_epoch0_snapshot(&mut provider, &sorted_members);
+        let policy = tee_policy_v1();
+        let payload = tee_payload_v1(1, &all_keys[..2], policy, snapshot_hash);
+
+        let error = run_bootstrap_v1(&mut provider, payload)
+            .expect_err("a committee subset must fail before DCAP verification");
+        assert!(error
+            .to_string()
+            .contains("complete active consensus committee"));
+        assert!(!is_bootstrapped(&mut provider));
+        provider.enter(|storage| {
+            let registry = outbe_teeregistry::TeeRegistry::new(storage);
+            for validator in sorted_members {
+                assert!(registry
+                    .validator_enclave_binding_v1(validator)
+                    .unwrap()
+                    .is_none());
+            }
         });
-        let payload = tee_payload(5, &ks);
-        let err = run_bootstrap(&mut provider, &payload).unwrap_err();
+    }
+
+    #[test]
+    fn tee_bootstrap_v1_routes_canonical_invalid_evidence_and_writes_nothing() {
+        let all_keys = keys(&[0x11]);
+        let mut sorted_members = members(&all_keys);
+        sorted_members.sort();
+        let mut provider = tee_committee_storage(1, &sorted_members);
+        let snapshot_hash = write_epoch0_snapshot(&mut provider, &sorted_members);
+        let policy = tee_policy_v1();
+        let payload = tee_payload_v1(1, &all_keys, policy, snapshot_hash);
+
+        run_bootstrap_v1(&mut provider, payload)
+            .expect_err("synthetic quote must reach and fail the public DCAP verifier");
+        assert!(!is_bootstrapped(&mut provider));
+        provider.enter(|storage| {
+            assert!(outbe_teeregistry::TeeRegistry::new(storage)
+                .validator_enclave_binding_v1(sorted_members[0])
+                .unwrap()
+                .is_none());
+        });
+        assert!(outbe_primitives::system_tx::SystemTxKind::TeeBootstrap.revert_fails_block());
+    }
+
+    #[test]
+    fn gramine_direct_ost3_bootstraps_once_through_the_activated_dispatch() {
+        let seeds = [0x11_u8, 0x22, 0x33];
+        let signing_keys = keys(&seeds);
+        let committee = members(&signing_keys);
+        let mut provider = tee_committee_storage(1, &committee);
+        let snapshot_hash = write_epoch0_snapshot(&mut provider, &committee);
+        let policy = gramine_direct_policy_v1(CHAIN_ID, B256::repeat_byte(0x11)).unwrap();
+        let validators = seeds
+            .iter()
+            .enumerate()
+            .map(|(index, seed)| {
+                let mut bls_minpk_public = [7_u8; 48];
+                bls_minpk_public[0] = index as u8;
+                DevValidatorV1 {
+                    evm_secret: [*seed; 32],
+                    bls_minpk_public,
+                }
+            })
+            .collect::<Vec<_>>();
+        let payload =
+            gramine_direct_bootstrap_v2(policy, snapshot_hash, 1, 7_201, &validators).unwrap();
+
+        run_bootstrap_v1(&mut provider, payload.clone()).unwrap();
+        assert!(is_bootstrapped(&mut provider));
+        provider.enter(|storage| {
+            let registry = outbe_teeregistry::TeeRegistry::new(storage);
+            for validator in &committee {
+                assert!(registry
+                    .validator_enclave_binding_v1(*validator)
+                    .unwrap()
+                    .is_some());
+            }
+        });
+
+        let error = run_bootstrap_v1(&mut provider, payload).unwrap_err();
         assert!(
-            err.to_string().contains("no active consensus committee"),
-            "{err}"
+            error.to_string().contains("already bootstrapped"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn gramine_direct_ost3_rejects_a_signed_wrong_snapshot_hash() {
+        let seeds = [0x11_u8];
+        let signing_keys = keys(&seeds);
+        let committee = members(&signing_keys);
+        let mut provider = tee_committee_storage(1, &committee);
+        let snapshot_hash = write_epoch0_snapshot(&mut provider, &committee);
+        let policy = gramine_direct_policy_v1(CHAIN_ID, B256::repeat_byte(0x11)).unwrap();
+        let validators = [DevValidatorV1 {
+            evm_secret: [seeds[0]; 32],
+            bls_minpk_public: [7_u8; 48],
+        }];
+        let payload = gramine_direct_bootstrap_v2(
+            policy,
+            snapshot_hash ^ B256::repeat_byte(1),
+            1,
+            7_201,
+            &validators,
+        )
+        .unwrap();
+
+        let error = run_bootstrap_v1(&mut provider, payload).unwrap_err();
+        assert!(
+            error.to_string().contains("snapshot hash mismatch"),
+            "{error}"
         );
         assert!(!is_bootstrapped(&mut provider));
     }

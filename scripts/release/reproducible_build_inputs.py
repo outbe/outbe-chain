@@ -22,24 +22,48 @@ def _load_generator_module():
 
 
 manifest_generator = _load_generator_module()
+
+
+def _load_project_toolchain_verifier():
+    path = Path(__file__).with_name("verify_project_toolchain.py")
+    spec = importlib.util.spec_from_file_location("outbe_project_toolchain_verifier", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load project toolchain verifier: {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+project_toolchain_verifier = _load_project_toolchain_verifier()
 EXPECTED_ARTIFACTS = (
     "outbe-chain",
     "outbe-cli",
     "outbe-keygen",
     "outbe-feeder",
     "outbe-tee-enclave",
+    "outbe-ocomp",
 )
 
 
-def load_and_validate_build_spec(path: Path) -> dict[str, Any]:
+def load_and_validate_build_spec(
+    path: Path,
+    *,
+    repo_root: Path | None = None,
+) -> dict[str, Any]:
     build_spec = json.loads(path.read_text(encoding="utf-8"))
     manifest_generator.validate_build_spec(build_spec)
     names = tuple(artifact.get("name") for artifact in build_spec.get("artifacts", []))
     if names != EXPECTED_ARTIFACTS:
-        raise ValueError("build spec must declare the exact five-ELF release matrix")
-    enclave = build_spec["artifacts"][-1]
+        raise ValueError("build spec must declare the exact production ELF release matrix")
+    enclave = next(
+        artifact
+        for artifact in build_spec["artifacts"]
+        if artifact.get("role") == "tee-enclave"
+    )
     if enclave.get("classification") != "production" or "mock" in enclave.get("features", []):
-        raise ValueError("production enclave must be the final non-mock ELF subject")
+        raise ValueError("production enclave must be a non-mock ELF subject")
+    if repo_root is not None:
+        project_toolchain_verifier.verify_repository(repo_root)
     return build_spec
 
 
@@ -109,7 +133,7 @@ def main() -> None:
     parser.add_argument("--release-tag")
     args = parser.parse_args()
 
-    build_spec = load_and_validate_build_spec(args.build_spec)
+    build_spec = load_and_validate_build_spec(args.build_spec, repo_root=args.repo_root)
     identity = resolve_release_identity(args.repo_root, args.release_tag)
     for value in resolved_values(build_spec, identity):
         print(value)

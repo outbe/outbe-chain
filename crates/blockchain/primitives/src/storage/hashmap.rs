@@ -1,5 +1,6 @@
 use alloy_primitives::{Address, Bytes, Log, LogData, B256, U256};
 use revm::context::journaled_state::JournalCheckpoint;
+use revm::context_interface::cfg::gas::{SSTORE_RESET, WARM_STORAGE_READ_COST};
 use revm::state::{AccountInfo, Bytecode};
 use std::collections::{BTreeMap, HashMap};
 
@@ -26,12 +27,16 @@ pub struct HashMapStorageProvider {
     /// entry yields `Ok(None)` (block outside retention / unknown).
     canonical_block_hashes: BTreeMap<u64, B256>,
     chain_id: u64,
+    genesis_hash: B256,
     timestamp: U256,
     beneficiary: Address,
     block_number: u64,
     is_static: bool,
     gas_limit: Option<u64>,
     gas_used: u64,
+    meter_storage_gas: bool,
+    metered_storage_reads: u64,
+    metered_storage_writes: u64,
     mutation_failure_at: Option<usize>,
     mutation_failure_address: Option<Address>,
     mutation_failure_after: bool,
@@ -65,6 +70,11 @@ struct Snapshot {
 impl HashMapStorageProvider {
     /// Creates a new test storage provider with the given chain ID.
     pub fn new(chain_id: u64) -> Self {
+        Self::new_with_chain_identity(chain_id, B256::ZERO)
+    }
+
+    /// Creates a test provider with an explicit immutable chain identity.
+    pub fn new_with_chain_identity(chain_id: u64, genesis_hash: B256) -> Self {
         Self {
             storage: HashMap::new(),
             transient: HashMap::new(),
@@ -73,12 +83,16 @@ impl HashMapStorageProvider {
             ordered_events: Vec::new(),
             canonical_block_hashes: BTreeMap::new(),
             chain_id,
+            genesis_hash,
             timestamp: U256::ZERO,
             beneficiary: Address::ZERO,
             block_number: 0,
             is_static: false,
             gas_limit: None,
             gas_used: 0,
+            meter_storage_gas: false,
+            metered_storage_reads: 0,
+            metered_storage_writes: 0,
             mutation_failure_at: None,
             mutation_failure_address: None,
             mutation_failure_after: false,
@@ -227,12 +241,27 @@ impl HashMapStorageProvider {
         self.is_static = is_static;
     }
 
-    /// Enables deterministic explicit-gas testing. Storage reads/writes stay
-    /// unmetered in this lightweight provider; calls to `deduct_gas` consume
-    /// this budget exactly like the production gas tracker.
+    /// Enables deterministic explicit-gas testing. Calls to `deduct_gas`
+    /// consume this budget exactly like the production gas tracker.
     pub fn set_gas_limit(&mut self, gas_limit: u64) {
         self.gas_limit = Some(gas_limit);
         self.gas_used = 0;
+        self.metered_storage_reads = 0;
+        self.metered_storage_writes = 0;
+    }
+
+    /// Opts this test provider into the production warm-SLOAD/SSTORE-reset
+    /// charges. Default tests remain lightweight and unmetered.
+    pub fn enable_production_storage_gas_metering(&mut self) {
+        self.meter_storage_gas = true;
+        self.metered_storage_reads = 0;
+        self.metered_storage_writes = 0;
+    }
+
+    /// Returns the production-shaped persistent storage operations observed
+    /// since the last gas-limit reset.
+    pub fn metered_storage_operations(&self) -> (u64, u64) {
+        (self.metered_storage_reads, self.metered_storage_writes)
     }
 
     /// Injects a deterministic failure immediately before the zero-based
@@ -386,6 +415,10 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         self.chain_id
     }
 
+    fn genesis_hash(&self) -> B256 {
+        self.genesis_hash
+    }
+
     fn timestamp(&self) -> U256 {
         self.timestamp
     }
@@ -418,6 +451,10 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
     }
 
     fn sload(&mut self, address: Address, key: U256) -> Result<U256> {
+        if self.meter_storage_gas {
+            self.deduct_gas(WARM_STORAGE_READ_COST)?;
+            self.metered_storage_reads = self.metered_storage_reads.saturating_add(1);
+        }
         Ok(self
             .storage
             .get(&(address, key))
@@ -434,6 +471,10 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
     }
 
     fn sstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
+        if self.meter_storage_gas {
+            self.deduct_gas(SSTORE_RESET)?;
+            self.metered_storage_writes = self.metered_storage_writes.saturating_add(1);
+        }
         self.before_mutation(address)?;
         self.storage.insert((address, key), value);
         self.after_mutation()

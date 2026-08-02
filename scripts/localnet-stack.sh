@@ -44,9 +44,9 @@ network_env() {
   export OUTBE_PROJECTION_MONGODB_DATABASE_PREFIX="$DATABASE_PREFIX"
   export OUTBE_TEE_ENCLAVE=1
   export OUTBE_TEE_ENCLAVE_MOCK=1
-  # A stack stop tears down every enclave together. Persist each validator's
-  # DKG-derived offer key so the next start can recover without depending on a
-  # still-running committee member for TEE key handoff.
+  # Persist each validator's permanent offer key across a whole-stack restart.
+  # A missing/corrupt sealed key is terminal for that identity; localnet never
+  # invokes a peer recovery or replacement path.
   export OUTBE_TEE_SEAL=1
   export OUTBE_TEE_ENCLAVE_BINARY="$ROOT_DIR/target/release/outbe-tee-enclave-mock"
 }

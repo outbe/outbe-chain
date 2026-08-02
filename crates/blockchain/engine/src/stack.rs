@@ -11,9 +11,7 @@
 //!    a. From saved DKG state on disk (restart precedence)
 //!    b. From CLI args (`--consensus.signing-share` + `--consensus.public-polynomial`)
 //!    c. Via interactive DKG ceremony during fresh genesis formation
-//!    d. Via testnet force-DKG disaster recovery when all current validators
-//!    intentionally replace lost DKG material on an existing chain
-//!    e. Via startup live-join reshare when the chain already has DKG state
+//!    d. Via startup live-join reshare when the chain already has DKG state
 //! 5. Create Muxers for epoch-scoped consensus channels
 //! 6. Enter epoch loop:
 //!    a. Register epoch sub-channels, build HybridScheme + Reporter
@@ -22,7 +20,7 @@
 //!    d. On reshare: run DKG in parallel, then abort engine + restart at new epoch
 
 use alloy_primitives::{Address as EthAddress, Bytes, B256};
-use commonware_codec::Read as _;
+use commonware_codec::{Encode as _, Read as _};
 use commonware_consensus::{
     simplex,
     types::{Epoch, Height, Round, ViewDelta},
@@ -265,51 +263,6 @@ fn epoch_length_blocks_from_genesis(node: &OutbeFullNode) -> Result<u32> {
         )),
         None => Ok(config::DEFAULT_EPOCH_LENGTH_BLOCKS),
     }
-}
-
-/// JSON shape of `genesis.config.teePolicy`, seeded by
-/// `scripts/seed_genesis.py`. `B256` fields deserialize from `0x…` hex.
-#[derive(serde::Deserialize)]
-struct GenesisTeePolicyJson {
-    #[serde(default)]
-    allowed_mrsigner: Vec<B256>,
-    #[serde(default)]
-    allowed_mrenclave: Vec<B256>,
-    #[serde(default)]
-    min_isv_svn: u16,
-}
-
-/// Read the genesis TEE attestation policy from `config.teePolicy`. Returns an
-/// empty (unconfigured) policy when absent — the producer then emits a payload
-/// whose `policy_hash` the Phase 3b handler does not bind (genesis slot 2 stays
-/// ZERO). When present it MUST match what `seed_genesis.py` hashed into
-/// `TeeRegistry.policy_hash`, so the producer's `payload.policy_hash` equals the
-/// genesis-seeded value and the bootstrap is accepted. Used to build the
-/// host-side strict connect policy for the consensus DKG/bootstrap sites
-/// and the offer-decrypt host connect (`init_enclave_client`).
-///
-/// `pub` + chain-spec-based so the node binary can build the same policy at
-/// startup, where only the chain spec (not a full `OutbeFullNode`) is in scope.
-pub fn tee_policy_from_chain_spec(
-    spec: &reth_ethereum::chainspec::ChainSpec<OutbeHeader>,
-) -> Result<outbe_primitives::tee_bootstrap::TeePolicy> {
-    let extra = &spec.genesis.config.extra_fields;
-    match extra.get_deserialized::<GenesisTeePolicyJson>("teePolicy") {
-        Some(Ok(policy)) => Ok(outbe_primitives::tee_bootstrap::TeePolicy {
-            allowed_mrsigner: policy.allowed_mrsigner,
-            allowed_mrenclave: policy.allowed_mrenclave,
-            min_isv_svn: policy.min_isv_svn,
-        }),
-        Some(Err(error)) => Err(eyre::eyre!("invalid genesis config teePolicy: {error}")),
-        None => Ok(outbe_primitives::tee_bootstrap::TeePolicy::default()),
-    }
-}
-
-/// Genesis TEE policy for the consensus path, from the live node's chain spec.
-fn tee_policy_from_genesis(
-    node: &OutbeFullNode,
-) -> Result<outbe_primitives::tee_bootstrap::TeePolicy> {
-    tee_policy_from_chain_spec(node.chain_spec().as_ref())
 }
 
 /// Read a `u64` millisecond timing value from genesis `config`, falling back to
@@ -679,7 +632,7 @@ fn read_startup_dkg_snapshot(
     .map(|(commit_height, artifact)| (commit_height.saturating_sub(1), artifact));
     let mut recovered_boundary_finalized = recovered_boundary.is_some();
 
-    if let Some(keys_dir) = args.keys_dir.as_ref().filter(|_| !args.force_dkg) {
+    if let Some(keys_dir) = args.keys_dir.as_ref() {
         if let Some(snapshot) = recover_pending_dkg_boundary_snapshot(
             keys_dir,
             key_backend,
@@ -805,11 +758,8 @@ where
         snapshot.context.genesis_formation_proven = gate == GenesisFormationGate::Proven;
 
         if !gate_required
-            || startup_dkg_mode(
-                snapshot.context,
-                local_key_in_current_consensus_set,
-                args.force_dkg,
-            ) == StartupDkgMode::InitialGenesisDkg
+            || startup_dkg_mode(snapshot.context, local_key_in_current_consensus_set)
+                == StartupDkgMode::InitialGenesisDkg
             || gate == GenesisFormationGate::ExistingChainJoin
             || !local_key_in_current_consensus_set
         {
@@ -962,15 +912,9 @@ struct RethGenesisPeerEvidence {
 fn startup_dkg_mode(
     context: StartupDkgContext,
     local_key_in_current_consensus_set: bool,
-    force_dkg: bool,
 ) -> StartupDkgMode {
     if !local_key_in_current_consensus_set {
         return StartupDkgMode::LiveJoinRequired;
-    }
-
-    if force_dkg {
-        warn!("--testnet.force-dkg: forcing fresh DKG ceremony (disaster recovery)");
-        return StartupDkgMode::InitialGenesisDkg;
     }
 
     if context.last_execution_height == 0
@@ -982,6 +926,73 @@ fn startup_dkg_mode(
     } else {
         StartupDkgMode::LiveJoinRequired
     }
+}
+
+/// Enforce the permanent offer-key invariant before any threshold ceremony,
+/// live join, reshare, or consensus actor can start.
+///
+/// Only proven block-1 founders may be keyless while canonical state is still
+/// zero. An empty-DB verifier join may carry an already-installed key until
+/// certified sync makes the canonical value locally available; every other
+/// existing identity must match canonical state exactly at this gate.
+fn validate_offer_key_before_threshold_work(
+    context: StartupDkgContext,
+    local_key_in_current_consensus_set: bool,
+    verifier_join: bool,
+    on_chain_offer: B256,
+    resident_offer: Option<B256>,
+) -> Result<()> {
+    let founding = !verifier_join
+        && startup_dkg_mode(context, local_key_in_current_consensus_set)
+            == StartupDkgMode::InitialGenesisDkg;
+    if founding {
+        ensure!(
+            on_chain_offer.is_zero(),
+            "fresh block-1 founding startup found a pre-existing canonical offer key"
+        );
+        return Ok(());
+    }
+
+    let resident_offer = resident_offer.ok_or_else(|| {
+        eyre::eyre!(
+            "existing identity has no permanent resident offer key before threshold work; no recovery or fallback exists"
+        )
+    })?;
+    ensure!(
+        !resident_offer.is_zero(),
+        "existing identity has a zero permanent resident offer key before threshold work; no recovery or fallback exists"
+    );
+
+    let has_existing_local_state = context.last_execution_height > 0
+        || context.last_consensus_finalized_height > 0
+        || context.has_chain_finalized_dkg_boundary();
+    if on_chain_offer.is_zero() {
+        ensure!(
+            !has_existing_local_state,
+            "existing canonical state has no mandatory OST3 offer key; no recovery or fallback exists"
+        );
+        ensure!(
+            verifier_join,
+            "only an empty-DB verifier join with an installed permanent key may defer exact offer-key comparison until certified sync"
+        );
+        return Ok(());
+    }
+
+    ensure!(
+        resident_offer == on_chain_offer,
+        "local enclave does not hold the canonical permanent offer key before threshold work; no recovery or fallback exists"
+    );
+    Ok(())
+}
+
+fn should_coordinate_genesis_tee_bootstrap(
+    context: StartupDkgContext,
+    local_key_in_current_consensus_set: bool,
+    verifier_join: bool,
+) -> bool {
+    !verifier_join
+        && startup_dkg_mode(context, local_key_in_current_consensus_set)
+            == StartupDkgMode::InitialGenesisDkg
 }
 
 fn genesis_formation_gate_decision(
@@ -1261,52 +1272,6 @@ const fn verifier_activation_needs_immediate_replay(
     current_height >= activation_height
 }
 
-fn build_force_dkg_recovery_boundary(
-    validator_set: &validators::ValidatorSet,
-    output: &Output<MinSig, bls12381::PublicKey>,
-    previous_boundary: &DkgBoundaryArtifact,
-    current_head: u64,
-) -> Result<(u64, DkgBoundaryArtifact)> {
-    ensure!(
-        current_head > 0,
-        "force-DKG recovery boundary is only valid for an existing chain"
-    );
-    validate_dkg_output_players_exact(output, validator_set)
-        .wrap_err("force-DKG output does not cover the current active validator set")?;
-
-    let dkg_cycle = previous_boundary
-        .dkg_cycle
-        .checked_add(1)
-        .ok_or_else(|| eyre::eyre!("force-DKG dkg_cycle overflow"))?;
-    let planned_activation_height = current_head
-        .checked_add(1)
-        .ok_or_else(|| eyre::eyre!("force-DKG planned activation height overflow"))?;
-    let vrf_material_version =
-        outbe_validatorset::next_vrf_material_version(previous_boundary.vrf_material_version)?;
-    let recovery_epoch =
-        next_consensus_epoch_after_dkg_activation(Epoch::new(previous_boundary.epoch));
-
-    let activated_validator_set = validator_set_for_dkg_output_players(output, validator_set)?;
-    let current_participants = participants_from_validator_set(validator_set)?;
-    let activated_participants = participants_from_validator_set(&activated_validator_set)?;
-    let is_validator_set_change = current_participants != activated_participants;
-
-    let artifact = dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
-        epoch: recovery_epoch,
-        validator_set: &activated_validator_set,
-        output,
-        is_full_dkg: true,
-        dkg_cycle,
-        freeze_height: current_head,
-        planned_activation_height,
-        vrf_material_version,
-        is_validator_set_change,
-        tee_reshare_registrations: Vec::new(),
-    })?;
-
-    Ok((planned_activation_height, artifact))
-}
-
 fn genesis_hash(node: &OutbeFullNode) -> Result<B256> {
     let hash = node
         .provider
@@ -1560,6 +1525,35 @@ fn tee_bootstrap_setup(
     Ok((evm_signer, committee))
 }
 
+/// Build the one canonical epoch-0 DKG boundary before block 1 exists.
+///
+/// OST3 must bind the exact committee snapshot that the preceding block-1
+/// `BoundaryOutcome` transaction will commit. Reading that snapshot from the
+/// provider before block 1 creates an impossible dependency cycle: the state is
+/// intentionally absent until `BoundaryOutcome` executes. Deriving both system
+/// transactions from this single artifact preserves proposer/executor parity and
+/// introduces no second committee authority.
+fn build_genesis_dkg_boundary_artifact(
+    validator_set: &validators::ValidatorSet,
+    output: &Output<MinSig, bls12381::PublicKey>,
+    is_full_dkg: bool,
+) -> Result<DkgBoundaryArtifact> {
+    validate_dkg_output_players_exact(output, validator_set)
+        .wrap_err("fresh bootstrap DKG output does not cover the genesis validator set")?;
+    dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
+        epoch: Epoch::new(0),
+        validator_set,
+        output,
+        is_full_dkg,
+        dkg_cycle: 0,
+        freeze_height: 0,
+        planned_activation_height: 0,
+        vrf_material_version: 0,
+        is_validator_set_change: true,
+        tee_reshare_registrations: Vec::new(),
+    })
+}
+
 fn epoch_validation_inputs(
     epoch: Epoch,
     participants: &commonware_utils::ordered::Set<bls12381::PublicKey>,
@@ -1798,33 +1792,25 @@ where
                 eyre::eyre!("genesis validator set is not a valid participant set: {e:?}")
             })?;
 
-    // TEE-chain guardrail. Full execution re-runs offer txs (decrypt in the
-    // enclave) and enclave-registration txs (`registerEnclave` seals the
-    // resident offer key to the joiner and emits `OfferKeySealed`) — BOTH route
-    // through the local enclave, and BOTH land in the block's receipts root. A
-    // follower without an enclave silently omits the seal / cannot decrypt, so
-    // its receipts root diverges and reth rejects the block (a cryptic
-    // "receipt root mismatch" at the first such height). Fail fast here with an
-    // actionable message instead. The offer key is a lifetime constant, so it is
-    // installed ONCE, before sync, via `outbe-cli tee join`. The TEE-chain probe
-    // reads the UPSTREAM's state, not the follower's: the follower is at genesis,
-    // where the bootstrap tx that sets the offer key has not run yet.
+    // Defence in depth for callers that construct the engine stack outside the
+    // node binary. The binary already proves this equality before Reth launch;
+    // repeat it here before certified sync so no alternate embedding can process
+    // a protected block with a missing or divergent permanent key.
     let tee_probe = crate::follow_transport::UpstreamRpcClient::new(&upstream)?;
     let tee_offer_public = tee_probe
         .tribute_offer_public_key()
         .await
         .wrap_err("failed to probe the upstream for TEE-chain status (follower prerequisites)")?;
-    if !tee_offer_public.is_zero() && args.tee_enclave_socket.is_none() {
-        return Err(eyre::eyre!(
-            "this is a TEE chain (a tribute offer key is set on-chain) but the follower was \
-             started WITHOUT --tee-enclave-socket. A full-execution follower re-runs offer and \
-             enclave-registration transactions through the enclave, so it needs an attested \
-             enclave that holds the (lifetime-constant) offer key. Install the key once, before \
-             syncing:\n  1. start the enclave sidecar,\n  2. `outbe-cli tee join --enclave-socket \
-             <socket> --rpc-url {upstream}` (registers + waits for the sealed offer key),\n  3. \
-             start the node with `--tee-enclave-socket <socket> --upstream {upstream}`."
-        ));
-    }
+    ensure!(
+        !tee_offer_public.is_zero(),
+        "selected upstream has no mandatory OST3 offer key"
+    );
+    let resident_offer = outbe_tee::resident_offer_public_key_v1()
+        .wrap_err("failed to read the mandatory local enclave offer key")?;
+    ensure!(
+        resident_offer == tee_offer_public,
+        "local enclave does not hold the selected chain's exact offer key; refusing certified sync (no recovery or fallback)"
+    );
 
     info!(
         %upstream,
@@ -2113,15 +2099,14 @@ where
 
 fn validate_testnet_only_flags(
     trust_el_head: bool,
-    force_dkg: bool,
     unix_time_offset_secs: Option<i64>,
     chain_id: u64,
 ) -> Result<()> {
     let is_explicit_test_network = outbe_primitives::chain::is_devnet(chain_id)
         || outbe_primitives::chain::is_testnet(chain_id);
-    if (trust_el_head || force_dkg) && !is_explicit_test_network {
+    if trust_el_head && !is_explicit_test_network {
         return Err(eyre::eyre!(
-            "--testnet.trust-el-head and --testnet.force-dkg are not allowed on non-test networks (chain_id {chain_id})"
+            "--testnet.trust-el-head is not allowed on non-test networks (chain_id {chain_id})"
         ));
     }
     if unix_time_offset_secs.is_some() && !is_explicit_test_network {
@@ -2182,15 +2167,9 @@ where
     let ocomp_install_hash = Some(ocomp_fork_install.install_hash(&poc_schema_limits())?);
     validate_testnet_only_flags(
         args.trust_el_head,
-        args.force_dkg,
         args.testnet_unix_time_offset_secs,
         chain_id,
     )?;
-    if args.force_dkg && !args.trust_el_head {
-        return Err(eyre::eyre!(
-            "--testnet.force-dkg requires --testnet.trust-el-head"
-        ));
-    }
 
     // Follower mode: cold-sync finalized blocks from an upstream node and verify
     // them against the trusted network identity, WITHOUT running the consensus
@@ -2312,19 +2291,6 @@ where
         )
     });
 
-    // Register the key-handoff channel (only with a TEE enclave sidecar). A
-    // joining/keyless committee member requests the resident offer key here; a
-    // current node seals it to the newcomer's attested X25519 key. Long-lived (a
-    // node serves handoff requests for as long as it runs), unlike the one-time
-    // DKG/bootstrap channels. Registered before `network.start()`.
-    let mut tee_handoff_channel = args.tee_enclave_socket.as_ref().map(|_| {
-        network.register(
-            config::TEE_HANDOFF_CHANNEL,
-            Quota::per_second(NZU32!(64)),
-            config::CHANNEL_BACKLOG,
-        )
-    });
-
     // Parse consensus peers: `<hex_pubkey>@<host:port>` → (PublicKey, SocketAddr).
     let bootnode_map = parse_consensus_peers(&args.consensus_peers)?;
 
@@ -2402,11 +2368,6 @@ where
         muxer.start();
         handle
     });
-    let mut tee_handoff_mux = tee_handoff_channel.take().map(|ch| {
-        let (muxer, handle) = Muxer::new(ctx.child("tee_handoff_mux"), ch.0, ch.1, MUXER_MAILBOX);
-        muxer.start();
-        handle
-    });
 
     // R5.4: pre-register the round-0 TEE sub-channels EARLY (mirroring the
     // consensus `dkg_mux.register(0)` at startup) so every node has round 0 routed
@@ -2430,17 +2391,6 @@ where
         ),
         None => None,
     };
-    // Pre-register the handoff sub-channel (round 0) so a newcomer's request
-    // routes to the responders without a registration race.
-    let mut tee_handoff_round0 = match tee_handoff_mux.as_mut() {
-        Some(m) => Some(
-            m.register(0)
-                .await
-                .map_err(|e| eyre::eyre!("failed to pre-register TEE handoff round 0: {e}"))?,
-        ),
-        None => None,
-    };
-
     info!("channel muxers started");
 
     // Startup chain-state sources must exist before threshold material selection:
@@ -2626,17 +2576,37 @@ where
     let mut recovered_boundary = startup_snapshot.recovered_boundary;
     let startup_dkg_context = startup_snapshot.context;
 
-    if args.force_dkg
-        && startup_dkg_context.last_execution_height > 0
-        && !startup_dkg_context.has_chain_finalized_dkg_boundary()
-    {
-        return Err(eyre::eyre!(
-            "--testnet.force-dkg existing-chain recovery requires a recovered \
-             chain DKG boundary before running a fresh ceremony. Restore \
-             validator-N/data/consensus/outbe-* and finalized_parent_certs; \
-             do not delete consensus archives when preserving the chain."
-        ));
-    }
+    // Determine founding versus existing identity before any DKG/live-join path.
+    // The mandatory enclave client was installed by the node entrypoint before
+    // Reth launch; this gate prevents threshold work and consensus startup from
+    // treating the pre-DKG onboarding recipient as a permanent offer key.
+    let verifier_join = args.signing_share.is_none()
+        && args.public_polynomial.is_some()
+        && args.dkg_output.is_some();
+    let local_consensus_key = signing_key.public_key();
+    let local_key_in_current_consensus_set = validator_set
+        .public_keys
+        .iter()
+        .any(|key| key == &local_consensus_key);
+    let on_chain_offer = validators::read_tee_offer_public_at_latest(&node.provider)
+        .wrap_err("failed to read canonical offer key before threshold work")?;
+    let resident_offer = outbe_tee::resident_offer_public_key_state_v1()
+        .wrap_err("failed to read enclave offer-key readiness before threshold work")?;
+    validate_offer_key_before_threshold_work(
+        startup_dkg_context,
+        local_key_in_current_consensus_set,
+        verifier_join,
+        on_chain_offer,
+        resident_offer,
+    )?;
+    info!(
+        founding = startup_dkg_mode(startup_dkg_context, local_key_in_current_consensus_set)
+            == StartupDkgMode::InitialGenesisDkg
+            && !verifier_join,
+        offer_key_ready = resident_offer.is_some(),
+        canonical_offer_key_present = !on_chain_offer.is_zero(),
+        "permanent offer-key gate passed before threshold work"
+    );
 
     // ── 6. Obtain threshold material ────────────────────────────────────
     let mut startup_live_join_completed = false;
@@ -2731,6 +2701,35 @@ where
             }
         };
 
+    // Verifier-join supplies public threshold material without a signing share.
+    // Its local database can still be at height zero while it joins an already
+    // running chain, so local height alone must never reproduce genesis DKG/OST3.
+    let coordinate_genesis_bootstrap = should_coordinate_genesis_tee_bootstrap(
+        startup_dkg_context,
+        local_key_in_current_consensus_set,
+        verifier_join,
+    );
+
+    // Block 1 carries `BoundaryOutcome` before `TeeBootstrap`. Only a proven
+    // founding member builds that canonical boundary from the completed
+    // consensus DKG and reuses its committee hash for OST3. The corresponding
+    // snapshot does not and must not exist in provider state until block 1
+    // executes.
+    let mut genesis_dkg_boundary_artifact = if coordinate_genesis_bootstrap {
+        let bootstrap_output = last_dkg_output.as_ref().ok_or_else(|| {
+            eyre::eyre!(
+                "fresh bootstrap requires full DKG output; public polynomial alone cannot build canonical boundary"
+            )
+        })?;
+        Some(build_genesis_dkg_boundary_artifact(
+            &validator_set,
+            bootstrap_output,
+            bootstrap_from_live_dkg,
+        )?)
+    } else {
+        None
+    };
+
     // ── 7. Build participant set (updated after each DKG reshare) ───────
     // when recovering a finalized DKG boundary, reconstruct the scheme
     // against the committee the recovered threshold material belongs to (the DKG
@@ -2754,12 +2753,6 @@ where
 
     let active_validator_set = validators::read_validators_at_latest(&node.provider)
         .wrap_err("failed to load active validator set for EVM signer validation")?;
-    // Verifier-join: --consensus.public-polynomial + --consensus.dkg-output without a
-    // --consensus.signing-share. The node may not yet be in the on-chain validator set
-    // (it is syncing from genesis), so membership is not fatal — it runs as a verifier.
-    let verifier_join = args.signing_share.is_none()
-        && args.public_polynomial.is_some()
-        && args.dkg_output.is_some();
     let recovered_committee_for_signer = recovered_boundary
         .as_ref()
         .map(|(_, boundary)| (&participants, boundary));
@@ -2773,8 +2766,8 @@ where
     )?;
 
     // ── 7b. One-time TEE DKG + bootstrap coordination (startup, like the DKG) ──
-    // On a fresh chain (no executed blocks yet), if this validator runs a TEE
-    // enclave sidecar:
+    // On a fresh chain (no executed blocks yet), this validator must run the TEE
+    // enclave sidecar selected by the mandatory block-1 genesis policy:
     //   1. run the TEE DKG ceremony so the committee's enclaves collaboratively
     //      derive the shared tribute offer key (Seam F: a group threshold
     //      signature over a fixed message → HKDF → X25519; byte-identical on every
@@ -2787,18 +2780,30 @@ where
     // FAILS FAST (node halts via startup error) on timeout or error, rather than
     // proceeding into a permanently un-bootstrapped chain (no offer key on-chain =>
     // offers impossible). Local liveness only — not a consensus rule on imported
-    // blocks. Skipped entirely when no `--tee-enclave-socket` is configured.
-    if let (Some(socket), Some(my_validator)) =
-        (args.tee_enclave_socket.clone(), proposer_evm_address)
+    // blocks. Missing local enclave or validator identity is a startup error,
+    // never a production fallback.
+    let socket = args.tee_enclave_socket.clone().ok_or_else(|| {
+        eyre::eyre!("mandatory TEE chain requires --tee-enclave-socket before consensus startup")
+    })?;
+    let tee_attestation =
+        outbe_evm::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
+            node.chain_spec().as_ref(),
+        );
+    let tee_activation = tee_attestation
+        .activation()
+        .map_err(|error| eyre::eyre!("invalid mandatory teeAttestationV1 ChainSpec: {error}"))?;
+    let tee_policy = tee_activation
+        .policy_at(outbe_evm::tee_attestation_activation::TEE_ATTESTATION_V1_ACTIVATION_HEIGHT)
+        .map_err(eyre::Report::msg)?
+        .clone();
     {
-        // The startup DKG closure (last_execution_height == 0) moves `socket`; clone
-        // it up front for the handoff responder spawned after the if/else.
-        let socket_for_responder = socket.clone();
-        if last_execution_height == 0 {
+        if coordinate_genesis_bootstrap {
+            let my_validator = proposer_evm_address.ok_or_else(|| {
+                eyre::eyre!("founding validator TEE bootstrap requires its EVM identity")
+            })?;
             let dkg_chain_id =
                 B256::left_padding_from(&node.chain_spec().chain().id().to_be_bytes());
             let n = participants.len();
-            let local_consensus_key = signing_key.public_key();
             let tee_remote_peers: std::collections::BTreeSet<bls12381::PublicKey> = participants
                 .iter()
                 .filter(|peer| *peer != &local_consensus_key)
@@ -2813,9 +2818,53 @@ where
             let (tee_sender, tee_receiver) = tee_bootstrap_round0
                 .take()
                 .ok_or_else(|| eyre::eyre!("TEE bootstrap P2P channel not registered"))?;
-            let (evm_signer, committee) =
+            let (evm_signer, participant_committee) =
                 tee_bootstrap_setup(&args, &participants, &validator_set)?;
-            let tee_policy = tee_policy_from_genesis(&node)?;
+            let genesis_boundary = genesis_dkg_boundary_artifact.as_ref().ok_or_else(|| {
+                eyre::eyre!("fresh OST3 bootstrap is missing its canonical genesis DKG boundary")
+            })?;
+            let committee_snapshot_hash = genesis_boundary.committee_set_hash;
+            let committee: std::collections::BTreeSet<alloy_primitives::Address> = genesis_boundary
+                .reshare
+                .new_active_set
+                .iter()
+                .copied()
+                .collect();
+            ensure!(
+                committee == participant_committee,
+                "OST3 epoch-0 DKG boundary differs from the live genesis participants"
+            );
+            ensure!(
+                committee.contains(&my_validator),
+                "local validator is absent from the exact OST3 epoch-0 committee snapshot"
+            );
+            let encoded_consensus_key = local_consensus_key.encode();
+            let consensus_bls_public: [u8; 48] = encoded_consensus_key
+                .as_ref()
+                .try_into()
+                .map_err(|_| eyre::eyre!("validator consensus public key is not 48 bytes"))?;
+            let node_id = outbe_primitives::tee_attestation_v1::NodeIdV1::Validator {
+                address: my_validator.into_array(),
+                bls_minpk_public: consensus_bls_public,
+            };
+            let numeric_chain_id = node.chain_spec().chain().id();
+            let requested_valid_until = node
+                .chain_spec()
+                .genesis
+                .timestamp
+                .checked_add(tee_policy.maximum_lease)
+                .ok_or_else(|| eyre::eyre!("OST3 deterministic block-1 lease overflows u64"))?;
+            let node_data_dir = node
+                .config
+                .datadir
+                .clone()
+                .resolve_datadir(node.chain_spec().chain())
+                .data_dir()
+                .to_path_buf();
+            let endpoint = socket
+                .to_str()
+                .ok_or_else(|| eyre::eyre!("TEE enclave endpoint is not valid UTF-8"))?
+                .to_owned();
 
             // Step 1 (TEE DKG → shared offer key) + Step 2 (bootstrap coordination →
             // block-1 payload), under one deadline. Any error or timeout halts.
@@ -2832,18 +2881,59 @@ where
             let bootstrap_clock = ctx.child("tee_bootstrap_clock");
             let payload = ctx
                 .timeout(deadline, async move {
-                    // Host connect policy from the genesis teePolicy: strict
-                    // under gramine-sgx, unattested-fallback on the dev box.
-                    let connect_policy =
-                        crate::tee_bootstrap::quote_policy_from_tee_policy(&tee_policy);
+                    let (mut enclave, production_manifest) = match tee_policy.attestation_mode {
+                        outbe_primitives::tee_attestation_v1::AttestationMode::DcapRequired => {
+                            let production = outbe_tee::connect_or_initialize_validator_enclave(
+                                &endpoint,
+                                &node_data_dir,
+                                outbe_tee::ValidatorNodeHostIdentityV1 {
+                                    chain_id: numeric_chain_id,
+                                    genesis_hash: tee_policy.genesis_hash,
+                                    validator: my_validator,
+                                    consensus_bls_public,
+                                },
+                                |hash| {
+                                    evm_signer
+                                        .sign_hash(&hash)
+                                        .map_err(|error| error.to_string())
+                                },
+                            )
+                            .map_err(|error| {
+                                eyre::eyre!("production NodeHost reconnect failed: {error}")
+                            })?;
+                            let manifest =
+                                outbe_tee::load_committed_enclave_manifest_v1(&node_data_dir)
+                                    .map_err(|error| {
+                                        eyre::eyre!(
+                                            "committed NodeHost manifest load failed: {error}"
+                                        )
+                                    })?;
+                            (
+                                outbe_tee::RuntimeEnclaveClient::Production(production),
+                                Some(manifest),
+                            )
+                        }
+                        outbe_primitives::tee_attestation_v1::AttestationMode::GramineDirectDev => {
+                            let development = outbe_tee::EnclaveClient::connect_endpoint(
+                                &endpoint,
+                                &outbe_tee::QuotePolicy::dev_accept_any(),
+                            )
+                            .map_err(|error| {
+                                eyre::eyre!("GramineDirectDev enclave reconnect failed: {error}")
+                            })?;
+                            (
+                                outbe_tee::RuntimeEnclaveClient::Development(development),
+                                None,
+                            )
+                        }
+                    };
                     let (tribute_offer_public, tribute_offer_group_public_key) =
                         crate::tee_bootstrap::run_tee_dkg_at_startup(
-                            &socket,
+                            &mut enclave,
                             dkg_clock,
                             n,
                             dkg_chain_id,
                             0,
-                            &connect_policy,
                             dkg_remote_peers,
                             dkg_sender,
                             dkg_receiver,
@@ -2854,18 +2944,34 @@ where
                         tribute_offer_public = %B256::from(tribute_offer_public),
                         "TEE DKG complete — shared tribute offer key derived"
                     );
-                    let payload = crate::tee_bootstrap::run_tee_bootstrap_at_startup(
-                        &socket,
-                        bootstrap_clock,
-                        my_validator,
+                    let local_submission =
+                        crate::tee_bootstrap::build_local_tee_bootstrap_submission_v2(
+                            &mut enclave,
+                            production_manifest.as_ref(),
+                            node_id,
+                            &tee_policy,
+                            requested_valid_until,
+                            &evm_signer,
+                        )?;
+                    let authority = outbe_primitives::tee_bootstrap_v2::TeeBootstrapAuthorityV2 {
+                        policy: tee_policy,
+                        committee_snapshot_hash,
+                        committee_snapshot_block: 1,
+                        key_epoch: 0,
+                        tribute_offer_epoch: 0,
+                        dkg_transcript_hash: B256::ZERO,
+                        tribute_offer_public_key: B256::from(tribute_offer_public),
+                        tribute_offer_group_public_key: Bytes::from(tribute_offer_group_public_key),
+                    };
+                    let payload = crate::tee_bootstrap::run_tee_bootstrap_v2_at_startup(
+                        local_submission,
+                        authority,
                         committee,
-                        B256::from(tribute_offer_public),
-                        tribute_offer_group_public_key,
-                        tee_policy,
                         &evm_signer,
                         tee_remote_peers,
                         tee_sender,
                         tee_receiver,
+                        bootstrap_clock,
                     )
                     .await
                     .map_err(|e| eyre::eyre!("TEE bootstrap coordination failed: {e}"))?;
@@ -2881,243 +2987,107 @@ where
                 })??;
 
             info!(
-                validators = payload.registrations.len(),
-                "TEE bootstrap coordinated — payload ready for block 1"
+                validators = payload.participants.len(),
+                attestation_mode = ?payload.policy.attestation_mode,
+                "mandatory OST3 bootstrap coordinated — payload ready for block 1"
             );
             bridge.set_pending_tee_bootstrap(payload);
-        } else {
-            // Existing-chain join: if the enclave lacks the offer key — its
-            // advertised offer public differs from the on-chain registered key —
-            // obtain it via a key-handoff before block production (the node cannot
-            // decrypt offers without it). Fail-fast on timeout, like the startup DKG.
-            let on_chain_offer =
-                validators::read_tee_offer_public_at_latest(&node.provider).unwrap_or(B256::ZERO);
-            if on_chain_offer != B256::ZERO {
-                let connect_policy = crate::tee_bootstrap::quote_policy_from_tee_policy(
-                    &tee_policy_from_genesis(&node)?,
-                );
-                let enclave_offer =
-                    crate::tee_bootstrap::query_enclave_offer_public(&socket, &connect_policy)
-                        .unwrap_or(B256::ZERO);
-                if enclave_offer != on_chain_offer {
-                    let (htx, hrx) = tee_handoff_round0
-                        .take()
-                        .ok_or_else(|| eyre::eyre!("TEE handoff P2P channel not registered"))?;
-                    let chain_id =
-                        B256::left_padding_from(&node.chain_spec().chain().id().to_be_bytes());
-                    let deadline = std::time::Duration::from_secs(args.tee_bootstrap_timeout_secs);
-                    let socket_join = socket.clone();
-                    // Handoff quorum (fault tolerance): require confirmations from
-                    // `f + 1` DISTINCT responders, where `f = ⌊(n-1)/3⌋` is the BFT
-                    // fault bound — so at least one confirmer is honest even if up to
-                    // `f` are Byzantine, while TOLERATING up to `f` unavailable nodes.
-                    // (Correctness is already guaranteed by the newcomer's on-chain key
-                    // check, so this quorum is anti-equivocation/availability defense in
-                    // depth; ⌊2n/3⌋+1 required ALL honest nodes at n=4 and stalled if
-                    // any one was down.)
-                    let committee_n = validator_set.public_keys.len();
-                    let f = committee_n.saturating_sub(1) / 3;
-                    let min_confirmations = f + 1;
-                    // Derive the offer key for the chain's current epoch, not a
-                    // hardcoded 0 (future-proofs the handoff for offer-key rotation).
-                    let tribute_offer_epoch =
-                        validators::read_tee_offer_epoch_at_latest(&node.provider).unwrap_or(0);
-                    let handoff_clock = ctx.child("tee_handoff_clock");
-                    ctx.timeout(deadline, async move {
-                        crate::tee_bootstrap::run_tee_handoff_join(
-                            &socket_join,
-                            handoff_clock,
-                            on_chain_offer,
-                            chain_id,
-                            tribute_offer_epoch,
-                            min_confirmations,
-                            &connect_policy,
-                            htx,
-                            hrx,
-                        )
-                        .await
-                    })
-                    .await
-                    .map_err(|_| {
-                        eyre::eyre!(
-                            "TEE key-handoff did not complete within {}s \
-                             (--tee-bootstrap-timeout-secs); halting before block production",
-                            args.tee_bootstrap_timeout_secs
-                        )
-                    })??;
-                    info!(
-                        %on_chain_offer,
-                        "TEE offer key obtained via key-handoff (existing-chain join)"
-                    );
-                }
-            }
-
-            // Record THIS validator's current enclave keys on-chain via a
-            // normal EOA tx (a node-submitted on-chain enclave-registration tx).
-            // The genesis bootstrap registered the committee at block 1; on an
-            // existing-chain restart the enclave's ephemeral attestation/noise keys are
-            // freshly generated, so re-submit to keep the on-chain registry accurate.
-            // Best-effort: a submission failure logs a warning but does NOT halt block
-            // production — the offer key (the consensus-critical material) is already
-            // present, and the registry's attestation/noise slots are an audit snapshot
-            // not read on the runtime path.
-            if let Some(evm_key_path) = args.effective_validator_evm_key()? {
-                let connect_policy = crate::tee_bootstrap::quote_policy_from_tee_policy(
-                    &tee_policy_from_genesis(&node)?,
-                );
-                let evm_signer = outbe_primitives::signer::OutbeEvmSigner::from_file(&evm_key_path)
-                    .map_err(|e| {
-                        eyre::eyre!("failed to load validator EVM signer for registration: {e}")
-                    })?;
-                let chain_id = node.chain_spec().chain().id();
-                // Latest block base fee, so the registration tx prices above the pool
-                // floor + current base fee and actually lands (0 ⇒ silently parked).
-                // Default 0 ⇒ the gas-price helper falls back to the pool floor.
-                let base_fee = node
-                    .provider
-                    .last_block_number()
-                    .ok()
-                    .and_then(|n| node.provider.sealed_header(n).ok().flatten())
-                    .and_then(|h| h.header().inner.base_fee_per_gas)
-                    .unwrap_or(0);
-                match crate::tee_bootstrap::submit_enclave_registration(
-                    &socket,
-                    &connect_policy,
-                    &evm_signer,
-                    &node.pool,
-                    &node.provider,
-                    chain_id,
-                    base_fee,
-                )
-                .await
-                {
-                    Ok(tx_hash) => info!(
-                        %tx_hash,
-                        validator = %evm_signer.address(),
-                        "submitted on-chain enclave registration (existing-chain join)"
-                    ),
-                    Err(e) => warn!(
-                        %e,
-                        "on-chain enclave registration submission failed (non-fatal)"
-                    ),
-                }
-            }
-        }
-
-        // Handoff responder: when this node has (or just obtained) the offer key, serve
-        // handoff requests for other joiners for as long as it runs. Skipped on a
-        // node that consumed the handoff channel as a newcomer (v1 — it does not also
-        // respond). Authorization uses the startup active set (set-change deferred).
-        if let Some((htx, hrx)) = tee_handoff_round0.take() {
-            let connect_policy = crate::tee_bootstrap::quote_policy_from_tee_policy(
-                &tee_policy_from_genesis(&node)?,
+        } else if verifier_join {
+            // The permissionless V1 onboarding transaction must have installed
+            // the permanent key before this process was launched. A share-less
+            // verifier joins only to certify and replay the existing chain; it
+            // neither has a proposer identity yet nor reproduces genesis OST3.
+            let resident_offer = outbe_tee::resident_offer_public_key_v1().wrap_err(
+                "verifier-join requires the permanent resident offer key before certified sync (no recovery or fallback)",
+            )?;
+            ensure!(
+                !resident_offer.is_zero(),
+                "verifier-join enclave has no permanent resident offer key; refusing certified sync (no recovery or fallback)"
             );
-            let verify_policy = connect_policy.clone();
-            let authorized = validator_set.public_keys.clone();
-            // WS-M2 A.3 (M7): the responder binds the seal target to the requester's
-            // on-chain registered `recipient_x25519`, read at REQUEST time from the
-            // latest state — NOT a genesis snapshot (which is empty before the block-1
-            // `TeeBootstrap` writes the registry, and would never see a post-genesis
-            // `registerEnclave`). Map each committee consensus key → EVM address; the
-            // closure resolves that address's registered recipient per request.
-            let addr_by_key: std::collections::BTreeMap<Vec<u8>, alloy_primitives::Address> =
-                validator_set
-                    .public_keys
-                    .iter()
-                    .zip(validator_set.addresses.iter())
-                    .map(|(pk, addr)| (commonware_codec::Encode::encode(pk).to_vec(), *addr))
-                    .collect();
-            let recipient_provider = node.provider.clone();
-            let registered_recipient = move |from_key: &[u8]| -> Option<B256> {
-                let addr = addr_by_key.get(from_key)?;
-                validators::read_tee_recipient_x25519_at_latest(&recipient_provider, *addr)
-                    .ok()
-                    .filter(|recipient| *recipient != B256::ZERO)
-            };
-            let socket_serve = socket_for_responder;
-            ctx.child("tee_handoff_responder")
-                .spawn(move |_| async move {
-                    if let Err(e) = crate::tee_bootstrap::serve_tee_handoff(
-                        &socket_serve,
-                        &connect_policy,
-                        verify_policy,
-                        authorized,
-                        registered_recipient,
-                        htx,
-                        hrx,
+            info!(
+                offer_public_key = %resident_offer,
+                "verifier-join resident offer key present before certified sync"
+            );
+        } else {
+            // A restarted active validator must already hold the exact resident
+            // offer key committed on-chain. Startup never recovers or replaces a
+            // lost key and never falls back to a pre-V1 delivery protocol.
+            let my_validator = proposer_evm_address.ok_or_else(|| {
+                eyre::eyre!("active validator consensus startup requires its EVM identity")
+            })?;
+            let on_chain_offer = validators::read_tee_offer_public_at_latest(&node.provider)
+                .wrap_err("failed to read the mandatory on-chain TEE offer key")?;
+            ensure!(
+                !on_chain_offer.is_zero(),
+                "mandatory OST3 chain has no on-chain offer key after block 1"
+            );
+            let evm_key_path = args
+                .effective_validator_evm_key()?
+                .ok_or_else(|| eyre::eyre!("validator restart requires its EVM signer key"))?;
+            let evm_signer = outbe_primitives::signer::OutbeEvmSigner::from_file(&evm_key_path)
+                .map_err(|error| eyre::eyre!("failed to load validator EVM signer: {error}"))?;
+            let local_consensus_key = signing_key.public_key();
+            let encoded_consensus_key = local_consensus_key.encode();
+            let consensus_bls_public: [u8; 48] = encoded_consensus_key
+                .as_ref()
+                .try_into()
+                .map_err(|_| eyre::eyre!("validator consensus public key is not 48 bytes"))?;
+            let node_data_dir = node
+                .config
+                .datadir
+                .clone()
+                .resolve_datadir(node.chain_spec().chain())
+                .data_dir()
+                .to_path_buf();
+            let endpoint = socket
+                .to_str()
+                .ok_or_else(|| eyre::eyre!("TEE enclave endpoint is not valid UTF-8"))?;
+            let mut enclave = match tee_policy.attestation_mode {
+                outbe_primitives::tee_attestation_v1::AttestationMode::DcapRequired => {
+                    outbe_tee::RuntimeEnclaveClient::Production(
+                        outbe_tee::connect_or_initialize_validator_enclave(
+                            endpoint,
+                            &node_data_dir,
+                            outbe_tee::ValidatorNodeHostIdentityV1 {
+                                chain_id: node.chain_spec().chain().id(),
+                                genesis_hash: tee_policy.genesis_hash,
+                                validator: my_validator,
+                                consensus_bls_public,
+                            },
+                            |hash| {
+                                evm_signer
+                                    .sign_hash(&hash)
+                                    .map_err(|error| error.to_string())
+                            },
+                        )
+                        .map_err(|error| {
+                            eyre::eyre!("production NodeHost reconnect failed: {error}")
+                        })?,
                     )
-                    .await
-                    {
-                        warn!(%e, "TEE handoff responder exited");
-                    }
-                });
+                }
+                outbe_primitives::tee_attestation_v1::AttestationMode::GramineDirectDev => {
+                    outbe_tee::RuntimeEnclaveClient::Development(
+                        outbe_tee::EnclaveClient::connect_endpoint(
+                            endpoint,
+                            &outbe_tee::QuotePolicy::dev_accept_any(),
+                        )
+                        .map_err(|error| {
+                            eyre::eyre!("GramineDirectDev enclave reconnect failed: {error}")
+                        })?,
+                    )
+                }
+            };
+            let enclave_offer = crate::tee_bootstrap::query_enclave_offer_public(&mut enclave)?;
+            ensure!(
+                enclave_offer == on_chain_offer,
+                "local enclave does not hold the chain offer key; refusing consensus startup (no recovery or fallback)"
+            );
         }
     }
 
     // ── 8. Recover execution finalized state ──────────────────────────────
-    let force_dkg_existing_chain = args.force_dkg && last_execution_height > 0;
-    let mut active_boundary = recovered_boundary.clone();
-    let mut active_boundary_finalized = startup_dkg_context.recovered_boundary_finalized;
-
-    if force_dkg_existing_chain {
-        let previous_boundary = recovered_boundary
-            .as_ref()
-            .map(|(_, artifact)| artifact.clone())
-            .ok_or_else(|| {
-                eyre::eyre!(
-                    "--testnet.force-dkg existing-chain recovery requires a recovered \
-                     chain DKG boundary. Restore validator-N/data/consensus/outbe-* \
-                     and finalized_parent_certs; do not delete consensus archives when \
-                     preserving the chain."
-                )
-            })?;
-        ensure!(
-            startup_dkg_context.recovered_boundary_finalized,
-            "--testnet.force-dkg cannot replace a still-pending DKG boundary; restart \
-             without force-dkg or restore finalized consensus state first"
-        );
-        let recovery_output = last_dkg_output.as_ref().ok_or_else(|| {
-            eyre::eyre!("--testnet.force-dkg completed without a DKG output artifact")
-        })?;
-        let (recovery_activation_height, recovery_boundary) = build_force_dkg_recovery_boundary(
-            &validator_set,
-            recovery_output,
-            &previous_boundary,
-            last_execution_height,
-        )?;
-        if let Some(ref keys_dir) = args.keys_dir {
-            save_pending_dkg_state(
-                keys_dir,
-                signing_share
-                    .as_ref()
-                    .ok_or_else(|| eyre::eyre!("--testnet.force-dkg requires a threshold share"))?,
-                &polynomial,
-                recovery_output,
-                &key_backend,
-            )
-            .wrap_err("failed to durably save force-DKG pending state")?;
-            save_pending_dkg_boundary(
-                keys_dir,
-                &PendingDkgBoundarySnapshot {
-                    artifact: recovery_boundary.clone(),
-                    activated_at_height: recovery_activation_height,
-                },
-            )
-            .wrap_err("failed to durably save force-DKG pending boundary")?;
-        }
-        info!(
-            previous_epoch = previous_boundary.epoch,
-            recovery_epoch = recovery_boundary.epoch,
-            dkg_cycle = recovery_boundary.dkg_cycle,
-            freeze_height = recovery_boundary.freeze_height,
-            planned_activation_height = recovery_boundary.planned_activation_height,
-            vrf_material_version = recovery_boundary.vrf_material_version,
-            vrf_group_public_key = %recovery_boundary.vrf_group_public_key,
-            "--testnet.force-dkg queued disaster-recovery DKG boundary"
-        );
-        active_boundary = Some((recovery_activation_height, recovery_boundary));
-        active_boundary_finalized = false;
-    }
+    let active_boundary = recovered_boundary.clone();
+    let active_boundary_finalized = startup_dkg_context.recovered_boundary_finalized;
 
     let recovered_boundary_artifact = active_boundary.as_ref().map(|(_, artifact)| artifact);
     let mut vrf_material_version = recovered_boundary_artifact
@@ -3293,7 +3263,10 @@ where
     // and consensus processed height. Prevents false fresh-bootstrap on
     // crash restart where Reth lost in-memory state (SIGKILL/OOM) but
     // consensus layer persisted progress durably.
-    let is_fresh_bootstrap = last_execution_height == 0 && last_consensus_finalized.get() == 0;
+    // Reuse the same proven-founding decision that gated the canonical genesis
+    // boundary and TEE OST3 ceremony. A verifier joining a running chain can have
+    // both local heights at zero and must not seed genesis state.
+    let is_fresh_bootstrap = coordinate_genesis_bootstrap;
 
     if last_execution_height == 0 && last_consensus_finalized.get() > 0 {
         info!(
@@ -3326,26 +3299,13 @@ where
             epoch_length_blocks,
         });
 
-        let bootstrap_output = last_dkg_output.as_ref().ok_or_else(|| {
-            eyre::eyre!(
-                "fresh bootstrap requires full DKG output; public polynomial alone cannot build canonical boundary"
-            )
+        let bootstrap_artifact = genesis_dkg_boundary_artifact.take().ok_or_else(|| {
+            eyre::eyre!("fresh bootstrap lost its canonical genesis DKG boundary")
         })?;
-        validate_dkg_output_players_exact(bootstrap_output, &validator_set)
-            .wrap_err("fresh bootstrap DKG output does not cover the genesis validator set")?;
-        let bootstrap_artifact =
-            dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
-                epoch: Epoch::new(0),
-                validator_set: &validator_set,
-                output: bootstrap_output,
-                is_full_dkg: bootstrap_from_live_dkg,
-                dkg_cycle: 0,
-                freeze_height: 0,
-                planned_activation_height: 0,
-                vrf_material_version,
-                is_validator_set_change: true,
-                tee_reshare_registrations: Vec::new(),
-            })?;
+        ensure!(
+            bootstrap_artifact.vrf_material_version == vrf_material_version,
+            "genesis DKG boundary VRF material version differs from the active startup version"
+        );
         info!(
             vrf_material_version,
             vrf_group_public_key = %bootstrap_artifact.vrf_group_public_key,
@@ -3430,18 +3390,11 @@ where
                 last_execution_hash,
                 recovered,
             )?,
-            Err(error) if args.force_dkg && last_execution_height > 0 => {
-                return Err(error).wrap_err(
-                    "--testnet.force-dkg existing-chain recovery requires durable marshal \
-                 finalization history; restore validator-N/data/consensus/outbe-* \
-                 instead of deleting consensus archives",
-                );
-            }
             Err(error) if startup_live_join_completed || args.trust_el_head => {
                 warn!(
                     %error,
                     last_execution_height,
-                    "marshal archive lacks finalized-round history after startup live-join or force-dkg; continuing from synced execution boundary"
+                    "marshal archive lacks finalized-round history after startup live-join; continuing from synced execution boundary"
                 );
                 (recovery_anchor_height, recovery_anchor_hash, None)
             }
@@ -6127,7 +6080,7 @@ fn startup_live_join_scan_height(
         if !trust_el_head {
             ensure!(
                 execution_height == 0,
-                "startup live join found execution history at height {execution_height} but no durable consensus-finalized height; refusing to recover DKG artifacts from unfinalized execution head. Wait for consensus finalization evidence or use --testnet.trust-el-head for disaster recovery."
+                "startup live join found execution history at height {execution_height} but no durable consensus-finalized height; refusing to recover DKG artifacts from unfinalized execution head. Wait for consensus finalization evidence or use --testnet.trust-el-head for testnet consensus-archive recovery; it cannot bypass the permanent offer-key gate."
             );
         } else if execution_height > 0 {
             warn!(
@@ -6494,219 +6447,212 @@ async fn obtain_threshold_material(
     dkg_sender: impl P2pSender<PublicKey = bls12381::PublicKey>,
     dkg_receiver: impl P2pReceiver<PublicKey = bls12381::PublicKey>,
 ) -> Result<ThresholdMaterial> {
-    if !args.force_dkg {
-        // Path 1: Try loading saved DKG state from keys_dir (restart precedence).
-        // On ordinary restart, saved local DKG state wins over CLI bootstrap material.
-        if let Some(ref keys_dir) = args.keys_dir {
-            let mut saved_state_error: Option<eyre::Report> = None;
-            let saved_state = match load_saved_dkg_state(keys_dir, key_backend) {
-                Ok(state) => state,
-                Err(error) => {
-                    warn!(
-                        %error,
-                        keys_dir = %keys_dir.display(),
-                        "saved DKG state is incomplete or corrupt; checking pending DKG state before failing"
-                    );
-                    saved_state_error = Some(error);
-                    None
-                }
-            };
-            if let Some((signing_share, polynomial, output)) = saved_state {
-                if vrf_material_matches_recovered_boundary(&polynomial, startup_dkg_context)
-                    && dkg_output_matches_recovered_boundary(&output, startup_dkg_context)
-                {
+    // Path 1: Try loading saved DKG state from keys_dir (restart precedence).
+    // On ordinary restart, saved local DKG state wins over CLI bootstrap material.
+    if let Some(ref keys_dir) = args.keys_dir {
+        let mut saved_state_error: Option<eyre::Report> = None;
+        let saved_state = match load_saved_dkg_state(keys_dir, key_backend) {
+            Ok(state) => state,
+            Err(error) => {
+                warn!(
+                    %error,
+                    keys_dir = %keys_dir.display(),
+                    "saved DKG state is incomplete or corrupt; checking pending DKG state before failing"
+                );
+                saved_state_error = Some(error);
+                None
+            }
+        };
+        if let Some((signing_share, polynomial, output)) = saved_state {
+            if vrf_material_matches_recovered_boundary(&polynomial, startup_dkg_context)
+                && dkg_output_matches_recovered_boundary(&output, startup_dkg_context)
+            {
+                info!(
+                    keys_dir = %keys_dir.display(),
+                    vrf_group_public_key = %vrf_group_public_key_hash(&polynomial),
+                    "threshold material ready from saved DKG state"
+                );
+                return Ok(ThresholdMaterial::Ready {
+                    signing_share,
+                    polynomial,
+                    last_dkg_output: Some(output),
+                    bootstrap_from_live_dkg: false,
+                });
+            }
+            warn!(
+                keys_dir = %keys_dir.display(),
+                local_vrf_group_public_key = %vrf_group_public_key_hash(&polynomial),
+                local_dkg_output_hash = %dkg_manager::dkg_output_hash(&output),
+                recovered_vrf_group_public_key = ?startup_dkg_context.recovered_vrf_group_public_key,
+                recovered_dkg_output_hash = ?startup_dkg_context.recovered_dkg_output_hash,
+                "saved DKG material is stale for the latest finalized boundary; checking pending DKG state"
+            );
+        }
+
+        let pending_state = match load_pending_dkg_state(keys_dir, key_backend) {
+            Ok(state) => state,
+            Err(error) => {
+                warn!(
+                    %error,
+                    keys_dir = %keys_dir.display(),
+                    "pending DKG state is incomplete or corrupt; ignoring pending material"
+                );
+                None
+            }
+        };
+        if let Some((signing_share, polynomial, output)) = pending_state {
+            if startup_dkg_context.recovered_dkg_output_hash.is_some()
+                && vrf_material_matches_recovered_boundary(&polynomial, startup_dkg_context)
+                && dkg_output_matches_recovered_boundary(&output, startup_dkg_context)
+            {
+                if startup_dkg_context.recovered_boundary_finalized {
+                    save_dkg_state(keys_dir, &signing_share, &polynomial, &output, key_backend)
+                        .wrap_err(
+                            "failed to promote pending DKG state after boundary finalization",
+                        )?;
+                    remove_pending_dkg_state(keys_dir);
+                    clear_pending_dkg_boundary(keys_dir);
+                    dkg_actor::DkgDealerRetryStore::in_keys_dir(keys_dir, key_backend.clone())
+                        .clear()
+                        .wrap_err("failed to retire recovered DKG retry state")?;
                     info!(
                         keys_dir = %keys_dir.display(),
                         vrf_group_public_key = %vrf_group_public_key_hash(&polynomial),
-                        "threshold material ready from saved DKG state"
+                        dkg_output_hash = %dkg_manager::dkg_output_hash(&output),
+                        "threshold material ready from promoted pending DKG state"
                     );
-                    return Ok(ThresholdMaterial::Ready {
-                        signing_share,
-                        polynomial,
-                        last_dkg_output: Some(output),
-                        bootstrap_from_live_dkg: false,
-                    });
-                }
-                warn!(
-                    keys_dir = %keys_dir.display(),
-                    local_vrf_group_public_key = %vrf_group_public_key_hash(&polynomial),
-                    local_dkg_output_hash = %dkg_manager::dkg_output_hash(&output),
-                    recovered_vrf_group_public_key = ?startup_dkg_context.recovered_vrf_group_public_key,
-                    recovered_dkg_output_hash = ?startup_dkg_context.recovered_dkg_output_hash,
-                    "saved DKG material is stale for the latest finalized boundary; checking pending DKG state"
-                );
-            }
-
-            let pending_state = match load_pending_dkg_state(keys_dir, key_backend) {
-                Ok(state) => state,
-                Err(error) => {
-                    warn!(
-                        %error,
+                } else {
+                    info!(
                         keys_dir = %keys_dir.display(),
-                        "pending DKG state is incomplete or corrupt; ignoring pending material"
+                        vrf_group_public_key = %vrf_group_public_key_hash(&polynomial),
+                        dkg_output_hash = %dkg_manager::dkg_output_hash(&output),
+                        "threshold material ready from durable pending DKG state and boundary snapshot"
                     );
-                    None
                 }
-            };
-            if let Some((signing_share, polynomial, output)) = pending_state {
-                if startup_dkg_context.recovered_dkg_output_hash.is_some()
-                    && vrf_material_matches_recovered_boundary(&polynomial, startup_dkg_context)
-                    && dkg_output_matches_recovered_boundary(&output, startup_dkg_context)
-                {
-                    if startup_dkg_context.recovered_boundary_finalized {
-                        save_dkg_state(keys_dir, &signing_share, &polynomial, &output, key_backend)
-                            .wrap_err(
-                                "failed to promote pending DKG state after boundary finalization",
-                            )?;
-                        remove_pending_dkg_state(keys_dir);
-                        clear_pending_dkg_boundary(keys_dir);
-                        dkg_actor::DkgDealerRetryStore::in_keys_dir(keys_dir, key_backend.clone())
-                            .clear()
-                            .wrap_err("failed to retire recovered DKG retry state")?;
-                        info!(
-                            keys_dir = %keys_dir.display(),
-                            vrf_group_public_key = %vrf_group_public_key_hash(&polynomial),
-                            dkg_output_hash = %dkg_manager::dkg_output_hash(&output),
-                            "threshold material ready from promoted pending DKG state"
-                        );
-                    } else {
-                        info!(
-                            keys_dir = %keys_dir.display(),
-                            vrf_group_public_key = %vrf_group_public_key_hash(&polynomial),
-                            dkg_output_hash = %dkg_manager::dkg_output_hash(&output),
-                            "threshold material ready from durable pending DKG state and boundary snapshot"
-                        );
-                    }
-                    return Ok(ThresholdMaterial::Ready {
-                        signing_share,
-                        polynomial,
-                        last_dkg_output: Some(output),
-                        bootstrap_from_live_dkg: false,
-                    });
-                }
-                warn!(
-                    keys_dir = %keys_dir.display(),
-                    local_vrf_group_public_key = %vrf_group_public_key_hash(&polynomial),
-                    local_dkg_output_hash = %dkg_manager::dkg_output_hash(&output),
-                    recovered_vrf_group_public_key = ?startup_dkg_context.recovered_vrf_group_public_key,
-                    recovered_dkg_output_hash = ?startup_dkg_context.recovered_dkg_output_hash,
-                    "pending DKG material is not finalized for the latest boundary"
-                );
-            }
-
-            if let Some(error) = saved_state_error {
-                return Err(error).wrap_err(
-                    "saved DKG state failed to load and pending state could not be promoted",
-                );
-            }
-
-            if startup_dkg_context.has_chain_finalized_dkg_boundary()
-                && !startup_dkg_context.recovered_boundary_finalized
-            {
-                return Err(eyre::eyre!(
-                    "pending DKG boundary snapshot was recovered but matching DKG material is unavailable"
-                ));
-            }
-
-            if startup_dkg_context.has_chain_finalized_dkg_boundary() {
-                // A verifier-join (no signing share, has --public-polynomial) must NOT
-                // enter the startup live-join reshare path on RESTART: that path waits
-                // for the freeze height WITHOUT driving sync, so a restarted-but-behind
-                // verifier deadlocks (current_height frozen below freeze_height forever —
-                // it can never reach the freeze without the engine running). Instead it
-                // falls through to the VerifierOnly path below, loads its polynomial,
-                // and syncs as a verifier; the running epoch loop then handles any
-                // reshare once it is synced + in the frozen target (the finalized-follower
-                // path for a non-staked full-node, the participant path once it is a
-                // PENDING frozen-target player). Only a share-holding node (a
-                // reconnecting signer) needs the immediate startup live-join reshare.
-                if !(args.signing_share.is_none() && args.public_polynomial.is_some()) {
-                    return Ok(ThresholdMaterial::StartupLiveJoinRequired);
-                }
-            }
-        }
-
-        // Path 2: Load from CLI args (fresh bootstrap / manual provisioning).
-        if let (Some(share_path), Some(poly_path)) = (&args.signing_share, &args.public_polynomial)
-        {
-            let signing_share = bls::load_signing_share(share_path, key_backend)
-                .wrap_err("failed to load BLS signing share")?;
-            let polynomial = bls::load_public_polynomial(poly_path, key_backend)
-                .wrap_err("failed to load BLS public polynomial")?;
-            let cli_dkg_output = if let Some(output_path) = &args.dkg_output {
-                let output = bls::load_dkg_output(output_path, key_backend)
-                    .wrap_err("failed to load BLS DKG output")?;
-                bls::validate_dkg_triplet(&signing_share, &polynomial, &output)
-                    .wrap_err("CLI DKG material triplet is inconsistent")?;
-                Some(output)
-            } else {
-                None
-            };
-
-            if startup_dkg_context.recovered_dkg_output_hash.is_some() && cli_dkg_output.is_none() {
-                warn!(
-                    share_path = %share_path.display(),
-                    poly_path = %poly_path.display(),
-                    recovered_dkg_output_hash = ?startup_dkg_context.recovered_dkg_output_hash,
-                    "CLI DKG material lacks required output for recovered chain boundary; waiting for live reshare"
-                );
-                return Ok(ThresholdMaterial::StartupLiveJoinRequired);
-            }
-
-            if !vrf_material_matches_recovered_boundary(&polynomial, startup_dkg_context)
-                || cli_dkg_output.as_ref().is_some_and(|output| {
-                    !dkg_output_matches_recovered_boundary(output, startup_dkg_context)
-                })
-            {
-                warn!(
-                    share_path = %share_path.display(),
-                    poly_path = %poly_path.display(),
-                    local_vrf_group_public_key = %vrf_group_public_key_hash(&polynomial),
-                    local_dkg_output_hash = ?cli_dkg_output.as_ref().map(dkg_manager::dkg_output_hash),
-                    recovered_vrf_group_public_key = ?startup_dkg_context.recovered_vrf_group_public_key,
-                    recovered_dkg_output_hash = ?startup_dkg_context.recovered_dkg_output_hash,
-                    "CLI DKG material is stale for the latest finalized boundary; waiting for live reshare"
-                );
-                return Ok(ThresholdMaterial::StartupLiveJoinRequired);
-            }
-
-            info!(
-                vrf_group_public_key = %vrf_group_public_key_hash(&polynomial),
-                "threshold material ready from CLI args"
-            );
-            return Ok(ThresholdMaterial::Ready {
-                signing_share,
-                polynomial,
-                last_dkg_output: cli_dkg_output,
-                bootstrap_from_live_dkg: false,
-            });
-        }
-
-        // Path 2b: Verifier-join — public group material (--consensus.public-polynomial
-        // + --consensus.dkg-output) WITHOUT a signing share. The node runs the consensus
-        // engine in verifier mode (follow/verify finalized blocks → sync its execution
-        // layer) and acquires a share at the next reshare. See ThresholdMaterial::VerifierOnly.
-        if args.signing_share.is_none() {
-            if let (Some(poly_path), Some(output_path)) =
-                (&args.public_polynomial, &args.dkg_output)
-            {
-                let polynomial = bls::load_public_polynomial(poly_path, key_backend)
-                    .wrap_err("failed to load BLS public polynomial for verifier-join")?;
-                let output = bls::load_dkg_output(output_path, key_backend)
-                    .wrap_err("failed to load BLS DKG output for verifier-join")?;
-                info!(
-                    vrf_group_public_key = %vrf_group_public_key_hash(&polynomial),
-                    "verifier-join: no threshold share; running consensus in VERIFIER mode \
-                     (follow + verify) until the next reshare grants a share"
-                );
-                return Ok(ThresholdMaterial::VerifierOnly {
+                return Ok(ThresholdMaterial::Ready {
+                    signing_share,
                     polynomial,
                     last_dkg_output: Some(output),
+                    bootstrap_from_live_dkg: false,
                 });
             }
+            warn!(
+                keys_dir = %keys_dir.display(),
+                local_vrf_group_public_key = %vrf_group_public_key_hash(&polynomial),
+                local_dkg_output_hash = %dkg_manager::dkg_output_hash(&output),
+                recovered_vrf_group_public_key = ?startup_dkg_context.recovered_vrf_group_public_key,
+                recovered_dkg_output_hash = ?startup_dkg_context.recovered_dkg_output_hash,
+                "pending DKG material is not finalized for the latest boundary"
+            );
         }
-    } else {
-        info!("--testnet.force-dkg: ignoring saved and CLI DKG material");
+
+        if let Some(error) = saved_state_error {
+            return Err(error).wrap_err(
+                "saved DKG state failed to load and pending state could not be promoted",
+            );
+        }
+
+        if startup_dkg_context.has_chain_finalized_dkg_boundary()
+            && !startup_dkg_context.recovered_boundary_finalized
+        {
+            return Err(eyre::eyre!(
+                    "pending DKG boundary snapshot was recovered but matching DKG material is unavailable"
+                ));
+        }
+
+        if startup_dkg_context.has_chain_finalized_dkg_boundary() {
+            // A verifier-join (no signing share, has --public-polynomial) must NOT
+            // enter the startup live-join reshare path on RESTART: that path waits
+            // for the freeze height WITHOUT driving sync, so a restarted-but-behind
+            // verifier deadlocks (current_height frozen below freeze_height forever —
+            // it can never reach the freeze without the engine running). Instead it
+            // falls through to the VerifierOnly path below, loads its polynomial,
+            // and syncs as a verifier; the running epoch loop then handles any
+            // reshare once it is synced + in the frozen target (the finalized-follower
+            // path for a non-staked full-node, the participant path once it is a
+            // PENDING frozen-target player). Only a share-holding node (a
+            // reconnecting signer) needs the immediate startup live-join reshare.
+            if !(args.signing_share.is_none() && args.public_polynomial.is_some()) {
+                return Ok(ThresholdMaterial::StartupLiveJoinRequired);
+            }
+        }
+    }
+
+    // Path 2: Load from CLI args (fresh bootstrap / manual provisioning).
+    if let (Some(share_path), Some(poly_path)) = (&args.signing_share, &args.public_polynomial) {
+        let signing_share = bls::load_signing_share(share_path, key_backend)
+            .wrap_err("failed to load BLS signing share")?;
+        let polynomial = bls::load_public_polynomial(poly_path, key_backend)
+            .wrap_err("failed to load BLS public polynomial")?;
+        let cli_dkg_output = if let Some(output_path) = &args.dkg_output {
+            let output = bls::load_dkg_output(output_path, key_backend)
+                .wrap_err("failed to load BLS DKG output")?;
+            bls::validate_dkg_triplet(&signing_share, &polynomial, &output)
+                .wrap_err("CLI DKG material triplet is inconsistent")?;
+            Some(output)
+        } else {
+            None
+        };
+
+        if startup_dkg_context.recovered_dkg_output_hash.is_some() && cli_dkg_output.is_none() {
+            warn!(
+                share_path = %share_path.display(),
+                poly_path = %poly_path.display(),
+                recovered_dkg_output_hash = ?startup_dkg_context.recovered_dkg_output_hash,
+                "CLI DKG material lacks required output for recovered chain boundary; waiting for live reshare"
+            );
+            return Ok(ThresholdMaterial::StartupLiveJoinRequired);
+        }
+
+        if !vrf_material_matches_recovered_boundary(&polynomial, startup_dkg_context)
+            || cli_dkg_output.as_ref().is_some_and(|output| {
+                !dkg_output_matches_recovered_boundary(output, startup_dkg_context)
+            })
+        {
+            warn!(
+                share_path = %share_path.display(),
+                poly_path = %poly_path.display(),
+                local_vrf_group_public_key = %vrf_group_public_key_hash(&polynomial),
+                local_dkg_output_hash = ?cli_dkg_output.as_ref().map(dkg_manager::dkg_output_hash),
+                recovered_vrf_group_public_key = ?startup_dkg_context.recovered_vrf_group_public_key,
+                recovered_dkg_output_hash = ?startup_dkg_context.recovered_dkg_output_hash,
+                "CLI DKG material is stale for the latest finalized boundary; waiting for live reshare"
+            );
+            return Ok(ThresholdMaterial::StartupLiveJoinRequired);
+        }
+
+        info!(
+            vrf_group_public_key = %vrf_group_public_key_hash(&polynomial),
+            "threshold material ready from CLI args"
+        );
+        return Ok(ThresholdMaterial::Ready {
+            signing_share,
+            polynomial,
+            last_dkg_output: cli_dkg_output,
+            bootstrap_from_live_dkg: false,
+        });
+    }
+
+    // Path 2b: Verifier-join — public group material (--consensus.public-polynomial
+    // + --consensus.dkg-output) WITHOUT a signing share. The node runs the consensus
+    // engine in verifier mode (follow/verify finalized blocks → sync its execution
+    // layer) and acquires a share at the next reshare. See ThresholdMaterial::VerifierOnly.
+    if args.signing_share.is_none() {
+        if let (Some(poly_path), Some(output_path)) = (&args.public_polynomial, &args.dkg_output) {
+            let polynomial = bls::load_public_polynomial(poly_path, key_backend)
+                .wrap_err("failed to load BLS public polynomial for verifier-join")?;
+            let output = bls::load_dkg_output(output_path, key_backend)
+                .wrap_err("failed to load BLS DKG output for verifier-join")?;
+            info!(
+                vrf_group_public_key = %vrf_group_public_key_hash(&polynomial),
+                "verifier-join: no threshold share; running consensus in VERIFIER mode \
+                 (follow + verify) until the next reshare grants a share"
+            );
+            return Ok(ThresholdMaterial::VerifierOnly {
+                polynomial,
+                last_dkg_output: Some(output),
+            });
+        }
     }
 
     // Path 3: Run interactive DKG ceremony.
@@ -6718,16 +6664,7 @@ async fn obtain_threshold_material(
         .try_collect()
         .map_err(|e| eyre::eyre!("invalid participant set: {e}"))?;
     let local_key_in_current_consensus_set = startup_participants.position(&local_pk).is_some();
-    if args.force_dkg && !local_key_in_current_consensus_set {
-        return Err(eyre::eyre!(
-            "--testnet.force-dkg requires the local BLS key to be in the current active consensus set"
-        ));
-    }
-    match startup_dkg_mode(
-        startup_dkg_context,
-        local_key_in_current_consensus_set,
-        args.force_dkg,
-    ) {
+    match startup_dkg_mode(startup_dkg_context, local_key_in_current_consensus_set) {
         StartupDkgMode::LiveJoinRequired => {
             warn!(
                 last_execution_height = startup_dkg_context.last_execution_height,
@@ -6774,34 +6711,20 @@ async fn obtain_threshold_material(
 
     // Save DKG state to keys_dir for future restarts.
     if let Some(ref keys_dir) = args.keys_dir {
-        let save_result = if args.force_dkg && startup_dkg_context.last_execution_height > 0 {
-            save_pending_dkg_state(
-                keys_dir,
-                &signing_share,
-                &polynomial,
-                &dkg_result.output,
-                key_backend,
-            )
-        } else {
-            save_dkg_state(
-                keys_dir,
-                &signing_share,
-                &polynomial,
-                &dkg_result.output,
-                key_backend,
-            )
-        };
+        let save_result = save_dkg_state(
+            keys_dir,
+            &signing_share,
+            &polynomial,
+            &dkg_result.output,
+            key_backend,
+        );
         if let Err(e) = save_result {
             warn!(
                 ?e,
                 "failed to save DKG state to disk (node will need to re-run DKG on restart)"
             );
         } else {
-            info!(
-                keys_dir = %keys_dir.display(),
-                pending = args.force_dkg && startup_dkg_context.last_execution_height > 0,
-                "saved DKG state to disk"
-            );
+            info!(keys_dir = %keys_dir.display(), "saved DKG state to disk");
         }
     } else {
         warn!("no --consensus.keys-dir set, DKG state will not be persisted");

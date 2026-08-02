@@ -439,7 +439,7 @@ a partial result, signature or chain effect.
 Use a separate test-only Rust reference crate:
 
 ```text
-crates/testing/lysis-v1-reference/
+testing/lysis-v1-reference/
   Cargo.toml
   src/lib.rs
   src/main.rs

@@ -95,8 +95,8 @@ pub type CeremonyShare = Share;
 
 /// Seam F output: `(tribute_offer_secret, tribute_offer_public, encoded_group_sig)`.
 /// The secret + group signature stay resident in the enclave; the public is
-/// registered on-chain. The group signature is `Zeroizing` (wiped on drop).
-pub type RecoveredTributeOfferKey = ([u8; 32], [u8; 32], Zeroizing<Vec<u8>>);
+/// registered on-chain. Both secret values are `Zeroizing` (wiped on drop).
+pub type RecoveredTributeOfferKey = (Zeroizing<[u8; 32]>, [u8; 32], Zeroizing<Vec<u8>>);
 
 /// 32-byte opaque ceremony identifier supplied by the host actor (the
 /// `DkgCeremonyId` digest). Used only as the resident-session map key; the
@@ -168,7 +168,7 @@ impl DkgSession {
     pub fn new(
         info: CeremonyInfo,
         signing_key: PrivKey,
-        enc_secret: [u8; 32],
+        enc_secret: &[u8; 32],
         recipient_enc_keys: BTreeMap<PubKey, [u8; 32]>,
     ) -> Result<Self> {
         let player = Player::<Variant, PrivKey>::new(info.clone(), signing_key.clone())
@@ -176,7 +176,7 @@ impl DkgSession {
         Ok(Self {
             info,
             signing_key,
-            enc_secret: Zeroizing::new(enc_secret),
+            enc_secret: Zeroizing::new(*enc_secret),
             recipient_enc_keys,
             dealer: None,
             player: Some(player),
@@ -359,9 +359,9 @@ impl DkgSession {
         let group_sig =
             threshold::recover::<Variant, _, N3f1>(output.public(), partials.iter(), &Sequential)
                 .map_err(|e| dkg_err("recover offer group signature", e))?;
-        // `sigma` (the encoded group signature) is retained resident by the caller:
-        // it re-derives any epoch's offer key locally and is the sealed key-handoff
-        // payload that onboards a new committee member.
+        // `sigma` (the encoded group signature) is retained resident by the caller
+        // so the exact permanent key survives restart and can be delivered through
+        // the deterministic one-time registry onboarding artifact.
         let sigma = Zeroizing::new(group_sig.encode().to_vec());
         let (secret, public) = crate::crypto::derive_tribute_offer_secret_from_group_sig(
             sigma.as_ref(),
@@ -521,9 +521,8 @@ impl DkgSession {
         // distinct dealers to cover the full committee — otherwise an untrusted host
         // feeding different dealer subsets to different enclaves would diverge the
         // derived offer key across validators. (Each verified dealer is a committee
-        // member, so a full distinct count equals full coverage. A reshare DKG would
-        // relax this to the recovery threshold, but onboarding uses key-handoff, not a
-        // reshare DKG, so every ceremony reaching here is an all-n initial DKG.)
+        // member, so a full distinct count equals full coverage. Scheduled rolling
+        // reshare is a separate consensus ceremony; this founding path is all-n.)
         let expected = max.get() as usize;
         if distinct_dealers.len() != expected {
             return Err(TeeError::Dkg(format!(
@@ -559,7 +558,7 @@ impl DkgSessionStore {
         id: CeremonyKey,
         info: CeremonyInfo,
         signing_key: PrivKey,
-        enc_secret: [u8; 32],
+        enc_secret: &[u8; 32],
         recipient_enc_keys: BTreeMap<PubKey, [u8; 32]>,
     ) -> Result<()> {
         if self.sessions.contains_key(&id) {
@@ -658,7 +657,7 @@ mod tests {
             .iter()
             .zip(&enc_secrets)
             .map(|(k, sk)| {
-                DkgSession::new(info.clone(), k.clone(), *sk, enc_keys.clone()).expect("session")
+                DkgSession::new(info.clone(), k.clone(), sk, enc_keys.clone()).expect("session")
             })
             .collect();
 
@@ -769,7 +768,7 @@ mod tests {
             .iter()
             .zip(&enc_secrets)
             .map(|(k, sk)| {
-                DkgSession::new(info.clone(), k.clone(), *sk, enc_keys.clone()).expect("session")
+                DkgSession::new(info.clone(), k.clone(), sk, enc_keys.clone()).expect("session")
             })
             .collect();
 
@@ -876,12 +875,12 @@ mod tests {
             .iter()
             .map(|pk| (pk.clone(), x25519_public(&dealer_enc)))
             .collect();
-        let mut dealer =
-            DkgSession::new(info.clone(), keys[0].clone(), dealer_enc, wrong_keys).expect("dealer");
+        let mut dealer = DkgSession::new(info.clone(), keys[0].clone(), &dealer_enc, wrong_keys)
+            .expect("dealer");
 
         let player_enc = enc_secret_for(1);
         let mut player =
-            DkgSession::new(info, keys[1].clone(), player_enc, BTreeMap::new()).expect("player");
+            DkgSession::new(info, keys[1].clone(), &player_enc, BTreeMap::new()).expect("player");
 
         let (pub_msg, blobs) = dealer.start_dealer(None).expect("start_dealer");
         let player_pk = player.participant_pubkey();
@@ -910,7 +909,7 @@ mod tests {
                 id,
                 info.clone(),
                 keys[0].clone(),
-                enc_secrets[0],
+                &enc_secrets[0],
                 enc_keys.clone(),
             )
             .expect("open");
@@ -922,7 +921,7 @@ mod tests {
                 id,
                 info.clone(),
                 keys[0].clone(),
-                enc_secrets[0],
+                &enc_secrets[0],
                 enc_keys.clone()
             )
             .is_err());
@@ -949,7 +948,7 @@ mod tests {
         let (info, keys, pubkeys) = setup(4);
         let (enc_secrets, enc_keys) = enc_material(&pubkeys);
         let mut session =
-            DkgSession::new(info, keys[0].clone(), enc_secrets[0], enc_keys).expect("session");
+            DkgSession::new(info, keys[0].clone(), &enc_secrets[0], enc_keys).expect("session");
 
         // dealer_finalize before start_dealer -> typed error.
         assert!(matches!(
@@ -976,7 +975,7 @@ mod tests {
             .iter()
             .zip(&enc_secrets)
             .map(|(k, sk)| {
-                DkgSession::new(info.clone(), k.clone(), *sk, enc_keys.clone()).expect("session")
+                DkgSession::new(info.clone(), k.clone(), sk, enc_keys.clone()).expect("session")
             })
             .collect();
 
@@ -1030,7 +1029,7 @@ mod tests {
         sessions: &[DkgSession],
         chain_id: B256,
         epoch: u64,
-    ) -> Vec<([u8; 32], [u8; 32])> {
+    ) -> Vec<(Zeroizing<[u8; 32]>, [u8; 32])> {
         use commonware_cryptography::Signer as _;
         let pubkeys: Vec<PubKey> = sessions
             .iter()
@@ -1075,10 +1074,11 @@ mod tests {
         let chain_id = B256::repeat_byte(0xC1);
 
         let derived = sealed_tribute_offer_keys(&sessions, chain_id, 0);
-        let (sk0, pk0) = derived[0];
+        let sk0 = &derived[0].0;
+        let pk0 = derived[0].1;
         for (i, (sk, pk)) in derived.iter().enumerate() {
             assert_eq!(*pk, pk0, "party {i} diverged on the offer public key");
-            assert_eq!(*sk, sk0, "party {i} diverged on the offer secret");
+            assert_eq!(sk, sk0, "party {i} diverged on the offer secret");
         }
 
         // Chain-binding: a different chain_id yields a different offer key.
@@ -1117,7 +1117,7 @@ mod tests {
         let (info, keys, pubkeys) = setup(4);
         let (enc_secrets, enc_keys) = enc_material(&pubkeys);
         let session =
-            DkgSession::new(info, keys[0].clone(), enc_secrets[0], enc_keys).expect("session");
+            DkgSession::new(info, keys[0].clone(), &enc_secrets[0], enc_keys).expect("session");
         assert!(matches!(
             session.tribute_offer_partials_sealed(),
             Err(TeeError::DkgSeamOrder(_))

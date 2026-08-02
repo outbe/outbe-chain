@@ -85,7 +85,7 @@ below as a fixed execution scope containing:
 Only the coordinating agent updates this plan. Implementation/review agents report
 evidence to the coordinator and never edit this file, avoiding a shared-file merge
 conflict across isolated worktrees. Repository/build/genesis validation belongs in
-`xtask`; end-to-end product flows belong in `crates/testing/e2e-harness`. Do not add a
+`xtask`; end-to-end product flows belong in `testing/e2e-harness`. Do not add a
 parallel standalone `scripts/tests` harness when either owner can express the check.
 
 Default completion rules for every implementation task:
@@ -1093,7 +1093,7 @@ its focused test filter and records exact output.
 | `SCF-G4` | `cargo nextest run -p outbe-stablecoinfactory`; focused provider/hook rollback and state-root tests |
 | `SCF-G5` | `cargo nextest run -p outbe-vote -p outbe-stablecoinfactory -p outbe-primitives -p outbe-evm` |
 | `SCF-G6` | affected RPC/node/EVM suites plus dedicated full-block parity, restart and historical-read targets |
-| `SCF-G7` | `cargo run -p outbe-e2e-harness --bin outbe-e2e -- --tee none --validators 4 --all --no-sudo --data-dir /tmp/outbe-stablecoin-e2e --input crates/testing/e2e-harness/features/stablecoin_factory_v1.feature`; `cargo nextest run --workspace`; `cargo test --doc --workspace`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` |
+| `SCF-G7` | `cargo run -p outbe-e2e-harness --bin outbe-e2e -- --tee none --validators 4 --all --no-sudo --data-dir /tmp/outbe-stablecoin-e2e --input testing/e2e-harness/features/stablecoin_factory_v1.feature`; `cargo nextest run --workspace`; `cargo test --doc --workspace`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` |
 
 ## Recommended PR boundaries
 

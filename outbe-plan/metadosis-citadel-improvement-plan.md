@@ -373,7 +373,7 @@ Metadosis-specific, а изменения primitives/EVM ограничены и
 - `crates/core/metadosis/src/ocomp/activation.rs`;
 - `crates/core/metadosis/src/ocomp/test_support.rs`;
 - `crates/blockchain/evm/tests/ocomp_request_lifecycle.rs`;
-- `crates/testing/e2e-harness/src/metadosis_p0.rs`.
+- `testing/e2e-harness/src/metadosis_p0.rs`.
 
 **Closure tests.**
 
@@ -1003,7 +1003,7 @@ semantics, public ABI, state layout или e2e evidence contract.
 4. Создать общепроектный versioned `VerificationLedger` как минимальное
    извлечение уже работающей evidence-механики:
    - generic core живёт в
-     `crates/testing/e2e-harness/src/verification_ledger/{mod,schema,ledger,verify}.rs`;
+     `testing/e2e-harness/src/verification_ledger/{mod,schema,ledger,verify}.rs`;
    - `outbe-plan/verification-ledger.yaml` является только index и pin-ит
      version/path каждого domain pack;
    - существующий `outbe-plan/off-chain-poc-evidence-ledger.yaml` остаётся по

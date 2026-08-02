@@ -83,7 +83,7 @@ Do not normalize names across contexts until their meanings are proven equal.
 | `crates/blockchain/**`       | execution, consensus integration, node, RPC, txpool, storage infrastructure             |
 | `crates/system/**`           | system protocol modules and block-level protocol state                                  |
 | `crates/core/**`             | business modules, precompiles, and cross-module workflows                               |
-| `crates/testing/**`          | reusable test infrastructure; it consumes, but does not redefine, production vocabulary |
+| `testing/**`                 | reusable test infrastructure; it consumes, but does not redefine, production vocabulary |
 | `contracts/precompiles/**`   | canonical external ABI for Rust runtime precompiles                                     |
 | `contracts/crosschain/**`    | ERC-7786 gateways, bridge routing, and interoperable addresses                          |
 | `contracts/intent/**`        | ERC-7683 orders, solvers, settlement, collateral, and routing                           |
