@@ -1,6 +1,6 @@
 use alloy_primitives::U256;
-use outbe_common::WorldwideDay;
 use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::time::timestamp_to_date_key;
 
 use crate::constants::{GEM_CALL_PERIOD_SECONDS, GEM_CALL_THRESHOLD_DAYS, QUALIFIER_REFERENCE_ISO};
 use crate::errors::GemError;
@@ -36,7 +36,7 @@ impl GemContract<'_> {
     /// against the qualifier pair. Returns true if called.
     pub(crate) fn call(
         &mut self,
-        window: &[(WorldwideDay, Option<U256>)],
+        window: &[(u32, Option<U256>)],
         gem_id: U256,
         now_ts: u64,
     ) -> Result<bool> {
@@ -47,10 +47,10 @@ impl GemContract<'_> {
         if item.reference_currency != QUALIFIER_REFERENCE_ISO {
             return Ok(false);
         }
-        let issued_wwd = WorldwideDay::from_timestamp(item.issued_at);
+        let issued_day = timestamp_to_date_key(item.issued_at);
         let mut breaches: u32 = 0;
         for (day, vwap) in window {
-            if *day < issued_wwd {
+            if *day < issued_day {
                 break;
             }
             if let Some(v) = vwap {

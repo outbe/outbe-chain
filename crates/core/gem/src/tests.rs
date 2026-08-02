@@ -1,6 +1,6 @@
 use alloy_primitives::{address, Address, U256};
 use alloy_sol_types::SolCall;
-use outbe_common::WorldwideDay;
+use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 use outbe_primitives::math::tree_math;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
@@ -322,13 +322,13 @@ fn gem_storage_layout_matches_genesis_seeder() {
 }
 /// Build a 30-day window (newest-first) with `breach_days` entries above the
 /// gem's call threshold, the rest at zero.
-fn breach_window(now: u64, breach: U256, breach_days: usize) -> Vec<(WorldwideDay, Option<U256>)> {
+fn breach_window(now: u64, breach: U256, breach_days: usize) -> Vec<(u32, Option<U256>)> {
     let mut window = Vec::with_capacity(30);
-    let mut day = WorldwideDay::from_timestamp(now);
+    let mut day = timestamp_to_date_key(now);
     for i in 0..30 {
         let v = if i < breach_days { breach } else { U256::ZERO };
         window.push((day, Some(v)));
-        day = day.previous_date_key();
+        day = previous_date_key(day);
     }
     window
 }
