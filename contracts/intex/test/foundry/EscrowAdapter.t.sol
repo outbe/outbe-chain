@@ -695,7 +695,7 @@ contract EscrowAdapterTest is Test {
         escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
 
         // Rewire targeting a new token while locks are still in flight — must revert
-        MockERC20 usdt = new MockERC20("Tether", "USDT", 6);
+        MockERC20 usdt = new MockERC20("Tether", "USDT", 18);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.LiveLocksOutstanding.selector, uint256(LOCK_AMOUNT)));
         vm.prank(admin);
         escrow.wire(auction, address(compact), address(usdt));
@@ -703,7 +703,7 @@ contract EscrowAdapterTest is Test {
 
     function test_Wire_RotatePaymentToken_AllowedWhenNoLocks() public {
         // Swap active token when no locks are held.
-        MockERC20 usdt = new MockERC20("Tether", "USDT", 6);
+        MockERC20 usdt = new MockERC20("Tether", "USDT", 18);
         vm.prank(admin);
         escrow.wire(auction, address(compact), address(usdt));
 

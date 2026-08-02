@@ -26,7 +26,7 @@ contract EscrowAdapterNotSelfTest is Test {
     function setUp() public {
         escrow = DeployProxy.escrowAdapter(admin, bridger);
         MockTheCompact compact = new MockTheCompact();
-        MockERC20 paymentToken = new MockERC20("USD Coin", "USDC", 6);
+        MockERC20 paymentToken = new MockERC20("USD Coin", "USDC", 18);
         vm.prank(admin);
         escrow.wire(auction, address(compact), address(paymentToken));
     }

@@ -19,7 +19,7 @@ contract FeeOnTransferToken is IERC20 {
 
     string public constant name = "Fee Token";
     string public constant symbol = "FEE";
-    uint8 public constant decimals = 6;
+    uint8 public constant decimals = 18;
 
     constructor(uint256 _feeBps) {
         feeBps = _feeBps;
@@ -82,7 +82,7 @@ contract EscrowAdapterHardeningTest is Test {
     function setUp() public {
         escrow = DeployProxy.escrowAdapter(admin, bridger);
         compact = new MockTheCompact();
-        paymentToken = new MockERC20("USD Coin", "USDC", 6);
+        paymentToken = new MockERC20("USD Coin", "USDC", 18);
 
         vm.prank(admin);
         escrow.wire(auction, address(compact), address(paymentToken));

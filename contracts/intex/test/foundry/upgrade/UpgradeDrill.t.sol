@@ -147,7 +147,7 @@ contract UpgradeDrillTest is CrossChainTest {
 
     function test_Drill_EscrowAdapter() public {
         EscrowAdapter escrow = DeployProxy.escrowAdapter(admin, admin);
-        MockERC20 token = new MockERC20("Mock USD", "MUSD", 6);
+        MockERC20 token = new MockERC20("Mock USD", "MUSD", 18);
         MockTheCompact compactMock = new MockTheCompact();
         address auction = makeAddr("auction");
 

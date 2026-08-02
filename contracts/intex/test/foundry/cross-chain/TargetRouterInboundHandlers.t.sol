@@ -62,7 +62,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
 
         escrow = DeployProxy.escrowAdapter(admin, admin);
         compact = new MockTheCompact();
-        paymentToken = new MockERC20("USD Coin", "USDC", 6);
+        paymentToken = new MockERC20("USD Coin", "USDC", 18);
         escrow.wire(admin, address(compact), address(paymentToken));
         compact.setResetPeriodSeconds(0);
 

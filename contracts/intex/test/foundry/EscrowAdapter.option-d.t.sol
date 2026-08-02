@@ -46,7 +46,7 @@ contract EscrowAdapterOptionDTest is Test {
         uint256 liveBalance = IERC6909(address(compact)).balanceOf(address(escrow), escrow.lockId());
         assertEq(liveBalance, LOCK_AMOUNT, "precondition: ERC6909 balance equals locked amount");
 
-        MockERC20 usdt = new MockERC20("Tether", "USDT", 6);
+        MockERC20 usdt = new MockERC20("Tether", "USDT", 18);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.LiveLocksOutstanding.selector, uint256(LOCK_AMOUNT)));
         vm.prank(admin);
         escrow.wire(auction, address(compact), address(usdt));
@@ -60,7 +60,7 @@ contract EscrowAdapterOptionDTest is Test {
 
         compact.setBalance(0, address(escrow), 999);
 
-        MockERC20 usdt = new MockERC20("Tether", "USDT", 6);
+        MockERC20 usdt = new MockERC20("Tether", "USDT", 18);
         vm.prank(admin);
         escrow.wire(auction, address(compact), address(usdt));
 
