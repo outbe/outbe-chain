@@ -1023,7 +1023,7 @@ crates/blockchain/node/src/ocomp/
 bin/outbe-keygen
   offline OCOMP key/registration artifact command
 
-crates/testing/e2e-harness
+testing/e2e-harness
   schedule/fault/restart/public-relay evidence controls
 ```
 

@@ -578,7 +578,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn ledger() -> PlanningLedger {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
         PlanningLedger::parse(&root.join("outbe-plan/off-chain-poc-evidence-ledger.yaml"))
             .expect("checked-in planning ledger")
     }

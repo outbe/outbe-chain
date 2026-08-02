@@ -113,7 +113,7 @@ pub fn run_fresh_devnet(repo: &Path, output: &Path) -> Result<()> {
             path(
                 &lane
                     .repo
-                    .join("crates/testing/e2e-harness/features/ocomp_public_path.feature"),
+                    .join("testing/e2e-harness/features/ocomp_public_path.feature"),
             ),
         ])
         .args(["--name", FRESH_SCENARIO]);
@@ -333,7 +333,7 @@ fn run_p0_case(
             path(
                 &lane
                     .repo
-                    .join("crates/testing/e2e-harness/features/ocomp_public_path.feature"),
+                    .join("testing/e2e-harness/features/ocomp_public_path.feature"),
             ),
         ])
         .args(["--name", P0_SCENARIO]);

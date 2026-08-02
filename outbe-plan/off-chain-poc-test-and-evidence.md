@@ -109,7 +109,7 @@ distributed behavior.
 
 ## 3. Reuse the existing harness; close only its OCOMP gaps
 
-`crates/testing/e2e-harness` already provides:
+`testing/e2e-harness` already provides:
 
 - a fresh per-scenario four-validator localnet owned by Rust `ChildGuard`s;
 - a harness-owned transaction-capable MongoDB replica set with one logical
@@ -169,7 +169,7 @@ crates/system/ocomp-protocol/tests/
 crates/core/lysis/tests/
 crates/core/metadosis/tests/ocomp_fsm_model.rs
 crates/core/lysis/tests/compile_fail/
-crates/testing/e2e-harness/tests/ocomp_evidence_verifier.rs
+testing/e2e-harness/tests/ocomp_evidence_verifier.rs
 ```
 
 ### 4.2 Production-seam integration gates
@@ -234,7 +234,7 @@ required `OCM-INT` lane.
 ### 4.5 Existing Tribute harness reuse contract
 
 OCOMP is an extension of the existing
-`crates/testing/e2e-harness`, not a parallel runner. The executable baseline is
+`testing/e2e-harness`, not a parallel runner. The executable baseline is
 `features/tribute_projection.feature` backed by
 `src/features/tribute_projection.rs`, `World`, `Rpc`, `MongoDb`, `Localnet` and
 the existing CE point-read verifier. `OCM-24` adds one registered
@@ -484,7 +484,7 @@ The E2E task resolves to the existing harness entrypoint:
 cargo run --locked -p outbe-e2e-harness --bin outbe-e2e -- \
   --tee gramine-direct --validators 4 --all \
   --enclave-bin target/release/outbe-tee-enclave \
-  --input crates/testing/e2e-harness/features/ocomp_poc.feature \
+  --input testing/e2e-harness/features/ocomp_poc.feature \
   --evidence-dir <dir>
 ```
 
@@ -562,7 +562,7 @@ crates/blockchain/node/src/ocomp/tests/
 crates/blockchain/evm/tests/
   system phase, public full-result vote, quorum apply, checkpoint and replay parity
 
-crates/testing/e2e-harness/
+testing/e2e-harness/
   existing Tribute projection/RPC/Mongo/CE fixture path
   + one registered OCOMP World handle and step module
   + OCOMP Gherkin features, evidence writer and verifier

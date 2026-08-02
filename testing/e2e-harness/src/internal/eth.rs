@@ -174,22 +174,22 @@ sol! {
 
 sol!(
     #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
-    "../../../contracts/precompiles/src/IVote.sol"
+    "../../contracts/precompiles/src/IVote.sol"
 );
 
 sol!(
     #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
-    "../../../contracts/precompiles/src/IStablecoinFactory.sol"
+    "../../contracts/precompiles/src/IStablecoinFactory.sol"
 );
 
 sol!(
     #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
-    "../../../contracts/precompiles/src/IStablecoinPolicyRegistry.sol"
+    "../../contracts/precompiles/src/IStablecoinPolicyRegistry.sol"
 );
 
 sol!(
     #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
-    "../../../contracts/precompiles/src/IStablecoin.sol"
+    "../../contracts/precompiles/src/IStablecoin.sol"
 );
 
 /// A dedicated multi-thread runtime that drives every RPC future, independent of

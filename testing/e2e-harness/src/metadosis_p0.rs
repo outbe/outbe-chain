@@ -26,7 +26,7 @@ pub const METADOSIS_P0_SCENARIO: &str =
 const METADOSIS_P0_FEATURE: &str = "Off-chain computation public path";
 const NAMED_FAILPOINT_VALUE: &str = "nod_receipt_root";
 const ARBITRARY_FAILPOINT_VALUE: &str = "metadosis-p0-arbitrary-unrecognized-value";
-const FINAL_FIXTURE: &str = "crates/testing/e2e-harness/fixtures/ocomp-final-v1";
+const FINAL_FIXTURE: &str = "testing/e2e-harness/fixtures/ocomp-final-v1";
 const REQUIRED_BINARY_NAMES: [&str; 6] = [
     "outbe_chain",
     "outbe_ocomp",

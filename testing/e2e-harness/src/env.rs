@@ -317,10 +317,10 @@ impl Default for Environment {
     }
 }
 
-/// Default repo root: three levels up from this crate (`crates/testing/e2e-harness`).
+/// Default repo root: two levels up from this crate (`testing/e2e-harness`).
 fn default_repo() -> PathBuf {
     let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    for _ in 0..3 {
+    for _ in 0..2 {
         p.pop();
     }
     p

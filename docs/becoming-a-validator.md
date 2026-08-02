@@ -406,5 +406,5 @@ mise run e2e
 
 The harness owns the node processes, enclave containers, port ranges, data
 directories, and a temporary MongoDB replica set. See
-`crates/testing/e2e-harness/README.md` for focused feature commands and debug
+`testing/e2e-harness/README.md` for focused feature commands and debug
 options.

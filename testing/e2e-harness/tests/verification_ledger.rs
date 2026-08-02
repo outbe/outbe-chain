@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
 fn repository_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
 #[test]

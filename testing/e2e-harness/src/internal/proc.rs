@@ -643,7 +643,7 @@ mod tests {
     fn real_sgx_manifest_bounds_threads_for_four_validator_e2e() {
         let manifest = include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../../bin/outbe-tee-enclave/gramine/outbe-tee-enclave.manifest.template"
+            "/../../bin/outbe-tee-enclave/gramine/outbe-tee-enclave.manifest.template"
         ));
         let max_threads = manifest
             .lines()

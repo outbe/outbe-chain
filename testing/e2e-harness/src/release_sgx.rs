@@ -733,8 +733,8 @@ fn absolute_path(path: &Path) -> Result<PathBuf> {
 fn default_repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
-        .nth(3)
-        .expect("e2e harness is three levels below repository root")
+        .nth(2)
+        .expect("e2e harness is two levels below repository root")
         .to_owned()
 }
 

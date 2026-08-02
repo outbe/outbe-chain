@@ -85,7 +85,7 @@ The repository-wide [E2E evidence inventory](e2e-inventory.md) lists live
 multi-node runners, in-process module compositions and Foundry suites without
 conflating their verification boundaries.
 
-`crates/testing/e2e-harness/README.md` explains how to run the harness. Feature
+`testing/e2e-harness/README.md` explains how to run the harness. Feature
 files implement scenarios. This directory specifies what outcomes those features
 must prove. Operational demo instructions belong in `docs/` runbooks and may cite a
 PFS, but manual screenshots or Mongo queries do not replace automated evidence.

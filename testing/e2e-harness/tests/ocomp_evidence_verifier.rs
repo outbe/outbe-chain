@@ -13,7 +13,7 @@ use serde_json::json;
 use tempfile::TempDir;
 
 fn repository_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
 fn planning_ledger_path() -> PathBuf {

@@ -28,7 +28,7 @@ const VOTER_FELONY_SLOT: u64 = 12;
 /// A lifecycle E2E may opt into a short delay; production seed defaults remain
 /// untouched. The value is supplied through `TESTNET_UNBONDING_PERIOD_SECS`.
 const STAKING_SUFFIX: &str = "ee02";
-const OCOMP_FINAL_FIXTURE_ROOT: &str = "crates/testing/e2e-harness/fixtures/ocomp-final-v1";
+const OCOMP_FINAL_FIXTURE_ROOT: &str = "testing/e2e-harness/fixtures/ocomp-final-v1";
 const OCOMP_FINAL_VALIDATORS: usize = 4;
 const OCOMP_FINAL_ROOT_FILES: &[(&str, u32)] = &[
     ("dkg-output.hex", 0o600),

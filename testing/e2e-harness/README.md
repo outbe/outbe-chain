@@ -200,7 +200,7 @@ Run only ZeroFee's native Alloy EIP-7702 set-code and sponsorship vertical slice
 ```sh
 cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
   --tee mock --validators 4 --all \
-  --input crates/testing/e2e-harness/features/zerofee.feature
+  --input testing/e2e-harness/features/zerofee.feature
 ```
 
 It is also part of the canonical `mise run e2e` suite. The Rust World owns its
@@ -251,7 +251,7 @@ Run the complete Tribute compressed-entity feature (happy path and edge cases):
 cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
   --tee gramine-direct \
   --validators 4 \
-  --input 'crates/testing/e2e-harness/features/tribute_projection.feature'
+  --input 'testing/e2e-harness/features/tribute_projection.feature'
 ```
 
 Run only the creation happy path:

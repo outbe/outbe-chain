@@ -1049,14 +1049,15 @@ mod tests {
         )
         .unwrap();
 
-        let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let mut genesis: serde_json::Value = serde_json::from_slice(
-            &std::fs::read(repo.join(
-                "crates/testing/e2e-harness/fixtures/ocomp-final-v1/artifacts/genesis-final.json",
-            ))
-            .unwrap(),
-        )
-        .unwrap();
+        let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mut genesis: serde_json::Value =
+            serde_json::from_slice(
+                &std::fs::read(repo.join(
+                    "testing/e2e-harness/fixtures/ocomp-final-v1/artifacts/genesis-final.json",
+                ))
+                .unwrap(),
+            )
+            .unwrap();
         let genesis_path = artifacts.join("genesis.json");
         std::fs::write(&genesis_path, serde_json::to_vec_pretty(&genesis).unwrap()).unwrap();
         let base_spec =
@@ -1341,7 +1342,7 @@ mod tests {
     #[test]
     fn checked_in_metadosis_pack_has_one_fixed_command_per_test() {
         let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../..")
+            .join("../..")
             .canonicalize()
             .unwrap();
         let ledger =

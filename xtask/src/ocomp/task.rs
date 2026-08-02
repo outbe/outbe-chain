@@ -1996,8 +1996,7 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                 ],
             )?;
 
-            let fixture =
-                repository_root.join("crates/testing/e2e-harness/fixtures/ocomp-final-v1");
+            let fixture = repository_root.join("testing/e2e-harness/fixtures/ocomp-final-v1");
             let checked_artifacts = fixture.join("artifacts");
             let base = fixture.join("base");
             let checked_capacity = checked_artifacts.join("generated-capacity-v1.json");

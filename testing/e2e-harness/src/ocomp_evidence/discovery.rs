@@ -97,7 +97,7 @@ fn scan_explicit_markers(repo: &Path) -> Result<BTreeMap<String, Vec<PathBuf>>> 
         "crates/core/tribute",
         "crates/blockchain/node",
         "crates/blockchain/evm",
-        "crates/testing/e2e-harness",
+        "testing/e2e-harness",
         "bin/outbe-ocomp",
     ];
     for root in roots {

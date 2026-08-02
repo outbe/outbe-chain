@@ -130,8 +130,7 @@ pub fn repository_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(Path::parent)
-        .and_then(Path::parent)
-        .expect("reference crate is under crates/testing")
+        .expect("reference crate is under testing")
         .to_path_buf()
 }
 
@@ -757,7 +756,7 @@ pub fn check(cases_path: &Path, manifest_path: &Path) -> Result<CheckReport> {
     if manifest["reference_sha256"].as_str() != Some(&reference_sha256) {
         integrity_errors.push("reference_sha256".to_owned());
     }
-    if manifest["reference_path"].as_str() != Some("crates/testing/lysis-v1-reference/src/lib.rs") {
+    if manifest["reference_path"].as_str() != Some("testing/lysis-v1-reference/src/lib.rs") {
         integrity_errors.push("reference_path".to_owned());
     }
     if cases.iter().any(|case| case.requirements.is_empty()) {
