@@ -69,8 +69,10 @@ Intel include. The C adapter `_Static_assert`s all nine SGX QVL result enum
 values against the staged `sgx_qve_header.h`; Rust tests then convert
 independent raw literals through the production mapping.
 
-`release/dcap-native-qvl-v1.json` records the inactive exact artifact and build
-input contract, and `scripts/release/verify_dcap_native_qvl.py` fails closed on
+`release/dcap-native-qvl-v1.json` records the exact artifact and build input
+contract. I9 B1 promotes its release-build state to active only as part of the
+exact `native-dcap` candidate; rollout remains blocked by the later I9 gates.
+`scripts/release/verify_dcap_native_qvl.py` fails closed on
 a missing, changed or boundary-incompatible artifact or include input.
 
 The real Processor-CA fixture passed five public-interface tests both natively

@@ -51,8 +51,11 @@ class ReleaseManifestTests(unittest.TestCase):
             "rust_toolchain": "1.96.0",
             "builder": {
                 "id": "https://github.com/outbe/outbe-chain/reproducible-elf-builder/v1",
-                "image": "rust:1.96.0-bookworm@sha256:" + "1" * 64,
-                "debian_snapshot": "20260501T000000Z",
+                "base_images": [
+                    "rust:1.96.0-bookworm@sha256:" + "1" * 64,
+                    "gramineproject/gramine:1.9-noble@sha256:" + "2" * 64,
+                ],
+                "recipe": "Dockerfile.project-toolchain",
                 "system_packages": ["clang=1.0", "cmake=1.0"],
             },
             "environment": {
@@ -79,7 +82,7 @@ class ReleaseManifestTests(unittest.TestCase):
                     "package": "outbe-tee-enclave",
                     "role": "tee-enclave",
                     "classification": "production",
-                    "features": [],
+                    "features": ["native-dcap"],
                     "install_profiles": ["full-node", "validator"],
                 },
             ],
@@ -114,7 +117,7 @@ class ReleaseManifestTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(
             hashlib.sha256(first).hexdigest(),
-            "ba39c0ca4c2acba8f5d1ee0e06c68988a1c5b59d7bb42e1d81cf6db52fc7aa4c",
+            "8f38128fa39fa4454f2937cab1a97d47b06235e64bcd3de5596dbea132b017fe",
         )
         self.assertTrue(first.endswith(b"\n"))
         self.assertNotIn(str(self.root).encode(), first)
@@ -127,6 +130,26 @@ class ReleaseManifestTests(unittest.TestCase):
     def test_production_enclave_rejects_mock_feature(self) -> None:
         self.spec["artifacts"][1]["features"] = ["mock"]
         with self.assertRaisesRegex(ValueError, "production enclave.*mock"):
+            self.build()
+
+    def test_production_enclave_requires_exact_native_dcap_feature(self) -> None:
+        self.spec["artifacts"][1]["features"] = []
+        with self.assertRaisesRegex(ValueError, "exactly native-dcap"):
+            self.build()
+
+    def test_non_enclave_artifact_rejects_application_features(self) -> None:
+        self.spec["artifacts"][0]["features"] = ["native-dcap"]
+        with self.assertRaisesRegex(ValueError, "non-enclave release artifacts"):
+            self.build()
+
+    def test_unsupported_release_architecture_fails_closed(self) -> None:
+        self.spec["target"] = "aarch64-unknown-linux-gnu"
+        with self.assertRaisesRegex(ValueError, "unsupported release target"):
+            self.build()
+
+    def test_production_enclave_identity_is_exact(self) -> None:
+        self.spec["artifacts"][1]["package"] = "replacement-enclave"
+        with self.assertRaisesRegex(ValueError, "package and binary"):
             self.build()
 
     def test_input_path_cannot_escape_source_root(self) -> None:
@@ -223,6 +246,8 @@ class RepositoryBuildSpecTests(unittest.TestCase):
         self.assertNotIn("mock", enclave["features"])
         self.assertIs(spec["cargo"]["auditable"], False)
         self.assertIn("release/reproducible-verifier-requirements.txt", spec["inputs"])
+        self.assertIn("release/dcap-native-qvl-v1.json", spec["inputs"])
+        self.assertIn("scripts/release/verify_dcap_native_qvl.py", spec["inputs"])
         self.assertIn("scripts/release/verify_reproducible_elf.py", spec["inputs"])
 
 

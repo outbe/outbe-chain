@@ -654,8 +654,10 @@ protocol/release activation, never a node-local choice.
 
 The selected feasibility matrix is Intel DCAP QVL
 `1.26.100.1-noble1` on `x86_64-unknown-linux-gnu` with Gramine `1.9`.
-The inactive artifact contract is
-`release/dcap-native-qvl-v1.json`; it pins QVL, `libstdc++`, `libgcc_s` and the
+The artifact contract is `release/dcap-native-qvl-v1.json`. I9 B1 promotes its
+release-build state from inactive to active together with the exact
+`native-dcap` feature graph; this does not authorize rollout before the B1–E1
+checkpoints pass. It pins QVL, `libstdc++`, `libgcc_s` and the
 complete compiler-observed Intel include closure by exact package version,
 byte size and SHA-256. The C adapter compiles from the staged verified include
 tree and asserts the SGX result enum values against those headers.

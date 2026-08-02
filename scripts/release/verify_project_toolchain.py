@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import tomllib
@@ -14,6 +15,7 @@ from typing import Any
 CONTRACT_PATH = "release/project-toolchain-v1.json"
 EXPECTED_TOP_LEVEL_KEYS = {
     "activation",
+    "apt_provenance",
     "gramine",
     "platform",
     "rust",
@@ -21,6 +23,15 @@ EXPECTED_TOP_LEVEL_KEYS = {
     "system_packages",
     "target",
 }
+SHA256_RE = re.compile(r"[0-9a-f]{64}")
+EXPECTED_APT_SOURCE_PATHS = (
+    "/etc/apt/sources.list.d/gramine.list",
+    "/etc/apt/sources.list.d/intel-sgx.list",
+    "/etc/apt/sources.list.d/ubuntu.sources",
+    "/usr/share/keyrings/gramine-keyring.gpg",
+    "/usr/share/keyrings/intel-sgx-deb.key",
+    "/usr/share/keyrings/ubuntu-archive-keyring.gpg",
+)
 LOWER_GIT_SHA_RE = re.compile(r"[0-9a-f]{40}")
 EXPECTED_SYSTEM_PACKAGES = (
     "build-essential",
@@ -47,6 +58,14 @@ def _read_json(path: Path) -> dict[str, Any]:
     return value
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def load_and_validate_pin(path: Path) -> dict[str, Any]:
     pin = _read_json(path)
     if set(pin) != EXPECTED_TOP_LEVEL_KEYS:
@@ -59,6 +78,34 @@ def load_and_validate_pin(path: Path) -> dict[str, Any]:
         raise ValueError("project toolchain supports only x86_64 Linux")
     if pin["platform"] != "linux/amd64":
         raise ValueError("project toolchain supports only linux/amd64")
+
+    apt = pin["apt_provenance"]
+    if not isinstance(apt, dict) or set(apt) != {"deb_closure", "source_files"}:
+        raise ValueError("project APT provenance has an unsupported shape")
+    closure = apt["deb_closure"]
+    if (
+        not isinstance(closure, dict)
+        or set(closure) != {"count", "format", "sha256"}
+        or not isinstance(closure["count"], int)
+        or isinstance(closure["count"], bool)
+        or closure["count"] <= 0
+        or closure["format"] != "sha256sum-lines-sorted-by-filename-v1"
+        or not SHA256_RE.fullmatch(closure["sha256"])
+    ):
+        raise ValueError("project APT package closure must have an exact digest and count")
+    source_files = apt["source_files"]
+    if (
+        not isinstance(source_files, list)
+        or any(not isinstance(source, dict) for source in source_files)
+        or tuple(source.get("path") for source in source_files)
+        != EXPECTED_APT_SOURCE_PATHS
+        or any(
+            set(source) != {"path", "sha256"}
+            or not SHA256_RE.fullmatch(source.get("sha256", ""))
+            for source in source_files
+        )
+    ):
+        raise ValueError("project APT source and key files must be hash-pinned")
 
     rust = pin["rust"]
     if not isinstance(rust, dict) or set(rust) != {"components", "version"}:
@@ -99,6 +146,32 @@ def load_and_validate_pin(path: Path) -> dict[str, Any]:
     if tuple(packages) != EXPECTED_SYSTEM_PACKAGES:
         raise ValueError("project toolchain has an unsupported system package set")
     return pin
+
+
+def verify_apt_inputs(*, pin_path: Path, root: Path, deb_dir: Path) -> None:
+    """Verify the base APT authority and downloaded package closure before install."""
+
+    pin = load_and_validate_pin(pin_path)
+    root = root.resolve()
+    for source in pin["apt_provenance"]["source_files"]:
+        candidate = root / source["path"].lstrip("/")
+        if not candidate.is_file() or candidate.is_symlink():
+            raise ValueError(f"missing or non-regular APT provenance input: {source['path']}")
+        if _sha256_file(candidate) != source["sha256"]:
+            raise ValueError(f"APT provenance digest mismatch: {source['path']}")
+
+    debs = sorted(deb_dir.resolve().glob("*.deb"), key=lambda path: path.name)
+    if any(not path.is_file() or path.is_symlink() for path in debs):
+        raise ValueError("APT package closure contains a non-regular artifact")
+    closure = pin["apt_provenance"]["deb_closure"]
+    if len(debs) != closure["count"]:
+        raise ValueError(
+            f"APT package closure count mismatch: expected {closure['count']}, found {len(debs)}"
+        )
+    ledger = "".join(f"{_sha256_file(path)}  {path.name}\n" for path in debs)
+    actual_digest = hashlib.sha256(ledger.encode("ascii")).hexdigest()
+    if actual_digest != closure["sha256"]:
+        raise ValueError("APT package closure digest mismatch")
 
 
 def _require_equal(
@@ -148,9 +221,30 @@ def repository_differences(repo_root: Path) -> list[str]:
         actual=elf.get("rust_toolchain"),
         expected=rust["version"],
     )
-    if f"rust:{rust['version']}-" not in elf.get("builder", {}).get("image", ""):
-        differences.append("ELF builder image does not use the pinned Rust version")
-    for required_input in (CONTRACT_PATH, "scripts/release/verify_project_toolchain.py"):
+    elf_builder = elf.get("builder", {})
+    _require_equal(
+        differences,
+        label="ELF builder recipe",
+        actual=elf_builder.get("recipe"),
+        expected="Dockerfile.project-toolchain",
+    )
+    elf_base_images = elf_builder.get("base_images", [])
+    if not any(f"rust:{rust['version']}-" in image for image in elf_base_images):
+        differences.append("ELF builder images do not use the pinned Rust version")
+    if not any(f"gramineproject/gramine:{gramine['version']}-" in image for image in elf_base_images):
+        differences.append("ELF builder images do not use the pinned Gramine version")
+    _require_equal(
+        differences,
+        label="ELF builder system packages",
+        actual=elf_builder.get("system_packages"),
+        expected=[f"{name}={version}" for name, version in packages.items()],
+    )
+    for required_input in (
+        CONTRACT_PATH,
+        "release/dcap-native-qvl-v1.json",
+        "scripts/release/verify_dcap_native_qvl.py",
+        "scripts/release/verify_project_toolchain.py",
+    ):
         if required_input not in elf.get("inputs", []):
             differences.append(f"ELF release inputs do not bind {required_input}")
 
@@ -222,6 +316,11 @@ def repository_differences(repo_root: Path) -> list[str]:
             differences.append(
                 f"project toolchain recipe does not install {package}={version}"
             )
+    for image in elf_base_images:
+        if f"FROM {image} " not in recipe:
+            differences.append(f"project toolchain recipe does not consume {image}")
+    if "FROM toolchain AS builder" not in recipe or "FROM scratch AS artifacts" not in recipe:
+        differences.append("project toolchain recipe does not own the release artifact stages")
 
     tee_build = (repo_root / "crates/system/tee/build.rs").read_text(encoding="utf-8")
     for release_pin in (
@@ -248,7 +347,17 @@ def verify_repository(repo_root: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-root", type=Path, default=Path.cwd())
+    parser.add_argument("--verify-apt-inputs", action="store_true")
+    parser.add_argument("--pin", type=Path)
+    parser.add_argument("--apt-root", type=Path)
+    parser.add_argument("--deb-dir", type=Path)
     args = parser.parse_args()
+    if args.verify_apt_inputs:
+        if args.pin is None or args.apt_root is None or args.deb_dir is None:
+            parser.error("--verify-apt-inputs requires --pin, --apt-root and --deb-dir")
+        verify_apt_inputs(pin_path=args.pin, root=args.apt_root, deb_dir=args.deb_dir)
+        print("project APT source and package closure: OK")
+        return
     verify_repository(args.repo_root)
     print(
         "project toolchain version pin: OK "

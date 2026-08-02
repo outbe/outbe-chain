@@ -63,7 +63,7 @@ fn repository_contract_has_no_runtime_signing_or_direct_fallback() {
     )
     .expect("release manifest template");
     assert!(template.contains("sgx.debug = false"));
-    assert!(template.contains("sgx.remote_attestation = \"none\""));
+    assert!(template.contains("sgx.remote_attestation = \"dcap\""));
     assert!(!template.contains("gramine-direct"));
     assert!(template.contains("loader.env.LD_LIBRARY_PATH = \"/qvl:/lib\""));
     for trusted_qvl_file in [
@@ -95,11 +95,21 @@ fn repository_contract_has_no_runtime_signing_or_direct_fallback() {
         .map(|value| value.as_str().expect("string input"))
         .collect::<Vec<_>>();
     assert!(inputs.contains(&"release/dcap-native-qvl-v1.json"));
+    assert_eq!(bundle_spec["sgx"]["remote_attestation"], "dcap");
     assert_eq!(
         bundle_spec["project_toolchain"],
         "release/project-toolchain-v1.json"
     );
     assert!(inputs.contains(&"scripts/release/verify_dcap_native_qvl.py"));
+}
+
+#[test]
+fn bundle_spec_rejects_pre_activation_attestation_mode() {
+    let mut spec = repo_spec();
+    spec.sgx.remote_attestation = "none".to_owned();
+
+    let error = spec.validate().expect_err("none must fail closed");
+    assert!(error.to_string().contains("must enable DCAP"));
 }
 
 #[test]

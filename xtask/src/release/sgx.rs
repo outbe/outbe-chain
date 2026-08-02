@@ -94,8 +94,8 @@ impl BundleSpec {
         if self.sgx.debug {
             bail!("release SGX bundle must use a non-debug enclave");
         }
-        if self.sgx.remote_attestation != "none" {
-            bail!("testnet release currently supports local SGX evidence only");
+        if self.sgx.remote_attestation != "dcap" {
+            bail!("production SGX bundle must enable DCAP remote attestation");
         }
         if self.sgx.sigstruct_date_source != "source-date-epoch-utc" {
             bail!("SIGSTRUCT date must derive from SOURCE_DATE_EPOCH in UTC");

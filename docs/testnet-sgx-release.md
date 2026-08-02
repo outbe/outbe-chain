@@ -4,11 +4,11 @@ This guide defines the release mechanics for the same enclave bytes that were
 independently reproduced, signed with the protected testnet key, published as an
 immutable OCI image and executed on Intel SGX x86_64.
 
-> **DCAP activation gate.** The checked-in release bundle is still the
-> pre-activation SGX lane with `sgx.remote_attestation = "none"`. It is not a
-> valid `DcapRequired` release and must not be rolled out to a production-mode
-> genesis. I9 B1 must first freeze the exact `native-dcap` bundle with Intel QVL
-> `1.26.100.1-noble1` and Gramine `1.9`; H1, P1 and E1 must then prove fresh
+> **DCAP release gate.** The checked-in B1 candidate selects
+> `sgx.remote_attestation = "dcap"`, exactly `native-dcap`, Intel QVL
+> `1.26.100.1-noble1` and Gramine `1.9`. This source-level activation is not by
+> itself authorization to roll out a production-mode genesis: the B1 checkpoint
+> must bind the reproducible artifact set, and H1, P1 and E1 must prove fresh
 > accepted Processor and registered multi-package Platform evidence, exact-release
 > timing, and real Validator/FullNode/32-validator E2E. Missing hardware or either
 > accepted CA result blocks release rather than skipping it.
@@ -128,9 +128,8 @@ gh run watch --repo outbe/outbe-chain <run-id> --exit-status
 The final DCAP-capable workflow must order two independent ELF builds, two
 unsigned SGX bundle builds, protected SIGSTRUCT signing, exact-digest OCI
 publication and Cosign signing, SPDX SBOM, fail-not-skip hardware SGX/DCAP
-acceptance, final schema validation and ReleaseManifest signing. The current
-pre-activation workflow does not satisfy this paragraph until B1 through E1 are
-closed.
+acceptance, final schema validation and ReleaseManifest signing. The workflow is
+not production-authorized until B1 through E1 are closed.
 The OCI job provisions pinned Buildx v0.35.0 and a digest-pinned BuildKit v0.31.2
 `docker-container` builder because the default Docker driver cannot emit the required
 BuildKit provenance and SBOM attestations.

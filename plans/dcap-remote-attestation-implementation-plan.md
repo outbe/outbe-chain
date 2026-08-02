@@ -129,13 +129,14 @@ Platform status remains mandatory, but it is I9 release evidence rather than
 an I1 implementation blocker. This relocation does not authorize a broader
 status matrix or synthetic positive.
 
-Toolchain staging is intentionally separate from container delivery:
+Before I9, toolchain staging is intentionally separate from container delivery:
 `release/project-toolchain-v1.json` is the single exact version pin and is
 bound into ELF and SGX release inputs, while its activation remains
-`pending-container-delivery`. This state does not claim that the current
+`pending-container-delivery`. That staging state does not claim that the
 production ELF/SGX builders use the unified image, and it does not complete
-the native-DCAP release gate. Image delivery and activation must be resolved
-before the production enclave is built with `native-dcap`.
+the native-DCAP release gate. I9 B1 must consume the same project-toolchain
+recipe for the exact local release graph before building the production enclave
+with `native-dcap`; registry publication remains a separate delivery concern.
 
 **Acceptance:**
 

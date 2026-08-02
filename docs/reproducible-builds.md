@@ -1,11 +1,11 @@
 # Reproducing the Outbe Linux x86_64 release inputs
 
-The base reproducible-release slice builds the five current production ELF files from one
+The base reproducible-release slice builds the six current production ELF files from one
 clean commit: `outbe-chain`, `outbe-cli`, `outbe-keygen`, `outbe-feeder` and
-`outbe-tee-enclave` without `mock`. The protected testnet workflow then consumes that exact
+`outbe-ocomp`, plus `outbe-tee-enclave` with exactly `native-dcap`. The protected testnet workflow then consumes that exact
 enclave ELF, compares two deterministic unsigned Gramine bundles, signs one, publishes an
 immutable OCI image and binds its measurements, SPDX SBOM and hardware-SGX evidence into a
-verified ReleaseManifest. Native packages and the broader release matrix remain separate.
+verified ReleaseManifest.
 
 ## Prerequisites and trust boundary
 
@@ -18,8 +18,12 @@ python3.11 -m venv /tmp/outbe-release-verifier
   -r release/reproducible-verifier-requirements.txt
 ```
 
-The recipe itself pins Rust 1.96.0, the builder image digest, a Debian snapshot and direct
-package versions in `release/reproducible-elf-build-v1.json`. The host validates those
+The recipe uses the single `Dockerfile.project-toolchain` graph. Its two base images are
+digest-pinned, and Rust 1.96.0, Gramine 1.9, Intel QVL 1.26.100.1-noble1 and every direct
+Noble package version are bound by `release/reproducible-elf-build-v1.json` and
+`release/project-toolchain-v1.json`. The same project pin binds the base APT source/key
+files and the name-plus-SHA-256 ledger of the complete 100-package `.deb` closure. The
+container verifies that closure before installing it with downloads disabled. The host validates those
 constraints before Docker can select or execute the builder. It accepts only
 `x86_64-unknown-linux-gnu` with the existing Cargo `release` profile.
 
@@ -43,9 +47,9 @@ scripts/release/reproducible-build.sh \
 
 The output contains:
 
-- `bin/` — the five production ELF files;
+- `bin/` — the six production ELF files;
 - `release-manifest.json` — canonical `build-candidate` ReleaseManifest v1;
-- `metadata/builder-system-packages.txt` — the fully resolved Debian package inventory;
+- `metadata/builder-system-packages.txt` — the fully resolved Noble package inventory;
 - `metadata/outbe-chain.version.txt` — automatically checked commit/time/profile/target output;
 - the exact schema and build spec; and
 - `SHA256SUMS` — checksums for all emitted files except the checksum file itself.
@@ -78,7 +82,7 @@ scripts/release/reproducible-build.sh \
 
 The verifier requires the exact hash-pinned Python package versions, validates both manifests
 against the checked-in Draft 2020-12 schema, checks their canonical bytes, requires the exact
-five-ELF matrix, and independently verifies the source-input, resolved-package, metadata and
+six-ELF matrix, and independently verifies the source-input, resolved-package, metadata and
 ELF digest/size records. It also checks the exact output checksum matrix, saved version
 identity, ELF magic and leaked builder paths before comparing each ELF byte for byte. It
 writes evidence even on failure and exits non-zero when any difference exists.
@@ -112,7 +116,8 @@ cmp -l /tmp/outbe-rebuild-a/bin/outbe-chain \
 ```
 
 If installed, run `diffoscope` on the named ELF. Compare source commit, release tag,
-`SOURCE_DATE_EPOCH`, builder image, Debian snapshot, resolved package inventory, Rust flags
+`SOURCE_DATE_EPOCH`, both base-image digests, project toolchain recipe, pinned `.deb`
+closure, resolved package inventory, Rust flags
 and both canonical manifests. Establish whether the state is reachable in the supported
 recipe and identify the byte-producing input before proposing a fix.
 
@@ -147,6 +152,5 @@ release commands with Cargo's locked dependency graph, require the GitHub Git AP
 and preserve one signed annotated tag object across every privileged boundary, and bind
 verified Cosign image, SBOM and BuildKit provenance evidence into the final manifest. The Rust finalizer obtains
 that evidence by invoking Cosign itself; publication remains a draft until every downloaded
-asset matches byte-for-byte. Deterministic native
-packages, every non-enclave OCI/profile,
-production signing authority, TUF, `outbeup` and the operator sidecar remain separate work.
+asset matches byte-for-byte. Every non-enclave OCI/profile, production signing authority,
+TUF and `outbeup` remain separate work.

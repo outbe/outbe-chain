@@ -316,7 +316,8 @@ def verify_outputs(
             "source_date_epoch": first_manifest["build"]["source_date_epoch"],
             "target": first_manifest["build"]["target"],
             "profile": first_manifest["build"]["profile"],
-            "builder_image": first_manifest["build"]["builder"]["image"],
+            "builder_base_images": first_manifest["build"]["builder"]["base_images"],
+            "builder_recipe": first_manifest["build"]["builder"]["recipe"],
         }
         if check_git_identity:
             try:

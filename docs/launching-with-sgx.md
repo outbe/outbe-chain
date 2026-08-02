@@ -32,10 +32,10 @@ artifact set:
   minimum validator profile;
 - real Validator, FullNode and 32-validator `DcapRequired` E2E is green.
 
-The currently checked-in pre-activation release bundle still declares
-`sgx.remote_attestation = "none"`. It must not be deployed as a
-`DcapRequired` production release. I9 B1 owns the exact release-bundle switch;
-H1, P1 and E1 own hardware acceptance, performance and production E2E.
+The checked-in B1 candidate now declares `sgx.remote_attestation = "dcap"` and
+builds the enclave with exactly `native-dcap`. It still must not be deployed as
+a `DcapRequired` production release until B1 binds the reproducible artifact
+set; H1, P1 and E1 own hardware acceptance, performance and production E2E.
 
 ## Run the isolated development network
 
