@@ -31,6 +31,8 @@ pub enum IntexFactoryError {
     InsufficientProofOfWork,
     #[error("zero shares received from vault")]
     ZeroSharesReceived,
+    #[error("payment token has unsupported decimals {0}")]
+    UnsupportedPaymentDecimals(u8),
     #[error("caller is not the origin router")]
     NotOriginRouter,
     #[error("no contributors recorded for series {0}")]

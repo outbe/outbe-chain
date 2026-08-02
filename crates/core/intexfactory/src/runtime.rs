@@ -164,13 +164,21 @@ pub(crate) fn derived_call_price(entry_price: U256, call_price_num: u64) -> Resu
         .ok_or_else(|| PrecompileError::Revert("call price overflow".into()))
 }
 
-/// Per-Intex cost = entry_price * promis_load / 1e30 (payment-token minor).
-/// Mirrors the desis derivation: entry(1e18) * PROMIS_LOAD / 1e12, expressed via
-/// promis_load_minor (= PROMIS_LOAD * 1e18), so the divisor is 1e30.
-pub(crate) fn derived_cost_amount(entry_price: U256, promis_load_minor: U256) -> Result<U256> {
+/// Per-Intex cost in the payment token's minor units. `entry_price` and
+/// `promis_load_minor` are both 1e18-scaled, so their product carries 1e36.
+pub(crate) fn derived_cost_amount(
+    entry_price: U256,
+    promis_load_minor: U256,
+    payment_decimals: u8,
+) -> Result<U256> {
+    let exp = 36u32
+        .checked_sub(u32::from(payment_decimals))
+        .ok_or(IntexFactoryError::UnsupportedPaymentDecimals(
+            payment_decimals,
+        ))?;
     entry_price
         .checked_mul(promis_load_minor)
-        .map(|v| v / U256::from(10u64).pow(U256::from(30u64)))
+        .map(|v| v / U256::from(10u64).pow(U256::from(exp)))
         .ok_or_else(|| PrecompileError::Revert("cost amount overflow".into()))
 }
 
@@ -435,14 +443,17 @@ pub fn settle(
         return Err(IntexFactoryError::NotAuthorized.into());
     }
 
-    // payment = per-Intex cost * amount; cost derives from entry_price * promis_load.
-    let payment = derived_cost_amount(series.entry_price_minor, series.promis_load_minor)?
-        .checked_mul(amount)
-        .ok_or_else(|| PrecompileError::Revert("settlement cost overflow".into()))?;
+    let payment_token = vault_asset(storage)?;
+    let payment = derived_cost_amount(
+        series.entry_price_minor,
+        series.promis_load_minor,
+        erc20_decimals(storage, payment_token)?,
+    )?
+    .checked_mul(amount)
+    .ok_or_else(|| PrecompileError::Revert("settlement cost overflow".into()))?;
 
     // Pull payment from the settler, deposit into the reserve vault.
     // Fee-on-transfer safe: measure the received delta.
-    let payment_token = vault_asset(storage)?;
     let before = erc20_balance_of(storage, payment_token, INTEX_FACTORY_ADDRESS)?;
     storage.call(
         payment_token,
@@ -537,6 +548,12 @@ fn erc20_balance_of(storage: &StorageHandle<'_>, token: Address, account: Addres
     let ret = storage.staticcall(token, IERC20::balanceOfCall { account }.abi_encode().into())?;
     IERC20::balanceOfCall::abi_decode_returns(&ret)
         .map_err(|_| PrecompileError::Revert("ERC20 balanceOf undecodable".into()))
+}
+
+fn erc20_decimals(storage: &StorageHandle<'_>, token: Address) -> Result<u8> {
+    let ret = storage.staticcall(token, IERC20::decimalsCall {}.abi_encode().into())?;
+    IERC20::decimalsCall::abi_decode_returns(&ret)
+        .map_err(|_| PrecompileError::Revert("ERC20 decimals undecodable".into()))
 }
 
 /// minePromis: PoW-gated burn of Settled then mint of Promis. `holder` is the

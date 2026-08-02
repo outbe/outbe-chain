@@ -170,6 +170,43 @@ fn floor_and_call_derivation() {
 }
 
 // ---------------------------------------------------------------------
+// settlement cost scaling
+// ---------------------------------------------------------------------
+
+fn entry_price() -> U256 {
+    U256::from(5u64) * U256::from(10u64).pow(U256::from(17u64))
+}
+
+fn load_minor() -> U256 {
+    U256::from(100_000u64) * U256::from(10u64).pow(U256::from(18u64))
+}
+
+#[test]
+fn cost_amount_six_decimals() {
+    let cost = runtime::derived_cost_amount(entry_price(), load_minor(), 6).unwrap();
+    assert_eq!(cost, U256::from(50_000_000_000u64));
+}
+
+#[test]
+fn cost_amount_eighteen_decimals_is_1e12_larger() {
+    let six = runtime::derived_cost_amount(entry_price(), load_minor(), 6).unwrap();
+    let eighteen = runtime::derived_cost_amount(entry_price(), load_minor(), 18).unwrap();
+    assert_eq!(eighteen, six * U256::from(10u64).pow(U256::from(12u64)));
+}
+
+#[test]
+fn cost_amount_zero_decimals() {
+    let cost = runtime::derived_cost_amount(entry_price(), load_minor(), 0).unwrap();
+    assert_eq!(cost, U256::from(50_000u64));
+}
+
+#[test]
+fn cost_amount_rejects_decimals_above_the_product_scale() {
+    let err = runtime::derived_cost_amount(entry_price(), load_minor(), 37).unwrap_err();
+    assert!(err.to_string().contains("unsupported decimals"), "{err}");
+}
+
+// ---------------------------------------------------------------------
 // settle gating (value movement is localnet-exercised, not unit tested)
 // ---------------------------------------------------------------------
 
