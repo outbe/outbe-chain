@@ -15,7 +15,7 @@ use filetime::FileTime;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
-use time::OffsetDateTime;
+use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use walkdir::WalkDir;
 
 const REQUIRED_BUNDLE_FILES: [&str; 6] = [
@@ -212,6 +212,8 @@ pub struct VerifiedReleaseInputs {
     pub elf_evidence: PathBuf,
     pub elf_manifest: PathBuf,
     pub hardware_evidence: PathBuf,
+    pub platform_dcap_evidence: PathBuf,
+    pub processor_dcap_evidence: PathBuf,
     pub oci_evidence: PathBuf,
     pub sbom: PathBuf,
     pub sgx_evidence: PathBuf,
@@ -280,6 +282,18 @@ fn build_release_manifest_from_evidence(
     {
         bail!("hardware SGX evidence does not bind the release image and measurements");
     }
+    require_fresh_dcap_hardware_evidence(
+        &inputs.processor_dcap_evidence,
+        "processor",
+        &bundle,
+        &oci,
+    )?;
+    require_fresh_dcap_hardware_evidence(
+        &inputs.platform_dcap_evidence,
+        "platform",
+        &bundle,
+        &oci,
+    )?;
     require_nonempty_regular_file(&inputs.bundle_archive, "signed SGX bundle archive")?;
     verify_bundle_archive(
         &inputs.bundle,
@@ -410,9 +424,135 @@ fn build_release_manifest_from_evidence(
             ],
         )?,
         passed_gate("hardware-sgx-release-smoke", &inputs.hardware_evidence)?,
+        passed_gate(
+            "fresh-accepted-processor-dcap",
+            &inputs.processor_dcap_evidence,
+        )?,
+        passed_gate(
+            "fresh-accepted-platform-dcap",
+            &inputs.platform_dcap_evidence,
+        )?,
     ];
     release_object.insert("verification_gates".to_owned(), Value::Array(gates));
     Ok(release)
+}
+
+fn require_fresh_dcap_hardware_evidence(
+    path: &Path,
+    expected_pck_ca: &str,
+    bundle: &BundleManifest,
+    oci: &OciBuildEvidence,
+) -> Result<Value> {
+    let evidence = require_evidence_result(path, &["passed"])?;
+    let string_at = |pointer: &str| {
+        evidence
+            .pointer(pointer)
+            .and_then(Value::as_str)
+            .ok_or_else(|| eyre!("{expected_pck_ca} DCAP evidence lacks {pointer}"))
+    };
+    let u64_at = |pointer: &str| {
+        evidence
+            .pointer(pointer)
+            .and_then(Value::as_u64)
+            .ok_or_else(|| eyre!("{expected_pck_ca} DCAP evidence lacks {pointer}"))
+    };
+    if string_at("/environment/architecture")? != "x86_64"
+        || string_at("/environment/backend")? != "gramine-sgx"
+        || evidence
+            .pointer("/environment/hardware_sgx")
+            .and_then(Value::as_bool)
+            != Some(true)
+        || evidence
+            .pointer("/environment/dcap")
+            .and_then(Value::as_bool)
+            != Some(true)
+        || string_at("/attestation/pck_ca")? != expected_pck_ca
+        || string_at("/attestation/public_verifier")? != "enclave-resident-begin-chunk-finish-v1"
+        || evidence.get("measurements") != Some(&serde_json::to_value(&bundle.measurements)?)
+        || string_at("/image/digest/algorithm")? != "sha256"
+        || string_at("/image/digest/value")? != oci.image.digest.value
+        || string_at("/source_commit")? != bundle.source.commit
+    {
+        bail!(
+            "{expected_pck_ca} DCAP evidence does not bind the exact release and public verifier"
+        );
+    }
+    let packages = u64_at("/environment/physical_package_count")?;
+    if packages == 0 || (expected_pck_ca == "platform" && packages < 2) {
+        bail!("{expected_pck_ca} DCAP evidence has incompatible package topology");
+    }
+    if evidence
+        .pointer("/freshness/binding_id_nonzero")
+        .and_then(Value::as_bool)
+        != Some(true)
+    {
+        bail!("{expected_pck_ca} DCAP evidence did not use a non-zero one-use binding");
+    }
+    let run_started = u64_at("/freshness/run_started_at")?;
+    let quote_generated = u64_at("/freshness/quote_generated_at")?;
+    let collateral_started = u64_at("/freshness/collateral_started_at")?;
+    let collateral_completed = u64_at("/freshness/collateral_completed_at")?;
+    let verified = u64_at("/freshness/verified_at")?;
+    if run_started == 0
+        || !(run_started <= quote_generated
+            && quote_generated <= collateral_started
+            && collateral_started <= collateral_completed
+            && collateral_completed <= verified)
+    {
+        bail!("{expected_pck_ca} DCAP freshness order is invalid");
+    }
+    if u64_at("/collateral/component_count")? != 8
+        || string_at("/collateral/pck_crl/kind")? != expected_pck_ca
+        || string_at("/collateral/root_crl/kind")? != "root"
+    {
+        bail!("{expected_pck_ca} DCAP evidence lacks the exact collateral matrix");
+    }
+    for (label, pointer) in [
+        ("PCK CRL", "/collateral/pck_crl"),
+        ("root CRL", "/collateral/root_crl"),
+    ] {
+        let issuer = string_at(&format!("{pointer}/issuer"))?;
+        let this_update = string_at(&format!("{pointer}/this_update"))?;
+        let next_update = string_at(&format!("{pointer}/next_update"))?;
+        if u64_at(&format!("{pointer}/size"))? == 0
+            || !is_lower_hex(string_at(&format!("{pointer}/sha256"))?, 64)
+            || issuer.is_empty()
+            || !issuer.is_ascii()
+            || !is_utc_second(this_update)
+            || !is_utc_second(next_update)
+            || this_update >= next_update
+        {
+            bail!("{expected_pck_ca} {label} provenance is invalid");
+        }
+        let expected_issuer_marker = if pointer.ends_with("pck_crl") {
+            if expected_pck_ca == "processor" {
+                "Intel SGX PCK Processor CA"
+            } else {
+                "Intel SGX PCK Platform CA"
+            }
+        } else {
+            "Intel SGX Root CA"
+        };
+        if !issuer.contains(expected_issuer_marker) {
+            bail!("{expected_pck_ca} {label} provenance has the wrong issuer");
+        }
+    }
+    Ok(evidence)
+}
+
+fn is_utc_second(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 20
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes[10] == b'T'
+        && bytes[13] == b':'
+        && bytes[16] == b':'
+        && bytes[19] == b'Z'
+        && bytes.iter().enumerate().all(|(index, byte)| {
+            matches!(index, 4 | 7 | 10 | 13 | 16 | 19) || byte.is_ascii_digit()
+        })
+        && OffsetDateTime::parse(value, &Rfc3339).is_ok()
 }
 
 fn validate_final_release_identity(

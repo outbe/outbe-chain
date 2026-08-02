@@ -60,10 +60,14 @@ Release immutability protects the tag and assets after publication. The tag rule
 still required before publication because draft releases are intentionally mutable while
 the workflow uploads and verifies their complete asset matrix.
 
-Register a dedicated ephemeral x86_64 GitHub runner with only the custom label
-`testnet-release-sgx`. Do not give this runner the default `self-hosted`, `Linux`, `X64` or
-generic `sgx` labels: those labels are shared by CI/nightly jobs and do not isolate the
-protected release workload. The release workflow targets the unique label directly.
+Register two dedicated ephemeral x86_64 GitHub runner classes. The single-package
+Processor-CA host uses only `testnet-release-sgx`; its one job performs both the
+existing immutable SGX/sealing acceptance and the fresh Processor-CA DCAP run.
+The registered multi-package Platform-CA host uses only
+`testnet-release-sgx-platform`. Do not give either runner the default
+`self-hosted`, `Linux`, `X64` or generic `sgx` labels: those labels are shared by
+CI/nightly jobs and do not isolate the protected release workload. One machine or
+one CA result cannot satisfy both hardware rows.
 
 The runner needs Docker access and these device nodes (legacy `/dev/sgx/...` aliases are
 also accepted):
@@ -85,6 +89,14 @@ from consuming unrelated queued work:
   --labels testnet-release-sgx \
   --work _work
 ```
+
+Use the same command with a distinct runner name and
+`--labels testnet-release-sgx-platform` on the registered multi-package host.
+Both hosts must install `libsgx-dcap-default-qpl` at the exact version in
+`release/project-toolchain-v1.json` and provide working QCNL/PCS configuration.
+The PCS subscription key remains a host-only acquisition secret: never put it in
+workflow arguments, repository files, artifacts or logs. QPL/QCNL is not installed
+in the release build image and never participates in consensus verification.
 
 Start this runner only after the protected workflow is ready to advance to hardware
 acceptance. Confirm GitHub reports exactly the custom routing label before allowing the
@@ -140,7 +152,10 @@ matrix, downloads every draft asset and compares it byte-for-byte, then publishe
 only after another tag-object check. Publication fails if a GitHub
 Release or failed draft already exists for the tag: reruns cannot replace assets, and
 changed output requires a new tag.
-There is no successful release asset if the SGX runner does not pass.
+There is no successful release asset if the Processor/SGX job or the registered
+multi-package Platform job does not pass. The final manifest requires both
+canonical `hardware-dcap-processor.json` and `hardware-dcap-platform.json`; the
+complete public evidence directories are published as deterministic tar assets.
 
 Besides the SGX evidence, the asset matrix carries the deployable payload:
 `outbe-linux-x86_64.tar` (every artifact of `release/reproducible-elf-build-v1.json` —
@@ -262,3 +277,18 @@ mise run release-sgx-hardware-e2e -- \
   --bundle /tmp/extracted-signed-sgx-bundle \
   --evidence /tmp/hardware-sgx.json
 ```
+
+That command is the SGX/sealing smoke only. For fresh accepted remote-attestation
+evidence, run the public-verifier path after the image has been verified and pulled:
+
+```bash
+cargo run --locked -p outbe-e2e-harness --bin outbe-release-dcap-evidence -- \
+  --image "$IMAGE" \
+  --bundle /tmp/extracted-signed-sgx-bundle \
+  --expected-pck-ca processor \
+  --output-dir /tmp/hardware-dcap-processor
+```
+
+Repeat with `platform` only on the registered multi-package host. A missing
+runner, wrong topology, stale collateral, rejected verdict or missing artifact is
+a release failure, never a skip.

@@ -162,6 +162,14 @@ fn privileged_release_workflow_pins_source_and_never_replaces_assets() {
     assert!(workflow.contains("[.tag, .object.sha] | @tsv"));
     assert!(workflow.contains("test \"${signed_tag_name}\" = \"${RELEASE_TAG}\""));
     assert!(workflow.contains("runs-on: testnet-release-sgx"));
+    assert!(workflow.contains("testnet-release-sgx-platform"));
+    assert!(workflow.contains("--expected-pck-ca processor"));
+    assert!(workflow.contains("--expected-pck-ca platform"));
+    assert!(workflow.contains("--processor-dcap-evidence"));
+    assert!(workflow.contains("--platform-dcap-evidence"));
+    assert!(workflow.contains("outbe-release-dcap-evidence"));
+    assert!(workflow.contains("hardware-dcap-processor-evidence"));
+    assert!(workflow.contains("hardware-dcap-platform-evidence"));
     assert!(!workflow.contains("runs-on: [self-hosted, sgx]"));
     assert!(!workflow.contains("git ls-remote --exit-code origin"));
     assert!(workflow.contains("--draft --prerelease"));
@@ -424,6 +432,8 @@ fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
     let elf_evidence = root.path().join("elf-reproducibility.json");
     let sgx_evidence = root.path().join("sgx-reproducibility.json");
     let hardware_evidence = root.path().join("hardware-sgx.json");
+    let processor_dcap_evidence = root.path().join("hardware-dcap-processor.json");
+    let platform_dcap_evidence = root.path().join("hardware-dcap-platform.json");
     write_deterministic_bundle_archive(fixture.path(), &bundle_archive, source.source_date_epoch)
         .expect("archive bundle fixture");
     let sbom_value = serde_json::json!({"spdxVersion": "SPDX-2.3"});
@@ -490,6 +500,68 @@ fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
         canonical_json(&hardware).expect("canonical hardware evidence"),
     )
     .expect("hardware evidence");
+    let fresh_dcap = |pck_ca: &str, physical_package_count: u64| {
+        let pck_crl_issuer = if pck_ca == "processor" {
+            "Intel SGX PCK Processor CA"
+        } else {
+            "Intel SGX PCK Platform CA"
+        };
+        serde_json::json!({
+            "attestation": {
+                "pck_ca": pck_ca,
+                "public_verifier": "enclave-resident-begin-chunk-finish-v1"
+            },
+            "collateral": {
+                "component_count": 8,
+                "pck_crl": {
+                    "issuer": pck_crl_issuer,
+                    "kind": pck_ca,
+                    "next_update": "2026-08-27T05:33:19Z",
+                    "size": 1002,
+                    "sha256": "d".repeat(64),
+                    "this_update": "2026-07-28T05:33:19Z"
+                },
+                "root_crl": {
+                    "issuer": "Intel SGX Root CA",
+                    "kind": "root",
+                    "next_update": "2027-02-26T13:04:00Z",
+                    "size": 294,
+                    "sha256": "e".repeat(64),
+                    "this_update": "2026-02-26T13:04:00Z"
+                }
+            },
+            "environment": {
+                "architecture": "x86_64",
+                "backend": "gramine-sgx",
+                "dcap": true,
+                "hardware_sgx": true,
+                "physical_package_count": physical_package_count
+            },
+            "freshness": {
+                "binding_id_nonzero": true,
+                "collateral_completed_at": 104,
+                "collateral_started_at": 103,
+                "quote_generated_at": 102,
+                "run_started_at": 101,
+                "verified_at": 105
+            },
+            "image": {"digest": {"algorithm": "sha256", "value": "c".repeat(64)}},
+            "measurements": bundle_manifest.measurements,
+            "result": "passed",
+            "schema_version": "1.0.0",
+            "source_commit": source.source_commit
+        })
+    };
+    fs::write(
+        &processor_dcap_evidence,
+        canonical_json(&fresh_dcap("processor", 1)).expect("processor DCAP evidence"),
+    )
+    .expect("processor DCAP evidence");
+    fs::write(
+        &platform_dcap_evidence,
+        canonical_json(&fresh_dcap("platform", 2)).expect("platform DCAP evidence"),
+    )
+    .expect("platform DCAP evidence");
 
     let inputs = VerifiedReleaseInputs {
         bundle: fixture.path().to_owned(),
@@ -500,6 +572,8 @@ fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
         elf_evidence,
         elf_manifest,
         hardware_evidence,
+        platform_dcap_evidence,
+        processor_dcap_evidence,
         oci_evidence,
         sbom,
         sgx_evidence,
@@ -527,7 +601,7 @@ fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
             .as_array()
             .expect("gates")
             .len(),
-        6
+        8
     );
     assert!(manifest["verification_gates"]
         .as_array()
@@ -541,6 +615,52 @@ fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
         .find(|gate| gate["name"] == "immutable-oci-sbom-and-provenance")
         .expect("OCI gate");
     assert_eq!(oci_gate["evidence"].as_array().expect("evidence").len(), 4);
+
+    fs::write(
+        &inputs.platform_dcap_evidence,
+        canonical_json(&fresh_dcap("processor", 2)).expect("wrong-CA evidence"),
+    )
+    .expect("replace Platform evidence with Processor evidence");
+    let error = build_release_manifest_candidate(&inputs)
+        .expect_err("Processor evidence must not satisfy the Platform gate");
+    assert!(error.to_string().contains("platform DCAP evidence"));
+
+    let mut stale = fresh_dcap("platform", 2);
+    stale["freshness"]["collateral_started_at"] = serde_json::json!(100);
+    fs::write(
+        &inputs.platform_dcap_evidence,
+        canonical_json(&stale).expect("stale evidence"),
+    )
+    .expect("replace Platform evidence with stale ordering");
+    let error = build_release_manifest_candidate(&inputs)
+        .expect_err("pre-run collateral must not satisfy the Platform gate");
+    assert!(error.to_string().contains("freshness order"));
+
+    fs::write(
+        &inputs.platform_dcap_evidence,
+        canonical_json(&fresh_dcap("platform", 2)).expect("restored Platform evidence"),
+    )
+    .expect("restore Platform evidence");
+
+    let mut incomplete_crl = fresh_dcap("platform", 2);
+    incomplete_crl["collateral"]["pck_crl"]
+        .as_object_mut()
+        .expect("PCK CRL object")
+        .remove("next_update");
+    fs::write(
+        &inputs.platform_dcap_evidence,
+        canonical_json(&incomplete_crl).expect("incomplete CRL provenance"),
+    )
+    .expect("replace Platform evidence with incomplete CRL provenance");
+    let error = build_release_manifest_candidate(&inputs)
+        .expect_err("CRL provenance without validity must not pass");
+    assert!(error.to_string().contains("next_update"));
+
+    fs::write(
+        &inputs.platform_dcap_evidence,
+        canonical_json(&fresh_dcap("platform", 2)).expect("restored Platform evidence"),
+    )
+    .expect("restore Platform evidence");
 
     fs::write(
         &inputs.cosign_sbom_verification,

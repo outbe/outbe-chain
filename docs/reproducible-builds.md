@@ -26,6 +26,9 @@ files and the name-plus-SHA-256 ledger of the complete 100-package `.deb` closur
 container verifies that closure before installing it with downloads disabled. The host validates those
 constraints before Docker can select or execute the builder. It accepts only
 `x86_64-unknown-linux-gnu` with the existing Cargo `release` profile.
+The same single pin records the host-only QPL version used to acquire release
+collateral, but that package is deliberately excluded from the build image and
+from the enclave-resident offline consensus verifier.
 
 Run from a clean checkout. Commit or deliberately discard every tracked and untracked
 change first. The output directory must be empty and outside the repository; this prevents

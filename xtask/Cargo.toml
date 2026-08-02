@@ -28,7 +28,7 @@ reth-ethereum.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
-time = { workspace = true, features = ["formatting"] }
+time = { workspace = true, features = ["formatting", "parsing"] }
 tempfile.workspace = true
 walkdir.workspace = true
 tar.workspace = true

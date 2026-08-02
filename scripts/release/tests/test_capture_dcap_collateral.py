@@ -14,6 +14,10 @@ QUOTE_PATH = (
     REPO_ROOT
     / "crates/system/tee/tests/fixtures/intel-dcap-1.26/sgx-processor-quote-v3.bin"
 )
+CRL_FIXTURE_ROOT = (
+    REPO_ROOT
+    / "crates/system/tee/tests/fixtures/intel-dcap-1.26-intent-bound-processor-negative"
+)
 
 
 def load_capture():
@@ -52,6 +56,24 @@ class CaptureDcapCollateralTests(unittest.TestCase):
             with self.subTest(malformed=malformed):
                 with self.assertRaises(ValueError):
                     self.capture.canonical_text_component(malformed, "test")
+
+    def test_crl_provenance_records_issuer_type_and_validity(self) -> None:
+        metadata = self.capture.crl_provenance(
+            CRL_FIXTURE_ROOT / "pck.crl.der", "processor"
+        )
+
+        self.assertEqual(metadata["type"], "processor")
+        self.assertIn("Intel SGX PCK Processor CA", metadata["issuer"])
+        self.assertEqual(metadata["this_update"], "2026-07-28T05:33:19Z")
+        self.assertEqual(metadata["next_update"], "2026-08-27T05:33:19Z")
+        self.assertGreater(metadata["size"], 0)
+        self.assertRegex(metadata["sha256"], r"^[0-9a-f]{64}$")
+
+    def test_host_qpl_must_match_the_single_project_pin(self) -> None:
+        pin = self.capture.load_host_qpl_pin()
+
+        self.assertEqual(pin["package"], "libsgx-dcap-default-qpl")
+        self.assertEqual(pin["version"], "1.26.100.1-noble1")
 
 
 if __name__ == "__main__":

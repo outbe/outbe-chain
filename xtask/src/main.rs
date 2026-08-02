@@ -244,6 +244,10 @@ enum SgxCommand {
         #[arg(long)]
         hardware_evidence: PathBuf,
         #[arg(long)]
+        processor_dcap_evidence: PathBuf,
+        #[arg(long)]
+        platform_dcap_evidence: PathBuf,
+        #[arg(long)]
         output: PathBuf,
     },
 }
@@ -382,6 +386,8 @@ fn main() -> Result<()> {
                     elf_evidence,
                     sgx_evidence,
                     hardware_evidence,
+                    processor_dcap_evidence,
+                    platform_dcap_evidence,
                     output,
                 } => {
                     sgx::finalize_release_manifest(
@@ -395,6 +401,8 @@ fn main() -> Result<()> {
                             elf_evidence,
                             elf_manifest,
                             hardware_evidence,
+                            platform_dcap_evidence,
+                            processor_dcap_evidence,
                             oci_evidence,
                             sbom,
                             sgx_evidence,

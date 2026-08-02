@@ -37,6 +37,9 @@
     "source_commit": "0d1a4b7607592dab4c8a720c962acee3de6b4ca8",
     "version": "1.9"
   },
+  "host_only_packages": {
+    "libsgx-dcap-default-qpl": "1.26.100.1-noble1"
+  },
   "platform": "linux/amd64",
   "rust": {
     "components": [

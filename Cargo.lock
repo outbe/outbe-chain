@@ -7515,6 +7515,7 @@ dependencies = [
  "outbe-primitives",
  "outbe-protocol",
  "outbe-protocol-derive",
+ "outbe-tee",
  "outbe-update",
  "outbe-zerofee",
  "outbe-zk-backend",

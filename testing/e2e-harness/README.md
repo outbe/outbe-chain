@@ -239,9 +239,27 @@ It requires real SGX devices and a Docker-pulled, Cosign-verified digest. The sc
 6. re-signs a test copy with an ephemeral different key and proves the old MRSIGNER-sealed
    identity is rejected rather than silently restored.
 
-Only after every step passes does it write canonical `hardware-sgx.json`. DCAP is recorded
-as unavailable/false under the current `remote_attestation = "none"` release contract; the
-scenario must not be cited as remote-attestation evidence.
+Only after every step passes does it write canonical `hardware-sgx.json`. This
+proves immutable SGX execution and sealing, but it is still not remote-attestation
+evidence. Accepted DCAP evidence is produced by a separate exact-release runner:
+
+```bash
+cargo run --locked -p outbe-e2e-harness --bin outbe-release-dcap-evidence -- \
+  --image 'ghcr.io/outbe/outbe-tee-enclave-testnet@sha256:<64-hex-digest>' \
+  --bundle /tmp/extracted-signed-sgx-bundle \
+  --expected-pck-ca processor \
+  --output-dir /tmp/hardware-dcap-processor
+```
+
+The command requires the project-pinned host-only QPL, working PCS/QCNL
+configuration, real SGX devices and an image that was already Cosign-verified and
+pulled by digest. It performs topology preflight before creating a binding or
+contacting PCS, generates a fresh intent-bound quote inside the production
+Gramine enclave, acquires all eight collateral components, and requires an
+`Accepted` result from the public enclave-resident Begin/Chunk/Finish verifier.
+It retains canonical evidence, verifier bytes, actual CRLs and non-secret
+provenance only. Use `--expected-pck-ca platform` only on a registered
+multi-package Platform-CA host; a single host/CA result cannot satisfy both rows.
 
 ## Focused Tribute compressed-entity checks
 

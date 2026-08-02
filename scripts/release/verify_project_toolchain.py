@@ -17,6 +17,7 @@ EXPECTED_TOP_LEVEL_KEYS = {
     "activation",
     "apt_provenance",
     "gramine",
+    "host_only_packages",
     "platform",
     "rust",
     "schema_version",
@@ -49,6 +50,7 @@ EXPECTED_SYSTEM_PACKAGES = (
     "libstdc++6",
     "pkg-config",
 )
+EXPECTED_HOST_ONLY_PACKAGES = ("libsgx-dcap-default-qpl",)
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -145,6 +147,20 @@ def load_and_validate_pin(path: Path) -> dict[str, Any]:
         raise ValueError("project system packages must be sorted exact version pins")
     if tuple(packages) != EXPECTED_SYSTEM_PACKAGES:
         raise ValueError("project toolchain has an unsupported system package set")
+    host_only_packages = pin["host_only_packages"]
+    if (
+        not isinstance(host_only_packages, dict)
+        or tuple(host_only_packages) != EXPECTED_HOST_ONLY_PACKAGES
+        or any(
+            not isinstance(version, str)
+            or not version
+            or any(character.isspace() for character in version)
+            for version in host_only_packages.values()
+        )
+    ):
+        raise ValueError("project toolchain has an unsupported host-only package set")
+    if set(host_only_packages).intersection(packages):
+        raise ValueError("host-only packages must not enter the release build image")
     return pin
 
 

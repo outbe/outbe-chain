@@ -42,6 +42,10 @@ class ProjectToolchainContractTests(unittest.TestCase):
         self.assertEqual(pin["rust"]["version"], "1.96.0")
         self.assertEqual(pin["gramine"]["version"], "1.9")
         self.assertEqual(
+            pin["host_only_packages"]["libsgx-dcap-default-qpl"],
+            "1.26.100.1-noble1",
+        )
+        self.assertEqual(
             pin["system_packages"]["libsgx-dcap-quote-verify"],
             "1.26.100.1-noble1",
         )
