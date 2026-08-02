@@ -1,8 +1,9 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};
-use outbe_primitives::dispatch::{dispatch_call, metadata, mutate, mutate_void};
+use outbe_primitives::dispatch::{dispatch_call, metadata, mutate, mutate_void, view};
 use outbe_primitives::error::Result;
 
+use crate::errors::GemFactoryError;
 use crate::runtime;
 use crate::schema::GemFactoryContract;
 
@@ -37,6 +38,22 @@ pub fn dispatch(
                     totalGemsIssued: factory.total_gems_issued.read()?,
                     totalIntexParked: factory.total_intex_parked.read()?,
                 })
+            }),
+
+            balanceOf(c) => view(c, |c| {
+                GemFactoryContract::new(storage.clone())
+                    .balance_of(c.owner)
+                    .map(U256::from)
+            }),
+            ownerOf(c) => view(c, |c| {
+                GemFactoryContract::new(storage.clone()).owner_of(c.positionId)
+            }),
+            tokenURI(c) => view(c, |c| {
+                GemFactoryContract::new(storage.clone()).token_uri(c.positionId)
+            }),
+            tokenOfOwnerByIndex(c) => view(c, |c| {
+                let idx = u32::try_from(c.index).map_err(|_| GemFactoryError::IndexOutOfBounds)?;
+                GemFactoryContract::new(storage.clone()).token_of_owner_by_index(c.owner, idx)
             }),
         }
     })

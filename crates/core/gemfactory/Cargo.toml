@@ -17,6 +17,7 @@ outbe-oracle.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 thiserror.workspace = true
+base64 = "0.22"
 
 [dev-dependencies]
 outbe-primitives = { workspace = true, features = ["test-utils"] }

@@ -17,20 +17,26 @@ pub enum GemFactoryError {
     #[error("call notice period expired")]
     DeadlineExpired,
 
-    #[error("merchant flow deferred")]
-    MerchantDeferred,
+    #[error("unsupported gem type")]
+    UnsupportedGemType,
 
     #[error("source intex not found")]
     SourceIntexNotFound,
 
-    #[error("factory record not found")]
-    FactoryRecordNotFound,
+    #[error("position not found")]
+    PositionNotFound,
+
+    #[error("position already exists")]
+    PositionAlreadyExists,
+
+    #[error("index out of bounds")]
+    IndexOutOfBounds,
 
     #[error("insufficient factory capacity")]
     InsufficientCapacity,
 
-    #[error("factory record expired")]
-    FactoryRecordExpired,
+    #[error("position expired")]
+    PositionExpired,
 
     #[error("invalid asset")]
     InvalidAsset,

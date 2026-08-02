@@ -314,3 +314,9 @@ pub const VAULT_ROUTER_ADDRESS: Address = address!("0x00000000000000000000000000
 /// texts, submit/read/update proposals, drive the proposal status model, and
 /// diff a proposal against the canon/meta-canon.
 pub const GOVERNANCE_ADDRESS: Address = address!("0x0000000000000000000000000000000000001018");
+
+/// IntexNFT1155 on Outbe: the local ERC-1155 balance ledger for Intex series
+/// (Issued/Settled tokens). A permanent CREATE3 proxy (not a low-range
+/// precompile). Called by IntexFactory (settle/burnSettled) and by GemFactory
+/// (`parkForGems`, gated by `GEM_ROLE`) to burn a merchant's parked Intex.
+pub const INTEX_NFT1155_ADDRESS: Address = address!("0x4Ccbc413a5f159Da316178F8b7576C923b4D1e5d");

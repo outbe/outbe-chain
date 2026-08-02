@@ -7754,6 +7754,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "base64 0.22.1",
  "outbe-common",
  "outbe-gem",
  "outbe-intex",

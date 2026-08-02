@@ -14,4 +14,9 @@ sol! {
         function approve(address spender, uint256 amount)
             external returns (bool);
     }
+
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IIntexNFT1155 {
+        function parkForGems(address holder, uint32 seriesId) external returns (uint256);
+    }
 }

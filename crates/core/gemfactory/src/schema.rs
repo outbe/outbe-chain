@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::GEM_FACTORY_ADDRESS;
 
@@ -13,12 +13,14 @@ pub enum GemTypes {
     Merchant = 5,
 }
 
-/// Per-merchant Gem Factory record: a parked Intex snapshot from which Merchant
-/// gems are issued on demand. `merchant == 0` means "no factory".
+/// A merchant's parked-Intex position: the pool of Promis capacity from which
+/// Merchant gems are issued. Modeled as a single-owner, non-transferable NFT
+/// (owner = `merchant`), keyed by `position_id`. `merchant == 0` means "no
+/// position".
 #[storage_record(exists_field = merchant)]
-pub struct FactoryRecord {
+pub struct GemPosition {
     #[key]
-    pub factory_id: U256,
+    pub position_id: U256,
 
     #[attribute(order = 0)]
     pub merchant: Address,
@@ -57,18 +59,24 @@ pub struct GemFactoryContract {
     pub total_intex_parked: outbe_primitives::storage::dsl::Value<U256>,
 
     #[attribute(order = 2)]
-    pub factories: outbe_primitives::storage::dsl::Map<U256, FactoryRecord>,
+    pub positions: outbe_primitives::storage::dsl::Map<U256, GemPosition>,
+
+    // --- Position-NFT owner index (per-merchant enumeration) ---
+    #[attribute(order = 3)]
+    pub position_owner_counts: outbe_primitives::storage::dsl::Map<Address, u32>,
+
+    #[attribute(order = 4)]
+    pub position_owner_ids: outbe_primitives::storage::dsl::Map<B256, U256>,
 }
 
 impl GemFactoryContract<'_> {
-    /// `factory_id = keccak256("gemfactory" ‖ source_intex_id_be ‖ block_number_be)`.
+    /// `position_id = keccak256("gemposition" ‖ source_intex_id_be ‖ block_number_be)`.
     /// A source Intex is parked once, so `source_intex_id` alone disambiguates.
-    pub fn generate_factory_id(source_intex_id: u32, block_number: u64) -> U256 {
-        use alloy_primitives::keccak256;
-        let mut buf = [0u8; 10 + 4 + 8];
-        buf[0..10].copy_from_slice(b"gemfactory");
-        buf[10..14].copy_from_slice(&source_intex_id.to_be_bytes());
-        buf[14..22].copy_from_slice(&block_number.to_be_bytes());
+    pub fn generate_position_id(source_intex_id: u32, block_number: u64) -> U256 {
+        let mut buf = [0u8; 11 + 4 + 8];
+        buf[0..11].copy_from_slice(b"gemposition");
+        buf[11..15].copy_from_slice(&source_intex_id.to_be_bytes());
+        buf[15..23].copy_from_slice(&block_number.to_be_bytes());
         U256::from_be_bytes(keccak256(buf).0)
     }
 }

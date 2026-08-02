@@ -12,6 +12,6 @@ pub const SRA_COEFFICIENT_PERCENT: u64 = 64;
 /// agent-gem Call Rate of 128%, i.e. `entry × 228 / 100`.
 pub const GEM_CALL_MARKUP_PERCENT: u64 = 228;
 
-/// Merchant Gem Factory validity: a parked Intex expires this long after
+/// GemPosition validity period: a parked Intex expires this long after
 /// `parked_at`; no new gems may be issued afterward. 1 year.
-pub const PARK_PERIOD_SECONDS: u64 = 365 * 24 * 3600;
+pub const POSITION_VALIDITY_SECONDS: u64 = 365 * 24 * 3600;

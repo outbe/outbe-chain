@@ -441,9 +441,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
-    function parkForGems(address holder, uint32 seriesId, uint256 amount) external onlyRole(GEM_ROLE) {
+    function parkForGems(address holder, uint32 seriesId) external onlyRole(GEM_ROLE) returns (uint256 amount) {
         if (holder == address(0)) revert ZeroAddress("holder", holder);
-        if (amount == 0) revert ZeroAmount();
 
         uint256 iTok = uint256(seriesId);
         IIntexNFT1155.SeriesData storage data = _s().seriesData[iTok];
@@ -452,6 +451,10 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         if (data.state != IIntexNFT1155.IntexState.Issued && data.state != IIntexNFT1155.IntexState.Qualified) {
             revert InvalidState(uint8(IIntexNFT1155.IntexState.Qualified), uint8(data.state));
         }
+
+        // Park the holder's whole position: burn their entire Issued balance.
+        amount = balanceOf(holder, iTok);
+        if (amount == 0) revert ZeroAmount();
 
         // forge-lint: disable-next-line(unsafe-typecast) -- amount <= issued balance <= totalSupply (uint32); _burn reverts otherwise
         data.totalSupply -= uint32(amount);

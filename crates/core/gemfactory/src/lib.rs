@@ -7,6 +7,7 @@ pub mod schema;
 pub mod constants;
 pub(crate) mod runtime;
 pub(crate) mod sol_ext;
+pub(crate) mod state;
 
 pub use schema::{GemFactoryContract, GemTypes};
 

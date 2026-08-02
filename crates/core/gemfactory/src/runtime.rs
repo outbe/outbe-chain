@@ -2,8 +2,8 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_gem::{api as gem_api, GemAddParams, GemState};
 use outbe_oracle::contract::OracleContract;
-use outbe_primitives::addresses::{GEM_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
-use outbe_primitives::error::Result;
+use outbe_primitives::addresses::{GEM_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS, VAULT_ROUTER_ADDRESS};
+use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::SCALE_1E18;
 
@@ -13,11 +13,13 @@ use outbe_vaultrouter::api::IVaultRouter;
 use outbe_gem::GEM_CALL_PERIOD_SECONDS;
 
 use crate::constants::{
-    FLOOR_MARKUP_PERCENT, GEM_CALL_MARKUP_PERCENT, PARK_PERIOD_SECONDS, SRA_COEFFICIENT_PERCENT,
+    FLOOR_MARKUP_PERCENT, GEM_CALL_MARKUP_PERCENT, POSITION_VALIDITY_SECONDS,
+    SRA_COEFFICIENT_PERCENT,
 };
 use crate::errors::GemFactoryError;
 use crate::events::{GemBurned, GemIssued, GemSettled};
-use crate::schema::{FactoryRecord, GemFactoryContract, GemTypes};
+use crate::schema::{GemFactoryContract, GemPosition, GemTypes};
+use crate::sol_ext::IIntexNFT1155;
 use crate::sol_ext::IERC20;
 
 pub fn mint_gem(
@@ -30,10 +32,6 @@ pub fn mint_gem(
 ) -> Result<U256> {
     if owner.is_zero() {
         return Err(GemFactoryError::InvalidOwner.into());
-    }
-    // TODO(merchant): wire up Merchant flow per the Merchant ADR.
-    if matches!(gem_type, GemTypes::Merchant) {
-        return Err(GemFactoryError::MerchantDeferred.into());
     }
 
     // TODO(multi-currency): only supports gems where issuance and reference
@@ -88,10 +86,11 @@ pub fn mint_gem(
     Ok(gem_id)
 }
 
-/// Register a merchant Gem Factory from a parked Intex. Reads the source series
-/// for its entry/floor snapshot and whole-series Promis capacity. The source
-/// Intex NFT burn happens outside this module.
-pub fn setup_factory(
+/// Park a merchant's whole Intex series and mint a GemPosition NFT. Burns the
+/// merchant's entire Issued holding on IntexNFT1155 (`parkForGems`, GEM_ROLE)
+/// and records the position with a snapshot of the source entry/floor and the
+/// resulting Promis capacity. Returns the minted `position_id`.
+pub fn mint_gem_position(
     storage: &StorageHandle<'_>,
     merchant: Address,
     source_intex_id: u32,
@@ -102,7 +101,7 @@ pub fn setup_factory(
 
     let series = outbe_intex::api::get_series(storage, source_intex_id)?
         .ok_or(GemFactoryError::SourceIntexNotFound)?;
-    // v1 supports only same-currency factories (mirrors mint_gem's limitation).
+    // v1 supports only same-currency positions (mirrors mint_gem's limitation).
     if series.issuance_currency != series.reference_currency {
         return Err(GemFactoryError::IssuanceReferenceMismatch {
             issuance: series.issuance_currency,
@@ -110,21 +109,22 @@ pub fn setup_factory(
         }
         .into());
     }
+
+    // Burn the merchant's whole Intex position; `parkForGems` returns the burned
+    // unit count (and reverts on a non-parkable state or an empty holding).
+    let units = burn_parked_intex(storage, merchant, source_intex_id)?;
     let capacity = series
         .promis_load_minor
-        .checked_mul(U256::from(series.issued_intex_count))
+        .checked_mul(units)
         .ok_or(GemFactoryError::Overflow)?;
-    if capacity.is_zero() {
-        return Err(GemFactoryError::InsufficientCapacity.into());
-    }
 
     let parked_at = storage.timestamp()?.to::<u64>();
-    let factory_id =
-        GemFactoryContract::generate_factory_id(source_intex_id, storage.block_number()?);
+    let position_id =
+        GemFactoryContract::generate_position_id(source_intex_id, storage.block_number()?);
 
-    let factory = GemFactoryContract::new(storage.clone());
-    factory.factories.create(&FactoryRecord {
-        factory_id,
+    let mut factory = GemFactoryContract::new(storage.clone());
+    factory.add_position(&GemPosition {
+        position_id,
         merchant,
         source_intex_id,
         remaining_capacity: capacity,
@@ -141,13 +141,35 @@ pub fn setup_factory(
         .ok_or(GemFactoryError::Overflow)?;
     factory.total_intex_parked.write(new_parked)?;
 
-    Ok(factory_id)
+    Ok(position_id)
 }
 
-/// Issue one Merchant gem to a customer, draining the factory's capacity.
+/// Burn the merchant's whole Issued Intex position via `parkForGems` (GEM_ROLE)
+/// and return the burned unit count. Reverts if the series is in a non-parkable
+/// (non-Issued/Qualified) state or the merchant holds nothing.
+fn burn_parked_intex(
+    storage: &StorageHandle<'_>,
+    holder: Address,
+    series_id: u32,
+) -> Result<U256> {
+    let ret = storage.call(
+        INTEX_NFT1155_ADDRESS,
+        U256::ZERO,
+        IIntexNFT1155::parkForGemsCall {
+            holder,
+            seriesId: series_id,
+        }
+        .abi_encode()
+        .into(),
+    )?;
+    IIntexNFT1155::parkForGemsCall::abi_decode_returns(&ret)
+        .map_err(|_| PrecompileError::Revert("parkForGems return undecodable".into()).into())
+}
+
+/// Issue one Merchant gem to a customer, draining the position's capacity.
 pub fn mint_merchant_gem(
     storage: &StorageHandle<'_>,
-    factory_id: U256,
+    position_id: U256,
     owner: Address,
     gem_load: U256,
 ) -> Result<U256> {
@@ -157,13 +179,13 @@ pub fn mint_merchant_gem(
 
     let factory = GemFactoryContract::new(storage.clone());
     let mut record = factory
-        .factories
-        .get(factory_id)?
-        .ok_or(GemFactoryError::FactoryRecordNotFound)?;
+        .positions
+        .get(position_id)?
+        .ok_or(GemFactoryError::PositionNotFound)?;
 
     let now = storage.timestamp()?.to::<u64>();
-    if now >= record.parked_at + PARK_PERIOD_SECONDS {
-        return Err(GemFactoryError::FactoryRecordExpired.into());
+    if now >= record.parked_at + POSITION_VALIDITY_SECONDS {
+        return Err(GemFactoryError::PositionExpired.into());
     }
     let remaining = record
         .remaining_capacity
@@ -194,7 +216,7 @@ pub fn mint_merchant_gem(
     )?;
 
     record.remaining_capacity = remaining;
-    factory.factories.update(&record)?;
+    factory.positions.update(&record)?;
 
     let prev_total = factory.total_gems_issued.read()?;
     let new_total = prev_total
@@ -385,7 +407,9 @@ fn compute_params(
             let floor = floor_with_markup(coen_rate)?;
             (cost, floor, GemState::Issued)
         }
-        GemTypes::Merchant => return Err(GemFactoryError::MerchantDeferred.into()),
+        // Merchant gems are minted via `mint_merchant_gem` against a GemPosition,
+        // not through this agent-class path.
+        GemTypes::Merchant => return Err(GemFactoryError::UnsupportedGemType.into()),
     };
     Ok((cost_amount, floor_price, initial_state))
 }
