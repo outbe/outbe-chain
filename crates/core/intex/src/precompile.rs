@@ -9,7 +9,7 @@ use alloy_sol_types::{sol, SolInterface};
 use outbe_primitives::dispatch::{dispatch_call, metadata, view};
 use outbe_primitives::error::Result;
 
-use crate::schema::{IntexContract, SeriesRecord};
+use crate::schema::{CertifiedContributorGenerationProjection, IntexContract, SeriesRecord};
 
 /// Selectors on this precompile that accept native value. The route table binds
 /// this to the address's `ValuePolicy` at compile time, so a selector added here
@@ -39,8 +39,32 @@ pub fn dispatch(
             seriesExists(c) => view(c, |c| registry.series_exists(c.seriesId)),
             totalSeries(_) => metadata::<IIntex::totalSeriesCall>(|| registry.read_total_series()),
             seriesAt(c) => view(c, |c| registry.read_series_id_at(c.index)),
+            certifiedContributorGeneration(c) => view(c, |c| {
+                Ok(to_abi_generation(
+                    registry.ocomp_certified_contributor_generation(c.worldwideDay)?,
+                ))
+            }),
         }
     })
+}
+
+fn to_abi_generation(
+    generation: Option<CertifiedContributorGenerationProjection>,
+) -> IIntex::CertifiedContributorGeneration {
+    generation.map_or(
+        IIntex::CertifiedContributorGeneration {
+            seriesVersion: 0,
+            contributorRoot: alloy_primitives::B256::ZERO,
+            contributorCount: 0,
+            eligibleNominalTotal: U256::ZERO,
+        },
+        |g| IIntex::CertifiedContributorGeneration {
+            seriesVersion: g.series_version,
+            contributorRoot: g.contributor_root,
+            contributorCount: g.contributor_count,
+            eligibleNominalTotal: g.eligible_nominal_total,
+        },
+    )
 }
 
 fn to_abi_data(r: &SeriesRecord) -> IIntex::SeriesData {

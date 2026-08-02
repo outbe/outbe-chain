@@ -97,6 +97,55 @@ fn full_chunk_fills_exactly_one_word() {
 }
 
 #[test]
+fn the_view_exposes_the_certified_generation() {
+    use alloy_sol_types::SolCall;
+
+    with_registry(|storage| {
+        let call =
+            crate::precompile::IIntex::certifiedContributorGenerationCall { worldwideDay: WWD };
+        let decode = |bytes: alloy_primitives::Bytes| {
+            crate::precompile::IIntex::certifiedContributorGenerationCall::abi_decode_returns(
+                &bytes,
+            )
+            .unwrap()
+        };
+
+        let absent = decode(
+            crate::precompile::dispatch(
+                storage.clone(),
+                &call.abi_encode(),
+                alloy_primitives::Address::ZERO,
+                U256::ZERO,
+            )
+            .unwrap(),
+        );
+        assert_eq!(absent.contributorCount, 0);
+        assert!(absent.contributorRoot.is_zero());
+
+        let leaves = population(600);
+        install_generation(&storage, &leaves);
+
+        let installed = decode(
+            crate::precompile::dispatch(
+                storage.clone(),
+                &call.abi_encode(),
+                alloy_primitives::Address::ZERO,
+                U256::ZERO,
+            )
+            .unwrap(),
+        );
+        assert_eq!(installed.contributorCount, 600);
+        assert_eq!(installed.contributorRoot, contributor_root(&leaves));
+        assert_eq!(
+            installed.eligibleNominalTotal,
+            leaves
+                .iter()
+                .fold(U256::ZERO, |acc, leaf| acc + leaf.nominal)
+        );
+    });
+}
+
+#[test]
 fn batch_verifies_against_the_installed_root() {
     with_registry(|storage| {
         let leaves = population(600);

@@ -50,4 +50,21 @@ interface IIntex {
 
     /// @notice The series id at a dense-enumeration index.
     function seriesAt(uint64 index) external view returns (uint32);
+
+    /// @notice Certified contributor authority for one day, as quorum installed it.
+    ///         All fields are zero when no generation exists.
+    struct CertifiedContributorGeneration {
+        uint64 seriesVersion;
+        bytes32 contributorRoot;
+        uint32 contributorCount;
+        uint256 eligibleNominalTotal;
+    }
+
+    /// @notice Read the certified contributor authority for `worldwideDay`. An
+    ///         off-chain payout sender compares its local records against this
+    ///         before building a proof.
+    function certifiedContributorGeneration(uint32 worldwideDay)
+        external
+        view
+        returns (CertifiedContributorGeneration memory);
 }
