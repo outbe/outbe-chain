@@ -59,7 +59,7 @@ class ReproducibleElfVerifierTests(unittest.TestCase):
                 "Version: 0.1.0",
                 f"Commit SHA: {'a' * 40}",
                 "Build Timestamp: 2026-07-14T03:33:20.000000000Z",
-                "Build Features: default",
+                "Build Features: no features enabled",
                 "Build Profile: release (x86_64-unknown-linux-gnu)",
                 "",
                 "Reth Version: test",

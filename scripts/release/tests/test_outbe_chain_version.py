@@ -30,7 +30,7 @@ class OutbeChainVersionTests(unittest.TestCase):
         timestamp = "2026-07-15T03:33:20.000000000Z"
         text = (
             f"Commit SHA: {commit}\nBuild Timestamp: {timestamp}\n"
-            "Build Features: default\n"
+            "Build Features: no features enabled\n"
             "Build Profile: release (x86_64-unknown-linux-gnu)\n"
             f"Commit SHA: {commit}\nBuild Timestamp: {timestamp}\n"
         )
@@ -54,6 +54,26 @@ class OutbeChainVersionTests(unittest.TestCase):
             profile="release",
         )
         self.assertGreaterEqual(len(differences), 3)
+
+    def test_default_feature_drift_fails(self) -> None:
+        commit = "a" * 40
+        timestamp = "2026-07-15T03:33:20.000000000Z"
+        differences = version.verify_version_text(
+            (
+                f"Commit SHA: {commit}\nBuild Timestamp: {timestamp}\n"
+                "Build Features: default\n"
+                "Build Profile: release (x86_64-unknown-linux-gnu)\n"
+                f"Commit SHA: {commit}\nBuild Timestamp: {timestamp}\n"
+            ),
+            source_commit=commit,
+            source_date_epoch=1_784_086_400,
+            target="x86_64-unknown-linux-gnu",
+            profile="release",
+        )
+        self.assertIn(
+            "expected one exact Outbe feature line: Build Features: no features enabled",
+            differences,
+        )
 
 
 if __name__ == "__main__":

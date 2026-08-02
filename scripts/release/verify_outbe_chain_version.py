@@ -22,6 +22,7 @@ def verify_version_text(
     profile: str,
 ) -> list[str]:
     differences: list[str] = []
+    lines = text.splitlines()
     expected_commit = f"Commit SHA: {source_commit}"
     expected_time = f"Build Timestamp: {expected_timestamp(source_date_epoch)}"
     expected_profile = f"Build Profile: {profile} ({target})"
@@ -32,8 +33,9 @@ def verify_version_text(
         differences.append(f"expected two exact deterministic timestamp lines: {expected_time}")
     if expected_profile not in text:
         differences.append(f"missing exact Outbe target/profile line: {expected_profile}")
-    if "Build Features: default" not in text:
-        differences.append("missing exact Outbe default-feature line")
+    expected_features = "Build Features: no features enabled"
+    if lines.count(expected_features) != 1:
+        differences.append(f"expected one exact Outbe feature line: {expected_features}")
     return differences
 
 
