@@ -1,0 +1,59 @@
+error[E0603]: module `emission_sink` is private
+ --> tests/ui/metadosis_raw_surface.rs:1:23
+  |
+1 | use outbe_metadosis::{emission_sink, ocomp, runtime, schema, state};
+  |                       ^^^^^^^^^^^^^ private module
+  |
+note: the module `emission_sink` is defined here
+ --> src/lib.rs
+  |
+  | mod emission_sink;
+  | ^^^^^^^^^^^^^^^^^
+
+error[E0603]: module `ocomp` is private
+ --> tests/ui/metadosis_raw_surface.rs:1:38
+  |
+1 | use outbe_metadosis::{emission_sink, ocomp, runtime, schema, state};
+  |                                      ^^^^^ private module
+  |
+note: the module `ocomp` is defined here
+ --> src/lib.rs
+  |
+  | mod ocomp;
+  | ^^^^^^^^^
+
+error[E0603]: module `runtime` is private
+ --> tests/ui/metadosis_raw_surface.rs:1:45
+  |
+1 | use outbe_metadosis::{emission_sink, ocomp, runtime, schema, state};
+  |                                             ^^^^^^^ private module
+  |
+note: the module `runtime` is defined here
+ --> src/lib.rs
+  |
+  | mod runtime;
+  | ^^^^^^^^^^^
+
+error[E0603]: module `schema` is private
+ --> tests/ui/metadosis_raw_surface.rs:1:54
+  |
+1 | use outbe_metadosis::{emission_sink, ocomp, runtime, schema, state};
+  |                                                      ^^^^^^ private module
+  |
+note: the module `schema` is defined here
+ --> src/lib.rs
+  |
+  | mod schema;
+  | ^^^^^^^^^^
+
+error[E0603]: module `state` is private
+ --> tests/ui/metadosis_raw_surface.rs:1:62
+  |
+1 | use outbe_metadosis::{emission_sink, ocomp, runtime, schema, state};
+  |                                                              ^^^^^ private module
+  |
+note: the module `state` is defined here
+ --> src/lib.rs
+  |
+  | mod state;
+  | ^^^^^^^^^

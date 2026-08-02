@@ -1132,3 +1132,52 @@ fn outer_hook_checkpoint_revert_restores_pending_state_index_and_logs() {
         1
     );
 }
+
+/// Vote is a payable route, so the boundary credits value to its address. Its
+/// dispatch must refuse value for every selector outside `PAYABLE_SELECTORS`, or
+/// a funded call to any other selector would strand native value at an address
+/// whose only outward path is the proposal-bond accounting.
+///
+/// Characterization: the negative-match block this replaced already covered
+/// these selectors with the same message, so the test pins current behavior
+/// rather than proving a fix. Its value is catching a future removal of the
+/// guard.
+#[test]
+fn unpublished_selectors_refuse_native_value() {
+    use alloy_sol_types::SolCall;
+
+    use crate::precompile::{dispatch_with_handlers, IVote};
+
+    let calls = [
+        IVote::castVoteCall {
+            proposalId: U256::ZERO,
+            approve: true,
+        }
+        .abi_encode(),
+        IVote::getProposalCall {
+            proposalId: U256::ZERO,
+        }
+        .abi_encode(),
+    ];
+
+    let mut provider = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        for data in &calls {
+            let funded = dispatch_with_handlers(
+                storage.clone(),
+                data,
+                Address::ZERO,
+                U256::from(1u64),
+                &REJECTING_REGISTRY,
+            );
+            assert!(
+                matches!(
+                    funded,
+                    Err(PrecompileError::Revert(ref message))
+                        if message == "non-payable function called with value"
+                ),
+                "unpublished selector must refuse value, got {funded:?}"
+            );
+        }
+    });
+}

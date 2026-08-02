@@ -1,8 +1,8 @@
 # ADR-S-OCM-004: OCOMP quorum atomically applies a typed result
 
-- **Status:** Accepted; q-forming atomic apply implemented on
-  `feat/ocomp-poc`; final PoC closure evidence pending
-- **Date:** 2026-07-26
+- **Status:** Accepted; q-forming atomic apply implemented; exact-revision
+  Linux closure evidence pending
+- **Date:** 2026-07-30
 - **Decision owners:** System Space, block-execution and participating domain owners
 - **Scope:** JobIntent lifecycle, finality binding, full-result vote window,
   quorum/expiry, q-forming result verification, private authority,
@@ -137,6 +137,21 @@ protocol bundle and complete result committee from the authenticated chain
 manifest before running bounded expiry. Later active blocks run only the
 ordinary lifecycle/expiry operation. The SystemTx selector, body and ordering
 do not change.
+
+For the fresh-devnet Metadosis profile selected by ADR-C-MET-001, `H` is
+exactly block `1` and the install classification is `Measurement`. Node
+startup requires the canonical install binding before execution begins and
+rejects a missing, malformed, wrong-chain, wrong-base-genesis, wrong-hash,
+wrong-classification or later activation. Cycle therefore cannot execute its
+block-1 Metadosis commands without an installed active request profile. The
+existing public-closure `Final` profile remains pinned to height `32` and is
+not reclassified as genesis-active. There is no legacy/no-OCOMP runtime branch
+and no process-local activation switch.
+
+This specialization does not change OCOMP quorum, wire, worker or vote
+semantics. The outer WWD reducer owns time/status, ordered READY selection,
+missed-window and capacity-forfeiture outcomes. OCOMP owns only the admitted
+job from intent through certified result apply, conflict or expiry.
 
 ### Fork-bound authority installation
 
@@ -409,16 +424,14 @@ affect only fields explicitly defined as protocol metadata.
 
 ## Production-interface verification evidence
 
-No complete full-result job-vote FSM, certified capability or
-receipt path exists in the baseline inspected by this ADR.
-The production current path still invokes Lysis synchronously from Metadosis.
-Required evidence includes the complete PFS-002 public transaction path,
-result-vote cap-1/cap/cap+1 and q-forming maximum-work cases through
-proposer/import/replay, a Tribute population crossing a work-shard boundary,
-healthy `4/4`, one-unavailable `3/4`, two-unavailable expiry, duplicate/late/
-wrong-key/equivocation vote cases, finality mutations, response-deadline
-boundary, exact retry, wrong binding, representative q-forming owner rollback,
-receipt mutation, fourth-vote-after-completion and public output/proof reads.
+The full-result job-vote FSM, private certified capability and aggregate owner
+receipt path are implemented. Production caller inventory contains no
+Metadosis synchronous-Lysis edge. Focused tests cover request/finality/open,
+result-vote cap boundaries, q-forming owner rollback, receipt mutation,
+fourth-vote accountability and proposer/import/replay parity. The remaining
+claim is exact-revision Linux process evidence for the complete PFS-002 path,
+including the four independent domains, work-shard boundary, healthy `4/4`,
+one-unavailable `3/4`, two-unavailable expiry and public output/proof reads.
 
 ## Consequences
 

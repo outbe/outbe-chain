@@ -13,6 +13,11 @@ use outbe_primitives::storage::StorageHandle;
 use crate::runtime;
 use crate::schema::BidData;
 
+/// Selectors on this precompile that accept native value. The route table binds
+/// this to the address's `ValuePolicy` at compile time, so a selector added here
+/// without flipping the route fails the build.
+pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
+
 /// Interface ID probed by `OriginRouter.wire` — `type(IDesis).interfaceId` of the
 /// router-facing interface in contracts/intex/src/origin/interfaces/IDesis.sol
 /// (XOR of its 4 function selectors).

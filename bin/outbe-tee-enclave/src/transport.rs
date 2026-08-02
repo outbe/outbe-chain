@@ -260,7 +260,9 @@ pub fn serve_connection<S: EnclaveTransportStream>(
 /// write-once DKG-derived offer key slot (populated by the DKG connection's
 /// Seam F, read by the offer-decrypt path). `boot` carries the seal/unseal
 /// configuration (chain_id / tee-dir / isv_svn); when `Some`, the sealing path
-/// persists the offer secret + threshold share after Seam F.
+/// persists the offer secret + threshold share after Seam F. The production
+/// accept loop passes the resident chain independently because non-sealing
+/// enclaves still need a chain-scoped state-key domain.
 pub fn serve_connection_with<S: EnclaveTransportStream>(
     stream: S,
     keys: &EnclaveKeys,
@@ -268,12 +270,16 @@ pub fn serve_connection_with<S: EnclaveTransportStream>(
     boot: Option<&EnclaveBootConfig>,
     initialization: &InitializationState,
 ) -> Result<(), TransportError> {
-    serve_connection_with_quote_generator(
+    let chain_id = boot
+        .map(|config| config.chain_id)
+        .unwrap_or(alloy_primitives::B256::ZERO);
+    serve_connection_with_resident_chain(
         stream,
         keys,
         offer_key,
         boot,
         initialization,
+        chain_id,
         crate::gramine::dcap_quote,
     )
 }
@@ -290,22 +296,27 @@ pub fn serve_connection_with_synthetic_dcap<S: EnclaveTransportStream>(
     boot: Option<&EnclaveBootConfig>,
     initialization: &InitializationState,
 ) -> Result<(), TransportError> {
-    serve_connection_with_quote_generator(
+    let chain_id = boot
+        .map(|config| config.chain_id)
+        .unwrap_or(alloy_primitives::B256::ZERO);
+    serve_connection_with_resident_chain(
         stream,
         keys,
         offer_key,
         boot,
         initialization,
+        chain_id,
         synthetic_dcap_quote,
     )
 }
 
-fn serve_connection_with_quote_generator<S: EnclaveTransportStream>(
+fn serve_connection_with_resident_chain<S: EnclaveTransportStream>(
     mut stream: S,
     keys: &EnclaveKeys,
     offer_key: &SharedTributeOfferKey,
     boot: Option<&EnclaveBootConfig>,
     initialization: &InitializationState,
+    chain_id: alloy_primitives::B256,
     quote_generator: fn(&[u8; 64]) -> Result<Vec<u8>, String>,
 ) -> Result<(), TransportError> {
     // 1. Minimal cleartext preamble. Production never emits a quote here.
@@ -535,8 +546,7 @@ fn serve_connection_with_quote_generator<S: EnclaveTransportStream>(
                 keys,
                 &mut dkg,
                 offer_key,
-                boot.map(|b| b.chain_id)
-                    .unwrap_or(alloy_primitives::B256::ZERO),
+                chain_id,
                 Some(initialization),
                 quote_generator,
             ),
@@ -765,6 +775,32 @@ fn dispatch_with_initialization(
                     }
                 };
             let mut result = crate::gratis::apply_op(&state_key, &request);
+            // Co-located Fidelity cohort section: applied atomically with the
+            // Gratis op under its own independent key domain. A failing section
+            // rejects the WHOLE op — the host writes neither ledger.
+            if let (outbe_tee::protocol::GratisOpStatus::Applied, Some(section)) =
+                (&result.status, &request.fidelity)
+            {
+                let fidelity_outcome =
+                    crate::fidelity::derive_fidelity_state_key(derived.group_sig(), chain_id, 0)
+                        .and_then(|fidelity_key| {
+                            crate::fidelity::apply_cohort_section(
+                                &fidelity_key,
+                                request.account,
+                                request.amount,
+                                section,
+                            )
+                        });
+                match fidelity_outcome {
+                    Ok(outcome) => result.fidelity = Some(outcome),
+                    Err(e) => {
+                        result = crate::gratis::rejected_result(
+                            format!("fidelity section failed: {e}"),
+                            result.inputs_canonical_hash,
+                        );
+                    }
+                }
+            }
             // Sign (inputs_canonical_hash ‖ result) with the attestation key so the
             // host can prove the result came from this attested enclave.
             let preimage = outbe_tee::protocol::gratis_op_attestation_preimage(
@@ -774,6 +810,96 @@ fn dispatch_with_initialization(
             result.attestation_tag = keys.sign_attestation(&preimage).to_vec();
             EnclaveResponse::GratisOpApplied {
                 result: Box::new(result),
+            }
+        }
+        EnclaveRequest::ApplyFidelityCohortOp { request } => {
+            // Standalone cohort mutation over the independent Fidelity key
+            // domain. Consensus path, re-executed by every validator.
+            let Some(derived) = offer_key.get() else {
+                return EnclaveResponse::Error {
+                    message: "ApplyFidelityCohortOp: no resident group key (DKG not complete)"
+                        .to_string(),
+                };
+            };
+            let result =
+                crate::fidelity::derive_fidelity_state_key(derived.group_sig(), chain_id, 0)
+                    .and_then(|key| crate::fidelity::apply_cohort_op(&key, &request));
+            match result {
+                Ok(mut result) => {
+                    let preimage = outbe_tee::protocol::fidelity_cohort_attestation_preimage(
+                        result.inputs_canonical_hash,
+                        &result,
+                    );
+                    result.attestation_tag = keys.sign_attestation(&preimage).to_vec();
+                    EnclaveResponse::FidelityCohortApplied {
+                        result: Box::new(result),
+                    }
+                }
+                Err(e) => EnclaveResponse::Error {
+                    message: e.to_string(),
+                },
+            }
+        }
+        EnclaveRequest::SnapshotFidelityLeagues { request } => {
+            // Same resident-key derivation + attestation as ApplyGratisOp, over
+            // the independent Fidelity key domain. Consensus path (metadosis
+            // OCOMP prepare, re-executed by every validator).
+            let Some(derived) = offer_key.get() else {
+                return EnclaveResponse::Error {
+                    message: "SnapshotFidelityLeagues: no resident group key (DKG not complete)"
+                        .to_string(),
+                };
+            };
+            let leagues =
+                crate::fidelity::derive_fidelity_state_key(derived.group_sig(), chain_id, 0)
+                    .and_then(|key| crate::fidelity::snapshot_leagues(&key, &request));
+            match leagues {
+                Ok(leagues) => {
+                    let inputs_canonical_hash =
+                        outbe_tee::protocol::fidelity_snapshot_canonical_hash(&request);
+                    let preimage = outbe_tee::protocol::fidelity_snapshot_attestation_preimage(
+                        inputs_canonical_hash,
+                        &leagues,
+                    );
+                    let attestation_tag = keys.sign_attestation(&preimage).to_vec();
+                    EnclaveResponse::FidelityLeaguesSnapshotted {
+                        leagues,
+                        inputs_canonical_hash,
+                        attestation_tag,
+                    }
+                }
+                Err(e) => EnclaveResponse::Error {
+                    message: e.to_string(),
+                },
+            }
+        }
+        EnclaveRequest::QueryFidelityIndex { request } => {
+            // Owner-authorized read (eth_call path, NOT consensus). The signed,
+            // expiring authorization is verified inside the engine — the trust
+            // boundary is the enclave, not the host that forwards the call.
+            let Some(derived) = offer_key.get() else {
+                return EnclaveResponse::Error {
+                    message: "QueryFidelityIndex: no resident group key (DKG not complete)"
+                        .to_string(),
+                };
+            };
+            let result =
+                crate::fidelity::derive_fidelity_state_key(derived.group_sig(), chain_id, 0)
+                    .and_then(|key| crate::fidelity::query_index(&key, chain_id, &request));
+            match result {
+                Ok(mut result) => {
+                    let preimage = outbe_tee::protocol::fidelity_query_attestation_preimage(
+                        result.inputs_canonical_hash,
+                        &result,
+                    );
+                    result.attestation_tag = keys.sign_attestation(&preimage).to_vec();
+                    EnclaveResponse::FidelityIndexQueried {
+                        result: Box::new(result),
+                    }
+                }
+                Err(e) => EnclaveResponse::Error {
+                    message: e.to_string(),
+                },
             }
         }
         EnclaveRequest::ApplyPromisOp { request } => {
@@ -1169,6 +1295,7 @@ pub fn serve(
     boot: Option<Arc<EnclaveBootConfig>>,
     offer_key: SharedTributeOfferKey,
     initialization: Arc<InitializationState>,
+    chain_id: alloy_primitives::B256,
 ) -> Result<(), TransportError> {
     // The DKG-derived offer key is shared across all connection threads: the DKG
     // ceremony connection writes it (Seam F), the offer-decrypt connection reads
@@ -1181,9 +1308,15 @@ pub fn serve(
         let initialization = Arc::clone(&initialization);
         std::thread::spawn(move || {
             // PoC: surface to stderr; one bad client must not kill the enclave.
-            if let Err(err) =
-                serve_connection_with(stream, &keys, &offer_key, boot.as_deref(), &initialization)
-            {
+            if let Err(err) = serve_connection_with_resident_chain(
+                stream,
+                &keys,
+                &offer_key,
+                boot.as_deref(),
+                &initialization,
+                chain_id,
+                crate::gramine::dcap_quote,
+            ) {
                 eprintln!("tee enclave: connection error: {err}");
             }
         });
@@ -1203,6 +1336,7 @@ pub fn serve_tcp(
     boot: Option<Arc<EnclaveBootConfig>>,
     offer_key: SharedTributeOfferKey,
     initialization: Arc<InitializationState>,
+    chain_id: alloy_primitives::B256,
 ) -> Result<(), TransportError> {
     for conn in listener.incoming() {
         let stream = conn?;
@@ -1213,9 +1347,15 @@ pub fn serve_tcp(
         let boot = boot.clone();
         let initialization = Arc::clone(&initialization);
         std::thread::spawn(move || {
-            if let Err(err) =
-                serve_connection_with(stream, &keys, &offer_key, boot.as_deref(), &initialization)
-            {
+            if let Err(err) = serve_connection_with_resident_chain(
+                stream,
+                &keys,
+                &offer_key,
+                boot.as_deref(),
+                &initialization,
+                chain_id,
+                crate::gramine::dcap_quote,
+            ) {
                 eprintln!("tee enclave: connection error: {err}");
             }
         });

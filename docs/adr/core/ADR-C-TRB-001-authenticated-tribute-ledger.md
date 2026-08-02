@@ -1,7 +1,7 @@
 # ADR-C-TRB-001: Tribute owns the authenticated per-owner daily receipt ledger
 
 - **Status:** Proposed; current implementation profiled
-- **Date:** 2026-07-17
+- **Date:** 2026-07-30
 - **Owners/scope:** `crates/core/tribute`, its compressed-entity body and typed
   off-chain projection
 - **Depends on:** ADR-B-CNS-003, ADR-B-EVM-004, ADR-C-MET-001, ADR-C-LYS-001, ADR-B-CLI-001
@@ -26,10 +26,10 @@ mutation. The contract separately owns consensus-state `total_supply` and one
 `DayTotals` record per day.
 
 The public EVM precompile is read-only. TributeFactory is the normal issuance
-authority; Metadosis owns opening, sealing and partition retirement; Lysis owns
-the one bulk consumption transition. These authorities must eventually be
-represented by closed typed capabilities rather than convention around public
-Rust methods.
+authority; Metadosis owns opening/sealing and the two explicit non-Lysis
+terminal transitions below; verified OCOMP result apply owns certified Lysis
+consumption. Mutation is reached through purpose-bound internal commands, not a
+public Rust facade convention.
 
 ## Authoritative interface and production entrypoints
 
@@ -41,10 +41,13 @@ The production mutation paths are:
 
 - `TributeFactory::offer_tribute` calls `TributeContract::issue` after enclave
   validation and canonical-identity checks;
-- Metadosis calls `seal_day`, `unseal_day`, and
-  `retire_completed_partition` as its WorldwideDay FSM advances;
-- Lysis calls `consume_lysis_partition` only after producing exactly one Nod per
-  verified Tribute;
+- Metadosis calls typed seal/unseal effects as its WorldwideDay FSM advances;
+- verified OCOMP result apply calls the certified consume/retire transition
+  only after producing exactly one Nod per verified Tribute;
+- `MissedOffering` may retire only an initialized, sealed, empty partition;
+- `CapacityForfeiture` may clear and retire only a sealed partition whose
+  authenticated collection root, generation, exact aggregate count and nominal
+  total match the command receipt;
 - `burn`, `burn_loaded`, and `burn_all_by_wwd` are generic/internal maintenance
   seams and are not public ABI commands.
 
@@ -85,6 +88,8 @@ Live   --authenticated burn----------------------------> Absent
 Open day --Metadosis closes offering-------------------> Sealed
 Sealed nonempty --Lysis verifies all and consumes------> Consumed
 Consumed --Metadosis COMPLETED and partition retirement> Retired
+Sealed empty --MissedOffering empty retirement---------> Retired + WWD FAILED
+Sealed exact aggregate --CapacityForfeiture------------> Retired + WWD FAILED
 ```
 
 `issue` validates identity and day state, increments day totals and supply, mints
@@ -97,6 +102,19 @@ Lysis does not delete bodies individually. It proves its observed count and
 nominal sum against a sealed `DayTotals`, decrements supply once, and zeroes the
 day bucket. After Metadosis has committed `COMPLETED`, partition retirement removes
 the authenticated catalog partition and emits `TributePartitionRetired`.
+
+The two FAILED-day authorities are closed exceptions, not a generic failed-day
+retirement rule:
+
+- missed OFFERING requires zero count and zero nominal, and performs no
+  per-record work;
+- capacity forfeiture authenticates the sealed root/source generation and exact
+  aggregate, then zeroes `DayTotals`/supply in constant consensus work and
+  advances the retired generation.
+
+Neither creates Nod/Intex or converts Tribute nominal/issuance value to Promis.
+Both preserve the one canonical `TributePartitionRetired(uint32)` projection
+event; cap/value evidence is carried by the Metadosis typed receipt/event.
 
 ## Ordering, atomicity, replay and failure
 
@@ -113,6 +131,11 @@ failures retain their typed execution classification. A replay after a completed
 partition retirement must observe a terminal Metadosis day and no new mutation;
 `RetirementOutcome::NotPresent` is otherwise only safe when zero totals are also
 established.
+
+Missed-offering and capacity-forfeiture effects share the same
+Metadosis-issued execution/checkpoint lease as value routing, WWD/index/event
+commit and replay receipt. A fault at any boundary restores Tribute aggregates,
+events and CE retirement work together.
 
 ## Determinism and resource bounds
 

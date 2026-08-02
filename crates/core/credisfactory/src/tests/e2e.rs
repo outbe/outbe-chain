@@ -10,6 +10,7 @@
 use alloy_primitives::{Address, Bytes, B256, U256};
 
 use outbe_credis::{CredisContract, NUMBER_OF_ANADOSIS, SECONDS_PER_MONTH};
+use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_gratisfactory::runtime as gf;
 use outbe_oracle::contract::OracleContract;
@@ -115,6 +116,7 @@ fn credis_spend_auth(eoa: Address, handle: B256, bundle: Address) -> [u8; 32] {
 /// Storage set up with the block time, sub-call stubs, and the enclave installed.
 fn env() -> HashMapStorageProvider {
     test_enclave::install();
+    fidelity_enclave::install();
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(CREATED_AT));
     storage.set_block_number(BLOCK_NUMBER);
@@ -207,6 +209,7 @@ fn full_pledge_request_pay_unlock_flow() {
         assert_eq!(view_balance(&storage, alice()), pledge_amount);
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
     });
+    fidelity_enclave::uninstall();
     test_enclave::uninstall();
 }
 
@@ -249,6 +252,7 @@ fn pay_anadosis_unlocks_one_installment() {
         assert_eq!(view_balance(&storage, alice()), installment);
         assert_eq!(view_pledged(&storage, alice()), pledge_amount - installment);
     });
+    fidelity_enclave::uninstall();
     test_enclave::uninstall();
 }
 
@@ -295,6 +299,7 @@ fn request_credis_rejects_overdue_anadosis() {
             .unwrap_err();
         assert!(err.to_string().contains("overdue"), "got: {err}");
     });
+    fidelity_enclave::uninstall();
     test_enclave::uninstall();
 }
 
@@ -364,6 +369,7 @@ fn pay_anadosis_rejects_non_owner_caller() {
         let err = runtime::pay_anadosis(storage.clone(), bob(), position_id).unwrap_err();
         assert!(err.to_string().contains("bundleAccount"), "got: {err}");
     });
+    fidelity_enclave::uninstall();
     test_enclave::uninstall();
 }
 
@@ -405,12 +411,13 @@ fn expiry_sweep_burns_outstanding_collateral() {
         let outstanding_gratis = pledge_amount - U256::from(3u64) * installment;
         assert_eq!(view_pledged(&storage, alice()), outstanding_gratis);
 
-        // Fidelity index before the burn (aged to a common anchor past expiry).
+        // Encrypted cohort ledger before the burn — the burn records a sale
+        // cohort, so the ciphertext must change afterwards.
         let expiry_ts = CREATED_AT + NUMBER_OF_ANADOSIS as u64 * SECONDS_PER_MONTH;
-        let later = expiry_ts + 365 * 86_400;
-        let rcfi_before = outbe_fidelity::FidelityContract::new(storage.clone())
-            .compute_fidelity_index(alice(), later)
+        let cohorts_before = outbe_fidelity::FidelityContract::new(storage.clone())
+            .cohorts_ct_of(alice())
             .unwrap();
+        assert!(!cohorts_before.is_empty(), "alice has a seeded cohort");
 
         // Advance past the 10-month term and run the begin-block expiry sweep.
         let sweep_ts = expiry_ts + 1;
@@ -447,13 +454,15 @@ fn expiry_sweep_burns_outstanding_collateral() {
         assert!(position.outstanding_anadosis_amount.is_zero());
         assert!(position.outstanding_gratis_amount.is_zero());
 
-        // Fidelity dropped (a sale cohort was recorded for the burned collateral).
-        let rcfi_after = outbe_fidelity::FidelityContract::new(storage.clone())
-            .compute_fidelity_index(alice(), later)
+        // A sale cohort was recorded for the burned collateral, so alice's
+        // encrypted cohort ledger changed (the RCFI-drop semantics itself is
+        // covered by the fidelity + enclave tests).
+        let cohorts_after = outbe_fidelity::FidelityContract::new(storage.clone())
+            .cohorts_ct_of(alice())
             .unwrap();
-        assert!(
-            rcfi_after < rcfi_before,
-            "fidelity should drop: before={rcfi_before}, after={rcfi_after}"
+        assert_ne!(
+            cohorts_before, cohorts_after,
+            "expiry burn should record a sale cohort"
         );
 
         // Idempotent: a second sweep at the same height finds nothing to burn.
@@ -463,5 +472,6 @@ fn expiry_sweep_burns_outstanding_collateral() {
         );
         assert_eq!(crate::lifecycle::scan_and_expire(&ctx2).unwrap(), 0);
     });
+    fidelity_enclave::uninstall();
     test_enclave::uninstall();
 }

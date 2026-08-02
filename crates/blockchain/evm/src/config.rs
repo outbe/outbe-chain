@@ -35,10 +35,8 @@ use reth_rpc_eth_api::helpers::pending_block::BuildPendingEnv;
 use std::{convert::Infallible, sync::Arc};
 
 use outbe_compressed_entities::{CompressedTreeService, ExecutionScope, ACTIVE_COMMITMENT_SCHEME};
-use outbe_metadosis::ocomp::activation::{
-    OcompFinalityAuthorityError, OcompFinalizedIntentAuthority,
-};
-use outbe_metadosis::ocomp::fork::OcompForkInstallV1;
+use outbe_metadosis::api::{OcompFinalityAuthorityError, OcompFinalizedIntentAuthority};
+use outbe_metadosis::config::OcompForkInstallV1;
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::{
     consensus::ConsensusExecutionBridge,
@@ -1849,9 +1847,7 @@ mod tests {
 
     use alloy_eips::BlockNumHash;
     use alloy_primitives::{Address, Bytes, B256, U256};
-    use outbe_metadosis::ocomp::activation::{
-        OcompFinalityAuthorityError, OcompFinalizedIntentAuthority,
-    };
+    use outbe_metadosis::api::{OcompFinalityAuthorityError, OcompFinalizedIntentAuthority};
     use outbe_ocomp_protocol::{
         common::{BoundedBytes, ProofBytes},
         intent::{
@@ -2319,7 +2315,7 @@ mod tests {
             fork_id: B256::ZERO,
             protocol_bundle_hash: B256::ZERO,
         };
-        let limits = outbe_metadosis::ocomp::schema::poc_schema_limits();
+        let limits = outbe_metadosis::config::poc_schema_limits();
 
         let side_chain = authority
             .verify(&anchor_proof(7, B256::repeat_byte(0x88)), expected, &limits)

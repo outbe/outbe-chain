@@ -41,7 +41,7 @@ use outbe_consensus::{
     },
 };
 use outbe_fidelity::{MAX_LEAGUE, MIN_LEAGUE};
-use outbe_metadosis::schema::OCOMP_JOB_RECORDS_BASE_SLOT;
+use outbe_metadosis::proof_layout::OCOMP_JOB_RECORDS_BASE_SLOT;
 use outbe_node::ocomp::finality::{PublicAccountProofV1, PublicBlockViewV1, PublicStorageProofV1};
 use outbe_ocomp_protocol::{
     common::{BoundedBytes, ProofBytes},

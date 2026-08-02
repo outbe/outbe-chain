@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::{Address, Bytes, B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     delete, mint, read, retire_partition, BodyInput, EntityId36, EntityRef, ExecutionScope,
@@ -15,6 +15,19 @@ use crate::state::tribute_from_verified;
 pub struct LoadedTribute {
     body: TributeData,
     current: VerifiedBody,
+}
+
+/// Constant-size owner receipt for a sealed Tribute generation forfeited by
+/// Metadosis retained-cap policy.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TributeForfeitureReceipt {
+    pub worldwide_day: WorldwideDay,
+    pub sealed_root: B256,
+    pub forfeited_count: u32,
+    pub forfeited_nominal: U256,
+    pub source_generation: u64,
+    pub retired_generation: u64,
+    pub retirement_outcome: RetirementOutcome,
 }
 
 impl LoadedTribute {
@@ -99,6 +112,153 @@ impl TributeContract<'_> {
         }
         let storage = self.storage_handle();
         storage.with_checkpoint(|| self.retire_completed_partition_inner(scope, day))
+    }
+
+    /// Requests retirement for the one terminal policy where OFFERING was
+    /// never opened. The day must still be sealed and exactly empty before any
+    /// CE work is touched.
+    pub fn retire_empty_missed_offering_partition(
+        &mut self,
+        scope: &ExecutionScope,
+        day: WorldwideDay,
+    ) -> Result<RetirementOutcome> {
+        let ce_checkpoint = scope.ce_work_checkpoint()?;
+        let storage = self.storage_handle();
+        let result = storage.with_checkpoint(|| {
+            let totals = self.get_day_totals(day)?;
+            if !totals.initialized
+                || !totals.is_sealed
+                || totals.tribute_count != 0
+                || !totals.tribute_nominal_amount.is_zero()
+            {
+                return Err(
+                    outbe_primitives::error::PrecompileError::BodyReadCorruption(
+                        "MissedOffering requires a sealed empty Tribute partition".into(),
+                    ),
+                );
+            }
+            self.retire_completed_partition_inner(scope, day)
+        });
+        if result.is_err() {
+            scope.restore_ce_work_checkpoint(ce_checkpoint)?;
+        }
+        result
+    }
+
+    /// Forfeits one complete sealed Tribute generation without enumerating
+    /// individual bodies. The authenticated parent partition root and owner
+    /// aggregates are bound before supply, retirement, or generation changes.
+    pub fn forfeit_sealed_partition(
+        &mut self,
+        scope: &ExecutionScope,
+        day: WorldwideDay,
+    ) -> Result<TributeForfeitureReceipt> {
+        let ce_checkpoint = scope.ce_work_checkpoint()?;
+        let storage = self.storage_handle();
+        let result = storage.with_checkpoint(|| {
+            let mut totals = self.get_day_totals(day)?;
+            if !self.ocomp_profile_ready.read()? || !totals.initialized || !totals.is_sealed {
+                return Err(
+                    outbe_primitives::error::PrecompileError::BodyReadCorruption(
+                        "CapacityForfeiture requires a fresh-profile sealed Tribute partition"
+                            .into(),
+                    ),
+                );
+            }
+
+            let partition = PartitionRef::TributeWwd(day);
+            let authenticated_root = scope.authenticated_partition_root(partition)?;
+            if totals.tribute_count != 0 && authenticated_root.is_none() {
+                return Err(
+                    outbe_primitives::error::PrecompileError::BodyReadCorruption(
+                        "populated Tribute aggregate has no authenticated parent partition".into(),
+                    ),
+                );
+            }
+            let sealed_root = authenticated_root.unwrap_or(B256::ZERO);
+
+            let mut admission = self
+                .day_pre_admission
+                .get(day)?
+                .unwrap_or_else(|| crate::DayPreAdmission::with_key(day));
+            if admission.source_generation != 0 {
+                return Err(
+                    outbe_primitives::error::PrecompileError::BodyReadCorruption(
+                        "CapacityForfeiture requires unretired Tribute generation zero".into(),
+                    ),
+                );
+            }
+            if admission.is_sealed {
+                if admission.sealed_collection_root != sealed_root
+                    || admission.sealed_tribute_count != totals.tribute_count
+                    || admission.sealed_tribute_nominal_amount != totals.tribute_nominal_amount
+                {
+                    return Err(
+                        outbe_primitives::error::PrecompileError::BodyReadCorruption(
+                            "sealed Tribute pre-admission differs from authenticated aggregate"
+                                .into(),
+                        ),
+                    );
+                }
+            } else {
+                admission.initialized = true;
+                admission.is_sealed = true;
+                admission.sealed_collection_root = sealed_root;
+                admission.sealed_tribute_count = totals.tribute_count;
+                admission.sealed_tribute_nominal_amount = totals.tribute_nominal_amount;
+            }
+
+            let forfeited_count = totals.tribute_count;
+            let forfeited_nominal = totals.tribute_nominal_amount;
+            let supply = self
+                .total_supply
+                .read()?
+                .checked_sub(u64::from(forfeited_count))
+                .ok_or_else(|| {
+                    outbe_primitives::error::PrecompileError::BodyReadCorruption(
+                        "Tribute total supply underflow during CapacityForfeiture".into(),
+                    )
+                })?;
+            self.total_supply.write(supply)?;
+            totals.tribute_count = 0;
+            totals.tribute_nominal_amount = U256::ZERO;
+            self.store_day_totals(&totals)?;
+
+            let retirement_outcome = self.retire_completed_partition_inner(scope, day)?;
+            let expected_retirement = if authenticated_root.is_some() {
+                RetirementOutcome::Requested
+            } else {
+                RetirementOutcome::NotPresent
+            };
+            if retirement_outcome != expected_retirement {
+                return Err(outbe_primitives::error::PrecompileError::Fatal(
+                    "Tribute retirement outcome contradicts authenticated partition root".into(),
+                ));
+            }
+
+            let source_generation = admission.source_generation;
+            let retired_generation = source_generation.checked_add(1).ok_or_else(|| {
+                outbe_primitives::error::PrecompileError::BodyReadCorruption(
+                    "Tribute source generation overflow during CapacityForfeiture".into(),
+                )
+            })?;
+            admission.source_generation = retired_generation;
+            self.store_day_pre_admission(&admission)?;
+
+            Ok(TributeForfeitureReceipt {
+                worldwide_day: day,
+                sealed_root,
+                forfeited_count,
+                forfeited_nominal,
+                source_generation,
+                retired_generation,
+                retirement_outcome,
+            })
+        });
+        if result.is_err() {
+            scope.restore_ce_work_checkpoint(ce_checkpoint)?;
+        }
+        result
     }
 
     pub(crate) fn retire_completed_partition_inner(

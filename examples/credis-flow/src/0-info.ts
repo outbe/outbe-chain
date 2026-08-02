@@ -2,6 +2,7 @@ import { ethers, toBigInt, Wallet } from "ethers";
 import {
   IGratis__factory,
   ICredis__factory,
+  IFidelity__factory,
   SmartAccountFactory__factory,
   IERC20__factory,
   ITokenBundle__factory,
@@ -12,6 +13,7 @@ import {
   DEFAULT_GRATIS_FACTORY_ADDRESS,
   DEFAULT_CREDIS_FACTORY_ADDRESS,
   DEFAULT_CREDIS_ADDRESS,
+  DEFAULT_FIDELITY_ADDRESS,
   formatToken,
   formatTokenMeta,
   fetchTokenMeta,
@@ -20,7 +22,13 @@ import {
   loadEnv,
   requireEnv, formatTokenMeta2,
 } from "./utils.js";
-import { deriveGratisKeys, decryptBalance, decryptPledged, type GratisKeys } from "./confidential.js";
+import {
+  deriveGratisKeys,
+  decryptBalance,
+  decryptPledged,
+  signFidelityQueryAuth,
+  type GratisKeys,
+} from "./confidential.js";
 import { listTickets } from "./ticket.js";
 
 const SALT = 0n;
@@ -41,6 +49,7 @@ const gratisAddress = process.env["GRATIS_ADDRESS"] || DEFAULT_GRATIS_ADDRESS;
 const gratisFactoryAddress = process.env["GRATIS_FACTORY_ADDRESS"] || DEFAULT_GRATIS_FACTORY_ADDRESS;
 const credisFactoryAddress = process.env["CREDIS_FACTORY_ADDRESS"] || DEFAULT_CREDIS_FACTORY_ADDRESS;
 const credisAddress = process.env["CREDIS_ADDRESS"] || DEFAULT_CREDIS_ADDRESS;
+const fidelityAddress = process.env["FIDELITY_ADDRESS"] || DEFAULT_FIDELITY_ADDRESS;
 const smartAccountFactoryAddress = requireEnv("SMART_ACCOUNT_FACTORY_ADDRESS", envPath);
 const bundleModulePluginAddress = requireEnv("BUNDLE_MODULE_PLUGIN_ADDRESS", envPath);
 const erc20Address = requireEnv("ERC20_ADDRESS", envPath);
@@ -56,6 +65,7 @@ async function main() {
 
   const gratis = IGratis__factory.connect(gratisAddress, provider);
   const credis = ICredis__factory.connect(credisAddress, provider);
+  const fidelity = IFidelity__factory.connect(fidelityAddress, provider);
   const saFactory = SmartAccountFactory__factory.connect(smartAccountFactoryAddress, provider);
   const token = IERC20__factory.connect(erc20Address, provider);
   const bundlePlugin = ITokenBundle__factory.connect(bundleModulePluginAddress, provider);
@@ -79,9 +89,12 @@ async function main() {
   // signing an ownership proof, so it needs USER_PRIVATE_KEY; without it (or if
   // the enclave/DKG isn't up) balances are shown as ciphertext.
   let userKeys: GratisKeys | null = null;
-  if (userPrivateKey) {
+  // The same account key that unlocks the Gratis view key also signs the
+  // Fidelity index query authorization, so build the wallet once.
+  const userWallet = userPrivateKey ? new Wallet(userPrivateKey, provider) : null;
+  if (userWallet) {
     try {
-      userKeys = await deriveGratisKeys(new Wallet(userPrivateKey, provider));
+      userKeys = await deriveGratisKeys(userWallet);
     } catch (e) {
       console.warn(`\n(!) Could not fetch Gratis view key (${(e as Error).message}); balances shown as ciphertext.`);
     }
@@ -97,7 +110,7 @@ async function main() {
     SALT,
   );
 
-  await printUserInfo(provider, gratis, token, gratisMeta, erc20Meta, userKeys);
+  await printUserInfo(provider, gratis, token, fidelity, gratisMeta, erc20Meta, userKeys, userWallet);
   await printSmartAccountInfo(provider, token, bundlePlugin, smartAccountAddr, erc20Meta);
   await printCredisInfo(credis, smartAccountAddr, erc20Meta);
   await printCcaInfo(provider, token, erc20Meta);
@@ -108,9 +121,11 @@ async function printUserInfo(
   provider: ethers.JsonRpcProvider,
   gratis: ReturnType<typeof IGratis__factory.connect>,
   token: ReturnType<typeof IERC20__factory.connect>,
+  fidelity: ReturnType<typeof IFidelity__factory.connect>,
   gratisMeta: TokenMeta,
   erc20Meta: TokenMeta,
   keys: GratisKeys | null,
+  wallet: Wallet | null,
 ) {
   const [nativeBalance, erc20Balance, gratisBlob, pledgedBlob, pledgedTotal] = await Promise.all([
     provider.getBalance(userAddress),
@@ -136,6 +151,8 @@ async function printUserInfo(
     .filter((t) => !t.ticket.positionId && t.ticket.chainId === chainId.toString())
     .reduce((sum, t) => sum + BigInt(t.ticket.amount), 0n);
 
+  const fid = await fetchFidelity(provider, fidelity, wallet);
+
   console.log(`\n=== User: ${userAddress} ===`);
   console.log(`  Native balance:  ${ethers.formatEther(nativeBalance)} COEN`);
   console.log(`  ERC20 balance:   ${formatTokenMeta(erc20Balance, erc20Meta)}`);
@@ -143,6 +160,63 @@ async function printUserInfo(
   console.log(`  Active pledged:  ${showPledged} (credited to the pledged ledger at requestCredis)`);
   console.log(`  Pending pledged: ${formatTokenMeta(pending, gratisMeta)} (local tickets not yet requested)`);
   console.log(`  Pledged total:   ${formatTokenMeta(pledgedTotal, gratisMeta)} (system-wide, plaintext aggregate)`);
+  console.log(`  Fidelity index:  ${fid.index}`);
+  console.log(`  League:          ${fid.league}`);
+}
+
+/** Mirror of `outbe_fidelity_math::league_from_rcfi` (1..=4096, saturating). */
+function leagueFromRcfi(rcfi: bigint, maxRcfi: bigint, minLeague: bigint, maxLeague: bigint): bigint {
+  if (maxRcfi === 0n) return minLeague;
+  const slot = (rcfi * maxLeague) / maxRcfi;
+  const capped = slot < maxLeague - 1n ? slot : maxLeague - 1n;
+  return minLeague + capped;
+}
+
+/**
+ * Read the EOA's Fidelity Index (RCFI) and derive its league. The cohort ledger
+ * is TEE-encrypted, so the index read needs an owner-signed, expiring
+ * authorization (the same account key); without USER_PRIVATE_KEY only the
+ * plaintext league bounds/max are available. League is derived client-side from
+ * the index vs the plaintext synthetic maximum — no separate on-chain read.
+ */
+async function fetchFidelity(
+  provider: ethers.JsonRpcProvider,
+  fidelity: ReturnType<typeof IFidelity__factory.connect>,
+  wallet: Wallet | null,
+): Promise<{ index: string; league: string }> {
+  let decimals: bigint, minLeague: bigint, maxLeague: bigint, maxRcfi: bigint, now: bigint;
+  try {
+    const block = await provider.getBlock("latest");
+    now = BigInt(block?.timestamp ?? 0);
+    [decimals, minLeague, maxLeague, maxRcfi] = await Promise.all([
+      fidelity.decimals().then((d) => BigInt(d)),
+      fidelity.minLeague().then((l) => BigInt(l)),
+      fidelity.maxLeague().then((l) => BigInt(l)),
+      fidelity.maxFidelityIndexAt(now),
+    ]);
+  } catch (e) {
+    return { index: `(unavailable: ${(e as Error).message})`, league: "N/A" };
+  }
+
+  if (!wallet) {
+    return { index: "(need USER_PRIVATE_KEY to sign the query authorization)", league: "N/A" };
+  }
+
+  try {
+    const { chainId } = await provider.getNetwork();
+    const expiry = now + 3600n; // authorize a 1-hour window past the current block
+    const signature = await signFidelityQueryAuth(wallet, chainId, userAddress, expiry);
+    // Evaluate the index at the same `now` as the synthetic max above, so the
+    // derived league is exact (the auth message doesn't bind the query time).
+    const rcfi = await fidelity.getFidelityIndexAt(userAddress, now, expiry, signature);
+    const league = leagueFromRcfi(rcfi, maxRcfi, minLeague, maxLeague);
+    return {
+      index: `${ethers.formatUnits(rcfi, Number(decimals))} decayed-days (raw ${rcfi})`,
+      league: `${league} / ${maxLeague}`,
+    };
+  } catch (e) {
+    return { index: `(query failed: ${(e as Error).message})`, league: "N/A" };
+  }
 }
 
 async function printSmartAccountInfo(

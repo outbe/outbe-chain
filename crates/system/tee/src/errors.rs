@@ -41,6 +41,9 @@ pub enum TransportError {
     #[error("DCAP verification channel invalid: {0}")]
     DcapVerification(String),
 
+    #[error("fidelity attestation signature invalid: {0}")]
+    FidelityAttestation(String),
+
     #[error("unexpected response from enclave")]
     UnexpectedResponse,
 

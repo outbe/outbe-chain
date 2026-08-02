@@ -1,7 +1,7 @@
 # ADR-C-LYS-001: Lysis atomically transforms a sealed Tribute day into Nods
 
-- **Status:** Proposed; OCOMP PoC target defined, current implementation is synchronous
-- **Date:** 2026-07-26
+- **Status:** Proposed; fresh-devnet OCOMP path implemented, exact-revision Linux evidence pending
+- **Date:** 2026-07-30
 - **Decision owners:** Tribute/Nod economics and authenticated-state maintainers
 - **Scope:** `crates/core/lysis` and its direct Tribute, Nod, Fidelity, Oracle,
   Intex-contributor and compressed-entity seams
@@ -72,6 +72,13 @@ correctness and its certified effect contract. Physical compressed-entity
 persistence follows ADR-B-CNS-003 and the CE series; Lysis cannot claim storage
 durability before end-block commit.
 
+Metadosis is not a synchronous Lysis caller. For fresh devnet, every populated
+positive-gratis day enters OCOMP pre-admission and Lysis-owned effects are
+reachable only from verified OCOMP result apply. Missing OCOMP profile is a
+startup/runtime invariant failure. Zero limit, unknown day type, empty Tribute
+day and zero Gratis allocation remain explicit local Metadosis terminal
+outcomes and do not invoke Lysis.
+
 NodFactory owns later Nod mining, not Lysis. Mining requires Nod owner, qualified
 state and valid PoW; any cost payment, Nod deletion and matching Gratis mint share
 one transaction.
@@ -113,6 +120,14 @@ cursors. The PoC proves the architecture on a multi-shard fixture and proves
 non-proportional plan construction for 10,000 and 1,000,000,000 records; it does
 not claim billion-record throughput, storage capacity or operational readiness.
 
+Metadosis `CapacityForfeiture` is not a Lysis execution or fallback. It binds
+the authenticated sealed Tribute root, source generation and exact aggregate
+count/nominal, then clears owner totals and requests retirement in constant
+consensus work. It creates no Nod and converts no Tribute value into Promis;
+only the victim WWD's already-formed Metadosis limit is routed to carry-over.
+Physical body retention and release remain node-owned exactly as for certified
+retirement.
+
 ## Failure and recovery
 
 Malformed/missing bodies, root/totals mismatch, duplicate Nod identity, zero
@@ -136,10 +151,12 @@ from their ADRs.
 Body codec, identity `(owner, day)`, allocation math, fixed-point scales, grouping,
 Nod schema and contributor encoding require fork activation for changes.
 
-Inspected tests cover current synchronous arithmetic examples, count/total
-mismatch, uniqueness, rollback, retirement preconditions and Nod mining guards.
-No storage-independent executor, deterministic planner/reducer corpus, typed
-result verifier, certified apply path or production OCOMP caller closure exists.
+Inspected tests cover the pure Lysis arithmetic/model, count/total mismatch,
+uniqueness, rollback, retirement preconditions and Nod mining guards. Production
+caller inventory contains no Metadosis-to-`outbe_lysis::runtime::lysis` edge;
+populated Metadosis days create OCOMP request state and verified result apply is
+the sole production Lysis effect path. Full Linux E2E closure remains governed
+by the Metadosis/OCOMP evidence plan.
 
 ## Consequences
 
@@ -164,41 +181,36 @@ change. OCOMP can evolve operationally without owning its economics.
 
 ## Open questions and technical debt
 
-1. The implementation still reads and transforms every Tribute synchronously in
-   one block. Replace that production path at the PoC fork; no synchronous fallback
-   may remain.
-2. Formalize maximum nominal, budget, league population and product bounds; replace
+1. Formalize maximum nominal, budget, league population and product bounds; replace
    unchecked fixed-point intermediates with checked arithmetic where required.
-3. Small budgets/rounding may produce a zero allocation and block the whole day.
+2. Small budgets/rounding may produce a zero allocation and block the whole day.
    Define minimum allocation, eligibility and dust policy.
-4. Nod identity `(owner, day)` assumes at most one Tribute per owner/day. Prove and
+3. Nod identity `(owner, day)` assumes at most one Tribute per owner/day. Prove and
    structurally test the invariant across all Tribute mutation/import paths.
-5. `consume_lysis_partition` zeros totals while physical bodies disappear at CE
+4. `consume_lysis_partition` zeros totals while physical bodies disappear at CE
    persistence. Prove no public read exposes a logically consumed body and that all
    owner/day indexes retire atomically.
-6. Define exact retry behavior when end-block CE persistence fails after execution
+5. Define exact retry behavior when end-block CE persistence fails after execution
    produced a retirement intent.
-7. The error path's FAILED event/state is reverted with the transaction. Add durable
+6. The error path's FAILED event/state is reverted with the transaction. Add durable
    non-authoritative diagnostics and remove misleading writes.
-8. Prove contributor aggregation when several Tributes resolve to the same owner;
+7. Prove contributor aggregation when several Tributes resolve to the same owner;
    specify whether entries are per Tribute or per unique owner.
-9. Price snapshots used for Nod cost/floor must be pinned to a precise block/day;
+8. Price snapshots used for Nod cost/floor must be pinned to a precise block/day;
    current Oracle availability/finality assumptions need ADR-S-ORC-001 closure.
-10. Nod mining accepts an asset whose binding to `reference_currency` is unfinished.
+9. Nod mining accepts an asset whose binding to `reference_currency` is unfinished.
     Close this before cost-bearing mining is enabled.
-11. ERC-20 transfer/approve return handling and nonstandard-token behavior require
+10. ERC-20 transfer/approve return handling and nonstandard-token behavior require
     safe-call and adversarial-token tests.
-12. Prove `day_limit = lysis_budget + auction_base` and
+11. Prove `day_limit = lysis_budget + auction_base` and
     `lysis_budget = used_by_nods + unused_lysis` with checked arithmetic.
-13. Add generated tests spanning all leagues, permutations, duplicate identities,
+12. Add generated tests spanning all leagues, permutations, duplicate identities,
     rounding extremes, every injected nested-call failure and replay.
-14. Add structural caller tests proving no user ABI or unrelated module can invoke
+13. Add structural caller tests proving no user ABI or unrelated module can invoke
     raw Lysis/consume mutators.
-15. Freeze `UnitSpecV1`, planner/reducer semantics, typed result/action codecs and
+14. Freeze `UnitSpecV1`, planner/reducer semantics, typed result/action codecs and
     an independent reference corpus.
-16. Implement certified Nod, contributor, Tribute, carry-over and Metadosis
-    methods/receipts. Desis must remain outside activation.
-17. Prove 1/2/4-worker byte equality, Supervisor-submitted validator-ZeroFee
+15. Prove 1/2/4-worker byte equality, Supervisor-submitted validator-ZeroFee
     result votes only after finality+4, public q=3 vote/quorum binding, separate
     fourth-validator accountability and the full PFS-002 activation/output
     path.

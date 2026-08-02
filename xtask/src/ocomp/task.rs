@@ -1112,9 +1112,9 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "test",
                     "--locked",
                     "-p",
-                    "outbe-evm",
-                    "--test",
-                    "ocomp_result_votes",
+                    "outbe-metadosis",
+                    "--lib",
+                    "ocomp_semantic_migrations",
                 ],
             )?;
             cargo(
@@ -1674,12 +1674,6 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                 cargo(
                     repository_root,
                     &["test", "--locked", "-p", "outbe-lysis", "--test", test],
-                )?;
-            }
-            for test in ["ocomp_atomic_apply", "ocomp_logical_time"] {
-                cargo(
-                    repository_root,
-                    &["test", "--locked", "-p", "outbe-evm", "--test", test],
                 )?;
             }
             cargo(

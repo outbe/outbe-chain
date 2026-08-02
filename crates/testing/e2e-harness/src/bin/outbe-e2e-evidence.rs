@@ -4,6 +4,10 @@ use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
 use eyre::{ensure, Result, WrapErr};
+use outbe_e2e_harness::metadosis_p0::{
+    canonical_final_fixture_sha256, capture_outbe_chain_feature_tree, current_clean_git_revision,
+    verify_metadosis_p0_parity, MetadosisP0Case, MetadosisP0CaseInput,
+};
 use outbe_e2e_harness::ocomp_evidence::{
     assemble_closure, assemble_lane, closure_manifest_in, discover, manifest_in, publish_report,
     require_pass, task_progress_report, verify_manifest, verify_retained_semantics, PlanningLedger,
@@ -32,6 +36,39 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Verify the six-run Metadosis P0 env-independence evidence lane.
+    MetadosisP0Parity {
+        /// Normal debug `outbe-chain` artifact used by the debug cases.
+        #[arg(long)]
+        debug_node: PathBuf,
+        /// Normal release `outbe-chain` artifact used by the release cases.
+        #[arg(long)]
+        release_node: PathBuf,
+        /// `cargo tree -e features -i outbe-metadosis` output for the node.
+        #[arg(long)]
+        feature_tree: PathBuf,
+        /// Debug scenario evidence with the removed env input unset.
+        #[arg(long)]
+        debug_unset: PathBuf,
+        /// Debug scenario evidence with the removed env input set to its old value.
+        #[arg(long)]
+        debug_named: PathBuf,
+        /// Debug scenario evidence with the removed env input set arbitrarily.
+        #[arg(long)]
+        debug_arbitrary: PathBuf,
+        /// Release scenario evidence with the removed env input unset.
+        #[arg(long)]
+        release_unset: PathBuf,
+        /// Release scenario evidence with the removed env input set to its old value.
+        #[arg(long)]
+        release_named: PathBuf,
+        /// Release scenario evidence with the removed env input set arbitrarily.
+        #[arg(long)]
+        release_arbitrary: PathBuf,
+        /// Immutable parity evidence JSON.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Measure and publish exact OCM-26 host facts using Rust-owned probes.
     #[cfg(feature = "ocomp-integration")]
     CapacityHost {
@@ -105,6 +142,58 @@ fn main() -> Result<()> {
     let ledger = PlanningLedger::parse(&ledger_path)?;
 
     match cli.command {
+        Command::MetadosisP0Parity {
+            debug_node,
+            release_node,
+            feature_tree,
+            debug_unset,
+            debug_named,
+            debug_arbitrary,
+            release_unset,
+            release_named,
+            release_arbitrary,
+            output,
+        } => {
+            let debug_node = resolve_from_current(&debug_node)?;
+            let release_node = resolve_from_current(&release_node)?;
+            let feature_tree = resolve_from_current(&feature_tree)?;
+            let retained_feature_tree = std::fs::read(&feature_tree)
+                .wrap_err_with(|| format!("read {}", feature_tree.display()))?;
+            let exact_feature_tree = capture_outbe_chain_feature_tree(&repo)?;
+            ensure!(
+                retained_feature_tree == exact_feature_tree,
+                "retained feature tree differs from the exact verifier command"
+            );
+            let source_revision = current_clean_git_revision(&repo)?;
+            let final_fixture_sha256 = canonical_final_fixture_sha256(&repo)?;
+            let cases = [
+                (MetadosisP0Case::DebugUnset, debug_unset),
+                (MetadosisP0Case::DebugNamed, debug_named),
+                (MetadosisP0Case::DebugArbitrary, debug_arbitrary),
+                (MetadosisP0Case::ReleaseUnset, release_unset),
+                (MetadosisP0Case::ReleaseNamed, release_named),
+                (MetadosisP0Case::ReleaseArbitrary, release_arbitrary),
+            ]
+            .into_iter()
+            .map(|(case, evidence_dir)| {
+                Ok(MetadosisP0CaseInput {
+                    case,
+                    evidence_dir: resolve_from_current(&evidence_dir)?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+            let evidence = verify_metadosis_p0_parity(
+                &source_revision,
+                &exact_feature_tree,
+                &debug_node,
+                &release_node,
+                &final_fixture_sha256,
+                &cases,
+            )?;
+            publish_json_output(&output, &evidence)?;
+            println!("{}", serde_json::to_string_pretty(&evidence)?);
+            Ok(())
+        }
         #[cfg(feature = "ocomp-integration")]
         Command::CapacityHost { workspace, output } => {
             let workspace = resolve_from_current(&workspace)?;
@@ -206,7 +295,6 @@ fn decode_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
     .wrap_err_with(|| format!("decode typed JSON {}", path.display()))
 }
 
-#[cfg(feature = "ocomp-integration")]
 fn publish_json_output<T: serde::Serialize>(path: &Path, value: &T) -> Result<()> {
     let path = resolve_from_current(path)?;
     let parent = path

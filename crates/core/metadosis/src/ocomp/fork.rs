@@ -21,7 +21,7 @@ const FORK_INSTALL_VERSION: u16 = 1;
 const FORK_INSTALL_FIXED_LEN: usize = 4 + 2 + 1 + 8 + 4 + 4 + 4;
 const FORK_INSTALL_HASH_DOMAIN: &[u8] = b"OUTBE_OCOMP_FORK_INSTALL_V1\0";
 
-/// Canonical fresh-devnet activation height for final PoC evidence.
+/// Frozen activation height of the existing Final PoC profile.
 pub const OCOMP_POC_FINAL_ACTIVATION_HEIGHT: u64 = 32;
 
 /// Evidence eligibility of one chain-manifest binding.
@@ -235,15 +235,14 @@ impl MetadosisContract<'_> {
             }
         }
 
-        let storage = self.storage.clone();
-        storage.with_checkpoint(|| {
+        (|| {
             self.initialize_ocomp_request_profile(&install.request_profile, limits)?;
             self.initialize_ocomp_activation_authority(
                 &install.protocol_bundle,
                 &install.result_committee,
                 limits,
             )
-        })
+        })()
     }
 }
 

@@ -132,6 +132,17 @@ pub fn run(opts: RunOpts) -> i32 {
         Err(code) => return code,
     };
 
+    // Resident chain id from `--chain-id` (default ZERO), bound INDEPENDENTLY of
+    // sealing: it scopes every state-key derivation and the owner-authorized
+    // fidelity query, which cross-checks it against the node's chain. Sourcing it
+    // from `--chain-id` here (not from the seal-only boot config) is what lets a
+    // non-sealing enclave still answer chain-scoped queries.
+    let chain_id = B256::from(
+        arg_value(&args, "--chain-id")
+            .and_then(|h| parse_hex32(&h))
+            .unwrap_or([0u8; 32]),
+    );
+
     // Shared, write-once permanent offer-key slot. A valid sealed blob restores
     // it. An existing blob that cannot be unsealed is terminal and is never
     // converted into a fresh ceremony or another key.
@@ -200,7 +211,7 @@ pub fn run(opts: RunOpts) -> i32 {
             "outbe-tee-enclave: listening on tcp://{socket} (attestation: {}; enclave identity: {identity_id})",
             attest.label()
         );
-        serve_tcp(&listener, keys, boot, offer_key, initialization)
+        serve_tcp(&listener, keys, boot, offer_key, initialization, chain_id)
     } else {
         // Fresh socket; UDS mode 0600 (owner-only), per plan §"Transport".
         let _ = std::fs::remove_file(&socket);
@@ -221,7 +232,7 @@ pub fn run(opts: RunOpts) -> i32 {
             "outbe-tee-enclave: listening on {socket} (attestation: {}; enclave identity: {identity_id})",
             attest.label()
         );
-        serve(&listener, keys, boot, offer_key, initialization)
+        serve(&listener, keys, boot, offer_key, initialization, chain_id)
     };
     if let Err(err) = result {
         eprintln!("outbe-tee-enclave: serve error: {err}");

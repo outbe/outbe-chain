@@ -250,14 +250,17 @@ mod tests {
         ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
     };
     use outbe_primitives::addresses::REWARDS_ADDRESS;
-    use outbe_primitives::block::BlockContext;
+    use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
     use outbe_primitives::consensus::ConsensusExecutionBridge;
     use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
     use outbe_primitives::reshare_artifact::{
         decode_outbe_block_artifacts, encode_outbe_block_artifacts, CompressedEntitiesRootArtifact,
         ConsensusHeaderArtifact, ExecutionSummaryArtifact, OutbeBlockArtifacts,
     };
-    use outbe_primitives::storage::{direct::DirectStorageProvider, StorageHandle};
+    use outbe_primitives::storage::{
+        direct::DirectStorageProvider, hashmap::HashMapStorageProvider,
+        MetadosisMutationPurposeTag, StorageHandle,
+    };
     use outbe_primitives::tee_genesis_v1::GRAMINE_DIRECT_DEV_CHAIN_ID;
     use outbe_primitives::OutbeHeader;
     use reth_ethereum::chainspec::ChainSpec;
@@ -292,6 +295,7 @@ mod tests {
     };
 
     const GENESIS_OWNER: Address = address!("0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf");
+    const TEST_BLOCK_ONE_TIMESTAMP: u64 = 1_700_000_001;
 
     #[test]
     fn final_artifact_adapter_overwrites_untrusted_root_and_preserves_consensus_fields() {
@@ -530,7 +534,7 @@ mod tests {
             policy,
             committee_snapshot_hash,
             1,
-            7_201,
+            TEST_BLOCK_ONE_TIMESTAMP + 3_600,
             &[DevValidatorV1 {
                 evm_secret: secret,
                 bls_minpk_public: consensus_public,
@@ -612,7 +616,7 @@ mod tests {
     fn next_block_attrs(extra_data: Bytes) -> OutbeNextBlockEnvAttributes {
         OutbeNextBlockEnvAttributes {
             inner: NextBlockEnvAttributes {
-                timestamp: 1,
+                timestamp: TEST_BLOCK_ONE_TIMESTAMP,
                 suggested_fee_recipient: REWARDS_ADDRESS,
                 prev_randao: B256::ZERO,
                 gas_limit: 30_000_000,
@@ -635,10 +639,28 @@ mod tests {
     type TestDb = CacheDB<EmptyDBTyped<ProviderError>>;
 
     fn seed_active_validators(db: &mut TestDb, validators: &[Address]) {
+        let chain_spec = test_chain_spec();
+        let install = outbe_metadosis::test_support::ForkInstallScenario::measurement_at(
+            1,
+            chain_spec.chain().id(),
+            chain_spec.genesis_hash(),
+        )
+        .unwrap()
+        .into_install();
+        let mut metadosis_genesis = HashMapStorageProvider::new(chain_spec.chain().id());
+        metadosis_genesis.set_block_number(1);
+        metadosis_genesis.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::ForkProfile);
+        metadosis_genesis.enter(|storage| {
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(1, 1_700_000_001, chain_spec.chain().id()),
+                storage,
+            );
+            outbe_metadosis::commands::install_fork_profile(&ctx, &install).unwrap();
+        });
         let ctx = BlockContext::new(
             0,
             0,
-            outbe_primitives::chain::CHAIN_ID,
+            MAINNET.chain().id(),
             GENESIS_OWNER,
             validators.to_vec(),
         );
@@ -690,6 +712,11 @@ mod tests {
                 .unwrap();
         });
         provider.flush().expect("validator seed flush must succeed");
+        drop(provider);
+        for ((address, slot), value) in metadosis_genesis.storage {
+            db.insert_account_storage(address, slot, value)
+                .expect("Metadosis production-route genesis seed must install");
+        }
 
         let marker_code = RevmBytecode::new_legacy([0xef].into());
         db.insert_account_info(
@@ -712,6 +739,14 @@ mod tests {
             outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
             AccountInfo {
                 code_hash: marker_code.hash_slow(),
+                code: Some(marker_code.clone()),
+                ..Default::default()
+            },
+        );
+        db.insert_account_info(
+            outbe_primitives::addresses::METADOSIS_ADDRESS,
+            AccountInfo {
+                code_hash: marker_code.hash_slow(),
                 code: Some(marker_code),
                 ..Default::default()
             },
@@ -722,7 +757,7 @@ mod tests {
         let ctx = BlockContext::new(
             0,
             0,
-            outbe_primitives::chain::CHAIN_ID,
+            MAINNET.chain().id(),
             GENESIS_OWNER,
             validators.to_vec(),
         );
@@ -744,13 +779,14 @@ mod tests {
     fn builder_keeps_preexecuted_phase1_witness_in_block_body() {
         let bridge = test_bridge();
         let parent = test_parent_at(1);
-        bridge.record_execution_summary(
+        bridge.record_execution_summary_with_state_root(
             1,
             parent.hash(),
             ExecutionSummaryArtifact {
                 validator_fee_sum: U256::ZERO,
             },
             parent.header().inner.timestamp,
+            parent.header().inner.state_root,
         );
         let config = test_config(bridge);
         let provider = DeterministicEmptyStateProvider;
@@ -854,13 +890,14 @@ mod tests {
         // `CertifiedParentAccounting` system tx requires on both build and
         // re-execute paths.
         let bridge = test_bridge();
-        bridge.record_execution_summary(
+        bridge.record_execution_summary_with_state_root(
             1,
             parent.hash(),
             ExecutionSummaryArtifact {
                 validator_fee_sum: U256::ZERO,
             },
             1,
+            parent.header().inner.state_root,
         );
         let config = test_config(bridge);
         let provider = DeterministicEmptyStateProvider;

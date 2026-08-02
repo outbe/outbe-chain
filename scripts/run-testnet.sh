@@ -265,7 +265,12 @@ do_start() {
             # clean re-bootstrap. Offset by 1 so the seed is never all-zero.
             local tee_dkg_seed
             tee_dkg_seed=$(printf '%064x' "$((i + 1))")
-            local tee_port=$((7000 + PORT_OFFSET + i))
+            # Base 17000, NOT 7000: macOS AirPlay Receiver (Control Center) binds
+            # *:7000 by default on Apple Silicon — the very platform `localnet-tee`
+            # targets — so the node would connect to AirPlay and fail-fast on a quote
+            # timeout. 17000 is off that path. Endpoint is IPv4-literal (the enclave
+            # binds 127.0.0.1 only; `localhost` could resolve to ::1).
+            local tee_port=$((17000 + PORT_OFFSET + i))
             local tee_endpoint="127.0.0.1:$tee_port"
             # Tag the container with PORT_OFFSET so parallel localnets get
             # distinct names (`outbe-tee-gramine-<offset>-<i>`) and each run only
@@ -281,14 +286,21 @@ do_start() {
             # re-running the ceremony, which is invalid on a non-fresh chain.
             # The production enclave under gramine-direct cannot EGETKEY and was
             # rejected above when OUTBE_TEE_SEAL was requested.
+            # The enclave's resident chain id, bound on EVERY launch (independent of
+            # sealing): it scopes state-key derivation and the owner-authorized
+            # fidelity query, which cross-checks it against the node's chain. Gating
+            # it on sealing left a non-sealing enclave at ZERO chain, so those
+            # queries failed with "query authorization is for a different chain".
+            local tee_chain_hex
+            tee_chain_hex=0x$(printf '%064x' "$(python3 -c "import json;print(json.load(open('$OUTPUT_DIR/genesis.json'))['config']['chainId'])")")
+            local -a tee_chain_args=(--chain-id "$tee_chain_hex")
+            # OUTBE_TEE_SEAL adds the persistent seal dir on top (restart fast-path).
             local -a tee_seal_mount=() tee_seal_args=()
             if [ -n "${OUTBE_TEE_SEAL:-}" ]; then
                 local tee_data_dir="$validator_dir/tee"
                 mkdir -p "$tee_data_dir"
-                local tee_chain_hex
-                tee_chain_hex=0x$(printf '%064x' "$(python3 -c "import json;print(json.load(open('$OUTPUT_DIR/genesis.json'))['config']['chainId'])")")
                 tee_seal_mount=(-v "$(readlink -f "$tee_data_dir"):/tee")
-                tee_seal_args=(--tee-dir /tee --chain-id "$tee_chain_hex")
+                tee_seal_args=(--tee-dir /tee)
             fi
             # Deterministic development-only DKG identity source. A validator
             # count/order change requires a new genesis.
@@ -302,7 +314,7 @@ do_start() {
                 -v "$(readlink -f "$tee_enclave_bin"):/app/outbe-tee-enclave:ro" \
                 -v "$(readlink -f "$tee_test_signing_key"):/run/secrets/outbe-test-sgx-key.pem:ro" \
                 "$tee_gramine_image" \
-                --socket "$tee_endpoint" "${tee_dkg_arg[@]}" "${tee_seal_args[@]}" >/dev/null
+                --socket "$tee_endpoint" "${tee_dkg_arg[@]}" "${tee_chain_args[@]}" "${tee_seal_args[@]}" >/dev/null
             echo "$tee_ctr" > "$PID_DIR/validator-$i.enclave.docker"
             local tee_up=""
             for _ in $(seq 1 200); do

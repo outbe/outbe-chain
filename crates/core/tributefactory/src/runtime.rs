@@ -4,7 +4,6 @@ use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     derive_poseidon_entity_id, EntityId36, ExecutionScope, ParentBodySource,
 };
-use outbe_metadosis::schema::{status, MetadosisContract, WorldwideDayEntryExt};
 use outbe_oracle::{contract::OracleContract, scurve};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_tee::protocol::{EncryptedTributeOffer, TributeOfferStatus, TributeZkContext};
@@ -84,9 +83,7 @@ impl TributeFactoryContract<'_> {
         // Current rate at this block. There is a single active OFFERING
         // day, so its committed oracle price is the current rate (identical on
         // every validator).
-        let metadosis = MetadosisContract::new(self.storage.clone());
-        let offering_day = *metadosis
-            .get_active_wwd_by_status(status::OFFERING)?
+        let offering_day = *outbe_metadosis::api::offering_worldwide_days(self.storage.clone())?
             .first()
             .ok_or_else(|| PrecompileError::Revert("no worldwide day is OFFERING".to_string()))?;
         let tribute_price =
@@ -135,11 +132,14 @@ impl TributeFactoryContract<'_> {
 
         // The offer's (decrypted) day must be OFFERING.
         let result_day = WorldwideDay::from(result.worldwide_day);
-        let wwd_status = metadosis.worldwide_days.entry(result_day).status().read()?;
-        if wwd_status != status::OFFERING {
+        let wwd_status = outbe_metadosis::api::worldwide_day(self.storage.clone(), result_day)?
+            .map(|projection| projection.status);
+        if wwd_status != Some(outbe_metadosis::WwdStatus::Offering) {
             return Err(TributeFactoryError::WorldwideDayNotOffering {
                 worldwide_day: result_day,
-                status: wwd_status,
+                // Preserve the established diagnostic byte without granting
+                // TributeFactory raw Metadosis schema access.
+                status: wwd_status.map_or(u8::MAX, |status| status as u8),
             }
             .into());
         }

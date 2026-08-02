@@ -92,7 +92,7 @@ impl ChainSpecParser for OutbeChainSpecParser {
         )
         .activation()
         .map_err(|error| eyre::eyre!("invalid mandatory teeAttestationV1 ChainSpec: {error}"))?;
-        outbe_node::ocomp::fork::load_ocomp_fork_install(chain_spec.as_ref())?;
+        outbe_node::ocomp::fork::require_startup_ocomp_fork_install(chain_spec.as_ref())?;
         Ok(chain_spec)
     }
 }
@@ -454,22 +454,16 @@ fn run_node() -> eyre::Result<()> {
     // Thread 1 (main): Reth execution layer.
     let bridge_for_evm = bridge.clone();
     let components = move |spec: Arc<ChainSpec<OutbeHeader>>| {
-        let fork_install = outbe_node::ocomp::fork::load_ocomp_fork_install(spec.as_ref())
-            .expect("chain spec parser validated OCOMP fork install");
-        let activation = fork_install.as_ref().map_or(
-            outbe_primitives::system_tx::OcompLifecycleActivation::Disabled,
-            |install| {
-                outbe_primitives::system_tx::OcompLifecycleActivation::at_block(
-                    install.activation_height,
-                )
-            },
+        let fork_install =
+            outbe_node::ocomp::fork::require_startup_ocomp_fork_install(spec.as_ref())
+                .expect("chain spec parser validated OCOMP fork install");
+        let activation = outbe_primitives::system_tx::OcompLifecycleActivation::at_block(
+            fork_install.activation_height,
         );
         let mut evm =
             outbe_evm::OutbeEvmConfig::new_with_bridge(spec.clone(), bridge_for_evm.clone())
                 .with_ocomp_lifecycle_activation(activation);
-        if let Some(install) = fork_install {
-            evm = evm.with_ocomp_fork_install(install);
-        }
+        evm = evm.with_ocomp_fork_install(fork_install);
         (
             evm,
             Arc::new(
@@ -499,17 +493,17 @@ fn run_node() -> eyre::Result<()> {
             "validated mandatory TEE attestation ChainSpec authority"
         );
         let ocomp_fork_install =
-            outbe_node::ocomp::fork::load_ocomp_fork_install(builder.config().chain.as_ref())?;
-        if let Some(install) = &ocomp_fork_install {
-            info!(
-                activation_height = install.activation_height,
-                classification = ?install.classification,
-                install_hash = %install.install_hash(
-                    &outbe_ocomp_protocol::profile::poc_schema_limits()
-                )?,
-                "validated immutable OCOMP chain-manifest fork install"
-            );
-        }
+            outbe_node::ocomp::fork::require_startup_ocomp_fork_install(
+                builder.config().chain.as_ref(),
+            )?;
+        info!(
+            activation_height = ocomp_fork_install.activation_height,
+            classification = ?ocomp_fork_install.classification,
+            install_hash = %ocomp_fork_install.install_hash(
+                &outbe_ocomp_protocol::profile::poc_schema_limits()
+            )?,
+            "validated genesis-active immutable OCOMP chain-manifest install"
+        );
 
         let prune_config = builder
             .config()
@@ -761,11 +755,9 @@ fn run_node() -> eyre::Result<()> {
                 compressed_tree_service.clone(),
             ),
         };
-        let outbe_node = match ocomp_fork_install {
-            Some(install) => outbe_node.with_ocomp_fork_install(install),
-            None => outbe_node,
-        };
-        let (projection_exit_tx, mut projection_exit_rx) = tokio::sync::mpsc::unbounded_channel();
+        let outbe_node = outbe_node.with_ocomp_fork_install(ocomp_fork_install);
+        let (projection_exit_tx, mut projection_exit_rx) =
+            tokio::sync::mpsc::unbounded_channel();
         let projection_readiness_for_rpc = projection_readiness.clone();
 
         let NodeHandle {

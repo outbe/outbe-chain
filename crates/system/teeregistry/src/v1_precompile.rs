@@ -18,6 +18,9 @@ use outbe_primitives::{
 
 use crate::{NodeEnclaveBindingV1, TeeRegistry, V1RegistrationOutcome};
 
+/// TeeRegistry V1 never accepts native token value on any selector.
+pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
+
 sol! {
     #[derive(Debug, PartialEq, Eq)]
     struct NodeEnclaveBindingV1View {

@@ -27,10 +27,12 @@ pub mod remote_session;
 pub mod tee_dkg;
 
 pub use client::{
-    verify_gratis_op_attestation, verify_peer_quote, verify_promis_op_attestation,
-    verify_tribute_offer_attestation, AttestedPeerKeys, AuthorizedEnclaveClient, EnclaveClient,
-    EnclaveInitializationChallenge, GeneratedDcapQuoteV1, NodeHostNoiseKey, QuotePolicy,
-    RemoteEnclaveClient, RemoteEnclavePublicKeysV1, RemoteSessionTicketV1,
+    verify_fidelity_cohort_attestation, verify_fidelity_query_attestation,
+    verify_fidelity_snapshot_attestation, verify_gratis_op_attestation, verify_peer_quote,
+    verify_promis_op_attestation, verify_tribute_offer_attestation, AttestedPeerKeys,
+    AuthorizedEnclaveClient, EnclaveClient, EnclaveInitializationChallenge, GeneratedDcapQuoteV1,
+    NodeHostNoiseKey, QuotePolicy, RemoteEnclaveClient, RemoteEnclavePublicKeysV1,
+    RemoteSessionTicketV1,
 };
 pub use client_global::{
     install_authorized_enclave_client, install_enclave_client, is_enclave_configured,

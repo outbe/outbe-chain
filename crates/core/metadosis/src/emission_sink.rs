@@ -1,64 +1,71 @@
 use crate::runtime::create_worldwide_day_for_date;
+use crate::state::{DayLimitFormationReceipt, OcompDayLimitFormation};
 use alloy_primitives::U256;
 use outbe_common::WorldwideDay;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},
+    storage::{
+        metadosis_cycle_allocation_binding, metadosis_late_settlement_binding,
+        MetadosisCertifiedFinality, MetadosisCycleLifecycle,
+    },
 };
 use outbe_promislimit::PromisLimitContract;
 
-use crate::precompile::IMetadosis;
-use crate::schema::{MetadosisContract, OcompDayLimitFormationStateEntryExt, WorldwideDayEntryExt};
+use crate::schema::MetadosisContract;
 
 /// Writes the terminal emission allocation into Metadosis-owned state.
-pub fn apply(ctx: &BlockRuntimeContext, amount: U256) -> Result<U256> {
-    let mut metadosis = MetadosisContract::new(ctx.storage.clone());
-    if metadosis
-        .read_ocomp_request_profile(&crate::ocomp::schema::poc_schema_limits())?
-        .is_some()
-    {
-        return apply_ocomp_day_limit(ctx, amount);
-    }
+pub(crate) fn apply(ctx: &BlockRuntimeContext, amount: U256) -> Result<DayLimitFormationReceipt> {
+    let binding = metadosis_cycle_allocation_binding(
+        ctx.block.chain_id,
+        ctx.block.block_number,
+        ctx.block.timestamp,
+    );
+    crate::commit::commit_transition::<MetadosisCycleLifecycle, _>(
+        ctx.storage.clone(),
+        binding,
+        |_| apply_inner(ctx, amount),
+    )
+}
 
-    let wwd = WorldwideDay::from_timestamp(ctx.block.timestamp);
-    create_worldwide_day_for_date(&mut metadosis, ctx, wwd)?;
-    metadosis
-        .worldwide_days
-        .entry(wwd)
-        .metadosis_limit_amount()
-        .write(amount)?;
-
-    metadosis.emit(IMetadosis::MetadosisAccumulation {
-        date: wwd.value(),
-        dayMetadosisLimitAmount: amount,
-        totalAccumulated: amount,
-        blockNumber: ctx.block.block_number,
-    })?;
-
-    Ok(U256::ZERO)
+fn apply_inner(ctx: &BlockRuntimeContext, amount: U256) -> Result<DayLimitFormationReceipt> {
+    crate::runtime::require_active_ocomp_profile(&MetadosisContract::new(ctx.storage.clone()))?;
+    apply_ocomp_day_limit(ctx, amount)
 }
 
 /// Recycles late-settlement headroom without racing daily OCOMP limit formation.
 ///
-/// Before the OCOMP profile is armed this preserves the legacy terminal-sink
-/// behavior. Under OCOMP, the daily Cycle allocation is the sole base-limit
-/// formation input, so a late residue is a carry-over credit consumed by the
-/// next not-yet-formed day limit.
-pub fn apply_late_settlement_headroom(ctx: &BlockRuntimeContext, amount: U256) -> Result<U256> {
-    let metadosis = MetadosisContract::new(ctx.storage.clone());
-    if metadosis
-        .read_ocomp_request_profile(&crate::ocomp::schema::poc_schema_limits())?
-        .is_some()
-    {
-        PromisLimitContract::new(ctx.storage.clone()).checked_add_carry_over(amount)?;
-        return Ok(U256::ZERO);
-    }
-
-    apply(ctx, amount)
+/// The genesis-active OCOMP profile makes the daily Cycle allocation the sole
+/// base-limit formation input, so a late residue is a carry-over credit consumed
+/// by the next not-yet-formed day limit. Missing profile state is fatal rather
+/// than a legacy execution mode.
+pub(crate) fn apply_late_settlement_headroom(
+    ctx: &BlockRuntimeContext,
+    amount: U256,
+) -> Result<U256> {
+    let binding = metadosis_late_settlement_binding(
+        ctx.block.chain_id,
+        ctx.block.block_number,
+        ctx.block.timestamp,
+    );
+    crate::commit::commit_transition::<MetadosisCertifiedFinality, _>(
+        ctx.storage.clone(),
+        binding,
+        |_| apply_late_settlement_headroom_inner(ctx, amount),
+    )
 }
 
-fn apply_ocomp_day_limit(ctx: &BlockRuntimeContext, base_limit: U256) -> Result<U256> {
-    ctx.storage.with_checkpoint(|| {
+fn apply_late_settlement_headroom_inner(ctx: &BlockRuntimeContext, amount: U256) -> Result<U256> {
+    crate::runtime::require_active_ocomp_profile(&MetadosisContract::new(ctx.storage.clone()))?;
+    PromisLimitContract::new(ctx.storage.clone()).checked_add_carry_over(amount)?;
+    Ok(U256::ZERO)
+}
+
+fn apply_ocomp_day_limit(
+    ctx: &BlockRuntimeContext,
+    base_limit: U256,
+) -> Result<DayLimitFormationReceipt> {
+    (|| {
         let wwd = WorldwideDay::from_timestamp(ctx.block.timestamp);
         let mut metadosis = MetadosisContract::new(ctx.storage.clone());
         create_worldwide_day_for_date(&mut metadosis, ctx, wwd)?;
@@ -69,37 +76,24 @@ fn apply_ocomp_day_limit(ctx: &BlockRuntimeContext, base_limit: U256) -> Result<
                     "formed OCOMP day limit cannot be replaced".into(),
                 ));
             }
-            return Ok(U256::ZERO);
+            return Ok(DayLimitFormationReceipt::Formed(formed));
         }
 
         let carry_over = PromisLimitContract::new(ctx.storage.clone()).checked_take_carry_over()?;
         let day_limit = base_limit
             .checked_add(carry_over.taken)
             .ok_or_else(|| PrecompileError::Revert("OCOMP day limit carry-over overflow".into()))?;
-        let day = metadosis.worldwide_days.entry(wwd);
-        day.metadosis_limit_amount().write(day_limit)?;
-        let formation = metadosis.ocomp_day_limit_formations.entry(wwd);
-        formation.carry_over_taken().write(carry_over.taken)?;
-
-        metadosis.emit(IMetadosis::MetadosisAccumulation {
-            date: wwd.value(),
-            dayMetadosisLimitAmount: day_limit,
-            totalAccumulated: day_limit,
-            blockNumber: ctx.block.block_number,
-        })?;
-        metadosis.emit(IMetadosis::OcompDayLimitFormed {
-            worldwideDay: wwd.value(),
-            baseLimit: base_limit,
-            carryOverBefore: carry_over.before,
-            carryOverTaken: carry_over.taken,
-            carryOverAfter: carry_over.after,
-            formedDayLimit: day_limit,
-            blockNumber: ctx.block.block_number,
-        })?;
-
-        // Selector-last: a caught storage/event failure cannot make a partial
-        // formation look committed, and exact replay cannot consume again.
-        formation.formed().write(true)?;
-        Ok(U256::ZERO)
-    })
+        crate::commit::commit_day_limit_formation(
+            &mut metadosis,
+            OcompDayLimitFormation {
+                worldwide_day: wwd,
+                base_limit,
+                carry_over_before: carry_over.before,
+                carry_over_taken: carry_over.taken,
+                carry_over_after: carry_over.after,
+                day_limit,
+                block_number: ctx.block.block_number,
+            },
+        )
+    })()
 }

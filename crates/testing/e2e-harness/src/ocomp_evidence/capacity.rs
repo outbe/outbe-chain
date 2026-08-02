@@ -107,6 +107,22 @@ struct CapacityPublicObservationV1 {
     q_forming_transaction_hash: B256,
     q_forming_block_number: u64,
     q_forming_block_hash: B256,
+    #[serde(default)]
+    _q_forming_receipt_success: Option<bool>,
+    #[serde(default)]
+    _q_forming_receipt_sha256: Option<String>,
+    #[serde(default)]
+    _q_forming_validator_receipt_sha256: Option<Vec<String>>,
+    #[serde(default)]
+    _q_forming_state_root: Option<B256>,
+    #[serde(default)]
+    _q_forming_ce_root: Option<B256>,
+    #[serde(default)]
+    _q_forming_validator_commitments: Option<Vec<crate::world::rpc::BlockCommitmentV1>>,
+    #[serde(default)]
+    _canonical_import_validator_count: Option<u8>,
+    #[serde(default)]
+    _canonical_import_verified: Option<bool>,
     finalized_block_number: u64,
     finalized_block_hash: B256,
     tribute_count: u64,

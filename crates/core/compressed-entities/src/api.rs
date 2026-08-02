@@ -954,6 +954,16 @@ impl ExecutionScope {
         parent.partition_present_verified(partition, parent.parent_root())
     }
 
+    /// Returns the authenticated parent root for one partition during the
+    /// active block lifecycle. Domain owners use this constant-size proof when
+    /// a terminal aggregate effect must bind and retire a complete partition
+    /// without enumerating its bodies.
+    pub fn authenticated_partition_root(&self, partition: PartitionRef) -> Result<Option<B256>> {
+        self.require_active()?;
+        let parent = self.opened_parent_tree()?;
+        parent.partition_root_verified(partition, parent.parent_root())
+    }
+
     pub fn ce_work_checkpoint(&self) -> Result<CeWorkCheckpoint> {
         self.ce_work
             .lock()

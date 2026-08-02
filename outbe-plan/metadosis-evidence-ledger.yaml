@@ -1,0 +1,947 @@
+schema_version: 1
+kind: outbe_metadosis_citadel_evidence_ledger
+status: implemented_evidence_pending
+note: >
+  This pack declares the exact production-interface tests required to close
+  CITADEL-001..008. It does not claim production proof until one clean,
+  exact-revision Linux evidence set passes the generic verifier.
+
+verification:
+  schema_version: 1
+  namespace: METADOSIS
+  evidence_identity:
+    exact_revision: true
+    artifact_profile: OUTBE_OCOMP_POC_DEVNET_FORK_V1
+    linux_lane: METADOSIS-LINUX
+    require_clean_tracked_tree: true
+    require_clean_untracked_tree: true
+  closure_policy:
+    require_all_required_tests: true
+    reject_ignored_or_skipped: true
+    reject_unknown_tests: true
+
+lanes:
+  METADOSIS-LINUX:
+    platform: x86_64-unknown-linux-gnu
+    operating_system: Ubuntu 24.04
+    image_digest_policy: exact_value_from_evidence_manifest
+    build_profile: debug_and_release
+    required: true
+    automatic_retries: 0
+    note: >
+      The external closure runner must supply the immutable image digest. A
+      checked-in placeholder digest is intentionally not treated as evidence.
+
+tests:
+  MET-ENV-001:
+    target: outbe-e2e-harness
+    name: metadosis_process::p0_parity
+    production_interface: PROCESS_Q_FORMING_IMPORT
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions: []
+    ignored: false
+    skipped: false
+  MET-MISS-001:
+    target: outbe-cycle
+    name: tests::noon_dispatcher_commits_the_same_typed_missed_offering_outcome
+    production_interface: CYCLE_BEGIN_BLOCK
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions: []
+    ignored: false
+    skipped: false
+  MET-MISS-002:
+    target: outbe-metadosis
+    name: tests::lifecycle::missed_offering_rejects_a_populated_partition_without_any_partial_effect
+    production_interface: METADOSIS_COMMAND
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - deterministic parent-body source
+    ignored: false
+    skipped: false
+  MET-MISS-003:
+    target: outbe-metadosis
+    name: tests::lifecycle::missed_offering_rolls_back_every_injected_storage_or_event_failure_then_retries
+    production_interface: METADOSIS_COMMAND
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - deterministic mutation fault injector
+      - clean-control provider, ordered-event and CE-work oracle
+    ignored: false
+    skipped: false
+  MET-OCOMP-001:
+    target: outbe-cycle
+    name: tests::block_1_begin_block_rejects_missing_genesis_ocomp_profile_without_partial_state
+    production_interface: CYCLE_BEGIN_BLOCK
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions: []
+    ignored: false
+    skipped: false
+  MET-OCOMP-002:
+    target: outbe-metadosis
+    name: tests::lifecycle::populated_positive_gratis_day_enqueues_ocomp_without_synchronous_lysis
+    production_interface: METADOSIS_COMMAND
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - deterministic parent-body source
+    ignored: false
+    skipped: false
+  MET-GEN-001:
+    target: outbe-node
+    name: ocomp::tests::fork::genesis_fork_install_loader_accepts_one_exact_binding_and_rejects_hash_mismatch
+    production_interface: NODE_STARTUP_CHAIN_SPEC
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions: []
+    ignored: false
+    skipped: false
+  MET-GEN-002:
+    target: outbe-node
+    name: ocomp::tests::fork::fresh_devnet_loader_rejects_malformed_and_wrong_chain_or_genesis_installs
+    production_interface: NODE_STARTUP_CHAIN_SPEC
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions: []
+    ignored: false
+    skipped: false
+  MET-GEN-003:
+    target: outbe-node
+    name: ocomp::tests::fork::fresh_devnet_loader_requires_exact_block_one_install
+    production_interface: NODE_STARTUP_CHAIN_SPEC
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions: []
+    ignored: false
+    skipped: false
+  MET-GEN-004:
+    target: outbe-e2e-harness
+    name: world::ocomp::tests::measurement_fork_install_rejects_layout_mismatch_before_node_start
+    production_interface: FRESH_DEVNET_PRELAUNCH
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions: []
+    ignored: false
+    skipped: false
+  MET-GEN-005:
+    target: outbe-e2e-harness
+    name: metadosis_process::fresh_devnet
+    production_interface: FRESH_DEVNET_FOUR_PROCESS_PUBLIC_PATH
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions: []
+    ignored: false
+    skipped: false
+  MET-GEN-006:
+    target: outbe-e2e-harness
+    name: world::ocomp::tests::fresh_metadosis_capacity_fixture_starts_without_active_day_or_shortened_phases
+    production_interface: FRESH_DEVNET_PRELAUNCH
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions: []
+    ignored: false
+    skipped: false
+  MET-AUTH-001:
+    target: outbe-metadosis
+    name: external_mutation_surface_compile_fail_examples
+    production_interface: EXTERNAL_CRATE_COMPILE_BOUNDARY
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions: []
+    ignored: false
+    skipped: false
+  MET-AUTH-002:
+    target: outbe-cycle
+    name: tests::cycle_tick_metadosis_authority_budget_matches_all_fixed_handlers
+    production_interface: CYCLE_AUTHORITY_ISSUER
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions: []
+    ignored: false
+    skipped: false
+  MET-AUTH-003:
+    target: outbe-metadosis
+    name: test_utils_keeps_the_raw_fixture_kernel_private
+    production_interface: EXTERNAL_CRATE_TEST_UTILS_COMPILE_BOUNDARY
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions: []
+    ignored: false
+    skipped: false
+  MET-LAYOUT-001:
+    target: outbe-metadosis
+    name: tests::state::test_storage_dsl_layout_slots
+    production_interface: METADOSIS_GENESIS_LAYOUT
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions: []
+    ignored: false
+    skipped: false
+  MET-AGG-001:
+    target: outbe-metadosis
+    name: commit::tests::aggregate_rejects_active_closed_overlap
+    production_interface: METADOSIS_VALIDATED_AGGREGATE
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - deterministic corrupt persisted state
+    ignored: false
+    skipped: false
+  MET-AGG-002:
+    target: outbe-metadosis
+    name: commit::tests::aggregate_rejects_missing_record_status_membership_and_phase_drift
+    production_interface: METADOSIS_VALIDATED_AGGREGATE
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - deterministic corrupt persisted state
+    ignored: false
+    skipped: false
+  MET-AGG-003:
+    target: outbe-metadosis
+    name: commit::tests::aggregate_rejects_ocomp_indexes_without_profile
+    production_interface: METADOSIS_VALIDATED_AGGREGATE
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - deterministic corrupt persisted state
+    ignored: false
+    skipped: false
+  MET-AGG-004:
+    target: outbe-metadosis
+    name: commit::tests::aggregate_requires_exact_response_deadline_equivalence
+    production_interface: METADOSIS_VALIDATED_AGGREGATE
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - deterministic corrupt persisted state
+    ignored: false
+    skipped: false
+  MET-AGG-005:
+    target: outbe-metadosis
+    name: commit::tests::aggregate_rejects_ready_index_without_fsm
+    production_interface: METADOSIS_VALIDATED_AGGREGATE
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - deterministic corrupt persisted state
+    ignored: false
+    skipped: false
+  MET-AGG-006:
+    target: outbe-metadosis
+    name: commit::tests::aggregate_rejects_closed_wwd_with_live_fsm
+    production_interface: METADOSIS_VALIDATED_AGGREGATE
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - deterministic corrupt persisted state
+    ignored: false
+    skipped: false
+  MET-REDUCER-001:
+    target: outbe-metadosis
+    name: tests::reducer::outer_wwd_state_event_matrix_is_exhaustive
+    production_interface: METADOSIS_OUTER_REDUCER
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions: []
+    ignored: false
+    skipped: false
+  MET-REDUCER-002:
+    target: outbe-metadosis
+    name: tests::reducer::reducer_is_exact_at_every_phase_boundary
+    production_interface: METADOSIS_OUTER_REDUCER
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions: []
+    ignored: false
+    skipped: false
+  MET-REDUCER-003:
+    target: outbe-metadosis
+    name: tests::reducer::reducer_rejects_backward_time_for_every_nonterminal_phase
+    production_interface: METADOSIS_OUTER_REDUCER
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions: []
+    ignored: false
+    skipped: false
+  MET-REDUCER-004:
+    target: outbe-metadosis
+    name: tests::reducer::reducer_rejects_backward_time_for_terminal_states
+    production_interface: METADOSIS_OUTER_REDUCER
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions: []
+    ignored: false
+    skipped: false
+  MET-REDUCER-005:
+    target: outbe-metadosis
+    name: tests::reducer::reducer_catches_up_without_synthesizing_a_missed_offering_after_it_opened
+    production_interface: METADOSIS_OUTER_REDUCER
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions: []
+    ignored: false
+    skipped: false
+  MET-CAP-001:
+    target: outbe-metadosis
+    name: tests::capacity::active_protocol_order_matches_btreeset_across_insert_remove_and_requeue_histories
+    production_interface: METADOSIS_COMMAND
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - independent BTreeSet scheduler model
+    ignored: false
+    skipped: false
+  MET-CAP-002:
+    target: outbe-cycle
+    name: tests::noon_dispatcher_applies_exact_capacity_forfeiture_to_the_new_due_candidate
+    production_interface: CYCLE_BEGIN_BLOCK
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions: []
+    ignored: false
+    skipped: false
+  MET-CAP-003:
+    target: outbe-metadosis
+    name: tests::capacity::every_capacity_forfeiture_mutation_failure_restores_state_events_and_ce_work_then_retries
+    production_interface: METADOSIS_COMMAND
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - deterministic mutation fault injector
+      - clean-control provider, ordered-event and CE-work oracle
+    ignored: false
+    skipped: false
+  MET-CAP-004:
+    target: outbe-metadosis
+    name: tests::capacity::derived_caps_are_bound_to_production_phase_and_tick_cadence
+    production_interface: METADOSIS_COMMAND
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions: []
+    ignored: false
+    skipped: false
+  MET-CAP-005:
+    target: outbe-metadosis
+    name: tests::capacity::retained_cap_minus_one_admits_cap_forfeits_and_cap_plus_one_is_corruption
+    production_interface: METADOSIS_COMMAND
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - deterministic capacity fixture
+    ignored: false
+    skipped: false
+  MET-CAP-006:
+    target: outbe-metadosis
+    name: tests::capacity::continuous_creation_cadence_keeps_due_candidates_within_the_derived_wait_bound
+    production_interface: METADOSIS_COMMAND
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - deterministic production-cadence model
+    ignored: false
+    skipped: false
+  MET-CAP-007:
+    target: outbe-metadosis
+    name: tests::capacity::active_cap_rejects_create_before_an_orphan_record_or_event
+    production_interface: METADOSIS_COMMAND
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - deterministic capacity fixture
+    ignored: false
+    skipped: false
+  MET-CAP-008:
+    target: outbe-metadosis
+    name: tests::capacity::validated_snapshot_orders_ready_days_by_scheduled_time_then_wwd
+    production_interface: METADOSIS_COMMAND
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - deterministic scheduler fixture
+    ignored: false
+    skipped: false
+  MET-DESIS-001:
+    target: outbe-desis
+    name: tests::auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value
+    production_interface: DESIS_TYPED_COMMAND
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions: []
+    ignored: false
+    skipped: false
+  MET-DESIS-002:
+    target: outbe-cycle
+    name: tests::cycle_path_routes_exact_oversized_desis_rejection_without_auction_state
+    production_interface: CYCLE_BEGIN_BLOCK
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions: []
+    ignored: false
+    skipped: false
+  MET-DESIS-003:
+    target: outbe-desis
+    name: tests::invalid_day_duplicate_and_anchor_overflow_are_errors_without_business_events
+    production_interface: DESIS_TYPED_COMMAND
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions: []
+    ignored: false
+    skipped: false
+  MET-TAGS-001:
+    target: outbe-metadosis
+    name: tests::state::closed_wwd_tags_cover_every_byte_and_reject_unknown_storage
+    production_interface: METADOSIS_STORAGE_QUERY
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions: []
+    ignored: false
+    skipped: false
+  MET-TAGS-002:
+    target: outbe-metadosis
+    name: tests::state::unknown_abi_status_reverts_and_corrupt_get_day_is_fatal
+    production_interface: METADOSIS_PRECOMPILE_ABI
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions: []
+    ignored: false
+    skipped: false
+  MET-ARITH-001:
+    target: outbe-metadosis
+    name: tests::state::full_domain_allocation_matches_independent_big_integer_model_and_conserves
+    production_interface: METADOSIS_COMMAND
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - independent arbitrary-precision integer oracle
+    ignored: false
+    skipped: false
+  MET-MODEL-001:
+    target: outbe-cycle
+    name: tests::model::generated_outer_wwd_histories_match_cycle_begin_block_model
+    production_interface: CYCLE_BEGIN_BLOCK
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - independent persisted outer-WWD model
+    ignored: false
+    skipped: false
+  MET-MODEL-002:
+    target: outbe-metadosis
+    name: tests::ocomp_request::p5_models::generated_expiry_retry_histories_match_production_adapters_and_composition
+    production_interface: METADOSIS_COMMAND
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - independent persisted OCOMP adapter model
+    ignored: false
+    skipped: false
+  MET-MODEL-003:
+    target: outbe-metadosis
+    name: tests::ocomp_request::p5_models::generated_quorum_histories_match_production_adapters_and_composition
+    production_interface: METADOSIS_COMMAND
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - independent persisted OCOMP adapter model
+      - deterministic mutation fault injector
+    ignored: false
+    skipped: false
+  MET-FAULT-001:
+    target: outbe-metadosis
+    name: tests::ocomp_request::p5_models::production_terminal_request_rolls_back_every_mutation_boundary_and_retries_exactly
+    production_interface: METADOSIS_COMMAND
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - deterministic mutation fault injector
+      - clean-control semantic state oracle
+    ignored: false
+    skipped: false
+  MET-FAULT-002:
+    target: outbe-metadosis
+    name: tests::ocomp_request::p5_models::production_response_window_close_and_final_expiry_roll_back_every_mutation_then_retry_exactly
+    production_interface: METADOSIS_COMMAND
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - canonical near-cap terminal-history fixture
+      - deterministic per-mutation fault injector
+      - clean-control semantic state oracle
+    ignored: false
+    skipped: false
+  MET-FAULT-003:
+    target: outbe-metadosis
+    name: tests::lifecycle::ocomp_day_limit_overflow_and_every_mutation_failure_are_atomic
+    production_interface: METADOSIS_COMMAND
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - deterministic per-mutation fault injector
+      - clean-control semantic state oracle
+    ignored: false
+    skipped: false
+  MET-FAULT-004:
+    target: outbe-metadosis
+    name: commands::tests::fork_install_command_rolls_back_every_mutation_and_retries_exactly
+    production_interface: METADOSIS_COMMAND
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - deterministic per-mutation fault injector
+      - clean-control provider and ordered-event oracle
+    ignored: false
+    skipped: false
+  MET-FAULT-005:
+    target: outbe-metadosis
+    name: tests::lifecycle::empty_tribute_day_command_rolls_back_every_mutation_and_ce_work_then_retries
+    production_interface: METADOSIS_COMMAND
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - deterministic per-mutation fault injector
+      - clean-control provider, ordered-event and CE-work oracle
+    ignored: false
+    skipped: false
+  MET-FAULT-006:
+    target: outbe-metadosis
+    name: tests::lifecycle::zero_gratis_command_rolls_back_every_mutation_and_ce_work_then_retries
+    production_interface: METADOSIS_COMMAND
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - deterministic per-mutation fault injector
+      - clean-control provider, ordered-event and CE-work oracle
+    ignored: false
+    skipped: false
+  MET-FAULT-007:
+    target: outbe-metadosis
+    name: tests::lifecycle::positive_ocomp_admission_rolls_back_every_mutation_and_retries_exactly
+    production_interface: METADOSIS_COMMAND
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - deterministic per-mutation fault injector
+      - clean-control provider, ordered-event and CE-work oracle
+    ignored: false
+    skipped: false
+  MET-FAULT-008:
+    target: outbe-metadosis
+    name: tests::ocomp_request::p5_models::production_deferred_request_rolls_back_every_mutation_and_retries_exactly
+    production_interface: METADOSIS_COMMAND
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - deterministic per-mutation fault injector
+      - clean-control semantic state oracle
+    ignored: false
+    skipped: false
+  MET-FAULT-009:
+    target: outbe-metadosis
+    name: tests::ocomp_request::p5_models::production_finality_record_rolls_back_every_mutation_and_retries_exactly
+    production_interface: METADOSIS_COMMAND
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - deterministic per-mutation fault injector
+      - clean-control semantic state oracle
+    ignored: false
+    skipped: false
+  MET-FAULT-010:
+    target: outbe-metadosis
+    name: tests::ocomp_request::p5_models::production_voting_open_rolls_back_every_mutation_and_retries_exactly
+    production_interface: METADOSIS_COMMAND
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - deterministic per-mutation fault injector
+      - clean-control semantic state oracle
+    ignored: false
+    skipped: false
+  MET-FAULT-011:
+    target: outbe-metadosis
+    name: tests::ocomp_semantic_migrations::conflict_q_forming_rolls_back_every_mutation_and_retries_exactly
+    production_interface: METADOSIS_SUBMIT_VERIFIED_RESULT_VOTE
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - deterministic per-mutation fault injector
+      - clean-control semantic state oracle
+    ignored: false
+    skipped: false
+  MET-FAULT-012:
+    target: outbe-metadosis
+    name: tests::ocomp_semantic_migrations::quorum_preserved_response_close_rolls_back_every_mutation_and_retries_exactly
+    production_interface: METADOSIS_COMMAND
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - deterministic per-mutation fault injector
+      - clean-control semantic state oracle
+    ignored: false
+    skipped: false
+  MET-FAULT-013:
+    target: outbe-metadosis
+    name: commit::tests::emergency_fail_retention_eviction_rolls_back_every_mutation_and_retries_exactly
+    production_interface: METADOSIS_COMMAND
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - deterministic per-mutation fault injector
+      - clean-control provider and ordered-event oracle
+    ignored: false
+    skipped: false
+  MET-FAULT-014:
+    target: outbe-metadosis
+    name: tests::lifecycle::zero_day_limit_rolls_back_every_mutation_and_retries_exactly
+    production_interface: METADOSIS_COMMAND
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - deterministic per-mutation fault injector
+      - clean-control provider, ordered-event and CE-work oracle
+    ignored: false
+    skipped: false
+  MET-FAULT-015:
+    target: outbe-metadosis
+    name: tests::lifecycle::unknown_day_type_rolls_back_every_mutation_and_retries_exactly
+    production_interface: METADOSIS_COMMAND
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - deterministic per-mutation fault injector
+      - clean-control provider, ordered-event and CE-work oracle
+    ignored: false
+    skipped: false
+  MET-FAULT-016:
+    target: outbe-metadosis
+    name: tests::lifecycle::green_empty_tribute_day_rolls_back_every_mutation_and_retries_exactly
+    production_interface: METADOSIS_COMMAND
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - deterministic per-mutation fault injector
+      - clean-control provider, ordered-event and CE-work oracle
+    ignored: false
+    skipped: false
+  MET-FAULT-017:
+    target: outbe-metadosis
+    name: tests::lifecycle::green_zero_gratis_rolls_back_every_mutation_and_retries_exactly
+    production_interface: METADOSIS_COMMAND
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - deterministic per-mutation fault injector
+      - clean-control provider, ordered-event and CE-work oracle
+    ignored: false
+    skipped: false
+  MET-MODEL-004:
+    target: outbe-evm
+    name: real_payload_builder_commits_atomic_request_after_ce_seal_without_lysis_effects
+    production_interface: EVM_CANONICAL_OCOMP_BLOCKS
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions: []
+    ignored: false
+    skipped: false
+  MET-MODEL-005:
+    target: outbe-evm
+    name: real_payload_builder_commits_atomic_request_after_ce_seal_without_lysis_effects
+    production_interface: EVM_SUBMIT_LYSIS_RESULT
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - deterministic in-process validator keys and canonical block builder
+    ignored: false
+    skipped: false
+  MET-EVM-001:
+    target: outbe-metadosis
+    name: tests::ocomp_semantic_migrations::q_forming_faults_restore_all_state_and_exact_retry_matches_clean_execution
+    production_interface: METADOSIS_SUBMIT_VERIFIED_RESULT_VOTE
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - deterministic activation-owner fault injector
+      - deterministic per-mutation fault injector
+      - clean-control semantic state oracle
+    ignored: false
+    skipped: false
+  MET-EVIDENCE-001:
+    target: outbe-e2e-harness
+    name: metadosis_evidence::verify::tests::hand_authored_pass_without_runner_receipt_is_rejected
+    production_interface: METADOSIS_EVIDENCE_POLICY_ADAPTER
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions: []
+    ignored: false
+    skipped: false
+  MET-EVIDENCE-002:
+    target: outbe-e2e-harness
+    name: checked_in_index_loads_both_packs_without_changing_ocomp_catalog
+    production_interface: VERIFICATION_LEDGER_GENERIC_CORE
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions: []
+    ignored: false
+    skipped: false
+  MET-EVIDENCE-003:
+    target: outbe-e2e-harness
+    name: domain_neutral_cli_reaches_the_checked_in_index
+    production_interface: VERIFICATION_LEDGER_GENERIC_CORE
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions: []
+    ignored: false
+    skipped: false
+  MET-EVIDENCE-004:
+    target: outbe-e2e-harness
+    name: checked_in_adr_flow_and_abi_contract_is_synchronized_without_status_promotion
+    production_interface: VERIFICATION_LEDGER_GENERIC_CORE
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions: []
+    ignored: false
+    skipped: false
+  MET-EVIDENCE-005:
+    target: outbe-e2e-harness
+    name: index_rejects_duplicate_keys_namespaces_ids_and_schema_drift
+    production_interface: VERIFICATION_LEDGER_GENERIC_CORE
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions: []
+    ignored: false
+    skipped: false
+  MET-EVIDENCE-006:
+    target: outbe-e2e-harness
+    name: index_rejects_unknown_and_cross_pack_requirement_references
+    production_interface: VERIFICATION_LEDGER_GENERIC_CORE
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions: []
+    ignored: false
+    skipped: false
+  MET-EVIDENCE-007:
+    target: outbe-e2e-harness
+    name: required_missing_renamed_ignored_and_skipped_tests_fail_closed
+    production_interface: VERIFICATION_LEDGER_GENERIC_CORE
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions: []
+    ignored: false
+    skipped: false
+  MET-EVIDENCE-008:
+    target: outbe-e2e-harness
+    name: evidence_rejects_wrong_interface_revision_profile_lane_and_namespace
+    production_interface: VERIFICATION_LEDGER_GENERIC_CORE
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions: []
+    ignored: false
+    skipped: false
+  MET-EVIDENCE-009:
+    target: outbe-e2e-harness
+    name: evidence_rejects_invalid_toolchain_and_member_identity
+    production_interface: VERIFICATION_LEDGER_GENERIC_CORE
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions: []
+    ignored: false
+    skipped: false
+  MET-EVIDENCE-010:
+    target: outbe-e2e-harness
+    name: bundle_verification_rejects_member_substitution_and_length_drift
+    production_interface: VERIFICATION_LEDGER_GENERIC_CORE
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions: []
+    ignored: false
+    skipped: false
+  MET-EVIDENCE-011:
+    target: outbe-e2e-harness
+    name: evidence_set_rejects_mixed_revision_and_profile_but_domains_close_independently
+    production_interface: VERIFICATION_LEDGER_GENERIC_CORE
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions: []
+    ignored: false
+    skipped: false
+  MET-EVIDENCE-012:
+    target: outbe-e2e-harness
+    name: metadosis_evidence::verify::tests::fresh_devnet_process_verifier_requires_measurement_one_layout_and_terminal_path
+    production_interface: METADOSIS_EVIDENCE_POLICY_ADAPTER
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - synthetic fail-closed process receipt
+    ignored: false
+    skipped: false
+  MET-EVIDENCE-013:
+    target: outbe-e2e-harness
+    name: domain_neutral_cli_rejects_self_attested_metadosis_pass
+    production_interface: VERIFICATION_LEDGER_GENERIC_CORE
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions: []
+    ignored: false
+    skipped: false
+  MET-EVIDENCE-014:
+    target: outbe-e2e-harness
+    name: metadosis_evidence::container::tests::container_provenance_rejects_image_command_and_runner_substitution
+    production_interface: METADOSIS_EVIDENCE_CONTAINER_LAUNCHER
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - synthetic Docker inspect image, command, network, socket and environment substitutions
+    ignored: false
+    skipped: false
+  MET-EVIDENCE-015:
+    target: outbe-e2e-harness
+    name: metadosis_evidence::container::tests::retained_container_provenance_rejects_raw_inspect_tampering
+    production_interface: METADOSIS_EVIDENCE_CONTAINER_LAUNCHER
+    required: true
+    lane: METADOSIS-LINUX
+    substitutions:
+      - synthetic retained Docker inspect byte substitution
+    ignored: false
+    skipped: false
+
+requirements:
+  C-1:
+    text: process environment cannot affect q-forming consensus activation
+    status: required
+    tests:
+      - MET-ENV-001
+  H-1:
+    text: missed OFFERING is one fail-closed typed terminal transition
+    status: required
+    tests:
+      - MET-MISS-001
+      - MET-MISS-002
+      - MET-MISS-003
+      - MET-REDUCER-001
+      - MET-REDUCER-002
+      - MET-REDUCER-003
+      - MET-REDUCER-004
+      - MET-REDUCER-005
+  H-2:
+    text: fresh devnet requires genesis-active OCOMP before block 1 and one runtime-created WWD through terminal OCOMP without shortened phases
+    status: required
+    tests:
+      - MET-OCOMP-001
+      - MET-OCOMP-002
+      - MET-GEN-001
+      - MET-GEN-002
+      - MET-GEN-003
+      - MET-GEN-004
+      - MET-GEN-005
+      - MET-GEN-006
+      - MET-MODEL-002
+      - MET-MODEL-003
+      - MET-FAULT-001
+      - MET-FAULT-002
+      - MET-FAULT-003
+      - MET-FAULT-004
+      - MET-FAULT-005
+      - MET-FAULT-006
+      - MET-MODEL-004
+      - MET-MODEL-005
+      - MET-EVM-001
+      - MET-REDUCER-001
+      - MET-REDUCER-002
+      - MET-REDUCER-003
+      - MET-REDUCER-004
+  H-3:
+    text: state mutation requires the purpose-bound command boundary
+    status: required
+    tests:
+      - MET-AUTH-001
+      - MET-AUTH-002
+      - MET-AUTH-003
+      - MET-FAULT-002
+      - MET-FAULT-003
+      - MET-FAULT-004
+      - MET-FAULT-005
+      - MET-FAULT-006
+      - MET-EVM-001
+      - MET-LAYOUT-001
+      - MET-AGG-001
+      - MET-AGG-002
+      - MET-AGG-003
+      - MET-AGG-004
+      - MET-AGG-005
+      - MET-AGG-006
+  M-1:
+    text: READY ordering and cap forfeiture are deterministic and atomic
+    status: required
+    tests:
+      - MET-CAP-001
+      - MET-CAP-002
+      - MET-CAP-003
+      - MET-CAP-004
+      - MET-CAP-005
+      - MET-CAP-006
+      - MET-CAP-007
+      - MET-CAP-008
+      - MET-MODEL-001
+      - MET-FAULT-002
+  M-2:
+    text: only oversized Desis supply is a committed rejection
+    status: required
+    tests:
+      - MET-DESIS-001
+      - MET-DESIS-002
+      - MET-DESIS-003
+  M-3:
+    text: stored tags and allocation arithmetic cover the accepted domain
+    status: required
+    tests:
+      - MET-TAGS-001
+      - MET-TAGS-002
+      - MET-ARITH-001
+  M-4:
+    text: the command boundary is the sole production rollback owner and every removed nested checkpoint has a full fault and exact-retry matrix
+    status: required
+    tests:
+      - MET-MISS-003
+      - MET-CAP-003
+      - MET-FAULT-001
+      - MET-FAULT-002
+      - MET-FAULT-003
+      - MET-FAULT-004
+      - MET-FAULT-005
+      - MET-FAULT-006
+      - MET-FAULT-007
+      - MET-FAULT-008
+      - MET-FAULT-009
+      - MET-FAULT-010
+      - MET-FAULT-011
+      - MET-FAULT-012
+      - MET-FAULT-013
+      - MET-FAULT-014
+      - MET-FAULT-015
+      - MET-FAULT-016
+      - MET-FAULT-017
+      - MET-EVM-001
+  D-1:
+    text: Citadel ADR, flow, ABI and exact-revision evidence claims remain synchronized and fail closed
+    status: required
+    tests:
+      - MET-EVIDENCE-001
+      - MET-EVIDENCE-002
+      - MET-EVIDENCE-003
+      - MET-EVIDENCE-004
+      - MET-EVIDENCE-005
+      - MET-EVIDENCE-006
+      - MET-EVIDENCE-007
+      - MET-EVIDENCE-008
+      - MET-EVIDENCE-009
+      - MET-EVIDENCE-010
+      - MET-EVIDENCE-011
+      - MET-EVIDENCE-012
+      - MET-EVIDENCE-013
+      - MET-EVIDENCE-014
+      - MET-EVIDENCE-015

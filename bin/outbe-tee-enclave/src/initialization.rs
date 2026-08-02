@@ -398,6 +398,9 @@ fn command_class(request: &EnclaveRequest) -> CommandClass {
         EnclaveRequest::ProcessTributeOfferBatch { .. }
         | EnclaveRequest::ApplyGratisOp { .. }
         | EnclaveRequest::ApplyPromisOp { .. }
+        | EnclaveRequest::ApplyFidelityCohortOp { .. }
+        | EnclaveRequest::SnapshotFidelityLeagues { .. }
+        | EnclaveRequest::QueryFidelityIndex { .. }
         | EnclaveRequest::DeriveAccountKeys { .. } => CommandClass::Ready,
         EnclaveRequest::SealOfferKeyForRegistry { .. }
         | EnclaveRequest::IngestSealedOfferKeyForRegistry { .. } => {

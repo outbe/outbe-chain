@@ -8,6 +8,7 @@ use eyre::{Result, WrapErr};
 use serde_json::json;
 
 use crate::env::Environment;
+use crate::metadosis_p0::canonical_final_fixture_sha256;
 use crate::ocomp_evidence::{hash_file, publish_member};
 use crate::world::localnet::LogAudit;
 use crate::world::ocomp::OcompScenarioTopologyV1;
@@ -71,6 +72,20 @@ pub(crate) fn write_scenario(input: ScenarioEvidence<'_>) -> Result<()> {
     } else {
         None
     };
+    let metadosis_p0 = input
+        .env
+        .metadosis_p0
+        .as_ref()
+        .map(|environment| {
+            Ok::<_, eyre::Report>(json!({
+                "environment": environment,
+                "genesis": hash_file(&input.scenario_dir.join("genesis.json"))
+                    .wrap_err("hash Metadosis P0 canonical genesis")?,
+                "canonical_final_fixture_sha256":
+                    canonical_final_fixture_sha256(&input.env.repo)?,
+            }))
+        })
+        .transpose()?;
     let document = json!({
         "schema_version": 1,
         "recorded_at_unix_ms": unix_millis(),
@@ -93,6 +108,7 @@ pub(crate) fn write_scenario(input: ScenarioEvidence<'_>) -> Result<()> {
             "gramine_image_id": input.gramine_image_id,
         },
         "scenario_data_dir": input.scenario_dir,
+        "metadosis_p0": metadosis_p0,
         "log_audit": input.audit.json(),
         "ocomp": {
             "exact_binaries": exact_ocomp_binaries,

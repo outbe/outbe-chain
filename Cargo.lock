@@ -7428,6 +7428,7 @@ dependencies = [
  "outbe-metadosis",
  "outbe-offchain-storage",
  "outbe-primitives",
+ "outbe-promislimit",
  "outbe-rewards",
  "outbe-tribute",
  "proptest",
@@ -7456,31 +7457,17 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
- "outbe-common",
  "outbe-compressed-entities",
- "outbe-desis",
  "outbe-evm",
  "outbe-governance",
- "outbe-gratis",
- "outbe-gratisfactory",
- "outbe-intex",
- "outbe-intexfactory",
- "outbe-metadosis",
- "outbe-nod",
- "outbe-nodfactory",
  "outbe-offchain-data",
  "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-primitives",
- "outbe-promislimit",
- "outbe-tee",
- "outbe-tee-enclave",
- "outbe-tribute",
  "outbe-update",
  "outbe-validatorset",
  "outbe-vote",
  "serde_json",
- "tempfile",
 ]
 
 [[package]]
@@ -7511,6 +7498,7 @@ dependencies = [
  "futures",
  "hex",
  "k256 0.13.4",
+ "libc",
  "mongodb",
  "outbe-common",
  "outbe-compressed-entities",
@@ -7637,6 +7625,7 @@ dependencies = [
  "commonware-math",
  "commonware-utils",
  "eyre",
+ "futures",
  "hex",
  "k256 0.13.4",
  "outbe-accounting",
@@ -7736,9 +7725,21 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "k256 0.13.4",
+ "outbe-fidelity-math",
  "outbe-macros",
  "outbe-primitives",
+ "outbe-tee",
+ "outbe-tee-enclave",
  "serde_json",
+]
+
+[[package]]
+name = "outbe-fidelity-math"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "outbe-primitives",
 ]
 
 [[package]]
@@ -7923,6 +7924,9 @@ dependencies = [
 name = "outbe-macros"
 version = "0.1.0"
 dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "outbe-primitives",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -7936,6 +7940,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "k256 0.13.4",
+ "num-bigint",
  "outbe-common",
  "outbe-compressed-entities",
  "outbe-desis",
@@ -7951,7 +7956,9 @@ dependencies = [
  "outbe-primitives",
  "outbe-promislimit",
  "outbe-tribute",
+ "proptest",
  "thiserror 2.0.18",
+ "trybuild",
 ]
 
 [[package]]
@@ -8472,6 +8479,7 @@ dependencies = [
  "ed25519-dalek",
  "hex",
  "k256 0.13.4",
+ "outbe-fidelity-math",
  "outbe-poseidon",
  "outbe-primitives",
  "outbe-protocol",

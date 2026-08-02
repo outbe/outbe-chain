@@ -142,6 +142,21 @@ impl Localnet {
         self.start(&opts)
     }
 
+    /// Stop the complete validator committee before changing the shared
+    /// testnet-only logical clock, then relaunch every validator with preserved
+    /// datadirs and enclaves. Clearing all owned guards is the stop barrier:
+    /// this method never runs a mixed-offset voting committee.
+    pub fn restart_committee_at_unix_time_offset(&mut self, offset_secs: i64) -> Result<()> {
+        self.validators.clear();
+        if !self.validators.is_empty() {
+            bail!("committee stop barrier retained a validator process");
+        }
+        let mut opts = self.start_opts.clone();
+        opts.unix_time_offset_secs = Some(offset_secs);
+        opts.genesis_timestamp_pre_shifted = true;
+        self.start(&opts)
+    }
+
     /// Relaunch one exact stopped committee validator while leaving every other
     /// stopped validator down. This is the bounded network-partition primitive
     /// used by the real tentative-candidate orphan scenario.

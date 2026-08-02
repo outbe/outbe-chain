@@ -102,6 +102,7 @@ k256.workspace = true
 proptest.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
+futures.workspace = true
 # proposer/validator determinism test: build a real BLS late-finalize
 # credit + committee snapshot to exercise verify+record on both paths.
 commonware-cryptography.workspace = true

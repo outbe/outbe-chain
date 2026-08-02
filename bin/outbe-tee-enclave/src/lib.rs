@@ -25,6 +25,7 @@ pub mod crypto;
 pub mod dcap_verifier;
 pub mod dkg;
 pub mod errors;
+pub mod fidelity;
 pub mod gramine;
 pub mod gratis;
 pub mod initialization;
@@ -36,3 +37,29 @@ pub mod run;
 pub mod seal;
 pub mod transport;
 pub mod zk_claim;
+
+/// Fixed dev identity for the in-process test-enclave stand-ins (NOT production).
+///
+/// In the real enclave one resident group signature yields every ledger's state
+/// key (the transport derives the gratis, fidelity, … keys from the same
+/// `group_sig`). The per-crate in-process test enclaves must model that: the
+/// fidelity key derived when the *gratis* stand-in applies a folded cohort
+/// section MUST equal the key the *fidelity* stand-in uses for snapshots/queries,
+/// or a folded mint would write a blob the snapshot cannot read. Both derive the
+/// fidelity key from this single `(group_sig, chain)` pair.
+pub mod dev {
+    use alloy_primitives::{B256, U256};
+
+    /// Shared dev group signature for the fidelity test-enclave key.
+    pub const FIDELITY_GROUP_SIG: &[u8] = b"outbe-dev-fidelity-group-signature-fixed-seed";
+    /// Shared dev chain id for the fidelity test-enclave key (also the resident
+    /// chain the fidelity query auth is scoped to in tests).
+    pub const FIDELITY_CHAIN_ID: u64 = outbe_primitives::chain::DEVNET_CHAIN_ID;
+
+    /// The fidelity dev chain id as a `B256` (matching the runtime's
+    /// `B256::from(U256::from(storage.chain_id()))` encoding).
+    #[must_use]
+    pub fn fidelity_chain() -> B256 {
+        B256::from(U256::from(FIDELITY_CHAIN_ID))
+    }
+}
