@@ -289,7 +289,7 @@ fn leaf_mask(start_index: u32, leaf_count: u32) -> Result<(u32, U256)> {
     if leaf_count == 0 || leaf_count > CONTRIBUTOR_CHUNK_CAPACITY {
         return Err(IntexError::BadContributorBatch("batch leaf count out of range").into());
     }
-    if start_index % CONTRIBUTOR_CHUNK_CAPACITY != 0 {
+    if !start_index.is_multiple_of(CONTRIBUTOR_CHUNK_CAPACITY) {
         return Err(IntexError::BadContributorBatch("batch start is not chunk-aligned").into());
     }
     let word_index = start_index / CONTRIBUTOR_CHUNK_CAPACITY;

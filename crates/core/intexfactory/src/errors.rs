@@ -43,6 +43,8 @@ pub enum IntexFactoryError {
     NoCertifiedRound(u32),
     #[error("contributor batch has an invalid shape")]
     BadContributorBatch,
+    #[error("contributor payout would exceed the round amount for day {0}")]
+    PayoutExceedsRound(u32),
 }
 
 impl From<IntexFactoryError> for PrecompileError {

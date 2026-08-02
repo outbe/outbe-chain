@@ -1,13 +1,9 @@
 //! Certified contributor payout: canonical leaf bytes and chunk-range membership.
 //!
-//! Contributor records are committed by Lysis into an ordered-list tree whose
-//! root is the only on-chain authority ([`crate::schema::IntexContract`]
-//! `ocomp_contributor_root`). A payout batch carries the records of one result
-//! chunk plus the sibling hashes above that chunk's subtree, so the chain
-//! rebuilds the root from the supplied bytes instead of trusting the sender.
-//!
-//! One proof covers up to 256 adjacent leaves: the batch reconstructs the lower
-//! eight levels from its own records, and only the levels above need siblings.
+//! Lysis commits contributor records into an ordered-list tree whose root is the
+//! only on-chain authority (`ocomp_contributor_root`). A batch carries up to 256
+//! adjacent records and rebuilds the lower eight levels from them, so only the
+//! levels above need siblings.
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_ocomp_protocol::list::{
@@ -202,7 +198,7 @@ impl RangeShape {
             .map_err(|_| IntexError::BadContributorBatch("tree height overflow"))?;
         let sub_height = tree_height_bits.min(CONTRIBUTOR_CHUNK_HEIGHT);
         let capacity = 1_u32 << sub_height;
-        if start_index % capacity != 0 {
+        if !start_index.is_multiple_of(capacity) {
             return Err(IntexError::BadContributorBatch("batch start is not chunk-aligned").into());
         }
         Ok(Self {

@@ -1466,6 +1466,14 @@ fn distribute_no_contributors_burns() {
         )
         .unwrap();
 
+        // A day without contributor authority holds its pot until the window
+        // closes, in case a certified root is still landing.
+        assert_eq!(
+            s.balance(INTEX_FACTORY_ADDRESS).unwrap(),
+            U256::from(100u64)
+        );
+        runtime::sweep_proceeds_deadlines(&s, DEADLINE_FUTURE).unwrap();
+
         // No distribution opened; the ownerless proceeds were destroyed, not vaulted.
         assert_eq!(outbe_intex::api::active_dist_count(&s).unwrap(), 0);
         assert_eq!(s.balance(VAULT_ROUTER_ADDRESS).unwrap(), U256::ZERO);

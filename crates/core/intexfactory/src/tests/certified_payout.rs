@@ -31,6 +31,14 @@ fn nominal_total(leaves: &[ContributorLeafData]) -> U256 {
 
 /// Writes the constant-size authority that OCOMP activation installs.
 fn install_generation(storage: &StorageHandle<'_>, leaves: &[ContributorLeafData]) {
+    install_generation_with_total(storage, leaves, nominal_total(leaves));
+}
+
+fn install_generation_with_total(
+    storage: &StorageHandle<'_>,
+    leaves: &[ContributorLeafData],
+    eligible_nominal_total: U256,
+) {
     let count = u32::try_from(leaves.len()).expect("count fits u32");
     let registry = outbe_intex::IntexContract::new(storage.clone());
     registry
@@ -39,7 +47,7 @@ fn install_generation(storage: &StorageHandle<'_>, leaves: &[ContributorLeafData
         .unwrap();
     registry
         .ocomp_eligible_nominal_total
-        .write(&WWD, nominal_total(leaves))
+        .write(&WWD, eligible_nominal_total)
         .unwrap();
     registry
         .ocomp_contributor_metadata
@@ -197,6 +205,42 @@ fn proceeds_arriving_after_the_round_opened_are_burned() {
             .unwrap();
         assert_eq!(round.amount, amount);
         assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), amount);
+    });
+}
+
+#[test]
+fn an_understated_nominal_total_cannot_spend_another_days_proceeds() {
+    with_factory(|s| {
+        let leaves = population(300);
+        // The certified total is off-chain input and is never reconciled against
+        // the leaves under the root, so a halved one inflates every share.
+        install_generation_with_total(&s, &leaves, nominal_total(&leaves) / U256::from(2u64));
+        let amount = U256::from(100_000u64);
+        deliver_proceeds(&s, amount);
+
+        // Another day's money sits on the same balance and must stay there.
+        let other_day = U256::from(1_000_000u64);
+        s.increase_balance(INTEX_FACTORY_ADDRESS, other_day)
+            .unwrap();
+
+        let err = runtime::pay_contributor_batch(
+            &s,
+            WWD,
+            0,
+            &abi_leaves(&leaves[0..256]),
+            &contributor_range_proof(&leaves, 0),
+        )
+        .unwrap_err();
+
+        assert!(
+            format!("{err:?}").contains("exceed the round amount"),
+            "{err:?}"
+        );
+        assert_eq!(s.balance(leaves[0].owner).unwrap(), U256::ZERO);
+        assert_eq!(
+            s.balance(INTEX_FACTORY_ADDRESS).unwrap(),
+            amount + other_day
+        );
     });
 }
 

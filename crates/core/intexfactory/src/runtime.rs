@@ -228,10 +228,8 @@ pub(crate) fn try_settle_proceeds(
     if outbe_intex::api::get_progress(storage, series_id)?.is_some() {
         return Ok(());
     }
-    // A certified round is drained by batch transactions, not by this sweep, and
-    // a day gets exactly one. Proceeds that arrive after it opened missed the
-    // fan-in window, which only happens when something upstream broke — burn
-    // them instead of stranding value the round can no longer distribute.
+    // Batches drain a certified round, not this sweep, and a day gets exactly
+    // one — anything arriving after it opened missed the window.
     if outbe_intex::api::certified_payout_round(storage, series_id)?.is_some() {
         let late = outbe_intex::api::take_proceeds_pot(storage, series_id)?;
         if !late.is_zero() {
@@ -250,9 +248,8 @@ pub(crate) fn try_settle_proceeds(
 
     let certified = outbe_intex::api::certified_contributor_generation(storage, series_id)?;
     let legacy_total = outbe_intex::api::contributor_total(storage, series_id)?;
-    // No contributor authority yet. Proceeds can complete before quorum installs
-    // the certified root, so hold the pot until the window really closes instead
-    // of burning a day that is about to become payable.
+    // Proceeds can complete before quorum installs the root, so hold the pot
+    // until the window closes rather than burn a day about to become payable.
     if certified.is_none() && legacy_total.is_zero() && now < deadline {
         return Ok(());
     }
@@ -268,8 +265,6 @@ pub(crate) fn try_settle_proceeds(
     }
 
     if let Some(generation) = certified {
-        // Contributor bodies live off-chain, so the round only fixes the amount
-        // every share divides; batches prove membership against the root.
         if generation.contributor_count == 0 {
             burn_ownerless_proceeds(storage, series_id, pot)?;
         } else {
@@ -283,9 +278,9 @@ pub(crate) fn try_settle_proceeds(
                 },
             )?;
         }
-        if complete {
-            outbe_intex::api::finalize_proceeds(storage, series_id)?;
-        }
+        // Unconditional: batches drain the round, so staying in the awaiting set
+        // would re-enter this sweep every block.
+        outbe_intex::api::finalize_proceeds(storage, series_id)?;
         return Ok(());
     }
 
@@ -307,10 +302,9 @@ pub(crate) fn try_settle_proceeds(
 
 /// Pay one chunk-aligned range of certified contributors.
 ///
-/// Permissionless by construction: the batch is only accepted if its records
-/// rebuild the day's certified contributor root, so a wrong owner, nominal or
-/// index cannot survive verification. Shares divide the amount frozen when the
-/// round opened, never the live balance.
+/// Permissionless: a batch is accepted only if its records rebuild the day's
+/// certified contributor root. Shares divide the amount frozen at round open,
+/// never the live balance.
 pub(crate) fn pay_contributor_batch(
     storage: &StorageHandle<'_>,
     worldwide_day: u32,
@@ -340,15 +334,11 @@ pub(crate) fn pay_contributor_batch(
         &decoded,
         proof,
     )?;
-    if generation.eligible_nominal_total.is_zero() {
-        return Err(IntexFactoryError::NoContributors(worldwide_day).into());
-    }
-
     storage.with_checkpoint(|| {
         let mut paid = U256::ZERO;
         for leaf in &decoded {
-            // Floor division for every leaf: batches arrive in any order, so no
-            // leaf can be the one that absorbs a remainder.
+            // Floor for every leaf: batches arrive in any order, so none can be
+            // the one that absorbs the remainder.
             let share = round
                 .amount
                 .checked_mul(leaf.nominal)
@@ -356,6 +346,15 @@ pub(crate) fn pay_contributor_batch(
                 / generation.eligible_nominal_total;
             storage.transfer_balance(INTEX_FACTORY_ADDRESS, leaf.owner, share)?;
             paid += share;
+        }
+        // One balance serves every day, so only this bound keeps a bad
+        // denominator from spending another day's proceeds.
+        let total_paid = round
+            .paid_so_far
+            .checked_add(paid)
+            .ok_or(IntexFactoryError::DistributionOverflow(worldwide_day))?;
+        if total_paid > round.amount {
+            return Err(IntexFactoryError::PayoutExceedsRound(worldwide_day).into());
         }
         outbe_intex::api::mark_certified_leaves_paid(
             storage,
@@ -379,10 +378,8 @@ pub(crate) fn pay_contributor_batch(
 
 /// Burns what floor division left behind, once every leaf of the round is paid.
 ///
-/// Shares are floored per leaf, so the payouts fall short of the frozen amount
-/// by less than one minor unit each. Until the last leaf is paid the balance
-/// still holds the outstanding shares — only a fully paid round has a remainder
-/// that belongs to nobody.
+/// Completion is what gates this: until the last leaf is paid the balance still
+/// holds outstanding shares, which are owed rather than left over.
 fn close_round_if_complete(
     storage: &StorageHandle<'_>,
     worldwide_day: u32,
@@ -393,8 +390,8 @@ fn close_round_if_complete(
     if round.paid_leaf_count != contributor_count {
         return Ok(());
     }
-    // Every share is a floor of a fraction of `amount`, so the sum can never
-    // exceed it; a shortfall here would mean the round accounting is corrupt.
+    // The per-batch cap keeps the sum within `amount`; a shortfall here means
+    // the round accounting is corrupt.
     let remainder = round.amount.checked_sub(round.paid_so_far).ok_or_else(|| {
         PrecompileError::Fatal("certified payout exceeded the round amount".into())
     })?;

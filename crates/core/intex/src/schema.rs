@@ -163,8 +163,10 @@ pub struct DistProgress {
 ///
 /// `amount` is frozen when the round opens (the proceeds pot at that moment) so
 /// every share derives from the same denominator regardless of when a batch
-/// lands; `active != 0` is the existence sentinel. The round is never closed:
-/// floor rounding leaves sub-unit dust behind and unpaid leaves stay claimable.
+/// lands; `active != 0` is the existence sentinel. The record outlives the
+/// payout: once `paid_leaf_count` reaches the certified contributor count the
+/// caller burns what floor rounding left and the paid bitmap refuses further
+/// batches, but the counters stay readable as the day's final accounting.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[storage_record(exists_field = active)]
 pub struct CertifiedPayoutRound {
