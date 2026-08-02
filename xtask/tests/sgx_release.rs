@@ -90,6 +90,7 @@ fn repository_contract_has_no_runtime_signing_or_direct_fallback() {
     assert!(sgx_release.contains("[\"--target\", \"toolchain\", \"--tag\", &image]"));
     assert!(sgx_release.contains("build project toolchain image"));
     assert!(!sgx_release.contains(".arg(&spec.gramine.builder_image)"));
+    assert_eq!(sgx_release.matches(".arg(&toolchain_image)").count(), 3);
 
     let bundle_spec: serde_json::Value = serde_json::from_slice(
         &fs::read(root.join("release/testnet-sgx-bundle-v1.json")).expect("bundle spec"),
