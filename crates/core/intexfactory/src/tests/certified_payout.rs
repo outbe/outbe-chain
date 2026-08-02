@@ -140,11 +140,63 @@ fn batches_pay_every_certified_contributor() {
             .unwrap()
             .unwrap();
         assert_eq!(round.paid_leaf_count, 300);
-        // Floor division leaves sub-unit dust behind on purpose.
+        // The last batch closed the round and burned what floor division left,
+        // so nothing of this day remains on the precompile.
+        assert!(round.paid_so_far < amount, "floor shares must fall short");
+        assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);
+    });
+}
+
+#[test]
+fn an_unfinished_round_keeps_the_outstanding_shares() {
+    with_factory(|s| {
+        let leaves = population(300);
+        install_generation(&s, &leaves);
+        let amount = U256::from(1_000_000u64);
+        deliver_proceeds(&s, amount);
+
+        // Only the first chunk is paid: the balance still owes the tail its
+        // shares, so nothing may be burned yet.
+        runtime::pay_contributor_batch(
+            &s,
+            WWD,
+            0,
+            &abi_leaves(&leaves[0..256]),
+            &contributor_range_proof(&leaves, 0),
+        )
+        .unwrap();
+
+        let round = outbe_intex::api::certified_payout_round(&s, WWD)
+            .unwrap()
+            .unwrap();
+        assert_eq!(round.paid_leaf_count, 256);
         assert_eq!(
             s.balance(INTEX_FACTORY_ADDRESS).unwrap(),
             amount - round.paid_so_far
         );
+    });
+}
+
+#[test]
+fn proceeds_arriving_after_the_round_opened_are_burned() {
+    with_factory(|s| {
+        let leaves = population(300);
+        install_generation(&s, &leaves);
+        let amount = U256::from(1_000u64);
+        deliver_proceeds(&s, amount);
+
+        // A second chain finally delivers, long after the fan-in window closed.
+        let late = U256::from(400u64);
+        s.increase_balance(INTEX_FACTORY_ADDRESS, late).unwrap();
+        runtime::distribute(&s, ORIGIN_ROUTER_ADDRESS, WWD, CHAIN + 1, late).unwrap();
+
+        // The round still distributes only what it froze, and the late delivery
+        // is destroyed rather than left on the balance.
+        let round = outbe_intex::api::certified_payout_round(&s, WWD)
+            .unwrap()
+            .unwrap();
+        assert_eq!(round.amount, amount);
+        assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), amount);
     });
 }
 

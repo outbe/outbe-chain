@@ -111,4 +111,13 @@ interface IIntexFactory {
     /// @notice One verified batch of `leafCount` contributors starting at
     ///         `startIndex` was paid `paidAmount` native COEN in total.
     event ContributorBatchPaid(uint32 indexed worldwideDay, uint32 startIndex, uint32 leafCount, uint256 paidAmount);
+
+    /// @notice Every contributor of `worldwideDay` has been paid. `burnedAmount`
+    ///         is what per-leaf floor division left behind and was destroyed;
+    ///         the day accepts no further batches.
+    event ContributorRoundClosed(uint32 indexed worldwideDay, uint256 paidAmount, uint256 burnedAmount);
+
+    /// @notice Proceeds arrived for `worldwideDay` after its payout round had
+    ///         already opened, missing the fan-in window, and were burned.
+    event LateProceedsBurned(uint32 indexed worldwideDay, uint256 amount);
 }

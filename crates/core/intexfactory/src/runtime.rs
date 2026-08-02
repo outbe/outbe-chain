@@ -229,8 +229,14 @@ pub(crate) fn try_settle_proceeds(
         return Ok(());
     }
     // A certified round is drained by batch transactions, not by this sweep, and
-    // a day gets exactly one. Later arrivals simply accumulate in the pot.
+    // a day gets exactly one. Proceeds that arrive after it opened missed the
+    // fan-in window, which only happens when something upstream broke — burn
+    // them instead of stranding value the round can no longer distribute.
     if outbe_intex::api::certified_payout_round(storage, series_id)?.is_some() {
+        let late = outbe_intex::api::take_proceeds_pot(storage, series_id)?;
+        if !late.is_zero() {
+            burn_late_proceeds(storage, series_id, late)?;
+        }
         return Ok(());
     }
     let deadline = outbe_intex::api::proceeds_deadline(storage, series_id)?;
@@ -366,8 +372,55 @@ pub(crate) fn pay_contributor_batch(
                 leafCount: leaf_count,
                 paidAmount: paid,
             },
-        )
+        )?;
+        close_round_if_complete(storage, worldwide_day, generation.contributor_count)
     })
+}
+
+/// Burns what floor division left behind, once every leaf of the round is paid.
+///
+/// Shares are floored per leaf, so the payouts fall short of the frozen amount
+/// by less than one minor unit each. Until the last leaf is paid the balance
+/// still holds the outstanding shares — only a fully paid round has a remainder
+/// that belongs to nobody.
+fn close_round_if_complete(
+    storage: &StorageHandle<'_>,
+    worldwide_day: u32,
+    contributor_count: u32,
+) -> Result<()> {
+    let round = outbe_intex::api::certified_payout_round(storage, worldwide_day)?
+        .ok_or(IntexFactoryError::NoCertifiedRound(worldwide_day))?;
+    if round.paid_leaf_count != contributor_count {
+        return Ok(());
+    }
+    // Every share is a floor of a fraction of `amount`, so the sum can never
+    // exceed it; a shortfall here would mean the round accounting is corrupt.
+    let remainder = round.amount.checked_sub(round.paid_so_far).ok_or_else(|| {
+        PrecompileError::Fatal("certified payout exceeded the round amount".into())
+    })?;
+    if !remainder.is_zero() {
+        storage.decrease_balance(INTEX_FACTORY_ADDRESS, remainder)?;
+    }
+    emit_event(
+        storage,
+        crate::precompile::IIntexFactory::ContributorRoundClosed {
+            worldwideDay: worldwide_day,
+            paidAmount: round.paid_so_far,
+            burnedAmount: remainder,
+        },
+    )
+}
+
+/// Destroy proceeds that arrived after the day's payout round had already opened.
+fn burn_late_proceeds(storage: &StorageHandle<'_>, worldwide_day: u32, amount: U256) -> Result<()> {
+    storage.decrease_balance(INTEX_FACTORY_ADDRESS, amount)?;
+    emit_event(
+        storage,
+        crate::precompile::IIntexFactory::LateProceedsBurned {
+            worldwideDay: worldwide_day,
+            amount,
+        },
+    )
 }
 
 /// Progress of one day's payout round; all-zero when no round is open.
