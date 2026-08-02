@@ -983,7 +983,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         "minePromis also requires a Promis modify-auth mac and opNonce, which this server cannot produce: " +
           "the modify key is sealed to an ephemeral X25519 key by outbe_deriveKeys(Promis, ...) and no unsealing " +
           "or mac derivation is implemented here. " +
-          `Proof of work is done — nonce ${pow.nonce} (seq ${seq}, ${pow.iterations} iterations, hash ${pow.hash}) ` +
+          `Proof of work is done — nonce ${pow.nonce} (seq ${seq}, difficulty ${POW_DIFFICULTY}, ` +
+          `${pow.iterations} iterations, hash ${pow.hash}) ` +
           `for ${promisAmount} Promis on series ${series}. Submit minePromis(${series}, ${amt}, ${pow.nonce}, mac, opNonce) ` +
           "with a client that holds the modify key.",
       );

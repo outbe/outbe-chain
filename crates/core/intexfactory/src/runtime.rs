@@ -442,8 +442,8 @@ pub fn settle(
         return Err(IntexFactoryError::NotAuthorized.into());
     }
 
-    // TODO: accept the issuance currency once an FX rule converts the amount.
     let iso = asset_reference_currency(storage, payment_token)?;
+    // TODO: accept the issuance currency once an FX rule converts the amount.
     if iso != series.reference_currency {
         return Err(IntexFactoryError::SettlementCurrencyMismatch(iso).into());
     }
@@ -554,11 +554,12 @@ pub fn settlement_quote(
         let Ok(decimals) = erc20_decimals(storage, asset) else {
             continue;
         };
-        costs.push(derived_cost_amount(
-            series.entry_price_minor,
-            series.promis_load_minor,
-            decimals,
-        )?);
+        let Ok(cost) =
+            derived_cost_amount(series.entry_price_minor, series.promis_load_minor, decimals)
+        else {
+            continue;
+        };
+        costs.push(cost);
         tokens.push(asset);
     }
     Ok((tokens, costs))

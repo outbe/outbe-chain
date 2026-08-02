@@ -11,8 +11,6 @@ pub enum IntexFactoryError {
     ZeroAddress,
     #[error("amount must be positive")]
     ZeroAmount,
-    #[error("dependency not wired")]
-    NotWired,
     #[error("series not found")]
     SeriesNotFound,
     #[error("series not settleable in state {0}")]
