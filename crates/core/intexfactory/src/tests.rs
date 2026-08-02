@@ -256,7 +256,9 @@ fn settle_rejects_zero_amount() {
 #[test]
 fn settle_rejects_missing_series() {
     with_factory(|s| {
-        assert!(runtime::settle(&s, 7, holder(), holder(), U256::from(1), payment_token()).is_err());
+        assert!(
+            runtime::settle(&s, 7, holder(), holder(), U256::from(1), payment_token()).is_err()
+        );
     });
 }
 
@@ -265,7 +267,8 @@ fn settle_rejects_wrong_state_issued() {
     with_factory(|s| {
         // Born Issued; settlement is only valid in Qualified/Called.
         runtime::issue(&s, sample(7)).unwrap();
-        let err = runtime::settle(&s, 7, holder(), holder(), U256::from(1), payment_token()).unwrap_err();
+        let err =
+            runtime::settle(&s, 7, holder(), holder(), U256::from(1), payment_token()).unwrap_err();
         assert!(err.to_string().to_lowercase().contains("settleable"));
     });
 }
@@ -289,7 +292,8 @@ fn settle_rejects_expired_deadline() {
         runtime::issue(&s, sample(7)).unwrap();
         // deadline = ISSUED_AT + CALL_PERIOD < now
         outbe_intex::api::mark_called(&s, 7, ISSUED_AT).unwrap();
-        let err = runtime::settle(&s, 7, holder(), holder(), U256::from(1), payment_token()).unwrap_err();
+        let err =
+            runtime::settle(&s, 7, holder(), holder(), U256::from(1), payment_token()).unwrap_err();
         assert!(err.to_string().to_lowercase().contains("deadline"));
     });
 }
@@ -657,9 +661,17 @@ fn try_call_marks_called_when_threshold_met() {
         let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
         fill_days(&oracle, last_closed_day, pair_id, 30, breach);
 
-        assert!(
-            called::try_call(&s, &mut f, &oracle, &mut Default::default(), 7, pair_id, last_closed_day, scan_ts).unwrap()
-        );
+        assert!(called::try_call(
+            &s,
+            &mut f,
+            &oracle,
+            &mut Default::default(),
+            7,
+            pair_id,
+            last_closed_day,
+            scan_ts
+        )
+        .unwrap());
         assert_eq!(
             outbe_intex::api::read_series(&s, 7)
                 .unwrap()
@@ -693,9 +705,17 @@ fn try_call_skips_when_below_threshold() {
             d = previous_date_key(d);
         }
 
-        assert!(
-            !called::try_call(&s, &mut f, &oracle, &mut Default::default(), 7, pair_id, last_closed_day, scan_ts).unwrap()
-        );
+        assert!(!called::try_call(
+            &s,
+            &mut f,
+            &oracle,
+            &mut Default::default(),
+            7,
+            pair_id,
+            last_closed_day,
+            scan_ts
+        )
+        .unwrap());
         assert_eq!(
             outbe_intex::api::read_series(&s, 7)
                 .unwrap()
@@ -745,9 +765,17 @@ fn try_call_excludes_pre_issuance_days() {
         let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
         fill_days(&oracle, last_closed_day, pair_id, 30, breach);
 
-        assert!(
-            !called::try_call(&s, &mut f, &oracle, &mut Default::default(), 8, pair_id, last_closed_day, scan_ts).unwrap()
-        );
+        assert!(!called::try_call(
+            &s,
+            &mut f,
+            &oracle,
+            &mut Default::default(),
+            8,
+            pair_id,
+            last_closed_day,
+            scan_ts
+        )
+        .unwrap());
         assert_eq!(
             outbe_intex::api::read_series(&s, 8)
                 .unwrap()
@@ -852,9 +880,17 @@ fn call_survives_router_failure() {
             U256::from(EXPECTED_TRIGGER) + U256::from(1),
         );
 
-        assert!(
-            called::try_call(&s, &mut f, &oracle, &mut Default::default(), 7, pair_id, last_closed_day, scan_ts).unwrap()
-        );
+        assert!(called::try_call(
+            &s,
+            &mut f,
+            &oracle,
+            &mut Default::default(),
+            7,
+            pair_id,
+            last_closed_day,
+            scan_ts
+        )
+        .unwrap());
         assert_eq!(
             outbe_intex::api::read_series(&s, 7)
                 .unwrap()

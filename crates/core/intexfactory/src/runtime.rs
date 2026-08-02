@@ -171,11 +171,9 @@ pub(crate) fn derived_cost_amount(
     promis_load_minor: U256,
     payment_decimals: u8,
 ) -> Result<U256> {
-    let exp = 36u32
-        .checked_sub(u32::from(payment_decimals))
-        .ok_or(IntexFactoryError::UnsupportedPaymentDecimals(
-            payment_decimals,
-        ))?;
+    let exp = 36u32.checked_sub(u32::from(payment_decimals)).ok_or(
+        IntexFactoryError::UnsupportedPaymentDecimals(payment_decimals),
+    )?;
     entry_price
         .checked_mul(promis_load_minor)
         .map(|v| v / U256::from(10u64).pow(U256::from(exp)))
@@ -585,13 +583,12 @@ fn asset_at(storage: &StorageHandle<'_>, index: U256) -> Result<Address> {
 }
 
 /// Reference currency the router recorded for `asset`, via its first vault.
-pub(crate) fn asset_reference_currency(
-    storage: &StorageHandle<'_>,
-    asset: Address,
-) -> Result<u16> {
+pub(crate) fn asset_reference_currency(storage: &StorageHandle<'_>, asset: Address) -> Result<u16> {
     let ret = storage.staticcall(
         VAULT_ROUTER_ADDRESS,
-        IVaultRouter::assetVaultsCountCall { asset }.abi_encode().into(),
+        IVaultRouter::assetVaultsCountCall { asset }
+            .abi_encode()
+            .into(),
     )?;
     let count = IVaultRouter::assetVaultsCountCall::abi_decode_returns(&ret)
         .map_err(|_| PrecompileError::Revert("assetVaultsCount undecodable".into()))?;
