@@ -940,18 +940,18 @@ pub fn prepare(repo_root: &Path, elf_output: &Path, output: &Path) -> Result<()>
     verify_checksums(elf_output, "SHA256SUMS")?;
     let identity = read_elf_identity(elf_output)?;
     require_clean_source(repo_root, &identity.source_commit)?;
+    let toolchain_image = build_project_toolchain_image(repo_root, &spec, &identity.source_commit)?;
     let output = create_empty_output(repo_root, output)?;
     let elf_output = fs::canonicalize(elf_output)
         .wrap_err_with(|| format!("resolve ELF output: {}", elf_output.display()))?;
 
-    let mut command = docker_command(&spec, repo_root)?;
+    let mut command = docker_command(&spec, repo_root, &toolchain_image)?;
     command
         .args(["-e", &format!("SGX_MAX_THREADS={}", spec.sgx.max_threads)])
         .args(["-e", &format!("SGX_ISV_PROD_ID={}", spec.sgx.isv_prod_id)])
         .args(["-e", &format!("SGX_ISV_SVN={}", spec.sgx.isv_svn)])
         .args(["-v", &format!("{}:/elf:ro", elf_output.display())])
         .args(["-v", &format!("{}:/out", output.display())])
-        .arg(&spec.gramine.builder_image)
         .args([container_adapter(), "prepare"]);
     run_status(&mut command, "prepare unsigned SGX bundle")?;
 
@@ -993,10 +993,11 @@ pub fn sign(repo_root: &Path, unsigned: &Path, key_file: &Path, output: &Path) -
         read_canonical_json(&unsigned.join("metadata/source-identity.json"))?;
     validate_source_identity(&identity)?;
     require_clean_source(repo_root, &identity.source_commit)?;
+    let toolchain_image = build_project_toolchain_image(repo_root, &spec, &identity.source_commit)?;
     let output = create_empty_output(repo_root, output)?;
     let date = sigstruct_date(identity.source_date_epoch)?;
 
-    let mut command = docker_command(&spec, repo_root)?;
+    let mut command = docker_command(&spec, repo_root, &toolchain_image)?;
     command
         .args(["-e", &format!("SIGSTRUCT_DATE={date}")])
         .args(["-v", &format!("{}:/unsigned:ro", unsigned.display())])
@@ -1005,7 +1006,6 @@ pub fn sign(repo_root: &Path, unsigned: &Path, key_file: &Path, output: &Path) -
             &format!("{}:/run/secrets/testnet-sgx-key.pem:ro", key_file.display()),
         ])
         .args(["-v", &format!("{}:/out", output.display())])
-        .arg(&spec.gramine.builder_image)
         .args([container_adapter(), "sign"]);
     run_status(&mut command, "sign testnet SGX bundle")?;
 
@@ -1028,11 +1028,12 @@ pub fn verify(repo_root: &Path, bundle: &Path) -> Result<()> {
     verify_checksums(&bundle, "SHA256SUMS")?;
     let manifest_path = bundle.join("metadata/testnet-sgx-bundle.json");
     let manifest: BundleManifest = read_canonical_json(&manifest_path)?;
+    require_clean_source(repo_root, &manifest.source.commit)?;
+    let toolchain_image = build_project_toolchain_image(repo_root, &spec, &manifest.source.commit)?;
 
-    let mut command = docker_command(&spec, repo_root)?;
+    let mut command = docker_command(&spec, repo_root, &toolchain_image)?;
     command
         .args(["-v", &format!("{}:/bundle:ro", bundle.display())])
-        .arg(&spec.gramine.builder_image)
         .args([container_adapter(), "view"]);
     let sigstruct_view = run_output(&mut command, "read signed SGX SIGSTRUCT")?;
     verify_signed_bundle(&bundle, &manifest, &spec, &sigstruct_view)
@@ -1684,7 +1685,27 @@ fn normalize_tree_mtime(root: &Path, source_date_epoch: i64) -> Result<()> {
     Ok(())
 }
 
-fn docker_command(spec: &BundleSpec, repo_root: &Path) -> Result<Command> {
+fn build_project_toolchain_image(
+    repo_root: &Path,
+    spec: &BundleSpec,
+    source_commit: &str,
+) -> Result<String> {
+    if !is_lower_hex(source_commit, 40) {
+        bail!("project toolchain image requires an exact source commit");
+    }
+    let image = format!("outbe-project-toolchain:{source_commit}");
+    let dockerfile = repo_root.join("Dockerfile.project-toolchain");
+    let mut command = Command::new("docker");
+    command
+        .args(["build", "--platform", &spec.platform, "--file"])
+        .arg(&dockerfile)
+        .args(["--target", "toolchain", "--tag", &image])
+        .arg(repo_root);
+    run_status(&mut command, "build project toolchain image")?;
+    Ok(image)
+}
+
+fn docker_command(spec: &BundleSpec, repo_root: &Path, image: &str) -> Result<Command> {
     let uid = current_id("-u")?;
     let gid = current_id("-g")?;
     let mut command = Command::new("docker");
@@ -1692,7 +1713,8 @@ fn docker_command(spec: &BundleSpec, repo_root: &Path) -> Result<Command> {
         .args(["run", "--rm", "--platform", &spec.platform])
         .args(["--user", &format!("{uid}:{gid}")])
         .args(["--entrypoint", "bash"])
-        .args(["-v", &format!("{}:/source:ro", repo_root.display())]);
+        .args(["-v", &format!("{}:/source:ro", repo_root.display())])
+        .arg(image);
     Ok(command)
 }
 

@@ -84,6 +84,13 @@ fn repository_contract_has_no_runtime_signing_or_direct_fallback() {
     assert!(adapter.contains("verify_dcap_native_qvl.py"));
     assert!(adapter.contains("--install-dir"));
 
+    let sgx_release = fs::read_to_string(root.join("xtask/src/release/sgx.rs"))
+        .expect("SGX release implementation");
+    assert!(sgx_release.contains("Dockerfile.project-toolchain"));
+    assert!(sgx_release.contains("[\"--target\", \"toolchain\", \"--tag\", &image]"));
+    assert!(sgx_release.contains("build project toolchain image"));
+    assert!(!sgx_release.contains(".arg(&spec.gramine.builder_image)"));
+
     let bundle_spec: serde_json::Value = serde_json::from_slice(
         &fs::read(root.join("release/testnet-sgx-bundle-v1.json")).expect("bundle spec"),
     )
