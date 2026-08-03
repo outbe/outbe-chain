@@ -41,7 +41,8 @@ SECP256K1_G = (
 )
 
 DEFAULT_PREFUND_WEI = 10_000 * 10**18
-DEFAULT_CHAIN_ID = 54322345
+DEVNET_CHAIN_ID = 424242
+TESTNET_CHAIN_ID = 54322345
 DEFAULT_EPOCH_LENGTH_BLOCKS = 120
 DEFAULT_DKG_PREPARE_WINDOW_BLOCKS = 30
 DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS = 30
@@ -448,7 +449,7 @@ def run_tee_genesis(
         )
     ):
         raise ValueError(
-            "gramine-direct-dev forbids production measurement arguments"
+            "gramine-direct-dev forbids DCAP measurement arguments"
         )
     subprocess.run(cmd, check=True)
 
@@ -636,7 +637,7 @@ def main() -> None:
         "--tee-mode",
         required=True,
         choices=("dcap-required", "gramine-direct-dev"),
-        help="Genesis-fixed mode; production never falls back to development",
+        help="Genesis-fixed mode; testnet never falls back to devnet",
     )
     parser.add_argument("--tee-enclave-endpoint", default="/run/outbe/tee.sock")
     parser.add_argument("--mrenclave", help="Exact release MRENCLAVE for dcap-required")
@@ -669,16 +670,16 @@ def main() -> None:
     if args.chain_id is None:
         if args.tee_mode == "dcap-required":
             raise ValueError(
-                "dcap-required requires an explicit non-development --chain-id"
+                f"dcap-required requires explicit testnet --chain-id {TESTNET_CHAIN_ID}"
             )
-        args.chain_id = DEFAULT_CHAIN_ID
-    if args.tee_mode == "gramine-direct-dev" and args.chain_id != DEFAULT_CHAIN_ID:
+        args.chain_id = DEVNET_CHAIN_ID
+    if args.tee_mode == "gramine-direct-dev" and args.chain_id != DEVNET_CHAIN_ID:
         raise ValueError(
-            f"gramine-direct-dev requires reserved chain id {DEFAULT_CHAIN_ID}"
+            f"gramine-direct-dev requires devnet chain id {DEVNET_CHAIN_ID}"
         )
-    if args.tee_mode == "dcap-required" and args.chain_id == DEFAULT_CHAIN_ID:
+    if args.tee_mode == "dcap-required" and args.chain_id != TESTNET_CHAIN_ID:
         raise ValueError(
-            f"dcap-required may not reuse GramineDirectDev chain id {DEFAULT_CHAIN_ID}"
+            f"dcap-required requires testnet chain id {TESTNET_CHAIN_ID}"
         )
 
     repo_root = Path(__file__).resolve().parents[1]

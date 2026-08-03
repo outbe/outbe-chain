@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use alloy_primitives::B256;
 use outbe_primitives::{
+    chain::TESTNET_CHAIN_ID,
     tee_attestation_v1::{
         AttestationMode, ResourceScheduleV1, TeeAttestationManifestV1, TeePolicyScheduleV1,
         TeePolicyV1, MAX_TEE_POLICY_SCHEDULE_BYTES,
@@ -136,6 +137,11 @@ fn validate_activation(
                 "DcapRequired may not use reserved GramineDirectDev chain ID {GRAMINE_DIRECT_DEV_CHAIN_ID}"
             ));
         }
+        AttestationMode::DcapRequired if chain_id != TESTNET_CHAIN_ID => {
+            return Err(format!(
+                "DcapRequired requires testnet chain ID {TESTNET_CHAIN_ID}"
+            ));
+        }
         AttestationMode::GramineDirectDev if chain_id != GRAMINE_DIRECT_DEV_CHAIN_ID => {
             return Err(format!(
                 "GramineDirectDev requires reserved chain ID {GRAMINE_DIRECT_DEV_CHAIN_ID}"
@@ -251,7 +257,7 @@ mod tests {
 
     #[test]
     fn valid_activation_binds_chain_policy_and_normative_resources() {
-        let chain_id = 71;
+        let chain_id = TESTNET_CHAIN_ID;
         let genesis_hash = B256::repeat_byte(0x44);
         let parsed = validate_activation(
             activation(chain_id, genesis_hash, AttestationMode::DcapRequired),
@@ -268,7 +274,7 @@ mod tests {
 
     #[test]
     fn mismatched_identity_or_hash_fails_closed() {
-        let chain_id = 71;
+        let chain_id = TESTNET_CHAIN_ID;
         let genesis_hash = B256::repeat_byte(0x44);
         assert!(validate_activation(
             activation(chain_id, genesis_hash, AttestationMode::DcapRequired),
@@ -326,6 +332,19 @@ mod tests {
         )
         .unwrap_err()
         .contains("may not use reserved GramineDirectDev chain ID"));
+
+        let unknown_chain_id = dev_chain_id + 1;
+        assert!(validate_activation(
+            activation(
+                unknown_chain_id,
+                dev_genesis_hash,
+                AttestationMode::DcapRequired,
+            ),
+            unknown_chain_id,
+            dev_genesis_hash,
+        )
+        .unwrap_err()
+        .contains("testnet chain ID"));
     }
 
     #[test]

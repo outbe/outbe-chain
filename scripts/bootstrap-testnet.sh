@@ -10,7 +10,7 @@
 #
 # This script:
 #   1. Runs DKG bootstrap to generate threshold keys + individual signing keys + polynomial + validators.json
-#   2. Generates a GramineDirectDev genesis (reserved chain ID 54322345)
+#   2. Generates a GramineDirectDev devnet genesis (chain ID 424242)
 #   2b. (Optional) Seeds genesis with precompile storage from SEED_FILE
 #   2c. Canonically binds teeAttestationV1 after every genesis mutation
 #   3. Prints startup commands for each validator
@@ -171,7 +171,7 @@ fi
 cat > "$GENESIS_WORK" <<GENESIS
 {
   "config": {
-    "chainId": 54322345,
+    "chainId": 424242,
     "homesteadBlock": 0,
     "eip150Block": 0,
     "eip155Block": 0,
@@ -229,7 +229,7 @@ else
 fi
 
 # Step 2c: Dev slashing tuning. Felony thresholds default to 150 misses per epoch
-# (prod epoch 1200 ≈ 1h; see slashindicator runtime), which exceeds this short dev
+# (testnet epoch 1200 ≈ 1h; see slashindicator runtime), which exceeds this short dev
 # epoch (TESTNET_EPOCH_LENGTH_BLOCKS) so the per-epoch reset would wipe the counter
 # before it triggers. Lower them below the dev epoch so downtime slashing is
 # observable on localnet. Invariant: felony_threshold < epoch_length.
@@ -258,7 +258,7 @@ echo
 
 # teeAttestationV1 binds the final genesis header hash, so it is added only
 # after seed/felony mutations. The command validates the complete output and
-# refuses either production measurements or a production-mode fallback.
+# refuses either DCAP measurements or a testnet-mode fallback.
 echo "--- Step 2d: Bind GramineDirectDev TEE Manifest ---"
 "$OUTBE_CHAIN_BINARY" tee genesis \
     --input "$GENESIS_WORK" \

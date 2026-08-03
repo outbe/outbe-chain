@@ -7246,6 +7246,7 @@ dependencies = [
  "outbe-consensus",
  "outbe-engine",
  "outbe-evm",
+ "outbe-metadosis",
  "outbe-node",
  "outbe-ocomp-protocol",
  "outbe-primitives",

@@ -128,7 +128,7 @@ fn generate_genesis(args: &TeeGenesisArgs) -> eyre::Result<()> {
                     && args.isv_prod_id.is_none()
                     && args.minimum_isv_svn.is_none()
                     && args.minimum_tcb_evaluation_data_number.is_none(),
-                "GramineDirectDev uses fixed non-hardware projections; production measurement arguments are forbidden"
+                "GramineDirectDev uses fixed non-hardware projections; DCAP measurement arguments are forbidden"
             );
             InitialTeeProfileV1::GramineDirectDev
         }
@@ -240,10 +240,17 @@ fn utf8_path<'a>(path: &'a Path, label: &str) -> eyre::Result<&'a str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use outbe_primitives::tee_genesis_v1::GRAMINE_DIRECT_DEV_CHAIN_ID;
+    use outbe_metadosis::{
+        proof_layout::METADOSIS_STORAGE_LAYOUT_V1_HASH, test_support::ForkInstallScenario,
+    };
+    use outbe_node::ocomp::fork::{
+        METADOSIS_STORAGE_LAYOUT_GENESIS_KEY, OCOMP_FORK_INSTALL_GENESIS_KEY,
+    };
+    use outbe_ocomp_protocol::profile::poc_schema_limits;
+    use outbe_primitives::chain::{DEVNET_CHAIN_ID, TESTNET_CHAIN_ID};
 
     fn write_base_genesis(path: &Path, chain_id: u64) {
-        let genesis = serde_json::json!({
+        let mut genesis = serde_json::json!({
             "config": {
                 "chainId": chain_id,
                 "homesteadBlock": 0,
@@ -273,6 +280,27 @@ mod tests {
             "alloc": {}
         });
         fs::write(path, serde_json::to_vec_pretty(&genesis).unwrap()).unwrap();
+        let parsed =
+            reth_ethereum::cli::chainspec::chain_value_parser(path.to_str().unwrap()).unwrap();
+        let install = ForkInstallScenario::measurement_at(1, chain_id, parsed.genesis_hash())
+            .unwrap()
+            .into_install();
+        let limits = poc_schema_limits();
+        let canonical_bytes = install.encode_canonical(&limits).unwrap();
+        let install_hash = install.install_hash(&limits).unwrap();
+        let config = genesis["config"].as_object_mut().unwrap();
+        config.insert(
+            OCOMP_FORK_INSTALL_GENESIS_KEY.to_owned(),
+            serde_json::json!({
+                "canonicalBytes": format!("0x{}", hex::encode(canonical_bytes)),
+                "installHash": install_hash,
+            }),
+        );
+        config.insert(
+            METADOSIS_STORAGE_LAYOUT_GENESIS_KEY.to_owned(),
+            serde_json::json!({ "layoutHash": METADOSIS_STORAGE_LAYOUT_V1_HASH }),
+        );
+        fs::write(path, serde_json::to_vec_pretty(&genesis).unwrap()).unwrap();
     }
 
     fn args(input: PathBuf, output: PathBuf, mode: TeeGenesisMode) -> TeeGenesisArgs {
@@ -293,7 +321,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let input = root.path().join("base.json");
         let output = root.path().join("dev.json");
-        write_base_genesis(&input, GRAMINE_DIRECT_DEV_CHAIN_ID);
+        write_base_genesis(&input, DEVNET_CHAIN_ID);
         let before = reth_ethereum::cli::chainspec::chain_value_parser(input.to_str().unwrap())
             .unwrap()
             .genesis_hash();
@@ -312,26 +340,26 @@ mod tests {
     }
 
     #[test]
-    fn dcap_genesis_requires_exact_measurements_and_non_dev_chain_id() {
+    fn dcap_genesis_requires_exact_measurements_and_testnet_chain_id() {
         let root = tempfile::tempdir().unwrap();
         let input = root.path().join("base.json");
-        write_base_genesis(&input, GRAMINE_DIRECT_DEV_CHAIN_ID + 1);
+        write_base_genesis(&input, TESTNET_CHAIN_ID);
         let before = reth_ethereum::cli::chainspec::chain_value_parser(input.to_str().unwrap())
             .unwrap()
             .genesis_hash();
-        let output = root.path().join("prod.json");
-        let mut production = args(input, output.clone(), TeeGenesisMode::DcapRequired);
-        assert!(generate_genesis(&production)
+        let output = root.path().join("testnet.json");
+        let mut testnet = args(input, output.clone(), TeeGenesisMode::DcapRequired);
+        assert!(generate_genesis(&testnet)
             .unwrap_err()
             .to_string()
             .contains("--mrenclave"));
 
-        production.mrenclave = Some("11".repeat(32));
-        production.mrsigner = Some("22".repeat(32));
-        production.isv_prod_id = Some(1);
-        production.minimum_isv_svn = Some(2);
-        production.minimum_tcb_evaluation_data_number = Some(17);
-        generate_genesis(&production).unwrap();
+        testnet.mrenclave = Some("11".repeat(32));
+        testnet.mrsigner = Some("22".repeat(32));
+        testnet.isv_prod_id = Some(1);
+        testnet.minimum_isv_svn = Some(2);
+        testnet.minimum_tcb_evaluation_data_number = Some(17);
+        generate_genesis(&testnet).unwrap();
         let parsed = OutbeChainSpecParser::parse(output.to_str().unwrap()).unwrap();
         assert_eq!(parsed.genesis_hash(), before);
     }
@@ -342,7 +370,7 @@ mod tests {
 
         let dev_input = root.path().join("dev-base.json");
         let dev_output = root.path().join("dev-output.json");
-        write_base_genesis(&dev_input, GRAMINE_DIRECT_DEV_CHAIN_ID + 1);
+        write_base_genesis(&dev_input, TESTNET_CHAIN_ID);
         assert!(generate_genesis(&args(
             dev_input,
             dev_output.clone(),
@@ -353,40 +381,40 @@ mod tests {
         .contains("requires reserved"));
         assert!(!dev_output.exists());
 
-        let prod_input = root.path().join("prod-base.json");
-        let prod_output = root.path().join("prod-output.json");
-        write_base_genesis(&prod_input, GRAMINE_DIRECT_DEV_CHAIN_ID);
-        let mut production = args(
-            prod_input,
-            prod_output.clone(),
+        let dcap_input = root.path().join("dcap-base.json");
+        let dcap_output = root.path().join("dcap-output.json");
+        write_base_genesis(&dcap_input, DEVNET_CHAIN_ID);
+        let mut dcap = args(
+            dcap_input,
+            dcap_output.clone(),
             TeeGenesisMode::DcapRequired,
         );
-        production.mrenclave = Some("11".repeat(32));
-        production.mrsigner = Some("22".repeat(32));
-        production.isv_prod_id = Some(1);
-        production.minimum_isv_svn = Some(2);
-        production.minimum_tcb_evaluation_data_number = Some(17);
-        assert!(generate_genesis(&production)
+        dcap.mrenclave = Some("11".repeat(32));
+        dcap.mrsigner = Some("22".repeat(32));
+        dcap.isv_prod_id = Some(1);
+        dcap.minimum_isv_svn = Some(2);
+        dcap.minimum_tcb_evaluation_data_number = Some(17);
+        assert!(generate_genesis(&dcap)
             .unwrap_err()
             .to_string()
             .contains("may not use reserved"));
-        assert!(!prod_output.exists());
+        assert!(!dcap_output.exists());
     }
 
     #[test]
-    fn zero_production_measurement_is_rejected_without_output() {
+    fn zero_dcap_measurement_is_rejected_without_output() {
         let root = tempfile::tempdir().unwrap();
         let input = root.path().join("base.json");
-        let output = root.path().join("prod.json");
-        write_base_genesis(&input, GRAMINE_DIRECT_DEV_CHAIN_ID + 1);
-        let mut production = args(input, output.clone(), TeeGenesisMode::DcapRequired);
-        production.mrenclave = Some("00".repeat(32));
-        production.mrsigner = Some("22".repeat(32));
-        production.isv_prod_id = Some(1);
-        production.minimum_isv_svn = Some(2);
-        production.minimum_tcb_evaluation_data_number = Some(17);
+        let output = root.path().join("testnet.json");
+        write_base_genesis(&input, TESTNET_CHAIN_ID);
+        let mut testnet = args(input, output.clone(), TeeGenesisMode::DcapRequired);
+        testnet.mrenclave = Some("00".repeat(32));
+        testnet.mrsigner = Some("22".repeat(32));
+        testnet.isv_prod_id = Some(1);
+        testnet.minimum_isv_svn = Some(2);
+        testnet.minimum_tcb_evaluation_data_number = Some(17);
 
-        assert!(generate_genesis(&production)
+        assert!(generate_genesis(&testnet)
             .unwrap_err()
             .to_string()
             .contains("must be non-zero"));
@@ -394,18 +422,18 @@ mod tests {
     }
 
     #[test]
-    fn development_mode_rejects_production_measurement_arguments() {
+    fn development_mode_rejects_dcap_measurement_arguments() {
         let root = tempfile::tempdir().unwrap();
         let input = root.path().join("base.json");
         let output = root.path().join("dev.json");
-        write_base_genesis(&input, GRAMINE_DIRECT_DEV_CHAIN_ID);
+        write_base_genesis(&input, DEVNET_CHAIN_ID);
         let mut development = args(input, output.clone(), TeeGenesisMode::GramineDirectDev);
         development.mrenclave = Some("11".repeat(32));
 
         assert!(generate_genesis(&development)
             .unwrap_err()
             .to_string()
-            .contains("production measurement arguments are forbidden"));
+            .contains("DCAP measurement arguments are forbidden"));
         assert!(!output.exists());
     }
 
@@ -413,7 +441,7 @@ mod tests {
     fn input_and_output_must_be_distinct() {
         let root = tempfile::tempdir().unwrap();
         let input = root.path().join("base.json");
-        write_base_genesis(&input, GRAMINE_DIRECT_DEV_CHAIN_ID);
+        write_base_genesis(&input, DEVNET_CHAIN_ID);
         let original = fs::read(&input).unwrap();
 
         assert!(generate_genesis(&args(
@@ -432,7 +460,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let input = root.path().join("base.json");
         let output = root.path().join("dev.json");
-        write_base_genesis(&input, GRAMINE_DIRECT_DEV_CHAIN_ID);
+        write_base_genesis(&input, DEVNET_CHAIN_ID);
         fs::write(&output, b"operator-owned\n").unwrap();
         assert!(generate_genesis(&args(
             input,

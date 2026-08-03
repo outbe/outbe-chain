@@ -1,17 +1,18 @@
 # I9 A0 checkpoint — OST3-only DCAP startup activation
 
-Status: `PASS` for the A0 deterministic and reachable-development gate. The A0
-implementation, post-review test matrix, forbidden-path audit and isolated staged
+Status: `PASS` for the A0 deterministic gate and `PENDING` for a reachable
+devnet rerun after the chain-identity correction. The A0 implementation,
+post-review deterministic matrix, forbidden-path audit and isolated staged
 scope are complete. This checkpoint does not claim accepted Intel hardware
-evidence or production release readiness; B1 through E1 remain fail-not-skip.
+evidence or testnet release readiness; B1 through E1 remain fail-not-skip.
 
 ## Outcome and fixed boundary
 
 A runnable Outbe ChainSpec has exactly one genesis-fixed V1 mode from block 1:
 
-- production uses `DcapRequired`, a non-development chain ID, explicit nonzero
+- testnet uses `DcapRequired`, chain ID `54322345`, explicit nonzero
   release measurements and mandatory canonical policy/resource schedules;
-- development uses `GramineDirectDev`, reserved chain ID `54322345`, a separate
+- devnet uses `GramineDirectDev`, chain ID `424242`, a separate
   genesis and explicit non-hardware measurements;
 - both modes use the OST3 producer and consumer. OST2 is neither produced nor
   accepted;
@@ -21,7 +22,7 @@ A runnable Outbe ChainSpec has exactly one genesis-fixed V1 mode from block 1:
 
 A0 activates the protocol surface. It does not close the I9 release gates for
 the exact `native-dcap` bundle, accepted Processor evidence, hardware
-timing or production E2E.
+timing or testnet E2E.
 
 ## C1 independent review and disposition
 
@@ -30,9 +31,9 @@ Two read-only reviews used fixed point
 
 | Finding | Disposition |
 | --- | --- |
-| A hand-authored `GramineDirectDev` manifest could use an arbitrary chain ID because only the generator enforced identity separation. | Fixed in `tee_attestation_activation.rs`: runtime validation now requires reserved chain ID `54322345` for development and rejects `DcapRequired` on it. Both directions are negative-tested. |
+| A hand-authored `GramineDirectDev` manifest could use an arbitrary chain ID because only the generator enforced identity separation. | Fixed in `tee_attestation_activation.rs`: runtime validation now requires devnet chain ID `424242` for `GramineDirectDev`, testnet chain ID `54322345` for `DcapRequired`, and rejects both crossover directions plus unknown identities. |
 | Operator docs still described `remote_attestation = none`, a verifier stub, optional TEE and obsolete `tee join` arguments. | Fixed in the SGX launch, role onboarding and release guides plus the TEE ADRs and CLI help. Current docs distinguish executable development behavior from still-open I9 hardware gates. |
-| ADR-B-NOD-001 still presented the pre-activation optional TEE socket and in-process stub as part of the node lifecycle. | Fixed: the lifecycle now requires the genesis-selected enclave, records the distinct FullNode/Validator readiness points and states that GramineDirectDev is a separate identity rather than a production fallback. |
+| ADR-B-NOD-001 still presented the pre-activation optional TEE socket and in-process stub as part of the node lifecycle. | Fixed: the lifecycle now requires the genesis-selected enclave, records the distinct FullNode/Validator readiness points and states that GramineDirectDev is a separate devnet identity rather than a testnet fallback. |
 | Component/offline EVM reexecution derived the immutable V1 ChainSpec authority but dropped it when `RuntimeBodyReaders` was absent. | Fixed by forwarding the same authority through `dispatch_with_tee_attestation`; the counterfactual genesis reexecution test failed before the fix and passes after it. No verifier or policy alternative was added. |
 | The restart harness asserted absence of a removed key-handoff timeout log, so that check could never fail for a real product behavior. | Fixed by deleting the dead log assertion. The reachable scenario now proves each identity unseals its own permanent key and that DKG is not rerun; no peer redelivery path is implied. |
 | This A0 evidence index was absent. | Fixed by this checkpoint. |
@@ -40,14 +41,14 @@ Two read-only reviews used fixed point
 
 ## Requirement-by-requirement evidence matrix
 
-| Requirement | Production/dev | Source and symbol | Positive evidence | Fail-closed evidence | Status and remaining gate |
+| Requirement | Network | Source and symbol | Positive evidence | Fail-closed evidence | Status and remaining gate |
 | --- | --- | --- | --- | --- | --- |
-| Mandatory V1 manifest from block 1 | Production and dev | `bin/outbe-chain/src/main.rs::OutbeChainSpecParser::parse`; `tee_attestation_activation.rs::TeeAttestationChainSpecStateV1`; activation height constant `1` | Production and development generator/parser round trips | Missing, malformed, wrong hash, wrong resource schedule and wrong activation height reject | `PASS` deterministic; signed release identity remains B1 |
-| Production and development identities cannot overlap | Both | `tee_genesis_v1.rs::initial_tee_policy_v1`; `tee_attestation_activation.rs::validate_activation` | Reserved dev identity and explicit production construction | Runtime and generator reject both mode/chain-ID crossover directions | `PASS` after C1 fix |
-| Authorized SGX/quote boundary | Production | `main.rs` DcapRequired NodeHost initialization; `initialization.rs::InitializationState::production`; `tee_bootstrap.rs::build_local_tee_bootstrap_submission_v2` | Deterministic NodeHost, quote-binding and offline verifier tests from I2-I8 | Missing socket, sealing key, manifest, quote/collateral or rejected policy stops startup/registration | `PASS` for code boundary; fresh accepted SGX is H1/E1 |
-| Separate runnable development network | Dev | `GRAMINE_DIRECT_DEV_CHAIN_ID`; `bootstrap-testnet.sh`; `run-testnet.sh`; E2E localnet builder | Four-validator join/restart scenario on chain `54322345` | Production measurement arguments, nonreserved dev identity, missing enclave and bare-host mode reject | `PASS` development reachability only |
+| Mandatory V1 manifest from block 1 | Testnet and devnet | `bin/outbe-chain/src/main.rs::OutbeChainSpecParser::parse`; `tee_attestation_activation.rs::TeeAttestationChainSpecStateV1`; activation height constant `1` | Testnet and devnet generator/parser round trips | Missing, malformed, wrong hash, wrong resource schedule and wrong activation height reject | `PASS` deterministic; signed release identity remains B1 |
+| Testnet and devnet identities cannot overlap | Both | `tee_genesis_v1.rs::initial_tee_policy_v1`; `tee_attestation_activation.rs::validate_activation` | Explicit construction for both network identities | Runtime and generator reject both mode/chain-ID crossover directions | `PASS` after C1 fix |
+| Authorized SGX/quote boundary | Testnet | `main.rs` DcapRequired NodeHost initialization; `initialization.rs::InitializationState::production`; `tee_bootstrap.rs::build_local_tee_bootstrap_submission_v2` | Deterministic NodeHost, quote-binding and offline verifier tests from I2-I8 | Missing socket, sealing key, manifest, quote/collateral or rejected policy stops startup/registration | `PASS` for code boundary; fresh accepted SGX is H1/E1 |
+| Separate runnable development network | Devnet | `GRAMINE_DIRECT_DEV_CHAIN_ID`; `bootstrap-testnet.sh`; `run-testnet.sh`; E2E localnet builder | The retained four-validator run used the superseded shared identity `54322345`; a run on `424242` is still required | DCAP measurement arguments, non-devnet identity, missing enclave and bare-host mode reject | `PENDING` reachable devnet rerun on `424242` |
 | Complete OST3 producer and consumer at block 1 | Both | `stack.rs` founding coordinator; `tee_bootstrap.rs`; `system_tx.rs::TEE_BOOTSTRAP_SELECTOR`; EVM config/executor block-1 checks | Canonical assembly, committee signatures, proposal injection and block-1 execution tests | Missing/incomplete/mismatched/oversized OST3 and OST3 outside block 1 reject | `PASS` deterministic; dense real 32-validator run is P1/E1 |
-| Total OST2 rejection | Both | `system_tx.rs` defines only selector `OST3`; production routing and system-set validation | Exact selector/collision and block-1 membership tests | `OST2` has no decoder or producer; source occurrence is one negative explanatory comment | `PASS` |
+| Total OST2 rejection | Both | `system_tx.rs` defines only selector `OST3`; canonical routing and system-set validation | Exact selector/collision and block-1 membership tests | `OST2` has no decoder or producer; source occurrence is one negative explanatory comment | `PASS` |
 | V1-only TeeRegistry admission | Both | `precompile_routes.rs`; `teeregistry::v1_precompile::dispatch` | Exact V1 view route and full Validator/FullNode registration suites | Exact old six-argument selector rejects; malformed evidence/signatures/caps reject before mutation | `PASS` |
 | Permissionless relay with node and enclave authority | Both | `teeregistry::v1`; NodeHost manifest and signature validation | Validator and FullNode tests use canonical evidence and profile-specific authority | Relay caller is never admission authority; wrong node/enclave proof rejects | `PASS` deterministic; real accepted evidence is E1 |
 | One-time permanent offer-key delivery | Both | `OfferKeySealedForRegistryV1`; `V1RegistrationOutcome`; enclave registry artifact ingestion | Created emits and ingests exactly one bounded deterministic artifact | Idempotent, renewal and replacement do not reseal or redeliver; missing/malformed enclave output is fatal | `PASS` |
@@ -144,9 +145,14 @@ negative documentation or an exact rejection test. Cryptographic uses of the
 word recovery refer to reconstructing signatures/shares, not restoring a lost
 permanent identity key.
 
-## Reachable development evidence
+## Historical reachable-development evidence
 
-Latest retained run:
+The retained run below predates the identity correction and used chain ID
+`54322345`. It remains useful as historical behavior evidence, but it does not
+prove reachability of the current devnet on `424242` and no longer satisfies
+the reachable-devnet row above.
+
+Historical retained run:
 
 - command lane: four validators, `--tee mock`, isolated `GramineDirectDev`;
 - feature: `Active validator restarts without a new DKG ceremony`;
@@ -165,9 +171,9 @@ Latest retained run:
 - 24 generated secret files were compared to retained logs/evidence without
   printing their values; zero plaintext matches were found.
 
-This run proves reachable V1 onboarding, founding readiness transition and exact
-resident-key restart behavior in development. It proves no SGX/DCAP-positive
-claim.
+This run observed V1 onboarding, founding readiness transition and exact
+resident-key restart behavior under the superseded shared identity. It proves
+neither current devnet reachability nor any SGX/DCAP-positive claim.
 
 ## ChainSpec construction artifacts
 
@@ -183,10 +189,18 @@ Both artifacts round-tripped through the product parser and preserved their
 deliberate genesis header identity. `/tmp` paths are ephemeral and the commands
 and tests, not path persistence, are the durable proof.
 
+The checked-in `testing/e2e-harness/fixtures/ocomp-final-v1` fixture also
+predates the network-identity correction and remains bound to `54322345`.
+It is not current devnet evidence and the strict `GramineDirectDev` generator
+rejects it fail-closed. Regenerating its chain-bound OCOMP install, committee
+registrations and signatures is a separate OCOMP fixture migration, not part
+of this DCAP identity slice; the OCOMP final-fixture lane stays deferred until
+that migration is performed.
+
 ## Operator documentation
 
 - `docs/launching-with-sgx.md` now explains the two non-overlapping networks,
-  the executable GramineDirectDev quickstart, production ChainSpec construction,
+  the executable GramineDirectDev quickstart, testnet ChainSpec construction,
   key-readiness checks and the still-open I9 release gates.
 - `docs/becoming-a-validator.md` now gives role-complete V1 `tee join` arguments,
   the mandatory FullNode upstream/key gate and permanent-loss behavior.
@@ -197,10 +211,14 @@ and tests, not path persistence, are the durable proof.
 
 ## Remaining I9 gates after A0
 
-The first residual gate is B1: freeze one reproducible x86_64 production bundle
+The first remaining DCAP release gate is B1: freeze one reproducible x86_64
+testnet bundle
 with exactly the `native-dcap` application feature, Intel QVL
 `1.26.100.1-noble1`, Gramine `1.9`, trusted native-artifact digests and no
 capture/mock/trace/fake-verifier surface.
+
+Separately, the reachable devnet rerun on `424242` and the OCOMP final-fixture
+migration described above remain pending and are not release evidence.
 
 Then H1 must retain fresh accepted Processor evidence; a real Platform node is
 checked fail-closed when it joins. P1 must prove exact-release QVL and dense full-block timing;

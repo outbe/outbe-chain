@@ -20,13 +20,16 @@ use clap::{Parser, ValueEnum};
 use commonware_codec::Encode as _;
 use commonware_cryptography::{bls12381, Signer as _};
 use eyre::{bail, ensure, eyre, Result, WrapErr as _};
-use outbe_primitives::tee_attestation_v1::{
-    AttestationEvidenceV1, AttestationMode, AttestationOperationV1, DcapCollateralComponentV1,
-    DcapCollateralKind, DcapEvidenceV1, EnclaveProfile, NodeIdV1, RegistrationIntentV1,
-    TeePolicyV1,
-};
 use outbe_primitives::tee_genesis_v1::{
     initial_tee_policy_v1, InitialTeeProfileV1, ProductionSgxMeasurementV1,
+};
+use outbe_primitives::{
+    chain::TESTNET_CHAIN_ID,
+    tee_attestation_v1::{
+        AttestationEvidenceV1, AttestationMode, AttestationOperationV1, DcapCollateralComponentV1,
+        DcapCollateralKind, DcapEvidenceV1, EnclaveProfile, NodeIdV1, RegistrationIntentV1,
+        TeePolicyV1,
+    },
 };
 use outbe_tee::dcap_protocol::{DcapPckCaV1, DcapPlatformTcbStatusV1, DcapVerificationOutcomeV1};
 use outbe_tee::node_host::{
@@ -38,7 +41,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 
-const CHAIN_ID: u64 = 3_151_908;
 const COMPONENT_FILES: [(DcapCollateralKind, &str); 8] = [
     (
         DcapCollateralKind::PckCertificateChain,
@@ -221,7 +223,7 @@ fn run(cli: Cli) -> Result<()> {
     let consensus_bls_public = valid_bls_public(run_started_at)?;
     let genesis_hash = keccak256(b"outbe/testnet/dcap-h1/genesis/v1");
     let identity = ValidatorNodeHostIdentityV1 {
-        chain_id: CHAIN_ID,
+        chain_id: TESTNET_CHAIN_ID,
         genesis_hash,
         validator,
         consensus_bls_public,
@@ -458,9 +460,9 @@ fn run(cli: Cli) -> Result<()> {
         "image": {"digest": {"algorithm": "sha256", "value": image_digest}, "reference": cli.image},
         "intent": {"profile": "validator", "sha256": hex::encode(Sha256::digest(&intent_bytes))},
         "policy": {
-            "chain_id": CHAIN_ID,
+            "chain_id": TESTNET_CHAIN_ID,
             "genesis_hash": hex::encode(genesis_hash),
-            "profile_selection": "validator exercises the consensus-participating production registration path; the canonical block-1 policy binds the same release measurement for validator and full-node",
+            "profile_selection": "validator exercises the consensus-participating testnet registration path; the canonical block-1 policy binds the same release measurement for validator and full-node",
             "sha256": hex::encode(Sha256::digest(&policy_bytes))
         },
         "measurements": bundle_manifest.measurements,
@@ -496,7 +498,7 @@ fn release_policy(measurements: &Measurements, genesis_hash: B256) -> Result<Tee
             minimum_isv_svn: measurements.isv_svn,
             minimum_tcb_evaluation_data_number: 1,
         }),
-        CHAIN_ID,
+        TESTNET_CHAIN_ID,
         genesis_hash,
     )
     .map_err(eyre::Report::msg)
@@ -629,7 +631,7 @@ fn start_enclave(
             "--tee-dir",
             "/var/lib/outbe/tee",
             "--chain-id",
-            &format!("0x{CHAIN_ID:064x}"),
+            &format!("0x{TESTNET_CHAIN_ID:064x}"),
         ])
         .stdout(Stdio::from(log.try_clone()?))
         .stderr(Stdio::from(log));

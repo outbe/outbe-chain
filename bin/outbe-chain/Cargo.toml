@@ -51,6 +51,7 @@ tracing.workspace = true
 commonware-consensus.workspace = true
 commonware-storage.workspace = true
 commonware-utils.workspace = true
+outbe-metadosis = { workspace = true, features = ["test-utils"] }
 reqwest.workspace = true
 tempfile.workspace = true
 

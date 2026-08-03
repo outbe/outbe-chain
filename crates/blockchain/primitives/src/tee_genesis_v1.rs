@@ -1,21 +1,25 @@
 //! Canonical block-1 TEE policy and ChainSpec-manifest construction.
 //!
 //! The development profile is a distinct chain identity, never a fallback for
-//! an unavailable production verifier. Production construction requires the
-//! exact signed-enclave measurement tuple; no placeholder production policy can
+//! an unavailable DCAP verifier. `DcapRequired` construction requires the
+//! exact signed-enclave measurement tuple; no placeholder DCAP policy can
 //! be emitted through this API.
 
 use alloy_primitives::{keccak256, B256, U256};
 use serde_json::{json, Value};
 
-use crate::tee_attestation_v1::{
-    AttestationMode, EnclaveProfile, PlatformTcbStatusSetV1, QvlTcbStatusV1, ResourceScheduleV1,
-    TeeMeasurementRuleV1, TeePolicyScheduleEntryV1, TeePolicyScheduleV1, TeePolicyV1,
+use crate::{
+    chain::{DEVNET_CHAIN_ID, TESTNET_CHAIN_ID},
+    tee_attestation_v1::{
+        AttestationMode, EnclaveProfile, PlatformTcbStatusSetV1, QvlTcbStatusV1,
+        ResourceScheduleV1, TeeMeasurementRuleV1, TeePolicyScheduleEntryV1, TeePolicyScheduleV1,
+        TeePolicyV1,
+    },
 };
 
-/// Reserved chain ID for the runnable Gramine Direct development network.
-/// A production `DcapRequired` genesis is rejected if it reuses this identity.
-pub const GRAMINE_DIRECT_DEV_CHAIN_ID: u64 = 54_322_345;
+/// Chain ID for the runnable Gramine Direct devnet.
+/// The DCAP testnet uses [`TESTNET_CHAIN_ID`] and cannot reuse this identity.
+pub const GRAMINE_DIRECT_DEV_CHAIN_ID: u64 = DEVNET_CHAIN_ID;
 
 /// SHA-256 of Intel's pinned SGX Root CA DER certificate.
 pub const INTEL_SGX_ROOT_CA_DER_SHA256: [u8; 32] = [
@@ -68,6 +72,11 @@ pub fn initial_tee_policy_v1(
         InitialTeeProfileV1::DcapRequired(_) if chain_id == GRAMINE_DIRECT_DEV_CHAIN_ID => {
             return Err(format!(
                 "DcapRequired may not use reserved GramineDirectDev chain ID {GRAMINE_DIRECT_DEV_CHAIN_ID}"
+            ));
+        }
+        InitialTeeProfileV1::DcapRequired(_) if chain_id != TESTNET_CHAIN_ID => {
+            return Err(format!(
+                "DcapRequired requires testnet chain ID {TESTNET_CHAIN_ID}"
             ));
         }
         InitialTeeProfileV1::GramineDirectDev if chain_id != GRAMINE_DIRECT_DEV_CHAIN_ID => {
@@ -170,7 +179,7 @@ pub fn initial_tee_policy_v1(
 }
 
 /// Encode the canonical one-entry policy schedule into the genesis config
-/// field consumed by every production node.
+/// field consumed by every testnet node.
 pub fn tee_attestation_v1_genesis_field(policy: &TeePolicyV1) -> Result<Value, String> {
     let schedule = TeePolicyScheduleV1 {
         chain_id: policy.chain_id,
@@ -197,8 +206,9 @@ pub fn tee_attestation_v1_genesis_field(policy: &TeePolicyV1) -> Result<Value, S
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chain::{DEVNET_CHAIN_ID, TESTNET_CHAIN_ID};
 
-    fn production_measurement() -> ProductionSgxMeasurementV1 {
+    fn dcap_measurement() -> ProductionSgxMeasurementV1 {
         ProductionSgxMeasurementV1 {
             mrenclave: B256::repeat_byte(0x11),
             mrsigner: B256::repeat_byte(0x22),
@@ -209,30 +219,51 @@ mod tests {
     }
 
     #[test]
-    fn production_and_development_chain_identities_cannot_overlap() {
+    fn dcap_testnet_and_gramine_direct_devnet_identities_cannot_overlap() {
         let genesis_hash = B256::repeat_byte(0x33);
+        assert_eq!(GRAMINE_DIRECT_DEV_CHAIN_ID, DEVNET_CHAIN_ID);
+        assert_ne!(GRAMINE_DIRECT_DEV_CHAIN_ID, TESTNET_CHAIN_ID);
         assert!(initial_tee_policy_v1(
-            InitialTeeProfileV1::DcapRequired(production_measurement()),
-            GRAMINE_DIRECT_DEV_CHAIN_ID,
+            InitialTeeProfileV1::DcapRequired(dcap_measurement()),
+            TESTNET_CHAIN_ID,
+            genesis_hash,
+        )
+        .is_ok());
+        assert!(initial_tee_policy_v1(
+            InitialTeeProfileV1::DcapRequired(dcap_measurement()),
+            DEVNET_CHAIN_ID,
             genesis_hash,
         )
         .unwrap_err()
         .contains("reserved"));
         assert!(initial_tee_policy_v1(
+            InitialTeeProfileV1::DcapRequired(dcap_measurement()),
+            DEVNET_CHAIN_ID + 1,
+            genesis_hash,
+        )
+        .unwrap_err()
+        .contains("testnet"));
+        assert!(initial_tee_policy_v1(
             InitialTeeProfileV1::GramineDirectDev,
-            GRAMINE_DIRECT_DEV_CHAIN_ID + 1,
+            TESTNET_CHAIN_ID,
             genesis_hash,
         )
         .unwrap_err()
         .contains("requires reserved"));
+        assert!(initial_tee_policy_v1(
+            InitialTeeProfileV1::GramineDirectDev,
+            DEVNET_CHAIN_ID,
+            genesis_hash,
+        )
+        .is_ok());
     }
 
     #[test]
-    fn production_policy_pins_both_roles_to_one_release_measurement() {
-        let measurement = production_measurement();
+    fn dcap_policy_pins_both_roles_to_one_release_measurement() {
+        let measurement = dcap_measurement();
         let policy = initial_tee_policy_v1(
             InitialTeeProfileV1::DcapRequired(measurement),
-            GRAMINE_DIRECT_DEV_CHAIN_ID + 1,
+            TESTNET_CHAIN_ID,
             B256::repeat_byte(0x33),
         )
         .unwrap();
@@ -256,25 +287,25 @@ mod tests {
     }
 
     #[test]
-    fn production_policy_rejects_zero_release_measurements() {
+    fn dcap_policy_rejects_zero_release_measurements() {
         let genesis_hash = B256::repeat_byte(0x33);
         for measurement in [
             ProductionSgxMeasurementV1 {
                 mrenclave: B256::ZERO,
-                ..production_measurement()
+                ..dcap_measurement()
             },
             ProductionSgxMeasurementV1 {
                 mrsigner: B256::ZERO,
-                ..production_measurement()
+                ..dcap_measurement()
             },
             ProductionSgxMeasurementV1 {
                 minimum_tcb_evaluation_data_number: 0,
-                ..production_measurement()
+                ..dcap_measurement()
             },
         ] {
             assert!(initial_tee_policy_v1(
                 InitialTeeProfileV1::DcapRequired(measurement),
-                GRAMINE_DIRECT_DEV_CHAIN_ID + 1,
+                TESTNET_CHAIN_ID,
                 genesis_hash,
             )
             .is_err());
