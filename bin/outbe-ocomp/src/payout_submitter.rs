@@ -1027,7 +1027,9 @@ fn validate_record(record: &PayoutSubmissionRecordV1) -> Result<(), PayoutSubmis
     if record.generation == 0
         || record.leaf_count == 0
         || record.leaf_count > CONTRIBUTOR_CHUNK_CAPACITY
-        || !record.start_index.is_multiple_of(CONTRIBUTOR_CHUNK_CAPACITY)
+        || !record
+            .start_index
+            .is_multiple_of(CONTRIBUTOR_CHUNK_CAPACITY)
         || record.raw_transaction.is_empty()
         || record.raw_transaction.len() > MAX_RAW_PAYOUT_TRANSACTION_BYTES
         || matches!(

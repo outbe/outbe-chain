@@ -295,9 +295,26 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
     ) -> Result<VoteSubmissionOutcomeV1, VoteSubmissionErrorV1> {
         let record = self.journal.load(job_id)?;
         let Some(record) = record else {
-            return self.prepare(preparer, job_id, result_digest, canonical_result);
+            return self.prepare(preparer, job_id, result_digest, canonical_result, 1);
         };
         self.require_record_binding(&record, result_digest)?;
+        if matches!(
+            record.stage,
+            VoteSubmissionStageV1::Prepared | VoteSubmissionStageV1::Submitted
+        ) && self.nonce_was_bypassed(&record)?
+        {
+            // A different transaction from the shared sender consumed the
+            // pinned nonce, so these bytes can never land. Rebuild the same
+            // vote in a fresh envelope: the content is bound to job_id and
+            // result_digest and does not change.
+            return self.prepare(
+                preparer,
+                job_id,
+                result_digest,
+                canonical_result,
+                next_generation(record.generation)?,
+            );
+        }
         match record.stage {
             VoteSubmissionStageV1::Prepared => self.submit(record),
             VoteSubmissionStageV1::Submitted => self.observe_submission(record),
@@ -317,6 +334,7 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
         job_id: B256,
         result_digest: B256,
         canonical_result: &[u8],
+        generation: u64,
     ) -> Result<VoteSubmissionOutcomeV1, VoteSubmissionErrorV1> {
         if canonical_result.is_empty() {
             return Err(VoteSubmissionErrorV1::EmptyCanonicalResult);
@@ -347,7 +365,7 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
             .map_err(node_error)?;
         self.validate_prepared(&prepared, job_id, result_digest, nonce, max_fee_per_gas)?;
         self.journal.persist(VoteSubmissionRecordV1 {
-            generation: 1,
+            generation,
             stage: VoteSubmissionStageV1::Prepared,
             job_id,
             result_digest,
@@ -456,6 +474,29 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
             });
         }
         Ok(())
+    }
+
+    /// True when the account nonce moved past this envelope while no receipt
+    /// exists for its exact bytes — the pinned transaction can never land.
+    /// The receipt is checked after the nonce read so an inclusion racing
+    /// between the two queries keeps the record instead of healing it.
+    fn nonce_was_bypassed(
+        &self,
+        record: &VoteSubmissionRecordV1,
+    ) -> Result<bool, VoteSubmissionErrorV1> {
+        if self
+            .rpc
+            .canonical_nonce(record.sender_address)
+            .map_err(rpc_error)?
+            <= record.nonce
+        {
+            return Ok(false);
+        }
+        Ok(self
+            .rpc
+            .transaction_receipt(record.transaction_hash)
+            .map_err(rpc_error)?
+            .is_none())
     }
 
     fn receipt_is_canonical(&self, receipt: VoteReceiptV1) -> Result<bool, VoteSubmissionErrorV1> {
