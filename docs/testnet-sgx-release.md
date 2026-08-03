@@ -9,15 +9,16 @@ immutable OCI image and executed on Intel SGX x86_64.
 > `1.26.100.1-noble1` and Gramine `1.9`. This source-level activation is not by
 > itself authorization to roll out a production-mode genesis: the B1 checkpoint
 > must bind the reproducible artifact set, and H1, P1 and E1 must prove fresh
-> accepted Processor evidence, exact-release timing, and real
-> Validator/FullNode/32-validator E2E. Missing Processor hardware or an accepted
+> accepted Processor evidence, same-server exact-release QVL/full-block timing,
+> and reachable real Validator/FullNode E2E. A 32-validator network is not a
+> release gate. Missing Processor hardware or an accepted
 > Processor result blocks release rather than skipping it. A real Platform node
-> is verified fail-closed by the same production verifier when it joins; it is
+> is verified fail-closed by the same testnet verifier when it joins; it is
 > not a dedicated row in every release.
 
 The commands below remain the intended protected publication workflow. Until the
 I9 closure checkpoint names the exact signed commit and artifact digests, they are
-release-mechanics documentation only, not authorization to publish a production
+release-mechanics documentation only, not authorization to publish a testnet
 DCAP image.
 
 ## One-time repository setup

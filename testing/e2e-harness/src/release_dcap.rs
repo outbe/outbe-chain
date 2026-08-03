@@ -843,6 +843,9 @@ fn platform_status(status: DcapPlatformTcbStatusV1) -> &'static str {
     match status {
         DcapPlatformTcbStatusV1::UpToDate => "up-to-date",
         DcapPlatformTcbStatusV1::SWHardeningNeeded => "sw-hardening-needed",
+        DcapPlatformTcbStatusV1::ConfigurationAndSWHardeningNeeded => {
+            "configuration-and-sw-hardening-needed"
+        }
     }
 }
 
@@ -1003,7 +1006,7 @@ mod tests {
         let policy = testnet_policy(&measurements);
         assert_eq!(
             policy.accepted_platform_tcb_statuses,
-            PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded
+            PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded
         );
         assert_eq!(policy.accepted_qe_tcb_status, QvlTcbStatusV1::UpToDate);
         assert_eq!(policy.measurement_rules.len(), 2);

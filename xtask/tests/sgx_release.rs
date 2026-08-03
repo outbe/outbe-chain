@@ -762,7 +762,7 @@ fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
             "attestation": {
                 "collateral_valid_until": 1787808799_u64,
                 "pck_ca": pck_ca,
-                "platform_tcb_status": "up-to-date",
+                "platform_tcb_status": "configuration-and-sw-hardening-needed",
                 "public_verifier": "enclave-resident-begin-chunk-finish-v1"
             },
             "collateral": {

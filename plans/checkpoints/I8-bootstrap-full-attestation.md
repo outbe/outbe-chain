@@ -108,7 +108,7 @@ wires this seam to real quote/collateral collection and the startup producer.
 | No user work in block 1 | canonical layout rejects every non-empty user zone | `PASS` |
 | Deduplicated bytes, non-deduplicated work | two-participant shared collateral test retains two QVL charges and 16 logical refs | `PASS` |
 | Dense gas closure | exact `309,931,488` precharge vector and checked arithmetic/cap tests | `PASS` |
-| 32-validator capacity | 64-rule, near-896-KiB shared-collateral payload and the exact five transaction encodings fit gas/P2P caps; private post-verifier state fixture creates exactly 32 ready bindings | `PASS` |
+| Synthetic 32-participant cap vector | 64-rule, near-896-KiB shared-collateral payload and the exact five transaction encodings fit gas/P2P caps; private post-verifier state fixture creates exactly 32 ready bindings. This is checked-arithmetic capacity evidence, not a required network launch or release E2E. | `PASS` |
 | Visible gas accounting | gas plan reserves precharge; success/failure receipt harness publishes intrinsic + precharge + explicit CE gas | `PASS` |
 | Proposer/validator block schedule | payload builder selects 500M/30M; consensus rejects 500M after height 1 | `PASS` |
 | Pre-A0 compatibility | default OST2 codec, engine bridge, legacy proposer injection and full builder re-execution remain green | `PASS` |
@@ -152,7 +152,7 @@ Observed results:
   pre-signing rejection;
 - V1 policy and schedule vectors: 25 passed;
 - default and feature-enabled system transaction suites: 31 passed each;
-- TeeRegistry state machine, including the 32-validator private
+- TeeRegistry state machine, including the synthetic 32-participant private
   post-verifier fixture: 36 passed;
 - EVM proposer/verifier, fatality and receipt accounting: 177 passed;
 - consensus validation and existing DKG behavior: 345 passed;
@@ -187,7 +187,7 @@ DKG epochs were rejected by OST3, and the production block-1 builder still
 iterated the user txpool. Focused regressions reproduced each issue. Checked
 length/gas preflight, genesis authority compatibility and unconditional
 block-1 pool suppression made those tests GREEN. The reviews also found that
-the original 32-validator RLP fixture used tiny evidence and only one system
+the original synthetic 32-participant RLP fixture used tiny evidence and only one system
 transaction; it was replaced by a 64-rule near-cap logical-evidence fixture
 that encodes all five mandatory block-1 transactions. Hardware provenance is
 still explicitly not claimed.

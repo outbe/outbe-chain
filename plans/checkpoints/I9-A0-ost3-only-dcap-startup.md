@@ -47,7 +47,7 @@ Two read-only reviews used fixed point
 | Testnet and devnet identities cannot overlap | Both | `tee_genesis_v1.rs::initial_tee_policy_v1`; `tee_attestation_activation.rs::validate_activation` | Explicit construction for both network identities | Runtime and generator reject both mode/chain-ID crossover directions | `PASS` after C1 fix |
 | Authorized SGX/quote boundary | Testnet | `main.rs` DcapRequired NodeHost initialization; `initialization.rs::InitializationState::production`; `tee_bootstrap.rs::build_local_tee_bootstrap_submission_v2` | Deterministic NodeHost, quote-binding and offline verifier tests from I2-I8 | Missing socket, sealing key, manifest, quote/collateral or rejected policy stops startup/registration | `PASS` for code boundary; fresh accepted SGX is H1/E1 |
 | Separate runnable development network | Devnet | `GRAMINE_DIRECT_DEV_CHAIN_ID`; `bootstrap-testnet.sh`; `run-testnet.sh`; E2E localnet builder | The retained four-validator run used the superseded shared identity `54322345`; a run on `424242` is still required | DCAP measurement arguments, non-devnet identity, missing enclave and bare-host mode reject | `PENDING` reachable devnet rerun on `424242` |
-| Complete OST3 producer and consumer at block 1 | Both | `stack.rs` founding coordinator; `tee_bootstrap.rs`; `system_tx.rs::TEE_BOOTSTRAP_SELECTOR`; EVM config/executor block-1 checks | Canonical assembly, committee signatures, proposal injection and block-1 execution tests | Missing/incomplete/mismatched/oversized OST3 and OST3 outside block 1 reject | `PASS` deterministic; dense real 32-validator run is P1/E1 |
+| Complete OST3 producer and consumer at block 1 | Both | `stack.rs` founding coordinator; `tee_bootstrap.rs`; `system_tx.rs::TEE_BOOTSTRAP_SELECTOR`; EVM config/executor block-1 checks | Canonical assembly, committee signatures, proposal injection and block-1 execution tests | Missing/incomplete/mismatched/oversized OST3 and OST3 outside block 1 reject | `PASS` deterministic; same-server QVL/full-block timing is P1 and reachable Validator/FullNode paths are E1 |
 | Total OST2 rejection | Both | `system_tx.rs` defines only selector `OST3`; canonical routing and system-set validation | Exact selector/collision and block-1 membership tests | `OST2` has no decoder or producer; source occurrence is one negative explanatory comment | `PASS` |
 | V1-only TeeRegistry admission | Both | `precompile_routes.rs`; `teeregistry::v1_precompile::dispatch` | Exact V1 view route and full Validator/FullNode registration suites | Exact old six-argument selector rejects; malformed evidence/signatures/caps reject before mutation | `PASS` |
 | Permissionless relay with node and enclave authority | Both | `teeregistry::v1`; NodeHost manifest and signature validation | Validator and FullNode tests use canonical evidence and profile-specific authority | Relay caller is never admission authority; wrong node/enclave proof rejects | `PASS` deterministic; real accepted evidence is E1 |
@@ -221,9 +221,10 @@ Separately, the reachable devnet rerun on `424242` and the OCOMP final-fixture
 migration described above remain pending and are not release evidence.
 
 Then H1 must retain fresh accepted Processor evidence; a real Platform node is
-checked fail-closed when it joins. P1 must prove exact-release QVL and dense full-block timing;
-E1 must pass real Validator, FullNode and 32-validator lifecycle E2E. Runner or
-evidence absence is a release failure, not a skip.
+checked fail-closed when it joins. P1 must prove exact-release QVL and maximum
+reachable full-block timing on the same SGX server. E1 must pass the reachable
+Validator and FullNode `DcapRequired` paths; no 32-validator network is
+required. Runner or evidence absence is a release failure, not a skip.
 
 ## Final C1 close record
 

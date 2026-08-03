@@ -16,7 +16,7 @@ QUOTE_PATH = (
 )
 CRL_FIXTURE_ROOT = (
     REPO_ROOT
-    / "crates/system/tee/tests/fixtures/intel-dcap-1.26-intent-bound-processor-negative"
+    / "crates/system/tee/tests/fixtures/intel-dcap-1.26-intent-bound-processor"
 )
 
 

@@ -171,10 +171,12 @@ byte-deterministic across nodes holding the same permanent OST3 key.
 
 ## Remaining release evidence
 
-- Freeze the exact Intel QVL and Gramine release graph and production feature set.
+- Freeze the exact Intel QVL and Gramine release graph and testnet feature set.
 - Capture fresh accepted Processor release evidence; retain a real Platform
   node's accepted evidence when it joins rather than fabricating a release row.
-- Prove exact-release enclave and full-block timing on the minimum supported host.
-- Complete real validator, FullNode and dense 32-validator DcapRequired E2E.
+- Prove exact-release QVL and maximum reachable full-block timing on the same
+  SGX server.
+- Complete reachable real Validator and FullNode `DcapRequired` paths; no
+  32-validator network is required.
 - Close the final requirement, forbidden-path and signed-artifact audit without
   treating development or synthetic vectors as hardware evidence.

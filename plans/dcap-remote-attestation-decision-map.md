@@ -173,27 +173,28 @@ Type: Discuss
 
 ### Question
 
-Which code identity and Intel TCB results are acceptable in production?
+Which code identity and Intel TCB results are acceptable on testnet?
 
 ### Answer
 
 `RESOLVED`.
 
-- Platform TCB may be `UpToDate` or `SWHardeningNeeded`.
+- Platform TCB may be `UpToDate`, `SWHardeningNeeded`, or
+  `ConfigurationAndSWHardeningNeeded`.
 - QE TCB must be `UpToDate`.
 - TCB Info schema v3 remains mandatory. A schema-v2 result is rejected even
   when its reported status is `UpToDate`.
-- Intel-authenticated advisory IDs accompanying an admitted
-  `SWHardeningNeeded` Platform result are preserved in the stable verdict.
-- Configuration-needed, out-of-date and revoked Platform or QE results are
-  rejected. `SWHardeningNeeded` is not admitted for QE.
+- Intel-authenticated advisory IDs accompanying an admitted hardening-needed
+  Platform result are preserved in the stable verdict.
+- Other configuration-needed, out-of-date and revoked Platform or QE results
+  are rejected. QE remains exactly `UpToDate`.
 - Admission requires exact `MRENCLAVE`, matching `MRSIGNER`, `ISVPRODID`, and
   minimum `ISVSVN`.
 - `MRSIGNER` alone or a higher SVN never admits unknown code.
 
-The initial policy follows Secret Network's practical acceptance of
-`SWHardeningNeeded`, but makes the accepted Platform set explicit and keeps QE
-strict. A later protocol software update may carry one exact successor policy
+The initial testnet policy follows Secret Network's practical warning-status
+acceptance, but makes the accepted Platform set explicit and keeps QE strict.
+A later protocol software update may carry one exact successor policy
 that tightens Platform admission to `UpToDate` only. The successor is staged
 and activated through the existing Update lifecycle; existing leases remain
 valid only until their bounded expiry and cannot renew under a policy they no
@@ -684,7 +685,8 @@ The production native adapter and Outbe wrapper:
 - invoke QVL inside the Outbe Gramine enclave with explicit collateral and
   timestamp, `p_qve_report_info = NULL`, and no host-result input;
 - parse the same authenticated signed documents to enforce TCB Info schema v3,
-  separate Platform `UpToDate | SWHardeningNeeded`, QE `UpToDate`, minimum TCB
+  separate Platform `UpToDate | SWHardeningNeeded |
+  ConfigurationAndSWHardeningNeeded`, QE `UpToDate`, minimum TCB
   evaluation number, FMSPC/PCE ID, exact measurement policy and pinned Intel
   root;
 - preserve authenticated Platform advisory IDs in the stable verdict;
@@ -723,7 +725,7 @@ strictly after the verifier boundary; it accepts only typed pre-verified
 non-test compilation. Those tests are not DCAP end-to-end positives. I9 closes
 the corresponding real `DcapRequired` validator, full-node and block-1 flows.
 
-Production packaging uses exactly enclave package `outbe-tee-enclave`, binary
+Testnet release packaging uses exactly enclave package `outbe-tee-enclave`, binary
 `outbe-tee-enclave` and application feature `native-dcap`; it never uses
 `--all-features` or `--all-targets`. Capture, mock, trace and test-only targets
 or features are absent. The I9 activation commit must update the currently

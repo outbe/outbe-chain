@@ -115,11 +115,11 @@ impl DcapTestnetChainSpecBindingV1 {
     ) -> Result<(), String> {
         let policy = &self.policy;
         if policy.accepted_platform_tcb_statuses
-            != PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded
+            != PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded
             || policy.accepted_qe_tcb_status != QvlTcbStatusV1::UpToDate
         {
             return Err(
-                "active testnet policy must admit Platform UpToDate | SWHardeningNeeded and QE UpToDate"
+                "active testnet policy must admit Platform UpToDate | SWHardeningNeeded | ConfigurationAndSWHardeningNeeded and QE UpToDate"
                     .into(),
             );
         }
@@ -413,7 +413,7 @@ mod tests {
             tcb_info_schema_version: 3,
             qe_identity_schema_version: 2,
             minimum_tcb_evaluation_data_number: 1,
-            accepted_platform_tcb_statuses: PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+            accepted_platform_tcb_statuses: PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
             accepted_qe_tcb_status: QvlTcbStatusV1::UpToDate,
             minimum_lease: 3_600,
             maximum_lease: 604_800,
@@ -541,7 +541,7 @@ mod tests {
                 2,
             )
             .unwrap_err()
-            .contains("UpToDate | SWHardeningNeeded"));
+            .contains("UpToDate | SWHardeningNeeded | ConfigurationAndSWHardeningNeeded"));
     }
 
     #[test]

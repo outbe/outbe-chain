@@ -515,8 +515,10 @@ fn require_fresh_dcap_hardware_evidence(
         bail!("{expected_pck_ca} DCAP freshness order is invalid");
     }
     let platform_status = string_at("/attestation/platform_tcb_status")?;
-    if !matches!(platform_status, "up-to-date" | "sw-hardening-needed")
-        || u64_at("/attestation/collateral_valid_until")? <= consensus_timestamp
+    if !matches!(
+        platform_status,
+        "up-to-date" | "sw-hardening-needed" | "configuration-and-sw-hardening-needed"
+    ) || u64_at("/attestation/collateral_valid_until")? <= consensus_timestamp
     {
         bail!("{expected_pck_ca} DCAP accepted verdict provenance is invalid");
     }

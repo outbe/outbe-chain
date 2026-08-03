@@ -972,15 +972,18 @@ impl QvlTcbStatusV1 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum PlatformTcbStatusSetV1 {
+    /// Admit only Intel `UpToDate`.
     UpToDateOnly = 0x01,
-    UpToDateOrSWHardeningNeeded = 0x02,
+    /// Admit `UpToDate`, `SWHardeningNeeded`, or
+    /// `ConfigurationAndSWHardeningNeeded` while preserving the exact verdict.
+    UpToDateOrHardeningNeeded = 0x02,
 }
 
 impl PlatformTcbStatusSetV1 {
     fn decode(value: u8) -> Result<Self, CodecError> {
         match value {
             0x01 => Ok(Self::UpToDateOnly),
-            0x02 => Ok(Self::UpToDateOrSWHardeningNeeded),
+            0x02 => Ok(Self::UpToDateOrHardeningNeeded),
             value => Err(CodecError::UnknownDiscriminant {
                 field: "accepted Platform TCB status set",
                 value,

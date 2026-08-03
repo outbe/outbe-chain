@@ -18,11 +18,12 @@ the quote binds `node_host_authorization_hash`; there is no role-key set.
 genesis/policy/single-`NodeHost` commitment. The intent also binds the exact
 operation (`register`, `renew`, measurement transition, or replacement).
 
-The 2026-07-30 decision amendment keeps V1 scoped to x86_64 Intel SGX and
+The 2026-08-03 testnet policy amendment keeps V1 scoped to x86_64 Intel SGX and
 encodes two exact Platform TCB admission sets. The initial policy admits
-`UpToDate` and `SWHardeningNeeded`; a later governance policy may tighten this
-to `UpToDate` only. QE remains `UpToDate` only, and TCB Info schema v3 remains
-mandatory.
+`UpToDate`, `SWHardeningNeeded`, and
+`ConfigurationAndSWHardeningNeeded`; a later governance policy may tighten
+this to `UpToDate` only. QE remains `UpToDate` only, and TCB Info schema v3
+remains mandatory.
 
 ## Outcome and includes audit
 
@@ -45,7 +46,7 @@ mandatory.
 | `cap-1`, `cap`, `cap+1`, and overflow | Aggregate evidence boundary vectors cover all three sizes; quote/component/framing/rule caps and `usize`→gas overflow reject deterministically. | Pass |
 | No active V1 selector or storage layout | Repository scan finds the V1 module only behind the direct-harness Cargo feature and its tests. The module declares no address, selector, state schema, or runtime registration. | Pass |
 | Legacy behavior byte-identical | Default feature set remains empty. The complete default `outbe-primitives` suite and complete `outbe-evm` suite pass; the only active-path change is additive immutable context propagation. | Pass |
-| Revised TCB policy is governance-tightenable | The public schedule vector starts with `UpToDateOrSWHardeningNeeded`, activates `UpToDateOnly` through a predecessor-bound policy, round-trips both values, and rejects an unknown status set. QE has only the canonical `UpToDate` value. | Pass |
+| Revised TCB policy is governance-tightenable | The public schedule vector starts with `UpToDateOrHardeningNeeded`, activates `UpToDateOnly` through a predecessor-bound policy, round-trips both values, and rejects an unknown status set. QE has only the canonical `UpToDate` value. | Pass |
 | Production architecture is bounded | Decision, evidence and implementation documents consistently specify x86_64 Intel SGX only. ARM TEE, aarch64 fixtures and cross-architecture release gates are explicit V1 non-goals. | Pass |
 
 ## Fixed vectors

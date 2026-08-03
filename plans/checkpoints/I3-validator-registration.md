@@ -54,7 +54,7 @@ quote-verification entry points.
 | I3 criterion | Authoritative evidence | Result |
 |---|---|---|
 | Full verifier is enclave-resident and input-exact | authenticated bounded Begin/Chunk/Finish implementation; request-hash and signed-outcome tests; production-only transport gate | `PASS` |
-| Real Processor evidence reaches enclave QVL | intent-bound Intel Processor fixture traverses authorized Noise and returns the stable strict-policy `PlatformTcbRejected` outcome | `PASS` policy-negative; accepted hardware flow remains I9 |
+| Real Processor evidence reaches enclave QVL | intent-bound Intel Processor fixture traverses authorized Noise and returns the stable accepted testnet verdict for `ConfigurationAndSWHardeningNeeded` with advisories preserved | `PASS`; exact-release fresh hardware flow remains I9 |
 | Unattested evidence rejects at the byte boundary | canonical `GramineDirectDev` evidence traverses the same authorized Noise upload and returns `EvidenceNonCanonical`; development session cannot invoke the verifier | `PASS` |
 | Validator identity and both proofs of possession are exact | actual EVM address plus BLS MinPk public key, validator-set lookup, node ECDSA PoP and enclave Ed25519 PoP over one intent hash | `PASS` |
 | Wrong profile and registration conflicts reject | canonical FullNode-profile intent at the post-verifier boundary plus one-to-one node/enclave/binding, stale nonce, key, measurement and strict-status negatives | `PASS` |

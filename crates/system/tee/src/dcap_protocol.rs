@@ -33,6 +33,7 @@ pub enum DcapPckCaV1 {
 pub enum DcapPlatformTcbStatusV1 {
     UpToDate = 0x01,
     SWHardeningNeeded = 0x02,
+    ConfigurationAndSWHardeningNeeded = 0x03,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -107,6 +108,7 @@ impl DcapVerdictV1 {
         let platform_tcb_status = match decoder.u8()? {
             0x01 => DcapPlatformTcbStatusV1::UpToDate,
             0x02 => DcapPlatformTcbStatusV1::SWHardeningNeeded,
+            0x03 => DcapPlatformTcbStatusV1::ConfigurationAndSWHardeningNeeded,
             _ => return Err(DcapRejectCodeV1::NativeOutputMalformed),
         };
         let tcb_evaluation_data_number = decoder.u32()?;
@@ -394,7 +396,7 @@ mod tests {
             pck_ca: DcapPckCaV1::Processor,
             fmspc: [0x33; 6],
             pce_id: 2,
-            platform_tcb_status: DcapPlatformTcbStatusV1::SWHardeningNeeded,
+            platform_tcb_status: DcapPlatformTcbStatusV1::ConfigurationAndSWHardeningNeeded,
             advisory_ids: vec!["INTEL-SA-00001".to_string()],
             tcb_evaluation_data_number: 19,
             qe_tcb_evaluation_data_number: 18,

@@ -158,9 +158,10 @@ PCE ID `0000` and a 16-byte PPID. QVL returns:
 - QE: `UpToDate`;
 - aggregate: `ConfigurationAndSWHardeningNeeded`.
 
-It is therefore a valid cryptographic fixture and a negative Outbe admission
-fixture. The TDX fixture returns `UpToDate`, but V1 rejects it before QVL policy
-admission because production accepts SGX quote v3 only.
+It is therefore a valid cryptographic fixture but remains a negative Outbe
+admission fixture because its signed `REPORT_DATA` is not an Outbe intent. The
+TDX fixture returns `UpToDate`, but V1 rejects it before QVL policy admission
+because testnet accepts SGX quote v3 only.
 
 The saved quote also carries `REPORT_DATA = "Hello, world!" || zeroes`; those
 signed bytes cannot be changed without invalidating the quote. It therefore
@@ -171,7 +172,7 @@ separate fail-not-skip I9 release requirement.
 On 2026-07-31 the I1 capture path produced a second real Processor-CA corpus,
 this time bound to the checked-in canonical `RegistrationIntentV1` and its
 complete 64-byte `report_data`. It is stored at
-`crates/system/tee/tests/fixtures/intel-dcap-1.26-intent-bound-processor-negative/`
+`crates/system/tee/tests/fixtures/intel-dcap-1.26-intent-bound-processor/`
 with capture provenance and per-file SHA-256 checksums. The quote is 4,600
 bytes with SHA-256
 `f7626ab64e0c2d182984390e9bab26d20f7b96af10dab20b43e6559edc118b1d`.
@@ -183,12 +184,12 @@ Pinned QVL 1.26 returns:
 - QE supplemental evaluation reference: `0` (unavailable in this QVL output);
 - earliest all-collateral expiration: `1787808799`.
 
-The fixture proves real intent binding and is permanently classified as a
-negative admission vector. The strict Platform policy remains
-`UpToDate | SWHardeningNeeded`; it is not weakened to admit the rented capture
-host. An accepted intent-bound Processor-CA capture from an SGX host that
-already returns an allowed Platform status is still required before I9 may
-activate production DCAP, but it does not block hardware-free I1 development.
+The fixture proves real intent binding and passes the explicit testnet Platform
+policy `UpToDate | SWHardeningNeeded |
+ConfigurationAndSWHardeningNeeded`. Its authenticated advisories remain in the
+stable accepted verdict, while QE remains exactly `UpToDate`. A fresh capture
+for the exact signed testnet release is still required by I9; this historical
+replay proves implementation correctness, not release freshness.
 
 This capture also fixed the wrapper interpretation of QVL 1.26 supplemental
 data. The combined TCB evaluation reference is the minimum of the signed
@@ -219,11 +220,11 @@ hardware evidence:
   vectors and immutable real quote/collateral bytes run through the public
   verifier and pinned native QVL at a fixed historical consensus timestamp;
 - the saved timestamp proves deterministic historical verification only;
-  production still supplies its current consensus timestamp, so expired
+  testnet still supplies its current consensus timestamp, so expired
   collateral rejects normally;
-- the current rented SGX host remains useful for periodic quote-generation and
-  capture-path smoke tests whose expected admission result is the authentic
-  `ConfigurationAndSWHardeningNeeded` rejection;
+- the current rented SGX host remains eligible for exact-release capture and
+  benchmark work when it returns the authenticated
+  `ConfigurationAndSWHardeningNeeded` result;
 - a new live capture is required when the canonical `report_data` binding,
   evidence grammar, QVL ABI/version, Intel trust root or release measurement
   changes, not once per test case;
@@ -294,19 +295,20 @@ The superseded pure-Rust prototype accepted both:
 - one byte appended inside the declared quote authentication-data region after
   increasing that region's length.
 
-The prototype's exact SGX-v3 length grammar rejected both. The native
-production adapter must perform the same strict check before QVL and must
+The prototype's exact SGX-v3 length grammar rejected both. The native testnet
+adapter must perform the same strict check before QVL and must
 require:
 
 - exact quote v3/SGX/P-256/Intel QE vendor/type-5 certification data;
 - complete consumption of both the outer quote and inner authentication data;
 - exact canonical DER components and exact signed-JSON bytes;
 - TCB Info schema exactly v3, regardless of the reported Platform status;
-- Platform status `UpToDate` or `SWHardeningNeeded`, with authenticated
-  advisory IDs preserved in the stable verdict;
+- Platform status `UpToDate`, `SWHardeningNeeded`, or
+  `ConfigurationAndSWHardeningNeeded`, with authenticated advisory IDs
+  preserved in the stable verdict;
 - QE status exactly `UpToDate`;
-- rejection of configuration-needed, out-of-date and revoked Platform or QE
-  results, and of `SWHardeningNeeded` for QE;
+- rejection of all other configuration-needed, out-of-date and revoked
+  Platform or QE results; QE accepts no warning status;
 - both signed documents' minimum TCB evaluation data number;
 - verified PCK FMSPC and PCE ID equal the signed TCB Info values;
 - exact policy measurement and pinned Intel root;
@@ -403,15 +405,16 @@ At the 896-KiB evidence cap and 64 rules:
 - the 32-participant dense `OST3` precharge is `309,931,488`;
 - maximum all-non-zero `OST3` intrinsic gas is `20,992,520`;
 - combined `OST3` is `330,924,008`, leaving `169,075,992` of the bootstrap
-  block for the other four mandatory system transactions.
+block for the other four mandatory system transactions. This is a synthetic
+checked-arithmetic boundary, not a required 32-validator launch.
 
 Batch-local collateral deduplication reduces encoded bytes only. Verification
 gas is charged for every participant's logical evidence dimensions. I1 proves
 the deterministic caps, allocation ordering, checked arithmetic and exact gas
 formula; hardware-free Gramine Direct timing is not production SGX capacity
 evidence. I9 must benchmark the exact-release enclave-resident native QVL and
-full block path on the published minimum supported validator profile. If that
-path cannot satisfy the documented block budgets, production activation stops
+full-block path on the same SGX server used for the release QVL measurements.
+If that path cannot satisfy the documented block budgets, testnet activation stops
 instead of silently changing the schedule or weakening verification.
 
 I8 wires OST3 as a distinct canonical variant through validator routing,
@@ -441,7 +444,7 @@ I1 deterministic correctness evidence:
 - byte-stable verdicts, host-verdict rejection, evidence tamper and
   missing-native-stack rejection pass on supported x86_64 CI builds.
 
-I9 empirical production-release evidence:
+I9 empirical testnet-release evidence:
 
 - a fresh real accepted Processor-CA fixture for the exact release
   enclave/policy; its absence is a release failure;
@@ -451,9 +454,10 @@ I9 empirical production-release evidence:
 - a real Platform node is admitted only after its own fresh Platform-CA quote
   and collateral pass the same public verifier; that evidence is retained when
   available but is neither synthetic nor a per-release gate;
-- exact-release `gramine-sgx` valid, invalid-early, invalid-late and dense
-  32-validator benchmarks run on the published minimum supported x86_64
-  validator profile and keep full-block execution inside its timing budget;
+- on the same SGX server, exact-release `gramine-sgx` measures valid,
+  invalid-early and invalid-late QVL paths and a maximum reachable full-block
+  workload inside the consensus timing budget; no 32-validator network is an
+  I9 release requirement;
 - the signed Gramine release manifest pins the selected QVL/native dependency
   artifacts, and SGX/DCAP end-to-end release CI is fail-not-skip.
 
@@ -463,5 +467,5 @@ population, so V1 has no fabricated or undefined "large real CRL" threshold.
 If Intel later publishes a materially larger valid CRL, it is retained as a
 regression fixture without changing the evidence classification above.
 
-ARM TEE and aarch64 are not production targets for V1 and therefore do not
+ARM TEE and aarch64 are not testnet targets for V1 and therefore do not
 carry fixture, verdict or release-gate requirements.

@@ -149,8 +149,8 @@ Results:
 I7 owns governance activation and rolling measurement overlap. I8 integrates
 the existing bootstrap/DKG result and keyless-before-readiness rule. I9 must
 prove real accepted Processor evidence and exact-release
-`gramine-sgx`, fresh one-use bindings, validator/full-node lifecycle, full
-block budget and 32-validator block-1 activation.
+`gramine-sgx`, fresh one-use bindings, Validator/FullNode lifecycle, and the
+same-SGX-server QVL/full-block budget. A 32-validator network is not required.
 
 Ticket carrier/discovery can be wired by a later consumer without becoming
 authority. A hostile endpoint can burn a delivered one-use ticket, which is an

@@ -28,5 +28,5 @@ cargo test --locked --offline \
   --features dcap-fixture-tool \
   --test dcap_fixture_tool
 
-cd crates/system/tee/tests/fixtures/intel-dcap-1.26-intent-bound-processor-negative
+cd crates/system/tee/tests/fixtures/intel-dcap-1.26-intent-bound-processor
 sha256sum --check SHA256SUMS

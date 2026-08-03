@@ -32,7 +32,7 @@ I0 manifest/context
 I1 ──────────────────────────────────┘
 I3/I4 ─> I7 update-bound enclave policy
 I1/I3 ─> I8 genesis bootstrap
-I0..I8 ─> I9 production activation
+I0..I8 ─> I9 testnet activation
 ```
 
 Each item is a vertical, testable behavior. Horizontal refactors are included
@@ -101,11 +101,12 @@ Outbe evidence. A real Intel-rooted Platform-CA quote requires registered
 multi-package SGX hardware. It is therefore required from the real Platform
 node at admission, not fabricated or required from every release runner.
 
-**I1 checkpoint (2026-07-31):** a real Processor-CA negative corpus is now
+**I1 checkpoint (updated 2026-08-03):** a real Processor-CA corpus is now
 bound to canonical `RegistrationIntentV1::report_data()`. It exercises the
-public verifier and is rejected as `PlatformTcbRejected` because the rented
-capture host returns `ConfigurationAndSWHardeningNeeded`; policy is not
-weakened. The QVL 1.26 supplemental-data reconciliation now uses the combined
+public verifier and is accepted by the explicit testnet Platform policy when
+the rented capture host returns `ConfigurationAndSWHardeningNeeded`; QE remains
+exactly `UpToDate`, and authenticated advisory IDs remain in the verdict. The
+QVL 1.26 supplemental-data reconciliation now uses the combined
 Platform/QE evaluation reference, accepts a zero unavailable QE-specific
 reference, and enforces the native all-collateral time window. Exact-expiration
 and malformed-reference tests cover those reachable results.
@@ -117,18 +118,17 @@ replayed by the mandatory `.github/workflows/ci.yml` `dcap-replay` x86_64 job
 through the public verifier and pinned native QVL at a fixed historical
 consensus timestamp, without SGX hardware, QPL/PCCS, network or live collateral
 fetch. `scripts/release/test_dcap_replay_ci.sh` is the identical local entry
-point. Its authentic `ConfigurationAndSWHardeningNeeded` result is preserved;
-no fake verifier turns it into an accepted verdict. The complete
+point. Its authentic `ConfigurationAndSWHardeningNeeded` result and advisories
+are preserved in the accepted verdict. The complete
 compiler-observed Intel QVL header closure is digest-verified and staged into
 an isolated include tree; the C adapter compile-time asserts all nine SGX
 result values before the independent Rust status matrix executes.
 Full criterion-by-criterion evidence is recorded in
 `plans/checkpoints/I1-deterministic-verifier-closure.md`.
 
-A second real intent-bound Processor-CA capture from a host with an allowed
-Platform status remains mandatory, but it is I9 release evidence rather than
-an I1 implementation blocker. This relocation does not authorize a broader
-status matrix or synthetic positive.
+A fresh real intent-bound Processor-CA capture for the exact signed testnet
+release remains mandatory I9 evidence. The historical accepted replay proves
+the implementation path but cannot replace that freshness gate.
 
 Before I9, toolchain staging is intentionally separate from container delivery:
 `release/project-toolchain-v1.json` is the single exact version pin and is
@@ -405,7 +405,7 @@ activation state machine.
   calldata/state/event/API field; public-evidence linkability remains
   documented.
 
-## I8 — Bootstrap 32 validator enclaves with full block-1 attestation
+## I8 — Bootstrap validator enclaves with full block-1 attestation
 
 **Outcome:** the OST3 block-1 path verifies every initial validator's complete
 DCAP evidence before committing bootstrap state.
@@ -431,8 +431,10 @@ OST3 and makes OST2 invalid for the activated production manifest.
 
 **Acceptance:**
 
-- a 32-validator production-shaped downstream fixture fits gas, RLP and
-  wall-time budgets through the private post-verifier capability;
+- the checked-in 32-participant synthetic boundary fixture fits gas and RLP
+  caps through the private post-verifier capability; it is retained as an
+  already-completed deterministic capacity test, not as a required logical
+  32-validator launch or hardware benchmark;
 - the same accepted block-1 flow through real public DCAP verification is an I9
   release E2E gate and is not claimed by the production-shaped fixture;
 - missing/invalid evidence or committee mismatch makes block 1 invalid;
@@ -449,10 +451,10 @@ OST3 and makes OST2 invalid for the activated production manifest.
 - pre-A0 OST2 producer/startup compatibility remains covered; no I8 test or
   checkpoint claims that production is already emitting OST3.
 
-## I9 — Activate production DCAP and make the release gate fail closed
+## I9 — Activate testnet DCAP and make the release gate fail closed
 
-**Outcome:** the production chain activates the V1 manifest only after all
-determinism, capacity and x86_64 SGX real-hardware evidence passes.
+**Outcome:** testnet activates the V1 manifest only after deterministic
+correctness and the necessary x86_64 SGX real-hardware evidence pass.
 
 **Includes:**
 
@@ -470,7 +472,7 @@ determinism, capacity and x86_64 SGX real-hardware evidence passes.
 - a published minimum supported x86_64 validator CPU/core/memory/EPC profile
   and exact-release `gramine-sgx` QVL/full-block benchmark matrix on that
   profile;
-- an exact production binary/feature allowlist that excludes test tooling;
+- an exact testnet release binary/feature allowlist that excludes test tooling;
 - release dependency/root checks and forbidden fail-open symbol scans.
 
 For I9, `fresh` means that the release job first freezes the candidate enclave
@@ -486,9 +488,9 @@ historical replay cannot satisfy this definition.
 - real SGX/DCAP job is fail-not-skip;
 - a real Processor x86_64 verdict/benchmark passes for the exact release
   artifacts and active policy; absence of that accepted result blocks
-  production activation;
+  testnet activation;
 - every real Platform node remains keyless and outside consensus until its own
-  fresh Platform-CA evidence passes the same production public verifier;
+  fresh Platform-CA evidence passes the same public verifier;
 - fresh actual Processor and root CRLs record issuer/type, validity dates, byte
   size and SHA-256 and fit the protocol caps; the release benchmark uses the
   largest actual matching Processor collateral bundle available from PCS;
@@ -497,19 +499,19 @@ historical replay cannot satisfy this definition.
   evidence only and never count as Intel hardware evidence;
 - a missing hardware runner fails the release gate rather than skipping it,
   while ordinary I1-I8 CI remains hardware-free through immutable replay;
-- the production bundle contains only allowlisted targets and the exact
-  production feature set: enclave package `outbe-tee-enclave`, binary
+- the testnet bundle contains only allowlisted targets and the exact release
+  feature set: enclave package `outbe-tee-enclave`, binary
   `outbe-tee-enclave`, and application feature `native-dcap`; capture, mock,
   trace and any future fake-verifier surface is absent, and neither
   `--all-features` nor `--all-targets` is used;
 - the I9 activation change updates
   `release/reproducible-elf-build-v1.json` from its staged empty feature list to
   exactly `["native-dcap"]`; before that activation the empty list remains an
-  explicit pending state, not a production DCAP claim;
-- exact-release `gramine-sgx` valid, invalid-early, invalid-late and dense
-  32-validator benchmarks run on the published minimum supported x86_64
-  validator profile, and its full-block execution remains inside the consensus
-  timing budget;
+  explicit pending state, not a testnet DCAP claim;
+- on the same SGX server, exact-release `gramine-sgx` measures QVL valid,
+  invalid-early and invalid-late paths and executes the maximum reachable
+  full-block workload inside the consensus timing budget; no logical or
+  physical 32-validator network is required;
 - missing or mismatched QVL/native dependencies, collateral or SGX
   support, including an unsupported architecture, is deterministic rejection;
 - pre-A0/legacy chain behavior remains covered and intentional.

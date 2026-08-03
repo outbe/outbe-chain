@@ -48,8 +48,11 @@ The owner selected the minimal split:
   timestamp without SGX hardware or live PCS/PCCS; live capture is not repeated
   per test case.
 
-This changes fixture staging, not the production verifier or admission policy.
-Production still admits both Processor and Platform PCK CA chains only after
+The 2026-08-03 testnet policy amendment admits the intent-bound real fixture's
+`ConfigurationAndSWHardeningNeeded` Platform result, preserves its advisories,
+and still requires QE `UpToDate`. This changes the accepted Platform status
+set, not the verification boundary. Testnet admits both Processor and Platform
+PCK CA chains only after
 the same native Intel QVL, canonical collateral, time, status, identity and
 measurement checks succeed.
 

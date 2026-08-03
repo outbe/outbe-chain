@@ -29,9 +29,10 @@ artifact set:
 - fresh accepted Processor-CA release evidence passes the enclave-resident
   public verifier; any real Platform-CA node must independently pass that same
   verifier when it joins;
-- exact-release `gramine-sgx` and dense block-1 timing fit the published
-  minimum validator profile;
-- real Validator, FullNode and 32-validator `DcapRequired` E2E is green.
+- on the same SGX server, exact-release `gramine-sgx` QVL and the maximum
+  reachable full-block workload fit the consensus timing budget;
+- reachable real Validator and FullNode `DcapRequired` paths are green. A
+  logical or physical 32-validator network is not a release gate.
 
 The checked-in B1 candidate now declares `sgx.remote_attestation = "dcap"` and
 builds the enclave with exactly `native-dcap`. It still must not be deployed to

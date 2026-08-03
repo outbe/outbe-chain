@@ -1,11 +1,13 @@
 # I9 B1 checkpoint — exact native-DCAP release bundle
 
-Status: `PASS`. B1 covers artifact identity, dependency closure and local
-reproducibility only. It does not claim accepted Intel hardware evidence, SGX
-execution, release benchmarks or production E2E; H1, P1 and E1 remain
+Status: `SUPERSEDED; REFRESH REQUIRED` as of 2026-08-03. The recorded B1 run
+passed for its named historical candidate, but the testnet Platform-policy and
+fixture changes after that candidate change the source identity. B1 must
+refreeze the current signed candidate before H1. It covers artifact identity,
+dependency closure and local reproducibility only; H1, P1 and E1 remain
 fail-not-skip.
 
-## Fixed candidate and signed prerequisite chain
+## Historical fixed candidate and signed prerequisite chain
 
 The current B1 candidate is commit
 `4e4fc7fd129fdc53e67318efe5b70dc0fcf759a6`, built twice from a clean detached
@@ -178,17 +180,20 @@ clippy additionally reports two pre-existing type-complexity findings in
 
 ## B1 boundary and next gates
 
-B1 freezes a locally reproducible candidate; it does not activate production
-rollout by itself.
+B1 freezes a locally reproducible candidate; it does not activate testnet by
+itself. The historical candidate above cannot be reused after the 2026-08-03
+source changes; the next B1 run must replace its commit, artifact hashes and
+measurements with the current signed candidate.
 
 H1 must retain fresh accepted Processor-CA evidence for this exact candidate,
 with actual Processor and root CRLs. A real Platform node must pass its own
 fresh Platform-CA admission through the same public verifier, but no dedicated
-Platform row gates every release. P1 must benchmark the exact signed
-`gramine-sgx` bundle, including valid, invalid-early, invalid-late and dense
-full-block cases on the minimum supported profile. E1 must pass real Validator,
-FullNode and 32-validator lifecycle E2E. Missing runner/evidence is failure,
-never a skip.
+Platform row gates every release. P1 must benchmark valid, invalid-early and
+invalid-late QVL paths plus the maximum reachable full-block workload for the
+exact signed `gramine-sgx` bundle on the same SGX server. E1 must pass the
+reachable Validator and FullNode `DcapRequired` paths. A logical or physical
+32-validator network is not a release gate. Missing required runner/evidence
+is failure, never a skip.
 
 Git push: `false`. PR mutation: `false`. Governance action: `false`.
 `bd dolt push`: `false`.

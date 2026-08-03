@@ -1465,12 +1465,12 @@ mod tests {
         const ROOT: &str = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../crates/system/tee/tests/fixtures/",
-            "intel-dcap-1.26-intent-bound-processor-negative/"
+            "intel-dcap-1.26-intent-bound-processor/"
         );
         let intent = RegistrationIntentV1::decode_canonical(include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../crates/system/tee/tests/fixtures/",
-            "intel-dcap-1.26-intent-bound-processor-negative/intent.bin"
+            "intel-dcap-1.26-intent-bound-processor/intent.bin"
         )))
         .unwrap();
         let components = [
@@ -1514,12 +1514,12 @@ mod tests {
 
     #[cfg(all(feature = "native-dcap", target_arch = "x86_64", target_os = "linux"))]
     #[test]
-    fn authenticated_noise_rpc_replays_real_processor_negative_through_enclave_qvl() {
+    fn authenticated_noise_rpc_replays_real_processor_acceptance_through_enclave_qvl() {
         use outbe_primitives::tee_attestation_v1::{
             AttestationEvidenceV1, AttestationMode, EnclaveProfile, GramineDirectEvidenceV1,
         };
         use outbe_tee::{
-            dcap_protocol::{DcapRejectCodeV1, DcapVerificationOutcomeV1},
+            dcap_protocol::{DcapPlatformTcbStatusV1, DcapRejectCodeV1, DcapVerificationOutcomeV1},
             AuthorizedEnclaveClient, NodeHostNoiseKey,
         };
 
@@ -1570,11 +1570,19 @@ mod tests {
         .unwrap();
         let (evidence, policy) = intent_bound_processor_fixture_wire_bytes();
 
+        let DcapVerificationOutcomeV1::Accepted(verdict) = client
+            .verify_dcap_evidence_v1(&evidence, &policy, 1_785_491_440)
+            .unwrap()
+        else {
+            panic!("testnet policy must accept the authenticated Processor fixture")
+        };
         assert_eq!(
-            client
-                .verify_dcap_evidence_v1(&evidence, &policy, 1_785_491_440)
-                .unwrap(),
-            DcapVerificationOutcomeV1::Rejected(DcapRejectCodeV1::PlatformTcbRejected)
+            verdict.platform_tcb_status,
+            DcapPlatformTcbStatusV1::ConfigurationAndSWHardeningNeeded
+        );
+        assert_eq!(
+            verdict.advisory_ids,
+            vec!["INTEL-SA-00289".to_string(), "INTEL-SA-00615".to_string()]
         );
 
         let AttestationEvidenceV1::Dcap(dcap) =

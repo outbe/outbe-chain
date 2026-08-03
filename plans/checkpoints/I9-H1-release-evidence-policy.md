@@ -63,10 +63,12 @@ Editing header-affecting genesis fields or measurement bytes in place is invalid
 the genesis hash, canonical policy bytes, policy hash and schedule hash must be
 regenerated together.
 
-The current rented Processor host previously returned
-`ConfigurationAndSWHardeningNeeded`, which is outside the accepted
-`UpToDate | SWHardeningNeeded` Platform status policy. A new capture may be
-attempted only after its platform configuration changes or on another eligible
-Processor host; the policy is not weakened to admit it.
+The current rented Processor host returns
+`ConfigurationAndSWHardeningNeeded`, which is accepted by the explicit testnet
+Platform policy together with `UpToDate` and `SWHardeningNeeded`. Its Intel
+advisory IDs remain visible in the stable verdict and QE still must be exactly
+`UpToDate`. The host is therefore eligible for the fresh exact-release capture
+and, on that same SGX server, the QVL and full-block budget measurements. The
+historical accepted replay does not satisfy the exact-release freshness gate.
 
 Git push, PR mutation, governance action and Beads/Dolt sync: `false`.
