@@ -157,7 +157,7 @@ async function main() {
   console.log(`  credisPrincipal:   ${formatTokenMeta(position.credisPrincipal, erc20Meta)}`);
   console.log(`  totalAnadosis:     ${formatTokenMeta(position.totalAnadosisAmount, erc20Meta)}`);
   console.log(`  totalGratis:       ${position.totalGratisAmount}`);
-  console.log(`  refinancingRate:   ${position.refinancingRate}`);
+  console.log(`  currencyRate:   ${position.currencyRate}`);
   console.log(`  issuanceCurrency:  ${position.issuanceCurrency}`);
   console.log(`\nBundle ERC20 change: ${formatTokenDiff(bundleErc20After - bundleErc20Before, erc20Meta.decimals, erc20Meta.symbol)}`);
 

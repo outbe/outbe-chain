@@ -31,7 +31,7 @@ use crate::tests::common::*;
 /// Issuance currency (ISO 4217) reported by `asset()`'s stubbed `isoCode()`.
 const ISSUANCE_ISO: u16 = 840;
 
-/// Refinancing rate seeded for USD in these e2e tests (4.30 %, 1e18 scaled).
+/// currency rate seeded for USD in these e2e tests (4.30 %, 1e18 scaled).
 fn refi_rate() -> U256 {
     U256::from(43_000_000_000_000_000u128)
 }
@@ -51,7 +51,7 @@ fn seed_oracle(storage: StorageHandle<'_>, rate_1e18: U256) {
         .set_exchange_rate(Address::ZERO, "COEN", "0xUSD", rate_1e18, 0, 0)
         .unwrap();
     oracle
-        .reference_refinancing_rate
+        .reference_currency_rate
         .write(&ISSUANCE_ISO, refi_rate())
         .unwrap();
 }
@@ -178,7 +178,7 @@ fn full_pledge_request_pay_unlock_flow() {
             alice()
         );
         assert_eq!(position.credis_principal, amount_stables);
-        assert_eq!(position.refinancing_rate, refi_rate());
+        assert_eq!(position.currency_rate, refi_rate());
         assert_eq!(position.issuance_currency, ISSUANCE_ISO);
         let multiplier =
             one_e18() + refi_rate() * U256::from(NUMBER_OF_ANADOSIS) / U256::from(12u64);

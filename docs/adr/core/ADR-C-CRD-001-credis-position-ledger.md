@@ -18,11 +18,11 @@ Oracle rates, move ERC-20 assets or release Gratis.
 ## Decision
 
 A position is created once from a globally unique commitment/nullifier-derived id.
-It snapshots bundle account, settlement asset and currency, refinancing rate,
+It snapshots bundle account, settlement asset and currency, currency rate,
 principal, original collateral, creation time, outstanding debt/collateral and an
 ordered schedule of exactly ten `Anadosis` installments.
 
-Total debt is derived at creation from principal and the pinned annual refinancing
+Total debt is derived at creation from principal and the pinned annual currency
 rate for a ten-month term. Integer division remainder is assigned deterministically
 to the final installment so installment debt sums exactly to recorded total debt.
 Collateral is likewise partitioned so all installments close the recorded amount.
@@ -119,7 +119,7 @@ remain in CredisFactory/VaultRouter and can fail without weakening its FSM.
    liquidation states) or prove cursor-derived status is sufficient at every API.
 4. There is no default, acceleration, restructuring, liquidation or bad-debt FSM.
    Define these before credit is treated as production complete.
-5. Check refinancing-rate multiplication and all timestamp/month arithmetic for
+5. Check currency-rate multiplication and all timestamp/month arithmetic for
    overflow before writes.
 6. Specify whether fixed 30-day installments or calendar months are intended.
 7. Add a generated model proving installment sums, cursor, outstanding values,

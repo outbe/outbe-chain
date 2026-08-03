@@ -41,13 +41,13 @@ impl CredisContract<'_> {
     }
 
     /// Total repayable debt for a position: `principal × (1 + rate × TERM / 12)`,
-    /// where `rate` is the annualized refinancing rate (1e18 scaled) and `TERM`
+    /// where `rate` is the annualized currency rate (1e18 scaled) and `TERM`
     /// is [`NUMBER_OF_ANADOSIS`] months. A zero rate yields `total == principal`
-    /// (the pre-refinancing-rate behavior).
-    fn total_debt(principal: U256, refinancing_rate: U256) -> Result<U256> {
+    /// (the pre-currency-rate behavior).
+    fn total_debt(principal: U256, currency_rate: U256) -> Result<U256> {
         let term = U256::from(NUMBER_OF_ANADOSIS);
         // multiplier = 1e18 + rate × TERM / 12  (1e18 scaled)
-        let multiplier = SCALE_1E18 + refinancing_rate * term / U256::from(12u64);
+        let multiplier = SCALE_1E18 + currency_rate * term / U256::from(12u64);
         let scaled = principal
             .checked_mul(multiplier)
             .ok_or_else(|| -> PrecompileError { CredisError::InvalidAmount.into() })?;
@@ -58,8 +58,8 @@ impl CredisContract<'_> {
     /// `position_id = keccak256(commitment || smart_account)`.
     ///
     /// `credis_principal` is the disbursed loan amount; the repayment schedule is
-    /// sized to `total_debt(principal, refinancing_rate)` and split across the
-    /// [`NUMBER_OF_ANADOSIS`] monthly installments. `refinancing_rate` (1e18
+    /// sized to `total_debt(principal, currency_rate)` and split across the
+    /// [`NUMBER_OF_ANADOSIS`] monthly installments. `currency_rate` (1e18
     /// scaled) and `issuance_currency` (ISO 4217) are pinned at issuance.
     #[allow(clippy::too_many_arguments)]
     pub fn create_position(
@@ -69,7 +69,7 @@ impl CredisContract<'_> {
         eoa_ct: Vec<u8>,
         asset: Address,
         issuance_currency: u16,
-        refinancing_rate: U256,
+        currency_rate: U256,
         credis_principal: U256,
         gratis_amount: U256,
         current_time: u64,
@@ -83,7 +83,7 @@ impl CredisContract<'_> {
             return Err(CredisError::PositionAlreadyExists.into());
         }
 
-        let total_debt = Self::total_debt(credis_principal, refinancing_rate)?;
+        let total_debt = Self::total_debt(credis_principal, currency_rate)?;
 
         self.create_position_record(&Position {
             position_id,
@@ -96,7 +96,7 @@ impl CredisContract<'_> {
             next_anadosis_number: 1,
             created_at: current_time,
             credis_principal,
-            refinancing_rate,
+            currency_rate: currency_rate,
             issuance_currency,
             eoa_ct,
         })?;

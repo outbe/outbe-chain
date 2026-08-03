@@ -111,10 +111,10 @@ fn create_position_populates_all_10_anadosis_records() {
 }
 
 #[test]
-fn create_position_applies_refinancing_rate_to_total_debt() {
+fn create_position_applies_currency_rate_to_total_debt() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage.clone());
-        // BRD example: principal 1000, refinancing rate 4.5% (45e15), term 10
+        // BRD example: principal 1000, currency rate 4.5% (45e15), term 10
         // months -> total_debt = 1000 * (1 + 0.045 * 10/12) = 1037.5 -> 1037.
         let principal = U256::from(1000u64);
         let rate = U256::from(45_000_000_000_000_000u128); // 0.045 @ 1e18
@@ -134,7 +134,7 @@ fn create_position_applies_refinancing_rate_to_total_debt() {
 
         let position = credis.get_position(position_id).unwrap();
         assert_eq!(position.credis_principal, principal);
-        assert_eq!(position.refinancing_rate, rate);
+        assert_eq!(position.currency_rate, rate);
         assert_eq!(position.issuance_currency, 840);
         assert_eq!(position.total_anadosis_amount, U256::from(1037u64));
         assert_eq!(position.outstanding_anadosis_amount, U256::from(1037u64));

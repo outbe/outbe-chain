@@ -4,7 +4,7 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolCall;
 
 use outbe_credis::{AnadosisResult, CredisContract};
-use outbe_oracle::api::{get_exchange_rate, get_refinancing_rate};
+use outbe_oracle::api::{get_currency_rate, get_exchange_rate};
 use outbe_primitives::addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
@@ -81,9 +81,9 @@ pub fn request_credis(
 
     // Derive the issuance currency from the disbursed asset (it self-reports its
     // ISO 4217 code via `IReferenceCurrency.isoCode()`) and pin the matching
-    // refinancing rate read from the Oracle's reference-currency collection.
+    // currency rate read from the Oracle's reference-currency collection.
     let issuance_currency = read_iso_code(&storage, asset)?;
-    let refinancing_rate = get_refinancing_rate(storage.clone(), issuance_currency)?;
+    let currency_rate = get_currency_rate(storage.clone(), issuance_currency)?;
 
     // Open the credis position, storing the sealed pledger EOA so the anadosis release
     // and the expiry-burn sweep can address the right confidential pledged ledger. The
@@ -97,7 +97,7 @@ pub fn request_credis(
         eoa_ct,
         asset,
         issuance_currency,
-        refinancing_rate,
+        currency_rate,
         amount_stables,
         gratis_amount,
         current_time,

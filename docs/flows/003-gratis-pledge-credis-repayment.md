@@ -34,7 +34,7 @@ permitting replay.
 - Denomination is pledge- and Credis-eligible; commitment/nullifier/proof inputs use
   the pinned circuit/domain version.
 - Bundle has no overdue position; asset reports a registered ISO currency.
-- Oracle has exchange/refinancing rates; VaultRouter has matching reserve shares
+- Oracle has exchange/currency rates; VaultRouter has matching reserve shares
   and CredisFactory is the registered target/source as applicable.
 
 ## Success sequence
@@ -43,7 +43,7 @@ permitting replay.
 |---:|---|---|---|
 | 1 | Gratisfactory | append pledge commitment and move denomination to Gratis escrow | pool root + escrow/pledged balances |
 | 2 | CredisFactory/Pool | verify bundle-bound proof and consume nullifier | spent-nullifier state |
-| 3 | CredisFactory/Oracle | calculate stable amount and snapshot refinancing/currency | position fields |
+| 3 | CredisFactory/Oracle | calculate stable amount and snapshot currency/currency | position fields |
 | 4 | Credis | create unique position and ten installments | position/index records |
 | 5 | VaultRouter | withdraw exact asset into borrower bundle | token/vault deltas and event |
 | 6 | borrower, repeated 10x | pay next asset installment into reserve | installment cursor/debt delta |

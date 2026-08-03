@@ -27,7 +27,7 @@ It does not own any of those modules' state.
    context nonce, consuming the nullifier;
 4. convert the denomination's 18-decimal Gratis amount into six-decimal stable
    amount using the pinned `COEN/0xUSD` Oracle rate and explicit decimal gap;
-5. staticcall the selected asset's `isoCode()` and snapshot its refinancing rate;
+5. staticcall the selected asset's `isoCode()` and snapshot its currency rate;
 6. create the Credis position using the nullifier as unique identity input;
 7. persist the original denomination for reclaim derivation; and
 8. withdraw exactly the position asset/amount through VaultRouter into the bundle.

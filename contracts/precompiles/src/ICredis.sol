@@ -20,7 +20,7 @@ interface ICredis {
         uint32 nextAnadosisNumber;
         uint64 createdAt;
         uint256 credisPrincipal;
-        uint256 refinancingRate;
+        uint256 currencyRate;
         uint16 issuanceCurrency;
         // Pledger EOA ciphertext (not an address). The enclave recovers
         // the plaintext EOA on-chain via a RevealOwner round-trip.
