@@ -19,6 +19,7 @@ pub mod lysis_result_catalog;
 pub mod lysis_scheduler;
 pub mod lysis_shuffle_adoption;
 pub mod nod_proof;
+pub mod payout_artifact;
 pub mod snapshot_client;
 pub mod snapshot_exporter;
 pub mod supervisor;

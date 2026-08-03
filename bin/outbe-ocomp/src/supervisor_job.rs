@@ -32,6 +32,7 @@ use crate::input_ref_catalog::VerifiedInputChunkRefCatalog;
 use crate::lysis_finalization::finalize_verified_lysis_v1;
 use crate::lysis_plan_audit::LocalLysisPlanAuditV1;
 use crate::lysis_scheduler::admit_reported_lysis_unit_v1;
+use crate::payout_artifact::write_contributor_payout_artifact;
 use crate::supervisor::DiscoveryRecord;
 
 const WORKER_IO_TIMEOUT: Duration = Duration::from_secs(600);
@@ -271,6 +272,10 @@ impl SupervisorJobRunnerV1 {
         let finalized = stage(
             "finalize verified Lysis result",
             finalize_verified_lysis_v1(record, &audit, &self.cas, &self.reader, limits),
+        )?;
+        stage(
+            "write contributor payout artifact",
+            write_contributor_payout_artifact(&audit, &local_job_root),
         )?;
         Ok(CompletedSupervisorJobV1 {
             job_id,
