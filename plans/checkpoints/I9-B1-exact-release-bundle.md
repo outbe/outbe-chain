@@ -27,8 +27,13 @@ prerequisite and corrective commits are:
 | `ea77c74b50c7d7df2da3e7dffd4672d24b4104b6` | refresh canonical OCOMP release fixtures | Good SSH/ED25519 signature, same key |
 | `267a8fbd361aa003db8a87022ee46309e20c9719` | admit `ConfigurationAndSWHardeningNeeded` for the testnet Platform policy | Good SSH/ED25519 signature, same key |
 
-The final checkpoint document is committed separately so its signature and hash
-are not self-referential.
+The designated B1 evidence commit is
+`34cb1436b23cade83cd74dd7f4633570f45fcd4b`. `git log --show-signature -1
+34cb1436b23cade83cd74dd7f4633570f45fcd4b` reports a Good SSH/ED25519
+signature by `novunaut@gmail.com`, key
+`SHA256:L1VVvQWdQea1QNq0LsHasVTmvEoPriaHEKYbC4yHnsA`. This identity is recorded
+by a later signed documentation-only commit so the evidence commit does not
+need to contain its own hash.
 
 ## Frozen toolchain and native-QVL closure
 
@@ -70,6 +75,12 @@ is used.
 | `outbe-tee-enclave` | `native-dcap` | 4775368 | `7ad25254411d1a00769defcbe138965d588addbda9efeff04e0227335cd2cf90` | byte-identical |
 
 ## Independent build evidence
+
+The source worktree was created with `git worktree add --detach
+/tmp/outbe-b1-source-267a8fb
+267a8fbd361aa003db8a87022ee46309e20c9719`. Immediately before Builder A,
+`git rev-parse HEAD` returned that exact commit, `git status --porcelain=v1`
+was empty, and `git symbolic-ref -q HEAD` exited `1`, confirming detached HEAD.
 
 Builder A:
 
@@ -170,6 +181,16 @@ remain H1/E1 release-workflow evidence.
 | SGX release bundle contract | 12 xtask integration tests | pass |
 | Native-DCAP release check | exact package/binary/target command | pass |
 | `cargo fmt --all -- --check`, `git diff --check` | post-edit | pass |
+
+The exact validation commands for this refreeze were:
+
+- `python3 -m unittest discover -s scripts/release/tests -p 'test_*.py' -v`
+  — exit `0`, `61` passed;
+- `cargo test -p xtask --test sgx_release` — exit `0`, `12` passed;
+- `cargo check --locked --release --no-default-features --package
+  outbe-tee-enclave --bin outbe-tee-enclave --features native-dcap --target
+  x86_64-unknown-linux-gnu --offline` — exit `0`;
+- `cargo fmt --all -- --check` and `git diff --check` — both exit `0`.
 
 No production code changed during this refreeze. Full-workspace cleanup and
 unrelated lint findings are outside B1 and were not expanded into this gate.
