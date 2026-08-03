@@ -7260,6 +7260,7 @@ dependencies = [
  "reth-node-builder",
  "reth-node-core",
  "reth-rpc-server-types",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",

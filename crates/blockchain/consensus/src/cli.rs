@@ -6,6 +6,7 @@
 use alloy_primitives::{keccak256, Address};
 use commonware_codec::Encode;
 use commonware_cryptography::Signer as _;
+use commonware_math::algebra::Random as _;
 use eyre::{Result, WrapErr};
 use k256::ecdsa::{SigningKey, VerifyingKey};
 use std::{
@@ -105,10 +106,70 @@ pub fn execute_dkg_bootstrap(
     let result = dkg::bootstrap_and_save(&output_dir, num_validators, backend)
         .wrap_err("DKG bootstrap failed")?;
 
-    // Generate validators.json and secp256k1 EVM keys.
-    let mut entries = Vec::with_capacity(result.count as usize);
-    let mut reth_bootnodes = Vec::with_capacity(result.count as usize);
-    for (i, dir) in result.validator_dirs.iter().enumerate() {
+    // Generate validators.json and secp256k1 EVM/Reth keys.
+    let entries = write_validator_identity_bundle(&output_dir, &result.validator_dirs, backend)?;
+
+    println!("DKG bootstrap complete:");
+    println!("  output dir:     {}", output_dir.display());
+    println!(
+        "  polynomial:     {}",
+        output_dir.join("polynomial.hex").display()
+    );
+    println!(
+        "  dkg output:     {}",
+        output_dir.join("dkg-output.hex").display()
+    );
+    print_validator_identity_outputs(&output_dir, &result.validator_dirs, &entries);
+
+    Ok(())
+}
+
+/// Generate the long-lived validator identities needed by the interactive
+/// round-0 genesis DKG without creating a second, incompatible centralized
+/// threshold polynomial.
+pub fn execute_validator_identities(
+    output_dir: PathBuf,
+    num_validators: u32,
+    backend: &KeyBackend,
+) -> Result<()> {
+    eyre::ensure!(num_validators > 0, "validator count must be > 0");
+    std::fs::create_dir_all(&output_dir)
+        .wrap_err_with(|| format!("failed to create output dir: {}", output_dir.display()))?;
+
+    let mut keys: Vec<commonware_cryptography::bls12381::PrivateKey> = (0..num_validators)
+        .map(|_| commonware_cryptography::bls12381::PrivateKey::random(rand_core::OsRng))
+        .collect();
+    keys.sort_by_key(|key| key.public_key().encode());
+
+    let mut validator_dirs = Vec::with_capacity(num_validators as usize);
+    for (index, key) in keys.iter().enumerate() {
+        let directory = output_dir.join(format!("validator-{index}"));
+        std::fs::create_dir_all(&directory).wrap_err_with(|| {
+            format!(
+                "failed to create validator directory: {}",
+                directory.display()
+            )
+        })?;
+        bls::save_individual_key(&directory.join("signing-key.hex"), key, backend)
+            .wrap_err_with(|| format!("failed to save validator-{index} signing key"))?;
+        validator_dirs.push(directory);
+    }
+
+    let entries = write_validator_identity_bundle(&output_dir, &validator_dirs, backend)?;
+    println!("validator identities generated for fresh interactive genesis DKG:");
+    println!("  output dir:     {}", output_dir.display());
+    print_validator_identity_outputs(&output_dir, &validator_dirs, &entries);
+    Ok(())
+}
+
+fn write_validator_identity_bundle(
+    output_dir: &Path,
+    validator_dirs: &[PathBuf],
+    backend: &KeyBackend,
+) -> Result<Vec<ValidatorEntry>> {
+    let mut entries = Vec::with_capacity(validator_dirs.len());
+    let mut reth_bootnodes = Vec::with_capacity(validator_dirs.len());
+    for (i, dir) in validator_dirs.iter().enumerate() {
         let key = bls::load_individual_key(&dir.join("signing-key.hex"), backend)
             .wrap_err_with(|| format!("failed to load key for validator {i}"))?;
         let pk = key.public_key();
@@ -167,19 +228,19 @@ pub fn execute_dkg_bootstrap(
     )
     .wrap_err_with(|| format!("failed to write: {}", reth_bootnodes_path.display()))?;
 
-    println!("DKG bootstrap complete:");
-    println!("  output dir:     {}", output_dir.display());
-    println!(
-        "  polynomial:     {}",
-        output_dir.join("polynomial.hex").display()
-    );
-    println!(
-        "  dkg output:     {}",
-        output_dir.join("dkg-output.hex").display()
-    );
+    Ok(entries)
+}
+
+fn print_validator_identity_outputs(
+    output_dir: &Path,
+    validator_dirs: &[PathBuf],
+    entries: &[ValidatorEntry],
+) {
+    let validators_path = output_dir.join("validators.json");
+    let reth_bootnodes_path = output_dir.join(LOCALNET_RETH_BOOTNODES_FILE);
     println!("  validators:     {}", validators_path.display());
     println!("  reth bootnodes: {}", reth_bootnodes_path.display());
-    for (i, dir) in result.validator_dirs.iter().enumerate() {
+    for (i, dir) in validator_dirs.iter().enumerate() {
         let evm_address = entries
             .get(i)
             .map(|entry| entry.address.as_str())
@@ -190,8 +251,6 @@ pub fn execute_dkg_bootstrap(
             dir.join("evm-key.hex").display()
         );
     }
-
-    Ok(())
 }
 
 /// DKG state file names (must match stack.rs constants).

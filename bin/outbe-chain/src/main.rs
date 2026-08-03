@@ -45,6 +45,7 @@ use std::{path::PathBuf, sync::Arc, thread};
 use tokio::sync::oneshot;
 use tracing::info;
 
+mod ocomp_genesis;
 mod tee_genesis;
 
 #[derive(Debug, Clone, Default)]
@@ -123,6 +124,16 @@ struct DkgCli {
 
 #[derive(clap::Subcommand)]
 enum DkgCommand {
+    /// Generate only the validator identity keys used by a fresh interactive genesis DKG.
+    Identities {
+        /// Output directory for generated identity key material.
+        #[arg(long)]
+        output_dir: std::path::PathBuf,
+
+        /// Number of validator identities to generate.
+        #[arg(long)]
+        validators: u32,
+    },
     /// Bootstrap DKG material for a validator set.
     Bootstrap {
         /// Output directory for generated key material.
@@ -185,6 +196,9 @@ fn main() -> eyre::Result<()> {
     }
     if args.len() > 1 && args[1] == "tee" {
         return tee_genesis::run(&args);
+    }
+    if args.len() > 1 && args[1] == "ocomp" {
+        return ocomp_genesis::run(&args);
     }
 
     // Intercept `--version` / `-V` so that the user sees Outbe-side build
@@ -255,6 +269,10 @@ fn run_dkg_command(args: &[String]) -> eyre::Result<()> {
     let backend = parse_dkg_key_backend(&dkg_cli)?;
 
     match dkg_cli.command {
+        DkgCommand::Identities {
+            output_dir,
+            validators,
+        } => outbe_consensus::cli::execute_validator_identities(output_dir, validators, &backend),
         DkgCommand::Bootstrap {
             output_dir,
             validators,
@@ -1198,6 +1216,31 @@ mod tests {
             let vdir = dir.path().join(format!("validator-{i}"));
             assert!(vdir.join("signing-key.hex").exists());
             assert!(vdir.join("evm-key.hex").exists());
+        }
+    }
+
+    #[test]
+    fn test_dkg_identities_do_not_precompute_genesis_threshold_material() {
+        let dir = tempfile::tempdir().unwrap();
+        let args = dkg_args(&[
+            "identities",
+            "--output-dir",
+            dir.path().to_str().unwrap(),
+            "--validators",
+            "4",
+        ]);
+        super::run_dkg_command(&args).unwrap();
+
+        assert!(dir.path().join("validators.json").exists());
+        assert!(dir.path().join("reth-bootnodes.txt").exists());
+        assert!(!dir.path().join("polynomial.hex").exists());
+        assert!(!dir.path().join("dkg-output.hex").exists());
+        for index in 0..4 {
+            let validator = dir.path().join(format!("validator-{index}"));
+            assert!(validator.join("signing-key.hex").exists());
+            assert!(validator.join("evm-key.hex").exists());
+            assert!(validator.join("reth-p2p-secret.hex").exists());
+            assert!(!validator.join("signing-share.hex").exists());
         }
     }
 
