@@ -23,11 +23,11 @@ fn sample_params(owner: Address) -> GemAddParams {
     GemAddParams {
         owner,
         gem_type: 2, // WALLET
-        gem_load: U256::from(1_000_000_000_000_000_000u128),
-        entry_price: U256::from(500_000_000_000_000_000u128),
-        cost_amount: U256::from(500_000_000_000_000_000u128),
-        floor_price: U256::from(540_000_000_000_000_000u128),
-        call_threshold: U256::from(1_140_000_000_000_000_000u128),
+        promis_load_minor: U256::from(1_000_000_000_000_000_000u128),
+        entry_price_minor: U256::from(500_000_000_000_000_000u128),
+        cost_amount_minor: U256::from(500_000_000_000_000_000u128),
+        floor_price_minor: U256::from(540_000_000_000_000_000u128),
+        call_rate: U256::from(1_140_000_000_000_000_000u128),
         issuance_currency: 840,
         reference_currency: 840,
         initial_state: GemState::Issued,
@@ -72,7 +72,7 @@ fn enumerable_returns_only_owned_gems() {
     with_storage(|storage| {
         let g1 = api::add_gem(storage, sample_params(ALICE)).unwrap();
         let mut p2 = sample_params(ALICE);
-        p2.gem_load = U256::from(2u64);
+        p2.promis_load_minor = U256::from(2u64);
         let g2 = api::add_gem(storage, p2).unwrap();
         let p3 = sample_params(BOB);
         let _g3 = api::add_gem(storage, p3).unwrap();
@@ -115,10 +115,10 @@ fn burn_compacts_owner_index() {
     with_storage(|storage| {
         let g1 = api::add_gem(storage, sample_params(ALICE)).unwrap();
         let mut p2 = sample_params(ALICE);
-        p2.gem_load = U256::from(2u64);
+        p2.promis_load_minor = U256::from(2u64);
         let g2 = api::add_gem(storage, p2).unwrap();
         let mut p3 = sample_params(ALICE);
-        p3.gem_load = U256::from(3u64);
+        p3.promis_load_minor = U256::from(3u64);
         let g3 = api::add_gem(storage, p3).unwrap();
 
         api::set_state(storage, g1, GemState::Settled).unwrap();
@@ -207,7 +207,7 @@ fn add_gem_qualified_initial_state_skips_bin_tree() {
         p.initial_state = GemState::Qualified;
         let _gem_id = api::add_gem(storage, p.clone()).unwrap();
         let gem = GemContract::new(storage.clone());
-        let bin = GemContract::price_to_bin(p.floor_price).unwrap();
+        let bin = GemContract::price_to_bin(p.floor_price_minor).unwrap();
         assert_eq!(gem.unqualified_bin_count.read(&bin).unwrap(), 0);
         assert!(!tree_math::contains(&gem, bin).unwrap());
     });
@@ -217,11 +217,11 @@ fn add_gem_qualified_initial_state_skips_bin_tree() {
 fn scan_skips_bins_above_rate() {
     with_storage(|storage| {
         let mut low = sample_params(ALICE);
-        low.floor_price = U256::from(100_000_000_000_000_000u128);
+        low.floor_price_minor = U256::from(100_000_000_000_000_000u128);
         let low_id = api::add_gem(storage, low.clone()).unwrap();
 
         let mut high = sample_params(BOB);
-        high.floor_price = U256::from(900_000_000_000_000_000u128);
+        high.floor_price_minor = U256::from(900_000_000_000_000_000u128);
         let _high_id = api::add_gem(storage, high.clone()).unwrap();
 
         let mut gem = GemContract::new(storage.clone());
@@ -232,7 +232,7 @@ fn scan_skips_bins_above_rate() {
 
         // High gem stays Issued (rate 0.5 < floor 0.9). It must still be
         // in its bin and the bin must still be set in the trie.
-        let high_bin = GemContract::price_to_bin(high.floor_price).unwrap();
+        let high_bin = GemContract::price_to_bin(high.floor_price_minor).unwrap();
         assert_eq!(gem.unqualified_bin_count.read(&high_bin).unwrap(), 1);
         assert!(tree_math::contains(&gem, high_bin).unwrap());
     });
@@ -311,13 +311,13 @@ fn gem_storage_layout_matches_genesis_seeder() {
         let gem = GemContract::new(storage.clone());
         assert_eq!(gem.total_supply.slot(), U256::from(0u64));
         assert_eq!(gem.gem_items.base_slot(), U256::from(1u64));
-        // GemData record spans 12 slots (owner@+0 .. called_at@+11), so the
-        // schema fields after gem_items start at 1 + 12 = 13.
-        assert_eq!(<crate::schema::GemData as StorageRecord>::SLOTS, 12);
-        assert_eq!(gem.owner_gem_counts.base_slot(), U256::from(13u64));
-        assert_eq!(gem.owner_gem_ids.base_slot(), U256::from(14u64));
-        // all_gem_ids (List) occupies slot 15.
-        assert_eq!(gem.gem_index.base_slot(), U256::from(16u64));
+        // GemData record spans 13 slots (owner@+0 .. settlement_period@+12), so
+        // the schema fields after gem_items start at 1 + 13 = 14.
+        assert_eq!(<crate::schema::GemData as StorageRecord>::SLOTS, 13);
+        assert_eq!(gem.owner_gem_counts.base_slot(), U256::from(14u64));
+        assert_eq!(gem.owner_gem_ids.base_slot(), U256::from(15u64));
+        // all_gem_ids (List) occupies slot 16.
+        assert_eq!(gem.gem_index.base_slot(), U256::from(17u64));
     });
 }
 /// Build a 30-day window (newest-first) with `breach_days` entries above the
@@ -346,8 +346,9 @@ fn qualified_gem(storage: &StorageHandle) -> U256 {
 fn call_then_forfeit_lifecycle() {
     with_storage(|storage| {
         let gem_id = qualified_gem(storage);
-        let threshold = api::get_gem(storage, gem_id).unwrap().unwrap().call_threshold;
-        let window = breach_window(T_NOW, threshold + U256::from(1u64), 20);
+        let threshold = api::get_gem(storage, gem_id).unwrap().unwrap().call_rate;
+        let breach_days = usize::from(crate::constants::GEM_CALL_THRESHOLD_DAYS);
+        let window = breach_window(T_NOW, threshold + U256::from(1u64), breach_days);
 
         let mut gem = GemContract::new(storage.clone());
         assert!(gem.call(&window, gem_id, T_NOW).unwrap());
@@ -367,9 +368,10 @@ fn call_then_forfeit_lifecycle() {
 fn call_skips_below_threshold() {
     with_storage(|storage| {
         let gem_id = qualified_gem(storage);
-        let threshold = api::get_gem(storage, gem_id).unwrap().unwrap().call_threshold;
-        // 19 breach-days < 20 required.
-        let window = breach_window(T_NOW, threshold + U256::from(1u64), 19);
+        let threshold = api::get_gem(storage, gem_id).unwrap().unwrap().call_rate;
+        // One below the threshold: not enough breach-days to force a call.
+        let breach_days = usize::from(crate::constants::GEM_CALL_THRESHOLD_DAYS) - 1;
+        let window = breach_window(T_NOW, threshold + U256::from(1u64), breach_days);
 
         let mut gem = GemContract::new(storage.clone());
         assert!(!gem.call(&window, gem_id, T_NOW).unwrap());

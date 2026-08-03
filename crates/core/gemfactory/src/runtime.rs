@@ -10,7 +10,6 @@ use outbe_primitives::units::SCALE_1E18;
 use outbe_common::pow;
 use outbe_vaultrouter::api::IVaultRouter;
 
-use outbe_gem::GEM_CALL_PERIOD_SECONDS;
 
 use crate::constants::{
     FLOOR_MARKUP_PERCENT, GEM_CALL_MARKUP_PERCENT, POSITION_VALIDITY_SECONDS,
@@ -49,11 +48,11 @@ pub fn mint_gem(
     let params = GemAddParams {
         owner,
         gem_type: gem_type as u8,
-        gem_load,
-        entry_price,
-        cost_amount,
-        floor_price,
-        call_threshold,
+        promis_load_minor: gem_load,
+        entry_price_minor: entry_price,
+        cost_amount_minor: cost_amount,
+        floor_price_minor: floor_price,
+        call_rate: call_threshold,
         issuance_currency,
         reference_currency,
         initial_state,
@@ -205,11 +204,11 @@ pub fn mint_merchant_gem(
         GemAddParams {
             owner,
             gem_type: GemTypes::Merchant as u8,
-            gem_load,
-            entry_price,
-            cost_amount,
-            floor_price,
-            call_threshold,
+            promis_load_minor: gem_load,
+            entry_price_minor: entry_price,
+            cost_amount_minor: cost_amount,
+            floor_price_minor: floor_price,
+            call_rate: call_threshold,
             issuance_currency: record.issuance_currency,
             reference_currency: record.reference_currency,
             initial_state: GemState::Issued,
@@ -254,7 +253,7 @@ pub fn settle_gem(storage: &StorageHandle<'_>, caller: Address, gem_id: U256) ->
         s if s == GemState::Qualified as u8 => {}
         s if s == GemState::Called as u8 => {
             let now = storage.timestamp()?.to::<u64>();
-            let deadline = u64::from(item.called_at) + u64::from(GEM_CALL_PERIOD_SECONDS);
+            let deadline = u64::from(item.called_at) + u64::from(item.settlement_period);
             if now > deadline {
                 return Err(GemFactoryError::DeadlineExpired.into());
             }
@@ -264,8 +263,8 @@ pub fn settle_gem(storage: &StorageHandle<'_>, caller: Address, gem_id: U256) ->
 
     gem_api::set_state(storage, gem_id, GemState::Settled)?;
 
-    if !item.cost_amount.is_zero() {
-        deposit_to_vault(storage, caller, item.cost_amount, item.issuance_currency)?;
+    if !item.cost_amount_minor.is_zero() {
+        deposit_to_vault(storage, caller, item.cost_amount_minor, item.issuance_currency)?;
     }
 
     emit_event(
@@ -273,7 +272,7 @@ pub fn settle_gem(storage: &StorageHandle<'_>, caller: Address, gem_id: U256) ->
         GemSettled {
             gemId: gem_id,
             owner: caller,
-            amountPaid: item.cost_amount,
+            amountPaid: item.cost_amount_minor,
             issuanceCurrency: item.issuance_currency,
         },
     )?;
@@ -372,19 +371,19 @@ pub fn mine_gem_promis(
 
     // The Promis is confidential: the mint runs inside the enclave, authorized by
     // the gem owner's Promis modify key. The client's `mac`/`opNonce` must bind the
-    // minted amount (`item.gem_load`), so the client precomputes it.
-    outbe_promisfactory::api::mint(storage.clone(), caller, item.gem_load, auth)?;
+    // minted amount (`item.promis_load_minor`), so the client precomputes it.
+    outbe_promisfactory::api::mint(storage.clone(), caller, item.promis_load_minor, auth)?;
 
     emit_event(
         storage,
         GemBurned {
             gemId: gem_id,
             owner: caller,
-            gemLoad: item.gem_load,
+            gemLoad: item.promis_load_minor,
         },
     )?;
 
-    Ok(item.gem_load)
+    Ok(item.promis_load_minor)
 }
 
 /// Looks up the COEN/`issuance_currency` rate via Oracle's

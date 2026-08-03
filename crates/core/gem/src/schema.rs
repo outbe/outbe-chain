@@ -15,11 +15,11 @@ pub enum GemState {
 pub struct GemAddParams {
     pub owner: Address,
     pub gem_type: u8,
-    pub gem_load: U256,
-    pub entry_price: U256,
-    pub cost_amount: U256,
-    pub floor_price: U256,
-    pub call_threshold: U256,
+    pub promis_load_minor: U256,
+    pub entry_price_minor: U256,
+    pub cost_amount_minor: U256,
+    pub floor_price_minor: U256,
+    pub call_rate: U256,
     pub issuance_currency: u16,
     pub reference_currency: u16,
     pub initial_state: GemState,
@@ -38,16 +38,16 @@ pub struct GemData {
     pub gem_type: u8,
 
     #[attribute(order = 2)]
-    pub gem_load: U256,
+    pub promis_load_minor: U256,
 
     #[attribute(order = 3)]
-    pub entry_price: U256,
+    pub entry_price_minor: U256,
 
     #[attribute(order = 4)]
-    pub cost_amount: U256,
+    pub cost_amount_minor: U256,
 
     #[attribute(order = 5)]
-    pub floor_price: U256,
+    pub floor_price_minor: U256,
 
     #[attribute(order = 6)]
     pub issuance_currency: u16,
@@ -62,13 +62,19 @@ pub struct GemData {
     pub issued_at: u64,
 
     /// Coen price level (Reference Currency) whose breach arms a Call Event.
-    /// `entry_price * (1 + call_rate)`; call rate is 128% for agent gems.
+    /// `entry_price_minor * (1 + call_rate)`; call rate is 128% for agent gems.
     #[attribute(order = 10)]
-    pub call_threshold: U256,
+    pub call_rate: U256,
 
     /// Block timestamp when the gem was force-called; `0` until Called.
     #[attribute(order = 11, default = 0)]
     pub called_at: u32,
+
+    /// Call Notice Period in seconds: after a Called gem passes
+    /// `called_at + settlement_period` it is forfeit-burned. Snapshot of the
+    /// protocol constant at issuance.
+    #[attribute(order = 12, default = 0)]
+    pub settlement_period: u32,
 }
 
 #[storage_schema]
@@ -122,7 +128,7 @@ pub struct GemContract {
 
 impl GemContract<'_> {
     /// `gem_id = keccak256("gem" ‖ owner ‖ amount_be ‖ block_number_be)`.
-    /// `amount` is the gem's `gem_load` (reward principal).
+    /// `amount` is the gem's `promis_load_minor` (reward principal).
     pub fn generate_gem_id(owner: Address, amount: U256, block_number: u64) -> U256 {
         use alloy_primitives::keccak256;
         let mut buf = [0u8; 3 + 20 + 32 + 8];

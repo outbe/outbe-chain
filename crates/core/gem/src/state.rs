@@ -66,7 +66,7 @@ impl GemContract<'_> {
         let item = self.gem_items.get(gem_id)?.ok_or(GemError::GemNotFound)?;
         let gem_id_hex = Self::format_gem_id(gem_id);
         let json = format!(
-            "{{\"name\":\"Gem #{}\",\"description\":\"{}\",\"image\":\"{}{}\",\"attributes\":[{{\"trait_type\":\"gem_id\",\"value\":\"{}\"}},{{\"trait_type\":\"gem_type\",\"value\":{}}},{{\"trait_type\":\"state\",\"value\":{}}},{{\"trait_type\":\"gem_load\",\"value\":\"{}\"}},{{\"trait_type\":\"entry_price\",\"value\":\"{}\"}},{{\"trait_type\":\"cost_amount\",\"value\":\"{}\"}},{{\"trait_type\":\"floor_price\",\"value\":\"{}\"}},{{\"trait_type\":\"issuance_currency\",\"value\":{}}},{{\"trait_type\":\"reference_currency\",\"value\":{}}}]}}",
+            "{{\"name\":\"Gem #{}\",\"description\":\"{}\",\"image\":\"{}{}\",\"attributes\":[{{\"trait_type\":\"gem_id\",\"value\":\"{}\"}},{{\"trait_type\":\"gem_type\",\"value\":{}}},{{\"trait_type\":\"state\",\"value\":{}}},{{\"trait_type\":\"promis_load_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"entry_price_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"cost_amount_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"floor_price_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"issuance_currency\",\"value\":{}}},{{\"trait_type\":\"reference_currency\",\"value\":{}}}]}}",
             &gem_id_hex[..8],
             TOKEN_DESCRIPTION,
             TOKEN_IMAGE_BASE,
@@ -74,10 +74,10 @@ impl GemContract<'_> {
             gem_id,
             item.gem_type,
             item.state,
-            item.gem_load,
-            item.entry_price,
-            item.cost_amount,
-            item.floor_price,
+            item.promis_load_minor,
+            item.entry_price_minor,
+            item.cost_amount_minor,
+            item.floor_price_minor,
             item.issuance_currency,
             item.reference_currency,
         );
@@ -113,7 +113,7 @@ impl GemContract<'_> {
         // Park unqualified gems in the bin index so the qualifier hook can
         // skip non-candidates without scanning the full population.
         if item.state == GemState::Issued as u8 {
-            self.insert_unqualified(item.gem_id, item.floor_price)?;
+            self.insert_unqualified(item.gem_id, item.floor_price_minor)?;
         } else if item.state == GemState::Qualified as u8 {
             // Genesis gems are born Qualified — index them as callable gems.
             self.insert_callable(item.gem_id)?;
@@ -159,7 +159,7 @@ impl GemContract<'_> {
         // Issued is the only state parked in the bin index; any transition
         // out of Issued must clean it up. Idempotent if the gem isn't there.
         if item.state == GemState::Issued as u8 && new_state != GemState::Issued {
-            self.remove_unqualified(gem_id, item.floor_price)?;
+            self.remove_unqualified(gem_id, item.floor_price_minor)?;
         }
 
         // Maintain the callable-gem list (membership == Qualified/Called).
@@ -260,8 +260,8 @@ impl GemContract<'_> {
         keccak256(buf)
     }
 
-    pub(crate) fn insert_unqualified(&mut self, gem_id: U256, floor_price: U256) -> Result<()> {
-        let bin_id = Self::price_to_bin(floor_price)?;
+    pub(crate) fn insert_unqualified(&mut self, gem_id: U256, floor_price_minor: U256) -> Result<()> {
+        let bin_id = Self::price_to_bin(floor_price_minor)?;
         debug_assert!(bin_id <= MAX_BIN_ID);
         let count = self.unqualified_bin_count.read(&bin_id)?;
         self.unqualified_bin_gems
@@ -271,10 +271,10 @@ impl GemContract<'_> {
         Ok(())
     }
 
-    /// Remove `gem_id` from the bin at its `floor_price`. Performs swap-and-pop
+    /// Remove `gem_id` from the bin at its `floor_price_minor`. Performs swap-and-pop
     /// to keep the bin's index dense; clears the bin's trie bit when emptied.
-    pub(crate) fn remove_unqualified(&mut self, gem_id: U256, floor_price: U256) -> Result<()> {
-        let bin_id = Self::price_to_bin(floor_price)?;
+    pub(crate) fn remove_unqualified(&mut self, gem_id: U256, floor_price_minor: U256) -> Result<()> {
+        let bin_id = Self::price_to_bin(floor_price_minor)?;
         let count = self.unqualified_bin_count.read(&bin_id)?;
         if count == 0 {
             return Ok(());

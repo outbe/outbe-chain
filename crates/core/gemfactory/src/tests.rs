@@ -105,10 +105,10 @@ fn mint_genesis_pays_like_agents_but_born_qualified() {
         // Genesis now pays like Wallet/Cca/Validator: cost = entry × load,
         // floor = rate × 1.08. It only keeps the born-Qualified fast path
         // (no maturity wait) — settle still moves cost into the Reserve.
-        assert_eq!(item.cost_amount, U256::from(20u64) * one_e18());
-        assert_eq!(item.entry_price, rate);
+        assert_eq!(item.cost_amount_minor, U256::from(20u64) * one_e18());
+        assert_eq!(item.entry_price_minor, rate);
         assert_eq!(
-            item.floor_price,
+            item.floor_price_minor,
             rate * U256::from(108u64) / U256::from(100u64)
         );
         assert_eq!(item.state, GemState::Qualified as u8);
@@ -129,9 +129,9 @@ fn mint_validator_post_genesis_behaves_like_wallet() {
 
         let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
         // Same as WALLET: cost = entry × load, floor with 8% markup, Issued.
-        assert_eq!(item.cost_amount, U256::from(10u64) * one_e18());
+        assert_eq!(item.cost_amount_minor, U256::from(10u64) * one_e18());
         assert_eq!(
-            item.floor_price,
+            item.floor_price_minor,
             rate * U256::from(108u64) / U256::from(100u64)
         );
         assert_eq!(item.state, GemState::Issued as u8);
@@ -148,11 +148,11 @@ fn mint_wallet_cost_and_floor_markup_state_issued() {
 
         let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
         // entry = coen_rate = 2; cost = entry * load / SCALE_1E18 = 2 * 5 = 10
-        assert_eq!(item.entry_price, rate);
-        assert_eq!(item.cost_amount, U256::from(10u64) * one_e18());
+        assert_eq!(item.entry_price_minor, rate);
+        assert_eq!(item.cost_amount_minor, U256::from(10u64) * one_e18());
         // floor = rate * 108 / 100 = 2 * 1.08 = 2.16
         assert_eq!(
-            item.floor_price,
+            item.floor_price_minor,
             rate * U256::from(108u64) / U256::from(100u64)
         );
         assert_eq!(item.state, GemState::Issued as u8);
@@ -169,7 +169,7 @@ fn mint_sra_applies_64_percent_discount() {
         let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
         // entry = rate = 2; cost = 2 * 10 * 64 / 100 = 12.8 (1e18-scaled)
         let expected = rate * load * U256::from(64u64) / U256::from(100u64) / one_e18();
-        assert_eq!(item.cost_amount, expected);
+        assert_eq!(item.cost_amount_minor, expected);
     });
 }
 
@@ -182,7 +182,7 @@ fn mint_cca_no_discount() {
 
         let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
         // entry = rate = 2; cost = 2 * 7 = 14
-        assert_eq!(item.cost_amount, U256::from(14u64) * one_e18());
+        assert_eq!(item.cost_amount_minor, U256::from(14u64) * one_e18());
     });
 }
 
@@ -473,10 +473,10 @@ fn mint_merchant_gem_mints_issued_and_drains_capacity() {
         assert_eq!(item.owner, BOB);
         assert_eq!(item.gem_type, GemTypes::Merchant as u8);
         assert_eq!(item.state, GemState::Issued as u8);
-        assert_eq!(item.entry_price, rate); // max(coen, source_entry) = coen
-        assert_eq!(item.cost_amount, U256::from(20u64) * one_e18()); // entry * load
-        assert_eq!(item.floor_price, rate * U256::from(108u64) / U256::from(100u64));
-        assert_eq!(item.call_threshold, rate * U256::from(228u64) / U256::from(100u64));
+        assert_eq!(item.entry_price_minor, rate); // max(coen, source_entry) = coen
+        assert_eq!(item.cost_amount_minor, U256::from(20u64) * one_e18()); // entry * load
+        assert_eq!(item.floor_price_minor, rate * U256::from(108u64) / U256::from(100u64));
+        assert_eq!(item.call_rate, rate * U256::from(228u64) / U256::from(100u64));
 
         let factory = GemFactoryContract::new(storage.clone());
         let rec = factory.positions.get(id).unwrap().unwrap();
@@ -496,8 +496,8 @@ fn mint_merchant_gem_anchors_entry_and_floor_to_source() {
 
         let gem_id = runtime::mint_merchant_gem(storage, id, BOB, one_e18()).unwrap();
         let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
-        assert_eq!(item.entry_price, source_entry);
-        assert_eq!(item.floor_price, source_floor);
+        assert_eq!(item.entry_price_minor, source_entry);
+        assert_eq!(item.floor_price_minor, source_floor);
     });
 }
 

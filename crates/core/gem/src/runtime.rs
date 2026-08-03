@@ -2,7 +2,7 @@ use alloy_primitives::U256;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::time::timestamp_to_date_key;
 
-use crate::constants::{GEM_CALL_PERIOD_SECONDS, GEM_CALL_THRESHOLD_DAYS, QUALIFIER_REFERENCE_ISO};
+use crate::constants::{GEM_CALL_THRESHOLD_DAYS, QUALIFIER_REFERENCE_ISO};
 use crate::errors::GemError;
 use crate::events::{GemBurned, GemCalled, GemQualified};
 use crate::schema::{GemContract, GemState};
@@ -13,13 +13,13 @@ impl GemContract<'_> {
         if item.state != GemState::Issued as u8 {
             return Ok(false);
         }
-        // `rate` is COEN/<QUALIFIER_REFERENCE_ISO>; floor_price is denominated
+        // `rate` is COEN/<QUALIFIER_REFERENCE_ISO>; floor_price_minor is denominated
         // in the gem's own reference_currency. Skip silently if they don't
         // match so we don't promote against an unrelated rate.
         if item.reference_currency != QUALIFIER_REFERENCE_ISO {
             return Ok(false);
         }
-        if rate <= item.floor_price {
+        if rate <= item.floor_price_minor {
             return Ok(false);
         }
         self.set_state(gem_id, GemState::Qualified)?;
@@ -54,7 +54,7 @@ impl GemContract<'_> {
                 break;
             }
             if let Some(v) = vwap {
-                if *v > item.call_threshold {
+                if *v > item.call_rate {
                     breaches += 1;
                 }
             }
@@ -75,14 +75,14 @@ impl GemContract<'_> {
     }
 
     /// Forfeit-burn a Called gem whose Call Notice Period has lapsed. No-op
-    /// unless the gem is Called and past `called_at + GEM_CALL_PERIOD_SECONDS`.
+    /// unless the gem is Called and past `called_at + settlement_period`.
     /// Returns true if burned.
     pub(crate) fn forfeit(&mut self, gem_id: U256, now_ts: u64) -> Result<bool> {
         let item = self.gem_items.get(gem_id)?.ok_or(GemError::GemNotFound)?;
         if item.state != GemState::Called as u8 {
             return Ok(false);
         }
-        let deadline = u64::from(item.called_at) + u64::from(GEM_CALL_PERIOD_SECONDS);
+        let deadline = u64::from(item.called_at) + u64::from(item.settlement_period);
         if now_ts <= deadline {
             return Ok(false);
         }
@@ -90,7 +90,7 @@ impl GemContract<'_> {
         self.emit(GemBurned {
             gemId: gem_id,
             owner: item.owner,
-            gemLoad: item.gem_load,
+            gemLoad: item.promis_load_minor,
         })?;
         Ok(true)
     }

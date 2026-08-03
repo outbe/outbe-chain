@@ -74,7 +74,7 @@ impl TriggerHandler {
             // Terminal allocation and the subsequent WWD process command.
             Self::EmissionLimitDaily => 2,
             Self::WwdAdvanceNoon => 1,
-            Self::IntexDaily | Self::AuctionAdvance => 0,
+            Self::IntexDaily | Self::AuctionAdvance | Self::GemCallDaily => 0,
         }
     }
 

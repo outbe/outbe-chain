@@ -672,17 +672,18 @@ def seed_gems(storage: StorageBuilder, gems: list):
     test in `crates/core/gem/src/tests.rs`:
 
       slot 0:      total_supply (u64)
-      slots 1-12:  gem_items Map<U256, GemData> record fields keyed by gem_id:
-                     1 owner              2 gem_type           3 gem_load
-                     4 entry_price        5 cost_amount        6 floor_price
+      slots 1-13:  gem_items Map<U256, GemData> record fields keyed by gem_id:
+                     1 owner              2 gem_type           3 promis_load_minor
+                     4 entry_price_minor  5 cost_amount_minor  6 floor_price_minor
                      7 issuance_currency  8 reference_currency 9 state
-                     10 issued_at         11 call_threshold    12 called_at
-      slot 13:     owner_gem_counts Map<Address, u32>
-      slot 14:     owner_gem_ids    Map<B256, U256>  (key = owner_index_key)
-      slot 15:     all_gem_ids      List<U256>  (len @ slot 15, data @ keccak(15)+i)
-      slot 16:     gem_index        Map<U256, u32>
+                     10 issued_at         11 call_rate         12 called_at
+                     13 settlement_period
+      slot 14:     owner_gem_counts Map<Address, u32>
+      slot 15:     owner_gem_ids    Map<B256, U256>  (key = owner_index_key)
+      slot 16:     all_gem_ids      List<U256>  (len @ slot 16, data @ keccak(16)+i)
+      slot 17:     gem_index        Map<U256, u32>
 
-    Settled gems are NOT parked in the unqualified bin-tree index (slots 17+) nor
+    Settled gems are NOT parked in the unqualified bin-tree index (slots 18+) nor
     the callable-gem index, so those slots are intentionally left empty (add_gem
     only indexes Issued gems; the callable index only holds Qualified/Called).
     """
@@ -698,7 +699,7 @@ def seed_gems(storage: StorageBuilder, gems: list):
             )
         gem_id = gem_id_gen(owner, gem_load, i)
 
-        # gem_items record (slots 1-12, keyed by gem_id).
+        # gem_items record (slots 1-13, keyed by gem_id).
         storage.set_mapping(1, gem_id, address_as_u256(owner))
         storage.set_mapping(2, gem_id, parse_int(gem.get("gem_type", GEM_TYPE_WALLET)))
         storage.set_mapping(3, gem_id, gem_load)
@@ -711,22 +712,24 @@ def seed_gems(storage: StorageBuilder, gems: list):
         storage.set_mapping(10, gem_id, parse_int(gem.get("issued_at", 0)))
         storage.set_mapping(11, gem_id, parse_int(gem.get("call_threshold", "0")))
         storage.set_mapping(12, gem_id, parse_int(gem.get("called_at", 0)))
+        # settlement_period: add_gem snapshots SETTLMENT_PERIOD_SECONDS (8 days).
+        storage.set_mapping(13, gem_id, parse_int(gem.get("settlement_period", 8 * 24 * 3600)))
 
-        # owner_gem_ids index (slot 14) + swap-and-pop counter (slot 13 below).
+        # owner_gem_ids index (slot 15) + swap-and-pop counter (slot 14 below).
         oi = owner_counts.get(owner.lower(), 0)
-        storage.set_mapping(14, gem_owner_index_key(owner, oi), int.from_bytes(gem_id, "big"))
+        storage.set_mapping(15, gem_owner_index_key(owner, oi), int.from_bytes(gem_id, "big"))
         owner_counts[owner.lower()] = oi + 1
 
-        # all_gem_ids List element i (slot 15 data region) + gem_index (slot 16).
-        storage.set_raw_slot(data_slot(15) + i, int.from_bytes(gem_id, "big"))
-        storage.set_mapping(16, gem_id, i)
+        # all_gem_ids List element i (slot 16 data region) + gem_index (slot 17).
+        storage.set_raw_slot(data_slot(16) + i, int.from_bytes(gem_id, "big"))
+        storage.set_mapping(17, gem_id, i)
 
     for owner, count in owner_counts.items():
-        storage.set_mapping(13, address_bytes(owner), count)
+        storage.set_mapping(14, address_bytes(owner), count)
 
-    # total_supply (slot 0) and all_gem_ids length (slot 15).
+    # total_supply (slot 0) and all_gem_ids length (slot 16).
     storage.set_slot(0, len(gems))
-    storage.set_slot(15, len(gems))
+    storage.set_slot(16, len(gems))
 
 
 def seed_coen(alloc: dict, balances: dict):

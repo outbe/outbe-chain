@@ -12,22 +12,23 @@ pub fn add_gem(storage: &StorageHandle<'_>, params: GemAddParams) -> Result<U256
 
     let mut gem = GemContract::new(storage.clone());
     let gem_id =
-        GemContract::generate_gem_id(params.owner, params.gem_load, storage.block_number()?);
+        GemContract::generate_gem_id(params.owner, params.promis_load_minor, storage.block_number()?);
 
     let item = GemData {
         gem_id,
         owner: params.owner,
         gem_type: params.gem_type,
-        gem_load: params.gem_load,
-        entry_price: params.entry_price,
-        cost_amount: params.cost_amount,
-        floor_price: params.floor_price,
-        call_threshold: params.call_threshold,
+        promis_load_minor: params.promis_load_minor,
+        entry_price_minor: params.entry_price_minor,
+        cost_amount_minor: params.cost_amount_minor,
+        floor_price_minor: params.floor_price_minor,
+        call_rate: params.call_rate,
         issuance_currency: params.issuance_currency,
         reference_currency: params.reference_currency,
         state: params.initial_state as u8,
         issued_at: params.issued_at,
         called_at: 0,
+        settlement_period: crate::constants::SETTLMENT_PERIOD_SECONDS,
     };
     gem.add_gem(&item)?;
     Ok(gem_id)
