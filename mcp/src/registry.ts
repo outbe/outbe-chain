@@ -25,7 +25,7 @@ const A = (hex: string): Address => getAddress(hex);
 const STRUCTS = [
   "struct NodData { uint256 nodId; address owner; uint32 worldwideDay; uint32 leagueId; uint256 floorPriceMinor; uint256 gratisLoadMinor; uint256 costOfGratisMinor; uint256 costAmountMinor; bool isQualified; uint16 issuanceCurrency; uint16 referenceCurrency; uint64 issuedAt; }",
   "struct GemData { uint256 gemId; address owner; uint8 gemType; uint8 state; uint256 gemLoad; uint256 entryPrice; uint256 costAmount; uint256 floorPrice; uint16 issuanceCurrency; uint16 referenceCurrency; uint64 issuedAt; }",
-  "struct Position { uint256 positionId; address asset; address bundleAccount; uint256 totalAnadosisAmount; uint256 outstandingAnadosisAmount; uint256 totalGratisAmount; uint256 outstandingGratisAmount; uint32 nextAnadosisNumber; uint64 createdAt; uint256 credisPrincipal; uint256 refinancingRate; uint16 issuanceCurrency; bytes eoaCiphertext; }",
+  "struct Position { uint256 positionId; address asset; address smartAccount; uint256 totalAnadosisAmount; uint256 outstandingAnadosisAmount; uint256 totalGratisAmount; uint256 outstandingGratisAmount; uint32 nextAnadosisNumber; uint64 createdAt; uint256 credisPrincipal; uint256 refinancingRate; uint16 issuanceCurrency; bytes eoaCiphertext; }",
   "struct Anadosis { uint32 anadosisNumber; uint64 dueDate; uint64 paidAt; uint256 anadosisAmount; uint256 gratisAmount; }",
   "struct PledgeTicket { uint256 commitment; uint256 amount; int64 createdAtBlock; }",
   "struct ExchangeRateTuple { string base; string quote; uint256 exchangeRate; uint256 volume; }",
@@ -138,13 +138,13 @@ export const CONTRACTS: Record<string, ContractEntry> = {
     abi: parseAbi([
       ...STRUCTS,
       "function getPosition(uint256 positionId) view returns (Position)",
-      "function getPositionsByAddress(address bundleAccount) view returns (Position[])",
+      "function getPositionsByAddress(address smartAccount) view returns (Position[])",
       "function getAllPositions() view returns (Position[])",
-      "function hasOverdueAnadosis(address bundleAccount) view returns (bool)",
+      "function hasOverdueAnadosis(address smartAccount) view returns (bool)",
       "function getNextAnadosis(uint256 positionId) view returns (Anadosis)",
       "function getPositionAnadosis(uint256 positionId) view returns (Anadosis[])",
-      "function credisOf(address bundleAccount) view returns (uint256)",
-      "function outstandingAnadosisOf(address bundleAccount) view returns (uint256)",
+      "function credisOf(address smartAccount) view returns (uint256)",
+      "function outstandingAnadosisOf(address smartAccount) view returns (uint256)",
     ]),
   },
 

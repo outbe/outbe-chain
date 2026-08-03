@@ -7,10 +7,10 @@ pub enum CredisFactoryError {
     #[error("invalid asset address")]
     InvalidAsset,
     #[error("invalid bundle account address")]
-    InvalidBundleAccount,
+    InvalidsmartAccount,
     #[error("anadosis amount is zero")]
     InvalidAmount,
-    #[error("caller is not the position bundleAccount")]
+    #[error("caller is not the position smartAccount")]
     UnauthorizedCaller,
     #[error("position is already fully paid")]
     PositionCompleted,

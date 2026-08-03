@@ -182,7 +182,7 @@ async function main() {
     process.exit(1);
   }
   console.log(`\nPosition:`);
-  console.log(`  Bundle Account: ${position.bundleAccount}`);
+  console.log(`  Bundle Account: ${position.smartAccount}`);
   console.log(`  Total:         ${formatTokenMeta(position.totalAnadosisAmount, erc20Meta)}`);
   console.log(`  Outstanding:   ${formatTokenMeta(position.outstandingAnadosisAmount, erc20Meta)}`);
   console.log(`  Created:       ${formatDate(position.createdAt)}`);

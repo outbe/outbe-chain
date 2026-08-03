@@ -21,7 +21,7 @@ pub struct AnadosisResult {
     pub gratis_amount: U256,
     pub paid_at: u64,
     pub asset: Address,
-    pub bundle_account: Address,
+    pub smart_account: Address,
 }
 
 impl CredisContract<'_> {
@@ -55,7 +55,7 @@ impl CredisContract<'_> {
     }
 
     /// Creates a position and returns the derived
-    /// `position_id = keccak256(commitment || bundle_account)`.
+    /// `position_id = keccak256(commitment || smart_account)`.
     ///
     /// `credis_principal` is the disbursed loan amount; the repayment schedule is
     /// sized to `total_debt(principal, refinancing_rate)` and split across the
@@ -65,7 +65,7 @@ impl CredisContract<'_> {
     pub fn create_position(
         &mut self,
         handle_id: U256,
-        bundle_account: Address,
+        smart_account: Address,
         eoa_ct: Vec<u8>,
         asset: Address,
         issuance_currency: u16,
@@ -78,7 +78,7 @@ impl CredisContract<'_> {
             return Err(CredisError::InvalidAmount.into());
         }
 
-        let position_id = CredisContract::position_id(handle_id, bundle_account);
+        let position_id = CredisContract::position_id(handle_id, smart_account);
         if self.position_exists(position_id)? {
             return Err(CredisError::PositionAlreadyExists.into());
         }
@@ -87,7 +87,7 @@ impl CredisContract<'_> {
 
         self.create_position_record(&Position {
             position_id,
-            bundle_account,
+            smart_account,
             asset,
             total_anadosis_amount: total_debt,
             outstanding_anadosis_amount: total_debt,
@@ -112,12 +112,12 @@ impl CredisContract<'_> {
             })?;
         }
 
-        self.append_to_address_index(bundle_account, position_id)?;
+        self.append_to_address_index(smart_account, position_id)?;
         self.append_to_global_index(position_id)?;
 
         self.emit(ICredis::PositionCreated {
             positionId: position_id,
-            bundleAccount: bundle_account,
+            smartAccount: smart_account,
             anadosisAmount: total_debt,
         })?;
 
@@ -166,7 +166,7 @@ impl CredisContract<'_> {
             gratis_amount: anadosis.gratis_amount,
             paid_at: anadosis.paid_at,
             asset: position.asset,
-            bundle_account: position.bundle_account,
+            smart_account: position.smart_account,
         })
     }
 
@@ -182,7 +182,7 @@ impl CredisContract<'_> {
     /// zeroes the outstanding balances, marks the schedule complete (so it is skipped
     /// by future sweeps and overdue checks), and emits `CollateralBurned`. Returns the
     /// pre-close snapshot so the caller can read `outstanding_gratis_amount` /
-    /// `eoa_ct` / `bundle_account`.
+    /// `eoa_ct` / `smart_account`.
     pub fn expire_position(&mut self, position_id: U256) -> Result<Position> {
         let mut position = self.load_position(position_id)?;
         let snapshot = position.clone();
@@ -192,7 +192,7 @@ impl CredisContract<'_> {
         self.update_position_record(&position)?;
         self.emit(ICredis::CollateralBurned {
             positionId: position_id,
-            bundleAccount: snapshot.bundle_account,
+            smartAccount: snapshot.smart_account,
             gratisBurned: snapshot.outstanding_gratis_amount,
         })?;
         Ok(snapshot)

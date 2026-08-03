@@ -169,7 +169,7 @@ fn full_pledge_request_pay_unlock_flow() {
 
         let credis = CredisContract::new(storage.clone());
         let position = credis.get_position(position_id).unwrap();
-        assert_eq!(position.bundle_account, alice());
+        assert_eq!(position.smart_account, alice());
         // The pledger EOA is stored sealed (ciphertext), never as a plaintext address,
         // and the enclave opens it back to alice via RevealOwner.
         assert!(!position.eoa_ct.is_empty(), "eoa stored as ciphertext");
@@ -322,7 +322,7 @@ fn request_credis_rejects_zero_asset() {
 }
 
 #[test]
-fn request_credis_rejects_zero_bundle_account() {
+fn request_credis_rejects_zero_smart_account() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(CREATED_AT));
     StorageHandle::enter(&mut storage, |storage| {
@@ -367,7 +367,7 @@ fn pay_anadosis_rejects_non_owner_caller() {
 
         // bob is not the position's bundle account.
         let err = runtime::pay_anadosis(storage.clone(), bob(), position_id).unwrap_err();
-        assert!(err.to_string().contains("bundleAccount"), "got: {err}");
+        assert!(err.to_string().contains("smartAccount"), "got: {err}");
     });
     fidelity_enclave::uninstall();
     test_enclave::uninstall();

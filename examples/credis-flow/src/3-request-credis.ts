@@ -70,7 +70,7 @@ async function main() {
   // Predict the bundle account address — the credis receiver, and the account
   // the pledge spend is bound to.
   const saFactory = SmartAccountFactory__factory.connect(smartAccountFactoryAddress, provider);
-  const bundleAccount = await saFactory.getAccountAddress(
+  const smartAccount = await saFactory.getAccountAddress(
     userAddress,
     ccaAddress,
     [erc20Address],
@@ -88,7 +88,7 @@ async function main() {
   // Bind the pledge to this bundle account with the spend authorization derived
   // from the pledge secret the user handed to the CCA.
   const secret = ethers.getBytes(ticket.pledgeSecret);
-  const spend = spendAuth(secret, bundleAccount);
+  const spend = spendAuth(secret, smartAccount);
 
   console.log("=== Request Credis (confidential / TEE) ===");
   console.log(`Env:            ${envName}`);
@@ -96,20 +96,20 @@ async function main() {
   console.log(`CCA:            ${ccaAddress}`);
   console.log(`User (pledger): ${userAddress}`);
   console.log(`CredisFactory:  ${credisFactoryAddress}`);
-  console.log(`Bundle account: ${bundleAccount}`);
+  console.log(`Bundle account: ${smartAccount}`);
   console.log(`ERC20:          ${erc20Address} (${erc20Meta.symbol})`);
   console.log(`Pledge handle:  ${ticket.pledgeHandle}`);
   console.log(`Spend auth:     ${spend}`);
   console.log(`Chain ID:       ${network.chainId}`);
 
-  const bundleErc20Before = await token.balanceOf(bundleAccount);
+  const bundleErc20Before = await token.balanceOf(smartAccount);
   console.log(`\nBundle ERC20 before: ${formatTokenMeta(bundleErc20Before, erc20Meta)}`);
 
   // The pledger EOA is NOT passed in calldata: the enclave reads it from the
   // pledge ticket, debits its pledged ledger, and returns it sealed so it is
   // stored as ciphertext on the position (no EOA↔bundle linkage on-chain).
-  console.log("\nSending requestCredis(asset, bundleAccount, pledgeHandle, spendAuth)...");
-  const tx = await credisFactory.requestCredis(erc20Address, bundleAccount, ticket.pledgeHandle, spend);
+  console.log("\nSending requestCredis(asset, smartAccount, pledgeHandle, spendAuth)...");
+  const tx = await credisFactory.requestCredis(erc20Address, smartAccount, ticket.pledgeHandle, spend);
   console.log(`  TX hash: ${tx.hash}`);
   const receipt = await tx.wait();
   if (!receipt) throw new Error("requestCredis tx receipt missing");
@@ -140,20 +140,20 @@ async function main() {
     }
   }
 
-  // Position id is deterministic: keccak256(pledgeHandle || bundleAccount).
-  const positionId = computePositionId(ticket.pledgeHandle, bundleAccount);
+  // Position id is deterministic: keccak256(pledgeHandle || smartAccount).
+  const positionId = computePositionId(ticket.pledgeHandle, smartAccount);
   if (eventPositionId !== null && eventPositionId !== positionId) {
     throw new Error(
       `PositionCreated id ${eventPositionId} != computed ${positionId} — check position_id parity`,
     );
   }
 
-  const bundleErc20After = await token.balanceOf(bundleAccount);
+  const bundleErc20After = await token.balanceOf(smartAccount);
   const position = await credis.getPosition(positionId);
 
   console.log("\n=== Position ===");
   console.log(`  positionId:        ${positionId}`);
-  console.log(`  bundleAccount:     ${position.bundleAccount}`);
+  console.log(`  smartAccount:     ${position.smartAccount}`);
   console.log(`  credisPrincipal:   ${formatTokenMeta(position.credisPrincipal, erc20Meta)}`);
   console.log(`  totalAnadosis:     ${formatTokenMeta(position.totalAnadosisAmount, erc20Meta)}`);
   console.log(`  totalGratis:       ${position.totalGratisAmount}`);
@@ -163,7 +163,7 @@ async function main() {
 
   // Persist the position + bundle for pay-anadosis.
   ticket.positionId = positionId.toString();
-  ticket.bundleAccount = bundleAccount;
+  ticket.smartAccount = smartAccount;
   writeTicket(ticket);
   console.log(`\nTicket updated: ${usedTicketPath}`);
   console.log("Run `npm run user-pays-anadosis` to pay an installment (and unlock 1/N of the collateral).");

@@ -321,12 +321,12 @@ export function spendAuth(secret: Uint8Array, bundle: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Position id — keccak256(handle || bundleAccount), matches CredisContract
+// Position id — keccak256(handle || smartAccount), matches CredisContract
 // ---------------------------------------------------------------------------
 
-/** `position_id = keccak256(pledge_handle(32) || bundle_account(20))` as uint256. */
-export function positionId(handleHex: string, bundleAccount: string): bigint {
+/** `position_id = keccak256(pledge_handle(32) || smart_account(20))` as uint256. */
+export function positionId(handleHex: string, smartAccount: string): bigint {
   const handle = ethers.getBytes(handleHex);
   if (handle.length !== 32) throw new Error("positionId: handle must be 32 bytes");
-  return BigInt(ethers.keccak256(concat(handle, addressBytes(bundleAccount))));
+  return BigInt(ethers.keccak256(concat(handle, addressBytes(smartAccount))));
 }

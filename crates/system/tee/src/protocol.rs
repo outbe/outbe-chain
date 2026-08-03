@@ -167,7 +167,7 @@ pub enum GratisOp {
     /// (`pledged_total_supply -= amount`).
     Unpledge,
     /// Consume a `PledgeLockTicket` for a credis request: verify `spend_auth` binds
-    /// it to `bundle_account`, credit the ticket `amount` into the EOA's own pledged
+    /// it to `smart_account`, credit the ticket `amount` into the EOA's own pledged
     /// ledger, and delete the ticket (no aggregate change — it stays pledged). Returns
     /// `gratis_amount` so credis can size the position.
     ConsumePledge,
@@ -234,9 +234,9 @@ pub struct GratisOpRequest {
     /// Pledge handle identifying the ticket (set for `Unpledge`/`ConsumePledge`).
     pub pledge_handle: Option<B256>,
     /// Destination bundle account (set for `ConsumePledge`).
-    pub bundle_account: Option<Address>,
-    /// Spend authorization binding the pledge to `bundle_account`
-    /// (`spend_auth_mac(pledge_secret, bundle_account)`), set for `ConsumePledge`.
+    pub smart_account: Option<Address>,
+    /// Spend authorization binding the pledge to `smart_account`
+    /// (`spend_auth_mac(pledge_secret, smart_account)`), set for `ConsumePledge`.
     pub spend_auth: Option<[u8; 32]>,
     /// Optional co-located Fidelity cohort update/probe, applied atomically with
     /// the Gratis op in the SAME enclave round-trip (Mint → `In`, Burn/BurnPledged
@@ -1053,7 +1053,7 @@ pub fn gratis_op_canonical_hash(req: &GratisOpRequest) -> B256 {
         }
         None => buf.push(0),
     }
-    match req.bundle_account {
+    match req.smart_account {
         Some(a) => {
             buf.push(1);
             buf.extend_from_slice(a.as_slice());

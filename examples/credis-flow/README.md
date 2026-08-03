@@ -21,7 +21,7 @@ holder, client-side) can read them.
   `pledgeHandle`; `unpledgeGratis(amount, handle, mac, opNonce)`;
   `mineCoen(amount, mac, opNonce)`. `mac = HMAC(modifyKey, op ‖ amount ‖ opNonce ‖
   chainId)` and `opNonce` must equal `gratis.opNonceOf(account)`.
-- **Credis.** `requestCredis(asset, bundleAccount, pledgeHandle, spendAuth)` — the
+- **Credis.** `requestCredis(asset, smartAccount, pledgeHandle, spendAuth)` — the
   user hands the CCA a `pledgeSecret` (`HMAC(modifyKey, handle)`); the CCA binds it
   to the bundle with `spendAuth = HMAC(pledgeSecret, "credis-bind" ‖ bundle)`.
   `anadosis(positionId)` pays one installment and **automatically** releases 1/N of

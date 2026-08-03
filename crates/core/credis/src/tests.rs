@@ -92,7 +92,7 @@ fn create_position_populates_all_10_anadosis_records() {
             .unwrap();
 
         let position = credis.get_position(position_id).unwrap();
-        assert_eq!(position.bundle_account, alice());
+        assert_eq!(position.smart_account, alice());
         assert_eq!(position.asset, asset());
         assert_eq!(position.total_anadosis_amount, U256::from(100_000u64));
         assert_eq!(position.outstanding_anadosis_amount, U256::from(100_000u64));
@@ -369,7 +369,7 @@ fn make_next_anadosis_advances_pointer() {
         for n in 1..=NUMBER_OF_ANADOSIS {
             let result = credis.make_next_anadosis(id, due_date_for(n)).unwrap();
             assert_eq!(result.anadosis_number, n);
-            assert_eq!(result.bundle_account, alice());
+            assert_eq!(result.smart_account, alice());
             assert_eq!(result.asset, asset());
             assert_eq!(result.paid_at, due_date_for(n));
         }
@@ -646,7 +646,7 @@ fn precompile_get_position_returns_full_record() {
         let position = ICredis::getPositionCall::abi_decode_returns(&out).unwrap();
 
         assert_eq!(position.positionId, id);
-        assert_eq!(position.bundleAccount, alice());
+        assert_eq!(position.smartAccount, alice());
         assert_eq!(position.totalAnadosisAmount, U256::from(100_000u64));
         assert_eq!(position.nextAnadosisNumber, 1);
         assert_eq!(position.createdAt, CREATED_AT);
@@ -658,7 +658,7 @@ fn precompile_rejects_msg_value() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         let call = ICredis::ICredisCalls::credisOf(ICredis::credisOfCall {
-            bundleAccount: alice(),
+            smartAccount: alice(),
         })
         .abi_encode();
         let err = dispatch(storage, &call, alice(), U256::from(1u64)).unwrap_err();
@@ -707,7 +707,7 @@ fn precompile_has_overdue_uses_storage_timestamp() {
             .unwrap();
 
         let call = ICredis::ICredisCalls::hasOverdueAnadosis(ICredis::hasOverdueAnadosisCall {
-            bundleAccount: alice(),
+            smartAccount: alice(),
         })
         .abi_encode();
         let out = dispatch(storage.clone(), &call, alice(), U256::ZERO).unwrap();
@@ -736,7 +736,7 @@ fn precompile_has_overdue_uses_storage_timestamp() {
             .unwrap();
 
         let call = ICredis::ICredisCalls::hasOverdueAnadosis(ICredis::hasOverdueAnadosisCall {
-            bundleAccount: alice(),
+            smartAccount: alice(),
         })
         .abi_encode();
         let out = dispatch(storage, &call, alice(), U256::ZERO).unwrap();

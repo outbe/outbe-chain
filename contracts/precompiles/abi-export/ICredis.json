@@ -4,7 +4,7 @@
     "name": "credisOf",
     "inputs": [
       {
-        "name": "bundleAccount",
+        "name": "smartAccount",
         "type": "address",
         "internalType": "address"
       }
@@ -39,7 +39,7 @@
             "internalType": "address"
           },
           {
-            "name": "bundleAccount",
+            "name": "smartAccount",
             "type": "address",
             "internalType": "address"
           },
@@ -171,7 +171,7 @@
             "internalType": "address"
           },
           {
-            "name": "bundleAccount",
+            "name": "smartAccount",
             "type": "address",
             "internalType": "address"
           },
@@ -281,7 +281,7 @@
     "name": "getPositionsByAddress",
     "inputs": [
       {
-        "name": "bundleAccount",
+        "name": "smartAccount",
         "type": "address",
         "internalType": "address"
       }
@@ -303,7 +303,7 @@
             "internalType": "address"
           },
           {
-            "name": "bundleAccount",
+            "name": "smartAccount",
             "type": "address",
             "internalType": "address"
           },
@@ -367,7 +367,7 @@
     "name": "hasOverdueAnadosis",
     "inputs": [
       {
-        "name": "bundleAccount",
+        "name": "smartAccount",
         "type": "address",
         "internalType": "address"
       }
@@ -386,7 +386,7 @@
     "name": "outstandingAnadosisOf",
     "inputs": [
       {
-        "name": "bundleAccount",
+        "name": "smartAccount",
         "type": "address",
         "internalType": "address"
       }
@@ -455,7 +455,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "bundleAccount",
+        "name": "smartAccount",
         "type": "address",
         "indexed": true,
         "internalType": "address"
@@ -480,7 +480,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "bundleAccount",
+        "name": "smartAccount",
         "type": "address",
         "indexed": true,
         "internalType": "address"

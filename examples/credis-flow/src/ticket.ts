@@ -6,7 +6,7 @@
 // developer machine.
 //
 // The `pledgeSecret` is the bearer secret the user hands to the CCA off-chain:
-// the CCA computes `spendAuth(pledgeSecret, bundleAccount)` to bind the pledge to
+// the CCA computes `spendAuth(pledgeSecret, smartAccount)` to bind the pledge to
 // its bundle account at `requestCredis`. It is `HMAC(modifyKey, handle)` — the
 // modify key never leaves the user's machine.
 
@@ -25,7 +25,7 @@ export interface Ticket {
   createdAt: string;
   // Filled by `request-credis` so `pay-anadosis` can address the position.
   positionId?: string; // decimal string (uint256)
-  bundleAccount?: string; // the bundle account the pledge was bound to
+  smartAccount?: string; // the bundle account the pledge was bound to
 }
 
 const TICKETS_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../tickets");
