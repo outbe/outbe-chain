@@ -493,7 +493,6 @@ fn run_supervisor(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> 
             job_root: payout_job_root,
             expected_chain_id: identity.chain_id,
             sender_address: payout_preparer.sender_address(),
-            lookback_days: SUPERVISOR_PAYOUT_LOOKBACK_DAYS,
             limits,
         },
         payout_rpc,

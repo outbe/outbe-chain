@@ -60,7 +60,6 @@ pub struct PayoutSubmissionConfigV1 {
     pub job_root: PathBuf,
     pub expected_chain_id: u64,
     pub sender_address: Address,
-    pub lookback_days: u32,
     pub limits: SchemaLimits,
 }
 
@@ -351,7 +350,20 @@ impl<R: PayoutSubmissionRpcV1> SupervisorPayoutSubmitterV1<R> {
         candidate_days: &[u32],
     ) -> Result<PayoutTickOutcomeV1, PayoutSubmissionErrorV1> {
         if let Some((worldwide_day, start_index)) = self.open_submission {
-            return self.drive_to_finality(worldwide_day, start_index);
+            let record = self
+                .journal
+                .load(worldwide_day, start_index)?
+                .ok_or(PayoutSubmissionErrorV1::InvalidJournal)?;
+            let dead = matches!(
+                record.stage,
+                PayoutSubmissionStageV1::Prepared | PayoutSubmissionStageV1::Submitted
+            ) && self.nonce_was_bypassed(&record)?;
+            if !dead {
+                return self.drive_to_finality(worldwide_day, start_index);
+            }
+            // The pinned envelope can never land; the on-chain bitmap still
+            // holds whatever is unpaid, so fall through to discovery.
+            self.open_submission = None;
         }
         let Some(work) = self.discover(candidate_days)? else {
             return Ok(PayoutTickOutcomeV1::Idle);
@@ -540,6 +552,28 @@ impl<R: PayoutSubmissionRpcV1> SupervisorPayoutSubmitterV1<R> {
         Ok(())
     }
 
+    /// The nonce moved past this envelope and no receipt exists for its hash.
+    /// The receipt is checked after the nonce read, so a racing inclusion
+    /// keeps the record.
+    fn nonce_was_bypassed(
+        &self,
+        record: &PayoutSubmissionRecordV1,
+    ) -> Result<bool, PayoutSubmissionErrorV1> {
+        if self
+            .rpc
+            .canonical_nonce(record.sender_address)
+            .map_err(rpc_error)?
+            <= record.nonce
+        {
+            return Ok(false);
+        }
+        Ok(self
+            .rpc
+            .transaction_receipt(record.transaction_hash)
+            .map_err(rpc_error)?
+            .is_none())
+    }
+
     fn receipt_is_canonical(
         &self,
         block_number: u64,
@@ -592,12 +626,20 @@ impl<R: PayoutSubmissionRpcV1> SupervisorPayoutSubmitterV1<R> {
             .map_err(|error| PayoutSubmissionErrorV1::Preparation(error.to_string()))?;
         self.validate_prepared(&prepared, work, nonce, max_fee_per_gas)?;
         let generation = match self.journal.load(work.worldwide_day, work.start_index)? {
-            // Only a finalized predecessor may be replaced.
-            Some(prior) if prior.stage == PayoutSubmissionStageV1::Finalized => {
+            None => 1,
+            Some(prior) => {
+                // Replaceable: a finalized attempt, or a dead envelope whose
+                // nonce another sender transaction consumed.
+                let replaceable = prior.stage == PayoutSubmissionStageV1::Finalized
+                    || (matches!(
+                        prior.stage,
+                        PayoutSubmissionStageV1::Prepared | PayoutSubmissionStageV1::Submitted
+                    ) && self.nonce_was_bypassed(&prior)?);
+                if !replaceable {
+                    return Err(PayoutSubmissionErrorV1::InvalidJournal);
+                }
                 next_generation(prior.generation)?
             }
-            Some(_) => return Err(PayoutSubmissionErrorV1::InvalidJournal),
-            None => 1,
         };
         self.journal.persist(PayoutSubmissionRecordV1 {
             generation,
@@ -802,7 +844,13 @@ impl<R: PayoutSubmissionRpcV1> SupervisorPayoutSubmitterV1<R> {
         for record in bytes.chunks_exact(CONTRIBUTOR_LEAF_BYTES) {
             let mut leaf = [0u8; CONTRIBUTOR_LEAF_BYTES];
             leaf.copy_from_slice(record);
-            total += decode_contributor_leaf(&leaf).nominal;
+            let Some(next) = total.checked_add(decode_contributor_leaf(&leaf).nominal) else {
+                eprintln!(
+                    "OCOMP payout: artifact for day {worldwide_day} overflows the nominal total; skipping"
+                );
+                return Ok(None);
+            };
+            total = next;
             leaves.push(leaf);
         }
         let root = contributor_list_root(certified.contributor_count, leaves.iter())
@@ -1172,7 +1220,105 @@ fn sync_directory(path: &Path) -> Result<(), PayoutSubmissionErrorV1> {
 
 #[cfg(test)]
 mod tests {
+    use outbe_ocomp_protocol::profile::poc_schema_limits;
+
+    use crate::vote_submitter::{VoteBlockV1, VoteReceiptV1};
+
     use super::*;
+
+    struct NonceProbeRpc {
+        nonce: u64,
+        receipt: Option<VoteReceiptV1>,
+    }
+
+    impl VoteSubmissionRpcV1 for NonceProbeRpc {
+        type Error = std::io::Error;
+
+        fn chain_id(&self) -> Result<u64, Self::Error> {
+            unimplemented!()
+        }
+
+        fn canonical_nonce(&self, _address: Address) -> Result<u64, Self::Error> {
+            Ok(self.nonce)
+        }
+
+        fn gas_price(&self) -> Result<u128, Self::Error> {
+            unimplemented!()
+        }
+
+        fn send_raw_transaction(
+            &self,
+            _raw_transaction: &[u8],
+            _expected_hash: B256,
+        ) -> Result<B256, Self::Error> {
+            unimplemented!()
+        }
+
+        fn transaction_receipt(
+            &self,
+            _transaction_hash: B256,
+        ) -> Result<Option<VoteReceiptV1>, Self::Error> {
+            Ok(self.receipt)
+        }
+
+        fn canonical_block(&self, _number: u64) -> Result<Option<VoteBlockV1>, Self::Error> {
+            unimplemented!()
+        }
+
+        fn finalized_block(&self) -> Result<VoteBlockV1, Self::Error> {
+            unimplemented!()
+        }
+    }
+
+    impl PayoutSubmissionRpcV1 for NonceProbeRpc {
+        fn call_contract(&self, _to: Address, _data: &[u8]) -> Result<Vec<u8>, Self::Error> {
+            unimplemented!()
+        }
+    }
+
+    fn probe_submitter(
+        root: &Path,
+        nonce: u64,
+        receipt: Option<VoteReceiptV1>,
+    ) -> SupervisorPayoutSubmitterV1<NonceProbeRpc> {
+        SupervisorPayoutSubmitterV1::open(
+            PayoutSubmissionConfigV1 {
+                journal_root: root.to_path_buf(),
+                job_root: root.to_path_buf(),
+                expected_chain_id: 42,
+                sender_address: Address::repeat_byte(0x42),
+                limits: poc_schema_limits(),
+            },
+            NonceProbeRpc { nonce, receipt },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_nonce_is_bypassed_only_when_it_moved_and_no_receipt_exists() {
+        let submitted = record(PayoutSubmissionStageV1::Submitted);
+
+        let fresh = tempfile::tempdir().unwrap();
+        let same_nonce = probe_submitter(fresh.path(), submitted.nonce, None);
+        assert!(!same_nonce.nonce_was_bypassed(&submitted).unwrap());
+
+        let moved = tempfile::tempdir().unwrap();
+        let bypassed = probe_submitter(moved.path(), submitted.nonce + 1, None);
+        assert!(bypassed.nonce_was_bypassed(&submitted).unwrap());
+
+        let landed = tempfile::tempdir().unwrap();
+        let with_receipt = probe_submitter(
+            landed.path(),
+            submitted.nonce + 1,
+            Some(VoteReceiptV1 {
+                transaction_hash: submitted.transaction_hash,
+                block_number: 1,
+                block_hash: B256::repeat_byte(0x11),
+                success: true,
+            }),
+        );
+        assert!(!with_receipt.nonce_was_bypassed(&submitted).unwrap());
+    }
 
     fn record(stage: PayoutSubmissionStageV1) -> PayoutSubmissionRecordV1 {
         PayoutSubmissionRecordV1 {
