@@ -127,6 +127,58 @@ Reentrancy is declared per module/entrypoint. The EVM frame stack and module sta
 guards enforce it; a thread-local same-address ban is not the protocol definition.
 Cross-address cycles, callbacks and read-only re-entry must have explicit behavior.
 
+### Native value at the precompile boundary
+
+A precompile executes only in a frame that targets its own address. Dispatch is
+selected by `bytecode_address` and keys the precompile's state on it, while
+`CALL` and `STATICCALL` keep `target_address` equal to it. `DELEGATECALL` and
+`CALLCODE` make the two diverge, and neither can give a precompile the
+borrowed-code semantics those opcodes promise: dispatch would read and write the
+precompile's own storage while `caller` stays the frame's inherited caller. Such
+a frame is refused outright, before the reentrancy guard and before any value
+decision. Two things follow. A contract cannot run a caller-authenticated
+selector — unstaking, voting, spending — under the identity of whoever called it.
+And no value can be credited from a frame that moved none: `DELEGATECALL` carries
+`CallValue::Apparent` and transfers nothing, while `CALLCODE` carries a
+stack-chosen `CallValue::Transfer` whose caller and target are the same account,
+which the journal resolves to a balance check with no movement.
+
+Native value is then classified once, before any storage provider or handle
+exists, and rejects before dispatch.
+
+Value is then default-denied per route. Each exact route declares a `ValuePolicy`
+on the same line as its dispatch function. `Payable` routes are those carrying at
+least one payable selector; their non-payable selectors still reject value
+per-method, because the boundary decision is per address and not per selector.
+Every other exact route is `Reject`, which stops value that has no accounting
+entry and no withdrawal path from stranding at a precompile address.
+
+Which selectors may keep the value is the dispatch module's own published list.
+The route table carries that list beside the policy and enforces it before
+delegating, so a module cannot omit the check and silently accept value on every
+selector it exposes. Payable modules repeat it at their own entry, which covers
+callers that reach them directly, and generated dispatch emits the same check, so
+a `#[contract_payable]` method does not open value on its siblings.
+
+The route table additionally asserts at compile time that a route declares
+`Payable` exactly when its module's list is non-empty. That binds the two
+declarations against each other, and nothing more: it does not verify that a
+published selector's handler consumes the value, nor that a second payable
+selector added to an already-payable module was published. Both are covered by
+test instead. Each published selector has a test driving value through dispatch
+and asserting the handler received it, and each payable module has a test that an
+unpublished selector's funded call is refused.
+
+The reserved stablecoin class permits value at the boundary, and its dispatch
+draws the line: a plain native send to an address the Factory never issued is
+accepted, because an externally owned account whose address falls in the prefix
+must still receive transfers. The same send to a Factory-derived token address is
+refused, because that address has no key and no selector that moves native
+balance, so accepting it would strand the value permanently.
+
+Rejection uses the ordinary revert shape and charges base gas, so a denied call
+is a normal reverting frame whose funds return with the frame's checkpoint.
+
 ### Conformance and production evidence
 
 Route conformance runs every active exact route and class outcome through the
@@ -165,6 +217,16 @@ the pinned upstream revm handler for equivalent bytecode calls.
 - Gas and refunds are charged once and match the receipt and committed execution.
 - Unsafe context access cannot escape its synchronous typed factory invocation.
 - Reentrancy policy is deterministic and module-declared, not thread scheduling.
+- A precompile executes only in a frame whose `target_address` is its own address;
+  a delegated frame is refused, so neither its inherited caller nor its uncredited
+  value can reach dispatch.
+- Every exact route declares its own value policy, and a route that declares no
+  payable selector cannot receive native value. Route policy and the module's
+  published payable selectors are asserted equal at compile time, and a payable
+  module refuses value for every selector it has not published.
+- Native value never settles at an address that cannot spend it: a Factory-issued
+  stablecoin token refuses a plain transfer, while an unissued address in the
+  reserved class still accepts one.
 
 ## Atomicity, concurrency and replay
 
@@ -187,6 +249,40 @@ Changes require an activation plan, golden vectors before/after the boundary and
 state migration when address meaning or layout changes. The pinned alloy/revm fork
 and its context-hook ABI are part of the compatibility surface until the unsafe seam
 is removed.
+
+The native-value boundary narrows the set of accepted calls, so it is a
+consensus-visible change that nodes must adopt together:
+
+- Old behavior: any precompile address accepted `msg.value`; a `DELEGATECALL` or
+  `CALLCODE` frame reached dispatch, ran against the precompile's own storage under
+  its inherited caller, and had its value credited as though transferred. Modules
+  rejected value individually, or not at all.
+- New behavior: a `DELEGATECALL` or `CALLCODE` frame targeting an Outbe-routed
+  address reverts, with or without value. Ethereum's own precompiles `0x01`–`0x0a`
+  resolve to no Outbe route and are untouched. A funded plain `CALL` to an exact
+  route that declares no payable selector now reverts where it previously
+  succeeded — that is the stranding this closes, and it is the change most likely
+  to affect an existing caller. Funded calls to the three payable routes still
+  succeed; in the reserved stablecoin class a plain native send succeeds only at an
+  address the Factory never issued, and reverts at an issued token.
+- Error precedence: on a funded call, the value refusal now precedes ABI decoding,
+  so calldata shorter than a selector or naming an unknown selector reports the
+  value error rather than the decode error. A caller matching on the old message
+  sees a different string; no outcome changes.
+- Gas: a plain native send into the reserved stablecoin class now performs the
+  Factory registration lookup before returning, costing two extra storage reads on
+  the accepted path and three on the issued-token refusal. A value-bearing `CALL`
+  always carries the stipend, but an Outbe sub-call that budgeted only the route's
+  base gas for such a send now runs out.
+- Operator migration: none for ordinary use. A contract that reached an
+  Outbe-routed precompile through `DELEGATECALL`/`CALLCODE` — including a
+  zero-value one, such as borrowing Outbe's own Poseidon or proof route — must
+  switch to a plain `CALL`; delegatecalling Ethereum's `0x01`–`0x0a` is unaffected.
+  A caller that sent value to a precompile with no payable selector must target a
+  payable route instead.
+  Because previously-accepted transactions now revert, mixed binaries disagree on
+  block validity; the change activates by coordinated rollout like any other
+  call-frame semantics change.
 
 ## Production-interface verification evidence
 

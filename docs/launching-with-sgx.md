@@ -1,180 +1,177 @@
-# Launching a TEE localnet with real SGX (gramine-sgx)
+# Launching TEE networks after the DCAP activation boundary
 
-In this setup, tribute enclaves run under `gramine-sgx` on real SGX hardware with
-confidential execution and EGETKEY sealing. Each enclave generates its own DKG
-identity from the hardware RNG. The committee then converges on one tribute offer
-key and publishes it on-chain. The E2E suite uses the production enclave binary
-under `gramine-direct`, without SGX hardware and with a deterministic
-`--dkg-seed`.
+Outbe has two explicit, genesis-fixed TEE modes. They are different networks,
+not runtime alternatives:
 
-> The manifest ships with `sgx.remote_attestation = "none"`. The enclaves still
-> provide confidential execution, real MRENCLAVE/MRSIGNER measurements, and
-> EGETKEY sealing, but they do not produce a DCAP quote. Quote generation requires
-> a provisioned PCK through PCCS or Intel PCS, and
-> `verify_enclave_registration` is still a stub, so the chain cannot verify quotes
-> yet. See [Re-enabling DCAP](#re-enabling-dcap-attestation).
+- `DcapRequired` is the production Intel SGX x86_64 mode. It requires the V1
+  manifest from block 1, an authorized SGX enclave, quote and canonical
+  collateral. A missing or rejected dependency stops startup; it never falls
+  back to development mode.
+- `GramineDirectDev` is an isolated development mode with reserved chain ID
+  `54322345`, its own genesis and non-hardware measurements. It runs under
+  `gramine-direct` and cannot be used as SGX, DCAP or release evidence.
 
-This page describes a developer-owned localnet. Its `Dockerfile.test` renders and
-signs with a scenario-scoped test key at launch. It cannot authorize a testnet
-deployment. Testnet operators must pull and verify the pre-signed image digest from
-[Testnet SGX release and rollout](testnet-sgx-release.md); the release container has no
-runtime signing or `gramine-direct` fallback.
+Every node role requires `--tee-enclave-socket`. A Validator cannot start
+threshold work or consensus without the permanent resident offer key, except
+while a proven fresh block-1 founder is creating that key. A FullNode must have
+the exact permanent key and match it against its selected certified upstream
+before Reth networking, RPC, sync or execution launches.
 
-## Prerequisites
+## Current release status
 
-- An SGX CPU with the in-kernel driver: `/dev/sgx_enclave` present.
-- Docker access. The localnet harness builds the explicit
-  `outbe-tee-enclave-gramine-test` image from `Dockerfile.test`; host Gramine is not
-  used by that container path.
-- The current user can reach SGX. Either be in the `sgx`/`sgx_prv` groups or run via
-  `sudo`. If quote/AESM operations are ever needed: `sudo systemctl restart aesmd`.
-- Docker, and the foundry tools (`cast`, on PATH) for the checks below.
-- Build the binaries:
-  ```sh
-  cargo build -p outbe-chain --bin outbe-chain
-  cargo build --release -p outbe-tee-enclave --bin outbe-tee-enclave   # the REAL enclave (no mock)
-  cargo build -p outbe-cli --bin outbe-cli
-  docker build -f bin/outbe-tee-enclave/gramine/Dockerfile.test \
-    -t outbe-tee-enclave-gramine-test bin/outbe-tee-enclave/gramine
-  ```
+The A0 code path makes `teeAttestationV1` and OST3 mandatory and fail-closed.
+That alone is not a production release claim. Production rollout remains
+blocked until the remaining I9 gates prove all of the following for one exact
+artifact set:
 
-## Launch a four-validator SGX network
+- Intel QVL `1.26.100.1-noble1`, Gramine `1.9`, the `native-dcap` feature and
+  every trusted native artifact are frozen and digest-verified;
+- fresh accepted Processor-CA and registered multi-package Platform-CA evidence
+  passes the enclave-resident public verifier;
+- exact-release `gramine-sgx` and dense block-1 timing fit the published
+  minimum validator profile;
+- real Validator, FullNode and 32-validator `DcapRequired` E2E is green.
 
-```sh
-export PATH="$PATH:$HOME/.foundry/bin"
-./scripts/bootstrap-testnet.sh 4 /tmp/sgx-net scripts/seed-testnet-lowstake.json
+The currently checked-in pre-activation release bundle still declares
+`sgx.remote_attestation = "none"`. It must not be deployed as a
+`DcapRequired` production release. I9 B1 owns the exact release-bundle switch;
+H1, P1 and E1 own hardware acceptance, performance and production E2E.
 
-sudo env OUTBE_TEE_ENCLAVE=1 OUTBE_TEE_SEAL=1 \
-  OUTBE_TEE_ENCLAVE_BINARY="$PWD/target/release/outbe-tee-enclave" \
-  OUTBE_CHAIN_BINARY="$PWD/target/debug/outbe-chain" PATH="$PATH" \
-  ./scripts/run-testnet.sh start /tmp/sgx-net
-```
+## Run the isolated development network
 
-What the flags do:
+This is the supported hardware-free operator path. It always creates a
+`GramineDirectDev` genesis and always launches one enclave per validator.
 
-- `OUTBE_TEE_ENCLAVE=1` without `OUTBE_TEE_ENCLAVE_MOCK` starts the real
-  `outbe-tee-enclave` binary. `run-testnet.sh` passes `/dev/sgx_enclave` (and
-  `/dev/sgx_provision` + the host AESM socket when present); the test entrypoint
-  signs the mounted development binary with the localnet's generated test key and
-  selects `gramine-sgx` because the SGX device is there.
-- `OUTBE_TEE_SEAL=1` gives each validator a persistent `--tee-dir` (bind-mounted at
-  `/tee`) and `--chain-id`. Under real SGX, it seals the DKG-derived offer key for
-  faster restarts. It also makes the enclave generate its own DKG identity and seal
-  it to `<tee-dir>/sealed_identity.bin`. No `--dkg-seed` is supplied, and the
-  identity survives a container restart.
-- The `gramine-direct` mock path (`OUTBE_TEE_ENCLAVE_MOCK=1`) keeps a deterministic
-  per-index `--dkg-seed`: it has no EGETKEY and cannot persist a random identity.
-- The generated test key lives under the localnet output directory with mode 0600,
-  is reused only for that localnet's restart stability and must never be copied into
-  a release or treated as the protected testnet signer.
-
-Each enclave logs, on a healthy boot:
-
-```
-MODE = gramine-sgx — remote attestation DISABLED (...); EGETKEY sealing available, NOT remote-attested
-listening on tcp://127.0.0.1:700i (attestation: none (gramine-sgx; ...); DKG identity: self-generated (fresh, sealed))
-```
-
-Wait for TEE bootstrap (real-SGX enclave load + DKG is slower than the mock):
+Prerequisites are Docker, a transaction-capable MongoDB replica set, and the
+Rust toolchain:
 
 ```sh
-cast call 0x000000000000000000000000000000000000EE0A 'isBootstrapped()(bool)' --rpc-url http://localhost:8545
-# -> true
+cargo build -p outbe-chain --bin outbe-chain
+cargo build -p outbe-cli --bin outbe-cli
+cargo build -p outbe-tee-enclave --bin outbe-tee-enclave
+
+docker build \
+  -f bin/outbe-tee-enclave/gramine/Dockerfile.test \
+  -t outbe-tee-enclave-gramine-test \
+  bin/outbe-tee-enclave/gramine
 ```
 
-## Verify the keys
-
-The `outbe-cli tee pubkey` command queries an enclave's **resident** offer key (the
-Seam-F group key once DKG completes), its DKG identity (`tee_bls_pub`), and its real
-measurements. With `--diff-chain` it also asserts the offer key equals the on-chain
-registry `tributeOfferPublicKey()` and **exits non-zero on a mismatch**.
+Create and start a four-validator development chain:
 
 ```sh
-for i in 0 1 2 3; do
-  ./target/debug/outbe-cli tee pubkey --enclave-socket 127.0.0.1:700$i \
-    --rpc-url http://localhost:8545 --diff-chain
-done
+./scripts/bootstrap-testnet.sh \
+  4 /tmp/outbe-devnet scripts/seed-testnet-lowstake.json
+
+OUTBE_PROJECTION_MONGODB_URI='mongodb://127.0.0.1:27017/?replicaSet=rs0' \
+OUTBE_TEE_ENCLAVE_BINARY="$PWD/target/debug/outbe-tee-enclave" \
+  ./scripts/run-testnet.sh start /tmp/outbe-devnet
+
+./scripts/run-testnet.sh status /tmp/outbe-devnet
 ```
 
-Expected results:
+`bootstrap-testnet.sh` inserts `teeAttestationV1` only after all other genesis
+mutations. `run-testnet.sh` refuses a missing enclave, a bare-host enclave and
+any implicit SGX selection. Even on an SGX-capable host this lane deliberately
+uses `gramine-direct`.
 
-- **offer pubkey identical on all 4 + `✓ MATCH`** → the committee shares ONE offer
-  key and it equals the on-chain registry. This is the key clients encrypt to.
-- **`tee_bls_pub` DISTINCT on all 4** → identities were independently
-  hardware-generated, not derived from a shared seed/index.
-- **`mrenclave` real, non-zero, identical on all 4** → same signed binary; read from
-  the local SGX report (no DCAP needed).
-- **`remote-attested (real quote): false`** → confidential and measured, but not
-  remote-attested (expected under `remote_attestation = "none"`).
-
-Restart-stability of a self-generated identity:
+For deterministic restart testing, use the explicitly test-only mock binary and
+its stable test sealing key:
 
 ```sh
-sudo docker restart outbe-tee-gramine-0
-# its tee_bls_pub is unchanged; the banner now says "self-generated (restored from seal)"
+cargo build -p outbe-tee-enclave \
+  --bin outbe-tee-enclave-mock --features mock
+
+OUTBE_PROJECTION_MONGODB_URI='mongodb://127.0.0.1:27017/?replicaSet=rs0' \
+OUTBE_TEE_ENCLAVE_MOCK=1 OUTBE_TEE_SEAL=1 \
+OUTBE_TEE_ENCLAVE_BINARY="$PWD/target/debug/outbe-tee-enclave-mock" \
+  ./scripts/run-testnet.sh start /tmp/outbe-devnet
 ```
 
-## Create a tribute against the registry offer key
+This mock restart case is development reachability evidence only. The
+non-mock enclave under `gramine-direct` cannot use EGETKEY sealing, so a fresh
+development genesis is required after its identity is lost.
 
-`outbe-cli tribute offer` reads `tributeOfferPublicKey()` from the registry,
-encrypts the offer to it, and submits `offerTribute(...)`; any committee enclave
-decrypts it in-SGX during block execution.
+Stop the network with:
 
 ```sh
-V0=0x$(tr -d '[:space:]' < /tmp/sgx-net/validator-0/evm-key.hex)
-ADDR=$(cast wallet address --private-key "$V0")
-
-# Optional pre-flight: fail fast if the registry and enclave keys diverged.
-./target/debug/outbe-cli tee pubkey --enclave-socket 127.0.0.1:7000 --rpc-url http://localhost:8545 --diff-chain
-
-# The localnet boots on the CURRENT date (bootstrap-testnet.sh seeds the OFFERING
-# day = genesis date, UTC+14), so offer for today, not a hardcoded calendar day:
-WWD=$(date -u -d "@$(( $(date +%s) + 50400 ))" +%Y%m%d)
-./target/debug/outbe-cli tribute offer "$WWD" --amount 100 --currency 840 \
-  --private-key "$V0" --rpc-url http://localhost:8545
-
-# After a block, the tribute is owned by the creator and supply is +1 on every node:
-./target/debug/outbe-cli tribute by-owner "$ADDR" --rpc-url http://localhost:8545
-cast call 0x0000000000000000000000000000000000001101 'totalSupply()(uint256)' --rpc-url http://localhost:8545
+./scripts/run-testnet.sh stop /tmp/outbe-devnet
 ```
 
-A registry/enclave key mismatch otherwise appears during execution as the opaque
-error `AEAD decryption failed`. Run the `tee pubkey --diff-chain` pre-flight before
-spending a transaction.
+## Construct a production ChainSpec
 
-## The keys in the registry
+Use only measurements and TCB values taken from the exact frozen release. The
+command below validates and writes a ChainSpec; it does not prove that the
+release passed hardware gates:
 
-- **Group offer key** — ONE per committee, registry slot-1 `tributeOfferPublicKey()`.
-  Derived in-enclave from the DKG group threshold signature (Seam F), byte-identical
-  on every honest enclave. This is what clients encrypt tributes to. `tee pubkey`'s
-  `offer pubkey` (resident, post-DKG) is this value.
-- **Per-enclave `recipient_x25519`** — a per-validator handoff key (registry slot for
-  the validator), REPORT_DATA-bound, used to seal the offer key to a joining member.
-  Distinct per enclave; not the key clients use.
-- **DKG identity** (`tee_bls_pub` + share-decrypt key) — a third thing, per enclave,
-  now self-generated under SGX.
+```sh
+target/debug/outbe-chain tee genesis \
+  --input /path/to/final-seeded-genesis.json \
+  --output /path/to/production-genesis.json \
+  --mode dcap-required \
+  --mrenclave 0x<exact-32-byte-release-measurement> \
+  --mrsigner 0x<exact-32-byte-release-signer> \
+  --isv-prod-id <exact-release-product-id> \
+  --minimum-isv-svn <reviewed-minimum-svn> \
+  --minimum-tcb-evaluation-data-number <reviewed-nonzero-tcb-number>
+```
 
-## genesis teePolicy
+The command refuses zero measurements, the reserved development chain ID,
+input/output aliasing and overwrite of an existing output. The product
+ChainSpec parser then requires the canonical `teeAttestationV1` field at every
+startup. A hand-authored manifest cannot select `GramineDirectDev` outside
+chain ID `54322345` or select `DcapRequired` on that reserved identity.
 
-The genesis `teePolicy` governs which enclave measurements the node will accept on
-connect. An empty policy resolves to `dev_accept_any`, which accepts the
-unattested/empty-quote enclaves produced under `remote_attestation = "none"`. On-chain,
-`verify_enclave_registration` is a stub (accepts any measurements), so zero/any
-measurements are currently accepted. Real measurement enforcement remains future work.
+`scripts/prepare_network.py` exposes the same boundary for generated launch
+plans:
 
-## Re-enabling DCAP attestation
+```sh
+python3 scripts/prepare_network.py \
+  --seed /path/to/seed.json \
+  --validators /path/to/validators.json \
+  --output-dir /path/to/network \
+  --tee-mode dcap-required \
+  --chain-id <production-chain-id> \
+  --mrenclave 0x<exact-measurement> \
+  --mrsigner 0x<exact-signer> \
+  --isv-prod-id <id> \
+  --minimum-isv-svn <svn> \
+  --minimum-tcb-evaluation-data-number <number>
+```
 
-To produce and verify real DCAP quotes:
+Do not use placeholder measurements. Do not start production until the I9
+release checkpoint records the exact signed artifacts and all required hardware
+evidence.
 
-1. Provision a PCK / quote provider (PCCS or Intel PCS) on the host.
-2. For a local-only experiment, set `sgx.remote_attestation = "dcap"` in the test
-   manifest template and rebuild `Dockerfile.test`. For an authorized release, change
-   `outbe-tee-enclave.release.manifest.template`, review/version the bundle contract and
-   create a new protected release; never modify or re-sign an existing image.
-3. Tighten the genesis `teePolicy` to require the expected MRENCLAVE/MRSIGNER and a
-   minimum ISV-SVN, and replace the `verify_enclave_registration` stub with real
-   on-chain measurement enforcement.
+## Verify identity and offer-key readiness
 
-Without PCK provisioning, `gramine-sgx` with `"dcap"` fails to load with
-`AESM service returned error 12`. For that reason, this localnet ships with
-`"none"`.
+After a development bootstrap or an authorized production run, query each
+enclave and compare its resident permanent key with canonical chain state:
+
+```sh
+target/debug/outbe-cli tee pubkey \
+  --enclave-socket 127.0.0.1:7000 \
+  --rpc-url http://127.0.0.1:8545 \
+  --diff-chain
+```
+
+Before founding DKG, `recipient_x25519` is only the one-time onboarding
+recipient and `offer_key_ready` is false. After founding finalization, the
+resident permanent offer key is ready and must equal
+`tributeOfferPublicKey()` on-chain. These values must never be confused.
+
+Missing, corrupt, wrong-chain or otherwise unsealable permanent state is
+terminal for that identity. There is no peer handoff, OperatorRecovery,
+governance replacement, forced DKG or production-to-development fallback.
+
+## Evidence labels
+
+| Path | What it proves | What it does not prove |
+| --- | --- | --- |
+| `GramineDirectDev` | deterministic development behavior and reachable operator flow | SGX, DCAP, Intel collateral or production readiness |
+| private `#[cfg(test)]` verdict capability | I3-I8 state-machine behavior after the verifier boundary | quote parsing, QVL execution or hardware acceptance |
+| synthetic cap vectors | deterministic bounds, allocation order and gas arithmetic | Intel-signed hardware evidence |
+| fresh I9 `gramine-sgx` runs | exact-release Processor/Platform acceptance and timing | nothing beyond the recorded artifact and host identity |
+
+See [Testnet SGX release and rollout](testnet-sgx-release.md) for the release
+boundary and [Running a full node and a validator](becoming-a-validator.md) for
+role-specific onboarding.

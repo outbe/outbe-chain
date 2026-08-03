@@ -7231,12 +7231,17 @@ dependencies = [
 name = "outbe-chain"
 version = "0.1.0"
 dependencies = [
+ "alloy-primitives",
  "clap",
+ "commonware-codec",
  "commonware-consensus",
+ "commonware-cryptography",
  "commonware-runtime",
  "commonware-storage",
  "commonware-utils",
  "eyre",
+ "hex",
+ "k256 0.13.4",
  "outbe-compressed-entities",
  "outbe-consensus",
  "outbe-engine",
@@ -7245,7 +7250,7 @@ dependencies = [
  "outbe-ocomp-protocol",
  "outbe-primitives",
  "outbe-rpc",
- "outbe-tributefactory",
+ "outbe-tee",
  "outbe-zkproof",
  "reqwest 0.12.28",
  "reth-chainspec",
@@ -7282,8 +7287,10 @@ dependencies = [
  "ring",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "x25519-dalek",
+ "zeroize",
 ]
 
 [[package]]
@@ -7422,6 +7429,7 @@ dependencies = [
  "outbe-metadosis",
  "outbe-offchain-storage",
  "outbe-primitives",
+ "outbe-promislimit",
  "outbe-rewards",
  "outbe-tribute",
  "proptest",
@@ -7450,31 +7458,17 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
- "outbe-common",
  "outbe-compressed-entities",
- "outbe-desis",
  "outbe-evm",
  "outbe-governance",
- "outbe-gratis",
- "outbe-gratisfactory",
- "outbe-intex",
- "outbe-intexfactory",
- "outbe-metadosis",
- "outbe-nod",
- "outbe-nodfactory",
  "outbe-offchain-data",
  "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-primitives",
- "outbe-promislimit",
- "outbe-tee",
- "outbe-tee-enclave",
- "outbe-tribute",
  "outbe-update",
  "outbe-validatorset",
  "outbe-vote",
  "serde_json",
- "tempfile",
 ]
 
 [[package]]
@@ -7505,6 +7499,7 @@ dependencies = [
  "futures",
  "hex",
  "k256 0.13.4",
+ "libc",
  "mongodb",
  "outbe-common",
  "outbe-compressed-entities",
@@ -7565,7 +7560,6 @@ dependencies = [
  "alloy-consensus",
  "alloy-eips 2.0.4",
  "alloy-primitives",
- "alloy-sol-types",
  "bytes",
  "clap",
  "commonware-actor",
@@ -7589,6 +7583,7 @@ dependencies = [
  "metrics-util",
  "outbe-compressed-entities",
  "outbe-consensus",
+ "outbe-evm",
  "outbe-node",
  "outbe-ocomp-protocol",
  "outbe-primitives",
@@ -7601,10 +7596,8 @@ dependencies = [
  "reth-chain-state",
  "reth-ethereum",
  "reth-node-builder",
- "reth-primitives-traits",
  "reth-provider",
  "reth-storage-api",
- "reth-transaction-pool",
  "serde",
  "serde_json",
  "tempfile",
@@ -7630,6 +7623,7 @@ dependencies = [
  "commonware-math",
  "commonware-utils",
  "eyre",
+ "futures",
  "hex",
  "k256 0.13.4",
  "outbe-accounting",
@@ -7693,6 +7687,7 @@ dependencies = [
  "reth-transaction-pool",
  "reth-trie",
  "revm",
+ "serde",
  "serde_json",
  "tempfile",
  "tracing",
@@ -7728,9 +7723,21 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "k256 0.13.4",
+ "outbe-fidelity-math",
  "outbe-macros",
  "outbe-primitives",
+ "outbe-tee",
+ "outbe-tee-enclave",
  "serde_json",
+]
+
+[[package]]
+name = "outbe-fidelity-math"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "outbe-primitives",
 ]
 
 [[package]]
@@ -7918,6 +7925,9 @@ dependencies = [
 name = "outbe-macros"
 version = "0.1.0"
 dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "outbe-primitives",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -7931,6 +7941,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "k256 0.13.4",
+ "num-bigint",
  "outbe-common",
  "outbe-compressed-entities",
  "outbe-desis",
@@ -7946,7 +7957,9 @@ dependencies = [
  "outbe-primitives",
  "outbe-promislimit",
  "outbe-tribute",
+ "proptest",
  "thiserror 2.0.18",
+ "trybuild",
 ]
 
 [[package]]
@@ -7981,6 +7994,7 @@ dependencies = [
  "alloy-rpc-types-engine",
  "alloy-sol-types",
  "alloy-trie",
+ "ed25519-dalek",
  "either",
  "eyre",
  "futures",
@@ -7998,10 +8012,12 @@ dependencies = [
  "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-primitives",
+ "outbe-tee",
+ "outbe-tee-enclave",
+ "outbe-teeregistry",
  "outbe-tribute",
  "outbe-txpool",
  "outbe-validatorset",
- "outbe-zerofee",
  "reth-basic-payload-builder",
  "reth-chain-state",
  "reth-chainspec",
@@ -8192,6 +8208,7 @@ dependencies = [
  "bytes",
  "commonware-cryptography",
  "commonware-p2p",
+ "ed25519-dalek",
  "hex",
  "k256 0.13.4",
  "outbe-ocomp-protocol",
@@ -8421,19 +8438,29 @@ name = "outbe-tee"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
+ "cc",
  "commonware-runtime",
  "dcap-qvl",
+ "der 0.7.10",
  "ed25519-dalek",
+ "hex",
  "k256 0.13.4",
+ "libc",
  "outbe-primitives",
+ "pem",
  "postcard",
  "rand 0.8.6",
+ "rustix",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "snow",
  "tempfile",
  "thiserror 2.0.18",
+ "time",
  "tokio",
+ "x25519-dalek",
+ "zeroize",
 ]
 
 [[package]]
@@ -8452,6 +8479,7 @@ dependencies = [
  "ed25519-dalek",
  "hex",
  "k256 0.13.4",
+ "outbe-fidelity-math",
  "outbe-poseidon",
  "outbe-primitives",
  "outbe-protocol",
@@ -8475,9 +8503,14 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "ed25519-dalek",
+ "k256 0.13.4",
  "outbe-macros",
  "outbe-primitives",
  "outbe-tee",
+ "outbe-tee-enclave",
+ "outbe-validatorset",
+ "tempfile",
 ]
 
 [[package]]
@@ -8556,8 +8589,10 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "hex",
  "outbe-macros",
  "outbe-primitives",
+ "outbe-teeregistry",
  "outbe-validatorset",
  "outbe-vote",
  "serde",

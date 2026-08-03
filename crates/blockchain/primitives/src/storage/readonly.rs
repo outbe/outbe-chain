@@ -44,18 +44,35 @@ pub trait StorageReader {
 /// fields return defaults (they're not needed for pure storage reads).
 pub struct ReadOnlyStorageProvider<R> {
     reader: R,
+    chain_id: u64,
+    genesis_hash: B256,
 }
 
 impl<R: StorageReader> ReadOnlyStorageProvider<R> {
     /// Create a new read-only provider from a storage reader.
     pub fn new(reader: R) -> Self {
-        Self { reader }
+        Self::new_with_chain_identity(reader, 0, B256::ZERO)
+    }
+
+    /// Create a read-only provider bound to an explicit immutable chain
+    /// identity. Consensus/follower callers that need contextual views use
+    /// this constructor with values sourced from ChainSpec.
+    pub fn new_with_chain_identity(reader: R, chain_id: u64, genesis_hash: B256) -> Self {
+        Self {
+            reader,
+            chain_id,
+            genesis_hash,
+        }
     }
 }
 
 impl<R: StorageReader> super::PrecompileStorageProvider for ReadOnlyStorageProvider<R> {
     fn chain_id(&self) -> u64 {
-        0
+        self.chain_id
+    }
+
+    fn genesis_hash(&self) -> B256 {
+        self.genesis_hash
     }
 
     fn timestamp(&self) -> U256 {

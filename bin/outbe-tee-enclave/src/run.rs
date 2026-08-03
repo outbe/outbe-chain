@@ -14,22 +14,24 @@ use std::os::unix::net::UnixListener;
 
 use alloy_primitives::B256;
 use rand_core::RngCore as _;
+use zeroize::Zeroizing;
 
+use crate::initialization::InitializationState;
 use crate::keys::EnclaveKeys;
 use crate::seal::{
     seal_tribute_offer_and_group_sig, unseal_tribute_offer_and_group_sig, EnclaveBootConfig,
-    KeyPolicy, SealHeader, SEAL_FORMAT,
+    SealHeader, SEAL_FORMAT,
 };
 use crate::transport::{serve, serve_tcp};
 
 /// Per-binary behavior knobs. The production binary uses [`RunOpts::prod`]; the
-/// dev mock binary uses [`RunOpts::mock`]. `mock` is wired into the attestation /
-/// sealing surface later; today it only differentiates the startup banner.
+/// dev mock binary has its feature-gated constructor. The private field prevents
+/// an external production caller from selecting development behavior.
 #[derive(Clone, Copy, Debug)]
 pub struct RunOpts {
     /// True for the dev mock binary (deterministic fake quote + stable sealing
     /// key + gramine-direct semantics). Never set in the production binary.
-    pub mock: bool,
+    mock: bool,
 }
 
 impl RunOpts {
@@ -39,6 +41,7 @@ impl RunOpts {
     }
 
     /// Dev mock binary (only compiled under `--features mock`).
+    #[cfg(feature = "mock")]
     pub fn mock() -> Self {
         Self { mock: true }
     }
@@ -103,10 +106,17 @@ pub fn run(opts: RunOpts) -> i32 {
                 .ok()
                 .and_then(|h| parse_hex32(&h))
         });
-    // Resolve the identity seed: explicit seed > self-generated-and-sealed (real
-    // SGX) > offer-secret fallback. See `resolve_dkg_identity_seed`.
-    let (dkg_seed, dkg_id) = resolve_dkg_identity_seed(&args, cli_dkg_seed);
-    let keys = match EnclaveKeys::new(tribute_offer_secret, dkg_seed) {
+    // Production accepts only an enclave-generated, successfully sealed seed.
+    // Explicit deterministic seeds and the offer-secret fallback are mock-only.
+    let (identity_seed, identity_id) =
+        match resolve_enclave_identity_seed(&args, cli_dkg_seed, opts.mock) {
+            Ok(identity) => identity,
+            Err(error) => {
+                eprintln!("outbe-tee-enclave: identity init failed: {error}");
+                return 1;
+            }
+        };
+    let keys = match EnclaveKeys::new_with_identity_seed(tribute_offer_secret, identity_seed) {
         Ok(keys) => keys,
         Err(err) => {
             eprintln!("outbe-tee-enclave: key init failed: {err}");
@@ -114,26 +124,62 @@ pub fn run(opts: RunOpts) -> i32 {
         }
     };
 
-    // Optional seal/unseal boot configuration. Present only when the
-    // launcher passes `--tee-dir`; absent → sealing disabled and the offer key is
-    // re-derived from the DKG each boot.
+    // Seal/unseal boot configuration. Production requires it; an explicitly
+    // selected development process may omit it and starts as a fresh keyless
+    // identity on its separate chain.
     let boot = match build_boot_config(&args, &keys) {
         Ok(boot) => boot,
         Err(code) => return code,
     };
 
-    // Shared, write-once DKG-derived offer-key slot. If a sealed blob
-    // exists (and a sealing key is available), restore it now — the restart
-    // fast-path that skips the DKG ceremony; otherwise the ceremony populates it.
+    // Resident chain id from `--chain-id` (default ZERO), bound INDEPENDENTLY of
+    // sealing: it scopes every state-key derivation and the owner-authorized
+    // fidelity query, which cross-checks it against the node's chain. Sourcing it
+    // from `--chain-id` here (not from the seal-only boot config) is what lets a
+    // non-sealing enclave still answer chain-scoped queries.
+    let chain_id = B256::from(
+        arg_value(&args, "--chain-id")
+            .and_then(|h| parse_hex32(&h))
+            .unwrap_or([0u8; 32]),
+    );
+
+    // Shared, write-once permanent offer-key slot. A valid sealed blob restores
+    // it. An existing blob that cannot be unsealed is terminal and is never
+    // converted into a fresh ceremony or another key.
     let offer_key: crate::transport::SharedTributeOfferKey =
         std::sync::Arc::new(std::sync::OnceLock::new());
     if let Some(cfg) = boot.as_deref() {
-        if let Some(derived) = crate::transport::unseal_tribute_offer_and_group_sig_on_boot(cfg) {
-            let _ = offer_key.set(derived);
+        match crate::transport::unseal_tribute_offer_and_group_sig_on_boot(cfg) {
+            Ok(Some(derived)) => {
+                let _ = offer_key.set(derived);
+            }
+            Ok(None) => {}
+            Err(error) => {
+                eprintln!("outbe-tee-enclave: {error}");
+                return 1;
+            }
         }
     }
 
+    let initialization = if opts.mock {
+        InitializationState::development()
+    } else {
+        let Some(boot) = boot.clone() else {
+            eprintln!(
+                "outbe-tee-enclave: production mode requires --tee-dir for write-once node authorization"
+            );
+            return 2;
+        };
+        match InitializationState::production(boot, &keys) {
+            Ok(state) => state,
+            Err(error) => {
+                eprintln!("outbe-tee-enclave: initialization state failed: {error}");
+                return 1;
+            }
+        }
+    };
     let keys = std::sync::Arc::new(keys);
+    let initialization = std::sync::Arc::new(initialization);
 
     // A `host:port` endpoint listens on TCP (required under Gramine, whose
     // pathname UDS are process-internal so a host process cannot reach them);
@@ -162,10 +208,10 @@ pub fn run(opts: RunOpts) -> i32 {
             }
         };
         eprintln!(
-            "outbe-tee-enclave: listening on tcp://{socket} (attestation: {}; DKG identity: {dkg_id})",
+            "outbe-tee-enclave: listening on tcp://{socket} (attestation: {}; enclave identity: {identity_id})",
             attest.label()
         );
-        serve_tcp(&listener, keys, boot, offer_key)
+        serve_tcp(&listener, keys, boot, offer_key, initialization, chain_id)
     } else {
         // Fresh socket; UDS mode 0600 (owner-only), per plan §"Transport".
         let _ = std::fs::remove_file(&socket);
@@ -183,10 +229,10 @@ pub fn run(opts: RunOpts) -> i32 {
             eprintln!("outbe-tee-enclave: chmod 0600 {socket} failed (continuing): {err}");
         }
         eprintln!(
-            "outbe-tee-enclave: listening on {socket} (attestation: {}; DKG identity: {dkg_id})",
+            "outbe-tee-enclave: listening on {socket} (attestation: {}; enclave identity: {identity_id})",
             attest.label()
         );
-        serve(&listener, keys, boot, offer_key)
+        serve(&listener, keys, boot, offer_key, initialization, chain_id)
     };
     if let Err(err) = result {
         eprintln!("outbe-tee-enclave: serve error: {err}");
@@ -195,108 +241,119 @@ pub fn run(opts: RunOpts) -> i32 {
     0
 }
 
-/// Resolve this enclave's DKG identity seed and a label for the startup banner.
+/// Resolve the one seed backing every persistent enclave identity key.
 ///
-/// Priority:
-///  1. **Explicit** `--dkg-seed` / `TEE_DEV_DKG_SEED` (deterministic). Used by the
-///     gramine-direct mock e2e/CI, which has no EGETKEY and so cannot persist a
-///     self-generated identity across restart.
-///  2. **Self-generated + sealed** (the honest SGX path): when no explicit seed is
-///     given but `--tee-dir` is set and EGETKEY sealing is available (real
-///     `gramine-sgx`), generate a RANDOM identity seed from hardware RNG on first
-///     boot and SEAL it to `<tee-dir>/sealed_identity.bin`, so the enclave is an
-///     INDEPENDENT DKG participant whose identity SURVIVES restart — with no
-///     host-supplied `--dkg-seed`. The 32-byte seed is sealed (reusing the
-///     offer-key seal with an empty group-sig) and the existing HKDF in
-///     `EnclaveKeys::new` reconstructs the full BLS+share-decrypt identity from it.
-///  3. **None**: no seed and no sealing → `EnclaveKeys` falls back to the shared
-///     offer secret (fine only for a single-enclave dev run, degenerate for a real
-///     ceremony).
-fn resolve_dkg_identity_seed(
+/// Development may use an explicit deterministic seed or the legacy offer-secret
+/// fallback. Production permits neither: it restores an existing valid sealed
+/// seed or creates and durably seals one on the first boot. Existing unreadable
+/// state is never overwritten. If node authorization exists but the identity is
+/// missing, startup fails: there is no recovery or implicit identity rotation.
+fn resolve_enclave_identity_seed(
     args: &[String],
     cli_seed: Option<[u8; 32]>,
-) -> (Option<[u8; 32]>, &'static str) {
-    if let Some(seed) = cli_seed {
-        return (Some(seed), "explicit --dkg-seed");
+    development: bool,
+) -> Result<(Option<Zeroizing<[u8; 32]>>, &'static str), String> {
+    if development {
+        return Ok(match cli_seed {
+            Some(seed) => (Some(Zeroizing::new(seed)), "explicit development seed"),
+            None => (None, "development offer-secret fallback"),
+        });
     }
-    // Self-gen needs a tee-dir to persist the sealed identity and real EGETKEY.
-    let Some(tee_dir) = arg_value(args, "--tee-dir").map(std::path::PathBuf::from) else {
-        return (None, "offer-secret fallback (no seed, no --tee-dir)");
-    };
-    let sealing_key = match crate::gramine::sealing_key_256(true) {
-        Ok(k) => k,
-        Err(_) => return (None, "offer-secret fallback (no EGETKEY — not real SGX)"),
-    };
+    if cli_seed.is_some() {
+        return Err("--dkg-seed and TEE_DEV_DKG_SEED are development-only".to_string());
+    }
+
+    let tee_dir = arg_value(args, "--tee-dir")
+        .map(std::path::PathBuf::from)
+        .ok_or_else(|| "production requires --tee-dir for sealed identity".to_string())?;
+    let chain_id_hex = arg_value(args, "--chain-id")
+        .ok_or_else(|| "production requires --chain-id <hex32>".to_string())?;
     let chain_id = B256::from(
-        arg_value(args, "--chain-id")
-            .and_then(|h| parse_hex32(&h))
-            .unwrap_or([0u8; 32]),
+        parse_hex32(&chain_id_hex)
+            .ok_or_else(|| "production --chain-id must be exactly 32 bytes of hex".to_string())?,
     );
+    let (sealing_key, key_policy) = crate::transport::sealing_key()
+        .ok_or_else(|| "production identity requires an SGX sealing key".to_string())?;
+
     // Running SGX SVN for the anti-rollback floor, read from the local report.
     let isv_svn = crate::gramine::local_report_measurements(&[0u8; 64])
         .map(|m| m.isv_svn)
         .unwrap_or(0);
-    // The tee dir is also created later by `build_boot_config`; ensure it exists
-    // now so first-boot identity sealing can persist.
-    let _ = std::fs::create_dir_all(&tee_dir);
+    std::fs::create_dir_all(&tee_dir)
+        .map_err(|error| format!("create identity directory {}: {error}", tee_dir.display()))?;
+    std::fs::set_permissions(&tee_dir, std::fs::Permissions::from_mode(0o700))
+        .map_err(|error| format!("chmod identity directory {}: {error}", tee_dir.display()))?;
     let path = tee_dir.join("sealed_identity.bin");
 
-    // Restore a previously self-generated identity if one is sealed here.
-    if let Ok(blob) = std::fs::read(&path) {
-        match unseal_tribute_offer_and_group_sig(&blob, &sealing_key, chain_id, isv_svn) {
-            Ok((seed, _empty_group_sig, _hdr)) => {
-                return (Some(*seed), "self-generated (restored from seal)");
-            }
-            Err(err) => {
-                eprintln!(
-                    "outbe-tee-enclave: sealed identity at {} did not unseal ({err}); \
-                     regenerating",
+    match std::fs::read(&path) {
+        Ok(blob) => {
+            let (seed, empty_group_signature, _) =
+                unseal_tribute_offer_and_group_sig(&blob, &sealing_key, chain_id, isv_svn)
+                    .map_err(|error| {
+                        format!(
+                            "sealed identity at {} is unusable and will not be replaced: {error}",
+                            path.display()
+                        )
+                    })?;
+            if !empty_group_signature.is_empty() {
+                return Err(format!(
+                    "sealed identity at {} contains unexpected group-signature bytes",
                     path.display()
-                );
+                ));
             }
+            return Ok((Some(seed), "self-generated (restored from seal)"));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!("read sealed identity {}: {error}", path.display()));
         }
     }
 
-    // First boot (or unreadable blob): generate a fresh random identity and seal it.
-    let mut seed = [0u8; 32];
-    rand_core::OsRng.fill_bytes(&mut seed);
+    let authorization_path = tee_dir.join("sealed_node_authorization_v1.bin");
+    match std::fs::symlink_metadata(&authorization_path) {
+        Ok(_) => {
+            return Err(format!(
+                "sealed identity is missing while node authorization exists at {}; old identity cannot be recovered",
+                authorization_path.display()
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!(
+                "inspect sealed node authorization {}: {error}",
+                authorization_path.display()
+            ));
+        }
+    }
+
+    // First boot only: generate and seal before any node authorization exists.
+    let mut seed = Zeroizing::new([0u8; 32]);
+    rand_core::OsRng.fill_bytes(&mut *seed);
     let mut nonce = [0u8; 12];
     rand_core::OsRng.fill_bytes(&mut nonce);
     let header = SealHeader {
         format_version: SEAL_FORMAT,
-        key_policy: KeyPolicy::MrSigner,
+        key_policy,
         isv_svn,
         key_epoch: 0,
         tribute_offer_epoch: 0,
         nonce,
     };
-    match seal_tribute_offer_and_group_sig(&seed, &[], &sealing_key, chain_id, &header) {
-        Ok(blob) => match std::fs::write(&path, blob) {
-            Ok(()) => (Some(seed), "self-generated (fresh, sealed)"),
-            Err(err) => {
-                eprintln!(
-                    "outbe-tee-enclave: could not persist sealed identity to {} ({err}); \
-                     identity will NOT survive restart",
-                    path.display()
-                );
-                (Some(seed), "self-generated (fresh, NOT persisted)")
-            }
-        },
-        Err(err) => {
-            eprintln!("outbe-tee-enclave: identity seal failed ({err}); identity not persisted");
-            (Some(seed), "self-generated (fresh, NOT persisted)")
-        }
-    }
+    let blob = seal_tribute_offer_and_group_sig(&seed, &[], &sealing_key, chain_id, &header)
+        .map_err(|error| format!("seal first enclave identity: {error}"))?;
+    crate::transport::write_once_0600(&path, &blob)
+        .map_err(|error| format!("persist first sealed identity {}: {error}", path.display()))?;
+    Ok((Some(seed), "self-generated (fresh, sealed)"))
 }
 
 /// Build the optional seal/unseal boot configuration from CLI args.
 ///
 /// Returns `Ok(Some)` only when `--tee-dir <path>` is supplied; the directory is
 /// created (best-effort 0700) and `--chain-id <hex32>` binds the sealing AAD.
-/// Absent `--tee-dir` → `Ok(None)`: sealing is disabled and behavior is unchanged
-/// (the offer key is re-derived from the DKG each boot). `Err(code)` propagates a
-/// fatal setup failure as a process exit code. `isv_svn` is the running enclave's
-/// SVN, the anti-rollback floor for unseal.
+/// Absent `--tee-dir` is permitted only for the explicitly selected development
+/// process and returns `Ok(None)` with no durable permanent key. Production
+/// rejects that configuration before serving. `Err(code)` propagates a fatal
+/// setup failure; `isv_svn` is the anti-rollback floor for unseal.
 fn build_boot_config(
     args: &[String],
     keys: &EnclaveKeys,
@@ -379,7 +436,19 @@ fn is_loopback_endpoint(endpoint: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::is_loopback_endpoint;
+    use std::os::unix::fs::PermissionsExt as _;
+
+    use super::{is_loopback_endpoint, resolve_enclave_identity_seed};
+
+    fn production_args(root: &std::path::Path) -> Vec<String> {
+        vec![
+            "outbe-tee-enclave".to_string(),
+            "--tee-dir".to_string(),
+            root.display().to_string(),
+            "--chain-id".to_string(),
+            hex::encode([0x41; 32]),
+        ]
+    }
 
     #[test]
     fn loopback_endpoint_accepts_only_loopback_ips() {
@@ -393,5 +462,58 @@ mod tests {
         // Non-IP host → reject (cannot prove loopback).
         assert!(!is_loopback_endpoint("example.com:7000"));
         assert!(!is_loopback_endpoint("localhost:7000"));
+    }
+
+    #[test]
+    fn production_identity_rejects_development_seed() {
+        let root = tempfile::tempdir().unwrap();
+        let error =
+            resolve_enclave_identity_seed(&production_args(root.path()), Some([0x77; 32]), false)
+                .unwrap_err();
+        assert!(error.contains("development-only"));
+        assert!(!root.path().join("sealed_identity.bin").exists());
+    }
+
+    #[test]
+    fn first_production_identity_is_owner_only_and_restores_exactly() {
+        let root = tempfile::tempdir().unwrap();
+        let args = production_args(root.path());
+        let (first, _) = resolve_enclave_identity_seed(&args, None, false).unwrap();
+        let path = root.path().join("sealed_identity.bin");
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let original_blob = std::fs::read(&path).unwrap();
+        let (restored, _) = resolve_enclave_identity_seed(&args, None, false).unwrap();
+        assert_eq!(first, restored);
+        assert_eq!(std::fs::read(path).unwrap(), original_blob);
+    }
+
+    #[test]
+    fn corrupt_production_identity_is_not_replaced() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("sealed_identity.bin");
+        let corrupt = b"corrupt-sealed-identity";
+        std::fs::write(&path, corrupt).unwrap();
+        let error =
+            resolve_enclave_identity_seed(&production_args(root.path()), None, false).unwrap_err();
+        assert!(error.contains("will not be replaced"));
+        assert_eq!(std::fs::read(path).unwrap(), corrupt);
+    }
+
+    #[test]
+    fn missing_identity_with_existing_authorization_fails_closed() {
+        let root = tempfile::tempdir().unwrap();
+        let authorization = root.path().join("sealed_node_authorization_v1.bin");
+        std::fs::write(&authorization, b"existing-authorization").unwrap();
+        let error =
+            resolve_enclave_identity_seed(&production_args(root.path()), None, false).unwrap_err();
+        assert!(error.contains("old identity cannot be recovered"));
+        assert!(!root.path().join("sealed_identity.bin").exists());
+        assert_eq!(
+            std::fs::read(authorization).unwrap(),
+            b"existing-authorization"
+        );
     }
 }

@@ -250,14 +250,18 @@ mod tests {
         ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
     };
     use outbe_primitives::addresses::REWARDS_ADDRESS;
-    use outbe_primitives::block::BlockContext;
+    use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
     use outbe_primitives::consensus::ConsensusExecutionBridge;
     use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
     use outbe_primitives::reshare_artifact::{
         decode_outbe_block_artifacts, encode_outbe_block_artifacts, CompressedEntitiesRootArtifact,
         ConsensusHeaderArtifact, ExecutionSummaryArtifact, OutbeBlockArtifacts,
     };
-    use outbe_primitives::storage::{direct::DirectStorageProvider, StorageHandle};
+    use outbe_primitives::storage::{
+        direct::DirectStorageProvider, hashmap::HashMapStorageProvider,
+        MetadosisMutationPurposeTag, StorageHandle,
+    };
+    use outbe_primitives::tee_genesis_v1::GRAMINE_DIRECT_DEV_CHAIN_ID;
     use outbe_primitives::OutbeHeader;
     use reth_ethereum::chainspec::ChainSpec;
     use reth_ethereum::{
@@ -291,6 +295,7 @@ mod tests {
     };
 
     const GENESIS_OWNER: Address = address!("0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf");
+    const TEST_BLOCK_ONE_TIMESTAMP: u64 = 1_700_000_001;
 
     #[test]
     fn final_artifact_adapter_overwrites_untrusted_root_and_preserves_consensus_fields() {
@@ -512,6 +517,32 @@ mod tests {
         )
     }
 
+    fn genesis_dev_tee_bootstrap(
+        committee_snapshot_hash: B256,
+    ) -> outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2 {
+        use outbe_primitives::tee_test_utils::{
+            gramine_direct_bootstrap_v2, gramine_direct_policy_v1, DevValidatorV1,
+        };
+
+        let mut secret = [0_u8; 32];
+        secret[31] = 1;
+        let mut consensus_public = [0_u8; 48];
+        consensus_public[0] = 1;
+        let policy = gramine_direct_policy_v1(GRAMINE_DIRECT_DEV_CHAIN_ID, MAINNET.genesis_hash())
+            .expect("test GramineDirectDev policy is canonical");
+        gramine_direct_bootstrap_v2(
+            policy,
+            committee_snapshot_hash,
+            1,
+            TEST_BLOCK_ONE_TIMESTAMP + 3_600,
+            &[DevValidatorV1 {
+                evm_secret: secret,
+                bls_minpk_public: consensus_public,
+            }],
+        )
+        .expect("test GramineDirectDev OST3 payload is canonical")
+    }
+
     fn test_config(bridge: ConsensusExecutionBridge) -> OutbeEvmConfig {
         OutbeEvmConfig::new_with_bridge(test_chain_spec(), bridge)
             .with_evm_signer(test_evm_signer())
@@ -525,7 +556,7 @@ mod tests {
             directory.path(),
             EnvironmentIdentity {
                 local_storage_schema_version: LOCAL_STORAGE_SCHEMA_VERSION,
-                chain_id: MAINNET.chain().id(),
+                chain_id: GRAMINE_DIRECT_DEV_CHAIN_ID,
                 genesis_hash: parent_hash,
                 commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
                 topology: outbe_compressed_entities::CeTopologyV1.encode(),
@@ -554,7 +585,21 @@ mod tests {
     }
 
     fn test_chain_spec() -> Arc<ChainSpec<OutbeHeader>> {
-        MAINNET.as_ref().clone().map_header(OutbeHeader::new).into()
+        use outbe_primitives::tee_test_utils::{
+            gramine_direct_policy_v1, tee_attestation_v1_extra_field,
+        };
+
+        let mut spec = MAINNET.as_ref().clone();
+        spec.chain = GRAMINE_DIRECT_DEV_CHAIN_ID.into();
+        spec.genesis.config.chain_id = GRAMINE_DIRECT_DEV_CHAIN_ID;
+        let policy = gramine_direct_policy_v1(spec.chain().id(), spec.genesis_hash())
+            .expect("test GramineDirectDev policy is canonical");
+        spec.genesis.config.extra_fields.insert(
+            "teeAttestationV1".to_owned(),
+            tee_attestation_v1_extra_field(&policy)
+                .expect("test TEE activation manifest is canonical"),
+        );
+        spec.map_header(OutbeHeader::new).into()
     }
 
     fn test_parent() -> SealedHeader<OutbeHeader> {
@@ -571,7 +616,7 @@ mod tests {
     fn next_block_attrs(extra_data: Bytes) -> OutbeNextBlockEnvAttributes {
         OutbeNextBlockEnvAttributes {
             inner: NextBlockEnvAttributes {
-                timestamp: 1,
+                timestamp: TEST_BLOCK_ONE_TIMESTAMP,
                 suggested_fee_recipient: REWARDS_ADDRESS,
                 prev_randao: B256::ZERO,
                 gas_limit: 30_000_000,
@@ -594,10 +639,28 @@ mod tests {
     type TestDb = CacheDB<EmptyDBTyped<ProviderError>>;
 
     fn seed_active_validators(db: &mut TestDb, validators: &[Address]) {
+        let chain_spec = test_chain_spec();
+        let install = outbe_metadosis::test_support::ForkInstallScenario::measurement_at(
+            1,
+            chain_spec.chain().id(),
+            chain_spec.genesis_hash(),
+        )
+        .unwrap()
+        .into_install();
+        let mut metadosis_genesis = HashMapStorageProvider::new(chain_spec.chain().id());
+        metadosis_genesis.set_block_number(1);
+        metadosis_genesis.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::ForkProfile);
+        metadosis_genesis.enter(|storage| {
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(1, 1_700_000_001, chain_spec.chain().id()),
+                storage,
+            );
+            outbe_metadosis::commands::install_fork_profile(&ctx, &install).unwrap();
+        });
         let ctx = BlockContext::new(
             0,
             0,
-            outbe_primitives::chain::CHAIN_ID,
+            MAINNET.chain().id(),
             GENESIS_OWNER,
             validators.to_vec(),
         );
@@ -649,6 +712,11 @@ mod tests {
                 .unwrap();
         });
         provider.flush().expect("validator seed flush must succeed");
+        drop(provider);
+        for ((address, slot), value) in metadosis_genesis.storage {
+            db.insert_account_storage(address, slot, value)
+                .expect("Metadosis production-route genesis seed must install");
+        }
 
         let marker_code = RevmBytecode::new_legacy([0xef].into());
         db.insert_account_info(
@@ -671,6 +739,14 @@ mod tests {
             outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
             AccountInfo {
                 code_hash: marker_code.hash_slow(),
+                code: Some(marker_code.clone()),
+                ..Default::default()
+            },
+        );
+        db.insert_account_info(
+            outbe_primitives::addresses::METADOSIS_ADDRESS,
+            AccountInfo {
+                code_hash: marker_code.hash_slow(),
                 code: Some(marker_code),
                 ..Default::default()
             },
@@ -681,7 +757,7 @@ mod tests {
         let ctx = BlockContext::new(
             0,
             0,
-            outbe_primitives::chain::CHAIN_ID,
+            MAINNET.chain().id(),
             GENESIS_OWNER,
             validators.to_vec(),
         );
@@ -703,13 +779,14 @@ mod tests {
     fn builder_keeps_preexecuted_phase1_witness_in_block_body() {
         let bridge = test_bridge();
         let parent = test_parent_at(1);
-        bridge.record_execution_summary(
+        bridge.record_execution_summary_with_state_root(
             1,
             parent.hash(),
             ExecutionSummaryArtifact {
                 validator_fee_sum: U256::ZERO,
             },
             parent.header().inner.timestamp,
+            parent.header().inner.state_root,
         );
         let config = test_config(bridge);
         let provider = DeterministicEmptyStateProvider;
@@ -731,7 +808,7 @@ mod tests {
         let phase1 = config
             .build_signed_phase1_tx(
                 2,
-                MAINNET.chain().id(),
+                GRAMINE_DIRECT_DEV_CHAIN_ID,
                 parent.hash(),
                 attrs.parent_consensus_metadata.clone(),
                 attrs.proposer_evm_address,
@@ -813,13 +890,14 @@ mod tests {
         // `CertifiedParentAccounting` system tx requires on both build and
         // re-execute paths.
         let bridge = test_bridge();
-        bridge.record_execution_summary(
+        bridge.record_execution_summary_with_state_root(
             1,
             parent.hash(),
             ExecutionSummaryArtifact {
                 validator_fee_sum: U256::ZERO,
             },
             1,
+            parent.header().inner.state_root,
         );
         let config = test_config(bridge);
         let provider = DeterministicEmptyStateProvider;
@@ -855,7 +933,7 @@ mod tests {
             let begin_system_txs = config
                 .build_begin_system_txs(
                     2,
-                    MAINNET.chain().id(),
+                    GRAMINE_DIRECT_DEV_CHAIN_ID,
                     30_000_000,
                     parent.hash(),
                     &attrs.inner.extra_data,
@@ -1020,7 +1098,9 @@ mod tests {
             .with_bundle_update()
             .build();
 
-        let attrs = next_block_attrs(encoded);
+        let mut attrs = next_block_attrs(encoded);
+        attrs.inner.gas_limit = outbe_primitives::system_tx::protocol_block_gas_limit(1);
+        attrs.pending_tee_bootstrap = Some(genesis_dev_tee_bootstrap(committee_set_hash));
         let mut builder = config
             .builder_for_next_block(&mut proposer_state, &parent, attrs.clone())
             .expect("builder must be created");
@@ -1030,14 +1110,14 @@ mod tests {
         let begin_system_txs = config
             .build_begin_system_txs(
                 1,
-                MAINNET.chain().id(),
-                30_000_000,
+                GRAMINE_DIRECT_DEV_CHAIN_ID,
+                outbe_primitives::system_tx::protocol_block_gas_limit(1),
                 parent.hash(),
                 &attrs.inner.extra_data,
                 attrs.parent_consensus_metadata.clone(),
                 attrs.proposer_evm_address,
                 None,
-                None,
+                attrs.pending_tee_bootstrap.clone(),
             )
             .expect("begin-zone system txs must build");
         for tx in begin_system_txs {

@@ -1,22 +1,33 @@
 //! Enclave-side transport: framed UDS server + Noise-IK responder + dispatch.
 //!
-//! Per connection: cleartext `GetQuote` (so the host can pin the attested Noise
-//! static key) -> Noise-IK responder handshake -> encrypted request/response
-//! loop until the peer closes. Fully blocking; one connection at a time (PoC).
+//! Production accepts only initialization discovery, a signed write-once
+//! initialization manifest, or `OpenSession` before Noise IK. The responder
+//! authenticates the persistent NodeHost static key immediately after message 1
+//! and before decoding any encrypted request. The legacy cleartext `GetQuote`
+//! preamble exists only in the separate development/mock mode.
 
 use std::io::{Read, Write};
-use std::net::TcpListener;
-use std::os::unix::net::UnixListener;
+use std::net::{TcpListener, TcpStream};
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::{Arc, OnceLock};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use zeroize::Zeroizing;
 
+use outbe_primitives::tee_attestation_v1::{AttestationMode, RegistrationIntentV1};
 use outbe_tee::codec::{decode_request, encode_response, read_frame, write_frame};
 use outbe_tee::errors::TransportError;
 use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
 use outbe_tee::NOISE_PARAMS;
 
+use crate::dcap_verifier::{
+    complete_verification_response, DcapVerificationProgressV1, DcapVerificationSessionV1,
+};
 use crate::dkg::{build_ceremony_info, DkgSessionStore};
+use crate::initialization::{
+    InitializationMode, InitializationState, PendingInitialization, PendingRemoteSessionV1,
+    SessionAuthorityV1,
+};
 use crate::keys::EnclaveKeys;
 use crate::process::process_tribute_offer_batch;
 use crate::seal::{
@@ -26,12 +37,9 @@ use crate::seal::{
 
 /// The tribute offer key derived once from the DKG group threshold signature
 /// (Seam F): the secret stays resident, clients encrypt to `public`. Written on
-/// the DKG connection's `DkgRecoverTributeOffer`, read by the offer-decrypt path on a
-/// different connection — hence shared across connection threads. Also carries the
-/// resident **group threshold signature** `group_sig` (the Seam F output): it seals
-/// on restart so the boot fast-path restores the offer key without re-running the
-/// DKG, AND it is the payload a committee key-handoff seals to a newcomer so
-/// the new member derives the byte-identical offer key for any epoch locally.
+/// the founding DKG connection's `DkgFinalizeTributeOffer`, then read by the
+/// offer-decrypt path on other connections. Also carries the resident group
+/// threshold signature so the restart fast-path restores the same permanent key.
 pub struct DerivedTributeOfferKey {
     secret: Zeroizing<[u8; 32]>,
     public: [u8; 32],
@@ -47,24 +55,31 @@ impl DerivedTributeOfferKey {
     pub fn public(&self) -> [u8; 32] {
         self.public
     }
-    /// The resident group threshold signature (Seam F output). Never leaves the
-    /// enclave unsealed; sealed for restart and handed off (sealed) to newcomers.
+    /// The resident group threshold signature (Seam F output). It never leaves
+    /// the enclave unsealed and is persisted only inside sealed restart state.
     fn group_sig(&self) -> &[u8] {
         &self.group_sig
     }
-    /// Build from an explicit secret + public + group signature (the
-    /// `DkgRecoverTributeOffer` / handoff-ingest arms, which already hold the public).
-    fn from_parts(secret: [u8; 32], public: [u8; 32], group_sig: Vec<u8>) -> Self {
+    /// Build from explicit founding-finalization or registry-onboarding material,
+    /// whose enclave-only path already holds the public component.
+    fn from_parts(
+        secret: Zeroizing<[u8; 32]>,
+        public: [u8; 32],
+        group_sig: Zeroizing<Vec<u8>>,
+    ) -> Self {
         Self {
-            secret: Zeroizing::new(secret),
+            secret,
             public,
-            group_sig: Zeroizing::new(group_sig),
+            group_sig,
         }
     }
     /// Reconstruct from a resident offer secret + group signature (recomputes the
     /// public key). Used by the seal/unseal boot path to restore the DKG-derived
     /// offer key on restart without re-running the ceremony.
-    fn from_secret_and_group_sig(secret: [u8; 32], group_sig: Vec<u8>) -> Self {
+    fn from_secret_and_group_sig(
+        secret: Zeroizing<[u8; 32]>,
+        group_sig: Zeroizing<Vec<u8>>,
+    ) -> Self {
         let public = crate::crypto::x25519_public(&secret);
         Self::from_parts(secret, public, group_sig)
     }
@@ -72,15 +87,34 @@ impl DerivedTributeOfferKey {
 
 /// Process-wide, write-once slot for the DKG-derived offer key, shared across
 /// every connection thread. `OnceLock` makes the first ceremony's key canonical;
-/// a divergent re-derivation is rejected by the `DkgRecoverTributeOffer` arm. No
+/// a divergent founding finalization is rejected by the enclave request arm. No
 /// `StorageHandle` exists in this binary, so std sync primitives apply here.
 pub type SharedTributeOfferKey = Arc<OnceLock<DerivedTributeOfferKey>>;
+
+/// Transport carriers supported by the production enclave server. Remote
+/// sessions use the socket read timeout to close an otherwise idle connection
+/// at its exclusive finalized-lease deadline.
+pub trait EnclaveTransportStream: Read + Write {
+    fn set_session_read_timeout(&self, timeout: Option<Duration>) -> std::io::Result<()>;
+}
+
+impl EnclaveTransportStream for UnixStream {
+    fn set_session_read_timeout(&self, timeout: Option<Duration>) -> std::io::Result<()> {
+        UnixStream::set_read_timeout(self, timeout)
+    }
+}
+
+impl EnclaveTransportStream for TcpStream {
+    fn set_session_read_timeout(&self, timeout: Option<Duration>) -> std::io::Result<()> {
+        TcpStream::set_read_timeout(self, timeout)
+    }
+}
 
 /// The TSEAL sealing key + its policy, or `None` when no confidential key is
 /// available. Real `EGETKEY(MRSIGNER)` under `gramine-sgx`; a fixed mock key
 /// under `mock`/test (stable across rebuilds, simulating MRSIGNER); nothing under
 /// `gramine-direct` prod, where there is no confidential at-rest persistence.
-fn sealing_key() -> Option<([u8; 32], KeyPolicy)> {
+pub(crate) fn sealing_key() -> Option<([u8; 32], KeyPolicy)> {
     if let Ok(k) = crate::gramine::sealing_key_256(true) {
         return Some((k, KeyPolicy::MrSigner));
     }
@@ -94,61 +128,64 @@ fn sealing_key() -> Option<([u8; 32], KeyPolicy)> {
     }
 }
 
-/// Write `data` to `path` with mode 0600, atomically (temp file + rename).
-fn atomic_write_0600(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
+/// Create one owner-only durable sealed blob without replacing existing state.
+/// A crash can leave a partial final file, which is deliberately fail-closed:
+/// subsequent startup rejects it and never converts corruption into rotation.
+pub(crate) fn write_once_0600(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
     use std::io::Write as _;
     use std::os::unix::fs::OpenOptionsExt as _;
-    let tmp = path.with_extension("tmp");
-    {
-        let mut f = std::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&tmp)?;
-        f.write_all(data)?;
-        f.sync_all()?;
+    let mut file = std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .open(path)?;
+    file.write_all(data)?;
+    file.sync_all()?;
+    if let Some(parent) = path.parent() {
+        std::fs::File::open(parent)?.sync_all()?;
     }
-    std::fs::rename(&tmp, path)
+    Ok(())
 }
 
-/// Restore the offer key + group signature from the sealed blob at boot (restart
-/// fast-path). Returns `None` when there is no blob, no sealing key, or unseal
-/// fails — the caller then runs the DKG ceremony (or a key-handoff) to obtain the
-/// key. The `chain_id` AAD and the running `isv_svn` floor (anti-rollback) come
-/// from the boot config.
+/// Restore the permanent offer key + group signature from the sealed blob at
+/// boot. A missing blob is the only keyless result and is valid only for a fresh
+/// identity whose startup context will prove founding/onboarding eligibility.
+/// Any existing blob that cannot be read or unsealed is terminal: a permanent
+/// key is never recovered, replaced, or regenerated for the same identity.
 pub fn unseal_tribute_offer_and_group_sig_on_boot(
     cfg: &EnclaveBootConfig,
-) -> Option<DerivedTributeOfferKey> {
+) -> Result<Option<DerivedTributeOfferKey>, String> {
     let path = cfg.sealed_root_path();
-    let blob = std::fs::read(&path).ok()?;
-    let (key, _policy) = sealing_key()?;
+    let blob = match std::fs::read(&path) {
+        Ok(blob) => blob,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(format!(
+                "read sealed permanent offer key {}: {error}; no recovery or fallback exists",
+                path.display()
+            ));
+        }
+    };
+    let (key, _policy) = sealing_key().ok_or_else(|| {
+        format!(
+            "sealed permanent offer key {} exists but no SGX sealing key is available; no recovery or fallback exists",
+            path.display()
+        )
+    })?;
     match unseal_tribute_offer_and_group_sig(&blob, &key, cfg.chain_id, cfg.isv_svn) {
         Ok((secret, group_sig, _header)) => {
             eprintln!(
                 "outbe-tee-enclave: unsealed offer key + group signature <- {} (restart fast-path)",
                 path.display()
             );
-            Some(DerivedTributeOfferKey::from_secret_and_group_sig(
-                *secret,
-                group_sig.to_vec(),
-            ))
+            Ok(Some(DerivedTributeOfferKey::from_secret_and_group_sig(
+                secret, group_sig,
+            )))
         }
-        Err(e) => {
-            // A persistent failure here usually means a STALE sealed blob written by a
-            // pre-upgrade binary (incompatible seal format / wrong MRSIGNER / rolled-back
-            // isv_svn), not a transient error. This node recovers by re-deriving the key
-            // (fresh-chain DKG, or a key-handoff on an existing chain) — but if EVERY
-            // committee node carries a stale blob, none can serve the handoff and the
-            // offer key is unrecoverable. If this recurs across restarts, delete the
-            // sealed blob (clear `--tee-dir`) and re-bootstrap from a clean state.
-            eprintln!(
-                "outbe-tee-enclave: unseal {} failed ({e}); will re-derive via DKG/handoff. \
-                 If this persists after an upgrade, the blob is stale — clear --tee-dir and re-bootstrap.",
-                path.display()
-            );
-            None
-        }
+        Err(error) => Err(format!(
+            "unseal permanent offer key {} failed: {error}; this identity has lost its key and no recovery or fallback exists",
+            path.display()
+        )),
     }
 }
 
@@ -196,7 +233,7 @@ fn seal_tribute_offer_and_group_sig_if_configured(
         cfg.chain_id,
         &header,
     ) {
-        Ok(blob) => match atomic_write_0600(&path, &blob) {
+        Ok(blob) => match write_once_0600(&path, &blob) {
             Ok(()) => eprintln!(
                 "outbe-tee-enclave: sealed offer key + group signature -> {}",
                 path.display()
@@ -210,36 +247,136 @@ fn seal_tribute_offer_and_group_sig_if_configured(
 /// Serve a single client connection end-to-end (no boot config / sealing).
 /// Thin wrapper over [`serve_connection_with`]; kept for tests and callers that
 /// do not seal.
-pub fn serve_connection<S: Read + Write>(
+pub fn serve_connection<S: EnclaveTransportStream>(
     stream: S,
     keys: &EnclaveKeys,
     offer_key: &SharedTributeOfferKey,
 ) -> Result<(), TransportError> {
-    serve_connection_with(stream, keys, offer_key, None)
+    let initialization = InitializationState::development();
+    serve_connection_with(stream, keys, offer_key, None, &initialization)
 }
 
 /// Serve a single client connection end-to-end. `offer_key` is the shared,
 /// write-once DKG-derived offer key slot (populated by the DKG connection's
 /// Seam F, read by the offer-decrypt path). `boot` carries the seal/unseal
 /// configuration (chain_id / tee-dir / isv_svn); when `Some`, the sealing path
-/// persists the offer secret + threshold share after Seam F.
-pub fn serve_connection_with<S: Read + Write>(
+/// persists the offer secret + threshold share after Seam F. The production
+/// accept loop passes the resident chain independently because non-sealing
+/// enclaves still need a chain-scoped state-key domain.
+pub fn serve_connection_with<S: EnclaveTransportStream>(
+    stream: S,
+    keys: &EnclaveKeys,
+    offer_key: &SharedTributeOfferKey,
+    boot: Option<&EnclaveBootConfig>,
+    initialization: &InitializationState,
+) -> Result<(), TransportError> {
+    let chain_id = boot
+        .map(|config| config.chain_id)
+        .unwrap_or(alloy_primitives::B256::ZERO);
+    serve_connection_with_resident_chain(
+        stream,
+        keys,
+        offer_key,
+        boot,
+        initialization,
+        chain_id,
+        crate::gramine::dcap_quote,
+    )
+}
+
+/// Explicit hardware-free lifecycle harness. The synthetic quote only carries
+/// the requested REPORT_DATA through the normal candidate transport path; it is
+/// never a QVL-positive or hardware-evidence seam. The production binary is
+/// built without `mock`, so this entrypoint and generator are absent from it.
+#[cfg(feature = "mock")]
+pub fn serve_connection_with_synthetic_dcap<S: EnclaveTransportStream>(
+    stream: S,
+    keys: &EnclaveKeys,
+    offer_key: &SharedTributeOfferKey,
+    boot: Option<&EnclaveBootConfig>,
+    initialization: &InitializationState,
+) -> Result<(), TransportError> {
+    let chain_id = boot
+        .map(|config| config.chain_id)
+        .unwrap_or(alloy_primitives::B256::ZERO);
+    serve_connection_with_resident_chain(
+        stream,
+        keys,
+        offer_key,
+        boot,
+        initialization,
+        chain_id,
+        synthetic_dcap_quote,
+    )
+}
+
+fn serve_connection_with_resident_chain<S: EnclaveTransportStream>(
     mut stream: S,
     keys: &EnclaveKeys,
     offer_key: &SharedTributeOfferKey,
     boot: Option<&EnclaveBootConfig>,
+    initialization: &InitializationState,
+    chain_id: alloy_primitives::B256,
+    quote_generator: fn(&[u8; 64]) -> Result<Vec<u8>, String>,
 ) -> Result<(), TransportError> {
-    // 1. GetQuote (cleartext, pre-handshake).
+    // 1. Minimal cleartext preamble. Production never emits a quote here.
     let first = decode_request(&read_frame(&mut stream)?)?;
-    let nonce = match first {
-        EnclaveRequest::GetQuote { nonce } => nonce,
-        _ => {
+    let mut remote_session: Option<PendingRemoteSessionV1> = None;
+    let pending: Option<PendingInitialization> = match (initialization.mode(), first) {
+        (InitializationMode::Development, EnclaveRequest::GetQuote { nonce }) => {
+            write_frame(&mut stream, &encode_response(&keys.quote(nonce))?)?;
+            None
+        }
+        (InitializationMode::Production, EnclaveRequest::GetInitializationChallenge) => {
+            let response = initialization
+                .challenge_response(keys)
+                .map_err(TransportError::Handshake)?;
+            write_frame(&mut stream, &encode_response(&response)?)?;
+            return Ok(());
+        }
+        (
+            InitializationMode::Production,
+            EnclaveRequest::Initialize {
+                manifest,
+                node_signature,
+            },
+        ) => Some(
+            initialization
+                .prepare(&manifest, &node_signature, keys)
+                .map_err(TransportError::Handshake)?,
+        ),
+        (InitializationMode::Production, EnclaveRequest::OpenSession) => {
+            initialization
+                .expected_node_host()
+                .map_err(TransportError::Handshake)?;
+            None
+        }
+        (InitializationMode::Production, EnclaveRequest::OpenRemoteSessionV1 { ticket_id }) => {
+            remote_session = Some(
+                initialization
+                    .take_remote_session(ticket_id)
+                    .map_err(TransportError::Handshake)?,
+            );
+            None
+        }
+        (InitializationMode::Development, _) => {
             return Err(TransportError::Handshake(
-                "expected GetQuote before handshake".to_string(),
-            ))
+                "development transport expected legacy GetQuote before handshake".to_string(),
+            ));
+        }
+        (InitializationMode::Production, _) => {
+            return Err(TransportError::Handshake(
+                "production transport expected initialization discovery, Initialize, OpenSession, or OpenRemoteSessionV1"
+                    .to_string(),
+            ));
         }
     };
-    write_frame(&mut stream, &encode_response(&keys.quote(nonce))?)?;
+    let session_authority = remote_session.map_or(SessionAuthorityV1::LocalNodeHost, |session| {
+        SessionAuthorityV1::RemoteActiveNode {
+            deadline: session.deadline(),
+        }
+    });
+    set_remote_read_deadline(&stream, remote_session)?;
 
     // 2. Noise-IK responder handshake.
     let params = NOISE_PARAMS
@@ -255,6 +392,36 @@ pub fn serve_connection_with<S: Read + Write>(
     handshake
         .read_message(&msg1, &mut buf)
         .map_err(|e| TransportError::Handshake(e.to_string()))?;
+
+    // Noise IK authenticates the initiator static in message 1. Reject it here,
+    // before message 2, transport mode, encrypted request decoding, or effects.
+    if initialization.mode() == InitializationMode::Production {
+        let expected = match remote_session {
+            Some(session) => session.initiator_static_x25519(),
+            None => pending
+                .as_ref()
+                .map(PendingInitialization::node_host_noise_x25519)
+                .map(Ok)
+                .unwrap_or_else(|| initialization.expected_node_host())
+                .map_err(TransportError::Handshake)?,
+        };
+        let remote = handshake.get_remote_static().ok_or_else(|| {
+            TransportError::Handshake("Noise IK message 1 omitted initiator static key".to_string())
+        })?;
+        if remote != expected {
+            return Err(TransportError::Handshake(
+                "Noise IK initiator is not the authorized NodeHost".to_string(),
+            ));
+        }
+    }
+
+    let initialized_this_connection = pending.is_some();
+    if let Some(pending) = pending {
+        initialization
+            .commit(pending, keys)
+            .map_err(TransportError::Handshake)?;
+    }
+
     let n = handshake
         .write_message(&[], &mut buf)
         .map_err(|e| TransportError::Handshake(e.to_string()))?;
@@ -264,30 +431,126 @@ pub fn serve_connection_with<S: Read + Write>(
         .into_transport_mode()
         .map_err(|e| TransportError::Handshake(e.to_string()))?;
 
+    // Initialization success is disclosed only inside the newly authenticated
+    // channel. OpenSession and the dev path wait for the first explicit command.
+    if initialized_this_connection {
+        let response = initialization
+            .initialized_response()
+            .map_err(TransportError::Handshake)?;
+        let plain = encode_response(&response)?;
+        let mut ct = vec![0u8; plain.len() + 64];
+        let n = noise
+            .write_message(&plain, &mut ct)
+            .map_err(|e| TransportError::Noise(e.to_string()))?;
+        write_frame(&mut stream, &ct[..n])?;
+    }
+
     // Resident DKG ceremonies for this connection. A ceremony spans many
     // request/response round-trips on one connection (PoC: one connection per
     // enclave for the whole ceremony).
     let mut dkg = DkgSessionStore::new();
+    let mut dcap_verification = DcapVerificationSessionV1::default();
     // Seal the DKG-derived offer key + share once installed (Seam F). Tracked
     // per-connection so we attempt the write-once seal at most once here.
     let mut seal_attempted = false;
 
     // 3. Encrypted request/response loop. Exits when the peer closes (read EOF).
-    while let Ok(frame) = read_frame(&mut stream) {
+    // Remote traffic is checked both before and after every blocking read, so a
+    // frame arriving at or after the exclusive lease deadline is never decoded.
+    loop {
+        session_authority
+            .ensure_live()
+            .map_err(|message| TransportError::Handshake(message.to_string()))?;
+        set_remote_read_deadline(&stream, remote_session)?;
+        let frame = match read_frame(&mut stream) {
+            Ok(frame) => frame,
+            Err(TransportError::Io(error))
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::UnexpectedEof
+                        | std::io::ErrorKind::ConnectionReset
+                        | std::io::ErrorKind::BrokenPipe
+                ) =>
+            {
+                break;
+            }
+            Err(TransportError::Io(error))
+                if remote_session.is_some()
+                    && matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) =>
+            {
+                session_authority
+                    .ensure_live()
+                    .map_err(|message| TransportError::Handshake(message.to_string()))?;
+                return Err(TransportError::Io(error));
+            }
+            Err(error) => return Err(error),
+        };
+        session_authority
+            .ensure_live()
+            .map_err(|message| TransportError::Handshake(message.to_string()))?;
         let mut pt = vec![0u8; frame.len()];
         let n = noise
             .read_message(&frame, &mut pt)
             .map_err(|e| TransportError::Noise(e.to_string()))?;
         let req = decode_request(&pt[..n])?;
+        if let Err(message) =
+            initialization.authorize_command(&req, offer_key.get().is_some(), session_authority)
+        {
+            let response = EnclaveResponse::Error {
+                message: message.to_string(),
+            };
+            let plain = encode_response(&response)?;
+            let mut ct = vec![0u8; plain.len() + 64];
+            let n = noise
+                .write_message(&plain, &mut ct)
+                .map_err(|e| TransportError::Noise(e.to_string()))?;
+            write_frame(&mut stream, &ct[..n])?;
+            continue;
+        }
 
-        let resp = dispatch(
-            req,
-            keys,
-            &mut dkg,
-            offer_key,
-            boot.map(|b| b.chain_id)
-                .unwrap_or(alloy_primitives::B256::ZERO),
-        );
+        let resp = match req {
+            request @ (EnclaveRequest::BeginDcapVerificationV1 { .. }
+            | EnclaveRequest::DcapVerificationChunkV1 { .. }
+            | EnclaveRequest::FinishDcapVerificationV1 { .. }) => {
+                if initialization.mode() != InitializationMode::Production {
+                    EnclaveResponse::Error {
+                        message: "DCAP verification requires initialized production state"
+                            .to_string(),
+                    }
+                } else {
+                    match dcap_verification.handle(request) {
+                        Ok(DcapVerificationProgressV1::Started { request_hash }) => {
+                            EnclaveResponse::DcapVerificationStartedV1 { request_hash }
+                        }
+                        Ok(DcapVerificationProgressV1::ChunkAccepted {
+                            request_hash,
+                            next_offset,
+                        }) => EnclaveResponse::DcapVerificationChunkAcceptedV1 {
+                            request_hash,
+                            next_offset,
+                        },
+                        Ok(DcapVerificationProgressV1::Complete(request)) => {
+                            complete_verification_response(request, keys)
+                        }
+                        Err(message) => EnclaveResponse::Error {
+                            message: message.to_string(),
+                        },
+                    }
+                }
+            }
+            request => dispatch_with_initialization(
+                request,
+                keys,
+                &mut dkg,
+                offer_key,
+                chain_id,
+                Some(initialization),
+                quote_generator,
+            ),
+        };
 
         // Persist the offer key + share the first time it becomes available
         // (write-once).
@@ -295,6 +558,9 @@ pub fn serve_connection_with<S: Read + Write>(
             seal_tribute_offer_and_group_sig_if_configured(boot, offer_key);
             seal_attempted = true;
         }
+        session_authority
+            .ensure_live()
+            .map_err(|message| TransportError::Handshake(message.to_string()))?;
 
         let plain = encode_response(&resp)?;
         let mut ct = vec![0u8; plain.len() + 64];
@@ -303,6 +569,24 @@ pub fn serve_connection_with<S: Read + Write>(
             .map_err(|e| TransportError::Noise(e.to_string()))?;
         write_frame(&mut stream, &ct[..n])?;
     }
+    Ok(())
+}
+
+fn set_remote_read_deadline(
+    stream: &impl EnclaveTransportStream,
+    remote_session: Option<PendingRemoteSessionV1>,
+) -> Result<(), TransportError> {
+    let Some(session) = remote_session else {
+        return Ok(());
+    };
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| TransportError::Handshake("system time precedes Unix epoch".into()))?;
+    let remaining = Duration::from_secs(session.deadline())
+        .checked_sub(now)
+        .filter(|remaining| !remaining.is_zero())
+        .ok_or_else(|| TransportError::Handshake("remote session lease expired".into()))?;
+    stream.set_session_read_timeout(Some(remaining))?;
     Ok(())
 }
 
@@ -316,10 +600,70 @@ pub fn dispatch(
     offer_key: &SharedTributeOfferKey,
     chain_id: alloy_primitives::B256,
 ) -> EnclaveResponse {
+    dispatch_with_initialization(
+        req,
+        keys,
+        dkg,
+        offer_key,
+        chain_id,
+        None,
+        crate::gramine::dcap_quote,
+    )
+}
+
+fn dispatch_with_initialization(
+    req: EnclaveRequest,
+    keys: &EnclaveKeys,
+    dkg: &mut DkgSessionStore,
+    offer_key: &SharedTributeOfferKey,
+    chain_id: alloy_primitives::B256,
+    initialization: Option<&InitializationState>,
+    quote_generator: fn(&[u8; 64]) -> Result<Vec<u8>, String>,
+) -> EnclaveResponse {
     match req {
+        EnclaveRequest::GetQuote { .. }
+        | EnclaveRequest::GetInitializationChallenge
+        | EnclaveRequest::Initialize { .. }
+        | EnclaveRequest::OpenSession
+        | EnclaveRequest::OpenRemoteSessionV1 { .. }
+        | EnclaveRequest::SessionHandshake { .. } => EnclaveResponse::Error {
+            message: "pre-handshake request is not valid inside a Noise session".to_string(),
+        },
+        EnclaveRequest::BeginDcapVerificationV1 { .. }
+        | EnclaveRequest::DcapVerificationChunkV1 { .. }
+        | EnclaveRequest::FinishDcapVerificationV1 { .. } => EnclaveResponse::Error {
+            message: "DCAP verification requires an authenticated production session".to_string(),
+        },
+        EnclaveRequest::AuthorizeRemoteSessionV1 {
+            ticket_id,
+            initiator_static_x25519,
+            responder_static_x25519,
+            deadline,
+            finalized_block_hash,
+        } => {
+            let Some(initialization) = initialization else {
+                return EnclaveResponse::Error {
+                    message: "remote session authorization requires production initialization"
+                        .into(),
+                };
+            };
+            match initialization.authorize_remote_session(
+                ticket_id,
+                initiator_static_x25519,
+                responder_static_x25519,
+                deadline,
+                finalized_block_hash,
+                keys,
+            ) {
+                Ok(()) => EnclaveResponse::RemoteSessionAuthorizedV1 { ticket_id },
+                Err(message) => EnclaveResponse::Error { message },
+            }
+        }
         EnclaveRequest::GetPublicKeys => EnclaveResponse::PublicKeys {
+            offer_key_ready: offer_key.get().is_some(),
             // Advertise the DKG-derived offer key once available, so clients
-            // encrypt to it; fall back to the dev offer key pre-DKG.
+            // encrypt to it. Before readiness the same field carries only the
+            // one-time onboarding recipient and is never permanent chain state.
             recipient_x25519_pub: offer_key
                 .get()
                 .map(|k| k.public())
@@ -330,9 +674,66 @@ pub fn dispatch(
             dkg_enc_pub: keys.dkg_enc_public(),
             dkg_enc_sig: keys.sign_dkg_enc_binding(chain_id),
         },
-        EnclaveRequest::Initialize => EnclaveResponse::Initialized {
-            sealed_loaded: false,
-        },
+        EnclaveRequest::GenerateDcapQuote { intent } => {
+            let Some(initialization) = initialization else {
+                return EnclaveResponse::Error {
+                    message: "DCAP quote generation requires initialized production state"
+                        .to_string(),
+                };
+            };
+            let result = (|| -> Result<(Vec<u8>, Vec<u8>), String> {
+                let report_data = initialization.quote_report_data(&intent)?;
+                let quote = quote_generator(&report_data)?;
+                let quote_body = validate_generated_quote_binding(report_data, quote)?;
+                let enclave_signature = keys.sign_attestation(&report_data[..32]);
+                Ok((quote_body, enclave_signature.to_vec()))
+            })();
+            match result {
+                Ok((quote_body, enclave_signature)) => EnclaveResponse::DcapQuote {
+                    intent,
+                    quote_body,
+                    enclave_signature,
+                },
+                Err(message) => EnclaveResponse::Error { message },
+            }
+        }
+        EnclaveRequest::SignRegistrationIntentDevV1 { intent } => {
+            let Some(initialization) = initialization else {
+                return EnclaveResponse::Error {
+                    message: "development intent signing requires the development transport"
+                        .to_string(),
+                };
+            };
+            if initialization.mode() != InitializationMode::Development {
+                return EnclaveResponse::Error {
+                    message: "production enclave cannot sign GramineDirectDev evidence".to_string(),
+                };
+            }
+            let result = (|| -> Result<Vec<u8>, String> {
+                let decoded = RegistrationIntentV1::decode_canonical(&intent)
+                    .map_err(|error| error.to_string())?;
+                if decoded.attestation_mode != AttestationMode::GramineDirectDev
+                    || decoded.attestation_ed25519 != keys.attestation_pub()
+                    || decoded
+                        .derived_enclave_id()
+                        .map_err(|error| error.to_string())?
+                        != decoded.enclave_id
+                {
+                    return Err(
+                        "GramineDirectDev intent does not bind this enclave identity".into(),
+                    );
+                }
+                let intent_hash = decoded.intent_hash().map_err(|error| error.to_string())?;
+                Ok(keys.sign_attestation(intent_hash.as_slice()).to_vec())
+            })();
+            match result {
+                Ok(enclave_signature) => EnclaveResponse::RegistrationIntentSignedDevV1 {
+                    intent,
+                    enclave_signature,
+                },
+                Err(message) => EnclaveResponse::Error { message },
+            }
+        }
         EnclaveRequest::ProcessTributeOfferBatch { offers } => {
             let derived = offer_key.get();
             let km = match derived {
@@ -374,6 +775,32 @@ pub fn dispatch(
                     }
                 };
             let mut result = crate::gratis::apply_op(&state_key, &request);
+            // Co-located Fidelity cohort section: applied atomically with the
+            // Gratis op under its own independent key domain. A failing section
+            // rejects the WHOLE op — the host writes neither ledger.
+            if let (outbe_tee::protocol::GratisOpStatus::Applied, Some(section)) =
+                (&result.status, &request.fidelity)
+            {
+                let fidelity_outcome =
+                    crate::fidelity::derive_fidelity_state_key(derived.group_sig(), chain_id, 0)
+                        .and_then(|fidelity_key| {
+                            crate::fidelity::apply_cohort_section(
+                                &fidelity_key,
+                                request.account,
+                                request.amount,
+                                section,
+                            )
+                        });
+                match fidelity_outcome {
+                    Ok(outcome) => result.fidelity = Some(outcome),
+                    Err(e) => {
+                        result = crate::gratis::rejected_result(
+                            format!("fidelity section failed: {e}"),
+                            result.inputs_canonical_hash,
+                        );
+                    }
+                }
+            }
             // Sign (inputs_canonical_hash ‖ result) with the attestation key so the
             // host can prove the result came from this attested enclave.
             let preimage = outbe_tee::protocol::gratis_op_attestation_preimage(
@@ -383,6 +810,96 @@ pub fn dispatch(
             result.attestation_tag = keys.sign_attestation(&preimage).to_vec();
             EnclaveResponse::GratisOpApplied {
                 result: Box::new(result),
+            }
+        }
+        EnclaveRequest::ApplyFidelityCohortOp { request } => {
+            // Standalone cohort mutation over the independent Fidelity key
+            // domain. Consensus path, re-executed by every validator.
+            let Some(derived) = offer_key.get() else {
+                return EnclaveResponse::Error {
+                    message: "ApplyFidelityCohortOp: no resident group key (DKG not complete)"
+                        .to_string(),
+                };
+            };
+            let result =
+                crate::fidelity::derive_fidelity_state_key(derived.group_sig(), chain_id, 0)
+                    .and_then(|key| crate::fidelity::apply_cohort_op(&key, &request));
+            match result {
+                Ok(mut result) => {
+                    let preimage = outbe_tee::protocol::fidelity_cohort_attestation_preimage(
+                        result.inputs_canonical_hash,
+                        &result,
+                    );
+                    result.attestation_tag = keys.sign_attestation(&preimage).to_vec();
+                    EnclaveResponse::FidelityCohortApplied {
+                        result: Box::new(result),
+                    }
+                }
+                Err(e) => EnclaveResponse::Error {
+                    message: e.to_string(),
+                },
+            }
+        }
+        EnclaveRequest::SnapshotFidelityLeagues { request } => {
+            // Same resident-key derivation + attestation as ApplyGratisOp, over
+            // the independent Fidelity key domain. Consensus path (metadosis
+            // OCOMP prepare, re-executed by every validator).
+            let Some(derived) = offer_key.get() else {
+                return EnclaveResponse::Error {
+                    message: "SnapshotFidelityLeagues: no resident group key (DKG not complete)"
+                        .to_string(),
+                };
+            };
+            let leagues =
+                crate::fidelity::derive_fidelity_state_key(derived.group_sig(), chain_id, 0)
+                    .and_then(|key| crate::fidelity::snapshot_leagues(&key, &request));
+            match leagues {
+                Ok(leagues) => {
+                    let inputs_canonical_hash =
+                        outbe_tee::protocol::fidelity_snapshot_canonical_hash(&request);
+                    let preimage = outbe_tee::protocol::fidelity_snapshot_attestation_preimage(
+                        inputs_canonical_hash,
+                        &leagues,
+                    );
+                    let attestation_tag = keys.sign_attestation(&preimage).to_vec();
+                    EnclaveResponse::FidelityLeaguesSnapshotted {
+                        leagues,
+                        inputs_canonical_hash,
+                        attestation_tag,
+                    }
+                }
+                Err(e) => EnclaveResponse::Error {
+                    message: e.to_string(),
+                },
+            }
+        }
+        EnclaveRequest::QueryFidelityIndex { request } => {
+            // Owner-authorized read (eth_call path, NOT consensus). The signed,
+            // expiring authorization is verified inside the engine — the trust
+            // boundary is the enclave, not the host that forwards the call.
+            let Some(derived) = offer_key.get() else {
+                return EnclaveResponse::Error {
+                    message: "QueryFidelityIndex: no resident group key (DKG not complete)"
+                        .to_string(),
+                };
+            };
+            let result =
+                crate::fidelity::derive_fidelity_state_key(derived.group_sig(), chain_id, 0)
+                    .and_then(|key| crate::fidelity::query_index(&key, chain_id, &request));
+            match result {
+                Ok(mut result) => {
+                    let preimage = outbe_tee::protocol::fidelity_query_attestation_preimage(
+                        result.inputs_canonical_hash,
+                        &result,
+                    );
+                    result.attestation_tag = keys.sign_attestation(&preimage).to_vec();
+                    EnclaveResponse::FidelityIndexQueried {
+                        result: Box::new(result),
+                    }
+                }
+                Err(e) => EnclaveResponse::Error {
+                    message: e.to_string(),
+                },
             }
         }
         EnclaveRequest::ApplyPromisOp { request } => {
@@ -445,7 +962,7 @@ pub fn dispatch(
                     alloy_primitives::B256::from(requester_ephemeral_pubkey),
                 ),
             );
-            match outbe_primitives::tee_bootstrap::recover_signer(&prehash, &sig65) {
+            match outbe_primitives::tee_signatures::recover_signer(&prehash, &sig65) {
                 Ok(signer) if signer == account => {}
                 _ => {
                     return EnclaveResponse::Error {
@@ -475,33 +992,13 @@ pub fn dispatch(
                 },
             }
         }
-        EnclaveRequest::SealTributeOfferHandoff { recipient_x25519 } => {
-            // Key-handoff SERVER: seal the resident group signature to the
-            // newcomer's attested X25519 key. The host already verified the
-            // newcomer's quote + committee membership. The plaintext group
-            // signature never leaves the enclave — only the sealed blob is returned.
-            let Some(derived) = offer_key.get() else {
-                return EnclaveResponse::Error {
-                    message: "SealTributeOfferHandoff: no resident offer key to hand off"
-                        .to_string(),
-                };
-            };
-            match crate::crypto::encrypt_share(&recipient_x25519, derived.group_sig()) {
-                Ok(blob) => EnclaveResponse::SealedTributeOfferHandoff {
-                    sealed: blob.to_bytes(),
-                },
-                Err(e) => EnclaveResponse::Error {
-                    message: e.to_string(),
-                },
-            }
-        }
         EnclaveRequest::SealOfferKeyForRegistry { recipient_x25519 } => {
             // On-chain key delivery SERVER: DETERMINISTICALLY
             // seal the resident group signature to `recipient_x25519` so the blob can
             // be committed on-chain. static-static ECDH from the resident offer secret
             // makes every committee enclave produce a byte-identical blob; the
-            // plaintext group signature never leaves the enclave. The newcomer opens
-            // it with `IngestTributeOfferHandoff`.
+            // plaintext group signature never leaves the enclave. The registered
+            // recipient opens it with `IngestSealedOfferKeyForRegistry`.
             let Some(derived) = offer_key.get() else {
                 return EnclaveResponse::Error {
                     message: "SealOfferKeyForRegistry: no resident offer key to seal".to_string(),
@@ -520,25 +1017,23 @@ pub fn dispatch(
                 },
             }
         }
-        EnclaveRequest::IngestTributeOfferHandoff {
+        EnclaveRequest::IngestSealedOfferKeyForRegistry {
             sealed,
             expected_tribute_offer_public,
             chain_id,
             tribute_offer_epoch,
         } => {
-            // Key-handoff NEWCOMER: decrypt the handed-off group signature
-            // with this enclave's X25519 share-decryption secret, derive the offer
-            // key, and accept it ONLY if the derived public matches the on-chain
-            // registered key — a malicious server cannot install a wrong key. On
-            // success the group signature becomes resident (write-once); the serve
-            // loop then seals it for restart.
+            // One-time on-chain onboarding: decrypt the registry artifact with this
+            // enclave's recipient secret and accept it only if its derived public key
+            // matches the chain commitment. The key becomes resident write-once and
+            // is then sealed for restart; there is no peer or recovery path.
             let derived = (|| -> crate::errors::Result<DerivedTributeOfferKey> {
                 let blob = crate::crypto::EncryptedShare::from_bytes(&sealed)?;
                 // Decrypt with the secret behind this enclave's advertised
                 // `recipient_x25519` (its `tribute_offer` X25519 key) — the key the
-                // server sealed the handoff to.
+                // finalized registry artifact was sealed to.
                 let group_sig = Zeroizing::new(crate::crypto::decrypt_share(
-                    &keys.tribute_offer_x25519_secret(),
+                    keys.tribute_offer_x25519_secret(),
                     &blob,
                 )?);
                 let (secret, public) = crate::crypto::derive_tribute_offer_secret_from_group_sig(
@@ -548,14 +1043,12 @@ pub fn dispatch(
                 )?;
                 if public != expected_tribute_offer_public {
                     return Err(crate::errors::TeeError::Dkg(
-                        "handoff rejected: derived offer key != on-chain registered key"
+                        "sealed offer key rejected: derived public key != on-chain commitment"
                             .to_string(),
                     ));
                 }
                 Ok(DerivedTributeOfferKey::from_parts(
-                    secret,
-                    public,
-                    group_sig.to_vec(),
+                    secret, public, group_sig,
                 ))
             })();
             match derived {
@@ -566,13 +1059,13 @@ pub fn dispatch(
                     if let Err(rejected) = offer_key.set(d) {
                         if offer_key.get().map(|k| k.public) != Some(rejected.public) {
                             return EnclaveResponse::Error {
-                                message: "offer key divergence: handed-off key differs from \
+                                message: "offer key divergence: registry key differs from \
                                           the resident offer key"
                                     .to_string(),
                             };
                         }
                     }
-                    EnclaveResponse::TributeOfferHandoffIngested {
+                    EnclaveResponse::OfferKeyForRegistryIngested {
                         tribute_offer_public: public,
                     }
                 }
@@ -624,7 +1117,7 @@ pub fn dispatch(
             signed_logs,
         } => {
             // The session stays resident after finalize: Seam F (below) needs the
-            // recovered share. It is released by `DkgRecoverTributeOffer`.
+            // recovered share. It is released by `DkgFinalizeTributeOffer`.
             into_response(dkg.get_mut(&ceremony_id.0).and_then(|s| {
                 let (group_public, share_commitment) = s.player_finalize_encoded(&signed_logs)?;
                 Ok(EnclaveResponse::DkgPlayerFinalized {
@@ -648,15 +1141,15 @@ pub fn dispatch(
                 Ok(EnclaveResponse::DkgTributeOfferPartial { sealed })
             }))
         }
-        EnclaveRequest::DkgRecoverTributeOffer {
+        EnclaveRequest::DkgFinalizeTributeOffer {
             ceremony_id,
             sealed_partials,
             chain_id,
             tribute_offer_epoch,
         } => {
-            // Recover the offer secret AND retain the group threshold signature
-            // (`group_sig`, Seam F): it seals for restart and is the key-handoff
-            // payload that onboards a new committee member.
+            // Complete founding Seam F and retain the group threshold signature
+            // in sealed restart state. Authorization has already proved this is
+            // a keyless Validator; a ready enclave cannot enter this arm.
             let result = dkg.get_mut(&ceremony_id.0).and_then(|s| {
                 // The group public KEY (constant term) is the public verification key
                 // carried into the bootstrap payload for later reshare-endorsement
@@ -671,8 +1164,7 @@ pub fn dispatch(
             });
             match result {
                 Ok((secret, public, group_sig, group_public_key)) => {
-                    let derived =
-                        DerivedTributeOfferKey::from_parts(secret, public, group_sig.to_vec());
+                    let derived = DerivedTributeOfferKey::from_parts(secret, public, group_sig);
                     // Write-once: the first ceremony's key is canonical. A re-run
                     // that derives the SAME key is idempotent; a DIVERGENT key is a
                     // determinism fault — reject rather than keep a stale key.
@@ -697,13 +1189,18 @@ pub fn dispatch(
                 },
             }
         }
-        EnclaveRequest::GetQuote { .. } => EnclaveResponse::Error {
-            message: "GetQuote is only valid before the handshake".to_string(),
-        },
-        EnclaveRequest::SessionHandshake { .. } => EnclaveResponse::Error {
-            message: "SessionHandshake is only valid during the handshake".to_string(),
-        },
     }
+}
+
+#[cfg(feature = "mock")]
+fn synthetic_dcap_quote(report_data: &[u8; 64]) -> Result<Vec<u8>, String> {
+    let mut quote = vec![0_u8; outbe_tee::quote::MIN_QUOTE_LEN];
+    let report_data_offset = quote
+        .len()
+        .checked_sub(report_data.len())
+        .ok_or_else(|| "synthetic quote REPORT_DATA offset underflow".to_string())?;
+    quote[report_data_offset..].copy_from_slice(report_data);
+    Ok(quote)
 }
 
 fn dispatch_dkg_open(
@@ -770,6 +1267,20 @@ fn into_response(result: crate::errors::Result<EnclaveResponse>) -> EnclaveRespo
     })
 }
 
+/// Re-parse the quote returned by Gramine before exposing it to NodeHost. This
+/// keeps a stale/misbound device response from being paired with the requested
+/// canonical intent even though the later consensus QVL remains authoritative.
+fn validate_generated_quote_binding(
+    expected_report_data: [u8; 64],
+    quote: Vec<u8>,
+) -> Result<Vec<u8>, String> {
+    let parsed = outbe_tee::quote::parse_quote_measurements(&quote)?;
+    if parsed.report_data != expected_report_data {
+        return Err("generated DCAP quote REPORT_DATA does not match requested intent".to_string());
+    }
+    Ok(quote)
+}
+
 /// Accept loop (used by the enclave binary). Each connection is served on its
 /// own thread so multiple long-lived clients are handled concurrently — the node
 /// keeps one connection open for offer decryption for its whole lifetime *and*
@@ -783,6 +1294,8 @@ pub fn serve(
     keys: Arc<EnclaveKeys>,
     boot: Option<Arc<EnclaveBootConfig>>,
     offer_key: SharedTributeOfferKey,
+    initialization: Arc<InitializationState>,
+    chain_id: alloy_primitives::B256,
 ) -> Result<(), TransportError> {
     // The DKG-derived offer key is shared across all connection threads: the DKG
     // ceremony connection writes it (Seam F), the offer-decrypt connection reads
@@ -792,9 +1305,18 @@ pub fn serve(
         let keys = Arc::clone(&keys);
         let offer_key = Arc::clone(&offer_key);
         let boot = boot.clone();
+        let initialization = Arc::clone(&initialization);
         std::thread::spawn(move || {
             // PoC: surface to stderr; one bad client must not kill the enclave.
-            if let Err(err) = serve_connection_with(stream, &keys, &offer_key, boot.as_deref()) {
+            if let Err(err) = serve_connection_with_resident_chain(
+                stream,
+                &keys,
+                &offer_key,
+                boot.as_deref(),
+                &initialization,
+                chain_id,
+                crate::gramine::dcap_quote,
+            ) {
                 eprintln!("tee enclave: connection error: {err}");
             }
         });
@@ -813,6 +1335,8 @@ pub fn serve_tcp(
     keys: Arc<EnclaveKeys>,
     boot: Option<Arc<EnclaveBootConfig>>,
     offer_key: SharedTributeOfferKey,
+    initialization: Arc<InitializationState>,
+    chain_id: alloy_primitives::B256,
 ) -> Result<(), TransportError> {
     for conn in listener.incoming() {
         let stream = conn?;
@@ -821,8 +1345,17 @@ pub fn serve_tcp(
         let keys = Arc::clone(&keys);
         let offer_key = Arc::clone(&offer_key);
         let boot = boot.clone();
+        let initialization = Arc::clone(&initialization);
         std::thread::spawn(move || {
-            if let Err(err) = serve_connection_with(stream, &keys, &offer_key, boot.as_deref()) {
+            if let Err(err) = serve_connection_with_resident_chain(
+                stream,
+                &keys,
+                &offer_key,
+                boot.as_deref(),
+                &initialization,
+                chain_id,
+                crate::gramine::dcap_quote,
+            ) {
                 eprintln!("tee enclave: connection error: {err}");
             }
         });
@@ -834,6 +1367,239 @@ pub fn serve_tcp(
 mod tests {
     use super::*;
     use alloy_primitives::B256;
+
+    #[test]
+    fn generated_quote_binding_rejects_post_syscall_report_data_substitution() {
+        let expected = [0xA1; 64];
+        let mut quote = vec![0u8; outbe_tee::quote::MIN_QUOTE_LEN];
+        let report_data_offset = outbe_tee::quote::MIN_QUOTE_LEN - 64;
+        quote[report_data_offset..].copy_from_slice(&expected);
+        assert_eq!(
+            validate_generated_quote_binding(expected, quote.clone()).unwrap(),
+            quote
+        );
+
+        let mut substituted = quote;
+        substituted[report_data_offset] ^= 1;
+        assert!(validate_generated_quote_binding(expected, substituted)
+            .unwrap_err()
+            .contains("does not match requested intent"));
+    }
+
+    fn spawn_production_connection(
+        keys: Arc<EnclaveKeys>,
+        boot: Arc<EnclaveBootConfig>,
+        offer_key: SharedTributeOfferKey,
+        initialization: Arc<InitializationState>,
+    ) -> (
+        std::os::unix::net::UnixStream,
+        std::thread::JoinHandle<Result<(), TransportError>>,
+    ) {
+        let (client, server) = std::os::unix::net::UnixStream::pair().unwrap();
+        let handle = std::thread::spawn(move || {
+            serve_connection_with(server, &keys, &offer_key, Some(&boot), &initialization)
+        });
+        (client, handle)
+    }
+
+    fn signed_initialization_manifest(
+        keys: &EnclaveKeys,
+        challenge: [u8; 32],
+        node_host_noise_x25519: [u8; 32],
+        profile: outbe_primitives::tee_attestation_v1::EnclaveProfile,
+    ) -> (
+        outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1,
+        [u8; 65],
+    ) {
+        use k256::ecdsa::signature::hazmat::PrehashSigner as _;
+        use outbe_primitives::tee_attestation_v1::{
+            EnclaveInitializationManifestV1, EnclaveProfile, NodeIdV1,
+        };
+
+        let signing = k256::ecdsa::SigningKey::from_bytes((&[0x61; 32]).into()).unwrap();
+        let public = signing.verifying_key().to_encoded_point(false);
+        let hash = alloy_primitives::keccak256(&public.as_bytes()[1..]);
+        let mut address = [0u8; 20];
+        address.copy_from_slice(&hash[12..]);
+        let node_id = match profile {
+            EnclaveProfile::Validator => NodeIdV1::Validator {
+                address,
+                bls_minpk_public: [0x32; 48],
+            },
+            EnclaveProfile::FullNode => NodeIdV1::FullNode {
+                reth_p2p_public: signing
+                    .verifying_key()
+                    .to_encoded_point(true)
+                    .as_bytes()
+                    .try_into()
+                    .unwrap(),
+            },
+        };
+        let manifest = EnclaveInitializationManifestV1 {
+            chain_id: [0x10; 32],
+            genesis_hash: B256::repeat_byte(0x11),
+            enclave_profile: profile,
+            node_id,
+            initialization_challenge: challenge,
+            node_host_noise_x25519,
+            recipient_x25519: keys.tribute_offer_public(),
+            attestation_ed25519: keys.attestation_pub(),
+            noise_responder_x25519: keys.noise_public(),
+        };
+        let (signature, recovery): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) = signing
+            .sign_prehash(manifest.authorization_hash().unwrap().as_slice())
+            .unwrap();
+        let mut signature_bytes = [0u8; 65];
+        signature_bytes[..64].copy_from_slice(signature.to_bytes().as_slice());
+        signature_bytes[64] = recovery.to_byte();
+        (manifest, signature_bytes)
+    }
+
+    #[cfg(all(feature = "native-dcap", target_arch = "x86_64", target_os = "linux"))]
+    fn intent_bound_processor_fixture_wire_bytes() -> (Vec<u8>, Vec<u8>) {
+        use outbe_primitives::tee_attestation_v1::{
+            AttestationEvidenceV1, DcapCollateralComponentV1, DcapCollateralKind, DcapEvidenceV1,
+            RegistrationIntentV1,
+        };
+
+        const ROOT: &str = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/system/tee/tests/fixtures/",
+            "intel-dcap-1.26-intent-bound-processor-negative/"
+        );
+        let intent = RegistrationIntentV1::decode_canonical(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/system/tee/tests/fixtures/",
+            "intel-dcap-1.26-intent-bound-processor-negative/intent.bin"
+        )))
+        .unwrap();
+        let components = [
+            (
+                DcapCollateralKind::PckCertificateChain,
+                "pck-certificate-chain.pem0",
+            ),
+            (DcapCollateralKind::PckCrl, "pck.crl.der"),
+            (
+                DcapCollateralKind::PckCrlIssuerChain,
+                "pck-crl-issuer-chain.pem",
+            ),
+            (DcapCollateralKind::RootCaCrl, "root-ca.crl.der"),
+            (DcapCollateralKind::TcbInfo, "tcb-info.json"),
+            (
+                DcapCollateralKind::TcbInfoIssuerChain,
+                "tcb-info-issuer-chain.pem",
+            ),
+            (DcapCollateralKind::QeIdentity, "qe-identity.json"),
+            (
+                DcapCollateralKind::QeIdentityIssuerChain,
+                "qe-identity-issuer-chain.pem",
+            ),
+        ]
+        .into_iter()
+        .map(|(kind, name)| DcapCollateralComponentV1 {
+            kind,
+            bytes: std::fs::read(format!("{ROOT}{name}")).unwrap(),
+        })
+        .collect();
+        let evidence = AttestationEvidenceV1::Dcap(DcapEvidenceV1 {
+            intent,
+            quote: std::fs::read(format!("{ROOT}quote.bin")).unwrap(),
+            components,
+        })
+        .encode_canonical()
+        .unwrap();
+        let policy = std::fs::read(format!("{ROOT}policy.bin")).unwrap();
+        (evidence, policy)
+    }
+
+    #[cfg(all(feature = "native-dcap", target_arch = "x86_64", target_os = "linux"))]
+    #[test]
+    fn authenticated_noise_rpc_replays_real_processor_negative_through_enclave_qvl() {
+        use outbe_primitives::tee_attestation_v1::{
+            AttestationEvidenceV1, AttestationMode, EnclaveProfile, GramineDirectEvidenceV1,
+        };
+        use outbe_tee::{
+            dcap_protocol::{DcapRejectCodeV1, DcapVerificationOutcomeV1},
+            AuthorizedEnclaveClient, NodeHostNoiseKey,
+        };
+
+        let root = tempfile::tempdir().unwrap();
+        let socket = root.path().join("enclave.sock");
+        let endpoint = socket.to_str().unwrap().to_string();
+        let boot = Arc::new(EnclaveBootConfig::new(
+            [0x10; 32],
+            root.path().to_path_buf(),
+            0,
+        ));
+        let keys = Arc::new(EnclaveKeys::new([0x73; 32], Some([0x73; 32])).unwrap());
+        let initialization =
+            Arc::new(InitializationState::production(boot.clone(), &keys).unwrap());
+        let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
+        let listener = UnixListener::bind(&socket).unwrap();
+        let server_keys = keys.clone();
+        let server_initialization = initialization.clone();
+        let server = std::thread::spawn(move || {
+            for _ in 0..2 {
+                let (stream, _) = listener.accept().unwrap();
+                serve_connection_with(
+                    stream,
+                    &server_keys,
+                    &offer_key,
+                    Some(&boot),
+                    &server_initialization,
+                )
+                .unwrap();
+            }
+        });
+
+        let challenge = AuthorizedEnclaveClient::discover_endpoint(&endpoint).unwrap();
+        let node_host_path = root.path().join("node-host-noise.key");
+        let node_host = NodeHostNoiseKey::create_new(&node_host_path).unwrap();
+        let (manifest, node_signature) = signed_initialization_manifest(
+            &keys,
+            challenge.challenge,
+            node_host.public(),
+            EnclaveProfile::Validator,
+        );
+        let mut client = AuthorizedEnclaveClient::initialize_endpoint(
+            &endpoint,
+            &manifest,
+            &node_signature,
+            &node_host,
+        )
+        .unwrap();
+        let (evidence, policy) = intent_bound_processor_fixture_wire_bytes();
+
+        assert_eq!(
+            client
+                .verify_dcap_evidence_v1(&evidence, &policy, 1_785_491_440)
+                .unwrap(),
+            DcapVerificationOutcomeV1::Rejected(DcapRejectCodeV1::PlatformTcbRejected)
+        );
+
+        let AttestationEvidenceV1::Dcap(dcap) =
+            AttestationEvidenceV1::decode_canonical(&evidence).unwrap()
+        else {
+            unreachable!("fixture must be DCAP evidence")
+        };
+        let mut unattested_intent = dcap.intent;
+        unattested_intent.attestation_mode = AttestationMode::GramineDirectDev;
+        let unattested = AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
+            intent: unattested_intent,
+            dev_attestation_public: [0x91; 32],
+            dev_signature: [0x92; 64],
+        })
+        .encode_canonical()
+        .unwrap();
+        assert_eq!(
+            client
+                .verify_dcap_evidence_v1(&unattested, &policy, 1_785_491_440)
+                .unwrap(),
+            DcapVerificationOutcomeV1::Rejected(DcapRejectCodeV1::EvidenceNonCanonical)
+        );
+        drop(client);
+        server.join().unwrap();
+    }
 
     /// One in-process enclave: its key material, resident DKG store, and the
     /// shared DKG-derived offer key slot.
@@ -1106,7 +1872,7 @@ mod tests {
                 .filter(|(recipient_bls, _)| *recipient_bls == participant_bls[i])
                 .map(|(_, blob)| blob.clone())
                 .collect();
-            match e.call(EnclaveRequest::DkgRecoverTributeOffer {
+            match e.call(EnclaveRequest::DkgFinalizeTributeOffer {
                 ceremony_id,
                 sealed_partials,
                 chain_id,
@@ -1118,11 +1884,11 @@ mod tests {
                 } => {
                     assert!(
                         !group_public_key.is_empty(),
-                        "group public key must be emitted at offer recovery"
+                        "group public key must be emitted at founding offer finalization"
                     );
                     tribute_offer_keys.push(tribute_offer_public);
                 }
-                other => panic!("DkgRecoverTributeOffer: {other:?}"),
+                other => panic!("DkgFinalizeTributeOffer: {other:?}"),
             }
         }
         // Every enclave derives the byte-identical shared offer public key.
@@ -1134,7 +1900,7 @@ mod tests {
         );
         assert_ne!(tribute_offer_keys[0], [0u8; 32]);
 
-        // The ceremony session is released after offer-key recovery.
+        // The ceremony session is released after founding offer-key finalization.
         assert!(enclaves.iter().all(|e| e.dkg.is_empty()));
     }
 
@@ -1147,6 +1913,43 @@ mod tests {
         assert!(matches!(resp, EnclaveResponse::Error { .. }), "{resp:?}");
     }
 
+    #[test]
+    fn public_keys_distinguish_onboarding_recipient_from_permanent_offer_key() {
+        let mut enclave = Enclave::new(0x31);
+        let onboarding_recipient = enclave.keys.tribute_offer_public();
+        match enclave.call(EnclaveRequest::GetPublicKeys) {
+            EnclaveResponse::PublicKeys {
+                offer_key_ready,
+                recipient_x25519_pub,
+                ..
+            } => {
+                assert!(!offer_key_ready);
+                assert_eq!(recipient_x25519_pub, onboarding_recipient);
+            }
+            other => panic!("unexpected pre-ready response: {other:?}"),
+        }
+
+        let permanent = DerivedTributeOfferKey::from_secret_and_group_sig(
+            Zeroizing::new([0x6a; 32]),
+            Zeroizing::new(vec![0x44; 96]),
+        );
+        let permanent_public = permanent.public();
+        assert!(enclave.offer_key.set(permanent).is_ok(), "install once");
+
+        match enclave.call(EnclaveRequest::GetPublicKeys) {
+            EnclaveResponse::PublicKeys {
+                offer_key_ready,
+                recipient_x25519_pub,
+                ..
+            } => {
+                assert!(offer_key_ready);
+                assert_eq!(recipient_x25519_pub, permanent_public);
+                assert_ne!(recipient_x25519_pub, onboarding_recipient);
+            }
+            other => panic!("unexpected ready response: {other:?}"),
+        }
+    }
+
     // ---- Seal / unseal offer secret + share (cfg(test) mock sealing key) ----
 
     fn install_tribute_offer_key(
@@ -1154,7 +1957,10 @@ mod tests {
         share: Vec<u8>,
     ) -> (SharedTributeOfferKey, [u8; 32]) {
         let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
-        let derived = DerivedTributeOfferKey::from_secret_and_group_sig(secret, share);
+        let derived = DerivedTributeOfferKey::from_secret_and_group_sig(
+            Zeroizing::new(secret),
+            Zeroizing::new(share),
+        );
         let public = derived.public();
         offer_key.set(derived).ok().expect("set offer key");
         (offer_key, public)
@@ -1173,7 +1979,9 @@ mod tests {
         seal_tribute_offer_and_group_sig_if_configured(Some(&cfg), &offer_key);
         assert!(cfg.sealed_root_path().exists(), "sealed blob written");
 
-        let restored = unseal_tribute_offer_and_group_sig_on_boot(&cfg).expect("unseal on boot");
+        let restored = unseal_tribute_offer_and_group_sig_on_boot(&cfg)
+            .expect("read sealed state")
+            .expect("unseal on boot");
         assert_eq!(restored.public(), public);
         assert_eq!(
             restored.group_sig(),
@@ -1194,8 +2002,9 @@ mod tests {
         seal_tribute_offer_and_group_sig_if_configured(Some(&cfg_a), &offer_key);
 
         let cfg_b = EnclaveBootConfig::new(chain, dir.path().to_path_buf(), 2);
-        let restored =
-            unseal_tribute_offer_and_group_sig_on_boot(&cfg_b).expect("vB unseals vA blob");
+        let restored = unseal_tribute_offer_and_group_sig_on_boot(&cfg_b)
+            .expect("read sealed state")
+            .expect("vB unseals vA blob");
         assert_eq!(restored.public(), public);
     }
 
@@ -1209,11 +2018,40 @@ mod tests {
         seal_tribute_offer_and_group_sig_if_configured(Some(&cfg), &offer_key);
 
         let cfg_wrong = EnclaveBootConfig::new([0x02; 32], dir.path().to_path_buf(), 1);
-        assert!(unseal_tribute_offer_and_group_sig_on_boot(&cfg_wrong).is_none());
+        let error = match unseal_tribute_offer_and_group_sig_on_boot(&cfg_wrong) {
+            Err(error) => error,
+            Ok(_) => panic!("wrong-chain sealed state must fail closed"),
+        };
+        assert!(error.contains("lost its key"), "{error}");
+        assert!(error.contains("no recovery or fallback"), "{error}");
     }
 
-    /// Sealing is write-once: a second call does not overwrite the blob (so a
-    /// later re-derived key cannot silently replace the persisted one).
+    #[test]
+    fn ws_c_missing_blob_is_the_only_keyless_boot_result() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = EnclaveBootConfig::new([0x18; 32], dir.path().to_path_buf(), 1);
+        assert!(unseal_tribute_offer_and_group_sig_on_boot(&cfg)
+            .expect("missing file is not corruption")
+            .is_none());
+    }
+
+    #[test]
+    fn ws_c_corrupt_blob_is_terminal_and_is_not_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = EnclaveBootConfig::new([0x19; 32], dir.path().to_path_buf(), 1);
+        let corrupt = b"corrupt-permanent-offer-key";
+        std::fs::write(cfg.sealed_root_path(), corrupt).unwrap();
+
+        let error = match unseal_tribute_offer_and_group_sig_on_boot(&cfg) {
+            Err(error) => error,
+            Ok(_) => panic!("corrupt sealed state must fail closed"),
+        };
+        assert!(error.contains("lost its key"), "{error}");
+        assert!(error.contains("no recovery or fallback"), "{error}");
+        assert_eq!(std::fs::read(cfg.sealed_root_path()).unwrap(), corrupt);
+    }
+
+    /// Sealing is write-once: a second call cannot replace the persisted key.
     #[test]
     fn ws_c_seal_is_write_once() {
         let dir = tempfile::tempdir().unwrap();
@@ -1230,6 +2068,7 @@ mod tests {
         // The persisted key is still the first one.
         assert_eq!(
             unseal_tribute_offer_and_group_sig_on_boot(&cfg)
+                .unwrap()
                 .unwrap()
                 .public(),
             public
@@ -1253,13 +2092,13 @@ mod tests {
         );
     }
 
-    // ---- Tribute offer key-handoff ----
+    // ---- One-time on-chain offer-key onboarding ----
 
-    /// A server enclave with a resident group signature seals it to a newcomer's
-    /// X25519 key; the newcomer ingests it, verifies it against the on-chain
-    /// expected offer public, and ends up with the byte-identical resident key.
+    /// A committee enclave deterministically seals the resident group signature
+    /// to the registered recipient. The recipient verifies the installed key
+    /// against the on-chain commitment.
     #[test]
-    fn handoff_seals_and_ingests_offer_key() {
+    fn registry_artifact_seals_and_installs_offer_key() {
         let chain_id = B256::repeat_byte(0xC1);
         let epoch = 0u64;
         // Any bytes act as the group signature for the HKDF derivation.
@@ -1273,41 +2112,43 @@ mod tests {
         server
             .offer_key
             .set(DerivedTributeOfferKey::from_parts(
-                secret, public, group_sig,
+                secret,
+                public,
+                Zeroizing::new(group_sig),
             ))
             .ok()
             .expect("install server offer key");
 
         // Newcomer: fresh enclave, no offer key; its X25519 recipient key is the
-        // handoff target.
+        // one-time registry artifact target.
         let mut newcomer = Enclave::new(2);
         let newcomer_enc = newcomer.keys.tribute_offer_public();
 
-        let sealed = match server.call(EnclaveRequest::SealTributeOfferHandoff {
+        let sealed = match server.call(EnclaveRequest::SealOfferKeyForRegistry {
             recipient_x25519: newcomer_enc,
         }) {
-            EnclaveResponse::SealedTributeOfferHandoff { sealed } => sealed,
-            other => panic!("expected SealedTributeOfferHandoff, got {other:?}"),
+            EnclaveResponse::SealedOfferKeyForRegistry { sealed } => sealed,
+            other => panic!("expected SealedOfferKeyForRegistry, got {other:?}"),
         };
 
-        match newcomer.call(EnclaveRequest::IngestTributeOfferHandoff {
+        match newcomer.call(EnclaveRequest::IngestSealedOfferKeyForRegistry {
             sealed,
             expected_tribute_offer_public: public,
             chain_id,
             tribute_offer_epoch: epoch,
         }) {
-            EnclaveResponse::TributeOfferHandoffIngested {
+            EnclaveResponse::OfferKeyForRegistryIngested {
                 tribute_offer_public,
             } => assert_eq!(tribute_offer_public, public),
-            other => panic!("expected TributeOfferHandoffIngested, got {other:?}"),
+            other => panic!("expected OfferKeyForRegistryIngested, got {other:?}"),
         }
         assert_eq!(newcomer.offer_key.get().map(|k| k.public()), Some(public));
     }
 
-    /// The newcomer rejects a handoff whose derived offer key does not match the
-    /// on-chain expected public — a malicious server cannot install a wrong key.
+    /// The recipient rejects a registry artifact whose derived key does not match
+    /// the on-chain commitment.
     #[test]
-    fn handoff_ingest_rejects_wrong_expected_public() {
+    fn registry_artifact_rejects_wrong_expected_public() {
         let chain_id = B256::repeat_byte(0xC2);
         let epoch = 0u64;
         let group_sig = vec![0x44_u8; 96];
@@ -1319,22 +2160,24 @@ mod tests {
         server
             .offer_key
             .set(DerivedTributeOfferKey::from_parts(
-                secret, public, group_sig,
+                secret,
+                public,
+                Zeroizing::new(group_sig),
             ))
             .ok()
             .expect("install");
 
         let mut newcomer = Enclave::new(4);
         let newcomer_enc = newcomer.keys.tribute_offer_public();
-        let sealed = match server.call(EnclaveRequest::SealTributeOfferHandoff {
+        let sealed = match server.call(EnclaveRequest::SealOfferKeyForRegistry {
             recipient_x25519: newcomer_enc,
         }) {
-            EnclaveResponse::SealedTributeOfferHandoff { sealed } => sealed,
+            EnclaveResponse::SealedOfferKeyForRegistry { sealed } => sealed,
             other => panic!("got {other:?}"),
         };
 
         // Claim a different expected public than the one the group signature yields.
-        match newcomer.call(EnclaveRequest::IngestTributeOfferHandoff {
+        match newcomer.call(EnclaveRequest::IngestSealedOfferKeyForRegistry {
             sealed,
             expected_tribute_offer_public: [0xEE_u8; 32],
             chain_id,
@@ -1348,7 +2191,7 @@ mod tests {
     }
 
     /// An enclave with a resident group key installed, so `DeriveAccountKeys` can
-    /// derive per-account keys (mirrors the handoff tests' setup).
+    /// exercise the ready-state capability in isolation.
     fn resident_enclave(seed: u8) -> Enclave {
         let group_sig = vec![0x5a_u8; 96];
         let e = Enclave::new(seed);
@@ -1357,7 +2200,9 @@ mod tests {
                 .expect("derive");
         e.offer_key
             .set(DerivedTributeOfferKey::from_parts(
-                secret, public, group_sig,
+                secret,
+                public,
+                Zeroizing::new(group_sig),
             ))
             .ok()
             .expect("install");
@@ -1453,6 +2298,1046 @@ mod tests {
                 EnclaveResponse::Error { .. }
             ),
             "owner_sig must bind the requester ephemeral (no cross-target replay)"
+        );
+    }
+
+    #[test]
+    fn production_initialization_binds_noise_initiator_before_request_decode() {
+        use outbe_tee::codec::{decode_response, encode_request};
+
+        let root = tempfile::tempdir().unwrap();
+        let boot = Arc::new(EnclaveBootConfig::new(
+            [0x10; 32],
+            root.path().to_path_buf(),
+            0,
+        ));
+        let keys = Arc::new(EnclaveKeys::new([7; 32], Some([1; 32])).unwrap());
+        let initialization =
+            Arc::new(InitializationState::production(boot.clone(), &keys).unwrap());
+        let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
+
+        let challenge = match initialization.challenge_response(&keys).unwrap() {
+            EnclaveResponse::InitializationChallenge { challenge, .. } => challenge,
+            response => panic!("unexpected challenge response: {response:?}"),
+        };
+        let node_host_private = [0x51; 32];
+        let node_host_public =
+            x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(node_host_private))
+                .to_bytes();
+        let (manifest, node_signature) = signed_initialization_manifest(
+            &keys,
+            challenge,
+            node_host_public,
+            outbe_primitives::tee_attestation_v1::EnclaveProfile::Validator,
+        );
+
+        // First connection: signed manifest plus possession of the exact embedded
+        // NodeHost Noise key commits the write-once authorization.
+        let (mut client, server) = spawn_production_connection(
+            keys.clone(),
+            boot.clone(),
+            offer_key.clone(),
+            initialization.clone(),
+        );
+        write_frame(
+            &mut client,
+            &encode_request(&EnclaveRequest::Initialize {
+                manifest: manifest.encode_canonical().unwrap(),
+                node_signature: node_signature.to_vec(),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let params = NOISE_PARAMS.parse().unwrap();
+        let mut handshake = snow::Builder::new(params)
+            .local_private_key(&node_host_private)
+            .remote_public_key(&keys.noise_public())
+            .build_initiator()
+            .unwrap();
+        let mut buf = [0u8; 2048];
+        let len = handshake.write_message(&[], &mut buf).unwrap();
+        write_frame(&mut client, &buf[..len]).unwrap();
+        let msg2 = read_frame(&mut client).unwrap();
+        handshake.read_message(&msg2, &mut buf).unwrap();
+        let mut noise = handshake.into_transport_mode().unwrap();
+        let frame = read_frame(&mut client).unwrap();
+        let len = noise.read_message(&frame, &mut buf).unwrap();
+        assert!(matches!(
+            decode_response(&buf[..len]).unwrap(),
+            EnclaveResponse::Initialized {
+                sealed_loaded: false,
+                ..
+            }
+        ));
+        drop(client);
+        server.join().unwrap().unwrap();
+        assert_eq!(
+            initialization.expected_node_host().unwrap(),
+            node_host_public
+        );
+
+        // The authorized persistent key can reconnect and issue an allowed
+        // command through the production channel.
+        let (mut client, server) = spawn_production_connection(
+            keys.clone(),
+            boot.clone(),
+            offer_key.clone(),
+            initialization.clone(),
+        );
+        write_frame(
+            &mut client,
+            &encode_request(&EnclaveRequest::OpenSession).unwrap(),
+        )
+        .unwrap();
+        let params = NOISE_PARAMS.parse().unwrap();
+        let mut handshake = snow::Builder::new(params)
+            .local_private_key(&node_host_private)
+            .remote_public_key(&keys.noise_public())
+            .build_initiator()
+            .unwrap();
+        let len = handshake.write_message(&[], &mut buf).unwrap();
+        write_frame(&mut client, &buf[..len]).unwrap();
+        let msg2 = read_frame(&mut client).unwrap();
+        handshake.read_message(&msg2, &mut buf).unwrap();
+        let mut noise = handshake.into_transport_mode().unwrap();
+        let request = encode_request(&EnclaveRequest::GetPublicKeys).unwrap();
+        let len = noise.write_message(&request, &mut buf).unwrap();
+        write_frame(&mut client, &buf[..len]).unwrap();
+        let frame = read_frame(&mut client).unwrap();
+        let len = noise.read_message(&frame, &mut buf).unwrap();
+        assert!(matches!(
+            decode_response(&buf[..len]).unwrap(),
+            EnclaveResponse::PublicKeys { .. }
+        ));
+        drop(client);
+        server.join().unwrap().unwrap();
+
+        // An unknown initiator is rejected after Noise message 1 even when that
+        // message carries bytes that are not a valid EnclaveRequest. The server
+        // never writes message 2 and therefore cannot decode or dispatch them.
+        let (mut attacker, server) =
+            spawn_production_connection(keys.clone(), boot, offer_key, initialization.clone());
+        write_frame(
+            &mut attacker,
+            &encode_request(&EnclaveRequest::OpenSession).unwrap(),
+        )
+        .unwrap();
+        let attacker_private = [0xA5; 32];
+        let params = NOISE_PARAMS.parse().unwrap();
+        let mut attacker_handshake = snow::Builder::new(params)
+            .local_private_key(&attacker_private)
+            .remote_public_key(&keys.noise_public())
+            .build_initiator()
+            .unwrap();
+        let len = attacker_handshake
+            .write_message(&[0xff; 32], &mut buf)
+            .unwrap();
+        write_frame(&mut attacker, &buf[..len]).unwrap();
+        assert!(read_frame(&mut attacker).is_err());
+        let error = server.join().unwrap().unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("initiator is not the authorized NodeHost"));
+        assert_eq!(
+            initialization.expected_node_host().unwrap(),
+            node_host_public
+        );
+    }
+
+    #[test]
+    fn public_node_host_client_initializes_and_reconnects_both_profiles() {
+        use outbe_primitives::tee_attestation_v1::EnclaveProfile;
+        use outbe_tee::{AuthorizedEnclaveClient, NodeHostNoiseKey};
+
+        for (profile, seed) in [
+            (EnclaveProfile::Validator, 0x71),
+            (EnclaveProfile::FullNode, 0x72),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let socket = root.path().join("enclave.sock");
+            let endpoint = socket.to_str().unwrap().to_string();
+            let boot = Arc::new(EnclaveBootConfig::new(
+                [0x10; 32],
+                root.path().to_path_buf(),
+                0,
+            ));
+            let keys = Arc::new(EnclaveKeys::new([seed; 32], Some([seed; 32])).unwrap());
+            let initialization =
+                Arc::new(InitializationState::production(boot.clone(), &keys).unwrap());
+            let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
+            let listener = UnixListener::bind(&socket).unwrap();
+            let server_keys = keys.clone();
+            let server_boot = boot.clone();
+            let server_initialization = initialization.clone();
+            let server_offer_key = offer_key.clone();
+            let server = std::thread::spawn(move || {
+                for _ in 0..3 {
+                    let (stream, _) = listener.accept().unwrap();
+                    serve_connection_with(
+                        stream,
+                        &server_keys,
+                        &server_offer_key,
+                        Some(&server_boot),
+                        &server_initialization,
+                    )
+                    .unwrap();
+                }
+            });
+
+            let challenge = AuthorizedEnclaveClient::discover_endpoint(&endpoint).unwrap();
+            assert_eq!(challenge.recipient_x25519, keys.tribute_offer_public());
+            assert_eq!(challenge.attestation_ed25519, keys.attestation_pub());
+            assert_eq!(challenge.noise_responder_x25519, keys.noise_public());
+
+            let node_host_path = root.path().join("node-host-noise.key");
+            let node_host = NodeHostNoiseKey::create_new(&node_host_path).unwrap();
+            let (manifest, node_signature) = signed_initialization_manifest(
+                &keys,
+                challenge.challenge,
+                node_host.public(),
+                profile,
+            );
+            let mut initialized = AuthorizedEnclaveClient::initialize_endpoint(
+                &endpoint,
+                &manifest,
+                &node_signature,
+                &node_host,
+            )
+            .unwrap();
+            assert!(matches!(
+                initialized.request(&EnclaveRequest::GetPublicKeys).unwrap(),
+                EnclaveResponse::PublicKeys { .. }
+            ));
+            drop(initialized);
+
+            drop(node_host);
+            let node_host = NodeHostNoiseKey::load(&node_host_path).unwrap();
+            let mut reconnected =
+                AuthorizedEnclaveClient::connect_endpoint(&endpoint, &manifest, &node_host)
+                    .unwrap();
+            assert!(matches!(
+                reconnected.request(&EnclaveRequest::GetPublicKeys).unwrap(),
+                EnclaveResponse::PublicKeys { .. }
+            ));
+            drop(reconnected);
+            server.join().unwrap();
+            assert_eq!(
+                initialization.expected_node_host().unwrap(),
+                node_host.public()
+            );
+        }
+    }
+
+    #[test]
+    fn preauthenticated_remote_ticket_opens_one_live_noise_session_and_cannot_replay() {
+        use outbe_primitives::tee_attestation_v1::{
+            EnclaveProfile, NodeHostAuthorizationWitnessV1, NodeIdV1,
+        };
+        use outbe_tee::{
+            admit_remote_session_v1, AuthorizedEnclaveClient, FinalizedRegistryBindingV1,
+            FinalizedRegistryViewV1, NodeHostNoiseKey, RemoteEnclaveClient,
+            RemoteSessionExpectationV1,
+        };
+
+        let root = tempfile::tempdir().unwrap();
+        let socket = root.path().join("remote-enclave.sock");
+        let endpoint = socket.to_str().unwrap().to_string();
+        let boot = Arc::new(EnclaveBootConfig::new(
+            [0x10; 32],
+            root.path().to_path_buf(),
+            0,
+        ));
+        let keys = Arc::new(EnclaveKeys::new([0xA1; 32], Some([0xA1; 32])).unwrap());
+        let initialization =
+            Arc::new(InitializationState::production(boot.clone(), &keys).unwrap());
+        let challenge = match initialization.challenge_response(&keys).unwrap() {
+            EnclaveResponse::InitializationChallenge { challenge, .. } => challenge,
+            response => panic!("unexpected challenge response: {response:?}"),
+        };
+        let listener = UnixListener::bind(&socket).unwrap();
+        let server_keys = keys.clone();
+        let server_boot = boot.clone();
+        let server_initialization = initialization.clone();
+        let server = std::thread::spawn(move || {
+            let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
+            let mut connections = Vec::new();
+            for _ in 0..4 {
+                let (stream, _) = listener.accept().unwrap();
+                let keys = server_keys.clone();
+                let boot = server_boot.clone();
+                let initialization = server_initialization.clone();
+                let offer_key = offer_key.clone();
+                connections.push(std::thread::spawn(move || {
+                    serve_connection_with(stream, &keys, &offer_key, Some(&boot), &initialization)
+                }));
+            }
+            connections
+                .into_iter()
+                .map(|connection| connection.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+
+        let owner_path = root.path().join("owner-noise.key");
+        let owner = NodeHostNoiseKey::create_new(&owner_path).unwrap();
+        let (manifest, node_signature) = signed_initialization_manifest(
+            &keys,
+            challenge,
+            owner.public(),
+            EnclaveProfile::Validator,
+        );
+        let mut owner_client = AuthorizedEnclaveClient::initialize_endpoint(
+            &endpoint,
+            &manifest,
+            &node_signature,
+            &owner,
+        )
+        .unwrap();
+
+        let source_path = root.path().join("source-noise.key");
+        let source = NodeHostNoiseKey::create_new(&source_path).unwrap();
+        let source_node = NodeIdV1::Validator {
+            address: [0xB1; 20],
+            bls_minpk_public: [0xB2; 48],
+        };
+        let source_witness = NodeHostAuthorizationWitnessV1 {
+            chain_id: manifest.chain_id,
+            genesis_hash: manifest.genesis_hash,
+            enclave_profile: EnclaveProfile::Validator,
+            node_id: source_node.clone(),
+            node_host_noise_x25519: source.public(),
+        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        assert!(matches!(
+            owner_client.request(&EnclaveRequest::AuthorizeRemoteSessionV1 {
+                ticket_id: B256::repeat_byte(0xA2),
+                initiator_static_x25519: source.public(),
+                responder_static_x25519: manifest.noise_responder_x25519,
+                deadline: now + 60,
+                finalized_block_hash: B256::repeat_byte(0xA3),
+            }),
+            Err(outbe_tee::TransportError::Handshake(message))
+                if message.contains("finalized admission capability")
+        ));
+        let view = FinalizedRegistryViewV1 {
+            chain_id: manifest.chain_id,
+            genesis_hash: manifest.genesis_hash,
+            block_number: 101,
+            block_hash: B256::repeat_byte(0xB3),
+            state_root: B256::repeat_byte(0xB4),
+            consensus_timestamp: now.saturating_sub(1),
+        };
+        let source_binding = FinalizedRegistryBindingV1 {
+            view,
+            node_id_hash: source_node.node_id_hash().unwrap(),
+            profile: EnclaveProfile::Validator,
+            enclave_id: B256::repeat_byte(0xB5),
+            binding_id: B256::repeat_byte(0xB6),
+            intent_hash: B256::repeat_byte(0xB7),
+            valid_until: now + 600,
+            noise_responder_x25519: [0xB8; 32],
+            node_host_authorization_hash: source_witness.authorization_hash().unwrap(),
+        };
+        let target_hash = manifest.node_id.node_id_hash().unwrap();
+        let target_binding = FinalizedRegistryBindingV1 {
+            view,
+            node_id_hash: target_hash,
+            profile: EnclaveProfile::Validator,
+            enclave_id: manifest.enclave_id().unwrap(),
+            binding_id: B256::repeat_byte(0xC1),
+            intent_hash: B256::repeat_byte(0xC2),
+            valid_until: now + 500,
+            noise_responder_x25519: manifest.noise_responder_x25519,
+            node_host_authorization_hash: manifest.node_host_authorization_hash().unwrap(),
+        };
+        let admission = admit_remote_session_v1(
+            RemoteSessionExpectationV1 {
+                chain_id: manifest.chain_id,
+                genesis_hash: manifest.genesis_hash,
+                source_node_id_hash: source_binding.node_id_hash,
+                source_profile: EnclaveProfile::Validator,
+                target_node_id_hash: target_hash,
+                target_profile: EnclaveProfile::Validator,
+            },
+            &source_witness,
+            source_binding,
+            target_binding,
+        )
+        .unwrap();
+        let wrong_ticket = owner_client.authorize_remote_session(&admission).unwrap();
+        let mut wrong_stream = std::os::unix::net::UnixStream::connect(&socket).unwrap();
+        wrong_stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .unwrap();
+        write_frame(
+            &mut wrong_stream,
+            &outbe_tee::codec::encode_request(&EnclaveRequest::OpenRemoteSessionV1 {
+                ticket_id: wrong_ticket.ticket_id(),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let params = NOISE_PARAMS.parse().unwrap();
+        let mut wrong_handshake = snow::Builder::new(params)
+            .local_private_key(&[0xD1; 32])
+            .remote_public_key(&manifest.noise_responder_x25519)
+            .build_initiator()
+            .unwrap();
+        let mut message = [0_u8; 1024];
+        let message_len = wrong_handshake.write_message(&[], &mut message).unwrap();
+        write_frame(&mut wrong_stream, &message[..message_len]).unwrap();
+        assert!(read_frame(&mut wrong_stream).is_err());
+
+        let ticket = owner_client.authorize_remote_session(&admission).unwrap();
+        let mut remote = RemoteEnclaveClient::connect_endpoint(&endpoint, &ticket, &source)
+            .expect("exact registered source NodeHost must complete Noise IK");
+        let remote_keys = remote.public_keys().unwrap();
+        assert_eq!(
+            remote_keys.noise_static_pub,
+            manifest.noise_responder_x25519
+        );
+        assert_eq!(remote_keys.recipient_x25519_pub, manifest.recipient_x25519);
+        assert_eq!(remote_keys.attestation_pub, manifest.attestation_ed25519);
+        drop(remote);
+
+        assert!(RemoteEnclaveClient::connect_endpoint(&endpoint, &ticket, &source).is_err());
+        drop(owner_client);
+        let results = server.join().unwrap();
+        assert!(results[0].is_ok());
+        assert!(results[1].is_err());
+        assert!(results[2].is_ok());
+        assert!(results[3].is_err());
+    }
+
+    #[test]
+    fn validator_node_host_state_initializes_once_and_reconnects_from_datadir() {
+        use alloy_primitives::{Address, U256};
+        use k256::ecdsa::signature::hazmat::PrehashSigner as _;
+        use outbe_tee::{connect_or_initialize_validator_enclave, ValidatorNodeHostIdentityV1};
+
+        let root = tempfile::tempdir().unwrap();
+        let socket = root.path().join("enclave.sock");
+        let endpoint = socket.to_str().unwrap().to_string();
+        let chain_id = 16_u64;
+        let chain_id_word = U256::from(chain_id).to_be_bytes();
+        let genesis_hash = B256::repeat_byte(0x11);
+        let boot = Arc::new(EnclaveBootConfig::new(
+            chain_id_word,
+            root.path().join("enclave-state"),
+            0,
+        ));
+        std::fs::create_dir(&boot.tee_dir).unwrap();
+        let keys = Arc::new(EnclaveKeys::new([0x74; 32], Some([0x74; 32])).unwrap());
+        let initialization =
+            Arc::new(InitializationState::production(boot.clone(), &keys).unwrap());
+        let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
+        let listener = UnixListener::bind(&socket).unwrap();
+        let server_keys = keys.clone();
+        let server_initialization = initialization.clone();
+        let server = std::thread::spawn(move || {
+            for _ in 0..3 {
+                let (stream, _) = listener.accept().unwrap();
+                serve_connection_with(
+                    stream,
+                    &server_keys,
+                    &offer_key,
+                    Some(&boot),
+                    &server_initialization,
+                )
+                .unwrap();
+            }
+        });
+
+        let signing = k256::ecdsa::SigningKey::from_bytes((&[0x61; 32]).into()).unwrap();
+        let public = signing.verifying_key().to_encoded_point(false);
+        let hash = alloy_primitives::keccak256(&public.as_bytes()[1..]);
+        let validator = Address::from_slice(&hash[12..]);
+        let identity = ValidatorNodeHostIdentityV1 {
+            chain_id,
+            genesis_hash,
+            validator,
+            consensus_bls_public: [0x32; 48],
+        };
+        let sign = |hash: B256| {
+            let (signature, recovery): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) = signing
+                .sign_prehash(hash.as_slice())
+                .map_err(|error| error.to_string())?;
+            let mut bytes = [0_u8; 65];
+            bytes[..64].copy_from_slice(signature.to_bytes().as_slice());
+            bytes[64] = recovery.to_byte();
+            Ok(bytes)
+        };
+        let node_data_dir = root.path().join("node-data");
+        std::fs::create_dir(&node_data_dir).unwrap();
+
+        let mut initialized =
+            connect_or_initialize_validator_enclave(&endpoint, &node_data_dir, identity, &sign)
+                .unwrap();
+        assert!(matches!(
+            initialized.request(&EnclaveRequest::GetPublicKeys).unwrap(),
+            EnclaveResponse::PublicKeys { .. }
+        ));
+        drop(initialized);
+
+        let mut reconnected =
+            connect_or_initialize_validator_enclave(&endpoint, &node_data_dir, identity, &sign)
+                .unwrap();
+        assert!(matches!(
+            reconnected.request(&EnclaveRequest::GetPublicKeys).unwrap(),
+            EnclaveResponse::PublicKeys { .. }
+        ));
+        drop(reconnected);
+        server.join().unwrap();
+
+        let state = node_data_dir.join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1);
+        assert!(state
+            .join(outbe_tee::node_host::NODE_HOST_NOISE_KEY_V1)
+            .is_file());
+        assert!(state
+            .join(outbe_tee::node_host::NODE_HOST_MANIFEST_V1)
+            .is_file());
+    }
+
+    #[test]
+    fn validator_replacement_candidate_keeps_the_committed_enclave_active() {
+        use alloy_primitives::{Address, U256};
+        use k256::ecdsa::signature::hazmat::PrehashSigner as _;
+        use outbe_primitives::tee_attestation_v1::{
+            AttestationEvidenceV1, AttestationMode, AttestationOperationV1,
+            DcapCollateralComponentV1, DcapCollateralKind, DcapEvidenceV1,
+            EnclaveInitializationManifestV1, RegistrationIntentV1,
+        };
+        use outbe_tee::{
+            connect_or_initialize_validator_enclave, persist_replacement_candidate_submission,
+            prepare_validator_enclave_replacement_candidate, ValidatorNodeHostIdentityV1,
+        };
+
+        let root = tempfile::tempdir().unwrap();
+        let socket_a = root.path().join("enclave-a.sock");
+        let socket_b = root.path().join("enclave-b.sock");
+        let endpoint_a = socket_a.to_str().unwrap().to_string();
+        let endpoint_b = socket_b.to_str().unwrap().to_string();
+        let chain_id = 18_u64;
+        let chain_id_word = U256::from(chain_id).to_be_bytes();
+        let genesis_hash = B256::repeat_byte(0x13);
+
+        let boot_a = Arc::new(EnclaveBootConfig::new(
+            chain_id_word,
+            root.path().join("enclave-a-state"),
+            0,
+        ));
+        let boot_b = Arc::new(EnclaveBootConfig::new(
+            chain_id_word,
+            root.path().join("enclave-b-state"),
+            0,
+        ));
+        std::fs::create_dir(&boot_a.tee_dir).unwrap();
+        std::fs::create_dir(&boot_b.tee_dir).unwrap();
+        let keys_a = Arc::new(EnclaveKeys::new([0x76; 32], Some([0x76; 32])).unwrap());
+        let keys_b = Arc::new(EnclaveKeys::new([0x77; 32], Some([0x77; 32])).unwrap());
+        let initialization_a =
+            Arc::new(InitializationState::production(boot_a.clone(), &keys_a).unwrap());
+        let initialization_b =
+            Arc::new(InitializationState::production(boot_b.clone(), &keys_b).unwrap());
+
+        let listener_a = UnixListener::bind(&socket_a).unwrap();
+        let server_keys_a = keys_a.clone();
+        let server_a = std::thread::spawn(move || {
+            let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
+            for _ in 0..3 {
+                let (stream, _) = listener_a.accept().unwrap();
+                serve_connection_with(
+                    stream,
+                    &server_keys_a,
+                    &offer_key,
+                    Some(&boot_a),
+                    &initialization_a,
+                )
+                .unwrap();
+            }
+        });
+        let listener_b = UnixListener::bind(&socket_b).unwrap();
+        let server_keys_b = keys_b.clone();
+        let server_b = std::thread::spawn(move || {
+            let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
+            for _ in 0..3 {
+                let (stream, _) = listener_b.accept().unwrap();
+                serve_connection_with(
+                    stream,
+                    &server_keys_b,
+                    &offer_key,
+                    Some(&boot_b),
+                    &initialization_b,
+                )
+                .unwrap();
+            }
+        });
+
+        let signing = k256::ecdsa::SigningKey::from_bytes((&[0x63; 32]).into()).unwrap();
+        let public = signing.verifying_key().to_encoded_point(false);
+        let hash = alloy_primitives::keccak256(&public.as_bytes()[1..]);
+        let validator = Address::from_slice(&hash[12..]);
+        let identity = ValidatorNodeHostIdentityV1 {
+            chain_id,
+            genesis_hash,
+            validator,
+            consensus_bls_public: [0x33; 48],
+        };
+        let sign = |hash: B256| {
+            let (signature, recovery): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) = signing
+                .sign_prehash(hash.as_slice())
+                .map_err(|error| error.to_string())?;
+            let mut bytes = [0_u8; 65];
+            bytes[..64].copy_from_slice(signature.to_bytes().as_slice());
+            bytes[64] = recovery.to_byte();
+            Ok(bytes)
+        };
+        let node_data_dir = root.path().join("node-data");
+        std::fs::create_dir(&node_data_dir).unwrap();
+
+        drop(
+            connect_or_initialize_validator_enclave(&endpoint_a, &node_data_dir, identity, &sign)
+                .unwrap(),
+        );
+        let candidate = prepare_validator_enclave_replacement_candidate(
+            &endpoint_b,
+            &node_data_dir,
+            identity,
+            &sign,
+        )
+        .unwrap();
+        let active_bytes = std::fs::read(
+            node_data_dir
+                .join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1)
+                .join(outbe_tee::node_host::NODE_HOST_MANIFEST_V1),
+        )
+        .unwrap();
+        let active = EnclaveInitializationManifestV1::decode_canonical(&active_bytes).unwrap();
+        assert_ne!(
+            active.enclave_id().unwrap(),
+            candidate.manifest().enclave_id().unwrap()
+        );
+        assert_eq!(
+            active.node_host_authorization_hash().unwrap(),
+            candidate.manifest().node_host_authorization_hash().unwrap()
+        );
+        let candidate_manifest = candidate.manifest().clone();
+        let candidate_path = node_data_dir
+            .join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1)
+            .join(outbe_tee::node_host::NODE_HOST_REPLACEMENT_CANDIDATE_V1);
+        let candidate_bytes = std::fs::read(&candidate_path).unwrap();
+        drop(candidate);
+        let resumed = prepare_validator_enclave_replacement_candidate(
+            &endpoint_b,
+            &node_data_dir,
+            identity,
+            &sign,
+        )
+        .unwrap();
+        assert_eq!(resumed.manifest(), &candidate_manifest);
+        assert_eq!(std::fs::read(&candidate_path).unwrap(), candidate_bytes);
+        drop(resumed);
+
+        let intent = RegistrationIntentV1 {
+            chain_id: candidate_manifest.chain_id,
+            genesis_hash: candidate_manifest.genesis_hash,
+            operation: AttestationOperationV1::ReplaceEnclaveBinding,
+            attestation_mode: AttestationMode::DcapRequired,
+            policy_hash: B256::repeat_byte(0x21),
+            enclave_profile: candidate_manifest.enclave_profile,
+            node_id: candidate_manifest.node_id.clone(),
+            enclave_id: candidate_manifest.enclave_id().unwrap(),
+            binding_id: B256::repeat_byte(0x45),
+            binding_version: 2,
+            registration_version: 1,
+            renewal_nonce: 0,
+            transition_nonce: 0,
+            requested_valid_until: 20_000,
+            recipient_x25519: candidate_manifest.recipient_x25519,
+            attestation_ed25519: candidate_manifest.attestation_ed25519,
+            noise_responder_x25519: candidate_manifest.noise_responder_x25519,
+            node_host_authorization_hash: candidate_manifest
+                .node_host_authorization_hash()
+                .unwrap(),
+        };
+        candidate_manifest.validate_intent_binding(&intent).unwrap();
+        let intent_hash = intent.intent_hash().unwrap();
+        let node_signature = sign(intent_hash).unwrap();
+        let enclave_signature = keys_b.sign_attestation(intent_hash.as_slice());
+        let components = (1_u8..=8)
+            .map(|kind| DcapCollateralComponentV1 {
+                kind: DcapCollateralKind::try_from(kind).unwrap(),
+                bytes: vec![kind],
+            })
+            .collect();
+        let evidence = AttestationEvidenceV1::Dcap(DcapEvidenceV1 {
+            intent,
+            quote: vec![0x51],
+            components,
+        });
+        let submission = persist_replacement_candidate_submission(
+            &node_data_dir,
+            &evidence,
+            &node_signature,
+            &enclave_signature,
+        )
+        .unwrap();
+        assert_eq!(
+            persist_replacement_candidate_submission(
+                &node_data_dir,
+                &evidence,
+                &node_signature,
+                &enclave_signature,
+            )
+            .unwrap(),
+            submission
+        );
+        let mut conflicting = evidence;
+        let AttestationEvidenceV1::Dcap(conflicting_dcap) = &mut conflicting else {
+            unreachable!();
+        };
+        conflicting_dcap.quote[0] ^= 1;
+        assert!(persist_replacement_candidate_submission(
+            &node_data_dir,
+            &conflicting,
+            &node_signature,
+            &enclave_signature,
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("conflicts with the durable replacement submission"));
+
+        let mut active_client =
+            connect_or_initialize_validator_enclave(&endpoint_a, &node_data_dir, identity, &sign)
+                .unwrap();
+        assert!(matches!(
+            active_client
+                .request(&EnclaveRequest::GetPublicKeys)
+                .unwrap(),
+            EnclaveResponse::PublicKeys { .. }
+        ));
+        drop(active_client);
+        server_a.join().unwrap();
+        server_b.join().unwrap();
+    }
+
+    #[test]
+    fn replacement_candidate_resumes_after_crash_between_stage_and_initialize() {
+        use alloy_primitives::{Address, U256};
+        use k256::ecdsa::signature::hazmat::PrehashSigner as _;
+        use outbe_tee::{
+            connect_or_initialize_validator_enclave,
+            prepare_validator_enclave_replacement_candidate, ValidatorNodeHostIdentityV1,
+        };
+
+        let root = tempfile::tempdir().unwrap();
+        let active_socket = root.path().join("active.sock");
+        let candidate_socket = root.path().join("candidate.sock");
+        let active_endpoint = active_socket.to_str().unwrap().to_string();
+        let candidate_endpoint = candidate_socket.to_str().unwrap().to_string();
+        let chain_id = 20_u64;
+        let chain_id_word = U256::from(chain_id).to_be_bytes();
+        let genesis_hash = B256::repeat_byte(0x15);
+        let active_boot = Arc::new(EnclaveBootConfig::new(
+            chain_id_word,
+            root.path().join("active-state"),
+            0,
+        ));
+        let candidate_boot = Arc::new(EnclaveBootConfig::new(
+            chain_id_word,
+            root.path().join("candidate-state"),
+            0,
+        ));
+        std::fs::create_dir(&active_boot.tee_dir).unwrap();
+        std::fs::create_dir(&candidate_boot.tee_dir).unwrap();
+        let active_keys = Arc::new(EnclaveKeys::new([0x79; 32], Some([0x79; 32])).unwrap());
+        let candidate_keys = Arc::new(EnclaveKeys::new([0x7a; 32], Some([0x7a; 32])).unwrap());
+        let active_initialization =
+            Arc::new(InitializationState::production(active_boot.clone(), &active_keys).unwrap());
+        let candidate_initialization = Arc::new(
+            InitializationState::production(candidate_boot.clone(), &candidate_keys).unwrap(),
+        );
+
+        let active_listener = UnixListener::bind(&active_socket).unwrap();
+        let active_server_keys = active_keys.clone();
+        let active_server = std::thread::spawn(move || {
+            let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
+            for _ in 0..2 {
+                let (stream, _) = active_listener.accept().unwrap();
+                serve_connection_with(
+                    stream,
+                    &active_server_keys,
+                    &offer_key,
+                    Some(&active_boot),
+                    &active_initialization,
+                )
+                .unwrap();
+            }
+        });
+
+        let signing = k256::ecdsa::SigningKey::from_bytes((&[0x64; 32]).into()).unwrap();
+        let public = signing.verifying_key().to_encoded_point(false);
+        let address_hash = alloy_primitives::keccak256(&public.as_bytes()[1..]);
+        let identity = ValidatorNodeHostIdentityV1 {
+            chain_id,
+            genesis_hash,
+            validator: Address::from_slice(&address_hash[12..]),
+            consensus_bls_public: [0x34; 48],
+        };
+        let sign = |hash: B256| {
+            let (signature, recovery): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) = signing
+                .sign_prehash(hash.as_slice())
+                .map_err(|error| error.to_string())?;
+            let mut bytes = [0_u8; 65];
+            bytes[..64].copy_from_slice(signature.to_bytes().as_slice());
+            bytes[64] = recovery.to_byte();
+            Ok(bytes)
+        };
+        let node_data_dir = root.path().join("node-data");
+        std::fs::create_dir(&node_data_dir).unwrap();
+        drop(
+            connect_or_initialize_validator_enclave(
+                &active_endpoint,
+                &node_data_dir,
+                identity,
+                &sign,
+            )
+            .unwrap(),
+        );
+        active_server.join().unwrap();
+
+        let first_listener = UnixListener::bind(&candidate_socket).unwrap();
+        let first_server_keys = candidate_keys.clone();
+        let first_boot = candidate_boot.clone();
+        let first_initialization = candidate_initialization.clone();
+        let first_server = std::thread::spawn(move || {
+            let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
+            let (stream, _) = first_listener.accept().unwrap();
+            serve_connection_with(
+                stream,
+                &first_server_keys,
+                &offer_key,
+                Some(&first_boot),
+                &first_initialization,
+            )
+            .unwrap();
+        });
+        assert!(prepare_validator_enclave_replacement_candidate(
+            &candidate_endpoint,
+            &node_data_dir,
+            identity,
+            &sign,
+        )
+        .is_err());
+        first_server.join().unwrap();
+        std::fs::remove_file(&candidate_socket).unwrap();
+        drop(candidate_initialization);
+        let restarted_candidate_initialization = Arc::new(
+            InitializationState::production(candidate_boot.clone(), &candidate_keys).unwrap(),
+        );
+
+        let retry_listener = UnixListener::bind(&candidate_socket).unwrap();
+        retry_listener.set_nonblocking(true).unwrap();
+        let retry_server_keys = candidate_keys.clone();
+        let retry_server = std::thread::spawn(move || {
+            let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            let mut accepted = 0;
+            while accepted < 3 && std::time::Instant::now() < deadline {
+                match retry_listener.accept() {
+                    Ok((stream, _)) => {
+                        let result = serve_connection_with(
+                            stream,
+                            &retry_server_keys,
+                            &offer_key,
+                            Some(&candidate_boot),
+                            &restarted_candidate_initialization,
+                        );
+                        if let Err(error) = result {
+                            assert!(
+                                error.to_string().contains("enclave is not initialized")
+                                    || error.to_string().contains("challenge mismatch"),
+                                "unexpected candidate retry error: {error}"
+                            );
+                        }
+                        accepted += 1;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                    }
+                    Err(error) => panic!("candidate retry listener failed: {error}"),
+                }
+            }
+            accepted
+        });
+        let retry = prepare_validator_enclave_replacement_candidate(
+            &candidate_endpoint,
+            &node_data_dir,
+            identity,
+            &sign,
+        );
+        match retry {
+            Ok(candidate) => drop(candidate),
+            Err(error) => {
+                let accepted = retry_server.join().unwrap();
+                panic!("candidate retry failed after {accepted} connections: {error}");
+            }
+        }
+        assert_eq!(retry_server.join().unwrap(), 3);
+    }
+
+    #[test]
+    fn full_node_host_state_uses_exact_reth_p2p_identity_and_reconnects() {
+        use alloy_primitives::U256;
+        use k256::ecdsa::signature::hazmat::PrehashSigner as _;
+        use outbe_primitives::tee_attestation_v1::{
+            EnclaveInitializationManifestV1, EnclaveProfile, NodeIdV1,
+        };
+        use outbe_tee::{
+            connect_or_initialize_full_node_enclave,
+            prepare_full_node_enclave_replacement_candidate, FullNodeNodeHostIdentityV1,
+        };
+
+        let root = tempfile::tempdir().unwrap();
+        let socket = root.path().join("enclave.sock");
+        let endpoint = socket.to_str().unwrap().to_string();
+        let candidate_socket = root.path().join("candidate-enclave.sock");
+        let candidate_endpoint = candidate_socket.to_str().unwrap().to_string();
+        let chain_id = 17_u64;
+        let chain_id_word = U256::from(chain_id).to_be_bytes();
+        let genesis_hash = B256::repeat_byte(0x12);
+        let boot = Arc::new(EnclaveBootConfig::new(
+            chain_id_word,
+            root.path().join("enclave-state"),
+            0,
+        ));
+        std::fs::create_dir(&boot.tee_dir).unwrap();
+        let keys = Arc::new(EnclaveKeys::new([0x75; 32], Some([0x75; 32])).unwrap());
+        let initialization =
+            Arc::new(InitializationState::production(boot.clone(), &keys).unwrap());
+        let candidate_boot = Arc::new(EnclaveBootConfig::new(
+            chain_id_word,
+            root.path().join("candidate-enclave-state"),
+            0,
+        ));
+        std::fs::create_dir(&candidate_boot.tee_dir).unwrap();
+        let candidate_keys = Arc::new(EnclaveKeys::new([0x78; 32], Some([0x78; 32])).unwrap());
+        let candidate_initialization = Arc::new(
+            InitializationState::production(candidate_boot.clone(), &candidate_keys).unwrap(),
+        );
+        let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
+        let listener = UnixListener::bind(&socket).unwrap();
+        let server_keys = keys.clone();
+        let server_initialization = initialization.clone();
+        let server = std::thread::spawn(move || {
+            for _ in 0..3 {
+                let (stream, _) = listener.accept().unwrap();
+                serve_connection_with(
+                    stream,
+                    &server_keys,
+                    &offer_key,
+                    Some(&boot),
+                    &server_initialization,
+                )
+                .unwrap();
+            }
+        });
+        let candidate_offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
+        let candidate_listener = UnixListener::bind(&candidate_socket).unwrap();
+        let candidate_server_keys = candidate_keys.clone();
+        let candidate_server = std::thread::spawn(move || {
+            for _ in 0..2 {
+                let (stream, _) = candidate_listener.accept().unwrap();
+                serve_connection_with(
+                    stream,
+                    &candidate_server_keys,
+                    &candidate_offer_key,
+                    Some(&candidate_boot),
+                    &candidate_initialization,
+                )
+                .unwrap();
+            }
+        });
+
+        let signing = k256::ecdsa::SigningKey::from_bytes((&[0x62; 32]).into()).unwrap();
+        let reth_p2p_public: [u8; 33] = signing
+            .verifying_key()
+            .to_encoded_point(true)
+            .as_bytes()
+            .try_into()
+            .unwrap();
+        let identity = FullNodeNodeHostIdentityV1 {
+            chain_id,
+            genesis_hash,
+            reth_p2p_public,
+        };
+        let sign = |hash: B256| {
+            let (signature, recovery): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) = signing
+                .sign_prehash(hash.as_slice())
+                .map_err(|error| error.to_string())?;
+            let mut bytes = [0_u8; 65];
+            bytes[..64].copy_from_slice(signature.to_bytes().as_slice());
+            bytes[64] = recovery.to_byte();
+            Ok(bytes)
+        };
+        let node_data_dir = root.path().join("node-data");
+        std::fs::create_dir(&node_data_dir).unwrap();
+
+        let mut initialized =
+            connect_or_initialize_full_node_enclave(&endpoint, &node_data_dir, identity, &sign)
+                .unwrap();
+        assert!(matches!(
+            initialized.request(&EnclaveRequest::GetPublicKeys).unwrap(),
+            EnclaveResponse::PublicKeys { .. }
+        ));
+        drop(initialized);
+
+        let mut reconnected =
+            connect_or_initialize_full_node_enclave(&endpoint, &node_data_dir, identity, &sign)
+                .unwrap();
+        assert!(matches!(
+            reconnected.request(&EnclaveRequest::GetPublicKeys).unwrap(),
+            EnclaveResponse::PublicKeys { .. }
+        ));
+        drop(reconnected);
+        let candidate = prepare_full_node_enclave_replacement_candidate(
+            &candidate_endpoint,
+            &node_data_dir,
+            identity,
+            &sign,
+        )
+        .unwrap();
+        assert_eq!(
+            candidate.manifest().enclave_profile,
+            EnclaveProfile::FullNode
+        );
+        assert_eq!(
+            candidate.manifest().node_id,
+            NodeIdV1::FullNode { reth_p2p_public }
+        );
+        let candidate_manifest = candidate.manifest().clone();
+        drop(candidate);
+        server.join().unwrap();
+        candidate_server.join().unwrap();
+
+        let manifest_bytes = std::fs::read(
+            node_data_dir
+                .join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1)
+                .join(outbe_tee::node_host::NODE_HOST_MANIFEST_V1),
+        )
+        .unwrap();
+        let manifest = EnclaveInitializationManifestV1::decode_canonical(&manifest_bytes).unwrap();
+        assert_eq!(manifest.enclave_profile, EnclaveProfile::FullNode);
+        assert_eq!(manifest.node_id, NodeIdV1::FullNode { reth_p2p_public });
+        assert_ne!(
+            manifest.enclave_id().unwrap(),
+            candidate_manifest.enclave_id().unwrap()
+        );
+        assert_eq!(
+            manifest.node_host_authorization_hash().unwrap(),
+            candidate_manifest.node_host_authorization_hash().unwrap()
         );
     }
 }

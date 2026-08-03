@@ -1112,9 +1112,9 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "test",
                     "--locked",
                     "-p",
-                    "outbe-evm",
-                    "--test",
-                    "ocomp_result_votes",
+                    "outbe-metadosis",
+                    "--lib",
+                    "ocomp_semantic_migrations",
                 ],
             )?;
             cargo(
@@ -1676,12 +1676,6 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     &["test", "--locked", "-p", "outbe-lysis", "--test", test],
                 )?;
             }
-            for test in ["ocomp_atomic_apply", "ocomp_logical_time"] {
-                cargo(
-                    repository_root,
-                    &["test", "--locked", "-p", "outbe-evm", "--test", test],
-                )?;
-            }
             cargo(
                 repository_root,
                 &["test", "--locked", "-p", "outbe-txpool", "ocomp_", "--lib"],
@@ -2002,8 +1996,7 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                 ],
             )?;
 
-            let fixture =
-                repository_root.join("crates/testing/e2e-harness/fixtures/ocomp-final-v1");
+            let fixture = repository_root.join("testing/e2e-harness/fixtures/ocomp-final-v1");
             let checked_artifacts = fixture.join("artifacts");
             let base = fixture.join("base");
             let checked_capacity = checked_artifacts.join("generated-capacity-v1.json");

@@ -17,9 +17,9 @@ use std::{
 use alloy_primitives::{Address, B256};
 use eyre::{ensure, Context as _, Result};
 use k256::ecdsa::{signature::hazmat::PrehashSigner as _, Signature, SigningKey};
-use outbe_metadosis::ocomp::{
-    fork::{OcompForkInstallClassification, OcompForkInstallV1, OCOMP_POC_FINAL_ACTIVATION_HEIGHT},
-    schema::OcompRequestProfile,
+use outbe_metadosis::config::{
+    OcompForkInstallClassification, OcompForkInstallV1, OcompRequestProfile,
+    OCOMP_POC_FINAL_ACTIVATION_HEIGHT,
 };
 use outbe_ocomp_protocol::{
     committee::{
@@ -1230,7 +1230,7 @@ mod tests {
     #[test]
     fn frozen_release_accepts_external_public_registrations_and_rejects_rebinding() {
         let repository_root = repository_root();
-        let fixture = repository_root.join("crates/testing/e2e-harness/fixtures/ocomp-final-v1");
+        let fixture = repository_root.join("testing/e2e-harness/fixtures/ocomp-final-v1");
         let artifacts = fixture.join("artifacts");
         let base_genesis = fixture.join("base/genesis.json");
         let validators = fixture.join("base/validators.json");

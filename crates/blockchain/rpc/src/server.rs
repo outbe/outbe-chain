@@ -289,7 +289,7 @@ where
         let prehash = outbe_tee::protocol::eip191_hash(
             &outbe_tee::protocol::derive_account_keys_message(ledger, account, ephemeral_pubkey),
         );
-        let recovered = outbe_primitives::tee_bootstrap::recover_signer(&prehash, &sig65)
+        let recovered = outbe_primitives::tee_signatures::recover_signer(&prehash, &sig65)
             .map_err(|e| invalid_params_err(format!("signature recovery failed: {e}")))?;
         if recovered != account {
             return Err(invalid_params_err(format!(

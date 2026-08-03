@@ -5,6 +5,11 @@ use outbe_primitives::error::Result;
 
 use crate::schema::AgentRewardContract;
 
+/// Selectors on this precompile that accept native value. The route table binds
+/// this to the address's `ValuePolicy` at compile time, so a selector added here
+/// without flipping the route fails the build.
+pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
+
 /// ABI surface for the AgentReward precompile.
 ///
 /// Each method is annotated with `#[contract_public("<Solidity signature>")]`.

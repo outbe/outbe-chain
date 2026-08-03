@@ -4,8 +4,9 @@
 //! It builds consensus-valid activation bytes and seeds the real Metadosis and
 //! owner storage APIs; it does not provide a production activation shortcut.
 
+#[cfg(test)]
+use std::cell::Cell;
 use std::{
-    cell::Cell,
     collections::HashMap,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -20,6 +21,12 @@ use outbe_compressed_entities::{
     begin_block, partition_collection_key, AuthenticatedParentTree, CeWorkCheckpoint, CeWorkConfig,
     EntityRef, ExecutionScope, FinalLeafMutation, PartitionRef, ProvisionalTreeBatch,
 };
+#[cfg(test)]
+use outbe_lysis::activation_v1::LysisOwnerReceiptsV1;
+#[cfg(test)]
+use outbe_ocomp_protocol::league_snapshot::league_snapshot_key;
+#[cfg(test)]
+use outbe_ocomp_protocol::state::OcompJobStatus;
 use outbe_ocomp_protocol::{
     committee::{
         OcompCommitteeSnapshotV1, OcompKeyRegistrationCoreV1, OcompKeyRegistrationV1,
@@ -46,35 +53,44 @@ use outbe_ocomp_protocol::{
         CompletionStatus, ConservationTotalsV1, ExactCountsV1, LysisArithmeticSummaryV1,
         LysisResultV1, MetadosisCompletionSummaryV1, ResultRootsV1,
     },
-    state::{OcompJobStatus, RESULT_VOTE_MIN_FINALITY_DEPTH},
+    state::RESULT_VOTE_MIN_FINALITY_DEPTH,
     vote::ResultVoteV1,
     SchemaLimits,
 };
 use outbe_primitives::{
     addresses::{COMPRESSED_ENTITIES_ADDRESS, METADOSIS_ADDRESS},
     error::{PrecompileError, Result as PrecompileResult},
-    storage::{hashmap::HashMapStorageProvider, StorageHandle},
+    storage::{hashmap::HashMapStorageProvider, MetadosisMutationPurposeTag, StorageHandle},
 };
 use outbe_tribute::{DayPreAdmission, DayTotals, TributeContract};
 
+#[cfg(test)]
+use crate::errors::MetadosisError;
+#[cfg(test)]
+use crate::schema::{
+    DayLimitFormationReceiptStateEntryExt, OcompDayLimitFormationStateEntryExt,
+    WorldwideDayEntryExt,
+};
 use crate::{
+    constants::{FORMING_PERIOD_HOURS, MAX_ACTIVE_WWDS, SECONDS_PER_HOUR, WAITING_PERIOD_HOURS},
     ocomp::{
         activation::{OcompFinalityAuthorityError, OcompFinalizedIntentAuthority},
         fork::{OcompForkInstallClassification, OcompForkInstallV1},
         schema::{poc_schema_limits, OcompRequestProfile},
         state::JobFsmLimits,
-        vote::dispatch_public_result_vote,
     },
     schema::{day_type, status, MetadosisContract, WorldwideDay as WorldwideDayRecord},
 };
-use outbe_lysis::activation_v1::LysisOwnerReceiptsV1;
-
 pub const TEST_WWD: WorldwideDay = WorldwideDay::new(20_260_723);
 pub const TEST_REQUEST_HEIGHT: u64 = 10;
 pub const TEST_LOGICAL_TIME: u64 = 1_000;
 
+/// Closed, test-only receipt corruptions retained from the original atomic
+/// activation regression suite. The enum never crosses the private fixture
+/// kernel or becomes part of the public semantic facade.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ActivationReceiptFault {
+#[cfg(test)]
+pub(crate) enum ActivationReceiptFault {
     Nod,
     Contributor,
     Tribute,
@@ -82,26 +98,23 @@ pub enum ActivationReceiptFault {
     RequestSplit,
 }
 
+#[cfg(test)]
 thread_local! {
     static ACTIVATION_RECEIPT_FAULT: Cell<Option<ActivationReceiptFault>> =
         const { Cell::new(None) };
 }
 
+#[cfg(test)]
 pub(crate) fn inject_receipt_fault(
     request_receipt: &mut RequestBudgetSplitReceiptV1,
     receipts: &mut LysisOwnerReceiptsV1,
 ) {
-    let fault = ACTIVATION_RECEIPT_FAULT.with(Cell::take);
-    match fault {
-        Some(ActivationReceiptFault::Nod) => {
-            receipts.nod.nod_root = hash(210);
-        }
+    match ACTIVATION_RECEIPT_FAULT.with(Cell::take) {
+        Some(ActivationReceiptFault::Nod) => receipts.nod.nod_root = hash(210),
         Some(ActivationReceiptFault::Contributor) => {
             receipts.contributor.contributor_count += 1;
         }
-        Some(ActivationReceiptFault::Tribute) => {
-            receipts.tribute.retired_generation += 1;
-        }
+        Some(ActivationReceiptFault::Tribute) => receipts.tribute.retired_generation += 1,
         Some(ActivationReceiptFault::CarryOver) => {
             receipts.carry_over.credited_unused_lysis += U256::from(1);
             receipts.carry_over.after_value += U256::from(1);
@@ -110,6 +123,343 @@ pub(crate) fn inject_receipt_fault(
             request_receipt.logical_anchor += 1;
         }
         None => {}
+    }
+}
+
+/// Crate-private raw fixture kernel.
+///
+/// Production mutations must never use this trait. It exists only in test or
+/// `test-utils` builds so predecessor state and intentional corruption remain
+/// owned by one private module instead of leaking through `MetadosisContract`.
+pub(crate) trait FixtureKernelExt {
+    fn create_worldwide_day(
+        &mut self,
+        wwd: WorldwideDay,
+        forming_start: u64,
+        lookback_delay_hours: u64,
+        offering_period_hours: u64,
+    ) -> PrecompileResult<()>;
+
+    #[cfg(test)]
+    fn delete_worldwide_day(&mut self, wwd: WorldwideDay) -> PrecompileResult<()>;
+
+    #[cfg(test)]
+    fn set_metadosis_limit(&mut self, wwd: WorldwideDay, amount: U256) -> PrecompileResult<()>;
+
+    #[cfg(test)]
+    fn fixture_set_wwd_status(
+        &mut self,
+        wwd: WorldwideDay,
+        status: crate::WwdStatus,
+    ) -> PrecompileResult<()>;
+
+    #[cfg(test)]
+    fn fixture_create_ready_day(
+        &mut self,
+        wwd: WorldwideDay,
+        day_limit: U256,
+        previous_vwap: U256,
+        current_vwap: U256,
+    ) -> PrecompileResult<()>;
+
+    #[cfg(test)]
+    fn corrupt_wwd_status_tag(&mut self, wwd: WorldwideDay, tag: u8) -> PrecompileResult<()>;
+
+    #[cfg(test)]
+    fn corrupt_wwd_day_type_tag(&mut self, wwd: WorldwideDay, tag: u8) -> PrecompileResult<()>;
+
+    #[cfg(test)]
+    fn fixture_seed_day_limit_formation(&mut self, wwd: WorldwideDay) -> PrecompileResult<()>;
+
+    #[cfg(test)]
+    fn fixture_set_scheduled_process_time(
+        &mut self,
+        wwd: WorldwideDay,
+        scheduled_process_time: u64,
+    ) -> PrecompileResult<()>;
+
+    #[cfg(test)]
+    fn fixture_write_league_snapshot(
+        &mut self,
+        wwd: u32,
+        owner: Address,
+        value: u16,
+    ) -> PrecompileResult<()>;
+
+    #[cfg(test)]
+    fn corrupt_ocomp_job_record(
+        &mut self,
+        intent_id: B256,
+        encoded_record: &[u8],
+    ) -> PrecompileResult<()>;
+
+    #[cfg(test)]
+    fn fixture_set_wwd_status_from_timestamp(
+        &mut self,
+        wwd: WorldwideDay,
+        block_time: u64,
+    ) -> PrecompileResult<crate::WwdStatus>;
+
+    #[cfg(test)]
+    fn set_wwd_day_type(
+        &mut self,
+        wwd: WorldwideDay,
+        day_type: crate::WwdDayType,
+    ) -> PrecompileResult<()>;
+
+    #[cfg(test)]
+    fn set_wwd_vwap(&mut self, wwd: WorldwideDay, vwap: U256) -> PrecompileResult<()>;
+
+    fn add_active_wwd(&mut self, wwd: WorldwideDay) -> PrecompileResult<()>;
+
+    #[cfg(test)]
+    fn remove_active_wwd(&mut self, wwd: WorldwideDay) -> PrecompileResult<()>;
+}
+
+impl FixtureKernelExt for MetadosisContract<'_> {
+    fn create_worldwide_day(
+        &mut self,
+        wwd: WorldwideDay,
+        forming_start: u64,
+        lookback_delay_hours: u64,
+        offering_period_hours: u64,
+    ) -> PrecompileResult<()> {
+        let seconds = |hours: u64, label: &str| {
+            hours.checked_mul(SECONDS_PER_HOUR).ok_or_else(|| {
+                PrecompileError::Revert(format!("Metadosis {label} duration overflow"))
+            })
+        };
+        let forming_end = forming_start
+            .checked_add(seconds(FORMING_PERIOD_HOURS, "forming")?)
+            .ok_or_else(|| PrecompileError::Revert("Metadosis forming window overflow".into()))?;
+        let lookback_end = forming_end
+            .checked_add(seconds(lookback_delay_hours, "lookback")?)
+            .ok_or_else(|| PrecompileError::Revert("Metadosis lookback window overflow".into()))?;
+        let offering_end = lookback_end
+            .checked_add(seconds(offering_period_hours, "offering")?)
+            .ok_or_else(|| PrecompileError::Revert("Metadosis offering window overflow".into()))?;
+        let scheduled_process_time = offering_end
+            .checked_add(seconds(WAITING_PERIOD_HOURS, "waiting")?)
+            .ok_or_else(|| PrecompileError::Revert("Metadosis waiting window overflow".into()))?;
+
+        self.worldwide_days.create(&WorldwideDayRecord {
+            wwd,
+            status: crate::WwdStatus::Forming.as_u8(),
+            day_type: crate::WwdDayType::Unknown.as_u8(),
+            forming_start,
+            forming_end,
+            lookback_end,
+            offering_end,
+            scheduled_process_time,
+            metadosis_limit_amount: U256::ZERO,
+            previous_vwap: U256::ZERO,
+            current_vwap: U256::ZERO,
+        })
+    }
+
+    #[cfg(test)]
+    fn delete_worldwide_day(&mut self, wwd: WorldwideDay) -> PrecompileResult<()> {
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            if self.worldwide_day_terminal_receipts.get(wwd)?.is_some() {
+                self.worldwide_day_terminal_receipts.delete(wwd)?;
+            }
+            if self.capacity_forfeiture_receipts.get(wwd)?.is_some() {
+                self.capacity_forfeiture_receipts.delete(wwd)?;
+            }
+            self.worldwide_days.delete(wwd)?;
+            if self.ocomp_day_limit_formations.entry(wwd).formed().read()? {
+                self.ocomp_day_limit_formations.delete(wwd)?;
+            }
+            if self
+                .day_limit_formation_receipts
+                .entry(wwd)
+                .formed()
+                .read()?
+            {
+                self.day_limit_formation_receipts.delete(wwd)?;
+            }
+            Ok(())
+        })
+    }
+
+    #[cfg(test)]
+    fn set_metadosis_limit(&mut self, wwd: WorldwideDay, amount: U256) -> PrecompileResult<()> {
+        if self.ocomp_day_limit_formations.entry(wwd).formed().read()? {
+            return Err(PrecompileError::Revert(
+                "formed OCOMP day limit is immutable".into(),
+            ));
+        }
+        self.worldwide_days
+            .entry(wwd)
+            .metadosis_limit_amount()
+            .write(amount)
+    }
+
+    #[cfg(test)]
+    fn fixture_set_wwd_status(
+        &mut self,
+        wwd: WorldwideDay,
+        status: crate::WwdStatus,
+    ) -> PrecompileResult<()> {
+        self.worldwide_days
+            .entry(wwd)
+            .status()
+            .write(status.as_u8())
+    }
+
+    #[cfg(test)]
+    fn fixture_create_ready_day(
+        &mut self,
+        wwd: WorldwideDay,
+        day_limit: U256,
+        previous_vwap: U256,
+        current_vwap: U256,
+    ) -> PrecompileResult<()> {
+        self.worldwide_days.create(&WorldwideDayRecord {
+            wwd,
+            status: crate::WwdStatus::Ready.as_u8(),
+            day_type: crate::WwdDayType::Green.as_u8(),
+            forming_start: 1,
+            forming_end: 2,
+            lookback_end: 3,
+            offering_end: 4,
+            scheduled_process_time: 5,
+            metadosis_limit_amount: day_limit,
+            previous_vwap,
+            current_vwap,
+        })
+    }
+
+    #[cfg(test)]
+    fn corrupt_wwd_status_tag(&mut self, wwd: WorldwideDay, tag: u8) -> PrecompileResult<()> {
+        self.worldwide_days.entry(wwd).status().write(tag)
+    }
+
+    #[cfg(test)]
+    fn corrupt_wwd_day_type_tag(&mut self, wwd: WorldwideDay, tag: u8) -> PrecompileResult<()> {
+        self.worldwide_days.entry(wwd).day_type().write(tag)
+    }
+
+    #[cfg(test)]
+    fn fixture_seed_day_limit_formation(&mut self, wwd: WorldwideDay) -> PrecompileResult<()> {
+        let day_limit = self
+            .worldwide_days
+            .entry(wwd)
+            .metadosis_limit_amount()
+            .read()?;
+        let formation = self.ocomp_day_limit_formations.entry(wwd);
+        formation.carry_over_taken().write(U256::ZERO)?;
+        formation.formed().write(true)?;
+        let receipt = self.day_limit_formation_receipts.entry(wwd);
+        receipt.base_limit().write(day_limit)?;
+        receipt.carry_over_before().write(U256::ZERO)?;
+        receipt.carry_over_taken().write(U256::ZERO)?;
+        receipt.carry_over_after().write(U256::ZERO)?;
+        receipt.formed_day_limit().write(day_limit)?;
+        receipt.block_number().write(1)?;
+        receipt.formed().write(true)
+    }
+
+    #[cfg(test)]
+    fn fixture_set_scheduled_process_time(
+        &mut self,
+        wwd: WorldwideDay,
+        scheduled_process_time: u64,
+    ) -> PrecompileResult<()> {
+        self.worldwide_days
+            .entry(wwd)
+            .scheduled_process_time()
+            .write(scheduled_process_time)
+    }
+
+    #[cfg(test)]
+    fn fixture_write_league_snapshot(
+        &mut self,
+        wwd: u32,
+        owner: Address,
+        value: u16,
+    ) -> PrecompileResult<()> {
+        self.ocomp_fidelity_league_snapshot
+            .write(&league_snapshot_key(wwd, owner), value)
+    }
+
+    #[cfg(test)]
+    fn corrupt_ocomp_job_record(
+        &mut self,
+        intent_id: B256,
+        encoded_record: &[u8],
+    ) -> PrecompileResult<()> {
+        let key = intent_storage_key(intent_id).map_err(|error| {
+            PrecompileError::Fatal(format!("fixture OCOMP intent key is invalid: {error}"))
+        })?;
+        self.ocomp_job_records.get_bytes(&key).write(encoded_record)
+    }
+
+    #[cfg(test)]
+    fn fixture_set_wwd_status_from_timestamp(
+        &mut self,
+        wwd: WorldwideDay,
+        block_time: u64,
+    ) -> PrecompileResult<crate::WwdStatus> {
+        let day = self.worldwide_days.entry(wwd);
+        let current = crate::WwdStatus::try_from(day.status().read()?)?;
+        if current.is_terminal() {
+            return Ok(current);
+        }
+        let next = if block_time < day.forming_end().read()? {
+            crate::WwdStatus::Forming
+        } else if block_time < day.lookback_end().read()? {
+            crate::WwdStatus::LookbackDelay
+        } else if block_time < day.offering_end().read()? {
+            crate::WwdStatus::Offering
+        } else if block_time < day.scheduled_process_time().read()? {
+            crate::WwdStatus::Waiting
+        } else {
+            crate::WwdStatus::Ready
+        };
+        if next != current {
+            day.status().write(next.as_u8())?;
+        }
+        Ok(next)
+    }
+
+    #[cfg(test)]
+    fn set_wwd_day_type(
+        &mut self,
+        wwd: WorldwideDay,
+        day_type: crate::WwdDayType,
+    ) -> PrecompileResult<()> {
+        self.worldwide_days
+            .entry(wwd)
+            .day_type()
+            .write(day_type.as_u8())
+    }
+
+    #[cfg(test)]
+    fn set_wwd_vwap(&mut self, wwd: WorldwideDay, vwap: U256) -> PrecompileResult<()> {
+        if vwap.is_zero() {
+            return Err(MetadosisError::VwapMustBeNonZero.into());
+        }
+        self.worldwide_days.entry(wwd).current_vwap().write(vwap)
+    }
+
+    fn add_active_wwd(&mut self, wwd: WorldwideDay) -> PrecompileResult<()> {
+        let active = self.active_wwd.read_all()?;
+        if active.contains(&wwd) {
+            return Ok(());
+        }
+        if active.len() >= MAX_ACTIVE_WWDS {
+            return Err(PrecompileError::Fatal(format!(
+                "Metadosis active WWD cap {MAX_ACTIVE_WWDS} reached before inserting {wwd}"
+            )));
+        }
+        self.active_wwd.insert(wwd).map(|_| ())
+    }
+
+    #[cfg(test)]
+    fn remove_active_wwd(&mut self, wwd: WorldwideDay) -> PrecompileResult<()> {
+        self.active_wwd.remove(&wwd).map(|_| ())
     }
 }
 
@@ -461,6 +811,131 @@ fn result(bundle_hash: B256, job_id: B256, limits: &SchemaLimits) -> LysisResult
     }
 }
 
+/// Builds one production-valid, bounded result for an already persisted test
+/// intent. The result keeps every scalar bound anchored to the intent while
+/// using deterministic non-zero commitments for the off-chain artifacts.
+#[must_use]
+pub fn lysis_result_for_intent(
+    intent: &JobIntentV1,
+    job_id: B256,
+    limits: &SchemaLimits,
+) -> LysisResultV1 {
+    let frozen = &intent.frozen_metadosis_values;
+    let roots = ResultRootsV1 {
+        nod_root: hash(150),
+        bucket_root: hash(151),
+        contributor_root: hash(152),
+        output_manifest_root: hash(153),
+    };
+    let counts = ExactCountsV1 {
+        tribute_count: intent.authenticated_day_count,
+        nod_count: intent.authenticated_day_count,
+        bucket_count: u32::from(intent.authenticated_day_count > 0),
+        contributor_count: 0,
+        semantic_event_count: 0,
+    };
+    let conservation = ConservationTotalsV1 {
+        tribute_nominal_total: intent.authenticated_day_nominal,
+        eligible_nominal_total: U256::ZERO,
+        day_limit: frozen.day_limit,
+        gratis_demand: frozen.gratis_demand,
+        gratis_supply: frozen.gratis_supply,
+        lysis_budget: frozen.lysis_budget,
+        auction_base: frozen.auction_base,
+        nod_gratis_consumed: U256::ZERO,
+        unused_lysis: frozen.lysis_budget,
+        carry_over_credit: frozen.lysis_budget,
+        nod_cost_total: U256::ZERO,
+    };
+    let summary = LysisArithmeticSummaryV1 {
+        input_manifest_hash: hash(154),
+        plan_hash: hash(155),
+        unit_artifact_root: hash(156),
+        fidelity_fraction_root: hash(157),
+        gratis_prefix_root: hash(158),
+        roots: roots.clone(),
+        counts: counts.clone(),
+        conservation: conservation.clone(),
+        first_error_ordinal: None,
+    };
+    let result = LysisResultV1 {
+        protocol_bundle_hash: intent.protocol_bundle_hash,
+        job_id,
+        attempt: intent.attempt,
+        input_manifest_hash: summary.input_manifest_hash,
+        plan_hash: summary.plan_hash,
+        unit_artifact_root: summary.unit_artifact_root,
+        fidelity_fraction_root: summary.fidelity_fraction_root,
+        gratis_prefix_root: summary.gratis_prefix_root,
+        result_chunk_count: 1,
+        result_chunk_list_root: hash(159),
+        carry_over_credit: CarryOverCreditActionV1 {
+            source_wwd: intent.wwd,
+            reason: CarryOverReason::UnusedLysis,
+            amount: frozen.lysis_budget,
+        },
+        metadosis_completion_summary: MetadosisCompletionSummaryV1 {
+            wwd: intent.wwd,
+            pending_nonce: intent.pending_nonce,
+            day_type: frozen.day_type,
+            tribute_nominal_total: intent.authenticated_day_nominal,
+            day_limit: frozen.day_limit,
+            gratis_demand: frozen.gratis_demand,
+            gratis_supply: frozen.gratis_supply,
+            lysis_budget: frozen.lysis_budget,
+            auction_base: frozen.auction_base,
+            nod_gratis_consumed: U256::ZERO,
+            unused_lysis: frozen.lysis_budget,
+            carry_over_credit: frozen.lysis_budget,
+            status: CompletionStatus::Completed,
+            logical_evaluation_height: intent.logical_evaluation_height,
+            logical_evaluation_time: intent.logical_evaluation_time,
+        },
+        tribute_count: intent.authenticated_day_count,
+        tribute_nominal_total: intent.authenticated_day_nominal,
+        unused_lysis: frozen.lysis_budget,
+        roots,
+        counts,
+        conservation,
+        arithmetic_commitment: hash_framed(
+            HashDomain::LysisArithmetic,
+            &summary.encode_canonical(limits).unwrap(),
+        )
+        .unwrap(),
+        event_summary_hash: lysis_v1_empty_semantic_event_root().unwrap(),
+    };
+    result.validate_finalized_intent(intent).unwrap();
+    result.validate_semantics(limits).unwrap();
+    result
+}
+
+/// Signs one deterministic fixture-committee vote for a caller-supplied
+/// persisted intent/result pair. The returned vote still has to pass the real
+/// public selector and block executor.
+#[must_use]
+pub fn signed_result_vote_for_intent(
+    intent: &JobIntentV1,
+    result: &LysisResultV1,
+    validator_index: u8,
+    limits: &SchemaLimits,
+) -> ResultVoteV1 {
+    let mut vote = ResultVoteV1 {
+        protocol_bundle_hash: intent.protocol_bundle_hash,
+        job_id: result.job_id,
+        attempt: intent.attempt,
+        result_committee_snapshot_hash: intent.result_committee_snapshot_hash,
+        validator_index,
+        key_epoch: 1,
+        result: result.clone(),
+        signature_rs: [0; 64],
+    };
+    vote.signature_rs = sign(
+        &signing_key(validator_index),
+        vote.signing_digest(intent, limits).unwrap(),
+    );
+    vote
+}
+
 fn finality_proof(intent: &JobIntentV1, limits: &SchemaLimits) -> FinalizedIntentProofV1 {
     FinalizedIntentProofV1 {
         chain_id: intent.chain_id,
@@ -495,13 +970,6 @@ pub struct FixedFinality {
     expected: ExpectedFinalizedIntentBindingV1,
     verified: VerifiedFinalizedIntentV1,
     calls: Arc<AtomicUsize>,
-}
-
-impl FixedFinality {
-    #[must_use]
-    pub fn calls(&self) -> usize {
-        self.calls.load(Ordering::Relaxed)
-    }
 }
 
 impl OcompFinalizedIntentAuthority for FixedFinality {
@@ -597,6 +1065,7 @@ pub struct RollbackSnapshot {
     ce_work: CeWorkCheckpoint,
 }
 
+#[cfg(test)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SemanticSnapshot {
     pub job_status: OcompJobStatus,
@@ -613,6 +1082,7 @@ pub struct SemanticSnapshot {
     pub owner_events: Vec<Log>,
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ActivationMetadata {
     pub activated_at_height: u64,
@@ -638,6 +1108,7 @@ impl ActivationFixture {
     /// Builds the same production-valid fixture before any validator vote is
     /// recorded, so public result-vote dispatch tests can exercise all four
     /// consensus slots instead of injecting quorum state.
+    #[cfg(test)]
     #[must_use]
     pub fn new_voting(current_height: u64, current_time: u64, seed_targets: bool) -> Self {
         Self::new_with_initial_votes(current_height, current_time, seed_targets, 0)
@@ -736,6 +1207,7 @@ impl ActivationFixture {
                     current_vwap: U256::from(10),
                 })
                 .unwrap();
+            contract.active_wwd.insert(TEST_WWD).unwrap();
             let fsm_limits = JobFsmLimits {
                 max_terminal_records: 365,
             };
@@ -758,8 +1230,20 @@ impl ActivationFixture {
             contract
                 .initialize_ocomp_activation_authority(&bundle, &committee, &limits)
                 .unwrap();
+            let outer_transition = crate::commit::plan_outer_transition_for_test_fixture(
+                &contract,
+                TEST_WWD,
+                crate::reducer::OuterWwdEvent::OcompRequestCommitted,
+            )
+            .unwrap();
             contract
-                .commit_ocomp_request(&intent, &request_receipt, &limits, fsm_limits)
+                .commit_ocomp_request(
+                    &outer_transition,
+                    &intent,
+                    &request_receipt,
+                    &limits,
+                    fsm_limits,
+                )
                 .unwrap();
             let finalized = contract
                 .record_ocomp_finality(
@@ -842,7 +1326,8 @@ impl ActivationFixture {
         self.dispatch_current()
     }
 
-    pub fn apply_with_receipt_fault(
+    #[cfg(test)]
+    pub(crate) fn apply_with_receipt_fault(
         &mut self,
         fault: ActivationReceiptFault,
     ) -> PrecompileResult<Bytes> {
@@ -870,8 +1355,16 @@ impl ActivationFixture {
 
     pub fn dispatch_current(&mut self) -> PrecompileResult<Bytes> {
         let calldata = self.calldata();
+        self.provider
+            .enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::VerifiedResultVote);
         StorageHandle::enter(&mut self.provider, |storage| {
-            dispatch_public_result_vote(storage, &self.scope, calldata.as_ref(), U256::ZERO, false)
+            crate::commands::submit_verified_result_vote(
+                storage,
+                &self.scope,
+                calldata.as_ref(),
+                U256::ZERO,
+                false,
+            )
         })
     }
 
@@ -901,6 +1394,15 @@ impl ActivationFixture {
         });
     }
 
+    pub(crate) fn corrupt_request_receipt_mismatch(&mut self) {
+        let mut mismatched = self.request_receipt.clone();
+        mismatched.logical_anchor = mismatched
+            .logical_anchor
+            .checked_add(1)
+            .expect("fixture logical anchor must admit one mismatch step");
+        self.replace_request_receipt(&mismatched);
+    }
+
     pub fn rollback_snapshot(&mut self) -> RollbackSnapshot {
         RollbackSnapshot {
             storage: self.provider.storage.clone(),
@@ -909,6 +1411,7 @@ impl ActivationFixture {
         }
     }
 
+    #[cfg(test)]
     pub fn semantic_snapshot(&mut self) -> SemanticSnapshot {
         let owner_events = self
             .provider
@@ -940,7 +1443,7 @@ impl ActivationFixture {
             let totals = tribute.get_day_totals(TEST_WWD).unwrap();
             SemanticSnapshot {
                 job_status: job.status,
-                worldwide_day_status: contract.get_wwd_status(TEST_WWD).unwrap(),
+                worldwide_day_status: contract.get_wwd_status(TEST_WWD).unwrap().as_u8(),
                 active_job_id: active.job_id,
                 active_nod_root: active.nod_root,
                 nod,
@@ -958,6 +1461,7 @@ impl ActivationFixture {
         })
     }
 
+    #[cfg(test)]
     pub fn activation_metadata(&mut self) -> ActivationMetadata {
         StorageHandle::enter(&mut self.provider, |storage| {
             let job = MetadosisContract::new(storage)
@@ -975,46 +1479,5 @@ impl ActivationFixture {
                 activated_at_time: receipt.activated_at_time,
             }
         })
-    }
-
-    pub fn assert_pending(&mut self) {
-        StorageHandle::enter(&mut self.provider, |storage| {
-            let contract = MetadosisContract::new(storage.clone());
-            let job = contract
-                .ocomp_job_record(self.intent_id, &self.limits)
-                .unwrap()
-                .unwrap();
-            assert_eq!(job.status, OcompJobStatus::VotingOpen);
-            assert!(job.finalized.unwrap().quorum.is_none());
-            assert_eq!(
-                contract.get_wwd_status(TEST_WWD).unwrap(),
-                status::OFFCHAIN_PENDING
-            );
-            assert!(contract
-                .active_lysis_generation(TEST_WWD, &self.limits)
-                .unwrap()
-                .is_none());
-            assert!(outbe_nod::schema::NodContract::new(storage.clone())
-                .ocomp_certified_generation(TEST_WWD)
-                .unwrap()
-                .is_none());
-            assert!(
-                outbe_intex::api::certified_contributor_generation(&storage, TEST_WWD.value())
-                    .unwrap()
-                    .is_none()
-            );
-            let tribute = TributeContract::new(storage.clone());
-            let admission = tribute.pre_admission_projection(TEST_WWD).unwrap();
-            let totals = tribute.get_day_totals(TEST_WWD).unwrap();
-            assert_eq!(admission.source_generation, 0);
-            assert_eq!(totals.tribute_count, 2);
-            assert_eq!(totals.tribute_nominal_amount, U256::from(1_000));
-            assert_eq!(tribute.total_supply.read().unwrap(), 2);
-            assert!(outbe_promislimit::PromisLimitContract::new(storage)
-                .total_unallocated
-                .read()
-                .unwrap()
-                .is_zero());
-        });
     }
 }

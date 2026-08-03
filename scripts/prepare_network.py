@@ -399,6 +399,60 @@ def run_seed_genesis(
     subprocess.run(cmd, check=True)
 
 
+def run_tee_genesis(
+    *,
+    chain_binary: str,
+    seeded_genesis: Path,
+    output_genesis: Path,
+    tee_mode: str,
+    mrenclave: str | None,
+    mrsigner: str | None,
+    isv_prod_id: int | None,
+    minimum_isv_svn: int | None,
+    minimum_tcb_evaluation_data_number: int | None,
+) -> None:
+    cmd = [
+        chain_binary,
+        "tee",
+        "genesis",
+        "--input",
+        str(seeded_genesis),
+        "--output",
+        str(output_genesis),
+        "--mode",
+        tee_mode,
+    ]
+    if tee_mode == "dcap-required":
+        required = {
+            "--mrenclave": mrenclave,
+            "--mrsigner": mrsigner,
+            "--isv-prod-id": isv_prod_id,
+            "--minimum-isv-svn": minimum_isv_svn,
+            "--minimum-tcb-evaluation-data-number": minimum_tcb_evaluation_data_number,
+        }
+        missing = [name for name, value in required.items() if value is None]
+        if missing:
+            raise ValueError(
+                "dcap-required genesis needs exact release values: " + ", ".join(missing)
+            )
+        for name, value in required.items():
+            cmd.extend([name, str(value)])
+    elif any(
+        value is not None
+        for value in (
+            mrenclave,
+            mrsigner,
+            isv_prod_id,
+            minimum_isv_svn,
+            minimum_tcb_evaluation_data_number,
+        )
+    ):
+        raise ValueError(
+            "gramine-direct-dev forbids production measurement arguments"
+        )
+    subprocess.run(cmd, check=True)
+
+
 def command_lines(
     *,
     chain_binary: str,
@@ -420,6 +474,7 @@ def command_lines(
     evm_key_path: str,
     consensus_listen_host: str,
     consensus_listen_port: int,
+    tee_enclave_endpoint: str,
     use_local_defaults: bool,
 ) -> list[str]:
     lines = [
@@ -441,6 +496,7 @@ def command_lines(
         f"  --log.file.directory {shell_quote(log_dir)} \\",
         f"  --consensus.signing-key {shell_quote(signing_key_path)} \\",
         f"  --validator.evm-key {shell_quote(evm_key_path)} \\",
+        f"  --tee-enclave-socket {shell_quote(tee_enclave_endpoint)} \\",
         f"  --consensus.listen-addr {consensus_listen_host}:{consensus_listen_port}",
     ]
     if use_local_defaults:
@@ -576,9 +632,21 @@ def main() -> None:
     parser.add_argument("--validator-hosts-file", type=Path, help="File with one validator host/IP per line")
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--chain-binary", default="outbe-chain")
+    parser.add_argument(
+        "--tee-mode",
+        required=True,
+        choices=("dcap-required", "gramine-direct-dev"),
+        help="Genesis-fixed mode; production never falls back to development",
+    )
+    parser.add_argument("--tee-enclave-endpoint", default="/run/outbe/tee.sock")
+    parser.add_argument("--mrenclave", help="Exact release MRENCLAVE for dcap-required")
+    parser.add_argument("--mrsigner", help="Exact release MRSIGNER for dcap-required")
+    parser.add_argument("--isv-prod-id", type=int)
+    parser.add_argument("--minimum-isv-svn", type=int)
+    parser.add_argument("--minimum-tcb-evaluation-data-number", type=int)
     parser.add_argument("--runtime-base-dir", help="Path prefix used in generated commands; defaults to output dir")
     parser.add_argument("--prefund-wei", type=int, default=DEFAULT_PREFUND_WEI)
-    parser.add_argument("--chain-id", type=int, default=DEFAULT_CHAIN_ID)
+    parser.add_argument("--chain-id", type=int)
     parser.add_argument("--epoch-length-blocks", type=int, default=DEFAULT_EPOCH_LENGTH_BLOCKS)
     parser.add_argument("--dkg-prepare-window-blocks", type=int, default=DEFAULT_DKG_PREPARE_WINDOW_BLOCKS)
     parser.add_argument("--dkg-activation-grace-blocks", type=int, default=DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS)
@@ -597,6 +665,21 @@ def main() -> None:
     parser.add_argument("--include-private-keys", action="store_true")
     parser.add_argument("--force-reth-secrets", action="store_true")
     args = parser.parse_args()
+
+    if args.chain_id is None:
+        if args.tee_mode == "dcap-required":
+            raise ValueError(
+                "dcap-required requires an explicit non-development --chain-id"
+            )
+        args.chain_id = DEFAULT_CHAIN_ID
+    if args.tee_mode == "gramine-direct-dev" and args.chain_id != DEFAULT_CHAIN_ID:
+        raise ValueError(
+            f"gramine-direct-dev requires reserved chain id {DEFAULT_CHAIN_ID}"
+        )
+    if args.tee_mode == "dcap-required" and args.chain_id == DEFAULT_CHAIN_ID:
+        raise ValueError(
+            f"dcap-required may not reuse GramineDirectDev chain id {DEFAULT_CHAIN_ID}"
+        )
 
     repo_root = Path(__file__).resolve().parents[1]
     output_dir = args.output_dir
@@ -664,13 +747,21 @@ def main() -> None:
             gas_limit=args.gas_limit,
         )
         write_json(output_dir / "genesis.base.json", base_genesis)
+    configured_chain_id = base_genesis.get("config", {}).get("chainId")
+    if configured_chain_id != args.chain_id:
+        raise ValueError(
+            f"genesis chainId {configured_chain_id!r} does not match --chain-id {args.chain_id}"
+        )
     preseed_genesis = prepare_prefunded_genesis(
         base_genesis,
         validators,
         prefund_wei=args.prefund_wei,
     )
     preseed_path = output_dir / "genesis.prefund.json"
+    seeded_genesis_path = output_dir / "genesis.seeded.json"
     genesis_path = output_dir / "genesis.json"
+    if genesis_path.exists():
+        raise ValueError(f"refusing to overwrite existing genesis: {genesis_path}")
     write_json(preseed_path, preseed_genesis)
 
     run_seed_genesis(
@@ -678,7 +769,18 @@ def main() -> None:
         preseed_genesis=preseed_path,
         seed=args.seed,
         validators=copied_validators_path,
+        output_genesis=seeded_genesis_path,
+    )
+    run_tee_genesis(
+        chain_binary=args.chain_binary,
+        seeded_genesis=seeded_genesis_path,
         output_genesis=genesis_path,
+        tee_mode=args.tee_mode,
+        mrenclave=args.mrenclave,
+        mrsigner=args.mrsigner,
+        isv_prod_id=args.isv_prod_id,
+        minimum_isv_svn=args.minimum_isv_svn,
+        minimum_tcb_evaluation_data_number=args.minimum_tcb_evaluation_data_number,
     )
 
     bootnodes: list[str] = []
@@ -765,6 +867,7 @@ def main() -> None:
             evm_key_path=runtime_evm_key_path,
             consensus_listen_host=args.consensus_listen_host,
             consensus_listen_port=consensus_port,
+            tee_enclave_endpoint=args.tee_enclave_endpoint,
             use_local_defaults=args.use_local_defaults,
         )
         script_path = commands_dir / f"validator-{index}.sh"

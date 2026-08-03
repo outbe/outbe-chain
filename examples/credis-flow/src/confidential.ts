@@ -191,6 +191,36 @@ export function deriveGratisKeys(signer: ethers.Wallet): Promise<GratisKeys> {
 }
 
 // ---------------------------------------------------------------------------
+// Fidelity index query authorization (owner-signed, expiring)
+// ---------------------------------------------------------------------------
+
+/**
+ * Owner-signed authorization for a Fidelity index query (`getFidelityIndex[At]`).
+ * The Fidelity precompile forwards it to the enclave, which recovers the signer
+ * and rejects the read unless it equals `account`, the chain matches, and
+ * `expiry >= block timestamp`. Unlike a view key, this only authorizes index
+ * reads until `expiry` — never decryption of the raw cohort ledger.
+ *
+ * Message = "outbe/fidelity/query-auth/v1" || chainId(32 BE) || account(20) || expiry(8 BE),
+ * signed as EIP-191 personal_sign — mirrors `outbe_tee::protocol::fidelity_query_auth_message`
+ * (chainId is `B256::from(U256::from(chain_id))`, i.e. the numeric chain id big-endian).
+ */
+export async function signFidelityQueryAuth(
+  signer: ethers.Wallet,
+  chainId: bigint,
+  account: string,
+  expiry: bigint,
+): Promise<string> {
+  const message = concat(
+    utf8("outbe/fidelity/query-auth/v1"),
+    be(chainId, 32),
+    addressBytes(account),
+    be(expiry, 8),
+  );
+  return signer.signMessage(message);
+}
+
+// ---------------------------------------------------------------------------
 // Balance / pledged decryption (view key, client-side)
 // ---------------------------------------------------------------------------
 

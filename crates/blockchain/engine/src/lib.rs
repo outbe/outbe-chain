@@ -23,3 +23,13 @@ pub mod validators;
 
 pub use args::ConsensusArgs;
 pub use stack::{run_consensus_stack, ConsensusStackServices};
+
+/// Read the exact offer-key commitment from the selected certified upstream.
+/// Full-node startup uses this narrow adapter before launching execution.
+pub async fn read_upstream_tribute_offer_public_key(
+    url: &str,
+) -> eyre::Result<alloy_primitives::B256> {
+    follow_transport::UpstreamRpcClient::new(url)?
+        .tribute_offer_public_key()
+        .await
+}

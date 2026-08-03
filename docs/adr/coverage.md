@@ -48,7 +48,7 @@ The current workspace contains 65 Cargo packages.
 | `outbe-nodfactory` | `crates/core/nodfactory` | ADR-C-NOD-002, PFS-002 | Nod issuance/mining orchestration |
 | `outbe-gratis` | `crates/core/gratis` | ADR-C-GRT-001 | Gratis ledger |
 | `outbe-gratisfactory` | `crates/core/gratisfactory` | ADR-C-GRT-002, PFS-003 | Gratis workflow authority |
-| `outbe-metadosis` | `crates/core/metadosis` | ADR-C-MET-001, PFS-002, PFS-004 and PFS-009 | WorldwideDay orchestration |
+| `outbe-metadosis` | `crates/core/metadosis` | ADR-C-MET-001, PFS-002, PFS-004 and PFS-009 | WorldwideDay owner; Citadel contract cross-links ADR-C-LYS-001, ADR-C-DES-001, ADR-C-TRB-001, ADR-C-PRM-003, ADR-S-CYC-001, ADR-S-OCM-004, ADR-B-GEN-001, ADR-B-TST-001 and ADR-B-OCD-011 without transferring their ownership |
 | `outbe-agentreward` | `crates/core/agentreward` | ADR-C-AGR-001 | Agent reward ledger |
 | `outbe-lysis` | `crates/core/lysis` | ADR-C-LYS-001, PFS-002 and PFS-009 | Tribute-to-Nod transformation |
 | `outbe-fidelity` | `crates/core/fidelity` | ADR-C-FID-001 | Fidelity cohorts |
@@ -84,9 +84,9 @@ The current workspace contains 65 Cargo packages.
 | `outbe-zkproof` | `crates/system/zkproof` | ADR-S-ZKP-001 and ADR-S-ZKP-002 | Verifier/hash profile |
 | `outbe-l2registry` | `crates/system/l2registry` | ADR-B-XCH-001 | L2 operator, BLS key and ZK-mode registry |
 | `outbe-offchain-data` | `crates/system/offchain-data` | ADR-B-OCD-003 through ADR-B-OCD-005 | Projection/runtime readers; Blockchain responsibility |
-| `outbe-e2e` | `crates/core/e2e` | ADR-B-TST-001, PFS-002 and PFS-005 | In-process integration evidence, not process E2E |
-| `outbe-lysis-v1-reference` | `crates/testing/lysis-v1-reference` | ADR-C-LYS-001 and ADR-B-TST-001 | Independent Lysis V1 reference evidence |
-| `outbe-e2e-harness` | `crates/testing/e2e-harness` | ADR-B-TST-001, PFS-001, PFS-002, PFS-006 and PFS-010 | Process/localnet/Mongo evidence harness; OCOMP PFS-002 remains a Gap |
+| `outbe-e2e` | `testing/e2e` | ADR-B-TST-001, PFS-002 and PFS-005 | In-process integration evidence, not process E2E |
+| `outbe-lysis-v1-reference` | `testing/lysis-v1-reference` | ADR-C-LYS-001 and ADR-B-TST-001 | Independent Lysis V1 reference evidence |
+| `outbe-e2e-harness` | `testing/e2e-harness` | ADR-B-TST-001, PFS-001, PFS-002, PFS-006 and PFS-010 | Process/localnet/Mongo evidence harness plus generic VerificationLedger; exact-revision Linux OCOMP/Metadosis closure remains pending evidence |
 | `xtask` | `xtask` | ADR-B-TST-001 | Repository, ABI, namespace and generated-artifact verification |
 
 `crates/blockchain/primitives/fuzz/Cargo.toml` is deliberately outside the workspace;

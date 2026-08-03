@@ -4,7 +4,7 @@
 - **Date:** 2026-07-17
 - **Scope:** DKG/epoch code in `crates/blockchain/consensus` and `crates/blockchain/engine`; activation in `crates/system/validatorset` and `crates/blockchain/evm`
 - **Depends on:** ADR-B-NOD-001, ADR-B-GEN-001, ADR-B-EVM-004
-- **Related:** ADR-S-VAL-001 validator lifecycle, ADR-S-TEE-001 and ADR-S-TEE-002 TEE key handoff
+- **Related:** ADR-S-VAL-001 validator lifecycle, ADR-S-TEE-001 and ADR-S-TEE-002 enclave identity and registry onboarding
 
 ## Context
 
@@ -49,9 +49,9 @@ Initial genesis DKG is permitted only when all are true
 - the local key belongs to the genesis consensus set.
 
 Otherwise the node must recover existing material or join the live chain. Local
-execution height zero by itself never proves a fresh network. Testnet-only
-`force-dkg` requires `trust-el-head`, is rejected on mainnet, and for an existing
-chain still requires a recovered chain boundary (`stack.rs:2033-2044, 2462-2471`).
+execution height zero by itself never proves a fresh network. There is no
+`force-dkg` override: an existing identity cannot replace lost threshold or
+permanent offer-key material by pretending to be genesis.
 
 Genesis DKG requires all configured genesis dealer logs and fails fast when the
 coordinated launch is incomplete. Live reshare completes at threshold and may
@@ -215,9 +215,11 @@ empty local execution DB connected to a live network.
   degrade that member's VRF secrecy and require rotation.
 - Local key backend/filesystem confidentiality is an operator responsibility;
   plaintext is development-only.
-- Testnet disaster-recovery flags are not a production recovery protocol.
-- TEE offer-key DKG/handoff shares network cadence but has distinct protocol and
-  registry contracts in ADR-S-TEE-001 and ADR-S-TEE-002.
+- `trust-el-head` is consensus-archive handling only and cannot replace threshold
+  or permanent enclave key material.
+- Founding TEE offer-key DKG and one-time registry onboarding have distinct
+  protocol and registry contracts in ADR-S-TEE-001 and ADR-S-TEE-002; neither is
+  a lost-key recovery path.
 
 ## Verification evidence
 
@@ -296,9 +298,9 @@ one material set for signing and verification parity.
 - Revealed-share rotation is an operator warning/metric, not an enforced on-chain
   lifecycle transition. Decide whether a revealed validator must become pending,
   jailed or key-rotation-required.
-- Testnet `trust-el-head/force-dkg` is disaster recovery without a production
-  equivalent. ADR-B-OCD-008 must define snapshots/bootstrap and explicitly delete or
-  retain these flags before mainnet.
+- Testnet `trust-el-head` remains narrowly scoped to consensus archive evidence. It
+  cannot bypass the permanent offer-key gate or start a fresh DKG for an existing
+  identity.
 - Key backend migration and passphrase/keychain failure behavior are not covered by
   end-to-end restart tests.
 - TEE re-registration fields exist in the boundary artifact, while the root README

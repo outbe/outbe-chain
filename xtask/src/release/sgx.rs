@@ -45,6 +45,7 @@ pub struct BundleSpec {
     pub inputs: Vec<String>,
     pub install_root: String,
     pub platform: String,
+    pub project_toolchain: String,
     pub sealed_state_schema: u32,
     pub sgx: SgxPolicy,
     pub spec_version: u32,
@@ -83,6 +84,9 @@ impl BundleSpec {
         }
         if self.platform != "linux/amd64" {
             bail!("testnet SGX bundle supports only linux/amd64");
+        }
+        if self.project_toolchain != "release/project-toolchain-v1.json" {
+            bail!("testnet SGX bundle must bind the project toolchain version pin");
         }
         if self.install_root != "/opt/outbe/sgx" {
             bail!("testnet SGX install root must remain /opt/outbe/sgx");

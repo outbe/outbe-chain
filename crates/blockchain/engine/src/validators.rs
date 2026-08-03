@@ -318,6 +318,33 @@ pub fn read_consensus_validators_at_latest(
     read_consensus_validators_from_state(&state)
 }
 
+/// Read the exact canonical committee snapshot committed for `epoch` from one
+/// state view. The resulting hash is the authority OST3 binds at block 1.
+pub fn read_committee_snapshot_from_state(
+    state_access: &dyn RethStateAccess,
+    epoch: u64,
+) -> Result<Option<outbe_validatorset::state::CommitteeSnapshot>> {
+    let reader = RethStateReader {
+        state: state_access,
+    };
+    let mut provider = ReadOnlyStorageProvider::new(reader);
+    let storage = StorageHandle::new(&mut provider);
+    outbe_validatorset::state::read_committee_snapshot_for_epoch(storage, epoch).map_err(|error| {
+        eyre::eyre!("failed to read committee snapshot for epoch {epoch}: {error}")
+    })
+}
+
+/// Latest-state wrapper for [`read_committee_snapshot_from_state`].
+pub fn read_committee_snapshot_at_latest(
+    provider: &dyn StateProviderFactory,
+    epoch: u64,
+) -> Result<Option<outbe_validatorset::state::CommitteeSnapshot>> {
+    let state = provider
+        .latest()
+        .map_err(|error| eyre::eyre!("failed to get latest state: {error}"))?;
+    read_committee_snapshot_from_state(&state, epoch)
+}
+
 /// Check if there's a pending validator set change in the on-chain state.
 ///
 /// Reads the `pending_set_change` flag from the ValidatorSet contract.
@@ -337,9 +364,9 @@ pub fn has_pending_set_change(state_access: &dyn RethStateAccess) -> Result<bool
 }
 
 /// Read the on-chain registered tribute offer public key (`TeeRegistry` slot 1).
-/// Used at startup to decide whether a joining node needs a key-handoff and as
-/// the `expected_tribute_offer_public` the newcomer's enclave verifies a handoff
-/// against. Returns `B256::ZERO` before the chain has bootstrapped the TEE.
+/// It is the canonical startup comparison for the permanent resident key and the
+/// expected public value verified by one-time registry onboarding. Returns zero
+/// only before block-1 OST3 has bootstrapped the chain.
 pub fn read_tee_offer_public_from_state(state_access: &dyn RethStateAccess) -> Result<B256> {
     let reader = RethStateReader {
         state: state_access,
@@ -363,9 +390,8 @@ pub fn read_tee_offer_public_at_latest(provider: &dyn StateProviderFactory) -> R
 }
 
 /// Read the on-chain tribute-offer epoch (`TeeRegistry` slot 4) from the latest
-/// state — `0` until an offer-key rotation advances it. Passed to the key-handoff
-/// so a newcomer's enclave derives the offer key for the chain's current epoch
-/// instead of a hardcoded `0` (future-proofs the handoff for Stage C).
+/// state. The current permanent genesis offer key uses epoch zero; the field is
+/// decoded explicitly rather than inferred by onboarding code.
 pub fn read_tee_offer_epoch_at_latest(provider: &dyn StateProviderFactory) -> Result<u64> {
     let state = provider
         .latest()
@@ -379,11 +405,8 @@ pub fn read_tee_offer_epoch_at_latest(provider: &dyn StateProviderFactory) -> Re
 }
 
 /// Read a validator's on-chain registered `recipient_x25519` (`TeeRegistry` per-
-/// validator slot). Returns `B256::ZERO` if the validator is not registered. Used
-/// by the handoff registration binding: the responder refuses to seal the resident
-/// group signature to a `recipient_x25519` that does not match this validator's
-/// registered key (an on-chain identity check that substitutes for the not-yet-real
-/// attestation check).
+/// validator slot). Returns zero if the validator is not registered. The one-time
+/// registry artifact must target this exact attested onboarding recipient.
 pub fn read_tee_recipient_x25519_from_state(
     state_access: &dyn RethStateAccess,
     validator: Address,

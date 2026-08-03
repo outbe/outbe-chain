@@ -9,29 +9,51 @@
 //! This crate MUST NOT contain secret-bearing cryptography — that lives only in
 //! `bin/outbe-tee-enclave`. Here we keep the message contract and transport.
 
-pub mod bootstrap;
 pub mod client;
 pub mod client_global;
 pub mod codec;
+pub mod dcap_protocol;
+#[cfg(feature = "native-dcap")]
+pub mod dcap_v1;
 pub mod endorsement;
 pub mod errors;
-pub mod handoff;
+pub mod host_collateral;
+#[cfg(feature = "native-dcap")]
+pub mod native_qvl;
+pub mod node_host;
 pub mod protocol;
 pub mod quote;
+pub mod remote_session;
 pub mod tee_dkg;
 
-pub use bootstrap::{build_unsigned_bootstrap, BootstrapParams, EnclaveRegistration};
 pub use client::{
-    verify_gratis_op_attestation, verify_peer_quote, verify_promis_op_attestation,
-    verify_tribute_offer_attestation, AttestedPeerKeys, EnclaveClient, QuotePolicy,
+    verify_fidelity_cohort_attestation, verify_fidelity_query_attestation,
+    verify_fidelity_snapshot_attestation, verify_gratis_op_attestation, verify_peer_quote,
+    verify_promis_op_attestation, verify_tribute_offer_attestation, AttestedPeerKeys,
+    AuthorizedEnclaveClient, EnclaveClient, EnclaveInitializationChallenge, GeneratedDcapQuoteV1,
+    NodeHostNoiseKey, QuotePolicy, RemoteEnclaveClient, RemoteEnclavePublicKeysV1,
+    RemoteSessionTicketV1,
 };
 pub use client_global::{
-    install_enclave_client, is_enclave_configured, seal_offer_key_for_registry, try_with_enclave,
+    install_authorized_enclave_client, install_enclave_client, is_enclave_configured,
+    resident_offer_public_key_state_v1, resident_offer_public_key_v1, seal_offer_key_for_registry,
+    try_with_enclave, verify_dcap_evidence_v1, RuntimeEnclaveClient,
 };
 pub use errors::TransportError;
-pub use handoff::{
-    answer_handoff_request, run_handoff_as_newcomer, HandoffEvent, HandoffGossip,
-    HandoffWireMessage,
+pub use host_collateral::acquire_dcap_collateral_v1;
+pub use node_host::{
+    connect_or_initialize_full_node_enclave, connect_or_initialize_validator_enclave,
+    construct_finalized_replacement_authorization_v1, load_committed_enclave_manifest_v1,
+    load_replacement_candidate_submission, persist_replacement_candidate_submission,
+    prepare_full_node_enclave_replacement_candidate,
+    prepare_validator_enclave_replacement_candidate, promote_replacement_candidate,
+    FinalizedReplacementAuthorizationV1, FinalizedReplacementBindingV1, FullNodeNodeHostIdentityV1,
+    ReplacementCandidateEnclaveV1, ReplacementCandidateSubmissionV1, ValidatorNodeHostIdentityV1,
+};
+pub use remote_session::{
+    admit_remote_session_v1, admit_rpc_trusted_remote_session_v1, FinalizedRegistryBindingV1,
+    FinalizedRegistryViewV1, RemoteSessionAdmissionError, RemoteSessionAdmissionV1,
+    RemoteSessionExpectationV1, RpcTrustedRemoteSessionV1,
 };
 pub use tee_dkg::{CeremonyCoordinator, CeremonyOutcome, EnclaveChannel};
 

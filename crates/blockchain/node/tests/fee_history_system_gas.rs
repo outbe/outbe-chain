@@ -16,6 +16,7 @@ use outbe_compressed_entities::{
     ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
 };
 use outbe_evm::OutbeEvmSigner;
+use outbe_metadosis::test_support::ForkInstallScenario;
 use outbe_node::OutbeNode;
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_offchain_storage::MemoryStorage;
@@ -207,6 +208,11 @@ async fn gas_14_rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
     let chain_spec = chain_spec_with_genesis(seed_single_validator_genesis(&signer)?);
     let ce_directory = tempfile::tempdir()?;
     let genesis_hash = chain_spec.genesis_hash();
+    let ocomp_fork_install = Arc::new(
+        ForkInstallScenario::measurement_at(1, DEVNET_CHAIN_ID, genesis_hash)
+            .expect("fresh-devnet OCOMP install fixture is canonical")
+            .into_install(),
+    );
     let ce_db = CeMdbx::open(
         ce_directory.path(),
         EnvironmentIdentity {
@@ -259,7 +265,7 @@ async fn gas_14_rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
         evm_signer: Some(signer),
         runtime_body_readers: RuntimeBodyReaders::new(Arc::new(MemoryStorage::new())),
         compressed_tree_service,
-        ocomp_fork_install: None,
+        ocomp_fork_install: Some(ocomp_fork_install),
     };
     let NodeHandle {
         node,

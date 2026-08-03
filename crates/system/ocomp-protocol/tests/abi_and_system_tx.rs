@@ -59,7 +59,7 @@ fn ocomp_system_selectors_are_exact_and_collision_free() {
     assert_eq!(OCOMP_LIFECYCLE_BEGIN_SELECTOR, *b"OSE2");
     assert_eq!(OCOMP_TERMINAL_REQUEST_SELECTOR, *b"OSR2");
     let existing = [
-        *b"OSA3", *b"OSL2", *b"OSC2", *b"OSB2", *b"OST2", *b"OSO2", *b"OSH2",
+        *b"OSA3", *b"OSL2", *b"OSC2", *b"OSB2", *b"OST3", *b"OSO2", *b"OSH2",
     ];
     let all = existing
         .into_iter()

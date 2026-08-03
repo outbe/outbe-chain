@@ -52,7 +52,6 @@ use crate::{
         decode_boundary_artifact, decode_late_finalize_credits_artifact, encode_boundary_artifact,
         encode_late_finalize_credits_artifact, LateFinalizeCreditsArtifact,
     },
-    tee_bootstrap::TeeBootstrapPayload,
 };
 
 pub use crate::addresses::OUTBE_SYSTEM_TX_ADDRESS;
@@ -74,8 +73,12 @@ pub const CYCLE_TICK_SELECTOR: [u8; 4] = [b'O', b'S', b'C', b'2'];
 pub const BOUNDARY_OUTCOME_SELECTOR: [u8; 4] = [b'O', b'S', b'B', b'2'];
 /// Selector for [`SystemTxKind::OracleSlashWindow`] (V2 OSO2).
 pub const ORACLE_SLASH_WINDOW_SELECTOR: [u8; 4] = [b'O', b'S', b'O', b'2'];
-/// Selector for [`SystemTxKind::TeeBootstrap`] (V2 OST2, Phase 3b).
-pub const TEE_BOOTSTRAP_SELECTOR: [u8; 4] = [b'O', b'S', b'T', b'2'];
+/// Selector for the evidence-carrying V1 TEE bootstrap payload.
+///
+/// `OST2` was never a valid selector for this greenfield chain. Only `OST3`
+/// is produced or accepted, in both `DcapRequired` and `GramineDirectDev`
+/// networks.
+pub const TEE_BOOTSTRAP_SELECTOR: [u8; 4] = [b'O', b'S', b'T', b'3'];
 /// Selector for [`SystemTxKind::LateFinalizeCredits`].
 pub const LATE_FINALIZE_CREDITS_SELECTOR: [u8; 4] = [b'O', b'S', b'L', b'2'];
 /// Selector for [`SystemTxKind::HookEvents`] (V2 OSH2).
@@ -91,6 +94,20 @@ pub const MAX_SYSTEM_TXS_PER_BLOCK: u8 = 16;
 /// `BoundaryOutcome` as its first begin-zone system transaction.
 pub const GENESIS_BOOTSTRAP_BLOCK_NUMBER: u64 = 1;
 
+/// Consensus gas limit for the evidence-heavy one-time block-1 bootstrap.
+pub const BOOTSTRAP_BLOCK_GAS_LIMIT: u64 = 500_000_000;
+/// Consensus gas limit before bootstrap and from block 2 onward.
+pub const STEADY_BLOCK_GAS_LIMIT: u64 = 30_000_000;
+
+/// Height-selected block gas schedule committed by `ResourceScheduleV1`.
+pub const fn protocol_block_gas_limit(block_number: u64) -> u64 {
+    if block_number == GENESIS_BOOTSTRAP_BLOCK_NUMBER {
+        BOOTSTRAP_BLOCK_GAS_LIMIT
+    } else {
+        STEADY_BLOCK_GAS_LIMIT
+    }
+}
+
 /// Internal execution gas limit used by the Outbe-aware system-call path.
 /// This value is never used as the visible `gas_limit` of the signed
 /// transaction envelope; visible envelopes use their Ethereum intrinsic gas so
@@ -102,7 +119,7 @@ pub const SYSTEM_TX_ARTIFACT_GAS_LIMIT: u64 = 10_000_000_000;
 pub const SYSTEM_TX_VISIBLE_GAS_FLOOR: u64 = 21_000;
 
 const SYSTEM_TX_ZERO_BYTE_GAS: u64 = 4;
-const SYSTEM_TX_NON_ZERO_BYTE_GAS: u64 = 16;
+pub const SYSTEM_TX_NON_ZERO_BYTE_GAS: u64 = 16;
 
 /// Body-zone position of a system tx.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -207,10 +224,9 @@ impl SystemTxKind {
     /// failure is fatal" invariant rather than silently forfeiting real money or
     /// a protocol-state transition.
     ///
-    /// `OracleSlashWindow` and `TeeBootstrap` stay soft: a revert there skips an
-    /// oracle penalty or a one-time TEE registry bootstrap — an integrity/feature
-    /// gap, not a money loss or a finality break — and halting the chain over it
-    /// would be the worse failure mode.
+    /// `TeeBootstrap` is mandatory at block 1: a revert would commit a genesis
+    /// committee that cannot execute confidential transactions, so it fails the
+    /// block. `OracleSlashWindow` and `HookEvents` remain soft.
     pub const fn revert_fails_block(self) -> bool {
         match self {
             Self::CertifiedParentAccounting
@@ -218,8 +234,9 @@ impl SystemTxKind {
             | Self::OcompLifecycleBegin
             | Self::CycleTick
             | Self::BoundaryOutcome
+            | Self::TeeBootstrap
             | Self::OcompTerminalRequest => true,
-            Self::TeeBootstrap | Self::OracleSlashWindow | Self::HookEvents => false,
+            Self::OracleSlashWindow | Self::HookEvents => false,
         }
     }
 
@@ -282,7 +299,7 @@ pub enum SystemTxInputV2 {
         artifact: DkgBoundaryArtifact,
     },
     TeeBootstrap {
-        payload: TeeBootstrapPayload,
+        payload: crate::tee_bootstrap_v2::TeeBootstrapV2,
     },
     OracleSlashWindow,
     HookEvents,
@@ -307,7 +324,8 @@ impl SystemTxInputV2 {
     /// Encode as `selector(4) || version(1) || canonical_body`.
     pub fn encode(&self) -> Result<Bytes, SystemTxError> {
         let mut out = Vec::new();
-        out.extend_from_slice(&self.kind().selector());
+        let selector = self.kind().selector();
+        out.extend_from_slice(&selector);
         out.push(SYSTEM_TX_INPUT_VERSION);
         match self {
             Self::CertifiedParentAccounting { metadata } => {
@@ -339,14 +357,12 @@ impl SystemTxInputV2 {
                         .as_ref(),
                 );
             }
-            Self::TeeBootstrap { payload } => {
-                out.extend_from_slice(
-                    payload
-                        .encode()
-                        .map_err(SystemTxError::from_precompile)?
-                        .as_ref(),
-                );
-            }
+            Self::TeeBootstrap { payload } => out.extend_from_slice(
+                payload
+                    .encode_canonical()
+                    .map_err(|error| SystemTxError::Codec(error.to_string()))?
+                    .as_ref(),
+            ),
         }
         Ok(Bytes::from(out))
     }
@@ -428,8 +444,8 @@ impl SystemTxInputV2 {
                 Ok(Self::BoundaryOutcome { artifact })
             }
             SystemTxKind::TeeBootstrap => Ok(Self::TeeBootstrap {
-                payload: TeeBootstrapPayload::decode(body)
-                    .map_err(SystemTxError::from_precompile)?,
+                payload: crate::tee_bootstrap_v2::TeeBootstrapV2::decode_canonical(body)
+                    .map_err(|error| SystemTxError::Codec(error.to_string()))?,
             }),
         }
     }
@@ -709,10 +725,10 @@ pub enum SystemTxError {
     )]
     GasLimitBelowIntrinsic { gas_limit: u64, intrinsic_gas: u64 },
     #[error(
-        "system tx intrinsic gas exceeds block gas limit: intrinsic={intrinsic_gas}, block_limit={block_gas_limit}"
+        "system tx required gas exceeds block gas limit: required={required_gas}, block_limit={block_gas_limit}"
     )]
     VisibleGasPlanExceedsBlock {
-        intrinsic_gas: u64,
+        required_gas: u64,
         block_gas_limit: u64,
     },
     #[error("system tx visible gas plan contains more than one CycleTick")]
@@ -748,6 +764,12 @@ pub enum SystemTxError {
         "V2 genesis bootstrap: block 1 must carry a BoundaryOutcome system tx (got has_boundary_outcome = false)"
     )]
     V2Block1MissingBoundaryOutcome,
+    #[error("V2 genesis bootstrap: block 1 must carry TeeBootstrap")]
+    V2Block1MissingTeeBootstrap,
+    #[error("TeeBootstrap is only valid at block 1, got block {block_number}")]
+    TeeBootstrapWrongHeight { block_number: u64 },
+    #[error("V2 genesis bootstrap: block 1 must not carry user transactions (got {actual})")]
+    V2Block1ContainsUserTransactions { actual: usize },
     #[error("phase1 tx decode failed: {0}")]
     Phase1TxDecode(String),
     #[error("phase1 tx signature recovery failed: {0}")]
@@ -862,14 +884,16 @@ pub fn system_tx_visible_gas_limit(calldata: &[u8]) -> Result<u64, SystemTxError
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SystemTxVisibleGasEntry {
     intrinsic_gas: u64,
+    protocol_precharge: u64,
     gas_limit: u64,
 }
 
 /// Deterministic visible-gas allocation for the complete begin-system zone.
 ///
-/// Ordinary system envelopes receive exactly their intrinsic gas. `CycleTick`
-/// receives the remaining block gas as its compressed-entity execution budget,
-/// while preserving enough gas for every other mandatory system envelope.
+/// System envelopes reserve intrinsic gas plus any schedule-hashed protocol
+/// precharge. `CycleTick` receives the remaining block gas as its
+/// compressed-entity execution budget, while preserving every other mandatory
+/// envelope's complete visible base charge.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemTxVisibleGasPlan {
     entries: Vec<SystemTxVisibleGasEntry>,
@@ -882,11 +906,12 @@ impl SystemTxVisibleGasPlan {
         system_txs: &[(SystemTxKind, Bytes)],
     ) -> Result<Self, SystemTxError> {
         let mut entries = Vec::with_capacity(system_txs.len());
-        let mut intrinsic_total = 0u64;
+        let mut required_total = 0u64;
         let mut cycle_ordinal = None;
 
         for (ordinal, (kind, calldata)) in system_txs.iter().enumerate() {
-            let actual = SystemTxInputV2::decode(calldata)?.kind();
+            let decoded = SystemTxInputV2::decode(calldata)?;
+            let actual = decoded.kind();
             if actual != *kind {
                 return Err(SystemTxError::CalldataKindMismatch {
                     expected: *kind,
@@ -897,21 +922,29 @@ impl SystemTxVisibleGasPlan {
                 return Err(SystemTxError::DuplicateCycleTickGasBudget);
             }
             let intrinsic_gas = system_tx_intrinsic_gas(calldata)?;
-            intrinsic_total = intrinsic_total.checked_add(intrinsic_gas).ok_or(
+            let protocol_precharge = system_tx_protocol_precharge(&decoded)?;
+            let gas_limit = intrinsic_gas.checked_add(protocol_precharge).ok_or(
                 SystemTxError::VisibleGasPlanExceedsBlock {
-                    intrinsic_gas: u64::MAX,
+                    required_gas: u64::MAX,
+                    block_gas_limit,
+                },
+            )?;
+            required_total = required_total.checked_add(gas_limit).ok_or(
+                SystemTxError::VisibleGasPlanExceedsBlock {
+                    required_gas: u64::MAX,
                     block_gas_limit,
                 },
             )?;
             entries.push(SystemTxVisibleGasEntry {
                 intrinsic_gas,
-                gas_limit: intrinsic_gas,
+                protocol_precharge,
+                gas_limit,
             });
         }
 
-        let remainder = block_gas_limit.checked_sub(intrinsic_total).ok_or(
+        let remainder = block_gas_limit.checked_sub(required_total).ok_or(
             SystemTxError::VisibleGasPlanExceedsBlock {
-                intrinsic_gas: intrinsic_total,
+                required_gas: required_total,
                 block_gas_limit,
             },
         )?;
@@ -921,13 +954,13 @@ impl SystemTxVisibleGasPlan {
                 .ok_or(SystemTxError::DuplicateCycleTickGasBudget)?;
             entry.gas_limit = entry.gas_limit.checked_add(remainder).ok_or(
                 SystemTxError::VisibleGasPlanExceedsBlock {
-                    intrinsic_gas: intrinsic_total,
+                    required_gas: required_total,
                     block_gas_limit,
                 },
             )?;
             block_gas_limit
         } else {
-            intrinsic_total
+            required_total
         };
 
         Ok(Self {
@@ -947,16 +980,35 @@ impl SystemTxVisibleGasPlan {
     }
 
     #[must_use]
+    pub fn protocol_precharge(&self, ordinal: usize) -> Option<u64> {
+        self.entries
+            .get(ordinal)
+            .map(|entry| entry.protocol_precharge)
+    }
+
+    #[must_use]
     pub fn ce_gas_limit(&self, ordinal: usize) -> Option<u64> {
         self.entries
             .get(ordinal)
-            .map(|entry| entry.gas_limit - entry.intrinsic_gas)
+            .map(|entry| entry.gas_limit - entry.intrinsic_gas - entry.protocol_precharge)
     }
 
     #[must_use]
     pub const fn total_envelope_gas(&self) -> u64 {
         self.total_envelope_gas
     }
+}
+
+fn system_tx_protocol_precharge(input: &SystemTxInputV2) -> Result<u64, SystemTxError> {
+    let SystemTxInputV2::TeeBootstrap { payload } = input else {
+        return Ok(0);
+    };
+    payload
+        .protocol_precharge(
+            &crate::tee_attestation_v1::SystemGasScheduleV1::normative(),
+            &crate::tee_attestation_v1::TeeRegistryGasScheduleV1::normative(),
+        )
+        .map_err(|error| SystemTxError::Codec(error.to_string()))
 }
 
 pub fn build_unsigned_system_tx(
@@ -1263,6 +1315,17 @@ pub fn validate_system_tx_set_for_activation(
     if block_number == 1 && !has_boundary_outcome {
         return Err(SystemTxError::V2Block1MissingBoundaryOutcome);
     }
+    if block_number == 1 && !has_tee_bootstrap {
+        return Err(SystemTxError::V2Block1MissingTeeBootstrap);
+    }
+    if block_number != 1 && has_tee_bootstrap {
+        return Err(SystemTxError::TeeBootstrapWrongHeight { block_number });
+    }
+    if block_number == 1 && !layout.user.is_empty() {
+        return Err(SystemTxError::V2Block1ContainsUserTransactions {
+            actual: layout.user.len(),
+        });
+    }
 
     let expected_begin = expected_begin_block_kinds_for_activation(
         block_number,
@@ -1383,34 +1446,111 @@ mod tests {
         }
     }
 
-    fn sample_tee_bootstrap() -> crate::tee_bootstrap::TeeBootstrapPayload {
-        use crate::tee_bootstrap::{
-            TeeBootstrapPayload, TeeRegistrationBundle, TeeValidatorSignature,
+    fn sample_tee_bootstrap() -> crate::tee_bootstrap_v2::TeeBootstrapV2 {
+        use crate::{
+            tee_attestation_v1::{
+                AttestationMode, AttestationOperationV1, DcapCollateralComponentV1,
+                DcapCollateralKind, EnclaveProfile, NodeIdV1, PlatformTcbStatusSetV1,
+                QvlTcbStatusV1, RegistrationIntentV1, ResourceScheduleV1, TeeMeasurementRuleV1,
+                TeePolicyV1,
+            },
+            tee_bootstrap_v2::{
+                TeeBootstrapCommitteeSignatureV2, TeeBootstrapParticipantEvidenceV2,
+                TeeBootstrapParticipantV2, TeeBootstrapV2,
+            },
         };
+
         let validator = address!("0x2222222222222222222222222222222222222222");
-        TeeBootstrapPayload {
-            policy_hash: B256::repeat_byte(0xB1),
+        let policy = TeePolicyV1 {
+            policy_version: 1,
+            chain_id: [0; 32],
+            genesis_hash: B256::repeat_byte(0x11),
+            activation_height: 1,
+            predecessor_policy_hash: B256::ZERO,
+            attestation_mode: AttestationMode::DcapRequired,
+            intel_root_der_hash: B256::repeat_byte(0x72),
+            quote_version: 3,
+            tee_type: 0,
+            attestation_key_type: 2,
+            qe_vendor_id: [
+                0x93, 0x9a, 0x72, 0x33, 0xf7, 0x9c, 0x4c, 0xa9, 0x94, 0x0a, 0x0d, 0xb3, 0x95, 0x7f,
+                0x06, 0x07,
+            ],
+            certification_data_type: 5,
+            tcb_info_schema_version: 3,
+            qe_identity_schema_version: 2,
+            minimum_tcb_evaluation_data_number: 1,
+            accepted_platform_tcb_statuses: PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+            accepted_qe_tcb_status: QvlTcbStatusV1::UpToDate,
+            minimum_lease: 3_600,
+            maximum_lease: 604_800,
+            collateral_margin: 3_600,
+            resource_schedule_hash: ResourceScheduleV1::normative()
+                .expect("normative resource schedule")
+                .schedule_hash()
+                .expect("resource schedule hashes"),
+            measurement_rules: vec![TeeMeasurementRuleV1 {
+                enclave_profile: EnclaveProfile::Validator,
+                mrenclave: B256::repeat_byte(0x81),
+                mrsigner: B256::repeat_byte(0x82),
+                isv_prod_id: 1,
+                minimum_isv_svn: 2,
+                admit_from_height: 1,
+                admit_until_height_exclusive: 1_000,
+            }],
+        };
+        let policy_hash = policy.policy_hash().expect("policy hashes");
+        let intent = RegistrationIntentV1 {
+            chain_id: [0; 32],
+            genesis_hash: B256::repeat_byte(0x11),
+            operation: AttestationOperationV1::RegisterEnclave,
+            attestation_mode: AttestationMode::DcapRequired,
+            policy_hash,
+            enclave_profile: EnclaveProfile::Validator,
+            node_id: NodeIdV1::Validator {
+                address: validator.into_array(),
+                bls_minpk_public: [0x31; 48],
+            },
+            enclave_id: B256::repeat_byte(0x32),
+            binding_id: B256::repeat_byte(0x33),
+            binding_version: 1,
+            registration_version: 0,
+            renewal_nonce: 0,
+            transition_nonce: 0,
+            requested_valid_until: 7_200,
+            recipient_x25519: [0x34; 32],
+            attestation_ed25519: [0x35; 32],
+            noise_responder_x25519: [0x36; 32],
+            node_host_authorization_hash: B256::repeat_byte(0x37),
+        };
+
+        TeeBootstrapV2 {
+            policy,
             committee_snapshot_hash: B256::repeat_byte(0xB2),
             committee_snapshot_block: 1,
-            key_epoch: 0,
-            tribute_offer_epoch: 0,
+            key_epoch: 1,
+            tribute_offer_epoch: 1,
             dkg_transcript_hash: B256::repeat_byte(0xB3),
             tribute_offer_public_key: B256::repeat_byte(0xB4),
-            tribute_offer_group_public_key: alloy_primitives::Bytes::from(vec![0xB5; 96]),
-            registrations: vec![TeeRegistrationBundle {
-                validator,
-                recipient_x25519: B256::repeat_byte(0x21),
-                attestation_pub: B256::repeat_byte(0x22),
-                noise_static_pub: B256::repeat_byte(0x23),
-                mrenclave: B256::repeat_byte(0x24),
-                mrsigner: B256::repeat_byte(0x25),
-                isv_svn: 3,
-                keys_hash: B256::repeat_byte(0x26),
+            tribute_offer_group_public_key: Bytes::from(vec![0xB5; 96]),
+            collateral_pool: (1_u8..=8)
+                .map(|kind| DcapCollateralComponentV1 {
+                    kind: DcapCollateralKind::try_from(kind).expect("known collateral kind"),
+                    bytes: vec![kind],
+                })
+                .collect(),
+            participants: vec![TeeBootstrapParticipantV2 {
+                intent,
+                evidence: TeeBootstrapParticipantEvidenceV2::Dcap {
+                    quote: vec![0x41; 64],
+                    collateral_component_indices: [0, 1, 2, 3, 4, 5, 6, 7],
+                },
+                node_signature: [0x42; 65],
+                enclave_signature: [0x43; 64],
             }],
-            policy: crate::tee_bootstrap::TeePolicy::default(),
-            validator_signatures: vec![TeeValidatorSignature {
+            committee_signatures: vec![TeeBootstrapCommitteeSignatureV2 {
                 validator,
-                signature: [0x41; 65],
+                signature: [0x44; 65],
             }],
         }
     }
@@ -1577,7 +1717,7 @@ mod tests {
         assert_eq!(
             error,
             SystemTxError::VisibleGasPlanExceedsBlock {
-                intrinsic_gas: intrinsic,
+                required_gas: intrinsic,
                 block_gas_limit: intrinsic - 1,
             }
         );
@@ -1944,11 +2084,12 @@ mod tests {
         let block1_txs = vec![
             system_tx(SystemTxKind::CycleTick, 0, 1),
             system_tx(SystemTxKind::BoundaryOutcome, 1, 1),
-            system_tx(SystemTxKind::OracleSlashWindow, 2, 1),
-            system_tx(SystemTxKind::HookEvents, 3, 1),
+            system_tx(SystemTxKind::TeeBootstrap, 2, 1),
+            system_tx(SystemTxKind::OracleSlashWindow, 3, 1),
+            system_tx(SystemTxKind::HookEvents, 4, 1),
         ];
         let block1 = split_system_layout(&block1_txs).expect("layout");
-        validate_active_system_tx_set(&block1, 1, true, false).expect("block 1 V2 ok");
+        validate_active_system_tx_set(&block1, 1, true, true).expect("block 1 V2 ok");
 
         let block2_txs = vec![
             system_tx(SystemTxKind::CertifiedParentAccounting, 0, 2),
@@ -1995,20 +2136,47 @@ mod tests {
             Err(SystemTxError::ActiveSystemTxSetMismatch { .. })
         ));
 
-        // / V2: block 1 must include CycleTick AND BoundaryOutcome.
-        // Missing CycleTick (with the mandatory BoundaryOutcome present)
+        // / V2: block 1 must include CycleTick, BoundaryOutcome and TeeBootstrap.
+        // Missing CycleTick (with the other mandatory phases present)
         // still yields ActiveSystemTxSetMismatch.
         let block1_missing_cycle_tick_txs = vec![
             system_tx(SystemTxKind::BoundaryOutcome, 0, 1),
-            system_tx(SystemTxKind::OracleSlashWindow, 1, 1),
-            system_tx(SystemTxKind::HookEvents, 2, 1),
+            system_tx(SystemTxKind::TeeBootstrap, 1, 1),
+            system_tx(SystemTxKind::OracleSlashWindow, 2, 1),
+            system_tx(SystemTxKind::HookEvents, 3, 1),
         ];
         let block1_missing_cycle_tick =
             split_system_layout(&block1_missing_cycle_tick_txs).expect("layout");
         assert!(matches!(
-            validate_active_system_tx_set(&block1_missing_cycle_tick, 1, true, false),
+            validate_active_system_tx_set(&block1_missing_cycle_tick, 1, true, true),
             Err(SystemTxError::ActiveSystemTxSetMismatch { .. })
         ));
+
+        let block1_missing_tee_txs = vec![
+            system_tx(SystemTxKind::CycleTick, 0, 1),
+            system_tx(SystemTxKind::BoundaryOutcome, 1, 1),
+            system_tx(SystemTxKind::OracleSlashWindow, 2, 1),
+            system_tx(SystemTxKind::HookEvents, 3, 1),
+        ];
+        let block1_missing_tee = split_system_layout(&block1_missing_tee_txs).expect("layout");
+        assert!(
+            validate_active_system_tx_set(&block1_missing_tee, 1, true, false).is_err(),
+            "block 1 must not commit without TeeBootstrap"
+        );
+
+        let block1_with_user_txs = vec![
+            system_tx(SystemTxKind::CycleTick, 0, 1),
+            system_tx(SystemTxKind::BoundaryOutcome, 1, 1),
+            system_tx(SystemTxKind::TeeBootstrap, 2, 1),
+            system_tx(SystemTxKind::OracleSlashWindow, 3, 1),
+            system_tx(SystemTxKind::HookEvents, 4, 1),
+            user_tx(),
+        ];
+        let block1_with_user = split_system_layout(&block1_with_user_txs).expect("layout");
+        assert!(
+            validate_active_system_tx_set(&block1_with_user, 1, true, true).is_err(),
+            "block 1 must contain exactly the five mandatory system transactions"
+        );
 
         // / V2: block 1 without BoundaryOutcome is rejected with
         // the V2-specific genesis bootstrap error before structural checks.
@@ -2071,17 +2239,14 @@ mod tests {
             SystemTxKind::LateFinalizeCredits,
             SystemTxKind::CycleTick,
             SystemTxKind::BoundaryOutcome,
+            SystemTxKind::TeeBootstrap,
         ] {
             assert!(
                 kind.revert_fails_block(),
                 "{kind:?} must fail the block on revert"
             );
         }
-        for kind in [
-            SystemTxKind::TeeBootstrap,
-            SystemTxKind::OracleSlashWindow,
-            SystemTxKind::HookEvents,
-        ] {
+        for kind in [SystemTxKind::OracleSlashWindow, SystemTxKind::HookEvents] {
             assert!(
                 !kind.revert_fails_block(),
                 "{kind:?} must keep the soft-receipt skip"
@@ -2090,9 +2255,9 @@ mod tests {
     }
 
     #[test]
-    fn validate_active_system_tx_set_handles_optional_phase3b_bootstrap() {
-        // Block carrying the one-time Phase 3b bootstrap (after BoundaryOutcome,
-        // before OracleSlashWindow) validates iff has_tee_bootstrap.
+    fn validate_active_system_tx_set_rejects_phase3b_outside_block1() {
+        // TeeBootstrap is the mandatory block-1 Phase 3b and cannot be replayed
+        // at a later height even when the body-derived flag says it is present.
         let txs = vec![
             system_tx(SystemTxKind::CertifiedParentAccounting, 0, 2),
             system_tx(SystemTxKind::LateFinalizeCredits, 1, 2),
@@ -2103,7 +2268,7 @@ mod tests {
             system_tx(SystemTxKind::HookEvents, 6, 2),
         ];
         let layout = split_system_layout(&txs).expect("layout");
-        validate_active_system_tx_set(&layout, 2, true, true).expect("bootstrap block ok");
+        assert!(validate_active_system_tx_set(&layout, 2, true, true).is_err());
 
         // Same bytes, but the flag says no bootstrap expected -> mismatch.
         assert!(matches!(
@@ -2111,7 +2276,7 @@ mod tests {
             Err(SystemTxError::ActiveSystemTxSetMismatch { .. })
         ));
 
-        // Bootstrap without a boundary outcome (degenerate but well-defined).
+        // A later bootstrap without a boundary outcome is equally invalid.
         let txs_no_bo = vec![
             system_tx(SystemTxKind::CertifiedParentAccounting, 0, 2),
             system_tx(SystemTxKind::LateFinalizeCredits, 1, 2),
@@ -2121,7 +2286,7 @@ mod tests {
             system_tx(SystemTxKind::HookEvents, 5, 2),
         ];
         let layout_no_bo = split_system_layout(&txs_no_bo).expect("layout");
-        validate_active_system_tx_set(&layout_no_bo, 2, false, true).expect("bootstrap w/o bo ok");
+        assert!(validate_active_system_tx_set(&layout_no_bo, 2, false, true).is_err());
     }
 
     #[test]

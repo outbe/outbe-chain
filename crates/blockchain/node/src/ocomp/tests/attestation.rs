@@ -12,7 +12,7 @@ use std::{
 use alloy_primitives::{B256, U256};
 use k256::ecdsa::{signature::hazmat::PrehashSigner as _, Signature, SigningKey};
 use outbe_consensus::block::ConsensusBlock;
-use outbe_metadosis::ocomp::schema::poc_schema_limits;
+use outbe_metadosis::config::poc_schema_limits;
 use outbe_ocomp_protocol::{
     committee::{
         OcompCommitteeSnapshotV1, OcompKeyRegistrationCoreV1, OcompKeyRegistrationV1,

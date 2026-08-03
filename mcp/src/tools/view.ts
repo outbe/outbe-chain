@@ -139,11 +139,17 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
     handler(async ({ account }) => ok(await view(ctx, "promis", "balanceOf", [account]))),
   );
 
+  // Per-account fidelity index is now encrypted and owner-signature-gated, so a
+  // read-only MCP tool cannot fetch it. Expose the public synthetic-max ceiling
+  // (`maxFidelityIndexAt`) instead — the upper bound on any account's RCFI at a
+  // given time, in decayed days.
   server.tool(
-    "fidelity_index",
-    "Fidelity RCFI (Retention Component of Fidelity Index) for an account, in decayed days.",
-    { account: addr },
-    handler(async ({ account }) => ok(await view(ctx, "fidelity", "getRcfi", [account]))),
+    "fidelity_max_index",
+    "Public synthetic-maximum Fidelity Index (saturating RCFI ceiling) at a Unix timestamp, in decayed days.",
+    { timestamp: z.number().int().describe("Unix timestamp (seconds)") },
+    handler(async ({ timestamp }) =>
+      ok(await view(ctx, "fidelity", "maxFidelityIndexAt", [timestamp])),
+    ),
   );
 
   server.tool(

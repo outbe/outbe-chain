@@ -1,7 +1,7 @@
 # ADR-B-GEN-001: Genesis is a reproducible chain-identity and schema activation manifest
 
 - **Status:** Proposed; current implementation profiled
-- **Date:** 2026-07-17
+- **Date:** 2026-07-30
 - **Decision owners:** Blockchain Space, release and protocol-schema maintainers
 - **Scope:** chain spec parsing, genesis construction/seeding, predeploy artifacts and startup validation
 - **Depends on:** ADR-B-WIR-001, ADR-B-CNS-003, ADR-B-EVM-003,
@@ -96,6 +96,36 @@ Validation is one typed, exhaustive readiness report and occurs before backgroun
 actors mutate state. Missing or mismatched mandatory state is startup-fatal; the
 executor never opportunistically backfills genesis. Optional dev profiles are
 explicit chain profiles and cannot be mistaken for production.
+
+### Fresh-devnet Metadosis contract
+
+The Metadosis Citadel implementation supports only newly created devnet state.
+Its selected chain manifest contains one canonical `Measurement`
+`OcompForkInstallV1` bound to the exact chain id, base genesis hash, install
+hash, request profile, protocol bundle and committee, with activation height
+`1`. Startup rejects missing, malformed, wrong-chain, wrong-genesis,
+wrong-hash, wrong-classification or later activation before block execution.
+The same genesis config must carry
+`metadosisStorageLayoutV1.layoutHash`, equal to the node's canonical
+`METADOSIS_STORAGE_LAYOUT_V1_HASH`; a missing or mismatched layout is rejected
+by the same strict pre-start loader before any node or OCOMP process starts.
+Cycle block 1 independently requires the persisted active profile before
+creating a WWD.
+
+This fresh-devnet profile does not replace or reinterpret the existing OCOMP
+public-closure `Final` profile, whose protocol contract remains activation at
+height `32`.
+
+Genesis/layout assertions bind that hash to the generated slot numbers and pin
+the appended Metadosis terminal, capacity and day-limit semantic receipt
+mappings empty. The existing
+bounded active/closed indexes remain authoritative; no due index is added.
+Unknown `getWorldwideDaysByStatus(uint8)` discriminants revert from block 1.
+
+Migration, backfill, mixed old/new replay, runtime activation and post-genesis
+fork selection are intentionally absent. This is not permission to reinterpret
+an existing network: a changed layout/behavior requires a fresh genesis and
+fresh stores.
 
 ### Schema activation and migration
 

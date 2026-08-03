@@ -10,22 +10,28 @@
 //! sub-call driver in [`crate::sub_call`].
 
 use alloy_evm::{eth::EthEvmContext, precompiles::PrecompilesMap};
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{Revert, SolError};
 use core::fmt::Debug;
 use core::marker::PhantomData;
 use outbe_compressed_entities::ExecutionScope;
-use outbe_metadosis::ocomp::activation::OcompFinalizedIntentAuthority;
-use outbe_metadosis::ocomp::fork::OcompForkInstallV1;
+use outbe_metadosis::{api::OcompFinalizedIntentAuthority, config::OcompForkInstallV1};
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::addresses::{
-    FIDELITY_ADDRESS, METADOSIS_ADDRESS, ORACLE_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS,
+    FIDELITY_ADDRESS, METADOSIS_ADDRESS, ORACLE_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS, SYSTEM_ADDRESS,
 };
 use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
-use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::storage::{
+    metadosis_advance_due_binding, metadosis_cycle_allocation_binding,
+    metadosis_init_genesis_binding, metadosis_late_settlement_binding,
+    metadosis_ocomp_lifecycle_begin_binding, metadosis_ocomp_terminal_request_binding,
+    metadosis_process_ready_binding, metadosis_verified_vote_binding,
+    MetadosisCertifiedFinalityBinding, MetadosisMutationEntitlements, MetadosisMutationPurposeTag,
+    StorageHandle,
+};
 use revm::{
     handler::{precompile_output_to_interpreter_result, EthPrecompiles, PrecompileProvider},
-    interpreter::{CallInputs, InterpreterResult},
+    interpreter::{CallInputs, CallScheme, InterpreterResult},
     precompile::{PrecompileHalt, PrecompileOutput, PrecompileResult},
     primitives::hardfork::SpecId,
     Database,
@@ -34,8 +40,9 @@ use std::sync::Arc;
 
 use crate::{
     gas::SubcallGasMeter,
-    precompile_routes,
+    precompile_routes::{self, ValuePolicy},
     storage::{CtxStorageProvider, CtxStorageProviderConfig, ReentrancyStack},
+    tee_attestation_activation::TeeAttestationChainSpecStateV1,
 };
 
 /// Shared marker retained in the sub-call context while q-forming apply
@@ -46,6 +53,47 @@ pub struct OcompActivationBlockMeter;
 /// (selector `0x08c379a0` followed by `abi.encode(reason)`).
 fn encode_revert_reason(msg: String) -> Bytes {
     Bytes::from(Revert::from(msg).abi_encode())
+}
+
+/// Classification of a call's native value at the precompile boundary.
+#[derive(Debug, PartialEq, Eq)]
+enum BoundaryValue {
+    /// Value revm has already moved into the precompile account, safe to credit.
+    Credited(U256),
+    /// Value that must not reach dispatch, with the reason to revert with.
+    Rejected(&'static str),
+}
+
+/// Decide how much native value a precompile call may credit.
+///
+/// Only a non-delegated frame reaches this: dispatch refuses `DELEGATECALL` and
+/// `CALLCODE` outright, so revm has already moved any `CallValue::Transfer` into
+/// the account whose storage dispatch is about to mutate.
+///
+/// The `CallValue::Apparent` arm is therefore unreachable. It is not a fallback
+/// for the delegated-frame guard and must not be read as one: `CALLCODE` carries
+/// a `Transfer`, so removing that guard would leave this function crediting a
+/// self-transfer that moved nothing. The guard is the only thing standing there.
+///
+/// A route that declares `ValuePolicy::Reject` then refuses any credited amount,
+/// so a call that would strand funds at a precompile stops before touching state.
+fn classify_boundary_value(
+    policy: ValuePolicy,
+    value: &revm::interpreter::CallValue,
+) -> BoundaryValue {
+    let credited = match *value {
+        revm::interpreter::CallValue::Transfer(v) | revm::interpreter::CallValue::Apparent(v) => v,
+    };
+    if credited.is_zero() {
+        return BoundaryValue::Credited(U256::ZERO);
+    }
+    if matches!(*value, revm::interpreter::CallValue::Apparent(_)) {
+        return BoundaryValue::Rejected("outbe precompile: apparent value is not a transfer");
+    }
+    if policy == ValuePolicy::Reject {
+        return BoundaryValue::Rejected("outbe precompile: non-payable address called with value");
+    }
+    BoundaryValue::Credited(credited)
 }
 
 /// Translate the outbe-level [`outbe_primitives::error::PrecompileError`] (the
@@ -105,6 +153,133 @@ fn is_lysis_result_vote_call(address: Address, data: &[u8], is_static: bool, val
         && value.is_zero()
 }
 
+struct MetadosisMutationCall<'a> {
+    address: Address,
+    data: &'a [u8],
+    caller: Address,
+    is_static: bool,
+    value: U256,
+    ocomp_lifecycle_active: bool,
+    chain_id: u64,
+    block_number: u64,
+    timestamp: u64,
+    preloaded_certified_state_root: Option<alloy_primitives::B256>,
+    ocomp_fork_install: Option<&'a OcompForkInstallV1>,
+}
+
+fn metadosis_mutation_entitlements(
+    call: MetadosisMutationCall<'_>,
+) -> MetadosisMutationEntitlements {
+    let MetadosisMutationCall {
+        address,
+        data,
+        caller,
+        is_static,
+        value,
+        ocomp_lifecycle_active,
+        chain_id,
+        block_number,
+        timestamp,
+        preloaded_certified_state_root,
+        ocomp_fork_install,
+    } = call;
+    use MetadosisMutationPurposeTag as Purpose;
+
+    if is_static || !value.is_zero() {
+        return MetadosisMutationEntitlements::NONE;
+    }
+    if is_lysis_result_vote_call(address, data, is_static, value) && ocomp_lifecycle_active {
+        return MetadosisMutationEntitlements::exact(
+            Purpose::VerifiedResultVote,
+            metadosis_verified_vote_binding(data),
+        );
+    }
+    if address != OUTBE_SYSTEM_TX_ADDRESS || caller != SYSTEM_ADDRESS {
+        return MetadosisMutationEntitlements::NONE;
+    }
+    let Ok(input) = crate::system_tx::SystemTxInputV2::decode(data) else {
+        return MetadosisMutationEntitlements::NONE;
+    };
+    match input {
+        crate::system_tx::SystemTxInputV2::CertifiedParentAccounting { metadata }
+            if metadata.proof_kind
+                == outbe_primitives::consensus_metadata::ParentParticipationProof::Finalization =>
+        {
+            let Some(finalized_state_root) = preloaded_certified_state_root else {
+                return MetadosisMutationEntitlements::NONE;
+            };
+            let certified = MetadosisCertifiedFinalityBinding::new(
+                chain_id,
+                block_number,
+                metadata.finalized_block_number,
+                metadata.finalized_block_hash,
+                finalized_state_root,
+            );
+            MetadosisMutationEntitlements::exact(Purpose::CertifiedFinality, certified.binding())
+        }
+        crate::system_tx::SystemTxInputV2::LateFinalizeCredits { .. } => {
+            MetadosisMutationEntitlements::exact(
+                Purpose::CertifiedFinality,
+                metadosis_late_settlement_binding(chain_id, block_number, timestamp),
+            )
+        }
+        // Exact fixed command identities cover genesis plus every statically
+        // registered trigger. A particular block may consume any due subset,
+        // but no identity can be consumed twice. Daily terminal allocation is
+        // intentionally keyed to the previous UTC day rather than the physical
+        // dispatch timestamp; derive the same fixed timestamp here.
+        crate::system_tx::SystemTxInputV2::CycleTick => {
+            let current_day = outbe_primitives::time::timestamp_to_date_key(timestamp);
+            let previous_day = outbe_primitives::time::previous_date_key(current_day);
+            let allocation_timestamp =
+                outbe_primitives::time::date_key_to_utc_timestamp(previous_day);
+            MetadosisMutationEntitlements::exact(
+                Purpose::CycleLifecycle,
+                metadosis_init_genesis_binding(chain_id, block_number, timestamp),
+            )
+            .union(MetadosisMutationEntitlements::exact(
+                Purpose::CycleLifecycle,
+                metadosis_cycle_allocation_binding(chain_id, block_number, allocation_timestamp),
+            ))
+            .union(MetadosisMutationEntitlements::exact(
+                Purpose::CycleLifecycle,
+                metadosis_process_ready_binding(chain_id, block_number, timestamp),
+            ))
+            .union(MetadosisMutationEntitlements::exact(
+                Purpose::CycleLifecycle,
+                metadosis_advance_due_binding(chain_id, block_number, timestamp),
+            ))
+        }
+        crate::system_tx::SystemTxInputV2::OcompLifecycleBegin if ocomp_lifecycle_active => {
+            let lifecycle = MetadosisMutationEntitlements::exact(
+                Purpose::OcompLifecycle,
+                metadosis_ocomp_lifecycle_begin_binding(chain_id, block_number, timestamp),
+            );
+            let Some(install) =
+                ocomp_fork_install.filter(|install| install.activation_height == block_number)
+            else {
+                return lifecycle;
+            };
+            let Ok(install_hash) =
+                install.install_hash(&outbe_metadosis::config::poc_schema_limits())
+            else {
+                return lifecycle;
+            };
+            lifecycle.union(MetadosisMutationEntitlements::exact(
+                Purpose::ForkProfile,
+                install_hash,
+            ))
+        }
+        crate::system_tx::SystemTxInputV2::OcompTerminalRequest if ocomp_lifecycle_active => {
+            MetadosisMutationEntitlements::exact(
+                Purpose::OcompLifecycle,
+                metadosis_ocomp_terminal_request_binding(chain_id, block_number, timestamp),
+            )
+        }
+        _ => MetadosisMutationEntitlements::NONE,
+    }
+}
+
 /// Returns the list of outbe precompile addresses registered by
 /// [`extend_outbe_precompiles`].
 ///
@@ -113,6 +288,31 @@ fn is_lysis_result_vote_call(address: Address, data: &[u8], is_static: bool, val
 /// from this list.
 pub fn outbe_precompile_addresses() -> &'static [Address] {
     precompile_routes::EXACT_ADDRESSES
+}
+
+/// Immutable protocol context shared by every Outbe precompile dispatch.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OutbePrecompileExecutionContext {
+    spec: SpecId,
+    genesis_hash: B256,
+    tee_attestation_v1: TeeAttestationChainSpecStateV1,
+}
+
+impl OutbePrecompileExecutionContext {
+    #[must_use]
+    pub const fn new(spec: SpecId, genesis_hash: B256) -> Self {
+        Self {
+            spec,
+            genesis_hash,
+            tee_attestation_v1: TeeAttestationChainSpecStateV1::Unbound,
+        }
+    }
+
+    #[must_use]
+    pub fn with_tee_attestation_v1(mut self, state: TeeAttestationChainSpecStateV1) -> Self {
+        self.tee_attestation_v1 = state;
+        self
+    }
 }
 
 /// Register outbe stateful precompile dispatch on the given [`PrecompilesMap`]
@@ -128,7 +328,7 @@ pub fn outbe_precompile_addresses() -> &'static [Address] {
 /// Registers Outbe precompiles with an executor-owned compressed-entity scope.
 pub fn extend_outbe_precompiles<DB>(
     precompiles: &mut PrecompilesMap,
-    spec: SpecId,
+    execution_context: OutbePrecompileExecutionContext,
     runtime_body_readers: Option<RuntimeBodyReaders>,
     execution_scope: Arc<ExecutionScope>,
     ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
@@ -138,6 +338,11 @@ pub fn extend_outbe_precompiles<DB>(
     DB: Database + Debug,
     DB::Error: Debug,
 {
+    let OutbePrecompileExecutionContext {
+        spec,
+        genesis_hash,
+        tee_attestation_v1,
+    } = execution_context;
     let ocomp_activation_block_meter = Arc::new(OcompActivationBlockMeter);
     precompiles.set_ctx_dispatch_hook(
         // handles: claim every outbe address.
@@ -158,6 +363,8 @@ pub fn extend_outbe_precompiles<DB>(
                 inputs,
                 OutbeDispatchRuntime {
                     spec,
+                    genesis_hash,
+                    tee_attestation_v1: &tee_attestation_v1,
                     runtime_body_readers: runtime_body_readers.as_ref(),
                     execution_scope: &execution_scope,
                     ocomp_finality_authority: ocomp_finality_authority.clone(),
@@ -173,6 +380,8 @@ pub fn extend_outbe_precompiles<DB>(
 /// Executor-owned runtime authorities carried into one Outbe dispatch.
 struct OutbeDispatchRuntime<'a> {
     spec: SpecId,
+    genesis_hash: B256,
+    tee_attestation_v1: &'a TeeAttestationChainSpecStateV1,
     runtime_body_readers: Option<&'a RuntimeBodyReaders>,
     execution_scope: &'a Arc<ExecutionScope>,
     ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
@@ -193,6 +402,8 @@ where
 {
     let OutbeDispatchRuntime {
         spec,
+        genesis_hash,
+        tee_attestation_v1,
         runtime_body_readers,
         execution_scope,
         ocomp_finality_authority,
@@ -208,6 +419,8 @@ where
         return Ok(None);
     };
     let block_number = ctx.block().number().saturating_to::<u64>();
+    let chain_id = ctx.cfg().chain_id;
+    let timestamp = ctx.block().timestamp().saturating_to::<u64>();
 
     // Materialize the exact calldata before choosing the consensus gas charge.
     // Contract -> precompile calls arrive as SharedBuffer and must pay the same
@@ -224,6 +437,34 @@ where
     let base_gas = route.base_gas(data.as_ref()).max(PRECOMPILE_BASE_GAS);
     if inputs.gas_limit < base_gas {
         let out = PrecompileOutput::halt(PrecompileHalt::OutOfGas, 0);
+        return Ok(Some(precompile_output_to_interpreter_result(
+            out,
+            inputs.gas_limit,
+        )));
+    }
+
+    // A precompile's state is keyed by its own address, so a `DELEGATECALL` or
+    // `CALLCODE` frame cannot give it the borrowed-code semantics those opcodes
+    // promise: dispatch would read and write the precompile's own storage while
+    // `caller` stays the frame's inherited caller. Any contract could then take
+    // caller-authenticated actions — unstaking, voting, spending — as whoever
+    // called it. Refuse the frame instead of executing it under a caller it does
+    // not belong to.
+    //
+    // Matching the scheme rather than comparing addresses states the rule the
+    // opcodes define; the address divergence those two produce is a consequence
+    // of it, and one that a self-referential frame would not exhibit.
+    if matches!(
+        inputs.scheme,
+        CallScheme::DelegateCall | CallScheme::CallCode
+    ) {
+        let out = PrecompileOutput::revert(
+            base_gas,
+            encode_revert_reason(
+                "outbe precompile: delegated call frame cannot execute a precompile".to_string(),
+            ),
+            0,
+        );
         return Ok(Some(precompile_output_to_interpreter_result(
             out,
             inputs.gas_limit,
@@ -255,9 +496,16 @@ where
             selector.as_deref().unwrap_or("missing")
         );
     }
-    let value = match inputs.value {
-        revm::interpreter::CallValue::Transfer(v) => v,
-        revm::interpreter::CallValue::Apparent(v) => v,
+    let value = match classify_boundary_value(route.value_policy(), &inputs.value) {
+        BoundaryValue::Credited(v) => v,
+        BoundaryValue::Rejected(reason) => {
+            let out =
+                PrecompileOutput::revert(base_gas, encode_revert_reason(reason.to_string()), 0);
+            return Ok(Some(precompile_output_to_interpreter_result(
+                out,
+                inputs.gas_limit,
+            )));
+        }
     };
     let gas_budget = inputs.gas_limit - base_gas;
     let gas_meter = SubcallGasMeter::new(gas_budget);
@@ -279,6 +527,7 @@ where
             self_address: address,
             reentrancy_stack: ReentrancyStack,
             spec,
+            genesis_hash,
             runtime_body_readers: runtime_body_readers.cloned(),
             execution_scope: execution_scope.clone(),
             ocomp_finality_authority: ocomp_finality_authority.clone(),
@@ -290,11 +539,27 @@ where
                 is_static,
                 value,
             ) && ocomp_lifecycle_active,
+            metadosis_mutation_entitlements: metadosis_mutation_entitlements(
+                MetadosisMutationCall {
+                    address,
+                    data: data.as_ref(),
+                    caller,
+                    is_static,
+                    value,
+                    ocomp_lifecycle_active,
+                    chain_id,
+                    block_number,
+                    timestamp,
+                    preloaded_certified_state_root:
+                        crate::begin_block_precompile::preloaded_certified_parent_state_root(),
+                    ocomp_fork_install: ocomp_fork_install.as_deref(),
+                },
+            ),
         },
     );
     let storage = StorageHandle::new(&mut provider);
     let result = if is_active_result_vote_selector {
-        outbe_metadosis::ocomp::vote::dispatch_public_result_vote(
+        outbe_metadosis::commands::submit_verified_result_vote(
             storage,
             execution_scope.as_ref(),
             data.as_ref(),
@@ -308,21 +573,18 @@ where
                 execution_scope.as_ref(),
                 readers,
                 ocomp_fork_install.as_deref(),
+                tee_attestation_v1,
                 data.as_ref(),
                 caller,
                 value,
             )
         } else {
-            route.dispatch(
+            crate::begin_block_precompile::dispatch_with_tee_attestation(
                 storage,
-                execution_scope.as_ref(),
-                runtime_body_readers,
-                precompile_routes::RouteCall {
-                    callee: address,
-                    data: data.as_ref(),
-                    caller,
-                    value,
-                },
+                tee_attestation_v1,
+                data.as_ref(),
+                caller,
+                value,
             )
         }
     } else {
@@ -344,7 +606,6 @@ where
             "OCOMP_TRACE_V1 kind=result_vote_committed block={block_number} caller={caller:#x}"
         );
     }
-
     if let Some(readers) = runtime_body_readers {
         if let Err(error) = &result {
             readers.report_precompile_error(error);
@@ -391,6 +652,8 @@ pub(crate) struct OutbeSubCallPrecompiles<DB> {
     eth: EthPrecompiles,
     /// EVM spec id, forwarded to [`outbe_ctx_dispatch`].
     spec: SpecId,
+    genesis_hash: B256,
+    tee_attestation_v1: TeeAttestationChainSpecStateV1,
     runtime_body_readers: Option<RuntimeBodyReaders>,
     execution_scope: Arc<ExecutionScope>,
     ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
@@ -402,6 +665,7 @@ pub(crate) struct OutbeSubCallPrecompiles<DB> {
 impl<DB> OutbeSubCallPrecompiles<DB> {
     pub(crate) fn new(
         spec: SpecId,
+        genesis_hash: B256,
         runtime_body_readers: Option<RuntimeBodyReaders>,
         execution_scope: Arc<ExecutionScope>,
         ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
@@ -411,6 +675,8 @@ impl<DB> OutbeSubCallPrecompiles<DB> {
         Self {
             eth: EthPrecompiles::new(spec),
             spec,
+            genesis_hash,
+            tee_attestation_v1: TeeAttestationChainSpecStateV1::Unbound,
             runtime_body_readers,
             execution_scope,
             ocomp_finality_authority,
@@ -449,6 +715,8 @@ where
             inputs,
             OutbeDispatchRuntime {
                 spec: self.spec,
+                genesis_hash: self.genesis_hash,
+                tee_attestation_v1: &self.tee_attestation_v1,
                 runtime_body_readers: self.runtime_body_readers.as_ref(),
                 execution_scope: &self.execution_scope,
                 ocomp_finality_authority: self.ocomp_finality_authority.clone(),
@@ -478,12 +746,248 @@ where
 }
 
 #[cfg(test)]
-mod lysis_activation_entitlement_tests {
-    use super::is_lysis_result_vote_call;
+mod boundary_value_tests {
+    use super::{classify_boundary_value, BoundaryValue::Credited, BoundaryValue::Rejected};
+    use crate::precompile_routes::{self, ValuePolicy};
     use alloy_primitives::{Address, U256};
+    use outbe_primitives::addresses::{
+        DESIS_ADDRESS, GRATIS_ADDRESS, INTEX_FACTORY_ADDRESS, STAKING_ADDRESS, VOTE_ADDRESS,
+    };
+    use revm::interpreter::CallValue;
+
+    const PAYABLE: [Address; 3] = [STAKING_ADDRESS, INTEX_FACTORY_ADDRESS, VOTE_ADDRESS];
+
+    fn policy(address: Address) -> ValuePolicy {
+        precompile_routes::resolve(&address)
+            .expect("address must be a routed precompile")
+            .value_policy()
+    }
+
+    /// Apparent value names an amount that was never transferred. Delegated
+    /// frames are refused before this point, so the arm is defensive.
+    #[test]
+    fn apparent_value_is_never_credited() {
+        for address in PAYABLE {
+            assert_eq!(
+                classify_boundary_value(policy(address), &CallValue::Apparent(U256::from(7u64))),
+                Rejected("outbe precompile: apparent value is not a transfer"),
+            );
+        }
+    }
+
+    #[test]
+    fn zero_value_dispatches_whatever_the_policy() {
+        for address in [GRATIS_ADDRESS, DESIS_ADDRESS, STAKING_ADDRESS] {
+            for value in [
+                CallValue::Transfer(U256::ZERO),
+                CallValue::Apparent(U256::ZERO),
+            ] {
+                assert_eq!(
+                    classify_boundary_value(policy(address), &value),
+                    Credited(U256::ZERO),
+                );
+            }
+        }
+    }
+
+    /// `staking.stake`, `intexfactory.distribute` and `vote.createProposal` are
+    /// the payable selectors, so their addresses must still receive funded calls.
+    #[test]
+    fn transferred_value_is_credited_to_payable_routes() {
+        let amount = U256::from(5u64);
+        for address in PAYABLE {
+            assert_eq!(
+                classify_boundary_value(policy(address), &CallValue::Transfer(amount)),
+                Credited(amount),
+            );
+        }
+    }
+
+    /// Desis dropped its payable `clearAuction`, so value sent there now has no
+    /// accounting path and must not strand at the address.
+    #[test]
+    fn transferred_value_to_a_reject_route_is_refused() {
+        let amount = U256::from(5u64);
+        for address in [GRATIS_ADDRESS, DESIS_ADDRESS] {
+            assert_eq!(
+                classify_boundary_value(policy(address), &CallValue::Transfer(amount)),
+                Rejected("outbe precompile: non-payable address called with value"),
+            );
+        }
+    }
+
+    /// Reserving the stablecoin address class must not make native value
+    /// unspendable there; the class dispatch decides which addresses may keep it.
+    #[test]
+    fn the_stablecoin_class_permits_value() {
+        let token: Address = "0x53c0000000000000000000000000000000000001"
+            .parse()
+            .expect("valid stablecoin class address");
+        let amount = U256::from(5u64);
+        assert_eq!(policy(token), ValuePolicy::Payable);
+        assert_eq!(
+            classify_boundary_value(policy(token), &CallValue::Transfer(amount)),
+            Credited(amount),
+        );
+    }
+
+    /// Pins which exact routes declare `Payable`. This catches an edit to the
+    /// route table. A module that grows a payable selector without publishing it
+    /// has that selector's funded calls refused — by the route before dispatch
+    /// and again by the module — so the omission shows up as its own broken
+    /// entrypoint rather than as stranded value.
+    #[test]
+    fn only_staking_intex_factory_and_vote_accept_value_among_exact_routes() {
+        for address in precompile_routes::EXACT_ADDRESSES {
+            assert_eq!(
+                policy(*address) == ValuePolicy::Payable,
+                PAYABLE.contains(address),
+                "unexpected value policy for {address:#x}"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod lysis_activation_entitlement_tests {
+    use super::{
+        is_lysis_result_vote_call, map_outbe_precompile_result, metadosis_mutation_entitlements,
+        MetadosisMutationCall,
+    };
+    use alloy_primitives::{Address, Bytes, B256, U256};
     use outbe_ocomp_protocol::abi::{
         GET_OFFCHAIN_JOB_SELECTOR, METADOSIS_ADDRESS, SUBMIT_LYSIS_RESULT_SELECTOR,
     };
+    use outbe_primitives::{
+        addresses::{OUTBE_SYSTEM_TX_ADDRESS, SYSTEM_ADDRESS},
+        consensus::{DkgBoundaryArtifact, ReshareResult},
+        consensus_metadata::CertifiedParentAccountingMetadata,
+        reshare_artifact::LateFinalizeCreditsArtifact,
+        storage::{
+            metadosis_advance_due_binding, metadosis_cycle_allocation_binding,
+            metadosis_init_genesis_binding, metadosis_late_settlement_binding,
+            metadosis_ocomp_lifecycle_begin_binding, metadosis_ocomp_terminal_request_binding,
+            metadosis_process_ready_binding, metadosis_verified_vote_binding,
+            MetadosisCertifiedFinalityBinding, MetadosisMutationEntitlements,
+            MetadosisMutationPurposeTag as Purpose,
+        },
+        system_tx::SystemTxInputV2,
+    };
+
+    const TEST_CHAIN_ID: u64 = 42;
+    const TEST_BLOCK_NUMBER: u64 = 9;
+    const TEST_TIMESTAMP: u64 = 1_000;
+
+    fn certified_root() -> B256 {
+        B256::repeat_byte(0xa1)
+    }
+
+    fn encoded(input: SystemTxInputV2) -> Bytes {
+        input.encode().expect("valid system-tx fixture")
+    }
+
+    fn boundary() -> DkgBoundaryArtifact {
+        DkgBoundaryArtifact {
+            epoch: 8,
+            dkg_cycle: 2,
+            freeze_height: 40,
+            planned_activation_height: 42,
+            target_set_hash: B256::repeat_byte(0x33),
+            vrf_material_version: 3,
+            vrf_group_public_key: B256::repeat_byte(0x44),
+            vrf_group_public_key_bytes: Bytes::from(vec![0x44; 96]),
+            committee_set_hash: B256::repeat_byte(0x66),
+            is_validator_set_change: true,
+            outcome: Bytes::from_static(b"boundary"),
+            is_full_dkg: false,
+            reshare: ReshareResult {
+                new_active_set: vec![Address::repeat_byte(0x33)],
+                active_set_hash: B256::repeat_byte(0x55),
+            },
+            tee_recipient_pubkeys: Vec::new(),
+            tee_reshare_registrations: Vec::new(),
+            endorsement_signature: Bytes::new(),
+        }
+    }
+
+    fn system_entitlements(
+        input: SystemTxInputV2,
+        lifecycle_active: bool,
+    ) -> MetadosisMutationEntitlements {
+        let data = encoded(input);
+        metadosis_mutation_entitlements(MetadosisMutationCall {
+            address: OUTBE_SYSTEM_TX_ADDRESS,
+            data: data.as_ref(),
+            caller: SYSTEM_ADDRESS,
+            is_static: false,
+            value: U256::ZERO,
+            ocomp_lifecycle_active: lifecycle_active,
+            chain_id: TEST_CHAIN_ID,
+            block_number: TEST_BLOCK_NUMBER,
+            timestamp: TEST_TIMESTAMP,
+            preloaded_certified_state_root: Some(certified_root()),
+            ocomp_fork_install: None,
+        })
+    }
+
+    fn expected_cycle_entitlements() -> MetadosisMutationEntitlements {
+        let current_day = outbe_primitives::time::timestamp_to_date_key(TEST_TIMESTAMP);
+        let previous_day = outbe_primitives::time::previous_date_key(current_day);
+        let allocation_timestamp = outbe_primitives::time::date_key_to_utc_timestamp(previous_day);
+        MetadosisMutationEntitlements::exact(
+            Purpose::CycleLifecycle,
+            metadosis_init_genesis_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP),
+        )
+        .union(MetadosisMutationEntitlements::exact(
+            Purpose::CycleLifecycle,
+            metadosis_cycle_allocation_binding(
+                TEST_CHAIN_ID,
+                TEST_BLOCK_NUMBER,
+                allocation_timestamp,
+            ),
+        ))
+        .union(MetadosisMutationEntitlements::exact(
+            Purpose::CycleLifecycle,
+            metadosis_process_ready_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP),
+        ))
+        .union(MetadosisMutationEntitlements::exact(
+            Purpose::CycleLifecycle,
+            metadosis_advance_due_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP),
+        ))
+    }
+
+    #[test]
+    fn inactive_lysis_selector_does_not_abort_block_execution() {
+        use alloy_sol_types::SolCall;
+        use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
+        use outbe_primitives::storage::hashmap::HashMapStorageProvider;
+        use outbe_primitives::storage::StorageHandle;
+
+        let call = outbe_metadosis::precompile::IMetadosis::submitLysisResultCall {
+            resultVoteV1: Bytes::from(vec![0_u8; 8]),
+        };
+        let mut provider = HashMapStorageProvider::new(TEST_CHAIN_ID);
+        let result = StorageHandle::enter(&mut provider, |storage| {
+            outbe_metadosis::precompile::dispatch(
+                storage,
+                &call.abi_encode(),
+                Address::ZERO,
+                U256::ZERO,
+            )
+        });
+
+        // With the OCOMP lifecycle inactive, the selector reaches the view
+        // dispatcher. The mapped outcome must be an ordinary revert output —
+        // an `Err` here becomes a revm `Fatal` that aborts the whole payload
+        // build for a transaction any external account can submit.
+        let output = map_outbe_precompile_result(result, PRECOMPILE_BASE_GAS)
+            .expect("inactive lysis vote must map to a revert, not a block-aborting error");
+        assert!(output.is_revert());
+        let mut expected = Vec::with_capacity(36);
+        expected.extend_from_slice(&outbe_ocomp_protocol::abi::OCOMP_RESULT_VOTE_REJECTED_SELECTOR);
+        expected.extend_from_slice(&U256::from(5_u64).to_be_bytes::<32>());
+        assert_eq!(output.bytes, Bytes::from(expected));
+    }
 
     #[test]
     fn only_exact_non_static_value_free_metadosis_result_vote_is_entitled() {
@@ -517,5 +1021,189 @@ mod lysis_activation_entitlement_tests {
             false,
             U256::from(1),
         ));
+    }
+
+    #[test]
+    fn exact_production_causes_receive_only_their_purpose() {
+        let metadata = CertifiedParentAccountingMetadata::default();
+        let certified = MetadosisCertifiedFinalityBinding::new(
+            TEST_CHAIN_ID,
+            TEST_BLOCK_NUMBER,
+            metadata.finalized_block_number,
+            metadata.finalized_block_hash,
+            certified_root(),
+        );
+        assert_eq!(
+            system_entitlements(
+                SystemTxInputV2::CertifiedParentAccounting { metadata },
+                false,
+            ),
+            MetadosisMutationEntitlements::exact(Purpose::CertifiedFinality, certified.binding(),),
+        );
+        assert_eq!(
+            system_entitlements(SystemTxInputV2::CycleTick, false),
+            expected_cycle_entitlements(),
+        );
+        assert_eq!(
+            system_entitlements(
+                SystemTxInputV2::LateFinalizeCredits {
+                    artifact: LateFinalizeCreditsArtifact::default(),
+                },
+                false,
+            ),
+            MetadosisMutationEntitlements::exact(
+                Purpose::CertifiedFinality,
+                metadosis_late_settlement_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP,),
+            ),
+        );
+        assert_eq!(
+            system_entitlements(SystemTxInputV2::OcompLifecycleBegin, true),
+            MetadosisMutationEntitlements::exact(
+                Purpose::OcompLifecycle,
+                metadosis_ocomp_lifecycle_begin_binding(
+                    TEST_CHAIN_ID,
+                    TEST_BLOCK_NUMBER,
+                    TEST_TIMESTAMP,
+                ),
+            ),
+        );
+        assert_eq!(
+            system_entitlements(SystemTxInputV2::OcompTerminalRequest, true),
+            MetadosisMutationEntitlements::exact(
+                Purpose::OcompLifecycle,
+                metadosis_ocomp_terminal_request_binding(
+                    TEST_CHAIN_ID,
+                    TEST_BLOCK_NUMBER,
+                    TEST_TIMESTAMP,
+                ),
+            ),
+        );
+        assert_eq!(
+            system_entitlements(
+                SystemTxInputV2::BoundaryOutcome {
+                    artifact: boundary(),
+                },
+                false,
+            ),
+            MetadosisMutationEntitlements::NONE,
+        );
+        assert_eq!(
+            metadosis_mutation_entitlements(MetadosisMutationCall {
+                address: METADOSIS_ADDRESS,
+                data: &SUBMIT_LYSIS_RESULT_SELECTOR,
+                caller: Address::repeat_byte(0x99),
+                is_static: false,
+                value: U256::ZERO,
+                ocomp_lifecycle_active: true,
+                chain_id: TEST_CHAIN_ID,
+                block_number: TEST_BLOCK_NUMBER,
+                timestamp: TEST_TIMESTAMP,
+                preloaded_certified_state_root: None,
+                ocomp_fork_install: None,
+            }),
+            MetadosisMutationEntitlements::exact(
+                Purpose::VerifiedResultVote,
+                metadosis_verified_vote_binding(&SUBMIT_LYSIS_RESULT_SELECTOR),
+            ),
+        );
+    }
+
+    #[test]
+    fn route_or_envelope_mismatch_grants_no_mutation_authority() {
+        let cycle = encoded(SystemTxInputV2::CycleTick);
+        for (address, caller, is_static, value) in [
+            (Address::repeat_byte(1), SYSTEM_ADDRESS, false, U256::ZERO),
+            (
+                OUTBE_SYSTEM_TX_ADDRESS,
+                Address::repeat_byte(2),
+                false,
+                U256::ZERO,
+            ),
+            (OUTBE_SYSTEM_TX_ADDRESS, SYSTEM_ADDRESS, true, U256::ZERO),
+            (
+                OUTBE_SYSTEM_TX_ADDRESS,
+                SYSTEM_ADDRESS,
+                false,
+                U256::from(1),
+            ),
+        ] {
+            assert_eq!(
+                metadosis_mutation_entitlements(MetadosisMutationCall {
+                    address,
+                    data: cycle.as_ref(),
+                    caller,
+                    is_static,
+                    value,
+                    ocomp_lifecycle_active: false,
+                    chain_id: TEST_CHAIN_ID,
+                    block_number: TEST_BLOCK_NUMBER,
+                    timestamp: TEST_TIMESTAMP,
+                    preloaded_certified_state_root: None,
+                    ocomp_fork_install: None,
+                }),
+                MetadosisMutationEntitlements::NONE,
+            );
+        }
+
+        assert_eq!(
+            metadosis_mutation_entitlements(MetadosisMutationCall {
+                address: OUTBE_SYSTEM_TX_ADDRESS,
+                data: b"malformed",
+                caller: SYSTEM_ADDRESS,
+                is_static: false,
+                value: U256::ZERO,
+                ocomp_lifecycle_active: false,
+                chain_id: TEST_CHAIN_ID,
+                block_number: TEST_BLOCK_NUMBER,
+                timestamp: TEST_TIMESTAMP,
+                preloaded_certified_state_root: None,
+                ocomp_fork_install: None,
+            }),
+            MetadosisMutationEntitlements::NONE,
+        );
+        assert_eq!(
+            system_entitlements(SystemTxInputV2::OracleSlashWindow, false),
+            MetadosisMutationEntitlements::NONE,
+        );
+        assert_eq!(
+            system_entitlements(SystemTxInputV2::OcompLifecycleBegin, false),
+            MetadosisMutationEntitlements::NONE,
+        );
+        assert_eq!(
+            system_entitlements(SystemTxInputV2::OcompTerminalRequest, false),
+            MetadosisMutationEntitlements::NONE,
+        );
+        assert_eq!(
+            metadosis_mutation_entitlements(MetadosisMutationCall {
+                address: METADOSIS_ADDRESS,
+                data: &SUBMIT_LYSIS_RESULT_SELECTOR,
+                caller: Address::repeat_byte(3),
+                is_static: false,
+                value: U256::ZERO,
+                ocomp_lifecycle_active: false,
+                chain_id: TEST_CHAIN_ID,
+                block_number: TEST_BLOCK_NUMBER,
+                timestamp: TEST_TIMESTAMP,
+                preloaded_certified_state_root: None,
+                ocomp_fork_install: None,
+            }),
+            MetadosisMutationEntitlements::NONE,
+        );
+        assert_eq!(
+            metadosis_mutation_entitlements(MetadosisMutationCall {
+                address: METADOSIS_ADDRESS,
+                data: &GET_OFFCHAIN_JOB_SELECTOR,
+                caller: Address::repeat_byte(3),
+                is_static: false,
+                value: U256::ZERO,
+                ocomp_lifecycle_active: true,
+                chain_id: TEST_CHAIN_ID,
+                block_number: TEST_BLOCK_NUMBER,
+                timestamp: TEST_TIMESTAMP,
+                preloaded_certified_state_root: None,
+                ocomp_fork_install: None,
+            }),
+            MetadosisMutationEntitlements::NONE,
+        );
     }
 }

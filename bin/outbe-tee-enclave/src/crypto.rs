@@ -20,7 +20,7 @@ use ring::{
     hkdf::{self, KeyType},
 };
 use x25519_dalek::{PublicKey, StaticSecret};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 use alloy_primitives::B256;
 
@@ -144,11 +144,11 @@ pub fn ecdhe_tribute_offer_decrypt(
 
 /// Derive the tribute-offer X25519 keypair from a 32-byte seed.
 ///
-/// Returns `(secret_bytes, public_bytes)`. The caller is responsible for
-/// zeroizing `secret_bytes` (callers wrap it in a zeroizing holder).
-pub fn derive_tribute_offer_keypair(seed: &[u8; 32]) -> Result<([u8; 32], [u8; 32])> {
-    let secret_bytes = hkdf_sha256(seed, b"", OFFER_X25519_INFO)?;
-    let secret = StaticSecret::from(secret_bytes);
+/// Returns `(secret_bytes, public_bytes)` with the secret already held in
+/// zeroizing storage so callers cannot accidentally transport a plain copy.
+pub fn derive_tribute_offer_keypair(seed: &[u8; 32]) -> Result<(Zeroizing<[u8; 32]>, [u8; 32])> {
+    let secret_bytes = Zeroizing::new(hkdf_sha256(seed, b"", OFFER_X25519_INFO)?);
+    let secret = StaticSecret::from(*secret_bytes);
     let public = PublicKey::from(&secret);
     Ok((secret_bytes, public.to_bytes()))
 }
@@ -163,15 +163,15 @@ pub fn derive_tribute_offer_keypair(seed: &[u8; 32]) -> Result<([u8; 32], [u8; 3
 /// secret is resident in each enclave so every validator decrypts tribute offers
 /// deterministically during block execution — an architectural requirement of
 /// deterministic local re-execution, not a compromise. Returns
-/// `(tribute_offer_secret, tribute_offer_public)`; the caller zeroizes the secret.
+/// `(tribute_offer_secret, tribute_offer_public)` with a zeroizing secret.
 pub fn derive_tribute_offer_secret_from_group_sig(
     group_sig: &[u8],
     chain_id: B256,
     epoch: u64,
-) -> Result<([u8; 32], [u8; 32])> {
+) -> Result<(Zeroizing<[u8; 32]>, [u8; 32])> {
     let mut info = OFFER_SEED_INFO_PREFIX.to_vec();
     info.extend_from_slice(epoch.to_string().as_bytes());
-    let seed = hkdf_sha256(chain_id.as_slice(), group_sig, &info)?;
+    let seed = Zeroizing::new(hkdf_sha256(chain_id.as_slice(), group_sig, &info)?);
     derive_tribute_offer_keypair(&seed)
 }
 
@@ -420,7 +420,7 @@ mod tests {
         assert_eq!(sk1, sk2);
         assert_eq!(pk1, pk2);
         // Public key matches the secret.
-        assert_eq!(pk1, PublicKey::from(&StaticSecret::from(sk1)).to_bytes());
+        assert_eq!(pk1, PublicKey::from(&StaticSecret::from(*sk1)).to_bytes());
     }
 
     /// `to_bytes` must lay out exactly `ephemeral_pub(32) || nonce(12) ||

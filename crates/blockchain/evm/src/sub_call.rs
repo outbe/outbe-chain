@@ -20,7 +20,7 @@ use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::{Address, B256, U256};
 use core::fmt::Debug;
 use outbe_compressed_entities::ExecutionScope;
-use outbe_metadosis::ocomp::activation::OcompFinalizedIntentAuthority;
+use outbe_metadosis::api::OcompFinalizedIntentAuthority;
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::storage::{SubCallError, SubCallInput, SubCallOutput, SubCallStatus};
 use revm::{
@@ -61,6 +61,7 @@ where
         self_address,
         outer_is_static,
         spec,
+        B256::ZERO,
         runtime_body_readers,
         execution_scope,
         None,
@@ -76,6 +77,7 @@ pub(crate) fn run_with_ocomp_context<DB>(
     self_address: Address,
     outer_is_static: bool,
     spec: SpecId,
+    genesis_hash: B256,
     runtime_body_readers: Option<RuntimeBodyReaders>,
     execution_scope: Arc<ExecutionScope>,
     ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
@@ -134,6 +136,7 @@ where
     crate::create_guard::install(&mut instructions);
     let precompiles = crate::precompiles::OutbeSubCallPrecompiles::<DB>::new(
         spec,
+        genesis_hash,
         runtime_body_readers,
         execution_scope,
         ocomp_finality_authority,

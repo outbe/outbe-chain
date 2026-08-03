@@ -9,16 +9,18 @@ use outbe_primitives::{
     addresses::{COMPRESSED_ENTITIES_ADDRESS, METADOSIS_ADDRESS},
     block::{BlockContext, BlockRuntimeContext},
     chain,
-    storage::{hashmap::HashMapStorageProvider, StorageHandle},
+    storage::{hashmap::HashMapStorageProvider, MetadosisMutationPurposeTag, StorageHandle},
 };
 use outbe_tribute::{TributeContract, TributeData};
 
 use super::{ocomp_storage::request_profile, TestParent};
 use crate::{
+    commands,
     constants::{
         FORMING_PERIOD_HOURS, LOOKBACK_DELAY_HOURS, OFFERING_PERIOD_HOURS, SECONDS_PER_HOUR,
         WAITING_PERIOD_HOURS,
     },
+    fixture_kernel::FixtureKernelExt,
     ocomp::{
         expiry::run_lifecycle_begin,
         request::run_terminal_request,
@@ -26,12 +28,16 @@ use crate::{
         state::{DayPhase, JobFsmLimits},
     },
     precompile::IMetadosis,
-    schema::{day_type, status, MetadosisContract, WorldwideDayEntryExt},
+    schema::{status, MetadosisContract, WorldwideDayEntryExt},
+    WwdDayType,
 };
+
+mod p5_models;
 
 #[test]
 fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
+    outbe_fidelity::enclave_client::test_enclave::install();
     let scope = ExecutionScope::new();
     let parent = TestParent::empty();
     let wwd = outbe_common::WorldwideDay::new(2026_0708);
@@ -63,16 +69,19 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
                 OFFERING_PERIOD_HOURS,
             )
             .unwrap();
+        metadosis.add_active_wwd(wwd).unwrap();
         let scheduled = wwd.start_timestamp()
             + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR
             + LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR
             + OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR
             + WAITING_PERIOD_HOURS * SECONDS_PER_HOUR;
         assert_eq!(
-            metadosis.update_wwd_status(wwd, scheduled).unwrap(),
+            metadosis
+                .fixture_set_wwd_status_from_timestamp(wwd, scheduled)
+                .unwrap(),
             status::READY
         );
-        metadosis.set_wwd_day_type(wwd, day_type::GREEN).unwrap();
+        metadosis.set_wwd_day_type(wwd, WwdDayType::Green).unwrap();
         metadosis.set_wwd_vwap(wwd, U256::from(2)).unwrap();
         metadosis.set_metadosis_limit(wwd, day_limit).unwrap();
         metadosis.initialize_ocomp_pre_admission(wwd).unwrap();
@@ -401,6 +410,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
 #[test]
 fn ineligible_request_defers_only_the_ready_key_without_effects() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
+    outbe_fidelity::enclave_client::test_enclave::install();
     let fixture = prepare_request_fixture(&mut provider, false);
 
     StorageHandle::enter(&mut provider, |storage| {
@@ -441,6 +451,7 @@ fn ineligible_request_defers_only_the_ready_key_without_effects() {
 #[test]
 fn deferred_day_does_not_starve_a_later_eligible_job_intent() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
+    outbe_fidelity::enclave_client::test_enclave::install();
     // Oracle starts un-armed so the first ready day defers (OracleProfileNotReady);
     // it is armed mid-test so the later day becomes eligible.
     let fixture = prepare_two_ready_days_fixture(&mut provider, false);
@@ -538,6 +549,7 @@ fn deferred_day_does_not_starve_a_later_eligible_job_intent() {
 #[test]
 fn two_eligible_days_create_independently_progressing_live_jobs() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
+    outbe_fidelity::enclave_client::test_enclave::install();
     let fixture = prepare_two_ready_days_fixture(&mut provider, true);
 
     StorageHandle::enter(&mut provider, |storage| {
@@ -606,8 +618,17 @@ fn two_eligible_days_create_independently_progressing_live_jobs() {
                 },
             )
             .unwrap());
+        let outer_transition = crate::commit::plan_outer_transition_for_test_fixture(
+            &metadosis,
+            fixture.first_wwd,
+            crate::reducer::OuterWwdEvent::OcompRetryScheduled(
+                crate::reducer::OcompRetryCause::Expired,
+            ),
+        )
+        .unwrap();
         metadosis
             .expire_ocomp_job(
+                &outer_transition,
                 first_intent_id,
                 finalized.deadline_height,
                 fixture.block_time + 64,
@@ -651,6 +672,7 @@ fn two_eligible_days_create_independently_progressing_live_jobs() {
 #[test]
 fn nonzero_owner_projections_are_snapshotted_in_the_created_intent() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
+    outbe_fidelity::enclave_client::test_enclave::install();
     let fixture = prepare_request_fixture(&mut provider, true);
 
     StorageHandle::enter(&mut provider, |storage| {
@@ -794,7 +816,11 @@ fn nonzero_owner_projections_are_snapshotted_in_the_created_intent() {
 #[test]
 fn request_storage_failure_rolls_back_every_observable_effect() {
     let mut calibration = HashMapStorageProvider::new(chain::CHAIN_ID);
+    outbe_fidelity::enclave_client::test_enclave::install();
     let calibration_fixture = prepare_request_fixture(&mut calibration, true);
+    calibration.set_block_number(calibration_fixture.block_number);
+    calibration.set_timestamp(U256::from(calibration_fixture.block_time));
+    calibration.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::OcompLifecycle);
     calibration.fail_mutation_at(usize::MAX);
     StorageHandle::enter(&mut calibration, |storage| {
         let ctx = BlockRuntimeContext::new(
@@ -805,7 +831,7 @@ fn request_storage_failure_rolls_back_every_observable_effect() {
             ),
             storage,
         );
-        run_terminal_request(&ctx, &calibration_fixture.scope).unwrap();
+        commands::run_ocomp_terminal_request(&ctx, &calibration_fixture.scope).unwrap();
     });
     let successful_mutations = calibration.clear_mutation_failure();
     assert!(
@@ -814,12 +840,16 @@ fn request_storage_failure_rolls_back_every_observable_effect() {
     );
 
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
+    outbe_fidelity::enclave_client::test_enclave::install();
     let fixture = prepare_request_fixture(&mut provider, true);
     let before = StorageHandle::enter(&mut provider, |storage| {
         request_observables(storage, fixture.wwd)
     });
     let events_before = provider.get_ordered_events().len();
     let failure_operation = successful_mutations / 2;
+    provider.set_block_number(fixture.block_number);
+    provider.set_timestamp(U256::from(fixture.block_time));
+    provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::OcompLifecycle);
     provider.fail_after_mutation_at(failure_operation);
 
     let error = StorageHandle::enter(&mut provider, |storage| {
@@ -831,7 +861,7 @@ fn request_storage_failure_rolls_back_every_observable_effect() {
             ),
             storage,
         );
-        run_terminal_request(&ctx, &fixture.scope).unwrap_err()
+        commands::run_ocomp_terminal_request(&ctx, &fixture.scope).unwrap_err()
     });
     assert!(matches!(
         error,
@@ -886,6 +916,14 @@ fn prepare_request_fixture(
     provider: &mut HashMapStorageProvider,
     oracle_ready: bool,
 ) -> PreparedRequestFixture {
+    prepare_request_fixture_with_day_type(provider, oracle_ready, WwdDayType::Green)
+}
+
+fn prepare_request_fixture_with_day_type(
+    provider: &mut HashMapStorageProvider,
+    oracle_ready: bool,
+    day_type: WwdDayType,
+) -> PreparedRequestFixture {
     let scope = ExecutionScope::new();
     let parent = TestParent::empty();
     let wwd = outbe_common::WorldwideDay::new(2026_0709);
@@ -896,6 +934,7 @@ fn prepare_request_fixture(
     let mut profile = request_profile();
     profile.chain_id = chain::CHAIN_ID;
 
+    outbe_fidelity::enclave_client::test_enclave::install();
     StorageHandle::enter(provider, |storage| {
         seed_ce_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
@@ -921,16 +960,19 @@ fn prepare_request_fixture(
                 OFFERING_PERIOD_HOURS,
             )
             .unwrap();
+        metadosis.add_active_wwd(wwd).unwrap();
         let scheduled = wwd.start_timestamp()
             + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR
             + LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR
             + OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR
             + WAITING_PERIOD_HOURS * SECONDS_PER_HOUR;
         assert_eq!(
-            metadosis.update_wwd_status(wwd, scheduled).unwrap(),
+            metadosis
+                .fixture_set_wwd_status_from_timestamp(wwd, scheduled)
+                .unwrap(),
             status::READY
         );
-        metadosis.set_wwd_day_type(wwd, day_type::GREEN).unwrap();
+        metadosis.set_wwd_day_type(wwd, day_type).unwrap();
         metadosis.set_wwd_vwap(wwd, U256::from(2)).unwrap();
         metadosis.set_metadosis_limit(wwd, U256::from(100)).unwrap();
         metadosis.initialize_ocomp_pre_admission(wwd).unwrap();
@@ -994,6 +1036,7 @@ fn prepare_two_ready_days_fixture(
     let mut profile = request_profile();
     profile.chain_id = chain::CHAIN_ID;
 
+    outbe_fidelity::enclave_client::test_enclave::install();
     StorageHandle::enter(provider, |storage| {
         seed_ce_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
@@ -1018,16 +1061,19 @@ fn prepare_two_ready_days_fixture(
                     OFFERING_PERIOD_HOURS,
                 )
                 .unwrap();
+            metadosis.add_active_wwd(wwd).unwrap();
             let scheduled = wwd.start_timestamp()
                 + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR
                 + LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR
                 + OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR
                 + WAITING_PERIOD_HOURS * SECONDS_PER_HOUR;
             assert_eq!(
-                metadosis.update_wwd_status(wwd, scheduled).unwrap(),
+                metadosis
+                    .fixture_set_wwd_status_from_timestamp(wwd, scheduled)
+                    .unwrap(),
                 status::READY
             );
-            metadosis.set_wwd_day_type(wwd, day_type::GREEN).unwrap();
+            metadosis.set_wwd_day_type(wwd, WwdDayType::Green).unwrap();
             metadosis.set_wwd_vwap(wwd, U256::from(2)).unwrap();
             metadosis.set_metadosis_limit(wwd, U256::from(100)).unwrap();
             metadosis.initialize_ocomp_pre_admission(wwd).unwrap();

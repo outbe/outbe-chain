@@ -9,13 +9,13 @@ protocol-flow result.
 
 | Runner | Boundary | PFS evidence | Canonical command |
 |---|---|---|---|
-| `crates/testing/e2e-harness/features/tribute_projection.feature` | Four validators, mock TEE, isolated MongoDB projections | PFS-001-01, -02, -03, -05 | `mise run e2e` |
-| `crates/testing/e2e-harness/features/l2_zk_gate.feature` | Four validators, mock TEE; harness-held BLS MinPk network key registered in the L2Registry | PFS-001-10, -11 | `mise run e2e` |
-| `crates/testing/e2e-harness/features/update_operator.feature` | Four validators, restart boundaries, rejection paths and a real operator binary replacement over preserved datadirs | PFS-005-01, -09 plus named recovery/rejection scenarios | `mise run e2e` |
+| `testing/e2e-harness/features/tribute_projection.feature` | Four validators, mock TEE, isolated MongoDB projections | PFS-001-01, -02, -03, -05 | `mise run e2e` |
+| `testing/e2e-harness/features/l2_zk_gate.feature` | Four validators, mock TEE; harness-held BLS MinPk network key registered in the L2Registry | PFS-001-10, -11 | `mise run e2e` |
+| `testing/e2e-harness/features/update_operator.feature` | Four validators, restart boundaries, rejection paths and a real operator binary replacement over preserved datadirs | PFS-005-01, -09 plus named recovery/rejection scenarios | `mise run e2e` |
 | lifecycle, DKG, downtime, restart and stale-join harness features | Mutable four-validator committee and TEE, including join/exit/claim accounting, slash idempotency and node/enclave checkpoint recovery | PFS-006-01, -02, -03, -04, -06, -09 | `mise run e2e` |
-| `crates/testing/e2e-harness/features/follower_upstream.feature` | Followers, upstream loss/switch, validator recovery and restart-safe warm promotion | PFS-008-01 through -08 | `mise run e2e` |
-| `crates/testing/e2e-harness/features/zerofee.feature` | Fresh four-validator localnet, native Alloy EIP-7702 signing, replay/restart/error/day-boundary coverage | PFS-007-01 through -12 | `mise run e2e` |
-| `crates/testing/e2e-harness/features/stablecoin_factory_v1.feature` | Fresh four-validator localnet; policy creation, bonded Factory approval, native ledger operations, duplicate-ticker rejection and full-committee same-binary restart | PFS-010-01 through -04 | `mise run e2e` |
+| `testing/e2e-harness/features/follower_upstream.feature` | Followers, upstream loss/switch, validator recovery and restart-safe warm promotion | PFS-008-01 through -08 | `mise run e2e` |
+| `testing/e2e-harness/features/zerofee.feature` | Fresh four-validator localnet, native Alloy EIP-7702 signing, replay/restart/error/day-boundary coverage | PFS-007-01 through -12 | `mise run e2e` |
+| `testing/e2e-harness/features/stablecoin_factory_v1.feature` | Fresh four-validator localnet; policy creation, bonded Factory approval, native ledger operations, duplicate-ticker rejection and full-committee same-binary restart | PFS-010-01 through -04 | `mise run e2e` |
 
 The nightly workflow runs the canonical harness. PFS rows tagged
 documentation-only are requirements, not claims of executable coverage.
@@ -24,10 +24,10 @@ documentation-only are requirements, not claims of executable coverage.
 
 | Test owner | Evidence supplied | PFS relationship |
 |---|---|---|
-| `crates/core/e2e/tests/wwd_lysis_nod_gratis.rs` | Current synchronous WWD to Lysis, Nod and Gratis state transitions | Historical component evidence for ADR-C-MET-001/ADR-C-LYS-001; it does not satisfy the OCOMP PFS-002 |
-| `crates/core/e2e/tests/wwd_auction_clearing.rs` | Auction day across Metadosis, Desis, IntexFactory, Lysis and Intex: green clearing with creator payout, red cancellation, fan-in deadline skip | PFS-009-01 through -03 |
-| `crates/core/e2e/tests/governance_lifecycle.rs` | Vote lifecycle and duplicate-ballot invariants | Partial PFS-005 |
-| `crates/core/e2e/tests/update_flow_spec.rs` | Update scheduling, activation and ordering/error edges | Partial PFS-005 |
+| `crates/system/cycle/src/tests.rs` Metadosis cases | Real Cycle trigger/lease/command boundary for block-1 profile guard, missed OFFERING, cap forfeiture, day-limit replay consistency and typed Desis rejection | Metadosis H-1..H-3/M-1..M-2 production-interface evidence; process E2E still required |
+| `crates/blockchain/evm/tests/ocomp_request_lifecycle.rs` | Canonical proposer/import/historical-replay blocks cover request, certified finality, open, expiry, retry and a q-forming block containing three public vote transactions | PFS-002 and Metadosis production-adapter evidence; not a four-process closure run or a replacement for the removed PFS-009 day walk |
+| `testing/e2e/tests/governance_lifecycle.rs` | Vote lifecycle and duplicate-ballot invariants | Partial PFS-005 |
+| `testing/e2e/tests/update_flow_spec.rs` | Update scheduling, activation and ordering/error edges | Partial PFS-005 |
 | `crates/core/credisfactory/src/tests/e2e.rs` | Pledge, Credis repayments and reclaim plus invalid-input edges | Partial PFS-003 |
 | `crates/core/tributefactory/src/tests.rs` (`l2_zk_gate`) and `crates/system/l2registry/src/tests.rs` | L2Registry registration/toggle/removal invariants and the offer-time BLS zk signature gate (all check outcomes) | Partial PFS-001-10/-11 |
 | `crates/blockchain/evm/tests/e2e_system_tx.rs` | System-transaction ordering, wire layout and gas behavior | ADR-level blockchain evidence; not a complete PFS |
@@ -40,13 +40,14 @@ Run these with their owning Cargo packages. They compose production modules in
 one process, so they cannot prove networking, finality, restart, projection or
 multi-node convergence unless a matrix row explicitly says otherwise.
 
-## Declared OCOMP gap
+## Pending OCOMP/Metadosis process evidence
 
-No current live multi-node feature implements PFS-002's
+The implementation and focused production-adapter tests exist, but no
+exact-revision Linux evidence bundle from the full four-validator
 request→finality→export→independent execution→full-result votes→q-forming apply
-path. The future harness feature must use four separate validator domains and
-map its scenario tags to PFS-002 and `POC-01..POC-26`; the existing synchronous
-in-process test cannot be relabeled as that evidence.
+run is checked in by this change. External closure must use four separate
+validator domains and the indexed OCOMP/Metadosis packs; direct Lysis fixtures
+cannot be relabeled as that evidence.
 
 ## Foundry contract suites
 

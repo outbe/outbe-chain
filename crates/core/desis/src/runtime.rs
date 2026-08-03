@@ -37,25 +37,57 @@ pub fn record_brief(
     is_green: bool,
     now: u64,
 ) -> Result<()> {
+    let anchor = preflight_brief(&storage, worldwide_day, now)?;
+    record_preflighted_brief(
+        storage,
+        worldwide_day,
+        supply_promis,
+        entry_price,
+        is_green,
+        anchor,
+    )
+}
+
+/// Validate every technical prerequisite before the API may classify an
+/// oversized supply as the sole committed business rejection.
+pub(crate) fn preflight_brief(
+    storage: &StorageHandle<'_>,
+    worldwide_day: u32,
+    now: u64,
+) -> Result<u32> {
     if worldwide_day == 0 {
         return Err(DesisError::InvalidWorldwideDay(0).into());
     }
-    let mut contract = storage.contract::<DesisContract>();
+    let contract = storage.contract::<DesisContract>();
     if contract.read_stage(worldwide_day)? != AuctionStage::None {
         return Err(DesisError::InvalidStageTransition.into());
     }
     // Anchor to this midnight while it still leaves the minimum commit window;
     // a late brief (stall past midnight) anchors to the next one instead.
     let midnight = now - now % SECONDS_PER_DAY;
-    let anchor_ts =
-        if COMMIT_WINDOW_SECONDS.saturating_sub(now - midnight) >= MIN_COMMIT_WINDOW_SECONDS {
-            midnight
-        } else {
-            midnight + SECONDS_PER_DAY
-        };
-    let anchor = u32::try_from(anchor_ts)
-        .map_err(|_| PrecompileError::Revert("brief anchor exceeds u32".into()))?;
+    let elapsed = now.checked_sub(midnight).ok_or_else(|| {
+        PrecompileError::Fatal("brief timestamp precedes its UTC midnight".into())
+    })?;
+    let remaining = COMMIT_WINDOW_SECONDS.saturating_sub(elapsed);
+    let anchor_ts = if remaining >= MIN_COMMIT_WINDOW_SECONDS {
+        midnight
+    } else {
+        midnight
+            .checked_add(SECONDS_PER_DAY)
+            .ok_or_else(|| PrecompileError::Revert("brief anchor timestamp overflow".into()))?
+    };
+    u32::try_from(anchor_ts).map_err(|_| PrecompileError::Revert("brief anchor exceeds u32".into()))
+}
 
+pub(crate) fn record_preflighted_brief(
+    storage: StorageHandle<'_>,
+    worldwide_day: u32,
+    supply_promis: u128,
+    entry_price: U256,
+    is_green: bool,
+    anchor: u32,
+) -> Result<()> {
+    let mut contract = storage.contract::<DesisContract>();
     contract.write_auction_config(worldwide_day, &AuctionConfig::from_entry_price(entry_price))?;
     contract.write_stage(worldwide_day, AuctionStage::Briefed)?;
     contract
@@ -289,10 +321,8 @@ fn start_auction(
         return Ok(StartOutcome::Retired);
     }
     if now >= commit_end {
-        contract.emit(IDesis::AuctionDispatchFailed {
+        contract.emit(IDesis::AuctionOverdue {
             worldwideDay: worldwide_day,
-            stage: "auction_stage_start".into(),
-            reason: "commit window elapsed".into(),
         })?;
         contract.write_stage(worldwide_day, AuctionStage::Cancelled)?;
         refund_unsold_supply(storage, contract, worldwide_day)?;

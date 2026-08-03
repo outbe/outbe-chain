@@ -55,6 +55,9 @@ pub enum TeeError {
 
     #[error("offer rejected: {0}")]
     TributeOfferReject(String),
+
+    #[error("fidelity: {0}")]
+    Fidelity(String),
 }
 
 pub type Result<T> = core::result::Result<T, TeeError>;

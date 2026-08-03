@@ -26,6 +26,8 @@ tracing.workspace = true
 proptest.workspace = true
 outbe-common.workspace = true
 outbe-offchain-storage.workspace = true
+outbe-metadosis = { workspace = true, features = ["test-utils"] }
+outbe-promislimit.workspace = true
 
 [lints]
 workspace = true

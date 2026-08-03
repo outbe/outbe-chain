@@ -20,7 +20,7 @@ use outbe_consensus::{
     ocomp_retention::OcompRetentionHook,
 };
 use outbe_metadosis::{
-    ocomp::schema::poc_schema_limits, precompile::IMetadosis, schema::OCOMP_JOB_RECORDS_BASE_SLOT,
+    config::poc_schema_limits, precompile::IMetadosis, proof_layout::OCOMP_JOB_RECORDS_BASE_SLOT,
 };
 use outbe_ocomp_protocol::{
     common::{BoundedBytes, ProofBytes},

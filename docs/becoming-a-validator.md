@@ -2,10 +2,10 @@
 
 There are two node roles:
 
-- **Full node** — `outbe-chain node` (no `--validator`). Syncs the chain over the
-  execution devp2p network, re-executes blocks, serves RPC. No consensus thread,
-  no BLS key, not in the consensus mesh, not registered on-chain. Trusts finality
-  (`phase1VerificationMode = trustedFinality`). It does not vote or propose.
+- **Full node** — `outbe-chain node` (no `--validator`). It has a persistent
+  compressed Reth P2P identity registered through TeeRegistry V1, follows a
+  selected certified `--upstream`, re-executes blocks and serves RPC. It does not
+  vote or propose and needs no consensus BLS key.
 
 - **Validator** — `outbe-chain node --validator`. This is **one** role with a
   lifecycle. The node always runs `--validator`; what it does depends on whether it
@@ -24,21 +24,18 @@ Validators that still hold a BLS share vote and remain accountable in the curren
 committee: ACTIVE, EXITING, and temporarily JAILED until the next reshare clears
 that share.
 
-> **The TEE enclave is required to process tribute offers.** Offers are encrypted
-> to the chain's offer key and decrypt **only inside the TEE enclave** — there is no
-> in-process key path. Any node that executes blocks containing offers (a full node
-> or a validator) needs a healthy enclave holding the offer key, installed with
-> `outbe-cli tee join`. Without it an `offerTribute` tx reverts, and a node that
-> reverts an offer the network accepted would diverge on the state root and could
-> not follow the chain. (Dispensable only on a chain that carries no offers.) DKG
-> consensus key material is separate and lives in `--consensus.keys-dir`, not in the
-> enclave.
+> **The TEE enclave is mandatory for every V1 chain and every node role.** The
+> ChainSpec must contain `teeAttestationV1`, and startup requires
+> `--tee-enclave-socket`. A node that does not hold the exact permanent offer key
+> cannot participate in consensus or execute canonical transactions. There is no
+> in-process stub, tee-less chain or offer-free exception. DKG consensus key
+> material is separate and lives in `--consensus.keys-dir`, not in the enclave.
 
-> **Verified vs documented.** The validator path below — register → follow → stake →
-> confirm-ready → reshare → ACTIVE, restart-recovery, and exit — is exercised
-> end-to-end by `crates/testing/e2e-harness` on a gramine-**mock** localnet (no real SGX/MRENCLAVE
-> attestation). The bare `--validator`-off full node is supported by the binary but
-> is not covered by those tests.
+> **Evidence boundary.** The reachable restart path is exercised on the isolated
+> `GramineDirectDev` mock localnet and proves development behavior only. Deterministic
+> tests cover Validator and FullNode V1 admission and fail-closed startup seams.
+> Real exact-release `DcapRequired` Validator, FullNode and 32-validator E2E remains
+> a mandatory I9 hardware gate.
 
 ---
 
@@ -50,11 +47,12 @@ cargo build --release -p outbe-cli    --bin outbe-cli      # operator CLI
 cargo build --release -p outbe-keygen --bin outbe-keygen   # key generation
 ```
 
-- The genesis bundle: `genesis.json`, the reth bootnode list, and — for a validator
+- The genesis bundle: `genesis.json` with mandatory `teeAttestationV1`, the Reth bootnode list, and — for a validator
   (it joins the consensus mesh) — the network's **public** DKG artifacts
   `polynomial.hex` and `dkg-output.hex` (public, no secret share).
-- The `outbe-tee-enclave` sidecar (real SGX under gramine in production; a mock
-  binary on localnet). Required to execute tribute offers.
+- The `outbe-tee-enclave` sidecar (the exact accepted `gramine-sgx` release in
+  production; an explicit GramineDirectDev binary on localnet). It must be running
+  before `tee join` or node startup.
 - For testnet, deploy the exact Cosign-verified enclave image digest and compare its
   signed ReleaseManifest measurements by following
   [Testnet SGX release and rollout](testnet-sgx-release.md). Do not build or sign the
@@ -68,20 +66,40 @@ transactions and public keys go over the wire.
 
 ## 1. Full node (sync + RPC only)
 
-Run the node **without** `--validator`. On an offer-bearing chain it still needs an
-enclave with the offer key:
+Run the node **without** `--validator`. It must first register its persistent Reth
+P2P identity and install the one-time permanent-key artifact. The node data
+directory passed to `tee join` must be the same resolved chain-specific directory
+that `outbe-chain` uses. The P2P secret file must also be the same one used by the
+node.
 
 ```sh
-# install the offer key into your enclave (needs only a funded EOA, not a validator):
+RETH_P2P_SECRET=/var/lib/outbe/reth-p2p-secret.hex
+NODE_DATA_DIR=/var/lib/outbe/<resolved-chain-data-dir>
+BINDING_ID=0x$(openssl rand -hex 32)
+VALID_UNTIL=$(( $(date -u +%s) + 86400 ))
+
+# The exact release enclave is already running at 127.0.0.1:7000.
+# RELAY_EVM_KEY is only a funded transaction relay; the P2P key is node authority.
 outbe-cli tee join --enclave-socket 127.0.0.1:7000 \
-  --private-key "$EVM_KEY" --rpc-url http://<rpc>:8545 --timeout-secs 60
+  --profile full-node \
+  --node-data-dir "$NODE_DATA_DIR" \
+  --reth-p2p-secret-key "$RETH_P2P_SECRET" \
+  --binding-id "$BINDING_ID" --valid-until "$VALID_UNTIL" \
+  --private-key "$RELAY_EVM_KEY" \
+  --rpc-url http://<certified-rpc>:8545 --timeout-secs 60
 
 outbe-chain node \
   --chain /path/to/genesis.json --datadir /var/lib/outbe \
+  --p2p-secret-key "$RETH_P2P_SECRET" \
   --bootnodes "<enode URLs>" \
+  --upstream http://<selected-certified-upstream>:8545 \
   --http --http.addr 127.0.0.1 --http.port 8545 --http.api eth,net,web3,outbe \
   --tee-enclave-socket 127.0.0.1:7000
 ```
+
+`tee join` must finish successfully before the FullNode process starts. At
+startup the node reads the upstream canonical 32-byte offer key, requires a
+ready nonzero resident key and compares them exactly before launching Reth.
 
 > **RPC exposure.** Examples bind RPC to `127.0.0.1` and enable only the
 > `eth,net,web3,outbe` modules. Never add `admin` or `debug` to `--http.api` on a
@@ -118,7 +136,7 @@ VALIDATOR_ADDR=$(cast wallet address --private-key "$EVM_KEY")
 
 Keep `signing-key.hex` / `evm-key.hex` secret and backed up.
 
-### 2.2 Register, announce P2P, install the offer key (one-time)
+### 2.2 Register, announce P2P, and install the offer key once
 
 ```sh
 # register the validator (binds your address to your BLS pubkey) -> REGISTERED
@@ -131,10 +149,26 @@ outbe-cli validator register --pubkey "0x$BLS_PUBKEY" --bls-sig "0x$SIG" \
 outbe-cli validator set-p2p --symmetric <public-host>:30400 \
   --private-key "$EVM_KEY" --rpc-url http://<rpc>:8545
 
-# start the enclave sidecar, then install the offer key (run BEFORE the node)
+# Start the exact accepted enclave sidecar first. Then bind its V1 identity and
+# install the permanent key before running this joining node.
+NODE_DATA_DIR=/var/lib/outbe/<resolved-chain-data-dir>
+BINDING_ID=0x$(openssl rand -hex 32)
+VALID_UNTIL=$(( $(date -u +%s) + 86400 ))
 outbe-cli tee join --enclave-socket 127.0.0.1:7000 \
-  --private-key "$EVM_KEY" --rpc-url http://<rpc>:8545 --timeout-secs 60
+  --profile validator \
+  --node-data-dir "$NODE_DATA_DIR" \
+  --node-private-key "$EVM_KEY" \
+  --consensus-bls-public "0x$BLS_PUBKEY" \
+  --binding-id "$BINDING_ID" --valid-until "$VALID_UNTIL" \
+  --private-key "$RELAY_EVM_KEY" \
+  --rpc-url http://<certified-rpc>:8545 --timeout-secs 60
 ```
+
+The relay and validator keys may belong to different accounts; admission authority
+comes from the Validator NodeHost signature and canonical evidence, not
+`msg.sender`. A Created registration emits one matching
+`OfferKeySealedForRegistryV1`; idempotent replay, renewal and replacement never
+redeliver it.
 
 Registration admits your node to the consensus mesh as a non-voting peer; it does
 not by itself make you a voting validator (no stake, no share yet). The non-voting
@@ -226,9 +260,10 @@ the difference is only whether the node already holds a share.
 In both cases, if the node is still waiting on a DKG reshare (you just registered, or
 a restarted node missed the ceremony it needed), the normal action is simply to **wait
 for the next periodic reshare** — it re-reads the active + confirmed set each epoch and
-picks you up. There is no normal on-demand reshare request; the only way to force one
-is the disaster-recovery flag `--testnet.force-dkg` (testnet/devnet only, for when all
-validators have lost key material — rejected on mainnet).
+picks you up. There is no on-demand or forced DKG path. In particular, losing the
+permanent enclave offer key never starts DKG or reshare: that NodeId is lost and
+cannot receive the key again. Continuing requires an independently admitted new
+node identity; the old identity cannot be recovered or replaced.
 
 ---
 
@@ -273,8 +308,8 @@ outbe-cli validator deactivate --private-key "$EVM_KEY" --rpc-url http://<rpc>:8
 ```
 
 Moves you ACTIVE → **EXITING** immediately; you keep signing until the next reshare,
-which excludes you (EXITING → **UNBONDING**, share cleared). Your node then **falls
-back to the share-less follower phase** of the smaller committee — it stays online
+which excludes you (EXITING → **UNBONDING**, share cleared). Your node then
+**transitions to the share-less follower phase** of the smaller committee — it stays online
 following finality rather than shutting down. Stop the process to leave entirely.
 
 Unstake / withdraw:
@@ -311,11 +346,12 @@ address for the local BLS key, or execution history with no durable consensus
 finalization evidence. For details and operator actions, see
 [`consensus-restart-recovery.md`](consensus-restart-recovery.md).
 
-For the enclave: with sealing (`--tee-dir <path>` + `--chain-id`) the sidecar restores
-the **same** offer key across restarts — no fresh `tee join`. Without sealing (no
-`--tee-dir`, e.g. the gramine-direct mock localnet) a sidecar restart re-derives a
-**new** offer key and needs a fresh `tee join`; keep the sidecar running across a node
-restart in that case.
+For the enclave, production requires sealing (`--tee-dir <path>` + `--chain-id`) and
+restores the exact same permanent offer key. Missing, corrupt, wrong-chain or otherwise
+unsealable permanent-key state is terminal for that identity; there is no recovery,
+replacement, forced DKG or fallback. The separate GramineDirectDev chain may use an
+explicitly ephemeral enclave only for fresh development networks and is never a restart
+fallback for production.
 
 ---
 
@@ -339,16 +375,15 @@ restart in that case.
 | `--consensus.public-polynomial` / `--consensus.dkg-output` | public DKG artifacts to follow finality before holding a share                                                                                  |
 | `--consensus.keys-dir`                                     | where the DKG share/polynomial/output are persisted (default `<datadir>/keys`)                                                                  |
 | `--consensus.listen-addr` / `--consensus.peers`            | consensus P2P listen address / bootstrap hint `<bls_pubkey>@<host:port>`                                                                        |
-| `--tee-enclave-socket`                                     | enclave sidecar socket (needed to execute tribute offers); the node fail-fasts without a healthy attested enclave                               |
+| `--tee-enclave-socket`                                     | mandatory enclave sidecar endpoint; every V1 node fails startup if it is absent or cannot satisfy its genesis-fixed mode                        |
 | `--testnet.trust-el-head`                                  | disaster-recovery only: trust execution head when no durable consensus-finalized height exists (testnet/devnet; not normal production recovery) |
-| `--testnet.force-dkg`                                      | disaster-recovery only: force a fresh DKG when all validators lost key material (testnet/devnet, rejected on mainnet)                           |
 
 ### Operator commands
 
 | Command                                                     | Purpose                                                        |
 | ----------------------------------------------------------- | -------------------------------------------------------------- |
 | `outbe-keygen hybrid` / `show-pubkey` / `sign-registration` | generate keys / derive BLS pubkey / sign registration          |
-| `outbe-cli tee join`                                        | register the enclave + install the offer key (funded EOA only) |
+| `outbe-cli tee join`                                        | register an exact Validator or FullNode identity and ingest its one-time permanent-key artifact through any funded relay |
 | `outbe-cli validator register` / `set-p2p`                  | register (→ REGISTERED) / publish the P2P address              |
 | `outbe-cli staking stake` / `unstake` / `claim`             | stake (→ PENDING at `min_stake`) / unstake / withdraw          |
 | `outbe-cli staking unjail`                                  | return a JAILED validator → PENDING (stake ≥ min_stake)        |
@@ -361,8 +396,9 @@ restart in that case.
 
 ## Localnet quickstart
 
-The validator path end-to-end runs through the Rust/Cucumber harness on an
-isolated 4-validator gramine-mock localnet:
+The development validator path runs through the Rust/Cucumber harness on an
+isolated four-validator GramineDirectDev mock localnet. This is never hardware
+evidence:
 
 ```sh
 mise run e2e
@@ -370,5 +406,5 @@ mise run e2e
 
 The harness owns the node processes, enclave containers, port ranges, data
 directories, and a temporary MongoDB replica set. See
-`crates/testing/e2e-harness/README.md` for focused feature commands and debug
+`testing/e2e-harness/README.md` for focused feature commands and debug
 options.

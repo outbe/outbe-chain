@@ -27,7 +27,12 @@ k256 = { workspace = true, optional = true }
 
 [dev-dependencies]
 k256.workspace = true
+num-bigint.workspace = true
 outbe-offchain-storage.workspace = true
+proptest.workspace = true
+trybuild = "1"
+# Drive the confidential Fidelity league snapshot in tests via the in-process engine.
+outbe-fidelity = { workspace = true, features = ["test-enclave"] }
 
 [features]
 default = []

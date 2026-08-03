@@ -170,9 +170,14 @@ export const CONTRACTS: Record<string, ContractEntry> = {
 
   fidelity: {
     address: A("0x000000000000000000000000000000000000100C"),
-    note: "Fidelity RCFI",
+    note: "Fidelity RCFI (per-account index is owner-signature-gated; only the public scalars are callable here)",
     abi: parseAbi([
-      "function getRcfi(address account) view returns (uint64)",
+      "function getFidelityIndex(address account, uint64 expiry, bytes signature) view returns (uint256)",
+      "function getFidelityIndexAt(address account, uint64 timestamp, uint64 expiry, bytes signature) view returns (uint256)",
+      "function decimals() view returns (uint8)",
+      "function maxFidelityIndexAt(uint64 timestamp) view returns (uint256)",
+      "function minLeague() view returns (uint16)",
+      "function maxLeague() view returns (uint16)",
     ]),
   },
 
@@ -283,7 +288,9 @@ export const CONTRACTS: Record<string, ContractEntry> = {
     abi: parseAbi([
       "function isBootstrapped() view returns (bool)",
       "function tributeOfferPublicKey() view returns (uint256)",
-      "function registeredCount() view returns (uint256)",
+      "function tributeOfferEpoch() view returns (uint256)",
+      "function keyEpoch() view returns (uint256)",
+      "function activePolicyV1() view returns (bytes)",
     ]),
   },
 

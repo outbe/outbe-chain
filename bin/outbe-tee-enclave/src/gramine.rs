@@ -144,6 +144,53 @@ pub fn dcap_quote(report_data: &[u8; 64]) -> Result<Vec<u8>, String> {
     Ok(quote)
 }
 
+/// Decode one canonical registration intent and derive the exact 64-byte value
+/// that Gramine must place in the SGX report body. This boundary exists only in
+/// `dcap-fixture-capture` builds; production binaries do not expose arbitrary
+/// intent-driven quote generation.
+#[cfg(feature = "dcap-fixture-capture")]
+pub fn capture_report_data_from_intent(canonical_intent: &[u8]) -> Result<[u8; 64], String> {
+    use outbe_primitives::tee_attestation_v1::{AttestationMode, RegistrationIntentV1};
+
+    let intent = RegistrationIntentV1::decode_canonical(canonical_intent)
+        .map_err(|error| format!("decode canonical RegistrationIntentV1: {error}"))?;
+    if intent.attestation_mode != AttestationMode::DcapRequired {
+        return Err("capture intent does not require DCAP".to_owned());
+    }
+    intent
+        .report_data()
+        .map_err(|error| format!("derive RegistrationIntentV1 report_data: {error}"))
+}
+
+/// Capture a real DCAP quote for one canonical intent into a new output file.
+/// Both paths are expected to live in the Gramine capture work directory,
+/// which is mounted as an untrusted allowed file tree by the capture launcher.
+#[cfg(feature = "dcap-fixture-capture")]
+pub fn capture_dcap_quote_to_file(intent_path: &str, quote_path: &str) -> Result<(), String> {
+    use std::io::Write;
+
+    let canonical_intent =
+        fs::read(intent_path).map_err(|error| format!("read {intent_path}: {error}"))?;
+    let report_data = capture_report_data_from_intent(&canonical_intent)?;
+    let quote = dcap_quote(&report_data)?;
+    let measurements = parse_quote_measurements(&quote)?;
+    if measurements.report_data != report_data {
+        return Err("captured quote REPORT_DATA does not match the canonical intent".to_owned());
+    }
+
+    let mut output = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(quote_path)
+        .map_err(|error| format!("create {quote_path}: {error}"))?;
+    output
+        .write_all(&quote)
+        .map_err(|error| format!("write {quote_path}: {error}"))?;
+    output
+        .sync_all()
+        .map_err(|error| format!("sync {quote_path}: {error}"))
+}
+
 /// Read this enclave's REAL measurements (MRENCLAVE/MRSIGNER/ISVSVN) from a LOCAL
 /// SGX report (`/dev/attestation/report`), which Gramine produces via EREPORT with
 /// NO DCAP/PCCS provisioning — so it works under `gramine-sgx` even when remote

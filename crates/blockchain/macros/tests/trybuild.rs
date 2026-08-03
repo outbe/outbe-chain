@@ -9,4 +9,5 @@ fn compile_fail_contract_dispatch() {
     t.compile_fail("tests/compile_fail/view_and_payable_conflict.rs");
     t.compile_fail("tests/compile_fail/mutating_missing_caller.rs");
     t.compile_fail("tests/compile_fail/arg_count_mismatch.rs");
+    t.compile_fail("tests/compile_fail/payable_without_selectors.rs");
 }

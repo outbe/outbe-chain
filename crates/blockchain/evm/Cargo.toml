@@ -31,7 +31,7 @@ outbe-governance.workspace = true
 outbe-stablecoinpolicy.workspace = true
 outbe-stablecoin.workspace = true
 outbe-stablecoinfactory.workspace = true
-outbe-teeregistry.workspace = true
+outbe-teeregistry = { workspace = true, features = ["tee-attestation-v1"] }
 outbe-l2registry.workspace = true
 outbe-tee.workspace = true
 outbe-vote.workspace = true
@@ -78,6 +78,7 @@ reth-rpc-eth-api.workspace = true
 
 alloy-sol-types.workspace = true
 eyre.workspace = true
+serde.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
@@ -87,7 +88,7 @@ outbe-nod = { workspace = true, features = ["test-utils"] }
 alloy-sol-types.workspace = true
 alloy-rpc-types-engine.workspace = true
 outbe-offchain-storage.workspace = true
-outbe-primitives = { workspace = true, features = [] }
+outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-validatorset.workspace = true
 reth-basic-payload-builder.workspace = true
 reth-chainspec.workspace = true
@@ -101,6 +102,7 @@ k256.workspace = true
 proptest.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
+futures.workspace = true
 # proposer/validator determinism test: build a real BLS late-finalize
 # credit + committee snapshot to exercise verify+record on both paths.
 commonware-cryptography.workspace = true

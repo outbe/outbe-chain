@@ -68,8 +68,8 @@ pub fn parse_quote_measurements(quote: &[u8]) -> Result<ReportMeasurements, Stri
 /// async HTTP client out of the node's sync connect path. The default build does
 /// NOT enable `dcap`, so the dev box pulls no SGX/QVL deps and this returns an
 /// explicit error (a strict policy then cannot pass without the feature, by
-/// design); `dev_accept_any` / `dev_fallback_if_unattested` skip it under
-/// gramine-direct.
+/// design); the explicit `dev_accept_any` policy skips it only on the distinct
+/// gramine-direct development network.
 #[cfg(feature = "dcap")]
 pub fn verify_dcap_signature(quote: &[u8]) -> Result<(), String> {
     use std::time::{SystemTime, UNIX_EPOCH};

@@ -2,7 +2,7 @@
 
 use alloy_primitives::{B256, U256};
 use outbe_common::WorldwideDay;
-use outbe_metadosis::ocomp::state::{
+use outbe_metadosis::model::{
     transition_rules, DayPhase, JobFsmCommand, JobFsmLimits, JobFsmState, JobFsmTransitionKind,
     ReadyAttemptSnapshot, RequestEffectMode,
 };
@@ -307,82 +307,7 @@ fn generated_sequences_match_independent_model_and_registered_transition_table()
 
     for operation_index in 0..512_u64 {
         let value = next_random(&mut random);
-        let projection = production.projection();
-        let command = match projection.phase {
-            DayPhase::Ready => {
-                let due = projection.next_check_height.unwrap();
-                let at_height = if value & 1 == 0 {
-                    due
-                } else {
-                    due.saturating_sub(1)
-                };
-                if value & 0x10 == 0 {
-                    JobFsmCommand::Defer {
-                        at_height,
-                        next_check_height: if value & 4 == 0 {
-                            at_height.saturating_add(1 + value % 8)
-                        } else {
-                            at_height
-                        },
-                    }
-                } else {
-                    let valid_retry = projection.pending_nonce == 0 || value & 2 == 0;
-                    JobFsmCommand::Request {
-                        at_height,
-                        intent_id: B256::from(U256::from(operation_index + 1)),
-                        lysis_budget: if valid_retry {
-                            LYSIS_BUDGET
-                        } else {
-                            LYSIS_BUDGET + U256::from(1)
-                        },
-                        request_budget_receipt_hash: if valid_retry {
-                            RECEIPT_HASH
-                        } else {
-                            B256::repeat_byte(0x52)
-                        },
-                    }
-                }
-            }
-            DayPhase::OffchainPending => match projection.deadline_height {
-                None => {
-                    let requested_height = production
-                        .snapshot()
-                        .live
-                        .expect("pending snapshot")
-                        .requested_height;
-                    JobFsmCommand::OpenVoting {
-                        at_height: if value & 1 == 0 {
-                            requested_height.saturating_add(4)
-                        } else {
-                            requested_height
-                        },
-                        deadline_height: if value & 4 == 0 {
-                            requested_height.saturating_add(8)
-                        } else {
-                            requested_height
-                        },
-                    }
-                }
-                Some(deadline) if value & 8 == 0 => JobFsmCommand::Request {
-                    at_height: deadline,
-                    intent_id: B256::from(U256::from(operation_index + 1)),
-                    lysis_budget: LYSIS_BUDGET,
-                    request_budget_receipt_hash: RECEIPT_HASH,
-                },
-                Some(deadline) if value & 0x10 == 0 => JobFsmCommand::Conflict {
-                    at_height: deadline.saturating_sub(1),
-                    at_time: 1_753_315_200 + operation_index,
-                },
-                Some(deadline) => JobFsmCommand::Expire {
-                    at_height: if value & 1 == 0 {
-                        deadline
-                    } else {
-                        deadline - 1
-                    },
-                    at_time: 1_753_315_200 + operation_index,
-                },
-            },
-        };
+        let command = generate_command(&production, value, operation_index);
 
         let production_before = production.clone();
         let model_before = model;
@@ -398,35 +323,180 @@ fn generated_sequences_match_independent_model_and_registered_transition_table()
             assert_eq!(model, model_before);
         }
 
-        let projection = production.projection();
-        match model.phase {
-            ModelPhase::Ready {
-                pending_nonce,
-                next_check_height,
-                retained_effect,
-            } => {
-                assert_eq!(projection.phase, DayPhase::Ready);
-                assert_eq!(projection.pending_nonce, pending_nonce);
-                assert_eq!(projection.next_check_height, Some(next_check_height));
-                assert_eq!(
-                    projection.retained_lysis_budget,
-                    retained_effect.then_some(LYSIS_BUDGET)
-                );
-            }
-            ModelPhase::Pending {
-                pending_nonce,
-                requested_height: _,
-                deadline_height,
-            } => {
-                assert_eq!(projection.phase, DayPhase::OffchainPending);
-                assert_eq!(projection.pending_nonce, pending_nonce);
-                assert_eq!(projection.deadline_height, deadline_height);
-                assert_eq!(projection.retained_lysis_budget, Some(LYSIS_BUDGET));
-            }
-        }
-        assert_eq!(projection.terminal_records, model.terminal_records);
+        assert_model_parity(&production, &model);
         assert_eq!(production.validate(limits), Ok(()));
     }
+}
+
+fn generate_command(production: &JobFsmState, value: u64, operation_index: u64) -> JobFsmCommand {
+    let projection = production.projection();
+    match projection.phase {
+        DayPhase::Ready => {
+            let due = projection.next_check_height.unwrap();
+            let at_height = if value & 1 == 0 {
+                due
+            } else {
+                due.saturating_sub(1)
+            };
+            if value & 0x10 == 0 {
+                JobFsmCommand::Defer {
+                    at_height,
+                    next_check_height: if value & 4 == 0 {
+                        at_height.saturating_add(1 + value % 8)
+                    } else {
+                        at_height
+                    },
+                }
+            } else {
+                let valid_retry = projection.pending_nonce == 0 || value & 2 == 0;
+                JobFsmCommand::Request {
+                    at_height,
+                    intent_id: B256::from(U256::from(operation_index + 1)),
+                    lysis_budget: if valid_retry {
+                        LYSIS_BUDGET
+                    } else {
+                        LYSIS_BUDGET + U256::from(1)
+                    },
+                    request_budget_receipt_hash: if valid_retry {
+                        RECEIPT_HASH
+                    } else {
+                        B256::repeat_byte(0x52)
+                    },
+                }
+            }
+        }
+        DayPhase::OffchainPending => match projection.deadline_height {
+            None => {
+                let requested_height = production
+                    .snapshot()
+                    .live
+                    .expect("pending snapshot")
+                    .requested_height;
+                JobFsmCommand::OpenVoting {
+                    at_height: if value & 1 == 0 {
+                        requested_height.saturating_add(4)
+                    } else {
+                        requested_height
+                    },
+                    deadline_height: if value & 4 == 0 {
+                        requested_height.saturating_add(8)
+                    } else {
+                        requested_height
+                    },
+                }
+            }
+            Some(deadline) if value & 8 == 0 => JobFsmCommand::Request {
+                at_height: deadline,
+                intent_id: B256::from(U256::from(operation_index + 1)),
+                lysis_budget: LYSIS_BUDGET,
+                request_budget_receipt_hash: RECEIPT_HASH,
+            },
+            Some(deadline) if value & 0x10 == 0 => JobFsmCommand::Conflict {
+                at_height: deadline.saturating_sub(1),
+                at_time: 1_753_315_200 + operation_index,
+            },
+            Some(deadline) => JobFsmCommand::Expire {
+                at_height: if value & 1 == 0 {
+                    deadline
+                } else {
+                    deadline - 1
+                },
+                at_time: 1_753_315_200 + operation_index,
+            },
+        },
+    }
+}
+
+fn assert_model_parity(production: &JobFsmState, model: &IndependentModel) {
+    let projection = production.projection();
+    match model.phase {
+        ModelPhase::Ready {
+            pending_nonce,
+            next_check_height,
+            retained_effect,
+        } => {
+            assert_eq!(projection.phase, DayPhase::Ready);
+            assert_eq!(projection.pending_nonce, pending_nonce);
+            assert_eq!(projection.next_check_height, Some(next_check_height));
+            assert_eq!(
+                projection.retained_lysis_budget,
+                retained_effect.then_some(LYSIS_BUDGET)
+            );
+        }
+        ModelPhase::Pending {
+            pending_nonce,
+            requested_height: _,
+            deadline_height,
+        } => {
+            assert_eq!(projection.phase, DayPhase::OffchainPending);
+            assert_eq!(projection.pending_nonce, pending_nonce);
+            assert_eq!(projection.deadline_height, deadline_height);
+            assert_eq!(projection.retained_lysis_budget, Some(LYSIS_BUDGET));
+        }
+    }
+    assert_eq!(projection.terminal_records, model.terminal_records);
+}
+
+/// Two WorldwideDays' FSMs share no state: an interleaved generated sequence
+/// must evolve each day exactly as if it ran alone, and one day's terminal
+/// budget must not constrain the other's. This freezes the per-day cap
+/// semantics at the model level.
+#[test]
+fn two_worldwide_days_generated_sequences_stay_independent() {
+    let limits = JobFsmLimits {
+        max_terminal_records: 16,
+    };
+    let other_wwd = outbe_common::WorldwideDay::new(WWD.value() + 1);
+    let mut lanes = [
+        (
+            JobFsmState::initial_ready(WWD, REQUEST_HEIGHT),
+            IndependentModel::initial(),
+        ),
+        (
+            JobFsmState::initial_ready(other_wwd, REQUEST_HEIGHT),
+            IndependentModel::initial(),
+        ),
+    ];
+    let mut random = GENERATED_SEQUENCE_SEED ^ 0x0002;
+
+    for operation_index in 0..512_u64 {
+        let lane_index = usize::try_from(next_random(&mut random) & 1).unwrap();
+        let value = next_random(&mut random);
+        let other_before = lanes[1 - lane_index].clone();
+
+        let (production, model) = &mut lanes[lane_index];
+        let command = generate_command(production, value, operation_index);
+        let production_before = production.clone();
+        let model_before = *model;
+        let actual = production.apply(command, limits);
+        let expected = model.apply(command, limits);
+        assert_eq!(
+            actual.is_ok(),
+            expected.is_ok(),
+            "lane={lane_index}, operation={operation_index}, command={command:?}"
+        );
+        if actual.is_err() {
+            assert_eq!(*production, production_before);
+            assert_eq!(*model, model_before);
+        }
+        assert_model_parity(production, model);
+        assert_eq!(production.validate(limits), Ok(()));
+
+        // The untouched day must be byte-identical: no shared budget, no
+        // shared index, no cross-day coupling of any kind.
+        assert_eq!(lanes[1 - lane_index], other_before);
+    }
+
+    // Each day owns its full terminal budget independently: their combined
+    // history may exceed one day's cap, which the former global index forbade.
+    let combined: u32 = lanes
+        .iter()
+        .map(|(production, _)| u32::from(production.projection().terminal_records))
+        .sum();
+    assert!(
+        combined <= 2 * u32::from(limits.max_terminal_records),
+        "combined history is bounded only by the sum of per-day caps"
+    );
 }
 
 #[test]

@@ -84,7 +84,7 @@ impl<'storage> StorageHandle<'storage> {
         C::at(self.clone(), address)
     }
 
-    fn with_provider<R>(
+    pub(super) fn with_provider<R>(
         &self,
         f: impl FnOnce(&mut dyn PrecompileStorageProvider) -> Result<R>,
     ) -> Result<R> {
@@ -98,6 +98,10 @@ impl<'storage> StorageHandle<'storage> {
 
     pub fn chain_id(&self) -> Result<u64> {
         self.with_provider(|provider| Ok(provider.chain_id()))
+    }
+
+    pub fn genesis_hash(&self) -> Result<B256> {
+        self.with_provider(|provider| Ok(provider.genesis_hash()))
     }
 
     pub fn timestamp(&self) -> Result<U256> {

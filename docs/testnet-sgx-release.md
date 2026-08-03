@@ -1,12 +1,22 @@
-# Testnet SGX release and rollout
+# Testnet SGX/DCAP release and rollout
 
-This guide releases the same enclave bytes that were independently reproduced, signs the
-Gramine bundle with the protected testnet key, publishes an immutable OCI image, executes
-that exact digest on hardware SGX and emits a signed `ReleaseManifest.json`.
+This guide defines the release mechanics for the same enclave bytes that were
+independently reproduced, signed with the protected testnet key, published as an
+immutable OCI image and executed on Intel SGX x86_64.
 
-It is a testnet process. The current Gramine contract uses local SGX measurements and
-EGETKEY sealing with `sgx.remote_attestation = "none"`; it does not claim DCAP quote or
-Intel collateral verification.
+> **DCAP activation gate.** The checked-in release bundle is still the
+> pre-activation SGX lane with `sgx.remote_attestation = "none"`. It is not a
+> valid `DcapRequired` release and must not be rolled out to a production-mode
+> genesis. I9 B1 must first freeze the exact `native-dcap` bundle with Intel QVL
+> `1.26.100.1-noble1` and Gramine `1.9`; H1, P1 and E1 must then prove fresh
+> accepted Processor and registered multi-package Platform evidence, exact-release
+> timing, and real Validator/FullNode/32-validator E2E. Missing hardware or either
+> accepted CA result blocks release rather than skipping it.
+
+The commands below remain the intended protected publication workflow. Until the
+I9 closure checkpoint names the exact signed commit and artifact digests, they are
+release-mechanics documentation only, not authorization to publish a production
+DCAP image.
 
 ## One-time repository setup
 
@@ -115,9 +125,12 @@ gh run list --repo outbe/outbe-chain --workflow testnet-release.yml --limit 5
 gh run watch --repo outbe/outbe-chain <run-id> --exit-status
 ```
 
-The ordered gates are two independent ELF builds, two unsigned SGX bundle builds,
-protected SIGSTRUCT signing, exact-digest OCI publication and Cosign signing, SPDX SBOM,
-hardware-SGX Rust/Gherkin acceptance, final schema validation and ReleaseManifest signing.
+The final DCAP-capable workflow must order two independent ELF builds, two
+unsigned SGX bundle builds, protected SIGSTRUCT signing, exact-digest OCI
+publication and Cosign signing, SPDX SBOM, fail-not-skip hardware SGX/DCAP
+acceptance, final schema validation and ReleaseManifest signing. The current
+pre-activation workflow does not satisfy this paragraph until B1 through E1 are
+closed.
 The OCI job provisions pinned Buildx v0.35.0 and a digest-pinned BuildKit v0.31.2
 `docker-container` builder because the default Docker driver cannot emit the required
 BuildKit provenance and SBOM attestations.
@@ -203,19 +216,18 @@ For a normal same-signer upgrade:
 1. Create and pass the complete new release; never sign a locally modified bundle.
 2. Require the same MRSIGNER, a strictly non-decreasing ISVSVN and the reviewed new
    MRENCLAVE.
-3. Before rollout, authorize an overlap containing old and new MRENCLAVE in the network's
-   measurement policy. Current testnet measurement enforcement is incomplete, so operators
-   must also compare the manifest and hardware evidence explicitly; this guide does not
-   turn the existing registration stub into a security claim.
+3. Before rollout, pass the governance proposal whose activation height authorizes
+   an overlap containing old and new MRENCLAVE in the V1 policy schedule. Verify the
+   canonical policy hash and exact release hardware evidence before that height.
 4. Roll the exact image digest through full nodes and validators. Both roles require an
    enclave on an offer-bearing network because both re-execute Tribute transactions.
 5. Verify same-signer sealed-state restoration and normal node readiness after each cohort.
 6. Retire the old MRENCLAVE only after every required node has moved and rollback policy is
    closed.
 
-A different MRSIGNER does not silently inherit old sealed identity. Treat signer rotation
-as a separate governed migration: prepare an authenticated handoff or rebootstrap, approve
-the new authority and release identity, and explicitly coordinate activation. Restarting
+A different MRSIGNER does not inherit the old sealed identity or permanent offer key.
+There is no handoff, rebootstrap or governance replacement for that identity: it must
+onboard as a new identity under an independently approved release policy. Restarting
 containers is not a signer-rotation procedure.
 
 ## Local tooling

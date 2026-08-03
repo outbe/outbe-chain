@@ -10,10 +10,10 @@
 //!   payload = tribute_offer_secret(32) ‖ group_sig_len u16 LE ‖ group_sig_bytes
 //! ```
 //!
-//! The blob seals the DKG-derived offer secret **and** the group threshold
-//! signature (Seam F output), so a restart restores both: the offer key re-derives
-//! immediately, and the resident `group_sig` lets the enclave re-derive any epoch's
-//! offer key and serve a committee key-handoff without re-running the DKG.
+//! The blob seals the DKG-derived offer secret and group threshold signature
+//! (Seam F output), so restart restores the exact permanent key. The resident
+//! signature is also the enclave-only input to deterministic registry onboarding;
+//! it is never a peer recovery or key-replacement capability.
 //!
 //! The sealing key comes from SGX `EGETKEY` with `KEYPOLICY=MRSIGNER` (so a new
 //! enclave of the same signer can unseal across updates). In mock mode it is a
@@ -33,9 +33,9 @@ use crate::errors::{Result, TeeError};
 /// Boot-time configuration the sealing path needs, built once at startup from CLI
 /// args and consumed by the seal-on-bootstrap / unseal-on-restart path:
 /// which chain the seed is bound to (AAD), where the sealed blob lives,
-/// and the running enclave SVN (anti-rollback floor). When absent (no
-/// `--tee-dir`), sealing is disabled and the offer key is re-derived from the DKG
-/// each boot.
+/// and the running enclave SVN (anti-rollback floor). Production requires this
+/// configuration; only the separate development process may omit it and remain
+/// non-durable/keyless until its fresh founding ceremony.
 #[derive(Clone, Debug)]
 pub struct EnclaveBootConfig {
     pub chain_id: B256,
@@ -57,6 +57,11 @@ impl EnclaveBootConfig {
     /// (`<tee-dir>/sealed_root.bin`).
     pub fn sealed_root_path(&self) -> PathBuf {
         self.tee_dir.join("sealed_root.bin")
+    }
+
+    /// Write-once sealed NodeHost authorization installed by I2 initialization.
+    pub fn sealed_node_authorization_path(&self) -> PathBuf {
+        self.tee_dir.join("sealed_node_authorization_v1.bin")
     }
 }
 
@@ -157,16 +162,18 @@ fn aes256gcm_decrypt(
     nonce: &[u8; 12],
     aad: &[u8],
     ciphertext: &[u8],
-) -> Result<Vec<u8>> {
+) -> Result<Zeroizing<Vec<u8>>> {
     use aead::BoundKey;
     let unbound = aead::UnboundKey::new(&aead::AES_256_GCM, key)
         .map_err(|_| TeeError::SealedBlobUnsealFailed)?;
     let mut opening = aead::OpeningKey::new(unbound, OneNonce::new(*nonce));
-    let mut in_out = ciphertext.to_vec();
-    let plaintext = opening
+    let mut in_out = Zeroizing::new(ciphertext.to_vec());
+    let plaintext_len = opening
         .open_in_place(aead::Aad::from(aad), &mut in_out)
-        .map_err(|_| TeeError::SealedBlobUnsealFailed)?;
-    Ok(plaintext.to_vec())
+        .map_err(|_| TeeError::SealedBlobUnsealFailed)?
+        .len();
+    in_out.truncate(plaintext_len);
+    Ok(in_out)
 }
 
 /// Encode the sealed payload: `tribute_offer_secret(32) ‖ group_sig_len u16 LE ‖ group_sig`.
@@ -189,25 +196,25 @@ fn encode_sealed_payload(
 }
 
 /// Decode a sealed payload into `(tribute_offer_secret, group_sig_bytes)`, length-checked.
-fn decode_sealed_payload(pt: &[u8]) -> Result<([u8; 32], Vec<u8>)> {
+fn decode_sealed_payload(pt: &[u8]) -> Result<(Zeroizing<[u8; 32]>, Zeroizing<Vec<u8>>)> {
     if pt.len() < 34 {
         return Err(TeeError::SealedBlobBadPayload(pt.len()));
     }
-    let mut tribute_offer_secret = [0u8; 32];
-    tribute_offer_secret.copy_from_slice(&pt[..32]);
     let mut len_bytes = [0u8; 2];
     len_bytes.copy_from_slice(&pt[32..34]);
     let group_sig_len = u16::from_le_bytes(len_bytes) as usize;
     if pt.len() != 34 + group_sig_len {
         return Err(TeeError::SealedBlobBadPayload(pt.len()));
     }
-    Ok((tribute_offer_secret, pt[34..].to_vec()))
+    let mut tribute_offer_secret = Zeroizing::new([0u8; 32]);
+    tribute_offer_secret.copy_from_slice(&pt[..32]);
+    let group_sig = Zeroizing::new(pt[34..].to_vec());
+    Ok((tribute_offer_secret, group_sig))
 }
 
-/// Seal the DKG-derived offer secret together with the group threshold signature
-/// into the on-disk blob. `group_sig` is the encoded Seam F signature; sealing it
-/// lets a restarted enclave re-derive the offer key for any epoch without re-running
-/// the DKG. `header.format_version` must be [`SEAL_FORMAT`].
+/// Seal the permanent DKG-derived offer secret together with the founding Seam F
+/// signature. Restart restores these exact bytes; it never derives a replacement
+/// key. `header.format_version` must be [`SEAL_FORMAT`].
 pub fn seal_tribute_offer_and_group_sig(
     tribute_offer_secret: &[u8; 32],
     group_sig: &[u8],
@@ -271,19 +278,10 @@ pub fn unseal_tribute_offer_and_group_sig(
     aad.extend_from_slice(chain_id.as_slice());
 
     let ciphertext = &blob[prefix + HEADER_LEN..];
-    let plaintext = Zeroizing::new(aes256gcm_decrypt(
-        sealing_key,
-        &header.nonce,
-        &aad,
-        ciphertext,
-    )?);
+    let plaintext = aes256gcm_decrypt(sealing_key, &header.nonce, &aad, ciphertext)?;
 
     let (tribute_offer_secret, group_sig) = decode_sealed_payload(&plaintext)?;
-    Ok((
-        Zeroizing::new(tribute_offer_secret),
-        Zeroizing::new(group_sig),
-        header,
-    ))
+    Ok((tribute_offer_secret, group_sig, header))
 }
 
 /// Fixed mock sealing key — stable across rebuilds so it simulates MRSIGNER

@@ -5,6 +5,20 @@ note: >
   This file defines required future evidence. A planned test is not evidence
   that implementation or verification currently exists.
 
+verification:
+  schema_version: 1
+  namespace: OCOMP
+  evidence_identity:
+    exact_revision: true
+    artifact_profile: OUTBE_OCOMP_POC_DEVNET_FORK_V1
+    linux_lane: OCM-E2E
+    require_clean_tracked_tree: true
+    require_clean_untracked_tree: true
+  closure_policy:
+    require_all_required_tests: true
+    reject_ignored_or_skipped: true
+    reject_unknown_tests: true
+
 scope:
   fork_profile: OUTBE_OCOMP_POC_DEVNET_FORK_V1
   program: LYSIS_V1
@@ -192,7 +206,7 @@ tests:
     status: planned
     layer: MODULE
     lane: OCM-FAST
-    planned_path: crates/testing/e2e-harness/tests/ocomp_evidence_verifier.rs
+    planned_path: testing/e2e-harness/tests/ocomp_evidence_verifier.rs
     production_entrypoint: outbe-e2e-evidence closure verifier
     real_components:
       - repository_planning_ledger
@@ -609,7 +623,7 @@ tests:
     status: planned
     layer: EXECUTION
     lane: OCM-INT
-    planned_path: crates/blockchain/evm/tests/ocomp_result_votes.rs
+    planned_path: crates/core/metadosis/src/tests/ocomp_semantic_migrations.rs
     production_entrypoint: public ResultVoteV1 dispatch and consensus vote/quorum/accountability state
     real_components:
       - production_metadosis_vote_dispatch
@@ -639,7 +653,7 @@ tests:
     status: planned
     layer: MODULE
     lane: OCM-INT
-    planned_path: crates/blockchain/evm/tests/ocomp_atomic_apply.rs
+    planned_path: crates/core/metadosis/src/tests/ocomp_semantic_migrations.rs
     production_entrypoint: q-forming full-result vote dispatch and one outer apply checkpoint
     real_components:
       - production_metadosis_dispatch
@@ -665,7 +679,7 @@ tests:
     status: planned
     layer: MODULE
     lane: OCM-INT
-    planned_path: crates/blockchain/evm/tests/ocomp_logical_time.rs
+    planned_path: crates/core/metadosis/src/tests/ocomp_semantic_migrations.rs
     production_entrypoint: request-pinned time through certified owner effects
     real_components:
       - production_request
@@ -688,7 +702,7 @@ tests:
     status: planned
     layer: EXECUTION
     lane: OCM-PUBLIC
-    planned_path: crates/testing/e2e-harness/features/ocomp_public_path.feature
+    planned_path: testing/e2e-harness/features/ocomp_public_path.feature
     production_entrypoint: Supervisor ResultVote submission through validator ZeroFee RPC, txpool, P2P, proposer, import and replay
     real_components:
       - four_nodes
@@ -717,7 +731,7 @@ tests:
     status: planned
     layer: EXECUTION
     lane: OCM-PUBLIC
-    planned_path: crates/testing/e2e-harness/features/ocomp_public_path.feature
+    planned_path: testing/e2e-harness/features/ocomp_public_path.feature
     production_entrypoint: public submitLysisResult changed-binding rejection and exact non-quorum recovery
     real_components:
       - four_nodes
@@ -740,7 +754,7 @@ tests:
     status: planned
     layer: EXECUTION
     lane: OCM-PUBLIC
-    planned_path: crates/testing/e2e-harness/features/ocomp_public_path.feature
+    planned_path: testing/e2e-harness/features/ocomp_public_path.feature
     production_entrypoint: begin-zone finality-plus-four open, full-result vote window, no-quorum expiry and terminal accountability
     real_components:
       - four_nodes
@@ -763,7 +777,7 @@ tests:
     status: planned
     layer: EXECUTION
     lane: OCM-PUBLIC
-    planned_path: crates/testing/e2e-harness/features/ocomp_public_path.feature
+    planned_path: testing/e2e-harness/features/ocomp_public_path.feature
     production_entrypoint: completed full-result vote replay
     real_components:
       - four_nodes
@@ -780,7 +794,7 @@ tests:
     status: planned
     layer: E2E
     lane: OCM-E2E
-    planned_path: crates/testing/e2e-harness/features/ocomp_poc.feature
+    planned_path: testing/e2e-harness/features/ocomp_poc.feature
     production_entrypoint: >
       one tracer public encrypted Tribute through the existing projection
       harness path, four compute domains and q=3 to certified Nod
@@ -852,7 +866,7 @@ tests:
     status: planned
     layer: MODULE
     lane: OCM-INT
-    planned_path: crates/blockchain/evm/tests/ocomp_atomic_apply.rs
+    planned_path: crates/core/metadosis/src/tests/ocomp_semantic_migrations.rs
     production_entrypoint: production q-forming full-result vote dispatch and outer owner checkpoint
     real_components:
       - production_full_result_vote_dispatch
@@ -873,7 +887,7 @@ tests:
     status: planned
     layer: E2E
     lane: OCM-E2E
-    planned_path: crates/testing/e2e-harness/features/ocomp_poc.feature
+    planned_path: testing/e2e-harness/features/ocomp_poc.feature
     production_entrypoint: incompatible supervisor handshake
     real_components:
       - four_nodes
@@ -890,7 +904,7 @@ tests:
     status: planned
     layer: E2E
     lane: OCM-E2E
-    planned_path: crates/testing/e2e-harness/features/ocomp_poc.feature
+    planned_path: testing/e2e-harness/features/ocomp_poc.feature
     production_entrypoint: finalized active generation restart and replay
     real_components:
       - four_nodes_with_preserved_datadirs
@@ -907,7 +921,7 @@ tests:
     status: planned
     layer: E2E
     lane: OCM-E2E
-    planned_path: crates/testing/e2e-harness/features/ocomp_poc.feature
+    planned_path: testing/e2e-harness/features/ocomp_poc.feature
     production_entrypoint: proposer, importer and historical replay block execution inside the OCM-E2E-001 tracer story
     real_components:
       - production_boundary_markers

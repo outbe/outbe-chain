@@ -62,6 +62,9 @@ pub enum RecordedRpcCall {
     EthSendRawTransaction {
         raw_tx: Vec<u8>,
     },
+    EthGetTransactionReceipt {
+        transaction_hash: String,
+    },
     EthGetBalance {
         address: Address,
     },
@@ -91,6 +94,7 @@ pub enum RecordedRpcResponse {
     U256(U256),
     Text(String),
     Value(Value),
+    OptionalValue(Option<Value>),
     Logs(Vec<Value>),
 }
 
@@ -136,6 +140,15 @@ impl RecordedRpcResponse {
             Self::Value(v) => Ok(v),
             other => Err(eyre::eyre!(
                 "expected JSON response for {method}, got {other:?}"
+            )),
+        }
+    }
+
+    pub fn into_optional_value(self, method: &str) -> Result<Option<Value>> {
+        match self {
+            Self::OptionalValue(v) => Ok(v),
+            other => Err(eyre::eyre!(
+                "expected optional JSON response for {method}, got {other:?}"
             )),
         }
     }

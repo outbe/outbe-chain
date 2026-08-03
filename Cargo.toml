@@ -48,6 +48,7 @@ members = [
     "crates/core/credis",
     "crates/core/credisfactory",
     "crates/core/fidelity",
+    "crates/core/fidelity-math",
     "crates/core/metadosis",
     "crates/core/promislimit",
     "crates/core/tributefactory",
@@ -56,7 +57,7 @@ members = [
     "crates/core/stablecoinpolicy",
     "crates/core/stablecoin",
     "crates/core/stablecoinfactory",
-    "crates/core/e2e",
+    "testing/e2e",
     "crates/core/common",
     # binaries
     "bin/outbe-chain",
@@ -66,8 +67,8 @@ members = [
     "bin/outbe-ocomp",
     "bin/outbe-tee-enclave",
     # testing
-    "crates/testing/e2e-harness",
-    "crates/testing/lysis-v1-reference",
+    "testing/e2e-harness",
+    "testing/lysis-v1-reference",
 ]
 resolver = "2"
 
@@ -141,6 +142,7 @@ outbe-agentreward = { path = "crates/core/agentreward" }
 outbe-credis = { path = "crates/core/credis" }
 outbe-credisfactory = { path = "crates/core/credisfactory" }
 outbe-fidelity = { path = "crates/core/fidelity" }
+outbe-fidelity-math = { path = "crates/core/fidelity-math" }
 outbe-metadosis = { path = "crates/core/metadosis" }
 outbe-promislimit = { path = "crates/core/promislimit" }
 outbe-tributefactory = { path = "crates/core/tributefactory" }
@@ -149,7 +151,7 @@ outbe-governance = { path = "crates/core/governance" }
 outbe-stablecoinpolicy = { path = "crates/core/stablecoinpolicy" }
 outbe-stablecoin = { path = "crates/core/stablecoin" }
 outbe-stablecoinfactory = { path = "crates/core/stablecoinfactory" }
-outbe-e2e = { path = "crates/core/e2e" }
+outbe-e2e = { path = "testing/e2e" }
 outbe-common = { path = "crates/core/common" }
 
 # Alloy — core (alloy-rs/core): stays on 1.x

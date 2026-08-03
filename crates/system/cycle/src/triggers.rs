@@ -67,6 +67,17 @@ pub enum TriggerHandler {
 }
 
 impl TriggerHandler {
+    /// Maximum number of sequential Metadosis command leases this handler can
+    /// consume in one authenticated Cycle system transaction.
+    pub const fn metadosis_mutation_lease_budget(self) -> u8 {
+        match self {
+            // Terminal allocation and the subsequent WWD process command.
+            Self::EmissionLimitDaily => 2,
+            Self::WwdAdvanceNoon => 1,
+            Self::IntexDaily | Self::AuctionAdvance => 0,
+        }
+    }
+
     pub(crate) fn run(
         self,
         ctx: &BlockRuntimeContext,
@@ -78,11 +89,23 @@ impl TriggerHandler {
                 crate::handler::run_emission_limit_daily(ctx, scope, parent)
             }
             Self::IntexDaily => outbe_intexfactory::called::run_daily(ctx),
-            Self::WwdAdvanceNoon => outbe_metadosis::runtime::advance_active_worldwide_days(ctx),
+            Self::WwdAdvanceNoon => {
+                outbe_metadosis::commands::advance_active_worldwide_days(ctx, scope)
+            }
             Self::AuctionAdvance => outbe_desis::tick_schedule(ctx),
             Self::GemCallDaily => outbe_gem::hooks::run_call_daily(ctx),
         }
     }
+}
+
+/// Exact bounded Metadosis command budget for one `CycleTick`. A long-gap block
+/// can fire both the daily emission and noon advancement handlers, so their
+/// budgets must be summed rather than taking only the common daily path.
+#[must_use]
+pub fn metadosis_mutation_lease_budget_per_tick() -> u8 {
+    ACTIVE_TRIGGERS.iter().fold(0_u8, |budget, trigger| {
+        budget.saturating_add(trigger.handler.metadosis_mutation_lease_budget())
+    })
 }
 
 /// Active trigger table. Order is informational only — the dispatcher

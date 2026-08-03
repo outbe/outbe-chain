@@ -25,6 +25,7 @@ pub struct EvmStorageProvider<'a> {
     internals: EvmInternals<'a>,
     gas: GasTracker,
     is_static: bool,
+    genesis_hash: B256,
 }
 
 impl<'a> EvmStorageProvider<'a> {
@@ -61,10 +62,21 @@ impl<'a> EvmStorageProvider<'a> {
         gas_limit: u64,
         is_static: bool,
     ) -> Self {
+        Self::new_with_is_static_and_genesis_hash(internals, gas_limit, is_static, B256::ZERO)
+    }
+
+    /// Creates a provider bound to the immutable genesis hash from ChainSpec.
+    pub fn new_with_is_static_and_genesis_hash(
+        internals: EvmInternals<'a>,
+        gas_limit: u64,
+        is_static: bool,
+        genesis_hash: B256,
+    ) -> Self {
         Self {
             internals,
             gas: GasTracker::new(gas_limit),
             is_static,
+            genesis_hash,
         }
     }
 
@@ -80,6 +92,10 @@ impl<'a> EvmStorageProvider<'a> {
 impl PrecompileStorageProvider for EvmStorageProvider<'_> {
     fn chain_id(&self) -> u64 {
         self.internals.chain_id()
+    }
+
+    fn genesis_hash(&self) -> B256 {
+        self.genesis_hash
     }
 
     fn timestamp(&self) -> U256 {

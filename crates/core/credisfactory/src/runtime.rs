@@ -209,12 +209,19 @@ pub fn expire_position(storage: StorageHandle<'_>, position_id: U256) -> Result<
     // for both).
     let eoa = outbe_gratis::api::reveal_owner(storage.clone(), &position.eoa_ct)?;
 
-    // Burn the still-locked collateral from the pledger's own pledged ledger.
+    // Burn the still-locked collateral from the pledger's own pledged ledger,
+    // folding the Fidelity sale cohort into the SAME enclave round-trip (no extra
+    // trip); persist the returned fidelity blob.
     let burned = position.outstanding_gratis_amount;
-    outbe_gratis::api::burn_pledged(storage.clone(), eoa, burned)?;
-
-    // Fidelity drops by the burned collateral (records a LIFO sale cohort).
-    outbe_fidelity::api::cohort_out(storage.clone(), eoa, burned, now)?;
+    let section = outbe_fidelity::api::cohort_section(
+        storage.clone(),
+        eoa,
+        outbe_fidelity::api::FidelityCohortOp::Out,
+        now,
+    )?;
+    let (_, outcome) =
+        outbe_gratis::api::burn_pledged_with_fidelity(storage.clone(), eoa, burned, section)?;
+    outbe_fidelity::api::apply_fidelity_outcome(storage.clone(), eoa, &outcome)?;
 
     // The equivalent value is deposited 1:1 into the Promis Reserve.
     outbe_promislimit::PromisLimitContract::new(storage.clone())

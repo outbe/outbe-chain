@@ -31,6 +31,10 @@ PORT_OFFSET="${PORT_OFFSET:-0}"
 OUTBE_TEST_DROP_NEW_PAYLOAD_VALIDATOR="${OUTBE_TEST_DROP_NEW_PAYLOAD_VALIDATOR:-}"
 OUTBE_TEST_DROP_NEW_PAYLOAD_HEIGHT="${OUTBE_TEST_DROP_NEW_PAYLOAD_HEIGHT:-}"
 OUTBE_TEST_VOTING_WINDOW_BLOCKS="${OUTBE_TEST_VOTING_WINDOW_BLOCKS:-}"
+# Every genesis produced by bootstrap-testnet.sh is GramineDirectDev from block
+# 1. The enclave is therefore mandatory; an unset flag cannot create a tee-less
+# fallback network.
+: "${OUTBE_TEE_ENCLAVE:=1}"
 
 # --- Helpers ---
 
@@ -138,14 +142,19 @@ do_start() {
     local base_authrpc=$((8551 + PORT_OFFSET))
     local base_metrics=$((9101 + PORT_OFFSET))
 
-    # Optional per-validator TEE enclave. Opt-in via OUTBE_TEE_ENCLAVE=1 (binary
-    # auto-detected in ./target, or set OUTBE_TEE_ENCLAVE_BINARY). When enabled,
-    # each validator runs its own `outbe-tee-enclave` AS A REAL GRAMINE ENCLAVE
-    # (signed; gramine-direct locally, gramine-sgx on SGX hardware) and the node
-    # attests it at startup (--tee-enclave-socket; node fail-fasts if it is down).
+    # Mandatory per-validator GramineDirectDev enclave. The binary is
+    # auto-detected in ./target or supplied via OUTBE_TEE_ENCLAVE_BINARY.
     local tee_enclave_bin=""
     local tee_gramine_image="outbe-tee-enclave-gramine-test"
     local tee_test_signing_key=""
+    if [ -z "${OUTBE_TEE_ENCLAVE:-}" ]; then
+        echo "Error: GramineDirectDev genesis cannot run without an enclave." >&2
+        exit 1
+    fi
+    if [ -n "${OUTBE_TEE_ENCLAVE_BARE:-}" ]; then
+        echo "Error: bare-host enclave mode is not GramineDirectDev and is no longer supported." >&2
+        exit 1
+    fi
     if [ -n "${OUTBE_TEE_ENCLAVE:-}" ]; then
         # OUTBE_TEE_ENCLAVE_MOCK=1 selects the dev mock binary
         # (`outbe-tee-enclave-mock`, built `--features mock`): unattested quote +
@@ -168,67 +177,58 @@ do_start() {
             echo "  Build it ($tee_build_hint) or set OUTBE_TEE_ENCLAVE_BINARY." >&2
             exit 1
         fi
-        # The enclave runs under Gramine (Docker + gramine image) by default.
-        # OUTBE_TEE_ENCLAVE_BARE=1 instead runs the mock binary as a bare host
-        # process — no Docker, no Gramine — for hosts where Gramine cannot run
-        # (notably Apple Silicon, where the amd64 gramine image dies under QEMU
-        # with `get_topology_info ENOENT`). Bare mode is unattested + NOT
-        # confidential, exactly like gramine-direct — which only adds a LibOS
-        # sandbox, not attestation — so it is functionally equivalent for
-        # localnet/CI. Never production.
-        if [ -z "${OUTBE_TEE_ENCLAVE_BARE:-}" ]; then
-            if ! command -v docker >/dev/null 2>&1; then
-                echo "Error: OUTBE_TEE_ENCLAVE needs Docker to run the Gramine enclave." >&2
-                echo "  Install Docker, set OUTBE_TEE_ENCLAVE_BARE=1 to run the mock bare," >&2
-                echo "  or run without OUTBE_TEE_ENCLAVE for a non-TEE testnet." >&2
+        # The development enclave always runs under Gramine. It deliberately
+        # uses gramine-direct even on an SGX host; real DcapRequired execution is
+        # owned by the separate I9 release harness and production genesis.
+        if ! command -v docker >/dev/null 2>&1; then
+            echo "Error: OUTBE_TEE_ENCLAVE needs Docker to run the Gramine enclave." >&2
+            echo "  Install Docker; there is no tee-less or bare-host fallback." >&2
+            exit 1
+        fi
+        if ! docker info >/dev/null 2>&1; then
+            echo "Error: Docker is installed but not reachable by this user." >&2
+            echo "  Add your user to the 'docker' group (sudo usermod -aG docker \$USER; re-login)," >&2
+            echo "  or run this script under sudo (note: it makes the validator data dirs root-owned)." >&2
+            exit 1
+        fi
+        if ! docker image inspect "$tee_gramine_image" >/dev/null 2>&1; then
+            echo "Test-only Gramine enclave image '$tee_gramine_image' missing — building it..."
+            if ! docker build \
+                -f bin/outbe-tee-enclave/gramine/Dockerfile.test \
+                -t "$tee_gramine_image" \
+                bin/outbe-tee-enclave/gramine; then
+                echo "Error: failed to build the Gramine enclave image." >&2
                 exit 1
-            fi
-            if ! docker info >/dev/null 2>&1; then
-                echo "Error: Docker is installed but not reachable by this user." >&2
-                echo "  Add your user to the 'docker' group (sudo usermod -aG docker \$USER; re-login)," >&2
-                echo "  or run this script under sudo (note: it makes the validator data dirs root-owned)." >&2
-                exit 1
-            fi
-            if ! docker image inspect "$tee_gramine_image" >/dev/null 2>&1; then
-                echo "Test-only Gramine enclave image '$tee_gramine_image' missing — building it..."
-                if ! docker build \
-                    -f bin/outbe-tee-enclave/gramine/Dockerfile.test \
-                    -t "$tee_gramine_image" \
-                    bin/outbe-tee-enclave/gramine; then
-                    echo "Error: failed to build the Gramine enclave image." >&2
-                    exit 1
-                fi
-            fi
-            tee_test_signing_key="$OUTPUT_DIR/test-sgx-signing-key.pem"
-            if [ -L "$tee_test_signing_key" ]; then
-                echo "Error: unsafe symlink at test SGX signing key path: $tee_test_signing_key" >&2
-                exit 1
-            fi
-            if [ ! -f "$tee_test_signing_key" ]; then
-                if ! docker run --rm \
-                    --user "$(id -u):$(id -g)" \
-                    --entrypoint gramine-sgx-gen-private-key \
-                    -v "$(readlink -f "$OUTPUT_DIR"):/keys" \
-                    "$tee_gramine_image" \
-                    /keys/test-sgx-signing-key.pem; then
-                    echo "Error: failed to generate scenario-scoped test SGX signing key." >&2
-                    exit 1
-                fi
-                chmod 600 "$tee_test_signing_key"
             fi
         fi
-        if [ -n "${OUTBE_TEE_ENCLAVE_BARE:-}" ]; then
-            echo "TEE enclave enabled ($tee_bin_name; BARE host process — no Gramine, unattested, NOT confidential): $tee_enclave_bin"
-        else
-            echo "TEE enclave enabled ($tee_bin_name; Gramine: gramine-direct locally / gramine-sgx on SGX hw): $tee_enclave_bin"
+        tee_test_signing_key="$OUTPUT_DIR/test-sgx-signing-key.pem"
+        if [ -L "$tee_test_signing_key" ]; then
+            echo "Error: unsafe symlink at test SGX signing key path: $tee_test_signing_key" >&2
+            exit 1
         fi
+        if [ ! -f "$tee_test_signing_key" ]; then
+            if ! docker run --rm \
+                --user "$(id -u):$(id -g)" \
+                --entrypoint gramine-sgx-gen-private-key \
+                -v "$(readlink -f "$OUTPUT_DIR"):/keys" \
+                "$tee_gramine_image" \
+                /keys/test-sgx-signing-key.pem; then
+                echo "Error: failed to generate scenario-scoped test SGX signing key." >&2
+                exit 1
+            fi
+            chmod 600 "$tee_test_signing_key"
+        fi
+        if [ -n "${OUTBE_TEE_SEAL:-}" ] && [ -z "${OUTBE_TEE_ENCLAVE_MOCK:-}" ]; then
+            echo "Error: gramine-direct cannot EGETKEY-seal the production enclave; use the mock lane for restart tests or bootstrap a new dev genesis." >&2
+            exit 1
+        fi
+        echo "TEE enclave enabled ($tee_bin_name; GramineDirectDev, not hardware evidence): $tee_enclave_bin"
         # WS-M2 M5: persist the resolved TEE flags so a later `start` that omits them
         # stays consistent with this one (see the re-apply note at the top of do_start).
         {
             printf ': "${OUTBE_TEE_ENCLAVE:=%s}"\n' "${OUTBE_TEE_ENCLAVE:-}"
             printf ': "${OUTBE_TEE_ENCLAVE_MOCK:=%s}"\n' "${OUTBE_TEE_ENCLAVE_MOCK:-}"
             printf ': "${OUTBE_TEE_SEAL:=%s}"\n' "${OUTBE_TEE_SEAL:-}"
-            printf ': "${OUTBE_TEE_ENCLAVE_BARE:=%s}"\n' "${OUTBE_TEE_ENCLAVE_BARE:-}"
         } > "$tee_env_file"
     fi
 
@@ -252,12 +252,9 @@ do_start() {
         mkdir -p "$reth_log_dir"
 
         # Launch this validator's TEE enclave and wait for its socket so the node
-        # can attest it at startup. The enclave ALWAYS runs as a real Gramine
-        # enclave (signed, measured MRENCLAVE) — never as a bare process:
-        #   - no SGX hardware (local dev) -> gramine-direct, for functional tests,
-        #   - SGX hardware present (prod/testnet) -> gramine-sgx, confidential.
-        # The entrypoint picks the mode automatically; we just pass the SGX device
-        # through when it exists. Gramine pathname UDS are process-internal, so the
+        # can authenticate it at startup. The enclave always runs under
+        # gramine-direct and this development lane is never hardware evidence.
+        # Gramine pathname UDS are process-internal, so the
         # node reaches the enclave over TCP (--network host puts the port on the
         # host loopback). One container per validator.
         local -a tee_args=()
@@ -268,103 +265,69 @@ do_start() {
             # clean re-bootstrap. Offset by 1 so the seed is never all-zero.
             local tee_dkg_seed
             tee_dkg_seed=$(printf '%064x' "$((i + 1))")
-            local tee_port=$((7000 + PORT_OFFSET + i))
+            # Base 17000, NOT 7000: macOS AirPlay Receiver (Control Center) binds
+            # *:7000 by default on Apple Silicon — the very platform `localnet-tee`
+            # targets — so the node would connect to AirPlay and fail-fast on a quote
+            # timeout. 17000 is off that path. Endpoint is IPv4-literal (the enclave
+            # binds 127.0.0.1 only; `localhost` could resolve to ::1).
+            local tee_port=$((17000 + PORT_OFFSET + i))
             local tee_endpoint="127.0.0.1:$tee_port"
             # Tag the container with PORT_OFFSET so parallel localnets get
             # distinct names (`outbe-tee-gramine-<offset>-<i>`) and each run only
             # tears down its own enclaves.
             local tee_ctr="outbe-tee-gramine-${PORT_OFFSET}-$i"
+            # Withhold SGX devices unconditionally so the entrypoint selects
+            # gramine-direct. This chain is explicitly not hardware evidence.
             local -a sgx_dev=()
-            # Pass the SGX device only for the production binary. In mock mode the
-            # enclave is the EMULATOR (gramine-direct, no SGX): withholding the
-            # device makes the entrypoint pick gramine-direct, and the `mock`
-            # feature supplies a stable sealing key so the restart fast-path is
-            # still testable without SGX.
-            if [ -z "${OUTBE_TEE_ENCLAVE_MOCK:-}" ]; then
-                if [ -e /dev/sgx_enclave ] || [ -e /dev/sgx/enclave ]; then
-                    sgx_dev=(--device /dev/sgx_enclave)
-                    # Provisioning device + AESM socket: gramine-sgx may need them
-                    # at enclave load (even with remote_attestation = "none"). Pass
-                    # them through when present; harmless otherwise.
-                    [ -e /dev/sgx_provision ] && sgx_dev+=(--device /dev/sgx_provision)
-                    [ -S /var/run/aesmd/aesm.socket ] &&
-                        sgx_dev+=(-v /var/run/aesmd/aesm.socket:/var/run/aesmd/aesm.socket)
-                fi
-            fi
             # OUTBE_TEE_SEAL=1 enables the sealed restart fast-path: the enclave
             # seals its DKG-derived offer key + share to a PERSISTENT per-validator
             # dir (survives container restart), so a stop/start restores the offer
-            # key from seal (real EGETKEY under gramine-sgx) instead of re-running
-            # the ceremony — which the node skips on a non-fresh chain. Needs SGX
-            # (no EGETKEY under gramine-direct → sealing is a no-op).
+            # key from the mock lane's stable test sealing key instead of
+            # re-running the ceremony, which is invalid on a non-fresh chain.
+            # The production enclave under gramine-direct cannot EGETKEY and was
+            # rejected above when OUTBE_TEE_SEAL was requested.
+            # The enclave's resident chain id, bound on EVERY launch (independent of
+            # sealing): it scopes state-key derivation and the owner-authorized
+            # fidelity query, which cross-checks it against the node's chain. Gating
+            # it on sealing left a non-sealing enclave at ZERO chain, so those
+            # queries failed with "query authorization is for a different chain".
+            local tee_chain_hex
+            tee_chain_hex=0x$(printf '%064x' "$(python3 -c "import json;print(json.load(open('$OUTPUT_DIR/genesis.json'))['config']['chainId'])")")
+            local -a tee_chain_args=(--chain-id "$tee_chain_hex")
+            # OUTBE_TEE_SEAL adds the persistent seal dir on top (restart fast-path).
             local -a tee_seal_mount=() tee_seal_args=()
             if [ -n "${OUTBE_TEE_SEAL:-}" ]; then
                 local tee_data_dir="$validator_dir/tee"
                 mkdir -p "$tee_data_dir"
-                local tee_chain_hex
-                tee_chain_hex=0x$(printf '%064x' "$(python3 -c "import json;print(json.load(open('$OUTPUT_DIR/genesis.json'))['config']['chainId'])")")
                 tee_seal_mount=(-v "$(readlink -f "$tee_data_dir"):/tee")
-                tee_seal_args=(--tee-dir /tee --chain-id "$tee_chain_hex")
+                tee_seal_args=(--tee-dir /tee)
             fi
-            # DKG identity source. The mock (gramine-direct, no EGETKEY) uses a
-            # deterministic per-index --dkg-seed. Real gramine-sgx WITH sealing
-            # (OUTBE_TEE_SEAL) instead lets the enclave SELF-GENERATE and seal its
-            # identity (survives restart), so NO host seed is supplied.
+            # Deterministic development-only DKG identity source. A validator
+            # count/order change requires a new genesis.
             local -a tee_dkg_arg=(--dkg-seed "$tee_dkg_seed")
-            if [ -z "${OUTBE_TEE_ENCLAVE_MOCK:-}" ] && [ -n "${OUTBE_TEE_SEAL:-}" ]; then
-                tee_dkg_arg=()
-            fi
-            if [ -n "${OUTBE_TEE_ENCLAVE_BARE:-}" ]; then
-                # Bare host process: free this exact socket first (mirrors
-                # `docker rm -f`), then launch the mock directly. A re-bootstrap
-                # wipes PID_DIR, orphaning the previous run's enclave still bound to
-                # this port; the node would then attach to a STALE enclave (old
-                # chain's offer key) and crash with "offer key divergence". Target
-                # our own binary on this exact socket only — never the OS's :7000
-                # (macOS AirPlay binds *:7000, which we leave alone).
-                local prev_pidf="$PID_DIR/validator-$i.enclave.pid"
-                [ -f "$prev_pidf" ] && kill "$(cat "$prev_pidf")" 2>/dev/null || true
-                pkill -f "outbe-tee-enclave.*--socket $tee_endpoint( |\$)" 2>/dev/null || true
-                sleep 0.3
-                local -a bare_seal_args=()
-                [ -n "${OUTBE_TEE_SEAL:-}" ] &&
-                    bare_seal_args=(--tee-dir "$(readlink -f "$tee_data_dir")" --chain-id "$tee_chain_hex")
-                "$tee_enclave_bin" --socket "$tee_endpoint" \
-                    "${tee_dkg_arg[@]}" "${bare_seal_args[@]}" \
-                    > "$validator_dir/enclave.log" 2>&1 &
-                echo "$!" > "$prev_pidf"
-            else
-                docker rm -f "$tee_ctr" >/dev/null 2>&1 || true
-                docker run -d --name "$tee_ctr" \
-                    --security-opt seccomp=unconfined \
-                    --network host \
-                    "${sgx_dev[@]}" \
-                    "${tee_seal_mount[@]}" \
-                    -v "$(readlink -f "$tee_enclave_bin"):/app/outbe-tee-enclave:ro" \
-                    -v "$(readlink -f "$tee_test_signing_key"):/run/secrets/outbe-test-sgx-key.pem:ro" \
-                    "$tee_gramine_image" \
-                    --socket "$tee_endpoint" "${tee_dkg_arg[@]}" "${tee_seal_args[@]}" >/dev/null
-                echo "$tee_ctr" > "$PID_DIR/validator-$i.enclave.docker"
-            fi
+            docker rm -f "$tee_ctr" >/dev/null 2>&1 || true
+            docker run -d --name "$tee_ctr" \
+                --security-opt seccomp=unconfined \
+                --network host \
+                "${sgx_dev[@]}" \
+                "${tee_seal_mount[@]}" \
+                -v "$(readlink -f "$tee_enclave_bin"):/app/outbe-tee-enclave:ro" \
+                -v "$(readlink -f "$tee_test_signing_key"):/run/secrets/outbe-test-sgx-key.pem:ro" \
+                "$tee_gramine_image" \
+                --socket "$tee_endpoint" "${tee_dkg_arg[@]}" "${tee_chain_args[@]}" "${tee_seal_args[@]}" >/dev/null
+            echo "$tee_ctr" > "$PID_DIR/validator-$i.enclave.docker"
             local tee_up=""
             for _ in $(seq 1 200); do
                 (exec 3<>"/dev/tcp/127.0.0.1/$tee_port") 2>/dev/null && { exec 3>&- 2>/dev/null; tee_up=1; break; }
                 sleep 0.1
             done
-            # Bare mode already redirects the process output to enclave.log; only
-            # the container needs its logs pulled out.
-            [ -n "${OUTBE_TEE_ENCLAVE_BARE:-}" ] ||
-                docker logs "$tee_ctr" > "$validator_dir/enclave.log" 2>&1 || true
+            docker logs "$tee_ctr" > "$validator_dir/enclave.log" 2>&1 || true
             # WS-M2 M6: fail loudly instead of silently proceeding — otherwise the node
             # would later fail-fast on the missing socket with a less obvious cause.
             if [ -z "$tee_up" ]; then
                 echo "Error: validator-$i TEE enclave did not open its socket 127.0.0.1:$tee_port within ~20s." >&2
                 echo "  The node would fail-fast on the missing socket. Enclave output: $validator_dir/enclave.log" >&2
-                if [ -n "${OUTBE_TEE_ENCLAVE_BARE:-}" ]; then
-                    kill "$(cat "$PID_DIR/validator-$i.enclave.pid" 2>/dev/null)" 2>/dev/null || true
-                else
-                    docker rm -f "$tee_ctr" >/dev/null 2>&1 || true
-                fi
+                docker rm -f "$tee_ctr" >/dev/null 2>&1 || true
                 exit 1
             fi
             tee_args+=(--tee-enclave-socket "$tee_endpoint")
@@ -549,15 +512,6 @@ do_stop() {
         ctr=$(cat "$dfile")
         docker rm -f "$ctr" >/dev/null 2>&1 && echo "  Stopped enclave container $ctr"
         rm -f "$dfile"
-    done
-
-    # Stop any bare-process enclaves (OUTBE_TEE_ENCLAVE_BARE=1), same ordering.
-    for pfile in "$PID_DIR"/validator-*.enclave.pid; do
-        [ -f "$pfile" ] || continue
-        local epid
-        epid=$(cat "$pfile")
-        kill -TERM "$epid" 2>/dev/null && echo "  Stopped enclave process $epid"
-        rm -f "$pfile"
     done
 
     # Clean stale lock files (both the MDBX `db/lock` and reth's

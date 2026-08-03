@@ -11,7 +11,7 @@ use std::{
 };
 
 use alloy_primitives::B256;
-use outbe_metadosis::ocomp::schema::poc_schema_limits;
+use outbe_metadosis::config::poc_schema_limits;
 use outbe_ocomp_protocol::{activation::SignOncePurpose, vote::ResultVoteSigningSubjectV1};
 
 use crate::ocomp::sign_once::{

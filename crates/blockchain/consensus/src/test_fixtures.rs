@@ -40,11 +40,10 @@ use outbe_primitives::reshare_artifact::{
 };
 use outbe_primitives::signer::OutbeEvmSigner;
 use outbe_primitives::system_tx::{
-    build_unsigned_system_tx, build_unsigned_system_tx_with_gas_limit, system_tx_intrinsic_gas,
-    SystemTxInputV2, SystemTxVisibleGasPlan,
+    build_unsigned_system_tx_with_gas_limit, SystemTxInputV2, SystemTxVisibleGasPlan,
 };
 use outbe_primitives::OutbeHeader;
-use reth_ethereum::{primitives::SealedBlock, Block, TransactionSigned};
+use reth_ethereum::{primitives::SealedBlock, Block};
 
 use crate::block::ConsensusBlock;
 use crate::committee_provider::CommitteeProvider;
@@ -140,6 +139,7 @@ pub(crate) fn validator_set_from_keys(
 
 pub(crate) fn block_with_header_artifact(artifact: &ConsensusHeaderArtifact) -> ConsensusBlock {
     let mut block = Block::default();
+    block.header.gas_limit = outbe_primitives::system_tx::protocol_block_gas_limit(0);
     block.header.extra_data = encode_consensus_header_artifact(artifact).unwrap();
     let block = block.map_header(OutbeHeader::new);
     ConsensusBlock::from_sealed(SealedBlock::seal_slow(block))
@@ -153,6 +153,7 @@ pub(crate) fn block_with_number_parent_and_header_artifact(
     let mut block = Block::default();
     block.header.number = number;
     block.header.parent_hash = parent_hash;
+    block.header.gas_limit = outbe_primitives::system_tx::protocol_block_gas_limit(number);
     block.header.extra_data = encode_consensus_header_artifact(artifact).unwrap();
     let block = block.map_header(OutbeHeader::new);
     ConsensusBlock::from_sealed(SealedBlock::seal_slow(block))
@@ -166,6 +167,7 @@ pub(crate) fn block_with_number_and_parent(number: u64, parent_hash: B256) -> Co
     let mut block = Block::default();
     block.header.number = number;
     block.header.parent_hash = parent_hash;
+    block.header.gas_limit = outbe_primitives::system_tx::protocol_block_gas_limit(number);
     let block = block.map_header(OutbeHeader::new);
     ConsensusBlock::from_sealed(SealedBlock::seal_slow(block))
 }
@@ -326,24 +328,6 @@ pub(crate) fn participants() -> (Vec<bls12381::PrivateKey>, Set<bls12381::Public
     participants_with_count(3)
 }
 
-pub(crate) fn sign_system_input(
-    signer: &OutbeEvmSigner,
-    input: SystemTxInputV2,
-    ordinal: u8,
-    block_number: u64,
-    chain_id: u64,
-) -> TransactionSigned {
-    let unsigned = build_unsigned_system_tx(
-        input.kind(),
-        ordinal,
-        block_number,
-        chain_id,
-        input.encode().expect("input encodes"),
-    )
-    .expect("system tx builds");
-    signer.sign_unsigned(unsigned).expect("system tx signs")
-}
-
 pub(crate) fn finalized_metadata(finalized_block_hash: B256) -> CertifiedParentAccountingMetadata {
     CertifiedParentAccountingMetadata {
         finalized_block_number: 1,
@@ -361,24 +345,15 @@ pub(crate) fn block_with_system_inputs(
     inputs: Vec<SystemTxInputV2>,
     chain_id: u64,
 ) -> ConsensusBlock {
-    let mut block = Block::default();
-    block.header.number = block_number;
-    block.header.parent_hash = parent_hash;
-    block.header.extra_data = extra_data;
-    for (ordinal, input) in inputs.into_iter().enumerate() {
-        block.header.gas_limit +=
-            system_tx_intrinsic_gas(input.encode().expect("input encodes").as_ref())
-                .expect("system tx intrinsic gas computes");
-        block.body.transactions.push(sign_system_input(
-            signer,
-            input,
-            ordinal.try_into().expect("test ordinal fits"),
-            block_number,
-            chain_id,
-        ));
-    }
-    let block = block.map_header(OutbeHeader::new);
-    ConsensusBlock::from_sealed(SealedBlock::seal_slow(block))
+    block_with_gas_planned_system_inputs(
+        signer,
+        block_number,
+        parent_hash,
+        extra_data,
+        inputs,
+        chain_id,
+        outbe_primitives::system_tx::protocol_block_gas_limit(block_number),
+    )
 }
 
 pub(crate) fn block_with_gas_planned_system_inputs(

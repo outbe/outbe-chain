@@ -144,16 +144,16 @@ sol! {
         function isBootstrapped() external view returns (bool);
         function tributeOfferPublicKey() external view returns (uint256);
         function tributeOfferEpoch() external view returns (uint256);
-        function registeredCount() external view returns (uint256);
+        function activePolicyV1() external view returns (bytes memory);
         function registerEnclave(
-            uint256 recipientX25519,
-            uint256 attestationPub,
-            uint256 noiseStaticPub,
-            uint256 mrenclave,
-            uint256 mrsigner,
-            uint16 isvSvn
+            bytes evidence,
+            bytes nodeSignature,
+            bytes enclaveSignature
         ) external returns (bool);
-        event OfferKeySealed(address indexed validator, bytes sealedOfferKey);
+        event OfferKeySealedForRegistryV1(
+            bytes32 indexed nodeIdHash,
+            bytes sealedOfferKey
+        );
     }
 
     #[derive(Debug)]

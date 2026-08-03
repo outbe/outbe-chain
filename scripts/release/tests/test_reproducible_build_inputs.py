@@ -81,6 +81,16 @@ class ReproducibleBuildInputsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "pinned by sha256"):
             build_inputs.load_and_validate_build_spec(path)
 
+    def test_project_toolchain_alignment_is_required_by_host_loader(self) -> None:
+        loaded = build_inputs.load_and_validate_build_spec(
+            BUILD_SPEC_PATH,
+            repo_root=REPO_ROOT,
+        )
+        self.assertEqual(
+            loaded["project_toolchain"],
+            "release/project-toolchain-v1.json",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

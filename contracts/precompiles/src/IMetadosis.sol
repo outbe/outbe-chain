@@ -30,6 +30,31 @@ interface IMetadosis {
 
     event WorldwideDayStatusChange(uint32 indexed worldwideDay, uint8 oldStatus, uint8 newStatus, uint64 blockNumber);
 
+    event WorldwideDayMissedOffering(
+        uint32 indexed worldwideDay,
+        uint256 dayMetadosisLimit,
+        uint256 carryOverBefore,
+        uint256 carryOverAfter,
+        uint8 retirementOutcome,
+        uint64 blockNumber
+    );
+
+    event WorldwideDayCapacityForfeited(
+        uint32 indexed worldwideDay,
+        uint32 maxRetainedWorldwideDays,
+        uint32 retainedCountBefore,
+        uint256 dayMetadosisLimit,
+        uint256 carryOverBefore,
+        uint256 carryOverAfter,
+        bytes32 sealedCollectionRoot,
+        uint32 forfeitedTributeCount,
+        uint256 forfeitedTributeNominal,
+        uint64 sourceGeneration,
+        uint64 retiredGeneration,
+        uint8 retirementOutcome,
+        uint64 blockNumber
+    );
+
     event MetadosisSkipped(uint32 indexed worldwideDay, string reason, string status, uint64 blockNumber);
 
     event MetadosisExecuted(
@@ -109,8 +134,41 @@ interface IMetadosis {
         );
 
     function getActiveWorldwideDays() external view returns (uint32[] memory wwds);
+    /// @notice Returns days for a closed WwdStatus discriminant.
+    /// @dev Unknown status bytes revert; they are never interpreted as empty.
     function getWorldwideDaysByStatus(uint8 status) external view returns (uint32[] memory wwds);
     function getBootstrapEndTime() external view returns (uint64 endTime);
+
+    function getWorldwideDayTerminalReceipt(uint32 wwd)
+        external
+        view
+        returns (
+            uint8 outcome,
+            uint256 valueRouted,
+            uint256 carryOverBefore,
+            uint256 carryOverAfter,
+            uint8 retirementOutcome,
+            uint64 blockNumber
+        );
+
+    function getCapacityForfeitureReceipt(uint32 wwd)
+        external
+        view
+        returns (
+            uint8 outcome,
+            uint32 maxRetainedWorldwideDays,
+            uint32 retainedCountBefore,
+            uint256 valueRouted,
+            uint256 carryOverBefore,
+            uint256 carryOverAfter,
+            bytes32 sealedCollectionRoot,
+            uint32 forfeitedTributeCount,
+            uint256 forfeitedTributeNominal,
+            uint64 sourceGeneration,
+            uint64 retiredGeneration,
+            uint8 retirementOutcome,
+            uint64 blockNumber
+        );
 
     /// @notice Return the canonical OCB1 record for one off-chain computation job.
     /// @param intentId Canonical JobIntent identifier.
@@ -122,17 +180,11 @@ interface IMetadosis {
 
     /// @notice Return the four fixed vote slots, immutable quorum and optional
     /// closed accountability summary for one finalized JobId.
-    function getOffchainVoteAccountability(bytes32 jobId)
-        external
-        view
-        returns (bytes memory ocompVoteAccountabilityV1);
+    function getOffchainVoteAccountability(bytes32 jobId) external view returns (bytes memory ocompVoteAccountabilityV1);
 
     /// @notice Return the canonical active generation selected by Metadosis state.
     function getActiveLysisGeneration(uint32 wwd) external view returns (bytes memory activeGenerationV1);
 
     /// @notice Return the canonical aggregate terminal receipt for an activation attempt.
-    function getLysisTerminalReceipt(bytes32 intentId)
-        external
-        view
-        returns (bytes memory aggregateActivationReceiptV1);
+    function getLysisTerminalReceipt(bytes32 intentId) external view returns (bytes memory aggregateActivationReceiptV1);
 }

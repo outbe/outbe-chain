@@ -5,11 +5,21 @@ pub mod gas;
 pub mod handle;
 pub mod hashmap;
 pub mod lysis_activation;
+mod metadosis_mutation;
 pub mod readonly;
 pub mod types;
 
 pub use handle::StorageHandle;
 pub use lysis_activation::CertifiedLysisActivation;
+pub use metadosis_mutation::{
+    metadosis_advance_due_binding, metadosis_cycle_allocation_binding,
+    metadosis_init_genesis_binding, metadosis_late_settlement_binding,
+    metadosis_ocomp_lifecycle_begin_binding, metadosis_ocomp_terminal_request_binding,
+    metadosis_process_ready_binding, metadosis_verified_vote_binding, MetadosisCertifiedFinality,
+    MetadosisCertifiedFinalityBinding, MetadosisCycleLifecycle, MetadosisForkProfile,
+    MetadosisMutationEntitlements, MetadosisMutationPurpose, MetadosisMutationPurposeTag,
+    MetadosisOcompLifecycle, MetadosisVerifiedResultVote,
+};
 pub use revm::state::{AccountInfo, Bytecode};
 pub use types::{Mapping, Slot, Storable, StorableType, StorageKey, StorageOps};
 
@@ -187,6 +197,34 @@ pub trait StorageBacked<'storage>: Sized {
 /// Runtime code reaches providers through explicit [`StorageHandle`] values
 /// created by precompile, transaction, or block lifecycle entrypoints.
 pub trait PrecompileStorageProvider {
+    /// Opens one exact Metadosis mutation frame for the current executor route.
+    ///
+    /// Providers deny this by default. Implementations must reject nested
+    /// mutation and any purpose not entitled by the authenticated route.
+    fn begin_metadosis_mutation_frame(
+        &mut self,
+        _purpose: MetadosisMutationPurposeTag,
+        _binding: B256,
+        _chain_id: u64,
+        _block_number: u64,
+    ) -> Result<()> {
+        Err(crate::error::PrecompileError::Fatal(
+            "Metadosis mutation frame is not available".into(),
+        ))
+    }
+
+    /// Closes the exact Metadosis mutation frame opened above.
+    fn finish_metadosis_mutation_frame(
+        &mut self,
+        _purpose: MetadosisMutationPurposeTag,
+        _binding: B256,
+        _completed: bool,
+    ) -> Result<()> {
+        Err(crate::error::PrecompileError::Fatal(
+            "Metadosis mutation frame is not available".into(),
+        ))
+    }
+
     /// Opens the private execution lease for one certified Lysis activation.
     ///
     /// Providers deny this by default. The production EVM execution context
@@ -213,6 +251,12 @@ pub trait PrecompileStorageProvider {
 
     /// Returns the chain ID.
     fn chain_id(&self) -> u64;
+
+    /// Returns the immutable genesis block hash for this execution context.
+    ///
+    /// Production providers source this from the canonical `ChainSpec`; it is
+    /// never accepted from transaction calldata or mutable contract storage.
+    fn genesis_hash(&self) -> B256;
 
     /// Returns the current block timestamp.
     fn timestamp(&self) -> U256;

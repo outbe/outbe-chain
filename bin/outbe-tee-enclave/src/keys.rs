@@ -1,25 +1,18 @@
 //! Enclave key material + quote assembly (secret-bearing — enclave only).
 //!
-//! Holds the Noise static keypair and the offer X25519 keypair (the tribute
-//! offer key that clients encrypt to), and builds the SGX quote whose
-//! `report_data` binds those public keys.
-//!
-//! The quote is **real**: under `gramine-sgx` it is produced by the hardware via
-//! [`crate::gramine::dcap_quote`] and the measurements (MRENCLAVE/MRSIGNER/ISVSVN)
-//! are parsed out of it. Under `gramine-direct`/bare there is no SGX hardware, so
-//! the quote is empty and measurements are zero — the enclave runs in an
-//! explicitly **unattested** mode (the host must use a dev policy to accept it).
-//! The attestation key is a real Ed25519 keypair generated fresh each boot
-//! (ephemeral, never sealed); its public key is bound into `report_data` and the
-//! host verifies per-offer attestation tags against it.
+//! One sealed identity seed deterministically derives the Noise responder,
+//! recipient X25519, Ed25519 attestation, TEE-BLS and DKG-decryption keys. The
+//! public identity therefore survives restart as one atomic unit. Intent-bound
+//! DCAP quotes are generated separately by the initialized NodeHost path; this
+//! module retains an unattested legacy response only for the mock/test transport.
 
 use alloy_primitives::{keccak256, B256};
 use commonware_codec::Encode as _;
+use commonware_cryptography::bls12381::primitives::group::{Private as BlsPrivate, Scalar};
 use commonware_cryptography::Signer as _;
-use x25519_dalek::{PublicKey, StaticSecret};
+use zeroize::{Zeroize as _, Zeroizing};
 
 use outbe_tee::protocol::EnclaveResponse;
-use outbe_tee::NOISE_PARAMS;
 
 use crate::crypto::{hkdf_sha256, x25519_public};
 use crate::dkg::PrivKey;
@@ -37,6 +30,27 @@ pub const UNATTESTED_MEASUREMENT: B256 = B256::ZERO;
 /// that is not authenticated by the BLS identity it is paired with, so an
 /// untrusted host cannot mis-pair or duplicate enc keys at ceremony open.
 pub const DKG_ENC_BIND_NAMESPACE: &[u8] = b"outbe/tee/dkg-enc-bind/v1";
+
+/// Versioned RFC 9380 domain for the persistent TEE-BLS identity mapping.
+/// Changing this value rotates the identity and therefore requires an explicit
+/// migration; the known-answer test below pins seed-to-public-key continuity.
+const TEE_BLS_IDENTITY_V1_DST: &[u8] = b"OUTBE_TEE_BLS_IDENTITY_V1_XMD:SHA-256";
+
+fn derive_tee_bls_identity_v1(seed: &[u8; 32]) -> Result<PrivKey, String> {
+    // Scalar::map is an explicit RFC 9380 expand_message_xmd + field reduction,
+    // rather than an RNG implementation detail. The counter handles the
+    // negligible zero-scalar case deterministically for every possible seed.
+    for counter in 0u8..=u8::MAX {
+        let mut input = Zeroizing::new([0u8; 33]);
+        input[..32].copy_from_slice(seed);
+        input[32] = counter;
+        let scalar = Scalar::map(TEE_BLS_IDENTITY_V1_DST, input.as_ref());
+        if scalar != Scalar::from_u64(0) {
+            return Ok(PrivKey::from(BlsPrivate::new(scalar)));
+        }
+    }
+    Err("TEE-BLS identity v1 mapping produced only zero scalars".to_string())
+}
 
 /// Signature type produced by the TEE-BLS identity key.
 type TeeBlsSignature = <PrivKey as commonware_cryptography::Signer>::Signature;
@@ -80,137 +94,96 @@ pub fn verify_dkg_enc_binding(
 
 /// Enclave-resident key material.
 pub struct EnclaveKeys {
-    noise_private: Vec<u8>,
+    noise_private: Zeroizing<[u8; 32]>,
     noise_public: [u8; 32],
     /// X25519 offer secret (the decrypt key) + its public (clients encrypt to it).
-    tribute_offer_secret: [u8; 32],
+    tribute_offer_secret: Zeroizing<[u8; 32]>,
     tribute_offer_public: [u8; 32],
-    /// Per-enclave Ed25519 attestation signing key, generated fresh each boot
-    /// (ephemeral, never sealed). The host pins its public key from the quote this
-    /// session and verifies per-offer attestation tags against it.
+    /// Persistent per-enclave Ed25519 attestation signing key.
     attestation_signing: ed25519_dalek::SigningKey,
-    /// Cached attestation public key bytes (the verifying key). Bound into
-    /// `report_data` so the host can pin it from the quote.
+    /// Cached attestation public key bytes (the verifying key).
     attestation_pub: [u8; 32],
     /// TEE threshold-BLS signing key (this enclave's DKG participant identity).
     tee_bls_key: PrivKey,
     /// X25519 secret used to open DKG shares sealed to this enclave.
-    dkg_enc_secret: [u8; 32],
+    dkg_enc_secret: Zeroizing<[u8; 32]>,
     mrenclave: B256,
     mrsigner: B256,
     isv_svn: u16,
     /// The real attestation environment detected at startup.
     attest_type: AttestationType,
-    /// Real DCAP quote bytes (empty when unattested). Generated once at startup;
-    /// the embedded report body carries the measurements + report_data.
-    quote_body: Vec<u8>,
 }
 
 impl EnclaveKeys {
-    /// Build enclave keys from an explicit offer secret. Generates a fresh Noise
-    /// static key and uses mock measurements. The offer encryption salt is the
-    /// fixed protocol constant [`outbe_tee::OFFER_HKDF_SALT`], not per-enclave.
-    ///
-    /// `dkg_seed_override` decouples this enclave's **DKG participant identity**
-    /// (its threshold-BLS signing key + X25519 share-decryption key) from the
-    /// offer secret: every validator's enclave shares the same dev offer secret,
-    /// so without a distinct seed all `n` enclaves would be the *same* DKG
-    /// participant (a degenerate ceremony). Each validator passes a distinct
-    /// `--dkg-seed`; tests that already give each enclave a distinct offer secret
-    /// pass `None` and fall back to it. The offer *key* is no longer derived from
-    /// `tribute_offer_secret` in production — it comes from the DKG group signature
-    /// (Seam F) at runtime — but the dev `tribute_offer_secret` remains the pre-DKG
-    /// fallback decrypt key.
+    /// Derive the complete persistent enclave identity from one seed. On SGX the
+    /// seed is generated once and sealed by `run::resolve_enclave_identity_seed`; mock
+    /// and direct tests pass an explicit seed. `legacy_seed` is only the fallback
+    /// when no persistent seed is available and is never a production authority.
     pub fn new(
-        tribute_offer_secret: [u8; 32],
-        dkg_seed_override: Option<[u8; 32]>,
+        legacy_seed: [u8; 32],
+        identity_seed_override: Option<[u8; 32]>,
     ) -> Result<Self, String> {
-        let params = NOISE_PARAMS
-            .parse()
-            .map_err(|e| format!("noise params: {e:?}"))?;
-        let keypair = snow::Builder::new(params)
-            .generate_keypair()
-            .map_err(|e| format!("noise keygen: {e}"))?;
-        if keypair.public.len() != 32 {
-            return Err("noise public key is not 32 bytes".to_string());
-        }
-        let mut noise_public = [0u8; 32];
-        noise_public.copy_from_slice(&keypair.public);
+        Self::new_with_identity_seed(legacy_seed, identity_seed_override.map(Zeroizing::new))
+    }
 
-        let tribute_offer_public =
-            PublicKey::from(&StaticSecret::from(tribute_offer_secret)).to_bytes();
-        // Real Ed25519 attestation keypair, generated fresh per boot. `OsRng` is
-        // used here only for protocol-required cryptographic secret material (the
-        // attestation signing key); it never feeds VRF/leader-election/consensus
-        // determinism. The key is ephemeral (not sealed): the host re-pins the
-        // public key from each session's quote.
-        let attestation_signing = ed25519_dalek::SigningKey::generate(&mut rand_core::OsRng);
+    /// Production constructor: keeps a restored or freshly generated identity
+    /// seed in zeroizing storage for the complete derivation path.
+    pub(crate) fn new_with_identity_seed(
+        mut legacy_seed: [u8; 32],
+        identity_seed_override: Option<Zeroizing<[u8; 32]>>,
+    ) -> Result<Self, String> {
+        let identity_seed = identity_seed_override.unwrap_or_else(|| Zeroizing::new(legacy_seed));
+        legacy_seed.zeroize();
+        let noise_private = Zeroizing::new(
+            hkdf_sha256(identity_seed.as_ref(), b"", b"outbe/tee/noise-static/v1")
+                .map_err(|error| error.to_string())?,
+        );
+        let noise_public = x25519_public(&noise_private);
+        let tribute_offer_secret = Zeroizing::new(
+            hkdf_sha256(
+                identity_seed.as_ref(),
+                b"",
+                b"outbe/tee/recipient-x25519/v1",
+            )
+            .map_err(|error| error.to_string())?,
+        );
+        let tribute_offer_public = x25519_public(&tribute_offer_secret);
+        let attestation_secret = Zeroizing::new(
+            hkdf_sha256(
+                identity_seed.as_ref(),
+                b"",
+                b"outbe/tee/attestation-ed25519/v1",
+            )
+            .map_err(|error| error.to_string())?,
+        );
+        let attestation_signing = ed25519_dalek::SigningKey::from_bytes(&attestation_secret);
         let attestation_pub = attestation_signing.verifying_key().to_bytes();
 
-        // DKG identity. Seeded from `dkg_seed_override` when provided (each
-        // validator passes a distinct `--dkg-seed`, so the n enclaves are
-        // distinct DKG participants even though they share the dev offer secret);
-        // otherwise falls back to `tribute_offer_secret` (tests give each enclave a
-        // distinct offer secret). Deterministic and stable across restart.
-        let dkg_seed_input = dkg_seed_override.unwrap_or(tribute_offer_secret);
-        let dkg_enc_secret = hkdf_sha256(&dkg_seed_input, b"", b"outbe/tee/dkg-enc/v1")
-            .map_err(|e| e.to_string())?;
-        let bls_seed_bytes = hkdf_sha256(&dkg_seed_input, b"", b"outbe/tee/dkg-bls-seed/v1")
-            .map_err(|e| e.to_string())?;
-        let bls_seed = u64::from_le_bytes(
-            bls_seed_bytes[..8]
-                .try_into()
-                .map_err(|_| "bls seed slice".to_string())?,
+        let dkg_enc_secret = Zeroizing::new(
+            hkdf_sha256(identity_seed.as_ref(), b"", b"outbe/tee/dkg-enc/v1")
+                .map_err(|e| e.to_string())?,
         );
-        let tee_bls_key = PrivKey::from_seed(bls_seed);
+        let bls_seed = Zeroizing::new(
+            hkdf_sha256(identity_seed.as_ref(), b"", b"outbe/tee/dkg-bls-seed/v1")
+                .map_err(|e| e.to_string())?,
+        );
+        let tee_bls_key = derive_tee_bls_identity_v1(&bls_seed)?;
 
-        // Real SGX attestation. Bind the cleartext public keys into the SGX
-        // report_data (first 32 bytes = keccak binding) and ask the hardware for
-        // a DCAP quote; the measurements are then parsed out of that real quote.
-        // Under gramine-direct/bare there is no SGX hardware (observed: the quote
-        // pseudo-file is unwritable and keys/ is empty), so the quote is empty and
-        // the measurements are zero — explicitly unattested, never fabricated.
+        // Read local measurements without producing an unauthenticated quote.
+        // Intent-bound DCAP generation is restricted to the initialized NodeHost.
         let attest_type = gramine::attestation_type();
         let report_data_b256 =
             Self::report_data_binding(&noise_public, &tribute_offer_public, &attestation_pub);
         let mut report_data_64 = [0u8; 64];
         report_data_64[..32].copy_from_slice(report_data_b256.as_slice());
-        let (mrenclave, mrsigner, isv_svn, quote_body) = match gramine::dcap_quote(&report_data_64)
-        {
-            Ok(quote) => {
-                let m = gramine::parse_quote_measurements(&quote)
-                    .map_err(|e| format!("parse own quote: {e}"))?;
-                (
-                    B256::from(m.mrenclave),
-                    B256::from(m.mrsigner),
-                    m.isv_svn,
-                    quote,
-                )
-            }
-            // No DCAP quote. Under gramine-sgx with remote attestation disabled
-            // (manifest "none") the hardware is still present, so read the REAL
-            // MRENCLAVE/MRSIGNER from a local SGX report — measured + confidential,
-            // but NOT remote-attested (quote_body stays empty). Under
-            // gramine-direct/bare there is no SGX at all, so this also fails and we
-            // report zero measurements, never fabricated.
-            Err(_) => match gramine::local_report_measurements(&report_data_64) {
-                Ok(m) => (
-                    B256::from(m.mrenclave),
-                    B256::from(m.mrsigner),
-                    m.isv_svn,
-                    Vec::new(),
-                ),
-                Err(_) => (
-                    UNATTESTED_MEASUREMENT,
-                    UNATTESTED_MEASUREMENT,
-                    0u16,
-                    Vec::new(),
-                ),
-            },
-        };
+        let (mrenclave, mrsigner, isv_svn) =
+            match gramine::local_report_measurements(&report_data_64) {
+                Ok(m) => (B256::from(m.mrenclave), B256::from(m.mrsigner), m.isv_svn),
+                Err(_) => (UNATTESTED_MEASUREMENT, UNATTESTED_MEASUREMENT, 0u16),
+            };
 
         Ok(Self {
-            noise_private: keypair.private,
+            noise_private,
             noise_public,
             tribute_offer_secret,
             tribute_offer_public,
@@ -222,7 +195,6 @@ impl EnclaveKeys {
             mrsigner,
             isv_svn,
             attest_type,
-            quote_body,
         })
     }
 
@@ -237,8 +209,8 @@ impl EnclaveKeys {
     }
 
     /// This enclave's X25519 share-decryption secret.
-    pub fn dkg_enc_secret(&self) -> [u8; 32] {
-        self.dkg_enc_secret
+    pub fn dkg_enc_secret(&self) -> &[u8; 32] {
+        &self.dkg_enc_secret
     }
 
     /// This enclave's X25519 share-encryption public key (dealers seal to it).
@@ -247,7 +219,7 @@ impl EnclaveKeys {
     }
 
     pub fn noise_private(&self) -> &[u8] {
-        &self.noise_private
+        self.noise_private.as_ref()
     }
     pub fn noise_public(&self) -> [u8; 32] {
         self.noise_public
@@ -255,12 +227,11 @@ impl EnclaveKeys {
     pub fn tribute_offer_public(&self) -> [u8; 32] {
         self.tribute_offer_public
     }
-    /// The X25519 secret behind `tribute_offer_public` — the key a keyless enclave
-    /// advertises as its `recipient_x25519` (REPORT_DATA-bound, per-enclave). A
-    /// key-handoff is sealed to that public, so the newcomer decrypts the handed-off
-    /// group signature with this secret.
-    pub fn tribute_offer_x25519_secret(&self) -> [u8; 32] {
-        self.tribute_offer_secret
+    /// The X25519 secret behind the one-time onboarding recipient advertised by a
+    /// keyless enclave. The finalized registry artifact is sealed to this
+    /// REPORT_DATA-bound public key and can be ingested only by this enclave.
+    pub fn tribute_offer_x25519_secret(&self) -> &[u8; 32] {
+        &self.tribute_offer_secret
     }
     pub fn attestation_pub(&self) -> [u8; 32] {
         self.attestation_pub
@@ -345,11 +316,6 @@ impl EnclaveKeys {
         &self.attest_type
     }
 
-    /// True only when this enclave produced a real SGX hardware quote.
-    pub fn is_attested(&self) -> bool {
-        !self.quote_body.is_empty()
-    }
-
     /// Build the SGX quote response. The `quote_body` is the real DCAP quote
     /// generated at startup (empty when unattested). `nonce` is unused for
     /// freshness here — the channel's freshness comes from the Noise-IK handshake
@@ -363,7 +329,7 @@ impl EnclaveKeys {
             recipient_x25519_pub: self.tribute_offer_public,
             attestation_pub: self.attestation_pub,
             noise_static_pub: self.noise_public,
-            quote_body: self.quote_body.clone(),
+            quote_body: Vec::new(),
             attestation: self.attest_type.label(),
         }
     }
@@ -374,16 +340,12 @@ mod tests {
     use super::*;
 
     /// Off SGX hardware (CI / gramine-direct / bare) the enclave MUST run
-    /// unattested: empty quote, zero measurements, `is_attested() == false`. It
-    /// must never fabricate a quote or measurements (the old mock did exactly
+    /// unattested: empty quote and zero measurements. It must never fabricate a
+    /// quote or measurements (the old mock did exactly
     /// that — `mock-gramine-direct-quote` + `[0xE1;32]`/`[0x51;32]`).
     #[test]
     fn unattested_when_no_sgx_hardware() {
         let keys = EnclaveKeys::new([0x07; 32], Some([0x01; 32])).expect("key init off-hardware");
-        assert!(
-            !keys.is_attested(),
-            "must be unattested without SGX hardware"
-        );
         assert_eq!(keys.mrenclave, UNATTESTED_MEASUREMENT);
         assert_eq!(keys.mrsigner, UNATTESTED_MEASUREMENT);
         assert_eq!(keys.isv_svn, 0);
@@ -444,15 +406,20 @@ mod tests {
         assert_ne!(got, keccak256(&swapped));
     }
 
-    /// The attestation key is a real Ed25519 key, generated fresh per boot
-    /// (two enclaves with identical seeds still get different attestation keys),
-    /// and its signatures verify against the advertised public key.
+    /// All public identity keys are persistent for one sealed seed, while a
+    /// different seed produces a distinct identity. Ed25519 signatures verify
+    /// against the advertised persistent public key.
     #[test]
-    fn attestation_key_is_real_ed25519_and_ephemeral() {
+    fn enclave_identity_keys_are_seed_stable_and_ed25519_is_real() {
         let k1 = EnclaveKeys::new([0x07; 32], Some([0x01; 32])).expect("k1");
         let k2 = EnclaveKeys::new([0x07; 32], Some([0x01; 32])).expect("k2");
-        // Ephemeral per boot: same seeds, different attestation keys.
-        assert_ne!(k1.attestation_pub(), k2.attestation_pub());
+        let k3 = EnclaveKeys::new([0x07; 32], Some([0x02; 32])).expect("k3");
+        assert_eq!(k1.attestation_pub(), k2.attestation_pub());
+        assert_eq!(k1.noise_public(), k2.noise_public());
+        assert_eq!(k1.tribute_offer_public(), k2.tribute_offer_public());
+        assert_ne!(k1.attestation_pub(), k3.attestation_pub());
+        assert_ne!(k1.noise_public(), k3.noise_public());
+        assert_ne!(k1.tribute_offer_public(), k3.tribute_offer_public());
         assert_ne!(k1.attestation_pub(), [0u8; 32]);
 
         // A signature verifies against the advertised public key.
@@ -463,7 +430,17 @@ mod tests {
         vk.verify_strict(msg, &sig)
             .expect("attestation signature verifies");
         // Wrong key must not verify.
-        let vk2 = ed25519_dalek::VerifyingKey::from_bytes(&k2.attestation_pub()).expect("vk2");
-        assert!(vk2.verify_strict(msg, &sig).is_err());
+        let vk3 = ed25519_dalek::VerifyingKey::from_bytes(&k3.attestation_pub()).expect("vk3");
+        assert!(vk3.verify_strict(msg, &sig).is_err());
+    }
+
+    #[test]
+    fn tee_bls_identity_v1_has_a_known_answer() {
+        let keys = EnclaveKeys::new([0x07; 32], Some([0x01; 32])).expect("key init");
+        assert_eq!(
+            hex::encode(keys.tee_bls_public_bytes()),
+            "b6178141d30a5a91df599cf9a9b089651b1f7f25945a51a4cd02542276b43a30815322d7a002335ca563124e86f624ce",
+            "seed-to-BLS mapping changed; use an explicit identity migration"
+        );
     }
 }

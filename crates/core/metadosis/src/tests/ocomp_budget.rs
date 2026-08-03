@@ -5,6 +5,7 @@ use outbe_ocomp_protocol::{
     intent::DayType,
     receipts::{desis_request_brief_hash, BudgetSplitDestination},
 };
+use outbe_primitives::error::PrecompileError;
 
 use crate::ocomp_budget::{
     apply_fresh_request_budget_effect, validate_replayed_request_budget_effect,
@@ -37,7 +38,10 @@ fn request_budget_split_is_exact_at_zero_max_and_rejects_over_budget() {
             auction_base: U256::MAX,
         }
     );
-    assert!(RequestBudgetSplit::derive(U256::from(9), U256::from(10)).is_err());
+    assert!(matches!(
+        RequestBudgetSplit::derive(U256::from(9), U256::from(10)),
+        Err(PrecompileError::Fatal(_))
+    ));
 }
 
 #[test]
@@ -200,11 +204,17 @@ fn retry_rejects_tampered_or_future_receipts_without_writing() {
 
         let mut tampered = receipt.clone();
         tampered.auction_entry_price += U256::from(1);
-        assert!(validate_replayed_request_budget_effect(request, &tampered).is_err());
+        assert!(matches!(
+            validate_replayed_request_budget_effect(request, &tampered),
+            Err(PrecompileError::Fatal(_))
+        ));
 
         let mut future = receipt;
         future.pending_nonce = request.pending_nonce + 1;
-        assert!(validate_replayed_request_budget_effect(request, &future).is_err());
+        assert!(matches!(
+            validate_replayed_request_budget_effect(request, &future),
+            Err(PrecompileError::Fatal(_))
+        ));
         assert_eq!(
             PromisLimitContract::new(storage)
                 .get_total_unallocated()

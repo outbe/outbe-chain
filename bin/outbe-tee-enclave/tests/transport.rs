@@ -136,6 +136,36 @@ fn rejects_tampered_report_data_binding() {
     server.join().unwrap();
 }
 
+#[test]
+fn development_session_cannot_invoke_production_dcap_verifier() {
+    let dir = tempfile::tempdir().unwrap();
+    let sock = dir.path().join("enclave.sock");
+    let keys = EnclaveKeys::new(OFFER_SECRET, None).unwrap();
+
+    let listener = UnixListener::bind(&sock).unwrap();
+    let server = thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        let offer_key = std::sync::Arc::new(std::sync::OnceLock::new());
+        serve_connection(stream, &keys, &offer_key).unwrap();
+    });
+
+    let mut client = EnclaveClient::connect(&sock, &QuotePolicy::dev_accept_any()).unwrap();
+    let error = client
+        .request(&EnclaveRequest::BeginDcapVerificationV1 {
+            request_hash: alloy_primitives::B256::repeat_byte(0xA1),
+            evidence_len: 1,
+            policy_len: 1,
+            block_timestamp: 1,
+        })
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("production"),
+        "unexpected verifier rejection: {error}"
+    );
+    drop(client);
+    server.join().unwrap();
+}
+
 /// End-to-end **throughput** of the full enclave offer path INCLUDING transport:
 /// `postcard` codec + Noise-IK encrypt/decrypt + framed UDS round-trip + the
 /// in-enclave decrypt/economics/Poseidon. The Noise handshake is paid once per

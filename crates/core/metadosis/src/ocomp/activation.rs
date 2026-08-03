@@ -30,10 +30,10 @@ use outbe_tribute::{
     TributeContract,
 };
 
-use crate::precompile::IMetadosis;
-use crate::schema::MetadosisContract;
+use crate::reducer::OuterWwdTransition;
+use crate::{precompile::IMetadosis, schema::MetadosisContract};
 
-use super::{schema::OcompRequestProfile, state::JobFsmLimits};
+use super::{profile::OcompRequestProfile, state::JobFsmLimits};
 
 const REJECT_LIMIT_EXCEEDED: u16 = 2;
 const REJECT_FORK_OR_BUNDLE_MISMATCH: u16 = 3;
@@ -78,24 +78,62 @@ pub enum OcompFinalityAuthorityError {
     LocalAuthority(String),
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct QuorumApplyContext<'a, 'storage> {
+    storage: &'a StorageHandle<'storage>,
+    scope: &'a ExecutionScope,
+    completed_transition: &'a OuterWwdTransition,
+    conflict_transition: &'a OuterWwdTransition,
+    current_height: u64,
+    current_time: u64,
+    limits: &'a SchemaLimits,
+}
+
+impl<'a, 'storage> QuorumApplyContext<'a, 'storage> {
+    pub(crate) const fn new(
+        storage: &'a StorageHandle<'storage>,
+        scope: &'a ExecutionScope,
+        completed_transition: &'a OuterWwdTransition,
+        conflict_transition: &'a OuterWwdTransition,
+        current_height: u64,
+        current_time: u64,
+        limits: &'a SchemaLimits,
+    ) -> Self {
+        Self {
+            storage,
+            scope,
+            completed_transition,
+            conflict_transition,
+            current_height,
+            current_time,
+            limits,
+        }
+    }
+}
+
+struct CertifiedResultInput<'a> {
+    result: &'a outbe_ocomp_protocol::result::LysisResultV1,
+    bundle: &'a ProtocolBundleV1,
+    plan: &'a LysisApplyPlanV1,
+    quorum: &'a outbe_ocomp_protocol::vote::OcompQuorumV1,
+    result_evidence_hash: B256,
+}
+
 /// Verifies and applies the full result carried by the vote that first forms
 /// q=3. The caller owns the outer storage checkpoint that also contains the
 /// q-forming vote slot and quorum, so any verifier/owner failure rolls the
 /// complete transition back.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn apply_quorum_result(
-    storage: &StorageHandle<'_>,
-    scope: &ExecutionScope,
+    context: QuorumApplyContext<'_, '_>,
     metadosis: &mut MetadosisContract<'_>,
     intent_id: B256,
     record: &OcompJobRecordV1,
     result: &outbe_ocomp_protocol::result::LysisResultV1,
     quorum: &outbe_ocomp_protocol::vote::OcompQuorumV1,
     authority: &OcompActivationAuthorityV1,
-    current_height: u64,
-    current_time: u64,
-    limits: &SchemaLimits,
 ) -> PrecompileResult<Bytes> {
+    let current_height = context.current_height;
+    let limits = context.limits;
     if record.status != OcompJobStatus::VotingOpen || record.terminal.is_some() {
         return Err(fatal(
             "OCOMP q-forming result requires a voting-open non-terminal job",
@@ -164,43 +202,36 @@ pub(crate) fn apply_quorum_result(
     )
     .map_err(|error| protocol_reject(error, REJECT_RESULT_STRUCTURE_INVALID))?;
 
-    let job_fsm_limits = fsm_limits(&profile);
-    if target_preconditions_changed(storage, metadosis, record, limits, job_fsm_limits)? {
+    let job_fsm_limits = profile.fsm_limits();
+    if target_preconditions_changed(context, metadosis, record, job_fsm_limits)? {
         commit_conflict(
+            context,
             metadosis,
             &plan,
             quorum,
             result_evidence_hash,
-            current_height,
-            current_time,
-            limits,
             job_fsm_limits,
         )
     } else {
-        apply_certified_result(
-            storage,
-            scope,
-            metadosis,
+        let certified = CertifiedResultInput {
             result,
-            &authority.bundle,
-            &plan,
+            bundle: &authority.bundle,
+            plan: &plan,
             quorum,
             result_evidence_hash,
-            current_height,
-            current_time,
-            limits,
-            job_fsm_limits,
-        )
+        };
+        apply_certified_result(context, metadosis, certified, job_fsm_limits)
     }
 }
 
 fn target_preconditions_changed(
-    storage: &StorageHandle<'_>,
+    context: QuorumApplyContext<'_, '_>,
     metadosis: &MetadosisContract<'_>,
     record: &OcompJobRecordV1,
-    limits: &SchemaLimits,
     fsm_limits: JobFsmLimits,
 ) -> PrecompileResult<bool> {
+    let storage = context.storage;
+    let limits = context.limits;
     let expected = &record.intent.activation_preconditions;
     let wwd = outbe_common::WorldwideDay::new(record.intent.wwd);
     let tribute = TributeContract::new(storage.clone()).pre_admission_projection(wwd)?;
@@ -235,22 +266,23 @@ fn target_preconditions_changed(
         || !contributors.contributor_total.is_zero()
         || !metadosis_projection.initialized
         || metadosis_projection.state_version != expected.metadosis.state_version
-        || status != crate::schema::status::OFFCHAIN_PENDING
+        || status != crate::aggregate::WwdStatus::OffchainPending
         || fsm.live_intent_id != Some(intent_id)
         || fsm.pending_nonce != expected.metadosis.pending_nonce)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn commit_conflict(
+    context: QuorumApplyContext<'_, '_>,
     metadosis: &mut MetadosisContract<'_>,
     plan: &LysisApplyPlanV1,
     quorum: &outbe_ocomp_protocol::vote::OcompQuorumV1,
     result_evidence_hash: B256,
-    current_height: u64,
-    current_time: u64,
-    limits: &SchemaLimits,
     fsm_limits: JobFsmLimits,
 ) -> PrecompileResult<Bytes> {
+    let outer_transition = context.conflict_transition;
+    let current_height = context.current_height;
+    let current_time = context.current_time;
+    let limits = context.limits;
     let binding = plan.binding().clone();
     let receipt = AggregateActivationReceiptV1 {
         binding: binding.clone(),
@@ -283,6 +315,7 @@ fn commit_conflict(
         terminal_receipt: receipt,
     };
     let next_pending_nonce = metadosis.commit_ocomp_conflict(
+        outer_transition,
         binding.intent_id,
         completed_binding,
         quorum,
@@ -306,21 +339,25 @@ fn commit_conflict(
     ))
 }
 
-#[allow(clippy::too_many_arguments)]
 fn apply_certified_result(
-    storage: &StorageHandle<'_>,
-    scope: &ExecutionScope,
+    context: QuorumApplyContext<'_, '_>,
     metadosis: &mut MetadosisContract<'_>,
-    result: &outbe_ocomp_protocol::result::LysisResultV1,
-    bundle: &ProtocolBundleV1,
-    plan: &LysisApplyPlanV1,
-    quorum: &outbe_ocomp_protocol::vote::OcompQuorumV1,
-    result_evidence_hash: B256,
-    current_height: u64,
-    current_time: u64,
-    limits: &SchemaLimits,
+    certified: CertifiedResultInput<'_>,
     fsm_limits: JobFsmLimits,
 ) -> PrecompileResult<Bytes> {
+    let storage = context.storage;
+    let scope = context.scope;
+    let outer_transition = context.completed_transition;
+    let current_height = context.current_height;
+    let current_time = context.current_time;
+    let limits = context.limits;
+    let CertifiedResultInput {
+        result,
+        bundle,
+        plan,
+        quorum,
+        result_evidence_hash,
+    } = certified;
     let binding = plan.binding().clone();
     let mut request_receipt = metadosis
         .request_budget_receipt(
@@ -401,6 +438,7 @@ fn apply_certified_result(
             .terminal_permit(capability)
             .map_err(|_| reject(REJECT_RECEIPT_MISMATCH))?;
         let completed = metadosis.commit_ocomp_completed(
+            outer_transition,
             binding.intent_id,
             active_generation,
             result_evidence_hash,
@@ -425,25 +463,10 @@ fn inject_test_receipt_fault(
     request_receipt: &mut RequestBudgetSplitReceiptV1,
     receipts: &mut LysisOwnerReceiptsV1,
 ) {
-    #[cfg(feature = "test-utils")]
-    super::test_support::inject_receipt_fault(request_receipt, receipts);
-    #[cfg(all(not(feature = "test-utils"), debug_assertions))]
-    {
-        const OWNER_FAILPOINT_ENV: &str = "OUTBE_E2E_OCOMP_OWNER_FAILPOINT";
-        match std::env::var(OWNER_FAILPOINT_ENV).ok().as_deref() {
-            Some("nod_receipt_root") => {
-                receipts.nod.nod_root = B256::repeat_byte(0xd2);
-            }
-            Some(_) => {
-                request_receipt.logical_anchor = request_receipt.logical_anchor.wrapping_add(1);
-            }
-            None => {}
-        }
-    }
-    #[cfg(all(not(feature = "test-utils"), not(debug_assertions)))]
-    {
-        let _ = (request_receipt, receipts);
-    }
+    #[cfg(test)]
+    crate::fixture_kernel::inject_receipt_fault(request_receipt, receipts);
+    #[cfg(not(test))]
+    let _ = (request_receipt, receipts);
 }
 
 fn owner_apply_error(error: PrecompileError) -> PrecompileError {
@@ -452,12 +475,6 @@ fn owner_apply_error(error: PrecompileError) -> PrecompileError {
             reject(REJECT_OWNER_APPLY_REJECTED)
         }
         other => other,
-    }
-}
-
-fn fsm_limits(profile: &OcompRequestProfile) -> JobFsmLimits {
-    JobFsmLimits {
-        max_terminal_records: profile.capacity_profile.max_terminal_job_records,
     }
 }
 
@@ -501,8 +518,7 @@ impl MetadosisContract<'_> {
         result_committee: &OcompCommitteeSnapshotV1,
         limits: &SchemaLimits,
     ) -> PrecompileResult<()> {
-        let storage = self.storage.clone();
-        storage.with_checkpoint(|| {
+        (|| {
             let profile = self
                 .read_ocomp_request_profile(limits)?
                 .ok_or_else(|| fatal("OCOMP request profile is not initialized"))?;
@@ -535,7 +551,7 @@ impl MetadosisContract<'_> {
                     Ok(())
                 }
             }
-        })
+        })()
     }
 
     pub fn read_ocomp_activation_authority(
@@ -576,7 +592,7 @@ impl MetadosisContract<'_> {
     }
 }
 
-pub(super) fn validate_activation_authority(
+pub(crate) fn validate_activation_authority(
     profile: &OcompRequestProfile,
     bundle: &ProtocolBundleV1,
     result_committee: &OcompCommitteeSnapshotV1,

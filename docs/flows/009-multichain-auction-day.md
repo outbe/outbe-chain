@@ -45,10 +45,10 @@ proceeds of every winning chain exactly once.
 - **Response measures:** Issued count ≤ supply; issued × load + unused = brief
   supply; every bidder pays or is refunded exactly once; the creator payout sum
   equals the delivered pot exactly; replay of the same day is byte-identical.
-- **Failure guarantee:** A failed dispatch rolls back all of its writes (a
-  checkpointed brief leaves no partial day); a failed gate day retries next
-  block; terminal stages never reopen; redelivered batches and messages are
-  no-ops.
+- **Failure guarantee:** A technical brief error rolls back the full Cycle
+  command; only `SupplyExceedsAuctionDomain` commits a typed full-supply
+  carry-over with no auction state. A failed gate day retries next block;
+  terminal stages never reopen; redelivered batches and messages are no-ops.
 
 ## Preconditions and canonical inputs
 
@@ -62,9 +62,9 @@ the origin chain.
 
 | Step | Owner | Command/effect | Durable evidence |
 |---:|---|---|---|
-| 1 | Metadosis | READY processing: Lysis transforms tributes, contributor map recorded per series | contributor list/total |
-| 2 | Metadosis | `dispatch_auction_brief` (supply, entry price, day type) | Desis `Briefed`, `brief_green` |
-| 3 | Desis | schedule tick at anchor: green starts, red cancels; STAGE_START to every snapshot chain | stage, `AuctionCreated`/`AuctionCancelledRedDay`, sends |
+| 1 | Metadosis | READY processing splits the formed limit; GREEN sends one typed Desis brief, RED routes auction base to carry-over; populated positive-gratis work creates an OCOMP intent without Lysis effects | split/brief receipt, Desis `Briefed` or exact carry-over, `JobIntentV1` |
+| 2 | OCOMP q-forming apply | certified Lysis result installs Nod/contributor state and retires the Tribute generation atomically; no synchronous fallback exists | q=3 receipt, contributor list/total, terminal Metadosis receipt |
+| 3 | Desis | schedule tick at anchor: accepted green starts, red cancels; STAGE_START to every snapshot chain | stage, `AuctionCreated`/`AuctionCancelledRedDay`, sends |
 | 4 | Target stacks | commit window: bond-locked commitments; reveal window: revealed bids, bond release | escrow receipts, auction records |
 | 5 | TargetRouter | relay bid batches + BIDS_DONE after clearing signal | relayed batches, marker |
 | 6 | Desis | per-chain intake: batches, integrity-checked completeness | `ChainBidsDone`, per-chain counts |
@@ -73,16 +73,18 @@ the origin chain.
 | 9 | IntexFactory | series creation + issuance instructions to every snapshot chain (winners grouped per chain, empty lists provision only); proceeds fan-in armed | series record, sends |
 | 10 | Target stacks | winner mints, loser refunds, escrow finalization; proceeds routed to origin per chain | NFT balances, escrow state |
 | 11 | IntexFactory | proceeds pot accumulates per source chain; round opens on fan-in completion or deadline | pot/arrived records |
-| 12 | IntexFactory | begin-block drain pays contributors proportionally, dust to last | creator balances, cleared pot |
+| 12 | IntexFactory | after certified contributor state exists, begin-block drain pays contributors proportionally, dust to last; an earlier pot remains pending | creator balances, cleared pot |
 
 ## Boundaries and conservation
 
-Steps 1–2 share the READY-day system transaction; step 3 and each later Desis
-transition run inside their own checkpoints (schedule tick per day, gate per
-day). Clearing (7–9) commits terminal stage, PromisLimit return, issuance and
-per-chain sends in one transaction. Cross-module equations: issued × load +
-unused = brief supply; per-bidder paid + refunded = locked; Σ creator payouts
-= Σ delivered proceeds per series.
+Step 1 commits request-phase split/brief/intent effects. Step 2 is a later
+verified OCOMP q-forming transaction; it is the only producer of certified
+contributor state. Step 3 and each later Desis transition run inside their own
+checkpoints (schedule tick per day, gate per day). Clearing (7–9) commits
+terminal stage, PromisLimit return, issuance and per-chain sends in one
+transaction. Cross-module equations: issued × load + unused = accepted brief
+supply; per-bidder paid + refunded = locked; Σ creator payouts = Σ delivered
+proceeds per series.
 
 ## Observable completion contract
 
@@ -107,16 +109,16 @@ round funds a supplementary round over the retained map.
 
 | Id | Scenario | Minimum topology | Required assertions | Automated by |
 |---|---|---|---|---|
-| PFS-009-01 | green day clears and pays creators | in-process, two-chain snapshot | stage walk, issued count, supply conservation, exact creator payout, replay determinism | `crates/core/e2e/tests/wwd_auction_clearing.rs` (green scenario) |
-| PFS-009-02 | red day cancels before start | in-process | zero-supply brief, `Cancelled`, no PromisLimit spend | same test (red scenario) |
-| PFS-009-03 | silent chain skipped at deadline | in-process, two-chain snapshot | gate waits inside window, clears without silent chain, reporting chain's bids issued | `test_runtime_e2e_auction_gate_deadline_skips_silent_chain` |
+| PFS-009-01 | green day clears and pays creators | in-process, two-chain snapshot | stage walk, issued count, supply conservation, exact creator payout, replay determinism | GAP: the former synchronous raw-fixture test was removed during the production-path cutover; no current automated replacement proves this full walk |
+| PFS-009-02 | red day cancels before start | in-process | zero-supply brief, `Cancelled`, no PromisLimit spend | GAP: the former synchronous raw-fixture test was removed during the production-path cutover; no current automated replacement proves this full walk |
+| PFS-009-03 | silent chain skipped at deadline | in-process, two-chain snapshot | gate waits inside window, clears without silent chain, reporting chain's bids issued | GAP: the former synchronous raw-fixture test was removed during the production-path cutover; no current automated replacement proves this full walk |
 | PFS-009-04 | full multichain walk over live transport | origin + remote chain + hub | stage delivery, bids over transport, mints/refunds on both chains, proceeds both legs | GAP: exercised manually on testnet; no automated runner |
 | PFS-009-05 | contract-side commit/reveal/escrow | Foundry, loopback pair | bond lifecycle, reveal validation, clearing execution, escrow finalization | `contracts/intex/test/foundry/cross-chain/LocalLoopback.t.sol` and suite |
 
 ## Open questions and technical debt
 
-- PFS-009-04 needs an automated two-chain runner; today the live walk is a
-  documented manual procedure.
+- PFS-009-01 through -04 need production-path automated replacements; today
+  the live multichain walk is a documented manual procedure.
 - Skipped-chain refunds rely on the escrow finalize-timeout path; an explicit
   cancellation signal to the skipped chain is future work.
 - A canonical bid tie-breaker (equal rate and timestamp) is still open in

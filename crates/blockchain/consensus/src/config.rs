@@ -31,12 +31,6 @@ pub const TEE_BOOTSTRAP_CHANNEL: u64 = 6;
 /// startup to derive the shared tribute offer key. Distinct from the consensus
 /// DKG channel (5) and the TEE bootstrap channel (6).
 pub const TEE_DKG_CHANNEL: u64 = 7;
-/// P2P channel for the tribute offer key-handoff (a joining/keyless committee
-/// member requests the resident offer key; a current node seals it to the
-/// newcomer's attested X25519 key). Distinct from the consensus DKG (5), TEE
-/// bootstrap (6), and TEE DKG (7) channels.
-pub const TEE_HANDOFF_CHANNEL: u64 = 8;
-
 /// Maximum extra_data size in block headers (bytes).
 /// Enough for 128-validator participation bitmap (23 bytes) with room to grow.
 pub const MAX_EXTRA_DATA_SIZE: usize = 256;

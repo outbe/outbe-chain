@@ -21,6 +21,12 @@ pub enum UpdateError {
     TooManyWaitingForActivation,
     #[error("invalid scheduled update status")]
     InvalidScheduledUpdateStatus,
+    #[error("invalid canonical successor TEE policy")]
+    InvalidTeePolicy,
+    #[error("successor TEE policy chain identity does not match the update")]
+    TeePolicyChainIdentityMismatch,
+    #[error("successor TEE policy activation height does not match the update")]
+    TeePolicyActivationMismatch,
 }
 
 impl From<UpdateError> for PrecompileError {

@@ -215,17 +215,11 @@ pub struct ConsensusArgs {
     pub keys_dir: Option<PathBuf>,
 
     /// Trust the existing EL head when consensus-finalized height is 0.
-    /// Allows DKG re-bootstrap on a node with existing execution state
-    /// after a consensus storage wipe. Use only for disaster recovery.
+    /// This is consensus-archive recovery after a storage wipe; it never bypasses
+    /// the permanent offer-key gate or regenerates a lost enclave identity.
     /// Only allowed on testnet/devnet chains (rejected on mainnet chain_id).
     #[arg(long = "testnet.trust-el-head", default_value_t = false)]
     pub trust_el_head: bool,
-
-    /// Force a fresh DKG ceremony even when execution history exists.
-    /// Disaster recovery: use when all validators lost DKG key material.
-    /// Requires --testnet.trust-el-head. Only allowed on testnet/devnet chains.
-    #[arg(long = "testnet.force-dkg", default_value_t = false)]
-    pub force_dkg: bool,
 
     /// Signed proposer clock offset for deterministic local testnet scenarios.
     /// Rejected on mainnet; normal nodes omit it and use the system clock.
@@ -280,11 +274,11 @@ pub struct ConsensusArgs {
     #[arg(long = "bls-passphrase", env = "BLS_PASSPHRASE", value_name = "SECRET")]
     pub bls_passphrase: Option<String>,
 
-    /// Path to the TEE enclave Unix socket (the `outbe-tee-enclave` sidecar).
-    /// When set, the node connects to the enclave at startup, verifies its
-    /// attested quote, and pins its Noise-IK static key. A validator with this
-    /// flag set requires a healthy, attested enclave to start (fail-fast).
-    /// When unset, the node runs with the in-process TEE stub (dev only).
+    /// Path or `host:port` endpoint for the `outbe-tee-enclave` sidecar.
+    /// Every `teeAttestationV1` ChainSpec requires it. `DcapRequired` performs
+    /// NodeHost-authorized SGX initialization; `GramineDirectDev` connects only
+    /// on its separate development chain. Missing or rejected transport stops
+    /// startup and never selects an in-process stub or another attestation mode.
     #[arg(long = "tee-enclave-socket", value_name = "PATH")]
     pub tee_enclave_socket: Option<PathBuf>,
 
@@ -348,7 +342,6 @@ impl fmt::Debug for ConsensusArgs {
             .field("is_validator", &self.is_validator)
             .field("listen_address", &self.listen_address)
             .field("trust_el_head", &self.trust_el_head)
-            .field("force_dkg", &self.force_dkg)
             .field(
                 "testnet_unix_time_offset_secs",
                 &self.testnet_unix_time_offset_secs,
@@ -545,7 +538,6 @@ mod tests {
             storage_dir: None,
             keys_dir: None,
             trust_el_head: false,
-            force_dkg: false,
             testnet_unix_time_offset_secs: None,
             consensus_peers: vec![],
             use_local_defaults: false,

@@ -1,7 +1,8 @@
-# Gramine manifest for outbe-tee-enclave (rendered by gramine-manifest at
-# container start, see entrypoint.sh). The `sgx.*` keys are ignored by
-# gramine-direct and only consumed by gramine-sgx, so the same manifest serves
-# both modes.
+# DEVELOPMENT/TEST Gramine manifest rendered by entrypoint.test.sh. Localnet
+# mounts the feature-gated outbe-tee-enclave-mock binary as `entrypoint`; this
+# file is never a production release input. The production-shaped manifest is
+# outbe-tee-enclave.release.manifest.template and hard-codes the production
+# binary.
 
 libos.entrypoint = "{{ entrypoint }}"
 
