@@ -3,9 +3,12 @@ use std::{collections::BTreeMap, fs, io::Cursor, process::Command};
 use alloy_primitives::B256;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use outbe_e2e_harness::release_dcap::RELEASE_DCAP_ARTIFACT_PATHS;
+use outbe_evm::tee_attestation_activation::DcapTestnetChainSpecBindingV1;
 use outbe_primitives::{
     chain::TESTNET_CHAIN_ID,
-    tee_attestation_v1::{TeePolicyScheduleEntryV1, TeePolicyScheduleV1, TeePolicyV1},
+    tee_attestation_v1::{
+        AttestationMode, EnclaveProfile, TeePolicyScheduleEntryV1, TeePolicyScheduleV1, TeePolicyV1,
+    },
     tee_genesis_v1::{
         initial_tee_policy_v1, tee_attestation_v1_genesis_field, InitialTeeProfileV1,
         ProductionSgxMeasurementV1,
@@ -42,6 +45,53 @@ fn repo_root() -> std::path::PathBuf {
         .parent()
         .expect("xtask lives under repository root")
         .to_owned()
+}
+
+#[test]
+fn repository_default_testnet_genesis_is_dcap_required_but_not_release_authority() {
+    let binding = DcapTestnetChainSpecBindingV1::from_genesis_path(
+        &repo_root().join("release/testnet-genesis.json"),
+    )
+    .expect("repository default testnet genesis must be a valid DCAP ChainSpec");
+
+    assert_eq!(binding.chain_id, TESTNET_CHAIN_ID);
+    assert_eq!(binding.activation_height, 1);
+    assert_eq!(
+        binding.policy.attestation_mode,
+        AttestationMode::DcapRequired
+    );
+    assert_eq!(binding.policy.measurement_rules.len(), 2);
+    assert_eq!(binding.policy.minimum_tcb_evaluation_data_number, 1);
+    for rule in &binding.policy.measurement_rules {
+        assert_eq!(rule.mrenclave, B256::from([0x11; 32]));
+        assert_eq!(rule.mrsigner, B256::from([0x22; 32]));
+        assert_eq!(rule.isv_prod_id, u16::MAX);
+        assert_eq!(rule.minimum_isv_svn, u16::MAX);
+    }
+    assert!(binding
+        .policy
+        .measurement_rules
+        .iter()
+        .any(|rule| rule.enclave_profile == EnclaveProfile::Validator));
+    assert!(binding
+        .policy
+        .measurement_rules
+        .iter()
+        .any(|rule| rule.enclave_profile == EnclaveProfile::FullNode));
+
+    let signed = parse_sigstruct_view(SIGSTRUCT).expect("test SIGSTRUCT");
+    let measurement = |value: &str| {
+        B256::from_slice(&hex::decode(value).expect("32-byte hexadecimal SGX measurement"))
+    };
+    let error = binding
+        .ensure_exact_release_measurements(
+            measurement(&signed.mrenclave),
+            measurement(&signed.mrsigner),
+            signed.isv_prod_id,
+            signed.isv_svn,
+        )
+        .expect_err("placeholder genesis must not authorize the signed test release");
+    assert!(error.contains("does not exactly bind signed bundle measurements"));
 }
 
 fn processor_dcap_artifact_fixtures(

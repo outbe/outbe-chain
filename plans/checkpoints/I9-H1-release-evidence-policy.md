@@ -49,9 +49,19 @@ member of the canonical Processor evidence archive. The signed
 `ReleaseManifest` Processor gate binds both the canonical summary and the full
 archive.
 
-The actual final testnet genesis file is not yet present in the repository.
-The protected workflow therefore fails at its tracked-file check and H1 remains
-pending; no synthetic or placeholder genesis is accepted.
+`release/testnet-genesis.json` is now a structurally valid default template for
+testnet chain ID `54322345` and block-1 `DcapRequired`. It deliberately pins
+non-release placeholder measurements (`MRENCLAVE = 0x11…11`, `MRSIGNER =
+0x22…22`, `ISVPRODID = 65535`, minimum `ISVSVN = 65535`) and therefore cannot
+authorize the current signed release. The release finalizer still requires an
+exact match with the signed enclave measurements.
+
+H1 remains pending. Before testnet, operators must finalize the complete seeded
+genesis (including allocations and the other startup contracts), then regenerate
+`teeAttestationV1` from that seed and the exact signed release measurements.
+Editing header-affecting genesis fields or measurement bytes in place is invalid:
+the genesis hash, canonical policy bytes, policy hash and schedule hash must be
+regenerated together.
 
 The current rented Processor host previously returned
 `ConfigurationAndSWHardeningNeeded`, which is outside the accepted
