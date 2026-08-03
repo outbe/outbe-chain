@@ -426,7 +426,7 @@ fn seed_and_park(storage: &StorageHandle, entry: U256, floor: U256, promis_load:
         },
     )
     .unwrap();
-    runtime::mint_gem_position(storage, ALICE, SOURCE_INTEX_ID).unwrap()
+    runtime::mint_gem_position(storage, ALICE, SOURCE_INTEX_ID, U256::from(PARK_UNITS)).unwrap()
 }
 
 #[test]
@@ -453,7 +453,7 @@ fn mint_gem_position_burns_parks_and_mints_nft() {
 #[test]
 fn mint_gem_position_unknown_source_rejects() {
     with_storage(None, |storage| {
-        let r = runtime::mint_gem_position(storage, ALICE, SOURCE_INTEX_ID);
+        let r = runtime::mint_gem_position(storage, ALICE, SOURCE_INTEX_ID, U256::from(PARK_UNITS));
         assert!(err_msg(r).contains("source intex"));
     });
 }

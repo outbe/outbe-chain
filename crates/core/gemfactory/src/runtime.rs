@@ -93,6 +93,7 @@ pub fn mint_gem_position(
     storage: &StorageHandle<'_>,
     merchant: Address,
     source_intex_id: u32,
+    amount: U256,
 ) -> Result<U256> {
     if merchant.is_zero() {
         return Err(GemFactoryError::InvalidOwner.into());
@@ -109,9 +110,9 @@ pub fn mint_gem_position(
         .into());
     }
 
-    // Burn the merchant's whole Intex position; `parkForGems` returns the burned
-    // unit count (and reverts on a non-parkable state or an empty holding).
-    let units = burn_parked_intex(storage, merchant, source_intex_id)?;
+    // Burn `amount` of the merchant's Intex units; `parkForGems` returns the
+    // burned count (and reverts on a non-parkable state or a zero amount).
+    let units = burn_parked_intex(storage, merchant, source_intex_id, amount)?;
     let capacity = series
         .promis_load_minor
         .checked_mul(units)
@@ -143,13 +144,14 @@ pub fn mint_gem_position(
     Ok(position_id)
 }
 
-/// Burn the merchant's whole Issued Intex position via `parkForGems` (GEM_ROLE)
-/// and return the burned unit count. Reverts if the series is in a non-parkable
-/// (non-Issued/Qualified) state or the merchant holds nothing.
+/// Burn `amount` of the merchant's Issued Intex units via `parkForGems`
+/// (GEM_ROLE) and return the burned count. Reverts if the series is in a
+/// non-parkable (non-Issued/Qualified) state or `amount` is zero.
 fn burn_parked_intex(
     storage: &StorageHandle<'_>,
     holder: Address,
     series_id: u32,
+    amount: U256,
 ) -> Result<U256> {
     let ret = storage.call(
         INTEX_NFT1155_ADDRESS,
@@ -157,6 +159,7 @@ fn burn_parked_intex(
         IIntexNFT1155::parkForGemsCall {
             holder,
             seriesId: series_id,
+            amount,
         }
         .abi_encode()
         .into(),

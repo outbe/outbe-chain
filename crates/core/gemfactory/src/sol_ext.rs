@@ -17,7 +17,7 @@ sol! {
 
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IIntexNFT1155 {
-        function parkForGems(address holder, uint32 seriesId) external returns (uint256);
+        function parkForGems(address holder, uint32 seriesId, uint256 amount) external returns (uint256);
     }
 
     // ERC-4626 reserve vault: reads the underlying stablecoin of a vault.

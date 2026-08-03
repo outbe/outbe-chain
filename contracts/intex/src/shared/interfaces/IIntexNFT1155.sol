@@ -228,15 +228,15 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param amount Amount of Settled tokens to burn.
     function burnSettled(address holder, uint32 seriesId, uint256 amount) external;
 
-    /// @notice Burn the holder's whole Issued Intex position when parked in the Gem Factory.
+    /// @notice Burn `amount` Issued Intex from `holder` when the tokens are parked in the Gem Factory.
     /// @dev Gem-factory entry point under GEM_ROLE. Only allowed while the series is tradable
-    ///      (Issued or Qualified — no Call Event yet). Burns the holder's entire Issued balance
-    ///      of the series (reverts if zero). The parked capacity record lives in the Gem Factory;
-    ///      the burned Intex is thereby non-tradable, call-exempt and Outbe-only.
+    ///      (Issued or Qualified — no Call Event yet). The parked capacity record lives in the
+    ///      Gem Factory; the burned Intex is thereby non-tradable, call-exempt and Outbe-only.
     /// @param holder Holder whose Issued tokens are burned.
     /// @param seriesId Series identifier.
-    /// @return amount Amount of Issued tokens burned (the holder's whole balance).
-    function parkForGems(address holder, uint32 seriesId) external returns (uint256 amount);
+    /// @param amount Amount of Issued tokens to burn.
+    /// @return The amount of Issued tokens burned.
+    function parkForGems(address holder, uint32 seriesId, uint256 amount) external returns (uint256);
 
     // --- Reads ---
 

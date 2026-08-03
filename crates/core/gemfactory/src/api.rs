@@ -27,8 +27,9 @@ pub fn mint_gem_position(
     storage: &StorageHandle<'_>,
     merchant: Address,
     source_intex_id: u32,
+    amount: U256,
 ) -> Result<U256> {
-    runtime::mint_gem_position(storage, merchant, source_intex_id)
+    runtime::mint_gem_position(storage, merchant, source_intex_id, amount)
 }
 
 pub fn mint_merchant_gem(
