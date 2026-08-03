@@ -386,6 +386,26 @@ def import_founder_material(source: Path, output_dir: Path, count: int) -> None:
             destination_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
 
 
+def verify_founder_material(
+    *,
+    chain_binary: str,
+    validators_path: Path,
+    material_dir: Path,
+) -> None:
+    subprocess.run(
+        [
+            chain_binary,
+            "dkg",
+            "verify-identities",
+            "--validators",
+            str(validators_path),
+            "--material-dir",
+            str(material_dir),
+        ],
+        check=True,
+    )
+
+
 def prepare_prefunded_genesis(
     base_genesis: dict[str, Any],
     validators: list[dict[str, Any]],
@@ -969,6 +989,11 @@ def main() -> None:
         )
     else:
         validators_path = args.validators
+        verify_founder_material(
+            chain_binary=args.chain_binary,
+            validators_path=validators_path,
+            material_dir=args.founder_material_dir,
+        )
         import_founder_material(args.founder_material_dir, output_dir, 4)
 
     validators_raw = load_json(validators_path)

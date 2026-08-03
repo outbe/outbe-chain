@@ -73,7 +73,7 @@ fn write_secret_hex_file(path: &Path, contents: &str) -> Result<()> {
     write_result
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 struct ValidatorEntry {
     public_key: String,
     address: String,
@@ -159,6 +159,78 @@ pub fn execute_validator_identities(
     println!("validator identities generated for fresh interactive genesis DKG:");
     println!("  output dir:     {}", output_dir.display());
     print_validator_identity_outputs(&output_dir, &validator_dirs, &entries);
+    Ok(())
+}
+
+/// Verify that imported founder private keys reproduce the public identities
+/// committed by validators.json before network preparation consumes them.
+pub fn execute_validator_identity_verification(
+    validators_path: &Path,
+    material_dir: &Path,
+    backend: &KeyBackend,
+) -> Result<()> {
+    let validators: Vec<ValidatorEntry> = serde_json::from_slice(
+        &std::fs::read(validators_path)
+            .wrap_err_with(|| format!("failed to read: {}", validators_path.display()))?,
+    )
+    .wrap_err_with(|| format!("failed to parse: {}", validators_path.display()))?;
+    eyre::ensure!(!validators.is_empty(), "validators.json must not be empty");
+
+    for (index, validator) in validators.iter().enumerate() {
+        let expected_public_key = hex::decode(
+            validator
+                .public_key
+                .strip_prefix("0x")
+                .unwrap_or(&validator.public_key),
+        )
+        .wrap_err_with(|| format!("validator-{index} public_key is not valid hex"))?;
+        eyre::ensure!(
+            expected_public_key.len() == 48,
+            "validator-{index} public_key must be 48 bytes"
+        );
+
+        let signing_key_path = material_dir
+            .join(format!("validator-{index}"))
+            .join("signing-key.hex");
+        let signing_key = bls::load_individual_key(&signing_key_path, backend)
+            .wrap_err_with(|| format!("failed to load validator-{index} BLS signing key"))?;
+        eyre::ensure!(
+            signing_key.public_key().encode() == expected_public_key,
+            "validator-{index} BLS signing key does not match validators.json"
+        );
+
+        let expected_address: Address = validator
+            .address
+            .parse()
+            .wrap_err_with(|| format!("validator-{index} address is invalid"))?;
+        let evm_key_path = material_dir
+            .join(format!("validator-{index}"))
+            .join("evm-key.hex");
+        let evm_key_text = std::fs::read_to_string(&evm_key_path)
+            .wrap_err_with(|| format!("failed to read: {}", evm_key_path.display()))?;
+        let evm_key_bytes = hex::decode(
+            evm_key_text
+                .trim()
+                .strip_prefix("0x")
+                .unwrap_or(evm_key_text.trim()),
+        )
+        .wrap_err_with(|| format!("validator-{index} EVM signing key is not valid hex"))?;
+        let evm_key = SigningKey::from_slice(&evm_key_bytes)
+            .wrap_err_with(|| format!("validator-{index} EVM signing key is invalid"))?;
+        let evm_public_key = evm_key.verifying_key().to_encoded_point(false);
+        let evm_address_hash = keccak256(&evm_public_key.as_bytes()[1..]);
+        let actual_address = Address::from_slice(&evm_address_hash[12..]);
+        eyre::ensure!(
+            actual_address == expected_address,
+            "validator-{index} EVM signing key does not match validators.json"
+        );
+    }
+
+    println!(
+        "verified {} imported founder identities against {}",
+        validators.len(),
+        validators_path.display()
+    );
     Ok(())
 }
 

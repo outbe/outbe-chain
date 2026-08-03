@@ -134,6 +134,16 @@ enum DkgCommand {
         #[arg(long)]
         validators: u32,
     },
+    /// Verify that imported founder private keys match their public validator manifest.
+    VerifyIdentities {
+        /// Public validators.json manifest.
+        #[arg(long)]
+        validators: std::path::PathBuf,
+
+        /// Directory containing validator-N/signing-key.hex and evm-key.hex.
+        #[arg(long)]
+        material_dir: std::path::PathBuf,
+    },
     /// Bootstrap DKG material for a validator set.
     Bootstrap {
         /// Output directory for generated key material.
@@ -273,6 +283,14 @@ fn run_dkg_command(args: &[String]) -> eyre::Result<()> {
             output_dir,
             validators,
         } => outbe_consensus::cli::execute_validator_identities(output_dir, validators, &backend),
+        DkgCommand::VerifyIdentities {
+            validators,
+            material_dir,
+        } => outbe_consensus::cli::execute_validator_identity_verification(
+            &validators,
+            &material_dir,
+            &backend,
+        ),
         DkgCommand::Bootstrap {
             output_dir,
             validators,

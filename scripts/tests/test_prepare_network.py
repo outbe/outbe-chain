@@ -27,6 +27,185 @@ def project_binary(name: str) -> Path:
 
 
 class PrepareNetworkTests(unittest.TestCase):
+    def test_existing_founders_accept_matching_private_identities(self) -> None:
+        chain = project_binary("outbe-chain")
+        keygen = project_binary("outbe-keygen")
+
+        with tempfile.TemporaryDirectory(prefix="outbe-prepare-network-") as temporary:
+            root = Path(temporary)
+            material = root / "founders"
+            output = root / "network"
+            subprocess.run(
+                [
+                    str(chain),
+                    "dkg",
+                    "identities",
+                    "--output-dir",
+                    str(material),
+                    "--validators",
+                    "4",
+                ],
+                cwd=REPO_ROOT,
+                check=True,
+            )
+
+            subprocess.run(
+                [
+                    "python3",
+                    str(PREPARE_NETWORK),
+                    "--seed",
+                    str(SEED),
+                    "--validators",
+                    str(material / "validators.json"),
+                    "--founder-material-dir",
+                    str(material),
+                    "--output-dir",
+                    str(output),
+                    "--chain-binary",
+                    str(chain),
+                    "--keygen-binary",
+                    str(keygen),
+                    "--tee-mode",
+                    "gramine-direct-dev",
+                    "--enclave-image",
+                    "outbe-tee-enclave-gramine-test:local",
+                    "--use-local-defaults",
+                ],
+                cwd=REPO_ROOT,
+                check=True,
+            )
+
+            self.assertTrue((output / "genesis.json").is_file())
+            for index in range(4):
+                self.assertTrue(
+                    (output / "commands" / f"validator-{index}.sh").is_file()
+                )
+                self.assertTrue(
+                    (output / "commands" / f"enclave-{index}.sh").is_file()
+                )
+
+    def test_existing_founders_reject_mismatched_bls_identity(self) -> None:
+        chain = project_binary("outbe-chain")
+        keygen = project_binary("outbe-keygen")
+
+        with tempfile.TemporaryDirectory(prefix="outbe-prepare-network-") as temporary:
+            root = Path(temporary)
+            material = root / "founders"
+            output = root / "network"
+            subprocess.run(
+                [
+                    str(chain),
+                    "dkg",
+                    "identities",
+                    "--output-dir",
+                    str(material),
+                    "--validators",
+                    "4",
+                ],
+                cwd=REPO_ROOT,
+                check=True,
+            )
+            (material / "validator-0" / "signing-key.hex").write_bytes(
+                (material / "validator-1" / "signing-key.hex").read_bytes()
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(PREPARE_NETWORK),
+                    "--seed",
+                    str(SEED),
+                    "--validators",
+                    str(material / "validators.json"),
+                    "--founder-material-dir",
+                    str(material),
+                    "--output-dir",
+                    str(output),
+                    "--chain-binary",
+                    str(chain),
+                    "--keygen-binary",
+                    str(keygen),
+                    "--tee-mode",
+                    "gramine-direct-dev",
+                    "--enclave-image",
+                    "outbe-tee-enclave-gramine-test:local",
+                    "--use-local-defaults",
+                ],
+                cwd=REPO_ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(
+                "validator-0 BLS signing key does not match validators.json",
+                result.stderr,
+            )
+            self.assertFalse((output / "genesis.json").exists())
+            self.assertFalse((output / "commands").exists())
+
+    def test_existing_founders_reject_mismatched_evm_identity(self) -> None:
+        chain = project_binary("outbe-chain")
+        keygen = project_binary("outbe-keygen")
+
+        with tempfile.TemporaryDirectory(prefix="outbe-prepare-network-") as temporary:
+            root = Path(temporary)
+            material = root / "founders"
+            output = root / "network"
+            subprocess.run(
+                [
+                    str(chain),
+                    "dkg",
+                    "identities",
+                    "--output-dir",
+                    str(material),
+                    "--validators",
+                    "4",
+                ],
+                cwd=REPO_ROOT,
+                check=True,
+            )
+            (material / "validator-0" / "evm-key.hex").write_bytes(
+                (material / "validator-1" / "evm-key.hex").read_bytes()
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(PREPARE_NETWORK),
+                    "--seed",
+                    str(SEED),
+                    "--validators",
+                    str(material / "validators.json"),
+                    "--founder-material-dir",
+                    str(material),
+                    "--output-dir",
+                    str(output),
+                    "--chain-binary",
+                    str(chain),
+                    "--keygen-binary",
+                    str(keygen),
+                    "--tee-mode",
+                    "gramine-direct-dev",
+                    "--enclave-image",
+                    "outbe-tee-enclave-gramine-test:local",
+                    "--use-local-defaults",
+                ],
+                cwd=REPO_ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(
+                "validator-0 EVM signing key does not match validators.json",
+                result.stderr,
+            )
+            self.assertFalse((output / "genesis.json").exists())
+            self.assertFalse((output / "commands").exists())
+
     def test_dcap_network_rejects_mutable_enclave_image_tag(self) -> None:
         chain = project_binary("outbe-chain")
         keygen = project_binary("outbe-keygen")
