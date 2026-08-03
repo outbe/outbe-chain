@@ -86,6 +86,7 @@ fn create_position_populates_all_10_anadosis_records() {
                 840,
                 U256::ZERO,
                 U256::from(100_000u64),
+                U256::ZERO,
                 U256::from(50_000u64),
                 CREATED_AT,
             )
@@ -118,6 +119,7 @@ fn create_position_applies_currency_rate_to_total_debt() {
         // months -> total_debt = 1000 * (1 + 0.045 * 10/12) = 1037.5 -> 1037.
         let principal = U256::from(1000u64);
         let rate = U256::from(45_000_000_000_000_000u128); // 0.045 @ 1e18
+        let entry_price = U256::from(250u64); // native→stable price pinned at issuance
         let position_id = credis
             .create_position(
                 test_commitment(),
@@ -127,6 +129,7 @@ fn create_position_applies_currency_rate_to_total_debt() {
                 840,
                 rate,
                 principal,
+                entry_price,
                 U256::from(500u64),
                 CREATED_AT,
             )
@@ -135,6 +138,7 @@ fn create_position_applies_currency_rate_to_total_debt() {
         let position = credis.get_position(position_id).unwrap();
         assert_eq!(position.credis_principal, principal);
         assert_eq!(position.currency_rate, rate);
+        assert_eq!(position.entry_price_minor, entry_price);
         assert_eq!(position.issuance_currency, 840);
         assert_eq!(position.total_anadosis_amount, U256::from(1037u64));
         assert_eq!(position.outstanding_anadosis_amount, U256::from(1037u64));
@@ -163,6 +167,7 @@ fn create_position_zero_rate_matches_principal() {
                 U256::ZERO,
                 principal,
                 U256::ZERO,
+                U256::ZERO,
                 CREATED_AT,
             )
             .unwrap();
@@ -186,6 +191,7 @@ fn create_position_rejects_duplicate() {
                 U256::ZERO,
                 U256::from(1000u64),
                 U256::ZERO,
+                U256::ZERO,
                 CREATED_AT,
             )
             .unwrap();
@@ -198,6 +204,7 @@ fn create_position_rejects_duplicate() {
                 840,
                 U256::ZERO,
                 U256::from(1000u64),
+                U256::ZERO,
                 U256::ZERO,
                 CREATED_AT,
             )
@@ -217,6 +224,7 @@ fn create_position_rejects_zero_amount() {
                 eoa_ct(),
                 asset(),
                 840,
+                U256::ZERO,
                 U256::ZERO,
                 U256::ZERO,
                 U256::ZERO,
@@ -241,6 +249,7 @@ fn create_position_grows_address_index() {
                 U256::ZERO,
                 U256::from(1000u64),
                 U256::ZERO,
+                U256::ZERO,
                 CREATED_AT,
             )
             .unwrap();
@@ -253,6 +262,7 @@ fn create_position_grows_address_index() {
                 840,
                 U256::ZERO,
                 U256::from(2000u64),
+                U256::ZERO,
                 U256::ZERO,
                 CREATED_AT,
             )
@@ -287,6 +297,7 @@ fn anadosis_amount_equal_split_without_remainder() {
                 U256::ZERO,
                 U256::from(100u64),
                 U256::ZERO,
+                U256::ZERO,
                 CREATED_AT,
             )
             .unwrap();
@@ -313,6 +324,7 @@ fn anadosis_amount_remainder_absorbed_in_last_anadosis() {
                 840,
                 U256::ZERO,
                 U256::from(105u64),
+                U256::ZERO,
                 U256::from(53u64), // gratis 53 / 10 = 5 r3 → anadosis 1..9 = 5, anadosis 10 = 8
                 CREATED_AT,
             )
@@ -361,6 +373,7 @@ fn make_next_anadosis_advances_pointer() {
                 840,
                 U256::ZERO,
                 U256::from(100_000u64),
+                U256::ZERO,
                 U256::from(50_000u64),
                 CREATED_AT,
             )
@@ -394,6 +407,7 @@ fn make_next_anadosis_decrements_outstanding() {
                 840,
                 U256::ZERO,
                 U256::from(100u64),
+                U256::ZERO,
                 U256::from(50u64),
                 CREATED_AT,
             )
@@ -420,6 +434,7 @@ fn make_next_anadosis_accepted_before_due_date() {
                 840,
                 U256::ZERO,
                 U256::from(1_000u64),
+                U256::ZERO,
                 U256::ZERO,
                 CREATED_AT,
             )
@@ -448,6 +463,7 @@ fn make_next_anadosis_accepted_at_and_after_due_date() {
                 U256::ZERO,
                 U256::from(1_000u64),
                 U256::ZERO,
+                U256::ZERO,
                 CREATED_AT,
             )
             .unwrap();
@@ -462,6 +478,7 @@ fn make_next_anadosis_accepted_at_and_after_due_date() {
                 840,
                 U256::ZERO,
                 U256::from(1_000u64),
+                U256::ZERO,
                 U256::ZERO,
                 CREATED_AT,
             )
@@ -502,6 +519,7 @@ fn get_anadosis_rejects_anadosis_number_zero() {
                 U256::ZERO,
                 U256::from(1_000u64),
                 U256::ZERO,
+                U256::ZERO,
                 CREATED_AT,
             )
             .unwrap();
@@ -523,6 +541,7 @@ fn get_anadosis_rejects_anadosis_number_above_cap() {
                 840,
                 U256::ZERO,
                 U256::from(1_000u64),
+                U256::ZERO,
                 U256::ZERO,
                 CREATED_AT,
             )
@@ -560,6 +579,7 @@ fn has_overdue_anadosis_reflects_past_due_unpaid_anadosis() {
                 U256::ZERO,
                 U256::from(100u64),
                 U256::ZERO,
+                U256::ZERO,
                 CREATED_AT,
             )
             .unwrap();
@@ -591,6 +611,7 @@ fn get_outstanding_amount_sums_across_positions() {
                 U256::ZERO,
                 U256::from(100u64),
                 U256::ZERO,
+                U256::ZERO,
                 CREATED_AT,
             )
             .unwrap();
@@ -603,6 +624,7 @@ fn get_outstanding_amount_sums_across_positions() {
                 840,
                 U256::ZERO,
                 U256::from(50u64),
+                U256::ZERO,
                 U256::ZERO,
                 CREATED_AT,
             )
@@ -635,6 +657,7 @@ fn precompile_get_position_returns_full_record() {
                 840,
                 U256::ZERO,
                 U256::from(100_000u64),
+                U256::ZERO,
                 U256::from(50_000u64),
                 CREATED_AT,
             )
@@ -702,6 +725,7 @@ fn precompile_has_overdue_uses_storage_timestamp() {
                 U256::ZERO,
                 U256::from(100u64),
                 U256::ZERO,
+                U256::ZERO,
                 CREATED_AT,
             )
             .unwrap();
@@ -730,6 +754,7 @@ fn precompile_has_overdue_uses_storage_timestamp() {
                 840,
                 U256::ZERO,
                 U256::from(100u64),
+                U256::ZERO,
                 U256::ZERO,
                 CREATED_AT,
             )

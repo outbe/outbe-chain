@@ -71,6 +71,7 @@ impl CredisContract<'_> {
         issuance_currency: u16,
         currency_rate: U256,
         credis_principal: U256,
+        rate: U256,
         gratis_amount: U256,
         current_time: u64,
     ) -> Result<U256> {
@@ -96,7 +97,8 @@ impl CredisContract<'_> {
             next_anadosis_number: 1,
             created_at: current_time,
             credis_principal,
-            currency_rate: currency_rate,
+            entry_price_minor: rate,
+            currency_rate,
             issuance_currency,
             eoa_ct,
         })?;

@@ -79,6 +79,11 @@
             "internalType": "uint256"
           },
           {
+            "name": "entryPriceMinor",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
             "name": "currencyRate",
             "type": "uint256",
             "internalType": "uint256"
@@ -211,6 +216,11 @@
             "internalType": "uint256"
           },
           {
+            "name": "entryPriceMinor",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
             "name": "currencyRate",
             "type": "uint256",
             "internalType": "uint256"
@@ -339,6 +349,11 @@
           },
           {
             "name": "credisPrincipal",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "entryPriceMinor",
             "type": "uint256",
             "internalType": "uint256"
           },

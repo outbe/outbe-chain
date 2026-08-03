@@ -77,7 +77,7 @@ pub fn request_credis(
         spend_auth,
     )?;
 
-    let amount_stables = convert_gratis_to_stables(storage.clone(), gratis_amount)?;
+    let (amount_stables, rate) = convert_gratis_to_stables(storage.clone(), gratis_amount)?;
 
     // Derive the issuance currency from the disbursed asset (it self-reports its
     // ISO 4217 code via `IReferenceCurrency.isoCode()`) and pin the matching
@@ -99,6 +99,7 @@ pub fn request_credis(
         issuance_currency,
         currency_rate,
         amount_stables,
+        rate,
         gratis_amount,
         current_time,
     )?;
@@ -250,7 +251,10 @@ fn read_iso_code(storage: &StorageHandle<'_>, asset: Address) -> Result<u16> {
 }
 
 /// Cosmos formula: `amountStables = gratisAmount * rateInt18 / (decimalsDiff * precision)`.
-fn convert_gratis_to_stables(storage: StorageHandle<'_>, gratis_amount: U256) -> Result<U256> {
+fn convert_gratis_to_stables(
+    storage: StorageHandle<'_>,
+    gratis_amount: U256,
+) -> Result<(U256, U256)> {
     let rate = get_exchange_rate(storage, NATIVE_TOKEN, STABLECOIN)?;
     let numerator = gratis_amount
         .checked_mul(rate)
@@ -263,5 +267,5 @@ fn convert_gratis_to_stables(storage: StorageHandle<'_>, gratis_amount: U256) ->
             .ok_or_else(|| -> PrecompileError {
                 CredisFactoryError::OracleConversionOverflow.into()
             })?;
-    Ok(numerator / denominator)
+    Ok((numerator / denominator, rate))
 }

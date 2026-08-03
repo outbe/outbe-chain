@@ -63,6 +63,9 @@ pub struct Position {
     /// cohort. Never a plaintext address on-chain.
     #[attribute(order = 12)]
     pub eoa_ct: Vec<u8>,
+
+    #[attribute(order = 13)]
+    pub entry_price_minor: U256,
 }
 
 /// Per-anadosis record. Keyed by `anadosis_key = keccak256(position_id || anadosis_number_be32)`.
