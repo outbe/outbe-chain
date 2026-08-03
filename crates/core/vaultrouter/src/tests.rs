@@ -995,7 +995,7 @@ fn reference_currency_assets_deduplicates_vaults_of_one_asset() {
 }
 
 #[test]
-fn currency_views_dispatch() {
+fn reference_currency_assets_dispatch() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.stub_sub_call_at_selector(
         vault(),
@@ -1013,30 +1013,6 @@ fn currency_views_dispatch() {
     StorageHandle::enter(&mut storage, |storage| {
         set_owner(&storage, owner());
         runtime::add_vault(storage.clone(), owner(), vault()).unwrap();
-
-        let iso_out = dispatch(
-            storage.clone(),
-            &IVaultRouter::assetReferenceCurrencyCall { asset: asset() }.abi_encode(),
-            stranger(),
-            U256::ZERO,
-        )
-        .unwrap();
-        assert_eq!(
-            IVaultRouter::assetReferenceCurrencyCall::abi_decode_returns(&iso_out).unwrap(),
-            USD_ISO_CODE
-        );
-
-        let unknown_out = dispatch(
-            storage.clone(),
-            &IVaultRouter::assetReferenceCurrencyCall { asset: receiver() }.abi_encode(),
-            stranger(),
-            U256::ZERO,
-        )
-        .unwrap();
-        assert_eq!(
-            IVaultRouter::assetReferenceCurrencyCall::abi_decode_returns(&unknown_out).unwrap(),
-            0
-        );
 
         let assets_out = dispatch(
             storage.clone(),

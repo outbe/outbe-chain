@@ -69,25 +69,6 @@
   },
   {
     "type": "function",
-    "name": "assetReferenceCurrency",
-    "inputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "isoCode",
-        "type": "uint16",
-        "internalType": "uint16"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "assetVaultAt",
     "inputs": [
       {

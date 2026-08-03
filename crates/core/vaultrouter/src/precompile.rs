@@ -90,9 +90,6 @@ fn dispatch_local(
                     .vault_reference_currencies
                     .read(&c.vault)
             }),
-            assetReferenceCurrency(c) => view(c, |c| {
-                VaultRouterContract::new(storage.clone()).asset_reference_currency(c.asset)
-            }),
             referenceCurrencyAssets(c) => view(c, |c| {
                 runtime::reference_currency_assets(&storage, c.isoCode)
             }),

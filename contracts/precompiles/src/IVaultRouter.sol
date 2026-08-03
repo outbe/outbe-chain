@@ -73,10 +73,6 @@ interface IVaultRouter {
     /// @notice Returns the ISO 4217 currency code recorded when `vault` was registered.
     function vaultReferenceCurrency(address vault) external view returns (uint16 isoCode);
 
-    /// @notice Returns the ISO 4217 code recorded for `asset`, or 0 when it has
-    ///         no registered vault.
-    function assetReferenceCurrency(address asset) external view returns (uint16 isoCode);
-
     /// @notice Returns every asset registered under `isoCode`. Order is not
     ///         stable across removals and carries no meaning.
     function referenceCurrencyAssets(uint16 isoCode) external view returns (address[] memory assets);
