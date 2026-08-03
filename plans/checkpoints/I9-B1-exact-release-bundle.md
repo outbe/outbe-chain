@@ -7,10 +7,12 @@ fail-not-skip.
 
 ## Fixed candidate and signed prerequisite chain
 
-The final B1 candidate is commit
-`71d6c6832e5784d4b95ee99aaa26105611ba7615`, built twice from a clean detached
-worktree with `SOURCE_DATE_EPOCH=1785709833`. The prerequisite and corrective
-commits are:
+The current B1 candidate is commit
+`4e4fc7fd129fdc53e67318efe5b70dc0fcf759a6`, built twice from a clean detached
+worktree with `SOURCE_DATE_EPOCH=1785714090`. It supersedes the earlier
+`71d6c6832e5784d4b95ee99aaa26105611ba7615` freeze because the H1 release gate
+added source-controlled evidence capture, finalization and workflow inputs.
+The prerequisite and corrective commits are:
 
 | Commit | Purpose | Signature result |
 | --- | --- | --- |
@@ -20,6 +22,8 @@ commits are:
 | `1d50299e43fcc023139daec6cf036d5647deaa42` | compile dev/mock branches out of production enclave and enforce ELF markers | Good SSH/ED25519 signature, same key |
 | `62737f31e5106bcd59dd02937a0678b943b45df7` | use the unified pinned project-toolchain image for prepare/sign/view | Good SSH/ED25519 signature, same key |
 | `71d6c6832e5784d4b95ee99aaa26105611ba7615` | place the Docker image after all runtime options | Good SSH/ED25519 signature, same key |
+| `72496f158041512ae3b9138b9b7350ebca17dc21` | record the superseded pre-H1 B1 freeze | Good SSH/ED25519 signature, same key |
+| `4e4fc7fd129fdc53e67318efe5b70dc0fcf759a6` | require fresh Processor and Platform DCAP evidence in the release gate | Good SSH/ED25519 signature, same key |
 
 The final checkpoint document is committed separately so its signature and hash
 are not self-referential.
@@ -32,6 +36,7 @@ are not self-referential.
 | Rust | `1.96.0` |
 | Gramine | `1.9`, source commit `0d1a4b7607592dab4c8a720c962acee3de6b4ca8` |
 | Intel QVL runtime/dev | `1.26.100.1-noble1` |
+| Intel QPL, host-only evidence capture | `1.26.100.1-noble1`; excluded from the release image and consensus path |
 | Intel SGX headers | `2.29.100.1-noble1` |
 | Rust base | `rust:1.96.0-bookworm@sha256:64d9b7f60e3abb08d477cad983d0a3743acc53a19369ba4482510184c9c807e5` |
 | Gramine base | `gramineproject/gramine:1.9-noble@sha256:bdf2d0ef9bd09fa10684e14fbe822236df35708d58a852209c5f235842ecb6d7` |
@@ -55,7 +60,7 @@ is used.
 
 | Artifact | Features | Build-A bytes | Build-A SHA-256 | Build-B result |
 | --- | --- | ---: | --- | --- |
-| `outbe-chain` | none | 194327080 | `0ab8df8e4e0c81bc138fbb944f196651b44ff6a9c1340278146afbe12dd78397` | byte-identical |
+| `outbe-chain` | none | 194329176 | `becdf49389a77d520cddbe93d9375cb81f292ad68fdbf2b1ecc28ffe076729c9` | byte-identical |
 | `outbe-cli` | none | 11697488 | `85e998bb098347cf8b812bb06fc9bd2c2ae04355509cf0b63e5cd4a22e2e7c64` | byte-identical |
 | `outbe-feeder` | none | 17160216 | `80ac4c97f9cfc5b8c8c7ce64feab1a7e14f5e84b6cca8c149863e9f104b846b3` | byte-identical |
 | `outbe-keygen` | none | 4256856 | `c1936ce290107ca6c67447215ca74fa78daad0add2876c4d89f2c7f9983e058d` | byte-identical |
@@ -67,13 +72,13 @@ is used.
 Builder A:
 
 - command: `scripts/release/reproducible-build.sh --no-cache --release-tag
-  commit-71d6c6832e5784d4b95ee99aaa26105611ba7615 --output
-  /tmp/outbe-b1-build-a-71d6c68`;
-- elapsed: `630.42 s`;
+  commit-4e4fc7fd129fdc53e67318efe5b70dc0fcf759a6 --output
+  /tmp/outbe-b1-build-a-4e4fc7f`;
+- elapsed: `643.19 s`;
 - `SHA256SUMS` SHA-256:
-  `6d209c0a445b86e0fed3ae5a944f65c6770a7b687ad0cb8fb71d7353a9b498a8`;
+  `3207cd09df4546a5412437d992701754aa718893b6c7055908d83eb60db8ca02`;
 - canonical manifest SHA-256:
-  `8f9ebdc618f4869c227d64917973de45f21175e829fe9dd71defc6b614635206`;
+  `2858d4cbb77a2a6b20b515d5d6300aab66593d2e9307d7e761ddfc418d5d321f`;
 - resolved package inventory SHA-256:
   `c19802502b267e558f553d85027fd4405e55897b0a54df2ed19bbb7800736b21`;
 - all 11 checksum rows passed.
@@ -81,15 +86,15 @@ Builder A:
 Builder B:
 
 - same command and release tag, output
-  `/tmp/outbe-b1-build-b-71d6c68`;
-- elapsed: `650.23 s`;
+  `/tmp/outbe-b1-build-b-4e4fc7f`;
+- elapsed: `640.73 s`;
 - all 11 checksum rows passed;
 - every artifact, `SHA256SUMS` and canonical release manifest is
   byte-identical to builder A.
 
 The pinned verifier reported `result: passed`, with all six
 `byte_identical: true`, no differences, and evidence SHA-256
-`e4a1ccd3a8086dcd25e811d5bb0b100e7feb32aff566e2407be5e5e81020815f`.
+`796857ba0c8dd725cc16fe8690d2b2b6f2d599054c255995773991bcdbcaa2d6`.
 
 ## Production-enclave audit
 
@@ -129,15 +134,15 @@ pinned project-toolchain image for build, prepare, sign and view.
 ## Unsigned Gramine bundle and signing boundary
 
 The two builders independently produced unsigned bundles at
-`/tmp/outbe-b1-unsigned-a-71d6c68` and
-`/tmp/outbe-b1-unsigned-b-71d6c68`. Both prepare runs passed the native-QVL
+`/tmp/outbe-b1-unsigned-a-4e4fc7f` and
+`/tmp/outbe-b1-unsigned-b-4e4fc7f`. Both prepare runs passed the native-QVL
 artifact contract. `cargo xtask release sgx compare` reported `result:
 identical`, `entry_count: 75`, tree SHA-256
-`d9bdabc256555f382446b417c802c5fe6ecd5f18358d774c57f77a7650410e6c`;
+`eeb8be4bcf278dc402e91c85ce3df03235a814a88cdbc7d218b200b0b12ebe8b`;
 the comparison evidence SHA-256 is
-`3f7b40f9f5e9a30a759f25f29e3276c3bc43b934737107ad9b20b2bf4b14f15c`.
+`e76362c82b315656d7157850e51cd2a6ed568f377bac35b65c6a0fe3b2fba0c9`.
 `SHA256SUMS.unsigned` is also identical with SHA-256
-`d8c41d2a21545589de76952932c119dd6d44e4bd308a35da7c478c0dbe5b96a5`.
+`bd389289ed71c92acecee8b1c1591446dd861b5b2798bc568d04d3e416309ee1`.
 An independent recursive diff was empty.
 
 B1 pins the release manifest template to `sgx.remote_attestation = "dcap"`,
@@ -159,7 +164,7 @@ remain H1/E1 release-workflow evidence.
 | `sgx.remote_attestation != dcap` | xtask SGX release tests | reject |
 | Missing SGX/quote/collateral at production startup | A0 startup and NodeHost negative matrix | reject before consensus/execution |
 | Wrong measurement or signing inputs | xtask SGX bundle verification tests | reject |
-| Exact release Python suite | 59 tests | pass |
+| Exact release Python suite | 61 tests | pass |
 | SGX release bundle contract | 11 xtask integration tests | pass |
 | Enclave identity tests, default and `mock` builds | 5/5 in each configuration; mock binary check passes | pass |
 | Native-DCAP release check | exact package/binary/target command | pass |
