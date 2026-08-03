@@ -147,6 +147,22 @@ pub fn add_vault(storage: StorageHandle<'_>, sender: Address, vault: Address) ->
     })
 }
 
+/// Distinct assets whose vaults are registered under `iso_code`.
+pub(crate) fn reference_currency_assets(
+    storage: &StorageHandle<'_>,
+    iso_code: u16,
+) -> Result<Vec<Address>> {
+    let contract = VaultRouterContract::new(storage.clone());
+    let mut assets: Vec<Address> = Vec::new();
+    for vault in contract.reference_currency_vault_set(iso_code).read_all()? {
+        let asset = vault_asset(storage, vault)?;
+        if !assets.contains(&asset) {
+            assets.push(asset);
+        }
+    }
+    Ok(assets)
+}
+
 /// `removeVault`: deregister `vault` for its asset and revoke the allowance.
 pub fn remove_vault(storage: StorageHandle<'_>, sender: Address, vault: Address) -> Result<()> {
     ensure_owner(&storage, sender)?;

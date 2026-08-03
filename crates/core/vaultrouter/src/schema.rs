@@ -124,6 +124,14 @@ impl<'storage> VaultRouterContract<'storage> {
         StorageSet::new(base, self.address, self.storage.clone())
     }
 
+    /// ISO-4217 code recorded for `asset`, or 0 if it has no vault.
+    pub fn asset_reference_currency(&self, asset: Address) -> outbe_primitives::error::Result<u16> {
+        match self.first_vault(asset)? {
+            Some(vault) => self.vault_reference_currencies.read(&vault),
+            None => Ok(0),
+        }
+    }
+
     /// First vault registered for `asset`, or `None` if the asset has no vault.
     pub fn first_vault(&self, asset: Address) -> outbe_primitives::error::Result<Option<Address>> {
         self.asset_vault_set(asset).at(0)

@@ -948,3 +948,109 @@ fn abi_withdraw_gates_msg_sender_against_registry() {
         );
     });
 }
+
+#[test]
+fn reference_currency_assets_deduplicates_vaults_of_one_asset() {
+    let second_vault = address!("0x0000000000000000000000000000000000000666");
+    let second_asset = address!("0x0000000000000000000000000000000000000555");
+
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    for (v, a) in [
+        (vault(), asset()),
+        (second_vault, asset()),
+        (
+            address!("0x0000000000000000000000000000000000000444"),
+            second_asset,
+        ),
+    ] {
+        storage.stub_sub_call_at_selector(
+            v,
+            IVaultV2::assetCall::SELECTOR,
+            word(U256::from_be_bytes(a.into_word().0)),
+        );
+        storage.stub_sub_call_at_selector(v, IVaultV2::ownerCall::SELECTOR, word(U256::ZERO));
+        storage.stub_sub_call_at_selector(
+            a,
+            IReferenceCurrency::isoCodeCall::SELECTOR,
+            word(U256::from(USD_ISO_CODE)),
+        );
+    }
+    storage.enable_sub_call_stub();
+
+    StorageHandle::enter(&mut storage, |storage| {
+        set_owner(&storage, owner());
+        for v in [
+            vault(),
+            second_vault,
+            address!("0x0000000000000000000000000000000000000444"),
+        ] {
+            runtime::add_vault(storage.clone(), owner(), v).unwrap();
+        }
+
+        let assets = runtime::reference_currency_assets(&storage, USD_ISO_CODE).unwrap();
+        assert_eq!(assets.len(), 2);
+        assert!(assets.contains(&asset()));
+        assert!(assets.contains(&second_asset));
+    });
+}
+
+#[test]
+fn currency_views_dispatch() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.stub_sub_call_at_selector(
+        vault(),
+        IVaultV2::assetCall::SELECTOR,
+        word(U256::from_be_bytes(asset().into_word().0)),
+    );
+    storage.stub_sub_call_at_selector(vault(), IVaultV2::ownerCall::SELECTOR, word(U256::ZERO));
+    storage.stub_sub_call_at_selector(
+        asset(),
+        IReferenceCurrency::isoCodeCall::SELECTOR,
+        word(U256::from(USD_ISO_CODE)),
+    );
+    storage.enable_sub_call_stub();
+
+    StorageHandle::enter(&mut storage, |storage| {
+        set_owner(&storage, owner());
+        runtime::add_vault(storage.clone(), owner(), vault()).unwrap();
+
+        let iso_out = dispatch(
+            storage.clone(),
+            &IVaultRouter::assetReferenceCurrencyCall { asset: asset() }.abi_encode(),
+            stranger(),
+            U256::ZERO,
+        )
+        .unwrap();
+        assert_eq!(
+            IVaultRouter::assetReferenceCurrencyCall::abi_decode_returns(&iso_out).unwrap(),
+            USD_ISO_CODE
+        );
+
+        let unknown_out = dispatch(
+            storage.clone(),
+            &IVaultRouter::assetReferenceCurrencyCall { asset: receiver() }.abi_encode(),
+            stranger(),
+            U256::ZERO,
+        )
+        .unwrap();
+        assert_eq!(
+            IVaultRouter::assetReferenceCurrencyCall::abi_decode_returns(&unknown_out).unwrap(),
+            0
+        );
+
+        let assets_out = dispatch(
+            storage.clone(),
+            &IVaultRouter::referenceCurrencyAssetsCall {
+                isoCode: USD_ISO_CODE,
+            }
+            .abi_encode(),
+            stranger(),
+            U256::ZERO,
+        )
+        .unwrap();
+        assert_eq!(
+            IVaultRouter::referenceCurrencyAssetsCall::abi_decode_returns(&assets_out).unwrap(),
+            vec![asset()]
+        );
+    });
+}
