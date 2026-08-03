@@ -21,6 +21,7 @@ outbe-metadosis.workspace = true
 outbe-node.workspace = true
 outbe-ocomp-protocol.workspace = true
 outbe-consensus.workspace = true
+outbe-evm.workspace = true
 outbe-e2e-harness = { path = "../testing/e2e-harness", features = ["ocomp-integration"] }
 outbe-primitives.workspace = true
 reth-chainspec.workspace = true

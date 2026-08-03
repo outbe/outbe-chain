@@ -13,23 +13,17 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use alloy_primitives::{keccak256, B256};
+use alloy_primitives::B256;
 use alloy_signer::SignerSync as _;
 use alloy_signer_local::PrivateKeySigner;
 use clap::{Parser, ValueEnum};
 use commonware_codec::Encode as _;
 use commonware_cryptography::{bls12381, Signer as _};
 use eyre::{bail, ensure, eyre, Result, WrapErr as _};
-use outbe_primitives::tee_genesis_v1::{
-    initial_tee_policy_v1, InitialTeeProfileV1, ProductionSgxMeasurementV1,
-};
-use outbe_primitives::{
-    chain::TESTNET_CHAIN_ID,
-    tee_attestation_v1::{
-        AttestationEvidenceV1, AttestationMode, AttestationOperationV1, DcapCollateralComponentV1,
-        DcapCollateralKind, DcapEvidenceV1, EnclaveProfile, NodeIdV1, RegistrationIntentV1,
-        TeePolicyV1,
-    },
+use outbe_evm::tee_attestation_activation::DcapTestnetChainSpecBindingV1;
+use outbe_primitives::tee_attestation_v1::{
+    AttestationEvidenceV1, AttestationMode, AttestationOperationV1, DcapCollateralComponentV1,
+    DcapCollateralKind, DcapEvidenceV1, EnclaveProfile, NodeIdV1, RegistrationIntentV1,
 };
 use outbe_tee::dcap_protocol::{DcapPckCaV1, DcapPlatformTcbStatusV1, DcapVerificationOutcomeV1};
 use outbe_tee::node_host::{
@@ -64,6 +58,28 @@ const COMPONENT_FILES: [(DcapCollateralKind, &str); 8] = [
     ),
 ];
 
+/// Exact non-secret member set retained by a successful release DCAP capture.
+pub const RELEASE_DCAP_ARTIFACT_PATHS: [&str; 18] = [
+    "collateral/capture-provenance.json",
+    "collateral/pck-certificate-chain.pem0",
+    "collateral/pck-crl-issuer-chain.pem",
+    "collateral/pck.crl.der",
+    "collateral/qe-identity-issuer-chain.pem",
+    "collateral/qe-identity.json",
+    "collateral/root-ca.crl.der",
+    "collateral/tcb-info-issuer-chain.pem",
+    "collateral/tcb-info.json",
+    "enclave-signature.bin",
+    "evidence-v1.bin",
+    "intent-v1.bin",
+    "node-signature.bin",
+    "policy-schedule-v1.bin",
+    "policy-v1.bin",
+    "quote-v3.bin",
+    "testnet-genesis.json",
+    "verifier-outcome-v1.bin",
+];
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 enum ExpectedPckCa {
     Processor,
@@ -95,6 +111,9 @@ struct Cli {
     /// Extracted exact signed SGX bundle.
     #[arg(long)]
     bundle: PathBuf,
+    /// Final testnet genesis whose block-1 DCAP policy authorizes this release.
+    #[arg(long)]
+    testnet_genesis: PathBuf,
     /// Intel PCK CA required from the enclave-verified signed PCK chain.
     #[arg(long, value_enum)]
     expected_pck_ca: ExpectedPckCa,
@@ -174,6 +193,10 @@ fn run(cli: Cli) -> Result<()> {
     let image_digest = exact_image_digest(&cli.image)?.to_owned();
     let bundle_manifest: BundleManifest =
         read_json(&bundle.join("metadata/testnet-sgx-bundle.json"))?;
+    let testnet_genesis = fs::canonicalize(&cli.testnet_genesis)
+        .wrap_err("resolve final testnet genesis ChainSpec")?;
+    let testnet_genesis_bytes =
+        fs::read(&testnet_genesis).wrap_err("read final testnet genesis ChainSpec")?;
 
     command_ok(
         Command::new("cargo")
@@ -182,6 +205,20 @@ fn run(cli: Cli) -> Result<()> {
             .current_dir(&repo),
         "verify exact signed SGX bundle",
     )?;
+    let binding = DcapTestnetChainSpecBindingV1::from_genesis_path(&testnet_genesis)
+        .map_err(eyre::Report::msg)?;
+    ensure!(
+        !bundle_manifest.measurements.debug,
+        "debug enclave cannot satisfy H1"
+    );
+    binding
+        .ensure_exact_release_measurements(
+            parse_b256(&bundle_manifest.measurements.mrenclave)?,
+            parse_b256(&bundle_manifest.measurements.mrsigner)?,
+            bundle_manifest.measurements.isv_prod_id,
+            bundle_manifest.measurements.isv_svn,
+        )
+        .map_err(eyre::Report::msg)?;
     command_ok(
         Command::new("docker")
             .args(["image", "inspect", &cli.image])
@@ -210,6 +247,7 @@ fn run(cli: Cli) -> Result<()> {
         &endpoint,
         &seal_dir,
         &work.path().join("enclave.log"),
+        binding.chain_id,
     )?;
     wait_for_log(
         &mut enclave.child,
@@ -221,10 +259,9 @@ fn run(cli: Cli) -> Result<()> {
     let node_signer = random_node_signer()?;
     let validator = node_signer.address();
     let consensus_bls_public = valid_bls_public(run_started_at)?;
-    let genesis_hash = keccak256(b"outbe/testnet/dcap-h1/genesis/v1");
     let identity = ValidatorNodeHostIdentityV1 {
-        chain_id: TESTNET_CHAIN_ID,
-        genesis_hash,
+        chain_id: binding.chain_id,
+        genesis_hash: binding.genesis_hash,
         validator,
         consensus_bls_public,
     };
@@ -233,10 +270,8 @@ fn run(cli: Cli) -> Result<()> {
             node_signature(&node_signer, hash)
         })?;
     let manifest = load_committed_enclave_manifest_v1(&node_data_dir)?;
-    let policy = release_policy(&bundle_manifest.measurements, genesis_hash)?;
-    let policy_hash = policy
-        .policy_hash()
-        .map_err(|error| eyre!("hash release policy: {error}"))?;
+    let policy = binding.policy.clone();
+    let policy_hash = binding.policy_hash;
 
     let binding_id = random_nonzero_b256()?;
     let requested_valid_until = run_started_at
@@ -355,7 +390,19 @@ fn run(cli: Cli) -> Result<()> {
     let retained_collateral = output_dir.join("collateral");
     fs::create_dir(&retained_collateral)?;
     let mut artifacts = BTreeMap::new();
+    write_artifact(
+        &output_dir,
+        "testnet-genesis.json",
+        &testnet_genesis_bytes,
+        &mut artifacts,
+    )?;
     write_artifact(&output_dir, "policy-v1.bin", &policy_bytes, &mut artifacts)?;
+    write_artifact(
+        &output_dir,
+        "policy-schedule-v1.bin",
+        &binding.policy_schedule_bytes,
+        &mut artifacts,
+    )?;
     write_artifact(&output_dir, "intent-v1.bin", &intent_bytes, &mut artifacts)?;
     write_artifact(
         &output_dir,
@@ -399,6 +446,11 @@ fn run(cli: Cli) -> Result<()> {
         &capture_provenance,
         &mut artifacts,
     )?;
+    let declared_artifacts = artifacts.keys().map(String::as_str).collect::<Vec<_>>();
+    ensure!(
+        declared_artifacts.as_slice() == RELEASE_DCAP_ARTIFACT_PATHS,
+        "release DCAP runner did not retain the exact canonical artifact set"
+    );
     ensure_no_secret_markers(&output_dir)?;
 
     let pck_crl = file_record(&retained_collateral.join("pck.crl.der"))?;
@@ -460,8 +512,13 @@ fn run(cli: Cli) -> Result<()> {
         "image": {"digest": {"algorithm": "sha256", "value": image_digest}, "reference": cli.image},
         "intent": {"profile": "validator", "sha256": hex::encode(Sha256::digest(&intent_bytes))},
         "policy": {
-            "chain_id": TESTNET_CHAIN_ID,
-            "genesis_hash": hex::encode(genesis_hash),
+            "activation_height": binding.activation_height,
+            "chain_id": binding.chain_id,
+            "genesis_hash": hex::encode(binding.genesis_hash),
+            "policy_hash": hex::encode(binding.policy_hash),
+            "policy_schedule_hash": hex::encode(binding.policy_schedule_hash),
+            "policy_schedule_sha256": hex::encode(Sha256::digest(&binding.policy_schedule_bytes)),
+            "policy_version": binding.policy_version,
             "profile_selection": "validator exercises the consensus-participating testnet registration path; the canonical block-1 policy binds the same release measurement for validator and full-node",
             "sha256": hex::encode(Sha256::digest(&policy_bytes))
         },
@@ -486,22 +543,6 @@ fn run(cli: Cli) -> Result<()> {
         output_dir.display()
     );
     Ok(())
-}
-
-fn release_policy(measurements: &Measurements, genesis_hash: B256) -> Result<TeePolicyV1> {
-    ensure!(!measurements.debug, "debug enclave cannot satisfy H1");
-    initial_tee_policy_v1(
-        InitialTeeProfileV1::DcapRequired(ProductionSgxMeasurementV1 {
-            mrenclave: parse_b256(&measurements.mrenclave)?,
-            mrsigner: parse_b256(&measurements.mrsigner)?,
-            isv_prod_id: measurements.isv_prod_id,
-            minimum_isv_svn: measurements.isv_svn,
-            minimum_tcb_evaluation_data_number: 1,
-        }),
-        TESTNET_CHAIN_ID,
-        genesis_hash,
-    )
-    .map_err(eyre::Report::msg)
 }
 
 fn host_preflight() -> Result<HostPreflight> {
@@ -614,6 +655,7 @@ fn start_enclave(
     endpoint: &str,
     seal_dir: &Path,
     log_path: &Path,
+    chain_id: u64,
 ) -> Result<RunningEnclave> {
     let name = format!("outbe-release-dcap-{}", std::process::id());
     let log = File::create(log_path)?;
@@ -631,7 +673,7 @@ fn start_enclave(
             "--tee-dir",
             "/var/lib/outbe/tee",
             "--chain-id",
-            &format!("0x{TESTNET_CHAIN_ID:064x}"),
+            &format!("0x{chain_id:064x}"),
         ])
         .stdout(Stdio::from(log.try_clone()?))
         .stderr(Stdio::from(log));
@@ -899,7 +941,26 @@ fn default_repo() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use outbe_primitives::tee_attestation_v1::{PlatformTcbStatusSetV1, QvlTcbStatusV1};
+    use outbe_primitives::{
+        chain::TESTNET_CHAIN_ID,
+        tee_attestation_v1::{PlatformTcbStatusSetV1, QvlTcbStatusV1, TeePolicyV1},
+        tee_genesis_v1::{initial_tee_policy_v1, InitialTeeProfileV1, ProductionSgxMeasurementV1},
+    };
+
+    fn testnet_policy(measurements: &Measurements) -> TeePolicyV1 {
+        initial_tee_policy_v1(
+            InitialTeeProfileV1::DcapRequired(ProductionSgxMeasurementV1 {
+                mrenclave: parse_b256(&measurements.mrenclave).unwrap(),
+                mrsigner: parse_b256(&measurements.mrsigner).unwrap(),
+                isv_prod_id: measurements.isv_prod_id,
+                minimum_isv_svn: measurements.isv_svn,
+                minimum_tcb_evaluation_data_number: 1,
+            }),
+            TESTNET_CHAIN_ID,
+            B256::repeat_byte(3),
+        )
+        .unwrap()
+    }
 
     #[test]
     fn exact_image_reference_requires_lowercase_sha256() {
@@ -931,7 +992,7 @@ mod tests {
     }
 
     #[test]
-    fn release_policy_binds_signed_measurements_and_strict_statuses() {
+    fn testnet_policy_fixture_binds_signed_measurements_and_strict_statuses() {
         let measurements = Measurements {
             debug: false,
             isv_prod_id: 1,
@@ -939,7 +1000,7 @@ mod tests {
             mrenclave: "11".repeat(32),
             mrsigner: "22".repeat(32),
         };
-        let policy = release_policy(&measurements, B256::repeat_byte(3)).expect("policy");
+        let policy = testnet_policy(&measurements);
         assert_eq!(
             policy.accepted_platform_tcb_statuses,
             PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded

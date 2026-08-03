@@ -64,6 +64,7 @@ mongodb.workspace = true
 hex.workspace = true
 libc.workspace = true
 outbe-compressed-entities.workspace = true
+outbe-evm.workspace = true
 outbe-primitives.workspace = true
 outbe-protocol.workspace = true
 outbe-protocol-derive.workspace = true

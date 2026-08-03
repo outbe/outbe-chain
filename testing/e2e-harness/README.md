@@ -247,21 +247,27 @@ evidence. Accepted DCAP evidence is produced by a separate exact-release runner:
 cargo run --locked -p outbe-e2e-harness --bin outbe-release-dcap-evidence -- \
   --image 'ghcr.io/outbe/outbe-tee-enclave-testnet@sha256:<64-hex-digest>' \
   --bundle /tmp/extracted-signed-sgx-bundle \
+  --testnet-genesis release/testnet-genesis.json \
   --expected-pck-ca processor \
   --output-dir /tmp/hardware-dcap-processor
 ```
 
 The command requires the project-pinned host-only QPL, working PCS/QCNL
 configuration, real SGX devices and an image that was already Cosign-verified and
-pulled by digest. It records host topology as untrusted provenance before
-creating a binding or contacting PCS, generates a fresh intent-bound quote
-inside the production Gramine enclave, acquires all eight collateral components,
-and requires an `Accepted` result from the public enclave-resident
-Begin/Chunk/Finish verifier. It retains canonical evidence, verifier bytes,
-actual CRLs and non-secret provenance only. `--expected-pck-ca platform` is an
-on-demand compatibility and node-admission diagnostic, not a release row: the
-Intel-signed PCK issuer is the authority, while guest-visible socket count is
-never used as a CA verdict.
+pulled by digest, plus the tracked final testnet genesis whose block-1 policy
+authorizes the signed measurements. It records host topology as untrusted
+provenance before creating a binding or contacting PCS, generates a fresh
+intent-bound quote inside the release Gramine enclave, acquires all eight
+collateral components, and requires an `Accepted` result from the public
+enclave-resident Begin/Chunk/Finish verifier. It retains canonical evidence,
+verifier bytes, actual CRLs and non-secret provenance only.
+`--expected-pck-ca platform` is an on-demand compatibility and node-admission
+diagnostic, not a release row: the Intel-signed PCK issuer is the authority,
+while guest-visible socket count is never used as a CA verdict.
+
+The protected workflow uses the single fixed path
+`release/testnet-genesis.json` from the immutable testnet tag. A missing or
+untracked file is a release failure; the harness never synthesizes a replacement.
 
 ## Focused Tribute compressed-entity checks
 

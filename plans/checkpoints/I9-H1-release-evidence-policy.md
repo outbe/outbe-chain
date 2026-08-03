@@ -40,13 +40,18 @@ This decision does not make H1 pass. H1 still needs:
 - exact testnet chain/genesis/active-policy binding;
 - retained canonical evidence from the public Begin/Chunk/Finish verifier.
 
-The release evidence harness now uses the canonical testnet chain ID
-`54322345`, but still derives a synthetic genesis hash and a measurement-derived
-initial policy. That evidence is useful for hardware-path qualification but
-cannot authorize a testnet release. Before H1 can pass, the harness must consume
-the canonical testnet genesis and exact active policy bytes, and the finalizer
-must verify their hashes against the evidence. Until then the protected
-workflow is ineligible for testnet activation.
+The release evidence harness and finalizer now require the same tracked
+`release/testnet-genesis.json` from the immutable testnet commit. Both parse it
+through the node's fail-closed ChainSpec path. The harness retains the exact
+genesis, block-1 policy and policy-schedule bytes; the finalizer independently
+checks their hashes, the Validator and FullNode measurement rules, and every
+member of the canonical Processor evidence archive. The signed
+`ReleaseManifest` Processor gate binds both the canonical summary and the full
+archive.
+
+The actual final testnet genesis file is not yet present in the repository.
+The protected workflow therefore fails at its tracked-file check and H1 remains
+pending; no synthetic or placeholder genesis is accepted.
 
 The current rented Processor host previously returned
 `ConfigurationAndSWHardeningNeeded`, which is outside the accepted

@@ -23,6 +23,7 @@ concurrency:
 env:
   IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/outbe-tee-enclave-testnet
   RELEASE_TAG: ${{ inputs.release_tag }}
+  TESTNET_GENESIS: release/testnet-genesis.json
 
 jobs:
   build-and-compare:
@@ -54,6 +55,7 @@ jobs:
           }
           test "$(git rev-parse "${RELEASE_TAG}^{commit}")" = "${GITHUB_SHA}"
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          git ls-files --error-unmatch "${TESTNET_GENESIS}"
           tag_object="$(gh api \
             -H 'X-GitHub-Api-Version: 2026-03-10' \
             "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" \
@@ -433,6 +435,7 @@ jobs:
           cargo run --locked -p outbe-e2e-harness --bin outbe-release-dcap-evidence -- \
             --image "${EXACT_IMAGE}" \
             --bundle "${RUNNER_TEMP}/signed" \
+            --testnet-genesis "${TESTNET_GENESIS}" \
             --expected-pck-ca processor \
             --output-dir "${RUNNER_TEMP}/hardware-dcap-processor"
 
@@ -527,7 +530,9 @@ jobs:
             --elf-evidence "${RUNNER_TEMP}/release-inputs/elf-reproducibility.json" \
             --sgx-evidence "${RUNNER_TEMP}/release-inputs/sgx-reproducibility.json" \
             --hardware-evidence "${RUNNER_TEMP}/hardware/hardware-sgx.json" \
+            --processor-dcap-archive "${RUNNER_TEMP}/final/hardware-dcap-processor.tar" \
             --processor-dcap-evidence "${RUNNER_TEMP}/final/hardware-dcap-processor.json" \
+            --testnet-genesis "${TESTNET_GENESIS}" \
             --output "${RUNNER_TEMP}/final/ReleaseManifest.json"
           python3 -m venv "${RUNNER_TEMP}/release-verifier"
           "${RUNNER_TEMP}/release-verifier/bin/pip" install \
@@ -583,6 +588,7 @@ jobs:
             "${RUNNER_TEMP}/hardware/hardware-sgx.json"
             "${RUNNER_TEMP}/final/hardware-dcap-processor.json"
             "${RUNNER_TEMP}/final/hardware-dcap-processor.tar"
+            "${TESTNET_GENESIS}"
           )
           test "$(remote_tag_object)" = "${verified_tag_object}"
           gh release create "${RELEASE_TAG}" "${assets[@]}" \

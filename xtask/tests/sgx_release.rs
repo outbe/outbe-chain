@@ -1,6 +1,16 @@
-use std::{fs, process::Command};
+use std::{collections::BTreeMap, fs, io::Cursor, process::Command};
 
+use alloy_primitives::B256;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use outbe_e2e_harness::release_dcap::RELEASE_DCAP_ARTIFACT_PATHS;
+use outbe_primitives::{
+    chain::TESTNET_CHAIN_ID,
+    tee_attestation_v1::{TeePolicyScheduleEntryV1, TeePolicyScheduleV1, TeePolicyV1},
+    tee_genesis_v1::{
+        initial_tee_policy_v1, tee_attestation_v1_genesis_field, InitialTeeProfileV1,
+        ProductionSgxMeasurementV1,
+    },
+};
 use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
 use xtask::release::sgx::{
@@ -16,6 +26,8 @@ const SIGSTRUCT: &str = "Attributes:\n\
     isv_prod_id: 1\n\
     isv_svn: 1\n\
     debug_enclave: False\n";
+const PCK_CRL_BYTES: &[u8] = b"synthetic Processor CRL boundary fixture";
+const ROOT_CRL_BYTES: &[u8] = b"synthetic root CRL boundary fixture";
 
 fn repo_spec() -> BundleSpec {
     BundleSpec::read(
@@ -30,6 +42,137 @@ fn repo_root() -> std::path::PathBuf {
         .parent()
         .expect("xtask lives under repository root")
         .to_owned()
+}
+
+fn processor_dcap_artifact_fixtures(
+    testnet_genesis: &[u8],
+    policy: &[u8],
+    policy_schedule: &[u8],
+) -> BTreeMap<String, Vec<u8>> {
+    let mut artifacts = RELEASE_DCAP_ARTIFACT_PATHS
+        .into_iter()
+        .map(|name| {
+            (
+                name.to_owned(),
+                format!("synthetic {name} boundary fixture").into_bytes(),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    artifacts.insert("collateral/pck.crl.der".to_owned(), PCK_CRL_BYTES.to_vec());
+    artifacts.insert(
+        "collateral/root-ca.crl.der".to_owned(),
+        ROOT_CRL_BYTES.to_vec(),
+    );
+    artifacts.insert("policy-v1.bin".to_owned(), policy.to_vec());
+    artifacts.insert(
+        "policy-schedule-v1.bin".to_owned(),
+        policy_schedule.to_vec(),
+    );
+    artifacts.insert("testnet-genesis.json".to_owned(), testnet_genesis.to_vec());
+    artifacts
+}
+
+fn write_processor_dcap_archive(
+    path: &std::path::Path,
+    evidence: &[u8],
+    testnet_genesis: &[u8],
+    policy: &[u8],
+    policy_schedule: &[u8],
+    source_date_epoch: i64,
+) {
+    let output = fs::File::create(path).expect("create Processor DCAP evidence archive");
+    let mut archive = tar::Builder::new(output);
+    let mut directory = tar::Header::new_gnu();
+    directory.set_entry_type(tar::EntryType::Directory);
+    directory.set_mode(0o755);
+    directory.set_uid(0);
+    directory.set_gid(0);
+    directory.set_mtime(source_date_epoch as u64);
+    directory.set_size(0);
+    directory.set_cksum();
+    archive
+        .append_data(&mut directory, "collateral", Cursor::new([]))
+        .expect("append Processor DCAP collateral directory");
+    let mut artifacts = processor_dcap_artifact_fixtures(testnet_genesis, policy, policy_schedule);
+    artifacts.insert("hardware-dcap-evidence.json".to_owned(), evidence.to_vec());
+    for (name, bytes) in artifacts {
+        let mut header = tar::Header::new_gnu();
+        header.set_mode(0o644);
+        header.set_uid(0);
+        header.set_gid(0);
+        header.set_mtime(source_date_epoch as u64);
+        header.set_size(bytes.len() as u64);
+        header.set_cksum();
+        archive
+            .append_data(&mut header, name, Cursor::new(bytes))
+            .expect("append Processor DCAP evidence member");
+    }
+    archive
+        .finish()
+        .expect("finish Processor DCAP evidence archive");
+}
+
+fn write_testnet_genesis(
+    root: &std::path::Path,
+    mrenclave: &str,
+    mrsigner: &str,
+    isv_prod_id: u16,
+    isv_svn: u16,
+) -> (std::path::PathBuf, TeePolicyV1, TeePolicyScheduleV1) {
+    let path = root.join("testnet-genesis.json");
+    let mut genesis = serde_json::json!({
+        "config": {
+            "chainId": TESTNET_CHAIN_ID,
+            "homesteadBlock": 0,
+            "eip150Block": 0,
+            "eip155Block": 0,
+            "eip158Block": 0,
+            "byzantiumBlock": 0,
+            "constantinopleBlock": 0,
+            "petersburgBlock": 0,
+            "istanbulBlock": 0,
+            "berlinBlock": 0,
+            "londonBlock": 0,
+            "terminalTotalDifficultyPassed": true
+        },
+        "nonce": "0x0",
+        "timestamp": "0x0",
+        "extraData": "0x",
+        "gasLimit": "0x1c9c380",
+        "difficulty": "0x0",
+        "mixHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "coinbase": "0x0000000000000000000000000000000000000000",
+        "alloc": {}
+    });
+    fs::write(&path, serde_json::to_vec_pretty(&genesis).unwrap()).unwrap();
+    let base = reth_ethereum::cli::chainspec::chain_value_parser(path.to_str().unwrap()).unwrap();
+    let parse = |value: &str| {
+        let value = value.strip_prefix("0x").unwrap_or(value);
+        B256::from_slice(&hex::decode(value).unwrap())
+    };
+    let policy = initial_tee_policy_v1(
+        InitialTeeProfileV1::DcapRequired(ProductionSgxMeasurementV1 {
+            mrenclave: parse(mrenclave),
+            mrsigner: parse(mrsigner),
+            isv_prod_id,
+            minimum_isv_svn: isv_svn,
+            minimum_tcb_evaluation_data_number: 1,
+        }),
+        TESTNET_CHAIN_ID,
+        base.genesis_hash(),
+    )
+    .unwrap();
+    let schedule = TeePolicyScheduleV1 {
+        chain_id: policy.chain_id,
+        genesis_hash: policy.genesis_hash,
+        entries: vec![TeePolicyScheduleEntryV1 {
+            activation_height: policy.activation_height,
+            policy: policy.clone(),
+        }],
+    };
+    genesis["config"]["teeAttestationV1"] = tee_attestation_v1_genesis_field(&policy).unwrap();
+    fs::write(&path, serde_json::to_vec_pretty(&genesis).unwrap()).unwrap();
+    (path, policy, schedule)
 }
 
 #[test]
@@ -143,7 +286,9 @@ fn cli_exposes_typed_sgx_release_commands() {
         .expect("run manifest help");
     assert!(manifest.status.success());
     let manifest_help = String::from_utf8(manifest.stdout).expect("UTF-8 manifest help");
+    assert!(manifest_help.contains("--processor-dcap-archive"));
     assert!(manifest_help.contains("--processor-dcap-evidence"));
+    assert!(manifest_help.contains("--testnet-genesis"));
     assert!(!manifest_help.contains("--platform-dcap-evidence"));
 }
 
@@ -172,7 +317,17 @@ fn privileged_release_workflow_pins_source_and_never_replaces_assets() {
     assert!(workflow.contains("test \"${signed_tag_name}\" = \"${RELEASE_TAG}\""));
     assert!(workflow.contains("runs-on: testnet-release-sgx"));
     assert!(workflow.contains("--expected-pck-ca processor"));
+    assert!(workflow.contains("--processor-dcap-archive"));
     assert!(workflow.contains("--processor-dcap-evidence"));
+    assert!(workflow.contains("TESTNET_GENESIS: release/testnet-genesis.json"));
+    assert_eq!(
+        workflow
+            .matches("--testnet-genesis \"${TESTNET_GENESIS}\"")
+            .count(),
+        2,
+        "hardware capture and finalization must consume the same immutable testnet genesis"
+    );
+    assert!(workflow.contains("git ls-files --error-unmatch \"${TESTNET_GENESIS}\""));
     assert!(workflow.contains("outbe-release-dcap-evidence"));
     assert!(workflow.contains("hardware-dcap-processor-evidence"));
     assert!(!workflow.contains("testnet-release-sgx-platform"));
@@ -187,6 +342,17 @@ fn privileged_release_workflow_pins_source_and_never_replaces_assets() {
     assert!(workflow.contains("cosign-image-verification.json"));
     assert!(workflow.contains("cosign-sbom-verification.json"));
     assert!(workflow.contains("cosign-provenance-verification.json"));
+    let release_assets = workflow
+        .split_once("          assets=(")
+        .expect("release asset list")
+        .1
+        .split_once("\n          )")
+        .expect("end of release asset list")
+        .0;
+    assert!(
+        release_assets.contains("\"${TESTNET_GENESIS}\""),
+        "the exact testnet genesis must be a published release asset"
+    );
     let package_job = workflow
         .split_once("  package-and-sign-image:")
         .expect("OCI package job")
@@ -361,6 +527,16 @@ fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
     };
     let bundle_manifest = build_bundle_manifest(fixture.path(), &repo_spec(), &source, SIGSTRUCT)
         .expect("bundle manifest");
+    let (testnet_genesis, testnet_policy, testnet_policy_schedule) = write_testnet_genesis(
+        root.path(),
+        &bundle_manifest.measurements.mrenclave,
+        &bundle_manifest.measurements.mrsigner,
+        bundle_manifest.measurements.isv_prod_id,
+        bundle_manifest.measurements.isv_svn,
+    );
+    let testnet_genesis_bytes = fs::read(&testnet_genesis).unwrap();
+    let testnet_policy_bytes = testnet_policy.encode_canonical().unwrap();
+    let testnet_policy_schedule_bytes = testnet_policy_schedule.encode_canonical().unwrap();
     fs::create_dir_all(fixture.path().join("metadata")).expect("metadata");
     fs::write(
         fixture.path().join("metadata/testnet-sgx-bundle.json"),
@@ -442,6 +618,7 @@ fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
     let sgx_evidence = root.path().join("sgx-reproducibility.json");
     let hardware_evidence = root.path().join("hardware-sgx.json");
     let processor_dcap_evidence = root.path().join("hardware-dcap-processor.json");
+    let processor_dcap_archive = root.path().join("hardware-dcap-processor.tar");
     write_deterministic_bundle_archive(fixture.path(), &bundle_archive, source.source_date_epoch)
         .expect("archive bundle fixture");
     let sbom_value = serde_json::json!({"spdxVersion": "SPDX-2.3"});
@@ -514,9 +691,28 @@ fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
         } else {
             "Intel SGX PCK Platform CA"
         };
+        let artifacts = processor_dcap_artifact_fixtures(
+            &testnet_genesis_bytes,
+            &testnet_policy_bytes,
+            &testnet_policy_schedule_bytes,
+        )
+        .into_iter()
+        .map(|(name, bytes)| {
+            (
+                name,
+                serde_json::json!({
+                    "sha256": hex::encode(Sha256::digest(&bytes)),
+                    "size": bytes.len()
+                }),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
         serde_json::json!({
+            "artifacts": artifacts,
             "attestation": {
+                "collateral_valid_until": 1787808799_u64,
                 "pck_ca": pck_ca,
+                "platform_tcb_status": "up-to-date",
                 "public_verifier": "enclave-resident-begin-chunk-finish-v1"
             },
             "collateral": {
@@ -525,16 +721,18 @@ fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
                     "issuer": pck_crl_issuer,
                     "kind": pck_ca,
                     "next_update": "2026-08-27T05:33:19Z",
-                    "size": 1002,
-                    "sha256": "d".repeat(64),
+                    "path": "collateral/pck.crl.der",
+                    "size": PCK_CRL_BYTES.len(),
+                    "sha256": hex::encode(Sha256::digest(PCK_CRL_BYTES)),
                     "this_update": "2026-07-28T05:33:19Z"
                 },
                 "root_crl": {
                     "issuer": "Intel SGX Root CA",
                     "kind": "root",
                     "next_update": "2027-02-26T13:04:00Z",
-                    "size": 294,
-                    "sha256": "e".repeat(64),
+                    "path": "collateral/root-ca.crl.der",
+                    "size": ROOT_CRL_BYTES.len(),
+                    "sha256": hex::encode(Sha256::digest(ROOT_CRL_BYTES)),
                     "this_update": "2026-02-26T13:04:00Z"
                 }
             },
@@ -547,24 +745,41 @@ fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
             },
             "freshness": {
                 "binding_id_nonzero": true,
-                "collateral_completed_at": 104,
-                "collateral_started_at": 103,
-                "quote_generated_at": 102,
-                "run_started_at": 101,
-                "verified_at": 105
+                "collateral_completed_at": 1785542403_u64,
+                "collateral_started_at": 1785542402_u64,
+                "consensus_timestamp": 1785542404_u64,
+                "quote_generated_at": 1785542401_u64,
+                "run_started_at": 1785542400_u64,
+                "verified_at": 1785542405_u64
             },
             "image": {"digest": {"algorithm": "sha256", "value": "c".repeat(64)}},
             "measurements": bundle_manifest.measurements,
+            "policy": {
+                "activation_height": 1,
+                "chain_id": TESTNET_CHAIN_ID,
+                "genesis_hash": hex::encode(testnet_policy.genesis_hash),
+                "policy_hash": hex::encode(testnet_policy.policy_hash().unwrap()),
+                "policy_schedule_hash": hex::encode(testnet_policy_schedule.schedule_hash().unwrap()),
+                "policy_schedule_sha256": hex::encode(Sha256::digest(&testnet_policy_schedule_bytes)),
+                "policy_version": 1,
+                "sha256": hex::encode(Sha256::digest(&testnet_policy_bytes))
+            },
             "result": "passed",
             "schema_version": "1.0.0",
             "source_commit": source.source_commit
         })
     };
-    fs::write(
-        &processor_dcap_evidence,
-        canonical_json(&fresh_dcap("processor", 1)).expect("processor DCAP evidence"),
-    )
-    .expect("processor DCAP evidence");
+    let processor_evidence =
+        canonical_json(&fresh_dcap("processor", 1)).expect("processor DCAP evidence");
+    fs::write(&processor_dcap_evidence, &processor_evidence).expect("processor DCAP evidence");
+    write_processor_dcap_archive(
+        &processor_dcap_archive,
+        &processor_evidence,
+        &testnet_genesis_bytes,
+        &testnet_policy_bytes,
+        &testnet_policy_schedule_bytes,
+        source.source_date_epoch,
+    );
     let inputs = VerifiedReleaseInputs {
         bundle: fixture.path().to_owned(),
         bundle_archive,
@@ -574,10 +789,12 @@ fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
         elf_evidence,
         elf_manifest,
         hardware_evidence,
+        processor_dcap_archive,
         processor_dcap_evidence,
         oci_evidence,
         sbom,
         sgx_evidence,
+        testnet_genesis,
     };
     let manifest = build_release_manifest_candidate(&inputs).expect("release manifest candidate");
 
@@ -603,6 +820,18 @@ fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
     assert!(gates
         .iter()
         .any(|gate| gate["name"] == "fresh-accepted-processor-dcap"));
+    let processor_gate = gates
+        .iter()
+        .find(|gate| gate["name"] == "fresh-accepted-processor-dcap")
+        .expect("Processor DCAP gate");
+    assert_eq!(
+        processor_gate["evidence"]
+            .as_array()
+            .expect("Processor gate evidence")
+            .len(),
+        2,
+        "the signed gate must bind both the summary and full retained evidence archive"
+    );
     assert!(!gates
         .iter()
         .any(|gate| gate["name"] == "fresh-accepted-platform-dcap"));
@@ -612,13 +841,143 @@ fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
         .expect("OCI gate");
     assert_eq!(oci_gate["evidence"].as_array().expect("evidence").len(), 4);
 
+    let mut substituted_retained_policy = testnet_policy_bytes.clone();
+    substituted_retained_policy[0] ^= 1;
+    write_processor_dcap_archive(
+        &inputs.processor_dcap_archive,
+        &processor_evidence,
+        &testnet_genesis_bytes,
+        &substituted_retained_policy,
+        &testnet_policy_schedule_bytes,
+        source.source_date_epoch,
+    );
+    let error = build_release_manifest_candidate(&inputs)
+        .expect_err("substituted retained policy must not pass finalization");
+    assert!(error.to_string().contains("archive member digest mismatch"));
+    write_processor_dcap_archive(
+        &inputs.processor_dcap_archive,
+        &processor_evidence,
+        &testnet_genesis_bytes,
+        &testnet_policy_bytes,
+        &testnet_policy_schedule_bytes,
+        source.source_date_epoch,
+    );
+
+    let mut truncated_artifact_set = fresh_dcap("processor", 1);
+    truncated_artifact_set["artifacts"]
+        .as_object_mut()
+        .expect("artifact records")
+        .remove("intent-v1.bin");
+    let truncated_artifact_set =
+        canonical_json(&truncated_artifact_set).expect("truncated artifact set evidence");
+    fs::write(&inputs.processor_dcap_evidence, &truncated_artifact_set)
+        .expect("replace exact Processor artifact set");
+    write_processor_dcap_archive(
+        &inputs.processor_dcap_archive,
+        &truncated_artifact_set,
+        &testnet_genesis_bytes,
+        &testnet_policy_bytes,
+        &testnet_policy_schedule_bytes,
+        source.source_date_epoch,
+    );
+    let error = build_release_manifest_candidate(&inputs)
+        .expect_err("truncated Processor artifact set must not pass finalization");
+    assert!(error.to_string().contains("exact canonical artifact set"));
+    fs::write(&inputs.processor_dcap_evidence, &processor_evidence)
+        .expect("restore exact Processor evidence");
+    write_processor_dcap_archive(
+        &inputs.processor_dcap_archive,
+        &processor_evidence,
+        &testnet_genesis_bytes,
+        &testnet_policy_bytes,
+        &testnet_policy_schedule_bytes,
+        source.source_date_epoch,
+    );
+
+    let mut disconnected_pck_crl = fresh_dcap("processor", 1);
+    disconnected_pck_crl["collateral"]["pck_crl"]["sha256"] = serde_json::json!("ff".repeat(32));
+    let disconnected_pck_crl =
+        canonical_json(&disconnected_pck_crl).expect("disconnected PCK CRL provenance");
+    fs::write(&inputs.processor_dcap_evidence, &disconnected_pck_crl)
+        .expect("replace PCK CRL provenance");
+    write_processor_dcap_archive(
+        &inputs.processor_dcap_archive,
+        &disconnected_pck_crl,
+        &testnet_genesis_bytes,
+        &testnet_policy_bytes,
+        &testnet_policy_schedule_bytes,
+        source.source_date_epoch,
+    );
+    let error = build_release_manifest_candidate(&inputs)
+        .expect_err("CRL provenance disconnected from retained bytes must not pass");
+    assert!(error.to_string().contains("retained PCK CRL"));
+    fs::write(&inputs.processor_dcap_evidence, &processor_evidence)
+        .expect("restore exact Processor evidence");
+    write_processor_dcap_archive(
+        &inputs.processor_dcap_archive,
+        &processor_evidence,
+        &testnet_genesis_bytes,
+        &testnet_policy_bytes,
+        &testnet_policy_schedule_bytes,
+        source.source_date_epoch,
+    );
+
+    let mut pre_collateral_consensus_time = fresh_dcap("processor", 1);
+    pre_collateral_consensus_time["freshness"]["consensus_timestamp"] =
+        serde_json::json!(1785542401_u64);
+    let pre_collateral_consensus_time = canonical_json(&pre_collateral_consensus_time)
+        .expect("pre-collateral consensus timestamp evidence");
     fs::write(
         &inputs.processor_dcap_evidence,
-        canonical_json(&fresh_dcap("processor", 0)).expect("zero-topology evidence"),
+        &pre_collateral_consensus_time,
     )
-    .expect("replace Processor evidence with untrusted guest topology");
+    .expect("replace consensus timestamp provenance");
+    write_processor_dcap_archive(
+        &inputs.processor_dcap_archive,
+        &pre_collateral_consensus_time,
+        &testnet_genesis_bytes,
+        &testnet_policy_bytes,
+        &testnet_policy_schedule_bytes,
+        source.source_date_epoch,
+    );
+    let error = build_release_manifest_candidate(&inputs)
+        .expect_err("pre-collateral consensus timestamp must not pass finalization");
+    assert!(error.to_string().contains("freshness order"));
+    fs::write(&inputs.processor_dcap_evidence, &processor_evidence)
+        .expect("restore exact Processor evidence");
+    write_processor_dcap_archive(
+        &inputs.processor_dcap_archive,
+        &processor_evidence,
+        &testnet_genesis_bytes,
+        &testnet_policy_bytes,
+        &testnet_policy_schedule_bytes,
+        source.source_date_epoch,
+    );
+
+    let zero_topology_evidence =
+        canonical_json(&fresh_dcap("processor", 0)).expect("zero-topology evidence");
+    fs::write(&inputs.processor_dcap_evidence, &zero_topology_evidence)
+        .expect("replace Processor evidence with untrusted guest topology");
+    write_processor_dcap_archive(
+        &inputs.processor_dcap_archive,
+        &zero_topology_evidence,
+        &testnet_genesis_bytes,
+        &testnet_policy_bytes,
+        &testnet_policy_schedule_bytes,
+        source.source_date_epoch,
+    );
     build_release_manifest_candidate(&inputs)
         .expect("guest topology provenance must not decide DCAP acceptance");
+    fs::write(&inputs.processor_dcap_evidence, &processor_evidence)
+        .expect("restore exact Processor evidence");
+    write_processor_dcap_archive(
+        &inputs.processor_dcap_archive,
+        &processor_evidence,
+        &testnet_genesis_bytes,
+        &testnet_policy_bytes,
+        &testnet_policy_schedule_bytes,
+        source.source_date_epoch,
+    );
 
     fs::write(
         &inputs.processor_dcap_evidence,
@@ -645,6 +1004,67 @@ fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
         canonical_json(&fresh_dcap("processor", 1)).expect("restored Processor evidence"),
     )
     .expect("restore Processor evidence");
+
+    let mut wrong_testnet_binding = fresh_dcap("processor", 1);
+    wrong_testnet_binding["policy"]["genesis_hash"] = serde_json::json!("00".repeat(32));
+    fs::write(
+        &inputs.processor_dcap_evidence,
+        canonical_json(&wrong_testnet_binding).expect("wrong testnet binding"),
+    )
+    .expect("replace Processor evidence with wrong testnet binding");
+    let error = build_release_manifest_candidate(&inputs)
+        .expect_err("wrong testnet ChainSpec binding must not pass finalization");
+    assert!(error.to_string().contains("testnet ChainSpec binding"));
+
+    fs::write(
+        &inputs.processor_dcap_evidence,
+        canonical_json(&fresh_dcap("processor", 1)).expect("restored Processor evidence"),
+    )
+    .expect("restore Processor evidence");
+
+    let mut wrong_policy_bytes = fresh_dcap("processor", 1);
+    wrong_policy_bytes["policy"]["sha256"] = serde_json::json!("00".repeat(32));
+    fs::write(
+        &inputs.processor_dcap_evidence,
+        canonical_json(&wrong_policy_bytes).expect("wrong policy bytes binding"),
+    )
+    .expect("replace Processor evidence with wrong policy bytes binding");
+    let error = build_release_manifest_candidate(&inputs)
+        .expect_err("substituted policy bytes must not pass finalization");
+    assert!(error.to_string().contains("testnet ChainSpec binding"));
+
+    fs::write(
+        &inputs.processor_dcap_evidence,
+        canonical_json(&fresh_dcap("processor", 1)).expect("restored Processor evidence"),
+    )
+    .expect("restore Processor evidence");
+
+    let mut wrong_schedule_bytes = fresh_dcap("processor", 1);
+    wrong_schedule_bytes["policy"]["policy_schedule_sha256"] = serde_json::json!("00".repeat(32));
+    fs::write(
+        &inputs.processor_dcap_evidence,
+        canonical_json(&wrong_schedule_bytes).expect("wrong policy schedule bytes binding"),
+    )
+    .expect("replace Processor evidence with wrong policy schedule bytes binding");
+    let error = build_release_manifest_candidate(&inputs)
+        .expect_err("substituted policy schedule bytes must not pass finalization");
+    assert!(error.to_string().contains("testnet ChainSpec binding"));
+
+    fs::write(
+        &inputs.processor_dcap_evidence,
+        canonical_json(&fresh_dcap("processor", 1)).expect("restored Processor evidence"),
+    )
+    .expect("restore Processor evidence");
+
+    let mut substituted_testnet_genesis = testnet_genesis_bytes.clone();
+    substituted_testnet_genesis.push(b'\n');
+    fs::write(&inputs.testnet_genesis, substituted_testnet_genesis)
+        .expect("substitute testnet genesis bytes");
+    let error = build_release_manifest_candidate(&inputs)
+        .expect_err("substituted testnet genesis bytes must not pass finalization");
+    assert!(error.to_string().contains("testnet ChainSpec binding"));
+    fs::write(&inputs.testnet_genesis, &testnet_genesis_bytes)
+        .expect("restore exact testnet genesis bytes");
 
     let mut incomplete_crl = fresh_dcap("processor", 1);
     incomplete_crl["collateral"]["pck_crl"]
