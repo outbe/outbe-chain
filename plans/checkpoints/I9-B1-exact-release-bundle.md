@@ -1,20 +1,18 @@
 # I9 B1 checkpoint — exact native-DCAP release bundle
 
-Status: `SUPERSEDED; REFRESH REQUIRED` as of 2026-08-03. The recorded B1 run
-passed for its named historical candidate, but the testnet Platform-policy and
-fixture changes after that candidate change the source identity. B1 must
-refreeze the current signed candidate before H1. It covers artifact identity,
+Status: `PASS` as of 2026-08-03 for signed candidate
+`267a8fbd361aa003db8a87022ee46309e20c9719`. B1 covers artifact identity,
 dependency closure and local reproducibility only; H1, P1 and E1 remain
 fail-not-skip.
 
-## Historical fixed candidate and signed prerequisite chain
+## Fixed candidate and signed prerequisite chain
 
 The current B1 candidate is commit
-`4e4fc7fd129fdc53e67318efe5b70dc0fcf759a6`, built twice from a clean detached
-worktree with `SOURCE_DATE_EPOCH=1785714090`. It supersedes the earlier
-`71d6c6832e5784d4b95ee99aaa26105611ba7615` freeze because the H1 release gate
-added source-controlled evidence capture, finalization and workflow inputs.
-The prerequisite and corrective commits are:
+`267a8fbd361aa003db8a87022ee46309e20c9719`, built twice from a clean detached
+worktree with `SOURCE_DATE_EPOCH=1785744191`. It supersedes the historical
+`4e4fc7fd129fdc53e67318efe5b70dc0fcf759a6` freeze and includes the canonical
+OCOMP fixture refresh plus the accepted testnet Platform policy. The
+prerequisite and corrective commits are:
 
 | Commit | Purpose | Signature result |
 | --- | --- | --- |
@@ -26,6 +24,8 @@ The prerequisite and corrective commits are:
 | `71d6c6832e5784d4b95ee99aaa26105611ba7615` | place the Docker image after all runtime options | Good SSH/ED25519 signature, same key |
 | `72496f158041512ae3b9138b9b7350ebca17dc21` | record the superseded pre-H1 B1 freeze | Good SSH/ED25519 signature, same key |
 | `4e4fc7fd129fdc53e67318efe5b70dc0fcf759a6` | introduced the superseded two-row Processor/Platform release gate | Good SSH/ED25519 signature, same key |
+| `ea77c74b50c7d7df2da3e7dffd4672d24b4104b6` | refresh canonical OCOMP release fixtures | Good SSH/ED25519 signature, same key |
+| `267a8fbd361aa003db8a87022ee46309e20c9719` | admit `ConfigurationAndSWHardeningNeeded` for the testnet Platform policy | Good SSH/ED25519 signature, same key |
 
 The final checkpoint document is committed separately so its signature and hash
 are not self-referential.
@@ -62,25 +62,25 @@ is used.
 
 | Artifact | Features | Build-A bytes | Build-A SHA-256 | Build-B result |
 | --- | --- | ---: | --- | --- |
-| `outbe-chain` | none | 194329176 | `becdf49389a77d520cddbe93d9375cb81f292ad68fdbf2b1ecc28ffe076729c9` | byte-identical |
-| `outbe-cli` | none | 11697488 | `85e998bb098347cf8b812bb06fc9bd2c2ae04355509cf0b63e5cd4a22e2e7c64` | byte-identical |
+| `outbe-chain` | none | 194336040 | `6ea7df741b37264ac82bcf9838c742a451f9ab69e760d3a73d35e6fdf7cbe591` | byte-identical |
+| `outbe-cli` | none | 11696856 | `200ae458fb87481d91f299cf712e282a5e84cfb463b2f47ff9212e148d5b2230` | byte-identical |
 | `outbe-feeder` | none | 17160216 | `80ac4c97f9cfc5b8c8c7ce64feab1a7e14f5e84b6cca8c149863e9f104b846b3` | byte-identical |
-| `outbe-keygen` | none | 4256856 | `c1936ce290107ca6c67447215ca74fa78daad0add2876c4d89f2c7f9983e058d` | byte-identical |
-| `outbe-ocomp` | none | 31648344 | `b055d3531c14673ee16bbff467c51650b585b7e22b1a96a3efc4288a6b485e23` | byte-identical |
-| `outbe-tee-enclave` | `native-dcap` | 4775416 | `bbd84795ec26ed6494919144de43374027a5a4e285945e5b3652fe1477c4025a` | byte-identical |
+| `outbe-keygen` | none | 4257288 | `40e0339463e691d17e357ff7d3b77e9230c6b769eca178915cb9c07857d53673` | byte-identical |
+| `outbe-ocomp` | none | 31990440 | `793f2045606526ad9c0943b377876d9429cac903ac1edb231e70e51f7e120d3d` | byte-identical |
+| `outbe-tee-enclave` | `native-dcap` | 4775368 | `7ad25254411d1a00769defcbe138965d588addbda9efeff04e0227335cd2cf90` | byte-identical |
 
 ## Independent build evidence
 
 Builder A:
 
 - command: `scripts/release/reproducible-build.sh --no-cache --release-tag
-  commit-4e4fc7fd129fdc53e67318efe5b70dc0fcf759a6 --output
-  /tmp/outbe-b1-build-a-4e4fc7f`;
-- elapsed: `643.19 s`;
+  commit-267a8fbd361aa003db8a87022ee46309e20c9719 --output
+  /tmp/outbe-b1-build-a-267a8fb`;
+- container build elapsed: `609.8 s`;
 - `SHA256SUMS` SHA-256:
-  `3207cd09df4546a5412437d992701754aa718893b6c7055908d83eb60db8ca02`;
+  `6d35fb7ad5899447aa1847990bb3def263d971b96a38786c82b9883f0752fc58`;
 - canonical manifest SHA-256:
-  `2858d4cbb77a2a6b20b515d5d6300aab66593d2e9307d7e761ddfc418d5d321f`;
+  `de64f6dc5d8e472308ae0b5bb224579cd3dddb174d2da4970306aba8f237300f`;
 - resolved package inventory SHA-256:
   `c19802502b267e558f553d85027fd4405e55897b0a54df2ed19bbb7800736b21`;
 - all 11 checksum rows passed.
@@ -88,15 +88,15 @@ Builder A:
 Builder B:
 
 - same command and release tag, output
-  `/tmp/outbe-b1-build-b-4e4fc7f`;
-- elapsed: `640.73 s`;
+  `/tmp/outbe-b1-build-b-267a8fb`;
+- container build elapsed: `594.6 s`;
 - all 11 checksum rows passed;
 - every artifact, `SHA256SUMS` and canonical release manifest is
   byte-identical to builder A.
 
 The pinned verifier reported `result: passed`, with all six
 `byte_identical: true`, no differences, and evidence SHA-256
-`796857ba0c8dd725cc16fe8690d2b2b6f2d599054c255995773991bcdbcaa2d6`.
+`41a30cf8ee7e8034cded3102913e251aaf848ef8a56aa1dda658b676c897717e`.
 
 ## Production-enclave audit
 
@@ -136,15 +136,15 @@ pinned project-toolchain image for build, prepare, sign and view.
 ## Unsigned Gramine bundle and signing boundary
 
 The two builders independently produced unsigned bundles at
-`/tmp/outbe-b1-unsigned-a-4e4fc7f` and
-`/tmp/outbe-b1-unsigned-b-4e4fc7f`. Both prepare runs passed the native-QVL
+`/tmp/outbe-b1-unsigned-a-267a8fb` and
+`/tmp/outbe-b1-unsigned-b-267a8fb`. Both prepare runs passed the native-QVL
 artifact contract. `cargo xtask release sgx compare` reported `result:
 identical`, `entry_count: 75`, tree SHA-256
-`eeb8be4bcf278dc402e91c85ce3df03235a814a88cdbc7d218b200b0b12ebe8b`;
+`dbbe1863a43cf613c0f43ce7ff0d8075ea0435f59798bdffeaf5dce7db20cd73`;
 the comparison evidence SHA-256 is
-`e76362c82b315656d7157850e51cd2a6ed568f377bac35b65c6a0fe3b2fba0c9`.
+`df23009329bed8745bcaf9c640964363068b087f99349d7bde19a79a1b0b25f5`.
 `SHA256SUMS.unsigned` is also identical with SHA-256
-`bd389289ed71c92acecee8b1c1591446dd861b5b2798bc568d04d3e416309ee1`.
+`9e5304a56270f23b7b095d8350597c1cf8f829779d4dcffe3a1fdda74a182706`.
 An independent recursive diff was empty.
 
 B1 pins the release manifest template to `sgx.remote_attestation = "dcap"`,
@@ -167,23 +167,19 @@ remain H1/E1 release-workflow evidence.
 | Missing SGX/quote/collateral at production startup | A0 startup and NodeHost negative matrix | reject before consensus/execution |
 | Wrong measurement or signing inputs | xtask SGX bundle verification tests | reject |
 | Exact release Python suite | 61 tests | pass |
-| SGX release bundle contract | 11 xtask integration tests | pass |
-| Enclave identity tests, default and `mock` builds | 5/5 in each configuration; mock binary check passes | pass |
+| SGX release bundle contract | 12 xtask integration tests | pass |
 | Native-DCAP release check | exact package/binary/target command | pass |
 | `cargo fmt --all -- --check`, `git diff --check` | post-edit | pass |
 
-Full-workspace `cargo clippy -- -D warnings` remains red only on two pre-existing
-`outbe-tee` findings outside the B1 diff (`RuntimeEnclaveClient` large enum
-variant and a collapsible `if` in `node_host.rs`). Package-only no-dependency
-clippy additionally reports two pre-existing type-complexity findings in
-`run.rs`/`seal.rs`. B1 does not alter or hide them. `shellcheck` is not installed.
+No production code changed during this refreeze. Full-workspace cleanup and
+unrelated lint findings are outside B1 and were not expanded into this gate.
 
 ## B1 boundary and next gates
 
 B1 freezes a locally reproducible candidate; it does not activate testnet by
-itself. The historical candidate above cannot be reused after the 2026-08-03
-source changes; the next B1 run must replace its commit, artifact hashes and
-measurements with the current signed candidate.
+itself. Candidate `267a8fbd361aa003db8a87022ee46309e20c9719` is the exact
+input for H1, P1 and E1. Any later source change invalidates this checkpoint
+and requires a new B1 freeze.
 
 H1 must retain fresh accepted Processor-CA evidence for this exact candidate,
 with actual Processor and root CRLs. A real Platform node must pass its own
