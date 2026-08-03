@@ -1,347 +1,100 @@
 #!/usr/bin/env bash
-# Bootstrap and optionally run a local testnet with N validators.
+# Compatibility entrypoint for the canonical network preparer.
 #
 # Usage:
-#   ./scripts/bootstrap-testnet.sh <NUM_VALIDATORS> <OUTPUT_DIR> [SEED_FILE]
+#   ./scripts/bootstrap-testnet.sh 4 OUTPUT_DIR [SEED_FILE]
 #
-# Example:
-#   ./scripts/bootstrap-testnet.sh 4 /tmp/outbe-testnet
-#   ./scripts/bootstrap-testnet.sh 4 /tmp/outbe-testnet scripts/seed-testnet.json
-#
-# This script:
-#   1. Runs DKG bootstrap to generate threshold keys + individual signing keys + polynomial + validators.json
-#   2. Generates a GramineDirectDev devnet genesis (chain ID 424242)
-#   2b. (Optional) Seeds genesis with precompile storage from SEED_FILE
-#   2c. Canonically binds teeAttestationV1 after every genesis mutation
-#   3. Prints startup commands for each validator
+# OCOMP V1 fixes the founding committee at four members. This wrapper retains
+# the localnet environment variables used by run-testnet.sh while delegating all
+# genesis/key/command generation to prepare_network.py. There is intentionally
+# no second genesis implementation here.
 
 set -euo pipefail
 
-NUM_VALIDATORS="${1:?Usage: $0 <num_validators> <output_dir> [seed_file]}"
-OUTPUT_DIR="${2:?Usage: $0 <num_validators> <output_dir> [seed_file]}"
-OUTBE_CONSENSUS_HOST_PATTERN="${OUTBE_CONSENSUS_HOST_PATTERN:-127.0.0.1}"
-# Uniform port shift so multiple localnets can run in parallel. It is baked into
-# the consensus p2p addresses (validators.json → genesis) and the reth bootnodes
-# below; run-testnet.sh must launch with the SAME PORT_OFFSET.
-PORT_OFFSET="${PORT_OFFSET:-0}"
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SEED_ARG="${3:-$SCRIPT_DIR/seed-testnet.json}"
-if [ "$SEED_ARG" = "none" ]; then
-    SEED_FILE=""
-else
-    SEED_FILE="$SEED_ARG"
+readonly NUM_VALIDATORS="${1:?Usage: $0 4 OUTPUT_DIR [SEED_FILE]}"
+readonly OUTPUT_DIR="${2:?Usage: $0 4 OUTPUT_DIR [SEED_FILE]}"
+readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+readonly REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+readonly SEED_FILE="${3:-$SCRIPT_DIR/seed-testnet.json}"
+
+if [[ "$NUM_VALIDATORS" != "4" ]]; then
+  echo "Error: OCOMP V1 requires exactly 4 founding validators, got $NUM_VALIDATORS" >&2
+  exit 2
+fi
+if [[ "$SEED_FILE" == "none" ]]; then
+  echo "Error: a runnable network requires a seed file; 'none' is not supported" >&2
+  exit 2
 fi
 
-# Honor env overrides (e.g. a longer epoch to keep DKG reshare rounds from
-# overlapping in tests); fall back to the localnet defaults when unset.
-: "${TESTNET_EPOCH_LENGTH_BLOCKS:=120}"
-: "${TESTNET_DKG_PREPARE_WINDOW_BLOCKS:=30}"
-: "${TESTNET_DKG_ACTIVATION_GRACE_BLOCKS:=30}"
-
-# Locate binary. OUTBE_CHAIN_BINARY is the explicit override used by CI,
-# release smoke tests, and local operators who want release binaries.
-if [ -n "${OUTBE_CHAIN_BINARY:-}" ]; then
-    if [ ! -x "$OUTBE_CHAIN_BINARY" ]; then
-        echo "Error: OUTBE_CHAIN_BINARY is set but not executable: $OUTBE_CHAIN_BINARY"
-        exit 1
+find_binary() {
+  local explicit="$1"
+  local name="$2"
+  if [[ -n "$explicit" ]]; then
+    [[ -x "$explicit" ]] || {
+      echo "Error: configured $name binary is not executable: $explicit" >&2
+      return 1
+    }
+    printf '%s\n' "$explicit"
+    return
+  fi
+  local candidate
+  for candidate in "$REPO_ROOT/target/debug/$name" "$REPO_ROOT/target/release/$name"; do
+    if [[ -x "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return
     fi
-else
-    OUTBE_CHAIN_BINARY=""
-    for candidate in ./target/debug/outbe-chain ./target/release/outbe-chain; do
-        if [ -x "$candidate" ]; then
-            OUTBE_CHAIN_BINARY="$candidate"
-            break
-        fi
-    done
-    if [ -z "$OUTBE_CHAIN_BINARY" ]; then
-        echo "Error: outbe-chain binary not found. Run 'cargo build --bin outbe-chain' or set OUTBE_CHAIN_BINARY."
-        exit 1
-    fi
-fi
-
-echo "Using outbe-chain binary: $OUTBE_CHAIN_BINARY"
-
-echo "=== Outbe Testnet Bootstrap ==="
-echo "Validators: $NUM_VALIDATORS"
-echo "Output:     $OUTPUT_DIR"
-echo "Epoch:      ${TESTNET_EPOCH_LENGTH_BLOCKS} blocks"
-echo "DKG:        every ${TESTNET_EPOCH_LENGTH_BLOCKS} blocks, prepare ${TESTNET_DKG_PREPARE_WINDOW_BLOCKS} blocks before activation"
-echo
-
-# Bootstrap must start from a clean directory. Reusing a previous datadir with a
-# new genesis/validator set leaves stale chain DB, PID files, IPC paths, and lock
-# files behind, which makes localnet smoke results meaningless.
-if [ -d "$OUTPUT_DIR" ]; then
-    PID_DIR="$OUTPUT_DIR/pids"
-    if [ -d "$PID_DIR" ]; then
-        for pid_file in "$PID_DIR"/validator-*.pid; do
-            [ -f "$pid_file" ] || continue
-            pid="$(cat "$pid_file" 2>/dev/null || true)"
-            if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-                echo "Error: validator process $pid from $pid_file is still running."
-                echo "Run './scripts/run-testnet.sh stop $OUTPUT_DIR' before bootstrapping."
-                exit 1
-            fi
-        done
-    fi
-    rm -rf "$OUTPUT_DIR"
-fi
-mkdir -p "$OUTPUT_DIR"
-python3 -c 'import secrets; print(secrets.token_hex(8))' > "$OUTPUT_DIR/projection-scope"
-
-# Step 1: DKG bootstrap
-echo "--- Step 1: DKG Bootstrap ---"
-"$OUTBE_CHAIN_BINARY" dkg bootstrap --output-dir "$OUTPUT_DIR" --validators "$NUM_VALIDATORS"
-if [ "$OUTBE_CONSENSUS_HOST_PATTERN" != "127.0.0.1" ] || [ "$PORT_OFFSET" != "0" ]; then
-    echo "  Rewriting consensus/reth p2p endpoints (host pattern: $OUTBE_CONSENSUS_HOST_PATTERN, port offset: $PORT_OFFSET)"
-    OUTBE_PORT_OFFSET="$PORT_OFFSET" python3 - \
-        "$OUTPUT_DIR/validators.json" \
-        "$OUTBE_CONSENSUS_HOST_PATTERN" \
-        "$OUTPUT_DIR/reth-bootnodes.txt" <<'PY'
-import json
-import os
-import re
-import sys
-from pathlib import Path
-
-CONSENSUS_BASE = 30400
-offset = int(os.environ.get("OUTBE_PORT_OFFSET", "0"))
-
-validators_path = Path(sys.argv[1])
-pattern = sys.argv[2]
-bootnodes_path = Path(sys.argv[3])
-
-# Consensus p2p_address: host from the pattern, port shifted by the offset. This
-# feeds seed_genesis.py -> the on-chain ValidatorSet, which every node reads to
-# resolve consensus peers; it must match run-testnet.sh's --consensus.listen-addr.
-validators = json.loads(validators_path.read_text())
-for i, entry in enumerate(validators):
-    host = pattern.replace("{i}", str(i)).replace("%d", str(i))
-    entry["p2p_address"] = f"{host}:{CONSENSUS_BASE + offset + i}"
-validators_path.write_text(json.dumps(validators, indent=2) + "\n")
-
-# Reth bootnode enode ports shift by the same offset (identity/host preserved).
-# Each line already encodes its validator's base port, so add the offset in place.
-if offset and bootnodes_path.exists():
-    lines = []
-    for line in bootnodes_path.read_text().splitlines():
-        m = re.match(r"^(enode://[^@]+@[^:]+:)(\d+)\s*$", line)
-        lines.append(f"{m.group(1)}{int(m.group(2)) + offset}" if m else line)
-    bootnodes_path.write_text("\n".join(lines) + "\n")
-PY
-fi
-echo
-
-# Step 2: Generate genesis.json
-echo "--- Step 2: Generate Genesis ---"
-GENESIS_WORK="$OUTPUT_DIR/genesis.seeded.json"
-
-# Extract validator addresses from validators.json
-ALLOC=""
-for i in $(seq 0 $((NUM_VALIDATORS - 1))); do
-    ADDR=$(python3 -c "
-import json, sys
-with open('$OUTPUT_DIR/validators.json') as f:
-    validators = json.load(f)
-print(validators[$i]['address'][2:])  # strip 0x prefix
-")
-    # 10000 COEN = 10000 * 10^18 = 0x21E19E0C9BAB2400000
-    if [ -n "$ALLOC" ]; then
-        ALLOC="$ALLOC,"
-    fi
-    ALLOC="$ALLOC
-      \"$ADDR\": { \"balance\": \"0x21E19E0C9BAB2400000\" }"
-done
-
-GENESIS_EPOCH=$(date +%s)
-GENESIS_TIMESTAMP=$(printf '0x%x' "$GENESIS_EPOCH")
-# The metadosis runtime derives the active worldwide-day each block from the block
-# timestamp: WorldwideDay::from_timestamp = date_key(ts + UTC_PLUS_14_OFFSET=50400).
-# Seed the OFFERING day on that SAME current date so it tracks the chain wall-clock.
-# A stale hardcoded day desyncs from the runtime-created "today" and wedges
-# metadosis processing (two active days). See seed_genesis.py --worldwide-day.
-WORLDWIDE_DAY=$(date -u -d "@$((GENESIS_EPOCH + 50400))" +%Y%m%d 2>/dev/null \
-    || date -u -r "$((GENESIS_EPOCH + 50400))" +%Y%m%d)
-if date -u -d '1 day ago' +"%Y-%m-%dT%H:%M:%SZ" >/dev/null 2>&1; then
-    GENESIS_TIME=$(date -u -d '1 day ago' +"%Y-%m-%dT%H:%M:%SZ")
-else
-    GENESIS_TIME=$(date -u -v-1d +"%Y-%m-%dT%H:%M:%SZ")
-fi
-
-cat > "$GENESIS_WORK" <<GENESIS
-{
-  "config": {
-    "chainId": 424242,
-    "homesteadBlock": 0,
-    "eip150Block": 0,
-    "eip155Block": 0,
-    "eip158Block": 0,
-    "byzantiumBlock": 0,
-    "constantinopleBlock": 0,
-    "petersburgBlock": 0,
-    "istanbulBlock": 0,
-    "berlinBlock": 0,
-    "londonBlock": 0,
-    "mergeNetsplitBlock": 0,
-    "terminalTotalDifficulty": 0,
-    "terminalTotalDifficultyPassed": true,
-    "shanghaiTime": 0,
-    "cancunTime": 0,
-    "pragueTime": 0,
-    "epochLengthBlocks": $TESTNET_EPOCH_LENGTH_BLOCKS,
-    "dkgPrepareWindowBlocks": $TESTNET_DKG_PREPARE_WINDOW_BLOCKS,
-    "dkgActivationGraceBlocks": $TESTNET_DKG_ACTIVATION_GRACE_BLOCKS,
-    "genesisTime": "$GENESIS_TIME"
-  },
-  "nonce": "0x0",
-  "timestamp": "$GENESIS_TIMESTAMP",
-  "extraData": "0x",
-  "gasLimit": "0x1c9c380",
-  "difficulty": "0x0",
-  "mixHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
-  "coinbase": "0x0000000000000000000000000000000000000000",
-  "alloc": {$ALLOC
-  }
+  done
+  echo "Error: $name not found; build it or set OUTBE_${name^^}_BINARY" >&2
+  return 1
 }
-GENESIS
 
-echo "  Mutable genesis work file written to $GENESIS_WORK"
-echo "  Pre-funded $NUM_VALIDATORS validators with 10000 liquid COEN each"
-echo
+CHAIN_BINARY="$(find_binary "${OUTBE_CHAIN_BINARY:-}" outbe-chain)" || exit 1
+KEYGEN_BINARY="$(find_binary "${OUTBE_KEYGEN_BINARY:-}" outbe-keygen)" || exit 1
+ENCLAVE_BINARY="$(find_binary "${OUTBE_TEE_ENCLAVE_BINARY:-}" outbe-tee-enclave-mock)" || exit 1
+readonly CHAIN_BINARY KEYGEN_BINARY ENCLAVE_BINARY
 
-# Step 2b: Seed genesis with precompile storage (optional)
-if [ -n "$SEED_FILE" ]; then
-    echo "--- Step 2b: Seed Genesis ---"
-    echo "  Seed: $SEED_FILE"
-    python3 "$SCRIPT_DIR/seed_genesis.py" \
-        --genesis "$GENESIS_WORK" \
-        --seed "$SEED_FILE" \
-        --validators "$OUTPUT_DIR/validators.json" \
-        --worldwide-day "$WORLDWIDE_DAY" \
-        --output "$GENESIS_WORK"
-    echo "  Worldwide-day retargeted to genesis date $WORLDWIDE_DAY (tracks wall-clock)"
-    echo "  Seeded genesis validator stake from $OUTPUT_DIR/validators.json"
-    echo
-else
-    echo "--- Step 2b: Seed Genesis skipped ---"
-    echo "  Warning: validator startup requires ValidatorSet/Staking state in genesis.json"
-    echo
-fi
-
-# Step 2c: Dev slashing tuning. Felony thresholds default to 150 misses per epoch
-# (testnet epoch 1200 ≈ 1h; see slashindicator runtime), which exceeds this short dev
-# epoch (TESTNET_EPOCH_LENGTH_BLOCKS) so the per-epoch reset would wipe the counter
-# before it triggers. Lower them below the dev epoch so downtime slashing is
-# observable on localnet. Invariant: felony_threshold < epoch_length.
-# SlashIndicator = 0x..EE01; config slot 1 = proposer felony, slot 13 = voter felony.
-DEV_FELONY_THRESHOLD="${DEV_FELONY_THRESHOLD:-30}"
-if [ "$DEV_FELONY_THRESHOLD" -ge "$TESTNET_EPOCH_LENGTH_BLOCKS" ]; then
-    echo "Error: DEV_FELONY_THRESHOLD ($DEV_FELONY_THRESHOLD) must be < epoch length ($TESTNET_EPOCH_LENGTH_BLOCKS)" >&2
-    exit 1
-fi
-python3 - "$GENESIS_WORK" "$DEV_FELONY_THRESHOLD" <<'PY'
-import json, sys
-path, thr = sys.argv[1], int(sys.argv[2])
-g = json.load(open(path))
-alloc = g["alloc"]
-key = next((k for k in alloc if k.lower().replace("0x", "").rjust(40, "0").endswith("ee01")), None)
-if key is None:
-    key = "0x000000000000000000000000000000000000ee01"
-    alloc[key] = {"balance": "0x0", "code": "0xef0000"}
-st = alloc[key].setdefault("storage", {})
-st["0x" + format(1, "064x")] = "0x" + format(thr, "064x")   # config_proposer_felony_threshold
-st["0x" + format(13, "064x")] = "0x" + format(thr, "064x")  # config_voter_felony_threshold
-json.dump(g, open(path, "w"), indent=2)
-PY
-echo "  Dev felony thresholds set to $DEV_FELONY_THRESHOLD blocks (< epoch $TESTNET_EPOCH_LENGTH_BLOCKS) for observable localnet slashing"
-echo
-
-# teeAttestationV1 binds the final genesis header hash, so it is added only
-# after seed/felony mutations. The command validates the complete output and
-# refuses either DCAP measurements or a testnet-mode fallback.
-echo "--- Step 2d: Bind GramineDirectDev TEE Manifest ---"
-"$OUTBE_CHAIN_BINARY" tee genesis \
-    --input "$GENESIS_WORK" \
-    --output "$OUTPUT_DIR/genesis.json" \
-    --mode gramine-direct-dev
-echo
-
-# Step 3: Print startup commands
-echo "--- Startup Commands ---"
-echo
-BASE_RETH_P2P_PORT=$((30303 + PORT_OFFSET))
-BASE_RETH_DISCV5_PORT=$((31303 + PORT_OFFSET))
-BASE_CONSENSUS_PORT=$((30400 + PORT_OFFSET))
-BASE_RPC_PORT=$((8545 + PORT_OFFSET))
-BASE_AUTH_RPC_PORT=$((8551 + PORT_OFFSET))
-BASE_METRICS_PORT=$((9101 + PORT_OFFSET))
-RETH_BOOTNODES_FILE="${RETH_BOOTNODES_FILE:-$OUTPUT_DIR/reth-bootnodes.txt}"
-
-for i in $(seq 0 $((NUM_VALIDATORS - 1))); do
-    RETH_P2P_PORT=$((BASE_RETH_P2P_PORT + i))
-    RETH_DISCV5_PORT=$((BASE_RETH_DISCV5_PORT + i))
-    CONSENSUS_PORT=$((BASE_CONSENSUS_PORT + i))
-    RPC_PORT=$((BASE_RPC_PORT + i))
-    AUTH_RPC_PORT=$((BASE_AUTH_RPC_PORT + i))
-    METRICS_PORT=$((BASE_METRICS_PORT + i))
-    VALIDATOR_DIR="$OUTPUT_DIR/validator-$i"
-
-    echo "# Validator $i (RPC=$RPC_PORT, P2P=$RETH_P2P_PORT, Consensus=$CONSENSUS_PORT)"
-    echo "OUTBE_PROJECTION_MONGODB_URI=\"\$OUTBE_PROJECTION_MONGODB_URI\" \\"
-    echo "OUTBE_PROJECTION_MONGODB_DATABASE=outbe_validator_$i \\"
-    echo "$OUTBE_CHAIN_BINARY node \\"
-    echo "  --validator \\"
-    echo "  --chain $OUTPUT_DIR/genesis.json \\"
-    echo "  --datadir $VALIDATOR_DIR/data \\"
-    echo "  --engine.persistence-threshold 0 \\"
-    echo "  --engine.memory-block-buffer-target 0 \\"
-    echo "  --http --http.addr 0.0.0.0 --http.port $RPC_PORT \\"
-    echo "  --http.api eth,net,web3,outbe \\"
-    echo "  --port $RETH_P2P_PORT \\"
-    echo "  --discovery.port $RETH_P2P_PORT \\"
-    echo "  --discovery.v5.addr 127.0.0.1 \\"
-    echo "  --discovery.v5.port $RETH_DISCV5_PORT \\"
-    if [ -f "$RETH_BOOTNODES_FILE" ]; then
-        echo "  --bootnodes \"\$(grep -v '^[[:space:]]*#' $RETH_BOOTNODES_FILE | paste -sd, -)\" \\"
+# Preserve the old safe re-bootstrap behavior: refuse to erase a live network,
+# then recreate the exact requested output directory from scratch.
+if [[ -d "$OUTPUT_DIR/pids" ]]; then
+  for pid_file in "$OUTPUT_DIR"/pids/validator-*.pid; do
+    [[ -f "$pid_file" ]] || continue
+    pid="$(tr -cd '0-9' < "$pid_file")"
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+      echo "Error: validator process $pid from $pid_file is still running." >&2
+      echo "Run './scripts/run-testnet.sh stop $OUTPUT_DIR' first." >&2
+      exit 1
     fi
-    if [ -f "$VALIDATOR_DIR/reth-p2p-secret.hex" ]; then
-        echo "  --p2p-secret-key-hex \"\$(tr -d '[:space:]' < $VALIDATOR_DIR/reth-p2p-secret.hex)\" \\"
-    fi
-    echo "  --authrpc.port $AUTH_RPC_PORT \\"
-    echo "  --ipcpath $VALIDATOR_DIR/data/reth.ipc \\"
-    echo "  --metrics 0.0.0.0:$METRICS_PORT \\"
-    echo "  --log.file.directory $VALIDATOR_DIR/logs \\"
-    echo "  --consensus.signing-key $VALIDATOR_DIR/signing-key.hex \\"
-    echo "  --validator.evm-key $VALIDATOR_DIR/evm-key.hex \\"
-    echo "  --tee-enclave-socket 127.0.0.1:$((7000 + PORT_OFFSET + i)) \\"
-    echo "  --consensus.signing-share $VALIDATOR_DIR/signing-share.hex \\"
-    echo "  --consensus.public-polynomial $OUTPUT_DIR/polynomial.hex \\"
-    echo "  --consensus.dkg-output $OUTPUT_DIR/dkg-output.hex \\"
-    echo "  --consensus.listen-addr 127.0.0.1:$CONSENSUS_PORT \\"
-    echo "  --consensus.use-local-defaults"
-    echo
-done
+  done
+fi
+rm -rf -- "$OUTPUT_DIR"
 
-echo "=== Bootstrap Complete ==="
-echo "Genesis:            $OUTPUT_DIR/genesis.json"
-echo "Validator tooling:  $OUTPUT_DIR/validators.json"
-echo "DKG polynomial:     $OUTPUT_DIR/polynomial.hex"
-echo "DKG output:         $OUTPUT_DIR/dkg-output.hex"
-echo "Reth bootnodes:     $RETH_BOOTNODES_FILE"
-echo "Reth p2p secrets:   per-validator files at validator-N/reth-p2p-secret.hex"
-echo
-echo "--- Validator EVM Keys ---"
-echo "Local dev only: keys printed for convenience; never use outside localnet."
-for i in $(seq 0 $((NUM_VALIDATORS - 1))); do
-    VALIDATOR_DIR="$OUTPUT_DIR/validator-$i"
-    ADDR=$(python3 -c "
-import json
-with open('$OUTPUT_DIR/validators.json') as f:
-    print(json.load(f)[$i]['address'])
-")
-    PRIV=$(tr -d '[:space:]' < "$VALIDATOR_DIR/evm-key.hex")
-    echo "  validator-$i: address=$ADDR  key_file=$VALIDATOR_DIR/evm-key.hex  private_key=0x$PRIV"
-done
-echo
-echo "Example (local dev only; avoid pasting keys into shared logs):"
-echo "  EVM_KEY=\$(tr -d '[:space:]' < $OUTPUT_DIR/validator-0/evm-key.hex) cast send <TO> --value 1ether --private-key \"\$EVM_KEY\" --rpc-url http://localhost:8545"
+readonly PORT_OFFSET="${PORT_OFFSET:-0}"
+readonly HOST_PATTERN="${OUTBE_CONSENSUS_HOST_PATTERN:-127.0.0.1}"
+readonly EPOCH_LENGTH="${TESTNET_EPOCH_LENGTH_BLOCKS:-120}"
+readonly DKG_PREPARE_WINDOW="${TESTNET_DKG_PREPARE_WINDOW_BLOCKS:-30}"
+readonly DKG_ACTIVATION_GRACE="${TESTNET_DKG_ACTIVATION_GRACE_BLOCKS:-30}"
+
+python3 "$SCRIPT_DIR/prepare_network.py" \
+  --seed "$SEED_FILE" \
+  --generate-validators 4 \
+  --validator-hosts "$HOST_PATTERN" \
+  --output-dir "$OUTPUT_DIR" \
+  --runtime-base-dir "$OUTPUT_DIR" \
+  --chain-binary "$CHAIN_BINARY" \
+  --keygen-binary "$KEYGEN_BINARY" \
+  --runtime-chain-binary "$CHAIN_BINARY" \
+  --tee-mode gramine-direct-dev \
+  --chain-id 424242 \
+  --enclave-image "${OUTBE_TEE_GRAMINE_IMAGE:-outbe-tee-enclave-gramine-test}" \
+  --runtime-enclave-binary "$ENCLAVE_BINARY" \
+  --epoch-length-blocks "$EPOCH_LENGTH" \
+  --dkg-prepare-window-blocks "$DKG_PREPARE_WINDOW" \
+  --dkg-activation-grace-blocks "$DKG_ACTIVATION_GRACE" \
+  --consensus-p2p-base-port "$((30400 + PORT_OFFSET))" \
+  --reth-p2p-base-port "$((30303 + PORT_OFFSET))" \
+  --reth-discv5-base-port "$((31303 + PORT_OFFSET))" \
+  --rpc-base-port "$((8545 + PORT_OFFSET))" \
+  --authrpc-base-port "$((8551 + PORT_OFFSET))" \
+  --metrics-base-port "$((9101 + PORT_OFFSET))" \
+  --tee-enclave-base-port "$((17000 + PORT_OFFSET))" \
+  --use-local-defaults
