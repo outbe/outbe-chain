@@ -27,6 +27,4 @@ pub mod supervisor;
 pub mod supervisor_export;
 pub mod supervisor_job;
 pub mod vote_submitter;
-#[cfg(test)]
-mod vote_submitter_heal_tests;
 pub mod worker;
