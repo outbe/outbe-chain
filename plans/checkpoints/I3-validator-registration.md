@@ -4,8 +4,9 @@ Date: 2026-07-31
 
 Status: `PASS` for I3. The validator path is implemented and verified, but the
 V1 public route remains inactive until I9. This checkpoint does not claim an
-accepted hardware registration: fresh accepted Processor/Platform evidence in
-the exact release `gramine-sgx` artifact remains a fail-not-skip I9 gate.
+accepted hardware registration: fresh accepted Processor evidence in the exact
+release `gramine-sgx` artifact remains a fail-not-skip I9 gate. Platform
+evidence is verified when a real Platform node joins.
 
 ## Outcome
 
@@ -137,7 +138,7 @@ I4 completion.
 I5-I8 retain their plan-owned renewal, rolling overlap, governance policy,
 handoff and bootstrap transitions. I9 must build and run the exact pinned
 release artifact on supported Intel SGX hardware, obtain a fresh accepted
-Processor flow and registered multi-package Platform evidence, measure the
-full-block budget with current Processor/Platform CRLs, repeat the ELF/feature
+Processor flow, measure the full-block budget with current Processor CRLs,
+repeat the ELF/feature
 audit on the release binaries and only then activate the V1 route. Until that
 checkpoint, `ACTIVE_TEE_ATTESTATION_V1_MANIFEST` remains `None`.

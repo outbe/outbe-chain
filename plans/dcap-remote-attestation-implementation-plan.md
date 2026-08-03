@@ -98,7 +98,8 @@ parser vector. Private pure Platform/QE policy tests start from the exact Intel
 QVL 1.26 raw SGX result ABI; Intel's dynamically generated, self-signed
 Platform-CA verification tests are topology provenance only, never public
 Outbe evidence. A real Intel-rooted Platform-CA quote requires registered
-multi-package SGX hardware and is a fail-not-skip I9 release gate.
+multi-package SGX hardware. It is therefore required from the real Platform
+node at admission, not fabricated or required from every release runner.
 
 **I1 checkpoint (2026-07-31):** a real Processor-CA negative corpus is now
 bound to canonical `RegistrationIntentV1::report_data()`. It exercises the
@@ -463,8 +464,9 @@ determinism, capacity and x86_64 SGX real-hardware evidence passes.
   renewal, candidate replacement, finalized lookup and Noise handshake in the
   release hardware job;
 - a fresh accepted Processor-CA capture for the exact release enclave and
-  policy, plus accepted registered multi-package Platform-CA evidence;
-- fresh actual Processor, Platform and root CRL provenance and cap checks;
+  policy;
+- fresh actual Processor and root CRL provenance and cap checks; a real
+  Platform node supplies and retains its own Platform collateral when it joins;
 - a published minimum supported x86_64 validator CPU/core/memory/EPC profile
   and exact-release `gramine-sgx` QVL/full-block benchmark matrix on that
   profile;
@@ -482,12 +484,14 @@ historical replay cannot satisfy this definition.
 **Acceptance:**
 
 - real SGX/DCAP job is fail-not-skip;
-- real Processor and real registered multi-package Platform x86_64
-  verdict/benchmark matrix passes for the exact release artifacts and active
-  policy; absence of either accepted result blocks production activation;
-- fresh actual Processor, Platform and root CRLs record issuer/type, validity
-  dates, byte size and SHA-256 and fit the protocol caps; the release benchmark
-  uses the largest actual matching collateral bundle available from PCS;
+- a real Processor x86_64 verdict/benchmark passes for the exact release
+  artifacts and active policy; absence of that accepted result blocks
+  production activation;
+- every real Platform node remains keyless and outside consensus until its own
+  fresh Platform-CA evidence passes the same production public verifier;
+- fresh actual Processor and root CRLs record issuer/type, validity dates, byte
+  size and SHA-256 and fit the protocol caps; the release benchmark uses the
+  largest actual matching Processor collateral bundle available from PCS;
 - no undefined "large real CRL" is fabricated or required: synthetic
   cap-minus-one/cap/cap-plus-one vectors remain deterministic DoS/capacity
   evidence only and never count as Intel hardware evidence;

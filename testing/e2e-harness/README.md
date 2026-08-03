@@ -253,13 +253,15 @@ cargo run --locked -p outbe-e2e-harness --bin outbe-release-dcap-evidence -- \
 
 The command requires the project-pinned host-only QPL, working PCS/QCNL
 configuration, real SGX devices and an image that was already Cosign-verified and
-pulled by digest. It performs topology preflight before creating a binding or
-contacting PCS, generates a fresh intent-bound quote inside the production
-Gramine enclave, acquires all eight collateral components, and requires an
-`Accepted` result from the public enclave-resident Begin/Chunk/Finish verifier.
-It retains canonical evidence, verifier bytes, actual CRLs and non-secret
-provenance only. Use `--expected-pck-ca platform` only on a registered
-multi-package Platform-CA host; a single host/CA result cannot satisfy both rows.
+pulled by digest. It records host topology as untrusted provenance before
+creating a binding or contacting PCS, generates a fresh intent-bound quote
+inside the production Gramine enclave, acquires all eight collateral components,
+and requires an `Accepted` result from the public enclave-resident
+Begin/Chunk/Finish verifier. It retains canonical evidence, verifier bytes,
+actual CRLs and non-secret provenance only. `--expected-pck-ca platform` is an
+on-demand compatibility and node-admission diagnostic, not a release row: the
+Intel-signed PCK issuer is the authority, while guest-visible socket count is
+never used as a CA verdict.
 
 ## Focused Tribute compressed-entity checks
 

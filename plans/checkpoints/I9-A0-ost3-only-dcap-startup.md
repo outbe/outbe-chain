@@ -20,7 +20,7 @@ A runnable Outbe ChainSpec has exactly one genesis-fixed V1 mode from block 1:
   post-genesis key handoff or lost-key recovery.
 
 A0 activates the protocol surface. It does not close the I9 release gates for
-the exact `native-dcap` bundle, accepted Processor/Platform evidence, hardware
+the exact `native-dcap` bundle, accepted Processor evidence, hardware
 timing or production E2E.
 
 ## C1 independent review and disposition
@@ -202,8 +202,8 @@ with exactly the `native-dcap` application feature, Intel QVL
 `1.26.100.1-noble1`, Gramine `1.9`, trusted native-artifact digests and no
 capture/mock/trace/fake-verifier surface.
 
-Then H1 must retain fresh accepted Processor and registered multi-package
-Platform evidence; P1 must prove exact-release QVL and dense full-block timing;
+Then H1 must retain fresh accepted Processor evidence; a real Platform node is
+checked fail-closed when it joins. P1 must prove exact-release QVL and dense full-block timing;
 E1 must pass real Validator, FullNode and 32-validator lifecycle E2E. Runner or
 evidence absence is a release failure, not a skip.
 

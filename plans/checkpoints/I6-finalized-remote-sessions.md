@@ -5,8 +5,8 @@ Date: 2026-08-01
 Status: `PASS` for I6. Validator and FullNode remote admission and finalized
 replacement authorization are implemented and verified. The V1 public route
 remains inactive until I9. This checkpoint does not claim accepted SGX hardware
-evidence; I9 still owns the fail-not-skip exact-release Processor/Platform and
-real `gramine-sgx` gates.
+evidence; I9 still owns the fail-not-skip exact-release Processor and real
+`gramine-sgx` gates. Platform evidence is node-specific at admission.
 
 ## Outcome
 
@@ -148,7 +148,7 @@ Results:
 
 I7 owns governance activation and rolling measurement overlap. I8 integrates
 the existing bootstrap/DKG result and keyless-before-readiness rule. I9 must
-prove real accepted Processor and multi-package Platform evidence, exact-release
+prove real accepted Processor evidence and exact-release
 `gramine-sgx`, fresh one-use bindings, validator/full-node lifecycle, full
 block budget and 32-validator block-1 activation.
 

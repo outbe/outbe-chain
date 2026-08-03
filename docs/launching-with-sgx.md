@@ -26,8 +26,9 @@ artifact set:
 
 - Intel QVL `1.26.100.1-noble1`, Gramine `1.9`, the `native-dcap` feature and
   every trusted native artifact are frozen and digest-verified;
-- fresh accepted Processor-CA and registered multi-package Platform-CA evidence
-  passes the enclave-resident public verifier;
+- fresh accepted Processor-CA release evidence passes the enclave-resident
+  public verifier; any real Platform-CA node must independently pass that same
+  verifier when it joins;
 - exact-release `gramine-sgx` and dense block-1 timing fit the published
   minimum validator profile;
 - real Validator, FullNode and 32-validator `DcapRequired` E2E is green.
@@ -170,7 +171,7 @@ governance replacement, forced DKG or production-to-development fallback.
 | `GramineDirectDev` | deterministic development behavior and reachable operator flow | SGX, DCAP, Intel collateral or production readiness |
 | private `#[cfg(test)]` verdict capability | I3-I8 state-machine behavior after the verifier boundary | quote parsing, QVL execution or hardware acceptance |
 | synthetic cap vectors | deterministic bounds, allocation order and gas arithmetic | Intel-signed hardware evidence |
-| fresh I9 `gramine-sgx` runs | exact-release Processor/Platform acceptance and timing | nothing beyond the recorded artifact and host identity |
+| fresh I9 `gramine-sgx` runs | exact-release Processor acceptance and timing | a future Platform node's own admission evidence |
 
 See [Testnet SGX release and rollout](testnet-sgx-release.md) for the release
 boundary and [Running a full node and a validator](becoming-a-validator.md) for

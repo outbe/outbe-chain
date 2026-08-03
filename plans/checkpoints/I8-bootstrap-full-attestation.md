@@ -198,8 +198,8 @@ the resulting temporary-to-canonical index remap and early cap ordering was
 
 ## Deferred, not waived
 
-I9 owns real `gramine-sgx` execution, fresh accepted Processor and registered
-multi-package Platform evidence, empirical exact-release full-block timing,
+I9 owns real `gramine-sgx` execution, fresh accepted Processor evidence,
+empirical exact-release full-block timing,
 real quote/collateral producer wiring, fail-not-skip release CI, production
 feature allowlisting and the atomic OST2-to-OST3 activation cutoff.
 

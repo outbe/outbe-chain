@@ -237,8 +237,10 @@ hardware evidence:
   verifier capability, so these are reachable lifecycle tests rather than
   Intel-hardware acceptance evidence;
 - I9 alone requires fresh accepted Processor-CA evidence for the exact release
-  enclave/policy, including the A-to-B replacement path, and accepted registered
-  multi-package Platform-CA evidence.
+  enclave/policy, including the A-to-B replacement path. A registered
+  multi-package Platform node must produce fresh accepted Platform-CA evidence
+  through the same production admission path when it actually joins; that
+  node-specific proof is not a prerequisite for every release.
 
 For I9, `fresh` means the release job freezes the candidate enclave ELF/SGX
 manifest and measurement, chain/genesis and exact active policy bytes before
@@ -270,7 +272,9 @@ positive native-QVL test. Outbe therefore uses the parser vector for CA
 classification and exact raw SGX values from the pinned Intel 1.26 QVL ABI for
 private status-policy tests. Because Platform CA applies to registered
 multi-package SGX platforms, the current single-package capture host cannot
-produce real Platform-CA evidence.
+produce real Platform-CA evidence. This prevents a fabricated release fixture,
+but does not block a release: the first real Platform node remains fail-closed
+at admission until its own Intel-rooted evidence passes.
 
 The earlier pure-Rust prototype treated both endpoints as inclusive. The
 selected native QVL 1.26 behavior is different: it returned
@@ -440,11 +444,13 @@ I1 deterministic correctness evidence:
 I9 empirical production-release evidence:
 
 - a fresh real accepted Processor-CA fixture for the exact release
-  enclave/policy and a real accepted Platform-CA SGX fixture captured on a
-  registered multi-package platform; either absence is a release failure;
-- fresh actual Processor, Platform and root CRLs are recorded with issuer/type,
-  validity dates, byte size and SHA-256 and checked against the protocol caps;
-  the release benchmark uses the largest actual matching collateral bundle;
+  enclave/policy; its absence is a release failure;
+- fresh actual Processor and root CRLs are recorded with issuer/type, validity
+  dates, byte size and SHA-256 and checked against the protocol caps; the
+  release benchmark uses the largest actual matching Processor bundle;
+- a real Platform node is admitted only after its own fresh Platform-CA quote
+  and collateral pass the same public verifier; that evidence is retained when
+  available but is neither synthetic nor a per-release gate;
 - exact-release `gramine-sgx` valid, invalid-early, invalid-late and dense
   32-validator benchmarks run on the published minimum supported x86_64
   validator profile and keep full-block execution inside its timing budget;

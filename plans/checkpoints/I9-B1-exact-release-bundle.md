@@ -23,7 +23,7 @@ The prerequisite and corrective commits are:
 | `62737f31e5106bcd59dd02937a0678b943b45df7` | use the unified pinned project-toolchain image for prepare/sign/view | Good SSH/ED25519 signature, same key |
 | `71d6c6832e5784d4b95ee99aaa26105611ba7615` | place the Docker image after all runtime options | Good SSH/ED25519 signature, same key |
 | `72496f158041512ae3b9138b9b7350ebca17dc21` | record the superseded pre-H1 B1 freeze | Good SSH/ED25519 signature, same key |
-| `4e4fc7fd129fdc53e67318efe5b70dc0fcf759a6` | require fresh Processor and Platform DCAP evidence in the release gate | Good SSH/ED25519 signature, same key |
+| `4e4fc7fd129fdc53e67318efe5b70dc0fcf759a6` | introduced the superseded two-row Processor/Platform release gate | Good SSH/ED25519 signature, same key |
 
 The final checkpoint document is committed separately so its signature and hash
 are not self-referential.
@@ -181,12 +181,14 @@ clippy additionally reports two pre-existing type-complexity findings in
 B1 freezes a locally reproducible candidate; it does not activate production
 rollout by itself.
 
-H1 must retain fresh accepted Processor-CA evidence for this exact candidate and
-accepted registered multi-package Platform-CA evidence, with actual Processor,
-Platform and root CRLs. P1 must benchmark the exact signed `gramine-sgx` bundle,
-including valid, invalid-early, invalid-late and dense full-block cases on the
-minimum supported profile. E1 must pass real Validator, FullNode and
-32-validator lifecycle E2E. Missing runner/evidence is failure, never a skip.
+H1 must retain fresh accepted Processor-CA evidence for this exact candidate,
+with actual Processor and root CRLs. A real Platform node must pass its own
+fresh Platform-CA admission through the same public verifier, but no dedicated
+Platform row gates every release. P1 must benchmark the exact signed
+`gramine-sgx` bundle, including valid, invalid-early, invalid-late and dense
+full-block cases on the minimum supported profile. E1 must pass real Validator,
+FullNode and 32-validator lifecycle E2E. Missing runner/evidence is failure,
+never a skip.
 
 Git push: `false`. PR mutation: `false`. Governance action: `false`.
 `bd dolt push`: `false`.

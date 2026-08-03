@@ -4,8 +4,9 @@ Date: 2026-07-31
 
 Status: `PASS` for I2. This checkpoint proves the deterministic initialization,
 authorization and quote-binding state machines. It does not claim an accepted
-hardware quote: fresh accepted Processor/Platform evidence and the empirical
-exact-release `gramine-sgx` run remain fail-not-skip I9 gates.
+hardware quote: fresh accepted Processor evidence and the empirical
+exact-release `gramine-sgx` run remain fail-not-skip I9 gates. A real Platform
+node is checked by the same path when it joins.
 
 ## Outcome
 
@@ -106,8 +107,8 @@ production command matrix; `NodeHost` assertions alone cannot authorize key
 material movement.
 
 I9 must execute the same authorized initial and renewal path with fresh accepted
-evidence on the exact release enclave, then close the Processor, registered
-multi-package Platform, full-block budget and Docker/activation gates described
+evidence on the exact release enclave, then close the Processor, full-block
+budget and Docker/activation gates described
 in the implementation plan. Synthetic cap-boundary vectors remain parser and
 resource-limit tests and are never described as hardware evidence. I9 also
 checks the exact production target/features/ELF so a crate-wide mock feature

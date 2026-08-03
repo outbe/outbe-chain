@@ -212,7 +212,6 @@ pub struct VerifiedReleaseInputs {
     pub elf_evidence: PathBuf,
     pub elf_manifest: PathBuf,
     pub hardware_evidence: PathBuf,
-    pub platform_dcap_evidence: PathBuf,
     pub processor_dcap_evidence: PathBuf,
     pub oci_evidence: PathBuf,
     pub sbom: PathBuf,
@@ -285,12 +284,6 @@ fn build_release_manifest_from_evidence(
     require_fresh_dcap_hardware_evidence(
         &inputs.processor_dcap_evidence,
         "processor",
-        &bundle,
-        &oci,
-    )?;
-    require_fresh_dcap_hardware_evidence(
-        &inputs.platform_dcap_evidence,
-        "platform",
         &bundle,
         &oci,
     )?;
@@ -428,10 +421,6 @@ fn build_release_manifest_from_evidence(
             "fresh-accepted-processor-dcap",
             &inputs.processor_dcap_evidence,
         )?,
-        passed_gate(
-            "fresh-accepted-platform-dcap",
-            &inputs.platform_dcap_evidence,
-        )?,
     ];
     release_object.insert("verification_gates".to_owned(), Value::Array(gates));
     Ok(release)
@@ -477,10 +466,9 @@ fn require_fresh_dcap_hardware_evidence(
             "{expected_pck_ca} DCAP evidence does not bind the exact release and public verifier"
         );
     }
-    let packages = u64_at("/environment/physical_package_count")?;
-    if packages == 0 || (expected_pck_ca == "platform" && packages < 2) {
-        bail!("{expected_pck_ca} DCAP evidence has incompatible package topology");
-    }
+    // Guest-visible socket topology is retained as provenance only. The
+    // enclave-verified Intel PCK issuer above is the PCK CA authority.
+    let _ = u64_at("/environment/physical_package_count")?;
     if evidence
         .pointer("/freshness/binding_id_nonzero")
         .and_then(Value::as_bool)

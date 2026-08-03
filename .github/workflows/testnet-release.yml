@@ -445,86 +445,9 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  hardware-dcap-platform:
-    name: fresh accepted registered multi-package Platform-CA evidence
-    needs: [build-and-compare, package-and-sign-image]
-    runs-on: testnet-release-sgx-platform
-    timeout-minutes: 45
-    permissions:
-      contents: read
-      packages: read
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          fetch-depth: 0
-          ref: ${{ needs.build-and-compare.outputs.verified_commit }}
-
-      - name: Recheck immutable tag binding before DCAP acceptance
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          remote_tag_object="$(gh api \
-            -H 'X-GitHub-Api-Version: 2026-03-10' \
-            "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" \
-            --jq 'select(.object.type == "tag") | .object.sha')"
-          test "${remote_tag_object}" = \
-            "${{ needs.build-and-compare.outputs.verified_tag_object }}"
-
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: published-sgx-image
-          path: ${{ runner.temp }}/published
-
-      - uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
-
-      - name: Verify the host-only QPL pin and exact image
-        env:
-          EXACT_IMAGE: ${{ needs.package-and-sign-image.outputs.exact_image }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          qpl_package='libsgx-dcap-default-qpl'
-          qpl_version="$(jq -er ".host_only_packages[\"${qpl_package}\"]" \
-            release/project-toolchain-v1.json)"
-          test "$(dpkg-query -W -f='${Version}' "${qpl_package}")" = "${qpl_version}"
-          printf '%s' "${GHCR_TOKEN}" \
-            | docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
-          cosign verify \
-            --certificate-identity-regexp \
-              '^https://github.com/outbe/outbe-chain/.github/workflows/testnet-release.yml@refs/heads/main$' \
-            --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
-            --certificate-github-workflow-sha \
-              '${{ needs.build-and-compare.outputs.verified_commit }}' \
-            "${EXACT_IMAGE}"
-          docker pull "${EXACT_IMAGE}"
-
-      - name: Capture fresh intent-bound Platform-CA evidence
-        env:
-          EXACT_IMAGE: ${{ needs.package-and-sign-image.outputs.exact_image }}
-        run: |
-          set -euo pipefail
-          mkdir "${RUNNER_TEMP}/signed"
-          tar -xf "${RUNNER_TEMP}/published/outbe-tee-enclave-sgx.tar" \
-            -C "${RUNNER_TEMP}/signed"
-          cargo run --locked -p outbe-e2e-harness --bin outbe-release-dcap-evidence -- \
-            --image "${EXACT_IMAGE}" \
-            --bundle "${RUNNER_TEMP}/signed" \
-            --expected-pck-ca platform \
-            --output-dir "${RUNNER_TEMP}/hardware-dcap-platform"
-
-      - name: Upload fresh DCAP evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: hardware-dcap-platform-evidence
-          path: ${{ runner.temp }}/hardware-dcap-platform
-          if-no-files-found: error
-          retention-days: 30
-
   finalize:
     name: publish verified ReleaseManifest and evidence
-    needs: [build-and-compare, package-and-sign-image, hardware-smoke, hardware-dcap-platform]
+    needs: [build-and-compare, package-and-sign-image, hardware-smoke]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -569,11 +492,6 @@ jobs:
           name: hardware-dcap-processor-evidence
           path: ${{ runner.temp }}/hardware-dcap-processor
 
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: hardware-dcap-platform-evidence
-          path: ${{ runner.temp }}/hardware-dcap-platform
-
       - uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
 
       - name: Authenticate final verifier to GHCR
@@ -592,16 +510,11 @@ jobs:
             -C "${RUNNER_TEMP}/signed"
           cp -f "${RUNNER_TEMP}/hardware-dcap-processor/hardware-dcap-evidence.json" \
             "${RUNNER_TEMP}/final/hardware-dcap-processor.json"
-          cp -f "${RUNNER_TEMP}/hardware-dcap-platform/hardware-dcap-evidence.json" \
-            "${RUNNER_TEMP}/final/hardware-dcap-platform.json"
           source_date_epoch="$(jq -er '.build.source_date_epoch' \
             "${RUNNER_TEMP}/release-inputs/elf-release-manifest.json")"
           tar --sort=name --mtime="@${source_date_epoch}" --owner=0 --group=0 \
             --numeric-owner -cf "${RUNNER_TEMP}/final/hardware-dcap-processor.tar" \
             -C "${RUNNER_TEMP}/hardware-dcap-processor" .
-          tar --sort=name --mtime="@${source_date_epoch}" --owner=0 --group=0 \
-            --numeric-owner -cf "${RUNNER_TEMP}/final/hardware-dcap-platform.tar" \
-            -C "${RUNNER_TEMP}/hardware-dcap-platform" .
           cargo xtask release sgx manifest \
             --elf-manifest "${RUNNER_TEMP}/release-inputs/elf-release-manifest.json" \
             --bundle "${RUNNER_TEMP}/signed" \
@@ -615,7 +528,6 @@ jobs:
             --sgx-evidence "${RUNNER_TEMP}/release-inputs/sgx-reproducibility.json" \
             --hardware-evidence "${RUNNER_TEMP}/hardware/hardware-sgx.json" \
             --processor-dcap-evidence "${RUNNER_TEMP}/final/hardware-dcap-processor.json" \
-            --platform-dcap-evidence "${RUNNER_TEMP}/final/hardware-dcap-platform.json" \
             --output "${RUNNER_TEMP}/final/ReleaseManifest.json"
           python3 -m venv "${RUNNER_TEMP}/release-verifier"
           "${RUNNER_TEMP}/release-verifier/bin/pip" install \
@@ -670,9 +582,7 @@ jobs:
             "${RUNNER_TEMP}/release-inputs/sgx-reproducibility.json"
             "${RUNNER_TEMP}/hardware/hardware-sgx.json"
             "${RUNNER_TEMP}/final/hardware-dcap-processor.json"
-            "${RUNNER_TEMP}/final/hardware-dcap-platform.json"
             "${RUNNER_TEMP}/final/hardware-dcap-processor.tar"
-            "${RUNNER_TEMP}/final/hardware-dcap-platform.tar"
           )
           test "$(remote_tag_object)" = "${verified_tag_object}"
           gh release create "${RELEASE_TAG}" "${assets[@]}" \

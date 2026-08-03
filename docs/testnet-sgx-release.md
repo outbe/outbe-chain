@@ -9,9 +9,11 @@ immutable OCI image and executed on Intel SGX x86_64.
 > `1.26.100.1-noble1` and Gramine `1.9`. This source-level activation is not by
 > itself authorization to roll out a production-mode genesis: the B1 checkpoint
 > must bind the reproducible artifact set, and H1, P1 and E1 must prove fresh
-> accepted Processor and registered multi-package Platform evidence, exact-release
-> timing, and real Validator/FullNode/32-validator E2E. Missing hardware or either
-> accepted CA result blocks release rather than skipping it.
+> accepted Processor evidence, exact-release timing, and real
+> Validator/FullNode/32-validator E2E. Missing Processor hardware or an accepted
+> Processor result blocks release rather than skipping it. A real Platform node
+> is verified fail-closed by the same production verifier when it joins; it is
+> not a dedicated row in every release.
 
 The commands below remain the intended protected publication workflow. Until the
 I9 closure checkpoint names the exact signed commit and artifact digests, they are
@@ -60,14 +62,12 @@ Release immutability protects the tag and assets after publication. The tag rule
 still required before publication because draft releases are intentionally mutable while
 the workflow uploads and verifies their complete asset matrix.
 
-Register two dedicated ephemeral x86_64 GitHub runner classes. The single-package
-Processor-CA host uses only `testnet-release-sgx`; its one job performs both the
-existing immutable SGX/sealing acceptance and the fresh Processor-CA DCAP run.
-The registered multi-package Platform-CA host uses only
-`testnet-release-sgx-platform`. Do not give either runner the default
-`self-hosted`, `Linux`, `X64` or generic `sgx` labels: those labels are shared by
-CI/nightly jobs and do not isolate the protected release workload. One machine or
-one CA result cannot satisfy both hardware rows.
+Register one dedicated ephemeral x86_64 GitHub runner class. The Processor-CA
+host uses only `testnet-release-sgx`; its one job performs both the existing
+immutable SGX/sealing acceptance and the fresh Processor-CA DCAP run. Do not
+give it the default `self-hosted`, `Linux`, `X64` or generic `sgx` labels: those
+labels are shared by CI/nightly jobs and do not isolate the protected release
+workload.
 
 The runner needs Docker access and these device nodes (legacy `/dev/sgx/...` aliases are
 also accepted):
@@ -90,9 +90,7 @@ from consuming unrelated queued work:
   --work _work
 ```
 
-Use the same command with a distinct runner name and
-`--labels testnet-release-sgx-platform` on the registered multi-package host.
-Both hosts must install `libsgx-dcap-default-qpl` at the exact version in
+The host must install `libsgx-dcap-default-qpl` at the exact version in
 `release/project-toolchain-v1.json` and provide working QCNL/PCS configuration.
 The PCS subscription key remains a host-only acquisition secret: never put it in
 workflow arguments, repository files, artifacts or logs. QPL/QCNL is not installed
@@ -152,10 +150,11 @@ matrix, downloads every draft asset and compares it byte-for-byte, then publishe
 only after another tag-object check. Publication fails if a GitHub
 Release or failed draft already exists for the tag: reruns cannot replace assets, and
 changed output requires a new tag.
-There is no successful release asset if the Processor/SGX job or the registered
-multi-package Platform job does not pass. The final manifest requires both
-canonical `hardware-dcap-processor.json` and `hardware-dcap-platform.json`; the
-complete public evidence directories are published as deterministic tar assets.
+There is no successful release asset if the Processor/SGX job does not pass.
+The final manifest requires canonical `hardware-dcap-processor.json`; its
+complete public evidence directory is published as a deterministic tar asset.
+Platform admission evidence, when a real Platform node joins, belongs to that
+node's admission record and is not substituted into the release manifest.
 
 Besides the SGX evidence, the asset matrix carries the deployable payload:
 `outbe-linux-x86_64.tar` (every artifact of `release/reproducible-elf-build-v1.json` —
@@ -289,6 +288,10 @@ cargo run --locked -p outbe-e2e-harness --bin outbe-release-dcap-evidence -- \
   --output-dir /tmp/hardware-dcap-processor
 ```
 
-Repeat with `platform` only on the registered multi-package host. A missing
-runner, wrong topology, stale collateral, rejected verdict or missing artifact is
-a release failure, never a skip.
+For an on-demand Platform compatibility check, the same command may use
+`--expected-pck-ca platform`. Guest-visible topology is recorded only as
+provenance; the enclave-verified Intel PCK issuer determines the CA. This
+optional diagnostic never substitutes for the real Platform node's admission
+and does not gate releases. For the mandatory Processor run, a missing runner,
+stale collateral, rejected verdict or missing artifact is a release failure,
+never a skip.

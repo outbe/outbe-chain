@@ -3,8 +3,8 @@
 Date: 2026-07-31
 
 Status: `PASS` for I1. This checkpoint does not claim an accepted hardware
-verdict, production activation, Docker delivery or real registered
-multi-package Platform-CA coverage; those remain fail-not-skip I9 gates.
+verdict, production activation or Docker delivery; those remain fail-not-skip
+I9 gates. Real Platform-CA coverage is obtained when such a node joins.
 
 ## Outcome
 
@@ -92,17 +92,18 @@ inside the verifier boundary.
 
 ## Deferred, not waived
 
-I9 still requires all of the following to fail rather than skip:
+The remaining I9 release and production-admission boundaries fail rather than
+skip:
 
 - a fresh accepted Processor-CA capture bound to the exact release
   enclave/policy and a one-use nonzero `binding_id`;
-- a real accepted Intel-rooted Platform-CA capture from registered
-  multi-package SGX hardware;
 - real accepted validator, full-node and 32-validator block-1
   `DcapRequired` execution;
-- fresh actual Processor, Platform and root CRLs recorded with issuer/type,
-  validity, byte size and SHA-256 and checked against the caps; the benchmark
-  uses the largest actual matching PCS bundle, not a fabricated "large" CRL;
+- a real Platform node, when present, remaining keyless until its own
+  Intel-rooted Platform-CA capture passes the same public verifier;
+- fresh actual Processor and root CRLs recorded with issuer/type, validity,
+  byte size and SHA-256 and checked against the caps; the benchmark uses the
+  largest actual matching PCS bundle, not a fabricated "large" CRL;
 - empirical exact-release `gramine-sgx` valid, invalid-early, invalid-late and
   dense 32-validator benchmarks on the published minimum supported x86_64
   validator profile, including the full-block consensus timing budget;

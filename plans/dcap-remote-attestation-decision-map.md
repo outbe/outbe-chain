@@ -702,9 +702,9 @@ Implementation/release acceptance evidence:
   clearly labelled as synthetic/test evidence and never accepted as
   hardware evidence;
 - for I9, a fresh real accepted Processor-CA capture for the exact release
-  enclave/policy plus a real accepted registered multi-package Platform-CA
-  capture; either missing hardware result blocks production activation rather
-  than ordinary implementation CI;
+  enclave/policy; a real Platform-CA node is verified by the same public
+  enclave-resident QVL path when it joins and receives no offer key unless that
+  admission succeeds;
 - deterministic time-boundary results;
 - canonical DER and signed-JSON behavior;
 - exact native artifact and Intel-root pinning;
@@ -741,9 +741,13 @@ this release gate.
 A real Intel-rooted Platform-CA type-5 quote cannot be derived from a
 Processor-CA quote or safely rebound to a different `REPORT_DATA`: either
 operation invalidates the signed evidence. It requires a registered
-multi-package SGX platform. Therefore the real Platform-CA matrix is an
-explicit fail-not-skip I9 release gate, while I1 uses Intel's synthetic
-Platform-CA vectors only for parser and policy coverage.
+multi-package SGX platform. Outbe therefore does not fabricate a Platform
+release fixture or require a dedicated Platform runner for every release.
+Instead, the production admission path classifies and fully verifies the real
+Platform PCK chain, collateral, status, identity and measurement when such a
+node joins; failure is terminal for that admission. I1 retains Intel's
+synthetic Platform vectors only for parser and policy coverage, never as
+hardware evidence.
 
 This preserves Secret Network's deployed rule that the host is not verifier
 authority, while using Gramine's supported enclave-resident native-QVL
@@ -817,8 +821,10 @@ Secret Network's opaque host-call pricing and permissive section allocation are
 not suitable precedent. I1 owns deterministic cap boundaries, pre-allocation,
 checked gas arithmetic and real Processor QVL correctness; I8 owns the bounded
 32-participant state transition. I9 owns empirical exact-release
-`gramine-sgx`, full-block timing and fresh actual Processor/Platform/root CRL
-capacity on the published minimum supported validator profile.
+`gramine-sgx`, full-block timing and fresh actual Processor/root CRL capacity
+on the published minimum supported validator profile. Actual Platform
+collateral is retained when a Platform node is admitted, but is not a
+per-release prerequisite.
 
 I8 introduces evidence-carrying OST3 alongside, rather than by reinterpreting,
 legacy OST2. The current startup/DKG producer remains byte-compatible and emits

@@ -93,7 +93,7 @@ struct Cli {
     /// Extracted exact signed SGX bundle.
     #[arg(long)]
     bundle: PathBuf,
-    /// Required Intel PCK CA for this independently scheduled hardware row.
+    /// Intel PCK CA required from the enclave-verified signed PCK chain.
     #[arg(long, value_enum)]
     expected_pck_ca: ExpectedPckCa,
     /// New output directory retained as a protected release artifact.
@@ -187,9 +187,9 @@ fn run(cli: Cli) -> Result<()> {
         "inspect exact pulled image",
     )?;
 
-    // No binding is generated and no PCS/QPL request is made before this
-    // topology gate proves which independently scheduled row this host can run.
-    let preflight = host_preflight(cli.expected_pck_ca)?;
+    // Host topology is untrusted provenance only. The enclave-resident verifier
+    // authenticates the PCK CA from the signed type-5 certificate chain below.
+    let preflight = host_preflight()?;
     let run_started_at = unix_seconds()?;
     let work = tempfile::Builder::new()
         .prefix("outbe-release-dcap-")
@@ -502,7 +502,7 @@ fn release_policy(measurements: &Measurements, genesis_hash: B256) -> Result<Tee
     .map_err(eyre::Report::msg)
 }
 
-fn host_preflight(expected: ExpectedPckCa) -> Result<HostPreflight> {
+fn host_preflight() -> Result<HostPreflight> {
     ensure!(std::env::consts::ARCH == "x86_64", "H1 requires x86_64");
     let (sgx_enclave_device, sgx_provision_device) = sgx_devices()?;
     let lscpu: Value = serde_json::from_slice(
@@ -515,16 +515,6 @@ fn host_preflight(expected: ExpectedPckCa) -> Result<HostPreflight> {
     .wrap_err("parse lscpu JSON")?;
     let fields = lscpu_fields(&lscpu)?;
     let packages = parse_lscpu_u64(&fields, &["Socket(s):", "Sockets:"])?;
-    match expected {
-        ExpectedPckCa::Processor => ensure!(
-            packages == 1,
-            "Processor-CA row requires exactly one physical package, observed {packages}"
-        ),
-        ExpectedPckCa::Platform => ensure!(
-            packages >= 2,
-            "Platform-CA row requires a multi-package host, observed {packages} package(s)"
-        ),
-    }
     let cpu_model = field_value(&fields, &["Model name:"])?;
     let cpuinfo = fs::read_to_string("/proc/cpuinfo")?;
     ensure!(
@@ -925,7 +915,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_lscpu_package_topology() {
+    fn records_lscpu_package_topology_as_untrusted_provenance() {
         let value = serde_json::json!({"lscpu": [
             {"field": "Model name:", "data": "Intel(R) Xeon(R)"},
             {"field": "Socket(s):", "data": "2"}

@@ -136,6 +136,15 @@ fn cli_exposes_typed_sgx_release_commands() {
             "missing command {command}: {stdout}"
         );
     }
+
+    let manifest = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["release", "sgx", "manifest", "--help"])
+        .output()
+        .expect("run manifest help");
+    assert!(manifest.status.success());
+    let manifest_help = String::from_utf8(manifest.stdout).expect("UTF-8 manifest help");
+    assert!(manifest_help.contains("--processor-dcap-evidence"));
+    assert!(!manifest_help.contains("--platform-dcap-evidence"));
 }
 
 #[test]
@@ -162,14 +171,14 @@ fn privileged_release_workflow_pins_source_and_never_replaces_assets() {
     assert!(workflow.contains("[.tag, .object.sha] | @tsv"));
     assert!(workflow.contains("test \"${signed_tag_name}\" = \"${RELEASE_TAG}\""));
     assert!(workflow.contains("runs-on: testnet-release-sgx"));
-    assert!(workflow.contains("testnet-release-sgx-platform"));
     assert!(workflow.contains("--expected-pck-ca processor"));
-    assert!(workflow.contains("--expected-pck-ca platform"));
     assert!(workflow.contains("--processor-dcap-evidence"));
-    assert!(workflow.contains("--platform-dcap-evidence"));
     assert!(workflow.contains("outbe-release-dcap-evidence"));
     assert!(workflow.contains("hardware-dcap-processor-evidence"));
-    assert!(workflow.contains("hardware-dcap-platform-evidence"));
+    assert!(!workflow.contains("testnet-release-sgx-platform"));
+    assert!(!workflow.contains("--expected-pck-ca platform"));
+    assert!(!workflow.contains("--platform-dcap-evidence"));
+    assert!(!workflow.contains("hardware-dcap-platform-evidence"));
     assert!(!workflow.contains("runs-on: [self-hosted, sgx]"));
     assert!(!workflow.contains("git ls-remote --exit-code origin"));
     assert!(workflow.contains("--draft --prerelease"));
@@ -433,7 +442,6 @@ fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
     let sgx_evidence = root.path().join("sgx-reproducibility.json");
     let hardware_evidence = root.path().join("hardware-sgx.json");
     let processor_dcap_evidence = root.path().join("hardware-dcap-processor.json");
-    let platform_dcap_evidence = root.path().join("hardware-dcap-platform.json");
     write_deterministic_bundle_archive(fixture.path(), &bundle_archive, source.source_date_epoch)
         .expect("archive bundle fixture");
     let sbom_value = serde_json::json!({"spdxVersion": "SPDX-2.3"});
@@ -557,12 +565,6 @@ fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
         canonical_json(&fresh_dcap("processor", 1)).expect("processor DCAP evidence"),
     )
     .expect("processor DCAP evidence");
-    fs::write(
-        &platform_dcap_evidence,
-        canonical_json(&fresh_dcap("platform", 2)).expect("platform DCAP evidence"),
-    )
-    .expect("platform DCAP evidence");
-
     let inputs = VerifiedReleaseInputs {
         bundle: fixture.path().to_owned(),
         bundle_archive,
@@ -572,7 +574,6 @@ fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
         elf_evidence,
         elf_manifest,
         hardware_evidence,
-        platform_dcap_evidence,
         processor_dcap_evidence,
         oci_evidence,
         sbom,
@@ -596,71 +597,74 @@ fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
         signed["tee"]["mrsigner"],
         bundle_manifest.measurements.mrsigner
     );
-    assert_eq!(
-        manifest["verification_gates"]
-            .as_array()
-            .expect("gates")
-            .len(),
-        8
-    );
-    assert!(manifest["verification_gates"]
-        .as_array()
-        .expect("gates")
+    let gates = manifest["verification_gates"].as_array().expect("gates");
+    assert_eq!(gates.len(), 7);
+    assert!(gates.iter().all(|gate| gate["status"] == "passed"));
+    assert!(gates
         .iter()
-        .all(|gate| gate["status"] == "passed"));
-    let oci_gate = manifest["verification_gates"]
-        .as_array()
-        .expect("gates")
+        .any(|gate| gate["name"] == "fresh-accepted-processor-dcap"));
+    assert!(!gates
+        .iter()
+        .any(|gate| gate["name"] == "fresh-accepted-platform-dcap"));
+    let oci_gate = gates
         .iter()
         .find(|gate| gate["name"] == "immutable-oci-sbom-and-provenance")
         .expect("OCI gate");
     assert_eq!(oci_gate["evidence"].as_array().expect("evidence").len(), 4);
 
     fs::write(
-        &inputs.platform_dcap_evidence,
-        canonical_json(&fresh_dcap("processor", 2)).expect("wrong-CA evidence"),
+        &inputs.processor_dcap_evidence,
+        canonical_json(&fresh_dcap("processor", 0)).expect("zero-topology evidence"),
     )
-    .expect("replace Platform evidence with Processor evidence");
-    let error = build_release_manifest_candidate(&inputs)
-        .expect_err("Processor evidence must not satisfy the Platform gate");
-    assert!(error.to_string().contains("platform DCAP evidence"));
+    .expect("replace Processor evidence with untrusted guest topology");
+    build_release_manifest_candidate(&inputs)
+        .expect("guest topology provenance must not decide DCAP acceptance");
 
-    let mut stale = fresh_dcap("platform", 2);
+    fs::write(
+        &inputs.processor_dcap_evidence,
+        canonical_json(&fresh_dcap("platform", 1)).expect("wrong-CA evidence"),
+    )
+    .expect("replace Processor evidence with Platform evidence");
+    let error = build_release_manifest_candidate(&inputs)
+        .expect_err("Platform evidence must not satisfy the Processor gate");
+    assert!(error.to_string().contains("processor DCAP evidence"));
+
+    let mut stale = fresh_dcap("processor", 1);
     stale["freshness"]["collateral_started_at"] = serde_json::json!(100);
     fs::write(
-        &inputs.platform_dcap_evidence,
+        &inputs.processor_dcap_evidence,
         canonical_json(&stale).expect("stale evidence"),
     )
-    .expect("replace Platform evidence with stale ordering");
+    .expect("replace Processor evidence with stale ordering");
     let error = build_release_manifest_candidate(&inputs)
-        .expect_err("pre-run collateral must not satisfy the Platform gate");
+        .expect_err("pre-run collateral must not satisfy the Processor gate");
     assert!(error.to_string().contains("freshness order"));
 
     fs::write(
-        &inputs.platform_dcap_evidence,
-        canonical_json(&fresh_dcap("platform", 2)).expect("restored Platform evidence"),
+        &inputs.processor_dcap_evidence,
+        canonical_json(&fresh_dcap("processor", 1)).expect("restored Processor evidence"),
     )
-    .expect("restore Platform evidence");
+    .expect("restore Processor evidence");
 
-    let mut incomplete_crl = fresh_dcap("platform", 2);
+    let mut incomplete_crl = fresh_dcap("processor", 1);
     incomplete_crl["collateral"]["pck_crl"]
         .as_object_mut()
         .expect("PCK CRL object")
         .remove("next_update");
     fs::write(
-        &inputs.platform_dcap_evidence,
+        &inputs.processor_dcap_evidence,
         canonical_json(&incomplete_crl).expect("incomplete CRL provenance"),
     )
-    .expect("replace Platform evidence with incomplete CRL provenance");
+    .expect("replace Processor evidence with incomplete CRL provenance");
     let error = build_release_manifest_candidate(&inputs)
         .expect_err("CRL provenance without validity must not pass");
     assert!(error.to_string().contains("next_update"));
 
     fs::write(
-        &inputs.platform_dcap_evidence,
-        canonical_json(&fresh_dcap("platform", 2)).expect("restored Platform evidence"),
+        &inputs.processor_dcap_evidence,
+        canonical_json(&fresh_dcap("processor", 1)).expect("restored Processor evidence"),
     )
-    .expect("restore Platform evidence");
+    .expect("restore Processor evidence");
 
     fs::write(
         &inputs.cosign_sbom_verification,
