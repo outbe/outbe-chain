@@ -19,8 +19,7 @@ use crate::constants::{
 use crate::errors::GemFactoryError;
 use crate::events::{GemBurned, GemIssued, GemSettled};
 use crate::schema::{GemFactoryContract, GemPosition, GemTypes};
-use crate::sol_ext::IIntexNFT1155;
-use crate::sol_ext::IERC20;
+use crate::sol_ext::{IIntexNFT1155, IVaultV2, IERC20};
 
 pub fn mint_gem(
     storage: &StorageHandle<'_>,
@@ -263,7 +262,7 @@ pub fn settle_gem(storage: &StorageHandle<'_>, caller: Address, gem_id: U256) ->
     gem_api::set_state(storage, gem_id, GemState::Settled)?;
 
     if !item.cost_amount.is_zero() {
-        deposit_to_vault(storage, caller, item.cost_amount)?;
+        deposit_to_vault(storage, caller, item.cost_amount, item.issuance_currency)?;
     }
 
     emit_event(
@@ -279,10 +278,14 @@ pub fn settle_gem(storage: &StorageHandle<'_>, caller: Address, gem_id: U256) ->
     Ok(())
 }
 
-fn deposit_to_vault(storage: &StorageHandle<'_>, caller: Address, amount: U256) -> Result<()> {
-    // Resolve the stablecoin asset address dynamically by querying the
-    // VaultRouter's `assetAt(0)`. v1 assumes a single registered asset.
-    let asset = read_reserve_asset(storage)?;
+fn deposit_to_vault(
+    storage: &StorageHandle<'_>,
+    caller: Address,
+    amount: U256,
+    issuance_currency: u16,
+) -> Result<()> {
+    // Pay in the stablecoin of the gem's issuance currency (Gem.md §3.2.5).
+    let asset = resolve_settlement_asset(storage, issuance_currency)?;
 
     let transfer = IERC20::transferFromCall {
         from: caller,
@@ -305,18 +308,39 @@ fn deposit_to_vault(storage: &StorageHandle<'_>, caller: Address, amount: U256) 
     Ok(())
 }
 
-// TODO the stablecoin address should be somehow resolved here or at user level
-/// Reads `assetAt(0)` from the vaultrouter via its in-process api and returns
-/// the resolved stablecoin asset. Reverts with `InvalidAsset` if the vault
-/// returns the zero address (mis-configured registry).
-fn read_reserve_asset(storage: &StorageHandle<'_>) -> Result<Address> {
+/// Resolve the settlement stablecoin for `issuance_currency`: pick the reserve
+/// vault registered for that ISO code and read its underlying asset.
+///
+// TODO(multi-currency): pick a vault deterministically instead of index 0
+fn resolve_settlement_asset(storage: &StorageHandle<'_>, issuance_currency: u16) -> Result<Address> {
     let ret = storage.staticcall(
         VAULT_ROUTER_ADDRESS,
-        IVaultRouter::assetAtCall { index: U256::ZERO }
-            .abi_encode()
-            .into(),
+        IVaultRouter::referenceCurrencyVaultsCountCall {
+            isoCode: issuance_currency,
+        }
+        .abi_encode()
+        .into(),
     )?;
-    let asset = IVaultRouter::assetAtCall::abi_decode_returns(&ret)
+    let count = IVaultRouter::referenceCurrencyVaultsCountCall::abi_decode_returns(&ret)
+        .map_err(|_| GemFactoryError::InvalidAsset)?;
+    if count.is_zero() {
+        return Err(GemFactoryError::NoSettlementVault.into());
+    }
+
+    let ret = storage.staticcall(
+        VAULT_ROUTER_ADDRESS,
+        IVaultRouter::referenceCurrencyVaultAtCall {
+            isoCode: issuance_currency,
+            index: U256::ZERO,
+        }
+        .abi_encode()
+        .into(),
+    )?;
+    let vault = IVaultRouter::referenceCurrencyVaultAtCall::abi_decode_returns(&ret)
+        .map_err(|_| GemFactoryError::InvalidAsset)?;
+
+    let ret = storage.staticcall(vault, IVaultV2::assetCall {}.abi_encode().into())?;
+    let asset = IVaultV2::assetCall::abi_decode_returns(&ret)
         .map_err(|_| GemFactoryError::InvalidAsset)?;
     if asset.is_zero() {
         return Err(GemFactoryError::InvalidAsset.into());

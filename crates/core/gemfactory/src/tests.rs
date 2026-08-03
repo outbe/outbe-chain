@@ -251,11 +251,11 @@ fn settle_wallet_reverts_without_deployed_vault() {
         .unwrap();
         gem_api::set_state(storage, gem_id, GemState::Qualified).unwrap();
 
-        // settle_gem now staticcalls `RESERVE_VAULT.assetAt(0)` to resolve
-        // the stablecoin asset. HashMapStorageProvider doesn't resolve
-        // sub-call targets, so the staticcall fails — proving the integration
-        // path is wired. Real vault interaction is covered by integration
-        // tests once a deployed VaultRouter becomes available.
+        // settle_gem resolves the settlement stablecoin by staticcalling the
+        // VaultRouter (`referenceCurrencyVaultsCount` for the issuance currency).
+        // HashMapStorageProvider doesn't resolve sub-call targets, so the
+        // staticcall fails — proving the integration path is wired. Real vault
+        // interaction is covered by integration tests with a deployed VaultRouter.
         let res = runtime::settle_gem(storage, ALICE, gem_id);
         assert!(res.is_err());
     });

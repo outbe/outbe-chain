@@ -41,6 +41,9 @@ pub enum GemFactoryError {
     #[error("invalid asset")]
     InvalidAsset,
 
+    #[error("no settlement vault for issuance currency")]
+    NoSettlementVault,
+
     #[error("insufficient proof of work")]
     InsufficientProofOfWork,
 
