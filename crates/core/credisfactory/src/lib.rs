@@ -3,7 +3,7 @@
 //!
 //! - `requestCredis` consumes a confidential Gratis pledge-lock ticket (pledge
 //!   handle + spend authorization) via [`outbe_gratis`], opens an [`outbe_credis`]
-//!   position bound to the bundle account (storing the pledger EOA), crediting the
+//!   position bound to the smart account (storing the pledger EOA), crediting the
 //!   collateral into the pledger's own pledged ledger, and delivers the stablecoin
 //!   loan via the vault sub-call.
 //! - `anadosis` advances the position's installment schedule and releases that

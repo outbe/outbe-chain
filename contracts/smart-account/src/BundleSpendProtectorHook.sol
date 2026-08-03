@@ -9,7 +9,7 @@ import {ITokenBundle} from "./interfaces/ITokenBundle.sol";
 import {IERC20} from "forge-std/interfaces/IERC20.sol";
 
 /// @notice Root-validator execution hook that bounds what the account OWNER can do with the
-///         bundled (reserved) portion of a bundle account. The owner may freely spend their own
+///         bundled (reserved) portion of a smart account. The owner may freely spend their own
 ///         (free) balance, but must not touch the reserve. Enforced as a post-execution invariant:
 ///         after an owner UserOp, for every bundled token the account must
 ///           (1) retain its reserve — it may remove at most its pre-op free balance, and

@@ -24,7 +24,7 @@ import { findLatestTicket, readTicket, writeTicket, type Ticket } from "./ticket
 const SALT = 0n;
 
 // The CCA calls requestCredis with the confidential pledge handle + a spend
-// authorization that binds it to the user's bundle account. The CCA holds the
+// authorization that binds it to the user's smart account. The CCA holds the
 // `pledgeSecret` the user handed over (in the ticket for the demo); it does NOT
 // hold the user's view key, so it cannot read the user's encrypted Gratis
 // balance — only the pledge is consumed and the loan disbursed to the bundle.
@@ -67,7 +67,7 @@ async function main() {
   const provider = new ethers.JsonRpcProvider(rpcUrl);
   const ccaWallet = new Wallet(ccaPrivateKey, provider);
 
-  // Predict the bundle account address — the credis receiver, and the account
+  // Predict the smart account address — the credis receiver, and the account
   // the pledge spend is bound to.
   const saFactory = SmartAccountFactory__factory.connect(smartAccountFactoryAddress, provider);
   const smartAccount = await saFactory.getAccountAddress(
@@ -85,7 +85,7 @@ async function main() {
 
   const [erc20Meta, network] = await Promise.all([fetchTokenMeta(token), provider.getNetwork()]);
 
-  // Bind the pledge to this bundle account with the spend authorization derived
+  // Bind the pledge to this smart account with the spend authorization derived
   // from the pledge secret the user handed to the CCA.
   const secret = ethers.getBytes(ticket.pledgeSecret);
   const spend = spendAuth(secret, smartAccount);
@@ -96,7 +96,7 @@ async function main() {
   console.log(`CCA:            ${ccaAddress}`);
   console.log(`User (pledger): ${userAddress}`);
   console.log(`CredisFactory:  ${credisFactoryAddress}`);
-  console.log(`Bundle account: ${smartAccount}`);
+  console.log(`smart account: ${smartAccount}`);
   console.log(`ERC20:          ${erc20Address} (${erc20Meta.symbol})`);
   console.log(`Pledge handle:  ${ticket.pledgeHandle}`);
   console.log(`Spend auth:     ${spend}`);

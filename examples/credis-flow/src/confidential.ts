@@ -312,7 +312,7 @@ export function pledgeSecret(modifyKey: Uint8Array, handleHex: string): Uint8Arr
 }
 
 /**
- * The spend authorization binding a pledge to a destination bundle account:
+ * The spend authorization binding a pledge to a destination smart account:
  * `HMAC(pledge_secret, "credis-bind" || bundle)`. Prevents a mempool observer of
  * `requestCredis(handle, spendAuth)` from redirecting the loan.
  */

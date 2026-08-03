@@ -123,7 +123,7 @@ pub fn pledge_secret(modify_key: &[u8; 32], handle: B256) -> [u8; 32] {
     out
 }
 
-/// Spend authorization binding a pledge to a destination bundle account, so a
+/// Spend authorization binding a pledge to a destination smart account, so a
 /// mempool observer of `requestCredis(handle, spend_auth)` cannot redirect it.
 /// `HMAC(pledge_secret, "credis-bind" ‖ bundle)`.
 pub fn spend_auth_mac(pledge_secret: &[u8; 32], bundle: Address) -> [u8; 32] {
@@ -450,7 +450,7 @@ fn apply_owner_op(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
 }
 
 /// requestCredis: consume a `PledgeLockTicket`, verify the spend binding to the
-/// bundle account, credit the ticket amount into the EOA's OWN pledged ledger, and
+/// smart account, credit the ticket amount into the EOA's OWN pledged ledger, and
 /// delete the ticket. No escrow account is involved — the collateral stays with the
 /// pledger for the whole credis term. The EOA no longer travels in calldata: the host
 /// recovers it with a prior `RevealOwner` round-trip and passes it as `req.account`; the

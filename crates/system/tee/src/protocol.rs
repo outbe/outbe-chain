@@ -233,7 +233,7 @@ pub struct GratisOpRequest {
     pub modify_auth: ModifyAuth,
     /// Pledge handle identifying the ticket (set for `Unpledge`/`ConsumePledge`).
     pub pledge_handle: Option<B256>,
-    /// Destination bundle account (set for `ConsumePledge`).
+    /// Destination smart account (set for `ConsumePledge`).
     pub smart_account: Option<Address>,
     /// Spend authorization binding the pledge to `smart_account`
     /// (`spend_auth_mac(pledge_secret, smart_account)`), set for `ConsumePledge`.

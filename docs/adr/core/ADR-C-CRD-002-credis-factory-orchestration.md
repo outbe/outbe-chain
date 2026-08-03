@@ -19,7 +19,7 @@ It does not own any of those modules' state.
 
 ### Request Credis
 
-`requestCredis` derives the borrower from a nonzero bundle account and performs:
+`requestCredis` derives the borrower from a nonzero smart account and performs:
 
 1. validate nonzero asset/bundle and a Credis-eligible denomination;
 2. reject a bundle with any overdue Credis position at canonical block time;
@@ -37,7 +37,7 @@ All steps and the success event are one EVM rollback domain.
 
 ### Pay next Anadosis
 
-Only the position's bundle account may pay. Before mutation the factory validates
+Only the position's smart account may pay. Before mutation the factory validates
 position, next installment, asset, amount and nonzero reclaim commitment. It then:
 
 1. advances the Credis next installment at canonical time;
@@ -99,7 +99,7 @@ choreography. Credis and VaultRouter remain separately auditable state owners.
    reservation and prove aggregate backing.
 2. Reclaim commitment denomination is opaque and can be wrong yet accepted. Add a
    verifiable denomination-bound insertion proof.
-3. Define relationship between transaction caller and bundle account; `_caller` is
+3. Define relationship between transaction caller and smart account; `_caller` is
    currently unused on request, so any relayer can submit a bundle-bound proof.
 4. Decide and enforce early-payment policy imported from ADR-C-CRD-001.
 5. Use actual ERC-20 balance deltas or explicitly reject fee-on-transfer/rebasing

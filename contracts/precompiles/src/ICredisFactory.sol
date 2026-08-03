@@ -6,7 +6,7 @@ interface ICredisFactory {
     event CredisRequested(address indexed smartAccount, uint256 amount);
 
     /// @notice Open a credis position against a confidential Gratis pledge.
-    ///         The bundle account presents `pledgeHandle` (the public id
+    ///         The smart account presents `pledgeHandle` (the public id
     ///         returned by `pledgeGratis`) and `spendAuth` = HMAC(pledgeSecret,
     ///         "credis-bind" || smartAccount), where the pledger EOA derived
     ///         `pledgeSecret` from its modify key + the handle off-chain. The
@@ -19,7 +19,7 @@ interface ICredisFactory {
 
     /// @notice Advance the named position by one anadosis payment and release
     ///         that installment's share of collateral from the pledged lock ledger
-    ///         back to its balance. Caller MUST be the position's bundle account.
+    ///         back to its balance. Caller MUST be the position's smart account.
     function anadosis(uint256 positionId) external;
 
     function supportsInterface(bytes4 interfaceId) external view returns (bool);

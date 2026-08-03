@@ -50,7 +50,7 @@ pub fn request_credis(
         return Err(CredisFactoryError::InvalidAsset.into());
     }
     if smart_account.is_zero() {
-        return Err(CredisFactoryError::InvalidsmartAccount.into());
+        return Err(CredisFactoryError::InvalidSmartAccount.into());
     }
 
     // Block timestamp is read from the execution frame rather than threaded in

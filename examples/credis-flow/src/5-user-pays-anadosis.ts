@@ -125,7 +125,7 @@ async function getState(
 
 function printState(label: string, state: State, erc20Meta: TokenMeta, smartAccountAddr: string) {
   console.log(`\n=== ${label} ===`);
-  console.log(`  Bundle Account (${smartAccountAddr}):`);
+  console.log(`  smart account (${smartAccountAddr}):`);
   console.log(`    ERC20 balance: ${formatTokenMeta(state.saErc20Balance, erc20Meta)}`);
   console.log(`  Vault Router (${vaultRouterAddress}):`);
   console.log(`    Vault ERC20:   ${formatTokenMeta(state.vaultErc20Balance, erc20Meta)}`);
@@ -158,7 +158,7 @@ async function main() {
     vaultRouter.assetVaultAt(erc20Address, 0),
   ]);
 
-  // Predict Bundle account address
+  // Predict smart account address
   const smartAccountAddr = await saFactory.getAccountAddress(
     userAddress,
     ccaAddress,
@@ -166,12 +166,12 @@ async function main() {
     [vaultRouterAddress],
     SALT,
   );
-  console.log(`Bundle Account:    ${smartAccountAddr}`);
+  console.log(`smart account:    ${smartAccountAddr}`);
 
-  // Verify Bundle account is deployed
+  // Verify smart account is deployed
   const code = await provider.getCode(smartAccountAddr);
   if (code === "0x") {
-    console.error("Bundle account not deployed. Run 2-top-up-smart-account.ts first.");
+    console.error("smart account not deployed. Run 2-top-up-smart-account.ts first.");
     process.exit(1);
   }
 
@@ -182,7 +182,7 @@ async function main() {
     process.exit(1);
   }
   console.log(`\nPosition:`);
-  console.log(`  Bundle Account: ${position.smartAccount}`);
+  console.log(`  smart account: ${position.smartAccount}`);
   console.log(`  Total:         ${formatTokenMeta(position.totalAnadosisAmount, erc20Meta)}`);
   console.log(`  Outstanding:   ${formatTokenMeta(position.outstandingAnadosisAmount, erc20Meta)}`);
   console.log(`  Created:       ${formatDate(position.createdAt)}`);
@@ -239,7 +239,7 @@ async function main() {
   // Ensure EntryPoint has deposit for gas
   const epDeposit: bigint = await entryPoint.balanceOf(smartAccountAddr);
   if (epDeposit < ethers.parseEther("0.01")) {
-    console.log("\nFunding EntryPoint deposit for Bundle account...");
+    console.log("\nFunding EntryPoint deposit for smart account...");
     const depositTx = await entryPoint.depositTo(smartAccountAddr, { value: ethers.parseEther("0.05") });
     await depositTx.wait();
     console.log("  Deposited 0.05 COEN into EntryPoint");

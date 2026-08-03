@@ -18,7 +18,7 @@ Oracle rates, move ERC-20 assets or release Gratis.
 ## Decision
 
 A position is created once from a globally unique commitment/nullifier-derived id.
-It snapshots bundle account, settlement asset and currency, currency rate,
+It snapshots smart account, settlement asset and currency, currency rate,
 principal, original collateral, creation time, outstanding debt/collateral and an
 ordered schedule of exactly ten `Anadosis` installments.
 
@@ -56,7 +56,7 @@ used by CredisFactory to gate new credit.
 
 ## Persistent state and invariants
 
-- Every position id is unique and points to one nonzero bundle account.
+- Every position id is unique and points to one nonzero smart account.
 - Every account index entry points to an existing position owned by that account;
   every position appears exactly once in its owner's dense index.
 - Every position has exactly ten ordered installment records.

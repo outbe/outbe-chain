@@ -107,7 +107,7 @@ fn view_pledged(s: &StorageHandle<'_>, a: Address) -> U256 {
 }
 
 /// The spend authorization the pledger EOA hands to the CCA to bind a pledge to a
-/// destination bundle account (`HMAC(pledgeSecret, "credis-bind" || bundle)`).
+/// destination smart account (`HMAC(pledgeSecret, "credis-bind" || bundle)`).
 fn credis_spend_auth(eoa: Address, handle: B256, bundle: Address) -> [u8; 32] {
     let mk = derive_modify_key(&test_enclave::state_key(), eoa).unwrap();
     spend_auth_mac(&pledge_secret(&mk, handle), bundle)
@@ -133,7 +133,7 @@ fn full_pledge_request_pay_unlock_flow() {
         let pledge_amount = one_e18();
         let installment = pledge_amount / U256::from(NUMBER_OF_ANADOSIS);
 
-        // Mine + pledge. Alice is both the pledger EOA and the bundle account here.
+        // Mine + pledge. Alice is both the pledger EOA and the smart account here.
         outbe_gratis::api::mint(
             storage.clone(),
             alice(),
@@ -154,7 +154,7 @@ fn full_pledge_request_pay_unlock_flow() {
         assert_eq!(view_balance(&storage, alice()), U256::ZERO);
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
 
-        // requestCredis bound to alice's bundle account, with alice as the pledger
+        // requestCredis bound to alice's smart account, with alice as the pledger
         // EOA. The collateral is credited into alice's OWN pledged ledger.
         let spend = credis_spend_auth(alice(), handle, alice());
         let (position_id, amount_stables) =
@@ -335,7 +335,7 @@ fn request_credis_rejects_zero_smart_account() {
             [0u8; 32],
         )
         .unwrap_err();
-        assert!(err.to_string().contains("bundle account"), "got: {err}");
+        assert!(err.to_string().contains("smart account"), "got: {err}");
     });
 }
 
@@ -365,7 +365,7 @@ fn pay_anadosis_rejects_non_owner_caller() {
             runtime::request_credis(storage.clone(), alice(), asset(), alice(), handle, spend)
                 .unwrap();
 
-        // bob is not the position's bundle account.
+        // bob is not the position's smart account.
         let err = runtime::pay_anadosis(storage.clone(), bob(), position_id).unwrap_err();
         assert!(err.to_string().contains("smartAccount"), "got: {err}");
     });
