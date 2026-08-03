@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 alloy-consensus.workspace = true
 alloy-eips.workspace = true
+alloy-sol-types.workspace = true
 alloy-primitives = { workspace = true, features = ["std"] }
 clap.workspace = true
 hex.workspace = true
@@ -20,7 +21,9 @@ outbe-common.workspace = true
 outbe-compressed-entities.workspace = true
 outbe-consensus.workspace = true
 outbe-intex.workspace = true
+outbe-intexfactory.workspace = true
 outbe-lysis.workspace = true
+outbe-metadosis.workspace = true
 outbe-node.workspace = true
 outbe-ocomp-protocol.workspace = true
 outbe-offchain-data.workspace = true

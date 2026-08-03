@@ -151,10 +151,7 @@ mod tests {
         assert_eq!(writer.commit().unwrap(), 3);
 
         let bytes = fs::read(dir.path().join(CONTRIBUTOR_PAYOUT_ARTIFACT_FILE)).unwrap();
-        let expected: Vec<u8> = leaves
-            .iter()
-            .flat_map(encode_contributor_leaf)
-            .collect();
+        let expected: Vec<u8> = leaves.iter().flat_map(encode_contributor_leaf).collect();
         assert_eq!(bytes, expected);
     }
 

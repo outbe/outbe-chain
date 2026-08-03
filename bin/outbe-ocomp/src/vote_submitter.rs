@@ -665,6 +665,28 @@ impl PublicVoteRpcClientV1 {
             .ok_or_else(|| PublicVoteRpcErrorV1::Malformed("missing result".to_owned()))
     }
 
+    /// Executes a read-only `eth_call` against finalized state.
+    pub(crate) fn call_contract_finalized(
+        &self,
+        to: Address,
+        data: &[u8],
+    ) -> Result<Vec<u8>, PublicVoteRpcErrorV1> {
+        let value = self.call(
+            "eth_call",
+            serde_json::json!([
+                { "to": format!("{to:#x}"), "data": format!("0x{}", hex::encode(data)) },
+                "finalized",
+            ]),
+        )?;
+        let text = value.as_str().ok_or_else(|| {
+            PublicVoteRpcErrorV1::Malformed("eth_call result is not a string".to_owned())
+        })?;
+        let stripped = text.strip_prefix("0x").ok_or_else(|| {
+            PublicVoteRpcErrorV1::Malformed("eth_call result is not 0x-prefixed".to_owned())
+        })?;
+        hex::decode(stripped).map_err(|error| PublicVoteRpcErrorV1::Malformed(error.to_string()))
+    }
+
     fn block_for_tag(&self, tag: serde_json::Value) -> Result<VoteBlockV1, PublicVoteRpcErrorV1> {
         let value = self.call("eth_getBlockByNumber", serde_json::json!([tag, false]))?;
         if value.is_null() {

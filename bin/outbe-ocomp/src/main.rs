@@ -15,6 +15,10 @@ use outbe_ocomp::control::{
     effective_uid, poc_schema_limits, require_effective_uid, uid_for_user, EndpointIdentity,
 };
 use outbe_ocomp::inbox::WorkerInboxLimits;
+use outbe_ocomp::payout_submitter::{
+    LocalPayoutTransactionPreparerV1, PayoutSubmissionConfigV1, PayoutTickOutcomeV1,
+    SupervisorPayoutSubmitterV1,
+};
 use outbe_ocomp::snapshot_client::SnapshotExporterNodeConfig;
 use outbe_ocomp::snapshot_exporter::{SnapshotExporter, SnapshotExporterConfig};
 use outbe_ocomp::supervisor::{SupervisorDiscovery, SupervisorDiscoveryConfig};
@@ -33,6 +37,7 @@ use outbe_ocomp::worker::{run_one_from_inherited_fd, WorkerConfig};
 use outbe_ocomp_protocol::capacity::OCOMP_POC_CAS_QUOTA_BYTES;
 use outbe_offchain_storage::MongoStorageConfig;
 use outbe_primitives::signer::OutbeEvmSigner;
+use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 
 #[derive(Debug, Parser)]
 #[command(name = "outbe-ocomp")]
@@ -99,6 +104,7 @@ const WORKER_INBOX_MAX_TOTAL_BYTES: u64 = 67_108_864;
 const SOCKET_ACTIVATION_FD: i32 = 0;
 const SUPERVISOR_VOTE_RPC_MAX_RESPONSE_BYTES: usize = 1_048_576;
 const SUPERVISOR_RECONCILE_INTERVAL: Duration = Duration::from_secs(1);
+const SUPERVISOR_PAYOUT_LOOKBACK_DAYS: u32 = 30;
 const SNAPSHOT_EXPORTER_RECONCILE_INTERVAL: Duration = Duration::from_secs(1);
 const SNAPSHOT_EXPORTER_TRIBUTE_PAGE_LIMIT: usize = 256;
 const SNAPSHOT_EXPORTER_MAX_RECOVERABLE_PREPARED_JOBS: usize = 8;
@@ -148,6 +154,7 @@ struct ProductionLayout {
     supervisor_export_binding_root: PathBuf,
     supervisor_job_root: PathBuf,
     supervisor_vote_submission_root: PathBuf,
+    supervisor_payout_submission_root: PathBuf,
     snapshot_exporter_ce_datadir: PathBuf,
     snapshot_exporter_input_ref_root: PathBuf,
     snapshot_exporter_receipt_root: PathBuf,
@@ -176,6 +183,7 @@ impl ProductionLayout {
             supervisor_export_binding_root: supervisor_root.join("export-bindings"),
             supervisor_job_root: supervisor_root.join("jobs"),
             supervisor_vote_submission_root: supervisor_root.join("vote-submissions"),
+            supervisor_payout_submission_root: supervisor_root.join("payout-submissions"),
             snapshot_exporter_ce_datadir: ocomp_root.join("ce"),
             snapshot_exporter_input_ref_root: exporter_root.join("input-refs"),
             snapshot_exporter_receipt_root: exporter_root.join("receipts"),
@@ -217,6 +225,7 @@ struct RuntimeProfile {
     supervisor_export_binding_root: PathBuf,
     supervisor_job_root: PathBuf,
     supervisor_vote_submission_root: PathBuf,
+    supervisor_payout_submission_root: PathBuf,
     snapshot_exporter_ce_datadir: PathBuf,
     snapshot_exporter_input_ref_root: PathBuf,
     snapshot_exporter_receipt_root: PathBuf,
@@ -249,6 +258,7 @@ impl RuntimeProfile {
                 supervisor_export_binding_root: layout.supervisor_export_binding_root,
                 supervisor_job_root: layout.supervisor_job_root,
                 supervisor_vote_submission_root: layout.supervisor_vote_submission_root,
+                supervisor_payout_submission_root: layout.supervisor_payout_submission_root,
                 snapshot_exporter_ce_datadir: layout.snapshot_exporter_ce_datadir,
                 snapshot_exporter_input_ref_root: layout.snapshot_exporter_input_ref_root,
                 snapshot_exporter_receipt_root: layout.snapshot_exporter_receipt_root,
@@ -323,6 +333,9 @@ impl RuntimeProfile {
             supervisor_export_binding_root: root.join("supervisor-v1").join("export-bindings"),
             supervisor_job_root: root.join("supervisor-v1").join("jobs"),
             supervisor_vote_submission_root: root.join("supervisor-v1").join("vote-submissions"),
+            supervisor_payout_submission_root: root
+                .join("supervisor-v1")
+                .join("payout-submissions"),
             snapshot_exporter_ce_datadir,
             snapshot_exporter_input_ref_root: root.join("exporter-v1").join("input-refs"),
             snapshot_exporter_receipt_root: root.join("exporter-v1").join("receipts"),
@@ -419,6 +432,7 @@ fn run_supervisor(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> 
         protocol_bundle: protocol_bundle.clone(),
         limits,
     })?;
+    let payout_job_root = runtime.supervisor_job_root.clone();
     let runner = SupervisorJobRunnerV1::open(SupervisorJobRunnerConfigV1 {
         cas_root: runtime.cas_root,
         cas_limits: CasLimits {
@@ -466,9 +480,28 @@ fn run_supervisor(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> 
         },
         vote_rpc,
     )?;
+    let payout_signer =
+        OutbeEvmSigner::from_strict_file(&runtime.ocomp_evm_key_path, runtime.effective_role_uid)?;
+    let payout_preparer = LocalPayoutTransactionPreparerV1::new(payout_signer, identity.chain_id)?;
+    let payout_rpc = PublicVoteRpcClientV1::new(
+        required_env("OUTBE_OCOMP_RPC_URL")?,
+        SUPERVISOR_VOTE_RPC_MAX_RESPONSE_BYTES,
+    )?;
+    let mut payout_submitter = SupervisorPayoutSubmitterV1::open(
+        PayoutSubmissionConfigV1 {
+            journal_root: runtime.supervisor_payout_submission_root,
+            job_root: payout_job_root,
+            expected_chain_id: identity.chain_id,
+            sender_address: payout_preparer.sender_address(),
+            lookback_days: SUPERVISOR_PAYOUT_LOOKBACK_DAYS,
+            limits,
+        },
+        payout_rpc,
+    )?;
     let mut handled_job_id = None;
     let mut completed_result: Option<CompletedSupervisorJobV1> = None;
     let mut last_submission_outcome = None;
+    let mut last_payout_outcome = None;
     loop {
         if let Err(error) = discovery.reconcile_once() {
             eprintln!("OCOMP supervisor discovery retry: {error}");
@@ -545,6 +578,33 @@ fn run_supervisor(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> 
                     }
                     Err(error) => eprintln!("OCOMP supervisor export-adoption retry: {error}"),
                 }
+            }
+        }
+        // Payouts share the vote signer's nonce, so a tick runs only while no
+        // vote work is pending, and one tick drives its batch to finality.
+        if completed_result.is_none() {
+            let today = timestamp_to_date_key(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)?
+                    .as_secs(),
+            );
+            let mut days = Vec::with_capacity(SUPERVISOR_PAYOUT_LOOKBACK_DAYS as usize + 1);
+            let mut day = today;
+            for _ in 0..=SUPERVISOR_PAYOUT_LOOKBACK_DAYS {
+                days.push(day);
+                day = previous_date_key(day);
+            }
+            days.reverse();
+            match payout_submitter.tick(&payout_preparer, &days) {
+                Ok(outcome) => {
+                    if last_payout_outcome != Some(outcome) {
+                        if outcome != PayoutTickOutcomeV1::Idle {
+                            eprintln!("OCOMP supervisor payout: {outcome:?}");
+                        }
+                        last_payout_outcome = Some(outcome);
+                    }
+                }
+                Err(error) => eprintln!("OCOMP supervisor payout retry: {error}"),
             }
         }
         std::thread::sleep(SUPERVISOR_RECONCILE_INTERVAL);

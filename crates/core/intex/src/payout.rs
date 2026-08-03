@@ -9,7 +9,7 @@ use alloy_primitives::{Address, B256, U256};
 use outbe_ocomp_protocol::list::{
     leaf_hash, node_hash, pad_hash, root_hash, streaming_ordered_list_membership_proof,
 };
-use outbe_ocomp_protocol::{ListKind, ProtocolError};
+use outbe_ocomp_protocol::{ListKind, ProtocolError, StreamingOrderedListRoot};
 use outbe_primitives::error::{PrecompileError, Result};
 
 use crate::errors::IntexError;
@@ -41,6 +41,32 @@ pub fn encode_contributor_leaf(leaf: &ContributorLeafData) -> [u8; CONTRIBUTOR_L
     out[20..56].copy_from_slice(&leaf.source_tribute_id);
     out[56..].copy_from_slice(&leaf.nominal.to_be_bytes::<32>());
     out
+}
+
+/// Inverse of [`encode_contributor_leaf`].
+pub fn decode_contributor_leaf(bytes: &[u8; CONTRIBUTOR_LEAF_BYTES]) -> ContributorLeafData {
+    let mut source_tribute_id = [0u8; 36];
+    source_tribute_id.copy_from_slice(&bytes[20..56]);
+    ContributorLeafData {
+        owner: Address::from_slice(&bytes[..20]),
+        source_tribute_id,
+        nominal: U256::from_be_slice(&bytes[56..]),
+    }
+}
+
+/// Builds the whole-day root exactly as the Lysis finalizer does, so an
+/// off-chain sender can compare its local records against the certified root.
+pub fn contributor_list_root<I, T>(count: u32, items: I) -> Result<B256>
+where
+    I: IntoIterator<Item = T>,
+    T: AsRef<[u8]>,
+{
+    let mut root = StreamingOrderedListRoot::new(KIND, count).map_err(protocol_error)?;
+    for item in items {
+        root.push(item.as_ref(), CONTRIBUTOR_LEAF_BYTES)
+            .map_err(protocol_error)?;
+    }
+    root.finish().map_err(protocol_error)
 }
 
 /// Verifies one chunk-aligned leaf range against the certified contributor root.
@@ -279,6 +305,24 @@ mod tests {
         (0..count)
             .map(|i| contributor_leaf(i, u64::from(i) + 1))
             .collect()
+    }
+
+    #[test]
+    fn leaf_encoding_round_trips() {
+        let leaf = contributor_leaf(41, 987_654);
+        assert_eq!(
+            decode_contributor_leaf(&encode_contributor_leaf(&leaf)),
+            leaf
+        );
+    }
+
+    #[test]
+    fn list_root_matches_the_reference_root() {
+        let leaves = population(600);
+        assert_eq!(
+            contributor_list_root(600, encode_all(&leaves)).unwrap(),
+            contributor_root(&leaves)
+        );
     }
 
     #[test]
