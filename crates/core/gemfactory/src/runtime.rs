@@ -17,7 +17,7 @@ use crate::constants::{
 use crate::errors::GemFactoryError;
 use crate::events::{GemBurned, GemIssued, GemSettled};
 use crate::schema::{GemFactoryContract, GemPosition, GemTypes};
-use crate::sol_ext::{IIntexNFT1155, IERC20};
+use crate::sol_ext::{IIntexNFT1155, IReferenceCurrency, IERC20};
 
 pub fn mint_gem(
     storage: &StorageHandle<'_>,
@@ -266,12 +266,23 @@ pub fn settle_gem(
         _ => return Err(GemFactoryError::InvalidState.into()),
     }
 
+    // The Cost Amount is paid in the gem's Settlement Currency
+    // Reject any payment asset whose ISO 4217 code differs from it.
+    let expected = settlement_currency_iso(storage, item.issuance_currency, item.reference_currency)?;
+    let asset_iso = read_iso_code(storage, asset)?;
+    if asset_iso != expected {
+        return Err(GemFactoryError::SettlementCurrencyMismatch {
+            asset: asset_iso,
+            expected,
+        }
+        .into());
+    }
+
     gem_api::set_state(storage, gem_id, GemState::Settled)?;
 
     if !item.cost_amount_minor.is_zero() {
-        // The caller pays in `asset` (the settlement stablecoin they supply).
-        // TODO(multi-currency): when `asset` is not supplied, auto-resolve the
-        // settlement stablecoin from the gem's issuance currency
+        // The caller pays in `asset`, validated above to match the Settlement
+        // Currency.
         deposit_to_vault(storage, caller, item.cost_amount_minor, asset)?;
     }
 
@@ -315,10 +326,33 @@ fn deposit_to_vault(
     Ok(())
 }
 
-/// Resolve the settlement stablecoin for `issuance_currency`: pick the reserve
-/// vault registered for that ISO code and read its underlying asset.
-///
-// TODO(multi-currency): pick a vault deterministically instead of index 0
+/// Issuance currency when a COEN
+/// pair is registered for it in the Oracle, otherwise the reference currency.
+fn settlement_currency_iso(
+    storage: &StorageHandle<'_>,
+    issuance_currency: u16,
+    reference_currency: u16,
+) -> Result<u16> {
+    let oracle = OracleContract::new(storage.clone());
+    let pair_hash = oracle.settlement_iso_to_pair.read(&issuance_currency)?;
+    Ok(if pair_hash.is_zero() {
+        reference_currency
+    } else {
+        issuance_currency
+    })
+}
+
+/// Reads the settlement asset's ISO 4217 code via a static
+/// `IReferenceCurrency.isoCode()` sub-call. Reverts `InvalidAsset` on
+/// undecodable data. Mirrors credisfactory's `read_iso_code`.
+fn read_iso_code(storage: &StorageHandle<'_>, asset: Address) -> Result<u16> {
+    let ret = storage.staticcall(
+        asset,
+        IReferenceCurrency::isoCodeCall {}.abi_encode().into(),
+    )?;
+    IReferenceCurrency::isoCodeCall::abi_decode_returns(&ret)
+        .map_err(|_| GemFactoryError::InvalidAsset.into())
+}
 
 pub fn mine_gem_promis(
     storage: &StorageHandle<'_>,

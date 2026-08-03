@@ -19,4 +19,11 @@ sol! {
     interface IIntexNFT1155 {
         function parkForGems(address holder, uint32 seriesId, uint256 amount) external returns (uint256);
     }
+
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    // Mirrors contracts/tokens/src/interfaces/IReferenceCurrency.sol. Implemented by
+    // stable-token assets so the factory can read the settlement asset's ISO 4217 code.
+    interface IReferenceCurrency {
+        function isoCode() external view returns (uint16);
+    }
 }

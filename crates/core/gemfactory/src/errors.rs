@@ -41,6 +41,9 @@ pub enum GemFactoryError {
     #[error("invalid asset")]
     InvalidAsset,
 
+    #[error("settlement asset iso {asset} does not match settlement currency {expected}")]
+    SettlementCurrencyMismatch { asset: u16, expected: u16 },
+
     #[error("insufficient proof of work")]
     InsufficientProofOfWork,
 

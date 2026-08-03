@@ -15,8 +15,12 @@ use crate::schema::{GemFactoryContract, GemPosition, GemTypes};
 const T_NOW: u64 = 1_700_000_000;
 const ALICE: Address = address!("0x1111111111111111111111111111111111111111");
 const BOB: Address = address!("0x2222222222222222222222222222222222222222");
-/// Mock settlement stablecoin passed to `settle_gem` in tests.
+/// Mock settlement stablecoin passed to `settle_gem` in tests; `isoCode()`
+/// stubbed to 840 (USD), matching the default test currency.
 const STABLE: Address = address!("0x00000000000000000000000000000000000000AA");
+/// Mock stablecoin whose `isoCode()` is 978 (EUR): a currency mismatch for a
+/// USD-denominated gem.
+const STABLE_EUR: Address = address!("0x00000000000000000000000000000000000000BB");
 
 /// A no-op authorization for mine paths that reject before reaching the (enclave)
 /// Promis mint (ownership/state/PoW failures).
@@ -55,6 +59,15 @@ fn with_storage<R>(rate_1e18: Option<U256>, f: impl FnOnce(&StorageHandle) -> R)
     storage.stub_sub_call_at(
         outbe_primitives::addresses::INTEX_NFT1155_ADDRESS,
         alloy_primitives::Bytes::from(U256::from(PARK_UNITS).to_be_bytes::<32>().to_vec()),
+    );
+    // Stub the settlement stablecoins' `isoCode()` (uint16 in a 32-byte word).
+    storage.stub_sub_call_at(
+        STABLE,
+        alloy_primitives::Bytes::from(U256::from(840u64).to_be_bytes::<32>().to_vec()),
+    );
+    storage.stub_sub_call_at(
+        STABLE_EUR,
+        alloy_primitives::Bytes::from(U256::from(978u64).to_be_bytes::<32>().to_vec()),
     );
     StorageHandle::enter(&mut storage, |handle| {
         if let Some(rate) = rate_1e18 {
@@ -253,13 +266,33 @@ fn settle_wallet_reverts_without_deployed_vault() {
         .unwrap();
         gem_api::set_state(storage, gem_id, GemState::Qualified).unwrap();
 
-        // settle_gem resolves the settlement stablecoin by staticcalling the
-        // VaultRouter (`referenceCurrencyVaultsCount` for the issuance currency).
-        // HashMapStorageProvider doesn't resolve sub-call targets, so the
-        // staticcall fails — proving the integration path is wired. Real vault
-        // interaction is covered by integration tests with a deployed VaultRouter.
+        // STABLE's isoCode (840) matches the gem's settlement currency, so the
+        // currency check passes and settle proceeds to the vault deposit. The
+        // VaultRouter is not stubbed, so that call fails — proving the deposit
+        // path is wired. Real vault interaction is covered by integration tests.
         let res = runtime::settle_gem(storage, ALICE, gem_id, STABLE);
         assert!(res.is_err());
+    });
+}
+
+#[test]
+fn settle_rejects_wrong_settlement_currency() {
+    let rate = U256::from(2u64) * one_e18();
+    with_storage(Some(rate), |storage| {
+        let gem_id = runtime::mint_gem(
+            storage,
+            ALICE,
+            GemTypes::Wallet,
+            U256::from(10u64) * one_e18(),
+            840,
+            840,
+        )
+        .unwrap();
+        gem_api::set_state(storage, gem_id, GemState::Qualified).unwrap();
+        // Paying a USD gem with a EUR (978) stablecoin must revert before any
+        // vault interaction.
+        let res = runtime::settle_gem(storage, ALICE, gem_id, STABLE_EUR);
+        assert!(err_msg(res).contains("settlement currency"));
     });
 }
 
