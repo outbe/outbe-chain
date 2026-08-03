@@ -15,10 +15,11 @@ use crate::hooks::{
 pub const MAX_ZERO_FEE_CONTRIBUTOR_BATCH_CALLDATA_BYTES: usize =
     4 + 4 * 32 + (32 + 256 * 4 * 32) + (32 + 24 * 32);
 
-/// Calldata dominates: transfers and hashing are not metered, so the rest is a
-/// bitmap word and the round counters.
+/// Storage ops inside the precompile are billed at warm revm rates: one
+/// transfer is two reads and two writes (~10.2k), so a full 256-leaf batch
+/// spends ~2.7M on transfers alone before the bitmap and round bookkeeping.
 pub const MAX_ZERO_FEE_CONTRIBUTOR_BATCH_GAS_LIMIT: u64 =
-    21_000 + 16 * MAX_ZERO_FEE_CONTRIBUTOR_BATCH_CALLDATA_BYTES as u64 + 500_000;
+    21_000 + 16 * MAX_ZERO_FEE_CONTRIBUTOR_BATCH_CALLDATA_BYTES as u64 + 3_500_000;
 
 /// Public txpool compatibility floor. The executor waives the actual debit
 /// only after stateful validator authorization.
