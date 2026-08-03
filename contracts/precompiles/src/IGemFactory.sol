@@ -2,7 +2,9 @@
 pragma solidity ^0.8.30;
 
 interface IGemFactory {
-    function settleGem(uint256 gemId) external;
+    /// @notice Settle a gem, paying its cost into the Reserve in `asset` (the
+    ///         settlement stablecoin supplied by the caller).
+    function settleGem(uint256 gemId, address asset) external;
     /// @notice Burn a settled gem and mint confidential Promis to the caller,
     ///         gated by off-chain proof of work. Authorized by the caller's Promis
     ///         modify key: `mac = HMAC(modifyKey, op-preimage)` where `opNonce`

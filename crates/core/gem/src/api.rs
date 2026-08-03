@@ -22,13 +22,13 @@ pub fn add_gem(storage: &StorageHandle<'_>, params: GemAddParams) -> Result<U256
         entry_price_minor: params.entry_price_minor,
         cost_amount_minor: params.cost_amount_minor,
         floor_price_minor: params.floor_price_minor,
-        call_rate: params.call_rate,
+        call_price_minor: params.call_price_minor,
         issuance_currency: params.issuance_currency,
         reference_currency: params.reference_currency,
         state: params.initial_state as u8,
         issued_at: params.issued_at,
         called_at: 0,
-        settlement_period: crate::constants::SETTLMENT_PERIOD_SECONDS,
+        settlement_period: crate::constants::SETTLEMENT_PERIOD_SECONDS,
     };
     gem.add_gem(&item)?;
     Ok(gem_id)

@@ -15,6 +15,8 @@ use crate::schema::{GemFactoryContract, GemPosition, GemTypes};
 const T_NOW: u64 = 1_700_000_000;
 const ALICE: Address = address!("0x1111111111111111111111111111111111111111");
 const BOB: Address = address!("0x2222222222222222222222222222222222222222");
+/// Mock settlement stablecoin passed to `settle_gem` in tests.
+const STABLE: Address = address!("0x00000000000000000000000000000000000000AA");
 
 /// A no-op authorization for mine paths that reject before reaching the (enclave)
 /// Promis mint (ownership/state/PoW failures).
@@ -256,7 +258,7 @@ fn settle_wallet_reverts_without_deployed_vault() {
         // HashMapStorageProvider doesn't resolve sub-call targets, so the
         // staticcall fails — proving the integration path is wired. Real vault
         // interaction is covered by integration tests with a deployed VaultRouter.
-        let res = runtime::settle_gem(storage, ALICE, gem_id);
+        let res = runtime::settle_gem(storage, ALICE, gem_id, STABLE);
         assert!(res.is_err());
     });
 }
@@ -275,7 +277,7 @@ fn settle_rejects_non_owner() {
         )
         .unwrap();
         gem_api::set_state(storage, gem_id, GemState::Qualified).unwrap();
-        let res = runtime::settle_gem(storage, BOB, gem_id);
+        let res = runtime::settle_gem(storage, BOB, gem_id, STABLE);
         assert!(err_msg(res).contains("not gem owner"));
     });
 }
@@ -294,7 +296,7 @@ fn settle_rejects_non_qualified_state() {
         )
         .unwrap();
         // WALLET is born Issued — settle should reject (must be Qualified).
-        let res = runtime::settle_gem(storage, ALICE, gem_id);
+        let res = runtime::settle_gem(storage, ALICE, gem_id, STABLE);
         assert!(err_msg(res).contains("invalid state"));
     });
 }
@@ -476,7 +478,7 @@ fn mint_merchant_gem_mints_issued_and_drains_capacity() {
         assert_eq!(item.entry_price_minor, rate); // max(coen, source_entry) = coen
         assert_eq!(item.cost_amount_minor, U256::from(20u64) * one_e18()); // entry * load
         assert_eq!(item.floor_price_minor, rate * U256::from(108u64) / U256::from(100u64));
-        assert_eq!(item.call_rate, rate * U256::from(228u64) / U256::from(100u64));
+        assert_eq!(item.call_price_minor, rate * U256::from(228u64) / U256::from(100u64));
 
         let factory = GemFactoryContract::new(storage.clone());
         let rec = factory.positions.get(id).unwrap().unwrap();

@@ -28,7 +28,7 @@ pub fn dispatch(
         use IGemFactory::IGemFactoryCalls::*;
         match call {
             settleGem(c) => mutate_void(c, caller, |sender, c| {
-                runtime::settle_gem(&storage, sender, c.gemId)
+                runtime::settle_gem(&storage, sender, c.gemId, c.asset)
             }),
             mineGemPromis(c) => mutate(c, caller, |sender, c| {
                 let auth = outbe_promisfactory::api::ModifyAuth {

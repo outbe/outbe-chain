@@ -18,8 +18,8 @@ pub const GEM_CALL_WINDOW_DAYS: u16 = 30;
 
 /// Breach-days within the window required to force-call a gem
 /// (coen VWAP above the Call Threshold on this many of the last window days).
-pub const GEM_CALL_THRESHOLD_DAYS: u16 = 21;
+pub const QUALIFICATION_PERIOD_DAYS: u16 = 21;
 
 /// Call Notice Period: seconds after `called_at` within which the holder must
 /// settle. Once elapsed the gem is forfeit-burned. 8 days.
-pub const SETTLMENT_PERIOD_SECONDS: u32 = 8 * 24 * 3600;
+pub const SETTLEMENT_PERIOD_SECONDS: u32 = 8 * 24 * 3600;

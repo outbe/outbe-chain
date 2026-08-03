@@ -8,7 +8,6 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::SCALE_1E18;
 
 use outbe_common::pow;
-use outbe_vaultrouter::api::IVaultRouter;
 
 
 use crate::constants::{
@@ -18,7 +17,7 @@ use crate::constants::{
 use crate::errors::GemFactoryError;
 use crate::events::{GemBurned, GemIssued, GemSettled};
 use crate::schema::{GemFactoryContract, GemPosition, GemTypes};
-use crate::sol_ext::{IIntexNFT1155, IVaultV2, IERC20};
+use crate::sol_ext::{IIntexNFT1155, IERC20};
 
 pub fn mint_gem(
     storage: &StorageHandle<'_>,
@@ -32,14 +31,14 @@ pub fn mint_gem(
         return Err(GemFactoryError::InvalidOwner.into());
     }
 
-    // TODO(multi-currency): only supports gems where issuance and reference
+    // TODO(multi-currency): only supports gems
     // currencies are the same. Cross-rate resolution (e.g. issuance=EUR with
     // reference=USD) needs a chained oracle lookup that's not wired yet
     outbe_oracle::api::check_reference_currency_with_storage(storage.clone(), reference_currency)?;
 
-    // Resolves both the issuance-currency registration check and the COEN/<iso>
-    // rate in a single oracle lookup.
-    let coen_rate = read_oracle_rate(storage, issuance_currency)?;
+    // Entry/floor/call are measured against the reference currency (the same
+    // COEN/<reference> rate the qualify/call scans compare against).
+    let coen_rate = read_oracle_rate(storage, reference_currency)?;
     let issued_at = storage.timestamp()?.to::<u64>();
     let (cost_amount, floor_price, initial_state) = compute_params(gem_type, gem_load, coen_rate)?;
     let entry_price = coen_rate;
@@ -52,7 +51,7 @@ pub fn mint_gem(
         entry_price_minor: entry_price,
         cost_amount_minor: cost_amount,
         floor_price_minor: floor_price,
-        call_rate: call_threshold,
+        call_price_minor: call_threshold,
         issuance_currency,
         reference_currency,
         initial_state,
@@ -193,7 +192,8 @@ pub fn mint_merchant_gem(
         .checked_sub(gem_load)
         .ok_or(GemFactoryError::InsufficientCapacity)?;
 
-    let coen_rate = read_oracle_rate(storage, record.issuance_currency)?;
+
+    let coen_rate = read_oracle_rate(storage, record.reference_currency)?;
     let entry_price = coen_rate.max(record.source_entry_price);
     let cost_amount = compute_cost(entry_price, gem_load, 100)?;
     let floor_price = floor_with_markup(entry_price)?.max(record.source_floor_price);
@@ -208,7 +208,7 @@ pub fn mint_merchant_gem(
             entry_price_minor: entry_price,
             cost_amount_minor: cost_amount,
             floor_price_minor: floor_price,
-            call_rate: call_threshold,
+            call_price_minor: call_threshold,
             issuance_currency: record.issuance_currency,
             reference_currency: record.reference_currency,
             initial_state: GemState::Issued,
@@ -242,7 +242,12 @@ pub fn mint_merchant_gem(
     Ok(gem_id)
 }
 
-pub fn settle_gem(storage: &StorageHandle<'_>, caller: Address, gem_id: U256) -> Result<()> {
+pub fn settle_gem(
+    storage: &StorageHandle<'_>,
+    caller: Address,
+    gem_id: U256,
+    asset: Address,
+) -> Result<()> {
     let item = gem_api::get_gem(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
     if item.owner != caller {
         return Err(GemFactoryError::NotGemOwner.into());
@@ -264,7 +269,10 @@ pub fn settle_gem(storage: &StorageHandle<'_>, caller: Address, gem_id: U256) ->
     gem_api::set_state(storage, gem_id, GemState::Settled)?;
 
     if !item.cost_amount_minor.is_zero() {
-        deposit_to_vault(storage, caller, item.cost_amount_minor, item.issuance_currency)?;
+        // The caller pays in `asset` (the settlement stablecoin they supply).
+        // TODO(multi-currency): when `asset` is not supplied, auto-resolve the
+        // settlement stablecoin from the gem's issuance currency
+        deposit_to_vault(storage, caller, item.cost_amount_minor, asset)?;
     }
 
     emit_event(
@@ -284,11 +292,8 @@ fn deposit_to_vault(
     storage: &StorageHandle<'_>,
     caller: Address,
     amount: U256,
-    issuance_currency: u16,
+    asset: Address,
 ) -> Result<()> {
-    // Pay in the stablecoin of the gem's issuance currency (Gem.md §3.2.5).
-    let asset = resolve_settlement_asset(storage, issuance_currency)?;
-
     let transfer = IERC20::transferFromCall {
         from: caller,
         to: GEM_FACTORY_ADDRESS,
@@ -314,41 +319,6 @@ fn deposit_to_vault(
 /// vault registered for that ISO code and read its underlying asset.
 ///
 // TODO(multi-currency): pick a vault deterministically instead of index 0
-fn resolve_settlement_asset(storage: &StorageHandle<'_>, issuance_currency: u16) -> Result<Address> {
-    let ret = storage.staticcall(
-        VAULT_ROUTER_ADDRESS,
-        IVaultRouter::referenceCurrencyVaultsCountCall {
-            isoCode: issuance_currency,
-        }
-        .abi_encode()
-        .into(),
-    )?;
-    let count = IVaultRouter::referenceCurrencyVaultsCountCall::abi_decode_returns(&ret)
-        .map_err(|_| GemFactoryError::InvalidAsset)?;
-    if count.is_zero() {
-        return Err(GemFactoryError::NoSettlementVault.into());
-    }
-
-    let ret = storage.staticcall(
-        VAULT_ROUTER_ADDRESS,
-        IVaultRouter::referenceCurrencyVaultAtCall {
-            isoCode: issuance_currency,
-            index: U256::ZERO,
-        }
-        .abi_encode()
-        .into(),
-    )?;
-    let vault = IVaultRouter::referenceCurrencyVaultAtCall::abi_decode_returns(&ret)
-        .map_err(|_| GemFactoryError::InvalidAsset)?;
-
-    let ret = storage.staticcall(vault, IVaultV2::assetCall {}.abi_encode().into())?;
-    let asset = IVaultV2::assetCall::abi_decode_returns(&ret)
-        .map_err(|_| GemFactoryError::InvalidAsset)?;
-    if asset.is_zero() {
-        return Err(GemFactoryError::InvalidAsset.into());
-    }
-    Ok(asset)
-}
 
 pub fn mine_gem_promis(
     storage: &StorageHandle<'_>,

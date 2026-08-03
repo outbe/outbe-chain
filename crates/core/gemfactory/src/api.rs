@@ -41,8 +41,13 @@ pub fn mint_merchant_gem(
     runtime::mint_merchant_gem(storage, position_id, owner, gem_load)
 }
 
-pub fn settle_gem(storage: &StorageHandle<'_>, caller: Address, gem_id: U256) -> Result<()> {
-    runtime::settle_gem(storage, caller, gem_id)
+pub fn settle_gem(
+    storage: &StorageHandle<'_>,
+    caller: Address,
+    gem_id: U256,
+    asset: Address,
+) -> Result<()> {
+    runtime::settle_gem(storage, caller, gem_id, asset)
 }
 
 pub fn mine_gem_promis(

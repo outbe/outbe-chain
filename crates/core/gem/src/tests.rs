@@ -27,7 +27,7 @@ fn sample_params(owner: Address) -> GemAddParams {
         entry_price_minor: U256::from(500_000_000_000_000_000u128),
         cost_amount_minor: U256::from(500_000_000_000_000_000u128),
         floor_price_minor: U256::from(540_000_000_000_000_000u128),
-        call_rate: U256::from(1_140_000_000_000_000_000u128),
+        call_price_minor: U256::from(1_140_000_000_000_000_000u128),
         issuance_currency: 840,
         reference_currency: 840,
         initial_state: GemState::Issued,
@@ -346,8 +346,8 @@ fn qualified_gem(storage: &StorageHandle) -> U256 {
 fn call_then_forfeit_lifecycle() {
     with_storage(|storage| {
         let gem_id = qualified_gem(storage);
-        let threshold = api::get_gem(storage, gem_id).unwrap().unwrap().call_rate;
-        let breach_days = usize::from(crate::constants::GEM_CALL_THRESHOLD_DAYS);
+        let threshold = api::get_gem(storage, gem_id).unwrap().unwrap().call_price_minor;
+        let breach_days = usize::from(crate::constants::QUALIFICATION_PERIOD_DAYS);
         let window = breach_window(T_NOW, threshold + U256::from(1u64), breach_days);
 
         let mut gem = GemContract::new(storage.clone());
@@ -368,9 +368,9 @@ fn call_then_forfeit_lifecycle() {
 fn call_skips_below_threshold() {
     with_storage(|storage| {
         let gem_id = qualified_gem(storage);
-        let threshold = api::get_gem(storage, gem_id).unwrap().unwrap().call_rate;
+        let threshold = api::get_gem(storage, gem_id).unwrap().unwrap().call_price_minor;
         // One below the threshold: not enough breach-days to force a call.
-        let breach_days = usize::from(crate::constants::GEM_CALL_THRESHOLD_DAYS) - 1;
+        let breach_days = usize::from(crate::constants::QUALIFICATION_PERIOD_DAYS) - 1;
         let window = breach_window(T_NOW, threshold + U256::from(1u64), breach_days);
 
         let mut gem = GemContract::new(storage.clone());

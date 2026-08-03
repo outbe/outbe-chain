@@ -19,7 +19,7 @@ pub struct GemAddParams {
     pub entry_price_minor: U256,
     pub cost_amount_minor: U256,
     pub floor_price_minor: U256,
-    pub call_rate: U256,
+    pub call_price_minor: U256,
     pub issuance_currency: u16,
     pub reference_currency: u16,
     pub initial_state: GemState,
@@ -64,7 +64,7 @@ pub struct GemData {
     /// Coen price level (Reference Currency) whose breach arms a Call Event.
     /// `entry_price_minor * (1 + call_rate)`; call rate is 128% for agent gems.
     #[attribute(order = 10)]
-    pub call_rate: U256,
+    pub call_price_minor: U256,
 
     /// Block timestamp when the gem was force-called; `0` until Called.
     #[attribute(order = 11, default = 0)]

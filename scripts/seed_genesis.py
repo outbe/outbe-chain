@@ -676,7 +676,7 @@ def seed_gems(storage: StorageBuilder, gems: list):
                      1 owner              2 gem_type           3 promis_load_minor
                      4 entry_price_minor  5 cost_amount_minor  6 floor_price_minor
                      7 issuance_currency  8 reference_currency 9 state
-                     10 issued_at         11 call_rate         12 called_at
+                     10 issued_at         11 call_price_minor   12 called_at
                      13 settlement_period
       slot 14:     owner_gem_counts Map<Address, u32>
       slot 15:     owner_gem_ids    Map<B256, U256>  (key = owner_index_key)
