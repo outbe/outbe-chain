@@ -361,8 +361,6 @@ impl<R: PayoutSubmissionRpcV1> SupervisorPayoutSubmitterV1<R> {
             if !dead {
                 return self.drive_to_finality(worldwide_day, start_index);
             }
-            // The pinned envelope can never land; the on-chain bitmap still
-            // holds whatever is unpaid, so fall through to discovery.
             self.open_submission = None;
         }
         let Some(work) = self.discover(candidate_days)? else {
@@ -552,9 +550,8 @@ impl<R: PayoutSubmissionRpcV1> SupervisorPayoutSubmitterV1<R> {
         Ok(())
     }
 
-    /// The nonce moved past this envelope and no receipt exists for its hash.
-    /// The receipt is checked after the nonce read, so a racing inclusion
-    /// keeps the record.
+    /// Receipt is checked after the nonce read, so a racing inclusion keeps
+    /// the record.
     fn nonce_was_bypassed(
         &self,
         record: &PayoutSubmissionRecordV1,
@@ -628,8 +625,6 @@ impl<R: PayoutSubmissionRpcV1> SupervisorPayoutSubmitterV1<R> {
         let generation = match self.journal.load(work.worldwide_day, work.start_index)? {
             None => 1,
             Some(prior) => {
-                // Replaceable: a finalized attempt, or a dead envelope whose
-                // nonce another sender transaction consumed.
                 let replaceable = prior.stage == PayoutSubmissionStageV1::Finalized
                     || (matches!(
                         prior.stage,

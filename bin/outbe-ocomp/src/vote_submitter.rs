@@ -303,8 +303,7 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
             VoteSubmissionStageV1::Prepared | VoteSubmissionStageV1::Submitted
         ) && self.nonce_was_bypassed(&record)?
         {
-            // Another sender transaction consumed the pinned nonce; rebuild
-            // the same vote in a fresh envelope.
+            // Same vote, fresh envelope: the pinned nonce was consumed elsewhere.
             return self.prepare(
                 preparer,
                 job_id,
@@ -474,9 +473,8 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
         Ok(())
     }
 
-    /// The nonce moved past this envelope and no receipt exists for its hash.
-    /// The receipt is checked after the nonce read, so a racing inclusion
-    /// keeps the record.
+    /// Receipt is checked after the nonce read, so a racing inclusion keeps
+    /// the record.
     fn nonce_was_bypassed(
         &self,
         record: &VoteSubmissionRecordV1,
