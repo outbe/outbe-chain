@@ -700,3 +700,193 @@ fn batch_without_a_certified_root_is_rejected() {
         );
     });
 }
+
+use crate::payout::test_support::encode_all;
+use crate::payout::{
+    contributor_list_root, decode_contributor_leaf, encode_contributor_leaf,
+    verify_contributor_leaf_range, CONTRIBUTOR_LEAF_BYTES,
+};
+use outbe_ocomp_protocol::common::EntityId36;
+use outbe_ocomp_protocol::profile::poc_schema_limits;
+use outbe_ocomp_protocol::result::ContributorActionV1;
+
+fn batch(
+    leaves: &[ContributorLeafData],
+    start: u32,
+    len: u32,
+) -> Vec<[u8; CONTRIBUTOR_LEAF_BYTES]> {
+    encode_all(&leaves[start as usize..(start + len) as usize])
+}
+
+#[test]
+fn leaf_encoding_round_trips() {
+    let leaf = contributor_leaf(41, 987_654);
+    assert_eq!(
+        decode_contributor_leaf(&encode_contributor_leaf(&leaf)),
+        leaf
+    );
+}
+
+#[test]
+fn list_root_matches_the_reference_root() {
+    let leaves = population(600);
+    assert_eq!(
+        contributor_list_root(600, encode_all(&leaves)).unwrap(),
+        contributor_root(&leaves)
+    );
+}
+
+#[test]
+fn canonical_leaf_encoding_matches_protocol_codec() {
+    let leaf = contributor_leaf(7, 12_345);
+    let action = ContributorActionV1 {
+        owner: leaf.owner,
+        source_tribute_id: EntityId36(leaf.source_tribute_id),
+        nominal_amount_minor: leaf.nominal,
+    };
+    let expected = action
+        .encode_canonical_record(&poc_schema_limits())
+        .expect("canonical record");
+    assert_eq!(
+        encode_contributor_leaf(&leaf).as_slice(),
+        expected.as_slice()
+    );
+}
+
+#[test]
+fn full_chunk_and_tail_verify() {
+    let leaves = population(600);
+    let root = contributor_root(&leaves);
+
+    for start in [0_u32, 256, 512] {
+        let len = 256.min(600 - start);
+        verify_contributor_leaf_range(
+            600,
+            start,
+            &batch(&leaves, start, len),
+            &contributor_range_proof(&leaves, start),
+            root,
+        )
+        .unwrap_or_else(|e| panic!("chunk at {start} must verify: {e:?}"));
+    }
+}
+
+#[test]
+fn small_tree_and_single_leaf_verify() {
+    for count in [1_u32, 5, 256] {
+        let leaves = population(count);
+        let root = contributor_root(&leaves);
+        verify_contributor_leaf_range(
+            count,
+            0,
+            &batch(&leaves, 0, count),
+            &contributor_range_proof(&leaves, 0),
+            root,
+        )
+        .unwrap_or_else(|e| panic!("population {count} must verify: {e:?}"));
+    }
+}
+
+#[test]
+fn misaligned_start_is_rejected() {
+    let leaves = population(600);
+    let root = contributor_root(&leaves);
+    let err = verify_contributor_leaf_range(
+        600,
+        128,
+        &batch(&leaves, 128, 256),
+        &contributor_range_proof(&leaves, 0),
+        root,
+    )
+    .unwrap_err();
+    assert!(format!("{err:?}").contains("chunk-aligned"), "{err:?}");
+}
+
+#[test]
+fn partial_non_tail_batch_is_rejected() {
+    let leaves = population(600);
+    let root = contributor_root(&leaves);
+    let err = verify_contributor_leaf_range(
+        600,
+        0,
+        &batch(&leaves, 0, 100),
+        &contributor_range_proof(&leaves, 0),
+        root,
+    )
+    .unwrap_err();
+    assert!(format!("{err:?}").contains("not the tail"), "{err:?}");
+}
+
+#[test]
+fn range_past_population_is_rejected() {
+    let leaves = population(600);
+    let root = contributor_root(&leaves);
+    let mut oversized = batch(&leaves, 512, 88);
+    oversized.push(encode_contributor_leaf(&contributor_leaf(600, 1)));
+    let err = verify_contributor_leaf_range(
+        600,
+        512,
+        &oversized,
+        &contributor_range_proof(&leaves, 512),
+        root,
+    )
+    .unwrap_err();
+    assert!(
+        format!("{err:?}").contains("past the contributor count"),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn wrong_sibling_count_is_rejected() {
+    let leaves = population(600);
+    let root = contributor_root(&leaves);
+    let mut proof = contributor_range_proof(&leaves, 0);
+    proof.pop();
+    let err =
+        verify_contributor_leaf_range(600, 0, &batch(&leaves, 0, 256), &proof, root).unwrap_err();
+    assert!(format!("{err:?}").contains("proof height"), "{err:?}");
+}
+
+#[test]
+fn tampered_leaf_is_rejected() {
+    let leaves = population(600);
+    let root = contributor_root(&leaves);
+    let mut tampered = batch(&leaves, 0, 256);
+    tampered[3][87] ^= 1;
+    let err = verify_contributor_leaf_range(
+        600,
+        0,
+        &tampered,
+        &contributor_range_proof(&leaves, 0),
+        root,
+    )
+    .unwrap_err();
+    assert!(format!("{err:?}").contains("does not match"), "{err:?}");
+}
+
+#[test]
+fn foreign_root_is_rejected() {
+    let leaves = population(600);
+    let other = contributor_root(&population(601));
+    let err = verify_contributor_leaf_range(
+        600,
+        0,
+        &batch(&leaves, 0, 256),
+        &contributor_range_proof(&leaves, 0),
+        other,
+    )
+    .unwrap_err();
+    assert!(format!("{err:?}").contains("does not match"), "{err:?}");
+}
+
+#[test]
+fn empty_population_and_empty_batch_are_rejected() {
+    let leaves = population(600);
+    let root = contributor_root(&leaves);
+    assert!(verify_contributor_leaf_range(0, 0, &batch(&leaves, 0, 1), &[], root).is_err());
+    assert!(
+        verify_contributor_leaf_range(600, 0, &[], &contributor_range_proof(&leaves, 0), root)
+            .is_err()
+    );
+}
