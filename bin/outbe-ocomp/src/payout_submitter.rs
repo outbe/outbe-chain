@@ -1,18 +1,11 @@
 //! Restart-safe public submission of certified contributor payout batches.
 //!
-//! The sender keeps no durable day bookkeeping of its own: candidate days are
-//! dates, and every question about them — is a round open, which leaves are
-//! unpaid, which job produced the day — is answered by finalized on-chain
-//! state, so the paid-leaf bitmap is the only progress that matters. Leaf data
-//! comes from the payout artifact written at finalization; a day is refused
-//! unless the locally recomputed root, count and total all match the certified
-//! values, so a validator that diverged from quorum (or lost its files) stays
-//! silent while the other quorum members pay.
-//!
-//! Payouts share the role-delegated EVM key with result votes, and the vote
-//! machinery pins its nonce at preparation and never re-prepares. One tick
-//! therefore drives its batch to finality before returning, and the caller
-//! must not run a tick while vote work is pending.
+//! Discovery is stateless: candidate days are dates, finalized chain state
+//! answers everything else, and the paid-leaf bitmap is the only progress.
+//! A day is refused unless the artifact's root, count and total match the
+//! certified values. Payouts share the role-delegated key with result votes,
+//! so the caller must not run a tick while vote work is pending, and one tick
+//! drives its batch to finality before yielding the nonce.
 
 use std::{
     fs::{self, File, OpenOptions},
@@ -290,7 +283,6 @@ impl PayoutTransactionPreparerV1 for LocalPayoutTransactionPreparerV1 {
     }
 }
 
-/// Certified authority for one day, as read back from finalized chain state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct CertifiedDayViewV1 {
     contributor_root: B256,
@@ -298,7 +290,6 @@ struct CertifiedDayViewV1 {
     eligible_nominal_total: U256,
 }
 
-/// One unpaid aligned batch with its calldata already proven and encoded.
 struct PayoutWorkV1 {
     worldwide_day: u32,
     start_index: u32,
@@ -306,9 +297,8 @@ struct PayoutWorkV1 {
     calldata: Vec<u8>,
 }
 
-/// Returns the first unpaid aligned batch under the paid-word view, or `None`
-/// when every leaf is paid. On-chain payments only land as whole aligned
-/// windows, so a word is either fully paid for its expected bits or untouched.
+/// On-chain payments land only as whole aligned windows, so a word is either
+/// fully paid for its expected bits or holds the first unpaid batch.
 fn first_unpaid_batch(words: &[U256], contributor_count: u32) -> Option<(u32, u32)> {
     let mut remaining = contributor_count;
     for (index, word) in words.iter().enumerate() {
@@ -349,14 +339,12 @@ impl<R: PayoutSubmissionRpcV1> SupervisorPayoutSubmitterV1<R> {
         })
     }
 
-    /// Whether a delivery survives from an earlier tick and still pins the
-    /// shared nonce.
+    /// Whether an earlier delivery still pins the shared nonce.
     pub const fn has_open_submission(&self) -> bool {
         self.open_submission.is_some()
     }
 
-    /// Advances payout work by at most one batch, driving it to finality
-    /// within the tick when the chain cooperates.
+    /// Advances payout work by at most one batch.
     pub fn tick<P: PayoutTransactionPreparerV1>(
         &mut self,
         preparer: &P,
@@ -604,8 +592,7 @@ impl<R: PayoutSubmissionRpcV1> SupervisorPayoutSubmitterV1<R> {
             .map_err(|error| PayoutSubmissionErrorV1::Preparation(error.to_string()))?;
         self.validate_prepared(&prepared, work, nonce, max_fee_per_gas)?;
         let generation = match self.journal.load(work.worldwide_day, work.start_index)? {
-            // Only a finalized predecessor may be replaced: a fresh attempt
-            // after a lost first-wins race or an orphaned nonce.
+            // Only a finalized predecessor may be replaced.
             Some(prior) if prior.stage == PayoutSubmissionStageV1::Finalized => {
                 next_generation(prior.generation)?
             }
@@ -781,10 +768,8 @@ impl<R: PayoutSubmissionRpcV1> SupervisorPayoutSubmitterV1<R> {
         Ok(None)
     }
 
-    /// Reads the day's artifact and verifies it against the certified values.
-    /// Any mismatch — missing file, wrong size, different root or total —
-    /// silently disqualifies this validator for the day: quorum guarantees at
-    /// least three others hold the matching data.
+    /// Any mismatch with the certified values — missing file, wrong size,
+    /// different root or total — disqualifies this validator for the day.
     fn load_verified_day(
         &self,
         worldwide_day: u32,
@@ -845,8 +830,6 @@ impl<R: PayoutSubmissionRpcV1> SupervisorPayoutSubmitterV1<R> {
     }
 }
 
-/// Builds `payContributorBatch` calldata for one aligned batch, proving it
-/// against the whole-population stream.
 fn build_batch_calldata(
     worldwide_day: u32,
     start_index: u32,
@@ -992,7 +975,6 @@ impl PayoutSubmissionJournalV1 {
         sync_directory(&self.root)
     }
 
-    /// Scans the journal for a delivery that has not reached finality.
     fn find_open_submission(&self) -> Result<Option<(u32, u32)>, PayoutSubmissionErrorV1> {
         let entries = fs::read_dir(&self.root)
             .map_err(|source| io_error("scan journal", &self.root, source))?;

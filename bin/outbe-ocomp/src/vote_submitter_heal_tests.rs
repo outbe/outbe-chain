@@ -130,7 +130,6 @@ fn result_digest() -> B256 {
     test_result(&limits).result_digest(&limits).unwrap()
 }
 
-/// Signs real restricted envelopes and records every nonce it was asked for.
 struct RecordingPreparer {
     signer: OutbeEvmSigner,
     limits: SchemaLimits,
@@ -190,7 +189,6 @@ impl VoteTransactionPreparerV1 for RecordingPreparer {
     }
 }
 
-/// Mock RPC whose account nonce can move underneath a journaled envelope.
 #[derive(Clone)]
 struct NonceRpc {
     state: Arc<Mutex<NonceRpcState>>,
@@ -336,7 +334,6 @@ fn a_bypassed_nonce_rebuilds_the_vote_from_the_prepared_stage() {
     );
     assert_eq!(last_nonce.load(Ordering::SeqCst), 7);
 
-    // Another transaction from the shared sender consumed nonce 7.
     rpc.bypass_nonce(8);
     assert_eq!(
         reconcile(&mut submitter, &preparer),
@@ -345,7 +342,6 @@ fn a_bypassed_nonce_rebuilds_the_vote_from_the_prepared_stage() {
     assert_eq!(calls.load(Ordering::SeqCst), 2);
     assert_eq!(last_nonce.load(Ordering::SeqCst), 8);
 
-    // The healed envelope proceeds normally.
     assert_eq!(
         reconcile(&mut submitter, &preparer),
         VoteSubmissionOutcomeV1::Submitted
@@ -390,8 +386,7 @@ fn an_included_receipt_wins_over_the_advanced_nonce() {
         VoteSubmissionOutcomeV1::Submitted
     );
 
-    // Our own envelope landed: the nonce advanced BECAUSE of it, and the
-    // receipt must keep the record instead of healing it.
+    // Our own envelope landed: the receipt must keep the record.
     let transaction_hash = {
         let limits = poc_schema_limits();
         let prepared = preparer

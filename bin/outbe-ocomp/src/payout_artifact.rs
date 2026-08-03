@@ -1,13 +1,7 @@
-//! Payout handoff artifact: the day's dense eligible-contributor list.
-//!
-//! Finalization already streams every eligible contributor record, so this
-//! module writes them to one flat file in the job directory. Days later, when
-//! the auction proceeds arrive, the payout sender reads the day back from that
-//! file instead of reopening the audit machinery over the result chunks.
-//!
-//! The file carries no header: its only consumer re-derives the merkle root
-//! from it and refuses the day unless root, count and total all match the
-//! certified on-chain values, so a torn or stale file fails closed.
+//! Payout handoff artifact: the day's dense eligible-contributor list, written
+//! at finalization so the payout sender can read the day back without
+//! reopening the audit machinery. The sender re-derives the merkle root from
+//! it, so a torn or stale file fails closed.
 
 use std::fs;
 use std::io::{BufWriter, Write};
@@ -21,7 +15,6 @@ use crate::lysis_result_catalog::{
     ExactLysisResultCatalogCursorV1, LysisResultCatalogError, LysisResultCatalogStepV1,
 };
 
-/// Fixed artifact name inside one job directory.
 pub const CONTRIBUTOR_PAYOUT_ARTIFACT_FILE: &str = "contributor-payout-v1.bin";
 
 const TEMP_SUFFIX: &str = ".tmp";
@@ -45,8 +38,7 @@ fn io_error(context: &'static str, source: std::io::Error) -> PayoutArtifactErro
     PayoutArtifactError::Io { context, source }
 }
 
-/// Append-only writer that installs the artifact atomically: records stream
-/// into a temp file, and the final name appears only on `commit`.
+/// Streams records into a temp file; the final name appears only on `commit`.
 struct PayoutArtifactWriter {
     file: BufWriter<fs::File>,
     temp: PathBuf,
