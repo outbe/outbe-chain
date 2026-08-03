@@ -28,7 +28,7 @@ use crate::internal::shell::Sh;
 
 use super::Localnet;
 
-/// One successful production startup-recovery span observed from a validator.
+/// One successful testnet startup-recovery span observed from a validator.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct CeStartupReplayObservationV1 {
     pub validator_index: u8,
@@ -408,7 +408,7 @@ impl Localnet {
 
     /// Forces one validator to reconstruct CE from preserved canonical Reth
     /// history and returns the exact successful replay span emitted by the
-    /// production startup gate.
+    /// testnet startup gate.
     #[cfg(feature = "ocomp-integration")]
     pub fn reconstruct_validator_ce_from_canonical_history(
         &mut self,
@@ -1024,7 +1024,7 @@ mod tests {
         for path in [
             "validator-0/node.log",
             "validator-0/enclave.log",
-            "validator-0/logs/54322345/reth.log",
+            "validator-0/logs/424242/reth.log",
         ] {
             assert!(is_runtime_log(Path::new(path)), "missed {path}");
         }
@@ -1124,7 +1124,7 @@ mod tests {
         let mut counts = [0, 0];
 
         assert!(accept_expected_update_fatal(
-            Path::new("validator-1/logs/54322345/reth.log"),
+            Path::new("validator-1/logs/424242/reth.log"),
             fatal,
             fragment,
             &mut counts,

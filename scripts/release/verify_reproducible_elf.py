@@ -24,6 +24,17 @@ EXPECTED_ARTIFACTS = (
     "outbe-ocomp",
 )
 FORBIDDEN_PATHS = (b"/workspace", b"/usr/local/cargo", b"/usr/local/rustup")
+# Deliberately independent of the manifest generator's copy: the second-builder
+# verifier must still reject a marker if generation was bypassed or regressed.
+PRODUCTION_TEE_FORBIDDEN_MARKERS = (
+    b"outbe-tee-enclave-mock: MOCK ENCLAVE",
+    b"outbe-dcap-capture-enclave",
+    b"OUTBE_QVL_TEST_TRACE",
+    b"OUTBE_QVL_BEGIN",
+    b"OUTBE_QVL_END",
+    b"explicit development seed",
+    b"development offer-secret fallback",
+)
 EXPECTED_CHECKSUM_PATHS = frozenset(
     [*(f"bin/{name}" for name in EXPECTED_ARTIFACTS)]
     + [
@@ -287,6 +298,12 @@ def verify_outputs(
                     differences.append(
                         f"{label}: forbidden absolute build path in {name}: {forbidden.decode()}"
                     )
+            if name == "outbe-tee-enclave":
+                for marker in PRODUCTION_TEE_FORBIDDEN_MARKERS:
+                    if marker in raw:
+                        differences.append(
+                            f"{label}: forbidden production TEE marker: {marker.decode('ascii')}"
+                        )
 
             record = (first_records if label == "builder-a" else second_records).get(name)
             if record is not None:
@@ -316,7 +333,8 @@ def verify_outputs(
             "source_date_epoch": first_manifest["build"]["source_date_epoch"],
             "target": first_manifest["build"]["target"],
             "profile": first_manifest["build"]["profile"],
-            "builder_image": first_manifest["build"]["builder"]["image"],
+            "builder_base_images": first_manifest["build"]["builder"]["base_images"],
+            "builder_recipe": first_manifest["build"]["builder"]["recipe"],
         }
         if check_git_identity:
             try:
@@ -355,6 +373,7 @@ def verify_outputs(
             "exact-output-checksum-matrix",
             "elf-magic",
             "forbidden-absolute-build-paths",
+            "forbidden-production-tee-markers",
             "pinned-verifier-environment",
             "outbe-chain-version-identity",
             "byte-for-byte-two-builder-comparison",

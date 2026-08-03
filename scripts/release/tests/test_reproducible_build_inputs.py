@@ -75,10 +75,10 @@ class ReproducibleBuildInputsTests(unittest.TestCase):
 
     def test_mutable_builder_is_rejected_by_host_loader(self) -> None:
         spec = json.loads(BUILD_SPEC_PATH.read_text(encoding="utf-8"))
-        spec["builder"]["image"] = "rust:latest"
+        spec["builder"]["base_images"][0] = "rust:latest"
         path = self.repo / "invalid-spec.json"
         path.write_text(json.dumps(spec), encoding="utf-8")
-        with self.assertRaisesRegex(ValueError, "pinned by sha256"):
+        with self.assertRaisesRegex(ValueError, "sha256-pinned"):
             build_inputs.load_and_validate_build_spec(path)
 
     def test_project_toolchain_alignment_is_required_by_host_loader(self) -> None:
@@ -90,6 +90,107 @@ class ReproducibleBuildInputsTests(unittest.TestCase):
             loaded["project_toolchain"],
             "release/project-toolchain-v1.json",
         )
+
+    def test_production_enclave_has_exact_native_dcap_feature(self) -> None:
+        loaded = build_inputs.load_and_validate_build_spec(BUILD_SPEC_PATH)
+        enclave = next(
+            artifact
+            for artifact in loaded["artifacts"]
+            if artifact["role"] == "tee-enclave"
+        )
+
+        self.assertEqual(enclave["features"], ["native-dcap"])
+
+    def test_feature_matrix_rejects_missing_extra_or_non_enclave_features(self) -> None:
+        base = json.loads(BUILD_SPEC_PATH.read_text(encoding="utf-8"))
+        enclave = next(
+            artifact for artifact in base["artifacts"] if artifact["role"] == "tee-enclave"
+        )
+        cases = (
+            (enclave, []),
+            (enclave, ["native-dcap", "dcap-fixture-capture"]),
+            (base["artifacts"][0], ["native-dcap"]),
+        )
+        for artifact, features in cases:
+            changed = json.loads(json.dumps(base))
+            target = next(
+                item for item in changed["artifacts"] if item["name"] == artifact["name"]
+            )
+            target["features"] = features
+            path = self.repo / f"invalid-{artifact['name']}-{len(features)}.json"
+            path.write_text(json.dumps(changed), encoding="utf-8")
+            with self.subTest(artifact=artifact["name"], features=features):
+                with self.assertRaisesRegex(ValueError, "feature"):
+                    build_inputs.load_and_validate_build_spec(path)
+
+    def test_enclave_dependency_graph_disables_outbe_tee_defaults(self) -> None:
+        metadata = json.loads(
+            subprocess.run(
+                [
+                    "cargo",
+                    "metadata",
+                    "--locked",
+                    "--offline",
+                    "--no-deps",
+                    "--format-version",
+                    "1",
+                ],
+                cwd=REPO_ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout
+        )
+        enclave = next(
+            package for package in metadata["packages"] if package["name"] == "outbe-tee-enclave"
+        )
+        tee = next(
+            dependency for dependency in enclave["dependencies"] if dependency["name"] == "outbe-tee"
+        )
+
+        self.assertIs(tee["uses_default_features"], False)
+
+    def test_artifact_build_plan_isolated_native_dcap_to_the_enclave_binary(self) -> None:
+        loaded = build_inputs.load_and_validate_build_spec(BUILD_SPEC_PATH)
+
+        plan = build_inputs.artifact_build_plan(loaded)
+
+        self.assertEqual(len(plan), 2)
+        common = [
+            "cargo",
+            "build",
+            "--locked",
+            "--release",
+            "--no-default-features",
+            "--target",
+            "x86_64-unknown-linux-gnu",
+        ]
+        without_features = [
+            artifact
+            for artifact in loaded["artifacts"]
+            if artifact["features"] == []
+        ]
+        expected_without_features = common.copy()
+        for artifact in without_features:
+            expected_without_features.extend(
+                ["--package", artifact["package"], "--bin", artifact["name"]]
+            )
+        self.assertEqual(plan[0], expected_without_features)
+        self.assertEqual(
+            plan[1],
+            common
+            + [
+                "--package",
+                "outbe-tee-enclave",
+                "--bin",
+                "outbe-tee-enclave",
+                "--features",
+                "native-dcap",
+            ],
+        )
+        for command in plan:
+            self.assertNotIn("--all-features", command)
+            self.assertNotIn("--all-targets", command)
 
 
 if __name__ == "__main__":

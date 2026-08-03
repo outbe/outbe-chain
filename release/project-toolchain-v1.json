@@ -1,8 +1,44 @@
 {
   "activation": "pending-container-delivery",
+  "apt_provenance": {
+    "deb_closure": {
+      "count": 100,
+      "format": "sha256sum-lines-sorted-by-filename-v1",
+      "sha256": "a96ae1783cc9e359b14bc7504ba6c395c55eadec51ddec9f3e73e42f5f292af6"
+    },
+    "source_files": [
+      {
+        "path": "/etc/apt/sources.list.d/gramine.list",
+        "sha256": "a691e8d0e86d99bd092427af188cad8f1b94960cd49157b1d7b5e5ecfac2aa34"
+      },
+      {
+        "path": "/etc/apt/sources.list.d/intel-sgx.list",
+        "sha256": "79d0b3b8b9c9cb1579b3828b49ba292e057164df22698f208fbec21aef37c4a3"
+      },
+      {
+        "path": "/etc/apt/sources.list.d/ubuntu.sources",
+        "sha256": "e32a60144cfc44172c9bfa7fab551793934d166ddc6dfc009c7174d08716d58d"
+      },
+      {
+        "path": "/usr/share/keyrings/gramine-keyring.gpg",
+        "sha256": "aef31307d8cce1e1b09f705c6e7ed8f7ec3b11ed92fa3b54f92f1574bbccdd5d"
+      },
+      {
+        "path": "/usr/share/keyrings/intel-sgx-deb.key",
+        "sha256": "92f96f84281031d889deb81060c44325f0481aee621ae47a15ae1df4431b4a23"
+      },
+      {
+        "path": "/usr/share/keyrings/ubuntu-archive-keyring.gpg",
+        "sha256": "80a36b0a6de2f69f49d2df75ef473ccde121e9e190b9ea01d20a4f63778d5c31"
+      }
+    ]
+  },
   "gramine": {
     "source_commit": "0d1a4b7607592dab4c8a720c962acee3de6b4ca8",
     "version": "1.9"
+  },
+  "host_only_packages": {
+    "libsgx-dcap-default-qpl": "1.26.100.1-noble1"
   },
   "platform": "linux/amd64",
   "rust": {

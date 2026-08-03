@@ -821,7 +821,7 @@ fn policy(
         tcb_info_schema_version: 3,
         qe_identity_schema_version: 2,
         minimum_tcb_evaluation_data_number: 1,
-        accepted_platform_tcb_statuses: PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+        accepted_platform_tcb_statuses: PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
         accepted_qe_tcb_status: QvlTcbStatusV1::UpToDate,
         minimum_lease: 3_600,
         maximum_lease: 604_800,
@@ -876,7 +876,7 @@ fn policy_and_schedule_roundtrip_with_height_selection() {
             .active_policy(1)
             .unwrap()
             .accepted_platform_tcb_statuses,
-        PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded
+        PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded
     );
     assert_eq!(
         schedule
@@ -891,7 +891,7 @@ fn policy_and_schedule_roundtrip_with_height_selection() {
     let mut unknown_platform_status_set = first.encode_canonical().unwrap();
     assert_eq!(
         unknown_platform_status_set[178],
-        PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded as u8
+        PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded as u8
     );
     unknown_platform_status_set[178] = 0xff;
     assert!(matches!(

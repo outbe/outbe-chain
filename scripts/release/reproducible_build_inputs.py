@@ -60,11 +60,53 @@ def load_and_validate_build_spec(
         for artifact in build_spec["artifacts"]
         if artifact.get("role") == "tee-enclave"
     )
-    if enclave.get("classification") != "production" or "mock" in enclave.get("features", []):
-        raise ValueError("production enclave must be a non-mock ELF subject")
+    if enclave.get("classification") != "production":
+        raise ValueError("production enclave must be a production ELF subject")
+    if enclave.get("features") != ["native-dcap"]:
+        raise ValueError(
+            "production enclave must enable exactly the native-dcap application feature"
+        )
+    for artifact in build_spec["artifacts"]:
+        expected_features = ["native-dcap"] if artifact is enclave else []
+        if artifact.get("features") != expected_features:
+            raise ValueError(
+                "production ELF feature matrix must isolate native-dcap to "
+                "outbe-tee-enclave"
+            )
     if repo_root is not None:
         project_toolchain_verifier.verify_repository(repo_root)
     return build_spec
+
+
+def artifact_build_plan(build_spec: dict[str, Any]) -> list[list[str]]:
+    """Return exact Cargo invocations grouped only by identical feature sets."""
+
+    target = build_spec["target"]
+    common = [
+        "cargo",
+        "build",
+        "--locked",
+        "--release",
+        "--no-default-features",
+        "--target",
+        target,
+    ]
+    cohorts: dict[tuple[str, ...], list[str]] = {}
+    for artifact in build_spec["artifacts"]:
+        features = tuple(artifact["features"])
+        command = cohorts.setdefault(features, common.copy())
+        command.extend(
+            ("--package", artifact["package"], "--bin", artifact["name"])
+        )
+    for features, command in cohorts.items():
+        if features:
+            command.extend(("--features", ",".join(features)))
+    return list(cohorts.values())
+
+
+def execute_artifact_build_plan(build_spec: dict[str, Any]) -> None:
+    for command in artifact_build_plan(build_spec):
+        subprocess.run(command, check=True)
 
 
 def _git(repo_root: Path, *args: str) -> str:
@@ -113,9 +155,6 @@ def resolved_values(
     identity: dict[str, str],
 ) -> list[str]:
     return [
-        build_spec["builder"]["image"],
-        build_spec["builder"]["debian_snapshot"],
-        " ".join(build_spec["builder"]["system_packages"]),
         " ".join(build_spec["environment"]["rustflags"]),
         build_spec["environment"]["cflags"],
         build_spec["environment"]["cxxflags"],
@@ -131,9 +170,15 @@ def main() -> None:
     parser.add_argument("--build-spec", required=True, type=Path)
     parser.add_argument("--repo-root", required=True, type=Path)
     parser.add_argument("--release-tag")
+    parser.add_argument("--execute-artifact-build-plan", action="store_true")
     args = parser.parse_args()
 
     build_spec = load_and_validate_build_spec(args.build_spec, repo_root=args.repo_root)
+    if args.execute_artifact_build_plan:
+        if args.release_tag is not None:
+            parser.error("--release-tag cannot be used with --execute-artifact-build-plan")
+        execute_artifact_build_plan(build_spec)
+        return
     identity = resolve_release_identity(args.repo_root, args.release_tag)
     for value in resolved_values(build_spec, identity):
         print(value)

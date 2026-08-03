@@ -7,12 +7,16 @@ import argparse
 import ctypes
 import hashlib
 import json
+import re
 import subprocess
+import time
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 NATIVE_MANIFEST = REPO_ROOT / "release/dcap-native-qvl-v1.json"
+PROJECT_PIN = REPO_ROOT / "release/project-toolchain-v1.json"
+RFC3339_SECONDS_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
 
 
 class _CollateralVersionParts(ctypes.Structure):
@@ -114,6 +118,7 @@ def canonical_text_component(value: bytes, label: str) -> bytes:
         raise ValueError(f"{label} is not UTF-8") from error
     return canonical
 
+
 def canonical_crl_component(value: bytes, minor_version: int, label: str) -> bytes:
     """Normalize PCS v3.0 hex CRLs and v3.1 raw CRLs to canonical DER."""
     if minor_version == 1:
@@ -129,7 +134,6 @@ def canonical_crl_component(value: bytes, minor_version: int, label: str) -> byt
         return bytes.fromhex(encoded.decode("ascii"))
     except (UnicodeDecodeError, ValueError) as error:
         raise ValueError(f"{label} is not canonical hexadecimal DER") from error
-
 
 
 def _bytes_at(pointer: int | None, size: int, label: str) -> bytes:
@@ -155,14 +159,83 @@ def _package_version(name: str) -> str:
     return completed.stdout.strip()
 
 
-def _library_provenance(path: Path, package: str) -> dict:
+def load_host_qpl_pin() -> dict[str, str]:
+    pin = json.loads(PROJECT_PIN.read_text(encoding="utf-8"))
+    packages = pin.get("host_only_packages")
+    if not isinstance(packages, dict) or set(packages) != {
+        "libsgx-dcap-default-qpl"
+    }:
+        raise ValueError("single project pin lacks the exact host-only QPL package")
+    version = packages["libsgx-dcap-default-qpl"]
+    if not isinstance(version, str) or not version or any(
+        character.isspace() for character in version
+    ):
+        raise ValueError("single project pin has an invalid host-only QPL version")
+    return {"package": "libsgx-dcap-default-qpl", "version": version}
+
+
+def _library_provenance(
+    path: Path, package: str, expected_version: str | None = None
+) -> dict:
     resolved = path.resolve(strict=True)
+    package_version = _package_version(package)
+    if expected_version is not None and package_version != expected_version:
+        raise ValueError(
+            f"host package {package} version {package_version!r} does not match "
+            f"the single project pin {expected_version!r}"
+        )
     return {
         "package": package,
-        "package_version": _package_version(package),
+        "package_version": package_version,
         "path": str(resolved),
         "size": resolved.stat().st_size,
         "sha256": sha256_file(resolved),
+    }
+
+
+def crl_provenance(path: Path, crl_type: str) -> dict:
+    if crl_type not in {"processor", "platform", "root"}:
+        raise ValueError(f"unsupported CRL type: {crl_type}")
+    completed = subprocess.run(
+        [
+            "openssl",
+            "crl",
+            "-inform",
+            "DER",
+            "-in",
+            str(path),
+            "-noout",
+            "-issuer",
+            "-lastupdate",
+            "-nextupdate",
+            "-dateopt",
+            "iso_8601",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    fields = {}
+    for line in completed.stdout.splitlines():
+        if "=" in line:
+            key, value = line.split("=", 1)
+            fields[key] = value.strip()
+    issuer = fields.get("issuer", "")
+    this_update = fields.get("lastUpdate", "").replace(" ", "T", 1)
+    next_update = fields.get("nextUpdate", "").replace(" ", "T", 1)
+    if (
+        not issuer
+        or not RFC3339_SECONDS_RE.fullmatch(this_update)
+        or not RFC3339_SECONDS_RE.fullmatch(next_update)
+    ):
+        raise ValueError("OpenSSL did not return canonical CRL issuer and validity dates")
+    return {
+        "issuer": issuer,
+        "next_update": next_update,
+        "sha256": sha256_file(path),
+        "size": path.stat().st_size,
+        "this_update": this_update,
+        "type": crl_type,
     }
 
 
@@ -264,6 +337,7 @@ def capture_collateral(quote: bytes) -> tuple[dict[str, bytes], dict]:
                 for name, value in raw_text.items()
             }
         )
+        qpl_pin = load_host_qpl_pin()
         provenance = {
             "collateral_abi": {
                 "major_version": collateral.version.parts.major_version,
@@ -272,16 +346,16 @@ def capture_collateral(quote: bytes) -> tuple[dict[str, bytes], dict]:
                 "normalized_minor_version": expected["collateral_minor_version"],
                 "allocation_size": collateral_size.value,
             },
-            "qvl": _library_provenance(
-                qvl_path, qvl_artifact["package"]
-            ),
+            "qvl": _library_provenance(qvl_path, qvl_artifact["package"]),
             "qpl": _library_provenance(
                 Path("/usr/lib/x86_64-linux-gnu/libdcap_quoteprov.so.1"),
-                "libsgx-dcap-default-qpl",
+                qpl_pin["package"],
+                qpl_pin["version"],
             ),
             "qcnl": _library_provenance(
                 Path("/usr/lib/x86_64-linux-gnu/libsgx_default_qcnl_wrapper.so.1"),
-                "libsgx-dcap-default-qpl",
+                qpl_pin["package"],
+                qpl_pin["version"],
             ),
         }
         return components, provenance
@@ -293,7 +367,8 @@ def capture_collateral(quote: bytes) -> tuple[dict[str, bytes], dict]:
             )
 
 
-def write_capture(quote_path: Path, output_dir: Path) -> None:
+def write_capture(quote_path: Path, output_dir: Path, expected_pck_ca: str) -> None:
+    capture_started_at = int(time.time())
     quote = quote_path.read_bytes()
     components, provenance = capture_collateral(quote)
     output_dir.mkdir(parents=True, exist_ok=False)
@@ -308,6 +383,17 @@ def write_capture(quote_path: Path, output_dir: Path) -> None:
         name: {"size": len(value), "sha256": sha256_bytes(value)}
         for name, value in sorted(components.items())
     }
+    provenance["crls"] = {
+        "pck": crl_provenance(output_dir / "pck.crl.der", expected_pck_ca),
+        "root": crl_provenance(output_dir / "root-ca.crl.der", "root"),
+    }
+    provenance["capture"] = {
+        "completed_at": int(time.time()),
+        "started_at": capture_started_at,
+    }
+    provenance["openssl_version"] = subprocess.run(
+        ["openssl", "version"], check=True, capture_output=True, text=True
+    ).stdout.strip()
     (output_dir / "capture-provenance.json").write_text(
         json.dumps(provenance, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -320,8 +406,11 @@ def main() -> int:
     )
     parser.add_argument("--quote", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument(
+        "--expected-pck-ca", required=True, choices=("processor", "platform")
+    )
     arguments = parser.parse_args()
-    write_capture(arguments.quote, arguments.output_dir)
+    write_capture(arguments.quote, arguments.output_dir, arguments.expected_pck_ca)
     return 0
 
 

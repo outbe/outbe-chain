@@ -114,7 +114,7 @@ outbe-emissionlimit = { path = "crates/system/emissionlimit" }
 outbe-cycle = { path = "crates/system/cycle" }
 outbe-accounting = { path = "crates/system/accounting" }
 outbe-zkproof = { path = "crates/system/zkproof" }
-outbe-tee = { path = "crates/system/tee" }
+outbe-tee = { path = "crates/system/tee", default-features = false }
 outbe-tee-enclave = { path = "bin/outbe-tee-enclave" }
 outbe-teeregistry = { path = "crates/system/teeregistry" }
 outbe-l2registry = { path = "crates/system/l2registry" }

@@ -29,21 +29,35 @@ use crate::transport::{serve, serve_tcp};
 /// an external production caller from selecting development behavior.
 #[derive(Clone, Copy, Debug)]
 pub struct RunOpts {
-    /// True for the dev mock binary (deterministic fake quote + stable sealing
-    /// key + gramine-direct semantics). Never set in the production binary.
+    /// True for the unattested dev mock binary (stable sealing key and
+    /// gramine-direct semantics). Never set in the production binary.
+    #[cfg(feature = "mock")]
     mock: bool,
 }
 
 impl RunOpts {
     /// Production binary: real Gramine attestation/sealing surface, no mock code.
     pub fn prod() -> Self {
-        Self { mock: false }
+        Self {
+            #[cfg(feature = "mock")]
+            mock: false,
+        }
     }
 
     /// Dev mock binary (only compiled under `--features mock`).
     #[cfg(feature = "mock")]
     pub fn mock() -> Self {
         Self { mock: true }
+    }
+
+    #[cfg(feature = "mock")]
+    fn is_mock(self) -> bool {
+        self.mock
+    }
+
+    #[cfg(not(feature = "mock"))]
+    fn is_mock(self) -> bool {
+        false
     }
 }
 
@@ -63,7 +77,8 @@ pub fn run(opts: RunOpts) -> i32 {
         return 2;
     };
 
-    if opts.mock {
+    #[cfg(feature = "mock")]
+    if opts.is_mock() {
         eprintln!(
             "outbe-tee-enclave-mock: MOCK ENCLAVE — deterministic quote + stable sealing key, \
              NOT confidential (dev/CI only, never production)"
@@ -95,21 +110,32 @@ pub fn run(opts: RunOpts) -> i32 {
         );
     }
 
-    let tribute_offer_secret = dev_bytes_from_env("TEE_DEV_OFFER_SECRET", [0x07; 32]);
+    #[cfg(feature = "mock")]
+    let tribute_offer_secret = if opts.is_mock() {
+        dev_bytes_from_env("TEE_DEV_OFFER_SECRET", [0x07; 32])
+    } else {
+        [0u8; 32]
+    };
+    #[cfg(not(feature = "mock"))]
+    let tribute_offer_secret = [0u8; 32];
     // Explicit, deterministic DKG identity seed (dev/CI): `--dkg-seed <hex32>` or
     // env `TEE_DEV_DKG_SEED`. The gramine-direct mock path uses this since it has
     // no EGETKEY and so cannot persist a self-generated identity across restart.
-    let cli_dkg_seed = arg_value(&args, "--dkg-seed")
-        .and_then(|hex| parse_hex32(&hex))
-        .or_else(|| {
+    let cli_dkg_seed = arg_value(&args, "--dkg-seed").and_then(|hex| parse_hex32(&hex));
+    #[cfg(feature = "mock")]
+    let cli_dkg_seed = if opts.is_mock() {
+        cli_dkg_seed.or_else(|| {
             std::env::var("TEE_DEV_DKG_SEED")
                 .ok()
                 .and_then(|h| parse_hex32(&h))
-        });
+        })
+    } else {
+        cli_dkg_seed
+    };
     // Production accepts only an enclave-generated, successfully sealed seed.
     // Explicit deterministic seeds and the offer-secret fallback are mock-only.
     let (identity_seed, identity_id) =
-        match resolve_enclave_identity_seed(&args, cli_dkg_seed, opts.mock) {
+        match resolve_enclave_identity_seed(&args, cli_dkg_seed, opts.is_mock()) {
             Ok(identity) => identity,
             Err(error) => {
                 eprintln!("outbe-tee-enclave: identity init failed: {error}");
@@ -161,9 +187,26 @@ pub fn run(opts: RunOpts) -> i32 {
         }
     }
 
-    let initialization = if opts.mock {
+    #[cfg(feature = "mock")]
+    let initialization = if opts.is_mock() {
         InitializationState::development()
     } else {
+        let Some(boot) = boot.clone() else {
+            eprintln!(
+                "outbe-tee-enclave: production mode requires --tee-dir for write-once node authorization"
+            );
+            return 2;
+        };
+        match InitializationState::production(boot, &keys) {
+            Ok(state) => state,
+            Err(error) => {
+                eprintln!("outbe-tee-enclave: initialization state failed: {error}");
+                return 1;
+            }
+        }
+    };
+    #[cfg(not(feature = "mock"))]
+    let initialization = {
         let Some(boot) = boot.clone() else {
             eprintln!(
                 "outbe-tee-enclave: production mode requires --tee-dir for write-once node authorization"
@@ -253,12 +296,15 @@ fn resolve_enclave_identity_seed(
     cli_seed: Option<[u8; 32]>,
     development: bool,
 ) -> Result<(Option<Zeroizing<[u8; 32]>>, &'static str), String> {
+    #[cfg(feature = "mock")]
     if development {
         return Ok(match cli_seed {
             Some(seed) => (Some(Zeroizing::new(seed)), "explicit development seed"),
             None => (None, "development offer-secret fallback"),
         });
     }
+    #[cfg(not(feature = "mock"))]
+    let _ = development;
     if cli_seed.is_some() {
         return Err("--dkg-seed and TEE_DEV_DKG_SEED are development-only".to_string());
     }
@@ -403,6 +449,7 @@ fn arg_value(args: &[String], flag: &str) -> Option<String> {
 
 /// Read a 32-byte hex value from `var` (optional `0x`); fall back to `default`
 /// on absence or malformed input.
+#[cfg(feature = "mock")]
 fn dev_bytes_from_env(var: &str, default: [u8; 32]) -> [u8; 32] {
     std::env::var(var)
         .ok()

@@ -139,9 +139,11 @@ sudo journalctl -u aesmd -n 200 --no-pager
   PCCS/PCS.
 - `AESM service returned error 12`: inspect both logs; on this host it was the
   downstream symptom of the unavailable PCCS.
-- Quote generated but policy rejects TCB status: update BIOS,
-  microcode/platform configuration or use another supported SGX host. Do not
-  weaken the `UpToDate | SWHardeningNeeded` policy.
+- Quote generated but policy rejects TCB status: confirm it is not one of the
+  accepted testnet Platform results (`UpToDate`, `SWHardeningNeeded`, or
+  `ConfigurationAndSWHardeningNeeded`), then update BIOS,
+  microcode/platform configuration or use another supported SGX host. QE still
+  must be exactly `UpToDate`.
 
 [intel-pcs-subscription]: https://api.portal.trustedservices.intel.com/products#product=liv-intel-software-guard-extensions-provisioning-certification-service
 [intel-sgx-install]: https://cc-enabling.trustedservices.intel.com/intel-sgx-sw-installation-guide-linux/02/installation_instructions/

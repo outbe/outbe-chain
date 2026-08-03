@@ -352,7 +352,7 @@ fn validator_binding_is_active_idempotent_and_expires_without_relay_authority() 
     let genesis_hash = B256::repeat_byte(0x11);
     let active_policy = policy(
         genesis_hash,
-        PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+        PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
     );
     let node_signer = OutbeEvmSigner::from_secret_bytes([0x61; 32]).unwrap();
     let enclave_signer = ed25519_dalek::SigningKey::from_bytes(&[0x62; 32]);
@@ -451,7 +451,7 @@ fn bootstrap_fixture_registers_exactly_thirty_two_validators_after_private_verif
     let genesis_hash = B256::repeat_byte(0x19);
     let active_policy = policy(
         genesis_hash,
-        PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+        PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
     );
     let fixtures = (1_u8..=32)
         .map(|index| {
@@ -523,7 +523,7 @@ fn proposer_validator_and_follower_apply_identical_full_state_verdict_and_gas() 
     let genesis_hash = B256::repeat_byte(0x18);
     let active_policy = policy(
         genesis_hash,
-        PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+        PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
     );
     let node_signer = OutbeEvmSigner::from_secret_bytes([0x68; 32]).unwrap();
     let enclave_signer = ed25519_dalek::SigningKey::from_bytes(&[0x69; 32]);
@@ -610,7 +610,7 @@ fn full_node_proposer_validator_and_follower_apply_identical_abi_state_and_gas()
     let genesis_hash = B256::repeat_byte(0x1A);
     let active_policy = policy(
         genesis_hash,
-        PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+        PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
     );
     let node_signer = k256::ecdsa::SigningKey::from_bytes((&[0x7A; 32]).into()).unwrap();
     let enclave_signer = ed25519_dalek::SigningKey::from_bytes(&[0x7B; 32]);
@@ -694,7 +694,7 @@ fn public_v1_registration_emits_onboarding_only_for_created_binding() {
     let genesis_hash = B256::repeat_byte(0x2A);
     let active_policy = policy(
         genesis_hash,
-        PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+        PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
     );
     let node_signer = OutbeEvmSigner::from_secret_bytes([0x31; 32]).unwrap();
     let enclave_signer = ed25519_dalek::SigningKey::from_bytes(&[0x32; 32]);
@@ -852,7 +852,7 @@ fn full_node_binding_is_idempotent_expires_and_rejects_validator_credentials() {
     let genesis_hash = B256::repeat_byte(0x19);
     let active_policy = policy(
         genesis_hash,
-        PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+        PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
     );
     let node_signer = k256::ecdsa::SigningKey::from_bytes((&[0x6A; 32]).into()).unwrap();
     let other_node = k256::ecdsa::SigningKey::from_bytes((&[0x6C; 32]).into()).unwrap();
@@ -1050,7 +1050,7 @@ fn full_node_renewal_and_replacement_follow_the_shared_lease_lifecycle() {
     let genesis_hash = B256::repeat_byte(0x25);
     let active_policy = policy(
         genesis_hash,
-        PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+        PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
     );
     let node_signer = k256::ecdsa::SigningKey::from_bytes((&[0x7B; 32]).into()).unwrap();
     let old_enclave = ed25519_dalek::SigningKey::from_bytes(&[0x7C; 32]);
@@ -1118,7 +1118,7 @@ fn validator_registration_rejects_pop_nonce_measurement_and_consensus_key_errors
     let genesis_hash = B256::repeat_byte(0x12);
     let active_policy = policy(
         genesis_hash,
-        PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+        PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
     );
     let node_signer = OutbeEvmSigner::from_secret_bytes([0x63; 32]).unwrap();
     let other_node = OutbeEvmSigner::from_secret_bytes([0x64; 32]).unwrap();
@@ -1249,7 +1249,7 @@ fn one_to_one_binding_and_strict_platform_policy_reject_conflicts() {
     let genesis_hash = B256::repeat_byte(0x13);
     let broad_policy = policy(
         genesis_hash,
-        PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+        PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
     );
     let first_node = OutbeEvmSigner::from_secret_bytes([0x67; 32]).unwrap();
     let second_node = OutbeEvmSigner::from_secret_bytes([0x68; 32]).unwrap();
@@ -1349,19 +1349,22 @@ fn one_to_one_binding_and_strict_platform_policy_reject_conflicts() {
         register_validator(storage.clone(), &strict_node, CONSENSUS_KEY);
         let mut registry = TeeRegistry::new(storage);
         registry.install_initial_policy_v1(&strict_policy).unwrap();
-        assert!(revert_message(
-            registry
-                .register_enclave_after_verifier_for_test(
-                    &strict_intent,
-                    &strict_node_signature,
-                    &strict_enclave_signature,
-                    PostVerifierDcapCapabilityV1::new(verdict(
-                        DcapPlatformTcbStatusV1::SWHardeningNeeded,
-                    )),
-                )
-                .unwrap_err()
-        )
-        .contains("stricter than active policy"));
+        for status in [
+            DcapPlatformTcbStatusV1::SWHardeningNeeded,
+            DcapPlatformTcbStatusV1::ConfigurationAndSWHardeningNeeded,
+        ] {
+            assert!(revert_message(
+                registry
+                    .register_enclave_after_verifier_for_test(
+                        &strict_intent,
+                        &strict_node_signature,
+                        &strict_enclave_signature,
+                        PostVerifierDcapCapabilityV1::new(verdict(status)),
+                    )
+                    .unwrap_err()
+            )
+            .contains("stricter than active policy"));
+        }
     });
 }
 
@@ -1370,7 +1373,7 @@ fn initial_policy_is_state_authority_and_is_write_once() {
     let genesis_hash = B256::repeat_byte(0x14);
     let first = policy(
         genesis_hash,
-        PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+        PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
     );
     let mut provider = storage(genesis_hash);
     let bootstrap_policy_hash = B256::repeat_byte(0xD1);
@@ -1414,7 +1417,7 @@ fn stages_exactly_one_predecessor_bound_successor_policy() {
     let genesis_hash = B256::repeat_byte(0x15);
     let current = policy(
         genesis_hash,
-        PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+        PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
     );
     let mut successor = current.clone();
     successor.policy_version = 2;
@@ -1486,7 +1489,7 @@ fn promotes_staged_successor_exactly_at_activation_height_and_replays_idempotent
     let genesis_hash = B256::repeat_byte(0x17);
     let current = policy(
         genesis_hash,
-        PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+        PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
     );
     let mut successor = current.clone();
     successor.policy_version = 2;
@@ -1528,7 +1531,7 @@ fn ambiguous_measurement_rules_reject_at_the_registry_boundary() {
     let genesis_hash = B256::repeat_byte(0x1a);
     let mut active_policy = policy(
         genesis_hash,
-        PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+        PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
     );
     let mut overlapping = active_policy.measurement_rules[0].clone();
     overlapping.minimum_isv_svn = 2;
@@ -1571,7 +1574,7 @@ fn existing_validator_transitions_to_staged_measurement_before_activation() {
     let genesis_hash = B256::repeat_byte(0x16);
     let current = policy(
         genesis_hash,
-        PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+        PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
     );
     let mut successor = current.clone();
     successor.policy_version = 2;
@@ -1649,7 +1652,7 @@ fn activation_preserves_old_lease_but_old_policy_cannot_register_renew_or_replac
     let genesis_hash = B256::repeat_byte(0x19);
     let current = policy(
         genesis_hash,
-        PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+        PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
     );
     let mut successor = current.clone();
     successor.policy_version = 2;
@@ -1761,7 +1764,7 @@ fn full_node_uses_the_same_bounded_transition_abi_and_staged_policy() {
     let genesis_hash = B256::repeat_byte(0x18);
     let current = policy(
         genesis_hash,
-        PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+        PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
     );
     let mut successor = current.clone();
     successor.policy_version = 2;
@@ -1832,7 +1835,7 @@ fn an_existing_lease_is_not_retroactively_filtered_by_the_policy_anchor() {
     let genesis_hash = B256::repeat_byte(0x26);
     let active_policy = policy(
         genesis_hash,
-        PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+        PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
     );
     let node_signer = OutbeEvmSigner::from_secret_bytes([0x7E; 32]).unwrap();
     let enclave_signer = ed25519_dalek::SigningKey::from_bytes(&[0x7F; 32]);
@@ -1884,7 +1887,7 @@ fn renewal_opens_in_final_third_accepts_expired_current_and_is_exactly_idempoten
     let genesis_hash = B256::repeat_byte(0x21);
     let active_policy = policy(
         genesis_hash,
-        PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+        PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
     );
     let node_signer = OutbeEvmSigner::from_secret_bytes([0x71; 32]).unwrap();
     let enclave_signer = ed25519_dalek::SigningKey::from_bytes(&[0x72; 32]);
@@ -2037,7 +2040,7 @@ fn renewal_rejects_collateral_margin_underflow_without_extending_state() {
     let genesis_hash = B256::repeat_byte(0x22);
     let active_policy = policy(
         genesis_hash,
-        PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+        PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
     );
     let node_signer = OutbeEvmSigner::from_secret_bytes([0x73; 32]).unwrap();
     let enclave_signer = ed25519_dalek::SigningKey::from_bytes(&[0x74; 32]);
@@ -2125,7 +2128,7 @@ fn candidate_generated_quote_intent_reaches_registry_replacement_exactly() {
     let genesis_hash = B256::repeat_byte(0x23);
     let active_policy = policy(
         genesis_hash,
-        PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+        PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
     );
     let node_signer = OutbeEvmSigner::from_secret_bytes([0x75; 32]).unwrap();
     let identity = ValidatorNodeHostIdentityV1 {
@@ -2352,7 +2355,7 @@ fn replacement_candidate_intent_reaches_registry_unchanged_and_never_reuses_cons
     let genesis_hash = B256::repeat_byte(0x23);
     let active_policy = policy(
         genesis_hash,
-        PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+        PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
     );
     let node_signer = OutbeEvmSigner::from_secret_bytes([0x75; 32]).unwrap();
     let old_enclave = ed25519_dalek::SigningKey::from_bytes(&[0x76; 32]);
@@ -2474,7 +2477,7 @@ fn renew_and_replace_abi_are_replica_deterministic_and_fit_normative_gas() {
     let genesis_hash = B256::repeat_byte(0x24);
     let active_policy = policy(
         genesis_hash,
-        PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+        PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
     );
     let node_signer = OutbeEvmSigner::from_secret_bytes([0x78; 32]).unwrap();
     let old_enclave = ed25519_dalek::SigningKey::from_bytes(&[0x79; 32]);

@@ -25,6 +25,7 @@ pub mod ocomp_capacity;
 pub mod ocomp_evidence;
 #[cfg(feature = "ocomp-integration")]
 pub mod ocomp_finality_fixture;
+pub mod release_dcap;
 pub mod release_sgx;
 pub mod verification_ledger;
 pub mod world;

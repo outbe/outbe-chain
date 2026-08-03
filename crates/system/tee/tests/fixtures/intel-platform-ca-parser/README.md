@@ -28,4 +28,6 @@ feed it to the public verifier.
 Outbe's private Platform/QE policy matrices start from the raw SGX result values
 in exact-pinned `libsgx-headers 2.29.100.1-noble1`, paired with QVL
 `1.26.100.1-noble1`; they are not derived from this certificate.
-The real Platform-CA native-QVL and end-to-end gate remains mandatory in I9.
+A real Platform node must still pass native QVL and end-to-end admission before
+it receives an offer key or joins consensus; this parser vector cannot satisfy
+that node-specific gate.

@@ -5,7 +5,8 @@ Date: 2026-08-01
 Status: `PASS` for I5. Validator and FullNode renewal/replacement are
 implemented and verified, but the V1 public route remains inactive until I9.
 This checkpoint does not claim accepted SGX hardware evidence. I9 still owns
-the fail-not-skip exact-release Processor/Platform acceptance gate.
+the fail-not-skip exact-release Processor acceptance gate; Platform evidence is
+verified when a real Platform node is admitted.
 
 ## Outcome
 

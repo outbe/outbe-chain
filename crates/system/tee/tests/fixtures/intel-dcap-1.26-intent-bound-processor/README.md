@@ -1,8 +1,9 @@
-# Intel DCAP 1.26 intent-bound Processor-CA negative
+# Intel DCAP 1.26 intent-bound Processor-CA fixture
 
 This is a real Intel SGX Processor-CA quote captured under Gramine SGX on
-2026-07-31. It is not synthetic evidence and it is not an accepted Outbe
-positive fixture.
+2026-07-31. It is not synthetic evidence. Under the testnet policy it is an
+accepted public-verifier fixture, but it is not exact-release evidence for a
+future testnet bundle.
 
 The enclave decoded `intent.bin`, derived
 `RegistrationIntentV1::report_data()`, generated `quote.bin`, and checked the
@@ -25,15 +26,15 @@ Capture facts:
 - QE supplemental evaluation reference: `0`;
 - earliest expiration across all collateral: `1787808799` (PCK CRL).
 
-The strict Outbe matrix accepts only `UpToDate` and
-`SWHardeningNeeded`. Therefore verification at the capture timestamp must
-return stable reject code `PlatformTcbRejected` (`0x0501`), and verification
-at `1787808799` must return `CollateralExpired` (`0x0305`). The status must not
-be reclassified to make this corpus positive.
+The testnet matrix accepts `UpToDate`, `SWHardeningNeeded`, and
+`ConfigurationAndSWHardeningNeeded` for Platform while QE remains exactly
+`UpToDate`. Verification at the capture timestamp therefore returns an
+accepted verdict preserving the exact Platform status and advisory IDs.
+Verification at `1787808799` returns `CollateralExpired` (`0x0305`).
 
-`strict-policy-reject-code-v1.hex` stores the two canonical big-endian reject
-bytes `05 01`. The public-verifier replay test compares the real result to these
-checked-in bytes rather than only comparing Rust enum values.
+`accepted-verdict-v1.hex` stores the canonical accepted verdict bytes. The
+public-verifier replay test compares the real result to these checked-in bytes
+rather than only comparing Rust enum values.
 
 `capture-provenance.json` records the exact QVL/QPL/QCNL package versions,
 artifact hashes, source collateral ABI, and normalized component hashes. No
@@ -41,6 +42,7 @@ PCS subscription key, PCCS credential, host verdict, or network response is
 stored in this fixture.
 
 `SHA256SUMS` covers every immutable fixture input and the expected stable result.
-This corpus closes the real intent-bound negative I1 case only. A fresh real
-intent-bound Processor-CA capture with an accepted status remains mandatory at
-the fail-not-skip I9 release gate, not for ordinary hardware-free I1 replay.
+This corpus closes the authentic intent-bound I1 replay case. I9 still captures
+one fresh quote for the exact signed release on the same SGX server and measures
+QVL/full-block execution there; this historical replay does not replace that
+fresh release run.

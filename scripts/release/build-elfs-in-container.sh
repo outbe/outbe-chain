@@ -15,7 +15,7 @@ for required in SOURCE_COMMIT SOURCE_DATE_EPOCH SOURCE_DESCRIBE RELEASE_TAG; do
   fi
 done
 
-mapfile -t package_rows < <(
+mapfile -t artifact_rows < <(
   python3 - "${SPEC}" <<'PY'
 import json
 import sys
@@ -28,21 +28,13 @@ for artifact in spec["artifacts"]:
 PY
 )
 
-cargo_args=(
-  build
-  --locked
-  --release
-  --target "${TARGET}"
-)
-for row in "${package_rows[@]}"; do
-  package="${row%%$'\t'*}"
-  cargo_args+=(--package "${package}")
-done
-
-cargo "${cargo_args[@]}"
+python3 scripts/release/reproducible_build_inputs.py \
+  --build-spec "${SPEC}" \
+  --repo-root /workspace \
+  --execute-artifact-build-plan
 
 install -d -m 0755 "${OUT}/bin" "${OUT}/metadata"
-for row in "${package_rows[@]}"; do
+for row in "${artifact_rows[@]}"; do
   name="${row#*$'\t'}"
   install -m 0755 "target/${TARGET}/${PROFILE}/${name}" "${OUT}/bin/${name}"
 done

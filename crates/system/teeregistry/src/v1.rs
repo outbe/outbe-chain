@@ -1103,10 +1103,17 @@ impl TeeRegistry<'_> {
                     .into(),
             ));
         }
+        let platform_requires_advisory_policy = matches!(
+            claims.platform_tcb_status,
+            status
+                if status == DcapPlatformTcbStatusV1::SWHardeningNeeded as u8
+                    || status
+                        == DcapPlatformTcbStatusV1::ConfigurationAndSWHardeningNeeded as u8
+        );
         if policy.attestation_mode == AttestationMode::DcapRequired
-            && claims.platform_tcb_status == DcapPlatformTcbStatusV1::SWHardeningNeeded as u8
+            && platform_requires_advisory_policy
             && policy.accepted_platform_tcb_statuses
-                != PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded
+                != PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded
         {
             return Err(PrecompileError::Revert(
                 "QVL Platform TCB status is stricter than active policy allows".into(),

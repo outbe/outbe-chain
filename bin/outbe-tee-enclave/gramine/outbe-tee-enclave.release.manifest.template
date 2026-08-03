@@ -20,9 +20,9 @@ sgx.debug = false
 sgx.edmm_enable = false
 sgx.max_threads = {{ max_threads }}
 
-# DCAP remains an explicit deferred testnet gate. This still provides genuine
-# SGX execution, local measurements and EGETKEY sealing, but not remote proof.
-sgx.remote_attestation = "none"
+# The production enclave exposes Gramine's DCAP quote interface. Consensus
+# verification remains enclave-resident and consumes canonical offline evidence.
+sgx.remote_attestation = "dcap"
 sgx.isvprodid = {{ isv_prod_id }}
 sgx.isvsvn = {{ isv_svn }}
 

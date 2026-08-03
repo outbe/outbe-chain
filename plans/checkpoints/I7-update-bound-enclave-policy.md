@@ -135,11 +135,11 @@ Final staged standards and spec re-reviews reported no remaining findings.
 
 ## Deferred, not waived
 
-I8 owns block-1 verification and bootstrap of the exact 32-validator committee,
-including full block gas/RLP/size closure through production-shaped fixtures.
-I9 owns exact-release `gramine-sgx` hardware evidence, fresh Processor and
-multi-package Platform collateral, empirical budgets and activation of the V1
-public route.
+I8 owns block-1 verification and bootstrap plus checked gas/RLP/size closure;
+its retained 32-participant vector is synthetic capacity evidence, not a
+required logical network launch. I9 owns exact-release `gramine-sgx` hardware
+evidence, fresh Processor collateral and same-SGX-server QVL/full-block
+budgets. A real Platform node supplies its own collateral at admission.
 
 I7 adds no physical-machine allowlist, PPID/controller policy, offer-key
 recovery, proof of deletion, DKG/BLS redesign, relay incentive or governance

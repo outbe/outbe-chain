@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
 #
-# Candidate build environment for the single Outbe Linux/SGX version pin.
-# Registry publication and release activation are intentionally separate.
+# Canonical local build environment for the single Outbe Linux/SGX version pin.
+# Registry publication of this toolchain remains a separate delivery concern.
 
 FROM rust:1.96.0-bookworm@sha256:64d9b7f60e3abb08d477cad983d0a3743acc53a19369ba4482510184c9c807e5 AS rust
 
@@ -16,8 +16,11 @@ ENV CARGO_HOME=/usr/local/cargo \
     PATH=/usr/local/cargo/bin:${PATH} \
     RUSTUP_HOME=/usr/local/rustup
 
+COPY release/project-toolchain-v1.json /opt/outbe/toolchain/project-toolchain-v1.json
+COPY scripts/release/verify_project_toolchain.py /opt/outbe/toolchain/verify_project_toolchain.py
+
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
+    apt-get install --download-only --reinstall -y --no-install-recommends \
       build-essential=12.10ubuntu1 \
       clang=1:18.0-59~exp2 \
       cmake=3.28.3-1build7 \
@@ -32,15 +35,21 @@ RUN apt-get update && \
       libssl-dev=3.0.13-0ubuntu3.12 \
       libstdc++6=14.2.0-4ubuntu2~24.04.1 \
       pkg-config=1.8.1-2build1 && \
+    python3 /opt/outbe/toolchain/verify_project_toolchain.py \
+      --verify-apt-inputs \
+      --pin /opt/outbe/toolchain/project-toolchain-v1.json \
+      --apt-root / \
+      --deb-dir /var/cache/apt/archives && \
+    apt-get install -y --no-install-recommends --no-download \
+      /var/cache/apt/archives/*.deb && \
+    dpkg --audit && \
     rm -rf /var/lib/apt/lists/*
 
 RUN rustup component add rustfmt clippy rust-src \
       --toolchain 1.96.0-x86_64-unknown-linux-gnu
 
 COPY release/dcap-native-qvl-v1.json /opt/outbe/toolchain/dcap-native-qvl-v1.json
-COPY release/project-toolchain-v1.json /opt/outbe/toolchain/project-toolchain-v1.json
 COPY scripts/release/verify_dcap_native_qvl.py /opt/outbe/toolchain/verify_dcap_native_qvl.py
-COPY scripts/release/verify_project_toolchain.py /opt/outbe/toolchain/verify_project_toolchain.py
 
 RUN test "$(rustc --version | cut -d' ' -f1-2)" = "rustc 1.96.0" && \
     test "$(dpkg-query -W -f='${Version}' gramine)" = "1.9" && \
@@ -50,3 +59,32 @@ RUN test "$(rustc --version | cut -d' ' -f1-2)" = "rustc 1.96.0" && \
 
 WORKDIR /workspace
 ENTRYPOINT []
+
+FROM toolchain AS builder
+
+COPY . .
+
+ARG SOURCE_COMMIT
+ARG SOURCE_DATE_EPOCH
+ARG SOURCE_DESCRIBE
+ARG RELEASE_TAG
+ARG REPRODUCIBLE_RUSTFLAGS
+ARG REPRODUCIBLE_CFLAGS
+ARG REPRODUCIBLE_CXXFLAGS
+
+ENV CFLAGS=${REPRODUCIBLE_CFLAGS} \
+    CXXFLAGS=${REPRODUCIBLE_CXXFLAGS} \
+    LANG=C \
+    LC_ALL=C \
+    RUSTFLAGS=${REPRODUCIBLE_RUSTFLAGS} \
+    SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH} \
+    TZ=UTC \
+    VERGEN_GIT_DESCRIBE=${SOURCE_DESCRIBE} \
+    VERGEN_GIT_DIRTY=false \
+    VERGEN_GIT_SHA=${SOURCE_COMMIT} \
+    ZERO_AR_DATE=1
+
+RUN scripts/release/build-elfs-in-container.sh
+
+FROM scratch AS artifacts
+COPY --from=builder /out/ /

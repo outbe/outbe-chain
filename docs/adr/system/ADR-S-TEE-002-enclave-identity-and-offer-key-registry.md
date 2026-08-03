@@ -157,8 +157,9 @@ tests, OST3 builders/consumers, EVM block-1 handlers, ValidatorSet readers and t
 authorized enclave delivery helper. There is no caller-authorized verification stub
 or alternate public registration dispatcher. Canonical evidence and signatures are
 validated before mutation; deterministic onboarding bytes share one implementation
-for production and private tests. Exact-release SGX execution and accepted Processor
-and multi-package Platform evidence remain fail-not-skip I9 release gates.
+for production and private tests. Exact-release SGX execution and accepted
+Processor evidence remain fail-not-skip I9 release gates; a real Platform node
+is checked fail-closed by the same verifier at admission.
 
 ## Consequences and rejected alternatives
 
@@ -170,9 +171,12 @@ byte-deterministic across nodes holding the same permanent OST3 key.
 
 ## Remaining release evidence
 
-- Freeze the exact Intel QVL and Gramine release graph and production feature set.
-- Capture fresh accepted Processor and registered multi-package Platform evidence.
-- Prove exact-release enclave and full-block timing on the minimum supported host.
-- Complete real validator, FullNode and dense 32-validator DcapRequired E2E.
+- Freeze the exact Intel QVL and Gramine release graph and testnet feature set.
+- Capture fresh accepted Processor release evidence; retain a real Platform
+  node's accepted evidence when it joins rather than fabricating a release row.
+- Prove exact-release QVL and maximum reachable full-block timing on the same
+  SGX server.
+- Complete reachable real Validator and FullNode `DcapRequired` paths; no
+  32-validator network is required.
 - Close the final requirement, forbidden-path and signed-artifact audit without
   treating development or synthetic vectors as hardware evidence.

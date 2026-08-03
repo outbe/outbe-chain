@@ -2,9 +2,11 @@
 
 Date: 2026-07-31
 
-Status: `PASS` for I1. This checkpoint does not claim an accepted hardware
-verdict, production activation, Docker delivery or real registered
-multi-package Platform-CA coverage; those remain fail-not-skip I9 gates.
+Status: `PASS` for I1. Policy amended 2026-08-03: the real intent-bound fixture
+is accepted by the explicit testnet warning-status matrix. This checkpoint
+still does not claim exact-release freshness, testnet activation or Docker
+delivery; those remain fail-not-skip I9 gates. Real Platform-CA coverage is
+obtained when such a node joins.
 
 ## Outcome
 
@@ -12,9 +14,9 @@ The canonical public `verify_dcap_evidence` path replays a real
 Processor-CA quote and caller-supplied collateral through exact-pinned Intel
 QVL at an explicit historical consensus timestamp. Cryptography succeeds and
 the authentic `ConfigurationAndSWHardeningNeeded` Platform result reaches the
-strict policy, which returns stable `PlatformTcbRejected` bytes `05 01`.
-Policy was not weakened and no test seam can turn that corpus into a positive
-public-verifier result.
+testnet policy and returns a stable accepted verdict with its authenticated
+advisory IDs. QE remains exactly `UpToDate`; no test seam fabricates the
+result.
 
 The same hardware-free replay is now a mandatory ordinary x86_64 CI job. It
 does not install QPL/PCCS, does not need SGX hardware and performs no live
@@ -30,11 +32,11 @@ all replay commands themselves use `--offline`.
 | Platform grammar and exact SGX result ABI are pinned without synthetic hardware claims | Intel v1.26 `PlatformPEM`; independent Rust raw literals; nine C `_Static_assert`s against digest-pinned `sgx_qve_header.h` | `PASS` |
 | Synthetic statuses cannot produce a public-verifier positive | Status constructors remain private pure tests; no fake QVL/runtime injection or production-selectable fake feature exists | `PASS` |
 | Trailing and non-canonical evidence rejects | Public integration tests cover outer/declared trailing bytes, PEM/JSON canonicality, empty components and policy canonicality | `PASS` |
-| Time and strict Platform/QE matrices pass | Signed-document issue/expiration tests, native collateral window tests, Platform allowlist `UpToDate | SWHardeningNeeded`, QE only `UpToDate` | `PASS` |
+| Time and strict Platform/QE matrices pass | Signed-document issue/expiration tests, native collateral window tests, Platform allowlist `UpToDate | SWHardeningNeeded | ConfigurationAndSWHardeningNeeded`, QE only `UpToDate` | `PASS` |
 | Deterministic capacity and gas behavior is bounded before cryptographic work | cap-minus-one/cap/cap-plus-one, allocation ordering, overflow checks and `consensus_qvl_precharge_matches_the_normative_formula_exactly` | `PASS` |
 | Consensus is independent of environment, filesystem, network, wall clock and native error strings | Public API accepts only evidence, policy and timestamp; Gramine syscall harness; stable owned reject codes | `PASS` |
 | Host verdict is absent and tampering rejects | Native wrapper returns only parsed QVL data; real quote tamper and intent-rebind tests reject | `PASS` |
-| Fixture verdict bytes are stable | `strict-policy-reject-code-v1.hex` SHA-256 `46698a793e5cae7c0a6da3cf4361e810b4155a1e173cbac9993576b2c9ed891e`; public byte comparison | `PASS` |
+| Fixture verdict bytes are stable | `accepted-verdict-v1.hex`; public byte comparison and fixture `SHA256SUMS` | `PASS` |
 | Native versions, artifact/header digests and missing/mismatch behavior fail closed | `release/project-toolchain-v1.json`; `release/dcap-native-qvl-v1.json`; verifier behavioral tests; Rust build contract | `PASS` |
 | No second verifier or live collateral fetch enters consensus | Native-QVL dependency/build audit; QPL/PCCS exists only in the separate host capture tool | `PASS` |
 
@@ -92,19 +94,19 @@ inside the verifier boundary.
 
 ## Deferred, not waived
 
-I9 still requires all of the following to fail rather than skip:
+The remaining I9 release and testnet-admission boundaries fail rather than
+skip:
 
 - a fresh accepted Processor-CA capture bound to the exact release
   enclave/policy and a one-use nonzero `binding_id`;
-- a real accepted Intel-rooted Platform-CA capture from registered
-  multi-package SGX hardware;
-- real accepted validator, full-node and 32-validator block-1
-  `DcapRequired` execution;
-- fresh actual Processor, Platform and root CRLs recorded with issuer/type,
-  validity, byte size and SHA-256 and checked against the caps; the benchmark
-  uses the largest actual matching PCS bundle, not a fabricated "large" CRL;
-- empirical exact-release `gramine-sgx` valid, invalid-early, invalid-late and
-  dense 32-validator benchmarks on the published minimum supported x86_64
-  validator profile, including the full-block consensus timing budget;
-- exact Docker delivery and production activation with only
+- real accepted Validator and FullNode `DcapRequired` execution;
+- a real Platform node, when present, remaining keyless until its own
+  Intel-rooted Platform-CA capture passes the same public verifier;
+- fresh actual Processor and root CRLs recorded with issuer/type, validity,
+  byte size and SHA-256 and checked against the caps; the benchmark uses the
+  largest actual matching PCS bundle, not a fabricated "large" CRL;
+- empirical exact-release `gramine-sgx` valid, invalid-early and invalid-late
+  QVL timing plus the maximum reachable full-block consensus timing budget on
+  the same SGX server; no 32-validator network is required;
+- exact Docker delivery and testnet activation with only
   `outbe-tee-enclave` plus feature `native-dcap`.

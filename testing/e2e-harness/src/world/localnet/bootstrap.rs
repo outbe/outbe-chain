@@ -11,6 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use std::{fs::Permissions, os::unix::fs::PermissionsExt as _};
 
 use eyre::{bail, eyre, Result, WrapErr};
+use outbe_primitives::chain::DEVNET_CHAIN_ID;
 use serde_json::json;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
@@ -25,7 +26,7 @@ const VALIDATOR_BALANCE_HEX: &str = "0x21E19E0C9BAB2400000";
 const DEV_FELONY_THRESHOLD: u64 = 30;
 const PROPOSER_FELONY_SLOT: u64 = 1;
 const VOTER_FELONY_SLOT: u64 = 12;
-/// A lifecycle E2E may opt into a short delay; production seed defaults remain
+/// A lifecycle E2E may opt into a short delay; testnet seed defaults remain
 /// untouched. The value is supplied through `TESTNET_UNBONDING_PERIOD_SECS`.
 const STAKING_SUFFIX: &str = "ee02";
 const OCOMP_FINAL_FIXTURE_ROOT: &str = "testing/e2e-harness/fixtures/ocomp-final-v1";
@@ -161,7 +162,7 @@ impl Localnet {
 
     /// Keep a debug-only logical-clock E2E internally consistent by shifting the
     /// genesis header by the same signed number of seconds passed to every node.
-    /// Without this, block 1 is correctly rejected by the production max-drift
+    /// Without this, block 1 is correctly rejected by the testnet max-drift
     /// validator before a day-boundary scenario can exercise ZeroFee.
     pub(crate) fn shift_genesis_timestamp(&self, offset_secs: i64) -> Result<()> {
         let path = self.cfg.dir.join("genesis.json");
@@ -261,7 +262,7 @@ impl Localnet {
         Ok(())
     }
 
-    /// Write the genesis skeleton: static chain config (chain id 54322345, epoch /
+    /// Write the devnet genesis skeleton: static chain config (chain id 424242, epoch /
     /// DKG params from `tuning`) plus a pre-funded `alloc` of each validator
     /// address (`bootstrap-testnet.sh:133-203`).
     fn write_genesis(&self, tuning: &[(&str, String)]) -> Result<()> {
@@ -298,7 +299,7 @@ impl Localnet {
 
         let mut genesis = json!({
             "config": {
-                "chainId": 54_322_345,
+                "chainId": DEVNET_CHAIN_ID,
                 "homesteadBlock": 0,
                 "eip150Block": 0,
                 "eip155Block": 0,
@@ -331,7 +332,7 @@ impl Localnet {
         });
         // Four real enclaves intentionally share one SGX host in this lane.
         // EPC scheduling can make one validator's otherwise ~100-200 ms offer
-        // re-execution take just over five seconds. The production defaults
+        // re-execution take just over five seconds. The testnet defaults
         // assume one enclave per validator host; widen only this co-located
         // hardware test network so a local resource stall does not cancel the
         // execution-read budget before the deterministic retry completes.

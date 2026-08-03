@@ -13,8 +13,8 @@ use serde::Deserialize;
 const QUOTE: &[u8] = include_bytes!("fixtures/intel-dcap-1.26/sgx-processor-quote-v3.bin");
 const COLLATERAL_WRAPPER: &str =
     include_str!("fixtures/intel-dcap-1.26/sgx-processor-collateral-wrapper.json");
-const INTENT_BOUND_NEGATIVE_CAPTURE_TIME: u64 = 1_785_491_440;
-const INTENT_BOUND_NEGATIVE_COLLATERAL_EXPIRES_AT: u64 = 1_787_808_799;
+const INTENT_BOUND_PROCESSOR_CAPTURE_TIME: u64 = 1_785_491_440;
+const INTENT_BOUND_PROCESSOR_COLLATERAL_EXPIRES_AT: u64 = 1_787_808_799;
 const PEM_CERTIFICATE_BEGIN: &[u8] = b"-----BEGIN CERTIFICATE-----";
 
 #[derive(Deserialize)]
@@ -66,7 +66,7 @@ fn policy() -> TeePolicyV1 {
         tcb_info_schema_version: 3,
         qe_identity_schema_version: 2,
         minimum_tcb_evaluation_data_number: 1,
-        accepted_platform_tcb_statuses: PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+        accepted_platform_tcb_statuses: PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
         accepted_qe_tcb_status: QvlTcbStatusV1::UpToDate,
         minimum_lease: 3_600,
         maximum_lease: 604_800,
@@ -167,47 +167,63 @@ fn evidence_with_synthetic_intent_binding(policy: &TeePolicyV1) -> DcapEvidenceV
     evidence
 }
 
-fn intent_bound_negative_capture() -> (TeePolicyV1, DcapEvidenceV1) {
+fn intent_bound_processor_capture() -> (TeePolicyV1, DcapEvidenceV1) {
     let policy = TeePolicyV1::decode_canonical(include_bytes!(
-        "fixtures/intel-dcap-1.26-intent-bound-processor-negative/policy.bin"
+        "fixtures/intel-dcap-1.26-intent-bound-processor/policy.bin"
     ))
     .unwrap();
     let intent = RegistrationIntentV1::decode_canonical(include_bytes!(
-        "fixtures/intel-dcap-1.26-intent-bound-processor-negative/intent.bin"
+        "fixtures/intel-dcap-1.26-intent-bound-processor/intent.bin"
     ))
     .unwrap();
     let components = [
         (
             DcapCollateralKind::PckCertificateChain,
-            include_bytes!("fixtures/intel-dcap-1.26-intent-bound-processor-negative/pck-certificate-chain.pem0").as_slice(),
+            include_bytes!(
+                "fixtures/intel-dcap-1.26-intent-bound-processor/pck-certificate-chain.pem0"
+            )
+            .as_slice(),
         ),
         (
             DcapCollateralKind::PckCrl,
-            include_bytes!("fixtures/intel-dcap-1.26-intent-bound-processor-negative/pck.crl.der").as_slice(),
+            include_bytes!("fixtures/intel-dcap-1.26-intent-bound-processor/pck.crl.der")
+                .as_slice(),
         ),
         (
             DcapCollateralKind::PckCrlIssuerChain,
-            include_bytes!("fixtures/intel-dcap-1.26-intent-bound-processor-negative/pck-crl-issuer-chain.pem").as_slice(),
+            include_bytes!(
+                "fixtures/intel-dcap-1.26-intent-bound-processor/pck-crl-issuer-chain.pem"
+            )
+            .as_slice(),
         ),
         (
             DcapCollateralKind::RootCaCrl,
-            include_bytes!("fixtures/intel-dcap-1.26-intent-bound-processor-negative/root-ca.crl.der").as_slice(),
+            include_bytes!("fixtures/intel-dcap-1.26-intent-bound-processor/root-ca.crl.der")
+                .as_slice(),
         ),
         (
             DcapCollateralKind::TcbInfo,
-            include_bytes!("fixtures/intel-dcap-1.26-intent-bound-processor-negative/tcb-info.json").as_slice(),
+            include_bytes!("fixtures/intel-dcap-1.26-intent-bound-processor/tcb-info.json")
+                .as_slice(),
         ),
         (
             DcapCollateralKind::TcbInfoIssuerChain,
-            include_bytes!("fixtures/intel-dcap-1.26-intent-bound-processor-negative/tcb-info-issuer-chain.pem").as_slice(),
+            include_bytes!(
+                "fixtures/intel-dcap-1.26-intent-bound-processor/tcb-info-issuer-chain.pem"
+            )
+            .as_slice(),
         ),
         (
             DcapCollateralKind::QeIdentity,
-            include_bytes!("fixtures/intel-dcap-1.26-intent-bound-processor-negative/qe-identity.json").as_slice(),
+            include_bytes!("fixtures/intel-dcap-1.26-intent-bound-processor/qe-identity.json")
+                .as_slice(),
         ),
         (
             DcapCollateralKind::QeIdentityIssuerChain,
-            include_bytes!("fixtures/intel-dcap-1.26-intent-bound-processor-negative/qe-identity-issuer-chain.pem").as_slice(),
+            include_bytes!(
+                "fixtures/intel-dcap-1.26-intent-bound-processor/qe-identity-issuer-chain.pem"
+            )
+            .as_slice(),
         ),
     ];
 
@@ -215,10 +231,8 @@ fn intent_bound_negative_capture() -> (TeePolicyV1, DcapEvidenceV1) {
         policy,
         DcapEvidenceV1 {
             intent,
-            quote: include_bytes!(
-                "fixtures/intel-dcap-1.26-intent-bound-processor-negative/quote.bin"
-            )
-            .to_vec(),
+            quote: include_bytes!("fixtures/intel-dcap-1.26-intent-bound-processor/quote.bin")
+                .to_vec(),
             components: components
                 .into_iter()
                 .map(|(kind, bytes)| DcapCollateralComponentV1 {
@@ -231,30 +245,29 @@ fn intent_bound_negative_capture() -> (TeePolicyV1, DcapEvidenceV1) {
 }
 
 #[test]
-fn intent_bound_real_processor_quote_reaches_strict_platform_status_policy() {
-    let (policy, evidence) = intent_bound_negative_capture();
+fn intent_bound_real_processor_quote_passes_testnet_platform_status_policy() {
+    let (policy, evidence) = intent_bound_processor_capture();
 
+    let verdict = verify_dcap_evidence(&evidence, &policy, INTENT_BOUND_PROCESSOR_CAPTURE_TIME)
+        .expect("ConfigurationAndSWHardeningNeeded is accepted by testnet policy");
     assert_eq!(
-        verify_dcap_evidence(&evidence, &policy, INTENT_BOUND_NEGATIVE_CAPTURE_TIME),
-        Err(DcapRejectCodeV1::PlatformTcbRejected)
+        verdict.platform_tcb_status,
+        outbe_tee::dcap_protocol::DcapPlatformTcbStatusV1::ConfigurationAndSWHardeningNeeded
     );
 }
 
 #[test]
-fn intent_bound_real_processor_reject_code_is_byte_stable() {
-    let (policy, evidence) = intent_bound_negative_capture();
-    let reject =
-        verify_dcap_evidence(&evidence, &policy, INTENT_BOUND_NEGATIVE_CAPTURE_TIME).unwrap_err();
+fn intent_bound_real_processor_verdict_is_byte_stable() {
+    let (policy, evidence) = intent_bound_processor_capture();
+    let verdict =
+        verify_dcap_evidence(&evidence, &policy, INTENT_BOUND_PROCESSOR_CAPTURE_TIME).unwrap();
     let expected = hex::decode(
-        include_str!(
-        "fixtures/intel-dcap-1.26-intent-bound-processor-negative/strict-policy-reject-code-v1.hex"
-    )
-        .trim(),
+        include_str!("fixtures/intel-dcap-1.26-intent-bound-processor/accepted-verdict-v1.hex")
+            .trim(),
     )
     .unwrap();
-    let actual = reject.code().to_be_bytes();
 
-    assert_eq!(actual.as_slice(), expected.as_slice());
+    assert_eq!(verdict.encode_canonical().unwrap(), expected);
 }
 
 #[test]
@@ -308,21 +321,23 @@ fn timestamp_outside_the_native_qvl_range_rejects_before_quote_verification() {
 
 #[test]
 fn intent_bound_real_processor_quote_uses_all_collateral_expiration_boundary() {
-    let (policy, evidence) = intent_bound_negative_capture();
+    let (policy, evidence) = intent_bound_processor_capture();
 
+    let verdict = verify_dcap_evidence(
+        &evidence,
+        &policy,
+        INTENT_BOUND_PROCESSOR_COLLATERAL_EXPIRES_AT - 1,
+    )
+    .expect("accepted testnet status remains valid before collateral expiration");
     assert_eq!(
-        verify_dcap_evidence(
-            &evidence,
-            &policy,
-            INTENT_BOUND_NEGATIVE_COLLATERAL_EXPIRES_AT - 1,
-        ),
-        Err(DcapRejectCodeV1::PlatformTcbRejected)
+        verdict.collateral_valid_until,
+        INTENT_BOUND_PROCESSOR_COLLATERAL_EXPIRES_AT
     );
     assert_eq!(
         verify_dcap_evidence(
             &evidence,
             &policy,
-            INTENT_BOUND_NEGATIVE_COLLATERAL_EXPIRES_AT,
+            INTENT_BOUND_PROCESSOR_COLLATERAL_EXPIRES_AT,
         ),
         Err(DcapRejectCodeV1::CollateralExpired)
     );

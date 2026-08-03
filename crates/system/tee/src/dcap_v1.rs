@@ -237,10 +237,13 @@ const fn map_platform_status(
 ) -> Result<DcapPlatformTcbStatusV1, DcapRejectCodeV1> {
     match (status, accepted) {
         (NativeQvlStatus::UpToDate, _) => Ok(DcapPlatformTcbStatusV1::UpToDate),
+        (NativeQvlStatus::SWHardeningNeeded, PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded) => {
+            Ok(DcapPlatformTcbStatusV1::SWHardeningNeeded)
+        }
         (
-            NativeQvlStatus::SWHardeningNeeded,
-            PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
-        ) => Ok(DcapPlatformTcbStatusV1::SWHardeningNeeded),
+            NativeQvlStatus::ConfigurationAndSWHardeningNeeded,
+            PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
+        ) => Ok(DcapPlatformTcbStatusV1::ConfigurationAndSWHardeningNeeded),
         _ => Err(DcapRejectCodeV1::PlatformTcbRejected),
     }
 }
@@ -975,15 +978,19 @@ mod tests {
         let statuses = SGX_QVL_STATUS_VECTORS.map(|(_, status)| status);
         for accepted in [
             PlatformTcbStatusSetV1::UpToDateOnly,
-            PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+            PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
         ] {
             for status in statuses {
                 let expected = match (status, accepted) {
                     (NativeQvlStatus::UpToDate, _) => Ok(DcapPlatformTcbStatusV1::UpToDate),
                     (
                         NativeQvlStatus::SWHardeningNeeded,
-                        PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+                        PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
                     ) => Ok(DcapPlatformTcbStatusV1::SWHardeningNeeded),
+                    (
+                        NativeQvlStatus::ConfigurationAndSWHardeningNeeded,
+                        PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
+                    ) => Ok(DcapPlatformTcbStatusV1::ConfigurationAndSWHardeningNeeded),
                     _ => Err(DcapRejectCodeV1::PlatformTcbRejected),
                 };
                 assert_eq!(map_platform_status(status, accepted), expected);

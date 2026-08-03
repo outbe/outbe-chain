@@ -108,6 +108,6 @@ I5 owns renewal, expiry transitions and bounded supersession. I6 owns remote
 session admission from finalized active state. I7 owns governance policy and
 rolling measurement overlap. I8 owns block-1 bootstrap. I9 must build the exact
 release artifact on supported Intel SGX hardware, capture fresh accepted
-Processor and registered multi-package Platform evidence, measure the release
+Processor evidence, measure the release
 budget and only then activate the V1 route. Until that checkpoint,
 `ACTIVE_TEE_ATTESTATION_V1_MANIFEST` remains `None`.

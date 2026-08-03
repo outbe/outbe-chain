@@ -2,7 +2,7 @@
 
 Date: 2026-07-30
 
-Amended: 2026-07-31
+Amended: 2026-07-31, 2026-08-03
 
 Status: accepted scope amendment; implementation may resume
 
@@ -38,15 +38,21 @@ The owner selected the minimal split:
 - Synthetic Platform evidence is labelled as such and never counted as a
   native-QVL positive or real-hardware result.
 - I9 requires a fresh accepted Processor-CA capture for the exact release
-  enclave/policy and a real Intel-rooted Platform-CA quote and collateral from
-  a registered multi-package SGX platform. Missing hardware or either accepted
-  result fails the release job; it is never skipped.
+  enclave/policy. Missing Processor hardware or an accepted result fails the
+  release job; it is never skipped.
+- A real registered multi-package Platform node must present its own fresh
+  Intel-rooted Platform-CA quote and collateral through the same public
+  verifier when it joins. It receives no offer key and cannot participate until
+  that admission succeeds; no dedicated Platform capture gates every release.
 - Ordinary CI replays immutable real evidence at a fixed historical consensus
   timestamp without SGX hardware or live PCS/PCCS; live capture is not repeated
   per test case.
 
-This changes fixture staging, not the production verifier or admission policy.
-Production still admits both Processor and Platform PCK CA chains only after
+The 2026-08-03 testnet policy amendment admits the intent-bound real fixture's
+`ConfigurationAndSWHardeningNeeded` Platform result, preserves its advisories,
+and still requires QE `UpToDate`. This changes the accepted Platform status
+set, not the verification boundary. Testnet admits both Processor and Platform
+PCK CA chains only after
 the same native Intel QVL, canonical collateral, time, status, identity and
 measurement checks succeed.
 
@@ -56,6 +62,7 @@ Synthetic inputs are permitted for quote/collateral grammar, caps, trailing
 bytes, CA classification, exhaustive status mapping, gas overflow and stable
 reject ordering. Positive cryptographic verification, exact intent binding,
 Intel root/FMSPC/PCE identity and the authentic strict-policy result require
-real signed Processor evidence in I1. An accepted Processor verdict and real
-signed Platform evidence remain mandatory in I9; synthetic or fake-verifier
-results cannot satisfy either release gate.
+real signed Processor evidence in I1. An accepted Processor verdict remains
+mandatory in I9. Real signed Platform evidence is mandatory for the Platform
+node being admitted, not for unrelated releases; synthetic or fake-verifier
+results cannot satisfy either boundary.

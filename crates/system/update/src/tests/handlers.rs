@@ -114,7 +114,7 @@ fn update_tee_policy(
         tcb_info_schema_version: 3,
         qe_identity_schema_version: 2,
         minimum_tcb_evaluation_data_number: 1,
-        accepted_platform_tcb_statuses: PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+        accepted_platform_tcb_statuses: PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
         accepted_qe_tcb_status: QvlTcbStatusV1::UpToDate,
         minimum_lease: 3_600,
         maximum_lease: 604_800,
