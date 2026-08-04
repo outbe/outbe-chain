@@ -123,7 +123,7 @@ pub fn pledge_secret(modify_key: &[u8; 32], handle: B256) -> [u8; 32] {
     out
 }
 
-/// Spend authorization binding a pledge to a destination bundle account, so a
+/// Spend authorization binding a pledge to a destination smart account, so a
 /// mempool observer of `requestCredis(handle, spend_auth)` cannot redirect it.
 /// `HMAC(pledge_secret, "credis-bind" ‖ bundle)`.
 pub fn spend_auth_mac(pledge_secret: &[u8; 32], bundle: Address) -> [u8; 32] {
@@ -450,7 +450,7 @@ fn apply_owner_op(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
 }
 
 /// requestCredis: consume a `PledgeLockTicket`, verify the spend binding to the
-/// bundle account, credit the ticket amount into the EOA's OWN pledged ledger, and
+/// smart account, credit the ticket amount into the EOA's OWN pledged ledger, and
 /// delete the ticket. No escrow account is involved — the collateral stays with the
 /// pledger for the whole credis term. The EOA no longer travels in calldata: the host
 /// recovers it with a prior `RevealOwner` round-trip and passes it as `req.account`; the
@@ -459,7 +459,7 @@ fn apply_owner_op(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
 /// the state key — for the host to store on the Credis position (hiding the EOA↔bundle link).
 fn apply_consume_pledge(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisOpResult> {
     let (Some(handle), Some(bundle), Some(spend_auth)) =
-        (req.pledge_handle, req.bundle_account, req.spend_auth)
+        (req.pledge_handle, req.smart_account, req.spend_auth)
     else {
         return Ok(reject(
             "consume_pledge requires handle, bundle, and spend_auth",
@@ -611,7 +611,7 @@ mod tests {
                 op_nonce: nonce,
             },
             pledge_handle: None,
-            bundle_account: None,
+            smart_account: None,
             spend_auth: None,
             fidelity: None,
         }
@@ -739,7 +739,7 @@ mod tests {
         rc.current_pledge_record = pledged.new_pledge_record.clone();
         rc.current_pledged = Vec::new();
         rc.pledge_handle = Some(handle);
-        rc.bundle_account = Some(bundle());
+        rc.smart_account = Some(bundle());
         rc.spend_auth = Some(spend);
         let credis_res = apply_op(&sk, &rc);
         assert!(matches!(credis_res.status, GratisOpStatus::Applied));
@@ -754,7 +754,7 @@ mod tests {
 
         // A wrong bundle binding is rejected (front-running defense).
         let mut bad = rc.clone();
-        bad.bundle_account = Some(Address::repeat_byte(0xEE));
+        bad.smart_account = Some(Address::repeat_byte(0xEE));
         assert!(matches!(
             apply_op(&sk, &bad).status,
             GratisOpStatus::Rejected { .. }
@@ -827,7 +827,7 @@ mod tests {
         let mut rc = req(GratisOp::ConsumePledge, alice(), U256::ZERO, 0);
         rc.current_pledge_record = pledged.new_pledge_record.clone();
         rc.pledge_handle = Some(handle);
-        rc.bundle_account = Some(bundle());
+        rc.smart_account = Some(bundle());
         rc.spend_auth = Some(spend);
         let consumed = apply_op(&sk, &rc);
         assert!(matches!(consumed.status, GratisOpStatus::Applied));
@@ -896,7 +896,7 @@ mod tests {
         let mut rc = req(GratisOp::ConsumePledge, alice(), U256::ZERO, 0);
         rc.current_pledge_record = un.new_pledge_record.clone();
         rc.pledge_handle = Some(handle);
-        rc.bundle_account = Some(bundle());
+        rc.smart_account = Some(bundle());
         rc.spend_auth = Some(spend);
         assert!(
             matches!(apply_op(&sk, &rc).status, GratisOpStatus::Rejected { .. }),
@@ -926,7 +926,7 @@ mod tests {
         let mut rc = req(GratisOp::ConsumePledge, alice(), U256::ZERO, 0);
         rc.current_pledge_record = pledged.new_pledge_record.clone();
         rc.pledge_handle = Some(handle);
-        rc.bundle_account = Some(bundle());
+        rc.smart_account = Some(bundle());
         rc.spend_auth = Some(spend);
         let consumed = apply_op(&sk, &rc);
         assert!(matches!(consumed.status, GratisOpStatus::Applied));

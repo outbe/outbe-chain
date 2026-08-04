@@ -10,15 +10,15 @@ pub const NUMBER_OF_ANADOSIS: u32 = 10;
 /// Seconds per month (30 days; cosmos `SecondsPerMonth`).
 pub const SECONDS_PER_MONTH: u64 = 30 * 24 * 60 * 60;
 
-/// Position head record. Keyed by `position_id = keccak256(commitment || bundle_account)`.
+/// Position head record. Keyed by `position_id = keccak256(commitment || smart_account)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[storage_record(exists_field = bundle_account)]
+#[storage_record(exists_field = smart_account)]
 pub struct Position {
     #[key]
     pub position_id: U256,
 
     #[attribute(order = 0)]
-    pub bundle_account: Address,
+    pub smart_account: Address,
 
     #[attribute(order = 1)]
     pub asset: Address,
@@ -42,14 +42,14 @@ pub struct Position {
     pub created_at: u64,
 
     /// Original Credis amount (principal) in the issuance currency, before the
-    /// refinancing-rate markup. `total_anadosis_amount` holds principal + interest.
+    /// currency-rate markup. `total_anadosis_amount` holds principal + interest.
     #[attribute(order = 9)]
     pub credis_principal: U256,
 
-    /// Annualized refinancing rate (1e18 scaled) read from the Oracle and pinned
+    /// Annualized currency rate (1e18 scaled) read from the Oracle and pinned
     /// at issuance for the lifetime of this schedule.
     #[attribute(order = 10)]
-    pub refinancing_rate: U256,
+    pub currency_rate: U256,
 
     /// Issuance currency as an ISO 4217 numeric code (e.g., 840 = USD), derived
     /// from the disbursed asset's `isoCode()` at issuance.
@@ -58,11 +58,14 @@ pub struct Position {
 
     /// The pledger EOA sealed under the enclave state key (`nonce ‖ ct`, produced by
     /// gratis `ConsumePledge`). Stored as ciphertext so external observers cannot link the
-    /// EOA to `bundle_account`; the expiry sweep / payAnadosis recover the plaintext EOA
+    /// EOA to `smart_account`; the expiry sweep / payAnadosis recover the plaintext EOA
     /// via a `RevealOwner` enclave round-trip to key the right `pledged_ct` and fidelity
     /// cohort. Never a plaintext address on-chain.
     #[attribute(order = 12)]
     pub eoa_ct: Vec<u8>,
+
+    #[attribute(order = 13)]
+    pub entry_price_minor: U256,
 }
 
 /// Per-anadosis record. Keyed by `anadosis_key = keccak256(position_id || anadosis_number_be32)`.
@@ -124,11 +127,11 @@ pub struct CredisContract {
 }
 
 impl CredisContract<'_> {
-    /// position_id derivation: `keccak256(commitment || bundle_account)`.
-    pub fn position_id(handle_id: U256, bundle_account: Address) -> U256 {
+    /// position_id derivation: `keccak256(commitment || smart_account)`.
+    pub fn position_id(handle_id: U256, smart_account: Address) -> U256 {
         let mut buf = [0u8; 52];
         buf[0..32].copy_from_slice(&handle_id.to_be_bytes::<32>());
-        buf[32..52].copy_from_slice(bundle_account.as_slice());
+        buf[32..52].copy_from_slice(smart_account.as_slice());
         U256::from_be_bytes(keccak256(buf).0)
     }
 

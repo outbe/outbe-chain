@@ -31,7 +31,7 @@ use crate::tests::common::*;
 /// Issuance currency (ISO 4217) reported by `asset()`'s stubbed `isoCode()`.
 const ISSUANCE_ISO: u16 = 840;
 
-/// Refinancing rate seeded for USD in these e2e tests (4.30 %, 1e18 scaled).
+/// currency rate seeded for USD in these e2e tests (4.30 %, 1e18 scaled).
 fn refi_rate() -> U256 {
     U256::from(43_000_000_000_000_000u128)
 }
@@ -51,7 +51,7 @@ fn seed_oracle(storage: StorageHandle<'_>, rate_1e18: U256) {
         .set_exchange_rate(Address::ZERO, "COEN", "0xUSD", rate_1e18, 0, 0)
         .unwrap();
     oracle
-        .reference_refinancing_rate
+        .reference_currency_rate
         .write(&ISSUANCE_ISO, refi_rate())
         .unwrap();
 }
@@ -107,7 +107,7 @@ fn view_pledged(s: &StorageHandle<'_>, a: Address) -> U256 {
 }
 
 /// The spend authorization the pledger EOA hands to the CCA to bind a pledge to a
-/// destination bundle account (`HMAC(pledgeSecret, "credis-bind" || bundle)`).
+/// destination smart account (`HMAC(pledgeSecret, "credis-bind" || bundle)`).
 fn credis_spend_auth(eoa: Address, handle: B256, bundle: Address) -> [u8; 32] {
     let mk = derive_modify_key(&test_enclave::state_key(), eoa).unwrap();
     spend_auth_mac(&pledge_secret(&mk, handle), bundle)
@@ -133,7 +133,7 @@ fn full_pledge_request_pay_unlock_flow() {
         let pledge_amount = one_e18();
         let installment = pledge_amount / U256::from(NUMBER_OF_ANADOSIS);
 
-        // Mine + pledge. Alice is both the pledger EOA and the bundle account here.
+        // Mine + pledge. Alice is both the pledger EOA and the smart account here.
         outbe_gratis::api::mint(
             storage.clone(),
             alice(),
@@ -154,7 +154,7 @@ fn full_pledge_request_pay_unlock_flow() {
         assert_eq!(view_balance(&storage, alice()), U256::ZERO);
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
 
-        // requestCredis bound to alice's bundle account, with alice as the pledger
+        // requestCredis bound to alice's smart account, with alice as the pledger
         // EOA. The collateral is credited into alice's OWN pledged ledger.
         let spend = credis_spend_auth(alice(), handle, alice());
         let (position_id, amount_stables) =
@@ -169,7 +169,7 @@ fn full_pledge_request_pay_unlock_flow() {
 
         let credis = CredisContract::new(storage.clone());
         let position = credis.get_position(position_id).unwrap();
-        assert_eq!(position.bundle_account, alice());
+        assert_eq!(position.smart_account, alice());
         // The pledger EOA is stored sealed (ciphertext), never as a plaintext address,
         // and the enclave opens it back to alice via RevealOwner.
         assert!(!position.eoa_ct.is_empty(), "eoa stored as ciphertext");
@@ -178,7 +178,7 @@ fn full_pledge_request_pay_unlock_flow() {
             alice()
         );
         assert_eq!(position.credis_principal, amount_stables);
-        assert_eq!(position.refinancing_rate, refi_rate());
+        assert_eq!(position.currency_rate, refi_rate());
         assert_eq!(position.issuance_currency, ISSUANCE_ISO);
         let multiplier =
             one_e18() + refi_rate() * U256::from(NUMBER_OF_ANADOSIS) / U256::from(12u64);
@@ -322,7 +322,7 @@ fn request_credis_rejects_zero_asset() {
 }
 
 #[test]
-fn request_credis_rejects_zero_bundle_account() {
+fn request_credis_rejects_zero_smart_account() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(CREATED_AT));
     StorageHandle::enter(&mut storage, |storage| {
@@ -335,7 +335,7 @@ fn request_credis_rejects_zero_bundle_account() {
             [0u8; 32],
         )
         .unwrap_err();
-        assert!(err.to_string().contains("bundle account"), "got: {err}");
+        assert!(err.to_string().contains("smart account"), "got: {err}");
     });
 }
 
@@ -365,9 +365,9 @@ fn pay_anadosis_rejects_non_owner_caller() {
             runtime::request_credis(storage.clone(), alice(), asset(), alice(), handle, spend)
                 .unwrap();
 
-        // bob is not the position's bundle account.
+        // bob is not the position's smart account.
         let err = runtime::pay_anadosis(storage.clone(), bob(), position_id).unwrap_err();
-        assert!(err.to_string().contains("bundleAccount"), "got: {err}");
+        assert!(err.to_string().contains("smartAccount"), "got: {err}");
     });
     fidelity_enclave::uninstall();
     test_enclave::uninstall();

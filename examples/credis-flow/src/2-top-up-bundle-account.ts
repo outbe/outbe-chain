@@ -2,8 +2,8 @@
  * 2-top-up-smart-account.ts
  *
  * Runs on behalf of the user to:
- *   1. Check if a bundle account exists, create if not
- *   2. Transfer 1000 ERC20 tokens from user EOA to the bundle account
+ *   1. Check if a smart account exists, create if not
+ *   2. Transfer 1000 ERC20 tokens from user EOA to the smart account
  *
  * Prerequisites:
  *   - Run 0-setup.ts first to ensure balances
@@ -43,16 +43,16 @@ async function main(): Promise<void> {
   // Fetch token metadata
   const { decimals: tokenDecimals, symbol: tokenSymbol } = await fetchTokenMeta(token);
 
-  console.log("=== Top-Up Bundle Account ===");
+  console.log("=== Top-Up smart account ===");
   console.log(`Env:     ${envName}`);
   console.log(`User     : ${userAddr}`);
   console.log(`CCA      : ${ccaAddress}`);
   console.log(`Token    : ${erc20Address} (${tokenSymbol}, ${tokenDecimals} decimals)`);
   console.log(`Factory  : ${smartAccountFactoryAddress}`);
 
-  // ── Step 1: Predict Bundle account address ─────────────────────────────────
+  // ── Step 1: Predict smart account address ─────────────────────────────────
 
-  console.log("\n[1] Predicting Bundle account address...");
+  console.log("\n[1] Predicting smart account address...");
   const accountAddr = await factory.getAccountAddress(userAddr, ccaAddress, [erc20Address], [vaultRouterAddress], SALT);
   console.log(`    → ${accountAddr}`);
 
@@ -69,9 +69,9 @@ async function main(): Promise<void> {
     console.log("    Already deployed — skipping");
   }
 
-  // ── Step 3: Transfer ERC20 to Bundle account ──────────────────────────────
+  // ── Step 3: Transfer ERC20 to smart account ──────────────────────────────
 
-  console.log("\n[3] Checking Bundle account ERC20 balance...");
+  console.log("\n[3] Checking smart account ERC20 balance...");
   const accountBal = await token.balanceOf(accountAddr);
 
   if (accountBal < TRANSFER_AMOUNT) {

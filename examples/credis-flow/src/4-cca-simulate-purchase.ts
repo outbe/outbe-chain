@@ -46,7 +46,7 @@ async function main() {
 
   const erc20Meta = await fetchTokenMeta(token);
 
-  // Predict Bundle account address
+  // Predict smart account address
   const smartAccountAddr = await saFactory.getAccountAddress(
     userAddress,
     ccaAddress,
@@ -60,15 +60,15 @@ async function main() {
   console.log(`RPC:              ${rpcUrl}`);
   console.log(`User:             ${userAddress}`);
   console.log(`CCA:              ${ccaAddress}`);
-  console.log(`Bundle Account:    ${smartAccountAddr}`);
+  console.log(`smart account:    ${smartAccountAddr}`);
   console.log(`EntryPoint:       ${entryPointAddress}`);
   console.log(`ERC20:            ${erc20Address} (${erc20Meta.symbol})`);
   console.log(`Withdraw amount:  ${formatTokenMeta(WITHDRAW_AMOUNT, erc20Meta)}`);
 
-  // Verify Bundle account is deployed
+  // Verify smart account is deployed
   const code = await provider.getCode(smartAccountAddr);
   if (code === "0x") {
-    console.error("Bundle account not deployed. Run 2-top-up-smart-account.ts first.");
+    console.error("smart account not deployed. Run 2-top-up-smart-account.ts first.");
     process.exit(1);
   }
 
@@ -99,7 +99,7 @@ async function main() {
   // Ensure EntryPoint has deposit for gas
   const epDeposit: bigint = await entryPoint.balanceOf(smartAccountAddr);
   if (epDeposit < ethers.parseEther("0.01")) {
-    console.log("\nFunding EntryPoint deposit for Bundle account...");
+    console.log("\nFunding EntryPoint deposit for smart account...");
     const depositTx = await entryPoint.depositTo(smartAccountAddr, { value: ethers.parseEther("0.05") });
     await depositTx.wait();
     console.log("  Deposited 0.05 COEN into EntryPoint");
@@ -179,7 +179,7 @@ function printBalances(
 ) {
   const personalBal = accountBal - bundleBal;
   const bundleBalance2 = bundleBal / 2n;
-  console.log(`  Bundle Account (${smartAccountAddr}):`);
+  console.log(`  smart account (${smartAccountAddr}):`);
   console.log(`    ERC20 total:   ${formatTokenMeta(accountBal, erc20Meta)}`);
   console.log(`     Bundle:       ${formatTokenMeta(bundleBal, erc20Meta)} (${formatTokenMeta2(bundleBalance2, erc20Meta)} + ${formatTokenMeta2(bundleBalance2, erc20Meta)})`);
   console.log(`    Personal:      ${formatTokenMeta(personalBal, erc20Meta)}`);

@@ -190,7 +190,7 @@ fn pledge_consume_and_pay_anadosis_flow() {
         assert_eq!(view_pledged(storage.clone(), alice()), U256::ZERO);
         assert_eq!(api::pledged_total_supply(storage.clone()).unwrap(), amount);
 
-        // requestCredis from a distinct bundle account: alice derives the pledge
+        // requestCredis from a distinct smart account: alice derives the pledge
         // secret from her modify key + the public handle and binds it to `bundle`.
         // The collateral is credited into alice's OWN pledged ledger (no escrow) and
         // the ticket is deleted; pledged_total is unchanged.
