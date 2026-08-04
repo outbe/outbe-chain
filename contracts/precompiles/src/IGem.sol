@@ -7,7 +7,7 @@ interface IGem {
         address owner;
         uint8 gemType;
         uint8 state;
-        uint256 promisLoad;
+        uint256 gemLoad;
         uint256 entryPrice;
         uint256 costAmount;
         uint256 floorPrice;

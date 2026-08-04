@@ -15,11 +15,14 @@ pub enum GemState {
 pub struct GemAddParams {
     pub owner: Address,
     pub gem_type: u8,
-    pub promis_load_minor: U256,
+    pub gem_load_minor: U256,
     pub entry_price_minor: U256,
     pub cost_amount_minor: U256,
     pub floor_price_minor: U256,
     pub call_price_minor: U256,
+    pub call_rate: u16,
+    pub call_window_days: u16,
+    pub call_threshold_days: u16,
     pub issuance_currency: u16,
     pub reference_currency: u16,
     pub initial_state: GemState,
@@ -38,7 +41,7 @@ pub struct GemData {
     pub gem_type: u8,
 
     #[attribute(order = 2)]
-    pub promis_load_minor: U256,
+    pub gem_load_minor: U256,
 
     #[attribute(order = 3)]
     pub entry_price_minor: U256,
@@ -68,13 +71,37 @@ pub struct GemData {
 
     /// Block timestamp when the gem was force-called; `0` until Called.
     #[attribute(order = 11, default = 0)]
-    pub called_at: u32,
+    pub called_at: u64,
 
-    /// Call Notice Period in seconds: after a Called gem passes
-    /// `called_at + settlement_period` it is forfeit-burned. Snapshot of the
-    /// protocol constant at issuance.
+    /// Call Notice Period in days: after a Called gem passes
+    /// `called_at + call_notice_period * 86400` it is forfeit-burned. Snapshot
+    /// of the protocol constant at issuance.
     #[attribute(order = 12, default = 0)]
-    pub settlement_period: u32,
+    pub call_notice_period: u32,
+
+    /// Call rate as a percent (snapshot of `GEM_CALL_MARKUP_PERCENT` at
+    /// issuance); `call_price_minor = entry_price_minor * call_rate / 100`.
+    #[attribute(order = 13, default = 0)]
+    pub call_rate: u16,
+
+    /// Call-trigger evaluation window in days (snapshot of
+    /// `GEM_CALL_WINDOW_DAYS` at issuance); the trailing span scanned for
+    /// Call Price breaches.
+    #[attribute(order = 14, default = 0)]
+    pub call_window_days: u16,
+
+    /// Breach-days within the window required to force-call the gem (snapshot
+    /// of `CALL_THRESHOLD_DAYS` at issuance).
+    #[attribute(order = 15, default = 0)]
+    pub call_threshold_days: u16,
+
+    /// Block timestamp when the gem became Qualified; `0` until Qualified.
+    #[attribute(order = 16, default = 0)]
+    pub qualified_at: u64,
+
+    /// Block timestamp when the gem was Settled; `0` until Settled.
+    #[attribute(order = 17, default = 0)]
+    pub settled_at: u64,
 }
 
 #[storage_schema]
@@ -128,7 +155,7 @@ pub struct GemContract {
 
 impl GemContract<'_> {
     /// `gem_id = keccak256("gem" ‖ owner ‖ amount_be ‖ block_number_be)`.
-    /// `amount` is the gem's `promis_load_minor` (reward principal).
+    /// `amount` is the gem's `gem_load_minor` (reward principal).
     pub fn generate_gem_id(owner: Address, amount: U256, block_number: u64) -> U256 {
         use alloy_primitives::keccak256;
         let mut buf = [0u8; 3 + 20 + 32 + 8];

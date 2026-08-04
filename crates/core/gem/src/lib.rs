@@ -9,6 +9,7 @@ pub(crate) mod constants;
 pub(crate) mod runtime;
 pub(crate) mod state;
 
+pub use constants::{GEM_CALL_WINDOW_DAYS, CALL_THRESHOLD_DAYS};
 pub use hooks::GemLifecycle;
 pub use schema::{GemAddParams, GemContract, GemData, GemState};
 

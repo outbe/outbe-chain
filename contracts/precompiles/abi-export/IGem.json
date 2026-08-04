@@ -92,7 +92,7 @@
             "internalType": "uint8"
           },
           {
-            "name": "promisLoad",
+            "name": "gemLoad",
             "type": "uint256",
             "internalType": "uint256"
           },

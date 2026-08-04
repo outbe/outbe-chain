@@ -66,7 +66,7 @@ impl GemContract<'_> {
         let item = self.gem_items.get(gem_id)?.ok_or(GemError::GemNotFound)?;
         let gem_id_hex = Self::format_gem_id(gem_id);
         let json = format!(
-            "{{\"name\":\"Gem #{}\",\"description\":\"{}\",\"image\":\"{}{}\",\"attributes\":[{{\"trait_type\":\"gem_id\",\"value\":\"{}\"}},{{\"trait_type\":\"gem_type\",\"value\":{}}},{{\"trait_type\":\"state\",\"value\":{}}},{{\"trait_type\":\"promis_load_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"entry_price_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"cost_amount_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"floor_price_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"issuance_currency\",\"value\":{}}},{{\"trait_type\":\"reference_currency\",\"value\":{}}}]}}",
+            "{{\"name\":\"Gem #{}\",\"description\":\"{}\",\"image\":\"{}{}\",\"attributes\":[{{\"trait_type\":\"gem_id\",\"value\":\"{}\"}},{{\"trait_type\":\"gem_type\",\"value\":{}}},{{\"trait_type\":\"state\",\"value\":{}}},{{\"trait_type\":\"gem_load_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"entry_price_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"cost_amount_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"floor_price_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"issuance_currency\",\"value\":{}}},{{\"trait_type\":\"reference_currency\",\"value\":{}}}]}}",
             &gem_id_hex[..8],
             TOKEN_DESCRIPTION,
             TOKEN_IMAGE_BASE,
@@ -74,7 +74,7 @@ impl GemContract<'_> {
             gem_id,
             item.gem_type,
             item.state,
-            item.promis_load_minor,
+            item.gem_load_minor,
             item.entry_price_minor,
             item.cost_amount_minor,
             item.floor_price_minor,
@@ -162,14 +162,21 @@ impl GemContract<'_> {
             self.remove_unqualified(gem_id, item.floor_price_minor)?;
         }
 
-        // Maintain the callable-gem list (membership == Qualified/Called).
+        // Maintain the callable-gem list (membership == Qualified/Called) and
+        // stamp the transition timestamp.
         match new_state {
             // Issued -> Qualified enters the list.
-            GemState::Qualified => self.insert_callable(gem_id)?,
-            // Qualified|Called -> Settled leaves it. An Issued -> Settled jump
-            // was never listed, so skip it.
-            GemState::Settled if item.state != GemState::Issued as u8 => {
-                self.remove_callable(gem_id)?
+            GemState::Qualified => {
+                self.insert_callable(gem_id)?;
+                item.qualified_at = self.storage.timestamp()?.to::<u64>();
+            }
+            GemState::Settled => {
+                // Qualified|Called -> Settled leaves the list. An Issued ->
+                // Settled jump was never listed, so skip the removal.
+                if item.state != GemState::Issued as u8 {
+                    self.remove_callable(gem_id)?;
+                }
+                item.settled_at = self.storage.timestamp()?.to::<u64>();
             }
             _ => {}
         }
@@ -209,7 +216,7 @@ impl GemContract<'_> {
     /// `Qualified -> Called`. Records the call timestamp used to enforce the
     /// notice-period settlement deadline. Qualified gems are not parked in the
     /// unqualified bin index, so there is nothing to clean up here.
-    pub(crate) fn mark_called(&mut self, gem_id: U256, called_at: u32) -> Result<()> {
+    pub(crate) fn mark_called(&mut self, gem_id: U256, called_at: u64) -> Result<()> {
         let mut item = self.gem_items.get(gem_id)?.ok_or(GemError::GemNotFound)?;
         if item.state != GemState::Qualified as u8 {
             return Err(GemError::InvalidState.into());

@@ -9,7 +9,7 @@ pub fn mint_gem(
     storage: &StorageHandle<'_>,
     owner: Address,
     gem_type: GemTypes,
-    promis_load: U256,
+    gem_load: U256,
     issuance_currency: u16,
     reference_currency: u16,
 ) -> Result<U256> {
@@ -17,7 +17,7 @@ pub fn mint_gem(
         storage,
         owner,
         gem_type,
-        promis_load,
+        gem_load,
         issuance_currency,
         reference_currency,
     )
@@ -37,9 +37,9 @@ pub fn mint_merchant_gem(
     caller: Address,
     position_id: U256,
     owner: Address,
-    promis_load: U256,
+    gem_load: U256,
 ) -> Result<U256> {
-    runtime::mint_merchant_gem(storage, caller, position_id, owner, promis_load)
+    runtime::mint_merchant_gem(storage, caller, position_id, owner, gem_load)
 }
 
 pub fn settle_gem(

@@ -8,7 +8,7 @@ interface IGemFactory {
     function mintGemPosition(uint32 sourceIntexId, uint256 amount) external returns (uint256 positionId);
     /// @notice Issue one Merchant gem to `owner`, draining the position's
     ///         capacity. Only the position's merchant (the caller) may call.
-    function mintMerchantGem(uint256 positionId, address owner, uint256 promisLoad) external returns (uint256 gemId);
+    function mintMerchantGem(uint256 positionId, address owner, uint256 gemLoad) external returns (uint256 gemId);
 
     /// @notice Settle a gem, paying its cost into the Reserve in `asset` (the
     ///         settlement stablecoin supplied by the caller).
