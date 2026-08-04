@@ -236,7 +236,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param seriesId Series identifier.
     /// @param amount Amount of Issued tokens to burn.
     /// @return The amount of Issued tokens burned.
-    function parkForGems(address holder, uint32 seriesId, uint256 amount) external returns (uint256);
+    function parkIntex(address holder, uint32 seriesId, uint256 amount) external returns (uint256);
 
     // --- Reads ---
 

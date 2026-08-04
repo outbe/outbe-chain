@@ -31,7 +31,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     bytes32 public constant SETTLEMENT_ROLE = keccak256("SETTLEMENT_ROLE");
     /// @notice Promis facade role; allowed to call `burnSettled`.
     bytes32 public constant PROMIS_ROLE = keccak256("PROMIS_ROLE");
-    /// @notice Gem factory role; allowed to call `parkForGems`.
+    /// @notice Gem factory role; allowed to call `parkIntex`.
     bytes32 public constant GEM_ROLE = keccak256("GEM_ROLE");
     /// @notice System relayer role; allowed to drive the system bridge during the `Called` window.
     /// @dev Holders of this role can `crosschainBurn` even while the series is `Called`. Regular `RELAYER_ROLE`
@@ -441,7 +441,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
-    function parkForGems(address holder, uint32 seriesId, uint256 amount)
+    function parkIntex(address holder, uint32 seriesId, uint256 amount)
         external
         onlyRole(GEM_ROLE)
         returns (uint256)

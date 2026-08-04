@@ -704,7 +704,7 @@
     },
     {
       "type": "function",
-      "name": "parkForGems",
+      "name": "parkIntex",
       "inputs": [
         {
           "name": "holder",
