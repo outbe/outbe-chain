@@ -380,7 +380,7 @@ contract SmartAccountApproach is BaseAATest {
 
     // --- helpers ---
 
-    /// @dev Deploys a bundled account (bundle token = `token`, sender = `vault`) and funds it so
+    /// @dev Deploys a smart account (bundle token = `token`, sender = `vault`) and funds it so
     ///      that total = 1400e18, bundleBalance = 1200e18, freeBalance = 200e18.
     function _setupSmartAccountWithFree() private returns (address smartAccount) {
         smartAccount = _deployAccount();
