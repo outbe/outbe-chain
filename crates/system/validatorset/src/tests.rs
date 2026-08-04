@@ -1,4 +1,4 @@
-use alloy_primitives::{address, keccak256, Address, B256};
+use alloy_primitives::{address, keccak256, Address, B256, U256};
 use k256::ecdsa::{signature::hazmat::PrehashSigner as _, Signature, SigningKey};
 use outbe_ocomp_protocol::{
     committee::{
@@ -339,6 +339,91 @@ fn test_set_p2p_address_rejects_oversized_and_accepts_asymmetric() {
     });
 }
 
+#[test]
+fn malformed_p2p_isolated_from_legacy_record_projection() {
+    let val_addr = address!("0x2222222222222222222222222222222222222226");
+    let pk = dummy_consensus_pubkey(6);
+
+    with_vs_configured(10, |vs| {
+        vs.register_validator(OWNER, val_addr, &pk).unwrap();
+        vs.val_p2p_address_version
+            .write(&val_addr, P2P_ADDRESS_VERSION_V1)
+            .unwrap();
+        vs.val_p2p_address_payload
+            .get_bytes(&val_addr)
+            .write(&[0xFF])
+            .unwrap();
+
+        // ValidatorRecord is deliberately a legacy ABI projection and does not
+        // broaden P2P corruption into failure of unrelated tuple reads.
+        assert!(vs.get_validator(val_addr).unwrap().is_some());
+        assert_eq!(vs.get_all_validators().unwrap().len(), 1);
+
+        // The complete typed aggregate owns P2P invariants and fails closed.
+        assert!(matches!(
+            vs.validator_state(val_addr),
+            Err(PrecompileError::Fatal(_))
+        ));
+    });
+}
+
+#[test]
+fn typed_storage_adapter_handles_pre_registration_stake_and_fails_closed() {
+    let addr = address!("0x2222222222222222222222222222222222222227");
+
+    with_vs_configured(10, |vs| {
+        vs.val_stake.write(&addr, U256::from(900)).unwrap();
+        vs.val_unbonding_end.write(&addr, 55).unwrap();
+
+        let state = vs.validator_state(addr).unwrap();
+        assert_eq!(state.lifecycle(), &crate::ValidatorLifecycle::Unregistered);
+        assert_eq!(state.stake().bonded(), U256::from(900));
+        assert_eq!(state.stake().unbonding_end_hint(), Some(55));
+
+        vs.val_join_confirmed.write(&addr, true).unwrap();
+        assert!(matches!(
+            vs.validator_state(addr),
+            Err(PrecompileError::Fatal(_))
+        ));
+
+        vs.val_join_confirmed.write(&addr, false).unwrap();
+        vs.val_status.write(&addr, 7).unwrap();
+        assert!(matches!(
+            vs.validator_state(addr),
+            Err(PrecompileError::Fatal(_))
+        ));
+    });
+}
+
+#[test]
+fn full_and_hot_lifecycle_reads_agree_on_combined_residue() {
+    let addr = address!("0x2222222222222222222222222222222222222228");
+
+    with_vs_configured(10, |vs| {
+        vs.register_validator(OWNER, addr, &dummy_consensus_pubkey(28))
+            .unwrap();
+        vs.val_status.write(&addr, status::UNBONDING).unwrap();
+        vs.val_join_confirmed.write(&addr, true).unwrap();
+        vs.val_has_bls_share.write(&addr, true).unwrap();
+        vs.val_jailed_at_height.write(&addr, 99).unwrap();
+
+        let full = vs.validator_state(addr).unwrap().lifecycle().clone();
+        let hot = vs.validator_lifecycle(addr).unwrap();
+        assert_eq!(full, hot);
+        assert_eq!(
+            hot,
+            crate::ValidatorLifecycle::JailHeightOutsideJailed {
+                lifecycle: Box::new(crate::ValidatorLifecycle::ShareOutsideCommitteeLifecycle(
+                    Box::new(crate::ValidatorLifecycle::ReadinessOutsidePending(
+                        Box::new(crate::ValidatorLifecycle::Unbonding,)
+                    ),)
+                ),),
+                jailed_at: 99,
+            }
+        );
+    });
+}
+
 // ---------------------------------------------------------------------------
 // 3. test_register_duplicate_fails
 // ---------------------------------------------------------------------------
@@ -414,6 +499,8 @@ fn test_force_exit() {
         vs.activate_validator_via_boundary_for_test(val_addr)
             .unwrap();
         vs.val_has_bls_share.write(&val_addr, true).unwrap();
+        // D-03 compatibility residue must not hide the ACTIVE phase from epoch work.
+        vs.val_join_confirmed.write(&val_addr, true).unwrap();
 
         vs.force_exit_validator(val_addr).unwrap();
         assert_eq!(vs.val_status.read(&val_addr).unwrap(), status::EXITING);
@@ -1013,6 +1100,10 @@ fn test_reregister_inactive_validator() {
         vs.activate_validator_via_boundary_for_test(val_addr)
             .unwrap();
         vs.val_status.write(&val_addr, status::INACTIVE).unwrap();
+        // D-06 residues do not change the persisted phase and must not block
+        // re-registration.
+        vs.val_join_confirmed.write(&val_addr, true).unwrap();
+        vs.val_jailed_at_height.write(&val_addr, 44).unwrap();
 
         // Re-register with a new pubkey
         vs.register_validator(OWNER, val_addr, &pk_new).unwrap();
@@ -1045,6 +1136,8 @@ fn test_reregister_inactive_validator() {
         assert_eq!(record.slash_count, 0);
         assert_eq!(record.missed_blocks, 0);
         assert!(record.stake.is_zero());
+        assert!(vs.val_join_confirmed.read(&val_addr).unwrap());
+        assert_eq!(vs.val_jailed_at_height.read(&val_addr).unwrap(), 44);
     });
 }
 
@@ -1124,6 +1217,9 @@ fn test_cleanup_inactive_validators() {
         // Mark val2 and val4 as INACTIVE
         vs.val_status.write(&val2, status::INACTIVE).unwrap();
         vs.val_status.write(&val4, status::INACTIVE).unwrap();
+        // Preserved D-06 fields wrap the lifecycle but must not hide its phase.
+        vs.val_join_confirmed.write(&val2, true).unwrap();
+        vs.val_jailed_at_height.write(&val4, 44).unwrap();
 
         // Cleanup all INACTIVE entries
         let removed = vs.cleanup_inactive_validators(0).unwrap();

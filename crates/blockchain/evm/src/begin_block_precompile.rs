@@ -1673,7 +1673,6 @@ mod tests {
                 vs.register_validator(OWNER, *member, &pubkey).unwrap();
                 vs.activate_validator_via_boundary_for_test(*member)
                     .unwrap();
-                vs.val_has_bls_share.write(member, true).unwrap();
             }
         });
         provider
@@ -2183,8 +2182,8 @@ mod tests {
                 "credited voter is not counted missed"
             );
             let vs = outbe_validatorset::contract::ValidatorSet::new(ctx.storage.clone());
-            assert_eq!(vs.val_missed_votes.read(&V1).unwrap(), 1);
-            assert_eq!(vs.val_missed_votes.read(&V0).unwrap(), 0);
+            assert_eq!(vs.participation(V1).unwrap().missed_votes, 1);
+            assert_eq!(vs.participation(V0).unwrap().missed_votes, 0);
 
             // Replay the closed window: settle freed the escrow and the per-fb_hash
             // guards short-circuit, so re-running must not double-count.
@@ -2194,7 +2193,7 @@ mod tests {
                 1,
                 "replay must not double-count the absentee miss"
             );
-            assert_eq!(vs.val_missed_votes.read(&V1).unwrap(), 1);
+            assert_eq!(vs.participation(V1).unwrap().missed_votes, 1);
         });
     }
 
@@ -2276,7 +2275,7 @@ mod tests {
                 for a in members {
                     out.push((
                         si.get_voter_miss_count(a).unwrap(),
-                        vs.val_missed_votes.read(&a).unwrap(),
+                        vs.participation(a).unwrap().missed_votes,
                     ));
                 }
             });

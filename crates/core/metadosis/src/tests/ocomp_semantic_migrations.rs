@@ -13,7 +13,10 @@ use outbe_primitives::{
 };
 use outbe_promislimit::PromisLimitContract;
 use outbe_tribute::TributeContract;
-use outbe_validatorset::{contract::ValidatorSet, runtime::status as validator_status};
+use outbe_validatorset::{
+    contract::ValidatorSet, runtime::status as validator_status, ExitingState, JailedState,
+    PendingState, ValidatorHistory, ValidatorLifecycle,
+};
 
 use crate::{
     fixture_kernel::{
@@ -415,13 +418,22 @@ fn deadline_records_missing_pending_validator_without_mutating_or_fatal() {
 
 #[test]
 fn deadline_keeps_every_non_active_missing_status_unchanged() {
-    for current_status in [
-        validator_status::REGISTERED,
-        validator_status::PENDING,
-        validator_status::EXITING,
-        validator_status::UNBONDING,
-        validator_status::INACTIVE,
-        validator_status::JAILED,
+    for (current_status, current_lifecycle) in [
+        (validator_status::REGISTERED, ValidatorLifecycle::Registered),
+        (
+            validator_status::PENDING,
+            ValidatorLifecycle::Pending(PendingState::AwaitingConfirmation),
+        ),
+        (
+            validator_status::EXITING,
+            ValidatorLifecycle::Exiting(ExitingState::AlreadyExcluded),
+        ),
+        (validator_status::UNBONDING, ValidatorLifecycle::Unbonding),
+        (validator_status::INACTIVE, ValidatorLifecycle::Inactive),
+        (
+            validator_status::JAILED,
+            ValidatorLifecycle::Jailed(JailedState::Excluded { jailed_at: 0 }),
+        ),
     ] {
         let mut fixture = ActivationFixture::new_voting(20, 1_010, true);
         assert_eq!(fixture.apply().unwrap(), Bytes::new());
@@ -438,12 +450,24 @@ fn deadline_keeps_every_non_active_missing_status_unchanged() {
             .provider
             .set_block_number(finalized.deadline_height - 1);
         StorageHandle::enter(&mut fixture.provider, |storage| {
-            let validators = ValidatorSet::new(storage);
+            let mut validators = ValidatorSet::new(storage);
+            let before = validators.get_validator(missing).unwrap().unwrap();
             validators
-                .val_status
-                .write(&missing, current_status)
+                .test_set_lifecycle(missing, current_lifecycle)
                 .unwrap();
-            validators.val_slash_count.write(&missing, 7).unwrap();
+            validators
+                .test_set_history(
+                    missing,
+                    ValidatorHistory::new(
+                        before.joined_at_height,
+                        (before.deactivated_at_height != 0).then_some(before.deactivated_at_height),
+                        7,
+                        before.missed_blocks,
+                        before.missed_votes,
+                        before.blocks_proposed,
+                    ),
+                )
+                .unwrap();
         });
 
         close_completed_response_window(&mut fixture, finalized.deadline_height).unwrap();
@@ -484,8 +508,7 @@ fn deadline_records_missing_removed_validator_without_fatal() {
     StorageHandle::enter(&mut fixture.provider, |storage| {
         let mut validators = ValidatorSet::new(storage);
         validators
-            .val_status
-            .write(&removed, validator_status::INACTIVE)
+            .test_set_lifecycle(removed, ValidatorLifecycle::Inactive)
             .unwrap();
         assert_eq!(validators.cleanup_inactive_validators(1).unwrap(), 1);
         assert!(validators.get_validator(removed).unwrap().is_none());
@@ -822,13 +845,9 @@ fn historical_vote_participant_resolution_does_not_consult_current_active_status
     let historical_validator = Address::repeat_byte(0xB1);
 
     StorageHandle::enter(&mut fixture.provider, |storage| {
-        let validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+        let mut validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         validators
-            .val_status
-            .write(
-                &historical_validator,
-                outbe_validatorset::logic::status::INACTIVE,
-            )
+            .test_set_lifecycle(historical_validator, ValidatorLifecycle::Inactive)
             .unwrap();
 
         assert_eq!(

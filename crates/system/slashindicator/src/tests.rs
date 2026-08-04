@@ -4,7 +4,7 @@ use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_staking::contract::Staking;
 use outbe_validatorset::contract::ValidatorSet;
-use outbe_validatorset::logic::status;
+use outbe_validatorset::{ActiveState, StakeProjection, ValidatorLifecycle};
 
 use crate::hooks;
 use crate::schema::SlashIndicator;
@@ -37,14 +37,22 @@ fn register_and_activate_with_stake(
 ) {
     let mut pk = [0u8; 48];
     pk[0] = seed;
+    register_and_activate_with_pubkey_and_stake(storage, validator, &pk, stake_amount);
+}
 
+fn register_and_activate_with_pubkey_and_stake(
+    storage: StorageHandle,
+    validator: Address,
+    consensus_pubkey: &[u8; 48],
+    stake_amount: U256,
+) {
     let mut vs = ValidatorSet::new(storage.clone());
     vs.config_owner.write(OWNER).unwrap();
     vs.set_config_max_validators(100).unwrap();
-    vs.register_validator(OWNER, validator, &pk).unwrap();
+    vs.register_validator(OWNER, validator, consensus_pubkey)
+        .unwrap();
     vs.activate_validator_via_boundary_for_test(validator)
         .unwrap();
-    vs.val_has_bls_share.write(&validator, true).unwrap();
 
     // Give the validator some stake so slash_stake has an effect
     let staking = Staking::new(storage.clone());
@@ -59,12 +67,17 @@ fn register_and_activate_with_stake(
         .increase_balance(STAKING_ADDRESS, stake_amount)
         .unwrap();
     staking.total_staked.write(stake_amount).unwrap();
-    vs.val_stake.write(&validator, stake_amount).unwrap();
+    vs.test_set_stake_projection(validator, StakeProjection::new(stake_amount, None))
+        .unwrap();
 
     // the evidence precompiles now require an ACTIVE-validator submitter.
     // Register SUBMITTER as ACTIVE so the evidence tests reach the verifier (a
     // distinct test asserts a non-ACTIVE caller is rejected).
-    if vs.val_status.read(&SUBMITTER).unwrap() != status::ACTIVE {
+    if !vs
+        .validator_lifecycle(SUBMITTER)
+        .unwrap()
+        .is_active_status()
+    {
         let mut sub_pk = [0u8; 48];
         sub_pk[0] = 0xEE;
         vs.register_validator(OWNER, SUBMITTER, &sub_pk).unwrap();
@@ -96,7 +109,7 @@ fn test_slash_proposer_misdemeanor() {
 
         // Validator status must still be ACTIVE (not force-exited)
         let vs = ValidatorSet::new(storage.clone());
-        assert_eq!(vs.val_status.read(&VAL_A).unwrap(), status::ACTIVE);
+        assert!(vs.validator_lifecycle(VAL_A).unwrap().is_active_status());
     });
 }
 
@@ -126,7 +139,10 @@ fn test_slash_proposer_felony() {
 
         // Validator must be forced out
         let vs = ValidatorSet::new(storage.clone());
-        assert_eq!(vs.val_status.read(&VAL_A).unwrap(), status::JAILED);
+        assert!(matches!(
+            vs.validator_lifecycle(VAL_A).unwrap(),
+            ValidatorLifecycle::Jailed(_)
+        ));
 
         // Stake must be reduced (5% slashed from 1_000_000)
         let staking = Staking::new(storage.clone());
@@ -166,9 +182,11 @@ fn test_felony_stays_jailed_when_slash_drops_below_min_stake() {
             U256::from(950u64)
         );
         let vs = ValidatorSet::new(storage.clone());
-        assert_eq!(
-            vs.val_status.read(&VAL_A).unwrap(),
-            status::JAILED,
+        assert!(
+            matches!(
+                vs.validator_lifecycle(VAL_A).unwrap(),
+                ValidatorLifecycle::Jailed(_)
+            ),
             "jail-before-slash must keep JAILED even when the slash drops below min_stake"
         );
     });
@@ -261,9 +279,12 @@ fn test_felony_count_cumulative() {
         assert_eq!(si.get_felony_count(VAL_A).unwrap(), 1);
 
         // Re-activate in test storage to verify cumulative felony accounting.
-        let vs = ValidatorSet::new(storage.clone());
-        vs.val_status.write(&VAL_A, status::ACTIVE).unwrap();
-        vs.val_has_bls_share.write(&VAL_A, true).unwrap();
+        let mut vs = ValidatorSet::new(storage.clone());
+        vs.test_set_lifecycle(
+            VAL_A,
+            ValidatorLifecycle::Active(ActiveState::Participating),
+        )
+        .unwrap();
 
         // Second epoch: trigger another felony
         for _ in 0..150 {
@@ -315,7 +336,8 @@ fn test_evidence_reward() {
         let staking = Staking::new(storage.clone());
         staking.stake_amount.write(&validator, stake).unwrap();
         staking.total_staked.write(stake).unwrap();
-        vs.val_stake.write(&validator, stake).unwrap();
+        vs.test_set_stake_projection(validator, StakeProjection::new(stake, None))
+            .unwrap();
 
         // Create two different proposals for the same round
         let proposal1 = build_test_proposal(1, 5, 0, [0xAA; 32]);
@@ -335,7 +357,10 @@ fn test_evidence_reward() {
 
         // Verify felony applied
         assert_eq!(si.get_felony_count(validator).unwrap(), 1);
-        assert_eq!(vs.val_status.read(&validator).unwrap(), status::JAILED);
+        assert!(matches!(
+            vs.validator_lifecycle(validator).unwrap(),
+            ValidatorLifecycle::Jailed(_)
+        ));
 
         // Verify evidence reward paid to submitter
         // slashed = 1_000_000 * 5 / 100 = 50_000
@@ -376,13 +401,18 @@ fn test_conflicting_vote_evidence() {
             vs.activate_validator_via_boundary_for_test(SUBMITTER)
                 .unwrap();
         }
-        vs.val_has_bls_share.write(&validator, true).unwrap();
+        vs.test_set_lifecycle(
+            validator,
+            ValidatorLifecycle::Active(ActiveState::Participating),
+        )
+        .unwrap();
 
         let stake = U256::from(2_000_000u64);
         let staking = Staking::new(storage.clone());
         staking.stake_amount.write(&validator, stake).unwrap();
         staking.total_staked.write(stake).unwrap();
-        vs.val_stake.write(&validator, stake).unwrap();
+        vs.test_set_stake_projection(validator, StakeProjection::new(stake, None))
+            .unwrap();
 
         // Create a notarize proposal (epoch=3, view=7)
         let proposal = build_test_proposal(3, 7, 0, [0xCC; 32]);
@@ -401,7 +431,10 @@ fn test_conflicting_vote_evidence() {
 
         // Verify felony applied
         assert_eq!(si.get_felony_count(validator).unwrap(), 1);
-        assert_eq!(vs.val_status.read(&validator).unwrap(), status::JAILED);
+        assert!(matches!(
+            vs.validator_lifecycle(validator).unwrap(),
+            ValidatorLifecycle::Jailed(_)
+        ));
 
         // Verify evidence reward
         // slashed = 2_000_000 * 5 / 100 = 100_000
@@ -446,7 +479,8 @@ fn test_conflicting_vote_evidence_reversed_order() {
         let staking = Staking::new(storage.clone());
         staking.stake_amount.write(&validator, stake).unwrap();
         staking.total_staked.write(stake).unwrap();
-        vs.val_stake.write(&validator, stake).unwrap();
+        vs.test_set_stake_projection(validator, StakeProjection::new(stake, None))
+            .unwrap();
 
         let proposal = build_test_proposal(2, 4, 0, [0xDD; 32]);
         let notarize_data = sign_notarize_evidence(&sk, &pk, &proposal);
@@ -529,7 +563,10 @@ fn test_full_lifecycle_integration() {
         // 2. Register validator
         let pk = [0x42u8; 48];
         vs.register_validator(OWNER, validator, &pk).unwrap();
-        assert_eq!(vs.val_status.read(&validator).unwrap(), status::REGISTERED);
+        assert_eq!(
+            vs.validator_lifecycle(validator).unwrap(),
+            ValidatorLifecycle::Registered
+        );
 
         // 3. Setup Staking config and stake
         let mut staking = Staking::new(storage.clone());
@@ -550,18 +587,23 @@ fn test_full_lifecycle_integration() {
         // slash_stake burns from STAKING_ADDRESS — fund it for the test.
         ctx.set_balance(STAKING_ADDRESS, U256::from(10_000u64))
             .unwrap();
-        assert_eq!(vs.val_status.read(&validator).unwrap(), status::PENDING);
+        assert!(matches!(
+            vs.validator_lifecycle(validator).unwrap(),
+            ValidatorLifecycle::Pending(_)
+        ));
         vs.activate_validator_via_boundary_for_test(validator)
             .unwrap();
-        vs.val_has_bls_share.write(&validator, true).unwrap();
-        assert_eq!(vs.val_status.read(&validator).unwrap(), status::ACTIVE);
+        assert!(vs
+            .validator_lifecycle(validator)
+            .unwrap()
+            .is_active_status());
         assert_eq!(staking.get_stake(validator).unwrap(), U256::from(10_000u64));
 
         // 4. Record proposer blocks
         vs.record_proposer(validator).unwrap();
         vs.record_proposer(validator).unwrap();
         vs.record_proposer(validator).unwrap();
-        assert_eq!(vs.val_blocks_proposed.read(&validator).unwrap(), 3);
+        assert_eq!(vs.participation(validator).unwrap().blocks_proposed, 3);
 
         // 5. Slash proposer until felony (150 misses)
         let mut si = SlashIndicator::new(storage.clone());
@@ -571,7 +613,10 @@ fn test_full_lifecycle_integration() {
         }
 
         // 6. Verify forced exit
-        assert_eq!(vs.val_status.read(&validator).unwrap(), status::JAILED);
+        assert!(matches!(
+            vs.validator_lifecycle(validator).unwrap(),
+            ValidatorLifecycle::Jailed(_)
+        ));
         assert_eq!(si.get_felony_count(validator).unwrap(), 1);
 
         // Stake reduced by 5%: 10_000 * 95 / 100 = 9_500
@@ -591,7 +636,10 @@ fn test_full_lifecycle_integration() {
     StorageHandle::enter(&mut storage, |storage| {
         let validator = VAL_A;
         let vs = ValidatorSet::new(storage.clone());
-        assert_eq!(vs.val_status.read(&validator).unwrap(), status::JAILED);
+        assert!(matches!(
+            vs.validator_lifecycle(validator).unwrap(),
+            ValidatorLifecycle::Jailed(_)
+        ));
     });
 }
 
@@ -614,13 +662,16 @@ fn slash_voter_felony_force_exits_and_slashes_at_threshold() {
         let vs = ValidatorSet::new(storage.clone());
         assert_eq!(si.get_voter_miss_count(VAL_A).unwrap(), 149);
         assert_eq!(si.get_felony_count(VAL_A).unwrap(), 0);
-        assert_eq!(vs.val_status.read(&VAL_A).unwrap(), status::ACTIVE);
+        assert!(vs.validator_lifecycle(VAL_A).unwrap().is_active_status());
 
         // 150th miss crosses the felony threshold → force-exit + 5% stake slash.
         si.slash_voter(VAL_A).unwrap();
         assert_eq!(si.get_voter_miss_count(VAL_A).unwrap(), 150);
         assert_eq!(si.get_felony_count(VAL_A).unwrap(), 1);
-        assert_eq!(vs.val_status.read(&VAL_A).unwrap(), status::JAILED);
+        assert!(matches!(
+            vs.validator_lifecycle(VAL_A).unwrap(),
+            ValidatorLifecycle::Jailed(_)
+        ));
 
         // 1_000_000 stake slashed by 5% → 950_000.
         let staking = Staking::new(storage.clone());
@@ -661,8 +712,20 @@ fn already_jailed_voter_is_not_re_slashed() {
         let vs = ValidatorSet::new(storage.clone());
         let staking = Staking::new(storage.clone());
         assert_eq!(si.get_felony_count(VAL_A).unwrap(), 1);
-        assert_eq!(vs.val_status.read(&VAL_A).unwrap(), status::JAILED);
+        assert!(matches!(
+            vs.validator_lifecycle(VAL_A).unwrap(),
+            ValidatorLifecycle::Jailed(_)
+        ));
         assert_eq!(staking.get_stake(VAL_A).unwrap(), U256::from(950_000u64));
+        // A retained readiness residue wraps JAILED but must not bypass the
+        // already-penalized guard.
+        let mut vs = ValidatorSet::new(storage.clone());
+        let jailed = vs.validator_lifecycle(VAL_A).unwrap();
+        vs.test_set_lifecycle(
+            VAL_A,
+            ValidatorLifecycle::ReadinessOutsidePending(Box::new(jailed)),
+        )
+        .unwrap();
 
         // Two more misses reach count==4 (another threshold multiple), but the
         // validator is already JAILED → no second felony, no second slash.
@@ -678,7 +741,10 @@ fn already_jailed_voter_is_not_re_slashed() {
             1,
             "no second felony while already JAILED"
         );
-        assert_eq!(vs.val_status.read(&VAL_A).unwrap(), status::JAILED);
+        assert!(matches!(
+            vs.validator_lifecycle(VAL_A).unwrap().phase(),
+            ValidatorLifecycle::Jailed(_)
+        ));
         assert_eq!(
             staking.get_stake(VAL_A).unwrap(),
             U256::from(950_000u64),
@@ -700,7 +766,7 @@ fn slash_voter_below_threshold_is_not_punitive() {
         assert_eq!(si.get_voter_miss_count(VAL_B).unwrap(), 1);
         assert_eq!(si.get_felony_count(VAL_B).unwrap(), 0);
         let vs = ValidatorSet::new(storage.clone());
-        assert_eq!(vs.val_status.read(&VAL_B).unwrap(), status::ACTIVE);
+        assert!(vs.validator_lifecycle(VAL_B).unwrap().is_active_status());
         let staking = Staking::new(storage.clone());
         assert_eq!(staking.get_stake(VAL_B).unwrap(), U256::from(1_000_000u64));
     });
@@ -871,14 +937,12 @@ fn test_evidence_dedup_rejects_duplicate() {
         let pk = sk.sk_to_pk();
 
         let pk_bytes: [u8; 48] = pk.to_bytes();
-        register_and_activate_with_stake(storage.clone(), VAL_A, 99, U256::from(100_000u64));
-
-        // Override consensus pubkey to match BLS key
-        let vs = ValidatorSet::new(storage.clone());
-        let pk_hash = ValidatorSet::consensus_pubkey_hash(&pk_bytes);
-        vs.consensus_pubkey_hash_to_address
-            .write(&pk_hash, VAL_A)
-            .unwrap();
+        register_and_activate_with_pubkey_and_stake(
+            storage.clone(),
+            VAL_A,
+            &pk_bytes,
+            U256::from(100_000u64),
+        );
 
         // Build two different proposals for the same round
         let prop1 = build_test_proposal(1, 5, 0, [0xAA; 32]);

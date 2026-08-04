@@ -16,6 +16,7 @@ use outbe_evm::executor::run_outbe_pre_execution_hooks;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_validatorset::contract::ValidatorSet;
+use outbe_validatorset::EpochSnapshot;
 
 const CHAIN_ID: u64 = 1;
 const EPOCH_LENGTH: u32 = 10;
@@ -27,10 +28,14 @@ const PROPOSER: Address = Address::ZERO;
 ///   * `epoch_start_block = 0`
 ///   * `epoch_number = 1` (the currently activated epoch)
 fn seed_validator_set(storage: StorageHandle, initial_epoch: u64) {
-    let vs = ValidatorSet::new(storage.clone());
-    vs.config_epoch_length_blocks.write(EPOCH_LENGTH).unwrap();
-    vs.epoch_start_block.write(0).unwrap();
-    vs.epoch_number.write(U256::from(initial_epoch)).unwrap();
+    let mut vs = ValidatorSet::new(storage.clone());
+    vs.test_set_epoch_snapshot(EpochSnapshot {
+        number: U256::from(initial_epoch),
+        start_timestamp: 0,
+        start_block: 0,
+        length_blocks: EPOCH_LENGTH,
+    })
+    .unwrap();
     // Seed COEN/840 pair + 1.0 rate so begin-block NOD/GEM/INTEX promotion
     // reads a registered pair instead of reverting "pair not registered".
     outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
@@ -58,14 +63,14 @@ fn nominal_epoch_boundary_without_certified_outcome_keeps_activated_epoch() {
         // Sanity: epoch_number BEFORE the pre-exec hook chain is the
         // pre-bump value.
         let vs_before = ValidatorSet::new(storage.clone());
+        let epoch_before = vs_before.epoch_snapshot().unwrap();
         assert_eq!(
-            vs_before.epoch_number.read().unwrap(),
+            epoch_before.number,
             U256::from(1u64),
             "pre-condition: epoch_number must be 1 before pre-exec",
         );
         assert_eq!(
-            vs_before.epoch_start_block.read().unwrap(),
-            0,
+            epoch_before.start_block, 0,
             "pre-condition: epoch_start_block must be 0 before pre-exec",
         );
 
@@ -88,14 +93,14 @@ fn nominal_epoch_boundary_without_certified_outcome_keeps_activated_epoch() {
         // receipt-visible BoundaryOutcome executes, every consumer — including
         // OCOMP — must continue to observe the old epoch and its snapshot.
         let vs_after = ValidatorSet::new(storage);
+        let epoch_after = vs_after.epoch_snapshot().unwrap();
         assert_eq!(
-            vs_after.epoch_number.read().unwrap(),
+            epoch_after.number,
             U256::from(1u64),
             "nominal boundary without certified outcome must not advance epoch",
         );
         assert_eq!(
-            vs_after.epoch_start_block.read().unwrap(),
-            0,
+            epoch_after.start_block, 0,
             "nominal boundary without certified outcome must not move epoch anchor",
         );
     });
@@ -125,14 +130,14 @@ fn transition_epoch_does_not_fire_inside_an_epoch() {
         run_outbe_pre_execution_hooks(&ctx, None).expect("pre-exec hook chain must succeed");
 
         let vs_after = ValidatorSet::new(storage);
+        let epoch_after = vs_after.epoch_snapshot().unwrap();
         assert_eq!(
-            vs_after.epoch_number.read().unwrap(),
+            epoch_after.number,
             U256::from(1u64),
             "mid-epoch block must NOT bump epoch_number",
         );
         assert_eq!(
-            vs_after.epoch_start_block.read().unwrap(),
-            0,
+            epoch_after.start_block, 0,
             "mid-epoch block must NOT advance epoch_start_block",
         );
     });

@@ -7,6 +7,7 @@ use outbe_primitives::error::Result as PrecompileResult;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::Units;
+use outbe_validatorset::StakeProjection;
 
 /// No shared mutable state between tests; contracts read/write through the
 /// scoped `StorageHandle` passed into the closure.
@@ -298,8 +299,6 @@ pub(super) fn init_oracle(oracle: &mut OracleContract) {
 /// Helper: register a validator in the ValidatorSet with given stake.
 /// Uses the first byte of addr as the pubkey seed to avoid BLS pubkey collision.
 pub(super) fn register_validator(storage: StorageHandle, addr: Address, stake: U256) {
-    use outbe_validatorset::logic::status;
-
     let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
     // Only write config once (if not already initialized)
     if !vs.config_is_initialized.read().unwrap() {
@@ -314,8 +313,7 @@ pub(super) fn register_validator(storage: StorageHandle, addr: Address, stake: U
     let mut pubkey = [0u8; 48];
     pubkey[..20].copy_from_slice(addr.as_slice());
     vs.register_validator(Address::ZERO, addr, &pubkey).unwrap();
-    // Set stake and status to ACTIVE
-    vs.val_stake.write(&addr, stake).unwrap();
-    vs.val_status.write(&addr, status::ACTIVE).unwrap();
-    vs.val_has_bls_share.write(&addr, true).unwrap();
+    vs.test_set_stake_projection(addr, StakeProjection::new(stake, None))
+        .unwrap();
+    vs.activate_validator(addr).unwrap();
 }
