@@ -68,10 +68,10 @@ use outbe_slashindicator::schema::SlashIndicator;
 use outbe_slashindicator::vrf_evidence::{InvalidVrfProofEvidence, MAGIC, VERSION};
 use outbe_staking::contract::Staking;
 use outbe_validatorset::contract::ValidatorSet;
-use outbe_validatorset::logic::status;
 use outbe_validatorset::state::{
     committee_set_hash_v2, write_committee_snapshot, CommitteeEntry, CommitteeSnapshot,
 };
+use outbe_validatorset::{ActiveState, StakeProjection, ValidatorLifecycle};
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 
@@ -326,12 +326,16 @@ fn setup_storage(
     let mut vs = ValidatorSet::new(storage.clone());
     vs.config_owner.write(OWNER).unwrap();
     vs.config_max_validators.write(100).unwrap();
-    vs.epoch_number.write(U256::from(current_epoch)).unwrap();
+    set_current_epoch(&mut vs, current_epoch);
     let mut pk = [0u8; 48];
     pk[0] = 0x42;
     vs.register_validator(OWNER, proposer, &pk).unwrap();
     vs.activate_validator(proposer).unwrap();
-    vs.val_has_bls_share.write(&proposer, true).unwrap();
+    vs.test_set_lifecycle(
+        proposer,
+        ValidatorLifecycle::Active(ActiveState::Participating),
+    )
+    .unwrap();
 
     let staking = Staking::new(storage.clone());
     let stake = U256::from(STAKE_AMOUNT);
@@ -341,9 +345,16 @@ fn setup_storage(
         .storage
         .increase_balance(STAKING_ADDRESS, stake)
         .unwrap();
-    vs.val_stake.write(&proposer, stake).unwrap();
+    vs.test_set_stake_projection(proposer, StakeProjection::new(stake, None))
+        .unwrap();
 
     write_committee_snapshot(storage, CHILD_EPOCH, snapshot).unwrap();
+}
+
+fn set_current_epoch(vs: &mut ValidatorSet<'_>, number: u64) {
+    let mut epoch = vs.epoch_snapshot().unwrap();
+    epoch.number = U256::from(number);
+    vs.test_set_epoch_snapshot(epoch).unwrap();
 }
 
 // Helper: build a default-shape evidence struct. Metadata and proof are always
@@ -485,7 +496,7 @@ fn invalid_vrf_evidence_rejects_non_active_submitter() {
             msg.contains("not an ACTIVE validator"),
             "EXITING validator must be rejected; got: {msg}",
         );
-        // status::EXITING == 3
+        // The ABI-compatible stored EXITING discriminant is 3.
         assert!(
             msg.contains("status: 3"),
             "rejection must echo the stored status; got: {msg}",
@@ -530,14 +541,13 @@ fn invalid_vrf_evidence_rejects_after_max_age() {
 }
 
 // ===========================================================================
-// epoch_lag check uses on-chain `ValidatorSet.epoch_number` (Option C).
+// epoch_lag check uses the on-chain ValidatorSet epoch snapshot (Option C).
 // ===========================================================================
 #[test]
 fn evidence_epoch_deadline_inadmissible_after_grace_epoch() {
     with_storage(|storage| {
-        // Initialize ValidatorSet just so we can write epoch_number.
-        let vs = ValidatorSet::new(storage.clone());
-        vs.epoch_number.write(U256::from(CHILD_EPOCH + 5)).unwrap();
+        let mut vs = ValidatorSet::new(storage.clone());
+        set_current_epoch(&mut vs, CHILD_EPOCH + 5);
 
         let evidence = evidence_skeleton(vec![]).encode();
         let mut si = SlashIndicator::new(storage);
@@ -631,8 +641,8 @@ fn evidence_with_missing_committee_snapshot_rejected() {
 
         // Storage minimum to satisfy admissibility but DO NOT write the
         // committee snapshot.
-        let vs = ValidatorSet::new(storage.clone());
-        vs.epoch_number.write(U256::from(CHILD_EPOCH)).unwrap();
+        let mut vs = ValidatorSet::new(storage.clone());
+        set_current_epoch(&mut vs, CHILD_EPOCH);
 
         let phase1 = sign_phase1_metadata_tx(&signer, &metadata);
         let evidence = evidence_skeleton(phase1).encode();
@@ -788,9 +798,11 @@ fn invalid_vrf_proof_evidence_slashes_child_proposer() {
 
         // (a) Validator JAILED (felony, not force-exited).
         let vs = ValidatorSet::new(storage.clone());
-        assert_eq!(
-            vs.val_status.read(&proposer).unwrap(),
-            status::JAILED,
+        assert!(
+            matches!(
+                vs.validator_lifecycle(proposer).unwrap(),
+                ValidatorLifecycle::Jailed(_)
+            ),
             "proposer must be jailed"
         );
 
@@ -986,18 +998,18 @@ fn evidence_max_age_inadmissible_after_deadline() {
 
 // ===========================================================================
 // body test #6 — admissibility reads `current_epoch` from
-// `ValidatorSet.epoch_number` storage, NOT from any in-memory cache.
+// ValidatorSet epoch storage, NOT from any in-memory cache.
 //
-// We write epoch_number directly via the contract facade and assert the
-// precompile observes the value. Drives the on-chain-state path (BP-0 option C).
+// We install an epoch snapshot through the test fixture API and assert the
+// precompile observes it. Drives the on-chain-state path (BP-0 option C).
 // ===========================================================================
 #[test]
 fn evidence_admissibility_reads_current_epoch_from_validator_set_storage() {
     with_storage_at(CHILD_BLOCK_NUMBER + 1, |storage| {
-        // Direct write to the canonical storage slot consulted by the
-        // precompile — no submission, no transition_epoch call.
-        let vs = ValidatorSet::new(storage.clone());
-        vs.epoch_number.write(U256::from(CHILD_EPOCH + 7)).unwrap();
+        // No submission or transition_epoch call: install the canonical epoch
+        // fixture the precompile consults.
+        let mut vs = ValidatorSet::new(storage.clone());
+        set_current_epoch(&mut vs, CHILD_EPOCH + 7);
 
         let evidence = evidence_skeleton(vec![]).encode();
         let mut si = SlashIndicator::new(storage);
@@ -1009,13 +1021,13 @@ fn evidence_admissibility_reads_current_epoch_from_validator_set_storage() {
         let msg = format!("{err}");
         assert!(
             msg.contains("evidence epoch-stale"),
-            "precompile must read epoch_number from storage; got: {msg}",
+            "precompile must read the ValidatorSet epoch from storage; got: {msg}",
         );
         // The current_epoch in the error message must be exactly the
         // value we just wrote — pins the storage-read path.
         assert!(
             msg.contains(&format!("current_epoch {}", CHILD_EPOCH + 7)),
-            "rejection must echo the stored epoch_number value; got: {msg}",
+            "rejection must echo the stored epoch value; got: {msg}",
         );
     });
 }

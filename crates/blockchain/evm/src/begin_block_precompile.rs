@@ -1084,6 +1084,7 @@ mod tests {
     use super::*;
     use alloy_primitives::{address, keccak256, B256};
     use outbe_primitives::{consensus::ReshareResult, storage::hashmap::HashMapStorageProvider};
+    use outbe_validatorset::{ActiveState, ValidatorLifecycle};
 
     const CHAIN_ID: u64 = 2026;
     const OWNER: Address = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
@@ -1198,10 +1199,12 @@ mod tests {
             vs.config_max_validators.write(128).unwrap();
             vs.config_epoch_length_blocks.write(10).unwrap();
             vs.register_validator(OWNER, VALIDATOR, &[7u8; 48]).unwrap();
-            vs.activate_validator(VALIDATOR).unwrap();
-            vs.val_has_bls_share.write(&VALIDATOR, true).unwrap();
-            vs.active_consensus_set_hash
-                .write(active_set_hash(&[VALIDATOR]))
+            vs.test_set_lifecycle(
+                VALIDATOR,
+                ValidatorLifecycle::Active(ActiveState::Participating),
+            )
+            .unwrap();
+            vs.test_set_active_consensus_set_hash(active_set_hash(&[VALIDATOR]))
                 .unwrap();
         });
         provider.set_block_number(1);
@@ -1645,8 +1648,11 @@ mod tests {
                 let mut pubkey = [7u8; 48];
                 pubkey[0] = i as u8;
                 vs.register_validator(OWNER, *member, &pubkey).unwrap();
-                vs.activate_validator(*member).unwrap();
-                vs.val_has_bls_share.write(member, true).unwrap();
+                vs.test_set_lifecycle(
+                    *member,
+                    ValidatorLifecycle::Active(ActiveState::Participating),
+                )
+                .unwrap();
             }
         });
         provider
@@ -2145,8 +2151,8 @@ mod tests {
                 "credited voter is not counted missed"
             );
             let vs = outbe_validatorset::contract::ValidatorSet::new(ctx.storage.clone());
-            assert_eq!(vs.val_missed_votes.read(&V1).unwrap(), 1);
-            assert_eq!(vs.val_missed_votes.read(&V0).unwrap(), 0);
+            assert_eq!(vs.participation(V1).unwrap().missed_votes, 1);
+            assert_eq!(vs.participation(V0).unwrap().missed_votes, 0);
 
             // Replay the closed window: settle freed the escrow and the per-fb_hash
             // guards short-circuit, so re-running must not double-count.
@@ -2156,7 +2162,7 @@ mod tests {
                 1,
                 "replay must not double-count the absentee miss"
             );
-            assert_eq!(vs.val_missed_votes.read(&V1).unwrap(), 1);
+            assert_eq!(vs.participation(V1).unwrap().missed_votes, 1);
         });
     }
 
@@ -2238,7 +2244,7 @@ mod tests {
                 for a in members {
                     out.push((
                         si.get_voter_miss_count(a).unwrap(),
-                        vs.val_missed_votes.read(&a).unwrap(),
+                        vs.participation(a).unwrap().missed_votes,
                     ));
                 }
             });

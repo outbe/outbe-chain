@@ -893,11 +893,7 @@ mod tests {
     #[test]
     fn test_read_validators_from_state_marks_invalid_registry_entry() {
         let access = populated_p2p_state(|vs, validator| {
-            vs.val_p2p_address_version.write(&validator, 99).unwrap();
-            vs.val_p2p_address_payload
-                .get_bytes(&validator)
-                .write(&[0])
-                .unwrap();
+            vs.test_corrupt_p2p_storage(validator, 99, &[0]).unwrap();
         });
 
         let validators = read_validators_from_state(&access).unwrap();
@@ -948,10 +944,10 @@ mod tests {
         let mut provider = HashMapStorageProvider::new(1);
 
         StorageHandle::enter(&mut provider, |storage| {
-            let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
+            let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage);
             vs.config_is_initialized.write(true).unwrap();
             vs.config_max_validators.write(128).unwrap();
-            vs.pending_set_change.write(true).unwrap();
+            vs.test_set_pending_set_change(true).unwrap();
         });
 
         let access = TestStateAccess {

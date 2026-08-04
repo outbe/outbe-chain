@@ -436,7 +436,7 @@ fn boundary_block_writes_both_outgoing_and_incoming_snapshots_atomically() {
         // active_consensus_set_hash advanced to the boundary's hash.
         let vs_after = ValidatorSet::new(storage.clone());
         assert_eq!(
-            vs_after.active_consensus_set_hash.read().unwrap(),
+            vs_after.active_consensus_set_hash().unwrap(),
             b256!("00000000000000000000000000000000000000000000000000000000000000A1")
         );
     });
@@ -785,16 +785,19 @@ fn boundary_activation_rolls_back_snapshots_on_failure() {
         // fresh state).
         let vs_after = ValidatorSet::new(storage.clone());
         assert_eq!(
-            vs_after.active_consensus_set_hash.read().unwrap(),
+            vs_after.active_consensus_set_hash().unwrap(),
             B256::ZERO,
             "active_consensus_set_hash must remain unchanged on rollback",
         );
 
         // And the previously-existing validator's status is unchanged.
-        let known_status = vs_after.val_status.read(&known_addr).unwrap();
+        let known_status = vs_after
+            .validator_lifecycle(known_addr)
+            .unwrap()
+            .stored_status();
         assert_eq!(
             known_status,
-            outbe_validatorset::runtime::status::REGISTERED,
+            Some(outbe_validatorset::runtime::status::REGISTERED),
             "pre-existing validator status must not be affected by the failed activation",
         );
     });

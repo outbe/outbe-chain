@@ -74,12 +74,9 @@ pub fn dispatch(
                         .into())
                 }),
                 validatorByIndex(c) => view(c, |c| {
-                    let addr = vs.index_to_address.read(&c.index)?;
-                    if addr.is_zero() {
-                        return Err(PrecompileError::Revert(
-                            "validator not found at index".into(),
-                        ));
-                    }
+                    let addr = vs.validator_address_at(c.index)?.ok_or_else(|| {
+                        PrecompileError::Revert("validator not found at index".into())
+                    })?;
                     let v = vs
                         .get_validator(addr)?
                         .ok_or_else(|| PrecompileError::Revert("validator not found".into()))?;
@@ -100,7 +97,7 @@ pub fn dispatch(
                         .into())
                 }),
                 validatorCount(_) => {
-                    metadata::<IValidatorSet::validatorCountCall>(|| vs.validator_count.read())
+                    metadata::<IValidatorSet::validatorCountCall>(|| vs.validator_count())
                 }
                 activeValidatorCount(_) => {
                     metadata::<IValidatorSet::activeValidatorCountCall>(|| {
@@ -193,7 +190,7 @@ pub fn dispatch(
                             "unauthorized: only owner can activate reshared set".into(),
                         ));
                     }
-                    vs.activate_reshared_set(&c.newActiveSet, c.groupPublicKey)
+                    vs.legacy_activate_reshared_set(&c.newActiveSet, c.groupPublicKey)
                 }),
             }
         },

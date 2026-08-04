@@ -6,7 +6,7 @@ use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_validatorset::contract::ValidatorSet;
-use outbe_validatorset::logic::status;
+use outbe_validatorset::ValidatorLifecycle;
 
 use crate::api::{get_proposal, get_proposal_voters, list_proposals, list_proposals_by_status};
 use crate::constants::VOTING_WINDOW_BLOCKS;
@@ -105,9 +105,11 @@ pub(super) fn register_pending_validator(storage: StorageHandle, addr: Address, 
     vs.register_validator(VALIDATOR_OWNER, addr, &dummy_pubkey(seed))
         .unwrap();
     vs.mark_pending(addr).unwrap();
-    assert_eq!(
-        vs.val_status.read(&addr).unwrap(),
-        status::PENDING,
+    assert!(
+        matches!(
+            vs.validator_lifecycle(addr).unwrap(),
+            ValidatorLifecycle::Pending(_)
+        ),
         "fixture must leave validator in PENDING status"
     );
 }

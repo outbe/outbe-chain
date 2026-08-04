@@ -108,6 +108,10 @@ pub fn activate_reshared_set(
     active_set_hash: B256,
 ) -> Result<()> {
     let mut vs = ValidatorSet::new(storage);
+    // Compatibility hook: callers that do not carry the complete boundary
+    // artifact intentionally remain on the permissive S-02/S-03 legacy path.
+    // Consensus must use `activate_boundary_atomic`, which validates the
+    // snapshot/hash bundle before reaching the validated internal transition.
     vs.activate_reshared_set(new_active_set, active_set_hash)?;
     Ok(())
 }
@@ -163,7 +167,7 @@ pub fn activate_boundary_atomic(
 
     {
         let mut vs = ValidatorSet::new(storage.clone());
-        vs.activate_reshared_set_with_expiry_exclusions(
+        vs.activate_validated_boundary_set_with_expiry_exclusions(
             &inputs.new_active_set,
             inputs.active_set_hash,
             &inputs.tee_expired_target_exclusions,

@@ -33,6 +33,7 @@ use outbe_primitives::{
     storage::{direct::DirectStorageProvider, StorageHandle},
     OutbeHeader,
 };
+use outbe_validatorset::{ActiveState, ValidatorLifecycle};
 use outbe_zerofee::ZeroFeeTransaction;
 use reth_ethereum::{
     evm::{primitives::Evm, revm::context::TxEnv, RethReceiptBuilder},
@@ -264,7 +265,7 @@ pub(crate) fn apply_boundary_outcome(
     }
 
     let vs_check = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-    let current_hash = vs_check.active_consensus_set_hash.read()?;
+    let current_hash = vs_check.active_consensus_set_hash()?;
 
     if current_hash != reshare.active_set_hash && !boundary.is_validator_set_change {
         return Err(PrecompileError::Fatal(format!(
@@ -301,14 +302,14 @@ fn committee_snapshot_from_boundary(
     let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
     let mut committee = Vec::with_capacity(boundary.reshare.new_active_set.len());
     for address in &boundary.reshare.new_active_set {
-        let Some(record) = vs.get_validator(*address)? else {
+        let Some(consensus_pubkey) = vs.consensus_pubkey_of(*address)? else {
             return Err(PrecompileError::Fatal(format!(
                 "boundary active set contains unregistered validator {address}"
             )));
         };
         committee.push(outbe_validatorset::CommitteeEntry {
             address: *address,
-            consensus_pubkey: record.consensus_pubkey,
+            consensus_pubkey,
         });
     }
 
@@ -580,8 +581,7 @@ fn run_outbe_pre_execution_hooks_inner(
     if outbe_validatorset::hooks::is_epoch_boundary(hook_ctx.storage.clone(), block_number)? {
         // Reset slash indicator per-epoch counters.
         let vs = outbe_validatorset::contract::ValidatorSet::new(hook_ctx.storage.clone());
-        let all = vs.get_all_validators()?;
-        let addrs: Vec<Address> = all.iter().map(|v| v.validator_address).collect();
+        let addrs = vs.registered_validator_addresses()?;
         let mut si = outbe_slashindicator::contract::SlashIndicator::new(hook_ctx.storage.clone());
         si.reset_epoch_counters(&addrs)?;
 
@@ -771,26 +771,31 @@ fn validate_genesis_state(storage: StorageHandle, genesis: &GenesisValidators) -
 
     let mut expected_total = U256::ZERO;
     for validator in &genesis.validators {
-        let Some(record) = vs.get_validator(validator.address)? else {
+        let state = vs.validator_state(validator.address)?;
+        if !state.is_registered() {
             return Err(PrecompileError::Fatal(format!(
                 "genesis validator {} is missing from ValidatorSet",
                 validator.address
             )));
-        };
+        }
 
-        if record.consensus_pubkey != validator.consensus_pubkey {
+        if state.consensus_pubkey().copied() != Some(validator.consensus_pubkey) {
             return Err(PrecompileError::Fatal(format!(
                 "genesis validator {} consensus pubkey mismatch",
                 validator.address
             )));
         }
-        if record.status != outbe_validatorset::logic::status::ACTIVE || !record.has_bls_share {
+        if !matches!(
+            state.lifecycle(),
+            &ValidatorLifecycle::Active(ActiveState::Participating)
+        ) {
             return Err(PrecompileError::Fatal(format!(
                 "genesis validator {} must be active with a BLS share",
                 validator.address
             )));
         }
-        if record.stake < min_stake {
+        let bonded_stake = state.stake().bonded();
+        if bonded_stake < min_stake {
             return Err(PrecompileError::Fatal(format!(
                 "genesis validator {} stake below min_stake",
                 validator.address
@@ -798,7 +803,7 @@ fn validate_genesis_state(storage: StorageHandle, genesis: &GenesisValidators) -
         }
 
         let staking_amount = staking.stake_amount.read(&validator.address)?;
-        if staking_amount != record.stake {
+        if staking_amount != bonded_stake {
             return Err(PrecompileError::Fatal(format!(
                 "genesis validator {} stake mismatch between ValidatorSet and Staking",
                 validator.address
@@ -9506,8 +9511,12 @@ mod tests {
                 staking.stake_amount.write(&old_active, stake).unwrap();
                 staking.total_staked.write(stake).unwrap();
                 staking.config_min_stake.write(U256::from(1u64)).unwrap();
-                let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-                vs.val_stake.write(&old_active, stake).unwrap();
+                let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+                vs.test_set_stake_projection(
+                    old_active,
+                    outbe_validatorset::StakeProjection::new(stake, None),
+                )
+                .unwrap();
             });
         let stake = U256::from(1_000u64);
         let mut setup_provider = outbe_primitives::storage::direct::DirectStorageProvider::new(
@@ -10629,8 +10638,12 @@ mod tests {
             let stake = U256::from(100u64);
             seed_registered_active_validator(storage.clone(), validator, &pk);
 
-            let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-            vs.val_stake.write(&validator, stake).unwrap();
+            let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+            vs.test_set_stake_projection(
+                validator,
+                outbe_validatorset::StakeProjection::new(stake, None),
+            )
+            .unwrap();
 
             let staking = outbe_staking::contract::Staking::new(storage.clone());
             staking.config_min_stake.write(stake).unwrap();
@@ -10832,12 +10845,12 @@ mod tests {
 
             // Read state after first activation.
             let set1 = vs.get_active_consensus_set().unwrap();
-            let hash1 = vs.active_consensus_set_hash.read().unwrap();
+            let hash1 = vs.active_consensus_set_hash().unwrap();
 
             // Second call with same hash → idempotency guard in executor.rs
             // checks `current_hash != reshare.active_set_hash`.
             // Here: current_hash == hash → no-op.
-            let current_hash = vs.active_consensus_set_hash.read().unwrap();
+            let current_hash = vs.active_consensus_set_hash().unwrap();
             assert_eq!(current_hash, hash, "hash must match after first activation");
 
             // Simulate executor's guard: skip if hash matches.
@@ -10846,7 +10859,7 @@ mod tests {
             }
             // State unchanged.
             let set2 = vs.get_active_consensus_set().unwrap();
-            let hash2 = vs.active_consensus_set_hash.read().unwrap();
+            let hash2 = vs.active_consensus_set_hash().unwrap();
             assert_eq!(
                 set1.len(),
                 set2.len(),
@@ -11136,7 +11149,7 @@ mod tests {
             super::apply_boundary_outcome(storage.clone(), &boundary).unwrap();
 
             let vs_after = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-            let now_hash = vs_after.active_consensus_set_hash.read().unwrap();
+            let now_hash = vs_after.active_consensus_set_hash().unwrap();
             assert_eq!(now_hash, new_hash, "active_set_hash must advance");
             let active = vs_after.get_active_consensus_set().unwrap();
             let addrs: Vec<Address> = active.iter().map(|v| v.validator_address).collect();
@@ -11228,7 +11241,7 @@ mod tests {
             super::apply_boundary_outcome(storage.clone(), &boundary).unwrap();
 
             let vs_after = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-            assert_eq!(vs_after.active_consensus_set_hash.read().unwrap(), hash);
+            assert_eq!(vs_after.active_consensus_set_hash().unwrap(), hash);
 
             let snapshot_key = outbe_validatorset::committee_snapshot_key(
                 boundary.epoch,

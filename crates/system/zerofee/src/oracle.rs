@@ -8,6 +8,7 @@ use crate::hooks::{
     ZeroFeeTransaction,
 };
 use outbe_oracle::precompile::IOracle;
+use outbe_validatorset::{ActiveState, ValidatorLifecycle};
 
 /// Maximum calldata bytes accepted for a zero-fee oracle vote.
 pub const MAX_ZERO_FEE_ORACLE_CALLDATA_BYTES: usize = 16 * 1024;
@@ -102,6 +103,12 @@ fn validate_oracle_submit_vote_state(
             outbe_validatorset::delegation::ValidatorDelegateRole::Oracle,
         )?
         .ok_or(ZeroFeePolicyError::UnauthorizedSigner)?;
+    if !matches!(
+        vs.validator_lifecycle(validator)?.phase(),
+        ValidatorLifecycle::Active(ActiveState::Participating)
+    ) {
+        return Err(ZeroFeePolicyError::UnauthorizedSigner);
+    }
 
     let oracle = outbe_oracle::contract::OracleContract::new(vs.storage.clone());
     if oracle.vote_exists.read(&validator)? {
@@ -198,14 +205,18 @@ mod tests {
     fn delegated_feeder_passes_until_validator_votes() {
         let mut storage = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut storage, |storage| {
+            let owner = address!("0xffffffffffffffffffffffffffffffffffffffff");
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-            vs.validator_count.write(1).unwrap();
-            vs.address_to_index.write(&VALIDATOR, 1).unwrap();
-            vs.index_to_address.write(&1, VALIDATOR).unwrap();
-            vs.val_status
-                .write(&VALIDATOR, outbe_validatorset::logic::status::ACTIVE)
-                .unwrap();
-            vs.val_has_bls_share.write(&VALIDATOR, true).unwrap();
+            vs.config_owner.write(owner).unwrap();
+            vs.config_max_validators.write(1).unwrap();
+            vs.register_validator(owner, VALIDATOR, &[1; 48]).unwrap();
+            vs.test_set_lifecycle(
+                VALIDATOR,
+                ValidatorLifecycle::ReadinessOutsidePending(Box::new(ValidatorLifecycle::Active(
+                    ActiveState::Participating,
+                ))),
+            )
+            .unwrap();
 
             vs.set_delegate(
                 VALIDATOR,

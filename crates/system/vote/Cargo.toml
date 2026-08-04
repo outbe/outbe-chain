@@ -17,3 +17,4 @@ tracing.workspace = true
 
 [dev-dependencies]
 outbe-update.workspace = true
+outbe-validatorset = { workspace = true, features = ["test-utils"] }
