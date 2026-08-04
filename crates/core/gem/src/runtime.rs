@@ -34,7 +34,7 @@ impl GemContract<'_> {
     /// Threshold on at least `QUALIFICATION_PERIOD_DAYS` of the trailing `window`
     /// (newest-first `(day, vwap)` pairs). No-op unless the gem is Qualified
     /// against the qualifier pair. Returns true if called.
-    pub(crate) fn call(
+    pub(crate) fn trigger_call(
         &mut self,
         window: &[(u32, Option<U256>)],
         gem_id: U256,

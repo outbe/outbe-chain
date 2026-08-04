@@ -145,7 +145,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
         // reads above keep `?` so infra errors still propagate. A gem is either
         // Qualified (call) or Called (forfeit); the inapplicable op is a no-op.
         let res = ctx.storage.with_checkpoint(|| {
-            if gem.call(&window, gem_id, now)? {
+            if gem.trigger_call(&window, gem_id, now)? {
                 return Ok(true);
             }
             gem.forfeit(gem_id, now)

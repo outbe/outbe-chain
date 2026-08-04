@@ -351,7 +351,7 @@ fn call_then_forfeit_lifecycle() {
         let window = breach_window(T_NOW, threshold + U256::from(1u64), breach_days);
 
         let mut gem = GemContract::new(storage.clone());
-        assert!(gem.call(&window, gem_id, T_NOW).unwrap());
+        assert!(gem.trigger_call(&window, gem_id, T_NOW).unwrap());
         let item = api::get_gem(storage, gem_id).unwrap().unwrap();
         assert_eq!(item.state, GemState::Called as u8);
         assert_eq!(item.called_at, T_NOW as u32);
@@ -374,7 +374,7 @@ fn call_skips_below_threshold() {
         let window = breach_window(T_NOW, threshold + U256::from(1u64), breach_days);
 
         let mut gem = GemContract::new(storage.clone());
-        assert!(!gem.call(&window, gem_id, T_NOW).unwrap());
+        assert!(!gem.trigger_call(&window, gem_id, T_NOW).unwrap());
         assert_eq!(
             api::get_gem(storage, gem_id).unwrap().unwrap().state,
             GemState::Qualified as u8
