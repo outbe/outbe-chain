@@ -205,6 +205,7 @@ async fn run_renewal_worker_v1(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_upgrade_promotion_worker_v1<P>(
     provider: P,
     chain_id: u64,
