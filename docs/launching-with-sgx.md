@@ -3,12 +3,12 @@
 Outbe has two explicit, genesis-fixed TEE modes. They are different networks,
 not runtime alternatives:
 
-- `DcapRequired` is the production Intel SGX x86_64 mode. It requires the V1
-  manifest from block 1, an authorized SGX enclave, quote and canonical
-  collateral. A missing or rejected dependency stops startup; it never falls
-  back to development mode.
-- `GramineDirectDev` is an isolated development mode with reserved chain ID
-  `54322345`, its own genesis and non-hardware measurements. It runs under
+- `DcapRequired` is the testnet Intel SGX x86_64 mode on chain ID `54322345`.
+  It requires the V1 manifest from block 1, an authorized SGX enclave, quote
+  and canonical collateral. A missing or rejected dependency stops startup;
+  it never falls back to development mode.
+- `GramineDirectDev` is the isolated devnet mode on chain ID `424242`, with its
+  own genesis and non-hardware measurements. It runs under
   `gramine-direct` and cannot be used as SGX, DCAP or release evidence.
 
 Every node role requires `--tee-enclave-socket`. A Validator cannot start
@@ -20,22 +20,24 @@ before Reth networking, RPC, sync or execution launches.
 ## Current release status
 
 The A0 code path makes `teeAttestationV1` and OST3 mandatory and fail-closed.
-That alone is not a production release claim. Production rollout remains
+That alone does not make a testnet release eligible. Testnet activation remains
 blocked until the remaining I9 gates prove all of the following for one exact
 artifact set:
 
 - Intel QVL `1.26.100.1-noble1`, Gramine `1.9`, the `native-dcap` feature and
   every trusted native artifact are frozen and digest-verified;
-- fresh accepted Processor-CA and registered multi-package Platform-CA evidence
-  passes the enclave-resident public verifier;
-- exact-release `gramine-sgx` and dense block-1 timing fit the published
-  minimum validator profile;
-- real Validator, FullNode and 32-validator `DcapRequired` E2E is green.
+- fresh accepted Processor-CA release evidence passes the enclave-resident
+  public verifier; any real Platform-CA node must independently pass that same
+  verifier when it joins;
+- on the same SGX server, exact-release `gramine-sgx` QVL and the maximum
+  reachable full-block workload fit the consensus timing budget;
+- reachable real Validator and FullNode `DcapRequired` paths are green. A
+  logical or physical 32-validator network is not a release gate.
 
-The currently checked-in pre-activation release bundle still declares
-`sgx.remote_attestation = "none"`. It must not be deployed as a
-`DcapRequired` production release. I9 B1 owns the exact release-bundle switch;
-H1, P1 and E1 own hardware acceptance, performance and production E2E.
+The checked-in B1 candidate now declares `sgx.remote_attestation = "dcap"` and
+builds the enclave with exactly `native-dcap`. It still must not be deployed to
+the `DcapRequired` testnet until B1 binds the reproducible artifact set; H1, P1
+and E1 own hardware acceptance, performance and testnet E2E.
 
 ## Run the isolated development network
 
@@ -97,7 +99,7 @@ Stop the network with:
 ./scripts/run-testnet.sh stop /tmp/outbe-devnet
 ```
 
-## Construct a production ChainSpec
+## Construct the testnet ChainSpec
 
 Use only measurements and TCB values taken from the exact frozen release. The
 command below validates and writes a ChainSpec; it does not prove that the
@@ -106,7 +108,7 @@ release passed hardware gates:
 ```sh
 target/debug/outbe-chain tee genesis \
   --input /path/to/final-seeded-genesis.json \
-  --output /path/to/production-genesis.json \
+  --output /path/to/testnet-genesis.json \
   --mode dcap-required \
   --mrenclave 0x<exact-32-byte-release-measurement> \
   --mrsigner 0x<exact-32-byte-release-signer> \
@@ -115,11 +117,12 @@ target/debug/outbe-chain tee genesis \
   --minimum-tcb-evaluation-data-number <reviewed-nonzero-tcb-number>
 ```
 
-The command refuses zero measurements, the reserved development chain ID,
+The command refuses zero measurements, the devnet chain ID,
 input/output aliasing and overwrite of an existing output. The product
 ChainSpec parser then requires the canonical `teeAttestationV1` field at every
 startup. A hand-authored manifest cannot select `GramineDirectDev` outside
-chain ID `54322345` or select `DcapRequired` on that reserved identity.
+devnet chain ID `424242` or select `DcapRequired` outside testnet chain ID
+`54322345`.
 
 `scripts/prepare_network.py` exposes the same boundary for generated launch
 plans:
@@ -130,7 +133,7 @@ python3 scripts/prepare_network.py \
   --validators /path/to/validators.json \
   --output-dir /path/to/network \
   --tee-mode dcap-required \
-  --chain-id <production-chain-id> \
+  --chain-id 54322345 \
   --mrenclave 0x<exact-measurement> \
   --mrsigner 0x<exact-signer> \
   --isv-prod-id <id> \
@@ -138,14 +141,14 @@ python3 scripts/prepare_network.py \
   --minimum-tcb-evaluation-data-number <number>
 ```
 
-Do not use placeholder measurements. Do not start production until the I9
-release checkpoint records the exact signed artifacts and all required hardware
-evidence.
+Do not use placeholder measurements. Do not start the testnet until the I9
+release checkpoint records the exact signed artifacts and all required
+hardware evidence.
 
 ## Verify identity and offer-key readiness
 
-After a development bootstrap or an authorized production run, query each
-enclave and compare its resident permanent key with canonical chain state:
+After a devnet bootstrap or an authorized testnet run, query each enclave and
+compare its resident permanent key with canonical chain state:
 
 ```sh
 target/debug/outbe-cli tee pubkey \
@@ -161,16 +164,16 @@ resident permanent offer key is ready and must equal
 
 Missing, corrupt, wrong-chain or otherwise unsealable permanent state is
 terminal for that identity. There is no peer handoff, OperatorRecovery,
-governance replacement, forced DKG or production-to-development fallback.
+governance replacement, forced DKG or testnet-to-devnet fallback.
 
 ## Evidence labels
 
 | Path | What it proves | What it does not prove |
 | --- | --- | --- |
-| `GramineDirectDev` | deterministic development behavior and reachable operator flow | SGX, DCAP, Intel collateral or production readiness |
+| `GramineDirectDev` | deterministic devnet behavior and reachable operator flow | SGX, DCAP, Intel collateral or testnet readiness |
 | private `#[cfg(test)]` verdict capability | I3-I8 state-machine behavior after the verifier boundary | quote parsing, QVL execution or hardware acceptance |
 | synthetic cap vectors | deterministic bounds, allocation order and gas arithmetic | Intel-signed hardware evidence |
-| fresh I9 `gramine-sgx` runs | exact-release Processor/Platform acceptance and timing | nothing beyond the recorded artifact and host identity |
+| fresh I9 `gramine-sgx` runs | exact-release Processor acceptance and timing | a future Platform node's own admission evidence |
 
 See [Testnet SGX release and rollout](testnet-sgx-release.md) for the release
 boundary and [Running a full node and a validator](becoming-a-validator.md) for

@@ -142,9 +142,10 @@ finding for this feasibility scope.
   bounds and checked gas arithmetic.
 
 Empirical exact-release `gramine-sgx` performance, full-block timing and fresh
-actual Processor/Platform/root CRL capacity are mandatory fail-not-skip I9
+actual Processor/root CRL capacity are mandatory fail-not-skip I9
 evidence. I1 does not require or fabricate an undefined "large real CRL".
 
-Fresh accepted Processor-CA execution and a real registered multi-package
-Platform-CA fixture are intentionally retained as fail-not-skip I9 release
-gates rather than misrepresented by Gramine Direct or synthetic evidence.
+Fresh accepted Processor-CA execution is intentionally retained as a
+fail-not-skip I9 release gate. A real registered multi-package Platform node
+must instead pass its own admission; Gramine Direct or synthetic evidence never
+substitutes for that proof.

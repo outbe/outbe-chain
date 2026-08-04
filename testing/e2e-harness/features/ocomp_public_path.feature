@@ -25,7 +25,7 @@ Feature: Off-chain computation public path
     Then the completed job and Nod generation are unchanged by both transactions
 
   @ocomp-delegated-signing @pfs-011-01
-  # OCOMP-TEST-ID: PFS-011-01
+  # PFS-TEST-ID: PFS-011-01
   Scenario: Dedicated OCOMP keys submit a finalized vote without validator-key signing
     Given the canonical four-validator OCOMP Final devnet
     Then every OCOMP transaction signer is distinct and scoped only to the OCOMP role

@@ -6,6 +6,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import importlib.util
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -79,6 +80,12 @@ class NativeQvlManifestTests(unittest.TestCase):
 
     def test_exact_artifacts_and_boundary_pass(self) -> None:
         self.verify_synthetic_manifest()
+
+    def test_repository_contract_is_release_active(self) -> None:
+        manifest = json.loads(
+            (REPO_ROOT / "release/dcap-native-qvl-v1.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(manifest["status"], "active")
 
     def test_expected_package_versions_come_from_the_project_pin(self) -> None:
         pin = copy.deepcopy(verifier.PROJECT_VERSION_PIN)
@@ -168,7 +175,7 @@ class NativeQvlManifestTests(unittest.TestCase):
 
     def test_status_change_fails_closed(self) -> None:
         changed = copy.deepcopy(self.manifest)
-        changed["status"] = "active"
+        changed["status"] = "inactive-until-i9"
         with self.assertRaisesRegex(ValueError, "status"):
             self.verify_synthetic_manifest(changed)
 

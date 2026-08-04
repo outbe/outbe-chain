@@ -64,9 +64,11 @@ mongodb.workspace = true
 hex.workspace = true
 libc.workspace = true
 outbe-compressed-entities.workspace = true
+outbe-evm.workspace = true
 outbe-primitives.workspace = true
 outbe-protocol.workspace = true
 outbe-protocol-derive.workspace = true
+outbe-tee.workspace = true
 outbe-zk-backend.workspace = true
 outbe-zk-canonical.workspace = true
 outbe-zkproof.workspace = true
@@ -130,6 +132,10 @@ path = "src/main.rs"
 [[bin]]
 name = "outbe-release-sgx-e2e"
 path = "src/bin/outbe-release-sgx-e2e.rs"
+
+[[bin]]
+name = "outbe-release-dcap-evidence"
+path = "src/bin/outbe-release-dcap-evidence.rs"
 
 [[bin]]
 name = "outbe-e2e-evidence"

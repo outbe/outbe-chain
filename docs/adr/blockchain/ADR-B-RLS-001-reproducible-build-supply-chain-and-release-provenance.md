@@ -47,9 +47,12 @@ and keys are forbidden from production artifacts and verified by artifact inspec
 
 `release/release-manifest-v1.schema.json` owns the versioned machine contract. Its first
 implemented slice binds the exact source commit and required clean tree, release tag,
-`SOURCE_DATE_EPOCH`, target/profile/toolchain, digest-pinned builder, immutable Debian
-snapshot and direct package versions, reproducibility flags, material input digests and the
-five current production ELF subjects. Every artifact records its role, classification,
+`SOURCE_DATE_EPOCH`, target/profile/toolchain, two digest-pinned base images, the canonical
+project-toolchain recipe and exact direct package versions, reproducibility flags, material
+input digests and the six current production ELF subjects. The project toolchain additionally
+pins the base APT source/key files and an aggregate name-plus-SHA-256 ledger for the full
+downloaded `.deb` closure; installation cannot download anything after this check. Every
+artifact records its role, classification,
 feature set, install-profile compatibility, media type, length and SHA-256 digest. Network
 selection remains delegated to a future signed `NetworkManifest`; an ELF therefore declares
 `network-manifest-required` rather than silently claiming compatibility with every network.
@@ -77,10 +80,12 @@ toolchain/profile/target contract, missing inputs or missing artifacts. It alway
 2. `outbe-cli`;
 3. `outbe-keygen`;
 4. `outbe-feeder`; and
-5. production `outbe-tee-enclave` without the `mock` feature.
+5. production `outbe-tee-enclave` with exactly `native-dcap`; and
+6. `outbe-ocomp`.
 
-The recipe uses Rust 1.96.0 on a digest-pinned Bookworm image, an immutable Debian snapshot
-with exact direct package versions, `cargo build --locked --release`, `LC_ALL=C`, `TZ=UTC`,
+The recipe uses the single `Dockerfile.project-toolchain` graph with digest-pinned Rust
+1.96.0 Bookworm and Gramine 1.9 Noble base images, exact Noble/Intel QVL package versions,
+`cargo build --locked --release`, `LC_ALL=C`, `TZ=UTC`,
 fixed source identity supplied to `vergen`, Rust/C/C++ path remapping and an explicit SHA-1
 GNU build-id policy. Host-side validation rejects mutable builders before Docker execution.
 The source context is an exact `git archive HEAD`; ignored host files and ambient local tags
@@ -102,7 +107,7 @@ land, this recipe proves local ELF reproducibility only and is not a complete re
 Independent verification uses Python 3.11 packages pinned by exact version and wheel hash in
 `release/reproducible-verifier-requirements.txt`. Verification recomputes source input and
 resolved system-package records, validates the exact output checksum matrix and saved binary
-version identity, and compares the five ELF files byte for byte. A matching hash alone does
+version identity, and compares the six ELF files byte for byte. A matching hash alone does
 not excuse a repeated builder-path leak or a mismatched manifest material.
 
 ## Dependency and exception policy
@@ -163,8 +168,9 @@ immutable releases must protect the tag and asset set after the verified draft i
 
 The hardware scenario checks local SGX report measurements, both EGETKEY policies,
 same-MRSIGNER sealing across restart, artifact-substitution rejection and failure to
-silently restore the old sealed identity after a test-only MRSIGNER change. It does not
-claim DCAP: the testnet manifest deliberately keeps `sgx.remote_attestation = "none"`.
+silently restore the old sealed identity after a test-only MRSIGNER change. The release
+manifest now enables DCAP, but that earlier scenario does not claim accepted DCAP evidence;
+the I9 H1/P1/E1 gates provide acceptance, performance and lifecycle evidence.
 
 Cosign verification is an operator/CI boundary before container launch; an application
 inside its own container cannot establish the registry identity of the image that started
@@ -241,7 +247,7 @@ an unbound CI run.
 
 ## Open questions and technical debt
 
-- **Critical, partially closed:** ReleaseManifest v1 now binds source, the five ELF
+- **Critical, partially closed:** ReleaseManifest v1 now binds source, the six ELF
   digests, a signed testnet Gramine archive, OCI digest, SGX measurements, SPDX SBOM and
   immutable testnet gate evidence. Native packages, deployment/genesis compatibility,
   the remaining artifact roles and a production signing authority are still open.

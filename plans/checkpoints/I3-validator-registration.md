@@ -4,8 +4,9 @@ Date: 2026-07-31
 
 Status: `PASS` for I3. The validator path is implemented and verified, but the
 V1 public route remains inactive until I9. This checkpoint does not claim an
-accepted hardware registration: fresh accepted Processor/Platform evidence in
-the exact release `gramine-sgx` artifact remains a fail-not-skip I9 gate.
+accepted hardware registration: fresh accepted Processor evidence in the exact
+release `gramine-sgx` artifact remains a fail-not-skip I9 gate. Platform
+evidence is verified when a real Platform node joins.
 
 ## Outcome
 
@@ -53,7 +54,7 @@ quote-verification entry points.
 | I3 criterion | Authoritative evidence | Result |
 |---|---|---|
 | Full verifier is enclave-resident and input-exact | authenticated bounded Begin/Chunk/Finish implementation; request-hash and signed-outcome tests; production-only transport gate | `PASS` |
-| Real Processor evidence reaches enclave QVL | intent-bound Intel Processor fixture traverses authorized Noise and returns the stable strict-policy `PlatformTcbRejected` outcome | `PASS` policy-negative; accepted hardware flow remains I9 |
+| Real Processor evidence reaches enclave QVL | intent-bound Intel Processor fixture traverses authorized Noise and returns the stable accepted testnet verdict for `ConfigurationAndSWHardeningNeeded` with advisories preserved | `PASS`; exact-release fresh hardware flow remains I9 |
 | Unattested evidence rejects at the byte boundary | canonical `GramineDirectDev` evidence traverses the same authorized Noise upload and returns `EvidenceNonCanonical`; development session cannot invoke the verifier | `PASS` |
 | Validator identity and both proofs of possession are exact | actual EVM address plus BLS MinPk public key, validator-set lookup, node ECDSA PoP and enclave Ed25519 PoP over one intent hash | `PASS` |
 | Wrong profile and registration conflicts reject | canonical FullNode-profile intent at the post-verifier boundary plus one-to-one node/enclave/binding, stale nonce, key, measurement and strict-status negatives | `PASS` |
@@ -137,7 +138,7 @@ I4 completion.
 I5-I8 retain their plan-owned renewal, rolling overlap, governance policy,
 handoff and bootstrap transitions. I9 must build and run the exact pinned
 release artifact on supported Intel SGX hardware, obtain a fresh accepted
-Processor flow and registered multi-package Platform evidence, measure the
-full-block budget with current Processor/Platform CRLs, repeat the ELF/feature
+Processor flow, measure the full-block budget with current Processor CRLs,
+repeat the ELF/feature
 audit on the release binaries and only then activate the V1 route. Until that
 checkpoint, `ACTIVE_TEE_ATTESTATION_V1_MANIFEST` remains `None`.

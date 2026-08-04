@@ -576,6 +576,8 @@ durable canonical receipts after the same DB-only hash/root barrier.
 ## Documentation
 
 - `docs/becoming-a-validator.md` — validator lifecycle and operator flow.
+- `docs/dcap-testnet-launch.md` — exact checklist for creating and launching the
+  four-founder DCAP testnet, then adding a FullNode.
 - `docs/launching-with-sgx.md` — running the TEE localnet under real gramine-sgx
   (self-generated enclave keys, sealing, offer-key verification).
 - `docker-compose.yml`, `deploy/` — local testnet and deployment

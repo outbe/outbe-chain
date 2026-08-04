@@ -173,27 +173,28 @@ Type: Discuss
 
 ### Question
 
-Which code identity and Intel TCB results are acceptable in production?
+Which code identity and Intel TCB results are acceptable on testnet?
 
 ### Answer
 
 `RESOLVED`.
 
-- Platform TCB may be `UpToDate` or `SWHardeningNeeded`.
+- Platform TCB may be `UpToDate`, `SWHardeningNeeded`, or
+  `ConfigurationAndSWHardeningNeeded`.
 - QE TCB must be `UpToDate`.
 - TCB Info schema v3 remains mandatory. A schema-v2 result is rejected even
   when its reported status is `UpToDate`.
-- Intel-authenticated advisory IDs accompanying an admitted
-  `SWHardeningNeeded` Platform result are preserved in the stable verdict.
-- Configuration-needed, out-of-date and revoked Platform or QE results are
-  rejected. `SWHardeningNeeded` is not admitted for QE.
+- Intel-authenticated advisory IDs accompanying an admitted hardening-needed
+  Platform result are preserved in the stable verdict.
+- Other configuration-needed, out-of-date and revoked Platform or QE results
+  are rejected. QE remains exactly `UpToDate`.
 - Admission requires exact `MRENCLAVE`, matching `MRSIGNER`, `ISVPRODID`, and
   minimum `ISVSVN`.
 - `MRSIGNER` alone or a higher SVN never admits unknown code.
 
-The initial policy follows Secret Network's practical acceptance of
-`SWHardeningNeeded`, but makes the accepted Platform set explicit and keeps QE
-strict. A later protocol software update may carry one exact successor policy
+The initial testnet policy follows Secret Network's practical warning-status
+acceptance, but makes the accepted Platform set explicit and keeps QE strict.
+A later protocol software update may carry one exact successor policy
 that tightens Platform admission to `UpToDate` only. The successor is staged
 and activated through the existing Update lifecycle; existing leases remain
 valid only until their bounded expiry and cannot renew under a policy they no
@@ -654,8 +655,10 @@ protocol/release activation, never a node-local choice.
 
 The selected feasibility matrix is Intel DCAP QVL
 `1.26.100.1-noble1` on `x86_64-unknown-linux-gnu` with Gramine `1.9`.
-The inactive artifact contract is
-`release/dcap-native-qvl-v1.json`; it pins QVL, `libstdc++`, `libgcc_s` and the
+The artifact contract is `release/dcap-native-qvl-v1.json`. I9 B1 promotes its
+release-build state from inactive to active together with the exact
+`native-dcap` feature graph; this does not authorize rollout before the B1–E1
+checkpoints pass. It pins QVL, `libstdc++`, `libgcc_s` and the
 complete compiler-observed Intel include closure by exact package version,
 byte size and SHA-256. The C adapter compiles from the staged verified include
 tree and asserts the SGX result enum values against those headers.
@@ -682,7 +685,8 @@ The production native adapter and Outbe wrapper:
 - invoke QVL inside the Outbe Gramine enclave with explicit collateral and
   timestamp, `p_qve_report_info = NULL`, and no host-result input;
 - parse the same authenticated signed documents to enforce TCB Info schema v3,
-  separate Platform `UpToDate | SWHardeningNeeded`, QE `UpToDate`, minimum TCB
+  separate Platform `UpToDate | SWHardeningNeeded |
+  ConfigurationAndSWHardeningNeeded`, QE `UpToDate`, minimum TCB
   evaluation number, FMSPC/PCE ID, exact measurement policy and pinned Intel
   root;
 - preserve authenticated Platform advisory IDs in the stable verdict;
@@ -700,9 +704,9 @@ Implementation/release acceptance evidence:
   clearly labelled as synthetic/test evidence and never accepted as
   hardware evidence;
 - for I9, a fresh real accepted Processor-CA capture for the exact release
-  enclave/policy plus a real accepted registered multi-package Platform-CA
-  capture; either missing hardware result blocks production activation rather
-  than ordinary implementation CI;
+  enclave/policy; a real Platform-CA node is verified by the same public
+  enclave-resident QVL path when it joins and receives no offer key unless that
+  admission succeeds;
 - deterministic time-boundary results;
 - canonical DER and signed-JSON behavior;
 - exact native artifact and Intel-root pinning;
@@ -721,7 +725,7 @@ strictly after the verifier boundary; it accepts only typed pre-verified
 non-test compilation. Those tests are not DCAP end-to-end positives. I9 closes
 the corresponding real `DcapRequired` validator, full-node and block-1 flows.
 
-Production packaging uses exactly enclave package `outbe-tee-enclave`, binary
+Testnet release packaging uses exactly enclave package `outbe-tee-enclave`, binary
 `outbe-tee-enclave` and application feature `native-dcap`; it never uses
 `--all-features` or `--all-targets`. Capture, mock, trace and test-only targets
 or features are absent. The I9 activation commit must update the currently
@@ -739,9 +743,13 @@ this release gate.
 A real Intel-rooted Platform-CA type-5 quote cannot be derived from a
 Processor-CA quote or safely rebound to a different `REPORT_DATA`: either
 operation invalidates the signed evidence. It requires a registered
-multi-package SGX platform. Therefore the real Platform-CA matrix is an
-explicit fail-not-skip I9 release gate, while I1 uses Intel's synthetic
-Platform-CA vectors only for parser and policy coverage.
+multi-package SGX platform. Outbe therefore does not fabricate a Platform
+release fixture or require a dedicated Platform runner for every release.
+Instead, the production admission path classifies and fully verifies the real
+Platform PCK chain, collateral, status, identity and measurement when such a
+node joins; failure is terminal for that admission. I1 retains Intel's
+synthetic Platform vectors only for parser and policy coverage, never as
+hardware evidence.
 
 This preserves Secret Network's deployed rule that the host is not verifier
 authority, while using Gramine's supported enclave-resident native-QVL
@@ -815,8 +823,10 @@ Secret Network's opaque host-call pricing and permissive section allocation are
 not suitable precedent. I1 owns deterministic cap boundaries, pre-allocation,
 checked gas arithmetic and real Processor QVL correctness; I8 owns the bounded
 32-participant state transition. I9 owns empirical exact-release
-`gramine-sgx`, full-block timing and fresh actual Processor/Platform/root CRL
-capacity on the published minimum supported validator profile.
+`gramine-sgx`, full-block timing and fresh actual Processor/root CRL capacity
+on the published minimum supported validator profile. Actual Platform
+collateral is retained when a Platform node is admitted, but is not a
+per-release prerequisite.
 
 I8 introduces evidence-carrying OST3 alongside, rather than by reinterpreting,
 legacy OST2. The current startup/DKG producer remains byte-compatible and emits

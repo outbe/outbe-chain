@@ -210,8 +210,9 @@ was rejected: consensus and caller validation remain necessary.
 - Freeze the exact `native-dcap` release feature graph and trusted native-artifact
   digests. Runtime ChainSpec parsing already confines `GramineDirectDev` to its
   reserved development identity and rejects production-to-development fallback.
-- Retain fresh Processor, Platform and root collateral provenance for the exact
-  release. Missing or stale collateral is rejection, never a live consensus fetch.
+- Retain fresh Processor and root collateral provenance for the exact release.
+  Retain Platform collateral with the real Platform node's admission when one
+  joins. Missing or stale collateral is rejection, never a live consensus fetch.
 - `tribute_offer_attestation_preimage` uses `serde_json::to_vec(...).unwrap_or_default()`;
   serialization failure must be explicit, never silently sign an empty result body.
 - Replace JSON in the result-attestation preimage with a versioned canonical binary

@@ -34,8 +34,9 @@ that share.
 > **Evidence boundary.** The reachable restart path is exercised on the isolated
 > `GramineDirectDev` mock localnet and proves development behavior only. Deterministic
 > tests cover Validator and FullNode V1 admission and fail-closed startup seams.
-> Real exact-release `DcapRequired` Validator, FullNode and 32-validator E2E remains
-> a mandatory I9 hardware gate.
+> Real exact-release `DcapRequired` Validator and FullNode paths remain a
+> mandatory I9 hardware gate. A logical or physical 32-validator network is
+> not required.
 
 ---
 

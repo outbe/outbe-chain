@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "status": "inactive-until-i9",
+  "status": "active",
   "target": "x86_64-unknown-linux-gnu",
   "gramine_version": "1.9",
   "intel_dcap": {

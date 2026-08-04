@@ -240,16 +240,21 @@
     "builder": {
       "additionalProperties": false,
       "properties": {
-        "debian_snapshot": {
-          "pattern": "^[0-9]{8}T[0-9]{6}Z$",
-          "type": "string"
+        "base_images": {
+          "items": {
+            "pattern": "^[^@\\s]+@sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array",
+          "uniqueItems": true
         },
         "id": {
           "$ref": "#/$defs/ascii"
         },
-        "image": {
-          "pattern": "^[^@\\s]+@sha256:[0-9a-f]{64}$",
-          "type": "string"
+        "recipe": {
+          "const": "Dockerfile.project-toolchain"
         },
         "system_packages": {
           "items": {
@@ -263,7 +268,7 @@
           "$ref": "#/$defs/material"
         }
       },
-      "required": ["id", "image", "debian_snapshot", "system_packages"],
+      "required": ["id", "base_images", "recipe", "system_packages"],
       "type": "object"
     },
     "canonicalization": {

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed verification of the inactive V1 native-QVL artifact contract."""
+"""Fail-closed verification of the active V1 native-QVL artifact contract."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from typing import Any
 
 
 EXPECTED_ROLES = ("qvl", "cxx-runtime", "gcc-runtime")
-EXPECTED_STATUS = "inactive-until-i9"
+EXPECTED_STATUS = "active"
 
 
 def _load_project_pin_verifier():

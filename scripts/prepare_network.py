@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Prepare an Outbe network from an existing validators.json.
+Prepare a complete four-founder Outbe network bundle.
 
 Inputs:
   - genesis.base.json: base chain config and initial alloc
@@ -9,14 +9,21 @@ Inputs:
 
 Outputs:
   - genesis.json: seeded chain state with ValidatorSet/Staking/Rewards/precompile storage
+    plus canonical block-1 OCOMP and TEE manifests
+  - protocol-bundle-v1.ocb1 and per-validator OCOMP key/PoP registrations
   - reth-bootnodes.txt: stable Reth enodes for --bootnodes
   - validator-N/evm-key.hex: validator EVM key material when present in validators.json
   - validator-N/reth-p2p-secret.hex: stable Reth p2p node identity keys
   - commands/validator-N.sh: runnable node command per validator
+  - commands/enclave-N.sh: matching Gramine enclave command per validator
   - network.md: human-readable launch plan with addresses, ports, and commands
 
-This script does not create or consume the removed runtime --consensus.validators flag.
-validators.json is a genesis/tooling input only.
+OCOMP V1 requires exactly four founding validators with threshold 3. Generated
+founders get fresh consensus identity, EVM, Reth and OCOMP keys. The permanent
+offer key and threshold shares are created only by the live block-1 founding
+ceremony; this tool deliberately does not precompute a conflicting DKG triplet.
+Existing-validator mode requires the complete matching identity material; the
+script never emits a knowingly partial launch command.
 """
 
 from __future__ import annotations
@@ -24,7 +31,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import secrets
+import shutil
 import stat
 import subprocess
 import sys
@@ -41,7 +50,8 @@ SECP256K1_G = (
 )
 
 DEFAULT_PREFUND_WEI = 10_000 * 10**18
-DEFAULT_CHAIN_ID = 54322345
+DEVNET_CHAIN_ID = 424242
+TESTNET_CHAIN_ID = 54322345
 DEFAULT_EPOCH_LENGTH_BLOCKS = 120
 DEFAULT_DKG_PREPARE_WINDOW_BLOCKS = 30
 DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS = 30
@@ -296,6 +306,12 @@ def parse_hosts(args: argparse.Namespace, expected: int) -> list[str]:
                 "validator hosts must be hosts/IPs only, without ports; ports are assigned by the script"
             )
     if len(values) == 1:
+        pattern = values[0]
+        if "{i}" in pattern or "%d" in pattern:
+            return [
+                pattern.replace("{i}", str(index)).replace("%d", str(index))
+                for index in range(expected)
+            ]
         return values * expected
     if len(values) != expected:
         raise ValueError(
@@ -304,7 +320,7 @@ def parse_hosts(args: argparse.Namespace, expected: int) -> list[str]:
     return values
 
 
-def run_dkg_bootstrap(
+def run_founder_identity_generation(
     *,
     chain_binary: str,
     output_dir: Path,
@@ -313,7 +329,7 @@ def run_dkg_bootstrap(
     cmd = [
         chain_binary,
         "dkg",
-        "bootstrap",
+        "identities",
         "--output-dir",
         str(output_dir),
         "--validators",
@@ -340,8 +356,8 @@ def update_generated_validators(
         if not isinstance(validator, dict):
             raise ValueError(f"generated validator {index} must be an object")
         host = hosts[index]
-        validator["p2p_address"] = f"{host}:{consensus_p2p_base_port}"
-        validator["reth_p2p_address"] = f"{host}:{reth_p2p_base_port}"
+        validator["p2p_address"] = f"{host}:{consensus_p2p_base_port + index}"
+        validator["reth_p2p_address"] = f"{host}:{reth_p2p_base_port + index}"
     write_json(validators_path, validators)
     return validators
 
@@ -354,6 +370,40 @@ def generated_wallet_private_keys(output_dir: Path, count: int) -> dict[int, str
             raw = normalize_hex(path.read_text(), expected_len=64, field=f"validator {index} evm key")
             keys[index] = "0x" + raw
     return keys
+
+
+def import_founder_material(source: Path, output_dir: Path, count: int) -> None:
+    required_private = ("signing-key.hex", "evm-key.hex")
+    for index in range(count):
+        destination = output_dir / f"validator-{index}"
+        destination.mkdir(parents=True, exist_ok=True)
+        for name in required_private:
+            source_path = source / f"validator-{index}" / name
+            if not source_path.is_file():
+                raise ValueError(f"founder material is missing {source_path}")
+            destination_path = destination / name
+            shutil.copyfile(source_path, destination_path)
+            destination_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+
+
+def verify_founder_material(
+    *,
+    chain_binary: str,
+    validators_path: Path,
+    material_dir: Path,
+) -> None:
+    subprocess.run(
+        [
+            chain_binary,
+            "dkg",
+            "verify-identities",
+            "--validators",
+            str(validators_path),
+            "--material-dir",
+            str(material_dir),
+        ],
+        check=True,
+    )
 
 
 def prepare_prefunded_genesis(
@@ -448,9 +498,112 @@ def run_tee_genesis(
         )
     ):
         raise ValueError(
-            "gramine-direct-dev forbids production measurement arguments"
+            "gramine-direct-dev forbids DCAP measurement arguments"
         )
     subprocess.run(cmd, check=True)
+
+
+def run_ocomp_bindings(
+    *,
+    chain_binary: str,
+    seeded_genesis: Path,
+    validators: Path,
+    output: Path,
+) -> dict[str, Any]:
+    subprocess.run(
+        [
+            chain_binary,
+            "ocomp",
+            "bindings",
+            "--input",
+            str(seeded_genesis),
+            "--validators",
+            str(validators),
+            "--output",
+            str(output),
+        ],
+        check=True,
+    )
+    value = load_json(output)
+    if not isinstance(value, dict) or value.get("schemaVersion") != 1:
+        raise ValueError("outbe-chain returned an invalid OCOMP bindings document")
+    identities = value.get("validatorIdentityHashes")
+    if not isinstance(identities, list) or len(identities) != 4:
+        raise ValueError("OCOMP bindings must contain exactly four validator identities")
+    return value
+
+
+def run_ocomp_keygen(
+    *,
+    keygen_binary: str,
+    output_dir: Path,
+    bindings: dict[str, Any],
+) -> None:
+    for index, identity in enumerate(bindings["validatorIdentityHashes"]):
+        subprocess.run(
+            [
+                keygen_binary,
+                "ocomp",
+                "--output-dir",
+                str(output_dir / f"validator-{index}"),
+                "--chain-id",
+                str(bindings["chainId"]),
+                "--genesis-hash",
+                str(bindings["genesisHash"]),
+                "--fork-id",
+                str(bindings["forkId"]),
+                "--protocol-bundle-hash",
+                str(bindings["protocolBundleHash"]),
+                "--validator-index",
+                str(index),
+                "--validator-identity-hash",
+                str(identity),
+                "--valid-from-height",
+                str(bindings["activationHeight"]),
+                "--valid-until-height-exclusive",
+                str(bindings["validUntilHeightExclusive"]),
+            ],
+            check=True,
+        )
+
+
+def run_ocomp_genesis(
+    *,
+    chain_binary: str,
+    seeded_genesis: Path,
+    validators: Path,
+    registrations_dir: Path,
+    output_genesis: Path,
+    protocol_bundle_output: Path,
+) -> None:
+    subprocess.run(
+        [
+            chain_binary,
+            "ocomp",
+            "genesis",
+            "--input",
+            str(seeded_genesis),
+            "--validators",
+            str(validators),
+            "--registrations-dir",
+            str(registrations_dir),
+            "--output",
+            str(output_genesis),
+            "--protocol-bundle-output",
+            str(protocol_bundle_output),
+        ],
+        check=True,
+    )
+
+
+def generate_dev_sgx_signing_key(path: Path) -> None:
+    subprocess.run(
+        ["openssl", "genrsa", "-3", "-out", str(path), "3072"],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    path.chmod(stat.S_IRUSR | stat.S_IWUSR)
 
 
 def command_lines(
@@ -475,13 +628,20 @@ def command_lines(
     consensus_listen_host: str,
     consensus_listen_port: int,
     tee_enclave_endpoint: str,
+    tee_bootstrap_timeout_secs: int,
+    projection_database: str,
     use_local_defaults: bool,
 ) -> list[str]:
     lines = [
+        'export RUST_MIN_STACK="${RUST_MIN_STACK:-16777216}"',
+        ': "${OUTBE_PROJECTION_MONGODB_URI:?set OUTBE_PROJECTION_MONGODB_URI}"',
+        "",
         f"{chain_binary} node \\",
         "  --validator \\",
         f"  --chain {shell_quote(genesis_runtime_path)} \\",
         f"  --datadir {shell_quote(datadir)} \\",
+        "  --engine.persistence-threshold 0 \\",
+        "  --engine.memory-block-buffer-target 0 \\",
         f"  --http --http.addr {rpc_host} --http.port {rpc_port} \\",
         "  --http.api eth,net,web3,outbe \\",
         f"  --port {reth_p2p_port} \\",
@@ -496,13 +656,66 @@ def command_lines(
         f"  --log.file.directory {shell_quote(log_dir)} \\",
         f"  --consensus.signing-key {shell_quote(signing_key_path)} \\",
         f"  --validator.evm-key {shell_quote(evm_key_path)} \\",
+        '  --projection.mongodb-uri "$OUTBE_PROJECTION_MONGODB_URI" \\',
+        f"  --projection.mongodb-database {shell_quote(projection_database)} \\",
         f"  --tee-enclave-socket {shell_quote(tee_enclave_endpoint)} \\",
+        f"  --tee-bootstrap-timeout-secs {tee_bootstrap_timeout_secs} \\",
         f"  --consensus.listen-addr {consensus_listen_host}:{consensus_listen_port}",
     ]
     if use_local_defaults:
         lines[-1] += " \\"
         lines.append("  --consensus.use-local-defaults")
     return lines
+
+
+def enclave_command_lines(
+    *,
+    tee_mode: str,
+    enclave_image: str,
+    endpoint: str,
+    runtime_validator_dir: str,
+    runtime_base_dir: str,
+    runtime_enclave_binary: str,
+    chain_id: int,
+    validator_index: int,
+    container_name: str,
+) -> list[str]:
+    chain_id_hex = f"0x{chain_id:064x}"
+    common = [
+        f"mkdir -p {shell_quote(runtime_validator_dir + '/tee')}",
+        "",
+        "docker run --rm \\",
+        f"  --name {shell_quote(container_name)} \\",
+        "  --network host \\",
+    ]
+    if tee_mode == "dcap-required":
+        common.extend(
+            [
+                "  --device /dev/sgx_enclave:/dev/sgx_enclave \\",
+                "  --device /dev/sgx_provision:/dev/sgx_provision \\",
+                f"  -v {shell_quote(runtime_validator_dir + '/tee')}:/var/lib/outbe/tee \\",
+                f"  {shell_quote(enclave_image)} \\",
+                f"  --socket {shell_quote(endpoint)} \\",
+                "  --tee-dir /var/lib/outbe/tee \\",
+                f"  --chain-id {chain_id_hex}",
+            ]
+        )
+        return common
+
+    common.extend(
+        [
+            "  --security-opt seccomp=unconfined \\",
+            f"  -v {shell_quote(runtime_enclave_binary)}:/app/outbe-tee-enclave:ro \\",
+            f"  -v {shell_quote(runtime_base_dir + '/test-sgx-signing-key.pem')}:/run/secrets/outbe-test-sgx-key.pem:ro \\",
+            f"  -v {shell_quote(runtime_validator_dir + '/tee')}:/tee \\",
+            f"  {shell_quote(enclave_image)} \\",
+            f"  --socket {shell_quote(endpoint)} \\",
+            f"  --dkg-seed {validator_index + 1:064x} \\",
+            "  --tee-dir /tee \\",
+            f"  --chain-id {chain_id_hex}",
+        ]
+    )
+    return common
 
 
 def write_command_script(path: Path, lines: list[str]) -> None:
@@ -537,6 +750,7 @@ def build_network_markdown(
     copied_validators_path: Path,
     bootnodes_path: Path,
     commands: list[tuple[int, str, list[str]]],
+    enclave_commands: list[tuple[int, str, list[str]]],
     reth_rows: list[dict[str, Any]],
     runtime_base_dir: str,
     include_private_keys: bool,
@@ -546,7 +760,7 @@ def build_network_markdown(
     lines: list[str] = []
     lines.append("# Outbe Network Launch Plan")
     lines.append("")
-    lines.append("Generated from an existing `validators.json`.")
+    lines.append("Generated as one chain-bound four-founder deployment bundle.")
     lines.append("")
     lines.append("## Artifacts")
     lines.append("")
@@ -594,12 +808,20 @@ def build_network_markdown(
     lines.append("")
     lines.append("## Per-Validator Commands")
     lines.append("")
-    lines.append("Copy the generated `genesis.json`, `reth-bootnodes.txt`, each validator's `signing-key.hex`, `evm-key.hex`, and `reth-p2p-secret.hex` to the paths used below. For existing-validator inputs, `evm-key.hex` is materialized only when the validator JSON includes the matching private key or an operator-owned `validator-N/evm-key.hex` already exists; otherwise provide the operator-owned key for the listed validator address before launch.")
+    lines.append("Copy the whole generated bundle to the runtime base directory. Set `OUTBE_PROJECTION_MONGODB_URI` on every host, start each enclave command, and only then start all four founder node commands within the configured TEE bootstrap timeout.")
     lines.append("")
-    for index, script_path, cmd in commands:
+    for (index, enclave_script_path, enclave_cmd), (_, script_path, cmd) in zip(
+        enclave_commands, commands
+    ):
         lines.append(f"### Validator {index}")
         lines.append("")
-        lines.append(f"Script: `{script_path}`")
+        lines.append(f"Enclave script: `{enclave_script_path}`")
+        lines.append("")
+        lines.append("```bash")
+        lines.extend(enclave_cmd)
+        lines.append("```")
+        lines.append("")
+        lines.append(f"Node script: `{script_path}`")
         lines.append("")
         lines.append("```bash")
         lines.extend(cmd)
@@ -623,22 +845,46 @@ def build_network_markdown(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Prepare Outbe genesis and launch plan from validators.json")
+    parser = argparse.ArgumentParser(
+        description="Prepare a complete four-founder Outbe network bundle"
+    )
     parser.add_argument("--genesis-base", type=Path)
     parser.add_argument("--seed", required=True, type=Path)
     parser.add_argument("--validators", type=Path)
+    parser.add_argument(
+        "--founder-material-dir",
+        type=Path,
+        help="Required with --validators; contains validator-N/signing-key.hex and evm-key.hex identity files",
+    )
     parser.add_argument("--generate-validators", type=int, help="Generate DKG/key material for N validators before preparing the network")
     parser.add_argument("--validator-hosts", help="Comma-separated validator hosts/IPs used with --generate-validators")
     parser.add_argument("--validator-hosts-file", type=Path, help="File with one validator host/IP per line")
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--chain-binary", default="outbe-chain")
+    parser.add_argument("--keygen-binary", default="outbe-keygen")
+    parser.add_argument(
+        "--runtime-chain-binary",
+        help="outbe-chain path used by generated commands; defaults to --chain-binary",
+    )
     parser.add_argument(
         "--tee-mode",
         required=True,
         choices=("dcap-required", "gramine-direct-dev"),
-        help="Genesis-fixed mode; production never falls back to development",
+        help="Genesis-fixed mode; testnet never falls back to devnet",
     )
-    parser.add_argument("--tee-enclave-endpoint", default="/run/outbe/tee.sock")
+    parser.add_argument(
+        "--enclave-image",
+        required=True,
+        help="Ready Gramine image; use an immutable digest for dcap-required",
+    )
+    parser.add_argument(
+        "--runtime-enclave-binary",
+        default="/usr/local/bin/outbe-tee-enclave-mock",
+        help="Dev-only enclave binary mounted into the Gramine test image",
+    )
+    parser.add_argument("--tee-enclave-host", default="127.0.0.1")
+    parser.add_argument("--tee-enclave-base-port", type=int, default=17000)
+    parser.add_argument("--tee-bootstrap-timeout-secs", type=int, default=300)
     parser.add_argument("--mrenclave", help="Exact release MRENCLAVE for dcap-required")
     parser.add_argument("--mrsigner", help="Exact release MRSIGNER for dcap-required")
     parser.add_argument("--isv-prod-id", type=int)
@@ -661,6 +907,7 @@ def main() -> None:
     parser.add_argument("--metrics-addr", default="0.0.0.0")
     parser.add_argument("--discv5-addr", default="0.0.0.0")
     parser.add_argument("--consensus-listen-host", default="0.0.0.0")
+    parser.add_argument("--projection-database-prefix")
     parser.add_argument("--use-local-defaults", action="store_true")
     parser.add_argument("--include-private-keys", action="store_true")
     parser.add_argument("--force-reth-secrets", action="store_true")
@@ -669,35 +916,62 @@ def main() -> None:
     if args.chain_id is None:
         if args.tee_mode == "dcap-required":
             raise ValueError(
-                "dcap-required requires an explicit non-development --chain-id"
+                f"dcap-required requires explicit testnet --chain-id {TESTNET_CHAIN_ID}"
             )
-        args.chain_id = DEFAULT_CHAIN_ID
-    if args.tee_mode == "gramine-direct-dev" and args.chain_id != DEFAULT_CHAIN_ID:
+        args.chain_id = DEVNET_CHAIN_ID
+    if args.tee_mode == "gramine-direct-dev" and args.chain_id != DEVNET_CHAIN_ID:
         raise ValueError(
-            f"gramine-direct-dev requires reserved chain id {DEFAULT_CHAIN_ID}"
+            f"gramine-direct-dev requires devnet chain id {DEVNET_CHAIN_ID}"
         )
-    if args.tee_mode == "dcap-required" and args.chain_id == DEFAULT_CHAIN_ID:
+    if args.tee_mode == "dcap-required" and args.chain_id != TESTNET_CHAIN_ID:
         raise ValueError(
-            f"dcap-required may not reuse GramineDirectDev chain id {DEFAULT_CHAIN_ID}"
+            f"dcap-required requires testnet chain id {TESTNET_CHAIN_ID}"
+        )
+    if args.tee_mode == "dcap-required" and re.fullmatch(
+        r"[^\s]+@sha256:[0-9a-f]{64}", args.enclave_image
+    ) is None:
+        raise ValueError(
+            "dcap-required needs --enclave-image as an immutable image digest "
+            "(name@sha256:<64 lowercase hex>)"
         )
 
     repo_root = Path(__file__).resolve().parents[1]
     output_dir = args.output_dir
     runtime_base_dir = args.runtime_base_dir or str(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    runtime_chain_binary = args.runtime_chain_binary or args.chain_binary
+    if args.tee_bootstrap_timeout_secs <= 0:
+        raise ValueError("--tee-bootstrap-timeout-secs must be > 0")
+    if output_dir.exists():
+        raise ValueError(f"refusing to reuse existing output directory: {output_dir}")
+    output_dir.mkdir(parents=True)
+    projection_scope = secrets.token_hex(8)
+    write_secret_hex(output_dir / "projection-scope", projection_scope)
+    projection_database_prefix = args.projection_database_prefix or (
+        ("outbe_testnet" if args.tee_mode == "dcap-required" else "outbe_devnet")
+        + f"_{projection_scope}"
+    )
 
     if args.validators and args.generate_validators:
         raise ValueError("use either --validators or --generate-validators, not both")
     if not args.validators and not args.generate_validators:
         raise ValueError("provide --validators or --generate-validators")
+    if args.validators and args.founder_material_dir is None:
+        raise ValueError("--validators requires --founder-material-dir for runnable founder commands")
+    if args.generate_validators and args.founder_material_dir is not None:
+        raise ValueError("--founder-material-dir is only valid with --validators")
 
     wallet_private_keys: dict[int, str] = {}
     validators_path: Path
     if args.generate_validators:
         if args.generate_validators <= 0:
             raise ValueError("--generate-validators must be > 0")
+        if args.generate_validators != 4:
+            raise ValueError(
+                "OCOMP V1 requires exactly 4 founding validators; "
+                "--generate-validators must be 4"
+            )
         hosts = parse_hosts(args, args.generate_validators)
-        run_dkg_bootstrap(
+        run_founder_identity_generation(
             chain_binary=args.chain_binary,
             output_dir=output_dir,
             count=args.generate_validators,
@@ -715,11 +989,21 @@ def main() -> None:
         )
     else:
         validators_path = args.validators
+        verify_founder_material(
+            chain_binary=args.chain_binary,
+            validators_path=validators_path,
+            material_dir=args.founder_material_dir,
+        )
+        import_founder_material(args.founder_material_dir, output_dir, 4)
 
     validators_raw = load_json(validators_path)
     if not isinstance(validators_raw, list) or not validators_raw:
         raise ValueError("validators.json must contain a non-empty JSON array")
     validators: list[dict[str, Any]] = validators_raw
+    if len(validators) != 4:
+        raise ValueError(
+            f"OCOMP V1 requires exactly 4 founding validators, got {len(validators)}"
+        )
 
     for index, validator in enumerate(validators):
         if not isinstance(validator, dict):
@@ -759,6 +1043,7 @@ def main() -> None:
     )
     preseed_path = output_dir / "genesis.prefund.json"
     seeded_genesis_path = output_dir / "genesis.seeded.json"
+    ocomp_genesis_path = output_dir / "genesis.ocomp.json"
     genesis_path = output_dir / "genesis.json"
     if genesis_path.exists():
         raise ValueError(f"refusing to overwrite existing genesis: {genesis_path}")
@@ -771,9 +1056,30 @@ def main() -> None:
         validators=copied_validators_path,
         output_genesis=seeded_genesis_path,
     )
-    run_tee_genesis(
+    ocomp_bindings_path = output_dir / "ocomp-bindings-v1.json"
+    ocomp_bindings = run_ocomp_bindings(
         chain_binary=args.chain_binary,
         seeded_genesis=seeded_genesis_path,
+        validators=copied_validators_path,
+        output=ocomp_bindings_path,
+    )
+    run_ocomp_keygen(
+        keygen_binary=args.keygen_binary,
+        output_dir=output_dir,
+        bindings=ocomp_bindings,
+    )
+    protocol_bundle_path = output_dir / "protocol-bundle-v1.ocb1"
+    run_ocomp_genesis(
+        chain_binary=args.chain_binary,
+        seeded_genesis=seeded_genesis_path,
+        validators=copied_validators_path,
+        registrations_dir=output_dir,
+        output_genesis=ocomp_genesis_path,
+        protocol_bundle_output=protocol_bundle_path,
+    )
+    run_tee_genesis(
+        chain_binary=args.chain_binary,
+        seeded_genesis=ocomp_genesis_path,
         output_genesis=genesis_path,
         tee_mode=args.tee_mode,
         mrenclave=args.mrenclave,
@@ -783,10 +1089,15 @@ def main() -> None:
         minimum_tcb_evaluation_data_number=args.minimum_tcb_evaluation_data_number,
     )
 
+    if args.tee_mode == "gramine-direct-dev":
+        generate_dev_sgx_signing_key(output_dir / "test-sgx-signing-key.pem")
+
     bootnodes: list[str] = []
     rows: list[dict[str, Any]] = []
     commands: list[tuple[int, str, list[str]]] = []
+    enclave_commands: list[tuple[int, str, list[str]]] = []
     commands_dir = output_dir / "commands"
+    claimed_endpoints: dict[tuple[str, int], str] = {}
 
     for index, validator in enumerate(validators):
         consensus_p2p = validator_consensus_address(validator, index)
@@ -799,6 +1110,7 @@ def main() -> None:
         reth_host, reth_port = parse_host_port(reth_p2p)
         validator_dir = output_dir / f"validator-{index}"
         validator_dir.mkdir(parents=True, exist_ok=True)
+        (validator_dir / "tee").mkdir(exist_ok=True)
 
         secret_path = validator_dir / "reth-p2p-secret.hex"
         secret_from_json = validator_field(
@@ -828,10 +1140,12 @@ def main() -> None:
             private_key_hex = normalize_hex(evm_key_path.read_text(), expected_len=64, field=f"validator {index} existing evm key")
             write_secret_hex(evm_key_path, private_key_hex)
         public_key = normalize_hex(validator["public_key"], expected_len=96, field=f"validator {index} public_key")
-        rpc_port = int(validator.get("rpc_port", args.rpc_base_port))
-        authrpc_port = int(validator.get("authrpc_port", args.authrpc_base_port))
-        metrics_port = int(validator.get("metrics_port", args.metrics_base_port))
-        discv5_port = int(validator.get("reth_discv5_port", args.reth_discv5_base_port))
+        rpc_port = int(validator.get("rpc_port", args.rpc_base_port + index))
+        authrpc_port = int(validator.get("authrpc_port", args.authrpc_base_port + index))
+        metrics_port = int(validator.get("metrics_port", args.metrics_base_port + index))
+        discv5_port = int(
+            validator.get("reth_discv5_port", args.reth_discv5_base_port + index)
+        )
         signing_key_path = validator_signing_key_path(
             validator,
             index,
@@ -846,9 +1160,33 @@ def main() -> None:
         datadir = f"{runtime_validator_dir}/data"
         ipc_path = f"{datadir}/reth.ipc"
         log_dir = f"{runtime_validator_dir}/logs"
+        tee_enclave_endpoint = (
+            f"{args.tee_enclave_host}:{args.tee_enclave_base_port + index}"
+        )
+        for endpoint_host, endpoint_port, label in (
+            (host, consensus_port, "consensus"),
+            (reth_host, reth_port, "reth-p2p"),
+            (host, rpc_port, "rpc"),
+            (host, authrpc_port, "authrpc"),
+            (host, metrics_port, "metrics"),
+            (host, discv5_port, "discv5"),
+            (host, args.tee_enclave_base_port + index, "tee"),
+        ):
+            if endpoint_port <= 0 or endpoint_port > 65535:
+                raise ValueError(
+                    f"validator {index} {label} port is outside 1..65535: {endpoint_port}"
+                )
+            key = (endpoint_host, endpoint_port)
+            previous = claimed_endpoints.get(key)
+            if previous is not None:
+                raise ValueError(
+                    f"endpoint collision at {endpoint_host}:{endpoint_port}: "
+                    f"{previous} and validator-{index} {label}"
+                )
+            claimed_endpoints[key] = f"validator-{index} {label}"
 
         cmd = command_lines(
-            chain_binary=args.chain_binary,
+            chain_binary=runtime_chain_binary,
             genesis_runtime_path=runtime_genesis_path,
             datadir=datadir,
             rpc_host=args.http_addr,
@@ -867,12 +1205,29 @@ def main() -> None:
             evm_key_path=runtime_evm_key_path,
             consensus_listen_host=args.consensus_listen_host,
             consensus_listen_port=consensus_port,
-            tee_enclave_endpoint=args.tee_enclave_endpoint,
+            tee_enclave_endpoint=tee_enclave_endpoint,
+            tee_bootstrap_timeout_secs=args.tee_bootstrap_timeout_secs,
+            projection_database=f"{projection_database_prefix}_validator_{index}",
             use_local_defaults=args.use_local_defaults,
         )
         script_path = commands_dir / f"validator-{index}.sh"
         write_command_script(script_path, cmd)
         commands.append((index, str(script_path), cmd))
+
+        enclave_cmd = enclave_command_lines(
+            tee_mode=args.tee_mode,
+            enclave_image=args.enclave_image,
+            endpoint=tee_enclave_endpoint,
+            runtime_validator_dir=runtime_validator_dir,
+            runtime_base_dir=runtime_base_dir,
+            runtime_enclave_binary=args.runtime_enclave_binary,
+            chain_id=args.chain_id,
+            validator_index=index,
+            container_name=f"outbe-{projection_scope}-enclave-{index}",
+        )
+        enclave_script_path = commands_dir / f"enclave-{index}.sh"
+        write_command_script(enclave_script_path, enclave_cmd)
+        enclave_commands.append((index, str(enclave_script_path), enclave_cmd))
 
         rows.append(
             {
@@ -897,6 +1252,7 @@ def main() -> None:
         copied_validators_path=copied_validators_path,
         bootnodes_path=bootnodes_path,
         commands=commands,
+        enclave_commands=enclave_commands,
         reth_rows=rows,
         runtime_base_dir=runtime_base_dir,
         include_private_keys=args.include_private_keys,

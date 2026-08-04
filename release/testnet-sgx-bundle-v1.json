@@ -32,7 +32,7 @@
     "isv_prod_id": 1,
     "isv_svn": 1,
     "max_threads": 16,
-    "remote_attestation": "none",
+    "remote_attestation": "dcap",
     "sigstruct_date_source": "source-date-epoch-utc"
   },
   "spec_version": 1

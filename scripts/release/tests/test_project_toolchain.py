@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import re
@@ -16,6 +17,8 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 TEE_BUILD_SCRIPT = REPO_ROOT / "crates/system/tee/build.rs"
 DOCKERFILE = REPO_ROOT / "Dockerfile.project-toolchain"
 PIN_PATH = REPO_ROOT / "release/project-toolchain-v1.json"
+ELF_SPEC_PATH = REPO_ROOT / "release/reproducible-elf-build-v1.json"
+REPRODUCIBLE_BUILD = REPO_ROOT / "scripts/release/reproducible-build.sh"
 VERIFIER_PATH = REPO_ROOT / "scripts/release/verify_project_toolchain.py"
 
 
@@ -38,6 +41,10 @@ class ProjectToolchainContractTests(unittest.TestCase):
         self.assertEqual(pin["platform"], "linux/amd64")
         self.assertEqual(pin["rust"]["version"], "1.96.0")
         self.assertEqual(pin["gramine"]["version"], "1.9")
+        self.assertEqual(
+            pin["host_only_packages"]["libsgx-dcap-default-qpl"],
+            "1.26.100.1-noble1",
+        )
         self.assertEqual(
             pin["system_packages"]["libsgx-dcap-quote-verify"],
             "1.26.100.1-noble1",
@@ -126,6 +133,77 @@ class ProjectToolchainContractTests(unittest.TestCase):
             recipe,
         )
 
+    def test_reproducible_release_is_owned_by_the_project_toolchain_recipe(self) -> None:
+        pin = json.loads(PIN_PATH.read_text(encoding="utf-8"))
+        elf = json.loads(ELF_SPEC_PATH.read_text(encoding="utf-8"))
+        recipe = DOCKERFILE.read_text(encoding="utf-8")
+        entrypoint = REPRODUCIBLE_BUILD.read_text(encoding="utf-8")
+
+        self.assertEqual(elf["builder"]["recipe"], "Dockerfile.project-toolchain")
+        self.assertEqual(
+            elf["builder"]["system_packages"],
+            [f"{name}={version}" for name, version in pin["system_packages"].items()],
+        )
+        self.assertEqual(
+            elf["builder"]["base_images"],
+            [
+                line.split()[1]
+                for line in recipe.splitlines()
+                if line.startswith("FROM ") and " AS rust" in line
+                or line.startswith("FROM ") and " AS toolchain" in line
+            ],
+        )
+        self.assertIn('FROM toolchain AS builder', recipe)
+        self.assertIn('FROM scratch AS artifacts', recipe)
+        self.assertIn('--file "${build_context}/Dockerfile.project-toolchain"', entrypoint)
+        self.assertNotIn("Dockerfile.reproducible", entrypoint)
+
+    def test_apt_source_and_package_closure_are_hash_pinned(self) -> None:
+        pin = json.loads(PIN_PATH.read_text(encoding="utf-8"))
+        recipe = DOCKERFILE.read_text(encoding="utf-8")
+
+        provenance = pin["apt_provenance"]
+        self.assertEqual(provenance["deb_closure"]["count"], 100)
+        self.assertRegex(provenance["deb_closure"]["sha256"], r"^[0-9a-f]{64}$")
+        self.assertEqual(len(provenance["source_files"]), 6)
+        for source in provenance["source_files"]:
+            self.assertTrue(source["path"].startswith("/"))
+            self.assertRegex(source["sha256"], r"^[0-9a-f]{64}$")
+        self.assertIn("--verify-apt-inputs", recipe)
+        self.assertIn("--no-download", recipe)
+
+    def test_apt_input_verifier_rejects_package_substitution(self) -> None:
+        verifier = load_verifier()
+        pin = json.loads(PIN_PATH.read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for source in pin["apt_provenance"]["source_files"]:
+                path = root / source["path"].lstrip("/")
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(source["path"].encode("ascii"))
+                source["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+
+            deb_dir = root / "debs"
+            deb_dir.mkdir()
+            for name, content in (("a_1_amd64.deb", b"a"), ("b_1_amd64.deb", b"b")):
+                (deb_dir / name).write_bytes(content)
+            ledger = "".join(
+                f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n"
+                for path in sorted(deb_dir.glob("*.deb"), key=lambda path: path.name)
+            )
+            pin["apt_provenance"]["deb_closure"] = {
+                "count": 2,
+                "format": "sha256sum-lines-sorted-by-filename-v1",
+                "sha256": hashlib.sha256(ledger.encode("ascii")).hexdigest(),
+            }
+            pin_path = root / "project-toolchain-v1.json"
+            pin_path.write_text(json.dumps(pin), encoding="utf-8")
+
+            verifier.verify_apt_inputs(pin_path=pin_path, root=root, deb_dir=deb_dir)
+            (deb_dir / "b_1_amd64.deb").write_bytes(b"substituted")
+            with self.assertRaisesRegex(ValueError, "closure digest mismatch"):
+                verifier.verify_apt_inputs(pin_path=pin_path, root=root, deb_dir=deb_dir)
+
     def test_toolchain_recipe_has_no_mutable_or_runtime_dcap_path(self) -> None:
         recipe = DOCKERFILE.read_text(encoding="utf-8").lower()
 
@@ -138,8 +216,12 @@ class ProjectToolchainContractTests(unittest.TestCase):
         self.assertNotIn("qpl", recipe)
         self.assertNotIn("pccs", recipe)
         self.assertNotRegex(recipe, r"from\s+\S+:(latest|main|master)(?:\s|$)")
-        self.assertEqual(len(re.findall(r"^from\s+", recipe, re.MULTILINE)), 2)
-        for image in re.findall(r"^from\s+(\S+)", recipe, re.MULTILINE):
+        self.assertEqual(len(re.findall(r"^from\s+", recipe, re.MULTILINE)), 4)
+        external_images = re.findall(
+            r"^from\s+(\S+)\s+as\s+(?:rust|toolchain)$", recipe, re.MULTILINE
+        )
+        self.assertEqual(len(external_images), 2)
+        for image in external_images:
             self.assertRegex(image, r"@sha256:[0-9a-f]{64}$")
 
 
