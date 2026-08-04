@@ -1,6 +1,5 @@
 //! Bounded local control sessions shared by the four fixed OCOMP roles.
 
-use std::fs;
 use std::io::{ErrorKind, Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
@@ -237,7 +236,7 @@ pub enum ControlError {
     LimitOverflow,
     #[error("cannot determine local control process credentials")]
     EffectiveUidUnavailable,
-    #[error("local service user {0} does not exist in /etc/passwd")]
+    #[error("local service user {0} is not a known system user")]
     UnknownUser(String),
     #[error("process effective uid {actual} does not match service user {user} uid {expected}")]
     EffectiveUserMismatch {
@@ -684,23 +683,73 @@ pub fn effective_uid() -> Result<u32, ControlError> {
     Ok(rustix::process::geteuid().as_raw())
 }
 
+#[allow(unsafe_code)]
 pub fn uid_for_user(user: &str) -> Result<u32, ControlError> {
-    let passwd = fs::read_to_string("/etc/passwd")?;
-    passwd
-        .lines()
-        .filter_map(parse_passwd_entry)
-        .find_map(|(name, uid)| (name == user).then_some(uid))
-        .ok_or_else(|| ControlError::UnknownUser(user.to_owned()))
+    let name =
+        std::ffi::CString::new(user).map_err(|_| ControlError::UnknownUser(user.to_owned()))?;
+    // SAFETY: `name` outlives the call; the remaining pointers are supplied by
+    // `with_passwd` as valid writable objects.
+    with_passwd(
+        |record, buf, len, found| unsafe {
+            libc::getpwnam_r(name.as_ptr(), record, buf, len, found)
+        },
+        |record| Some(record.pw_uid),
+    )?
+    .ok_or_else(|| ControlError::UnknownUser(user.to_owned()))
 }
 
+#[allow(unsafe_code)]
 pub fn effective_user_name() -> Result<String, ControlError> {
     let uid = effective_uid()?;
-    let passwd = fs::read_to_string("/etc/passwd")?;
-    passwd
-        .lines()
-        .filter_map(parse_passwd_entry)
-        .find_map(|(name, candidate)| (candidate == uid).then_some(name.to_owned()))
-        .ok_or_else(|| ControlError::UnknownUser(format!("uid:{uid}")))
+    // SAFETY: the pointers are supplied by `with_passwd` as valid writable
+    // objects; `pw_name` borrows the record's backing buffer for the read.
+    with_passwd(
+        |record, buf, len, found| unsafe { libc::getpwuid_r(uid, record, buf, len, found) },
+        |record| {
+            if record.pw_name.is_null() {
+                return None;
+            }
+            // SAFETY: `pw_name` points at a NUL-terminated C string in `buf`.
+            let name = unsafe { std::ffi::CStr::from_ptr(record.pw_name) };
+            name.to_str().ok().map(str::to_owned)
+        },
+    )?
+    .ok_or_else(|| ControlError::UnknownUser(format!("uid:{uid}")))
+}
+
+/// Resolve a passwd record through the system name service (Open Directory on
+/// macOS, nsswitch on Linux) rather than parsing `/etc/passwd`, which omits
+/// directory-backed users. Returns `Ok(None)` when the record is not found.
+#[allow(unsafe_code)]
+fn with_passwd<T>(
+    lookup: impl Fn(*mut libc::passwd, *mut libc::c_char, usize, *mut *mut libc::passwd) -> libc::c_int,
+    map: impl Fn(&libc::passwd) -> Option<T>,
+) -> Result<Option<T>, ControlError> {
+    let mut buf_len: usize = 1024;
+    loop {
+        let mut buf = vec![0 as libc::c_char; buf_len];
+        // SAFETY: `libc::passwd` is plain-old-data with no invariants violated
+        // by a zeroed representation prior to the name-service call.
+        let mut record: libc::passwd = unsafe { std::mem::zeroed() };
+        let mut found: *mut libc::passwd = std::ptr::null_mut();
+        // SAFETY: `buf` provides `buf_len` writable bytes and `record`/`found`
+        // are valid writable objects that the lookup populates.
+        let code = lookup(&mut record, buf.as_mut_ptr(), buf_len, &mut found);
+        if code == libc::ERANGE {
+            buf_len = buf_len
+                .checked_mul(2)
+                .ok_or(ControlError::EffectiveUidUnavailable)?;
+            continue;
+        }
+        if code != 0 {
+            return Err(ControlError::Io(std::io::Error::from_raw_os_error(code)));
+        }
+        if found.is_null() {
+            return Ok(None);
+        }
+        // SAFETY: a non-null `found` means `record` was fully populated.
+        return Ok(map(unsafe { &*found }));
+    }
 }
 
 pub fn require_effective_user(user: &str) -> Result<u32, ControlError> {
@@ -722,14 +771,6 @@ fn require_effective_uid_for(expected: u32, user: String) -> Result<u32, Control
         });
     }
     Ok(actual)
-}
-
-fn parse_passwd_entry(line: &str) -> Option<(&str, u32)> {
-    let mut fields = line.split(':');
-    let name = fields.next()?;
-    fields.next()?;
-    let uid = fields.next()?.parse().ok()?;
-    Some((name, uid))
 }
 
 #[cfg(target_os = "linux")]
@@ -780,6 +821,9 @@ fn peer_credentials(stream: &UnixStream) -> Result<PeerCredentials, ControlError
         return Err(ControlError::Io(std::io::Error::last_os_error()));
     }
 
+    // LOCAL_PEERPID is best-effort informational metadata: it fails with
+    // ENOTCONN once the peer has disconnected, whereas the authorization-relevant
+    // uid from getpeereid is captured at connect time and stays valid.
     let mut pid: libc::pid_t = 0;
     let mut length = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
     // SAFETY: `pid` and `length` are valid writable objects for the exact
@@ -794,18 +838,15 @@ fn peer_credentials(stream: &UnixStream) -> Result<PeerCredentials, ControlError
             &raw mut length,
         )
     };
-    if peer_pid_result != 0 {
-        return Err(ControlError::Io(std::io::Error::last_os_error()));
-    }
-    if usize::try_from(length).ok() != Some(std::mem::size_of::<libc::pid_t>()) {
-        return Err(ControlError::EffectiveUidUnavailable);
-    }
+    let pid = if peer_pid_result == 0
+        && usize::try_from(length).ok() == Some(std::mem::size_of::<libc::pid_t>())
+    {
+        u32::try_from(pid).unwrap_or_default()
+    } else {
+        0
+    };
 
-    Ok(PeerCredentials {
-        pid: u32::try_from(pid).map_err(|_| ControlError::EffectiveUidUnavailable)?,
-        uid,
-        gid,
-    })
+    Ok(PeerCredentials { pid, uid, gid })
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
