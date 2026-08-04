@@ -34,7 +34,7 @@ permitting replay.
 - Denomination is pledge- and Credis-eligible; commitment/nullifier/proof inputs use
   the pinned circuit/domain version.
 - Bundle has no overdue position; asset reports a registered ISO currency.
-- Oracle has exchange/refinancing rates; VaultRouter has matching reserve shares
+- Oracle has exchange/currency rates; VaultRouter has matching reserve shares
   and CredisFactory is the registered target/source as applicable.
 
 ## Success sequence
@@ -43,7 +43,7 @@ permitting replay.
 |---:|---|---|---|
 | 1 | Gratisfactory | append pledge commitment and move denomination to Gratis escrow | pool root + escrow/pledged balances |
 | 2 | CredisFactory/Pool | verify bundle-bound proof and consume nullifier | spent-nullifier state |
-| 3 | CredisFactory/Oracle | calculate stable amount and snapshot refinancing/currency | position fields |
+| 3 | CredisFactory/Oracle | calculate stable amount and snapshot currency/currency | position fields |
 | 4 | Credis | create unique position and ten installments | position/index records |
 | 5 | VaultRouter | withdraw exact asset into borrower bundle | token/vault deltas and event |
 | 6 | borrower, repeated 10x | pay next asset installment into reserve | installment cursor/debt delta |
@@ -96,7 +96,7 @@ commitments and remains a blocking debt.
 | PFS-003-07 | early repayment | live position before due timestamp | owner pays next installment | result follows explicit early-payment policy with no ambiguous cursor | documentation-only pending policy |
 | PFS-003-08 | restart at transaction boundaries | committed pledge/request/payment/reclaim checkpoints | restart after each boundary | reads, roots, nullifiers, balances and cursor reconstruct identically | documentation-only: persistent fixture absent |
 | PFS-003-09 | zero settlement asset | valid proof/bundle but zero asset | request Credis | revert; no nullifier/position mutation | in-process `request_credis_rejects_zero_asset` |
-| PFS-003-10 | zero bundle account | valid proof/asset but zero bundle | request Credis | revert; no nullifier/position mutation | in-process `request_credis_rejects_zero_bundle_account` |
+| PFS-003-10 | zero smart account | valid proof/asset but zero bundle | request Credis | revert; no nullifier/position mutation | in-process `request_credis_rejects_zero_smart_account` |
 | PFS-003-11 | unauthorized installment payer | live position owned by another bundle | non-owner pays installment | revert; cursor/debt/root unchanged | in-process `pay_anadosis_rejects_non_owner_caller` |
 | PFS-003-12 | zero reclaim commitment | due installment and owner caller | pay with zero commitment | revert; cursor/debt/root unchanged | in-process `pay_anadosis_rejects_zero_reclaim_commitment` |
 

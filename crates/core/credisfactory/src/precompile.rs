@@ -1,7 +1,7 @@
 //! ABI dispatch for the credisfactory precompile at `CREDIS_FACTORY_ADDRESS`.
 //!
 //! `requestCredis` consumes a confidential Gratis pledge (pledge handle + spend
-//! authorization) and opens a credis position bound to `bundleAccount`.
+//! authorization) and opens a credis position bound to `smartAccount`.
 //! `anadosis` advances the schedule and releases 1/N of the pledged collateral
 //! back to the original pledger's encrypted Gratis balance.
 
@@ -40,7 +40,7 @@ pub fn dispatch(
                         storage.clone(),
                         sender,
                         c.asset,
-                        c.bundleAccount,
+                        c.smartAccount,
                         c.pledgeHandle,
                         c.spendAuth.0,
                     )?;

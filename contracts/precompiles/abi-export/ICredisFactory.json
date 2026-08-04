@@ -22,7 +22,7 @@
         "internalType": "address"
       },
       {
-        "name": "bundleAccount",
+        "name": "smartAccount",
         "type": "address",
         "internalType": "address"
       },
@@ -75,7 +75,7 @@
     "name": "CredisRequested",
     "inputs": [
       {
-        "name": "bundleAccount",
+        "name": "smartAccount",
         "type": "address",
         "indexed": true,
         "internalType": "address"

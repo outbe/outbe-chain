@@ -5,7 +5,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 /// @title MockFeeToken
 /// @notice ERC20 that burns a fixed basis-point fee on every transfer, so the recipient receives
-///         less than the sent amount. Used to prove bundle accounting credits the measured delta
+///         less than the sent amount. Used to prove smart accounting credits the measured delta
 ///         (T-02) rather than the nominal transfer amount.
 contract MockFeeToken is ERC20 {
     uint256 public immutable FEE_BPS;

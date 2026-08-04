@@ -66,7 +66,7 @@ fn base_request(op: GratisOp, chain_id: B256, account: Address, amount: U256) ->
         current_pledge_record: Vec::new(),
         modify_auth: no_auth(),
         pledge_handle: None,
-        bundle_account: None,
+        smart_account: None,
         spend_auth: None,
         fidelity: None,
     }
@@ -377,7 +377,7 @@ pub(crate) fn consume_pledge(
     req.current_pledged = gratis.pledged_ct_of(eoa)?;
     req.current_pledge_record = ticket_ct;
     req.pledge_handle = Some(pledge_handle);
-    req.bundle_account = Some(bundle);
+    req.smart_account = Some(bundle);
     req.spend_auth = Some(spend_auth);
     let result = apply_gratis_op(req)?;
     ensure_applied(&result)?;

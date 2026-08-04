@@ -23,15 +23,15 @@ mod oracle_tests {
         StorageHandle::enter(&mut storage, f);
     }
 
-    /// Test refinancing rate (4.30 %, 1e18 scaled) used when building
+    /// Test currency rate (4.30 %, 1e18 scaled) used when building
     /// `ReferenceCurrency` genesis entries.
-    const TEST_REFI_RATE: U256 = U256::from_limbs([43_000_000_000_000_000u64, 0, 0, 0]);
+    const TEST_RATE: U256 = U256::from_limbs([43_000_000_000_000_000u64, 0, 0, 0]);
 
-    /// Builds a `ReferenceCurrency` with the test refinancing rate.
+    /// Builds a `ReferenceCurrency` with the test currency rate.
     fn ref_cur(iso_code: u16) -> crate::logic::ReferenceCurrency {
         crate::logic::ReferenceCurrency {
             iso_code,
-            refinancing_rate: TEST_REFI_RATE,
+            currency_rate: TEST_RATE,
         }
     }
 
@@ -2832,12 +2832,12 @@ mod oracle_tests {
         });
     }
 
-    /// Parity guard for the `reference_refinancing_rate` base slot used by
+    /// Parity guard for the `reference_currency_rate` base slot used by
     /// `scripts/seed_genesis.py`. Writes a distinctive marker, then scans base
     /// slots 0..128 to recover the macro-assigned slot via the known
     /// `keccak256(left_pad(key, 32) || be(base, 32))` mapping derivation.
     #[test]
-    fn test_reference_refinancing_rate_slot_parity() {
+    fn test_reference_currency_rate_slot_parity() {
         use alloy_primitives::keccak256;
         use outbe_primitives::addresses::ORACLE_ADDRESS;
 
@@ -2845,10 +2845,7 @@ mod oracle_tests {
             let oracle = OracleContract::new(storage.clone());
             let iso: u16 = 840;
             let marker = U256::from(0x00AB_CDEFu64);
-            oracle
-                .reference_refinancing_rate
-                .write(&iso, marker)
-                .unwrap();
+            oracle.reference_currency_rate.write(&iso, marker).unwrap();
 
             for base in 0u64..128 {
                 let mut buf = [0u8; 64];
@@ -2858,18 +2855,18 @@ mod oracle_tests {
                 if storage.sload(ORACLE_ADDRESS, slot).unwrap() == marker {
                     assert_eq!(
                         base, 60,
-                        "macro-assigned reference_refinancing_rate slot changed; \
+                        "macro-assigned reference_currency_rate slot changed; \
                          update scripts/seed_genesis.py"
                     );
                     return;
                 }
             }
-            panic!("could not locate reference_refinancing_rate base slot in 0..128");
+            panic!("could not locate reference_currency_rate base slot in 0..128");
         });
     }
 
     #[test]
-    fn test_genesis_seeds_refinancing_rate() {
+    fn test_genesis_seeds_currency_rate() {
         with_storage(|storage| {
             let mut oracle = OracleContract::new(storage.clone());
             crate::logic::init_from_genesis(
@@ -2878,14 +2875,14 @@ mod oracle_tests {
             )
             .unwrap();
             assert_eq!(
-                oracle.get_refinancing_rate(840).unwrap(),
-                crate::logic::DEFAULT_USD_REFINANCING_RATE
+                oracle.get_currency_rate(840).unwrap(),
+                crate::logic::DEFAULT_USD_CURRENCY_RATE
             );
         });
     }
 
     #[test]
-    fn test_get_refinancing_rate_reverts_for_unregistered() {
+    fn test_get_currency_rate_reverts_for_unregistered() {
         with_storage(|storage| {
             let mut oracle = OracleContract::new(storage.clone());
             crate::logic::init_from_genesis(
@@ -2893,10 +2890,10 @@ mod oracle_tests {
                 &crate::logic::OracleGenesisConfig::default_config(),
             )
             .unwrap();
-            let err = oracle.get_refinancing_rate(978).unwrap_err();
+            let err = oracle.get_currency_rate(978).unwrap_err();
             let msg = format!("{err:?}");
             assert!(
-                msg.contains("no refinancing rate for iso_code 978"),
+                msg.contains("no currency rate for iso_code 978"),
                 "unexpected error: {msg}"
             );
         });

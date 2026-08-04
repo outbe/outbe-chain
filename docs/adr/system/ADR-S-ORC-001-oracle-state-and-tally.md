@@ -14,7 +14,7 @@ Oracle is a stateful consensus module, not merely a feeder API. It registers pai
 and currencies, accepts validator/delegated-feeder votes, tallies stake-weighted
 prices at block boundaries, stores bounded raw snapshots and finalized daily/WWD
 aggregates, computes VWAP/TWAP/S-curve values, tracks participation penalties and
-provides refinancing rates to credit modules.
+provides currency rates to credit modules.
 
 The feeder binary, ZeroFee policy and downstream consumers have separate authority
 and ADRs. This record defines the on-chain Oracle state and deterministic lifecycle.
@@ -30,7 +30,7 @@ deactivated as a vote target only by the system authority.
 
 Settlement currency records bind a nonzero ISO code and denom string/hash to a
 registered pair. Reference currencies bind a unique ISO code to an annualized
-1e18-scaled refinancing rate. These registries are initialized/migrated by
+1e18-scaled currency rate. These registries are initialized/migrated by
 chain-spec/protocol activation, not mutable feeder input.
 
 Direct `setExchangeRate` is a system-only bootstrap path and records zero
@@ -86,7 +86,7 @@ resetting counters. Validator-set cardinality is capped for this mandatory phase
 | Vote submission | Oracle ABI plus ZeroFee admission policy in ADR-S-FEE-001 |
 | Tally/snapshot/UTC finalization | `OracleLifecycle::begin_block` |
 | Penalty execution | receipt-visible `OracleSlashWindow` system phase |
-| Rates/VWAP/TWAP/S-curve/refinancing reads | Oracle ABI and typed read-only API |
+| Rates/VWAP/TWAP/S-curve/currency reads | Oracle ABI and typed read-only API |
 | Feeder process/network data | ADR-S-ORC-002, never direct state authority |
 
 ## Persistent state and invariants
@@ -109,7 +109,7 @@ resetting counters. Validator-set cardinality is capped for this mandatory phase
 
 ## Determinism, arithmetic and bounds
 
-All prices, volumes, bands and refinancing rates are 1e18 fixed-point. Median
+All prices, volumes, bands and currency rates are 1e18 fixed-point. Median
 sorting, tie-breaking, reference-pair selection, cross-rate formula, integer square
 root, rounding, snapshot retention, catch-up cap and S-curve math are consensus
 algorithms. Iteration is by stable pair id and validator/index order.
@@ -222,7 +222,7 @@ instead of being folded into an “Oracle subsystem” ADR.
     ADR-S-VAL-001 and ADR-S-SLS-001.
 19. Penalty `success + abstain + miss` uses unchecked `u64` addition and reset window
     semantics need generated long-run tests.
-20. Refinancing rates are described as genesis-pinned; define activated update and
+20. currency rates are described as genesis-pinned; define activated update and
     historical snapshot policy before rates can change.
 21. Pair deactivation zeroes rates in a separate cleanup method. Define atomic
     activation/deactivation and what existing obligations/readers observe.
