@@ -4,7 +4,7 @@
     "name": "credisOf",
     "inputs": [
       {
-        "name": "bundleAccount",
+        "name": "smartAccount",
         "type": "address",
         "internalType": "address"
       }
@@ -39,7 +39,7 @@
             "internalType": "address"
           },
           {
-            "name": "bundleAccount",
+            "name": "smartAccount",
             "type": "address",
             "internalType": "address"
           },
@@ -79,7 +79,12 @@
             "internalType": "uint256"
           },
           {
-            "name": "refinancingRate",
+            "name": "entryPriceMinor",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "currencyRate",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -171,7 +176,7 @@
             "internalType": "address"
           },
           {
-            "name": "bundleAccount",
+            "name": "smartAccount",
             "type": "address",
             "internalType": "address"
           },
@@ -211,7 +216,12 @@
             "internalType": "uint256"
           },
           {
-            "name": "refinancingRate",
+            "name": "entryPriceMinor",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "currencyRate",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -281,7 +291,7 @@
     "name": "getPositionsByAddress",
     "inputs": [
       {
-        "name": "bundleAccount",
+        "name": "smartAccount",
         "type": "address",
         "internalType": "address"
       }
@@ -303,7 +313,7 @@
             "internalType": "address"
           },
           {
-            "name": "bundleAccount",
+            "name": "smartAccount",
             "type": "address",
             "internalType": "address"
           },
@@ -343,7 +353,12 @@
             "internalType": "uint256"
           },
           {
-            "name": "refinancingRate",
+            "name": "entryPriceMinor",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "currencyRate",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -367,7 +382,7 @@
     "name": "hasOverdueAnadosis",
     "inputs": [
       {
-        "name": "bundleAccount",
+        "name": "smartAccount",
         "type": "address",
         "internalType": "address"
       }
@@ -386,7 +401,7 @@
     "name": "outstandingAnadosisOf",
     "inputs": [
       {
-        "name": "bundleAccount",
+        "name": "smartAccount",
         "type": "address",
         "internalType": "address"
       }
@@ -455,7 +470,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "bundleAccount",
+        "name": "smartAccount",
         "type": "address",
         "indexed": true,
         "internalType": "address"
@@ -480,7 +495,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "bundleAccount",
+        "name": "smartAccount",
         "type": "address",
         "indexed": true,
         "internalType": "address"

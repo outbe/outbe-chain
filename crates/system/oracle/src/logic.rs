@@ -55,7 +55,7 @@ pub struct GenesisAggregateVote {
 }
 
 /// A reference currency for genesis import/export: an ISO 4217 numeric code
-/// plus its annualized refinancing rate (1e18 scaled). The refinancing rate is
+/// plus its annualized currency rate (1e18 scaled). The currency rate is
 /// read by the Credis Factory at issuance and pinned onto the Anadosis
 /// schedule. Currencies used purely as pricing references (no credis) may carry
 /// a zero rate.
@@ -63,14 +63,13 @@ pub struct GenesisAggregateVote {
 pub struct ReferenceCurrency {
     /// ISO 4217 numeric code (e.g., 840 = USD).
     pub iso_code: u16,
-    /// Annualized refinancing rate at 1e18 scale (e.g., 0.043 -> 43e15).
-    pub refinancing_rate: U256,
+    /// Annualized currency rate at 1e18 scale (e.g., 0.043 -> 43e15).
+    pub currency_rate: U256,
 }
 
-/// Genesis seed for the USD (ISO 840) refinancing rate: the current SOFR
+/// Genesis seed for the USD (ISO 840) currency rate: the current SOFR
 /// (Secured Overnight Financing Rate) at 1e18 scale.
-pub const DEFAULT_USD_REFINANCING_RATE: U256 =
-    U256::from_limbs([36_300_000_000_000_000u64, 0, 0, 0]);
+pub const DEFAULT_USD_CURRENCY_RATE: U256 = U256::from_limbs([36_300_000_000_000_000u64, 0, 0, 0]);
 
 /// Configurable genesis parameters for the Oracle contract.
 ///
@@ -99,9 +98,9 @@ pub struct OracleGenesisConfig {
     /// denom: stablecoin denom string (e.g., "0xUSD").
     /// pair_base/pair_quote: trading pair for this settlement currency.
     pub settlement_currencies: Vec<(u16, String, String, String)>,
-    /// Reference currencies with their annualized refinancing rate (1e18
+    /// Reference currencies with their annualized currency rate (1e18
     /// scaled). These ISO 4217 codes identify currencies valid for off-chain
-    /// pricing references; the refinancing rate is read by the Credis Factory
+    /// pricing references; the currency rate is read by the Credis Factory
     /// at issuance. Pre-filled at genesis with USD (840) at the current SOFR.
     pub reference_currencies: Vec<ReferenceCurrency>,
     /// Penalty counters as `(validator, success, abstain, miss)`.
@@ -132,7 +131,7 @@ impl OracleGenesisConfig {
             settlement_currencies: vec![],
             reference_currencies: vec![ReferenceCurrency {
                 iso_code: 840,
-                refinancing_rate: DEFAULT_USD_REFINANCING_RATE,
+                currency_rate: DEFAULT_USD_CURRENCY_RATE,
             }],
             penalty_counters: vec![],
             aggregate_votes: vec![],
@@ -237,7 +236,7 @@ pub fn init_from_genesis(oracle: &mut OracleContract, config: &OracleGenesisConf
         oracle.settlement_count.write(count + 1)?;
     }
 
-    // Import reference currencies and their refinancing rates.
+    // Import reference currencies and their currency rates.
     let mut seen_reference_iso: std::collections::BTreeSet<u16> = std::collections::BTreeSet::new();
     for reference in &config.reference_currencies {
         let iso_code = reference.iso_code;
@@ -253,8 +252,8 @@ pub fn init_from_genesis(oracle: &mut OracleContract, config: &OracleGenesisConf
         }
         oracle.reference_currencies.push(iso_code)?;
         oracle
-            .reference_refinancing_rate
-            .write(&iso_code, reference.refinancing_rate)?;
+            .reference_currency_rate
+            .write(&iso_code, reference.currency_rate)?;
     }
 
     // Import penalty counters.
@@ -437,15 +436,15 @@ pub fn export_genesis(
         settlement_currencies.push((iso_code, denom, base, quote));
     }
 
-    // Export reference currencies with their refinancing rates (bounded list;
+    // Export reference currencies with their currency rates (bounded list;
     // read_all OK).
     let reference_iso_codes = oracle.reference_currencies.read_all()?;
     let mut reference_currencies = Vec::with_capacity(reference_iso_codes.len());
     for iso_code in reference_iso_codes {
-        let refinancing_rate = oracle.reference_refinancing_rate.read(&iso_code)?;
+        let currency_rate = oracle.reference_currency_rate.read(&iso_code)?;
         reference_currencies.push(ReferenceCurrency {
             iso_code,
-            refinancing_rate,
+            currency_rate,
         });
     }
 
@@ -843,14 +842,14 @@ impl OracleContract<'_> {
         Ok((rate, block, ts))
     }
 
-    /// Annualized refinancing rate (1e18 scaled) for an ISO 4217 code, as pinned
+    /// Annualized currency rate (1e18 scaled) for an ISO 4217 code, as pinned
     /// on the reference-currency collection at genesis. Reverts when the code is
     /// not a registered reference currency or carries no (non-zero) rate.
-    pub fn get_refinancing_rate(&self, iso_code: u16) -> Result<U256> {
-        let rate = self.reference_refinancing_rate.read(&iso_code)?;
+    pub fn get_currency_rate(&self, iso_code: u16) -> Result<U256> {
+        let rate = self.reference_currency_rate.read(&iso_code)?;
         if rate.is_zero() {
             return Err(PrecompileError::Revert(format!(
-                "no refinancing rate for iso_code {iso_code}"
+                "no currency rate for iso_code {iso_code}"
             )));
         }
         Ok(rate)
