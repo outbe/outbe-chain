@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256};
 use k256::ecdsa::{signature::hazmat::PrehashVerifier, Signature, VerifyingKey};
 
 use crate::{
@@ -10,14 +10,26 @@ use crate::{
     schema::{encode_nested_value, impl_top_level_codec, require, wire_struct, SchemaLimits},
 };
 
-pub const POC_COMMITTEE_SIZE: usize = 4;
-pub const POC_COMMITTEE_THRESHOLD: u8 = 3;
 pub const POC_KEY_EPOCH: u64 = 1;
 pub const RESULT_SIGNATURE_PURPOSE_BITMAP: u32 = 1;
 
+/// Canonical OCOMP identity of one consensus validator.
+///
+/// The preimage deliberately excludes committee position: reordering an
+/// otherwise identical ValidatorSet does not create a different validator.
+pub fn validator_identity_hash_v1(
+    validator_address: Address,
+    consensus_bls_min_pk: &[u8; 48],
+) -> Result<B256, ProtocolError> {
+    let mut payload = Vec::with_capacity(20 + 48);
+    payload.extend_from_slice(validator_address.as_slice());
+    payload.extend_from_slice(consensus_bls_min_pk);
+    hash_framed(HashDomain::ValidatorIdentity, &payload)
+}
+
 wire_struct! {
     pub struct OcompMemberV1 {
-        pub validator_index: u8,
+        pub validator_index: u16,
         pub validator_identity_hash: B256,
         pub ocomp_public_key_sec1: [u8; 33],
         pub key_epoch: u64,
@@ -35,7 +47,7 @@ wire_struct! {
         pub fork_id: B256,
         pub protocol_bundle_hash: B256,
         pub snapshot_epoch: u64,
-        pub threshold: u8,
+        pub threshold: u16,
         pub ordered_members: Vec<OcompMemberV1>,
     }
     validate = validate_committee;
@@ -46,15 +58,10 @@ wire_struct! {
     pub struct OcompKeyRegistrationCoreV1 {
         pub chain_id: u64,
         pub genesis_hash: B256,
-        pub fork_id: B256,
-        pub protocol_bundle_hash: B256,
-        pub validator_index: u8,
         pub validator_identity_hash: B256,
         pub ocomp_public_key_sec1: [u8; 33],
         pub key_epoch: u64,
         pub allowed_purpose_bitmap: u32,
-        pub valid_from_height: u64,
-        pub valid_until_height_exclusive: u64,
     }
 }
 
@@ -76,15 +83,10 @@ impl OcompMemberV1 {
         OcompKeyRegistrationCoreV1 {
             chain_id: snapshot.chain_id,
             genesis_hash: snapshot.genesis_hash,
-            fork_id: snapshot.fork_id,
-            protocol_bundle_hash: snapshot.protocol_bundle_hash,
-            validator_index: self.validator_index,
             validator_identity_hash: self.validator_identity_hash,
             ocomp_public_key_sec1: self.ocomp_public_key_sec1,
             key_epoch: self.key_epoch,
             allowed_purpose_bitmap: self.allowed_purpose_bitmap,
-            valid_from_height: self.valid_from_height,
-            valid_until_height_exclusive: self.valid_until_height_exclusive,
         }
     }
 }
@@ -103,10 +105,6 @@ impl OcompKeyRegistrationV1 {
             self.core.allowed_purpose_bitmap == RESULT_SIGNATURE_PURPOSE_BITMAP,
             "result-signature-only key purpose",
         )?;
-        require(
-            self.core.valid_from_height < self.core.valid_until_height_exclusive,
-            "key validity range",
-        )?;
         let digest = self.proof_of_possession_digest(limits)?;
         verify_low_s_prehash(
             &self.core.ocomp_public_key_sec1,
@@ -118,14 +116,11 @@ impl OcompKeyRegistrationV1 {
 
 impl OcompCommitteeSnapshotV1 {
     pub fn validate_semantics(&self, limits: &SchemaLimits) -> Result<(), ProtocolError> {
-        require(self.snapshot_epoch == 1, "PoC committee snapshot epoch")?;
         require(
-            self.threshold == POC_COMMITTEE_THRESHOLD,
-            "PoC committee threshold",
-        )?;
-        require(
-            self.ordered_members.len() == POC_COMMITTEE_SIZE,
-            "PoC committee size",
+            !self.ordered_members.is_empty()
+                && usize::from(self.threshold) <= self.ordered_members.len()
+                && self.threshold > 0,
+            "committee threshold",
         )?;
         let mut identities = BTreeSet::new();
         let mut keys = BTreeSet::new();
@@ -141,6 +136,10 @@ impl OcompCommitteeSnapshotV1 {
             require(
                 keys.insert(member.ocomp_public_key_sec1),
                 "unique OCOMP key",
+            )?;
+            require(
+                member.valid_from_height < member.valid_until_height_exclusive,
+                "committee member validity range",
             )?;
             OcompKeyRegistrationV1 {
                 core: member.registration_core(self),

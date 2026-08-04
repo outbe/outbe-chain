@@ -18,7 +18,6 @@ use outbe_consensus::{
 };
 use outbe_metadosis::proof_layout::OCOMP_JOB_RECORDS_BASE_SLOT;
 use outbe_ocomp_protocol::{
-    committee::POC_COMMITTEE_SIZE,
     common::{BoundedBytes, ProofBytes},
     control::{FinalizedIntentProofResponseV1, SnapshotHandoffV1},
     intent::{
@@ -449,7 +448,11 @@ where
         let finalized = decode_public_finalized_block(
             &public_bytes.finalization_bytes,
             &public_bytes.block_bytes,
-            POC_COMMITTEE_SIZE,
+            usize::try_from(outbe_consensus::bls::MAX_VALIDATORS).map_err(|_| {
+                PublicFinalizedIntentProofBuildError::Finalization(
+                    "consensus validator bound exceeds usize".to_owned(),
+                )
+            })?,
         )
         .map_err(|error| PublicFinalizedIntentProofBuildError::Finalization(error.to_string()))?;
         let block_hash = finalized.block.block_hash();

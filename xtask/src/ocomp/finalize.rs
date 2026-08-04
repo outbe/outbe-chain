@@ -160,7 +160,7 @@ struct SemanticArtifactsDocumentV1 {
 
 #[derive(Debug, Serialize)]
 struct CommitteeMemberDocumentV1 {
-    validator_index: u8,
+    validator_index: u16,
     validator_identity_hash: B256,
     ocomp_public_key_sec1_hex: String,
     key_epoch: u64,
@@ -179,7 +179,7 @@ struct CommitteeDocumentV1 {
     protocol_bundle_hash: B256,
     snapshot_hash: B256,
     snapshot_epoch: u64,
-    threshold: u8,
+    threshold: u16,
     ordered_members: Vec<CommitteeMemberDocumentV1>,
 }
 
@@ -359,7 +359,11 @@ pub fn run(
             correctness_profile_id,
             capacity_profile,
             source_availability_policy_id,
-            result_committee_snapshot_hash,
+            result_validator_set_epoch: result_committee.snapshot_epoch,
+            result_committee_set_hash: result_committee_snapshot_hash,
+            result_ocomp_binding_hash: result_committee_snapshot_hash,
+            result_member_count: u16::try_from(result_committee.ordered_members.len())?,
+            result_quorum_threshold: result_committee.threshold,
         },
         protocol_bundle,
         result_committee,
@@ -779,11 +783,12 @@ fn result_committee(
 ) -> Result<OcompCommitteeSnapshotV1> {
     let mut ordered_members = Vec::with_capacity(4);
     for (index, validator_identity_hash) in validator_identities.into_iter().enumerate() {
-        let validator_index = u8::try_from(index)?;
+        let signing_key_index = u8::try_from(index)?;
+        let validator_index = u16::try_from(index)?;
         let registration = if let Some(registrations) = registrations {
             registrations[index].clone()
         } else {
-            let key = reference_signing_key(validator_index);
+            let key = reference_signing_key(signing_key_index);
             let public_key: [u8; 33] = key
                 .verifying_key()
                 .to_encoded_point(true)
@@ -793,15 +798,10 @@ fn result_committee(
                 core: OcompKeyRegistrationCoreV1 {
                     chain_id,
                     genesis_hash,
-                    fork_id,
-                    protocol_bundle_hash,
-                    validator_index,
                     validator_identity_hash,
                     ocomp_public_key_sec1: public_key,
                     key_epoch: 1,
                     allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
-                    valid_from_height: OCOMP_POC_FINAL_ACTIVATION_HEIGHT,
-                    valid_until_height_exclusive: u64::MAX,
                 },
                 proof_of_possession: [0; 64],
             };
@@ -816,27 +816,22 @@ fn result_committee(
         ensure!(
             registration.core.chain_id == chain_id
                 && registration.core.genesis_hash == genesis_hash
-                && registration.core.fork_id == fork_id
-                && registration.core.protocol_bundle_hash == protocol_bundle_hash
-                && registration.core.validator_index == validator_index
                 && registration.core.validator_identity_hash == validator_identity_hash
                 && registration.core.key_epoch == 1
-                && registration.core.allowed_purpose_bitmap == RESULT_SIGNATURE_PURPOSE_BITMAP
-                && registration.core.valid_from_height == OCOMP_POC_FINAL_ACTIVATION_HEIGHT
-                && registration.core.valid_until_height_exclusive == u64::MAX,
+                && registration.core.allowed_purpose_bitmap == RESULT_SIGNATURE_PURPOSE_BITMAP,
             "validator-{validator_index} OCOMP registration does not match the requested chain binding"
         );
         registration
             .validate_proof_of_possession(limits)
             .wrap_err("verify OCOMP proof of possession")?;
         ordered_members.push(OcompMemberV1 {
-            validator_index: registration.core.validator_index,
+            validator_index,
             validator_identity_hash: registration.core.validator_identity_hash,
             ocomp_public_key_sec1: registration.core.ocomp_public_key_sec1,
             key_epoch: registration.core.key_epoch,
             allowed_purpose_bitmap: registration.core.allowed_purpose_bitmap,
-            valid_from_height: registration.core.valid_from_height,
-            valid_until_height_exclusive: registration.core.valid_until_height_exclusive,
+            valid_from_height: OCOMP_POC_FINAL_ACTIVATION_HEIGHT,
+            valid_until_height_exclusive: u64::MAX,
             proof_of_possession: registration.proof_of_possession,
         });
     }

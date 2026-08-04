@@ -35,7 +35,7 @@ wire_struct! {
         pub activation_call_id: B256,
         pub result_digest: B256,
         pub quorum_height: u64,
-        pub quorum_signer_bitmap: u8,
+        pub quorum_signer_bitmap: Vec<u8>,
         pub quorum_evidence_hash: B256,
         pub result_evidence_hash: B256,
         pub terminal_receipt_hash: B256,

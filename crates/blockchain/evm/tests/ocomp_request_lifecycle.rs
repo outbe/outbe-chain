@@ -884,7 +884,7 @@ fn real_payload_builder_commits_atomic_request_after_ce_seal_without_lysis_effec
         quorum.result_digest,
         voting_result.result_digest(&poc_schema_limits()).unwrap()
     );
-    assert_eq!(quorum.signer_bitmap, 0b0111);
+    assert_eq!(quorum.signer_bitmap, vec![0b0111]);
     assert_eq!(completed.quorum_evidence_hash, quorum.evidence_hash);
 
     let mut completed_state = HashMapStorageProvider::new(CHAIN_ID);

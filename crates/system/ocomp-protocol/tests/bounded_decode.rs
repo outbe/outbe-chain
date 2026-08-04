@@ -48,9 +48,10 @@ fn control_cap_plus_one_rejects_from_prefix_before_body_decode() {
 }
 
 #[test]
-fn vote_state_rejects_a_fifth_slot_before_any_crypto_work() {
+fn vote_state_rejects_slot_count_different_from_declared_n_before_crypto_work() {
     let mut accountability =
-        OcompVoteAccountabilityV1::empty([1; 32].into(), [2; 32].into()).unwrap();
+        OcompVoteAccountabilityV1::empty([1; 32].into(), 1, [2; 32].into(), [3; 32].into(), 4, 3)
+            .unwrap();
     accountability.slots.push(None);
     let error = accountability
         .validate_semantics(&LIMITS)

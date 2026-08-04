@@ -1342,8 +1342,11 @@ fn quorum_applies_lysis_and_creates_nod_with_vote_count(
             assert_eq!(
                 accountability
                     .quorum_signer_bitmap
+                    .as_ref()
                     .expect("completed job quorum")
-                    .count_ones(),
+                    .iter()
+                    .map(|byte| byte.count_ones())
+                    .sum::<u32>(),
                 3
             );
 
@@ -2149,9 +2152,9 @@ fn no_quorum_job_expires_without_nod(world: &mut World) {
     assert_eq!(accountability.slot_validator_indexes, vec![0, 1]);
     assert_eq!(accountability.quorum_result_digest, None);
     assert_eq!(accountability.closed_height, Some(request.deadline_height));
-    assert_eq!(accountability.timely_bitmap, Some(0b0011));
-    assert_eq!(accountability.missing_bitmap, Some(0b1100));
-    assert_eq!(accountability.equivocation_bitmap, Some(0));
+    assert_eq!(accountability.timely_bitmap, Some(vec![0b0011]));
+    assert_eq!(accountability.missing_bitmap, Some(vec![0b1100]));
+    assert_eq!(accountability.equivocation_bitmap, Some(vec![0]));
 
     for port in world.validators.committee_ports() {
         assert_eq!(
@@ -2641,12 +2644,12 @@ fn incompatible_supervisor_isolated_from_consensus(world: &mut World) {
         sleep(Duration::from_millis(250));
     };
     assert_eq!(closed.quorum_result_digest, Some(activation.result_digest));
-    assert_eq!(closed.quorum_signer_bitmap, Some(0b1110));
-    assert_eq!(closed.timely_bitmap, Some(0b1110));
-    assert_eq!(closed.matching_bitmap, Some(0b1110));
-    assert_eq!(closed.divergent_bitmap, Some(0));
-    assert_eq!(closed.missing_bitmap, Some(0b0001));
-    assert_eq!(closed.equivocation_bitmap, Some(0));
+    assert_eq!(closed.quorum_signer_bitmap, Some(vec![0b1110]));
+    assert_eq!(closed.timely_bitmap, Some(vec![0b1110]));
+    assert_eq!(closed.matching_bitmap, Some(vec![0b1110]));
+    assert_eq!(closed.divergent_bitmap, Some(vec![0]));
+    assert_eq!(closed.missing_bitmap, Some(vec![0b0001]));
+    assert_eq!(closed.equivocation_bitmap, Some(vec![0]));
 }
 
 #[when("all validator nodes and OCOMP node-facing processes restart with preserved data")]

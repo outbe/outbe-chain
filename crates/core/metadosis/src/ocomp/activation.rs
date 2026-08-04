@@ -157,11 +157,12 @@ pub(crate) fn apply_quorum_result(
     {
         return Err(reject(REJECT_FORK_OR_BUNDLE_MISMATCH));
     }
-    if record.intent.result_committee_snapshot_hash
-        != authority
-            .result_committee
-            .snapshot_hash(limits)
-            .map_err(|error| protocol_reject(error, REJECT_COMMITTEE_SNAPSHOT_INVALID))?
+    if record.intent.result_validator_set_epoch != authority.result_committee.snapshot_epoch
+        || record.intent.result_ocomp_binding_hash
+            != authority
+                .result_committee
+                .snapshot_hash(limits)
+                .map_err(|error| protocol_reject(error, REJECT_COMMITTEE_SNAPSHOT_INVALID))?
     {
         return Err(reject(REJECT_COMMITTEE_SNAPSHOT_INVALID));
     }
@@ -308,7 +309,7 @@ fn commit_conflict(
         activation_call_id: binding.activation_call_id,
         result_digest: binding.result_digest,
         quorum_height: quorum.quorum_height,
-        quorum_signer_bitmap: quorum.signer_bitmap,
+        quorum_signer_bitmap: quorum.signer_bitmap.clone(),
         quorum_evidence_hash: quorum.evidence_hash,
         result_evidence_hash,
         terminal_receipt_hash,
@@ -621,7 +622,8 @@ pub(crate) fn validate_activation_authority(
         || result_committee.genesis_hash != profile.genesis_hash
         || result_committee.fork_id != profile.fork_id
         || result_committee.protocol_bundle_hash != profile.protocol_bundle_hash
-        || committee_hash != profile.result_committee_snapshot_hash
+        || result_committee.snapshot_epoch != profile.result_validator_set_epoch
+        || committee_hash != profile.result_ocomp_binding_hash
     {
         return Err(fatal(
             "OCOMP result committee differs from the request profile",

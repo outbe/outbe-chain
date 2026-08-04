@@ -3576,7 +3576,7 @@ where
                 key_path: config.key_path,
                 sign_once_root: ocomp_storage_root.join("ocomp_sign_once"),
                 expected_owner_uid: outbe_ocomp_protocol::local_control::effective_uid()?,
-                validator_index: config.validator_index,
+                validator_index: u16::from(config.validator_index),
                 committee: install.result_committee.clone(),
                 initial_height: recovery_anchor_height,
             },

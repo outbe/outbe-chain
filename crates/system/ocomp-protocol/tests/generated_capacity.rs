@@ -84,9 +84,9 @@ fn evidence(work_value: u64) -> CapacityEvidenceV1 {
                     tribute_count: 257,
                     nod_count: 257,
                     worker_shard_count: 2,
-                    validator_block_processing: std::array::from_fn(|validator_index| {
-                        CapacityValidatorBlockProcessingV1 {
-                            validator_index: u8::try_from(validator_index).unwrap(),
+                    validator_block_processing: (0_u16..4)
+                        .map(|validator_index| CapacityValidatorBlockProcessingV1 {
+                            validator_index,
                             block_number: 40,
                             block_hash: B256::repeat_byte(ordinal.saturating_add(60)),
                             elapsed_micros: if validator_index == 3 {
@@ -94,8 +94,8 @@ fn evidence(work_value: u64) -> CapacityEvidenceV1 {
                             } else {
                                 100
                             },
-                        }
-                    }),
+                        })
+                        .collect(),
                     historical_replay: CapacityHistoricalReplayBindingV1 {
                         validator_index: 0,
                         first_missing_block_number: 1,
@@ -248,6 +248,23 @@ fn ocm_cap_001_capacity_evidence_has_a_strict_typed_json_boundary() {
         .unwrap()
         .insert("unmeasured_guess".to_owned(), serde_json::json!(1));
     assert!(serde_json::from_value::<CapacityEvidenceV1>(unknown).is_err());
+}
+
+#[test]
+fn capacity_evidence_accepts_the_observed_validator_set_size_without_ocomp_literal() {
+    let mut dynamic = evidence(800);
+    for run in &mut dynamic.runs {
+        run.binding
+            .validator_block_processing
+            .push(CapacityValidatorBlockProcessingV1 {
+                validator_index: 4,
+                block_number: run.binding.q_forming_block_number,
+                block_hash: run.binding.q_forming_block_hash,
+                elapsed_micros: 100,
+            });
+    }
+
+    dynamic.verify().unwrap();
 }
 
 #[test]

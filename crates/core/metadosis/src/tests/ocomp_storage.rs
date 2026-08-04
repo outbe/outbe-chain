@@ -77,7 +77,11 @@ pub(super) fn request_profile() -> OcompRequestProfile {
         correctness_profile_id: B256::repeat_byte(0x24),
         capacity_profile: capacity_profile(),
         source_availability_policy_id: B256::repeat_byte(0x35),
-        result_committee_snapshot_hash: B256::repeat_byte(0x36),
+        result_validator_set_epoch: 2,
+        result_committee_set_hash: B256::repeat_byte(0x36),
+        result_ocomp_binding_hash: B256::repeat_byte(0x37),
+        result_member_count: 4,
+        result_quorum_threshold: 3,
     }
 }
 
@@ -212,7 +216,11 @@ fn intent(
                 state_version: 2,
             },
         },
-        result_committee_snapshot_hash: B256::repeat_byte(0x36),
+        result_validator_set_epoch: 2,
+        result_committee_set_hash: B256::repeat_byte(0x36),
+        result_ocomp_binding_hash: B256::repeat_byte(0x37),
+        result_member_count: 4,
+        result_quorum_threshold: 3,
         custody_committee_epoch_hash: None,
     }
 }
@@ -473,7 +481,9 @@ fn certified_conflict_is_terminal_for_the_old_job_and_requeues_the_same_budget()
         let quorum = OcompQuorumV1 {
             result_digest,
             quorum_height: finalized.open_height,
-            signer_bitmap: 0b0111,
+            member_count: 4,
+            quorum_threshold: 3,
+            signer_bitmap: vec![0b0111],
             evidence_hash: B256::repeat_byte(0x55),
         };
         let activation_call_id = B256::repeat_byte(0x53);
@@ -510,7 +520,7 @@ fn certified_conflict_is_terminal_for_the_old_job_and_requeues_the_same_budget()
             activation_call_id,
             result_digest,
             quorum_height: quorum.quorum_height,
-            quorum_signer_bitmap: quorum.signer_bitmap,
+            quorum_signer_bitmap: quorum.signer_bitmap.clone(),
             quorum_evidence_hash: quorum.evidence_hash,
             result_evidence_hash: B256::repeat_byte(0x54),
             terminal_receipt_hash: terminal_receipt.terminal_receipt_hash(&limits).unwrap(),

@@ -156,17 +156,21 @@ pub struct OcompPublicResultVoteTransactionV1 {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct OcompPublicVoteAccountabilityV1 {
     pub job_id: B256,
-    pub result_committee_snapshot_hash: B256,
-    pub slot_validator_indexes: Vec<u8>,
+    pub result_validator_set_epoch: u64,
+    pub result_committee_set_hash: B256,
+    pub result_ocomp_binding_hash: B256,
+    pub member_count: u16,
+    pub quorum_threshold: u16,
+    pub slot_validator_indexes: Vec<u16>,
     pub quorum_result_digest: Option<B256>,
     pub quorum_height: Option<u64>,
-    pub quorum_signer_bitmap: Option<u8>,
+    pub quorum_signer_bitmap: Option<Vec<u8>>,
     pub closed_height: Option<u64>,
-    pub timely_bitmap: Option<u8>,
-    pub matching_bitmap: Option<u8>,
-    pub divergent_bitmap: Option<u8>,
-    pub missing_bitmap: Option<u8>,
-    pub equivocation_bitmap: Option<u8>,
+    pub timely_bitmap: Option<Vec<u8>>,
+    pub matching_bitmap: Option<Vec<u8>>,
+    pub divergent_bitmap: Option<Vec<u8>>,
+    pub missing_bitmap: Option<Vec<u8>>,
+    pub equivocation_bitmap: Option<Vec<u8>>,
 }
 
 /// Finalized, cross-owner authority for one proof-backed Nod generation.
@@ -1424,7 +1428,11 @@ impl Rpc {
         let closed = accountability.closed_summary.as_ref();
         Some(OcompPublicVoteAccountabilityV1 {
             job_id: accountability.job_id,
-            result_committee_snapshot_hash: accountability.result_committee_snapshot_hash,
+            result_validator_set_epoch: accountability.result_validator_set_epoch,
+            result_committee_set_hash: accountability.result_committee_set_hash,
+            result_ocomp_binding_hash: accountability.result_ocomp_binding_hash,
+            member_count: accountability.member_count,
+            quorum_threshold: accountability.quorum_threshold,
             slot_validator_indexes: accountability
                 .slots
                 .iter()
@@ -1433,13 +1441,13 @@ impl Rpc {
                 .collect(),
             quorum_result_digest: quorum.map(|value| value.result_digest),
             quorum_height: quorum.map(|value| value.quorum_height),
-            quorum_signer_bitmap: quorum.map(|value| value.signer_bitmap),
+            quorum_signer_bitmap: quorum.map(|value| value.signer_bitmap.clone()),
             closed_height: closed.map(|value| value.closed_height),
-            timely_bitmap: closed.map(|value| value.timely_bitmap),
-            matching_bitmap: closed.map(|value| value.matching_bitmap),
-            divergent_bitmap: closed.map(|value| value.divergent_bitmap),
-            missing_bitmap: closed.map(|value| value.missing_bitmap),
-            equivocation_bitmap: closed.map(|value| value.equivocation_bitmap),
+            timely_bitmap: closed.map(|value| value.timely_bitmap.clone()),
+            matching_bitmap: closed.map(|value| value.matching_bitmap.clone()),
+            divergent_bitmap: closed.map(|value| value.divergent_bitmap.clone()),
+            missing_bitmap: closed.map(|value| value.missing_bitmap.clone()),
+            equivocation_bitmap: closed.map(|value| value.equivocation_bitmap.clone()),
         })
     }
 

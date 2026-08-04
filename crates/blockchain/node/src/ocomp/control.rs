@@ -116,7 +116,7 @@ pub struct OcompNodeAttestationConfig {
     pub key_path: PathBuf,
     pub sign_once_root: PathBuf,
     pub expected_owner_uid: u32,
-    pub validator_index: u8,
+    pub validator_index: u16,
     pub committee: OcompCommitteeSnapshotV1,
     pub initial_height: u64,
 }

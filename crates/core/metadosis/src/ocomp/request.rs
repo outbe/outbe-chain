@@ -325,7 +325,11 @@ fn build_and_commit_request(
         logical_evaluation_height: ctx.block.block_number,
         logical_evaluation_time: ctx.block.timestamp,
         activation_preconditions,
-        result_committee_snapshot_hash: profile.result_committee_snapshot_hash,
+        result_validator_set_epoch: profile.result_validator_set_epoch,
+        result_committee_set_hash: profile.result_committee_set_hash,
+        result_ocomp_binding_hash: profile.result_ocomp_binding_hash,
+        result_member_count: profile.result_member_count,
+        result_quorum_threshold: profile.result_quorum_threshold,
         custody_committee_epoch_hash: None,
     };
     commit_and_emit_request(
@@ -369,7 +373,11 @@ fn build_and_commit_retry(
         || previous.intent.genesis_hash != profile.genesis_hash
         || previous.intent.fork_id != profile.fork_id
         || previous.intent.source_availability_policy_id != profile.source_availability_policy_id
-        || previous.intent.result_committee_snapshot_hash != profile.result_committee_snapshot_hash
+        || previous.intent.result_validator_set_epoch != profile.result_validator_set_epoch
+        || previous.intent.result_committee_set_hash != profile.result_committee_set_hash
+        || previous.intent.result_ocomp_binding_hash != profile.result_ocomp_binding_hash
+        || previous.intent.result_member_count != profile.result_member_count
+        || previous.intent.result_quorum_threshold != profile.result_quorum_threshold
         || previous.intent.frozen_metadosis_values.lysis_budget != retained_lysis_budget
     {
         return Err(fatal("OCOMP retry source binding is inconsistent"));

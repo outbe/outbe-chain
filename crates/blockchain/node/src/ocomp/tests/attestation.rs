@@ -83,15 +83,10 @@ fn registration(index: u8, limits: &SchemaLimits) -> OcompKeyRegistrationV1 {
         core: OcompKeyRegistrationCoreV1 {
             chain_id: 42,
             genesis_hash: hash(40),
-            fork_id: hash(1),
-            protocol_bundle_hash: hash(41),
-            validator_index: index,
             validator_identity_hash: hash(70 + index),
             ocomp_public_key_sec1: public_key,
             key_epoch: 1,
             allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
-            valid_from_height: 1,
-            valid_until_height_exclusive: 1_000,
         },
         proof_of_possession: [0; 64],
     };
@@ -114,13 +109,13 @@ fn committee(limits: &SchemaLimits) -> OcompCommitteeSnapshotV1 {
             .map(|index| {
                 let registration = registration(index, limits);
                 OcompMemberV1 {
-                    validator_index: index,
+                    validator_index: u16::from(index),
                     validator_identity_hash: registration.core.validator_identity_hash,
                     ocomp_public_key_sec1: registration.core.ocomp_public_key_sec1,
                     key_epoch: registration.core.key_epoch,
                     allowed_purpose_bitmap: registration.core.allowed_purpose_bitmap,
-                    valid_from_height: registration.core.valid_from_height,
-                    valid_until_height_exclusive: registration.core.valid_until_height_exclusive,
+                    valid_from_height: 1,
+                    valid_until_height_exclusive: 1_000,
                     proof_of_possession: registration.proof_of_possession,
                 }
             })
@@ -197,7 +192,11 @@ pub(super) fn fixture() -> (
         logical_evaluation_height: 100,
         logical_evaluation_time: 1_000,
         activation_preconditions: preconditions(),
-        result_committee_snapshot_hash: committee.snapshot_hash(&limits).expect("committee hash"),
+        result_validator_set_epoch: committee.snapshot_epoch,
+        result_committee_set_hash: hash(45),
+        result_ocomp_binding_hash: committee.snapshot_hash(&limits).expect("committee hash"),
+        result_member_count: committee.ordered_members.len() as u16,
+        result_quorum_threshold: committee.threshold,
         custody_committee_epoch_hash: None,
     };
     intent.validate_semantics().expect("valid test intent");
@@ -761,7 +760,7 @@ fn ocm_sig_001_node_refuses_wrong_export_deadline_bundle_committee_and_arithmeti
     let mut wrong_committee_export = exported.clone();
     wrong_committee_export
         .finalized_intent
-        .result_committee_snapshot_hash = hash(202);
+        .result_ocomp_binding_hash = hash(202);
     let authority = Arc::new(StaticAuthority {
         value: Mutex::new(wrong_committee_export),
         reloads: AtomicUsize::new(0),

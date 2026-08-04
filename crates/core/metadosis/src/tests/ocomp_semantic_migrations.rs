@@ -302,7 +302,7 @@ fn public_dispatch_records_four_slots_and_immutable_q3() {
         assert_eq!(record.status, OcompJobStatus::Completed);
         let quorum = record.finalized.unwrap().quorum.unwrap();
         assert_eq!(quorum.result_digest, expected_result_digest);
-        assert_eq!(quorum.signer_bitmap, 0b0111);
+        assert_eq!(quorum.signer_bitmap, vec![0b0111]);
 
         let encoded = crate::precompile::dispatch(
             storage,

@@ -160,14 +160,14 @@ where
 #[derive(Clone, Copy, Debug)]
 pub struct OcompAttestationConfig {
     pub identity: EndpointIdentity,
-    pub validator_index: u8,
+    pub validator_index: u16,
 }
 
 pub struct OcompAttestationGate {
     authority: Arc<dyn FinalizedAttestationAuthority>,
     height: Arc<dyn CurrentHeightSource>,
     identity: EndpointIdentity,
-    validator_index: u8,
+    validator_index: u16,
     committee: OcompCommitteeSnapshotV1,
     committee_snapshot_hash: B256,
     signer: OcompSigner,
@@ -197,7 +197,7 @@ impl OcompAttestationGate {
             .ordered_members
             .get(usize::from(config.validator_index))
             .ok_or(AttestationError::Binding("configured validator index"))?;
-        if member.validator_index != config.validator_index
+        if u16::from(member.validator_index) != config.validator_index
             || member.ocomp_public_key_sec1 != signer.public_key_sec1()
             || member.key_epoch != signer.key_epoch()
             || member.allowed_purpose_bitmap != RESULT_SIGNATURE_PURPOSE_BITMAP
@@ -283,7 +283,9 @@ impl OcompAttestationGate {
                 job_id: result.job_id,
                 attempt: result.attempt,
                 protocol_bundle_hash: result.protocol_bundle_hash,
-                committee_snapshot_hash: self.committee_snapshot_hash,
+                result_validator_set_epoch: intent.result_validator_set_epoch,
+                result_committee_set_hash: intent.result_committee_set_hash,
+                result_ocomp_binding_hash: intent.result_ocomp_binding_hash,
                 validator_index: self.validator_index,
                 key_epoch: self.signer.key_epoch(),
                 result_digest,
@@ -298,7 +300,9 @@ impl OcompAttestationGate {
             protocol_bundle_hash: result.protocol_bundle_hash,
             job_id: result.job_id,
             attempt: result.attempt,
-            result_committee_snapshot_hash: self.committee_snapshot_hash,
+            result_validator_set_epoch: intent.result_validator_set_epoch,
+            result_committee_set_hash: intent.result_committee_set_hash,
+            result_ocomp_binding_hash: intent.result_ocomp_binding_hash,
             validator_index: self.validator_index,
             key_epoch: self.signer.key_epoch(),
             result,
@@ -334,7 +338,8 @@ impl OcompAttestationGate {
             || intent.genesis_hash != self.identity.genesis_hash
             || intent.fork_id != self.committee.fork_id
             || intent.protocol_bundle_hash != self.identity.protocol_bundle_hash
-            || intent.result_committee_snapshot_hash != self.committee_snapshot_hash
+            || intent.result_validator_set_epoch != self.committee.snapshot_epoch
+            || intent.result_ocomp_binding_hash != self.committee_snapshot_hash
         {
             return Err(AttestationError::Binding("finalized intent network"));
         }

@@ -10,8 +10,9 @@ use outbe_ocomp_protocol::{
     activation::{ActivationCallCoreV1, SignOncePurpose, SignOnceRecordV1},
     codec::CodecLimits,
     committee::{
-        verify_low_s_prehash, OcompCommitteeSnapshotV1, OcompKeyRegistrationCoreV1,
-        OcompKeyRegistrationV1, OcompMemberV1, RESULT_SIGNATURE_PURPOSE_BITMAP,
+        validator_identity_hash_v1, verify_low_s_prehash, OcompCommitteeSnapshotV1,
+        OcompKeyRegistrationCoreV1, OcompKeyRegistrationV1, OcompMemberV1,
+        RESULT_SIGNATURE_PURPOSE_BITMAP,
     },
     common::{BoundedBytes, EntityId36, ProofBytes},
     control::{
@@ -58,8 +59,9 @@ use outbe_ocomp_protocol::{
         UnitPhase, UnitSpecV1, WorkOutputHeaderV1,
     },
     vote::{
-        EquivocationEvidenceV1, OcompAccountabilitySummaryV1, OcompQuorumV1,
-        OcompVoteAccountabilityV1, RecordVoteOutcomeV1, ResultVoteSlotV1, ResultVoteV1,
+        decode_submit_lysis_result_prefix, EquivocationEvidenceV1, OcompAccountabilitySummaryV1,
+        OcompQuorumV1, OcompVoteAccountabilityV1, RecordVoteOutcomeV1, ResultVoteSigningSubjectV1,
+        ResultVoteSlotV1, ResultVoteV1,
     },
     ProtocolError, SchemaLimits,
 };
@@ -186,7 +188,11 @@ fn intent() -> JobIntentV1 {
         logical_evaluation_height: 100,
         logical_evaluation_time: 1_000,
         activation_preconditions: preconditions(),
-        result_committee_snapshot_hash: hash(45),
+        result_validator_set_epoch: 1,
+        result_committee_set_hash: hash(45),
+        result_ocomp_binding_hash: hash(46),
+        result_member_count: 4,
+        result_quorum_threshold: 3,
         custody_committee_epoch_hash: None,
     }
 }
@@ -359,21 +365,222 @@ fn registration(index: u8) -> OcompKeyRegistrationV1 {
         core: OcompKeyRegistrationCoreV1 {
             chain_id: 42,
             genesis_hash: hash(40),
-            fork_id: hash(1),
-            protocol_bundle_hash: hash(41),
-            validator_index: index,
             validator_identity_hash: hash(70 + index),
             ocomp_public_key_sec1: compressed_key(&key),
             key_epoch: 1,
             allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
-            valid_from_height: 1,
-            valid_until_height_exclusive: 1_000,
         },
         proof_of_possession: [0; 64],
     };
     let digest = registration.proof_of_possession_digest(&LIMITS).unwrap();
     registration.proof_of_possession = sign(&key, digest);
     registration
+}
+
+#[test]
+fn ocomp_registration_is_validator_identity_bound_not_committee_bound() {
+    let key = signing_key(0);
+    let mut registration = OcompKeyRegistrationV1 {
+        core: OcompKeyRegistrationCoreV1 {
+            chain_id: 42,
+            genesis_hash: hash(40),
+            validator_identity_hash: hash(70),
+            ocomp_public_key_sec1: compressed_key(&key),
+            key_epoch: 1,
+            allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
+        },
+        proof_of_possession: [0; 64],
+    };
+    let digest = registration.proof_of_possession_digest(&LIMITS).unwrap();
+    registration.proof_of_possession = sign(&key, digest);
+
+    registration.validate_proof_of_possession(&LIMITS).unwrap();
+    let encoded = registration.encode_canonical(&LIMITS).unwrap();
+    assert_eq!(
+        OcompKeyRegistrationV1::decode_canonical(&encoded, &LIMITS).unwrap(),
+        registration
+    );
+}
+
+#[test]
+fn validator_identity_hash_is_address_and_bls_bound_without_committee_index() {
+    let address = Address::repeat_byte(0x11);
+    let bls_min_pk = [0x22; 48];
+    let identity = validator_identity_hash_v1(address, &bls_min_pk).unwrap();
+
+    assert_eq!(
+        identity,
+        validator_identity_hash_v1(address, &bls_min_pk).unwrap()
+    );
+    assert_ne!(
+        identity,
+        validator_identity_hash_v1(Address::repeat_byte(0x12), &bls_min_pk).unwrap()
+    );
+    assert_ne!(
+        identity,
+        validator_identity_hash_v1(address, &[0x23; 48]).unwrap()
+    );
+}
+
+#[test]
+fn vote_signing_subject_binds_all_snapshot_coordinates_and_u16_index() {
+    let subject = ResultVoteSigningSubjectV1 {
+        chain_id: 42,
+        genesis_hash: hash(40),
+        fork_id: hash(1),
+        protocol_bundle_hash: hash(41),
+        job_id: hash(59),
+        attempt: 1,
+        result_validator_set_epoch: 7,
+        result_committee_set_hash: hash(45),
+        result_ocomp_binding_hash: hash(46),
+        validator_index: 300,
+        key_epoch: 1,
+        purpose: SignOncePurpose::ResultSignature as u8,
+        result_digest: hash(60),
+    };
+    let digest = subject.signing_digest().unwrap();
+
+    for changed in [
+        ResultVoteSigningSubjectV1 {
+            result_validator_set_epoch: 8,
+            ..subject
+        },
+        ResultVoteSigningSubjectV1 {
+            result_committee_set_hash: hash(47),
+            ..subject
+        },
+        ResultVoteSigningSubjectV1 {
+            result_ocomp_binding_hash: hash(48),
+            ..subject
+        },
+        ResultVoteSigningSubjectV1 {
+            validator_index: 301,
+            ..subject
+        },
+    ] {
+        assert_ne!(changed.signing_digest().unwrap(), digest);
+    }
+}
+
+#[test]
+fn dynamic_accountability_uses_supplied_n_quorum_and_lsb0_bitmaps() {
+    let snapshot = committee();
+    let mut finalized_intent = intent();
+    finalized_intent.result_validator_set_epoch = snapshot.snapshot_epoch;
+    finalized_intent.result_ocomp_binding_hash = snapshot.snapshot_hash(&LIMITS).unwrap();
+    let job_id = hash(59);
+    let matching_result = vote_result(job_id, 120);
+    let mut accountability = OcompVoteAccountabilityV1::empty(
+        job_id,
+        finalized_intent.result_validator_set_epoch,
+        finalized_intent.result_committee_set_hash,
+        finalized_intent.result_ocomp_binding_hash,
+        9,
+        7,
+    )
+    .unwrap();
+
+    for validator_index in 0_u16..7 {
+        let vote = signed_vote(
+            validator_index,
+            matching_result.clone(),
+            &finalized_intent,
+            job_id,
+            &snapshot,
+        );
+        accountability
+            .record_verified_vote(&vote, 106 + u64::from(validator_index), &LIMITS)
+            .unwrap();
+    }
+    assert_eq!(
+        accountability.quorum.as_ref().unwrap().signer_bitmap,
+        vec![0b0111_1111, 0]
+    );
+
+    let late_vote = signed_vote(8, matching_result, &finalized_intent, job_id, &snapshot);
+    accountability
+        .record_verified_vote(&late_vote, 114, &LIMITS)
+        .unwrap();
+    let summary = accountability.close(120, &LIMITS).unwrap();
+    assert_eq!(summary.timely_bitmap, vec![0b0111_1111, 0b0000_0001]);
+    assert_eq!(summary.missing_bitmap, vec![0b1000_0000, 0]);
+
+    let mut invalid_padding = summary;
+    invalid_padding.timely_bitmap[1] |= 0b1000_0000;
+    assert!(invalid_padding.validate_semantics().is_err());
+}
+
+#[test]
+fn committee_snapshot_has_no_protocol_fixed_size_threshold_or_epoch() {
+    let mut snapshot = committee();
+    snapshot.snapshot_epoch = 2;
+    snapshot.threshold = 4;
+    snapshot.ordered_members.push({
+        let registration = registration(4);
+        OcompMemberV1 {
+            validator_index: 4,
+            validator_identity_hash: registration.core.validator_identity_hash,
+            ocomp_public_key_sec1: registration.core.ocomp_public_key_sec1,
+            key_epoch: registration.core.key_epoch,
+            allowed_purpose_bitmap: registration.core.allowed_purpose_bitmap,
+            valid_from_height: 1,
+            valid_until_height_exclusive: 1_000,
+            proof_of_possession: registration.proof_of_possession,
+        }
+    });
+
+    snapshot.validate_semantics(&LIMITS).unwrap();
+    let encoded = snapshot.encode_canonical(&LIMITS).unwrap();
+    assert_eq!(
+        OcompCommitteeSnapshotV1::decode_canonical(&encoded, &LIMITS).unwrap(),
+        snapshot
+    );
+}
+
+#[test]
+fn submit_result_prefix_decoder_is_canonical_bounded_and_panic_free() {
+    let snapshot = committee();
+    let mut finalized_intent = intent();
+    finalized_intent.result_validator_set_epoch = snapshot.snapshot_epoch;
+    finalized_intent.result_ocomp_binding_hash = snapshot.snapshot_hash(&LIMITS).unwrap();
+    let vote = signed_vote(
+        3,
+        vote_result(hash(59), 120),
+        &finalized_intent,
+        hash(59),
+        &snapshot,
+    );
+    let calldata =
+        outbe_ocomp_protocol::abi::encode_submit_lysis_result_calldata(&vote, &LIMITS).unwrap();
+    let prefix = decode_submit_lysis_result_prefix(&calldata, &LIMITS).unwrap();
+    assert_eq!(prefix.protocol_bundle_hash, vote.protocol_bundle_hash);
+    assert_eq!(prefix.job_id, vote.job_id);
+    assert_eq!(prefix.attempt, vote.attempt);
+    assert_eq!(
+        prefix.result_validator_set_epoch,
+        vote.result_validator_set_epoch
+    );
+    assert_eq!(
+        prefix.result_committee_set_hash,
+        vote.result_committee_set_hash
+    );
+    assert_eq!(
+        prefix.result_ocomp_binding_hash,
+        vote.result_ocomp_binding_hash
+    );
+    assert_eq!(prefix.validator_index, vote.validator_index);
+    assert_eq!(prefix.key_epoch, vote.key_epoch);
+
+    for truncated_len in [0, 3, 4, 35, 36, 67, 68, calldata.len() - 1] {
+        assert!(decode_submit_lysis_result_prefix(&calldata[..truncated_len], &LIMITS).is_err());
+    }
+    let mut wrong_offset = calldata.clone();
+    wrong_offset[35] = 31;
+    assert!(decode_submit_lysis_result_prefix(&wrong_offset, &LIMITS).is_err());
+    let mut non_zero_padding = calldata;
+    *non_zero_padding.last_mut().unwrap() = 1;
+    assert!(decode_submit_lysis_result_prefix(&non_zero_padding, &LIMITS).is_err());
 }
 
 fn committee() -> OcompCommitteeSnapshotV1 {
@@ -388,13 +595,13 @@ fn committee() -> OcompCommitteeSnapshotV1 {
             .map(|index| {
                 let registration = registration(index);
                 OcompMemberV1 {
-                    validator_index: index,
+                    validator_index: u16::from(index),
                     validator_identity_hash: registration.core.validator_identity_hash,
                     ocomp_public_key_sec1: registration.core.ocomp_public_key_sec1,
                     key_epoch: registration.core.key_epoch,
                     allowed_purpose_bitmap: registration.core.allowed_purpose_bitmap,
-                    valid_from_height: registration.core.valid_from_height,
-                    valid_until_height_exclusive: registration.core.valid_until_height_exclusive,
+                    valid_from_height: 1,
+                    valid_until_height_exclusive: 1_000,
                     proof_of_possession: registration.proof_of_possession,
                 }
             })
@@ -403,7 +610,7 @@ fn committee() -> OcompCommitteeSnapshotV1 {
 }
 
 fn signed_vote(
-    validator_index: u8,
+    validator_index: u16,
     result: LysisResultV1,
     finalized_intent: &JobIntentV1,
     job_id: B256,
@@ -413,14 +620,19 @@ fn signed_vote(
         protocol_bundle_hash: finalized_intent.protocol_bundle_hash,
         job_id,
         attempt: finalized_intent.attempt,
-        result_committee_snapshot_hash: snapshot.snapshot_hash(&LIMITS).unwrap(),
+        result_validator_set_epoch: snapshot.snapshot_epoch,
+        result_committee_set_hash: finalized_intent.result_committee_set_hash,
+        result_ocomp_binding_hash: snapshot.snapshot_hash(&LIMITS).unwrap(),
         validator_index,
         key_epoch: 1,
         result,
         signature_rs: [0; 64],
     };
     let signing_digest = vote.signing_digest(finalized_intent, &LIMITS).unwrap();
-    vote.signature_rs = sign(&signing_key(validator_index), signing_digest);
+    vote.signature_rs = sign(
+        &signing_key(u8::try_from(validator_index).unwrap()),
+        signing_digest,
+    );
     vote
 }
 
@@ -606,7 +818,9 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         job_id: result.job_id,
         attempt: result.attempt,
         protocol_bundle_hash: result.protocol_bundle_hash,
-        committee_snapshot_hash: snapshot.snapshot_hash(&LIMITS).unwrap(),
+        result_validator_set_epoch: snapshot.snapshot_epoch,
+        result_committee_set_hash: hash(45),
+        result_ocomp_binding_hash: snapshot.snapshot_hash(&LIMITS).unwrap(),
         validator_index: 0,
         key_epoch: 1,
         result_digest,
@@ -814,7 +1028,8 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
     assert_round_trip!(shuffle_run, ShuffleRunArtifactV1, ShuffleRunArtifactV1);
     assert_round_trip!(terminal, LysisTerminalV1, LysisTerminalV1);
     let mut vote_intent = intent();
-    vote_intent.result_committee_snapshot_hash = snapshot.snapshot_hash(&LIMITS).unwrap();
+    vote_intent.result_validator_set_epoch = snapshot.snapshot_epoch;
+    vote_intent.result_ocomp_binding_hash = snapshot.snapshot_hash(&LIMITS).unwrap();
     let vote = signed_vote(
         0,
         vote_result(hash(59), 120),
@@ -838,18 +1053,27 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         submitted_height: 107,
     };
     let quorum = OcompQuorumV1 {
+        member_count: 4,
+        quorum_threshold: 3,
         result_digest: vote_digest,
         quorum_height: 106,
-        signer_bitmap: 0b0111,
+        signer_bitmap: vec![0b0111],
         evidence_hash: hash(121),
     };
     let summary = OcompAccountabilitySummaryV1 {
         closed_height: 120,
-        timely_bitmap: 0b0111,
-        matching_bitmap: 0b0111,
-        divergent_bitmap: 0,
-        missing_bitmap: 0b1000,
-        equivocation_bitmap: 0,
+        result_validator_set_epoch: vote_intent.result_validator_set_epoch,
+        result_committee_set_hash: vote_intent.result_committee_set_hash,
+        result_ocomp_binding_hash: vote_intent.result_ocomp_binding_hash,
+        member_count: 4,
+        quorum_threshold: 3,
+        winning_result_digest: Some(vote_digest),
+        quorum_evidence_hash: Some(hash(121)),
+        timely_bitmap: vec![0b0111],
+        matching_bitmap: vec![0b0111],
+        divergent_bitmap: vec![0],
+        missing_bitmap: vec![0b1000],
+        equivocation_bitmap: vec![0],
     };
     assert_round_trip!(vote, ResultVoteV1, ResultVoteV1);
     assert_round_trip!(equivocation, EquivocationEvidenceV1, EquivocationEvidenceV1);
@@ -860,9 +1084,15 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         OcompAccountabilitySummaryV1,
         OcompAccountabilitySummaryV1
     );
-    let accountability =
-        OcompVoteAccountabilityV1::empty(hash(59), vote_intent.result_committee_snapshot_hash)
-            .unwrap();
+    let accountability = OcompVoteAccountabilityV1::empty(
+        hash(59),
+        vote_intent.result_validator_set_epoch,
+        vote_intent.result_committee_set_hash,
+        vote_intent.result_ocomp_binding_hash,
+        vote_intent.result_member_count,
+        vote_intent.result_quorum_threshold,
+    )
+    .unwrap();
     assert_round_trip!(
         accountability,
         OcompVoteAccountabilityV1,
@@ -871,16 +1101,23 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
 }
 
 #[test]
-fn direct_result_votes_freeze_q3_and_keep_late_accountability_separate() {
+fn direct_result_votes_freeze_supplied_quorum_and_keep_late_accountability_separate() {
     let snapshot = committee();
     let mut finalized_intent = intent();
-    finalized_intent.result_committee_snapshot_hash = snapshot.snapshot_hash(&LIMITS).unwrap();
+    finalized_intent.result_validator_set_epoch = snapshot.snapshot_epoch;
+    finalized_intent.result_ocomp_binding_hash = snapshot.snapshot_hash(&LIMITS).unwrap();
     let job_id = hash(59);
     let matching_result = vote_result(job_id, 120);
     let result_digest = matching_result.result_digest(&LIMITS).unwrap();
-    let mut accountability =
-        OcompVoteAccountabilityV1::empty(job_id, finalized_intent.result_committee_snapshot_hash)
-            .unwrap();
+    let mut accountability = OcompVoteAccountabilityV1::empty(
+        job_id,
+        finalized_intent.result_validator_set_epoch,
+        finalized_intent.result_committee_set_hash,
+        finalized_intent.result_ocomp_binding_hash,
+        finalized_intent.result_member_count,
+        finalized_intent.result_quorum_threshold,
+    )
+    .unwrap();
 
     for validator_index in 0..3 {
         let vote = signed_vote(
@@ -911,7 +1148,7 @@ fn direct_result_votes_freeze_q3_and_keep_late_accountability_separate() {
     let frozen_quorum = accountability.quorum.clone().unwrap();
     assert_eq!(frozen_quorum.result_digest, result_digest);
     assert_eq!(frozen_quorum.quorum_height, 108);
-    assert_eq!(frozen_quorum.signer_bitmap, 0b0111);
+    assert_eq!(frozen_quorum.signer_bitmap, vec![0b0111]);
 
     let minority = signed_vote(
         3,
@@ -944,11 +1181,11 @@ fn direct_result_votes_freeze_q3_and_keep_late_accountability_separate() {
     assert_eq!(accountability.quorum.as_ref(), Some(&frozen_quorum));
 
     let summary = accountability.close(120, &LIMITS).unwrap();
-    assert_eq!(summary.timely_bitmap, 0b1111);
-    assert_eq!(summary.matching_bitmap, 0b0111);
-    assert_eq!(summary.divergent_bitmap, 0b1000);
-    assert_eq!(summary.missing_bitmap, 0);
-    assert_eq!(summary.equivocation_bitmap, 0b1000);
+    assert_eq!(summary.timely_bitmap, vec![0b1111]);
+    assert_eq!(summary.matching_bitmap, vec![0b0111]);
+    assert_eq!(summary.divergent_bitmap, vec![0b1000]);
+    assert_eq!(summary.missing_bitmap, vec![0]);
+    assert_eq!(summary.equivocation_bitmap, vec![0b1000]);
     assert_eq!(accountability.quorum.as_ref(), Some(&frozen_quorum));
 }
 
@@ -1098,7 +1335,8 @@ fn lysis_completion_is_bound_to_the_finalized_job_intent() {
 fn full_result_digest_and_finalized_binding_cover_completion_fields() {
     let snapshot = committee();
     let mut finalized_intent = intent();
-    finalized_intent.result_committee_snapshot_hash = snapshot.snapshot_hash(&LIMITS).unwrap();
+    finalized_intent.result_validator_set_epoch = snapshot.snapshot_epoch;
+    finalized_intent.result_ocomp_binding_hash = snapshot.snapshot_hash(&LIMITS).unwrap();
     let finalized_request_state_root = hash(49);
     let job_id = finalized_intent
         .job_id(
@@ -1128,7 +1366,8 @@ fn full_result_digest_and_finalized_binding_cover_completion_fields() {
 fn result_vote_verification_requires_the_finalized_intent_binding() {
     let snapshot = committee();
     let mut finalized_intent = intent();
-    finalized_intent.result_committee_snapshot_hash = snapshot.snapshot_hash(&LIMITS).unwrap();
+    finalized_intent.result_validator_set_epoch = snapshot.snapshot_epoch;
+    finalized_intent.result_ocomp_binding_hash = snapshot.snapshot_hash(&LIMITS).unwrap();
     let job_id = hash(59);
     let vote = signed_vote(
         0,

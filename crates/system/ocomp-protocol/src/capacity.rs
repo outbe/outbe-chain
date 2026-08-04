@@ -10,7 +10,6 @@ use alloy_primitives::{B256, U256};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    committee::POC_COMMITTEE_SIZE,
     generated_shape::{
         OCOMP_POC_CANDIDATE_LIMITS_V1, OCOMP_POC_DEVNET_MACHINE_V1, OCOMP_POC_HEADROOM_POLICY_V1,
     },
@@ -187,7 +186,7 @@ impl ObservedMachineFactsV1 {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CapacityValidatorBlockProcessingV1 {
-    pub validator_index: u8,
+    pub validator_index: u16,
     pub block_number: u64,
     pub block_hash: B256,
     pub elapsed_micros: u64,
@@ -219,7 +218,7 @@ pub struct CapacityRecoveredGenerationBindingV1 {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CapacityHistoricalReplayBindingV1 {
-    pub validator_index: u8,
+    pub validator_index: u16,
     pub first_missing_block_number: u64,
     pub target_block_number: u64,
     pub target_block_hash: B256,
@@ -236,7 +235,7 @@ impl CapacityHistoricalReplayBindingV1 {
             .checked_sub(self.first_missing_block_number)
             .and_then(|span| span.checked_add(1));
         let generation = &self.recovered_generation;
-        if usize::from(self.validator_index) >= POC_COMMITTEE_SIZE
+        if usize::from(self.validator_index) >= run.validator_block_processing.len()
             || self.first_missing_block_number == 0
             || self.first_missing_block_number > run.q_forming_block_number
             || self.target_block_number < run.finalized_block_number
@@ -281,7 +280,7 @@ pub struct CapacityRunBindingV1 {
     pub tribute_count: u64,
     pub nod_count: u64,
     pub worker_shard_count: u64,
-    pub validator_block_processing: [CapacityValidatorBlockProcessingV1; POC_COMMITTEE_SIZE],
+    pub validator_block_processing: Vec<CapacityValidatorBlockProcessingV1>,
     pub historical_replay: CapacityHistoricalReplayBindingV1,
 }
 
@@ -302,6 +301,7 @@ impl CapacityRunBindingV1 {
         }
         if self.q_forming_block_number == 0
             || self.finalized_block_number < self.q_forming_block_number
+            || self.validator_block_processing.is_empty()
             || self
                 .validator_block_processing
                 .iter()

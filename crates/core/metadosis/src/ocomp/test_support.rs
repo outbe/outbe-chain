@@ -558,9 +558,6 @@ fn committee(
                 core: OcompKeyRegistrationCoreV1 {
                     chain_id,
                     genesis_hash,
-                    fork_id: hash(21),
-                    protocol_bundle_hash: bundle_hash,
-                    validator_index: index,
                     validator_identity_hash: hash(70 + index),
                     ocomp_public_key_sec1: key
                         .verifying_key()
@@ -570,8 +567,6 @@ fn committee(
                         .unwrap(),
                     key_epoch: 1,
                     allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
-                    valid_from_height: 1,
-                    valid_until_height_exclusive: 1_000,
                 },
                 proof_of_possession: [0; 64],
             };
@@ -589,14 +584,15 @@ fn committee(
         threshold: 3,
         ordered_members: registrations
             .into_iter()
-            .map(|registration| OcompMemberV1 {
-                validator_index: registration.core.validator_index,
+            .enumerate()
+            .map(|(index, registration)| OcompMemberV1 {
+                validator_index: u16::try_from(index).unwrap(),
                 validator_identity_hash: registration.core.validator_identity_hash,
                 ocomp_public_key_sec1: registration.core.ocomp_public_key_sec1,
                 key_epoch: registration.core.key_epoch,
                 allowed_purpose_bitmap: registration.core.allowed_purpose_bitmap,
-                valid_from_height: registration.core.valid_from_height,
-                valid_until_height_exclusive: registration.core.valid_until_height_exclusive,
+                valid_from_height: 1,
+                valid_until_height_exclusive: 1_000,
                 proof_of_possession: registration.proof_of_possession,
             })
             .collect(),
@@ -629,7 +625,11 @@ pub fn fork_install_fixture(
             correctness_profile_id: hash(12),
             capacity_profile: capacity_profile(),
             source_availability_policy_id: hash(44),
-            result_committee_snapshot_hash: committee_hash,
+            result_validator_set_epoch: result_committee.snapshot_epoch,
+            result_committee_set_hash: hash(45),
+            result_ocomp_binding_hash: committee_hash,
+            result_member_count: u16::try_from(result_committee.ordered_members.len()).unwrap(),
+            result_quorum_threshold: result_committee.threshold,
         },
         protocol_bundle,
         result_committee,
@@ -720,7 +720,11 @@ fn intent(bundle_hash: B256, committee_hash: B256, request_receipt_hash: B256) -
                 state_version: 1,
             },
         },
-        result_committee_snapshot_hash: committee_hash,
+        result_validator_set_epoch: 1,
+        result_committee_set_hash: hash(45),
+        result_ocomp_binding_hash: committee_hash,
+        result_member_count: 4,
+        result_quorum_threshold: 3,
         custody_committee_epoch_hash: None,
     }
 }
@@ -923,8 +927,10 @@ pub fn signed_result_vote_for_intent(
         protocol_bundle_hash: intent.protocol_bundle_hash,
         job_id: result.job_id,
         attempt: intent.attempt,
-        result_committee_snapshot_hash: intent.result_committee_snapshot_hash,
-        validator_index,
+        result_validator_set_epoch: intent.result_validator_set_epoch,
+        result_committee_set_hash: intent.result_committee_set_hash,
+        result_ocomp_binding_hash: intent.result_ocomp_binding_hash,
+        validator_index: u16::from(validator_index),
         key_epoch: 1,
         result: result.clone(),
         signature_rs: [0; 64],
@@ -1222,7 +1228,11 @@ impl ActivationFixture {
                 correctness_profile_id: hash(12),
                 capacity_profile: capacity_profile(),
                 source_availability_policy_id: hash(44),
-                result_committee_snapshot_hash: committee_hash,
+                result_validator_set_epoch: committee.snapshot_epoch,
+                result_committee_set_hash: hash(45),
+                result_ocomp_binding_hash: committee_hash,
+                result_member_count: u16::try_from(committee.ordered_members.len()).unwrap(),
+                result_quorum_threshold: committee.threshold,
             };
             contract
                 .initialize_ocomp_request_profile(&profile, &limits)
@@ -1267,8 +1277,10 @@ impl ActivationFixture {
                     protocol_bundle_hash: bundle_hash,
                     job_id,
                     attempt: intent.attempt,
-                    result_committee_snapshot_hash: committee_hash,
-                    validator_index: index,
+                    result_validator_set_epoch: intent.result_validator_set_epoch,
+                    result_committee_set_hash: intent.result_committee_set_hash,
+                    result_ocomp_binding_hash: intent.result_ocomp_binding_hash,
+                    validator_index: u16::from(index),
                     key_epoch: 1,
                     result: result.clone(),
                     signature_rs: [0; 64],
@@ -1308,8 +1320,10 @@ impl ActivationFixture {
             protocol_bundle_hash: intent.protocol_bundle_hash,
             job_id: self.result.job_id,
             attempt: intent.attempt,
-            result_committee_snapshot_hash: intent.result_committee_snapshot_hash,
-            validator_index,
+            result_validator_set_epoch: intent.result_validator_set_epoch,
+            result_committee_set_hash: intent.result_committee_set_hash,
+            result_ocomp_binding_hash: intent.result_ocomp_binding_hash,
+            validator_index: u16::from(validator_index),
             key_epoch: 1,
             result: self.result.clone(),
             signature_rs: [0; 64],

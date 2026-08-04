@@ -263,7 +263,11 @@ impl MetadosisContract<'_> {
                 .map_err(|error| fatal(error.to_string()))?;
             let accountability = OcompVoteAccountabilityV1::empty(
                 finalized.job_id,
-                record.intent.result_committee_snapshot_hash,
+                record.intent.result_validator_set_epoch,
+                record.intent.result_committee_set_hash,
+                record.intent.result_ocomp_binding_hash,
+                record.intent.result_member_count,
+                record.intent.result_quorum_threshold,
             )
             .map_err(|error| fatal(format!("create OCOMP vote slots: {error}")))?;
             let slot = self.ocomp_vote_accountability.get_bytes(&finalized.job_id);
@@ -664,7 +668,7 @@ impl MetadosisContract<'_> {
                 activation_call_id: permit.activation_call_id(),
                 result_digest: binding.result_digest,
                 quorum_height: quorum.quorum_height,
-                quorum_signer_bitmap: quorum.signer_bitmap,
+                quorum_signer_bitmap: quorum.signer_bitmap.clone(),
                 quorum_evidence_hash: quorum.evidence_hash,
                 result_evidence_hash,
                 terminal_receipt_hash,
