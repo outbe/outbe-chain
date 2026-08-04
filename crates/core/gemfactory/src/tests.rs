@@ -510,8 +510,14 @@ fn mint_merchant_gem_mints_issued_and_drains_capacity() {
         assert_eq!(item.state, GemState::Issued as u8);
         assert_eq!(item.entry_price_minor, rate); // max(coen, source_entry) = coen
         assert_eq!(item.cost_amount_minor, U256::from(20u64) * one_e18()); // entry * load
-        assert_eq!(item.floor_price_minor, rate * U256::from(108u64) / U256::from(100u64));
-        assert_eq!(item.call_price_minor, rate * U256::from(228u64) / U256::from(100u64));
+        assert_eq!(
+            item.floor_price_minor,
+            rate * U256::from(108u64) / U256::from(100u64)
+        );
+        assert_eq!(
+            item.call_price_minor,
+            rate * U256::from(228u64) / U256::from(100u64)
+        );
 
         let factory = GemFactoryContract::new(storage.clone());
         let rec = factory.positions.get(id).unwrap().unwrap();

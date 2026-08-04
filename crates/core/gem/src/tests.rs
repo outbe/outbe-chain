@@ -1,9 +1,9 @@
 use alloy_primitives::{address, Address, U256};
 use alloy_sol_types::SolCall;
-use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 use outbe_primitives::math::tree_math;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 
 use crate::api;
 use crate::precompile::{dispatch, IGem};
@@ -346,7 +346,10 @@ fn qualified_gem(storage: &StorageHandle) -> U256 {
 fn call_then_forfeit_lifecycle() {
     with_storage(|storage| {
         let gem_id = qualified_gem(storage);
-        let threshold = api::get_gem(storage, gem_id).unwrap().unwrap().call_price_minor;
+        let threshold = api::get_gem(storage, gem_id)
+            .unwrap()
+            .unwrap()
+            .call_price_minor;
         let breach_days = usize::from(crate::constants::QUALIFICATION_PERIOD_DAYS);
         let window = breach_window(T_NOW, threshold + U256::from(1u64), breach_days);
 
@@ -368,7 +371,10 @@ fn call_then_forfeit_lifecycle() {
 fn call_skips_below_threshold() {
     with_storage(|storage| {
         let gem_id = qualified_gem(storage);
-        let threshold = api::get_gem(storage, gem_id).unwrap().unwrap().call_price_minor;
+        let threshold = api::get_gem(storage, gem_id)
+            .unwrap()
+            .unwrap()
+            .call_price_minor;
         // One below the threshold: not enough breach-days to force a call.
         let breach_days = usize::from(crate::constants::QUALIFICATION_PERIOD_DAYS) - 1;
         let window = breach_window(T_NOW, threshold + U256::from(1u64), breach_days);

@@ -260,7 +260,11 @@ impl GemContract<'_> {
         keccak256(buf)
     }
 
-    pub(crate) fn insert_unqualified(&mut self, gem_id: U256, floor_price_minor: U256) -> Result<()> {
+    pub(crate) fn insert_unqualified(
+        &mut self,
+        gem_id: U256,
+        floor_price_minor: U256,
+    ) -> Result<()> {
         let bin_id = Self::price_to_bin(floor_price_minor)?;
         debug_assert!(bin_id <= MAX_BIN_ID);
         let count = self.unqualified_bin_count.read(&bin_id)?;
@@ -273,7 +277,11 @@ impl GemContract<'_> {
 
     /// Remove `gem_id` from the bin at its `floor_price_minor`. Performs swap-and-pop
     /// to keep the bin's index dense; clears the bin's trie bit when emptied.
-    pub(crate) fn remove_unqualified(&mut self, gem_id: U256, floor_price_minor: U256) -> Result<()> {
+    pub(crate) fn remove_unqualified(
+        &mut self,
+        gem_id: U256,
+        floor_price_minor: U256,
+    ) -> Result<()> {
         let bin_id = Self::price_to_bin(floor_price_minor)?;
         let count = self.unqualified_bin_count.read(&bin_id)?;
         if count == 0 {

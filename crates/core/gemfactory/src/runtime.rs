@@ -2,13 +2,14 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_gem::{api as gem_api, GemAddParams, GemState};
 use outbe_oracle::contract::OracleContract;
-use outbe_primitives::addresses::{GEM_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS, VAULT_ROUTER_ADDRESS};
+use outbe_primitives::addresses::{
+    GEM_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS, VAULT_ROUTER_ADDRESS,
+};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::SCALE_1E18;
 
 use outbe_common::pow;
-
 
 use crate::constants::{
     FLOOR_MARKUP_PERCENT, GEM_CALL_MARKUP_PERCENT, POSITION_VALIDITY_SECONDS,
@@ -40,7 +41,8 @@ pub fn mint_gem(
     // COEN/<reference> rate the qualify/call scans compare against).
     let coen_rate = read_oracle_rate(storage, reference_currency)?;
     let issued_at = storage.timestamp()?.to::<u64>();
-    let (cost_amount, floor_price, initial_state) = compute_params(gem_type, promis_load, coen_rate)?;
+    let (cost_amount, floor_price, initial_state) =
+        compute_params(gem_type, promis_load, coen_rate)?;
     let entry_price = coen_rate;
     let call_threshold = call_threshold_with_markup(entry_price)?;
 
@@ -196,7 +198,6 @@ pub fn mint_merchant_gem(
         .checked_sub(promis_load)
         .ok_or(GemFactoryError::InsufficientCapacity)?;
 
-
     let coen_rate = read_oracle_rate(storage, record.reference_currency)?;
     let entry_price = coen_rate.max(record.source_entry_price);
     let cost_amount = compute_cost(entry_price, promis_load, 100)?;
@@ -272,7 +273,8 @@ pub fn settle_gem(
 
     // The Cost Amount is paid in the gem's Settlement Currency
     // Reject any payment asset whose ISO 4217 code differs from it.
-    let expected = settlement_currency_iso(storage, item.issuance_currency, item.reference_currency)?;
+    let expected =
+        settlement_currency_iso(storage, item.issuance_currency, item.reference_currency)?;
     let asset_iso = read_iso_code(storage, asset)?;
     if asset_iso != expected {
         return Err(GemFactoryError::SettlementCurrencyMismatch {

@@ -27,8 +27,10 @@ impl GemFactoryContract<'_> {
         self.positions.create(pos)?;
 
         let owner_count = self.position_owner_counts.read(&pos.merchant)?;
-        self.position_owner_ids
-            .write(&Self::owner_index_key(pos.merchant, owner_count), pos.position_id)?;
+        self.position_owner_ids.write(
+            &Self::owner_index_key(pos.merchant, owner_count),
+            pos.position_id,
+        )?;
         self.position_owner_counts
             .write(&pos.merchant, owner_count + 1)?;
         Ok(())
