@@ -357,6 +357,7 @@ fn boundary_artifact_is_deterministic() {
         vrf_material_version: 1,
         is_validator_set_change: true,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
     let b = build_boundary_artifact(BoundaryArtifactInput {
@@ -370,11 +371,87 @@ fn boundary_artifact_is_deterministic() {
         vrf_material_version: 1,
         is_validator_set_change: true,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
     assert_eq!(a, b);
     assert_ne!(a.vrf_group_public_key, B256::ZERO);
     assert_ne!(a.reshare.active_set_hash, B256::ZERO);
+}
+
+#[tokio::test]
+async fn pending_boundary_rejects_reordered_missing_or_altered_expiry_exclusions() {
+    let (keys, _participants, output, _polynomial, _log) = run_test_dkg_complete();
+    let validator_set = ValidatorSet {
+        public_keys: keys.iter().map(|key| key.public_key()).collect(),
+        addresses: vec![
+            address!("0x1111111111111111111111111111111111111111"),
+            address!("0x2222222222222222222222222222222222222222"),
+            address!("0x3333333333333333333333333333333333333333"),
+        ],
+        p2p_addresses: vec![crate::validators::ValidatorP2pAddress::Missing; 3],
+    };
+    let exclusions = vec![
+        address!("0x4444444444444444444444444444444444444444"),
+        address!("0x5555555555555555555555555555555555555555"),
+    ];
+    let expected = build_boundary_artifact(BoundaryArtifactInput {
+        epoch: Epoch::new(1),
+        validator_set: &validator_set,
+        output: &output,
+        is_full_dkg: false,
+        dkg_cycle: 1,
+        freeze_height: 10,
+        planned_activation_height: 20,
+        vrf_material_version: 1,
+        is_validator_set_change: true,
+        tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: exclusions,
+    })
+    .unwrap();
+    let manager = Mailbox::new();
+    manager.note_ceremony_completed(expected.clone());
+    manager
+        .verify_pending_boundary_artifact(Epoch::new(1), &expected)
+        .await
+        .unwrap();
+
+    let mut reordered = expected.clone();
+    reordered.tee_expired_target_exclusions.reverse();
+    reordered.tee_expired_target_exclusions_hash =
+        outbe_primitives::reshare_artifact::tee_expired_target_exclusions_hash(
+            &reordered.tee_expired_target_exclusions,
+        )
+        .unwrap();
+    assert!(manager
+        .verify_pending_boundary_artifact(Epoch::new(1), &reordered)
+        .await
+        .is_err());
+
+    let mut missing = expected.clone();
+    missing.tee_expired_target_exclusions.pop();
+    missing.tee_expired_target_exclusions_hash =
+        outbe_primitives::reshare_artifact::tee_expired_target_exclusions_hash(
+            &missing.tee_expired_target_exclusions,
+        )
+        .unwrap();
+    assert!(manager
+        .verify_pending_boundary_artifact(Epoch::new(1), &missing)
+        .await
+        .is_err());
+
+    let mut altered = expected.clone();
+    altered.tee_expired_target_exclusions[0] =
+        address!("0x6666666666666666666666666666666666666666");
+    altered.tee_expired_target_exclusions_hash =
+        outbe_primitives::reshare_artifact::tee_expired_target_exclusions_hash(
+            &altered.tee_expired_target_exclusions,
+        )
+        .unwrap();
+    assert!(manager
+        .verify_pending_boundary_artifact(Epoch::new(1), &altered)
+        .await
+        .is_err());
 }
 
 #[test]
@@ -433,6 +510,7 @@ fn boundary_artifact_carries_tee_reshare_registrations() {
         vrf_material_version: 1,
         is_validator_set_change: true,
         tee_reshare_registrations: regs.clone(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
     assert_eq!(artifact.tee_reshare_registrations, regs);
@@ -854,6 +932,7 @@ async fn verify_preannounce_outcome_matches_only_local_dkg_output() {
         vrf_material_version: 0,
         is_validator_set_change: true,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
 
@@ -915,6 +994,7 @@ async fn verify_boundary_succeeds_after_finalize() {
         vrf_material_version: 0,
         is_validator_set_change: true,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
 
@@ -1050,6 +1130,7 @@ fn full_output_outcome_detects_reshare_log_subset_divergence() {
         vrf_material_version: 1,
         is_validator_set_change: true,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
     let subset_artifact = build_boundary_artifact(BoundaryArtifactInput {
@@ -1063,6 +1144,7 @@ fn full_output_outcome_detects_reshare_log_subset_divergence() {
         vrf_material_version: 1,
         is_validator_set_change: true,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
     assert_eq!(

@@ -1,4 +1,6 @@
-use alloy_primitives::{keccak256, Address, B256};
+#[cfg(feature = "tee-attestation-v1")]
+use alloy_primitives::keccak256;
+use alloy_primitives::{Address, B256};
 use outbe_primitives::error::{PrecompileError, Result};
 
 use crate::schema::TeeRegistry;
@@ -6,10 +8,12 @@ use crate::schema::TeeRegistry;
 /// Domain label binding the per-validator `keys_hash` (mirrors the bootstrap
 /// bundle's `outbe/tee/keys/v1`), so a V1 `registerEnclave` produces the
 /// same `keysHash(addr)` shape as the block-1 bootstrap registration.
+#[cfg(feature = "tee-attestation-v1")]
 const TEE_KEYS_HASH_DOMAIN: &[u8] = b"outbe/tee/keys/v1";
 
 /// `keccak256(domain ‖ validator ‖ recipient ‖ attestation ‖ noise ‖ mrenclave ‖
 /// mrsigner ‖ isv_svn_be)` — binds all of a validator's enclave key material.
+#[cfg(feature = "tee-attestation-v1")]
 pub(crate) fn compute_keys_hash(
     validator: Address,
     recipient_x25519: B256,

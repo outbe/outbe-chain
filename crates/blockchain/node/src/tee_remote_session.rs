@@ -14,12 +14,15 @@ use outbe_primitives::{
         readonly::{ReadOnlyStorageProvider, StorageReader},
         StorageHandle,
     },
-    tee_attestation_v1::{EnclaveProfile, NodeHostAuthorizationWitnessV1, NodeIdV1},
+    tee_attestation_v1::{
+        AttestationEvidenceV1, EnclaveProfile, NodeHostAuthorizationWitnessV1, NodeIdV1,
+        TeePolicyV1,
+    },
 };
 use outbe_tee::{
     admit_remote_session_v1, construct_finalized_replacement_authorization_v1,
-    AuthorizedEnclaveClient, FinalizedRegistryBindingV1, FinalizedRegistryViewV1,
-    FinalizedReplacementAuthorizationV1, FinalizedReplacementBindingV1,
+    load_replacement_candidate_submission, AuthorizedEnclaveClient, FinalizedRegistryBindingV1,
+    FinalizedRegistryViewV1, FinalizedReplacementAuthorizationV1, FinalizedReplacementBindingV1,
     RemoteSessionAdmissionError, RemoteSessionAdmissionV1, RemoteSessionExpectationV1,
     RemoteSessionTicketV1, TransportError,
 };
@@ -95,6 +98,20 @@ pub enum LocalRegistryAdmissionError {
     Enclave(#[from] TransportError),
     #[error(transparent)]
     Admission(#[from] RemoteSessionAdmissionError),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LocalFinalizedSuccessorStatusV1 {
+    pub view: FinalizedRegistryViewV1,
+    pub staged_proposal_id: Option<U256>,
+    pub staged_policy: Option<TeePolicyV1>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LocalFinalizedReplacementAuthorizationV1 {
+    pub authorization: FinalizedReplacementAuthorizationV1,
+    pub view: FinalizedRegistryViewV1,
+    pub successor_activation_height: Option<u64>,
 }
 
 /// A finalized state root already authenticated by the caller's Outbe light
@@ -227,11 +244,65 @@ pub fn construct_local_finalized_replacement_authorization_v1<P>(
 where
     P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
 {
+    construct_local_finalized_replacement_authorization_with_view_v1(
+        provider,
+        chain_id,
+        genesis_hash,
+        node_data_dir,
+        node_id,
+        profile,
+    )
+    .map(|result| result.authorization)
+}
+
+/// Same authority constructor as
+/// [`construct_local_finalized_replacement_authorization_v1`], with the exact
+/// finalized marker needed by the node-owned durable promotion watcher.
+pub fn construct_local_finalized_replacement_authorization_with_view_v1<P>(
+    provider: &P,
+    chain_id: u64,
+    genesis_hash: B256,
+    node_data_dir: &Path,
+    node_id: &NodeIdV1,
+    profile: EnclaveProfile,
+) -> Result<LocalFinalizedReplacementAuthorizationV1, LocalRegistryAdmissionError>
+where
+    P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
+{
     with_local_finalized_registry(provider, chain_id, genesis_hash, |view, registry| {
         let binding = registry
             .node_enclave_binding_for_identity_v1(node_id, profile)
             .map_err(registry_error)?
             .ok_or(LocalRegistryAdmissionError::ReplacementBindingMissing)?;
+        let submission = load_replacement_candidate_submission(node_data_dir).map_err(|error| {
+            LocalRegistryAdmissionError::ReplacementAuthorization(error.to_string())
+        })?;
+        let submission = submission.ok_or_else(|| {
+            LocalRegistryAdmissionError::ReplacementAuthorization(
+                "durable replacement submission is missing".into(),
+            )
+        })?;
+        let AttestationEvidenceV1::Dcap(dcap) =
+            AttestationEvidenceV1::decode_canonical(submission.evidence()).map_err(|error| {
+                LocalRegistryAdmissionError::ReplacementAuthorization(error.to_string())
+            })?
+        else {
+            return Err(LocalRegistryAdmissionError::ReplacementAuthorization(
+                "durable replacement evidence is not DCAP".into(),
+            ));
+        };
+        let intent_hash = dcap.intent.intent_hash().map_err(|error| {
+            LocalRegistryAdmissionError::ReplacementAuthorization(error.to_string())
+        })?;
+        if binding.intent_hash != intent_hash
+            || binding.enclave_id != dcap.intent.enclave_id
+            || binding.binding_id != dcap.intent.binding_id
+            || binding.binding_version != dcap.intent.binding_version
+            || binding.registration_version != dcap.intent.registration_version
+            || binding.transition_nonce != dcap.intent.transition_nonce
+        {
+            return Err(LocalRegistryAdmissionError::ReplacementBindingMissing);
+        }
         let finalized_binding = FinalizedReplacementBindingV1 {
             view,
             profile,
@@ -247,9 +318,46 @@ where
             noise_responder_x25519: binding.noise_responder_x25519.into(),
             node_host_authorization_hash: binding.node_host_authorization_hash,
         };
-        construct_finalized_replacement_authorization_v1(node_data_dir, &finalized_binding).map_err(
-            |error| LocalRegistryAdmissionError::ReplacementAuthorization(error.to_string()),
-        )
+        let authorization =
+            construct_finalized_replacement_authorization_v1(node_data_dir, &finalized_binding)
+                .map_err(|error| {
+                    LocalRegistryAdmissionError::ReplacementAuthorization(error.to_string())
+                })?;
+        let successor_activation_height = registry
+            .staged_successor_policy_v1()
+            .map_err(registry_error)?
+            .map(|(_, policy)| policy.activation_height);
+        Ok(LocalFinalizedReplacementAuthorizationV1 {
+            authorization,
+            view,
+            successor_activation_height,
+        })
+    })
+}
+
+/// Inspect only node-local consensus-finalized rollout state. This supplies
+/// deadline alerts and terminal-cutoff decisions; it cannot authorize
+/// candidate promotion.
+pub fn inspect_local_finalized_successor_status_v1<P>(
+    provider: &P,
+    chain_id: u64,
+    genesis_hash: B256,
+) -> Result<LocalFinalizedSuccessorStatusV1, LocalRegistryAdmissionError>
+where
+    P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
+{
+    with_local_finalized_registry(provider, chain_id, genesis_hash, |view, registry| {
+        let staged = registry
+            .staged_successor_policy_v1()
+            .map_err(registry_error)?;
+        let (staged_proposal_id, staged_policy) = staged
+            .map(|(proposal_id, policy)| (Some(proposal_id), Some(policy)))
+            .unwrap_or((None, None));
+        Ok(LocalFinalizedSuccessorStatusV1 {
+            view,
+            staged_proposal_id,
+            staged_policy,
+        })
     })
 }
 

@@ -486,7 +486,7 @@ fn restart_registered_joiner_before_staking(world: &mut World) {
     world.state.joiner_offer_public_before_restart = Some(
         world
             .localnet
-            .joiner_offer_public(idx)
+            .node_offer_public(idx)
             .expect("registered joiner offer key must match canonical chain state"),
     );
     world.state.marker_height = world.rpc.head(primary);
@@ -536,7 +536,7 @@ fn registered_restart_then_join_activates(world: &mut World) {
         .expect("pre-restart joiner offer key");
     let after = world
         .localnet
-        .joiner_offer_public(idx)
+        .node_offer_public(idx)
         .expect("restarted joiner offer key must match canonical chain state");
     assert_eq!(
         after, before,

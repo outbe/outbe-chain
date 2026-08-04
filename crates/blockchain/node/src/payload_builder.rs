@@ -832,6 +832,8 @@ mod tests {
                     is_full_dkg: false,
                     tee_recipient_pubkeys: Vec::new(),
                     tee_reshare_registrations: Vec::new(),
+                    tee_expired_target_exclusions: Vec::new(),
+                    tee_expired_target_exclusions_hash: B256::ZERO,
                     endorsement_signature: Bytes::new(),
                     reshare: ReshareResult {
                         active_set_hash: active_set_hash(&active_set),

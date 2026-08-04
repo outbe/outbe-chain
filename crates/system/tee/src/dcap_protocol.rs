@@ -8,9 +8,26 @@ use alloy_primitives::{keccak256, B256};
 use outbe_primitives::tee_attestation_v1::{MAX_ATTESTATION_EVIDENCE_BYTES, MAX_TEE_POLICY_BYTES};
 
 const DCAP_VERIFICATION_REQUEST_DOMAIN_V1: &[u8] = b"outbe/tee/dcap-verification-request/v1";
+const DCAP_ONBOARDING_REQUEST_DOMAIN_V1: &[u8] = b"outbe/tee/dcap-onboarding-request/v1";
 const DCAP_VERIFICATION_ATTESTATION_DOMAIN_V1: &[u8] =
     b"outbe/tee/dcap-verification-attestation/v1";
+const DCAP_ONBOARDING_ATTESTATION_DOMAIN_V1: &[u8] = b"outbe/tee/dcap-onboarding-attestation/v1";
 const DCAP_EVIDENCE_DOMAIN_V1: &[u8] = b"outbe/tee/dcap-evidence/v1";
+const DCAP_ONBOARDING_CONTEXT_DOMAIN_V1: &[u8] = b"outbe/tee/onboarding-context/v1";
+
+/// Canonical `AttestationOperationV1::RegisterEnclave` discriminant committed
+/// by the purpose-bound onboarding request. Keeping the byte here avoids
+/// serializing a Rust enum across the enclave wire while still binding the
+/// exact operation into the request hash.
+pub const DCAP_REGISTER_ENCLAVE_OPERATION_V1: u8 = 0x01;
+
+/// Maximum canonical purpose-bound artifact emitted into the Registry event.
+/// The fixed public context plus one encrypted BLS group signature fit well
+/// below this cap, which is shared with the existing consensus log bound.
+pub const MAX_DCAP_ONBOARDING_ARTIFACT_BYTES: usize = 512;
+
+const DCAP_ONBOARDING_CONTEXT_BYTES: usize = 241;
+const DCAP_ONBOARDING_ARTIFACT_FIXED_BYTES: usize = 1 + DCAP_ONBOARDING_CONTEXT_BYTES + 12 + 2;
 
 /// Maximum plaintext payload in one upload chunk. Postcard metadata and Noise
 /// authentication remain safely below the shared 64 KiB frame ceiling.
@@ -20,6 +37,139 @@ pub const MAX_DCAP_VERIFICATION_CHUNK_BYTES: usize = 60 * 1024;
 /// Intel QVL 1.26 exposes at most 450 advisory bytes; 1 KiB leaves bounded
 /// framing headroom without allowing an unbounded response.
 pub const MAX_DCAP_VERDICT_BYTES: usize = 1024;
+
+/// Public values that make a one-time offer-key artifact useful for exactly
+/// one accepted `RegisterEnclave` intent and unusable in every other context.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DcapOnboardingContextV1 {
+    pub chain_id: [u8; 32],
+    pub genesis_hash: B256,
+    pub intent_hash: B256,
+    pub node_id_hash: B256,
+    pub enclave_id: B256,
+    pub recipient_x25519: [u8; 32],
+    pub tribute_offer_public: [u8; 32],
+    pub key_epoch: u64,
+    pub tribute_offer_epoch: u64,
+}
+
+impl DcapOnboardingContextV1 {
+    pub fn encode_canonical(&self) -> Vec<u8> {
+        let mut encoded = Vec::with_capacity(DCAP_ONBOARDING_CONTEXT_BYTES);
+        encoded.push(1);
+        encoded.extend_from_slice(&self.chain_id);
+        encoded.extend_from_slice(self.genesis_hash.as_slice());
+        encoded.extend_from_slice(self.intent_hash.as_slice());
+        encoded.extend_from_slice(self.node_id_hash.as_slice());
+        encoded.extend_from_slice(self.enclave_id.as_slice());
+        encoded.extend_from_slice(&self.recipient_x25519);
+        encoded.extend_from_slice(&self.tribute_offer_public);
+        encoded.extend_from_slice(&self.key_epoch.to_be_bytes());
+        encoded.extend_from_slice(&self.tribute_offer_epoch.to_be_bytes());
+        debug_assert_eq!(encoded.len(), DCAP_ONBOARDING_CONTEXT_BYTES);
+        encoded
+    }
+
+    pub fn decode_canonical(input: &[u8]) -> Result<Self, DcapRejectCodeV1> {
+        if input.len() != DCAP_ONBOARDING_CONTEXT_BYTES {
+            return Err(DcapRejectCodeV1::NativeOutputMalformed);
+        }
+        let mut decoder = Decoder::new(input);
+        if decoder.u8()? != 1 {
+            return Err(DcapRejectCodeV1::NativeOutputMalformed);
+        }
+        let value = Self {
+            chain_id: decoder.array()?,
+            genesis_hash: B256::from(decoder.array::<32>()?),
+            intent_hash: B256::from(decoder.array::<32>()?),
+            node_id_hash: B256::from(decoder.array::<32>()?),
+            enclave_id: B256::from(decoder.array::<32>()?),
+            recipient_x25519: decoder.array()?,
+            tribute_offer_public: decoder.array()?,
+            key_epoch: decoder.u64()?,
+            tribute_offer_epoch: decoder.u64()?,
+        };
+        decoder.finish()?;
+        Ok(value)
+    }
+
+    pub fn context_hash(&self) -> B256 {
+        let canonical = self.encode_canonical();
+        let mut preimage =
+            Vec::with_capacity(DCAP_ONBOARDING_CONTEXT_DOMAIN_V1.len() + 4 + canonical.len());
+        preimage.extend_from_slice(DCAP_ONBOARDING_CONTEXT_DOMAIN_V1);
+        preimage.extend_from_slice(&(canonical.len() as u32).to_be_bytes());
+        preimage.extend_from_slice(&canonical);
+        keccak256(preimage)
+    }
+}
+
+/// Deterministic, purpose-bound ciphertext committed by TeeRegistry. The
+/// serialized nonce is transport redundancy only: target ingest must derive
+/// the expected nonce from [`DcapOnboardingContextV1::context_hash`] and reject
+/// a mismatch before opening the AEAD ciphertext.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DcapOnboardingArtifactV1 {
+    pub context: DcapOnboardingContextV1,
+    pub nonce: [u8; 12],
+    pub ciphertext: Vec<u8>,
+}
+
+impl DcapOnboardingArtifactV1 {
+    pub fn encode_canonical(&self) -> Result<Vec<u8>, DcapRejectCodeV1> {
+        if self.ciphertext.len() < 16
+            || self.ciphertext.len()
+                > MAX_DCAP_ONBOARDING_ARTIFACT_BYTES - DCAP_ONBOARDING_ARTIFACT_FIXED_BYTES
+        {
+            return Err(DcapRejectCodeV1::NativeOutputMalformed);
+        }
+        let ciphertext_len = u16::try_from(self.ciphertext.len())
+            .map_err(|_| DcapRejectCodeV1::NativeOutputMalformed)?;
+        let mut encoded =
+            Vec::with_capacity(DCAP_ONBOARDING_ARTIFACT_FIXED_BYTES + self.ciphertext.len());
+        encoded.push(1);
+        encoded.extend_from_slice(&self.context.encode_canonical());
+        encoded.extend_from_slice(&self.nonce);
+        encoded.extend_from_slice(&ciphertext_len.to_be_bytes());
+        encoded.extend_from_slice(&self.ciphertext);
+        Ok(encoded)
+    }
+
+    pub fn decode_canonical(input: &[u8]) -> Result<Self, DcapRejectCodeV1> {
+        if input.len() < DCAP_ONBOARDING_ARTIFACT_FIXED_BYTES + 16
+            || input.len() > MAX_DCAP_ONBOARDING_ARTIFACT_BYTES
+        {
+            return Err(DcapRejectCodeV1::NativeOutputMalformed);
+        }
+        let mut decoder = Decoder::new(input);
+        if decoder.u8()? != 1 {
+            return Err(DcapRejectCodeV1::NativeOutputMalformed);
+        }
+        let context = DcapOnboardingContextV1::decode_canonical(
+            decoder.take(DCAP_ONBOARDING_CONTEXT_BYTES)?,
+        )?;
+        let nonce = decoder.array()?;
+        let ciphertext_len = usize::from(decoder.u16()?);
+        if ciphertext_len < 16 {
+            return Err(DcapRejectCodeV1::NativeOutputMalformed);
+        }
+        let ciphertext = decoder.take(ciphertext_len)?.to_vec();
+        decoder.finish()?;
+        Ok(Self {
+            context,
+            nonce,
+            ciphertext,
+        })
+    }
+}
+
+/// Result returned by the dedicated onboarding verifier. Rejections never
+/// carry an artifact; accepted results must carry exactly one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DcapOnboardingVerificationResultV1 {
+    pub outcome: DcapVerificationOutcomeV1,
+    pub artifact: Option<DcapOnboardingArtifactV1>,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -177,6 +327,10 @@ pub enum DcapRejectCodeV1 {
     QeTcbRejected = 0x0502,
     TcbEvaluationNumberTooLow = 0x0503,
     MeasurementRejected = 0x0601,
+    OperationMismatch = 0x0701,
+    NodeSignatureInvalid = 0x0702,
+    EnclaveSignatureInvalid = 0x0703,
+    OnboardingContextMismatch = 0x0704,
 }
 
 impl DcapRejectCodeV1 {
@@ -210,6 +364,10 @@ impl TryFrom<u16> for DcapRejectCodeV1 {
             0x0502 => Self::QeTcbRejected,
             0x0503 => Self::TcbEvaluationNumberTooLow,
             0x0601 => Self::MeasurementRejected,
+            0x0701 => Self::OperationMismatch,
+            0x0702 => Self::NodeSignatureInvalid,
+            0x0703 => Self::EnclaveSignatureInvalid,
+            0x0704 => Self::OnboardingContextMismatch,
             _ => return Err(()),
         })
     }
@@ -289,6 +447,53 @@ pub fn dcap_verification_request_hash(
     Ok(keccak256(preimage))
 }
 
+/// Commit to the exact purpose-bound onboarding verifier inputs. This is a
+/// separate domain from generic evidence verification: possession of an
+/// authenticated generic verdict can never authorize offer-key delivery.
+#[allow(clippy::too_many_arguments)]
+pub fn dcap_onboarding_request_hash(
+    evidence: &[u8],
+    policy: &[u8],
+    block_timestamp: u64,
+    node_signature: &[u8; 65],
+    enclave_signature: &[u8; 64],
+    expected_tribute_offer_public: &[u8; 32],
+    key_epoch: u64,
+    tribute_offer_epoch: u64,
+) -> Result<B256, DcapRejectCodeV1> {
+    if evidence.len() > MAX_ATTESTATION_EVIDENCE_BYTES {
+        return Err(DcapRejectCodeV1::EvidenceNonCanonical);
+    }
+    if policy.len() > MAX_TEE_POLICY_BYTES {
+        return Err(DcapRejectCodeV1::PolicyNonCanonical);
+    }
+    let evidence_len =
+        u32::try_from(evidence.len()).map_err(|_| DcapRejectCodeV1::EvidenceNonCanonical)?;
+    let policy_len =
+        u32::try_from(policy.len()).map_err(|_| DcapRejectCodeV1::PolicyNonCanonical)?;
+    let mut preimage = Vec::with_capacity(
+        DCAP_ONBOARDING_REQUEST_DOMAIN_V1.len()
+            + evidence.len()
+            + policy.len()
+            + node_signature.len()
+            + enclave_signature.len()
+            + 69,
+    );
+    preimage.extend_from_slice(DCAP_ONBOARDING_REQUEST_DOMAIN_V1);
+    preimage.push(DCAP_REGISTER_ENCLAVE_OPERATION_V1);
+    preimage.extend_from_slice(&evidence_len.to_be_bytes());
+    preimage.extend_from_slice(evidence);
+    preimage.extend_from_slice(&policy_len.to_be_bytes());
+    preimage.extend_from_slice(policy);
+    preimage.extend_from_slice(&block_timestamp.to_be_bytes());
+    preimage.extend_from_slice(node_signature);
+    preimage.extend_from_slice(enclave_signature);
+    preimage.extend_from_slice(expected_tribute_offer_public);
+    preimage.extend_from_slice(&key_epoch.to_be_bytes());
+    preimage.extend_from_slice(&tribute_offer_epoch.to_be_bytes());
+    Ok(keccak256(preimage))
+}
+
 /// Domain-separated hash of the exact canonical evidence bytes used for
 /// current-binding idempotency. A new quote or collateral set is not an exact
 /// replay even when it carries the same registration intent.
@@ -321,6 +526,35 @@ pub fn dcap_verification_attestation_preimage(
     preimage.extend_from_slice(request_hash.as_slice());
     preimage.extend_from_slice(&len.to_be_bytes());
     preimage.extend_from_slice(outcome);
+    Ok(preimage)
+}
+
+/// Local-only signature preimage for the purpose-bound onboarding result.
+/// Both the verifier outcome and exact deterministic artifact are authenticated
+/// by the source enclave's quote-bound Ed25519 key.
+pub fn dcap_onboarding_attestation_preimage(
+    request_hash: B256,
+    outcome: &[u8],
+    artifact: &[u8],
+) -> Result<Vec<u8>, DcapRejectCodeV1> {
+    if outcome.len() > MAX_DCAP_VERDICT_BYTES + 6
+        || artifact.len() > MAX_DCAP_ONBOARDING_ARTIFACT_BYTES
+    {
+        return Err(DcapRejectCodeV1::NativeOutputMalformed);
+    }
+    let outcome_len =
+        u32::try_from(outcome.len()).map_err(|_| DcapRejectCodeV1::NativeOutputMalformed)?;
+    let artifact_len =
+        u32::try_from(artifact.len()).map_err(|_| DcapRejectCodeV1::NativeOutputMalformed)?;
+    let mut preimage = Vec::with_capacity(
+        DCAP_ONBOARDING_ATTESTATION_DOMAIN_V1.len() + outcome.len() + artifact.len() + 40,
+    );
+    preimage.extend_from_slice(DCAP_ONBOARDING_ATTESTATION_DOMAIN_V1);
+    preimage.extend_from_slice(request_hash.as_slice());
+    preimage.extend_from_slice(&outcome_len.to_be_bytes());
+    preimage.extend_from_slice(outcome);
+    preimage.extend_from_slice(&artifact_len.to_be_bytes());
+    preimage.extend_from_slice(artifact);
     Ok(preimage)
 }
 
@@ -373,6 +607,12 @@ impl<'a> Decoder<'a> {
                 .try_into()
                 .map_err(|_| DcapRejectCodeV1::NativeOutputMalformed)?,
         ))
+    }
+
+    fn array<const N: usize>(&mut self) -> Result<[u8; N], DcapRejectCodeV1> {
+        self.take(N)?
+            .try_into()
+            .map_err(|_| DcapRejectCodeV1::NativeOutputMalformed)
     }
 
     fn finish(self) -> Result<(), DcapRejectCodeV1> {
@@ -459,5 +699,114 @@ mod tests {
         assert!(preimage
             .windows(32)
             .any(|window| window == request.as_slice()));
+    }
+
+    fn onboarding_context() -> DcapOnboardingContextV1 {
+        DcapOnboardingContextV1 {
+            chain_id: [0x31; 32],
+            genesis_hash: B256::repeat_byte(0x32),
+            intent_hash: B256::repeat_byte(0x33),
+            node_id_hash: B256::repeat_byte(0x34),
+            enclave_id: B256::repeat_byte(0x35),
+            recipient_x25519: [0x36; 32],
+            tribute_offer_public: [0x37; 32],
+            key_epoch: 7,
+            tribute_offer_epoch: 8,
+        }
+    }
+
+    #[test]
+    fn onboarding_context_and_artifact_are_canonical_and_bounded() {
+        let context = onboarding_context();
+        let canonical = context.encode_canonical();
+        assert_eq!(
+            DcapOnboardingContextV1::decode_canonical(&canonical),
+            Ok(context)
+        );
+        assert_ne!(context.context_hash(), B256::ZERO);
+
+        let artifact = DcapOnboardingArtifactV1 {
+            context,
+            nonce: [0x41; 12],
+            ciphertext: vec![0x42; 112],
+        };
+        let encoded = artifact.encode_canonical().unwrap();
+        assert!(encoded.len() <= MAX_DCAP_ONBOARDING_ARTIFACT_BYTES);
+        assert_eq!(
+            DcapOnboardingArtifactV1::decode_canonical(&encoded),
+            Ok(artifact)
+        );
+
+        let mut trailing = encoded;
+        trailing.push(0);
+        assert_eq!(
+            DcapOnboardingArtifactV1::decode_canonical(&trailing),
+            Err(DcapRejectCodeV1::NativeOutputMalformed)
+        );
+    }
+
+    #[test]
+    fn onboarding_request_commitment_binds_signatures_offer_and_epochs() {
+        let evidence = [0x51, 0x52];
+        let policy = [0x61, 0x62];
+        let timestamp = 1_700_000_000;
+        let node_signature = [0x71; 65];
+        let enclave_signature = [0x72; 64];
+        let offer_public = [0x73; 32];
+        let request = dcap_onboarding_request_hash(
+            &evidence,
+            &policy,
+            timestamp,
+            &node_signature,
+            &enclave_signature,
+            &offer_public,
+            9,
+            10,
+        )
+        .unwrap();
+
+        let mut changed_node_signature = node_signature;
+        changed_node_signature[0] ^= 1;
+        assert_ne!(
+            request,
+            dcap_onboarding_request_hash(
+                &evidence,
+                &policy,
+                timestamp,
+                &changed_node_signature,
+                &enclave_signature,
+                &offer_public,
+                9,
+                10,
+            )
+            .unwrap()
+        );
+        assert_ne!(
+            request,
+            dcap_onboarding_request_hash(
+                &evidence,
+                &policy,
+                timestamp,
+                &node_signature,
+                &enclave_signature,
+                &offer_public,
+                9,
+                11,
+            )
+            .unwrap()
+        );
+
+        let outcome = DcapVerificationOutcomeV1::Rejected(DcapRejectCodeV1::PlatformTcbRejected)
+            .encode_canonical()
+            .unwrap();
+        let artifact = DcapOnboardingArtifactV1 {
+            context: onboarding_context(),
+            nonce: [0x74; 12],
+            ciphertext: vec![0x75; 112],
+        }
+        .encode_canonical()
+        .unwrap();
+        let preimage = dcap_onboarding_attestation_preimage(request, &outcome, &artifact).unwrap();
+        assert!(preimage.ends_with(&artifact));
     }
 }

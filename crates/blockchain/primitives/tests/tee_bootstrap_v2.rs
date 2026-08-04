@@ -436,6 +436,8 @@ fn thirty_two_validator_near_cap_bootstrap_fits_five_transaction_block() {
         },
         tee_recipient_pubkeys: Vec::new(),
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
+        tee_expired_target_exclusions_hash: B256::ZERO,
         endorsement_signature: Bytes::new(),
     };
     let inputs = vec![
@@ -535,6 +537,7 @@ fn assembly_rejects_aggregate_calldata_over_cap_before_signing() {
                     intent: intent(address, policy_hash),
                     quote: vec![address; 64],
                     components,
+                    transition_key_ready_proof: None,
                 }),
                 node_signature: [address; 65],
                 enclave_signature: [address; 64],

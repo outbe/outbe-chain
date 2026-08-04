@@ -23,6 +23,7 @@ use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::{Zeroize, Zeroizing};
 
 use alloy_primitives::B256;
+use outbe_tee::dcap_protocol::{DcapOnboardingArtifactV1, DcapOnboardingContextV1};
 
 use crate::errors::{Result, TeeError};
 
@@ -41,6 +42,11 @@ const DKG_SHARE_INFO: &[u8] = b"outbe/tee/dkg-share/v1";
 /// HKDF `info` for the deterministic registry-seal nonce, distinct from the AEAD
 /// key derivation so the nonce cannot collide with the key.
 const REGISTRY_NONCE_INFO: &[u8] = b"outbe/tee/registry-seal-nonce/v1";
+
+/// Purpose-bound onboarding key and nonce domains. They intentionally differ
+/// from each other and from both generic DKG share domains above.
+pub(crate) const ONBOARDING_KEY_INFO_V1: &[u8] = b"outbe/tee/onboarding-key/v1";
+pub(crate) const ONBOARDING_NONCE_INFO_V1: &[u8] = b"outbe/tee/onboarding-nonce/v1";
 
 /// Single-use nonce provider for ring's `BoundKey` API. Replicated locally
 /// (mirrors `outbe_primitives::crypto::OneNonce`) to keep enclave dependencies
@@ -289,6 +295,77 @@ pub fn decrypt_share(recipient_secret: &[u8; 32], enc: &EncryptedShare) -> Resul
     chacha20poly1305_decrypt(&key, &enc.nonce, &enc.ciphertext)
 }
 
+fn onboarding_aead_material(
+    context_hash: B256,
+    shared_secret: &[u8; 32],
+) -> Result<([u8; 32], [u8; 12])> {
+    let key = hkdf_sha256(
+        context_hash.as_slice(),
+        shared_secret,
+        ONBOARDING_KEY_INFO_V1,
+    )?;
+    let nonce_okm = hkdf_sha256(
+        context_hash.as_slice(),
+        shared_secret,
+        ONBOARDING_NONCE_INFO_V1,
+    )?;
+    let mut nonce = [0_u8; 12];
+    nonce.copy_from_slice(&nonce_okm[..12]);
+    Ok((key, nonce))
+}
+
+/// Deterministically encrypt the resident founding group signature for one
+/// exact accepted registration context. No caller-selected plaintext exists.
+pub fn encrypt_onboarding_artifact_v1(
+    sender_offer_secret: &[u8; 32],
+    context: DcapOnboardingContextV1,
+    group_signature: &[u8],
+) -> Result<DcapOnboardingArtifactV1> {
+    let sender = StaticSecret::from(*sender_offer_secret);
+    if PublicKey::from(&sender).to_bytes() != context.tribute_offer_public {
+        return Err(TeeError::Dkg(
+            "onboarding context offer public does not match resident key".into(),
+        ));
+    }
+    let shared = sender.diffie_hellman(&PublicKey::from(context.recipient_x25519));
+    let (key, nonce) = onboarding_aead_material(context.context_hash(), shared.as_bytes())?;
+    let ciphertext = chacha20poly1305_encrypt(&key, &nonce, group_signature)?;
+    let artifact = DcapOnboardingArtifactV1 {
+        context,
+        nonce,
+        ciphertext,
+    };
+    artifact
+        .encode_canonical()
+        .map_err(|_| TeeError::EncryptFailed)?;
+    Ok(artifact)
+}
+
+/// Open one purpose-bound onboarding artifact. The target derives its recipient
+/// public key, context key and nonce locally. A wire nonce mismatch is rejected
+/// before AEAD open and is never used as nonce authority.
+pub fn decrypt_onboarding_artifact_v1(
+    recipient_secret: &[u8; 32],
+    artifact: &DcapOnboardingArtifactV1,
+) -> Result<Zeroizing<Vec<u8>>> {
+    let recipient = StaticSecret::from(*recipient_secret);
+    let recipient_public = PublicKey::from(&recipient).to_bytes();
+    if recipient_public != artifact.context.recipient_x25519 {
+        return Err(TeeError::DecryptFailed);
+    }
+    let shared = recipient.diffie_hellman(&PublicKey::from(artifact.context.tribute_offer_public));
+    let (key, expected_nonce) =
+        onboarding_aead_material(artifact.context.context_hash(), shared.as_bytes())?;
+    if artifact.nonce != expected_nonce {
+        return Err(TeeError::DecryptFailed);
+    }
+    Ok(Zeroizing::new(chacha20poly1305_decrypt(
+        &key,
+        &expected_nonce,
+        &artifact.ciphertext,
+    )?))
+}
+
 /// Derive the X25519 public key for a 32-byte X25519 secret (the enclave's DKG
 /// share-decryption key). Announced so dealers can seal shares to this enclave.
 pub fn x25519_public(secret: &[u8; 32]) -> [u8; 32] {
@@ -298,6 +375,23 @@ pub fn x25519_public(secret: &[u8; 32]) -> [u8; 32] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn onboarding_context(
+        recipient_x25519: [u8; 32],
+        tribute_offer_public: [u8; 32],
+    ) -> DcapOnboardingContextV1 {
+        DcapOnboardingContextV1 {
+            chain_id: [0x21; 32],
+            genesis_hash: B256::repeat_byte(0x22),
+            intent_hash: B256::repeat_byte(0x23),
+            node_id_hash: B256::repeat_byte(0x24),
+            enclave_id: B256::repeat_byte(0x25),
+            recipient_x25519,
+            tribute_offer_public,
+            key_epoch: 3,
+            tribute_offer_epoch: 4,
+        }
+    }
 
     /// The deterministic registry seal must be byte-identical across calls (so every
     /// committee enclave commits the same on-chain blob) and must round-trip through
@@ -327,6 +421,61 @@ mod tests {
         let other_pub = x25519_public(&[11u8; 32]);
         let c = encrypt_share_deterministic(&offer_secret, &other_pub, plaintext).unwrap();
         assert_ne!(a.to_bytes(), c.to_bytes());
+    }
+
+    #[test]
+    fn onboarding_artifact_is_exact_replay_and_context_separated() {
+        let offer_secret = [0x31; 32];
+        let offer_public = x25519_public(&offer_secret);
+        let recipient_secret = [0x32; 32];
+        let recipient_public = x25519_public(&recipient_secret);
+        let context = onboarding_context(recipient_public, offer_public);
+        let plaintext = b"exact founding group signature";
+
+        let first = encrypt_onboarding_artifact_v1(&offer_secret, context, plaintext).unwrap();
+        let replay = encrypt_onboarding_artifact_v1(&offer_secret, context, plaintext).unwrap();
+        assert_eq!(first, replay);
+        assert_eq!(
+            decrypt_onboarding_artifact_v1(&recipient_secret, &first)
+                .unwrap()
+                .as_slice(),
+            plaintext
+        );
+
+        let mut changed_context = context;
+        changed_context.intent_hash = B256::repeat_byte(0x41);
+        let changed =
+            encrypt_onboarding_artifact_v1(&offer_secret, changed_context, plaintext).unwrap();
+        assert_ne!(first.nonce, changed.nonce);
+        assert_ne!(first.ciphertext, changed.ciphertext);
+    }
+
+    #[test]
+    fn onboarding_ingest_rejects_wire_nonce_before_aead_open() {
+        let offer_secret = [0x51; 32];
+        let offer_public = x25519_public(&offer_secret);
+        let recipient_secret = [0x52; 32];
+        let recipient_public = x25519_public(&recipient_secret);
+        let mut artifact = encrypt_onboarding_artifact_v1(
+            &offer_secret,
+            onboarding_context(recipient_public, offer_public),
+            b"group signature",
+        )
+        .unwrap();
+        artifact.nonce[0] ^= 1;
+        assert!(matches!(
+            decrypt_onboarding_artifact_v1(&recipient_secret, &artifact),
+            Err(TeeError::DecryptFailed)
+        ));
+    }
+
+    #[test]
+    fn onboarding_domains_are_distinct_from_existing_share_domains() {
+        assert_ne!(ONBOARDING_KEY_INFO_V1, ONBOARDING_NONCE_INFO_V1);
+        assert_ne!(ONBOARDING_KEY_INFO_V1, DKG_SHARE_INFO);
+        assert_ne!(ONBOARDING_KEY_INFO_V1, REGISTRY_NONCE_INFO);
+        assert_ne!(ONBOARDING_NONCE_INFO_V1, DKG_SHARE_INFO);
+        assert_ne!(ONBOARDING_NONCE_INFO_V1, REGISTRY_NONCE_INFO);
     }
 
     /// Encrypt as a client would (ephemeral_secret x tribute_offer_public), then decrypt

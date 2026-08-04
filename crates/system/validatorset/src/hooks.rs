@@ -127,6 +127,7 @@ pub struct BoundaryActivationInputs {
     pub incoming: CommitteeSnapshot,
     pub new_active_set: Vec<Address>,
     pub active_set_hash: B256,
+    pub tee_expired_target_exclusions: Vec<Address>,
 }
 
 /// V2 atomic boundary activation.
@@ -162,7 +163,11 @@ pub fn activate_boundary_atomic(
 
     {
         let mut vs = ValidatorSet::new(storage.clone());
-        vs.activate_reshared_set(&inputs.new_active_set, inputs.active_set_hash)?;
+        vs.activate_reshared_set_with_expiry_exclusions(
+            &inputs.new_active_set,
+            inputs.active_set_hash,
+            &inputs.tee_expired_target_exclusions,
+        )?;
     }
 
     let (_, incoming_key) =

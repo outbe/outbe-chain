@@ -36,6 +36,7 @@ ocomp-integration = [
     "dep:reth-trie",
     "dep:revm",
 ]
+dcap-lifecycle-sgx = ["dep:k256", "dep:outbe-operator"]
 
 # e2e harness. The scenarios are Gherkin fixtures under `features/`; the step
 # code behind them drives the `world/` handles. Chain reads/sends are native
@@ -79,6 +80,7 @@ outbe-metadosis = { workspace = true, optional = true }
 outbe-nod = { workspace = true, optional = true }
 outbe-nodfactory = { workspace = true, optional = true }
 outbe-node = { workspace = true, optional = true }
+outbe-operator = { workspace = true, optional = true }
 outbe-ocomp-protocol = { workspace = true, optional = true }
 outbe-offchain-data = { workspace = true, optional = true }
 outbe-offchain-storage = { workspace = true, optional = true }
@@ -136,6 +138,11 @@ path = "src/bin/outbe-release-sgx-e2e.rs"
 [[bin]]
 name = "outbe-release-dcap-evidence"
 path = "src/bin/outbe-release-dcap-evidence.rs"
+
+[[bin]]
+name = "outbe-dcap-lifecycle-sgx"
+path = "src/bin/outbe-dcap-lifecycle-sgx.rs"
+required-features = ["dcap-lifecycle-sgx"]
 
 [[bin]]
 name = "outbe-e2e-evidence"

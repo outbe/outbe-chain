@@ -374,6 +374,7 @@ enum CommandClass {
     Never,
     Initialized,
     ValidatorKeyless,
+    KeylessOnboardingArtifact,
     Ready,
     FinalizedAuthorizationRequired,
 }
@@ -385,6 +386,7 @@ fn command_class(request: &EnclaveRequest) -> CommandClass {
         | EnclaveRequest::GenerateDcapQuote { .. }
         | EnclaveRequest::SignRegistrationIntentDevV1 { .. }
         | EnclaveRequest::BeginDcapVerificationV1 { .. }
+        | EnclaveRequest::BeginDcapOnboardingVerificationV1 { .. }
         | EnclaveRequest::DcapVerificationChunkV1 { .. }
         | EnclaveRequest::FinishDcapVerificationV1 { .. } => CommandClass::Initialized,
         EnclaveRequest::DkgOpen { .. }
@@ -395,6 +397,9 @@ fn command_class(request: &EnclaveRequest) -> CommandClass {
         | EnclaveRequest::DkgPlayerFinalize { .. }
         | EnclaveRequest::DkgTributeOfferPartial { .. }
         | EnclaveRequest::DkgFinalizeTributeOffer { .. } => CommandClass::ValidatorKeyless,
+        EnclaveRequest::IngestDcapOnboardingArtifactV1 { .. } => {
+            CommandClass::KeylessOnboardingArtifact
+        }
         EnclaveRequest::ProcessTributeOfferBatch { .. }
         | EnclaveRequest::ApplyGratisOp { .. }
         | EnclaveRequest::ApplyPromisOp { .. }
@@ -431,6 +436,7 @@ fn command_allowed(
         CommandClass::Never => false,
         CommandClass::Initialized => true,
         CommandClass::ValidatorKeyless => profile == EnclaveProfile::Validator && !offer_key_ready,
+        CommandClass::KeylessOnboardingArtifact => !offer_key_ready,
         CommandClass::Ready => offer_key_ready,
         // Remote sessions never inherit these commands. Their future protocol-
         // specific proof/delivery path remains separately fail-closed and is
@@ -913,6 +919,7 @@ mod tests {
             (Never, [false, false, false, false]),
             (Initialized, [true, true, true, true]),
             (ValidatorKeyless, [true, false, false, false]),
+            (KeylessOnboardingArtifact, [true, false, true, false]),
             (Ready, [false, true, false, true]),
             (FinalizedAuthorizationRequired, [false, false, false, false]),
         ];
@@ -941,5 +948,40 @@ mod tests {
         assert!(command_allowed(class, EnclaveProfile::Validator, true).is_err());
         assert!(command_allowed(class, EnclaveProfile::FullNode, false).is_err());
         assert!(command_allowed(class, EnclaveProfile::FullNode, true).is_err());
+    }
+
+    #[test]
+    fn purpose_bound_ingest_is_keyless_only_while_raw_key_commands_remain_denied() {
+        let purpose_bound = command_class(&EnclaveRequest::IngestDcapOnboardingArtifactV1 {
+            artifact: vec![0x11; 300],
+            expected_intent_hash: B256::repeat_byte(0x12),
+            expected_tribute_offer_public: [0x13; 32],
+            expected_key_epoch: 0,
+            expected_tribute_offer_epoch: 0,
+        });
+        assert_eq!(purpose_bound, CommandClass::KeylessOnboardingArtifact);
+        for profile in [EnclaveProfile::Validator, EnclaveProfile::FullNode] {
+            assert!(command_allowed(purpose_bound, profile, false).is_ok());
+            assert!(command_allowed(purpose_bound, profile, true).is_err());
+        }
+
+        for raw in [
+            EnclaveRequest::SealOfferKeyForRegistry {
+                recipient_x25519: [0x21; 32],
+            },
+            EnclaveRequest::IngestSealedOfferKeyForRegistry {
+                sealed: vec![0x22; 60],
+                expected_tribute_offer_public: [0x23; 32],
+                chain_id: B256::repeat_byte(0x24),
+                tribute_offer_epoch: 0,
+            },
+        ] {
+            let class = command_class(&raw);
+            assert_eq!(class, CommandClass::FinalizedAuthorizationRequired);
+            for profile in [EnclaveProfile::Validator, EnclaveProfile::FullNode] {
+                assert!(command_allowed(class, profile, false).is_err());
+                assert!(command_allowed(class, profile, true).is_err());
+            }
+        }
     }
 }

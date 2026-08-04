@@ -45,21 +45,25 @@ cp "$REPO/bin/outbe-tee-enclave/gramine/outbe-tee-enclave.manifest.template" "$W
 cd "$WORK"
 
 mkdir -p "$WORK/tee"
-render_sign() {  # $1 = template, $2 = manifest base name
+mkdir -p "$WORK/qvl"
+cp -f /lib/x86_64-linux-gnu/libsgx_dcap_quoteverify.so.1 "$WORK/qvl/"
+cp -f /lib/x86_64-linux-gnu/libstdc++.so.6 "$WORK/qvl/"
+cp -f /lib/x86_64-linux-gnu/libgcc_s.so.1 "$WORK/qvl/"
+render_sign() {  # $1 = template, $2 = manifest base name, $3 = attestation mode
     gramine-manifest -Dlog_level=error -Darch_libdir=/lib/x86_64-linux-gnu \
-        -Dentrypoint="$BIN" -Dtee_dir="$WORK/tee" "$1" "$2.manifest" >/dev/null
+        -Dentrypoint="$BIN" -Dtee_dir="$WORK/tee" \
+        -Dremote_attestation="$3" -Dqvl_host_dir="$WORK/qvl" \
+        "$1" "$2.manifest" >/dev/null
     gramine-sgx-sign --manifest "$2.manifest" --output "$2.manifest.sgx" >/dev/null 2>&1
 }
 
 echo "== SGX smoke: signing enclave (computes real MRENCLAVE/MRSIGNER) =="
-render_sign outbe-tee-enclave.manifest.template outbe-tee-enclave
+render_sign outbe-tee-enclave.manifest.template outbe-tee-enclave none
 gramine-sgx-sigstruct-view outbe-tee-enclave.sig 2>/dev/null \
     | grep -iE "mr_enclave|mr_signer|isv_prod|isv_svn" | sed 's/^/  /'
 
 echo "== probing real DCAP quote (remote_attestation = dcap) =="
-sed 's/^sgx.remote_attestation = "none"/sgx.remote_attestation = "dcap"/' \
-    outbe-tee-enclave.manifest.template > dcap.manifest.template
-render_sign dcap.manifest.template dcap
+render_sign outbe-tee-enclave.manifest.template dcap dcap
 DCAP_OUT="$("${SGX_RUN[@]}" timeout 90 gramine-sgx dcap --probe-attestation 2>&1 || true)"
 if echo "$DCAP_OUT" | grep -q "dcap_quote: .*bytes"; then
     echo "  PASS: real DCAP quote generated ($(echo "$DCAP_OUT" | grep -oE 'dcap_quote: [0-9]+ bytes'))"
@@ -75,7 +79,7 @@ fi
 # The repository manifest already uses no remote attestation, so it loads even
 # without a provisioned PCK while still exercising real SGX + EGETKEY.
 echo "== functional smoke: SGX execution + EGETKEY sealing (no attestation needed) =="
-render_sign outbe-tee-enclave.manifest.template smoke
+render_sign outbe-tee-enclave.manifest.template smoke none
 PROBE="$("${SGX_RUN[@]}" timeout 90 gramine-sgx smoke --probe-attestation 2>&1 || true)"
 echo "$PROBE" | grep -iE "/dev/attestation|sealing_key|attestation_type" | sed 's/^/  /'
 

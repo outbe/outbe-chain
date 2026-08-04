@@ -35,10 +35,13 @@ pub use client::{
     RemoteSessionTicketV1,
 };
 pub use client_global::{
-    install_authorized_enclave_client, install_enclave_client, is_enclave_configured,
-    resident_offer_public_key_state_v1, resident_offer_public_key_v1, seal_offer_key_for_registry,
-    try_with_enclave, verify_dcap_evidence_v1, RuntimeEnclaveClient,
+    generate_dcap_quote_v1, install_authorized_enclave_client, install_enclave_client,
+    is_enclave_configured, resident_offer_public_key_state_v1, resident_offer_public_key_v1,
+    seal_offer_key_for_registry, try_with_enclave, verify_dcap_evidence_v1,
+    verify_dcap_registration_and_seal_v1, RuntimeEnclaveClient,
 };
+#[cfg(feature = "native-dcap")]
+pub use dcap_v1::{dcap_collateral_validity_window_v1, DcapCollateralValidityWindowV1};
 pub use errors::TransportError;
 pub use host_collateral::acquire_dcap_collateral_v1;
 pub use node_host::{

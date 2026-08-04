@@ -34,12 +34,23 @@ use outbe_node::{
     },
     OutbeBeaconConsensus, OutbeFullNode, OutbeNode,
 };
+use outbe_operator::{
+    rpc::HttpRenewalRpc,
+    tee::{
+        inspect_upgrade_journal_v1, read_renewal_status_v1, record_upgrade_finalized_v1,
+        record_upgrade_missed_cutoff_v1, record_upgrade_promoted_v1, run_renewal_once_v1,
+        NodeBindingSelectorV1, RenewalAlertLevelV1, RenewalEnclaveV1, RenewalModeV1,
+        RenewalNodeSignerV1, RenewalOutcomeV1, RenewalServiceConfigV1, UpgradeJournalStateV1,
+    },
+    tx::RelaySignerV1,
+};
 use outbe_primitives::projection::ProjectionReadinessHandle;
 use outbe_primitives::OutbeHeader;
 use reth_chainspec::ChainSpec;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_ethereum::cli::interface::Cli;
 use reth_node_builder::NodeHandle;
+use reth_provider::{HeaderProvider, StateProviderFactory};
 use reth_rpc_server_types::{RethRpcModule, RpcModuleSelection, RpcModuleValidator};
 use std::{path::PathBuf, sync::Arc, thread};
 use tokio::sync::oneshot;
@@ -47,6 +58,376 @@ use tracing::info;
 
 mod ocomp_genesis;
 mod tee_genesis;
+
+enum RenewalNodeAuthorityV1 {
+    Validator(Arc<OutbeEvmSigner>),
+    FullNode(k256::ecdsa::SigningKey),
+}
+
+impl RenewalNodeSignerV1 for RenewalNodeAuthorityV1 {
+    fn sign_node_hash(&self, hash: alloy_primitives::B256) -> eyre::Result<[u8; 65]> {
+        match self {
+            Self::Validator(signer) => signer
+                .sign_hash(&hash)
+                .map_err(|error| eyre::eyre!("validator renewal signing failed: {error}")),
+            Self::FullNode(signer) => {
+                use k256::ecdsa::signature::hazmat::PrehashSigner as _;
+                let (signature, recovery): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) =
+                    signer.sign_prehash(hash.as_slice()).map_err(|error| {
+                        eyre::eyre!("full-node renewal signing failed: {error}")
+                    })?;
+                let mut bytes = [0_u8; 65];
+                bytes[..64].copy_from_slice(&signature.to_bytes());
+                bytes[64] = recovery.to_byte();
+                Ok(bytes)
+            }
+        }
+    }
+}
+
+struct GlobalRenewalEnclaveV1;
+
+impl RenewalEnclaveV1 for GlobalRenewalEnclaveV1 {
+    fn generate_dcap_quote(
+        &mut self,
+        intent: &outbe_primitives::tee_attestation_v1::RegistrationIntentV1,
+    ) -> eyre::Result<outbe_tee::GeneratedDcapQuoteV1> {
+        outbe_tee::generate_dcap_quote_v1(intent)
+            .map_err(|error| eyre::eyre!("generate renewal quote: {error}"))
+    }
+}
+
+struct RenewalWorkerV1 {
+    rpc_url: String,
+    relay: RelaySignerV1,
+    authority: RenewalNodeAuthorityV1,
+    config: RenewalServiceConfigV1,
+    poll_secs: u64,
+    warning_blocks: u64,
+    critical_blocks: u64,
+}
+
+async fn run_renewal_worker_v1(
+    worker: RenewalWorkerV1,
+    shutdown: tokio_util::sync::CancellationToken,
+) {
+    let rpc = HttpRenewalRpc::new(worker.rpc_url);
+    let mut enclave = GlobalRenewalEnclaveV1;
+    loop {
+        let upgrade_blocks_renewal = match inspect_upgrade_journal_v1(&worker.config.node_data_dir)
+        {
+            Ok(Some(snapshot)) => matches!(
+                snapshot.lifecycle,
+                UpgradeJournalStateV1::CandidatePrepared { .. }
+                    | UpgradeJournalStateV1::RootCopied { .. }
+                    | UpgradeJournalStateV1::CandidateKeyReady { .. }
+                    | UpgradeJournalStateV1::SubmissionPrepared { .. }
+                    | UpgradeJournalStateV1::Submitted { .. }
+                    | UpgradeJournalStateV1::Finalized { .. }
+                    | UpgradeJournalStateV1::Promoted { .. }
+                    | UpgradeJournalStateV1::TerminalMissedCutoff { .. }
+            ),
+            Ok(None) => false,
+            Err(error) => {
+                tracing::error!(error = %format!("{error:#}"), "read upgrade checkpoint before renewal failed; renewal paused fail-closed");
+                true
+            }
+        };
+        let renewal = if upgrade_blocks_renewal {
+            None
+        } else {
+            Some(
+                run_renewal_once_v1(
+                    &rpc,
+                    &worker.relay,
+                    &mut enclave,
+                    &worker.authority,
+                    &worker.config,
+                    RenewalModeV1::Automatic,
+                )
+                .await,
+            )
+        };
+        match renewal {
+            None => {}
+            Some(Ok(RenewalOutcomeV1::Submitted {
+                transaction_hash,
+                replayed,
+            })) => info!(%transaction_hash, replayed, "automatic DCAP renewal submitted"),
+            Some(Ok(RenewalOutcomeV1::Finalized {
+                finalized_height,
+                valid_until,
+            })) => info!(
+                finalized_height,
+                valid_until, "automatic DCAP renewal finalized"
+            ),
+            Some(Ok(RenewalOutcomeV1::Abandoned {
+                finalized_height,
+                reason,
+            })) => {
+                tracing::warn!(finalized_height, %reason, "stale DCAP renewal abandoned; next pass will rebuild")
+            }
+            Some(Ok(RenewalOutcomeV1::NotDue { .. })) => {}
+            Some(Err(error)) => {
+                tracing::error!(error = %format!("{error:#}"), "automatic DCAP renewal reconciliation failed")
+            }
+        }
+        match read_renewal_status_v1(
+            &rpc,
+            &worker.config.node_data_dir,
+            &worker.config.selector,
+            worker.warning_blocks,
+            worker.critical_blocks,
+        )
+        .await
+        {
+            Ok(status) if status.alert == RenewalAlertLevelV1::Critical => tracing::error!(
+                finalized_height = status.finalized_height,
+                next_freeze_height = status.next_freeze_height,
+                valid_until = status.valid_until,
+                "DCAP renewal is unsafe at the critical DKG-freeze margin"
+            ),
+            Ok(status) if status.alert == RenewalAlertLevelV1::Warning => tracing::warn!(
+                finalized_height = status.finalized_height,
+                next_freeze_height = status.next_freeze_height,
+                valid_until = status.valid_until,
+                "DCAP renewal is unsafe at the warning DKG-freeze margin"
+            ),
+            Ok(_) => {}
+            Err(error) => {
+                tracing::error!(error = %format!("{error:#}"), "read automatic DCAP renewal status failed")
+            }
+        }
+        tokio::select! {
+            () = shutdown.cancelled() => break,
+            () = tokio::time::sleep(std::time::Duration::from_secs(worker.poll_secs)) => {}
+        }
+    }
+}
+
+async fn run_upgrade_promotion_worker_v1<P>(
+    provider: P,
+    chain_id: u64,
+    genesis_hash: alloy_primitives::B256,
+    node_data_dir: PathBuf,
+    poll_secs: u64,
+    warning_blocks: u64,
+    critical_blocks: u64,
+    promoted: Arc<tokio::sync::Notify>,
+) where
+    P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory + Send + Sync + 'static,
+{
+    loop {
+        let snapshot = match inspect_upgrade_journal_v1(&node_data_dir) {
+            Ok(Some(snapshot)) => snapshot,
+            Ok(None) => {
+                tokio::time::sleep(std::time::Duration::from_secs(poll_secs)).await;
+                continue;
+            }
+            Err(error) => {
+                tracing::error!(error = %format!("{error:#}"), "read enclave-upgrade journal failed");
+                return;
+            }
+        };
+        let context = snapshot.lifecycle.context().clone();
+        match &snapshot.lifecycle {
+            UpgradeJournalStateV1::Promoted { .. } => return,
+            UpgradeJournalStateV1::TerminalMissedCutoff {
+                finalized_height,
+                activation_height,
+                ..
+            } => {
+                tracing::error!(
+                    finalized_height,
+                    activation_height,
+                    "enclave upgrade is terminal after missing successor activation cutoff"
+                );
+                return;
+            }
+            UpgradeJournalStateV1::Finalized {
+                finalized_height,
+                finalized_hash,
+                ..
+            } => {
+                let committed = match outbe_tee::load_committed_enclave_manifest_v1(&node_data_dir)
+                {
+                    Ok(committed) => committed,
+                    Err(error) => {
+                        tracing::error!(error = %error, "load committed manifest during upgrade recovery failed");
+                        return;
+                    }
+                };
+                let committed_hash = match committed.authorization_hash() {
+                    Ok(hash) => hash,
+                    Err(error) => {
+                        tracing::error!(error = %error, "hash committed manifest during upgrade recovery failed");
+                        return;
+                    }
+                };
+                if committed_hash == context.candidate_manifest_hash {
+                    if let Err(error) = record_upgrade_promoted_v1(&node_data_dir) {
+                        tracing::error!(error = %format!("{error:#}"), "record recovered upgrade promotion failed");
+                        return;
+                    }
+                    info!(finalized_height, %finalized_hash, "reconciled already-promoted enclave candidate");
+                    return;
+                }
+                match outbe_node::tee_remote_session::construct_local_finalized_replacement_authorization_with_view_v1(
+                    &provider,
+                    chain_id,
+                    genesis_hash,
+                    &node_data_dir,
+                    &committed.node_id,
+                    committed.enclave_profile,
+                ) {
+                    Ok(authorized) => {
+                        if let Err(error) = outbe_tee::promote_replacement_candidate(
+                            &node_data_dir,
+                            &authorized.authorization,
+                        ) {
+                            tracing::error!(error = %error, "promote finalized enclave candidate failed");
+                            return;
+                        }
+                        if let Err(error) = record_upgrade_promoted_v1(&node_data_dir) {
+                            tracing::error!(error = %format!("{error:#}"), "record finalized enclave promotion failed");
+                            return;
+                        }
+                        info!(finalized_height, %finalized_hash, "finalized enclave candidate promoted; execution restart required");
+                        promoted.notify_one();
+                        return;
+                    }
+                    Err(error) => {
+                        tracing::error!(error = %error, "reconstruct finalized candidate promotion authority failed");
+                        return;
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        let status =
+            match outbe_node::tee_remote_session::inspect_local_finalized_successor_status_v1(
+                &provider,
+                chain_id,
+                genesis_hash,
+            ) {
+                Ok(status) => status,
+                Err(error) => {
+                    tracing::error!(error = %error, "read node-local finalized successor status failed");
+                    tokio::time::sleep(std::time::Duration::from_secs(poll_secs)).await;
+                    continue;
+                }
+            };
+        if let Some(policy) = &status.staged_policy {
+            let policy_hash = match policy.policy_hash() {
+                Ok(hash) => hash,
+                Err(error) => {
+                    tracing::error!(error = %error, "hash node-local staged successor policy failed");
+                    return;
+                }
+            };
+            if policy_hash != context.successor_policy_hash
+                || policy.activation_height != context.activation_height
+            {
+                tracing::error!(
+                    "journaled enclave upgrade no longer matches the finalized staged successor"
+                );
+                return;
+            }
+        }
+        if matches!(snapshot.lifecycle, UpgradeJournalStateV1::Submitted { .. }) {
+            let committed = match outbe_tee::load_committed_enclave_manifest_v1(&node_data_dir) {
+                Ok(committed) => committed,
+                Err(error) => {
+                    tracing::error!(error = %error, "load active manifest for finalized upgrade check failed");
+                    return;
+                }
+            };
+            match outbe_node::tee_remote_session::construct_local_finalized_replacement_authorization_with_view_v1(
+                &provider,
+                chain_id,
+                genesis_hash,
+                &node_data_dir,
+                &committed.node_id,
+                committed.enclave_profile,
+            ) {
+                Ok(authorized) => {
+                    // A matching finalized B proves that transition execution
+                    // happened before the Registry cutoff, even when finality
+                    // advanced across H in one step.
+                    if let Err(error) = record_upgrade_finalized_v1(
+                        &node_data_dir,
+                        authorized.view.block_number,
+                        authorized.view.block_hash,
+                    ) {
+                        tracing::error!(error = %format!("{error:#}"), "record finalized enclave transition failed");
+                        return;
+                    }
+                    if let Err(error) = outbe_tee::promote_replacement_candidate(
+                        &node_data_dir,
+                        &authorized.authorization,
+                    ) {
+                        tracing::error!(error = %error, "promote finalized enclave candidate failed");
+                        return;
+                    }
+                    if let Err(error) = record_upgrade_promoted_v1(&node_data_dir) {
+                        tracing::error!(error = %format!("{error:#}"), "record enclave candidate promotion failed");
+                        return;
+                    }
+                    info!(
+                        finalized_height = authorized.view.block_number,
+                        finalized_hash = %authorized.view.block_hash,
+                        "finalized enclave candidate promoted; execution restart required"
+                    );
+                    promoted.notify_one();
+                    return;
+                }
+                Err(outbe_node::tee_remote_session::LocalRegistryAdmissionError::ReplacementBindingMissing) => {}
+                Err(error) => {
+                    tracing::error!(error = %error, "finalized enclave transition authorization failed");
+                    return;
+                }
+            }
+        }
+        if status.view.block_number >= context.activation_height {
+            match record_upgrade_missed_cutoff_v1(
+                &node_data_dir,
+                status.view.block_number,
+                context.activation_height,
+            ) {
+                Ok(_) => tracing::error!(
+                    finalized_height = status.view.block_number,
+                    activation_height = context.activation_height,
+                    "enclave upgrade missed its finalized successor activation cutoff"
+                ),
+                Err(error) => {
+                    tracing::error!(error = %format!("{error:#}"), "record missed enclave-upgrade cutoff failed")
+                }
+            }
+            return;
+        }
+        let remaining = context
+            .activation_height
+            .saturating_sub(status.view.block_number);
+        if remaining <= critical_blocks {
+            tracing::error!(
+                finalized_height = status.view.block_number,
+                activation_height = context.activation_height,
+                remaining_blocks = remaining,
+                "enclave upgrade is inside its critical finalized activation margin"
+            );
+        } else if remaining <= warning_blocks {
+            tracing::warn!(
+                finalized_height = status.view.block_number,
+                activation_height = context.activation_height,
+                remaining_blocks = remaining,
+                "enclave upgrade is inside its warning finalized activation margin"
+            );
+        }
+
+        tokio::time::sleep(std::time::Duration::from_secs(poll_secs)).await;
+    }
+}
 
 #[derive(Debug, Clone, Default)]
 struct OutbeChainSpecParser;
@@ -522,6 +903,26 @@ fn run_node() -> eyre::Result<()> {
         let initial_tee_policy = tee_activation
             .policy_at(outbe_evm::tee_attestation_activation::TEE_ATTESTATION_V1_ACTIVATION_HEIGHT)
             .map_err(eyre::Report::msg)?;
+        let dkg_prepare_window_blocks = builder
+            .config()
+            .chain
+            .genesis
+            .config
+            .extra_fields
+            .get_deserialized::<u64>("dkgPrepareWindowBlocks")
+            .transpose()
+            .map_err(|error| eyre::eyre!("invalid dkgPrepareWindowBlocks: {error}"))?
+            .unwrap_or(outbe_consensus::config::DEFAULT_DKG_PREPARE_WINDOW_BLOCKS);
+        let minimum_block_time_millis = builder
+            .config()
+            .chain
+            .genesis
+            .config
+            .extra_fields
+            .get_deserialized::<u64>("minBlockTimeMs")
+            .transpose()
+            .map_err(|error| eyre::eyre!("invalid minBlockTimeMs: {error}"))?
+            .unwrap_or(outbe_consensus::timing::DEFAULT_MIN_BLOCK_TIME_MS);
         info!(
             attestation_mode = ?initial_tee_policy.attestation_mode,
             activation_height = tee_activation.manifest.activation_height,
@@ -589,6 +990,8 @@ fn run_node() -> eyre::Result<()> {
         } else {
             None
         };
+        let renewal_validator_authority = evm_signer.clone();
+        let mut renewal_full_node_authority = None;
 
         // Every network declares exactly one TEE mode in genesis and every node
         // must connect to the corresponding enclave transport before execution
@@ -666,6 +1069,7 @@ fn run_node() -> eyre::Result<()> {
                         },
                     )
                     .wrap_err("full-node NodeHost enclave initialization failed")?;
+                    renewal_full_node_authority = Some(signing);
                     outbe_tee::install_authorized_enclave_client(client)
                         .map_err(eyre::Report::msg)?;
                 }
@@ -720,6 +1124,61 @@ fn run_node() -> eyre::Result<()> {
                 "full-node resident offer key matched upstream before execution launch"
             );
         }
+
+        let renewal_worker = match initial_tee_policy.attestation_mode {
+            outbe_primitives::tee_attestation_v1::AttestationMode::DcapRequired => {
+                let relay_path = args.tee_renewal_relay_key.as_deref().ok_or_else(|| {
+                    eyre::eyre!(
+                        "DcapRequired automatic renewal requires --tee-renewal.relay-key"
+                    )
+                })?;
+                let relay = RelaySignerV1::from_file(relay_path).wrap_err_with(|| {
+                    format!("load funded TEE renewal relay key {}", relay_path.display())
+                })?;
+                let manifest = outbe_tee::load_committed_enclave_manifest_v1(&node_data_dir)
+                    .wrap_err("load committed NodeHost manifest for renewal")?;
+                let (selector, authority) = match &manifest.node_id {
+                    outbe_primitives::tee_attestation_v1::NodeIdV1::Validator {
+                        address,
+                        ..
+                    } if args.is_validator => (
+                        NodeBindingSelectorV1::Validator(alloy_primitives::Address::from(*address)),
+                        RenewalNodeAuthorityV1::Validator(
+                            renewal_validator_authority.clone().ok_or_else(|| {
+                                eyre::eyre!("validator renewal authority is unavailable")
+                            })?,
+                        ),
+                    ),
+                    outbe_primitives::tee_attestation_v1::NodeIdV1::FullNode {
+                        reth_p2p_public,
+                    } if !args.is_validator => (
+                        NodeBindingSelectorV1::FullNode(*reth_p2p_public),
+                        RenewalNodeAuthorityV1::FullNode(
+                            renewal_full_node_authority.take().ok_or_else(|| {
+                                eyre::eyre!("full-node renewal authority is unavailable")
+                            })?,
+                        ),
+                    ),
+                    _ => eyre::bail!(
+                        "committed NodeHost manifest profile does not match the node role"
+                    ),
+                };
+                Some(RenewalWorkerV1 {
+                    rpc_url: args.tee_renewal_rpc_url.clone(),
+                    relay,
+                    authority,
+                    config: RenewalServiceConfigV1 {
+                        node_data_dir: node_data_dir.clone(),
+                        selector,
+                        manifest,
+                    },
+                    poll_secs: args.tee_renewal_poll_secs,
+                    warning_blocks: args.tee_renewal_warning_blocks,
+                    critical_blocks: args.tee_renewal_critical_blocks,
+                })
+            }
+            outbe_primitives::tee_attestation_v1::AttestationMode::GramineDirectDev => None,
+        };
 
         let offchain_data = args.offchain_data()?;
         validate_adr005_node_mode(args.is_validator, args.upstream.is_some())?;
@@ -860,6 +1319,10 @@ fn run_node() -> eyre::Result<()> {
                         compressed_tree_service.clone(),
                         proof_body_readers.clone(),
                         proof_chain_id,
+                    )
+                    .with_tee_renewal_schedule(
+                        dkg_prepare_window_blocks,
+                        minimum_block_time_millis,
                     );
                     ctx.modules.merge_if_module_configured(
                         RethRpcModule::Other("outbe".to_owned()),
@@ -872,6 +1335,29 @@ fn run_node() -> eyre::Result<()> {
             .launch()
             .await
             .wrap_err("failed launching execution node")?;
+
+        let renewal_handle = renewal_worker.map(|worker| {
+            tokio::spawn(run_renewal_worker_v1(worker, shutdown_token.clone()))
+        });
+        let upgrade_promotion = Arc::new(tokio::sync::Notify::new());
+        let upgrade_handle = if initial_tee_policy.attestation_mode
+            == outbe_primitives::tee_attestation_v1::AttestationMode::DcapRequired
+        {
+            let provider = node.provider.clone();
+            let promoted = upgrade_promotion.clone();
+            Some(tokio::spawn(run_upgrade_promotion_worker_v1(
+                provider,
+                proof_chain_id,
+                genesis_hash,
+                node_data_dir.clone(),
+                args.tee_renewal_poll_secs,
+                args.tee_renewal_warning_blocks,
+                args.tee_renewal_critical_blocks,
+                promoted,
+            )))
+        } else {
+            None
+        };
 
         let durable_ce_adapter = Arc::new(RethDurableCeState::new(node.provider.clone()));
         let durable_ce_state: Arc<dyn DurableCeState> = durable_ce_adapter.clone();
@@ -930,6 +1416,12 @@ fn run_node() -> eyre::Result<()> {
                         let _ = done.await;
                     }
                 }
+                () = upgrade_promotion.notified() => {
+                    info!("finalized enclave upgrade requested execution restart");
+                    if let Some(done) = shutdown.shutdown() {
+                        let _ = done.await;
+                    }
+                }
                 _ = tokio::signal::ctrl_c() => {
                     info!("received shutdown signal");
                 }
@@ -960,6 +1452,27 @@ fn run_node() -> eyre::Result<()> {
                     if let Some(done) = shutdown.shutdown() {
                         let _ = done.await;
                     }
+                }
+                () = upgrade_promotion.notified() => {
+                    info!("finalized enclave upgrade requested execution restart");
+                    if let Some(done) = shutdown.shutdown() {
+                        let _ = done.await;
+                    }
+                }
+            }
+        }
+
+        shutdown_token.cancel();
+        if let Some(handle) = renewal_handle {
+            handle.await.wrap_err("automatic DCAP renewal worker panicked")?;
+        }
+        if let Some(handle) = upgrade_handle {
+            handle.abort();
+            match handle.await {
+                Ok(()) => {}
+                Err(error) if error.is_cancelled() => {}
+                Err(error) => {
+                    return Err(eyre::eyre!("enclave-upgrade watcher panicked: {error}"));
                 }
             }
         }

@@ -411,6 +411,7 @@ fn boundary_block_writes_both_outgoing_and_incoming_snapshots_atomically() {
             active_set_hash: b256!(
                 "00000000000000000000000000000000000000000000000000000000000000A1"
             ),
+            tee_expired_target_exclusions: Vec::new(),
         };
 
         let (out_key, in_key) =
@@ -506,6 +507,7 @@ fn outgoing_epoch_snapshot_remains_available_after_reshare_activation() {
             incoming: incoming_snapshot.clone(),
             new_active_set: vec![val_b, val_c],
             active_set_hash: B256::with_last_byte(0xC1),
+            tee_expired_target_exclusions: Vec::new(),
         };
         let (out_key, _) =
             activate_boundary_atomic(storage.clone(), &inputs).expect("first activation");
@@ -527,6 +529,7 @@ fn outgoing_epoch_snapshot_remains_available_after_reshare_activation() {
             incoming: next_incoming,
             new_active_set: vec![val_c],
             active_set_hash: B256::with_last_byte(0xC2),
+            tee_expired_target_exclusions: Vec::new(),
         };
         activate_boundary_atomic(storage.clone(), &next).expect("second activation");
 
@@ -745,6 +748,7 @@ fn boundary_activation_rolls_back_snapshots_on_failure() {
             incoming: incoming_snapshot.clone(),
             new_active_set: vec![unknown_addr],
             active_set_hash: B256::with_last_byte(0xF1),
+            tee_expired_target_exclusions: Vec::new(),
         };
 
         let err = activate_boundary_atomic(storage.clone(), &inputs)

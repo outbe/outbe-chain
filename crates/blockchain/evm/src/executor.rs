@@ -226,6 +226,17 @@ pub(crate) fn apply_boundary_outcome(
 ) -> outbe_primitives::error::Result<()> {
     let reshare = &boundary.reshare;
 
+    let expected_tee_expiry_hash =
+        outbe_primitives::reshare_artifact::tee_expired_target_exclusions_hash(
+            &boundary.tee_expired_target_exclusions,
+        )?;
+    if boundary.tee_expired_target_exclusions_hash != expected_tee_expiry_hash {
+        return Err(PrecompileError::Fatal(format!(
+            "boundary TEE expiry exclusions commitment mismatch: expected {expected_tee_expiry_hash}, got {}",
+            boundary.tee_expired_target_exclusions_hash
+        )));
+    }
+
     let expected_active_set_hash = hash_boundary_active_set(&reshare.new_active_set);
     if reshare.active_set_hash != expected_active_set_hash {
         return Err(PrecompileError::Fatal(format!(
@@ -268,6 +279,7 @@ pub(crate) fn apply_boundary_outcome(
         incoming: incoming_snapshot,
         new_active_set: reshare.new_active_set.clone(),
         active_set_hash: reshare.active_set_hash,
+        tee_expired_target_exclusions: boundary.tee_expired_target_exclusions.clone(),
     };
     outbe_validatorset::hooks::activate_boundary_atomic(storage, &inputs)?;
     Ok(())
@@ -11052,6 +11064,8 @@ mod tests {
             is_full_dkg: false,
             tee_recipient_pubkeys: Vec::new(),
             tee_reshare_registrations: Vec::new(),
+            tee_expired_target_exclusions: Vec::new(),
+            tee_expired_target_exclusions_hash: B256::ZERO,
             endorsement_signature: alloy_primitives::Bytes::new(),
             reshare: outbe_primitives::consensus::ReshareResult {
                 new_active_set,
@@ -11127,6 +11141,71 @@ mod tests {
             let active = vs_after.get_active_consensus_set().unwrap();
             let addrs: Vec<Address> = active.iter().map(|v| v.validator_address).collect();
             assert!(addrs.contains(&val_c), "C must now be in active set");
+        });
+    }
+
+    #[test]
+    fn apply_boundary_outcome_replays_narrow_certified_tee_expiry_demotion() {
+        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+        StorageHandle::enter(&mut storage, |storage| {
+            let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+            vs.config_owner.write(OWNER).unwrap();
+            vs.config_max_validators.write(128).unwrap();
+            vs.config_is_initialized.write(true).unwrap();
+
+            let retained = address!("0x1111111111111111111111111111111111111111");
+            let expired = address!("0x2222222222222222222222222222222222222222");
+            vs.register_validator(OWNER, retained, &dummy_pubkey(0xA1))
+                .unwrap();
+            vs.register_validator(OWNER, expired, &dummy_pubkey(0xB2))
+                .unwrap();
+            let current_hash = super::hash_boundary_active_set(&[retained, expired]);
+            vs.activate_reshared_set(&[retained, expired], current_hash)
+                .unwrap();
+
+            let mut boundary = boundary_with(true, vec![(retained, dummy_pubkey(0xA1))]);
+            boundary.tee_expired_target_exclusions = vec![expired];
+            boundary.tee_expired_target_exclusions_hash =
+                outbe_primitives::reshare_artifact::tee_expired_target_exclusions_hash(
+                    &boundary.tee_expired_target_exclusions,
+                )
+                .unwrap();
+            super::apply_boundary_outcome(storage.clone(), &boundary).unwrap();
+
+            let vs_after = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+            assert_eq!(
+                vs_after.val_status.read(&expired).unwrap(),
+                outbe_validatorset::runtime::status::PENDING
+            );
+            assert!(!vs_after.val_has_bls_share.read(&expired).unwrap());
+            assert!(!vs_after.val_join_confirmed.read(&expired).unwrap());
+            assert_eq!(
+                vs_after.val_status.read(&retained).unwrap(),
+                outbe_validatorset::runtime::status::ACTIVE
+            );
+        });
+    }
+
+    #[test]
+    fn apply_boundary_outcome_rejects_tampered_tee_expiry_commitment() {
+        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+        StorageHandle::enter(&mut storage, |storage| {
+            let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+            vs.config_owner.write(OWNER).unwrap();
+            vs.config_max_validators.write(128).unwrap();
+            vs.config_is_initialized.write(true).unwrap();
+            let retained = address!("0x1111111111111111111111111111111111111111");
+            vs.register_validator(OWNER, retained, &dummy_pubkey(0xA1))
+                .unwrap();
+            let hash = super::hash_boundary_active_set(&[retained]);
+            vs.activate_reshared_set(&[retained], hash).unwrap();
+
+            let mut boundary = boundary_with(false, vec![(retained, dummy_pubkey(0xA1))]);
+            boundary.tee_expired_target_exclusions_hash = B256::with_last_byte(0xFF);
+            let error = super::apply_boundary_outcome(storage.clone(), &boundary).unwrap_err();
+            assert!(error
+                .to_string()
+                .contains("TEE expiry exclusions commitment mismatch"));
         });
     }
 

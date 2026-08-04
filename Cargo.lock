@@ -7249,6 +7249,7 @@ dependencies = [
  "outbe-metadosis",
  "outbe-node",
  "outbe-ocomp-protocol",
+ "outbe-operator",
  "outbe-primitives",
  "outbe-rpc",
  "outbe-tee",
@@ -7259,6 +7260,7 @@ dependencies = [
  "reth-ethereum",
  "reth-node-builder",
  "reth-node-core",
+ "reth-provider",
  "reth-rpc-server-types",
  "serde",
  "serde_json",
@@ -7282,6 +7284,7 @@ dependencies = [
  "hex",
  "k256 0.13.4",
  "outbe-common",
+ "outbe-operator",
  "outbe-primitives",
  "outbe-rpc",
  "outbe-tee",
@@ -7514,6 +7517,7 @@ dependencies = [
  "outbe-ocomp-protocol",
  "outbe-offchain-data",
  "outbe-offchain-storage",
+ "outbe-operator",
  "outbe-oracle",
  "outbe-primitives",
  "outbe-protocol",
@@ -8168,6 +8172,27 @@ dependencies = [
  "mongodb",
  "parking_lot",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "outbe-operator"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "eyre",
+ "hex",
+ "k256 0.13.4",
+ "libc",
+ "outbe-primitives",
+ "outbe-tee",
+ "reqwest 0.12.28",
+ "rustix",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "zeroize",
 ]
 
 [[package]]

@@ -6,8 +6,10 @@ use outbe_node::ocomp::finality::{PublicAccountProofV1, PublicStorageProofV1};
 use outbe_node::tee_remote_session::{
     admit_anchored_remote_session_v1, admit_local_finalized_remote_session_v1,
     authorize_local_finalized_remote_session_v1,
-    construct_local_finalized_replacement_authorization_v1, ExternalRegistryAdmissionError,
-    LocalRegistryAdmissionError, TrustedFinalizedRegistryCheckpointV1,
+    construct_local_finalized_replacement_authorization_v1,
+    construct_local_finalized_replacement_authorization_with_view_v1,
+    ExternalRegistryAdmissionError, LocalRegistryAdmissionError,
+    TrustedFinalizedRegistryCheckpointV1,
 };
 use outbe_primitives::{
     header::{OutbeHeader, OutbePrimitives},
@@ -491,6 +493,7 @@ fn current_finalized_registry_constructs_exact_replacement_authorization() {
                 bytes: vec![kind],
             })
             .collect(),
+        transition_key_ready_proof: None,
     });
     persist_replacement_candidate_submission(
         &node_data_dir,
@@ -560,6 +563,18 @@ fn current_finalized_registry_constructs_exact_replacement_authorization() {
     provider.add_header(block_hash, header);
     let finalized = FinalizedMockProvider::new(provider, BlockNumHash::new(90, block_hash));
 
+    let authorized = construct_local_finalized_replacement_authorization_with_view_v1(
+        &finalized,
+        chain_id,
+        genesis_hash,
+        &node_data_dir,
+        &node_id,
+        EnclaveProfile::Validator,
+    )
+    .unwrap();
+    assert_eq!(authorized.view.block_number, 90);
+    assert_eq!(authorized.view.block_hash, block_hash);
+    assert_eq!(authorized.successor_activation_height, None);
     let authorization = construct_local_finalized_replacement_authorization_v1(
         &finalized,
         chain_id,
@@ -569,6 +584,7 @@ fn current_finalized_registry_constructs_exact_replacement_authorization() {
         EnclaveProfile::Validator,
     )
     .unwrap();
+    assert_eq!(authorization, authorized.authorization);
     assert_eq!(
         promote_replacement_candidate(&node_data_dir, &authorization).unwrap(),
         candidate
