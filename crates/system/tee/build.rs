@@ -27,10 +27,15 @@ fn main() {
     let expected_target = project_pin["target"]
         .as_str()
         .expect("project toolchain must pin target");
-    assert_eq!(
-        target, expected_target,
-        "native-dcap target must match the project toolchain pin"
-    );
+    // native-QVL links a Linux SGX .so; on any other host
+    // there is nothing to link, so skip. The real enclave build runs on the
+    // pinned target and takes the full verification path below.
+    if target != expected_target {
+        println!(
+            "cargo:warning=outbe-tee: skipping native-dcap QVL link (host {target} != pinned {expected_target})"
+        );
+        return;
+    }
 
     let mut required_packages = BTreeSet::new();
     let dcap = qvl_manifest["intel_dcap"]

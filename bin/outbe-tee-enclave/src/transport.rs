@@ -578,7 +578,7 @@ fn serve_connection_with_resident_chain<S: EnclaveTransportStream>(
                         Ok(DcapVerificationProgressV1::Complete(request)) => {
                             match initialization.manifest() {
                                 Ok(manifest) => complete_verification_response(
-                                    request,
+                                    *request,
                                     keys,
                                     offer_key.get(),
                                     manifest.as_ref(),
@@ -664,6 +664,9 @@ pub fn dispatch(
     )
 }
 
+type DcapQuoteArtifactsV1 = (Vec<u8>, Vec<u8>, Vec<u8>);
+
+#[allow(clippy::too_many_arguments)]
 fn dispatch_with_initialization(
     req: EnclaveRequest,
     keys: &EnclaveKeys,
@@ -736,7 +739,7 @@ fn dispatch_with_initialization(
                         .to_string(),
                 };
             };
-            let result = (|| -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), String> {
+            let result = (|| -> Result<DcapQuoteArtifactsV1, String> {
                 let report_data = initialization.quote_report_data(&intent)?;
                 let decoded_intent = RegistrationIntentV1::decode_canonical(&intent)
                     .map_err(|error| format!("registration intent is not canonical: {error}"))?;
