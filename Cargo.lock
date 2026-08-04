@@ -7340,18 +7340,6 @@ dependencies = [
 name = "outbe-e2e"
 version = "0.1.0"
 dependencies = [
- "alloy-primitives",
- "alloy-sol-types",
- "outbe-compressed-entities",
- "outbe-evm",
- "outbe-governance",
- "outbe-offchain-data",
- "outbe-offchain-storage",
- "outbe-oracle",
- "outbe-primitives",
- "outbe-update",
- "outbe-validatorset",
- "outbe-vote",
  "serde_json",
 ]
 
