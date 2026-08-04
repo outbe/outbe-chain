@@ -26,6 +26,9 @@ pub enum GemFactoryError {
     #[error("position not found")]
     PositionNotFound,
 
+    #[error("only position owner can mint merchant gem")]
+    NotPositionOwner,
+
     #[error("position already exists")]
     PositionAlreadyExists,
 

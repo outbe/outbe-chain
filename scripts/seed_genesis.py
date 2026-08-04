@@ -646,15 +646,15 @@ GEM_STATE_SETTLED = 2
 GEM_TYPE_WALLET = 3
 
 
-def gem_id_gen(owner: str, gem_load: int, index: int) -> bytes:
-    """Genesis gem id = keccak256("gem" ++ owner_20B ++ gem_load_be32 ++ index_be8).
+def gem_id_gen(owner: str, promis_load: int, index: int) -> bytes:
+    """Genesis gem id = keccak256("gem" ++ owner_20B ++ promis_load_be32 ++ index_be8).
 
     Mirrors the shape of `GemContract::generate_gem_id` (which uses the issuing
     block number); `index` disambiguates multiple genesis gems for one owner.
     The demo scripts never need to predict this — they discover the id via
     `IGem.tokenOfOwnerByIndex(owner, 0)`.
     """
-    buf = b"gem" + address_bytes(owner) + to_be32(gem_load) + u64_bytes(index)
+    buf = b"gem" + address_bytes(owner) + to_be32(promis_load) + u64_bytes(index)
     return keccak256(buf)
 
 
@@ -690,19 +690,19 @@ def seed_gems(storage: StorageBuilder, gems: list):
     owner_counts: dict[str, int] = {}
     for i, gem in enumerate(gems):
         owner = gem["owner"]
-        gem_load = parse_int(gem["gem_load"])
+        promis_load = parse_int(gem["promis_load"])
         state = parse_int(gem.get("state", GEM_STATE_SETTLED))
         if state != GEM_STATE_SETTLED:
             raise ValueError(
                 f"seed_gems only supports Settled gems (state={GEM_STATE_SETTLED}); "
                 f"got state={state}"
             )
-        gem_id = gem_id_gen(owner, gem_load, i)
+        gem_id = gem_id_gen(owner, promis_load, i)
 
         # gem_items record (slots 1-13, keyed by gem_id).
         storage.set_mapping(1, gem_id, address_as_u256(owner))
         storage.set_mapping(2, gem_id, parse_int(gem.get("gem_type", GEM_TYPE_WALLET)))
-        storage.set_mapping(3, gem_id, gem_load)
+        storage.set_mapping(3, gem_id, promis_load)
         storage.set_mapping(4, gem_id, parse_int(gem.get("entry_price", "0")))
         storage.set_mapping(5, gem_id, parse_int(gem.get("cost_amount", "0")))
         storage.set_mapping(6, gem_id, parse_int(gem.get("floor_price", "0")))

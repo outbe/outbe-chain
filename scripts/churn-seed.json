@@ -6,7 +6,7 @@
   "gems": [
     {
       "owner": "0x64CCA861d30714593cB690e0a550C8a9b8b3b058",
-      "gem_load": "1000000000000000000000",
+      "promis_load": "1000000000000000000000",
       "issuance_currency": 840,
       "reference_currency": 840
     }

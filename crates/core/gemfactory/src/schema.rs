@@ -28,7 +28,7 @@ pub struct GemPosition {
     #[attribute(order = 1)]
     pub source_intex_id: u32,
 
-    /// Remaining Promis capacity; drains by `gem_load` on each issue.
+    /// Remaining Promis capacity; drains by `promis_load` on each issue.
     #[attribute(order = 2)]
     pub remaining_capacity: U256,
 

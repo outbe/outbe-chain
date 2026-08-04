@@ -10,5 +10,5 @@ sol! {
     /// Emitted when a Called gem is forfeit-burned after its notice period
     /// lapsed. Same signature as the gemfactory mining burn.
     #[derive(Debug, PartialEq)]
-    event GemBurned(uint256 indexed gemId, address owner, uint256 gemLoad);
+    event GemBurned(uint256 indexed gemId, address owner, uint256 promisLoad);
 }

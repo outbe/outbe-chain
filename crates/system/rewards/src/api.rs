@@ -242,7 +242,7 @@ mod tests {
 
     /// Collects all gem loads owned by `voter` from the gem entity store.
     /// Returns empty Vec if voter holds no gems.
-    fn voter_gem_loads(ctx: &BlockRuntimeContext, voter: Address) -> Vec<U256> {
+    fn voter_promis_loads(ctx: &BlockRuntimeContext, voter: Address) -> Vec<U256> {
         let gem = outbe_gem::GemContract::new(ctx.storage.clone());
         let count = gem.balance_of(voter).unwrap();
         (0..count)
@@ -251,7 +251,7 @@ mod tests {
                 outbe_gem::api::get_gem(&ctx.storage, gem_id)
                     .unwrap()
                     .unwrap()
-                    .gem_load
+                    .promis_load_minor
             })
             .collect()
     }
@@ -367,8 +367,8 @@ mod tests {
                 add_topup_for_voters(&ctx, 20240101, U256::from(400u64), &voters).unwrap();
             assert_eq!(distributed, U256::from(400u64));
 
-            assert_eq!(voter_gem_loads(&ctx, VAL_X), vec![U256::from(100u64)]);
-            assert_eq!(voter_gem_loads(&ctx, VAL_Y), vec![U256::from(300u64)]);
+            assert_eq!(voter_promis_loads(&ctx, VAL_X), vec![U256::from(100u64)]);
+            assert_eq!(voter_promis_loads(&ctx, VAL_Y), vec![U256::from(300u64)]);
 
             let rewards = ctx.storage.contract::<Rewards>();
             assert!(rewards.daily_topup_settled.read(&20240101).unwrap());

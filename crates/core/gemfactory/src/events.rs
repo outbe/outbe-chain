@@ -6,7 +6,7 @@ sol! {
         uint256 indexed gemId,
         uint8 gemType,
         address owner,
-        uint256 gemLoad,
+        uint256 promisLoad,
         uint256 entryPrice,
         uint256 costAmount,
         uint256 floorPrice,
@@ -25,6 +25,6 @@ sol! {
     event GemBurned(
         uint256 indexed gemId,
         address owner,
-        uint256 gemLoad
+        uint256 promisLoad
     );
 }

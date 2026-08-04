@@ -68,7 +68,7 @@ fn to_abi_data(item: &GemData) -> IGem::GemData {
         owner: item.owner,
         gemType: item.gem_type,
         state: item.state,
-        gemLoad: item.promis_load_minor,
+        promisLoad: item.promis_load_minor,
         entryPrice: item.entry_price_minor,
         costAmount: item.cost_amount_minor,
         floorPrice: item.floor_price_minor,

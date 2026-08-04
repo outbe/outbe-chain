@@ -23,7 +23,7 @@ pub fn mint_gem(
     storage: &StorageHandle<'_>,
     owner: Address,
     gem_type: GemTypes,
-    gem_load: U256,
+    promis_load: U256,
     issuance_currency: u16,
     reference_currency: u16,
 ) -> Result<U256> {
@@ -40,14 +40,14 @@ pub fn mint_gem(
     // COEN/<reference> rate the qualify/call scans compare against).
     let coen_rate = read_oracle_rate(storage, reference_currency)?;
     let issued_at = storage.timestamp()?.to::<u64>();
-    let (cost_amount, floor_price, initial_state) = compute_params(gem_type, gem_load, coen_rate)?;
+    let (cost_amount, floor_price, initial_state) = compute_params(gem_type, promis_load, coen_rate)?;
     let entry_price = coen_rate;
     let call_threshold = call_threshold_with_markup(entry_price)?;
 
     let params = GemAddParams {
         owner,
         gem_type: gem_type as u8,
-        promis_load_minor: gem_load,
+        promis_load_minor: promis_load,
         entry_price_minor: entry_price,
         cost_amount_minor: cost_amount,
         floor_price_minor: floor_price,
@@ -72,7 +72,7 @@ pub fn mint_gem(
             gemId: gem_id,
             gemType: gem_type as u8,
             owner,
-            gemLoad: gem_load,
+            promisLoad: promis_load,
             entryPrice: entry_price,
             costAmount: cost_amount,
             floorPrice: floor_price,
@@ -89,11 +89,11 @@ pub fn mint_gem(
 /// resulting Promis capacity. Returns the minted `position_id`.
 pub fn mint_gem_position(
     storage: &StorageHandle<'_>,
-    merchant: Address,
+    caller: Address,
     source_intex_id: u32,
     amount: U256,
 ) -> Result<U256> {
-    if merchant.is_zero() {
+    if caller.is_zero() {
         return Err(GemFactoryError::InvalidOwner.into());
     }
 
@@ -110,7 +110,7 @@ pub fn mint_gem_position(
 
     // Burn `amount` of the merchant's Intex units; `parkForGems` returns the
     // burned count (and reverts on a non-parkable state or a zero amount).
-    let units = burn_parked_intex(storage, merchant, source_intex_id, amount)?;
+    let units = burn_parked_intex(storage, caller, source_intex_id, amount)?;
     let capacity = series
         .promis_load_minor
         .checked_mul(units)
@@ -123,7 +123,7 @@ pub fn mint_gem_position(
     let mut factory = GemFactoryContract::new(storage.clone());
     factory.add_position(&GemPosition {
         position_id,
-        merchant,
+        merchant: caller,
         source_intex_id,
         remaining_capacity: capacity,
         source_entry_price: series.entry_price_minor,
@@ -169,9 +169,10 @@ fn burn_parked_intex(
 /// Issue one Merchant gem to a customer, draining the position's capacity.
 pub fn mint_merchant_gem(
     storage: &StorageHandle<'_>,
+    caller: Address,
     position_id: U256,
     owner: Address,
-    gem_load: U256,
+    promis_load: U256,
 ) -> Result<U256> {
     if owner.is_zero() {
         return Err(GemFactoryError::InvalidOwner.into());
@@ -182,6 +183,9 @@ pub fn mint_merchant_gem(
         .positions
         .get(position_id)?
         .ok_or(GemFactoryError::PositionNotFound)?;
+    if record.merchant != caller {
+        return Err(GemFactoryError::NotPositionOwner.into());
+    }
 
     let now = storage.timestamp()?.to::<u64>();
     if now >= record.parked_at + POSITION_VALIDITY_SECONDS {
@@ -189,13 +193,13 @@ pub fn mint_merchant_gem(
     }
     let remaining = record
         .remaining_capacity
-        .checked_sub(gem_load)
+        .checked_sub(promis_load)
         .ok_or(GemFactoryError::InsufficientCapacity)?;
 
 
     let coen_rate = read_oracle_rate(storage, record.reference_currency)?;
     let entry_price = coen_rate.max(record.source_entry_price);
-    let cost_amount = compute_cost(entry_price, gem_load, 100)?;
+    let cost_amount = compute_cost(entry_price, promis_load, 100)?;
     let floor_price = floor_with_markup(entry_price)?.max(record.source_floor_price);
     let call_threshold = call_threshold_with_markup(entry_price)?;
 
@@ -204,7 +208,7 @@ pub fn mint_merchant_gem(
         GemAddParams {
             owner,
             gem_type: GemTypes::Merchant as u8,
-            promis_load_minor: gem_load,
+            promis_load_minor: promis_load,
             entry_price_minor: entry_price,
             cost_amount_minor: cost_amount,
             floor_price_minor: floor_price,
@@ -231,7 +235,7 @@ pub fn mint_merchant_gem(
             gemId: gem_id,
             gemType: GemTypes::Merchant as u8,
             owner,
-            gemLoad: gem_load,
+            promisLoad: promis_load,
             entryPrice: entry_price,
             costAmount: cost_amount,
             floorPrice: floor_price,
@@ -383,7 +387,7 @@ pub fn mine_gem_promis(
         GemBurned {
             gemId: gem_id,
             owner: caller,
-            gemLoad: item.promis_load_minor,
+            promisLoad: item.promis_load_minor,
         },
     )?;
 
@@ -412,7 +416,7 @@ fn read_oracle_rate(storage: &StorageHandle<'_>, issuance_currency: u16) -> Resu
 
 fn compute_params(
     gem_type: GemTypes,
-    gem_load: U256,
+    promis_load: U256,
     coen_rate: U256,
 ) -> Result<(U256, U256, GemState)> {
     let (cost_amount, floor_price, initial_state) = match gem_type {
@@ -421,19 +425,19 @@ fn compute_params(
         // class: cost = entry × load, floor = rate × 1.08. settleGem moves
         // `cost_amount` into the Reserve vault just like Wallet/Cca/Sra.
         GemTypes::Genesis => {
-            let cost = compute_cost(coen_rate, gem_load, 100)?;
+            let cost = compute_cost(coen_rate, promis_load, 100)?;
             let floor = floor_with_markup(coen_rate)?;
             (cost, floor, GemState::Qualified)
         }
         GemTypes::Sra => {
-            let cost = compute_cost(coen_rate, gem_load, SRA_COEFFICIENT_PERCENT)?;
+            let cost = compute_cost(coen_rate, promis_load, SRA_COEFFICIENT_PERCENT)?;
             let floor = floor_with_markup(coen_rate)?;
             (cost, floor, GemState::Issued)
         }
         // Validator (post-genesis), Wallet, Cca — standard agent-class flow:
         // cost = entry × load, floor = rate × 1.08, born Issued.
         GemTypes::Validator | GemTypes::Wallet | GemTypes::Cca => {
-            let cost = compute_cost(coen_rate, gem_load, 100)?;
+            let cost = compute_cost(coen_rate, promis_load, 100)?;
             let floor = floor_with_markup(coen_rate)?;
             (cost, floor, GemState::Issued)
         }

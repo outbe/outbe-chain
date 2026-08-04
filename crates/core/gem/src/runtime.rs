@@ -90,7 +90,7 @@ impl GemContract<'_> {
         self.emit(GemBurned {
             gemId: gem_id,
             owner: item.owner,
-            gemLoad: item.promis_load_minor,
+            promisLoad: item.promis_load_minor,
         })?;
         Ok(true)
     }

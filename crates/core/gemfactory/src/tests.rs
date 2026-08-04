@@ -502,7 +502,7 @@ fn mint_merchant_gem_mints_issued_and_drains_capacity() {
         let capacity = parked_capacity(e18_u128());
 
         let load = U256::from(10u64) * one_e18();
-        let gem_id = runtime::mint_merchant_gem(storage, id, BOB, load).unwrap();
+        let gem_id = runtime::mint_merchant_gem(storage, ALICE, id, BOB, load).unwrap();
 
         let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
         assert_eq!(item.owner, BOB);
@@ -529,10 +529,21 @@ fn mint_merchant_gem_anchors_entry_and_floor_to_source() {
         let source_floor = U256::from(5u64) * one_e18();
         let id = seed_and_park(storage, source_entry, source_floor, e18_u128());
 
-        let gem_id = runtime::mint_merchant_gem(storage, id, BOB, one_e18()).unwrap();
+        let gem_id = runtime::mint_merchant_gem(storage, ALICE, id, BOB, one_e18()).unwrap();
         let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
         assert_eq!(item.entry_price_minor, source_entry);
         assert_eq!(item.floor_price_minor, source_floor);
+    });
+}
+
+#[test]
+fn mint_merchant_gem_rejects_non_merchant() {
+    let rate = U256::from(2u64) * one_e18();
+    with_storage(Some(rate), |storage| {
+        let id = seed_and_park(storage, one_e18(), one_e18(), e18_u128());
+        // BOB is not the position's merchant (ALICE) — must reject.
+        let r = runtime::mint_merchant_gem(storage, BOB, id, BOB, one_e18());
+        assert!(err_msg(r).contains("position owner"));
     });
 }
 
@@ -542,7 +553,7 @@ fn mint_merchant_gem_over_capacity_rejects() {
     with_storage(Some(rate), |storage| {
         let id = seed_and_park(storage, one_e18(), one_e18(), e18_u128());
         let over = parked_capacity(e18_u128()) + U256::from(1u64);
-        let r = runtime::mint_merchant_gem(storage, id, BOB, over);
+        let r = runtime::mint_merchant_gem(storage, ALICE, id, BOB, over);
         assert!(err_msg(r).contains("capacity"));
     });
 }
@@ -568,7 +579,7 @@ fn mint_merchant_gem_after_expiry_rejects() {
             })
             .unwrap();
 
-        let r = runtime::mint_merchant_gem(storage, position_id, BOB, one_e18());
+        let r = runtime::mint_merchant_gem(storage, ALICE, position_id, BOB, one_e18());
         assert!(err_msg(r).contains("expired"));
     });
 }
