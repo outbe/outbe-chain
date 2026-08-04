@@ -1490,7 +1490,7 @@ fn mutate_one_storage_value(mut post_state: HashedPostState) -> HashedPostState 
 
 fn apply_bundle(
     target: &mut HashMapStorageProvider,
-    state: &revm::primitives::AddressMap<revm::database::smartAccount>,
+    state: &revm::primitives::AddressMap<revm::database::BundleAccount>,
 ) {
     for (address, account) in state {
         for (slot, value) in &account.storage {

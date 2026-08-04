@@ -1516,8 +1516,10 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let explicit_secret = root.path().join("operator-p2p.key");
         let unused_default = root.path().join("default-discovery-secret");
-        let mut network = reth_node_core::args::NetworkArgs::default();
-        network.p2p_secret_key = Some(explicit_secret.clone());
+        let network = reth_node_core::args::NetworkArgs {
+            p2p_secret_key: Some(explicit_secret.clone()),
+            ..Default::default()
+        };
 
         let (first_signer, first_public) =
             super::load_reth_p2p_node_host_signer(&network, unused_default.clone()).unwrap();

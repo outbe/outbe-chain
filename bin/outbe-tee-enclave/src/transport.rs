@@ -3232,7 +3232,7 @@ mod tests {
         std::fs::create_dir(&node_data_dir).unwrap();
 
         let mut initialized =
-            connect_or_initialize_validator_enclave(&endpoint, &node_data_dir, identity, &sign)
+            connect_or_initialize_validator_enclave(&endpoint, &node_data_dir, identity, sign)
                 .unwrap();
         assert!(matches!(
             initialized.request(&EnclaveRequest::GetPublicKeys).unwrap(),
@@ -3241,7 +3241,7 @@ mod tests {
         drop(initialized);
 
         let mut reconnected =
-            connect_or_initialize_validator_enclave(&endpoint, &node_data_dir, identity, &sign)
+            connect_or_initialize_validator_enclave(&endpoint, &node_data_dir, identity, sign)
                 .unwrap();
         assert!(matches!(
             reconnected.request(&EnclaveRequest::GetPublicKeys).unwrap(),
@@ -3357,14 +3357,14 @@ mod tests {
         std::fs::create_dir(&node_data_dir).unwrap();
 
         drop(
-            connect_or_initialize_validator_enclave(&endpoint_a, &node_data_dir, identity, &sign)
+            connect_or_initialize_validator_enclave(&endpoint_a, &node_data_dir, identity, sign)
                 .unwrap(),
         );
         let candidate = prepare_validator_enclave_replacement_candidate(
             &endpoint_b,
             &node_data_dir,
             identity,
-            &sign,
+            sign,
         )
         .unwrap();
         let active_bytes = std::fs::read(
@@ -3392,7 +3392,7 @@ mod tests {
             &endpoint_b,
             &node_data_dir,
             identity,
-            &sign,
+            sign,
         )
         .unwrap();
         assert_eq!(resumed.manifest(), &candidate_manifest);
@@ -3470,7 +3470,7 @@ mod tests {
         .contains("conflicts with the durable replacement submission"));
 
         let mut active_client =
-            connect_or_initialize_validator_enclave(&endpoint_a, &node_data_dir, identity, &sign)
+            connect_or_initialize_validator_enclave(&endpoint_a, &node_data_dir, identity, sign)
                 .unwrap();
         assert!(matches!(
             active_client
@@ -3562,7 +3562,7 @@ mod tests {
                 &active_endpoint,
                 &node_data_dir,
                 identity,
-                &sign,
+                sign,
             )
             .unwrap(),
         );
@@ -3588,7 +3588,7 @@ mod tests {
             &candidate_endpoint,
             &node_data_dir,
             identity,
-            &sign,
+            sign,
         )
         .is_err());
         first_server.join().unwrap();
@@ -3636,7 +3636,7 @@ mod tests {
             &candidate_endpoint,
             &node_data_dir,
             identity,
-            &sign,
+            sign,
         );
         match retry {
             Ok(candidate) => drop(candidate),
@@ -3746,7 +3746,7 @@ mod tests {
         std::fs::create_dir(&node_data_dir).unwrap();
 
         let mut initialized =
-            connect_or_initialize_full_node_enclave(&endpoint, &node_data_dir, identity, &sign)
+            connect_or_initialize_full_node_enclave(&endpoint, &node_data_dir, identity, sign)
                 .unwrap();
         assert!(matches!(
             initialized.request(&EnclaveRequest::GetPublicKeys).unwrap(),
@@ -3755,7 +3755,7 @@ mod tests {
         drop(initialized);
 
         let mut reconnected =
-            connect_or_initialize_full_node_enclave(&endpoint, &node_data_dir, identity, &sign)
+            connect_or_initialize_full_node_enclave(&endpoint, &node_data_dir, identity, sign)
                 .unwrap();
         assert!(matches!(
             reconnected.request(&EnclaveRequest::GetPublicKeys).unwrap(),
@@ -3766,7 +3766,7 @@ mod tests {
             &candidate_endpoint,
             &node_data_dir,
             identity,
-            &sign,
+            sign,
         )
         .unwrap();
         assert_eq!(
