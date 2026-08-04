@@ -19,6 +19,7 @@ pub const ATTESTATION_EVIDENCE_DOMAIN_V1: &[u8] = b"outbe/tee/attestation-eviden
 pub const ENCLAVE_ID_DOMAIN_V1: &[u8] = b"outbe/tee/enclave-id/v1";
 pub const INITIALIZATION_MANIFEST_DOMAIN_V1: &[u8] = b"outbe/tee/initialization-manifest/v1";
 pub const NODE_HOST_AUTHORIZATION_DOMAIN_V1: &[u8] = b"outbe/tee/node-host-authorization/v1";
+pub const TRANSITION_KEY_READY_PROOF_DOMAIN_V1: &[u8] = b"outbe/tee/transition-key-ready-proof/v1";
 /// Maximum canonical size of one stable NodeHost authorization witness.
 pub const MAX_NODE_HOST_AUTHORIZATION_WITNESS_BYTES: usize = 172;
 pub const REPORT_POLICY_DOMAIN_V1: &[u8] = b"outbe/tee/report-policy/v1";
@@ -701,11 +702,134 @@ pub struct DcapCollateralComponentV1 {
     pub bytes: Vec<u8>,
 }
 
+/// Candidate-enclave proof that a measurement successor already holds the
+/// chain's permanent offer key before Registry binding mutation.
+///
+/// The candidate computes its own initialized-manifest hash and signs the
+/// exact transition context with the quote-bound Ed25519 key. Registry can
+/// independently verify every field except the local manifest journal link;
+/// NodeHost additionally compares `candidate_manifest_hash` with its durable
+/// candidate before persisting or promoting the submission.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TransitionKeyReadyProofV1 {
+    pub chain_id: [u8; 32],
+    pub genesis_hash: B256,
+    pub transition_intent_hash: B256,
+    pub candidate_manifest_hash: B256,
+    pub transition_nonce: u64,
+    pub resident_offer_public: [u8; 32],
+    pub candidate_attestation_signature: [u8; 64],
+}
+
+impl TransitionKeyReadyProofV1 {
+    pub const CANONICAL_LEN: usize = 1 + 32 + 32 + 32 + 32 + 8 + 32 + 64;
+
+    pub fn encode_canonical(&self) -> Result<Vec<u8>, CodecError> {
+        self.validate_shape()?;
+        let mut out = Vec::with_capacity(Self::CANONICAL_LEN);
+        out.push(PROTOCOL_VERSION_V1);
+        out.extend_from_slice(&self.chain_id);
+        out.extend_from_slice(self.genesis_hash.as_slice());
+        out.extend_from_slice(self.transition_intent_hash.as_slice());
+        out.extend_from_slice(self.candidate_manifest_hash.as_slice());
+        put_u64(&mut out, self.transition_nonce);
+        out.extend_from_slice(&self.resident_offer_public);
+        out.extend_from_slice(&self.candidate_attestation_signature);
+        Ok(out)
+    }
+
+    pub fn decode_canonical(input: &[u8]) -> Result<Self, CodecError> {
+        if input.len() != Self::CANONICAL_LEN {
+            return Err(CodecError::NonCanonical(
+                "transition key-ready proof length",
+            ));
+        }
+        let mut decoder = Decoder::new(input);
+        decoder.version("TransitionKeyReadyProofV1")?;
+        let value = Self {
+            chain_id: decoder.array()?,
+            genesis_hash: B256::from(decoder.array::<32>()?),
+            transition_intent_hash: B256::from(decoder.array::<32>()?),
+            candidate_manifest_hash: B256::from(decoder.array::<32>()?),
+            transition_nonce: decoder.u64()?,
+            resident_offer_public: decoder.array()?,
+            candidate_attestation_signature: decoder.array()?,
+        };
+        decoder.finish()?;
+        value.validate_shape()?;
+        Ok(value)
+    }
+
+    /// Hash signed by the initialized candidate enclave. The signature itself
+    /// is deliberately excluded from the preimage.
+    pub fn signing_hash(&self) -> Result<B256, CodecError> {
+        self.validate_shape()?;
+        let mut canonical = Vec::with_capacity(Self::CANONICAL_LEN - 64);
+        canonical.push(PROTOCOL_VERSION_V1);
+        canonical.extend_from_slice(&self.chain_id);
+        canonical.extend_from_slice(self.genesis_hash.as_slice());
+        canonical.extend_from_slice(self.transition_intent_hash.as_slice());
+        canonical.extend_from_slice(self.candidate_manifest_hash.as_slice());
+        put_u64(&mut canonical, self.transition_nonce);
+        canonical.extend_from_slice(&self.resident_offer_public);
+        Ok(domain_hash(
+            TRANSITION_KEY_READY_PROOF_DOMAIN_V1,
+            &canonical,
+        ))
+    }
+
+    /// Verify the proof against the exact transition intent and Registry offer
+    /// public key. No host-supplied candidate or chain value is trusted.
+    pub fn verify_for_transition(
+        &self,
+        intent: &RegistrationIntentV1,
+        expected_offer_public: [u8; 32],
+    ) -> Result<(), CodecError> {
+        self.validate_shape()?;
+        if intent.operation != AttestationOperationV1::TransitionEnclaveMeasurement
+            || self.chain_id != intent.chain_id
+            || self.genesis_hash != intent.genesis_hash
+            || self.transition_intent_hash != intent.intent_hash()?
+            || self.transition_nonce != intent.transition_nonce
+            || self.resident_offer_public != expected_offer_public
+        {
+            return Err(CodecError::NonCanonical(
+                "transition key-ready proof binding mismatch",
+            ));
+        }
+        ring::signature::UnparsedPublicKey::new(
+            &ring::signature::ED25519,
+            intent.attestation_ed25519,
+        )
+        .verify(
+            self.signing_hash()?.as_slice(),
+            &self.candidate_attestation_signature,
+        )
+        .map_err(|_| CodecError::NonCanonical("transition key-ready proof signature"))
+    }
+
+    fn validate_shape(&self) -> Result<(), CodecError> {
+        if self.chain_id == [0; 32]
+            || self.genesis_hash.is_zero()
+            || self.transition_intent_hash.is_zero()
+            || self.candidate_manifest_hash.is_zero()
+            || self.transition_nonce == 0
+            || self.resident_offer_public == [0; 32]
+        {
+            return Err(CodecError::NonCanonical(
+                "transition key-ready proof contains a zero commitment",
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DcapEvidenceV1 {
     pub intent: RegistrationIntentV1,
     pub quote: Vec<u8>,
     pub components: Vec<DcapCollateralComponentV1>,
+    pub transition_key_ready_proof: Option<TransitionKeyReadyProofV1>,
 }
 
 impl DcapEvidenceV1 {
@@ -720,6 +844,7 @@ impl DcapEvidenceV1 {
             return Err(CodecError::NonCanonical("empty SGX quote"));
         }
         self.validate_components()?;
+        self.validate_transition_proof_presence()?;
 
         let intent = self.intent.encode_canonical()?;
         let mut payload_len = checked_add_usize(1, 4)?;
@@ -730,6 +855,16 @@ impl DcapEvidenceV1 {
         for component in &self.components {
             payload_len = checked_add_usize(payload_len, 5)?;
             payload_len = checked_add_usize(payload_len, component.bytes.len())?;
+        }
+        payload_len = checked_add_usize(payload_len, 1)?;
+        let transition_proof = self
+            .transition_key_ready_proof
+            .as_ref()
+            .map(TransitionKeyReadyProofV1::encode_canonical)
+            .transpose()?;
+        if let Some(proof) = &transition_proof {
+            payload_len = checked_add_usize(payload_len, 2)?;
+            payload_len = checked_add_usize(payload_len, proof.len())?;
         }
         let complete_len = checked_add_usize(6, payload_len)?;
         enforce_limit(
@@ -749,6 +884,17 @@ impl DcapEvidenceV1 {
             out.push(component.kind as u8);
             put_len_u32(&mut out, component.bytes.len())?;
             out.extend_from_slice(&component.bytes);
+        }
+        match transition_proof {
+            None => out.push(0),
+            Some(proof) => {
+                out.push(1);
+                put_u16(
+                    &mut out,
+                    u16::try_from(proof.len()).map_err(|_| CodecError::ArithmeticOverflow)?,
+                );
+                out.extend_from_slice(&proof);
+            }
         }
         Ok(out)
     }
@@ -798,12 +944,34 @@ impl DcapEvidenceV1 {
                 bytes: decoder.take(component_len)?.to_vec(),
             });
         }
+        let transition_key_ready_proof = match decoder.u8()? {
+            0 => None,
+            1 => {
+                let proof_len = usize::from(decoder.u16()?);
+                if proof_len != TransitionKeyReadyProofV1::CANONICAL_LEN {
+                    return Err(CodecError::NonCanonical(
+                        "transition key-ready proof length",
+                    ));
+                }
+                Some(TransitionKeyReadyProofV1::decode_canonical(
+                    decoder.take(proof_len)?,
+                )?)
+            }
+            _ => {
+                return Err(CodecError::NonCanonical(
+                    "transition key-ready proof presence flag",
+                ))
+            }
+        };
         decoder.finish()?;
-        Ok(Self {
+        let value = Self {
             intent,
             quote,
             components,
-        })
+            transition_key_ready_proof,
+        };
+        value.validate_transition_proof_presence()?;
+        Ok(value)
     }
 
     fn validate_components(&self) -> Result<(), CodecError> {
@@ -826,6 +994,17 @@ impl DcapEvidenceV1 {
                     "DCAP component kinds must be exactly 0x01..=0x08",
                 ));
             }
+        }
+        Ok(())
+    }
+
+    fn validate_transition_proof_presence(&self) -> Result<(), CodecError> {
+        let is_transition =
+            self.intent.operation == AttestationOperationV1::TransitionEnclaveMeasurement;
+        if is_transition != self.transition_key_ready_proof.is_some() {
+            return Err(CodecError::NonCanonical(
+                "transition key-ready proof presence does not match operation",
+            ));
         }
         Ok(())
     }

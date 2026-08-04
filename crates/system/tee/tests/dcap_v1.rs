@@ -158,6 +158,7 @@ fn evidence(policy: &TeePolicyV1) -> DcapEvidenceV1 {
             .into_iter()
             .map(|(kind, bytes)| DcapCollateralComponentV1 { kind, bytes })
             .collect(),
+        transition_key_ready_proof: None,
     }
 }
 
@@ -240,6 +241,7 @@ fn intent_bound_processor_capture() -> (TeePolicyV1, DcapEvidenceV1) {
                     bytes: bytes.to_vec(),
                 })
                 .collect(),
+            transition_key_ready_proof: None,
         },
     )
 }

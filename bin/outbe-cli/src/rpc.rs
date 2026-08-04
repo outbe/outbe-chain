@@ -2,6 +2,7 @@
 
 use alloy_primitives::{Address, U256};
 use eyre::{Result, WrapErr};
+use outbe_primitives::tee_operator_v1::TeeRenewalScheduleV1;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -12,6 +13,17 @@ pub trait Rpc {
         to: Address,
         data: &[u8],
     ) -> impl std::future::Future<Output = Result<Vec<u8>>> + Send;
+    fn eth_call_at(
+        &self,
+        to: Address,
+        data: &[u8],
+        block_tag: &str,
+    ) -> impl std::future::Future<Output = Result<Vec<u8>>> + Send {
+        async move {
+            let _ = (to, data, block_tag);
+            Err(eyre::eyre!("eth_call at an explicit block is unsupported"))
+        }
+    }
     fn eth_block_number(&self) -> impl std::future::Future<Output = Result<u64>> + Send;
     fn eth_chain_id(&self) -> impl std::future::Future<Output = Result<u64>> + Send;
     fn eth_gas_price(&self) -> impl std::future::Future<Output = Result<U256>> + Send;
@@ -41,11 +53,19 @@ pub trait Rpc {
     fn net_peer_count(&self) -> impl std::future::Future<Output = Result<u64>> + Send;
     fn outbe_consensus_status(&self) -> impl std::future::Future<Output = Result<Value>> + Send;
     fn outbe_get_epoch_info(&self) -> impl std::future::Future<Output = Result<Value>> + Send;
+    fn outbe_tee_renewal_schedule_v1(
+        &self,
+    ) -> impl std::future::Future<Output = Result<TeeRenewalScheduleV1>> + Send {
+        async { Err(eyre::eyre!("TEE renewal schedule RPC is unsupported")) }
+    }
     fn eth_get_block_by_number(
         &self,
         block: u64,
     ) -> impl std::future::Future<Output = Result<Value>> + Send;
     fn eth_get_latest_block(&self) -> impl std::future::Future<Output = Result<Value>> + Send;
+    fn eth_get_finalized_block(&self) -> impl std::future::Future<Output = Result<Value>> + Send {
+        async { Err(eyre::eyre!("finalized block RPC is unsupported")) }
+    }
     fn outbe_get_vrf_seed(&self) -> impl std::future::Future<Output = Result<Value>> + Send;
     fn outbe_get_emission_info(&self) -> impl std::future::Future<Output = Result<Value>> + Send;
     fn outbe_get_slash_config(&self) -> impl std::future::Future<Output = Result<Value>> + Send;
@@ -217,6 +237,22 @@ impl Rpc for RpcClient {
         Self::parse_hex_bytes(&result)
     }
 
+    async fn eth_call_at(&self, to: Address, data: &[u8], block_tag: &str) -> Result<Vec<u8>> {
+        let result = self
+            .call_rpc(
+                "eth_call",
+                serde_json::json!([
+                    {
+                        "to": format!("{to:?}"),
+                        "data": format!("0x{}", hex::encode(data)),
+                    },
+                    block_tag
+                ]),
+            )
+            .await?;
+        Self::parse_hex_bytes(&result)
+    }
+
     async fn eth_block_number(&self) -> Result<u64> {
         let result = self
             .call_rpc("eth_blockNumber", serde_json::json!([]))
@@ -317,6 +353,14 @@ impl Rpc for RpcClient {
             .await
     }
 
+    async fn outbe_tee_renewal_schedule_v1(&self) -> Result<TeeRenewalScheduleV1> {
+        serde_json::from_value(
+            self.call_rpc("outbe_teeRenewalScheduleV1", serde_json::json!([]))
+                .await?,
+        )
+        .wrap_err("decode outbe_teeRenewalScheduleV1")
+    }
+
     async fn eth_get_block_by_number(&self, block: u64) -> Result<Value> {
         let hex_block = format!("0x{block:x}");
         self.call_rpc(
@@ -329,6 +373,14 @@ impl Rpc for RpcClient {
     async fn eth_get_latest_block(&self) -> Result<Value> {
         self.call_rpc("eth_getBlockByNumber", serde_json::json!(["latest", false]))
             .await
+    }
+
+    async fn eth_get_finalized_block(&self) -> Result<Value> {
+        self.call_rpc(
+            "eth_getBlockByNumber",
+            serde_json::json!(["finalized", false]),
+        )
+        .await
     }
 
     async fn outbe_get_vrf_seed(&self) -> Result<Value> {

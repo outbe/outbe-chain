@@ -14,8 +14,8 @@ use std::path::{Path, PathBuf};
 
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_primitives::tee_attestation_v1::{
-    AttestationEvidenceV1, AttestationOperationV1, EnclaveInitializationManifestV1, EnclaveProfile,
-    NodeIdV1, RegistrationIntentV1, MAX_ATTESTATION_EVIDENCE_BYTES,
+    AttestationEvidenceV1, AttestationOperationV1, DcapEvidenceV1, EnclaveInitializationManifestV1,
+    EnclaveProfile, NodeIdV1, RegistrationIntentV1, MAX_ATTESTATION_EVIDENCE_BYTES,
 };
 
 use crate::{
@@ -263,7 +263,24 @@ impl ReplacementCandidateEnclaveV1 {
         &mut self,
         intent: &RegistrationIntentV1,
     ) -> Result<GeneratedDcapQuoteV1, TransportError> {
-        self.client.generate_dcap_quote(intent)
+        let generated = self.client.generate_dcap_quote(intent)?;
+        if intent.operation == AttestationOperationV1::TransitionEnclaveMeasurement {
+            let proof = generated
+                .transition_key_ready_proof
+                .as_ref()
+                .ok_or_else(|| {
+                    TransportError::Attestation(
+                        "replacement candidate returned no transition key-ready proof".into(),
+                    )
+                })?;
+            let expected_manifest_hash = self.manifest.authorization_hash().map_err(codec_error)?;
+            if proof.candidate_manifest_hash != expected_manifest_hash {
+                return Err(TransportError::Attestation(
+                    "transition key-ready proof targets another candidate manifest".into(),
+                ));
+            }
+        }
+        Ok(generated)
     }
 }
 
@@ -468,11 +485,11 @@ pub fn persist_replacement_candidate_submission(
     validate_replacement_candidate_state(&candidate, &active, &node_host)?;
 
     let evidence_bytes = evidence.encode_canonical().map_err(codec_error)?;
-    let intent = match evidence {
+    let dcap = match evidence {
         AttestationEvidenceV1::Dcap(value)
             if is_candidate_successor_operation(value.intent.operation) =>
         {
-            &value.intent
+            value
         }
         AttestationEvidenceV1::Dcap(_) | AttestationEvidenceV1::GramineDirectDev(_) => {
             return Err(TransportError::Codec(
@@ -481,6 +498,8 @@ pub fn persist_replacement_candidate_submission(
             ))
         }
     };
+    validate_candidate_key_ready_proof(&candidate.manifest, dcap)?;
+    let intent = &dcap.intent;
     candidate
         .manifest
         .validate_intent_binding(intent)
@@ -1030,11 +1049,11 @@ fn validate_durable_replacement_submission(
 ) -> Result<RegistrationIntentV1, TransportError> {
     let evidence =
         AttestationEvidenceV1::decode_canonical(&submission.evidence).map_err(codec_error)?;
-    let intent = match evidence {
+    let dcap = match evidence {
         AttestationEvidenceV1::Dcap(value)
             if is_candidate_successor_operation(value.intent.operation) =>
         {
-            value.intent
+            value
         }
         AttestationEvidenceV1::Dcap(_) | AttestationEvidenceV1::GramineDirectDev(_) => {
             return Err(TransportError::Codec(
@@ -1043,6 +1062,8 @@ fn validate_durable_replacement_submission(
             ))
         }
     };
+    validate_candidate_key_ready_proof(manifest, &dcap)?;
+    let intent = dcap.intent;
     manifest
         .validate_intent_binding(&intent)
         .map_err(codec_error)?;
@@ -1054,6 +1075,28 @@ fn validate_durable_replacement_submission(
         ));
     }
     Ok(intent)
+}
+
+fn validate_candidate_key_ready_proof(
+    manifest: &EnclaveInitializationManifestV1,
+    evidence: &DcapEvidenceV1,
+) -> Result<(), TransportError> {
+    if evidence.intent.operation != AttestationOperationV1::TransitionEnclaveMeasurement {
+        return Ok(());
+    }
+    let proof = evidence
+        .transition_key_ready_proof
+        .as_ref()
+        .ok_or_else(|| {
+            TransportError::Codec("transition evidence is missing its key-ready proof".into())
+        })?;
+    let expected_manifest_hash = manifest.authorization_hash().map_err(codec_error)?;
+    if proof.candidate_manifest_hash != expected_manifest_hash {
+        return Err(TransportError::Codec(
+            "transition key-ready proof targets another durable candidate manifest".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn is_candidate_successor_operation(operation: AttestationOperationV1) -> bool {
@@ -1609,6 +1652,7 @@ mod tests {
     use k256::ecdsa::signature::hazmat::PrehashSigner as _;
     use outbe_primitives::tee_attestation_v1::{
         AttestationMode, DcapCollateralComponentV1, DcapCollateralKind, DcapEvidenceV1,
+        TransitionKeyReadyProofV1,
     };
 
     struct ReplacementFixture {
@@ -1702,6 +1746,22 @@ mod tests {
         node_signature[..64].copy_from_slice(signature.to_bytes().as_slice());
         node_signature[64] = recovery.to_byte();
         let enclave_signature = enclave_signer.sign(intent_hash.as_slice()).to_bytes();
+        let transition_key_ready_proof =
+            (operation == AttestationOperationV1::TransitionEnclaveMeasurement).then(|| {
+                let mut proof = TransitionKeyReadyProofV1 {
+                    chain_id: intent.chain_id,
+                    genesis_hash: intent.genesis_hash,
+                    transition_intent_hash: intent_hash,
+                    candidate_manifest_hash: candidate.authorization_hash().unwrap(),
+                    transition_nonce: intent.transition_nonce,
+                    resident_offer_public: [0x71; 32],
+                    candidate_attestation_signature: [0; 64],
+                };
+                proof.candidate_attestation_signature = enclave_signer
+                    .sign(proof.signing_hash().unwrap().as_slice())
+                    .to_bytes();
+                proof
+            });
         let evidence = AttestationEvidenceV1::Dcap(DcapEvidenceV1 {
             intent,
             quote: vec![0x51],
@@ -1711,6 +1771,7 @@ mod tests {
                     bytes: vec![kind],
                 })
                 .collect(),
+            transition_key_ready_proof,
         });
         persist_replacement_candidate_submission(
             &node_data_dir,

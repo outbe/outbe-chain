@@ -11,9 +11,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use std::{fs::Permissions, os::unix::fs::PermissionsExt as _};
 
 use eyre::{bail, eyre, Result, WrapErr};
-use outbe_primitives::chain::DEVNET_CHAIN_ID;
+use outbe_primitives::chain::{DEVNET_CHAIN_ID, TESTNET_CHAIN_ID};
 use serde_json::json;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
+
+use crate::{env::TeeMode, internal::proc};
 
 #[cfg(feature = "ocomp-integration")]
 use super::ymd_utc;
@@ -45,10 +47,13 @@ const OCOMP_FINAL_VALIDATOR_FILES: &[&str] = &[
 ];
 
 impl Localnet {
-    /// Add the canonical GramineDirectDev block-1 manifest after every scenario
-    /// has finished mutating genesis. The product binary constructs and
-    /// validates the bytes; the harness never reimplements the policy codec.
-    pub(crate) fn bind_dev_tee_genesis(&self) -> Result<()> {
+    /// Add the canonical block-1 TEE manifest after every scenario has finished
+    /// mutating genesis. Real SGX binds the exact test SIGSTRUCT into a
+    /// `DcapRequired` policy; non-hardware lanes remain separate
+    /// `GramineDirectDev` chains. The product binary constructs and validates the
+    /// policy bytes; the harness never reimplements its codec.
+    pub(crate) fn bind_tee_genesis(&self) -> Result<()> {
+        self.ensure_real_lane_ocomp_genesis()?;
         let genesis = self.cfg.dir.join("genesis.json");
         let value: serde_json::Value = serde_json::from_slice(&fs::read(&genesis)?)?;
         if value
@@ -74,14 +79,157 @@ impl Localnet {
             .arg(&seeded)
             .arg("--output")
             .arg(&genesis)
-            .arg("--mode")
-            .arg("gramine-direct-dev");
+            .arg("--mode");
+        match self.cfg.tee_mode {
+            TeeMode::Real => {
+                let signing_key = self.cfg.dir.join("test-sgx-signing-key.pem");
+                let image_id =
+                    proc::ensure_enclave_image(&self.cfg.repo, self.cfg.sudo, &signing_key)?;
+                let measurement = proc::inspect_test_sgx_measurement(
+                    &self.cfg.repo,
+                    &self.real_enclave_bin()?,
+                    &signing_key,
+                    &image_id,
+                    self.cfg.sudo,
+                )?;
+                command
+                    .arg("dcap-required")
+                    .arg("--mrenclave")
+                    .arg(measurement.mrenclave)
+                    .arg("--mrsigner")
+                    .arg(measurement.mrsigner)
+                    .arg("--isv-prod-id")
+                    .arg(measurement.isv_prod_id.to_string())
+                    .arg("--minimum-isv-svn")
+                    .arg(measurement.isv_svn.to_string())
+                    .arg("--minimum-tcb-evaluation-data-number")
+                    .arg("1");
+            }
+            TeeMode::GramineDirect | TeeMode::Mock => {
+                command.arg("gramine-direct-dev");
+            }
+        }
         if let Err(error) = self.run_setup(&mut command, "outbe-chain tee genesis") {
             if !genesis.exists() {
                 let _ = fs::rename(&seeded, &genesis);
             }
             return Err(error);
         }
+        Ok(())
+    }
+
+    /// The current node binary requires a genesis-active OCOMP install for
+    /// every network. Build that independent prerequisite with the product
+    /// tooling before binding the hardware TEE policy; the DCAP harness does
+    /// not reproduce either OCOMP's canonical codec or its signatures.
+    fn ensure_real_lane_ocomp_genesis(&self) -> Result<()> {
+        if !matches!(self.cfg.tee_mode, TeeMode::Real) {
+            return Ok(());
+        }
+        if self.committee_size() != OCOMP_FINAL_VALIDATORS {
+            bail!("real DcapRequired E2E requires exactly {OCOMP_FINAL_VALIDATORS} validators");
+        }
+
+        let genesis = self.cfg.dir.join("genesis.json");
+        let current: serde_json::Value = serde_json::from_slice(&fs::read(&genesis)?)?;
+        if current
+            .get("config")
+            .and_then(|config| config.get("ocompForkInstallV1"))
+            .is_some()
+        {
+            return Ok(());
+        }
+
+        let validators = self.cfg.dir.join("validators.json");
+        let bindings_path = self.cfg.dir.join("ocomp-bindings-v1.json");
+        let mut bindings_command = Command::new(&self.cfg.bin_chain);
+        bindings_command.args([
+            "ocomp",
+            "bindings",
+            "--input",
+            genesis
+                .to_str()
+                .ok_or_else(|| eyre!("non-UTF8 genesis path"))?,
+            "--validators",
+            validators
+                .to_str()
+                .ok_or_else(|| eyre!("non-UTF8 validators path"))?,
+            "--output",
+            bindings_path
+                .to_str()
+                .ok_or_else(|| eyre!("non-UTF8 OCOMP bindings path"))?,
+        ]);
+        self.run_setup(&mut bindings_command, "outbe-chain ocomp bindings")?;
+
+        let bindings: serde_json::Value = serde_json::from_slice(&fs::read(&bindings_path)?)?;
+        let required_string = |name: &str| -> Result<&str> {
+            bindings
+                .get(name)
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| eyre!("OCOMP bindings missing string {name}"))
+        };
+        let required_u64 = |name: &str| -> Result<u64> {
+            bindings
+                .get(name)
+                .and_then(serde_json::Value::as_u64)
+                .ok_or_else(|| eyre!("OCOMP bindings missing u64 {name}"))
+        };
+        let identities = bindings
+            .get("validatorIdentityHashes")
+            .and_then(serde_json::Value::as_array)
+            .filter(|identities| identities.len() == OCOMP_FINAL_VALIDATORS)
+            .ok_or_else(|| eyre!("OCOMP bindings require exactly four validator identities"))?;
+        for (index, identity) in identities.iter().enumerate() {
+            let output_dir = self.cfg.validator_dir(index);
+            let mut keygen = Command::new(&self.cfg.bin_keygen);
+            keygen
+                .arg("ocomp")
+                .arg("--output-dir")
+                .arg(&output_dir)
+                .arg("--chain-id")
+                .arg(required_u64("chainId")?.to_string())
+                .arg("--genesis-hash")
+                .arg(required_string("genesisHash")?)
+                .arg("--fork-id")
+                .arg(required_string("forkId")?)
+                .arg("--protocol-bundle-hash")
+                .arg(required_string("protocolBundleHash")?)
+                .arg("--validator-index")
+                .arg(index.to_string())
+                .arg("--validator-identity-hash")
+                .arg(
+                    identity
+                        .as_str()
+                        .ok_or_else(|| eyre!("OCOMP validator identity is not a string"))?,
+                )
+                .arg("--valid-from-height")
+                .arg(required_u64("activationHeight")?.to_string())
+                .arg("--valid-until-height-exclusive")
+                .arg(required_u64("validUntilHeightExclusive")?.to_string());
+            self.run_setup(&mut keygen, "outbe-keygen ocomp")?;
+        }
+
+        let generated = self.cfg.dir.join("genesis.ocomp.json");
+        let protocol_bundle = self.cfg.dir.join("protocol-bundle-v1.ocb1");
+        let mut genesis_command = Command::new(&self.cfg.bin_chain);
+        genesis_command
+            .arg("ocomp")
+            .arg("genesis")
+            .arg("--input")
+            .arg(&genesis)
+            .arg("--validators")
+            .arg(&validators)
+            .arg("--registrations-dir")
+            .arg(&self.cfg.dir)
+            .arg("--output")
+            .arg(&generated)
+            .arg("--protocol-bundle-output")
+            .arg(&protocol_bundle);
+        self.run_setup(&mut genesis_command, "outbe-chain ocomp genesis")?;
+
+        let original = self.cfg.dir.join("genesis.pre-ocomp.json");
+        fs::rename(&genesis, &original)?;
+        fs::rename(&generated, &genesis)?;
         Ok(())
     }
 
@@ -297,9 +445,10 @@ impl Localnet {
             .format(&Rfc3339)
             .wrap_err("format genesis time")?;
 
+        let chain_id = localnet_chain_id(self.cfg.tee_mode);
         let mut genesis = json!({
             "config": {
-                "chainId": DEVNET_CHAIN_ID,
+                "chainId": chain_id,
                 "homesteadBlock": 0,
                 "eip150Block": 0,
                 "eip155Block": 0,
@@ -456,6 +605,16 @@ fn apply_co_located_sgx_timing(
     config.insert("leaderTimeoutMs".to_owned(), json!(15_000));
     config.insert("certificationTimeoutMs".to_owned(), json!(30_000));
     Ok(())
+}
+
+/// Hardware E2E exercises the same DcapRequired network class as testnet.
+/// Dev-only enclave modes keep the separately identified devnet chain and can
+/// never become a fallback for the hardware lane.
+const fn localnet_chain_id(tee_mode: TeeMode) -> u64 {
+    match tee_mode {
+        TeeMode::Real => TESTNET_CHAIN_ID,
+        TeeMode::GramineDirect | TeeMode::Mock => DEVNET_CHAIN_ID,
+    }
 }
 
 fn patch_felony_storage(
@@ -615,6 +774,13 @@ mod tests {
         let mut mock = json!({ "config": {} });
         apply_co_located_sgx_timing(&mut mock, crate::env::TeeMode::Mock).unwrap();
         assert!(mock["config"].as_object().unwrap().is_empty());
+    }
+
+    #[test]
+    fn hardware_and_dev_tee_lanes_have_distinct_network_identities() {
+        assert_eq!(localnet_chain_id(TeeMode::Real), TESTNET_CHAIN_ID);
+        assert_eq!(localnet_chain_id(TeeMode::GramineDirect), DEVNET_CHAIN_ID);
+        assert_eq!(localnet_chain_id(TeeMode::Mock), DEVNET_CHAIN_ID);
     }
 
     #[test]

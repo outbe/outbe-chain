@@ -25,7 +25,8 @@ use outbe_primitives::tee_attestation_v1::{
 };
 #[cfg(feature = "tee-attestation-v1")]
 use outbe_tee::dcap_protocol::{
-    dcap_evidence_hash_v1, DcapPlatformTcbStatusV1, DcapVerdictV1, DcapVerificationOutcomeV1,
+    dcap_evidence_hash_v1, DcapOnboardingArtifactV1, DcapPlatformTcbStatusV1, DcapVerdictV1,
+    DcapVerificationOutcomeV1,
 };
 
 sol! {
@@ -91,6 +92,12 @@ sol! {
 pub enum V1RegistrationOutcome {
     Created,
     Idempotent,
+}
+
+#[cfg(feature = "tee-attestation-v1")]
+pub(crate) struct V1OnboardingOutcome {
+    pub(crate) registration: V1RegistrationOutcome,
+    pub(crate) artifact: Option<DcapOnboardingArtifactV1>,
 }
 
 #[cfg(feature = "tee-attestation-v1")]
@@ -777,6 +784,53 @@ impl TeeRegistry<'_> {
         })
     }
 
+    /// Emit only the artifact produced by the same purpose-bound enclave
+    /// verification capability that accepted this registration. No second raw
+    /// host-selected sealing request exists on the production path.
+    pub(crate) fn emit_verified_onboarding_artifact_v1(
+        &mut self,
+        outcome: &V1OnboardingOutcome,
+        node_id_hash: B256,
+    ) -> Result<()> {
+        if outcome.registration == V1RegistrationOutcome::Idempotent {
+            return Ok(());
+        }
+        let artifact = outcome.artifact.as_ref().ok_or_else(|| {
+            PrecompileError::Fatal(
+                "created DcapRequired registration has no purpose-bound onboarding artifact".into(),
+            )
+        })?;
+        let context = artifact.context;
+        let expected_offer_public = self.offer_public_key()?;
+        if expected_offer_public.is_zero()
+            || context.chain_id != chain_id_word(self.storage.chain_id()?)
+            || context.genesis_hash != self.storage.genesis_hash()?
+            || context.node_id_hash != node_id_hash
+            || context.tribute_offer_public != expected_offer_public.0
+            || context.key_epoch != self.key_epoch()?
+            || context.tribute_offer_epoch != self.tribute_offer_epoch()?
+            || self.v1_node_intent_hash.read(&node_id_hash)? != context.intent_hash
+            || self.v1_node_enclave_id.read(&node_id_hash)? != context.enclave_id
+            || self.v1_node_recipient_x25519.read(&node_id_hash)?
+                != B256::from(context.recipient_x25519)
+        {
+            return Err(PrecompileError::Fatal(
+                "purpose-bound onboarding artifact does not match committed Registry binding"
+                    .into(),
+            ));
+        }
+        let encoded = artifact.encode_canonical().map_err(|code| {
+            PrecompileError::Fatal(format!(
+                "purpose-bound onboarding artifact is non-canonical: {:#06x}",
+                code.code()
+            ))
+        })?;
+        self.emit(OfferKeySealedForRegistryV1 {
+            nodeIdHash: node_id_hash,
+            sealedOfferKey: encoded.into(),
+        })
+    }
+
     /// Test-only seam around the enclave call. Production and tests share all
     /// Created/Idempotent, commitment, size, prefix and event logic.
     #[cfg(test)]
@@ -860,6 +914,23 @@ impl TeeRegistry<'_> {
         )
     }
 
+    pub(crate) fn register_enclave_with_onboarding_v1(
+        &mut self,
+        evidence: &[u8],
+        node_signature: &[u8; 65],
+        enclave_signature: &[u8; 64],
+        policy: &TeePolicyV1,
+    ) -> Result<V1OnboardingOutcome> {
+        self.apply_evidence_mutation_with_onboarding_v1(
+            AttestationOperationV1::RegisterEnclave,
+            evidence,
+            node_signature,
+            enclave_signature,
+            policy,
+            true,
+        )
+    }
+
     pub(crate) fn renew_enclave_with_active_policy_v1(
         &mut self,
         evidence: &[u8],
@@ -923,29 +994,88 @@ impl TeeRegistry<'_> {
         enclave_signature: &[u8; 64],
         policy: &TeePolicyV1,
     ) -> Result<V1RegistrationOutcome> {
+        self.apply_evidence_mutation_with_onboarding_v1(
+            expected_operation,
+            evidence,
+            node_signature,
+            enclave_signature,
+            policy,
+            false,
+        )
+        .map(|outcome| outcome.registration)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn apply_evidence_mutation_with_onboarding_v1(
+        &mut self,
+        expected_operation: AttestationOperationV1,
+        evidence: &[u8],
+        node_signature: &[u8; 65],
+        enclave_signature: &[u8; 64],
+        policy: &TeePolicyV1,
+        issue_onboarding_artifact: bool,
+    ) -> Result<V1OnboardingOutcome> {
         let decoded = AttestationEvidenceV1::decode_canonical(evidence)
             .map_err(|error| revert_codec("attestation evidence is not canonical", error))?;
+        if expected_operation == AttestationOperationV1::TransitionEnclaveMeasurement {
+            self.validate_transition_key_ready_proof_v1(&decoded)?;
+        }
         if decoded.mode() != policy.attestation_mode {
             return Err(PrecompileError::Revert(
                 "attestation evidence mode does not match the active V1 policy".into(),
             ));
         }
 
-        let (intent, claims, evidence_hash) = match &decoded {
+        let (intent, claims, evidence_hash, onboarding_artifact) = match &decoded {
             AttestationEvidenceV1::Dcap(dcap) => {
                 let policy_bytes = policy.encode_canonical().map_err(|error| {
                     PrecompileError::Fatal(format!("active V1 policy cannot be encoded: {error}"))
                 })?;
-                let outcome = outbe_tee::verify_dcap_evidence_v1(
-                    evidence,
-                    &policy_bytes,
-                    consensus_timestamp(&self.storage)?,
-                )
-                .map_err(|error| {
-                    PrecompileError::Fatal(format!(
-                        "enclave-resident DCAP verifier is unavailable or unauthenticated: {error}"
-                    ))
-                })?;
+                let consensus_timestamp = consensus_timestamp(&self.storage)?;
+                let (outcome, onboarding_artifact) = if issue_onboarding_artifact {
+                    if expected_operation != AttestationOperationV1::RegisterEnclave {
+                        return Err(PrecompileError::Fatal(
+                            "onboarding artifact requested for a non-registration operation".into(),
+                        ));
+                    }
+                    let offer_public = self.offer_public_key()?;
+                    if offer_public.is_zero() {
+                        return Err(PrecompileError::Fatal(
+                            "DcapRequired registration requires the OST3 offer-key commitment"
+                                .into(),
+                        ));
+                    }
+                    let result = outbe_tee::verify_dcap_registration_and_seal_v1(
+                        evidence,
+                        &policy_bytes,
+                        consensus_timestamp,
+                        node_signature,
+                        enclave_signature,
+                        offer_public.0,
+                        self.key_epoch()?,
+                        self.tribute_offer_epoch()?,
+                    )
+                    .map_err(|error| {
+                        PrecompileError::Fatal(format!(
+                            "purpose-bound DCAP onboarding verifier is unavailable or unauthenticated: {error}"
+                        ))
+                    })?;
+                    (result.outcome, result.artifact)
+                } else {
+                    (
+                        outbe_tee::verify_dcap_evidence_v1(
+                            evidence,
+                            &policy_bytes,
+                            consensus_timestamp,
+                        )
+                        .map_err(|error| {
+                            PrecompileError::Fatal(format!(
+                                "enclave-resident DCAP verifier is unavailable or unauthenticated: {error}"
+                            ))
+                        })?,
+                        None,
+                    )
+                };
                 let verdict = match outcome {
                     DcapVerificationOutcomeV1::Accepted(verdict) => verdict,
                     DcapVerificationOutcomeV1::Rejected(code) => {
@@ -965,6 +1095,7 @@ impl TeeRegistry<'_> {
                     dcap.intent.clone(),
                     VerifiedEnclaveClaimsV1::from_dcap(&verdict)?,
                     evidence_hash,
+                    onboarding_artifact,
                 )
             }
             AttestationEvidenceV1::GramineDirectDev(dev) => {
@@ -988,10 +1119,10 @@ impl TeeRegistry<'_> {
                     };
                 let claims =
                     direct_dev_claims(policy, dev.intent.enclave_profile, height, evidence_hash)?;
-                (dev.intent.clone(), claims, evidence_hash)
+                (dev.intent.clone(), claims, evidence_hash, None)
             }
         };
-        self.apply_verified_claims_mutation_v1(
+        let registration = self.apply_verified_claims_mutation_v1(
             expected_operation,
             &intent,
             node_signature,
@@ -999,7 +1130,38 @@ impl TeeRegistry<'_> {
             policy,
             &claims,
             evidence_hash,
-        )
+        )?;
+        Ok(V1OnboardingOutcome {
+            registration,
+            artifact: onboarding_artifact,
+        })
+    }
+
+    pub(crate) fn validate_transition_key_ready_proof_v1(
+        &self,
+        evidence: &AttestationEvidenceV1,
+    ) -> Result<()> {
+        let AttestationEvidenceV1::Dcap(dcap) = evidence else {
+            return Err(PrecompileError::Revert(
+                "measurement transition requires DCAP key-ready evidence".into(),
+            ));
+        };
+        let proof = dcap.transition_key_ready_proof.as_ref().ok_or_else(|| {
+            PrecompileError::Revert("measurement transition is missing key-ready proof".into())
+        })?;
+        let offer_public = self.offer_public_key()?;
+        if offer_public.is_zero() {
+            return Err(PrecompileError::Fatal(
+                "measurement transition requires the permanent offer-key commitment".into(),
+            ));
+        }
+        proof
+            .verify_for_transition(&dcap.intent, offer_public.0)
+            .map_err(|error| {
+                PrecompileError::Revert(format!(
+                    "measurement transition key-ready proof is invalid: {error}"
+                ))
+            })
     }
 
     fn apply_verified_claims_mutation_v1(

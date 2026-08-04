@@ -188,8 +188,8 @@ fn start_ocomp_measurement_localnet(
     };
     world
         .localnet
-        .bind_dev_tee_genesis()
-        .expect("bind canonical GramineDirectDev genesis before OCOMP fork identity");
+        .bind_tee_genesis()
+        .expect("bind canonical TEE genesis before OCOMP fork identity");
     let measurement_fork = match public_capacity_tribute_count {
         Some(0) => world
             .ocomp

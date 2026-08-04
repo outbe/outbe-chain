@@ -7,17 +7,25 @@ use outbe_primitives::{
     signer::OutbeEvmSigner,
     storage::{hashmap::HashMapStorageProvider, PrecompileStorageProvider, StorageHandle},
     tee_attestation_v1::{
-        AttestationMode, AttestationOperationV1, EnclaveInitializationManifestV1, EnclaveProfile,
+        AttestationEvidenceV1, AttestationMode, AttestationOperationV1, DcapCollateralComponentV1,
+        DcapCollateralKind, DcapEvidenceV1, EnclaveInitializationManifestV1, EnclaveProfile,
         NodeIdV1, PlatformTcbStatusSetV1, QvlTcbStatusV1, RegistrationIntentV1, RegistryMutatorV1,
-        TeeMeasurementRuleV1, TeePolicyV1, TeeRegistryGasScheduleV1,
+        TeeMeasurementRuleV1, TeePolicyV1, TeeRegistryGasScheduleV1, TransitionKeyReadyProofV1,
     },
 };
-use outbe_tee::dcap_protocol::{DcapPckCaV1, DcapPlatformTcbStatusV1, DcapVerdictV1};
+use outbe_tee::dcap_protocol::{
+    DcapOnboardingArtifactV1, DcapOnboardingContextV1, DcapPckCaV1, DcapPlatformTcbStatusV1,
+    DcapVerdictV1,
+};
 use outbe_validatorset::contract::ValidatorSet;
 
 use crate::{
+    runtime::TeeBootstrapData,
     schema::TeeRegistry,
-    v1::{OfferKeySealedForRegistryV1, PostVerifierDcapCapabilityV1, V1RegistrationOutcome},
+    v1::{
+        OfferKeySealedForRegistryV1, PostVerifierDcapCapabilityV1, V1OnboardingOutcome,
+        V1RegistrationOutcome,
+    },
     v1_precompile::{
         dispatch_register_after_verifier_for_test,
         dispatch_register_with_onboarding_after_verifier_for_test,
@@ -60,6 +68,7 @@ const MRENCLAVE: B256 = B256::repeat_byte(0x81);
 const MRSIGNER: B256 = B256::repeat_byte(0x82);
 const CONSENSUS_KEY: [u8; 48] = [0x32; 48];
 const NODE_HOST_NOISE_X25519: [u8; 32] = [0xa5; 32];
+const OFFER_PUBLIC: [u8; 32] = [0xb1; 32];
 
 fn policy(genesis_hash: B256, statuses: PlatformTcbStatusSetV1) -> TeePolicyV1 {
     TeePolicyV1 {
@@ -338,6 +347,54 @@ fn measurement_transition_intent(
     intent.transition_nonce += 1;
     intent.policy_hash = next_policy.policy_hash().unwrap();
     intent
+}
+
+fn transition_evidence(
+    intent: &RegistrationIntentV1,
+    enclave_signer: &ed25519_dalek::SigningKey,
+) -> Vec<u8> {
+    let candidate_manifest = initialization_manifest_for_intent(intent, [0xa7; 32]);
+    let mut proof = TransitionKeyReadyProofV1 {
+        chain_id: intent.chain_id,
+        genesis_hash: intent.genesis_hash,
+        transition_intent_hash: intent.intent_hash().unwrap(),
+        candidate_manifest_hash: candidate_manifest.authorization_hash().unwrap(),
+        transition_nonce: intent.transition_nonce,
+        resident_offer_public: OFFER_PUBLIC,
+        candidate_attestation_signature: [0; 64],
+    };
+    proof.candidate_attestation_signature = enclave_signer
+        .sign(proof.signing_hash().unwrap().as_slice())
+        .to_bytes();
+    AttestationEvidenceV1::Dcap(DcapEvidenceV1 {
+        intent: intent.clone(),
+        quote: vec![0x51],
+        components: (1_u8..=8)
+            .map(|kind| DcapCollateralComponentV1 {
+                kind: DcapCollateralKind::try_from(kind).unwrap(),
+                bytes: vec![kind],
+            })
+            .collect(),
+        transition_key_ready_proof: Some(proof),
+    })
+    .encode_canonical()
+    .unwrap()
+}
+
+fn install_offer_key(registry: &mut TeeRegistry<'_>, policy: &TeePolicyV1) {
+    registry
+        .write_bootstrap(&TeeBootstrapData {
+            tribute_offer_public_key: B256::from(OFFER_PUBLIC),
+            policy_hash: policy.policy_hash().unwrap(),
+            key_epoch: 0,
+            tribute_offer_epoch: 0,
+            dkg_transcript_hash: B256::repeat_byte(0xb2),
+            committee_snapshot_block: 1,
+            committee_snapshot_hash: B256::repeat_byte(0xb3),
+            tribute_offer_group_public_key: vec![0xb4; 96].into(),
+            registrations: Vec::new(),
+        })
+        .unwrap();
 }
 
 fn revert_message(error: PrecompileError) -> String {
@@ -775,6 +832,100 @@ fn public_v1_registration_emits_onboarding_only_for_created_binding() {
         1,
         "idempotent replay must not redeliver the permanent offer key"
     );
+}
+
+#[test]
+fn verified_onboarding_artifact_must_match_the_committed_binding_exactly() {
+    let genesis_hash = B256::repeat_byte(0x91);
+    let active_policy = policy(
+        genesis_hash,
+        PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
+    );
+    let node_signer = OutbeEvmSigner::from_secret_bytes([0x92; 32]).unwrap();
+    let enclave_signer = ed25519_dalek::SigningKey::from_bytes(&[0x93; 32]);
+    let intent = registration_intent(
+        &active_policy,
+        &node_signer,
+        CONSENSUS_KEY,
+        &enclave_signer,
+        0x94,
+        0x95,
+    );
+    let (node_signature, enclave_signature) = signatures(&intent, &node_signer, &enclave_signer);
+    let node_id_hash = intent.node_id.node_id_hash().unwrap();
+    let offer_public = B256::repeat_byte(0x96);
+    let artifact = DcapOnboardingArtifactV1 {
+        context: DcapOnboardingContextV1 {
+            chain_id: intent.chain_id,
+            genesis_hash: intent.genesis_hash,
+            intent_hash: intent.intent_hash().unwrap(),
+            node_id_hash,
+            enclave_id: intent.derived_enclave_id().unwrap(),
+            recipient_x25519: intent.recipient_x25519,
+            tribute_offer_public: offer_public.0,
+            key_epoch: 0,
+            tribute_offer_epoch: 0,
+        },
+        nonce: [0x97; 12],
+        ciphertext: vec![0x98; 112],
+    };
+    let mut provider = storage(genesis_hash);
+    StorageHandle::enter(&mut provider, |storage| {
+        register_validator(storage.clone(), &node_signer, CONSENSUS_KEY);
+        let mut registry = TeeRegistry::new(storage);
+        registry.install_initial_policy_v1(&active_policy).unwrap();
+        registry
+            .tribute_offer_public_key
+            .write(offer_public)
+            .unwrap();
+        let registration = registry
+            .register_enclave_after_verifier_for_test(
+                &intent,
+                &node_signature,
+                &enclave_signature,
+                PostVerifierDcapCapabilityV1::new(verdict(DcapPlatformTcbStatusV1::UpToDate)),
+            )
+            .unwrap();
+        registry
+            .emit_verified_onboarding_artifact_v1(
+                &V1OnboardingOutcome {
+                    registration,
+                    artifact: Some(artifact.clone()),
+                },
+                node_id_hash,
+            )
+            .unwrap();
+    });
+    let events = provider
+        .get_ordered_events()
+        .iter()
+        .filter(|event| {
+            event.topics().first() == Some(&OfferKeySealedForRegistryV1::SIGNATURE_HASH)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        OfferKeySealedForRegistryV1::decode_log(events[0])
+            .unwrap()
+            .sealedOfferKey
+            .as_ref(),
+        artifact.encode_canonical().unwrap().as_slice()
+    );
+
+    let error = StorageHandle::enter(&mut provider, |storage| {
+        let mut wrong = artifact;
+        wrong.context.intent_hash = B256::repeat_byte(0xff);
+        TeeRegistry::new(storage)
+            .emit_verified_onboarding_artifact_v1(
+                &V1OnboardingOutcome {
+                    registration: V1RegistrationOutcome::Created,
+                    artifact: Some(wrong),
+                },
+                node_id_hash,
+            )
+            .unwrap_err()
+    });
+    assert!(matches!(error, PrecompileError::Fatal(_)));
 }
 
 #[test]
@@ -1601,8 +1752,9 @@ fn existing_validator_transitions_to_staged_measurement_before_activation() {
         measurement_transition_intent(&initial, &successor, &new_enclave, 0x52, 0x62, NOW + 3_600);
     let (initial_node, initial_enclave) = signatures(&initial, &node_signer, &old_enclave);
     let (transition_node, transition_enclave) = signatures(&transition, &node_signer, &new_enclave);
+    let transition_evidence = transition_evidence(&transition, &new_enclave);
     let call = IRegisterEnclaveV1Test::transitionEnclaveMeasurementCall {
-        evidence: vec![0xa8; 4_096].into(),
+        evidence: transition_evidence.clone().into(),
         nodeSignature: transition_node.to_vec().into(),
         enclaveSignature: transition_enclave.to_vec().into(),
     }
@@ -1615,6 +1767,7 @@ fn existing_validator_transitions_to_staged_measurement_before_activation() {
         register_validator(storage.clone(), &node_signer, CONSENSUS_KEY);
         let mut registry = TeeRegistry::new(storage.clone());
         registry.install_initial_policy_v1(&current).unwrap();
+        install_offer_key(&mut registry, &current);
         registry
             .register_enclave_after_verifier_for_test(
                 &initial,
@@ -1626,6 +1779,41 @@ fn existing_validator_transitions_to_staged_measurement_before_activation() {
         registry
             .stage_successor_policy_v1(U256::from(7), &successor)
             .unwrap();
+
+        let mut wrong_offer =
+            AttestationEvidenceV1::decode_canonical(&transition_evidence).unwrap();
+        let AttestationEvidenceV1::Dcap(wrong_offer) = &mut wrong_offer else {
+            unreachable!();
+        };
+        let proof = wrong_offer.transition_key_ready_proof.as_mut().unwrap();
+        proof.resident_offer_public = [0xc1; 32];
+        proof.candidate_attestation_signature = new_enclave
+            .sign(proof.signing_hash().unwrap().as_slice())
+            .to_bytes();
+        let wrong_call = IRegisterEnclaveV1Test::transitionEnclaveMeasurementCall {
+            evidence: AttestationEvidenceV1::Dcap(wrong_offer.clone())
+                .encode_canonical()
+                .unwrap()
+                .into(),
+            nodeSignature: transition_node.to_vec().into(),
+            enclaveSignature: transition_enclave.to_vec().into(),
+        }
+        .abi_encode();
+        assert!(dispatch_transition_after_verifier_for_test(
+            storage.clone(),
+            &wrong_call,
+            &transition,
+            PostVerifierDcapCapabilityV1::new(next_verdict.clone()),
+        )
+        .is_err());
+        assert_eq!(
+            registry
+                .validator_enclave_binding_v1(node_signer.address())
+                .unwrap()
+                .unwrap()
+                .enclave_id,
+            initial.enclave_id
+        );
         dispatch_transition_after_verifier_for_test(
             storage.clone(),
             &call,
@@ -1787,7 +1975,7 @@ fn full_node_uses_the_same_bounded_transition_abi_and_staged_policy() {
     let (transition_node, transition_enclave) =
         full_node_signatures(&transition, &node_signer, &new_enclave);
     let call = IRegisterEnclaveV1Test::transitionEnclaveMeasurementCall {
-        evidence: vec![0xa8; 4_096].into(),
+        evidence: transition_evidence(&transition, &new_enclave).into(),
         nodeSignature: transition_node.to_vec().into(),
         enclaveSignature: transition_enclave.to_vec().into(),
     }
@@ -1800,6 +1988,7 @@ fn full_node_uses_the_same_bounded_transition_abi_and_staged_policy() {
     StorageHandle::enter(&mut provider, |storage| {
         let mut registry = TeeRegistry::new(storage.clone());
         registry.install_initial_policy_v1(&current).unwrap();
+        install_offer_key(&mut registry, &current);
         registry
             .register_enclave_after_verifier_for_test(
                 &initial,
@@ -2279,6 +2468,7 @@ fn candidate_generated_quote_intent_reaches_registry_replacement_exactly() {
                 bytes: vec![kind],
             })
             .collect(),
+        transition_key_ready_proof: None,
     });
     let exact_evidence = evidence.encode_canonical().unwrap();
     let submission = persist_replacement_candidate_submission(

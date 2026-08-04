@@ -829,6 +829,7 @@ struct FrozenDkgTarget {
     planned_activation_height: u64,
     validator_set: validators::ValidatorSet,
     participants: commonware_utils::ordered::Set<bls12381::PublicKey>,
+    tee_expired_target_exclusions: Vec<EthAddress>,
     is_validator_set_change: bool,
 }
 
@@ -1103,6 +1104,7 @@ enum FrozenValidatorSetRefresh {
     Ready {
         validator_set: validators::ValidatorSet,
         participants: commonware_utils::ordered::Set<bls12381::PublicKey>,
+        tee_expired_target_exclusions: Vec<EthAddress>,
     },
     PendingBlockHash,
 }
@@ -1551,6 +1553,7 @@ fn build_genesis_dkg_boundary_artifact(
         vrf_material_version: 0,
         is_validator_set_change: true,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
 }
 
@@ -4715,6 +4718,9 @@ where
                                     vrf_material_version: activated_vrf_material_version,
                                     is_validator_set_change: activated_is_validator_set_change,
                                     tee_reshare_registrations: Vec::new(),
+                                    tee_expired_target_exclusions: target
+                                        .tee_expired_target_exclusions
+                                        .clone(),
                                 },
                             )?;
                             let epoch_boundary_height =
@@ -5185,10 +5191,11 @@ where
 
                         // Freeze the target set from the EVM state at freeze_height.
                         // This keeps DKG membership deterministic across validators.
-                        let (target_validator_set, target_participants) = match refresh_validator_set_at_height(&node.provider, freeze_height) {
+                        let (target_validator_set, target_participants, tee_expired_target_exclusions) = match refresh_validator_set_at_height(&node, freeze_height) {
                             Ok(FrozenValidatorSetRefresh::Ready {
                                 validator_set: new_set,
                                 participants: new_participants,
+                                tee_expired_target_exclusions,
                             }) => {
                                 let old_count = participants.len();
                                 let local_role = classify_local_reshare_role(
@@ -5260,9 +5267,10 @@ where
                                     ?local_role,
                                     chain_peer_set_id,
                                     dkg_peer_set_id,
+                                    tee_expired_target_exclusions = tee_expired_target_exclusions.len(),
                                     "refreshed validator set from EVM state for reshare"
                                 );
-                                (new_set, new_participants)
+                                (new_set, new_participants, tee_expired_target_exclusions)
                             }
                             Ok(FrozenValidatorSetRefresh::PendingBlockHash) => {
                                 match pending_freeze_block_hash_decision(
@@ -5303,6 +5311,7 @@ where
                             planned_activation_height,
                             validator_set: target_validator_set.clone(),
                             participants: target_participants.clone(),
+                            tee_expired_target_exclusions,
                             is_validator_set_change,
                         });
                         vrf_safety.note_preparing(
@@ -5913,6 +5922,7 @@ fn persist_completed_dkg_before_activation(
             vrf_material_version: next_vrf_material_version,
             is_validator_set_change: activated_participants != *current_participants,
             tee_reshare_registrations: Vec::new(),
+            tee_expired_target_exclusions: target.tee_expired_target_exclusions.clone(),
         })?;
 
     if let Some(share) = complete.share.as_ref() {
@@ -5996,7 +6006,7 @@ fn pending_boundary_is_finalized(
 fn validate_pending_boundary_snapshot(
     snapshot: &PendingDkgBoundarySnapshot,
     local_output: &Output<MinSig, bls12381::PublicKey>,
-    provider: &(impl StateProviderFactory + BlockHashReader),
+    node: &OutbeFullNode,
 ) -> Result<()> {
     let boundary_output = decode_boundary_output(&snapshot.artifact)
         .wrap_err("failed to decode pending DKG boundary output")?;
@@ -6005,8 +6015,15 @@ fn validate_pending_boundary_snapshot(
         &boundary_output,
         "pending boundary snapshot",
     )?;
-    let frozen = match refresh_validator_set_at_height(provider, snapshot.artifact.freeze_height)? {
-        FrozenValidatorSetRefresh::Ready { validator_set, .. } => validator_set,
+    let (frozen, tee_expired_target_exclusions) = match refresh_validator_set_at_height(
+        node,
+        snapshot.artifact.freeze_height,
+    )? {
+        FrozenValidatorSetRefresh::Ready {
+            validator_set,
+            tee_expired_target_exclusions,
+            ..
+        } => (validator_set, tee_expired_target_exclusions),
         FrozenValidatorSetRefresh::PendingBlockHash => {
             return Err(eyre::eyre!(
                 "pending DKG boundary freeze-height state unavailable at height {}; refusing unsafe recovery",
@@ -6026,6 +6043,7 @@ fn validate_pending_boundary_snapshot(
         vrf_material_version: snapshot.artifact.vrf_material_version,
         is_validator_set_change: snapshot.artifact.is_validator_set_change,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions,
     })?;
     ensure!(
         rebuilt == snapshot.artifact,
@@ -6067,7 +6085,7 @@ fn recover_pending_dkg_boundary_snapshot(
             ));
         }
     };
-    validate_pending_boundary_snapshot(&snapshot, &local_output, &node.provider)?;
+    validate_pending_boundary_snapshot(&snapshot, &local_output, node)?;
     Ok(Some(snapshot))
 }
 
@@ -6233,10 +6251,11 @@ where
         }
 
         let (target_validator_set, target_participants) =
-            match refresh_validator_set_at_height(&node.provider, freeze_height) {
+            match refresh_validator_set_at_height(node, freeze_height) {
                 Ok(FrozenValidatorSetRefresh::Ready {
                     validator_set,
                     participants,
+                    ..
                 }) => (validator_set, participants),
                 Ok(FrozenValidatorSetRefresh::PendingBlockHash) => {
                     info!(
@@ -6841,24 +6860,66 @@ pub(crate) fn build_peer_map(
 /// Called at freeze_height so dynamically added/removed validators are applied
 /// from the same historical state on every node.
 fn refresh_validator_set_at_height(
-    provider: &(impl StateProviderFactory + BlockHashReader),
+    node: &OutbeFullNode,
     freeze_height: u64,
 ) -> Result<FrozenValidatorSetRefresh> {
-    let Some(block_hash) = provider.block_hash(freeze_height).map_err(|e| {
+    let Some(block_hash) = node.provider.block_hash(freeze_height).map_err(|e| {
         eyre::eyre!("failed to get block hash at freeze height {freeze_height}: {e}")
     })?
     else {
         return Ok(FrozenValidatorSetRefresh::PendingBlockHash);
     };
-    let state = provider
+    let Some(header) = node
+        .provider
+        .sealed_header(freeze_height)
+        .map_err(|error| {
+            eyre::eyre!("failed to get canonical header at freeze height {freeze_height}: {error}")
+        })?
+    else {
+        return Ok(FrozenValidatorSetRefresh::PendingBlockHash);
+    };
+    ensure!(
+        header.hash() == block_hash,
+        "canonical freeze header hash mismatch at height {freeze_height}: block-hash index {block_hash}, header {}",
+        header.hash()
+    );
+    ensure!(
+        header.header().inner.number == freeze_height,
+        "canonical freeze header number mismatch: expected {freeze_height}, got {}",
+        header.header().inner.number
+    );
+
+    let state = node
+        .provider
         .state_by_block_hash(block_hash)
         .map_err(|e| eyre::eyre!("failed to get state at freeze height {freeze_height}: {e}"))?;
     // The reshare TARGET (next_players) is ACTIVE∪PENDING: ACTIVE members stay and
     // PENDING joiners are activated by this ceremony. EXITING validators are excluded
     // (the reshare removes them). Using the reshare-target reader — not the ACTIVE-only
     // voting reader — is what lets a staked PENDING joiner receive a share.
-    let new_set = validators::read_reshare_target_from_state(&state)
-        .wrap_err("failed to read reshare target set from frozen EVM state")?;
+    let tee_attestation =
+        outbe_evm::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
+            node.chain_spec().as_ref(),
+        );
+    let activation = tee_attestation
+        .activation()
+        .map_err(|error| eyre::eyre!("invalid mandatory teeAttestationV1 ChainSpec: {error}"))?;
+    let attestation_mode = activation
+        .policy_at(outbe_evm::tee_attestation_activation::TEE_ATTESTATION_V1_ACTIVATION_HEIGHT)
+        .map_err(eyre::Report::msg)?
+        .attestation_mode;
+    let filtered = validators::read_tee_filtered_reshare_target_from_state(
+        &state,
+        outbe_primitives::storage::readonly::ReadOnlyBlockContext {
+            chain_id: node.chain_spec().chain().id(),
+            genesis_hash: genesis_hash(node)?,
+            block_number: freeze_height,
+            timestamp: header.header().inner.timestamp,
+        },
+        attestation_mode,
+    )
+    .wrap_err("failed to apply TEE readiness to frozen reshare target")?;
+    let new_set = filtered.validator_set;
 
     let participants: commonware_utils::ordered::Set<bls12381::PublicKey> = new_set
         .public_keys
@@ -6870,6 +6931,7 @@ fn refresh_validator_set_at_height(
     Ok(FrozenValidatorSetRefresh::Ready {
         validator_set: new_set,
         participants,
+        tee_expired_target_exclusions: filtered.tee_expired_target_exclusions,
     })
 }
 

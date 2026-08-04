@@ -2490,6 +2490,7 @@ mod tests {
             vrf_material_version: 0,
             is_validator_set_change: true,
             tee_reshare_registrations: Vec::new(),
+            tee_expired_target_exclusions: Vec::new(),
         })
         .unwrap();
         let (scheme_provider, committee_provider) =
@@ -2530,6 +2531,7 @@ mod tests {
             vrf_material_version: 0,
             is_validator_set_change: true,
             tee_reshare_registrations: Vec::new(),
+            tee_expired_target_exclusions: Vec::new(),
         })
         .unwrap();
         let (scheme_provider, committee_provider) =

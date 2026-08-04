@@ -19,15 +19,18 @@ use std::path::Path;
 
 use alloy_primitives::{keccak256, B256};
 use outbe_primitives::tee_attestation_v1::{
-    AttestationMode, EnclaveInitializationManifestV1, RegistrationIntentV1,
+    AttestationMode, AttestationOperationV1, EnclaveInitializationManifestV1, RegistrationIntentV1,
+    TransitionKeyReadyProofV1,
 };
 use rand::RngCore as _;
 use zeroize::Zeroizing;
 
 use crate::codec::{decode_response, encode_request, read_frame, write_frame};
 use crate::dcap_protocol::{
+    dcap_onboarding_attestation_preimage, dcap_onboarding_request_hash,
     dcap_verification_attestation_preimage, dcap_verification_request_hash,
-    DcapVerificationOutcomeV1, MAX_DCAP_VERIFICATION_CHUNK_BYTES,
+    DcapOnboardingArtifactV1, DcapOnboardingVerificationResultV1, DcapVerificationOutcomeV1,
+    MAX_DCAP_VERIFICATION_CHUNK_BYTES,
 };
 use crate::errors::TransportError;
 use crate::protocol::{EnclaveRequest, EnclaveResponse};
@@ -229,6 +232,7 @@ pub struct EnclaveInitializationChallenge {
 pub struct GeneratedDcapQuoteV1 {
     pub quote_body: Vec<u8>,
     pub enclave_signature: [u8; 64],
+    pub transition_key_ready_proof: Option<TransitionKeyReadyProofV1>,
 }
 
 /// Production session authenticated by the sealed NodeHost initiator key.
@@ -809,16 +813,85 @@ impl AuthorizedEnclaveClient {
                     code.code()
                 ))
             })?;
-        let evidence_len = u32::try_from(evidence.len())
-            .map_err(|_| TransportError::DcapVerification("evidence length exceeds u32".into()))?;
-        let policy_len = u32::try_from(policy.len())
-            .map_err(|_| TransportError::DcapVerification("policy length exceeds u32".into()))?;
-        match self.request(&EnclaveRequest::BeginDcapVerificationV1 {
+        let response = self.upload_dcap_verification_v1(
+            evidence,
+            policy,
             request_hash,
-            evidence_len,
-            policy_len,
+            EnclaveRequest::BeginDcapVerificationV1 {
+                request_hash,
+                evidence_len: u32::try_from(evidence.len()).map_err(|_| {
+                    TransportError::DcapVerification("evidence length exceeds u32".into())
+                })?,
+                policy_len: u32::try_from(policy.len()).map_err(|_| {
+                    TransportError::DcapVerification("policy length exceeds u32".into())
+                })?,
+                block_timestamp,
+            },
+        )?;
+        validate_dcap_verification_response(self.attestation_pub, request_hash, response)
+    }
+
+    /// Verify one exact `RegisterEnclave` request and request the deterministic
+    /// one-time offer-key artifact from a resident source enclave.
+    #[allow(clippy::too_many_arguments)]
+    pub fn verify_dcap_registration_and_seal_v1(
+        &mut self,
+        evidence: &[u8],
+        policy: &[u8],
+        block_timestamp: u64,
+        node_signature: &[u8; 65],
+        enclave_signature: &[u8; 64],
+        expected_tribute_offer_public: [u8; 32],
+        key_epoch: u64,
+        tribute_offer_epoch: u64,
+    ) -> Result<DcapOnboardingVerificationResultV1, TransportError> {
+        let request_hash = dcap_onboarding_request_hash(
+            evidence,
+            policy,
             block_timestamp,
-        })? {
+            node_signature,
+            enclave_signature,
+            &expected_tribute_offer_public,
+            key_epoch,
+            tribute_offer_epoch,
+        )
+        .map_err(|code| {
+            TransportError::DcapVerification(format!(
+                "invalid onboarding verifier input dimensions: {:#06x}",
+                code.code()
+            ))
+        })?;
+        let response = self.upload_dcap_verification_v1(
+            evidence,
+            policy,
+            request_hash,
+            EnclaveRequest::BeginDcapOnboardingVerificationV1 {
+                request_hash,
+                evidence_len: u32::try_from(evidence.len()).map_err(|_| {
+                    TransportError::DcapVerification("evidence length exceeds u32".into())
+                })?,
+                policy_len: u32::try_from(policy.len()).map_err(|_| {
+                    TransportError::DcapVerification("policy length exceeds u32".into())
+                })?,
+                block_timestamp,
+                node_signature: node_signature.to_vec(),
+                enclave_signature: enclave_signature.to_vec(),
+                expected_tribute_offer_public,
+                key_epoch,
+                tribute_offer_epoch,
+            },
+        )?;
+        validate_dcap_onboarding_response(self.attestation_pub, request_hash, response)
+    }
+
+    fn upload_dcap_verification_v1(
+        &mut self,
+        evidence: &[u8],
+        policy: &[u8],
+        request_hash: B256,
+        begin: EnclaveRequest,
+    ) -> Result<EnclaveResponse, TransportError> {
+        match self.request(&begin)? {
             EnclaveResponse::DcapVerificationStartedV1 {
                 request_hash: echoed,
             } if echoed == request_hash => {}
@@ -864,8 +937,7 @@ impl AuthorizedEnclaveClient {
             offset = next;
         }
 
-        let response = self.request(&EnclaveRequest::FinishDcapVerificationV1 { request_hash })?;
-        validate_dcap_verification_response(self.attestation_pub, request_hash, response)
+        self.request(&EnclaveRequest::FinishDcapVerificationV1 { request_hash })
     }
 
     pub fn attestation_pub(&self) -> [u8; 32] {
@@ -1014,6 +1086,82 @@ fn validate_dcap_verification_response(
     Ok(canonical)
 }
 
+fn validate_dcap_onboarding_response(
+    attestation_pub: [u8; 32],
+    expected_request_hash: B256,
+    response: EnclaveResponse,
+) -> Result<DcapOnboardingVerificationResultV1, TransportError> {
+    use ed25519_dalek::{Signature, VerifyingKey};
+
+    let EnclaveResponse::DcapOnboardingVerificationFinishedV1 {
+        request_hash,
+        outcome,
+        onboarding_artifact,
+        attestation_tag,
+    } = response
+    else {
+        return Err(TransportError::UnexpectedResponse);
+    };
+    if request_hash != expected_request_hash {
+        return Err(TransportError::DcapVerification(
+            "enclave onboarding response request commitment mismatch".into(),
+        ));
+    }
+    let canonical = DcapVerificationOutcomeV1::decode_canonical(&outcome).map_err(|code| {
+        TransportError::DcapVerification(format!(
+            "enclave onboarding outcome is non-canonical: {:#06x}",
+            code.code()
+        ))
+    })?;
+    let artifact = if onboarding_artifact.is_empty() {
+        None
+    } else {
+        Some(
+            DcapOnboardingArtifactV1::decode_canonical(&onboarding_artifact).map_err(|code| {
+                TransportError::DcapVerification(format!(
+                    "enclave onboarding artifact is non-canonical: {:#06x}",
+                    code.code()
+                ))
+            })?,
+        )
+    };
+    match (&canonical, &artifact) {
+        (DcapVerificationOutcomeV1::Accepted(_), Some(_))
+        | (DcapVerificationOutcomeV1::Rejected(_), None) => {}
+        _ => {
+            return Err(TransportError::DcapVerification(
+                "enclave onboarding outcome/artifact combination is invalid".into(),
+            ))
+        }
+    }
+    let preimage =
+        dcap_onboarding_attestation_preimage(request_hash, &outcome, &onboarding_artifact)
+            .map_err(|code| {
+                TransportError::DcapVerification(format!(
+                    "enclave onboarding response is oversized: {:#06x}",
+                    code.code()
+                ))
+            })?;
+    let verifying_key = VerifyingKey::from_bytes(&attestation_pub).map_err(|error| {
+        TransportError::DcapVerification(format!("invalid enclave attestation key: {error}"))
+    })?;
+    let signature_bytes: [u8; 64] = attestation_tag.try_into().map_err(|tag: Vec<u8>| {
+        TransportError::DcapVerification(format!(
+            "invalid enclave onboarding tag length {}",
+            tag.len()
+        ))
+    })?;
+    verifying_key
+        .verify_strict(&preimage, &Signature::from_bytes(&signature_bytes))
+        .map_err(|error| {
+            TransportError::DcapVerification(format!("enclave onboarding tag is invalid: {error}"))
+        })?;
+    Ok(DcapOnboardingVerificationResultV1 {
+        outcome: canonical,
+        artifact,
+    })
+}
+
 fn validate_generated_dcap_quote(
     intent: &RegistrationIntentV1,
     canonical_intent: &[u8],
@@ -1029,6 +1177,7 @@ fn validate_generated_dcap_quote(
         intent: echoed_intent,
         quote_body,
         enclave_signature,
+        transition_key_ready_proof,
     } = response
     else {
         return Err(TransportError::UnexpectedResponse);
@@ -1053,9 +1202,34 @@ fn validate_generated_dcap_quote(
             "DCAP quote enclave proof of possession is invalid".into(),
         ));
     }
+    let transition_key_ready_proof = if transition_key_ready_proof.is_empty() {
+        None
+    } else {
+        Some(
+            TransitionKeyReadyProofV1::decode_canonical(&transition_key_ready_proof)
+                .map_err(|error| TransportError::Codec(error.to_string()))?,
+        )
+    };
+    match (intent.operation, transition_key_ready_proof.as_ref()) {
+        (AttestationOperationV1::TransitionEnclaveMeasurement, Some(proof)) => proof
+            .verify_for_transition(intent, proof.resident_offer_public)
+            .map_err(|error| TransportError::Attestation(error.to_string()))?,
+        (AttestationOperationV1::TransitionEnclaveMeasurement, None) => {
+            return Err(TransportError::Attestation(
+                "transition quote response is missing its key-ready proof".into(),
+            ));
+        }
+        (_, Some(_)) => {
+            return Err(TransportError::Attestation(
+                "non-transition quote response carries a key-ready proof".into(),
+            ));
+        }
+        (_, None) => {}
+    }
     Ok(GeneratedDcapQuoteV1 {
         quote_body,
         enclave_signature,
+        transition_key_ready_proof,
     })
 }
 
@@ -1380,6 +1554,7 @@ mod tests {
             intent: canonical_intent,
             quote_body: vec![0x51; 512],
             enclave_signature,
+            transition_key_ready_proof: Vec::new(),
         }
     }
 
@@ -1442,6 +1617,69 @@ mod tests {
     }
 
     #[test]
+    fn generated_transition_quote_requires_valid_key_ready_proof() {
+        use ed25519_dalek::{Signer as _, SigningKey};
+
+        let signer = SigningKey::from_bytes(&[0x23; 32]);
+        let mut intent = registration_intent(signer.verifying_key().to_bytes());
+        intent.operation = AttestationOperationV1::TransitionEnclaveMeasurement;
+        intent.registration_version = 1;
+        intent.transition_nonce = 4;
+        let canonical = intent.encode_canonical().unwrap();
+        let enclave_signature = signer
+            .sign(intent.intent_hash().unwrap().as_slice())
+            .to_bytes()
+            .to_vec();
+        let mut proof = TransitionKeyReadyProofV1 {
+            chain_id: intent.chain_id,
+            genesis_hash: intent.genesis_hash,
+            transition_intent_hash: intent.intent_hash().unwrap(),
+            candidate_manifest_hash: B256::repeat_byte(0x24),
+            transition_nonce: intent.transition_nonce,
+            resident_offer_public: [0x25; 32],
+            candidate_attestation_signature: [0; 64],
+        };
+        proof.candidate_attestation_signature = signer
+            .sign(proof.signing_hash().unwrap().as_slice())
+            .to_bytes();
+        let response = EnclaveResponse::DcapQuote {
+            intent: canonical.clone(),
+            quote_body: vec![0x51; 512],
+            enclave_signature: enclave_signature.clone(),
+            transition_key_ready_proof: proof.encode_canonical().unwrap(),
+        };
+        let accepted = validate_generated_dcap_quote(
+            &intent,
+            &canonical,
+            signer.verifying_key().to_bytes(),
+            response,
+        )
+        .unwrap();
+        assert_eq!(accepted.transition_key_ready_proof, Some(proof));
+
+        assert!(validate_generated_dcap_quote(
+            &intent,
+            &canonical,
+            signer.verifying_key().to_bytes(),
+            dcap_response(canonical.clone(), enclave_signature.clone()),
+        )
+        .is_err());
+        proof.resident_offer_public[0] ^= 1;
+        assert!(validate_generated_dcap_quote(
+            &intent,
+            &canonical,
+            signer.verifying_key().to_bytes(),
+            EnclaveResponse::DcapQuote {
+                intent: canonical.clone(),
+                quote_body: vec![0x51; 512],
+                enclave_signature,
+                transition_key_ready_proof: proof.encode_canonical().unwrap(),
+            },
+        )
+        .is_err());
+    }
+
+    #[test]
     fn dcap_verification_response_requires_exact_hash_canonical_outcome_and_signature() {
         use ed25519_dalek::{Signer as _, SigningKey};
 
@@ -1486,6 +1724,90 @@ mod tests {
             attestation_tag[0] ^= 1;
         }
         assert!(validate_dcap_verification_response(public, request_hash, bad_tag).is_err());
+    }
+
+    #[test]
+    fn onboarding_response_requires_signed_exact_artifact_and_valid_pairing() {
+        use ed25519_dalek::{Signer as _, SigningKey};
+
+        let signer = SigningKey::from_bytes(&[0x31; 32]);
+        let public = signer.verifying_key().to_bytes();
+        let request_hash = B256::repeat_byte(0x32);
+        let outcome = DcapVerificationOutcomeV1::Accepted(crate::dcap_protocol::DcapVerdictV1 {
+            mrenclave: B256::repeat_byte(0x33),
+            mrsigner: B256::repeat_byte(0x34),
+            isv_prod_id: 1,
+            isv_svn: 2,
+            pck_ca: crate::dcap_protocol::DcapPckCaV1::Processor,
+            fmspc: [0x35; 6],
+            pce_id: 3,
+            platform_tcb_status: crate::dcap_protocol::DcapPlatformTcbStatusV1::UpToDate,
+            advisory_ids: Vec::new(),
+            tcb_evaluation_data_number: 4,
+            qe_tcb_evaluation_data_number: 5,
+            collateral_valid_until: 6,
+        })
+        .encode_canonical()
+        .unwrap();
+        let artifact = DcapOnboardingArtifactV1 {
+            context: crate::dcap_protocol::DcapOnboardingContextV1 {
+                chain_id: [0x41; 32],
+                genesis_hash: B256::repeat_byte(0x42),
+                intent_hash: B256::repeat_byte(0x43),
+                node_id_hash: B256::repeat_byte(0x44),
+                enclave_id: B256::repeat_byte(0x45),
+                recipient_x25519: [0x46; 32],
+                tribute_offer_public: [0x47; 32],
+                key_epoch: 7,
+                tribute_offer_epoch: 8,
+            },
+            nonce: [0x48; 12],
+            ciphertext: vec![0x49; 112],
+        }
+        .encode_canonical()
+        .unwrap();
+        let tag = signer
+            .sign(&dcap_onboarding_attestation_preimage(request_hash, &outcome, &artifact).unwrap())
+            .to_bytes()
+            .to_vec();
+        let response = || EnclaveResponse::DcapOnboardingVerificationFinishedV1 {
+            request_hash,
+            outcome: outcome.clone(),
+            onboarding_artifact: artifact.clone(),
+            attestation_tag: tag.clone(),
+        };
+        let result = validate_dcap_onboarding_response(public, request_hash, response()).unwrap();
+        assert!(matches!(
+            result.outcome,
+            DcapVerificationOutcomeV1::Accepted(_)
+        ));
+        assert!(result.artifact.is_some());
+
+        let mut tampered = response();
+        if let EnclaveResponse::DcapOnboardingVerificationFinishedV1 {
+            onboarding_artifact,
+            ..
+        } = &mut tampered
+        {
+            let last = onboarding_artifact.len() - 1;
+            onboarding_artifact[last] ^= 1;
+        }
+        assert!(validate_dcap_onboarding_response(public, request_hash, tampered).is_err());
+
+        let rejected_with_artifact = EnclaveResponse::DcapOnboardingVerificationFinishedV1 {
+            request_hash,
+            outcome: DcapVerificationOutcomeV1::Rejected(
+                crate::dcap_protocol::DcapRejectCodeV1::NodeSignatureInvalid,
+            )
+            .encode_canonical()
+            .unwrap(),
+            onboarding_artifact: artifact,
+            attestation_tag: tag,
+        };
+        assert!(
+            validate_dcap_onboarding_response(public, request_hash, rejected_with_artifact)
+                .is_err()
+        );
     }
 
     #[test]

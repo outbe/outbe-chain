@@ -138,6 +138,7 @@ impl TeeBootstrapV2 {
                     intent,
                     quote,
                     components,
+                    transition_key_ready_proof: _,
                 }) => {
                     let components: [DcapCollateralComponentV1; 8] =
                         components.try_into().map_err(|_| {
@@ -559,6 +560,7 @@ impl TeeBootstrapV2 {
                     intent: participant.intent.clone(),
                     quote: quote.clone(),
                     components,
+                    transition_key_ready_proof: None,
                 })
             }
             TeeBootstrapParticipantEvidenceV2::GramineDirectDev {

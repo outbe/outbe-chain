@@ -294,6 +294,32 @@ pub struct ConsensusArgs {
     )]
     pub tee_bootstrap_timeout_secs: u64,
 
+    /// Funded EVM private key used only to relay automatic renewal
+    /// transactions. Required by DcapRequired nodes; FullNode identity keys
+    /// never implicitly become funded transaction signers.
+    #[arg(long = "tee-renewal.relay-key", value_name = "PATH")]
+    pub tee_renewal_relay_key: Option<PathBuf>,
+
+    /// Local HTTP JSON-RPC endpoint used by the renewal worker after Reth starts.
+    #[arg(
+        long = "tee-renewal.rpc-url",
+        default_value = "http://127.0.0.1:8545",
+        value_name = "URL"
+    )]
+    pub tee_renewal_rpc_url: String,
+
+    /// Interval between automatic renewal reconciliation attempts.
+    #[arg(long = "tee-renewal.poll-secs", default_value_t = 30)]
+    pub tee_renewal_poll_secs: u64,
+
+    /// Warning margin relative to the next finalized DKG freeze.
+    #[arg(long = "tee-renewal.warning-blocks", default_value_t = 600)]
+    pub tee_renewal_warning_blocks: u64,
+
+    /// Critical margin relative to the next finalized DKG freeze.
+    #[arg(long = "tee-renewal.critical-blocks", default_value_t = 120)]
+    pub tee_renewal_critical_blocks: u64,
+
     /// Run as a FOLLOWER: cold-sync finalized blocks from this upstream node and
     /// verify them against the committee (anchored on the genesis validator set,
     /// read from the node's own genesis state), instead of running the consensus
@@ -351,6 +377,12 @@ impl fmt::Debug for ConsensusArgs {
             .field("bls_key_backend", &self.bls_key_backend)
             .field("bls_passphrase_configured", &self.bls_passphrase.is_some())
             .field("tee_enclave_configured", &self.tee_enclave_socket.is_some())
+            .field(
+                "tee_renewal_relay_configured",
+                &self.tee_renewal_relay_key.is_some(),
+            )
+            .field("tee_renewal_rpc_url", &self.tee_renewal_rpc_url)
+            .field("tee_renewal_poll_secs", &self.tee_renewal_poll_secs)
             .field("upstream_configured", &self.upstream.is_some())
             .field(
                 "offchain_data_configured",
@@ -378,6 +410,15 @@ impl ConsensusArgs {
     pub fn validate(&self) -> eyre::Result<()> {
         self.offchain_data()?;
         self.ocomp.node_control()?;
+        if self.tee_renewal_poll_secs == 0 {
+            eyre::bail!("--tee-renewal.poll-secs must be greater than zero");
+        }
+        if self.tee_renewal_critical_blocks > self.tee_renewal_warning_blocks {
+            eyre::bail!("--tee-renewal.critical-blocks cannot exceed --tee-renewal.warning-blocks");
+        }
+        if self.tee_renewal_rpc_url.trim().is_empty() {
+            eyre::bail!("--tee-renewal.rpc-url must not be empty");
+        }
         // Follower mode (`--upstream`) is the lightweight full-node path and must
         // not be combined with validator/consensus participation. (clap's
         // `conflicts_with` also enforces this on the CLI; this covers programmatic
@@ -548,6 +589,11 @@ mod tests {
             bls_passphrase: None,
             tee_enclave_socket: None,
             tee_bootstrap_timeout_secs: 60,
+            tee_renewal_relay_key: None,
+            tee_renewal_rpc_url: "http://127.0.0.1:8545".to_owned(),
+            tee_renewal_poll_secs: 30,
+            tee_renewal_warning_blocks: 600,
+            tee_renewal_critical_blocks: 120,
             upstream: None,
             upstream_nocertify: false,
             projection_mongodb_uri: Some("mongodb://localhost:27017".to_owned()),

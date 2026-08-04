@@ -6,8 +6,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use alloy_primitives::{hex, Bytes};
+use alloy_primitives::{hex, Address, Bytes};
 use eyre::{eyre, Result};
+use outbe_primitives::tee_attestation_v1::NodeIdV1;
+use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
 
 use crate::internal::{
     addresses,
@@ -116,7 +118,7 @@ impl Localnet {
 
         // Enclave container (owned foreground, no `-d`), then `tee join` once its
         // socket is up.
-        self.start_joiner_enclave(index)?;
+        self.start_node_enclave(index)?;
         let port = self.cfg.tee_port(index);
         let sock = format!("127.0.0.1:{port}");
         let binding_id = random_hex_32()?;
@@ -125,26 +127,34 @@ impl Localnet {
             .checked_add(7_200)
             .ok_or_else(|| eyre!("V1 tee join lease deadline overflow"))?
             .to_string();
-        Sh::new(&self.cfg).cli_required([
+        let mut join = args![
             "tee",
             "join",
             "--enclave-socket",
-            &sock,
+            sock,
             "--profile",
             "validator",
             "--consensus-bls-public",
-            &bls,
+            bls,
             "--binding-id",
-            &binding_id,
+            binding_id,
             "--valid-until",
-            &valid_until,
+            valid_until,
             "--rpc-url",
             self.cfg.rpc0.as_str(),
             "--private-key",
-            &key,
+            key,
             "--timeout-secs",
-            "60",
-        ])?;
+            if matches!(self.cfg.tee_mode, crate::env::TeeMode::Real) {
+                "180"
+            } else {
+                "60"
+            },
+        ];
+        if matches!(self.cfg.tee_mode, crate::env::TeeMode::Real) {
+            join.extend(args!["--node-data-dir", vd.join("data").display()]);
+        }
+        Sh::new(&self.cfg).cli_required(join)?;
         Ok(())
     }
 
@@ -153,38 +163,80 @@ impl Localnet {
     /// fresh join material.
     pub fn restart_joiner_enclave(&mut self, index: usize) -> Result<()> {
         self.enclaves.remove(&index);
-        self.start_joiner_enclave(index)
+        self.start_node_enclave(index)
     }
 
-    /// Query the joiner's exact resident offer public key and require the CLI's
-    /// authoritative chain comparison to report MATCH.
-    pub fn joiner_offer_public(&self, index: usize) -> Result<[u8; 32]> {
-        let output = Sh::new(&self.cfg).cli([
-            "tee",
-            "pubkey",
-            "--enclave-socket",
-            &format!("127.0.0.1:{}", self.cfg.tee_port(index)),
-            "--diff-chain",
-            "--rpc-url",
-            self.cfg.rpc0.as_str(),
-        ])?;
-        if !output.contains("✓ MATCH") {
-            return Err(eyre!(
-                "joiner enclave offer key did not match canonical chain state: {output}"
-            ));
+    pub fn stop_node_enclave(&mut self, index: usize) {
+        self.enclaves.remove(&index);
+    }
+
+    pub fn restart_full_node_enclave(&mut self, index: usize) -> Result<()> {
+        self.enclaves.remove(&index);
+        self.start_node_enclave(index)
+    }
+
+    /// Reopen the production enclave through its durable NodeHost identity and
+    /// read the exact resident offer public key over authenticated Noise. The
+    /// preceding `tee join` already required this key to match finalized chain
+    /// state; this method proves that the same key remains reachable after the
+    /// enclave and node restart without reopening the plaintext dev transport.
+    pub fn node_offer_public(&self, index: usize) -> Result<[u8; 32]> {
+        let node_data_dir = self.cfg.validator_dir(index).join("data");
+        let manifest = outbe_tee::load_committed_enclave_manifest_v1(&node_data_dir)
+            .map_err(|error| eyre!("load joiner NodeHost manifest: {error}"))?;
+        if manifest.chain_id[..24] != [0_u8; 24] {
+            return Err(eyre!("node manifest chain id does not fit u64"));
         }
-        let encoded = first_hex(&output, 64)
-            .ok_or_else(|| eyre!("joiner pubkey output has no 32-byte key: {output}"))?;
-        let decoded = hex::decode(encoded)?;
-        decoded.try_into().map_err(|value: Vec<u8>| {
-            eyre!(
-                "joiner pubkey output must contain exactly 32 bytes, got {}",
-                value.len()
-            )
-        })
+        let chain_id = u64::from_be_bytes(
+            manifest.chain_id[24..]
+                .try_into()
+                .map_err(|_| eyre!("node manifest chain id has invalid width"))?,
+        );
+        let endpoint = format!("127.0.0.1:{}", self.cfg.tee_port(index));
+        let unexpected_reinitialize =
+            |_| Err("committed node unexpectedly required reinitialization".to_owned());
+        let mut client = match manifest.node_id {
+            NodeIdV1::Validator {
+                address,
+                bls_minpk_public,
+            } => outbe_tee::connect_or_initialize_validator_enclave(
+                &endpoint,
+                &node_data_dir,
+                outbe_tee::ValidatorNodeHostIdentityV1 {
+                    chain_id,
+                    genesis_hash: manifest.genesis_hash,
+                    validator: Address::from(address),
+                    consensus_bls_public: bls_minpk_public,
+                },
+                unexpected_reinitialize,
+            ),
+            NodeIdV1::FullNode { reth_p2p_public } => {
+                outbe_tee::connect_or_initialize_full_node_enclave(
+                    &endpoint,
+                    &node_data_dir,
+                    outbe_tee::FullNodeNodeHostIdentityV1 {
+                        chain_id,
+                        genesis_hash: manifest.genesis_hash,
+                        reth_p2p_public,
+                    },
+                    unexpected_reinitialize,
+                )
+            }
+        }
+        .map_err(|error| eyre!("authenticated node enclave reopen failed: {error}"))?;
+        match client.request(&EnclaveRequest::GetPublicKeys)? {
+            EnclaveResponse::PublicKeys {
+                offer_key_ready: true,
+                recipient_x25519_pub,
+                ..
+            } => Ok(recipient_x25519_pub),
+            other => Err(eyre!(
+                "authenticated node enclave has no permanent offer key: {other:?}"
+            )),
+        }
     }
 
-    fn start_joiner_enclave(&mut self, index: usize) -> Result<()> {
+    pub(super) fn start_node_enclave(&mut self, index: usize) -> Result<()> {
         let vd = self.cfg.validator_dir(index);
         let port = self.cfg.tee_port(index);
         let image_id = proc::ensure_enclave_image(
@@ -251,6 +303,12 @@ impl Localnet {
             vd.join("signing-key.hex").display(),
             "--validator.evm-key",
             vd.join("evm-key.hex").display(),
+            "--tee-renewal.relay-key",
+            vd.join("evm-key.hex").display(),
+            "--tee-renewal.rpc-url",
+            format!("http://localhost:{}", self.cfg.http_port(index)),
+            "--tee-renewal.poll-secs",
+            "2",
             "--consensus.listen-addr",
             format!("127.0.0.1:{}", self.cfg.consensus_port(index)),
             "--consensus.peers",
