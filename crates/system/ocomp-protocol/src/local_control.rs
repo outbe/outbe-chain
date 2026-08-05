@@ -39,6 +39,7 @@ impl ControlRole {
                     | method_bit(NodeMessageKind::GetJobSpec as u16)
                     | method_bit(NodeMessageKind::OpenSnapshotLease as u16)
                     | method_bit(NodeMessageKind::RequestAttestation as u16)
+                    | method_bit(NodeMessageKind::CommitLocalResult as u16)
                     | method_bit(NodeMessageKind::GetOcompHealth as u16)
             }
             (Self::SnapshotExporter, ControlMagic::Node) => {

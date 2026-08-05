@@ -54,6 +54,7 @@ pub enum NodeMessageKind {
     RequestAttestation = 0x0019,
     GetOcompHealth = 0x001a,
     CheckProjectionContainment = 0x001b,
+    CommitLocalResult = 0x001c,
     Response = 0x7ffe,
     Error = 0x7fff,
 }
@@ -107,6 +108,24 @@ wire_enum_u8! {
         SnapshotExporter = 3,
         Worker = 4,
     }
+}
+
+wire_struct! {
+    /// Non-voting compute role publishes one complete canonical result to the
+    /// node-owned durable exact-result authority. This command cannot request
+    /// attestation, a signature, or a transaction.
+    pub struct CommitLocalResultV1 {
+        pub canonical_result: BoundedBytes,
+    }
+    validate = validate_commit_local_result;
+}
+
+wire_struct! {
+    pub struct LocalResultCommittedV1 {
+        pub job_id: B256,
+        pub result_digest: B256,
+    }
+    validate = validate_local_result_committed;
 }
 
 wire_struct! {
@@ -627,6 +646,8 @@ impl_control_body_codec!(CommitSnapshotExportV1);
 impl_control_body_codec!(SnapshotExportCommittedV1);
 impl_control_body_codec!(RequestAttestationV1);
 impl_control_body_codec!(AttestationResponseV1);
+impl_control_body_codec!(CommitLocalResultV1);
+impl_control_body_codec!(LocalResultCommittedV1);
 impl_control_body_codec!(PreparedVoteTransactionV1);
 
 impl RunUnitV1 {
@@ -917,6 +938,28 @@ fn validate_request_attestation(
         !request.canonical_result.0.is_empty()
             && request.canonical_result.0.len() <= limits.max_control_body_bytes,
         "attestation result control cap",
+    )
+}
+
+fn validate_commit_local_result(
+    request: &CommitLocalResultV1,
+    limits: &SchemaLimits,
+) -> Result<(), ProtocolError> {
+    request.canonical_result.validate(limits)?;
+    require(
+        !request.canonical_result.0.is_empty()
+            && request.canonical_result.0.len() <= limits.max_control_body_bytes,
+        "local result control cap",
+    )
+}
+
+fn validate_local_result_committed(
+    response: &LocalResultCommittedV1,
+    _limits: &SchemaLimits,
+) -> Result<(), ProtocolError> {
+    require(
+        !response.job_id.is_zero() && !response.result_digest.is_zero(),
+        "local result committed identity",
     )
 }
 

@@ -25,6 +25,7 @@ use crate::{
     schema::MetadosisContract,
 };
 
+use super::activation::OcompLocalResultAuthority;
 use super::schema::remove_response_deadline_key;
 
 const REJECT_MALFORMED_ENCODING: u16 = 1;
@@ -56,6 +57,7 @@ pub fn dispatch_public_result_vote(
     data: &[u8],
     value: U256,
     is_static: bool,
+    local_result_authority: Option<&dyn OcompLocalResultAuthority>,
 ) -> Result<Bytes> {
     if !value.is_zero() || is_static {
         return Err(vote_reject(REJECT_CALL_MODE));
@@ -66,7 +68,13 @@ pub fn dispatch_public_result_vote(
         .map_err(|_| vote_reject(REJECT_MALFORMED_ENCODING))?;
     let inclusion_height = storage.block_number()?;
     MetadosisContract::new(storage)
-        .record_ocomp_result_vote(&vote, inclusion_height, scope, &limits)
+        .record_ocomp_result_vote(
+            &vote,
+            inclusion_height,
+            scope,
+            &limits,
+            local_result_authority,
+        )
         .map_err(map_vote_transition_error)?;
     Ok(Bytes::new())
 }
@@ -219,6 +227,7 @@ impl MetadosisContract<'_> {
         inclusion_height: u64,
         scope: &ExecutionScope,
         limits: &SchemaLimits,
+        local_result_authority: Option<&dyn OcompLocalResultAuthority>,
     ) -> Result<RecordedResultVoteV1> {
         let storage = self.storage.clone();
         let outcome = (|| {
@@ -340,6 +349,7 @@ impl MetadosisContract<'_> {
                         &vote.result,
                         formed,
                         &authority,
+                        local_result_authority,
                     )?;
                     let applied = self
                         .ocomp_job_record(response.intent_id, limits)?

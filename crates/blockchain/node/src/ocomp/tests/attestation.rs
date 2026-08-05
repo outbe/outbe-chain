@@ -34,9 +34,9 @@ use outbe_ocomp_protocol::{
         LysisResultV1, MetadosisCompletionSummaryV1, ResultRootsV1,
     },
     vote::ResultVoteV1,
-    AttestationResponseV1, ListFinalizedJobsResponseV1, ListFinalizedJobsV1, LocalErrorCode,
-    LocalErrorV1, NodeMessageKind, ProtocolError, RequestAttestationV1, SchemaLimits,
-    MAX_FINALIZED_JOBS_PER_RESPONSE,
+    AttestationResponseV1, CommitLocalResultV1, ListFinalizedJobsResponseV1, ListFinalizedJobsV1,
+    LocalErrorCode, LocalErrorV1, LocalResultCommittedV1, NodeMessageKind, ProtocolError,
+    RequestAttestationV1, SchemaLimits, MAX_FINALIZED_JOBS_PER_RESPONSE,
 };
 use outbe_primitives::{
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
@@ -61,6 +61,7 @@ use crate::ocomp::{
         OcompAttestationGate, ProviderHistoricalOcompSnapshotSource, SnapshotSourceError,
     },
     control::OcompControlServer,
+    local_result::LocalLysisResultStore,
     retention::{
         CandidateFinalityV1, CandidatePinV1, FinalizedInputProofSource, OcompRetentionCoordinator,
         RetentionError,
@@ -637,7 +638,18 @@ fn control_server(
     directory: &tempfile::TempDir,
     gate: OcompAttestationGate,
 ) -> Arc<OcompControlServer> {
-    Arc::new(base_control_server(directory).with_attestation(Arc::new(gate)))
+    Arc::new(
+        base_control_server(directory)
+            .with_local_result_store(local_result_store(directory))
+            .with_attestation(Arc::new(gate)),
+    )
+}
+
+fn local_result_store(directory: &tempfile::TempDir) -> Arc<LocalLysisResultStore> {
+    Arc::new(
+        LocalLysisResultStore::open(directory.path().join("local-results"), protocol_limits())
+            .expect("local Lysis result store"),
+    )
 }
 
 fn base_control_server(directory: &tempfile::TempDir) -> OcompControlServer {
@@ -1217,6 +1229,9 @@ fn ocm_sig_001_real_control_socket_attests_and_returns_typed_conflict_without_dr
     let vote = ResultVoteV1::decode_canonical(&first.canonical_vote.0, &limits)
         .expect("canonical result vote");
     assert_historical_vote(&vote, &exported, &committee, 105, &limits);
+    local_result_store(&directory)
+        .verify_exact(result.job_id, &result)
+        .expect("attestation persists the exact local result before signing");
 
     let mut conflicting = result;
     conflicting.roots.nod_root = hash(62);
@@ -1257,6 +1272,111 @@ fn ocm_sig_001_real_control_socket_attests_and_returns_typed_conflict_without_dr
     let replay = AttestationResponseV1::decode_body(&replay_frame.body, &limits)
         .expect("replayed attestation");
     assert_eq!(replay, first);
+
+    drop(client);
+    server_thread
+        .join()
+        .expect("control server did not panic")
+        .expect("control server stopped cleanly");
+}
+
+#[test]
+fn keyless_control_commits_exact_local_result_and_rejects_conflict_without_voting() {
+    let limits = protocol_limits();
+    let (_, _, result) = fixture();
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let store = local_result_store(&directory);
+    let server = Arc::new(base_control_server(&directory).with_local_result_store(store.clone()));
+    let (node_stream, supervisor_stream) =
+        UnixStream::pair().expect("real local control socket pair");
+    let server_thread = thread::spawn(move || server.serve_connection(node_stream));
+    let mut client = ControlClientSession::connect(
+        supervisor_stream,
+        ClientPolicy::supervisor_to_node(
+            effective_uid().expect("effective uid"),
+            EndpointIdentity {
+                chain_id: 42,
+                genesis_hash: hash(40),
+                boot_nonce: hash(99),
+                protocol_bundle_hash: hash(41),
+            },
+            limits,
+        ),
+    )
+    .expect("connect keyless follower control session");
+    client.handshake().expect("control handshake");
+    let canonical = result.encode_canonical(&limits).expect("canonical result");
+    let request = CommitLocalResultV1 {
+        canonical_result: BoundedBytes(canonical),
+    };
+
+    for _ in 0..2 {
+        client
+            .send_request(
+                NodeMessageKind::CommitLocalResult as u16,
+                request.encode_body(&limits).expect("commit request"),
+            )
+            .expect("send local result commit");
+        let frame = client.receive_response().expect("commit response");
+        assert_eq!(frame.message_kind, NodeMessageKind::Response as u16);
+        let committed = LocalResultCommittedV1::decode_body(&frame.body, &limits)
+            .expect("typed committed response");
+        assert_eq!(committed.job_id, result.job_id);
+        assert_eq!(
+            committed.result_digest,
+            result.result_digest(&limits).expect("result digest")
+        );
+    }
+    store
+        .verify_exact(result.job_id, &result)
+        .expect("keyless follower result is durable");
+
+    let mut conflicting = result.clone();
+    conflicting.roots.nod_root = hash(62);
+    recompute_arithmetic(&mut conflicting, &limits);
+    client
+        .send_request(
+            NodeMessageKind::CommitLocalResult as u16,
+            CommitLocalResultV1 {
+                canonical_result: BoundedBytes(
+                    conflicting
+                        .encode_canonical(&limits)
+                        .expect("conflicting canonical result"),
+                ),
+            }
+            .encode_body(&limits)
+            .expect("conflicting commit request"),
+        )
+        .expect("send conflicting local result");
+    let conflict_frame = client.receive_response().expect("conflict response");
+    assert_eq!(conflict_frame.message_kind, NodeMessageKind::Error as u16);
+    let conflict =
+        LocalErrorV1::decode_body(&conflict_frame.body, &limits).expect("typed local error");
+    assert_eq!(
+        conflict.rejected_kind,
+        NodeMessageKind::CommitLocalResult as u16
+    );
+    assert_eq!(conflict.error_code, LocalErrorCode::Conflict as u16);
+    assert!(!conflict.retryable);
+
+    client
+        .send_request(
+            NodeMessageKind::ListFinalizedJobs as u16,
+            ListFinalizedJobsV1 {
+                after_cursor: 0,
+                limit: MAX_FINALIZED_JOBS_PER_RESPONSE,
+            }
+            .encode_body(&limits)
+            .expect("list request after conflict"),
+        )
+        .expect("control session remains usable after conflict");
+    assert_eq!(
+        client
+            .receive_response()
+            .expect("list response after conflict")
+            .message_kind,
+        NodeMessageKind::Response as u16
+    );
 
     drop(client);
     server_thread

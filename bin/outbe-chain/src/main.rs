@@ -1208,6 +1208,13 @@ fn run_node() -> eyre::Result<()> {
             .data_dir()
             .to_path_buf();
         let genesis_hash = builder.config().chain.genesis_hash();
+        let local_lysis_results = Arc::new(
+            outbe_node::ocomp::local_result::LocalLysisResultStore::open(
+                ce_data_dir.join("ocomp-local-results-v1"),
+                outbe_ocomp_protocol::profile::poc_schema_limits(),
+            )
+            .wrap_err("failed to open durable node-local Lysis result store")?,
+        );
         let ce_identity = EnvironmentIdentity {
             local_storage_schema_version: LOCAL_STORAGE_SCHEMA_VERSION,
             chain_id: builder.config().chain.chain().id(),
@@ -1250,7 +1257,9 @@ fn run_node() -> eyre::Result<()> {
                 compressed_tree_service.clone(),
             ),
         };
-        let outbe_node = outbe_node.with_ocomp_fork_install(ocomp_fork_install);
+        let outbe_node = outbe_node
+            .with_ocomp_fork_install(ocomp_fork_install)
+            .with_ocomp_local_result_authority(local_lysis_results.clone());
         let (projection_exit_tx, mut projection_exit_rx) =
             tokio::sync::mpsc::unbounded_channel();
         let projection_readiness_for_rpc = projection_readiness.clone();

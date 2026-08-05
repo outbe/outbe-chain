@@ -158,11 +158,19 @@ pub fn submit_verified_result_vote(
     data: &[u8],
     value: U256,
     is_static: bool,
+    local_result_authority: Option<&dyn crate::api::OcompLocalResultAuthority>,
 ) -> Result<Bytes> {
     let binding = metadosis_verified_vote_binding(data);
     with_ce_checkpoint(scope, || {
         commit_transition::<MetadosisVerifiedResultVote, _>(storage.clone(), binding, |_| {
-            crate::ocomp::vote::dispatch_public_result_vote(storage, scope, data, value, is_static)
+            crate::ocomp::vote::dispatch_public_result_vote(
+                storage,
+                scope,
+                data,
+                value,
+                is_static,
+                local_result_authority,
+            )
         })
     })
 }

@@ -25,7 +25,10 @@ pub struct OcompNodeControlConfig {
     pub protocol_bundle_hash: B256,
     pub boot_nonce: B256,
     pub session_generation: u64,
-    pub key_path: PathBuf,
+    /// Present only for a validator that signs OCOMP result votes. A certified
+    /// FullNode runs the same discovery/export/compute control plane without a
+    /// signing key and can never request result attestation.
+    pub key_path: Option<PathBuf>,
 }
 
 /// Local process-boundary settings. Omitted as a whole until OCOMP is enabled.
@@ -89,15 +92,14 @@ impl OcompArgs {
             self.snapshot_exporter_uid.is_some(),
             self.protocol_bundle_hash.is_some(),
             self.boot_nonce.is_some(),
-            self.key_path.is_some(),
         ];
-        if configured.iter().all(|value| !value) {
+        if configured.iter().all(|value| !value) && self.key_path.is_none() {
             return Ok(None);
         }
         if !configured.iter().all(|value| *value) {
             eyre::bail!(
                 "OCOMP node control requires both role sockets, both peer UIDs, \
-                 --ocomp.protocol-bundle-hash, --ocomp.boot-nonce and --ocomp.key"
+                 --ocomp.protocol-bundle-hash and --ocomp.boot-nonce"
             );
         }
         if self.session_generation == 0 {
@@ -136,10 +138,7 @@ impl OcompArgs {
             protocol_bundle_hash,
             boot_nonce,
             session_generation: self.session_generation,
-            key_path: self
-                .key_path
-                .clone()
-                .expect("complete profile checked above"),
+            key_path: self.key_path.clone(),
         }))
     }
 }
@@ -430,8 +429,28 @@ impl ConsensusArgs {
                  both peer UIDs, --ocomp.protocol-bundle-hash, --ocomp.boot-nonce and --ocomp.key"
             );
         }
-        if !self.is_validator && ocomp_node_control.is_some() {
-            eyre::bail!("OCOMP voting configuration requires --validator");
+        if self.is_validator
+            && ocomp_node_control
+                .as_ref()
+                .is_some_and(|config| config.key_path.is_none())
+        {
+            eyre::bail!("validator OCOMP voting configuration requires --ocomp.key");
+        }
+        if self.upstream.is_some() && ocomp_node_control.is_none() {
+            eyre::bail!(
+                "certified FullNode requires OCOMP compute control: provide both role sockets, \
+                 both peer UIDs, --ocomp.protocol-bundle-hash and --ocomp.boot-nonce"
+            );
+        }
+        if self.upstream.is_some()
+            && ocomp_node_control
+                .as_ref()
+                .is_some_and(|config| config.key_path.is_some())
+        {
+            eyre::bail!("certified FullNode must not configure --ocomp.key");
+        }
+        if !self.is_validator && self.upstream.is_none() && ocomp_node_control.is_some() {
+            eyre::bail!("OCOMP control requires --validator or certified --upstream FullNode");
         }
         if !self.is_validator && self.signing_key.is_some() {
             tracing::warn!(
@@ -601,13 +620,17 @@ mod tests {
         }
     }
 
-    fn configure_ocomp_voting(args: &mut ConsensusArgs) {
+    fn configure_ocomp_control(args: &mut ConsensusArgs) {
         args.ocomp.supervisor_socket = Some("/tmp/supervisor.sock".into());
         args.ocomp.snapshot_exporter_socket = Some("/tmp/exporter.sock".into());
         args.ocomp.supervisor_uid = Some(1001);
         args.ocomp.snapshot_exporter_uid = Some(1002);
         args.ocomp.protocol_bundle_hash = Some(B256::repeat_byte(0x11));
         args.ocomp.boot_nonce = Some(B256::repeat_byte(0x22));
+    }
+
+    fn configure_ocomp_voting(args: &mut ConsensusArgs) {
+        configure_ocomp_control(args);
         args.ocomp.key_path = Some("/tmp/ocomp-key.hex".into());
     }
 
@@ -632,9 +655,9 @@ mod tests {
     }
 
     #[test]
-    fn validator_requires_complete_ocomp_voting_config_but_full_node_does_not() {
-        let full_node = default_args();
-        assert!(full_node.validate().is_ok());
+    fn validator_requires_complete_ocomp_voting_config() {
+        let non_participant = default_args();
+        assert!(non_participant.validate().is_ok());
 
         let mut validator = default_args();
         validator.is_validator = true;
@@ -644,6 +667,38 @@ mod tests {
             .expect_err("validator without OCOMP voting configuration must fail closed")
             .to_string();
         assert!(error.contains("validator requires OCOMP"), "error: {error}");
+    }
+
+    #[test]
+    fn certified_full_node_requires_complete_keyless_ocomp_control() {
+        let mut follower = default_args();
+        follower.upstream = Some("http://upstream:8545".to_owned());
+        let error = follower
+            .validate()
+            .expect_err("OCOMP-enabled FullNode without its local compute control must fail")
+            .to_string();
+        assert!(error.contains("FullNode requires OCOMP"), "error: {error}");
+
+        configure_ocomp_control(&mut follower);
+        follower
+            .validate()
+            .expect("FullNode accepts a complete keyless OCOMP control profile");
+        let config = follower
+            .ocomp
+            .node_control()
+            .expect("complete profile parses")
+            .expect("profile is configured");
+        assert!(config.key_path.is_none(), "FullNode has no voting key");
+
+        follower.ocomp.key_path = Some("/tmp/forbidden-ocomp-key.hex".into());
+        let error = follower
+            .validate()
+            .expect_err("FullNode must not acquire validator vote capability")
+            .to_string();
+        assert!(
+            error.contains("must not configure --ocomp.key"),
+            "error: {error}"
+        );
     }
 
     #[test]
@@ -737,6 +792,7 @@ mod tests {
     fn test_follower_upstream_ok_without_validator() {
         let mut args = default_args();
         args.upstream = Some("http://upstream:8545".to_string());
+        configure_ocomp_control(&mut args);
         assert!(args.validate().is_ok());
     }
 

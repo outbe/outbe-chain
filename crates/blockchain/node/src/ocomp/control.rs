@@ -20,10 +20,11 @@ use outbe_ocomp_protocol::local_control::{
     ControlError, ControlRole, ControlServerSession, EndpointIdentity, ServerPolicy,
 };
 use outbe_ocomp_protocol::{
-    common::BoundedBytes, AttestationResponseV1, BuildFinalizedIntentProofV1, BuildLysisOpeningsV1,
-    CheckProjectionContainmentV1, CommitSnapshotExportV1, FinalizedJobSpecV1,
-    FinalizedJobSummaryV1, GetJobSpecV1, GetSnapshotHandoffV1, ListFinalizedJobsResponseV1,
-    ListFinalizedJobsV1, ListSnapshotHandoffsV1, LocalErrorCode, LocalErrorV1, NodeMessageKind,
+    common::BoundedBytes, result::LysisResultV1, AttestationResponseV1,
+    BuildFinalizedIntentProofV1, BuildLysisOpeningsV1, CheckProjectionContainmentV1,
+    CommitLocalResultV1, CommitSnapshotExportV1, FinalizedJobSpecV1, FinalizedJobSummaryV1,
+    GetJobSpecV1, GetSnapshotHandoffV1, ListFinalizedJobsResponseV1, ListFinalizedJobsV1,
+    ListSnapshotHandoffsV1, LocalErrorCode, LocalErrorV1, LocalResultCommittedV1, NodeMessageKind,
     OpenSnapshotLeaseV1, ProtocolError, RenewSnapshotLeaseV1, RequestAttestationV1, SchemaLimits,
 };
 use thiserror::Error;
@@ -32,6 +33,7 @@ use super::attestation::{
     AtomicHeightSource, AttestationAuthorityError, AttestationError, CurrentHeightSource,
     HistoricalOcompSnapshotSource, OcompAttestationConfig, OcompAttestationGate,
 };
+use super::local_result::{LocalLysisResultError, LocalLysisResultStore};
 use super::retention::{FinalizedJobPinV1, OcompRetentionCoordinator, RetentionError};
 use super::sign_once::{SignOnceError, SignOnceStore};
 use super::signer::OcompSigner;
@@ -109,6 +111,7 @@ pub struct OcompControlServer {
     expected_snapshot_exporter_uid: Option<u32>,
     attestation: Option<Arc<OcompAttestationGate>>,
     attestation_height: Option<Arc<AtomicHeightSource>>,
+    local_results: Option<Arc<LocalLysisResultStore>>,
 }
 
 #[derive(Clone, Debug)]
@@ -143,7 +146,16 @@ impl OcompControlServer {
             expected_snapshot_exporter_uid: None,
             attestation: None,
             attestation_height: None,
+            local_results: None,
         })
+    }
+
+    /// Installs the one node-owned immutable result authority shared by the
+    /// validator attestation path and the keyless FullNode follower path.
+    #[must_use]
+    pub fn with_local_result_store(mut self, store: Arc<LocalLysisResultStore>) -> Self {
+        self.local_results = Some(store);
+        self
     }
 
     /// Enables the node-owned result attestation gate on the existing
@@ -404,6 +416,38 @@ impl OcompControlServer {
                         }
                     }
                 }
+                kind if kind == NodeMessageKind::CommitLocalResult as u16 => {
+                    let request = match CommitLocalResultV1::decode_body(&frame.body, &self.limits)
+                    {
+                        Ok(request) => request,
+                        Err(_) => {
+                            send_local_error(
+                                &mut session,
+                                frame.request_id,
+                                frame.message_kind,
+                                LocalErrorCode::Malformed,
+                                false,
+                                &self.limits,
+                            )?;
+                            continue;
+                        }
+                    };
+                    match self.commit_local_result(&request) {
+                        Ok(response) => response.encode_body(&self.limits)?,
+                        Err(error) => {
+                            let (error_code, retryable) = local_result_local_error(&error);
+                            send_local_error(
+                                &mut session,
+                                frame.request_id,
+                                frame.message_kind,
+                                error_code,
+                                retryable,
+                                &self.limits,
+                            )?;
+                            continue;
+                        }
+                    }
+                }
                 kind if kind == NodeMessageKind::OpenSnapshotLease as u16 => {
                     let request = OpenSnapshotLeaseV1::decode_body(&frame.body, &self.limits)?;
                     self.snapshot_export()?
@@ -478,6 +522,26 @@ impl OcompControlServer {
             .ok_or(NodeControlError::AttestationUnavailable)
     }
 
+    fn local_results(&self) -> Result<&LocalLysisResultStore, NodeControlError> {
+        self.local_results
+            .as_deref()
+            .ok_or(NodeControlError::LocalResultStoreUnavailable)
+    }
+
+    pub fn commit_local_result(
+        &self,
+        request: &CommitLocalResultV1,
+    ) -> Result<LocalResultCommittedV1, NodeControlError> {
+        let result = LysisResultV1::decode_canonical(&request.canonical_result.0, &self.limits)?;
+        let committed = self
+            .local_results()?
+            .commit(result.job_id, &request.canonical_result.0)?;
+        Ok(LocalResultCommittedV1 {
+            job_id: committed.job_id,
+            result_digest: committed.result_digest,
+        })
+    }
+
     pub fn request_attestation(
         &self,
         request: &RequestAttestationV1,
@@ -485,6 +549,8 @@ impl OcompControlServer {
         let vote = self
             .attestation()?
             .attest_canonical_result(&request.canonical_result.0)?;
+        self.local_results()?
+            .commit(vote.job_id, &request.canonical_result.0)?;
         Ok(AttestationResponseV1 {
             canonical_vote: BoundedBytes(vote.encode_canonical(&self.limits)?),
         })
@@ -623,6 +689,39 @@ fn attestation_local_error(error: &NodeControlError) -> (LocalErrorCode, bool) {
     }
 }
 
+fn local_result_local_error(error: &NodeControlError) -> (LocalErrorCode, bool) {
+    match error {
+        NodeControlError::LocalResultStoreUnavailable => {
+            (LocalErrorCode::InternalOcompUnavailable, true)
+        }
+        NodeControlError::LocalResult(LocalLysisResultError::Conflict { .. })
+        | NodeControlError::LocalResult(LocalLysisResultError::Mismatch { .. }) => {
+            (LocalErrorCode::Conflict, false)
+        }
+        NodeControlError::LocalResult(LocalLysisResultError::Oversized { .. }) => {
+            (LocalErrorCode::LimitExceeded, false)
+        }
+        NodeControlError::LocalResult(
+            LocalLysisResultError::Protocol(_)
+            | LocalLysisResultError::JobIdMismatch { .. }
+            | LocalLysisResultError::NonCanonical,
+        )
+        | NodeControlError::Protocol(_) => (LocalErrorCode::Malformed, false),
+        NodeControlError::LocalResult(
+            LocalLysisResultError::Io { .. }
+            | LocalLysisResultError::Missing { .. }
+            | LocalLysisResultError::Poisoned,
+        ) => (LocalErrorCode::InternalOcompUnavailable, true),
+        NodeControlError::LocalResult(
+            LocalLysisResultError::InvalidLimits
+            | LocalLysisResultError::UnsafeStore { .. }
+            | LocalLysisResultError::UncertainState { .. }
+            | LocalLysisResultError::CorruptRecord { .. },
+        ) => (LocalErrorCode::InternalOcompUnavailable, false),
+        _ => (LocalErrorCode::InternalOcompUnavailable, false),
+    }
+}
+
 fn summary(pin: FinalizedJobPinV1) -> FinalizedJobSummaryV1 {
     FinalizedJobSummaryV1 {
         cursor: pin.candidate.block_number,
@@ -646,6 +745,8 @@ pub enum NodeControlError {
     SnapshotExport(#[from] SnapshotExportError),
     #[error(transparent)]
     Attestation(#[from] AttestationError),
+    #[error(transparent)]
+    LocalResult(#[from] LocalLysisResultError),
     #[error("node OCOMP control received unsupported method {0:#06x}")]
     UnexpectedMethod(u16),
     #[error("requested finalized OCOMP job is not live")]
@@ -654,6 +755,8 @@ pub enum NodeControlError {
     SnapshotExportUnavailable,
     #[error("node OCOMP attestation gate is not configured")]
     AttestationUnavailable,
+    #[error("node OCOMP local result store is not configured")]
+    LocalResultStoreUnavailable,
     #[error("node OCOMP control cannot serve peer role {0:?}")]
     UnsupportedPeerRole(ControlRole),
     #[error("node OCOMP control session generation cannot be zero")]

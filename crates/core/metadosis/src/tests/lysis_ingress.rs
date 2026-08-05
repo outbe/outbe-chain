@@ -76,8 +76,9 @@ fn static_or_valued_lysis_call_rejects_with_call_mode_code_when_active() {
     with_storage(|storage| {
         let scope = ExecutionScope::new();
         for (value, is_static) in [(U256::from(1_u8), false), (U256::ZERO, true)] {
-            let err = dispatch_public_result_vote(storage.clone(), &scope, &[], value, is_static)
-                .expect_err("static or valued vote call must be rejected");
+            let err =
+                dispatch_public_result_vote(storage.clone(), &scope, &[], value, is_static, None)
+                    .expect_err("static or valued vote call must be rejected");
             match err {
                 PrecompileError::RevertBytes(bytes) => {
                     // Call-mode rejection keeps its own code; it must not

@@ -3588,7 +3588,9 @@ where
         )?
         .with_node_attestation_height_source(
             OcompNodeAttestationConfig {
-                key_path: config.key_path,
+                key_path: config.key_path.ok_or_else(|| {
+                    eyre::eyre!("validator OCOMP control requires a result-signing key")
+                })?,
                 sign_once_root: ocomp_storage_root.join("ocomp_sign_once"),
                 expected_owner_uid: outbe_ocomp_protocol::local_control::effective_uid()?,
                 fork_id: install.request_profile.fork_id,
