@@ -11203,13 +11203,10 @@ mod tests {
 
             let retained = address!("0x1111111111111111111111111111111111111111");
             let expired = address!("0x2222222222222222222222222222222222222222");
-            vs.register_validator(OWNER, retained, &dummy_pubkey(0xA1))
-                .unwrap();
-            vs.register_validator(OWNER, expired, &dummy_pubkey(0xB2))
-                .unwrap();
+            test_register_active(&mut vs, retained, &dummy_pubkey(0xA1));
+            test_register_active(&mut vs, expired, &dummy_pubkey(0xB2));
             let current_hash = super::hash_boundary_active_set(&[retained, expired]);
-            vs.activate_reshared_set(&[retained, expired], current_hash)
-                .unwrap();
+            vs.test_set_active_consensus_set_hash(current_hash).unwrap();
 
             let mut boundary = boundary_with(true, vec![(retained, dummy_pubkey(0xA1))]);
             boundary.tee_expired_target_exclusions = vec![expired];
@@ -11221,14 +11218,16 @@ mod tests {
             super::apply_boundary_outcome(storage.clone(), &boundary).unwrap();
 
             let vs_after = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+            let expired_state = vs_after.validator_state(expired).unwrap();
             assert_eq!(
-                vs_after.val_status.read(&expired).unwrap(),
+                expired_state.stored_status().unwrap(),
                 outbe_validatorset::runtime::status::PENDING
             );
-            assert!(!vs_after.val_has_bls_share.read(&expired).unwrap());
-            assert!(!vs_after.val_join_confirmed.read(&expired).unwrap());
+            assert!(!expired_state.has_bls_share());
+            assert!(!expired_state.join_confirmed());
+            let retained_state = vs_after.validator_state(retained).unwrap();
             assert_eq!(
-                vs_after.val_status.read(&retained).unwrap(),
+                retained_state.stored_status().unwrap(),
                 outbe_validatorset::runtime::status::ACTIVE
             );
         });
@@ -11243,10 +11242,9 @@ mod tests {
             vs.config_max_validators.write(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
             let retained = address!("0x1111111111111111111111111111111111111111");
-            vs.register_validator(OWNER, retained, &dummy_pubkey(0xA1))
-                .unwrap();
+            test_register_active(&mut vs, retained, &dummy_pubkey(0xA1));
             let hash = super::hash_boundary_active_set(&[retained]);
-            vs.activate_reshared_set(&[retained], hash).unwrap();
+            vs.test_set_active_consensus_set_hash(hash).unwrap();
 
             let mut boundary = boundary_with(false, vec![(retained, dummy_pubkey(0xA1))]);
             boundary.tee_expired_target_exclusions_hash = B256::with_last_byte(0xFF);

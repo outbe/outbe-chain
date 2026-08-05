@@ -729,6 +729,7 @@ mod tests {
     #[test]
     fn test_read_consensus_validators_includes_exiting_with_share() {
         let mut provider = HashMapStorageProvider::new(1);
+        provider.set_block_number(1);
         let active = Address::with_last_byte(0x01);
         let exiting = Address::with_last_byte(0x02);
 
@@ -741,8 +742,8 @@ mod tests {
                 .unwrap();
             vs.register_validator(OWNER, exiting, &valid_consensus_pubkey(2))
                 .unwrap();
-            vs.activate_reshared_set(&[active, exiting], B256::with_last_byte(0xAA))
-                .unwrap();
+            vs.activate_validator(active).unwrap();
+            vs.activate_validator(exiting).unwrap();
             vs.deactivate_validator(OWNER, exiting).unwrap();
         });
 

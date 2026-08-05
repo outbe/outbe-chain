@@ -80,6 +80,23 @@ impl ValidatorSet<'_> {
         self.activate_validated_boundary_set(new_active_set, active_set_hash, freeze_height)
     }
 
+    /// Calls the consensus-validated boundary seam with certified TEE-expiry
+    /// exclusions from a test without exposing it in production.
+    pub fn test_activate_validated_boundary_set_with_expiry_exclusions(
+        &mut self,
+        new_active_set: &[Address],
+        active_set_hash: B256,
+        freeze_height: u64,
+        tee_expired_target_exclusions: &[Address],
+    ) -> Result<()> {
+        self.activate_validated_boundary_set_with_expiry_exclusions(
+            new_active_set,
+            active_set_hash,
+            freeze_height,
+            tee_expired_target_exclusions,
+        )
+    }
+
     /// Replaces the ValidatorSet stake mirror; Staking remains authoritative.
     pub fn test_set_stake_projection(
         &mut self,

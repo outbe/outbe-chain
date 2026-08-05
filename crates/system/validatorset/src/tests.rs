@@ -1537,16 +1537,16 @@ fn certified_tee_expiry_demotes_active_and_clears_pending_readiness() {
         let pending = address!("0x2222222222222222222222222222222222222222");
         vs.register_validator(OWNER, active, &dummy_consensus_pubkey(0x01))
             .unwrap();
-        vs.activate_reshared_set(&[active], B256::with_last_byte(0xA1))
-            .unwrap();
+        vs.activate_validator(active).unwrap();
         vs.register_validator(OWNER, pending, &dummy_consensus_pubkey(0x02))
             .unwrap();
         vs.mark_pending(pending).unwrap();
         vs.confirm_validator_ready(pending).unwrap();
 
-        vs.activate_reshared_set_with_expiry_exclusions(
+        vs.test_activate_validated_boundary_set_with_expiry_exclusions(
             &[],
             B256::with_last_byte(0xA2),
+            u64::MAX,
             &[active, pending],
         )
         .unwrap();
@@ -1573,19 +1573,24 @@ fn certified_tee_expiry_demotes_active_and_clears_pending_readiness() {
 }
 
 #[test]
-fn ordinary_dkg_omission_without_expiry_proof_keeps_active_retry_state() {
+fn ordinary_dkg_omission_without_expiry_proof_is_rejected() {
     with_vs_configured(128, |vs| {
         let active = address!("0x1111111111111111111111111111111111111111");
         vs.register_validator(OWNER, active, &dummy_consensus_pubkey(0x01))
             .unwrap();
-        vs.activate_reshared_set(&[active], B256::with_last_byte(0xB1))
-            .unwrap();
+        vs.activate_validator(active).unwrap();
 
-        vs.activate_reshared_set_with_expiry_exclusions(&[], B256::with_last_byte(0xB2), &[])
-            .unwrap();
+        assert!(vs
+            .test_activate_validated_boundary_set_with_expiry_exclusions(
+                &[],
+                B256::with_last_byte(0xB2),
+                u64::MAX,
+                &[],
+            )
+            .is_err());
 
         assert_eq!(vs.val_status.read(&active).unwrap(), status::ACTIVE);
-        assert!(!vs.val_has_bls_share.read(&active).unwrap());
+        assert!(vs.val_has_bls_share.read(&active).unwrap());
         assert!(vs.pending_set_change.read().unwrap());
     });
 }
@@ -1597,27 +1602,29 @@ fn expiry_branch_rejects_contradictory_duplicate_and_unknown_authority() {
         let unknown = address!("0x9999999999999999999999999999999999999999");
         vs.register_validator(OWNER, active, &dummy_consensus_pubkey(0x01))
             .unwrap();
-        vs.activate_reshared_set(&[active], B256::with_last_byte(0xC1))
-            .unwrap();
+        vs.activate_validator(active).unwrap();
 
         assert!(vs
-            .activate_reshared_set_with_expiry_exclusions(
+            .test_activate_validated_boundary_set_with_expiry_exclusions(
                 &[active],
                 B256::with_last_byte(0xC2),
+                u64::MAX,
                 &[active],
             )
             .is_err());
         assert!(vs
-            .activate_reshared_set_with_expiry_exclusions(
+            .test_activate_validated_boundary_set_with_expiry_exclusions(
                 &[],
                 B256::with_last_byte(0xC2),
+                u64::MAX,
                 &[active, active],
             )
             .is_err());
         assert!(vs
-            .activate_reshared_set_with_expiry_exclusions(
+            .test_activate_validated_boundary_set_with_expiry_exclusions(
                 &[],
                 B256::with_last_byte(0xC2),
+                u64::MAX,
                 &[unknown],
             )
             .is_err());

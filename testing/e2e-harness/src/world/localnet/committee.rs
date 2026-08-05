@@ -423,15 +423,8 @@ impl Localnet {
             self.extend_real_sgx_startup_timeout(&mut a);
         }
 
-        let binary = self
-            .validator_binary_overrides
-            .get(&i)
-            .unwrap_or(&self.cfg.bin_chain);
-        let mut cmd = Command::new(binary);
+        let mut cmd = Command::new(&self.cfg.bin_chain);
         cmd.env("RUST_MIN_STACK", "16777216");
-        if let Some(environment) = self.validator_environment_overrides.get(&i) {
-            cmd.envs(environment.iter().map(|(key, value)| (key, value)));
-        }
         if let Some(w) = opts.voting_window {
             cmd.env("OUTBE_TEST_VOTING_WINDOW_BLOCKS", w.to_string());
         }
