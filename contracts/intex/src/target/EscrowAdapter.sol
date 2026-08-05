@@ -202,7 +202,6 @@ contract EscrowAdapter is
         if (_compact == address(0)) revert ZeroAddress("compact");
         if (_paymentToken == address(0)) revert ZeroAddress("paymentToken");
 
-        // Escrow locks and the commit bond arrive as 18-decimal minor units.
         uint8 tokenDecimals = IERC20Metadata(_paymentToken).decimals();
         if (tokenDecimals != PAYMENT_TOKEN_DECIMALS) revert PaymentTokenDecimals(tokenDecimals);
 

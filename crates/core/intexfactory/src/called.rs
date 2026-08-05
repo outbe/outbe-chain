@@ -125,9 +125,7 @@ pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
     Ok(())
 }
 
-/// Finalized per-day VWAPs of one oracle pair, read once and reused across every
-/// series in a scan. Owning `pair_id` keeps a cached day from being read as a
-/// different pair's.
+/// Finalized per-day VWAPs of one oracle pair, read once per scan.
 pub(crate) struct DayVwaps {
     pair_id: u32,
     days: BTreeMap<u32, Option<U256>>,

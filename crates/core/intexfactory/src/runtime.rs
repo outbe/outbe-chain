@@ -533,7 +533,7 @@ fn nft_balance_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Re
 }
 
 /// Payment tokens accepted for `series_id` and the per-Intex cost in each.
-/// Assets the router cannot report on are skipped rather than failing the quote.
+/// Assets the router cannot report on are skipped.
 pub fn settlement_quote(
     storage: &StorageHandle<'_>,
     series_id: u32,
