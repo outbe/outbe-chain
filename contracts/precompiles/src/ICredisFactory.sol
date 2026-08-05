@@ -17,10 +17,16 @@ interface ICredisFactory {
         external
         returns (uint256 positionId, uint256 amountStables);
 
-    /// @notice Advance the named position by one anadosis payment and release
-    ///         that installment's share of collateral from the pledged lock ledger
-    ///         back to its balance. Caller MUST be the position's smart account.
-    function anadosis(uint256 positionId) external;
+    /// @notice Pay `amount` toward the position's unpaid anadosis schedule and
+    ///         release the matching share of collateral from the pledged lock
+    ///         ledger back to its balance. Installments are settled in order:
+    ///         each is covered in full while the supplied amount lasts, and the
+    ///         last one reached may be covered partially (its remainder stays on
+    ///         `Anadosis.unpaidAmount`). When `amount` exceeds the position's
+    ///         outstanding balance only the required part is pulled from the caller.
+    ///         Caller MUST be the position's smart account.
+    /// @return totalPaidAmount Stablecoin actually pulled — `min(amount, outstanding)`.
+    function anadosis(uint256 positionId, uint256 amount) external returns (uint256 totalPaidAmount);
 
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
 }

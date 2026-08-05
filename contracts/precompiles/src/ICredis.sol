@@ -34,6 +34,10 @@ interface ICredis {
         uint64 paidAt;
         uint256 anadosisAmount;
         uint256 gratisAmount;
+        // Portion of `anadosisAmount` still owed. Equals `anadosisAmount` until
+        // the first payment lands on this installment and 0 once it is settled
+        // (at which point `paidAt` is stamped).
+        uint256 unpaidAmount;
     }
 
     function getPosition(uint256 positionId) external view returns (Position memory);

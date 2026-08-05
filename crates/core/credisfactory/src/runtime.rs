@@ -3,7 +3,7 @@
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolCall;
 
-use outbe_credis::{AnadosisResult, CredisContract};
+use outbe_credis::CredisContract;
 use outbe_oracle::api::{get_currency_rate, get_exchange_rate};
 use outbe_primitives::addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
@@ -122,32 +122,36 @@ pub fn request_credis(
 // pay_anadosis
 // ---------------------------------------------------------------------------
 
-/// Advances the credis position by one anadosis installment and releases that
-/// installment's share of collateral from the pledger's OWN confidential pledged
-/// ledger back to its balance. The pledger EOA is stored sealed on the position and
-/// recovered here through the enclave (`reveal_owner`), so the release reaches the
-/// rightful pledger without the EOA ever appearing on-chain. The paid installment (the
-/// ERC20 → vault deposit below) is the authorization for the release — no separate
-/// proof is required.
+/// Applies `amount` to the credis position's unpaid anadosis schedule (oldest
+/// installment first, the last one reached possibly only partially) and releases the
+/// matching share of collateral from the pledger's OWN confidential pledged ledger back
+/// to its balance. When `amount` exceeds what the schedule still needs, only the
+/// required part is pulled from the caller. The pledger EOA is stored sealed on the
+/// position and recovered here through the enclave (`reveal_owner`), so the release
+/// reaches the rightful pledger without the EOA ever appearing on-chain. The payment
+/// (the ERC20 → vault deposit below) is the authorization for the release — no separate
+/// proof is required. Returns the stablecoin actually pulled.
 pub fn pay_anadosis(
     storage: StorageHandle<'_>,
     caller: Address,
     position_id: U256,
-) -> Result<AnadosisResult> {
+    amount: U256,
+) -> Result<U256> {
+    if amount.is_zero() {
+        return Err(CredisFactoryError::InvalidAmount.into());
+    }
+
     // Read-only validation pass before any mutation; recover the pledger EOA from the
     // position's sealed `eoa_ct` via a RevealOwner enclave round-trip.
     let eoa_account = {
         let credis_ro = CredisContract::new(storage.clone());
         let position = credis_ro.get_position(position_id)?;
-        let next = credis_ro
-            .get_next_anadosis(position_id)?
-            .ok_or(CredisFactoryError::PositionCompleted)?;
+        if credis_ro.get_next_anadosis(position_id)?.is_none() {
+            return Err(CredisFactoryError::PositionCompleted.into());
+        }
 
         if position.asset.is_zero() {
             return Err(CredisFactoryError::InvalidAsset.into());
-        }
-        if next.anadosis_amount.is_zero() {
-            return Err(CredisFactoryError::InvalidAmount.into());
         }
         if caller != position.smart_account {
             return Err(CredisFactoryError::UnauthorizedCaller.into());
@@ -157,38 +161,43 @@ pub fn pay_anadosis(
 
     let current_time = storage.timestamp()?.to::<u64>();
     let mut credis = CredisContract::new(storage.clone());
-    let result = credis.make_next_anadosis(position_id, current_time)?;
+    let payment = credis.pay_anadosis(position_id, amount, current_time)?;
 
-    // ERC20 + vault sequence. Sub-call reverts propagate out and unwind the
-    // bookkeeping via the surrounding precompile frame.
-    let amount = result.anadosis_amount;
-    let asset = result.asset;
+    // ERC20 + vault sequence, moving only what the schedule consumed. Sub-call reverts
+    // propagate out and unwind the bookkeeping via the surrounding precompile frame.
+    let paid = payment.total_paid_amount;
+    let asset = payment.asset;
 
-    // 1) Pull stablecoin from caller into the credisfactory precompile address.
-    let transfer = IERC20::transferFromCall {
-        from: caller,
-        to: CREDIS_FACTORY_ADDRESS,
-        amount,
+    if !paid.is_zero() {
+        // 1) Pull stablecoin from caller into the credisfactory precompile address.
+        let transfer = IERC20::transferFromCall {
+            from: caller,
+            to: CREDIS_FACTORY_ADDRESS,
+            amount: paid,
+        }
+        .abi_encode();
+        storage.call(asset, U256::ZERO, transfer.into())?;
+
+        // 2) Approve the vault to spend that exact amount.
+        let approve = IERC20::approveCall {
+            spender: VAULT_ROUTER_ADDRESS,
+            amount: paid,
+        }
+        .abi_encode();
+        storage.call(asset, U256::ZERO, approve.into())?;
+
+        // 3) Vault pulls and deposits into the reserve vault via its Solidity ABI.
+        outbe_vaultrouter::api::deposit(&storage, asset, paid)?;
     }
-    .abi_encode();
-    storage.call(asset, U256::ZERO, transfer.into())?;
 
-    // 2) Approve the vault to spend that exact amount.
-    let approve = IERC20::approveCall {
-        spender: VAULT_ROUTER_ADDRESS,
-        amount,
+    // 4) Release the collateral share freed by this payment from the pledger's own
+    //    pledged ledger back to its liquid Gratis balance. One enclave round-trip for
+    //    the whole payment, however many installments it spanned.
+    if !payment.gratis_released.is_zero() {
+        outbe_gratis::api::release_to_eoa(storage.clone(), eoa_account, payment.gratis_released)?;
     }
-    .abi_encode();
-    storage.call(asset, U256::ZERO, approve.into())?;
 
-    // 3) Vault pulls and deposits into the reserve vault via its Solidity ABI.
-    outbe_vaultrouter::api::deposit(&storage, asset, amount)?;
-
-    // 4) Release this installment's share of collateral from the pledger's own
-    //    pledged ledger back to its liquid Gratis balance.
-    outbe_gratis::api::release_to_eoa(storage.clone(), eoa_account, result.gratis_amount)?;
-
-    Ok(result)
+    Ok(paid)
 }
 
 /// Burns the outstanding pledged collateral of an expired credis position, drops the

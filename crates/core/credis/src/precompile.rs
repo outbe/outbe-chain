@@ -103,5 +103,6 @@ fn abi_anadosis(a: &crate::schema::Anadosis) -> ICredis::Anadosis {
         paidAt: a.paid_at,
         anadosisAmount: a.anadosis_amount,
         gratisAmount: a.gratis_amount,
+        unpaidAmount: a.unpaid_amount,
     }
 }
