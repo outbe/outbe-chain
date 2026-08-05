@@ -1665,7 +1665,7 @@ fn two_concurrent_live_days_do_not_share_terminal_budget() {
         &mut provider,
         &fixture.scope,
         fixture.later_wwd,
-        // Stay well inside the first day's response window (open + 64 blocks):
+        // Stay well inside the first day's exact compute-and-vote response window:
         // the begin-zone enforces exact response-deadline heights.
         fixture.block_number + 5,
         fixture.block_time + 4,

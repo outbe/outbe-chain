@@ -368,7 +368,10 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
         let next_ocomp_snapshot = read_ocomp_snapshot_extension(storage.clone(), next_snapshot_key)
             .unwrap()
             .unwrap();
-        assert_eq!(next_ocomp_snapshot.member_count, 6);
+        assert_eq!(
+            next_ocomp_snapshot.member_count, 1,
+            "the five validators that missed the expired attempt are jailed before the next boundary"
+        );
 
         let retry_height = expiry_height + 1;
         let retry = BlockRuntimeContext::new(
@@ -409,8 +412,8 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
             retried_record.intent.result_ocomp_binding_hash,
             next_ocomp_snapshot.ocomp_binding_hash
         );
-        assert_eq!(retried_record.intent.result_member_count, 6);
-        assert_eq!(retried_record.intent.result_quorum_threshold, 5);
+        assert_eq!(retried_record.intent.result_member_count, 1);
+        assert_eq!(retried_record.intent.result_quorum_threshold, 1);
         assert_eq!(terminal.intent.result_member_count, 5);
         assert_eq!(terminal.intent.result_quorum_threshold, 4);
         assert_eq!(

@@ -25,10 +25,13 @@ use crate::features::common::{
 };
 use crate::internal::eth;
 use crate::world::localnet::StartOpts;
-use crate::world::ocomp::OCOMP_CAPACITY_OFFERING_AFTER_GENESIS_SECS;
 use crate::world::ocomp::{
     OcompForkMismatchEvidenceV1, OcompForkRestartEvidenceV1, OcompMeasurementForkV1,
     OcompProcessFault, OcompProcessRole,
+};
+use crate::world::ocomp::{
+    OCOMP_CAPACITY_OFFERING_AFTER_GENESIS_SECS, OCOMP_DYNAMIC_DKG_PREPARE_WINDOW_BLOCKS,
+    OCOMP_TEST_EPOCH_LENGTH_BLOCKS,
 };
 use crate::world::state::{
     MetadosisFinalizedPointV1, MetadosisFreshLifecycleObservationV1, MetadosisTimeControlEpochV1,
@@ -71,8 +74,14 @@ fn fresh_ocomp_dynamic_membership_localnet(world: &mut World) {
         world,
         6,
         &[
-            ("TESTNET_EPOCH_LENGTH_BLOCKS", "20".to_owned()),
-            ("TESTNET_DKG_PREPARE_WINDOW_BLOCKS", "10".to_owned()),
+            (
+                "TESTNET_EPOCH_LENGTH_BLOCKS",
+                OCOMP_TEST_EPOCH_LENGTH_BLOCKS.to_string(),
+            ),
+            (
+                "TESTNET_DKG_PREPARE_WINDOW_BLOCKS",
+                OCOMP_DYNAMIC_DKG_PREPARE_WINDOW_BLOCKS.to_string(),
+            ),
             ("TESTNET_DEV_FELONY_THRESHOLD", "10".to_owned()),
         ],
     );
@@ -109,7 +118,14 @@ fn fresh_ocomp_dynamic_membership_localnet(world: &mut World) {
 
 #[given("a fresh four-validator Metadosis capacity localnet at FORMING")]
 fn fresh_metadosis_capacity_localnet_at_forming(world: &mut World) {
-    bootstrap_localnet(world, 6, &[]);
+    bootstrap_localnet(
+        world,
+        6,
+        &[(
+            "TESTNET_EPOCH_LENGTH_BLOCKS",
+            OCOMP_TEST_EPOCH_LENGTH_BLOCKS.to_string(),
+        )],
+    );
     let wwd = world
         .state
         .wwd
@@ -205,7 +221,14 @@ fn start_ocomp_measurement_localnet(
     public_capacity_tribute_count: Option<usize>,
 ) {
     let shorten_public_day = public_capacity_tribute_count.is_some();
-    bootstrap_localnet(world, 6, &[]);
+    bootstrap_localnet(
+        world,
+        6,
+        &[(
+            "TESTNET_EPOCH_LENGTH_BLOCKS",
+            OCOMP_TEST_EPOCH_LENGTH_BLOCKS.to_string(),
+        )],
+    );
     let mut start_opts = if shorten_public_day {
         let now_secs = SystemTime::now()
             .duration_since(UNIX_EPOCH)

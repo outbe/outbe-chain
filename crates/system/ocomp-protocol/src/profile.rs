@@ -9,6 +9,10 @@ use crate::{
     schema::{impl_top_level_codec, wire_enum_u8, wire_struct, SchemaLimits},
 };
 
+/// Exact inclusive-start/exclusive-end window in which every validator pinned
+/// by one finalized OCOMP attempt must compute and include its result vote.
+pub const OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS: u64 = 1_800;
+
 /// Generated measurement ceilings shared by every OCOMP PoC process.
 ///
 /// These compile ceilings do not arm a network or provide a bundle hash.

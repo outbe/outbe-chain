@@ -3,7 +3,9 @@
 use std::sync::Arc;
 
 use alloy_primitives::{Bytes, B256};
-use outbe_metadosis::config::{OcompForkInstallClassification, OcompForkInstallV1};
+use outbe_metadosis::config::{
+    OcompForkInstallClassification, OcompForkInstallV1, OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS,
+};
 use outbe_metadosis::proof_layout::METADOSIS_STORAGE_LAYOUT_V1_HASH;
 use outbe_ocomp_protocol::profile::poc_schema_limits;
 use outbe_primitives::OutbeHeader;
@@ -14,7 +16,6 @@ pub const OCOMP_FORK_INSTALL_GENESIS_KEY: &str = "ocompForkInstallV1";
 pub const METADOSIS_STORAGE_LAYOUT_GENESIS_KEY: &str = "metadosisStorageLayoutV1";
 pub const EPOCH_LENGTH_BLOCKS_GENESIS_KEY: &str = "epochLengthBlocks";
 pub const GENESIS_ACTIVE_OCOMP_HEIGHT: u64 = 1;
-const OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS: u64 = 64;
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -142,7 +143,7 @@ fn require_ocomp_snapshot_retention_horizon(
         .ok_or_else(|| eyre::eyre!("OCOMP maximum job lifetime overflow"))?;
     if retained_epoch_span <= required_job_lifetime {
         eyre::bail!(
-            "OCOMP snapshot retention horizon is too short: +             ({} - 1) * {} = {} must be strictly greater than {} + {} + {} = {}",
+            "OCOMP snapshot retention horizon is too short: ({} - 1) * {} = {} must be strictly greater than {} + {} + {} = {}",
             outbe_validatorset::COMMITTEE_SNAPSHOT_RETAIN_EPOCHS,
             epoch_length_blocks,
             retained_epoch_span,

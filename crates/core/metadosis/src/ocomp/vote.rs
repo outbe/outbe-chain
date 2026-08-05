@@ -407,6 +407,41 @@ impl MetadosisContract<'_> {
             accountability
                 .close(at_height, limits)
                 .map_err(|error| fatal(format!("close OCOMP vote accountability: {error}")))?;
+            let snapshot = outbe_validatorset::read_ocomp_snapshot_extension_for_binding(
+                self.storage.clone(),
+                record.intent.result_validator_set_epoch,
+                record.intent.result_committee_set_hash,
+                record.intent.result_ocomp_binding_hash,
+            )?
+            .filter(|snapshot| snapshot.member_count == accountability.member_count)
+            .ok_or_else(|| fatal("OCOMP deadline historical snapshot is missing"))?;
+            let snapshot_key = outbe_validatorset::committee_snapshot_key(
+                snapshot.epoch,
+                snapshot.committee_set_hash,
+            );
+            let mut validators =
+                outbe_validatorset::contract::ValidatorSet::new(self.storage.clone());
+            for (index, slot) in accountability.slots.iter().enumerate() {
+                if slot.is_some() {
+                    continue;
+                }
+                let participant_index = u16::try_from(index)
+                    .map_err(|_| fatal("OCOMP missing participant index exceeds u16"))?;
+                let member = outbe_validatorset::read_ocomp_snapshot_member_at(
+                    self.storage.clone(),
+                    snapshot_key,
+                    participant_index,
+                )?
+                .ok_or_else(|| fatal("OCOMP deadline snapshot member is missing"))?;
+                validators
+                    .jail_validator(member.validator_address)
+                    .map_err(|error| match error {
+                        PrecompileError::Revert(_) | PrecompileError::RevertBytes(_) => fatal(
+                            format!("jail missing OCOMP validator {participant_index}: {error}"),
+                        ),
+                        other => other,
+                    })?;
+            }
             self.write_result_vote_accountability(&accountability, limits)?;
             remove_response_deadline_key(&mut index, key)?;
             self.write_response_deadline_index(&index)?;

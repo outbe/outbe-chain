@@ -19,8 +19,8 @@ use super::{
 };
 
 /// Records finality for the exact live OCOMP request whose request block is the
-/// consensus-certified parent. The lookup is bounded by the fork profile's
-/// live-Job cap; unrelated finalized parents are a no-op.
+/// consensus-certified parent. The lookup is bounded by the canonical retained
+/// WorldwideDay population; unrelated finalized parents are a no-op.
 pub fn record_certified_parent_finality(
     ctx: &BlockRuntimeContext<'_>,
     finalized_request_block_number: u64,

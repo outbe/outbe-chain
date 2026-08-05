@@ -13,7 +13,7 @@ use crate::{
     generated_shape::{
         OCOMP_POC_CANDIDATE_LIMITS_V1, OCOMP_POC_DEVNET_MACHINE_V1, OCOMP_POC_HEADROOM_POLICY_V1,
     },
-    profile::CapacityProfileV1,
+    profile::{CapacityProfileV1, OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS},
 };
 
 /// Runtime CAS quota assigned to one OCOMP validator domain in the PoC.
@@ -498,7 +498,7 @@ impl VerifiedCapacityEvidenceV1 {
                 .map_err(|_| CapacityEvidenceError::GeneratedLimitOverflow)?,
             max_active_scurve_entries: u32::try_from(candidate.max_active_scurve_entries)
                 .map_err(|_| CapacityEvidenceError::GeneratedLimitOverflow)?,
-            result_deadline_blocks: 64,
+            result_deadline_blocks: OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS,
             source_retention_after_terminal_blocks: candidate
                 .source_retention_after_terminal_blocks,
             generated_limits_manifest_hash,

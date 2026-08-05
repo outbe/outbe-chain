@@ -24,7 +24,7 @@ use outbe_ocomp_protocol::{
     generated_shape::{
         OCOMP_CAPACITY_PROFILE_ID_HEX, OCOMP_POC_CANDIDATE_LIMITS_V1, OCOMP_POC_DEVNET_MACHINE_V1,
     },
-    profile::{poc_schema_limits, CapacityProfileV1},
+    profile::{poc_schema_limits, CapacityProfileV1, OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS},
 };
 use outbe_primitives::consensus::OUTBE_MAX_BLOCK_SIZE;
 use serde::Serialize;
@@ -35,7 +35,6 @@ const GENERATED_CAPACITY_KIND: &str = "outbe-ocomp-generated-capacity-v1";
 const CAPACITY_MEMORY_MAX_BYTES: u64 = OCOMP_POC_DEVNET_MACHINE_V1.minimum_process_memory_bytes;
 const CAPACITY_CPU_QUOTA_PERCENT: u16 = 400;
 const OCOMP_POC_BLOCK_GAS_LIMIT: u64 = 30_000_000;
-const OCOMP_POC_RESULT_DEADLINE_BLOCKS: u64 = 64;
 
 #[derive(Debug, Serialize)]
 struct GeneratedCapacityManifestV1 {
@@ -318,7 +317,7 @@ fn frozen_capacity_budget() -> Result<CapacityBudgetV1> {
         validation_window_ms > 0,
         "OCOMP PoC validation window must be positive"
     );
-    let finality_latency_micros = OCOMP_POC_RESULT_DEADLINE_BLOCKS
+    let finality_latency_micros = OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS
         .checked_mul(DEFAULT_CERTIFICATION_TIMEOUT_MS)
         .and_then(|value| value.checked_mul(1_000))
         .ok_or_else(|| eyre::eyre!("OCOMP PoC finality budget overflows"))?;
@@ -332,7 +331,7 @@ fn frozen_capacity_budget() -> Result<CapacityBudgetV1> {
         .ok_or_else(|| eyre::eyre!("consensus validator edge count overflows"))?;
     let network_bytes = u64::from(MAX_P2P_MESSAGE_SIZE)
         .checked_mul(directed_committee_edges)
-        .and_then(|value| value.checked_mul(OCOMP_POC_RESULT_DEADLINE_BLOCKS))
+        .and_then(|value| value.checked_mul(OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS))
         .ok_or_else(|| eyre::eyre!("OCOMP PoC network budget overflows"))?;
     Ok(CapacityBudgetV1 {
         transaction_bytes: u64::try_from(OUTBE_MAX_BLOCK_SIZE)
@@ -936,14 +935,19 @@ mod tests {
             budget.internal_work,
             OCOMP_POC_CANDIDATE_LIMITS_V1.max_activation_internal_work
         );
-        assert_eq!(budget.cpu_micros, 2_048_000_000);
+        let expected_finality_latency_micros =
+            OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS * DEFAULT_CERTIFICATION_TIMEOUT_MS * 1_000;
+        assert_eq!(
+            budget.cpu_micros,
+            OCOMP_POC_DEVNET_MACHINE_V1.logical_cpu_count * expected_finality_latency_micros
+        );
         let validator_count = u64::from(outbe_consensus::bls::MAX_VALIDATORS);
         assert_eq!(
             budget.network_bytes,
             u64::from(MAX_P2P_MESSAGE_SIZE)
                 * validator_count
                 * (validator_count - 1)
-                * OCOMP_POC_RESULT_DEADLINE_BLOCKS
+                * OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS
         );
         assert_eq!(
             budget.assigned_memory_bytes,
@@ -955,7 +959,10 @@ mod tests {
         );
         assert_eq!(budget.cas_bytes, OCOMP_POC_CAS_QUOTA_BYTES);
         assert_eq!(budget.block_processing_micros, 4_000_000);
-        assert_eq!(budget.finality_latency_micros, 512_000_000);
+        assert_eq!(
+            budget.finality_latency_micros,
+            expected_finality_latency_micros
+        );
         assert_eq!(
             CAPACITY_CPU_QUOTA_PERCENT,
             u16::try_from(OCOMP_POC_DEVNET_MACHINE_V1.logical_cpu_count * 100).unwrap()

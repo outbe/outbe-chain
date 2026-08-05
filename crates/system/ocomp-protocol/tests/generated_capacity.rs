@@ -9,7 +9,7 @@ use outbe_ocomp_protocol::{
         CapacityValidatorBlockProcessingV1, CapacityWorkBillV1, ObservedMachineFactsV1,
     },
     generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1,
-    profile::poc_schema_limits,
+    profile::{poc_schema_limits, OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS},
     vote::{EquivocationEvidenceV1, OcompVoteAccountabilityV1, ResultVoteSlotV1},
 };
 
@@ -384,7 +384,7 @@ fn dynamic_membership_capacity_fits_the_consensus_validator_bound() {
     let one_vote_internal_work = result_vote_internal_work(vote_cap).unwrap();
     let response_window_work = OCOMP_POC_CANDIDATE_LIMITS_V1
         .max_activation_gas
-        .checked_mul(64)
+        .checked_mul(OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS)
         .unwrap();
     let quorum_work = one_vote_internal_work
         .checked_mul(u64::from(quorum_threshold))
@@ -395,6 +395,6 @@ fn dynamic_membership_capacity_fits_the_consensus_validator_bound() {
     );
     assert!(
         quorum_work <= response_window_work,
-        "consensus-bound quorum needs {quorum_work} internal-work units, above the 64-block response-window budget {response_window_work}"
+        "consensus-bound quorum needs {quorum_work} internal-work units, above the {OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS}-block response-window budget {response_window_work}"
     );
 }

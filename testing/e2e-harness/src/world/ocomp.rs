@@ -104,11 +104,11 @@ pub(crate) const OCOMP_CAPACITY_OFFERING_AFTER_GENESIS_SECS: u64 = 360;
 #[cfg(feature = "ocomp-integration")]
 const OCOMP_DYNAMIC_FIRST_OFFERING_AFTER_GENESIS_SECS: u64 = 180;
 #[cfg(feature = "ocomp-integration")]
-const OCOMP_DYNAMIC_SECOND_OFFERING_AFTER_GENESIS_SECS: u64 = 280;
+const OCOMP_DYNAMIC_SECOND_OFFERING_AFTER_GENESIS_SECS: u64 = 700;
 #[cfg(feature = "ocomp-integration")]
-const OCOMP_DYNAMIC_EPOCH_LENGTH_BLOCKS: u64 = 20;
+pub(crate) const OCOMP_TEST_EPOCH_LENGTH_BLOCKS: u64 = 300;
 #[cfg(feature = "ocomp-integration")]
-const OCOMP_DYNAMIC_DKG_PREPARE_WINDOW_BLOCKS: u64 = 10;
+pub(crate) const OCOMP_DYNAMIC_DKG_PREPARE_WINDOW_BLOCKS: u64 = 10;
 
 /// Fixed process roles represented in one validator's OCOMP domain.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -660,8 +660,8 @@ impl OcompTopology {
 
     /// Prepare two independently scheduled public jobs around one real DKG
     /// membership boundary. The shortened epoch is still above the normative
-    /// snapshot-retention lower bound; the production 64-block result deadline
-    /// is left unchanged.
+    /// snapshot-retention lower bound; the exact production 1,800-block
+    /// compute-and-vote deadline is left unchanged.
     #[cfg(feature = "ocomp-integration")]
     pub fn prepare_dynamic_membership_fork_install(&self) -> Result<OcompDynamicMembershipForkV1> {
         let genesis_path = self.cfg.dir.join("genesis.json");
@@ -676,7 +676,7 @@ impl OcompTopology {
             config
                 .get(outbe_node::ocomp::fork::EPOCH_LENGTH_BLOCKS_GENESIS_KEY)
                 .and_then(serde_json::Value::as_u64)
-                == Some(OCOMP_DYNAMIC_EPOCH_LENGTH_BLOCKS)
+                == Some(OCOMP_TEST_EPOCH_LENGTH_BLOCKS)
                 && config
                     .get("dkgPrepareWindowBlocks")
                     .and_then(serde_json::Value::as_u64)
@@ -2589,7 +2589,7 @@ fn provisional_measurement_capacity_profile() -> CapacityProfileV1 {
         max_reference_currencies: 256,
         max_oracle_wwd_pair_entries: 256,
         max_active_scurve_entries: 256,
-        result_deadline_blocks: 64,
+        result_deadline_blocks: outbe_ocomp_protocol::profile::OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS,
         source_retention_after_terminal_blocks: 64,
         generated_limits_manifest_hash: B256::repeat_byte(23),
     }
@@ -3300,8 +3300,9 @@ mod tests {
         let mut configured: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&genesis_path).unwrap()).unwrap();
         configured["config"][outbe_node::ocomp::fork::EPOCH_LENGTH_BLOCKS_GENESIS_KEY] =
-            serde_json::json!(20_u64);
-        configured["config"]["dkgPrepareWindowBlocks"] = serde_json::json!(10_u64);
+            serde_json::json!(OCOMP_TEST_EPOCH_LENGTH_BLOCKS);
+        configured["config"]["dkgPrepareWindowBlocks"] =
+            serde_json::json!(OCOMP_DYNAMIC_DKG_PREPARE_WINDOW_BLOCKS);
         std::fs::write(
             &genesis_path,
             serde_json::to_vec_pretty(&configured).unwrap(),
@@ -3315,7 +3316,7 @@ mod tests {
                 .unwrap();
         assert_eq!(
             genesis["config"][outbe_node::ocomp::fork::EPOCH_LENGTH_BLOCKS_GENESIS_KEY],
-            serde_json::json!(20_u64)
+            serde_json::json!(OCOMP_TEST_EPOCH_LENGTH_BLOCKS)
         );
         let alloc = genesis["alloc"].as_object().unwrap();
         let metadosis_key = find_alloc_address_key(alloc, METADOSIS_ADDRESS)
@@ -3365,6 +3366,10 @@ mod tests {
         });
         assert!(prepared.first_processing_time < prepared.second_processing_time);
         assert_eq!(prepared.fork.install.founder_registrations.len(), 4);
+        let chain_spec = parse_outbe_chain_spec(&topology.cfg.dir.join("genesis.json")).unwrap();
+        outbe_node::ocomp::fork::load_ocomp_fork_install(&chain_spec)
+            .unwrap()
+            .expect("dynamic membership fixture is startup-valid");
     }
 
     #[cfg(feature = "ocomp-integration")]
@@ -3536,7 +3541,7 @@ mod tests {
         let spec = reth_chainspec::ChainSpec::<OutbeHeader>::default();
         let mut genesis = serde_json::to_value(&spec.genesis).unwrap();
         genesis["config"][outbe_node::ocomp::fork::EPOCH_LENGTH_BLOCKS_GENESIS_KEY] =
-            serde_json::json!(120_u64);
+            serde_json::json!(OCOMP_TEST_EPOCH_LENGTH_BLOCKS);
         std::fs::write(
             topology.cfg.dir.join("genesis.json"),
             serde_json::to_vec_pretty(&genesis).unwrap(),
