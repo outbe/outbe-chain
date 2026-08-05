@@ -10,22 +10,25 @@ use std::sync::{
     Arc,
 };
 
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256, U256};
+use metrics::counter;
 use outbe_ocomp_protocol::{
-    committee::{OcompCommitteeSnapshotV1, RESULT_SIGNATURE_PURPOSE_BITMAP},
-    intent::JobIntentV1,
-    local_control::EndpointIdentity,
-    result::LysisResultV1,
-    state::RESULT_VOTE_MIN_FINALITY_DEPTH,
-    vote::ResultVoteV1,
-    ProtocolError, SchemaLimits,
+    intent::JobIntentV1, local_control::EndpointIdentity, result::LysisResultV1,
+    state::RESULT_VOTE_MIN_FINALITY_DEPTH, vote::ResultVoteV1, ProtocolError, SchemaLimits,
 };
-use reth_storage_api::BlockNumReader;
+use outbe_primitives::storage::{
+    readonly::{ReadOnlyStorageProvider, StorageReader},
+    StorageHandle,
+};
+use outbe_validatorset::{
+    committee_snapshot_key, ocomp_binding_hash_v1, read_ocomp_snapshot_extension_for_binding,
+    read_ocomp_snapshot_member_at, OcompSnapshotMemberV1,
+};
+use reth_provider::StateProviderFactory;
+use reth_storage_api::{BlockNumReader, StateProvider};
 
 use super::{
-    retention::{
-        CandidatePinV1, OcompRetentionCoordinator, PinStateV1, RetentionError, RetentionStatus,
-    },
+    retention::{CandidatePinV1, OcompRetentionCoordinator, PinStateV1, RetentionError},
     sign_once::{SignOnceError, SignOnceStore, SignOnceSubjectV1},
     signer::{OcompKeyError, OcompSigner},
 };
@@ -55,6 +58,16 @@ impl FinalizedAttestationAuthority for OcompRetentionCoordinator {
         requested_job_id: B256,
         limits: &SchemaLimits,
     ) -> Result<ExportedAttestationAuthorityV1, AttestationAuthorityError> {
+        let record = match self.exported_job_record(requested_job_id) {
+            Ok(record) => record,
+            Err(RetentionError::Quarantined(reason)) => {
+                return Err(AttestationAuthorityError::Unavailable(reason));
+            }
+            Err(RetentionError::InvalidTransition(_)) => {
+                return Err(AttestationAuthorityError::NotExported(requested_job_id));
+            }
+            Err(error) => return Err(AttestationAuthorityError::Retention(error)),
+        };
         let (
             candidate,
             job_id,
@@ -62,32 +75,24 @@ impl FinalizedAttestationAuthority for OcompRetentionCoordinator {
             finality_recorded_height,
             open_height,
             deadline_height,
-        ) = match self.status() {
-            RetentionStatus::Ready(record) => match record.state {
-                PinStateV1::Exported {
-                    candidate,
-                    job_id,
-                    manifest_hash,
-                    finality_recorded_height,
-                    open_height,
-                    deadline_height,
-                    ..
-                } if job_id == requested_job_id => (
-                    candidate,
-                    job_id,
-                    manifest_hash,
-                    finality_recorded_height,
-                    open_height,
-                    deadline_height,
-                ),
-                _ => return Err(AttestationAuthorityError::NotExported(requested_job_id)),
-            },
-            RetentionStatus::Empty => {
-                return Err(AttestationAuthorityError::NotExported(requested_job_id));
-            }
-            RetentionStatus::Quarantined { reason } => {
-                return Err(AttestationAuthorityError::Unavailable(reason));
-            }
+        ) = match record.state {
+            PinStateV1::Exported {
+                candidate,
+                job_id,
+                manifest_hash,
+                finality_recorded_height,
+                open_height,
+                deadline_height,
+                ..
+            } if job_id == requested_job_id => (
+                candidate,
+                job_id,
+                manifest_hash,
+                finality_recorded_height,
+                open_height,
+                deadline_height,
+            ),
+            _ => return Err(AttestationAuthorityError::NotExported(requested_job_id)),
         };
         let proof = self.build_finalized_intent_proof(job_id)?;
         let finalized_intent = proof
@@ -107,6 +112,109 @@ impl FinalizedAttestationAuthority for OcompRetentionCoordinator {
 
 pub trait CurrentHeightSource: Send + Sync {
     fn current_height(&self) -> Result<u64, HeightSourceError>;
+}
+
+/// Exact OCOMP material attached to one historical consensus ValidatorSet.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HistoricalOcompSnapshotV1 {
+    pub epoch: u64,
+    pub committee_set_hash: B256,
+    pub ocomp_binding_hash: B256,
+    pub ordered_members: Vec<OcompSnapshotMemberV1>,
+}
+
+/// Loads one historical OCOMP extension retained in the current canonical
+/// ValidatorSet ring. The three finalized-intent bindings select the exact
+/// snapshot; implementations return `None` for missing, evicted or mismatched
+/// state and never substitute the current membership.
+pub trait HistoricalOcompSnapshotSource: Send + Sync {
+    fn load_snapshot(
+        &self,
+        epoch: u64,
+        committee_set_hash: B256,
+        ocomp_binding_hash: B256,
+    ) -> Result<Option<HistoricalOcompSnapshotV1>, SnapshotSourceError>;
+}
+
+#[derive(Clone, Debug)]
+pub struct ProviderHistoricalOcompSnapshotSource<P> {
+    provider: P,
+}
+
+impl<P> ProviderHistoricalOcompSnapshotSource<P> {
+    #[must_use]
+    pub const fn new(provider: P) -> Self {
+        Self { provider }
+    }
+}
+
+struct RethSnapshotStorageReader<'a> {
+    state: &'a dyn StateProvider,
+}
+
+impl StorageReader for RethSnapshotStorageReader<'_> {
+    fn read_storage(&self, address: Address, key: B256) -> outbe_primitives::error::Result<U256> {
+        self.state
+            .storage(address, key)
+            .map(|value| value.unwrap_or(U256::ZERO))
+            .map_err(|error| {
+                outbe_primitives::error::PrecompileError::Storage(format!(
+                    "historical OCOMP snapshot read failed: {error}"
+                ))
+            })
+    }
+}
+
+impl<P> HistoricalOcompSnapshotSource for ProviderHistoricalOcompSnapshotSource<P>
+where
+    P: StateProviderFactory + Send + Sync,
+{
+    fn load_snapshot(
+        &self,
+        epoch: u64,
+        committee_set_hash: B256,
+        ocomp_binding_hash: B256,
+    ) -> Result<Option<HistoricalOcompSnapshotV1>, SnapshotSourceError> {
+        let state = self
+            .provider
+            .latest()
+            .map_err(|error| SnapshotSourceError(error.to_string()))?;
+        let reader = RethSnapshotStorageReader {
+            state: state.as_ref(),
+        };
+        let mut provider = ReadOnlyStorageProvider::new(reader);
+        let storage = StorageHandle::new(&mut provider);
+        let Some(extension) = read_ocomp_snapshot_extension_for_binding(
+            storage.clone(),
+            epoch,
+            committee_set_hash,
+            ocomp_binding_hash,
+        )
+        .map_err(|error| SnapshotSourceError(error.to_string()))?
+        else {
+            return Ok(None);
+        };
+        let snapshot_key = committee_snapshot_key(epoch, committee_set_hash);
+        let mut ordered_members = Vec::with_capacity(usize::from(extension.member_count));
+        for index in 0..extension.member_count {
+            let Some(member) = read_ocomp_snapshot_member_at(storage.clone(), snapshot_key, index)
+                .map_err(|error| SnapshotSourceError(error.to_string()))?
+            else {
+                return Ok(None);
+            };
+            ordered_members.push(member);
+        }
+        if ocomp_binding_hash_v1(epoch, committee_set_hash, &ordered_members) != ocomp_binding_hash
+        {
+            return Ok(None);
+        }
+        Ok(Some(HistoricalOcompSnapshotV1 {
+            epoch,
+            committee_set_hash,
+            ocomp_binding_hash,
+            ordered_members,
+        }))
+    }
 }
 
 #[derive(Debug)]
@@ -160,19 +268,21 @@ where
 #[derive(Clone, Copy, Debug)]
 pub struct OcompAttestationConfig {
     pub identity: EndpointIdentity,
-    pub validator_index: u16,
+    pub fork_id: B256,
+    pub validator_address: Address,
 }
 
 pub struct OcompAttestationGate {
     authority: Arc<dyn FinalizedAttestationAuthority>,
     height: Arc<dyn CurrentHeightSource>,
+    snapshots: Arc<dyn HistoricalOcompSnapshotSource>,
     identity: EndpointIdentity,
-    validator_index: u16,
-    committee: OcompCommitteeSnapshotV1,
-    committee_snapshot_hash: B256,
+    fork_id: B256,
+    validator_address: Address,
     signer: OcompSigner,
     sign_once: SignOnceStore,
     limits: SchemaLimits,
+    abstentions: AtomicU64,
 }
 
 impl OcompAttestationGate {
@@ -180,42 +290,52 @@ impl OcompAttestationGate {
     pub fn new(
         authority: Arc<dyn FinalizedAttestationAuthority>,
         height: Arc<dyn CurrentHeightSource>,
+        snapshots: Arc<dyn HistoricalOcompSnapshotSource>,
         config: OcompAttestationConfig,
-        committee: OcompCommitteeSnapshotV1,
         signer: OcompSigner,
         sign_once: SignOnceStore,
         limits: SchemaLimits,
     ) -> Result<Self, AttestationError> {
-        committee.validate_semantics(&limits)?;
-        if committee.chain_id != config.identity.chain_id
-            || committee.genesis_hash != config.identity.genesis_hash
-            || committee.protocol_bundle_hash != config.identity.protocol_bundle_hash
-        {
-            return Err(AttestationError::Binding("configured committee network"));
+        if config.fork_id.is_zero() || config.validator_address.is_zero() {
+            return Err(AttestationError::Binding("configured validator identity"));
         }
-        let member = committee
-            .ordered_members
-            .get(usize::from(config.validator_index))
-            .ok_or(AttestationError::Binding("configured validator index"))?;
-        if u16::from(member.validator_index) != config.validator_index
-            || member.ocomp_public_key_sec1 != signer.public_key_sec1()
-            || member.key_epoch != signer.key_epoch()
-            || member.allowed_purpose_bitmap != RESULT_SIGNATURE_PURPOSE_BITMAP
-        {
-            return Err(AttestationError::Binding("configured local OCOMP member"));
-        }
-        let committee_snapshot_hash = committee.snapshot_hash(&limits)?;
         Ok(Self {
             authority,
             height,
+            snapshots,
             identity: config.identity,
-            validator_index: config.validator_index,
-            committee,
-            committee_snapshot_hash,
+            fork_id: config.fork_id,
+            validator_address: config.validator_address,
             signer,
             sign_once,
             limits,
+            abstentions: AtomicU64::new(0),
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn abstention_count(&self) -> u64 {
+        self.abstentions.load(Ordering::Relaxed)
+    }
+
+    fn observable_abstention(
+        &self,
+        reason: &'static str,
+        job_id: B256,
+        intent: &JobIntentV1,
+        error: AttestationError,
+    ) -> AttestationError {
+        self.abstentions.fetch_add(1, Ordering::Relaxed);
+        counter!("outbe_ocomp_attestation_abstentions_total", "reason" => reason).increment(1);
+        tracing::error!(
+            %job_id,
+            result_validator_set_epoch = intent.result_validator_set_epoch,
+            result_committee_set_hash = %intent.result_committee_set_hash,
+            result_ocomp_binding_hash = %intent.result_ocomp_binding_hash,
+            reason,
+            "OCOMP node abstains from the exact historical job snapshot"
+        );
+        error
     }
 
     pub fn attest_canonical_result(
@@ -237,6 +357,68 @@ impl OcompAttestationGate {
             .authority
             .reload_exported(result.job_id, &self.limits)?;
         self.validate_authority_and_result(&authority, &result)?;
+        let intent = &authority.finalized_intent;
+        let snapshot = match self.snapshots.load_snapshot(
+            intent.result_validator_set_epoch,
+            intent.result_committee_set_hash,
+            intent.result_ocomp_binding_hash,
+        ) {
+            Ok(Some(snapshot)) => snapshot,
+            Ok(None) => {
+                return Err(self.observable_abstention(
+                    "missing_snapshot",
+                    result.job_id,
+                    intent,
+                    AttestationError::HistoricalSnapshotUnavailable,
+                ));
+            }
+            Err(error) => {
+                return Err(self.observable_abstention(
+                    "snapshot_source",
+                    result.job_id,
+                    intent,
+                    AttestationError::Snapshot(error),
+                ));
+            }
+        };
+        if snapshot.epoch != intent.result_validator_set_epoch
+            || snapshot.committee_set_hash != intent.result_committee_set_hash
+            || snapshot.ocomp_binding_hash != intent.result_ocomp_binding_hash
+            || snapshot.ordered_members.len() != usize::from(intent.result_member_count)
+        {
+            return Err(self.observable_abstention(
+                "snapshot_binding",
+                result.job_id,
+                intent,
+                AttestationError::HistoricalSnapshotUnavailable,
+            ));
+        }
+        let Some((validator_index, member)) = snapshot
+            .ordered_members
+            .iter()
+            .enumerate()
+            .find(|(_, member)| member.validator_address == self.validator_address)
+        else {
+            return Err(self.observable_abstention(
+                "local_member_absent",
+                result.job_id,
+                intent,
+                AttestationError::LocalMemberAbsent,
+            ));
+        };
+        let validator_index: u16 = validator_index
+            .try_into()
+            .map_err(|_| AttestationError::Binding("historical validator index"))?;
+        if member.ocomp_public_key_sec1 != self.signer.public_key_sec1()
+            || member.key_epoch != self.signer.key_epoch()
+        {
+            return Err(self.observable_abstention(
+                "local_key_mismatch",
+                result.job_id,
+                intent,
+                AttestationError::LocalKeyMismatch,
+            ));
+        }
 
         let result_digest = result.result_digest(&self.limits)?;
 
@@ -268,13 +450,6 @@ impl OcompAttestationGate {
                 deadline_height: fresh.deadline_height,
             });
         }
-        let member = &self.committee.ordered_members[usize::from(self.validator_index)];
-        if member.valid_from_height > current_height
-            || current_height >= member.valid_until_height_exclusive
-        {
-            return Err(AttestationError::LocalMemberInactive { current_height });
-        }
-
         let record = self.sign_once.record_or_replay(
             SignOnceSubjectV1 {
                 chain_id: self.identity.chain_id,
@@ -286,7 +461,7 @@ impl OcompAttestationGate {
                 result_validator_set_epoch: intent.result_validator_set_epoch,
                 result_committee_set_hash: intent.result_committee_set_hash,
                 result_ocomp_binding_hash: intent.result_ocomp_binding_hash,
-                validator_index: self.validator_index,
+                validator_index,
                 key_epoch: self.signer.key_epoch(),
                 result_digest,
             },
@@ -303,15 +478,17 @@ impl OcompAttestationGate {
             result_validator_set_epoch: intent.result_validator_set_epoch,
             result_committee_set_hash: intent.result_committee_set_hash,
             result_ocomp_binding_hash: intent.result_ocomp_binding_hash,
-            validator_index: self.validator_index,
+            validator_index,
             key_epoch: self.signer.key_epoch(),
             result,
             signature_rs: record.signature_rs,
         };
-        vote.verify(
+        vote.verify_historical_member(
             &fresh.finalized_intent,
             fresh.job_id,
-            &self.committee,
+            snapshot.ordered_members.len() as u16,
+            member.key_epoch,
+            &member.ocomp_public_key_sec1,
             current_height,
             fresh.open_height,
             fresh.deadline_height,
@@ -336,10 +513,8 @@ impl OcompAttestationGate {
         }
         if intent.chain_id != self.identity.chain_id
             || intent.genesis_hash != self.identity.genesis_hash
-            || intent.fork_id != self.committee.fork_id
+            || intent.fork_id != self.fork_id
             || intent.protocol_bundle_hash != self.identity.protocol_bundle_hash
-            || intent.result_validator_set_epoch != self.committee.snapshot_epoch
-            || intent.result_ocomp_binding_hash != self.committee_snapshot_hash
         {
             return Err(AttestationError::Binding("finalized intent network"));
         }
@@ -378,6 +553,10 @@ pub enum AttestationAuthorityError {
 pub struct HeightSourceError(pub String);
 
 #[derive(Debug, thiserror::Error)]
+#[error("historical OCOMP snapshot source failed: {0}")]
+pub struct SnapshotSourceError(pub String);
+
+#[derive(Debug, thiserror::Error)]
 pub enum AttestationError {
     #[error("OCOMP attestation binding failed: {0}")]
     Binding(&'static str),
@@ -397,14 +576,20 @@ pub enum AttestationError {
         current_height: u64,
         deadline_height: u64,
     },
-    #[error("local OCOMP committee member is inactive at height {current_height}")]
-    LocalMemberInactive { current_height: u64 },
+    #[error("the exact historical OCOMP snapshot is unavailable")]
+    HistoricalSnapshotUnavailable,
+    #[error("the local validator is absent from the exact historical OCOMP snapshot")]
+    LocalMemberAbsent,
+    #[error("the local OCOMP key does not match the exact historical validator member")]
+    LocalKeyMismatch,
     #[error("node-owned finalized/export authority changed before signing")]
     AuthorityChanged,
     #[error(transparent)]
     Authority(#[from] AttestationAuthorityError),
     #[error(transparent)]
     Height(#[from] HeightSourceError),
+    #[error(transparent)]
+    Snapshot(#[from] SnapshotSourceError),
     #[error(transparent)]
     Protocol(#[from] ProtocolError),
     #[error(transparent)]

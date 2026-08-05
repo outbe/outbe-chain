@@ -2,7 +2,7 @@
 //!
 //! Nothing in this module changes block validity. It decides only whether this
 //! validator has enough durable, authenticated input to advertise, vote for,
-//! export, execute, or sign one PoC job.
+//! export, execute, or sign one OCOMP job.
 
 pub(crate) mod attestation;
 pub mod control;
@@ -15,7 +15,10 @@ pub(crate) mod sign_once;
 pub(crate) mod signer;
 pub mod snapshot_control;
 
-pub use attestation::{CurrentHeightSource, ProviderHeightSource};
+pub use attestation::{
+    CurrentHeightSource, HistoricalOcompSnapshotSource, HistoricalOcompSnapshotV1,
+    ProviderHeightSource, ProviderHistoricalOcompSnapshotSource, SnapshotSourceError,
+};
 pub use openings::{build_lysis_openings, verify_lysis_openings};
 
 #[cfg(test)]

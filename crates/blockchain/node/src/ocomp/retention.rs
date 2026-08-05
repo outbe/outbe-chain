@@ -793,7 +793,7 @@ struct CoordinatorInner {
     registry: Option<JobRegistryV1>,
 }
 
-/// Node-owned bounded multi-job PoC pin coordinator.
+/// Node-owned bounded multi-job OCOMP pin coordinator.
 pub struct OcompRetentionCoordinator {
     store: JournalStore,
     inner: Mutex<CoordinatorInner>,
@@ -1064,6 +1064,27 @@ impl OcompRetentionCoordinator {
             )),
             _ => Err(RetentionError::InvalidTransition(
                 "snapshot handoff requires the exact finalized Job",
+            )),
+        }
+    }
+
+    /// Returns the exact live `Exported` record addressed by `JobId`.
+    ///
+    /// This deliberately consults the bounded multi-job registry rather than
+    /// [`Self::status`], whose single operational summary may describe a newer
+    /// job. Callers must not substitute another live job.
+    pub(crate) fn exported_job_record(&self, job_id: B256) -> Result<PinRecordV1, RetentionError> {
+        let inner = self.lock()?;
+        if let RetentionStatus::Quarantined { ref reason } = inner.status {
+            return Err(RetentionError::Quarantined(reason.clone()));
+        }
+        let (_, record) = record_for_job(&inner, job_id)?;
+        match record.state {
+            PinStateV1::Exported {
+                job_id: current, ..
+            } if current == job_id => Ok(record),
+            _ => Err(RetentionError::InvalidTransition(
+                "attestation requires the exact exported Job",
             )),
         }
     }

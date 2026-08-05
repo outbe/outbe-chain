@@ -1,6 +1,6 @@
 //! Node-owned secp256k1 signer dedicated to OCOMP result attestations.
 //!
-//! The loader accepts exactly one development-PoC secret representation:
+//! The loader accepts exactly one OCOMP secret representation:
 //! 64 lowercase hexadecimal characters followed by one LF byte in a regular,
 //! owner-matching `0600` file. It deliberately exposes no generic purpose or
 //! arbitrary-message signing method.

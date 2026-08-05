@@ -113,8 +113,8 @@ ready nonzero resident key and compares them exactly before launching Reth.
 Check it with `outbe-cli monitor health` / `cast block finalized`. A full node’s
 `outbe_consensusStatus` reports zeros — those fields are validator-only.
 
-If your goal is to become a validator, skip this and go to section 2 — a validator
-runs `node --validator` from the start.
+If this FullNode later becomes a validator, keep the synchronized data directory,
+stop it, and restart it with the complete validator profile from sections 2–3.
 
 ---
 
@@ -136,6 +136,22 @@ VALIDATOR_ADDR=$(cast wallet address --private-key "$EVM_KEY")
 ```
 
 Keep `signing-key.hex` / `evm-key.hex` secret and backed up.
+
+Generate the validator's OCOMP result-signing key before its first validator
+startup. The public registration binds this key to the chain, genesis,
+validator address and current BLS MinPk identity; the secret key remains local:
+
+```sh
+outbe-keygen ocomp --output-dir /var/lib/outbe/ocomp \
+  --chain-id <chain-id> --genesis-hash <0x-genesis-hash> \
+  --validator-address "$VALIDATOR_ADDR" \
+  --consensus-bls-min-pk "$BLS_PUBKEY"
+```
+
+This writes `ocomp-key-v1.hex` and the public
+`ocomp-registration-v1.ocb1`. A validator startup without the OCOMP key and
+complete local-control configuration is rejected. A FullNode needs neither and
+must not be given the validator OCOMP configuration.
 
 ### 2.2 Register, announce P2P, and install the offer key once
 
@@ -193,8 +209,29 @@ outbe-chain node --validator \
   --consensus.dkg-output        /path/to/dkg-output.hex \
   --consensus.listen-addr       0.0.0.0:30400 \
   --consensus.peers             "<bls_pubkey>@<host:port>,..." \
+  --ocomp.supervisor-socket     /run/outbe/ocomp-supervisor.sock \
+  --ocomp.snapshot-exporter-socket /run/outbe/ocomp-snapshot-exporter.sock \
+  --ocomp.supervisor-uid        <supervisor-uid> \
+  --ocomp.snapshot-exporter-uid <snapshot-exporter-uid> \
+  --ocomp.protocol-bundle-hash  <0x-chain-pinned-bundle-hash> \
+  --ocomp.boot-nonce            <fresh-nonzero-0x32-byte-value> \
+  --ocomp.key                   /var/lib/outbe/ocomp/ocomp-key-v1.hex \
   --tee-enclave-socket          127.0.0.1:7000
 ```
+
+There is deliberately no OCOMP validator-index or committee file. For every
+finalized job the node opens that job's historical ValidatorSet snapshot,
+finds `VALIDATOR_ADDR`, checks that the stored OCOMP public key matches
+`ocomp-key-v1.hex`, and signs with the index from that snapshot. A membership
+change therefore affects only new jobs; old live jobs keep their old index and
+quorum.
+
+The two OCOMP sockets belong to the local Supervisor and SnapshotExporter
+processes. Their peer UIDs, the bundle hash and the boot nonce form one
+all-or-nothing startup profile. The OCOMP key file and the node-owned sign-once
+journal under the chain data directory must survive restarts. An exact retry
+returns the byte-identical stored signature; a changed job binding is refused
+as equivocation.
 
 > The node sources its DKG `prev_output`/polynomial from the **chain** (the latest
 > finalized DKG boundary), so the public artifact files only need to be valid genesis
@@ -220,24 +257,14 @@ until the total reaches `min_stake`.)
 
 ### 2.5 Confirm readiness (→ eligible) and wait for the reshare (→ ACTIVE)
 
-A PENDING validator is not admitted to the next reshare until it confirms, on-chain,
-that it has caught up and supplies the canonical proof-of-possession registration
-for its OCOMP result key. Generate the immutable key and registration for this
-chain, genesis, validator address and exact BLS MinPk public key:
-
-```sh
-outbe-keygen ocomp --output-dir <ocomp-key-dir> \
-  --chain-id <chain-id> --genesis-hash <0x-genesis-hash> \
-  --validator-address "$VALIDATOR_ADDR" \
-  --consensus-bls-min-pk <96-hex-character-bls-minpk>
-```
-
-Then, only after the node has reached the finalized tip, submit the generated
-public registration:
+A PENDING validator is not admitted to the next reshare until it confirms,
+on-chain, that it has caught up and supplies the canonical proof-of-possession
+registration for its OCOMP result key. Only after the node has reached the
+finalized tip, submit the public registration generated in section 2.1:
 
 ```sh
 outbe-cli validator confirm-ready \
-  --registration <ocomp-key-dir>/ocomp-registration-v1.ocb1 \
+  --registration /var/lib/outbe/ocomp/ocomp-registration-v1.ocb1 \
   --private-key "$EVM_KEY" --rpc-url http://<rpc>:8545
 ```
 
@@ -267,17 +294,32 @@ the difference is only whether the node already holds a share.
 
 - **Returning validator (was ACTIVE)** — restart `node --validator` with its existing
   `--consensus.keys-dir`. It **recovers its share from disk**, catches up to head, and
-  **resumes signing without a new reshare** — fast, no waiting. (If it had been
-  excluded from the set while down, it recovers as a follower and rejoins at the next
-  reshare it is part of.)
+  **resumes signing without a new reshare** while its on-chain status is still ACTIVE.
+  If it has already left the active set and reached INACTIVE, it must complete the
+  normal re-registration/stake/PENDING flow and submit `confirm-ready` again; exit
+  clears the prior OCOMP readiness. It then rejoins only through the next certified
+  reshare.
 
-In both cases, if the node is still waiting on a DKG reshare (you just registered, or
-a restarted node missed the ceremony it needed), the normal action is simply to **wait
-for the next periodic reshare** — it re-reads the active + confirmed set each epoch and
-picks you up. There is no on-demand or forced DKG path. In particular, losing the
-permanent enclave offer key never starts DKG or reshare: that NodeId is lost and
-cannot receive the key again. Continuing requires an independently admitted new
-node identity; the old identity cannot be recovered or replaced.
+- **FullNode becoming a validator** — stop the FullNode and restart the same
+  synchronized data directory with `--validator`, the consensus/EVM/OCOMP keys,
+  public DKG artifacts and the complete OCOMP local-control profile from section
+  2.3. It does not receive a manually assigned OCOMP index. After registration,
+  stake and `confirm-ready`, the next certified reshare makes it ACTIVE and its
+  address appears automatically in snapshots for new OCOMP jobs.
+
+Once a new or returning node is registered, staked, PENDING and confirmed, the
+normal action is simply to **wait for the next periodic reshare** — it re-reads the
+eligible set each epoch and picks the validator up. There is no on-demand or forced
+DKG path. In particular, losing the permanent enclave offer key never starts DKG or
+reshare: that NodeId is lost and cannot receive the key again. Continuing requires
+an independently admitted new node identity; the old identity cannot be recovered
+or replaced.
+
+If an old job's pinned snapshot is missing/evicted, the local validator is absent
+from it, or its stored OCOMP key does not match, the node abstains from that job.
+It logs the JobId and all three snapshot bindings and increments
+`outbe_ocomp_attestation_abstentions_total`; it never substitutes the current
+ValidatorSet. Other consensus and FullNode processing continues.
 
 ---
 
@@ -389,6 +431,10 @@ fallback for production.
 | `--consensus.public-polynomial` / `--consensus.dkg-output` | public DKG artifacts to follow finality before holding a share                                                                                  |
 | `--consensus.keys-dir`                                     | where the DKG share/polynomial/output are persisted (default `<datadir>/keys`)                                                                  |
 | `--consensus.listen-addr` / `--consensus.peers`            | consensus P2P listen address / bootstrap hint `<bls_pubkey>@<host:port>`                                                                        |
+| `--ocomp.supervisor-socket` / `--ocomp.snapshot-exporter-socket` | validator-only local Supervisor and SnapshotExporter endpoints; both are mandatory together                                                |
+| `--ocomp.supervisor-uid` / `--ocomp.snapshot-exporter-uid` | expected Unix peer identities for those two local endpoints                                                                                    |
+| `--ocomp.protocol-bundle-hash` / `--ocomp.boot-nonce`      | chain-pinned OCOMP bundle identity / nonzero per-boot control-session binding                                                                   |
+| `--ocomp.key`                                              | validator's node-owned OCOMP result-signing key registered through `confirm-ready`; no static participant index is configured                  |
 | `--tee-enclave-socket`                                     | mandatory enclave sidecar endpoint; every V1 node fails startup if it is absent or cannot satisfy its genesis-fixed mode                        |
 | `--testnet.trust-el-head`                                  | disaster-recovery only: trust execution head when no durable consensus-finalized height exists (testnet/devnet; not normal production recovery) |
 
@@ -397,6 +443,7 @@ fallback for production.
 | Command                                                     | Purpose                                                        |
 | ----------------------------------------------------------- | -------------------------------------------------------------- |
 | `outbe-keygen hybrid` / `show-pubkey` / `sign-registration` | generate keys / derive BLS pubkey / sign registration          |
+| `outbe-keygen ocomp`                                       | generate the permanent validator OCOMP key and public `ocomp-registration-v1.ocb1` artifact |
 | `outbe-cli tee join`                                        | register an exact Validator or FullNode identity and ingest its one-time permanent-key artifact through any funded relay |
 | `outbe-cli validator register` / `set-p2p`                  | register (→ REGISTERED) / publish the P2P address              |
 | `outbe-cli staking stake` / `unstake` / `claim`             | stake (→ PENDING at `min_stake`) / unstake / withdraw          |

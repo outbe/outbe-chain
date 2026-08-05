@@ -715,7 +715,7 @@ mod tests {
         let mut provider = HashMapStorageProvider::new(1);
 
         StorageHandle::enter(&mut provider, |storage| {
-            let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
+            let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage);
             vs.config_is_initialized.write(true).unwrap();
             vs.set_config_max_validators(128).unwrap();
         });
@@ -934,7 +934,7 @@ mod tests {
         let mut provider = HashMapStorageProvider::new(1);
 
         StorageHandle::enter(&mut provider, |storage| {
-            let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
+            let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage);
             vs.config_is_initialized.write(true).unwrap();
             vs.set_config_max_validators(128).unwrap();
         });
@@ -951,7 +951,7 @@ mod tests {
         let mut provider = HashMapStorageProvider::new(1);
 
         StorageHandle::enter(&mut provider, |storage| {
-            let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
+            let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage);
             vs.config_is_initialized.write(true).unwrap();
             vs.set_config_max_validators(128).unwrap();
             vs.pending_set_change.write(true).unwrap();

@@ -1,8 +1,8 @@
 //! Node-owned bounded OCOMP control endpoint.
 //!
-//! This local service exposes only the one finalized live PoC job retained by
-//! [`OcompRetentionCoordinator`]. Connection or protocol failures remain local
-//! to OCOMP and are never propagated into consensus/finality.
+//! This local service exposes the bounded set of finalized live OCOMP jobs
+//! retained by [`OcompRetentionCoordinator`]. Connection or protocol failures
+//! remain local to OCOMP and are never propagated into consensus/finality.
 
 use std::io;
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -13,24 +13,24 @@ use std::sync::{
 };
 use std::time::Duration;
 
+use alloy_primitives::{Address, B256};
 use metrics::{counter, gauge};
 use outbe_compressed_entities::CompressedTreeService;
 use outbe_ocomp_protocol::local_control::{
     ControlError, ControlRole, ControlServerSession, EndpointIdentity, ServerPolicy,
 };
 use outbe_ocomp_protocol::{
-    committee::OcompCommitteeSnapshotV1, common::BoundedBytes, AttestationResponseV1,
-    BuildFinalizedIntentProofV1, BuildLysisOpeningsV1, CheckProjectionContainmentV1,
-    CommitSnapshotExportV1, FinalizedJobSpecV1, FinalizedJobSummaryV1, GetJobSpecV1,
-    GetSnapshotHandoffV1, ListFinalizedJobsResponseV1, ListFinalizedJobsV1, ListSnapshotHandoffsV1,
-    LocalErrorCode, LocalErrorV1, NodeMessageKind, OpenSnapshotLeaseV1, ProtocolError,
-    RenewSnapshotLeaseV1, RequestAttestationV1, SchemaLimits,
+    common::BoundedBytes, AttestationResponseV1, BuildFinalizedIntentProofV1, BuildLysisOpeningsV1,
+    CheckProjectionContainmentV1, CommitSnapshotExportV1, FinalizedJobSpecV1,
+    FinalizedJobSummaryV1, GetJobSpecV1, GetSnapshotHandoffV1, ListFinalizedJobsResponseV1,
+    ListFinalizedJobsV1, ListSnapshotHandoffsV1, LocalErrorCode, LocalErrorV1, NodeMessageKind,
+    OpenSnapshotLeaseV1, ProtocolError, RenewSnapshotLeaseV1, RequestAttestationV1, SchemaLimits,
 };
 use thiserror::Error;
 
 use super::attestation::{
     AtomicHeightSource, AttestationAuthorityError, AttestationError, CurrentHeightSource,
-    OcompAttestationConfig, OcompAttestationGate,
+    HistoricalOcompSnapshotSource, OcompAttestationConfig, OcompAttestationGate,
 };
 use super::retention::{FinalizedJobPinV1, OcompRetentionCoordinator, RetentionError};
 use super::sign_once::{SignOnceError, SignOnceStore};
@@ -116,8 +116,8 @@ pub struct OcompNodeAttestationConfig {
     pub key_path: PathBuf,
     pub sign_once_root: PathBuf,
     pub expected_owner_uid: u32,
-    pub validator_index: u16,
-    pub committee: OcompCommitteeSnapshotV1,
+    pub fork_id: B256,
+    pub validator_address: Address,
     pub initial_height: u64,
 }
 
@@ -162,9 +162,11 @@ impl OcompControlServer {
     pub fn with_node_attestation(
         self,
         config: OcompNodeAttestationConfig,
+        snapshots: Arc<dyn HistoricalOcompSnapshotSource>,
     ) -> Result<Self, NodeControlError> {
         let height = Arc::new(AtomicHeightSource::new(config.initial_height));
-        let mut server = self.with_node_attestation_height_source(config, height.clone())?;
+        let mut server =
+            self.with_node_attestation_height_source(config, height.clone(), snapshots)?;
         server.attestation_height = Some(height);
         Ok(server)
     }
@@ -175,6 +177,7 @@ impl OcompControlServer {
         mut self,
         config: OcompNodeAttestationConfig,
         height: Arc<dyn CurrentHeightSource>,
+        snapshots: Arc<dyn HistoricalOcompSnapshotSource>,
     ) -> Result<Self, NodeControlError> {
         let signer = OcompSigner::from_file(&config.key_path, config.expected_owner_uid)
             .map_err(AttestationError::from)?;
@@ -187,11 +190,12 @@ impl OcompControlServer {
         let gate = OcompAttestationGate::new(
             self.retention.clone(),
             height,
+            snapshots,
             OcompAttestationConfig {
                 identity: self.identity,
-                validator_index: config.validator_index,
+                fork_id: config.fork_id,
+                validator_address: config.validator_address,
             },
-            config.committee,
             signer,
             sign_once,
             self.limits,
@@ -579,14 +583,21 @@ fn attestation_local_error(error: &NodeControlError) -> (LocalErrorCode, bool) {
             AttestationError::Authority(
                 AttestationAuthorityError::Unavailable(_) | AttestationAuthorityError::Retention(_),
             )
-            | AttestationError::Height(_),
+            | AttestationError::Height(_)
+            | AttestationError::Snapshot(_),
         ) => (LocalErrorCode::SourceUnavailable, true),
         NodeControlError::Attestation(AttestationError::AuthorityChanged) => {
             (LocalErrorCode::Conflict, true)
         }
+        NodeControlError::Attestation(AttestationError::DeadlineReached { .. }) => {
+            (LocalErrorCode::Conflict, false)
+        }
         NodeControlError::Attestation(
-            AttestationError::DeadlineReached { .. } | AttestationError::LocalMemberInactive { .. },
-        ) => (LocalErrorCode::Conflict, false),
+            AttestationError::HistoricalSnapshotUnavailable | AttestationError::LocalMemberAbsent,
+        ) => (LocalErrorCode::NotFound, false),
+        NodeControlError::Attestation(AttestationError::LocalKeyMismatch) => {
+            (LocalErrorCode::InternalOcompUnavailable, false)
+        }
         NodeControlError::Attestation(AttestationError::SignOnce(
             SignOnceError::Equivocation { .. },
         )) => (LocalErrorCode::Conflict, false),

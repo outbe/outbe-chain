@@ -934,8 +934,8 @@ mod tests {
                 .register_validator(OWNER, proposer, &TEST_CONSENSUS_PUBLIC_KEY)
                 .expect("proposer registration seed succeeds");
             validators
-                .activate_reshared_set(&[proposer], B256::ZERO)
-                .expect("active proposer seed succeeds");
+                .activate_validator_via_boundary_for_test(proposer)
+                .expect("active proposer reaches production boundary activation");
 
             let mut oracle = outbe_oracle::contract::OracleContract::new(storage);
             oracle

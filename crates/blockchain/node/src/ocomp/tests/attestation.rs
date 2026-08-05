@@ -1,15 +1,16 @@
 use std::{
+    collections::BTreeMap,
     fs,
     os::unix::fs::MetadataExt as _,
     os::unix::net::UnixStream,
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
         Arc, Mutex,
     },
     thread,
 };
 
-use alloy_primitives::{B256, U256};
+use alloy_primitives::{Address, Bytes, B256, U256};
 use k256::ecdsa::{signature::hazmat::PrehashSigner as _, Signature, SigningKey};
 use outbe_consensus::block::ConsensusBlock;
 use outbe_metadosis::config::poc_schema_limits;
@@ -38,12 +39,27 @@ use outbe_ocomp_protocol::{
     LocalErrorV1, NodeMessageKind, ProtocolError, RequestAttestationV1, SchemaLimits,
     MAX_FINALIZED_JOBS_PER_RESPONSE,
 };
+use outbe_primitives::{
+    storage::{hashmap::HashMapStorageProvider, StorageHandle},
+    OutbePrimitives,
+};
+use outbe_validatorset::{
+    read_committee_snapshot, read_ocomp_snapshot_extension, write_committee_snapshot,
+    COMMITTEE_SNAPSHOT_RETAIN_EPOCHS,
+};
+use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
+use tracing::{
+    field::{Field, Visit},
+    span::{Attributes, Id, Record},
+    Event, Metadata, Subscriber,
+};
 
 use crate::ocomp::{
     attestation::{
         AtomicHeightSource, AttestationAuthorityError, AttestationError,
-        ExportedAttestationAuthorityV1, FinalizedAttestationAuthority, OcompAttestationConfig,
-        OcompAttestationGate,
+        ExportedAttestationAuthorityV1, FinalizedAttestationAuthority,
+        HistoricalOcompSnapshotSource, HistoricalOcompSnapshotV1, OcompAttestationConfig,
+        OcompAttestationGate, ProviderHistoricalOcompSnapshotSource, SnapshotSourceError,
     },
     control::OcompControlServer,
     retention::{
@@ -69,6 +85,111 @@ fn sign(key: &SigningKey, digest: B256) -> [u8; 64] {
         .unwrap_or(signature)
         .to_bytes()
         .into()
+}
+
+#[derive(Clone, Default)]
+struct CapturedEvents {
+    fields: Arc<Mutex<Vec<BTreeMap<String, String>>>>,
+}
+
+struct CapturedEventVisitor {
+    fields: BTreeMap<String, String>,
+}
+
+impl Visit for CapturedEventVisitor {
+    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+        self.fields
+            .insert(field.name().to_owned(), format!("{value:?}"));
+    }
+}
+
+impl Subscriber for CapturedEvents {
+    fn enabled(&self, _metadata: &Metadata<'_>) -> bool {
+        true
+    }
+
+    fn new_span(&self, _span: &Attributes<'_>) -> Id {
+        Id::from_u64(1)
+    }
+
+    fn record(&self, _span: &Id, _values: &Record<'_>) {}
+
+    fn record_follows_from(&self, _span: &Id, _follows: &Id) {}
+
+    fn event(&self, event: &Event<'_>) {
+        let mut visitor = CapturedEventVisitor {
+            fields: BTreeMap::new(),
+        };
+        event.record(&mut visitor);
+        self.fields
+            .lock()
+            .expect("captured event mutex")
+            .push(visitor.fields);
+    }
+
+    fn enter(&self, _span: &Id) {}
+
+    fn exit(&self, _span: &Id) {}
+}
+
+#[derive(Default)]
+struct CapturedMetrics {
+    value: Arc<AtomicU64>,
+    keys: Mutex<Vec<String>>,
+}
+
+impl metrics::Recorder for CapturedMetrics {
+    fn describe_counter(
+        &self,
+        _key: metrics::KeyName,
+        _unit: Option<metrics::Unit>,
+        _description: metrics::SharedString,
+    ) {
+    }
+
+    fn describe_gauge(
+        &self,
+        _key: metrics::KeyName,
+        _unit: Option<metrics::Unit>,
+        _description: metrics::SharedString,
+    ) {
+    }
+
+    fn describe_histogram(
+        &self,
+        _key: metrics::KeyName,
+        _unit: Option<metrics::Unit>,
+        _description: metrics::SharedString,
+    ) {
+    }
+
+    fn register_counter(
+        &self,
+        key: &metrics::Key,
+        _metadata: &metrics::Metadata<'_>,
+    ) -> metrics::Counter {
+        self.keys
+            .lock()
+            .expect("captured metrics mutex")
+            .push(key.to_string());
+        metrics::Counter::from_arc(self.value.clone())
+    }
+
+    fn register_gauge(
+        &self,
+        _key: &metrics::Key,
+        _metadata: &metrics::Metadata<'_>,
+    ) -> metrics::Gauge {
+        metrics::Gauge::noop()
+    }
+
+    fn register_histogram(
+        &self,
+        _key: &metrics::Key,
+        _metadata: &metrics::Metadata<'_>,
+    ) -> metrics::Histogram {
+        metrics::Histogram::noop()
+    }
 }
 
 fn registration(index: u8, limits: &SchemaLimits) -> OcompKeyRegistrationV1 {
@@ -328,6 +449,46 @@ struct ChangingAuthority {
     reloads: AtomicUsize,
 }
 
+struct MultiAuthority {
+    values: BTreeMap<B256, ExportedAttestationAuthorityV1>,
+}
+
+impl FinalizedAttestationAuthority for MultiAuthority {
+    fn reload_exported(
+        &self,
+        job_id: B256,
+        _limits: &SchemaLimits,
+    ) -> Result<ExportedAttestationAuthorityV1, AttestationAuthorityError> {
+        self.values
+            .get(&job_id)
+            .cloned()
+            .ok_or(AttestationAuthorityError::NotExported(job_id))
+    }
+}
+
+struct MultiHistoricalSnapshotSource {
+    snapshots: Vec<HistoricalOcompSnapshotV1>,
+}
+
+impl HistoricalOcompSnapshotSource for MultiHistoricalSnapshotSource {
+    fn load_snapshot(
+        &self,
+        epoch: u64,
+        committee_set_hash: B256,
+        ocomp_binding_hash: B256,
+    ) -> Result<Option<HistoricalOcompSnapshotV1>, SnapshotSourceError> {
+        Ok(self
+            .snapshots
+            .iter()
+            .find(|snapshot| {
+                snapshot.epoch == epoch
+                    && snapshot.committee_set_hash == committee_set_hash
+                    && snapshot.ocomp_binding_hash == ocomp_binding_hash
+            })
+            .cloned())
+    }
+}
+
 impl FinalizedAttestationAuthority for ChangingAuthority {
     fn reload_exported(
         &self,
@@ -364,6 +525,26 @@ impl FinalizedAttestationAuthority for StaticAuthority {
 
 struct EmptyProofSource;
 
+struct StaticHistoricalSnapshotSource {
+    snapshot: Option<HistoricalOcompSnapshotV1>,
+}
+
+impl HistoricalOcompSnapshotSource for StaticHistoricalSnapshotSource {
+    fn load_snapshot(
+        &self,
+        epoch: u64,
+        committee_set_hash: B256,
+        ocomp_binding_hash: B256,
+    ) -> Result<Option<HistoricalOcompSnapshotV1>, SnapshotSourceError> {
+        Ok(self.snapshot.as_ref().and_then(|snapshot| {
+            (snapshot.epoch == epoch
+                && snapshot.committee_set_hash == committee_set_hash
+                && snapshot.ocomp_binding_hash == ocomp_binding_hash)
+                .then(|| snapshot.clone())
+        }))
+    }
+}
+
 impl FinalizedInputProofSource for EmptyProofSource {
     fn candidate_for_block(
         &self,
@@ -389,6 +570,25 @@ pub(super) fn attestation_gate(
     committee: OcompCommitteeSnapshotV1,
 ) -> OcompAttestationGate {
     let limits = protocol_limits();
+    let snapshots = Arc::new(StaticHistoricalSnapshotSource {
+        snapshot: Some(HistoricalOcompSnapshotV1 {
+            epoch: committee.snapshot_epoch,
+            committee_set_hash: hash(45),
+            ocomp_binding_hash: committee.snapshot_hash(&limits).expect("committee hash"),
+            ordered_members: committee
+                .ordered_members
+                .iter()
+                .enumerate()
+                .map(
+                    |(index, member)| outbe_validatorset::OcompSnapshotMemberV1 {
+                        validator_address: Address::repeat_byte((index + 1) as u8),
+                        ocomp_public_key_sec1: member.ocomp_public_key_sec1,
+                        key_epoch: member.key_epoch,
+                    },
+                )
+                .collect(),
+        }),
+    });
     let signer = OcompSigner::from_secret([1; 32]).expect("local OCOMP signer");
     let root = directory.path().join("sign-once");
     let owner_uid = fs::metadata(directory.path())
@@ -398,6 +598,7 @@ pub(super) fn attestation_gate(
     OcompAttestationGate::new(
         authority,
         height,
+        snapshots,
         OcompAttestationConfig {
             identity: EndpointIdentity {
                 chain_id: 42,
@@ -405,9 +606,9 @@ pub(super) fn attestation_gate(
                 boot_nonce: hash(99),
                 protocol_bundle_hash: hash(41),
             },
-            validator_index: 0,
+            fork_id: committee.fork_id,
+            validator_address: Address::repeat_byte(1),
         },
-        committee,
         signer,
         store,
         limits,
@@ -462,6 +663,481 @@ fn assert_no_sign_once_record(directory: &tempfile::TempDir) {
         0,
         "a rejected candidate must not consume the sign-once slot"
     );
+}
+
+fn mock_reth_provider(seed: &HashMapStorageProvider) -> MockEthProvider<OutbePrimitives> {
+    let provider = MockEthProvider::<OutbePrimitives>::new();
+    let mut accounts: BTreeMap<_, Vec<_>> = BTreeMap::new();
+    for ((account, slot), value) in &seed.storage {
+        accounts
+            .entry(*account)
+            .or_default()
+            .push((B256::from(slot.to_be_bytes::<32>()), *value));
+    }
+    for (account, storage) in accounts {
+        provider.add_account(
+            account,
+            ExtendedAccount::new(0, U256::ZERO)
+                .with_bytecode(Bytes::from_static(&[0xef]))
+                .extend_storage(storage),
+        );
+    }
+    provider
+}
+
+#[test]
+fn ocm_sig_001_provider_source_reads_only_the_exact_retained_ring_snapshot() {
+    let owner = Address::ZERO;
+    let first = Address::repeat_byte(0x61);
+    let second = Address::repeat_byte(0x62);
+    let first_bls = [0x71; 48];
+    let second_bls = [0x72; 48];
+    let initial_epoch = 3u64;
+    let mut seed = HashMapStorageProvider::new(42);
+    let (snapshot, initial_consensus_hash, initial_binding_hash) =
+        StorageHandle::enter(&mut seed, |storage| {
+            let mut validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+            validators.config_owner.write(owner).unwrap();
+            validators.config_is_initialized.write(true).unwrap();
+            validators.set_config_max_validators(128).unwrap();
+            validators
+                .epoch_number
+                .write(U256::from(initial_epoch))
+                .unwrap();
+            validators
+                .register_validator(owner, first, &first_bls)
+                .unwrap();
+            validators
+                .register_validator(owner, second, &second_bls)
+                .unwrap();
+            validators
+                .activate_validator_via_boundary_for_test(first)
+                .unwrap();
+            let snapshot_key = validators
+                .activate_validator_via_boundary_for_test(second)
+                .unwrap();
+            let snapshot = read_committee_snapshot(storage.clone(), snapshot_key)
+                .unwrap()
+                .expect("current consensus snapshot");
+            let extension = read_ocomp_snapshot_extension(storage, snapshot_key)
+                .unwrap()
+                .expect("current OCOMP extension");
+            (
+                snapshot,
+                extension.committee_set_hash,
+                extension.ocomp_binding_hash,
+            )
+        });
+
+    let initial_source = ProviderHistoricalOcompSnapshotSource::new(mock_reth_provider(&seed));
+    let initial = initial_source
+        .load_snapshot(initial_epoch, initial_consensus_hash, initial_binding_hash)
+        .unwrap()
+        .expect("exact retained snapshot");
+    assert_eq!(initial.ordered_members.len(), 2);
+    assert!(initial_source
+        .load_snapshot(
+            initial_epoch,
+            initial_consensus_hash,
+            B256::repeat_byte(0xFF),
+        )
+        .unwrap()
+        .is_none());
+
+    let replacement_epoch = initial_epoch + COMMITTEE_SNAPSHOT_RETAIN_EPOCHS;
+    let (replacement_key, replacement_consensus_hash, replacement_binding_hash) =
+        StorageHandle::enter(&mut seed, |storage| {
+            let (consensus_hash, snapshot_key) =
+                write_committee_snapshot(storage.clone(), replacement_epoch, &snapshot).unwrap();
+            let extension = read_ocomp_snapshot_extension(storage, snapshot_key)
+                .unwrap()
+                .expect("replacement OCOMP extension");
+            (snapshot_key, consensus_hash, extension.ocomp_binding_hash)
+        });
+    let replacement_source = ProviderHistoricalOcompSnapshotSource::new(mock_reth_provider(&seed));
+    assert!(replacement_source
+        .load_snapshot(initial_epoch, initial_consensus_hash, initial_binding_hash,)
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        replacement_source
+            .load_snapshot(
+                replacement_epoch,
+                replacement_consensus_hash,
+                replacement_binding_hash,
+            )
+            .unwrap()
+            .expect("replacement retained snapshot")
+            .ordered_members
+            .len(),
+        2
+    );
+
+    StorageHandle::enter(&mut seed, |storage| {
+        let validators = outbe_validatorset::contract::ValidatorSet::new(storage);
+        validators
+            .committee_snapshot_ocomp_key_lo_at
+            .get_nested(&replacement_key)
+            .write(&0, B256::ZERO)
+            .unwrap();
+        validators
+            .committee_snapshot_ocomp_key_hi_at
+            .get_nested(&replacement_key)
+            .write(&0, B256::ZERO)
+            .unwrap();
+    });
+    let corrupt_source = ProviderHistoricalOcompSnapshotSource::new(mock_reth_provider(&seed));
+    assert!(corrupt_source
+        .load_snapshot(
+            replacement_epoch,
+            replacement_consensus_hash,
+            replacement_binding_hash,
+        )
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+fn ocm_sig_001_derives_the_local_u16_index_from_the_job_snapshot() {
+    let limits = protocol_limits();
+    let (committee, exported, result) = fixture();
+    let local_address = Address::repeat_byte(0xA1);
+    let mut members = committee
+        .ordered_members
+        .iter()
+        .enumerate()
+        .map(
+            |(index, member)| outbe_validatorset::OcompSnapshotMemberV1 {
+                validator_address: Address::repeat_byte((index + 1) as u8),
+                ocomp_public_key_sec1: member.ocomp_public_key_sec1,
+                key_epoch: member.key_epoch,
+            },
+        )
+        .collect::<Vec<_>>();
+    members.swap(0, 2);
+    members[2].validator_address = local_address;
+    let snapshots = Arc::new(StaticHistoricalSnapshotSource {
+        snapshot: Some(HistoricalOcompSnapshotV1 {
+            epoch: exported.finalized_intent.result_validator_set_epoch,
+            committee_set_hash: exported.finalized_intent.result_committee_set_hash,
+            ocomp_binding_hash: exported.finalized_intent.result_ocomp_binding_hash,
+            ordered_members: members,
+        }),
+    });
+    let authority = Arc::new(StaticAuthority {
+        value: Mutex::new(exported.clone()),
+        reloads: AtomicUsize::new(0),
+    });
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let owner_uid = fs::metadata(directory.path())
+        .expect("temporary directory metadata")
+        .uid();
+    let gate = OcompAttestationGate::new(
+        authority,
+        Arc::new(AtomicHeightSource::new(105)),
+        snapshots,
+        OcompAttestationConfig {
+            identity: EndpointIdentity {
+                chain_id: 42,
+                genesis_hash: hash(40),
+                boot_nonce: hash(99),
+                protocol_bundle_hash: hash(41),
+            },
+            fork_id: committee.fork_id,
+            validator_address: local_address,
+        },
+        OcompSigner::from_secret([1; 32]).expect("local OCOMP signer"),
+        SignOnceStore::open(directory.path().join("sign-once"), owner_uid, limits)
+            .expect("sign-once store"),
+        limits,
+    )
+    .expect("dynamic attestation gate");
+
+    let vote = gate.attest(result).expect("historical member attestation");
+    assert_eq!(vote.validator_index, 2);
+    vote.verify_historical_member(
+        &exported.finalized_intent,
+        exported.job_id,
+        4,
+        1,
+        &OcompSigner::from_secret([1; 32])
+            .expect("local OCOMP signer")
+            .public_key_sec1(),
+        105,
+        exported.open_height,
+        exported.deadline_height,
+        &limits,
+    )
+    .expect("dynamic historical vote verifies");
+}
+
+#[test]
+fn ocm_sig_001_two_live_membership_epochs_sign_with_their_own_indices() {
+    let limits = protocol_limits();
+    let (committee, first_exported, first_result) = fixture();
+    let local_address = Address::repeat_byte(1);
+    let first_members = committee
+        .ordered_members
+        .iter()
+        .enumerate()
+        .map(
+            |(index, member)| outbe_validatorset::OcompSnapshotMemberV1 {
+                validator_address: Address::repeat_byte((index + 1) as u8),
+                ocomp_public_key_sec1: member.ocomp_public_key_sec1,
+                key_epoch: member.key_epoch,
+            },
+        )
+        .collect::<Vec<_>>();
+    let first_snapshot = HistoricalOcompSnapshotV1 {
+        epoch: first_exported.finalized_intent.result_validator_set_epoch,
+        committee_set_hash: first_exported.finalized_intent.result_committee_set_hash,
+        ocomp_binding_hash: first_exported.finalized_intent.result_ocomp_binding_hash,
+        ordered_members: first_members.clone(),
+    };
+
+    let mut second_exported = first_exported.clone();
+    second_exported.candidate.block_number += 100;
+    second_exported.candidate.block_hash = hash(0xD1);
+    second_exported.candidate.state_root = hash(0xD2);
+    second_exported.finalized_intent.result_validator_set_epoch = 2;
+    second_exported.finalized_intent.result_committee_set_hash = hash(0xD3);
+    second_exported.finalized_intent.result_ocomp_binding_hash = hash(0xD4);
+    second_exported.finalized_intent.result_member_count = 5;
+    second_exported.finalized_intent.result_quorum_threshold = 4;
+    second_exported.candidate.intent_id = second_exported
+        .finalized_intent
+        .intent_id(&limits)
+        .expect("second IntentId");
+    second_exported.job_id = second_exported
+        .finalized_intent
+        .job_id(
+            second_exported.candidate.block_hash,
+            second_exported.candidate.state_root,
+            &limits,
+        )
+        .expect("second JobId");
+    let mut second_result = first_result.clone();
+    second_result.job_id = second_exported.job_id;
+
+    let mut second_members = first_members[1..].to_vec();
+    let fifth_registration = registration(4, &limits);
+    second_members.push(outbe_validatorset::OcompSnapshotMemberV1 {
+        validator_address: Address::repeat_byte(5),
+        ocomp_public_key_sec1: fifth_registration.core.ocomp_public_key_sec1,
+        key_epoch: fifth_registration.core.key_epoch,
+    });
+    second_members.push(outbe_validatorset::OcompSnapshotMemberV1 {
+        validator_address: local_address,
+        ocomp_public_key_sec1: first_members[0].ocomp_public_key_sec1,
+        key_epoch: first_members[0].key_epoch,
+    });
+    let second_snapshot = HistoricalOcompSnapshotV1 {
+        epoch: second_exported.finalized_intent.result_validator_set_epoch,
+        committee_set_hash: second_exported.finalized_intent.result_committee_set_hash,
+        ocomp_binding_hash: second_exported.finalized_intent.result_ocomp_binding_hash,
+        ordered_members: second_members,
+    };
+    let authority = Arc::new(MultiAuthority {
+        values: BTreeMap::from([
+            (first_exported.job_id, first_exported.clone()),
+            (second_exported.job_id, second_exported.clone()),
+        ]),
+    });
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let owner_uid = fs::metadata(directory.path())
+        .expect("temporary directory metadata")
+        .uid();
+    let gate = OcompAttestationGate::new(
+        authority,
+        Arc::new(AtomicHeightSource::new(105)),
+        Arc::new(MultiHistoricalSnapshotSource {
+            snapshots: vec![first_snapshot, second_snapshot],
+        }),
+        OcompAttestationConfig {
+            identity: EndpointIdentity {
+                chain_id: 42,
+                genesis_hash: hash(40),
+                boot_nonce: hash(99),
+                protocol_bundle_hash: hash(41),
+            },
+            fork_id: committee.fork_id,
+            validator_address: local_address,
+        },
+        OcompSigner::from_secret([1; 32]).expect("local OCOMP signer"),
+        SignOnceStore::open(directory.path().join("sign-once"), owner_uid, limits)
+            .expect("sign-once store"),
+        limits,
+    )
+    .expect("dynamic attestation gate");
+
+    assert_eq!(
+        gate.attest(first_result)
+            .expect("first membership vote")
+            .validator_index,
+        0
+    );
+    assert_eq!(
+        gate.attest(second_result)
+            .expect("second membership vote")
+            .validator_index,
+        4
+    );
+}
+
+#[test]
+fn ocm_sig_001_unusable_historical_membership_abstains_observably_without_signing() {
+    let limits = protocol_limits();
+    let (committee, exported, result) = fixture();
+    let local_address = Address::repeat_byte(1);
+    let captured_metrics = CapturedMetrics::default();
+    let _metrics_guard = metrics::set_default_local_recorder(&captured_metrics);
+    let captured_events = CapturedEvents::default();
+    let dispatch = tracing::Dispatch::new(captured_events.clone());
+    let _tracing_guard = tracing::dispatcher::set_default(&dispatch);
+    let make_gate = |directory: &tempfile::TempDir, snapshot: Option<HistoricalOcompSnapshotV1>| {
+        let owner_uid = fs::metadata(directory.path())
+            .expect("temporary directory metadata")
+            .uid();
+        OcompAttestationGate::new(
+            Arc::new(StaticAuthority {
+                value: Mutex::new(exported.clone()),
+                reloads: AtomicUsize::new(0),
+            }),
+            Arc::new(AtomicHeightSource::new(105)),
+            Arc::new(StaticHistoricalSnapshotSource { snapshot }),
+            OcompAttestationConfig {
+                identity: EndpointIdentity {
+                    chain_id: 42,
+                    genesis_hash: hash(40),
+                    boot_nonce: hash(99),
+                    protocol_bundle_hash: hash(41),
+                },
+                fork_id: committee.fork_id,
+                validator_address: local_address,
+            },
+            OcompSigner::from_secret([1; 32]).expect("local OCOMP signer"),
+            SignOnceStore::open(directory.path().join("sign-once"), owner_uid, limits)
+                .expect("sign-once store"),
+            limits,
+        )
+        .expect("dynamic attestation gate")
+    };
+
+    let missing_directory = tempfile::tempdir().expect("missing snapshot directory");
+    let missing = make_gate(&missing_directory, None);
+    assert!(matches!(
+        missing.attest(result.clone()),
+        Err(AttestationError::HistoricalSnapshotUnavailable)
+    ));
+    assert_eq!(missing.abstention_count(), 1);
+    assert_no_sign_once_record(&missing_directory);
+
+    let members = committee
+        .ordered_members
+        .iter()
+        .enumerate()
+        .map(
+            |(index, member)| outbe_validatorset::OcompSnapshotMemberV1 {
+                validator_address: Address::repeat_byte((index + 1) as u8),
+                ocomp_public_key_sec1: member.ocomp_public_key_sec1,
+                key_epoch: member.key_epoch,
+            },
+        )
+        .collect::<Vec<_>>();
+
+    let binding_mismatch_directory = tempfile::tempdir().expect("binding mismatch directory");
+    let binding_mismatch = make_gate(
+        &binding_mismatch_directory,
+        Some(HistoricalOcompSnapshotV1 {
+            epoch: exported.finalized_intent.result_validator_set_epoch + 1,
+            committee_set_hash: exported.finalized_intent.result_committee_set_hash,
+            ocomp_binding_hash: exported.finalized_intent.result_ocomp_binding_hash,
+            ordered_members: members.clone(),
+        }),
+    );
+    assert!(matches!(
+        binding_mismatch.attest(result.clone()),
+        Err(AttestationError::HistoricalSnapshotUnavailable)
+    ));
+    assert_eq!(binding_mismatch.abstention_count(), 1);
+    assert_no_sign_once_record(&binding_mismatch_directory);
+
+    let mut absent_members = members.clone();
+    absent_members[0].validator_address = Address::repeat_byte(0xEE);
+    let absent_directory = tempfile::tempdir().expect("local member absent directory");
+    let absent = make_gate(
+        &absent_directory,
+        Some(HistoricalOcompSnapshotV1 {
+            epoch: exported.finalized_intent.result_validator_set_epoch,
+            committee_set_hash: exported.finalized_intent.result_committee_set_hash,
+            ocomp_binding_hash: exported.finalized_intent.result_ocomp_binding_hash,
+            ordered_members: absent_members,
+        }),
+    );
+    assert!(matches!(
+        absent.attest(result.clone()),
+        Err(AttestationError::LocalMemberAbsent)
+    ));
+    assert_eq!(absent.abstention_count(), 1);
+    assert_no_sign_once_record(&absent_directory);
+
+    let mut members = members;
+    members[0].ocomp_public_key_sec1 = members[1].ocomp_public_key_sec1;
+    let mismatch_directory = tempfile::tempdir().expect("key mismatch directory");
+    let mismatch = make_gate(
+        &mismatch_directory,
+        Some(HistoricalOcompSnapshotV1 {
+            epoch: exported.finalized_intent.result_validator_set_epoch,
+            committee_set_hash: exported.finalized_intent.result_committee_set_hash,
+            ocomp_binding_hash: exported.finalized_intent.result_ocomp_binding_hash,
+            ordered_members: members,
+        }),
+    );
+    assert!(matches!(
+        mismatch.attest(result),
+        Err(AttestationError::LocalKeyMismatch)
+    ));
+    assert_eq!(mismatch.abstention_count(), 1);
+    assert_no_sign_once_record(&mismatch_directory);
+
+    assert_eq!(captured_metrics.value.load(Ordering::Relaxed), 4);
+    let metric_keys = captured_metrics
+        .keys
+        .lock()
+        .expect("captured metrics mutex")
+        .join("\n");
+    for reason in [
+        "missing_snapshot",
+        "local_member_absent",
+        "local_key_mismatch",
+    ] {
+        assert!(
+            metric_keys.contains("outbe_ocomp_attestation_abstentions_total")
+                && metric_keys.contains(reason),
+            "missing metric reason {reason}: {metric_keys}"
+        );
+    }
+    assert_eq!(metric_keys.matches("reason = missing_snapshot").count(), 2);
+    let events = captured_events.fields.lock().expect("captured event mutex");
+    let abstentions = events
+        .iter()
+        .filter(|fields| fields.contains_key("reason"))
+        .collect::<Vec<_>>();
+    assert_eq!(abstentions.len(), 4, "captured fields: {events:?}");
+    for fields in abstentions {
+        for required in [
+            "job_id",
+            "result_validator_set_epoch",
+            "result_committee_set_hash",
+            "result_ocomp_binding_hash",
+            "reason",
+        ] {
+            assert!(
+                fields.contains_key(required),
+                "missing log field {required}: {fields:?}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -774,7 +1450,7 @@ fn ocm_sig_001_node_refuses_wrong_export_deadline_bundle_committee_and_arithmeti
             committee.clone(),
         )
         .attest(result.clone()),
-        Err(AttestationError::Binding("finalized intent network"))
+        Err(AttestationError::Binding("finalized intent pin"))
     ));
     assert_no_sign_once_record(&directory);
 

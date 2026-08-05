@@ -26,7 +26,6 @@ pub struct OcompNodeControlConfig {
     pub boot_nonce: B256,
     pub session_generation: u64,
     pub key_path: PathBuf,
-    pub validator_index: u8,
 }
 
 /// Local process-boundary settings. Omitted as a whole until OCOMP is enabled.
@@ -60,13 +59,9 @@ pub struct OcompArgs {
     #[arg(long = "ocomp.session-generation", default_value_t = 1)]
     pub session_generation: u64,
 
-    /// Node-owned result-signing key registered in the chain manifest.
+    /// Node-owned result-signing key registered on-chain by `confirmValidatorReady`.
     #[arg(long = "ocomp.key", value_name = "PATH")]
     pub key_path: Option<PathBuf>,
-
-    /// This node's exact index in the four-member OCOMP result committee.
-    #[arg(long = "ocomp.validator-index", value_name = "INDEX")]
-    pub validator_index: Option<u8>,
 }
 
 impl Default for OcompArgs {
@@ -80,7 +75,6 @@ impl Default for OcompArgs {
             boot_nonce: None,
             session_generation: 1,
             key_path: None,
-            validator_index: None,
         }
     }
 }
@@ -96,7 +90,6 @@ impl OcompArgs {
             self.protocol_bundle_hash.is_some(),
             self.boot_nonce.is_some(),
             self.key_path.is_some(),
-            self.validator_index.is_some(),
         ];
         if configured.iter().all(|value| !value) {
             return Ok(None);
@@ -104,8 +97,7 @@ impl OcompArgs {
         if !configured.iter().all(|value| *value) {
             eyre::bail!(
                 "OCOMP node control requires both role sockets, both peer UIDs, \
-                 --ocomp.protocol-bundle-hash, --ocomp.boot-nonce, --ocomp.key \
-                 and --ocomp.validator-index"
+                 --ocomp.protocol-bundle-hash, --ocomp.boot-nonce and --ocomp.key"
             );
         }
         if self.session_generation == 0 {
@@ -147,9 +139,6 @@ impl OcompArgs {
             key_path: self
                 .key_path
                 .clone()
-                .expect("complete profile checked above"),
-            validator_index: self
-                .validator_index
                 .expect("complete profile checked above"),
         }))
     }
@@ -409,7 +398,7 @@ impl ConsensusArgs {
     /// - `--bls-key-backend encrypted` without `--bls-passphrase` → error
     pub fn validate(&self) -> eyre::Result<()> {
         self.offchain_data()?;
-        self.ocomp.node_control()?;
+        let ocomp_node_control = self.ocomp.node_control()?;
         if self.tee_renewal_poll_secs == 0 {
             eyre::bail!("--tee-renewal.poll-secs must be greater than zero");
         }
@@ -434,6 +423,15 @@ impl ConsensusArgs {
                 "--validator requires --consensus.signing-key. \
                  Provide the path to your BLS signing key file."
             );
+        }
+        if self.is_validator && ocomp_node_control.is_none() {
+            eyre::bail!(
+                "validator requires OCOMP voting configuration: provide both role sockets, \
+                 both peer UIDs, --ocomp.protocol-bundle-hash, --ocomp.boot-nonce and --ocomp.key"
+            );
+        }
+        if !self.is_validator && ocomp_node_control.is_some() {
+            eyre::bail!("OCOMP voting configuration requires --validator");
         }
         if !self.is_validator && self.signing_key.is_some() {
             tracing::warn!(
@@ -603,6 +601,16 @@ mod tests {
         }
     }
 
+    fn configure_ocomp_voting(args: &mut ConsensusArgs) {
+        args.ocomp.supervisor_socket = Some("/tmp/supervisor.sock".into());
+        args.ocomp.snapshot_exporter_socket = Some("/tmp/exporter.sock".into());
+        args.ocomp.supervisor_uid = Some(1001);
+        args.ocomp.snapshot_exporter_uid = Some(1002);
+        args.ocomp.protocol_bundle_hash = Some(B256::repeat_byte(0x11));
+        args.ocomp.boot_nonce = Some(B256::repeat_byte(0x22));
+        args.ocomp.key_path = Some("/tmp/ocomp-key.hex".into());
+    }
+
     #[test]
     fn test_full_node_without_key_ok() {
         assert!(default_args().validate().is_ok());
@@ -614,20 +622,35 @@ mod tests {
         args.ocomp.supervisor_socket = Some("/tmp/supervisor.sock".into());
         assert!(args.validate().is_err());
 
-        args.ocomp.snapshot_exporter_socket = Some("/tmp/exporter.sock".into());
-        args.ocomp.supervisor_uid = Some(1001);
-        args.ocomp.snapshot_exporter_uid = Some(1002);
-        args.ocomp.protocol_bundle_hash = Some(B256::repeat_byte(0x11));
-        args.ocomp.boot_nonce = Some(B256::repeat_byte(0x22));
-        args.ocomp.key_path = Some("/tmp/ocomp-key.hex".into());
-        args.ocomp.validator_index = Some(2);
+        configure_ocomp_voting(&mut args);
         let config = args.ocomp.node_control().unwrap().unwrap();
         assert_eq!(config.supervisor_uid, 1001);
         assert_eq!(config.snapshot_exporter_uid, 1002);
-        assert_eq!(config.validator_index, 2);
 
         args.ocomp.snapshot_exporter_socket = args.ocomp.supervisor_socket.clone();
         assert!(args.ocomp.node_control().is_err());
+    }
+
+    #[test]
+    fn validator_requires_complete_ocomp_voting_config_but_full_node_does_not() {
+        let full_node = default_args();
+        assert!(full_node.validate().is_ok());
+
+        let mut validator = default_args();
+        validator.is_validator = true;
+        validator.signing_key = Some("/tmp/bls-key.hex".into());
+        let error = validator
+            .validate()
+            .expect_err("validator without OCOMP voting configuration must fail closed")
+            .to_string();
+        assert!(error.contains("validator requires OCOMP"), "error: {error}");
+    }
+
+    #[test]
+    fn removed_ocomp_validator_index_flag_is_rejected() {
+        assert!(
+            TestConsensusCli::try_parse_from(["test", "--ocomp.validator-index", "4",]).is_err()
+        );
     }
 
     #[test]
@@ -747,10 +770,11 @@ mod tests {
     }
 
     #[test]
-    fn test_validator_with_signing_key_ok() {
+    fn test_validator_with_signing_key_and_ocomp_voting_ok() {
         let mut args = default_args();
         args.is_validator = true;
         args.signing_key = Some(PathBuf::from("/tmp/key.hex"));
+        configure_ocomp_voting(&mut args);
         assert!(args.validate().is_ok());
     }
 

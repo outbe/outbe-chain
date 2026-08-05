@@ -135,6 +135,28 @@ fn ocm_sig_001_exact_replay_and_equivocation_survive_restart() {
         .expect("replay after restart");
     assert_eq!(replay_after_restart, first);
 
+    for conflicting in [
+        SignOnceSubjectV1 {
+            result_validator_set_epoch: first_subject.result_validator_set_epoch + 1,
+            ..first_subject
+        },
+        SignOnceSubjectV1 {
+            result_committee_set_hash: B256::repeat_byte(0x35),
+            ..first_subject
+        },
+        SignOnceSubjectV1 {
+            result_ocomp_binding_hash: B256::repeat_byte(0x36),
+            ..first_subject
+        },
+    ] {
+        assert!(matches!(
+            reopened.record_or_replay(conflicting, |_| {
+                panic!("a changed historical binding must be refused before signing")
+            }),
+            Err(SignOnceError::Equivocation { .. })
+        ));
+    }
+
     let conflicting = subject(B256::repeat_byte(0x66));
     assert!(matches!(
         reopened.record_or_replay(conflicting, |_| {

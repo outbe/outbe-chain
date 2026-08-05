@@ -98,7 +98,7 @@ use outbe_consensus::{
 use outbe_node::ocomp::control::{OcompControlServer, OcompNodeAttestationConfig};
 use outbe_node::ocomp::service::{OcompControlRuntime, OcompControlRuntimeConfig};
 use outbe_node::ocomp::snapshot_control::RethProjectionContainmentAuthority;
-use outbe_node::ocomp::ProviderHeightSource;
+use outbe_node::ocomp::{ProviderHeightSource, ProviderHistoricalOcompSnapshotSource};
 use outbe_node::OutbeFullNode;
 use outbe_ocomp_protocol::local_control::EndpointIdentity;
 use outbe_ocomp_protocol::profile::poc_schema_limits;
@@ -3546,6 +3546,21 @@ where
                 install.request_profile.protocol_bundle_hash
             ));
         }
+        let validator_address = if let Some(address) = proposer_evm_address {
+            address
+        } else {
+            let key_path = args.effective_validator_evm_key()?.ok_or_else(|| {
+                eyre::eyre!("OCOMP validator voting requires --validator.evm-key")
+            })?;
+            outbe_primitives::signer::OutbeEvmSigner::from_file(&key_path)
+                .wrap_err_with(|| {
+                    format!(
+                        "failed to load OCOMP validator EVM identity from {}",
+                        key_path.display()
+                    )
+                })?
+                .address()
+        };
         let identity = EndpointIdentity {
             chain_id,
             genesis_hash,
@@ -3576,11 +3591,14 @@ where
                 key_path: config.key_path,
                 sign_once_root: ocomp_storage_root.join("ocomp_sign_once"),
                 expected_owner_uid: outbe_ocomp_protocol::local_control::effective_uid()?,
-                validator_index: u16::from(config.validator_index),
-                committee: install.result_committee.clone(),
+                fork_id: install.request_profile.fork_id,
+                validator_address,
                 initial_height: recovery_anchor_height,
             },
             Arc::new(ProviderHeightSource::new(node.provider.clone())),
+            Arc::new(ProviderHistoricalOcompSnapshotSource::new(
+                node.provider.clone(),
+            )),
         )?
         .with_snapshot_export_authority(
             snapshot_export_authority.clone(),

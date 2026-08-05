@@ -262,6 +262,23 @@ The sign-once subject binds at least:
 An exact retry returns the recorded signature. A different digest for the same
 subject is refused after restart as well as in one process.
 
+The node resolves membership separately for every finalized job. It reads the
+three intent bindings from the current canonical ValidatorSet snapshot-retention
+ring, requires the exact retained extension and recomputes its OCOMP binding.
+It never substitutes the current ACTIVE membership. A missing or evicted
+snapshot, absent local validator, or local-key mismatch causes an observable
+abstention before the sign-once boundary: the node increments
+`outbe_ocomp_attestation_abstentions_total` and emits an error containing the
+JobId and all three bindings. This failure is local to that OCOMP job and does
+not stop consensus or FullNode execution.
+
+On an OCOMP-enabled chain, validator startup is fail-closed unless the complete
+validator-only OCOMP profile is present: both role sockets and peer UIDs, the
+pinned protocol-bundle hash, a nonzero boot nonce, and the node-owned OCOMP key.
+The participant index and committee are never configured. A FullNode starts
+without this profile or key and has no result-voting capability; supplying the
+validator-only profile without `--validator` is a startup error.
+
 ### On-chain result votes
 
 After its attestation gate signs the closed result subject, the validator

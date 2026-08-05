@@ -202,7 +202,7 @@ impl FinalizedInputProofSource for TransientFinalitySource {
 #[derive(Clone)]
 struct ProofReturningSource {
     inner: DeterministicProofSource,
-    proof: FinalizedIntentProofV1,
+    proofs: BTreeMap<B256, FinalizedIntentProofV1>,
 }
 
 impl FinalizedInputProofSource for ProofReturningSource {
@@ -222,9 +222,14 @@ impl FinalizedInputProofSource for ProofReturningSource {
 
     fn build_finalized_intent_proof(
         &self,
-        _candidate: CandidatePinV1,
+        candidate: CandidatePinV1,
     ) -> Result<FinalizedIntentProofV1, RetentionError> {
-        Ok(self.proof.clone())
+        self.proofs
+            .get(&candidate.block_hash)
+            .cloned()
+            .ok_or_else(|| {
+                RetentionError::Source("missing finalized-intent proof fixture".to_owned())
+            })
     }
 }
 
@@ -605,7 +610,7 @@ fn ocm_pin_001_restart_reconciles_a_canonical_tentative_from_the_next_finalizati
 }
 
 #[test]
-fn ocm_pin_001_production_source_opens_typed_post_state_before_four_positive_votes() {
+fn ocm_pin_001_production_source_opens_typed_post_state_on_each_independent_node() {
     let ProductionCandidateFixture {
         request,
         candidate,
@@ -650,7 +655,10 @@ fn finalized_intent_export_rejects_a_proof_for_a_different_intent() {
     let inner = DeterministicProofSource::with_jobs([(candidate, job_id)]);
     let source = Arc::new(ProofReturningSource {
         inner: inner.clone(),
-        proof: unverified_proof(candidate, &different),
+        proofs: BTreeMap::from([(
+            candidate.block_hash,
+            unverified_proof(candidate, &different),
+        )]),
     });
     let root = tempfile::tempdir().expect("validator journal root");
     let coordinator = OcompRetentionCoordinator::open(root.path(), source);
@@ -872,7 +880,7 @@ async fn ocm_pin_001_new_payload_pending_receipts_reach_the_production_journal_b
 }
 
 #[test]
-fn ocm_pin_001_tentative_is_durable_before_four_positive_votes_and_finalizes_exactly() {
+fn ocm_pin_001_tentative_is_durable_across_independent_nodes_and_finalizes_exactly() {
     let request = block(100, B256::repeat_byte(0x31), 1);
     let candidate = candidate(&request, B256::repeat_byte(0x41));
     let job_id = B256::repeat_byte(0x51);
@@ -1374,6 +1382,143 @@ fn ocm_pin_001_retained_predecessor_does_not_block_a_retry_job() {
             .expect("both Job entries survive restart"),
         first_terminal
     );
+}
+
+#[test]
+fn ocm_pin_001_each_exported_job_remains_addressable_after_a_newer_export() {
+    let first_request = block(151, B256::repeat_byte(0x31), 1);
+    let second_request = block(221, B256::repeat_byte(0x32), 2);
+    let first_candidate = candidate(&first_request, B256::repeat_byte(0x41));
+    let second_candidate = candidate(&second_request, B256::repeat_byte(0x42));
+    let first_job_id = B256::repeat_byte(0x51);
+    let second_job_id = B256::repeat_byte(0x52);
+    let source = Arc::new(DeterministicProofSource::with_jobs([
+        (first_candidate, first_job_id),
+        (second_candidate, second_job_id),
+    ]));
+    let root = tempfile::tempdir().expect("multi-export journal root");
+    let coordinator = OcompRetentionCoordinator::open(root.path(), source.clone());
+
+    for (request, job_id, manifest_byte) in [
+        (&first_request, first_job_id, 0x61),
+        (&second_request, second_job_id, 0x62),
+    ] {
+        assert_eq!(
+            DeterministicConsensusDriver::vote(&coordinator, request),
+            VoteOutcome::Positive
+        );
+        DeterministicConsensusDriver::finalize(source.as_ref(), &coordinator, request);
+        let (generation, _) = coordinator
+            .finalized_job_record(job_id)
+            .expect("job reaches finalized state");
+        coordinator
+            .record_exported(job_id, generation, 9, B256::repeat_byte(manifest_byte))
+            .expect("job reaches exported state");
+    }
+
+    for (job_id, manifest_byte) in [(first_job_id, 0x61), (second_job_id, 0x62)] {
+        let record = coordinator
+            .exported_job_record(job_id)
+            .expect("every live export remains addressable by JobId");
+        assert!(matches!(
+            record.state,
+            PinStateV1::Exported {
+                job_id: current,
+                manifest_hash,
+                ..
+            } if current == job_id && manifest_hash == B256::repeat_byte(manifest_byte)
+        ));
+    }
+}
+
+#[test]
+fn ocm_pin_001_attestation_authority_reloads_every_live_export_by_job_id() {
+    let limits = poc_schema_limits();
+    let first_request = block(151, B256::repeat_byte(0x31), 1);
+    let second_request = block(221, B256::repeat_byte(0x32), 2);
+    let first_intent = production_intent(first_request.number());
+    let mut second_intent = production_intent(second_request.number());
+    second_intent.pending_nonce = 2;
+    second_intent.attempt = 2;
+    second_intent
+        .activation_preconditions
+        .metadosis
+        .pending_nonce = 2;
+
+    let make_candidate = |request: &ConsensusBlock, intent: &JobIntentV1| {
+        let intent_id = intent.intent_id(&limits).expect("fixture IntentId");
+        CandidatePinV1 {
+            block_number: request.number(),
+            block_hash: request.block_hash(),
+            state_root: request.header().inner.state_root,
+            intent_id,
+            wwd: intent.wwd,
+            ce_sealed_root: intent.ce_sealed_root,
+            protocol_bundle_hash: intent.protocol_bundle_hash,
+            input_lease_id: intent.input_lease_id().expect("fixture input lease"),
+        }
+    };
+    let first_candidate = make_candidate(&first_request, &first_intent);
+    let second_candidate = make_candidate(&second_request, &second_intent);
+    let first_job_id = first_intent
+        .job_id(
+            first_candidate.block_hash,
+            first_candidate.state_root,
+            &limits,
+        )
+        .expect("first JobId");
+    let second_job_id = second_intent
+        .job_id(
+            second_candidate.block_hash,
+            second_candidate.state_root,
+            &limits,
+        )
+        .expect("second JobId");
+    let inner = DeterministicProofSource::with_jobs([
+        (first_candidate, first_job_id),
+        (second_candidate, second_job_id),
+    ]);
+    let source = Arc::new(ProofReturningSource {
+        inner: inner.clone(),
+        proofs: BTreeMap::from([
+            (
+                first_candidate.block_hash,
+                unverified_proof(first_candidate, &first_intent),
+            ),
+            (
+                second_candidate.block_hash,
+                unverified_proof(second_candidate, &second_intent),
+            ),
+        ]),
+    });
+    let root = tempfile::tempdir().expect("multi-export journal root");
+    let coordinator = OcompRetentionCoordinator::open(root.path(), source);
+
+    for (request, job_id, manifest_byte) in [
+        (&first_request, first_job_id, 0x61),
+        (&second_request, second_job_id, 0x62),
+    ] {
+        coordinator
+            .prepare_candidate(request)
+            .expect("candidate pin must become durable");
+        DeterministicConsensusDriver::finalize(&inner, &coordinator, request);
+        let (generation, _) = coordinator
+            .finalized_job_record(job_id)
+            .expect("job reaches finalized state");
+        coordinator
+            .record_exported(job_id, generation, 9, B256::repeat_byte(manifest_byte))
+            .expect("job reaches exported state");
+    }
+
+    for job_id in [first_job_id, second_job_id] {
+        let authority = crate::ocomp::attestation::FinalizedAttestationAuthority::reload_exported(
+            &coordinator,
+            job_id,
+            &limits,
+        )
+        .expect("every live Exported job must remain attestable");
+        assert_eq!(authority.job_id, job_id);
+    }
 }
 
 #[test]
