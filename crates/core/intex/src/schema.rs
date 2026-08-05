@@ -177,11 +177,11 @@ pub struct CertifiedPayoutRound {
     #[attribute(order = 0)]
     pub amount: U256,
 
-    /// Σ of the shares paid so far (informational).
+    /// Σ of the shares paid so far; feeds the round cap and the close remainder.
     #[attribute(order = 1)]
     pub paid_so_far: U256,
 
-    /// Number of leaves paid so far (informational).
+    /// Number of leaves paid so far; the completion gate for closing the round.
     #[attribute(order = 2)]
     pub paid_leaf_count: u32,
 

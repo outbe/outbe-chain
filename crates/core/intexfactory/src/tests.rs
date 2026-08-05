@@ -1996,3 +1996,56 @@ fn legacy_day_keeps_using_the_cursor_path() {
         assert_eq!(s.balance(owners[1]).unwrap(), U256::from(500u64));
     });
 }
+
+#[test]
+fn a_corrupt_total_reverts_cleanly_before_any_transfer() {
+    with_factory(|s| {
+        let leaves = population(300);
+        install_generation_with_total(&s, &leaves, U256::from(1u64));
+        let amount = U256::from(100_000u64);
+        deliver_proceeds(&s, amount);
+
+        let err = runtime::pay_contributor_batch(
+            &s,
+            WWD,
+            0,
+            &abi_leaves(&leaves[0..256]),
+            &contributor_range_proof(&leaves, 0),
+        )
+        .unwrap_err();
+
+        // The inflated batch dwarfs the whole factory balance: the cap must
+        // reject it as a clean revert before the first transfer, never as an
+        // insufficient-balance Fatal mid-batch.
+        assert!(
+            format!("{err:?}").contains("exceed the round amount"),
+            "{err:?}"
+        );
+        assert_eq!(s.balance(leaves[0].owner).unwrap(), U256::ZERO);
+        assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), amount);
+    });
+}
+
+#[test]
+fn late_proceeds_after_an_ownerless_certified_day_burn() {
+    with_factory(|s| {
+        let registry = outbe_intex::IntexContract::new(s.clone());
+        registry
+            .ocomp_contributor_root
+            .write(&WWD, B256::repeat_byte(1))
+            .unwrap();
+        registry
+            .ocomp_contributor_metadata
+            .write(&WWD, metadata_word(1, 0))
+            .unwrap();
+        deliver_proceeds(&s, U256::from(500u64));
+        assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);
+
+        // A duplicate delivery lands after finalization cleared the deadline;
+        // it must burn like any other late arrival, not sit on the balance.
+        s.increase_balance(INTEX_FACTORY_ADDRESS, U256::from(70u64))
+            .unwrap();
+        runtime::distribute(&s, ORIGIN_ROUTER_ADDRESS, WWD, CHAIN, U256::from(70u64)).unwrap();
+        assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);
+    });
+}

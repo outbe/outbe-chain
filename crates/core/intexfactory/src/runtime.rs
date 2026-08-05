@@ -239,7 +239,15 @@ pub(crate) fn try_settle_proceeds(
     }
     let deadline = outbe_intex::api::proceeds_deadline(storage, series_id)?;
     if deadline == 0 {
-        return Ok(()); // never armed (no issuance for this series)
+        // Never armed — or already finalized. A certified day past finalization
+        // (an ownerless one never opens a round) treats any re-delivery as late.
+        if outbe_intex::api::certified_contributor_generation(storage, series_id)?.is_some() {
+            let late = outbe_intex::api::take_proceeds_pot(storage, series_id)?;
+            if !late.is_zero() {
+                burn_late_proceeds(storage, series_id, late)?;
+            }
+        }
+        return Ok(());
     }
     let complete = outbe_intex::api::proceeds_ready(storage, series_id)?;
     if !complete && now < deadline {
@@ -335,6 +343,7 @@ pub(crate) fn pay_contributor_batch(
         proof,
     )?;
     storage.with_checkpoint(|| {
+        let mut shares = Vec::with_capacity(decoded.len());
         let mut paid = U256::ZERO;
         for leaf in &decoded {
             // Floor for every leaf: batches arrive in any order, so none can be
@@ -344,17 +353,23 @@ pub(crate) fn pay_contributor_batch(
                 .checked_mul(leaf.nominal)
                 .ok_or(IntexFactoryError::DistributionOverflow(worldwide_day))?
                 / generation.eligible_nominal_total;
-            storage.transfer_balance(INTEX_FACTORY_ADDRESS, leaf.owner, share)?;
-            paid += share;
+            paid = paid
+                .checked_add(share)
+                .ok_or(IntexFactoryError::DistributionOverflow(worldwide_day))?;
+            shares.push(share);
         }
-        // One balance serves every day, so only this bound keeps a bad
-        // denominator from spending another day's proceeds.
+        // One balance serves every day; bounding before any transfer keeps a
+        // bad denominator from spending another day's proceeds and from
+        // draining into an insufficient-balance Fatal mid-batch.
         let total_paid = round
             .paid_so_far
             .checked_add(paid)
             .ok_or(IntexFactoryError::DistributionOverflow(worldwide_day))?;
         if total_paid > round.amount {
             return Err(IntexFactoryError::PayoutExceedsRound(worldwide_day).into());
+        }
+        for (leaf, share) in decoded.iter().zip(&shares) {
+            storage.transfer_balance(INTEX_FACTORY_ADDRESS, leaf.owner, *share)?;
         }
         outbe_intex::api::mark_certified_leaves_paid(
             storage,
