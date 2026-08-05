@@ -548,18 +548,22 @@ fn sign(key: &SigningKey, digest: B256) -> [u8; 64] {
     signature.to_bytes().into()
 }
 
-fn seed_validator_snapshot(
+pub(crate) fn seed_validator_snapshot(
     storage: StorageHandle<'_>,
     limits: &SchemaLimits,
+    member_count: u8,
 ) -> OcompSnapshotExtensionV1 {
+    assert!(member_count > 0);
     let chain_id = storage.chain_id().unwrap();
     let genesis_hash = storage.genesis_hash().unwrap();
     let owner = Address::repeat_byte(0xE0);
     let mut validators = ValidatorSet::new(storage.clone());
     validators.config_owner.write(owner).unwrap();
-    validators.set_config_max_validators(4).unwrap();
+    validators
+        .set_config_max_validators(u32::from(member_count))
+        .unwrap();
     let mut snapshot_key = B256::ZERO;
-    for index in 0..4_u8 {
+    for index in 0..member_count {
         let validator = Address::repeat_byte(0xB0 + index);
         let consensus_pubkey = [0x30 + index; 48];
         validators
@@ -1106,31 +1110,115 @@ pub struct ActivationFixture {
 impl ActivationFixture {
     #[must_use]
     pub fn new(current_height: u64, current_time: u64, seed_targets: bool) -> Self {
-        Self::new_with_initial_votes(current_height, current_time, seed_targets, 2)
+        Self::new_with_initial_votes(current_height, current_time, seed_targets, 4, 2)
     }
 
-    /// Builds the same production-valid fixture before any validator vote is
-    /// recorded, so public result-vote dispatch tests can exercise all four
-    /// consensus slots instead of injecting quorum state.
+    /// Builds the default production-valid fixture before any validator vote
+    /// is recorded, without injecting quorum state.
     #[cfg(test)]
     #[must_use]
     pub fn new_voting(current_height: u64, current_time: u64, seed_targets: bool) -> Self {
-        Self::new_with_initial_votes(current_height, current_time, seed_targets, 0)
+        Self::new_voting_with_member_count(current_height, current_time, seed_targets, 4)
+    }
+
+    /// Builds a production-valid voting fixture for the requested ValidatorSet
+    /// size without introducing an OCOMP-specific membership authority.
+    #[cfg(test)]
+    #[must_use]
+    pub fn new_voting_with_member_count(
+        current_height: u64,
+        current_time: u64,
+        seed_targets: bool,
+        member_count: u8,
+    ) -> Self {
+        Self::new_with_initial_votes(current_height, current_time, seed_targets, member_count, 0)
+    }
+
+    /// Adds the next validator through registration, OCOMP readiness and the
+    /// certified-boundary test hook, returning the newly persisted snapshot.
+    #[cfg(test)]
+    pub fn activate_additional_validator_for_test(
+        &mut self,
+        index: u8,
+    ) -> OcompSnapshotExtensionV1 {
+        StorageHandle::enter(&mut self.provider, |storage| {
+            let chain_id = storage.chain_id().unwrap();
+            let genesis_hash = storage.genesis_hash().unwrap();
+            let owner = Address::repeat_byte(0xE0);
+            let validator = Address::repeat_byte(0xB0 + index);
+            let consensus_pubkey = [0x30 + index; 48];
+            let mut validators = ValidatorSet::new(storage.clone());
+            assert_eq!(validators.validator_count.read().unwrap(), u32::from(index));
+            validators
+                .set_config_max_validators(u32::from(index) + 1)
+                .unwrap();
+            validators
+                .register_validator(owner, validator, &consensus_pubkey)
+                .unwrap();
+            validators.mark_pending(validator).unwrap();
+
+            let key = signing_key(index);
+            let mut registration = OcompKeyRegistrationV1 {
+                core: OcompKeyRegistrationCoreV1 {
+                    chain_id,
+                    genesis_hash,
+                    validator_identity_hash: validator_identity_hash_v1(
+                        validator,
+                        &consensus_pubkey,
+                    )
+                    .unwrap(),
+                    ocomp_public_key_sec1: key
+                        .verifying_key()
+                        .to_encoded_point(true)
+                        .as_bytes()
+                        .try_into()
+                        .unwrap(),
+                    key_epoch: 1,
+                    allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
+                },
+                proof_of_possession: [0; 64],
+            };
+            let digest = registration
+                .proof_of_possession_digest(&self.limits)
+                .unwrap();
+            registration.proof_of_possession = sign(&key, digest);
+            validators
+                .confirm_validator_ready(
+                    validator,
+                    &registration.encode_canonical(&self.limits).unwrap(),
+                )
+                .unwrap();
+            let timestamp: u64 = storage.timestamp().unwrap().try_into().unwrap();
+            outbe_validatorset::hooks::transition_epoch(
+                storage.clone(),
+                timestamp,
+                storage.block_number().unwrap(),
+            )
+            .unwrap();
+            let snapshot_key = validators
+                .activate_validator_via_boundary_for_test(validator)
+                .unwrap();
+            read_ocomp_snapshot_extension(storage, snapshot_key)
+                .unwrap()
+                .unwrap()
+        })
     }
 
     fn new_with_initial_votes(
         current_height: u64,
         current_time: u64,
         seed_targets: bool,
+        member_count: u8,
         initial_vote_count: u8,
     ) -> Self {
-        assert!(initial_vote_count <= 3);
+        assert!(member_count > 0);
+        assert!(initial_vote_count < member_count);
         let limits = poc_schema_limits();
         let bundle = bundle();
         let bundle_hash = bundle.protocol_bundle_hash(&limits).unwrap();
         let mut provider = HashMapStorageProvider::new_with_chain_identity(1, hash(17));
         let snapshot = StorageHandle::enter(&mut provider, |storage| {
-            seed_validator_snapshot(storage, &limits)
+            seed_validator_snapshot(storage, &limits, member_count)
         });
         let request_receipt = request_receipt(bundle_hash);
         let request_receipt_hash = request_receipt.receipt_hash(&limits).unwrap();

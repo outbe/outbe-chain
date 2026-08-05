@@ -75,7 +75,7 @@ mod tests {
         let log = build_outbe_failure_log(
             address!("0x000000000000000000000000000000000000EE06"),
             107,
-            "zero-fee signer is not an active validator or delegated feeder".to_string(),
+            "zero-fee signer is not authorized for this transaction hook".to_string(),
         );
         assert_eq!(
             log.address,
@@ -144,7 +144,7 @@ mod tests {
     /// address — the exact scenario that halted the testnet on 2026-05-15.
     #[test]
     fn snapshot_zero_fee_unauthorized_signer_107() {
-        let reason = "zero-fee signer is not an active validator or delegated feeder";
+        let reason = "zero-fee signer is not authorized for this transaction hook";
         let log = build_outbe_failure_log(
             address!("0x000000000000000000000000000000000000EE06"),
             107,

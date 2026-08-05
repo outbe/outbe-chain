@@ -16,8 +16,8 @@ pub const MAX_ZERO_FEE_OCOMP_CALLDATA_BYTES: usize = 68
         + 31)
         & !31);
 
-/// Fixed compute ceiling for one signature verification and four bounded
-/// consensus vote slots.
+/// Consensus-generated compute ceiling for one signature verification and the
+/// validator set bounded vote-accountability object.
 pub const MAX_ZERO_FEE_OCOMP_GAS_LIMIT: u64 =
     outbe_ocomp_protocol::generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1.max_activation_gas;
 
@@ -27,6 +27,26 @@ pub const MIN_ZERO_FEE_OCOMP_MAX_FEE_PER_GAS: u128 = MIN_PROTOCOL_BASE_FEE as u1
 
 #[derive(Debug, Clone, Copy)]
 pub struct OcompSubmitResultVoteHook;
+
+fn resolve_historical_ocomp_signer(
+    validators: &outbe_validatorset::contract::ValidatorSet<'_>,
+    historical_validator: alloy_primitives::Address,
+    signer: alloy_primitives::Address,
+) -> Result<Option<alloy_primitives::Address>, ZeroFeePolicyError> {
+    let role = outbe_validatorset::delegation::ValidatorDelegateRole::Ocomp;
+    let explicit = validators.get_delegate(historical_validator, role)?;
+    if signer == historical_validator {
+        return Ok(explicit.is_zero().then_some(historical_validator));
+    }
+    if explicit != signer {
+        return Ok(None);
+    }
+    let reverse = validators
+        .validator_by_role_delegate
+        .get_nested(&role.id())
+        .read(&signer)?;
+    Ok((reverse == historical_validator).then_some(historical_validator))
+}
 
 impl ZeroFeeHook for OcompSubmitResultVoteHook {
     fn id(&self) -> ZeroFeeHookId {
@@ -67,8 +87,16 @@ impl ZeroFeeHook for OcompSubmitResultVoteHook {
                 limit: MAX_ZERO_FEE_OCOMP_GAS_LIMIT,
             });
         }
-        validate_dynamic_vote_envelope(tx.input)?;
-        Ok(Some(ZeroFeeCandidate::new(self.id(), tx.signer)))
+        let prefix = outbe_ocomp_protocol::vote::decode_submit_lysis_result_prefix(
+            tx.input,
+            &outbe_ocomp_protocol::profile::poc_schema_limits(),
+        )
+        .map_err(|_| malformed())?;
+        Ok(Some(ZeroFeeCandidate::new_ocomp_vote(
+            self.id(),
+            tx.signer,
+            prefix,
+        )))
     }
 
     fn authorize_fee_waiver(
@@ -76,46 +104,24 @@ impl ZeroFeeHook for OcompSubmitResultVoteHook {
         storage: StorageHandle,
         candidate: ZeroFeeCandidate,
     ) -> Result<ZeroFeeAuthorization, ZeroFeePolicyError> {
-        let validators = outbe_validatorset::contract::ValidatorSet::new(storage);
-        let validator = validators
-            .resolve_validator_for_role(
-                candidate.signer,
-                outbe_validatorset::delegation::ValidatorDelegateRole::Ocomp,
-            )?
+        let prefix = candidate
+            .ocomp_vote_prefix()
             .ok_or(ZeroFeePolicyError::UnauthorizedSigner)?;
+        let historical_validator = outbe_metadosis::resolve_historical_result_vote_participant(
+            storage.clone(),
+            &prefix,
+            &outbe_ocomp_protocol::profile::poc_schema_limits(),
+        )?
+        .ok_or(ZeroFeePolicyError::UnauthorizedSigner)?;
+        let validators = outbe_validatorset::contract::ValidatorSet::new(storage);
+        let validator =
+            resolve_historical_ocomp_signer(&validators, historical_validator, candidate.signer)?
+                .ok_or(ZeroFeePolicyError::UnauthorizedSigner)?;
         Ok(ZeroFeeAuthorization {
             hook: self.id(),
             subject: validator,
         })
     }
-}
-
-fn validate_dynamic_vote_envelope(input: &[u8]) -> Result<(), ZeroFeePolicyError> {
-    if input.len() < 68 || U256::from_be_slice(&input[4..36]) != U256::from(32) {
-        return Err(malformed());
-    }
-    let payload_len =
-        usize::try_from(U256::from_be_slice(&input[36..68])).map_err(|_| malformed())?;
-    let vote_cap = usize::try_from(
-        outbe_ocomp_protocol::generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1.max_result_vote_bytes,
-    )
-    .map_err(|_| malformed())?;
-    if payload_len == 0 || payload_len > vote_cap {
-        return Err(malformed());
-    }
-    let padded_len = payload_len
-        .checked_add(31)
-        .map(|value| value & !31)
-        .ok_or_else(malformed)?;
-    let expected_len = 68_usize.checked_add(padded_len).ok_or_else(malformed)?;
-    if input.len() != expected_len {
-        return Err(malformed());
-    }
-    let payload_end = 68 + payload_len;
-    if input[payload_end..].iter().any(|byte| *byte != 0) {
-        return Err(malformed());
-    }
-    Ok(())
 }
 
 fn malformed() -> ZeroFeePolicyError {
@@ -127,19 +133,61 @@ fn malformed() -> ZeroFeePolicyError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{address, Address};
+    use alloy_primitives::{address, Address, B256};
+    use outbe_ocomp_protocol::{
+        encode_envelope, profile::poc_schema_limits, registry::ObjectKind,
+        vote::ResultVotePrefixV1, OCB1_HEADER_LEN,
+    };
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 
     const VALIDATOR: Address = address!("0x1111111111111111111111111111111111111111");
     const DELEGATE: Address = address!("0x2222222222222222222222222222222222222222");
 
-    fn calldata(payload_len: usize) -> Vec<u8> {
-        let padded_len = (payload_len + 31) & !31;
+    fn vote_prefix() -> ResultVotePrefixV1 {
+        ResultVotePrefixV1 {
+            protocol_bundle_hash: B256::repeat_byte(0x31),
+            job_id: B256::repeat_byte(0x32),
+            attempt: 3,
+            result_validator_set_epoch: 7,
+            result_committee_set_hash: B256::repeat_byte(0x33),
+            result_ocomp_binding_hash: B256::repeat_byte(0x34),
+            validator_index: 1,
+            key_epoch: 1,
+        }
+    }
+
+    fn canonical_vote_payload(encoded_len: usize) -> Vec<u8> {
+        let prefix = vote_prefix();
+        let mut body = Vec::new();
+        body.extend_from_slice(prefix.protocol_bundle_hash.as_slice());
+        body.extend_from_slice(prefix.job_id.as_slice());
+        body.extend_from_slice(&prefix.attempt.to_be_bytes());
+        body.extend_from_slice(&prefix.result_validator_set_epoch.to_be_bytes());
+        body.extend_from_slice(prefix.result_committee_set_hash.as_slice());
+        body.extend_from_slice(prefix.result_ocomp_binding_hash.as_slice());
+        body.extend_from_slice(&prefix.validator_index.to_be_bytes());
+        body.extend_from_slice(&prefix.key_epoch.to_be_bytes());
+        assert!(encoded_len >= OCB1_HEADER_LEN + body.len());
+        body.resize(encoded_len - OCB1_HEADER_LEN, 0);
+        encode_envelope(ObjectKind::ResultVoteV1, &body, poc_schema_limits().codec).unwrap()
+    }
+
+    fn calldata_from_payload(payload: &[u8]) -> Vec<u8> {
+        let padded_len = (payload.len() + 31) & !31;
         let mut input = vec![0_u8; 68 + padded_len];
         input[..4].copy_from_slice(&SUBMIT_LYSIS_RESULT_SELECTOR);
         input[4..36].copy_from_slice(&U256::from(32).to_be_bytes::<32>());
-        input[36..68].copy_from_slice(&U256::from(payload_len).to_be_bytes::<32>());
+        input[36..68].copy_from_slice(&U256::from(payload.len()).to_be_bytes::<32>());
+        input[68..68 + payload.len()].copy_from_slice(payload);
         input
+    }
+
+    fn canonical_calldata(encoded_len: usize) -> Vec<u8> {
+        calldata_from_payload(&canonical_vote_payload(encoded_len))
+    }
+
+    fn minimal_canonical_calldata() -> Vec<u8> {
+        canonical_calldata(OCB1_HEADER_LEN + 150)
     }
 
     fn tx_from(signer: Address, input: &[u8]) -> ZeroFeeTransaction<'_> {
@@ -165,15 +213,22 @@ mod tests {
                 .max_result_vote_bytes,
         )
         .unwrap();
-        let input = calldata(vote_cap);
+        let input = canonical_calldata(vote_cap);
         let candidate = crate::registry().classify(&tx(&input)).unwrap().unwrap();
         assert_eq!(candidate.hook, ZeroFeeHookId::OcompSubmitResultVote);
         assert_eq!(candidate.signer, VALIDATOR);
     }
 
     #[test]
+    fn classified_candidate_carries_the_canonical_vote_prefix() {
+        let input = minimal_canonical_calldata();
+        let candidate = crate::registry().classify(&tx(&input)).unwrap().unwrap();
+        assert_eq!(candidate.ocomp_vote_prefix(), Some(vote_prefix()));
+    }
+
+    #[test]
     fn malformed_or_oversized_result_vote_envelope_is_rejected() {
-        let mut malformed_padding = calldata(1);
+        let mut malformed_padding = minimal_canonical_calldata();
         *malformed_padding.last_mut().unwrap() = 1;
         assert!(matches!(
             crate::registry().classify(&tx(&malformed_padding)),
@@ -185,7 +240,7 @@ mod tests {
                 .max_result_vote_bytes,
         )
         .unwrap();
-        let oversized = calldata(vote_cap + 1);
+        let oversized = calldata_from_payload(&vec![0_u8; vote_cap + 1]);
         assert!(matches!(
             crate::registry().classify(&tx(&oversized)),
             Err(ZeroFeePolicyError::CalldataTooLarge { .. })
@@ -193,18 +248,11 @@ mod tests {
     }
 
     #[test]
-    fn active_validator_or_its_ocomp_delegate_receives_fee_waiver() {
-        let input = calldata(1);
+    fn current_active_status_without_a_matching_open_job_cannot_authorize_a_waiver() {
+        let input = minimal_canonical_calldata();
         let candidate = crate::registry().classify(&tx(&input)).unwrap().unwrap();
         let mut provider = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut provider, |storage| {
-            assert_eq!(
-                crate::registry()
-                    .authorize_fee_waiver(storage.clone(), candidate)
-                    .unwrap_err(),
-                ZeroFeePolicyError::UnauthorizedSigner
-            );
-
             let mut validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             validators.validator_count.write(1).unwrap();
             validators.address_to_index.write(&VALIDATOR, 1).unwrap();
@@ -218,10 +266,12 @@ mod tests {
                 .write(&VALIDATOR, true)
                 .unwrap();
 
-            let authorization = crate::registry()
-                .authorize_fee_waiver(storage.clone(), candidate)
-                .unwrap();
-            assert_eq!(authorization.subject, VALIDATOR);
+            assert_eq!(
+                crate::registry()
+                    .authorize_fee_waiver(storage.clone(), candidate)
+                    .unwrap_err(),
+                ZeroFeePolicyError::UnauthorizedSigner
+            );
 
             validators
                 .set_delegate(
@@ -234,16 +284,51 @@ mod tests {
                 .classify(&tx_from(DELEGATE, &input))
                 .unwrap()
                 .unwrap();
-            let authorization = crate::registry()
-                .authorize_fee_waiver(storage.clone(), delegated)
-                .unwrap();
-            assert_eq!(authorization.subject, VALIDATOR);
-
             assert_eq!(
                 crate::registry()
-                    .authorize_fee_waiver(storage, candidate)
+                    .authorize_fee_waiver(storage, delegated)
                     .unwrap_err(),
                 ZeroFeePolicyError::UnauthorizedSigner
+            );
+        });
+    }
+
+    #[test]
+    fn historical_participant_or_its_explicit_delegate_is_authorized_without_active_status() {
+        let mut provider = HashMapStorageProvider::new(1);
+        StorageHandle::enter(&mut provider, |storage| {
+            let mut validators = outbe_validatorset::contract::ValidatorSet::new(storage);
+            validators.validator_count.write(1).unwrap();
+            validators.address_to_index.write(&VALIDATOR, 1).unwrap();
+            validators.index_to_address.write(&1, VALIDATOR).unwrap();
+            validators
+                .val_status
+                .write(&VALIDATOR, outbe_validatorset::logic::status::INACTIVE)
+                .unwrap();
+            validators
+                .val_has_bls_share
+                .write(&VALIDATOR, false)
+                .unwrap();
+
+            assert_eq!(
+                resolve_historical_ocomp_signer(&validators, VALIDATOR, VALIDATOR).unwrap(),
+                Some(VALIDATOR)
+            );
+
+            validators
+                .set_delegate(
+                    VALIDATOR,
+                    outbe_validatorset::delegation::ValidatorDelegateRole::Ocomp,
+                    DELEGATE,
+                )
+                .unwrap();
+            assert_eq!(
+                resolve_historical_ocomp_signer(&validators, VALIDATOR, DELEGATE).unwrap(),
+                Some(VALIDATOR)
+            );
+            assert_eq!(
+                resolve_historical_ocomp_signer(&validators, VALIDATOR, VALIDATOR).unwrap(),
+                None
             );
         });
     }

@@ -53,6 +53,7 @@ mod fixture_kernel;
 pub mod genesis;
 mod lifecycle;
 mod ocomp;
+pub use ocomp::vote::resolve_historical_result_vote_participant;
 pub(crate) mod ocomp_budget;
 mod pre_admission;
 pub mod precompile;

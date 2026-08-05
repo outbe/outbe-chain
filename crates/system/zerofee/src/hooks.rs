@@ -39,12 +39,38 @@ pub struct ZeroFeeCandidate {
     pub hook: ZeroFeeHookId,
     /// Recovered transaction signer.
     pub signer: Address,
+    /// Canonical OCOMP routing and historical-membership binding extracted by
+    /// the shared protocol decoder. Non-OCOMP hooks leave this empty.
+    ocomp_vote_prefix: Option<outbe_ocomp_protocol::vote::ResultVotePrefixV1>,
 }
 
 impl ZeroFeeCandidate {
     /// Creates a zero-fee candidate for a matching hook.
     pub const fn new(hook: ZeroFeeHookId, signer: Address) -> Self {
-        Self { hook, signer }
+        Self {
+            hook,
+            signer,
+            ocomp_vote_prefix: None,
+        }
+    }
+
+    /// Creates an OCOMP candidate bound to the exact canonical vote prefix.
+    pub const fn new_ocomp_vote(
+        hook: ZeroFeeHookId,
+        signer: Address,
+        prefix: outbe_ocomp_protocol::vote::ResultVotePrefixV1,
+    ) -> Self {
+        Self {
+            hook,
+            signer,
+            ocomp_vote_prefix: Some(prefix),
+        }
+    }
+
+    /// Returns the OCOMP vote prefix carried from stateless classification to
+    /// stateful authorization.
+    pub const fn ocomp_vote_prefix(self) -> Option<outbe_ocomp_protocol::vote::ResultVotePrefixV1> {
+        self.ocomp_vote_prefix
     }
 }
 
@@ -97,7 +123,7 @@ pub enum ZeroFeePolicyError {
     #[error("zero-fee oracle vote calldata is malformed: {0}")]
     MalformedCalldata(String),
     /// The signer is not authorized to use this zero-fee policy.
-    #[error("zero-fee signer is not an active validator or delegated feeder")]
+    #[error("zero-fee signer is not authorized for this transaction hook")]
     UnauthorizedSigner,
     /// The represented validator already submitted an oracle vote this period.
     #[error("zero-fee oracle vote already exists for validator")]
@@ -246,6 +272,14 @@ mod failure_code_tests {
                 "duplicate ZeroFeePolicyError code {code}"
             );
         }
+    }
+
+    #[test]
+    fn unauthorized_signer_reason_is_hook_neutral() {
+        assert_eq!(
+            ZeroFeePolicyError::UnauthorizedSigner.to_string(),
+            "zero-fee signer is not authorized for this transaction hook"
+        );
     }
 }
 

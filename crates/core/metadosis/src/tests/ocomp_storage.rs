@@ -192,6 +192,7 @@ fn intent(
     request_height: u64,
     _deadline_height: u64,
     receipt_hash: B256,
+    snapshot: &outbe_validatorset::OcompSnapshotExtensionV1,
 ) -> JobIntentV1 {
     let attempt = u32::try_from(pending_nonce).unwrap();
     JobIntentV1 {
@@ -251,11 +252,14 @@ fn intent(
                 state_version: 2,
             },
         },
-        result_validator_set_epoch: 2,
-        result_committee_set_hash: B256::repeat_byte(0x36),
-        result_ocomp_binding_hash: B256::repeat_byte(0x37),
-        result_member_count: 4,
-        result_quorum_threshold: 3,
+        result_validator_set_epoch: snapshot.epoch,
+        result_committee_set_hash: snapshot.committee_set_hash,
+        result_ocomp_binding_hash: snapshot.ocomp_binding_hash,
+        result_member_count: snapshot.member_count,
+        result_quorum_threshold: u16::try_from(outbe_consensus::proof::simplex_n3f1_quorum(
+            usize::from(snapshot.member_count),
+        ))
+        .unwrap(),
         custody_committee_epoch_hash: None,
     }
 }
@@ -289,12 +293,14 @@ fn certified_parent_finality_records_only_the_exact_live_request_and_fails_close
         let fsm_limits = JobFsmLimits {
             max_terminal_records: 2,
         };
+        let snapshot = crate::fixture_kernel::seed_validator_snapshot(storage.clone(), &limits, 4);
         let receipt = receipt();
         let requested = intent(
             0,
             REQUEST_HEIGHT,
             DEADLINE_HEIGHT,
             receipt.receipt_hash(&limits).unwrap(),
+            &snapshot,
         );
         let intent_id = requested.intent_id(&limits).unwrap();
         let mut contract = MetadosisContract::new(storage.clone());
@@ -399,6 +405,7 @@ fn persisted_request_and_expiry_keep_job_indexes_status_and_budget_equivalent() 
         let fsm_limits = JobFsmLimits {
             max_terminal_records: 2,
         };
+        let snapshot = crate::fixture_kernel::seed_validator_snapshot(storage.clone(), &limits, 4);
         let mut contract = MetadosisContract::new(storage);
         create_ready_day(&mut contract, WWD);
         contract
@@ -407,7 +414,7 @@ fn persisted_request_and_expiry_keep_job_indexes_status_and_budget_equivalent() 
 
         let receipt = receipt();
         let receipt_hash = receipt.receipt_hash(&limits).unwrap();
-        let first_intent = intent(0, REQUEST_HEIGHT, DEADLINE_HEIGHT, receipt_hash);
+        let first_intent = intent(0, REQUEST_HEIGHT, DEADLINE_HEIGHT, receipt_hash, &snapshot);
         let first_intent_id = first_intent.intent_id(&limits).unwrap();
         let request_transition = outer_transition(&contract, OuterWwdEvent::OcompRequestCommitted);
         contract
@@ -489,6 +496,7 @@ fn certified_conflict_is_terminal_for_the_old_job_and_requeues_the_same_budget()
         let fsm_limits = JobFsmLimits {
             max_terminal_records: 2,
         };
+        let snapshot = crate::fixture_kernel::seed_validator_snapshot(storage.clone(), &limits, 4);
         let mut contract = MetadosisContract::new(storage);
         create_ready_day(&mut contract, WWD);
         contract
@@ -497,7 +505,13 @@ fn certified_conflict_is_terminal_for_the_old_job_and_requeues_the_same_budget()
 
         let request_receipt = receipt();
         let request_receipt_hash = request_receipt.receipt_hash(&limits).unwrap();
-        let requested = intent(0, REQUEST_HEIGHT, DEADLINE_HEIGHT, request_receipt_hash);
+        let requested = intent(
+            0,
+            REQUEST_HEIGHT,
+            DEADLINE_HEIGHT,
+            request_receipt_hash,
+            &snapshot,
+        );
         let intent_id = requested.intent_id(&limits).unwrap();
         let request_transition = outer_transition(&contract, OuterWwdEvent::OcompRequestCommitted);
         contract
@@ -634,7 +648,11 @@ fn job_record_is_physically_bound_to_the_protocol_intent_slot_key() {
     };
     let receipt = receipt();
     let receipt_hash = receipt.receipt_hash(&limits).unwrap();
-    let requested = intent(0, REQUEST_HEIGHT, DEADLINE_HEIGHT, receipt_hash);
+    let mut provider = HashMapStorageProvider::new(1);
+    let snapshot = StorageHandle::enter(&mut provider, |storage| {
+        crate::fixture_kernel::seed_validator_snapshot(storage, &limits, 4)
+    });
+    let requested = intent(0, REQUEST_HEIGHT, DEADLINE_HEIGHT, receipt_hash, &snapshot);
     let intent_id = requested.intent_id(&limits).unwrap();
     let protocol_key = intent_storage_key(intent_id).unwrap();
     let records_base_slot = U256::from(OCOMP_JOB_RECORDS_BASE_SLOT);
@@ -642,7 +660,6 @@ fn job_record_is_physically_bound_to_the_protocol_intent_slot_key() {
     let raw_intent_slot = intent_id.mapping_slot(records_base_slot);
     assert_ne!(protocol_slot, raw_intent_slot);
 
-    let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
         let mut contract = MetadosisContract::new(storage.clone());
         assert_eq!(contract.ocomp_job_records.base_slot(), records_base_slot);
@@ -696,9 +713,10 @@ fn duplicate_request_cannot_replace_a_record_at_the_protocol_intent_slot_key() {
         let fsm_limits = JobFsmLimits {
             max_terminal_records: 2,
         };
+        let snapshot = crate::fixture_kernel::seed_validator_snapshot(storage.clone(), &limits, 4);
         let receipt = receipt();
         let receipt_hash = receipt.receipt_hash(&limits).unwrap();
-        let requested = intent(0, REQUEST_HEIGHT, DEADLINE_HEIGHT, receipt_hash);
+        let requested = intent(0, REQUEST_HEIGHT, DEADLINE_HEIGHT, receipt_hash, &snapshot);
         let intent_id = requested.intent_id(&limits).unwrap();
         let protocol_key = intent_storage_key(intent_id).unwrap();
         let original = OcompJobRecordV1 {
@@ -751,6 +769,7 @@ fn final_allowed_expiry_credits_full_lysis_budget_once_and_does_not_requeue() {
         let fsm_limits = JobFsmLimits {
             max_terminal_records: 1,
         };
+        let snapshot = crate::fixture_kernel::seed_validator_snapshot(storage.clone(), &limits, 4);
         let mut promis_limit = PromisLimitContract::new(storage.clone());
         let existing_carry_over = U256::from(17);
         promis_limit
@@ -765,7 +784,7 @@ fn final_allowed_expiry_credits_full_lysis_budget_once_and_does_not_requeue() {
 
         let receipt = receipt();
         let receipt_hash = receipt.receipt_hash(&limits).unwrap();
-        let first_intent = intent(0, REQUEST_HEIGHT, DEADLINE_HEIGHT, receipt_hash);
+        let first_intent = intent(0, REQUEST_HEIGHT, DEADLINE_HEIGHT, receipt_hash, &snapshot);
         let first_intent_id = first_intent.intent_id(&limits).unwrap();
         let request_transition = outer_transition(&contract, OuterWwdEvent::OcompRequestCommitted);
         contract

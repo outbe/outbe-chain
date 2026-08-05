@@ -5,12 +5,13 @@
 //! the inner OCOMP signature against the pinned historical ValidatorSet and owns
 //! the atomic pinned-ValidatorSet vote transition. It never executes Lysis.
 
-use alloy_primitives::{Bytes, U256};
+use alloy_primitives::{Address, Bytes, U256};
 use outbe_compressed_entities::ExecutionScope;
 use outbe_ocomp_protocol::{
-    abi::{OCOMP_RESULT_VOTE_REJECTED_SELECTOR, SUBMIT_LYSIS_RESULT_SELECTOR},
+    abi::OCOMP_RESULT_VOTE_REJECTED_SELECTOR,
+    error::ProtocolError,
     state::OcompJobStatus,
-    vote::{OcompQuorumV1, RecordVoteOutcomeV1, ResultVoteV1},
+    vote::{OcompQuorumV1, RecordVoteOutcomeV1, ResultVotePrefixV1, ResultVoteV1},
     SchemaLimits,
 };
 use outbe_primitives::{
@@ -60,7 +61,7 @@ pub fn dispatch_public_result_vote(
         return Err(vote_reject(REJECT_CALL_MODE));
     }
     let limits = super::schema::poc_schema_limits();
-    let vote_bytes = preflight_result_vote_calldata(data)?;
+    let vote_bytes = preflight_result_vote_calldata(data, &limits)?;
     let vote = ResultVoteV1::decode_canonical(vote_bytes, &limits)
         .map_err(|_| vote_reject(REJECT_MALFORMED_ENCODING))?;
     let inclusion_height = storage.block_number()?;
@@ -70,48 +71,21 @@ pub fn dispatch_public_result_vote(
     Ok(Bytes::new())
 }
 
-fn preflight_result_vote_calldata(data: &[u8]) -> Result<&[u8]> {
-    let vote_cap = usize::try_from(
-        outbe_ocomp_protocol::generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1.max_result_vote_bytes,
-    )
-    .map_err(|_| fatal("OCOMP result-vote cap does not fit usize"))?;
-    let padded_cap = vote_cap
-        .checked_add(31)
-        .map(|value| value & !31)
-        .ok_or_else(|| vote_reject(REJECT_LIMIT_EXCEEDED))?;
-    let calldata_cap = 68_usize
-        .checked_add(padded_cap)
-        .ok_or_else(|| vote_reject(REJECT_LIMIT_EXCEEDED))?;
-    if data.len() > calldata_cap {
-        return Err(vote_reject(REJECT_LIMIT_EXCEEDED));
-    }
-    if data.len() < 68
-        || data.get(..4) != Some(SUBMIT_LYSIS_RESULT_SELECTOR.as_slice())
-        || U256::from_be_slice(&data[4..36]) != U256::from(32)
-    {
-        return Err(vote_reject(REJECT_MALFORMED_ENCODING));
-    }
+fn preflight_result_vote_calldata<'a>(data: &'a [u8], limits: &SchemaLimits) -> Result<&'a [u8]> {
+    outbe_ocomp_protocol::vote::decode_submit_lysis_result_prefix(data, limits).map_err(
+        |error| {
+            vote_reject(if matches!(error, ProtocolError::CapacityExceeded { .. }) {
+                REJECT_LIMIT_EXCEEDED
+            } else {
+                REJECT_MALFORMED_ENCODING
+            })
+        },
+    )?;
     let payload_len = usize::try_from(U256::from_be_slice(&data[36..68]))
         .map_err(|_| vote_reject(REJECT_LIMIT_EXCEEDED))?;
-    if payload_len == 0 || payload_len > vote_cap {
-        return Err(vote_reject(REJECT_LIMIT_EXCEEDED));
-    }
     outbe_ocomp_protocol::capacity::result_vote_internal_work(payload_len)
         .map_err(|_| vote_reject(REJECT_LIMIT_EXCEEDED))?;
-    let padded_len = payload_len
-        .checked_add(31)
-        .map(|value| value & !31)
-        .ok_or_else(|| vote_reject(REJECT_LIMIT_EXCEEDED))?;
-    let expected_len = 68_usize
-        .checked_add(padded_len)
-        .ok_or_else(|| vote_reject(REJECT_LIMIT_EXCEEDED))?;
-    if data.len() != expected_len {
-        return Err(vote_reject(REJECT_MALFORMED_ENCODING));
-    }
     let payload_end = 68 + payload_len;
-    if data[payload_end..].iter().any(|byte| *byte != 0) {
-        return Err(vote_reject(REJECT_MALFORMED_ENCODING));
-    }
     Ok(&data[68..payload_end])
 }
 
@@ -129,6 +103,76 @@ pub(crate) fn vote_reject(code: u16) -> PrecompileError {
     encoded.extend_from_slice(&OCOMP_RESULT_VOTE_REJECTED_SELECTOR);
     encoded.extend_from_slice(&U256::from(code).to_be_bytes::<32>());
     PrecompileError::RevertBytes(Bytes::from(encoded))
+}
+
+/// Resolves the validator represented by one canonical OCOMP vote prefix from
+/// the exact historical ValidatorSet snapshot pinned by its open job.
+///
+/// Current ValidatorSet status is deliberately not consulted: membership for
+/// an already-open attempt is immutable. Missing, evicted or mismatched
+/// caller-selected state is an ordinary `None`, never a fallback to the current
+/// snapshot.
+pub fn resolve_historical_result_vote_participant(
+    storage: StorageHandle<'_>,
+    prefix: &ResultVotePrefixV1,
+    limits: &SchemaLimits,
+) -> Result<Option<Address>> {
+    let contract = MetadosisContract::new(storage.clone());
+    let Some(response) = contract.response_window_for_job(prefix.job_id)? else {
+        return Ok(None);
+    };
+    let Some(record) = contract.ocomp_job_record(response.intent_id, limits)? else {
+        return Err(fatal("OCOMP response index points to a missing job"));
+    };
+    let Some(finalized) = record.finalized.as_ref() else {
+        return Err(fatal("OCOMP response-window job is not finalized"));
+    };
+    if finalized.job_id != response.job_id
+        || finalized.deadline_height != response.deadline_height
+        || !matches!(
+            record.status,
+            OcompJobStatus::VotingOpen | OcompJobStatus::Completed | OcompJobStatus::Conflicted
+        )
+    {
+        return Err(fatal("OCOMP response index/job binding mismatch"));
+    }
+    if prefix.protocol_bundle_hash != record.intent.protocol_bundle_hash
+        || prefix.attempt != record.intent.attempt
+        || prefix.result_validator_set_epoch != record.intent.result_validator_set_epoch
+        || prefix.result_committee_set_hash != record.intent.result_committee_set_hash
+        || prefix.result_ocomp_binding_hash != record.intent.result_ocomp_binding_hash
+        || prefix.validator_index >= record.intent.result_member_count
+    {
+        return Ok(None);
+    }
+    let Some(snapshot) = outbe_validatorset::read_ocomp_snapshot_extension_for_binding(
+        storage.clone(),
+        prefix.result_validator_set_epoch,
+        prefix.result_committee_set_hash,
+        prefix.result_ocomp_binding_hash,
+    )?
+    else {
+        return Ok(None);
+    };
+    if snapshot.member_count != record.intent.result_member_count {
+        return Ok(None);
+    }
+    let snapshot_key = outbe_validatorset::committee_snapshot_key(
+        prefix.result_validator_set_epoch,
+        prefix.result_committee_set_hash,
+    );
+    let Some(member) = outbe_validatorset::read_ocomp_snapshot_member_at(
+        storage,
+        snapshot_key,
+        prefix.validator_index,
+    )?
+    else {
+        return Ok(None);
+    };
+    if member.key_epoch != prefix.key_epoch {
+        return Ok(None);
+    }
+    Ok(Some(member.validator_address))
 }
 
 impl MetadosisContract<'_> {
@@ -165,6 +209,16 @@ impl MetadosisContract<'_> {
             ) {
                 return Err(reject(
                     "OCOMP result vote requires an open or quorum-certified job",
+                ));
+            }
+            if vote.protocol_bundle_hash != record.intent.protocol_bundle_hash
+                || vote.attempt != record.intent.attempt
+                || vote.result_validator_set_epoch != record.intent.result_validator_set_epoch
+                || vote.result_committee_set_hash != record.intent.result_committee_set_hash
+                || vote.result_ocomp_binding_hash != record.intent.result_ocomp_binding_hash
+            {
+                return Err(reject(
+                    "OCOMP result vote does not match pinned job binding",
                 ));
             }
             let authority = self
@@ -353,13 +407,24 @@ fn fatal(message: impl Into<String>) -> PrecompileError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use outbe_ocomp_protocol::{
+        abi::SUBMIT_LYSIS_RESULT_SELECTOR, encode_envelope, registry::ObjectKind, OCB1_HEADER_LEN,
+    };
 
     fn dynamic_bytes_calldata(payload_len: usize) -> Vec<u8> {
+        assert!(payload_len >= OCB1_HEADER_LEN + 150);
+        let payload = encode_envelope(
+            ObjectKind::ResultVoteV1,
+            &vec![0_u8; payload_len - OCB1_HEADER_LEN],
+            super::super::schema::poc_schema_limits().codec,
+        )
+        .unwrap();
         let padded_len = (payload_len + 31) & !31;
         let mut data = vec![0_u8; 68 + padded_len];
         data[..4].copy_from_slice(&SUBMIT_LYSIS_RESULT_SELECTOR);
         data[4..36].copy_from_slice(&U256::from(32).to_be_bytes::<32>());
         data[36..68].copy_from_slice(&U256::from(payload_len).to_be_bytes::<32>());
+        data[68..68 + payload_len].copy_from_slice(&payload);
         data
     }
 
@@ -370,27 +435,30 @@ mod tests {
                 .max_result_vote_bytes,
         )
         .unwrap();
+        let limits = super::super::schema::poc_schema_limits();
         for accepted in [cap - 1, cap] {
             let data = dynamic_bytes_calldata(accepted);
             assert_eq!(
-                preflight_result_vote_calldata(&data).unwrap().len(),
+                preflight_result_vote_calldata(&data, &limits)
+                    .unwrap()
+                    .len(),
                 accepted
             );
         }
 
         let rejected = dynamic_bytes_calldata(cap + 1);
         assert!(matches!(
-            preflight_result_vote_calldata(&rejected),
+            preflight_result_vote_calldata(&rejected, &limits),
             Err(PrecompileError::RevertBytes(_))
         ));
     }
 
     #[test]
     fn result_vote_preflight_rejects_nonzero_abi_padding() {
-        let mut data = dynamic_bytes_calldata(1);
+        let mut data = dynamic_bytes_calldata(OCB1_HEADER_LEN + 150);
         *data.last_mut().unwrap() = 1;
         assert!(matches!(
-            preflight_result_vote_calldata(&data),
+            preflight_result_vote_calldata(&data, &super::super::schema::poc_schema_limits()),
             Err(PrecompileError::RevertBytes(_))
         ));
     }

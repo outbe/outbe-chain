@@ -11,10 +11,12 @@
 ## Context
 
 ZeroFee determines when native fee debit may be waived without weakening the
-underlying command's authorization. It has two distinct policy paths in one module:
+underlying command's authorization. It has three distinct policy paths in one module:
 
 1. a stateless-plus-stateful hook for validator/delegated-feeder Oracle votes; and
-2. a general sponsored free-transaction path with a per-signer UTC-day quota held by
+2. a stateless-plus-stateful hook for validator/delegated-supervisor OCOMP result
+   votes; and
+3. a general sponsored free-transaction path with a per-signer UTC-day quota held by
    the ZeroFee paymaster.
 
 Txpool admission, EVM pre-fee accounting and receipt soft-failure conversion must
@@ -38,6 +40,24 @@ Stateful authorization resolves signer to an active, BLS-share-bearing validator
 its delegated feeder and requires no vote already stored for that validator in the
 current Oracle period. Authorization returns the represented validator as subject.
 It grants only fee waiver; Oracle revalidates command authority during execution.
+
+### OCOMP result-vote hook
+
+Stateless classification matches the exact `Metadosis.submitLysisResult(bytes)`
+envelope and invokes the canonical OCOMP prefix decoder. The resulting candidate
+carries the job id, attempt, pinned ValidatorSet epoch, consensus snapshot hash,
+OCOMP binding hash, `u16` participant index and key epoch. Txpool, preflight and
+execution do not maintain another calldata layout parser.
+
+Stateful authorization locates the open job, requires every candidate binding to
+match the intent and resolves the participant from that job's retained historical
+ValidatorSet snapshot. It never substitutes the current snapshot and does not
+require the historical participant to remain ACTIVE. The transaction may be signed
+by that validator address or its current explicit OCOMP delegate; while a delegate
+is installed, direct validator signing is disabled for this role. Missing or
+evicted history, a ring collision, wrong binding or wrong signer rejects the
+waiver. The inner OCOMP signature is independently reverified by Metadosis and is
+the authority for recording the vote.
 
 ### Daily sponsorship
 
@@ -65,8 +85,13 @@ being owned by the hook.
 - Hook ids and registry order are unique and static for a protocol version.
 - Classification is deterministic from signed envelope; authorization is
   deterministic from canonical pre-state.
-- Oracle waiver subject is exactly one active validator and has not voted this
-  period.
+- Oracle waiver subject is exactly one current active validator and has not voted
+  this period.
+- OCOMP waiver subject is exactly the participant at the vote's index in the
+  job-pinned historical ValidatorSet snapshot. Current ACTIVE membership is not
+  consulted.
+- An OCOMP candidate binds the job id, attempt and all three snapshot bindings;
+  missing retained history fails closed without falling back to current state.
 - Sponsored packed day decodes canonically; effective count is zero for any other
   day and at most the daily limit for admitted pre-state.
 - Every executed/admitted sponsored transaction consumes quota exactly once under
@@ -89,9 +114,10 @@ allow infinite free retries unless that is deliberate policy.
 
 ## Security, compatibility and bounds
 
-Limits, whitelist, selector, hook ids, minimum fee semantics, UTC date conversion,
-packed counter encoding and failure codes are consensus/admission formats. Updates
-require activation across txpool and executor simultaneously.
+Limits, whitelist, selectors, hook ids, minimum fee semantics, the canonical OCOMP
+prefix, UTC date conversion, packed counter encoding and failure codes are
+consensus/admission formats. Updates require activation across txpool and executor
+simultaneously.
 
 Nonzero balance is only a weak cost signal, not Sybil resistance. Whitelisted
 precompiles must have bounded work under sponsored gas and cannot expose indirect
@@ -100,10 +126,11 @@ explicit signer/authority analysis.
 
 ## Production-interface verification evidence
 
-Inspected hook types/registry, Oracle envelope and state authorization, general
-sponsorship constants/runtime/state/precompile, packed counter/lazy reset and error
-code uniqueness tests. Full txpool-to-executor consistency, concurrency, reorg,
-EIP-7702 and target-call e2e are incomplete.
+Inspected hook types/registry, Oracle envelope and state authorization, historical
+OCOMP participant/delegate authorization, the shared OCOMP prefix decoder, txpool
+classification, general sponsorship constants/runtime/state/precompile, packed
+counter/lazy reset and error-code uniqueness tests. Full concurrency, reorg,
+EIP-7702 and target-call e2e remain release evidence rather than alternate policy.
 
 ## Consequences
 
@@ -142,8 +169,9 @@ stable failure codes, while canonical execution remains final authority.
    cleanup/rent or accept permanent storage explicitly.
 9. UTC day reset at timestamp boundary permits eight calls immediately before and
    after midnight; confirm intended burst capacity.
-10. Oracle hook scans validator/delegation state through Oracle's unbounded resolver;
-    admission DoS bounds depend on ADR-S-ORC-001 reverse-index work.
+10. Oracle authorization follows current ValidatorSet eligibility; OCOMP
+    authorization follows a bounded retained historical snapshot and an O(1)
+    participant lookup. Do not merge these role semantics into one resolver.
 11. Stable error reasons include internal storage strings. Ensure receipt/log size is
     bounded and does not leak nondeterministic implementation detail.
 12. Define behavior when zero-fee state authorization passes but target Oracle vote

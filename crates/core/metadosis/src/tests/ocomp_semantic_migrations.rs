@@ -1,7 +1,9 @@
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_ocomp_protocol::{
-    receipts::ActivationOutcome, state::OcompJobStatus, vote::OcompVoteAccountabilityV1,
+    receipts::ActivationOutcome,
+    state::OcompJobStatus,
+    vote::{OcompVoteAccountabilityV1, ResultVotePrefixV1},
 };
 use outbe_primitives::{
     addresses::{INTEX_ADDRESS, NOD_ADDRESS, PROMIS_LIMIT_ADDRESS, TRIBUTE_ADDRESS},
@@ -253,42 +255,52 @@ fn result_digest(fixture: &ActivationFixture) -> B256 {
     fixture.result.result_digest(&fixture.limits).unwrap()
 }
 
-fn submit_vote(fixture: &mut ActivationFixture, validator_index: u8, height: u64) {
+fn submit_vote_result(
+    fixture: &mut ActivationFixture,
+    vote: &outbe_ocomp_protocol::vote::ResultVoteV1,
+    height: u64,
+) -> outbe_primitives::error::Result<Bytes> {
     fixture.provider.set_block_number(height);
     fixture.provider.enable_lysis_activation_frame();
     fixture
         .provider
         .enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::VerifiedResultVote);
-    let vote = fixture.signed_result_vote(validator_index);
     let vote_bytes = vote.encode_canonical(&fixture.limits).unwrap();
     let calldata = IMetadosis::submitLysisResultCall {
         resultVoteV1: Bytes::from(vote_bytes),
     }
     .abi_encode();
     StorageHandle::enter(&mut fixture.provider, |storage| {
-        assert_eq!(
-            crate::commands::submit_verified_result_vote(
-                storage,
-                &fixture.scope,
-                &calldata,
-                U256::ZERO,
-                false,
-            )
-            .unwrap(),
-            Bytes::new()
-        );
-    });
+        crate::commands::submit_verified_result_vote(
+            storage,
+            &fixture.scope,
+            &calldata,
+            U256::ZERO,
+            false,
+        )
+    })
 }
 
-// OCOMP-TEST-ID: OCM-VOT-001
-#[test]
-fn public_dispatch_records_four_slots_and_immutable_q3() {
-    let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
+fn submit_vote(fixture: &mut ActivationFixture, validator_index: u8, height: u64) {
+    let vote = fixture.signed_result_vote(validator_index);
+    assert_eq!(
+        submit_vote_result(fixture, &vote, height).unwrap(),
+        Bytes::new()
+    );
+}
+
+fn assert_public_dispatch_uses_pinned_dynamic_membership(
+    member_count: u8,
+    quorum_threshold: u16,
+    quorum_bitmap: Vec<u8>,
+) {
+    let mut fixture =
+        ActivationFixture::new_voting_with_member_count(14, 1_010, true, member_count);
     let job_id = fixture.result.job_id;
     let intent_id = fixture.intent_id;
     let expected_result_digest = result_digest(&fixture);
 
-    for index in 0..4 {
+    for index in 0..member_count {
         submit_vote(&mut fixture, index, 14 + u64::from(index));
     }
 
@@ -300,9 +312,11 @@ fn public_dispatch_records_four_slots_and_immutable_q3() {
             .unwrap()
             .unwrap();
         assert_eq!(record.status, OcompJobStatus::Completed);
+        assert_eq!(record.intent.result_member_count, u16::from(member_count));
+        assert_eq!(record.intent.result_quorum_threshold, quorum_threshold);
         let quorum = record.finalized.unwrap().quorum.unwrap();
         assert_eq!(quorum.result_digest, expected_result_digest);
-        assert_eq!(quorum.signer_bitmap, vec![0b0111]);
+        assert_eq!(quorum.signer_bitmap, quorum_bitmap);
 
         let encoded = crate::precompile::dispatch(
             storage,
@@ -315,7 +329,181 @@ fn public_dispatch_records_four_slots_and_immutable_q3() {
             IMetadosis::getOffchainVoteAccountabilityCall::abi_decode_returns(&encoded).unwrap();
         let accountability =
             OcompVoteAccountabilityV1::decode_canonical(public.as_ref(), &limits).unwrap();
-        assert_eq!(accountability.slots.iter().flatten().count(), 4);
+        assert_eq!(accountability.slots.len(), usize::from(member_count));
+        assert_eq!(
+            accountability.slots.iter().flatten().count(),
+            usize::from(member_count)
+        );
         assert_eq!(accountability.quorum.unwrap(), quorum);
+    });
+}
+
+// OCOMP-TEST-ID: OCM-VOT-001
+#[test]
+fn public_dispatch_uses_pinned_dynamic_membership_and_quorum() {
+    assert_public_dispatch_uses_pinned_dynamic_membership(4, 3, vec![0b0000_0111]);
+    assert_public_dispatch_uses_pinned_dynamic_membership(5, 4, vec![0b0000_1111]);
+}
+
+#[test]
+fn historical_vote_participant_resolution_does_not_consult_current_active_status() {
+    let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
+    let vote = fixture.signed_result_vote(1);
+    let prefix = ResultVotePrefixV1 {
+        protocol_bundle_hash: vote.protocol_bundle_hash,
+        job_id: vote.job_id,
+        attempt: vote.attempt,
+        result_validator_set_epoch: vote.result_validator_set_epoch,
+        result_committee_set_hash: vote.result_committee_set_hash,
+        result_ocomp_binding_hash: vote.result_ocomp_binding_hash,
+        validator_index: vote.validator_index,
+        key_epoch: vote.key_epoch,
+    };
+    let historical_validator = Address::repeat_byte(0xB1);
+
+    StorageHandle::enter(&mut fixture.provider, |storage| {
+        let validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+        validators
+            .val_status
+            .write(
+                &historical_validator,
+                outbe_validatorset::logic::status::INACTIVE,
+            )
+            .unwrap();
+
+        assert_eq!(
+            crate::ocomp::vote::resolve_historical_result_vote_participant(
+                storage,
+                &prefix,
+                &fixture.limits,
+            )
+            .unwrap(),
+            Some(historical_validator)
+        );
+    });
+}
+
+#[test]
+fn vote_binding_mismatch_is_rejected_before_historical_snapshot_lookup() {
+    let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
+    let mut vote = fixture.signed_result_vote(1);
+    let snapshot_key = outbe_validatorset::committee_snapshot_key(
+        vote.result_validator_set_epoch,
+        vote.result_committee_set_hash,
+    );
+    vote.result_ocomp_binding_hash = B256::repeat_byte(0xEE);
+
+    StorageHandle::enter(&mut fixture.provider, |storage| {
+        let validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+        validators
+            .committee_snapshot_exists
+            .write(&snapshot_key, false)
+            .unwrap();
+
+        let error = MetadosisContract::new(storage)
+            .record_ocomp_result_vote(&vote, 14, &fixture.scope, &fixture.limits)
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            PrecompileError::Revert(message)
+                if message == "OCOMP result vote does not match pinned job binding"
+        ));
+    });
+}
+
+#[test]
+fn public_vote_rejects_every_pinned_identity_and_signature_mismatch() {
+    let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
+    let base = fixture.signed_result_vote(1);
+    let mut cases = Vec::new();
+
+    let mut wrong = base.clone();
+    wrong.protocol_bundle_hash = B256::repeat_byte(0xA1);
+    cases.push(("protocol bundle", wrong));
+    let mut wrong = base.clone();
+    wrong.attempt = wrong.attempt.saturating_add(1);
+    cases.push(("attempt", wrong));
+    let mut wrong = base.clone();
+    wrong.result_validator_set_epoch = wrong.result_validator_set_epoch.saturating_add(1);
+    cases.push(("ValidatorSet epoch", wrong));
+    let mut wrong = base.clone();
+    wrong.result_committee_set_hash = B256::repeat_byte(0xA2);
+    cases.push(("consensus snapshot hash", wrong));
+    let mut wrong = base.clone();
+    wrong.result_ocomp_binding_hash = B256::repeat_byte(0xA3);
+    cases.push(("OCOMP binding hash", wrong));
+    let mut wrong = base.clone();
+    wrong.validator_index = u16::MAX;
+    cases.push(("participant index", wrong));
+    let mut wrong = base.clone();
+    wrong.key_epoch = wrong.key_epoch.saturating_add(1);
+    cases.push(("key epoch", wrong));
+    let mut wrong = base;
+    wrong.signature_rs[0] ^= 1;
+    cases.push(("signature", wrong));
+
+    for (label, vote) in cases {
+        assert!(
+            matches!(
+                submit_vote_result(&mut fixture, &vote, 14),
+                Err(PrecompileError::RevertBytes(_))
+            ),
+            "{label} mismatch must be a public vote rejection"
+        );
+    }
+}
+
+#[test]
+fn old_job_keeps_its_four_member_snapshot_across_a_four_to_five_boundary() {
+    let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
+    let next_snapshot = fixture.activate_additional_validator_for_test(4);
+    assert_eq!(next_snapshot.member_count, 5);
+
+    let old_participant_vote = fixture.signed_result_vote(3);
+    assert_eq!(
+        submit_vote_result(&mut fixture, &old_participant_vote, 14).unwrap(),
+        Bytes::new()
+    );
+
+    let new_validator_vote = fixture.signed_result_vote(4);
+    assert!(matches!(
+        submit_vote_result(&mut fixture, &new_validator_vote, 15),
+        Err(PrecompileError::RevertBytes(_))
+    ));
+}
+
+#[test]
+fn missing_pinned_snapshot_reverts_public_vote_without_changing_the_job() {
+    let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
+    let vote = fixture.signed_result_vote(0);
+    let snapshot_key = outbe_validatorset::committee_snapshot_key(
+        vote.result_validator_set_epoch,
+        vote.result_committee_set_hash,
+    );
+    StorageHandle::enter(&mut fixture.provider, |storage| {
+        let validators = outbe_validatorset::contract::ValidatorSet::new(storage);
+        validators
+            .committee_snapshot_exists
+            .write(&snapshot_key, false)
+            .unwrap();
+    });
+
+    assert!(matches!(
+        submit_vote_result(&mut fixture, &vote, 14),
+        Err(PrecompileError::RevertBytes(_))
+    ));
+    StorageHandle::enter(&mut fixture.provider, |storage| {
+        let contract = MetadosisContract::new(storage);
+        let record = contract
+            .ocomp_job_record(fixture.intent_id, &fixture.limits)
+            .unwrap()
+            .unwrap();
+        assert_eq!(record.status, OcompJobStatus::VotingOpen);
+        let accountability = contract
+            .result_vote_accountability(vote.job_id, &fixture.limits)
+            .unwrap()
+            .unwrap();
+        assert!(accountability.slots.iter().all(Option::is_none));
+        assert!(accountability.quorum.is_none());
     });
 }

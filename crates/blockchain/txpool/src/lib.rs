@@ -595,7 +595,7 @@ mod tests {
     use super::*;
     use alloy_consensus::{SignableTransaction as _, TxEip1559};
     use alloy_eips::{eip1559::MIN_PROTOCOL_BASE_FEE, eip2718::Encodable2718 as _};
-    use alloy_primitives::{Bytes, Signature, TxKind};
+    use alloy_primitives::{Bytes, Signature, TxKind, B256};
     use alloy_sol_types::SolCall;
     use outbe_primitives::addresses::{ORACLE_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS};
     use reth_ethereum::TransactionSigned;
@@ -644,6 +644,45 @@ mod tests {
         .into()
     }
 
+    fn ocomp_submit_result_vote_input() -> Bytes {
+        use outbe_ocomp_protocol::{
+            abi::SUBMIT_LYSIS_RESULT_SELECTOR, encode_envelope, profile::poc_schema_limits,
+            registry::ObjectKind, vote::ResultVotePrefixV1, OCB1_HEADER_LEN,
+        };
+
+        let prefix = ResultVotePrefixV1 {
+            protocol_bundle_hash: B256::repeat_byte(0x31),
+            job_id: B256::repeat_byte(0x32),
+            attempt: 3,
+            result_validator_set_epoch: 7,
+            result_committee_set_hash: B256::repeat_byte(0x33),
+            result_ocomp_binding_hash: B256::repeat_byte(0x34),
+            validator_index: 1,
+            key_epoch: 1,
+        };
+        let mut body = Vec::new();
+        body.extend_from_slice(prefix.protocol_bundle_hash.as_slice());
+        body.extend_from_slice(prefix.job_id.as_slice());
+        body.extend_from_slice(&prefix.attempt.to_be_bytes());
+        body.extend_from_slice(&prefix.result_validator_set_epoch.to_be_bytes());
+        body.extend_from_slice(prefix.result_committee_set_hash.as_slice());
+        body.extend_from_slice(prefix.result_ocomp_binding_hash.as_slice());
+        body.extend_from_slice(&prefix.validator_index.to_be_bytes());
+        body.extend_from_slice(&prefix.key_epoch.to_be_bytes());
+        body.resize(150, 0);
+        let payload = encode_envelope(ObjectKind::ResultVoteV1, &body, poc_schema_limits().codec)
+            .expect("canonical OCOMP vote prefix must encode");
+        assert_eq!(payload.len(), OCB1_HEADER_LEN + body.len());
+
+        let padded_len = (payload.len() + 31) & !31;
+        let mut input = vec![0_u8; 68 + padded_len];
+        input[..4].copy_from_slice(&SUBMIT_LYSIS_RESULT_SELECTOR);
+        input[4..36].copy_from_slice(&U256::from(32).to_be_bytes::<32>());
+        input[36..68].copy_from_slice(&U256::from(payload.len()).to_be_bytes::<32>());
+        input[68..68 + payload.len()].copy_from_slice(&payload);
+        input.into()
+    }
+
     #[test]
     fn only_submit_vote_has_reserved_zero_fee_priority_class() {
         assert_eq!(
@@ -664,6 +703,33 @@ mod tests {
         let expensive_normal_tx = pooled_tx(Address::ZERO, Bytes::new(), u128::MAX, u128::MAX);
 
         assert!(ordering.priority(&zero_fee_vote, 0) > ordering.priority(&expensive_normal_tx, 0));
+    }
+
+    #[test]
+    fn canonical_ocomp_vote_uses_the_same_reserved_priority_path() {
+        let ordering = OutbeTransactionOrdering::<EthPooledTransaction>::default();
+        let zero_fee_vote = pooled_tx(
+            outbe_ocomp_protocol::abi::METADOSIS_ADDRESS,
+            ocomp_submit_result_vote_input(),
+            MIN_PROTOCOL_BASE_FEE as u128,
+            0,
+        );
+        let expensive_normal_tx = pooled_tx(Address::ZERO, Bytes::new(), u128::MAX, u128::MAX);
+
+        assert!(ordering.priority(&zero_fee_vote, 0) > ordering.priority(&expensive_normal_tx, 0));
+    }
+
+    #[test]
+    fn truncated_ocomp_vote_gets_no_pool_priority() {
+        let ordering = OutbeTransactionOrdering::<EthPooledTransaction>::default();
+        let malformed_vote = pooled_tx(
+            outbe_ocomp_protocol::abi::METADOSIS_ADDRESS,
+            Bytes::copy_from_slice(&outbe_ocomp_protocol::abi::SUBMIT_LYSIS_RESULT_SELECTOR),
+            MIN_PROTOCOL_BASE_FEE as u128,
+            0,
+        );
+
+        assert_eq!(ordering.priority(&malformed_vote, 0), Priority::None);
     }
 
     #[test]

@@ -578,6 +578,23 @@ fn submit_result_prefix_decoder_is_canonical_bounded_and_panic_free() {
     let mut wrong_offset = calldata.clone();
     wrong_offset[35] = 31;
     assert!(decode_submit_lysis_result_prefix(&wrong_offset, &LIMITS).is_err());
+
+    let mut overflowing_length = calldata.clone();
+    overflowing_length[36] = 1;
+    assert!(decode_submit_lysis_result_prefix(&overflowing_length, &LIMITS).is_err());
+
+    let oversized_len = usize::try_from(
+        outbe_ocomp_protocol::generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1.max_result_vote_bytes,
+    )
+    .unwrap()
+        + 1;
+    let oversized_padded_len = (oversized_len + 31) & !31;
+    let mut oversized = vec![0_u8; 68 + oversized_padded_len];
+    oversized[..4].copy_from_slice(&outbe_ocomp_protocol::abi::SUBMIT_LYSIS_RESULT_SELECTOR);
+    oversized[35] = 32;
+    oversized[36..68].copy_from_slice(&U256::from(oversized_len).to_be_bytes::<32>());
+    assert!(decode_submit_lysis_result_prefix(&oversized, &LIMITS).is_err());
+
     let mut non_zero_padding = calldata;
     *non_zero_padding.last_mut().unwrap() = 1;
     assert!(decode_submit_lysis_result_prefix(&non_zero_padding, &LIMITS).is_err());

@@ -5069,6 +5069,64 @@ mod tests {
         .into()
     }
 
+    fn test_ocomp_submit_result_vote_tx() -> reth_ethereum::TransactionSigned {
+        use outbe_ocomp_protocol::{
+            abi::{METADOSIS_ADDRESS, SUBMIT_LYSIS_RESULT_SELECTOR},
+            encode_envelope,
+            profile::poc_schema_limits,
+            registry::ObjectKind,
+        };
+
+        let mut body = Vec::new();
+        body.extend_from_slice(B256::repeat_byte(0x31).as_slice());
+        body.extend_from_slice(B256::repeat_byte(0x32).as_slice());
+        body.extend_from_slice(&3_u32.to_be_bytes());
+        body.extend_from_slice(&7_u64.to_be_bytes());
+        body.extend_from_slice(B256::repeat_byte(0x33).as_slice());
+        body.extend_from_slice(B256::repeat_byte(0x34).as_slice());
+        body.extend_from_slice(&1_u16.to_be_bytes());
+        body.extend_from_slice(&1_u64.to_be_bytes());
+        body.resize(150, 0);
+        let payload = encode_envelope(ObjectKind::ResultVoteV1, &body, poc_schema_limits().codec)
+            .expect("canonical OCOMP prefix must encode");
+        let padded_len = (payload.len() + 31) & !31;
+        let mut input = vec![0_u8; 68 + padded_len];
+        input[..4].copy_from_slice(&SUBMIT_LYSIS_RESULT_SELECTOR);
+        input[4..36].copy_from_slice(&U256::from(32).to_be_bytes::<32>());
+        input[36..68].copy_from_slice(&U256::from(payload.len()).to_be_bytes::<32>());
+        input[68..68 + payload.len()].copy_from_slice(&payload);
+
+        TxEip1559 {
+            chain_id: CHAIN_ID,
+            nonce: 0,
+            gas_limit: outbe_zerofee::MAX_ZERO_FEE_OCOMP_GAS_LIMIT,
+            max_fee_per_gas: outbe_zerofee::MIN_ZERO_FEE_OCOMP_MAX_FEE_PER_GAS,
+            max_priority_fee_per_gas: 0,
+            to: TxKind::Call(METADOSIS_ADDRESS),
+            value: U256::ZERO,
+            input: input.into(),
+            access_list: Default::default(),
+        }
+        .into_signed(Signature::test_signature())
+        .into()
+    }
+
+    #[test]
+    fn executor_adapter_classifies_the_canonical_ocomp_vote_prefix() {
+        let tx = test_ocomp_submit_result_vote_tx();
+        let zero_fee = super::zero_fee_transaction(&tx, Address::ZERO);
+        let candidate = outbe_zerofee::registry()
+            .classify(&zero_fee)
+            .expect("canonical OCOMP envelope must classify")
+            .expect("canonical OCOMP envelope must select its hook");
+
+        assert_eq!(
+            candidate.hook,
+            outbe_zerofee::ZeroFeeHookId::OcompSubmitResultVote
+        );
+        assert_eq!(candidate.ocomp_vote_prefix().unwrap().validator_index, 1);
+    }
+
     #[allow(dead_code)] // retained for follow-up tests
     fn test_metadata() -> CertifiedParentAccountingMetadata {
         CertifiedParentAccountingMetadata::default()
