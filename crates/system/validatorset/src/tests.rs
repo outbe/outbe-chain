@@ -1970,18 +1970,16 @@ fn certified_tee_expiry_demotes_active_and_clears_pending_readiness() {
         let pending = address!("0x2222222222222222222222222222222222222222");
         vs.register_validator(OWNER, active, &dummy_consensus_pubkey(0x01))
             .unwrap();
-        admit_pending(vs, active, 0x31);
-        vs.activate_reshared_set(&[active], B256::with_last_byte(0xA1))
-            .unwrap();
+        vs.activate_validator(active).unwrap();
         vs.register_validator(OWNER, pending, &dummy_consensus_pubkey(0x02))
             .unwrap();
         vs.mark_pending(pending).unwrap();
         confirm_ready(vs, pending, 0x32);
 
-        vs.activate_validated_boundary_set_with_expiry_exclusions(
+        vs.test_activate_validated_boundary_set_with_expiry_exclusions(
             &[],
             B256::with_last_byte(0xA2),
-            1,
+            u64::MAX,
             &[active, pending],
         )
         .unwrap();
@@ -2013,16 +2011,13 @@ fn ordinary_dkg_omission_without_expiry_proof_is_rejected_atomically() {
         let active = address!("0x1111111111111111111111111111111111111111");
         vs.register_validator(OWNER, active, &dummy_consensus_pubkey(0x01))
             .unwrap();
-        admit_pending(vs, active, 0x41);
-        vs.activate_reshared_set(&[active], B256::with_last_byte(0xB1))
-            .unwrap();
-
+        vs.activate_validator(active).unwrap();
         let hash_before = vs.active_consensus_set_hash().unwrap();
         assert!(vs
-            .activate_validated_boundary_set_with_expiry_exclusions(
+            .test_activate_validated_boundary_set_with_expiry_exclusions(
                 &[],
                 B256::with_last_byte(0xB2),
-                1,
+                u64::MAX,
                 &[],
             )
             .is_err());
@@ -2040,31 +2035,29 @@ fn expiry_branch_rejects_contradictory_duplicate_and_unknown_authority() {
         let unknown = address!("0x9999999999999999999999999999999999999999");
         vs.register_validator(OWNER, active, &dummy_consensus_pubkey(0x01))
             .unwrap();
-        admit_pending(vs, active, 0x51);
-        vs.activate_reshared_set(&[active], B256::with_last_byte(0xC1))
-            .unwrap();
+        vs.activate_validator(active).unwrap();
 
         assert!(vs
-            .activate_validated_boundary_set_with_expiry_exclusions(
+            .test_activate_validated_boundary_set_with_expiry_exclusions(
                 &[active],
                 B256::with_last_byte(0xC2),
-                1,
+                u64::MAX,
                 &[active],
             )
             .is_err());
         assert!(vs
-            .activate_validated_boundary_set_with_expiry_exclusions(
+            .test_activate_validated_boundary_set_with_expiry_exclusions(
                 &[],
                 B256::with_last_byte(0xC2),
-                1,
+                u64::MAX,
                 &[active, active],
             )
             .is_err());
         assert!(vs
-            .activate_validated_boundary_set_with_expiry_exclusions(
+            .test_activate_validated_boundary_set_with_expiry_exclusions(
                 &[],
                 B256::with_last_byte(0xC2),
-                1,
+                u64::MAX,
                 &[unknown],
             )
             .is_err());

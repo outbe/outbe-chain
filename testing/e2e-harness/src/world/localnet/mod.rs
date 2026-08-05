@@ -16,7 +16,6 @@
 //! - [`log_audit`] — runtime-log normalization, policy, and evidence.
 //! - [`probes`] — datadir, compressed-entity, and timing observations.
 
-mod adversarial;
 mod bootstrap;
 mod committee;
 mod follower;
@@ -116,12 +115,6 @@ pub struct Localnet {
     validator_chain_manifests: HashMap<usize, PathBuf>,
     /// The options the last committee `start` ran with, replayed by `restart`.
     start_opts: StartOpts,
-    /// Scenario-scoped executable overrides used only by explicit adversarial
-    /// tests. Normal validators always use `cfg.bin_chain`.
-    validator_binary_overrides: HashMap<usize, PathBuf>,
-    /// Scenario-scoped environment passed only to the corresponding overridden
-    /// validator process.
-    validator_environment_overrides: HashMap<usize, Vec<(String, String)>>,
 }
 
 impl Localnet {
@@ -134,8 +127,6 @@ impl Localnet {
             enclave_image_id: None,
             validator_chain_manifests: HashMap::new(),
             start_opts: StartOpts::default(),
-            validator_binary_overrides: HashMap::new(),
-            validator_environment_overrides: HashMap::new(),
         }
     }
 

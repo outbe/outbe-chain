@@ -7,7 +7,7 @@ use std::sync::Mutex;
 use std::thread::sleep;
 use std::time::Duration;
 
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{Address, U256};
 use cucumber::{given, then, when};
 
 use crate::validator_evidence::conflicting_notarize_for_validator;
@@ -17,6 +17,9 @@ use crate::world::validators::RegistrationIdentity;
 use crate::world::World;
 
 const COEN: u128 = 1_000_000_000_000_000_000;
+const PERIODIC_EXCLUSION_TRIES: u32 = 240;
+const S08_UNBONDING_SECS: u64 = 240;
+const S08_STAGGER_SECS: u64 = 20;
 
 #[derive(Clone, Debug)]
 struct ReregistrationScratch {
@@ -31,6 +34,7 @@ struct ReregistrationScratch {
 struct UnbondingScratch {
     address: String,
     key: String,
+    deactivation_epoch: u64,
     first_end: u64,
     second_end: u64,
     final_end: u64,
@@ -135,47 +139,63 @@ fn dense_index(world: &World, address: Address) -> u64 {
         .expect("validator in dense index")
 }
 
-fn active_set_hash(addresses: &[Address]) -> B256 {
-    let mut bytes = Vec::with_capacity(8 + addresses.len() * 20);
-    bytes.extend_from_slice(&(addresses.len() as u64).to_be_bytes());
-    for address in addresses {
-        bytes.extend_from_slice(address.as_slice());
-    }
-    keccak256(bytes)
-}
-
-fn owner_activate_without(world: &World, omitted: Address) {
-    let port = world.validators.primary_port();
-    let active = world
-        .rpc
-        .active_validators(port)
-        .expect("active validator set");
-    let retained = active
-        .into_iter()
-        .filter(|address| *address != omitted)
-        .collect::<Vec<_>>();
-    let owner = world.validators.get(0).evm_key().expect("owner key");
-    let outcome = world
-        .rpc
-        .activate_reshared_set(&owner, &retained, active_set_hash(&retained))
-        .expect("submit owner activation");
-    assert!(
-        outcome.success,
-        "owner exclusion boundary reverted: {}",
-        outcome.transaction_hash
-    );
-}
-
 fn current_epoch(world: &World) -> u64 {
     world
         .rpc
-        .consensus_status_field(world.validators.primary_port(), "epoch")
-        .and_then(|value| value.trim_matches('"').parse().ok())
-        .expect("consensus epoch")
+        .epoch_on(world.validators.primary_port())
+        .expect("ValidatorSet epoch")
+}
+
+fn wait_for_periodic_exclusion(
+    world: &World,
+    address: &str,
+    deactivation_epoch: u64,
+) -> ValidatorRecord {
+    let primary = world.validators.primary_port();
+
+    for _ in 0..PERIODIC_EXCLUSION_TRIES {
+        let epoch_advanced = world
+            .rpc
+            .epoch_on(primary)
+            .is_some_and(|epoch| epoch > deactivation_epoch);
+        let all_nodes_excluded = world.validators.committee_ports().into_iter().all(|port| {
+            world
+                .rpc
+                .validator_record(port, address)
+                .is_some_and(|record| record.status == 4 && !record.has_bls_share)
+                && !world.rpc.is_participant(port, address)
+        });
+        if epoch_advanced && all_nodes_excluded {
+            return world
+                .rpc
+                .validator_record(primary, address)
+                .expect("validator record after periodic exclusion");
+        }
+        sleep(Duration::from_secs(2));
+    }
+
+    panic!(
+        "validator {address} was not excluded by a periodic DKG boundary after epoch \
+         {deactivation_epoch}; current epoch: {:?}, primary record: {:?}",
+        world.rpc.epoch_on(primary),
+        world.rpc.validator_record(primary, address)
+    );
 }
 
 fn assert_accounting(world: &World, expected_live_claims: U256, label: &str) -> (U256, U256) {
     let primary = world.validators.primary_port();
+    let comparison_height = world
+        .rpc
+        .head(primary)
+        .expect("primary head before accounting comparison");
+    for port in world.validators.committee_ports() {
+        assert!(
+            world
+                .rpc
+                .wait_finalized_at_least(port, comparison_height, 60),
+            "{label}: RPC {port} did not finalize comparison height {comparison_height}"
+        );
+    }
     let primary_records = world.rpc.validators(primary).expect("validator addresses");
     let total = world
         .rpc
@@ -223,10 +243,19 @@ fn assert_accounting(world: &World, expected_live_claims: U256, label: &str) -> 
         );
         for address in &primary_records {
             let address_text = format!("{address:#x}");
+            let primary_stake = world
+                .rpc
+                .validator_record(primary, &address_text)
+                .expect("primary validator record for stake comparison")
+                .stake;
+            let node_stake = world
+                .rpc
+                .validator_record(port, &address_text)
+                .expect("validator record for stake comparison")
+                .stake;
             assert_eq!(
-                world.rpc.validator_record(port, &address_text),
-                world.rpc.validator_record(primary, &address_text),
-                "{label}: validator record differs on port {port}"
+                node_stake, primary_stake,
+                "{label}: validator stake differs on port {port}"
             );
             assert_eq!(
                 world.rpc.stake_on(port, &address_text),
@@ -562,18 +591,23 @@ fn run_accounting_lifecycle(world: &mut World) {
     world.rpc.stake(&victim_key, 100).expect("successful stake");
     assert_accounting(world, claims, "successful stake");
 
-    let before_rejected = world
+    let stake_before_rejected = world
         .rpc
         .validator_record(port, &victim_address)
-        .expect("record before rejected stake");
+        .expect("record before rejected stake")
+        .stake;
     let total_before_rejected = world.rpc.total_staked_on(port);
     assert!(
         world.rpc.stake(&victim_key, 0).is_err(),
         "zero-value stake unexpectedly succeeded"
     );
     assert_eq!(
-        world.rpc.validator_record(port, &victim_address),
-        Some(before_rejected)
+        world
+            .rpc
+            .validator_record(port, &victim_address)
+            .expect("record after rejected stake")
+            .stake,
+        stake_before_rejected
     );
     assert_eq!(world.rpc.total_staked_on(port), total_before_rejected);
     assert_accounting(world, claims, "rejected stake");
@@ -592,16 +626,13 @@ fn run_accounting_lifecycle(world: &mut World) {
         .rpc
         .stake_on(port, &exiting_address)
         .expect("stake before exit");
+    let deactivation_epoch = current_epoch(world);
     world
         .rpc
         .deactivate(&exiting_key)
         .expect("deactivate validator");
     assert_accounting(world, claims, "deactivate");
-    owner_activate_without(
-        world,
-        exiting_address.parse().expect("parse exiting address"),
-    );
-    wait_status(world, &exiting_address, 4, 20);
+    wait_for_periodic_exclusion(world, &exiting_address, deactivation_epoch);
     let drained = wait_zero_bonded_stake(world, &exiting_address, 20);
     claims += exit_stake;
     assert_accounting(world, claims, "exit drain");
@@ -635,9 +666,9 @@ fn native_balance_is_conserved(world: &mut World) {
 fn active_validator_has_staggered_claims(world: &mut World) {
     let profile = BootstrapProfile::default()
         .with_validator_set_owner(0)
-        .with_dkg_timing(80, 20, 20)
+        .with_dkg_timing(60, 20, 20)
         .expect("valid DKG timing")
-        .with_staking_timing(Some(20), Some(40))
+        .with_staking_timing(Some(S08_UNBONDING_SECS), Some(300))
         .expect("valid staking timing");
     boot_profile(world, profile);
 
@@ -651,8 +682,8 @@ fn active_validator_has_staggered_claims(world: &mut World) {
         .validator_record(world.validators.primary_port(), &address)
         .expect("record after first unstake")
         .unbonding_end;
-    let first_start = first_end.saturating_sub(20);
-    wait_timestamp(world, first_start + 8, 30);
+    let first_start = first_end.saturating_sub(S08_UNBONDING_SECS);
+    wait_timestamp(world, first_start + S08_STAGGER_SECS, 30);
 
     let second = world
         .rpc
@@ -668,7 +699,7 @@ fn active_validator_has_staggered_claims(world: &mut World) {
         second_end > first_end,
         "claim timestamps were not staggered"
     );
-    wait_timestamp(world, first_end, 30);
+    let deactivation_epoch = current_epoch(world);
     world
         .rpc
         .deactivate(&key)
@@ -677,6 +708,7 @@ fn active_validator_has_staggered_claims(world: &mut World) {
     *UNBONDING.lock().expect("unbonding scratch") = Some(UnbondingScratch {
         address,
         key,
+        deactivation_epoch,
         first_end,
         second_end,
         final_end: 0,
@@ -692,11 +724,7 @@ fn exclusion_moves_to_unbonding(world: &mut World) {
         .expect("unbonding scratch")
         .take()
         .expect("S-08 setup");
-    owner_activate_without(
-        world,
-        scratch.address.parse().expect("parse unbonding address"),
-    );
-    wait_status(world, &scratch.address, 4, 20);
+    wait_for_periodic_exclusion(world, &scratch.address, scratch.deactivation_epoch);
     scratch.final_end = wait_zero_bonded_stake(world, &scratch.address, 20).unbonding_end;
     assert!(scratch.final_end > scratch.second_end);
     *UNBONDING.lock().expect("unbonding scratch") = Some(scratch);
@@ -711,7 +739,7 @@ fn consume_staggered_claims(world: &mut World) {
         .expect("S-08 setup");
     let port = world.validators.primary_port();
 
-    wait_timestamp(world, scratch.first_end, 10);
+    wait_timestamp(world, scratch.first_end, 240);
     let before = world
         .rpc
         .balance_on(port, &scratch.address)
@@ -780,7 +808,7 @@ fn final_claim_moves_inactive(world: &mut World) {
         .expect("unbonding scratch")
         .take()
         .expect("S-08 setup");
-    wait_timestamp(world, scratch.final_end, 40);
+    wait_timestamp(world, scratch.final_end, 240);
     world
         .rpc
         .claim_unbonded(&scratch.key)

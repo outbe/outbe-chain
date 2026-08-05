@@ -6,7 +6,7 @@
 //! durable on-chain hint; it is never used to force the scheduler.
 
 use std::thread::sleep;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use alloy_primitives::{keccak256, Address, B256};
 use cucumber::{given, then, when};
@@ -18,35 +18,6 @@ const EPOCH_BLOCKS: u64 = 60;
 const PREPARE_BLOCKS: u64 = 20;
 const ACTIVATION_GRACE_BLOCKS: u64 = 30;
 const CEREMONY_LOG: &str = "freezing validator set and starting DKG rotation";
-const RECOVERY_POLL_INTERVAL: Duration = Duration::from_secs(2);
-const RECOVERY_STALL_TIMEOUT: Duration = Duration::from_secs(180);
-const RECOVERY_POST_GRACE_BLOCKS: u64 = 2;
-const BOUNDARY_HASH_FATAL: &str = "active_set_hash changed without validator-set change";
-
-#[derive(Debug, PartialEq, Eq)]
-enum RecoveryDecision {
-    Continue,
-    Recovered,
-    WindowMissed,
-    FinalityStalled,
-}
-
-fn recovery_decision(
-    participant: bool,
-    finalized: Option<u64>,
-    observation_end: u64,
-    idle: Duration,
-) -> RecoveryDecision {
-    if participant {
-        RecoveryDecision::Recovered
-    } else if finalized.is_some_and(|height| height > observation_end) {
-        RecoveryDecision::WindowMissed
-    } else if idle >= RECOVERY_STALL_TIMEOUT {
-        RecoveryDecision::FinalityStalled
-    } else {
-        RecoveryDecision::Continue
-    }
-}
 
 fn boot_profiled_localnet(world: &mut World, owner: Option<usize>) {
     let mut profile = BootstrapProfile::default()
@@ -393,7 +364,7 @@ fn joiner_activates_in_scheduled_window(world: &mut World) {
     panic!("joiner never became ACTIVE in the scheduled DKG window");
 }
 
-// ---- D-04: raw owner omission leaves ACTIVE/share=false until recovery ------
+// ---- D-04: external owners cannot manufacture an ACTIVE/shareless member ----
 
 #[given("a fresh localnet whose four active validators have BLS shares")]
 fn four_active_validators_with_shares(world: &mut World) {
@@ -423,8 +394,10 @@ fn four_active_validators_with_shares(world: &mut World) {
     }
 }
 
-#[when(expr = "the configured owner activates a canonical reshared set omitting {string}")]
-fn owner_omits_active_validator(world: &mut World, omitted_name: String) {
+#[when(
+    expr = "the configured owner attempts to activate a canonical reshared set omitting {string}"
+)]
+fn owner_attempts_to_omit_active_validator(world: &mut World, omitted_name: String) {
     let primary = world.validators.primary_port();
     let omitted: Address = validator_address(world, &omitted_name)
         .parse()
@@ -445,136 +418,47 @@ fn owner_omits_active_validator(world: &mut World, omitted_name: String) {
     let outcome = world
         .rpc
         .activate_reshared_set(&owner_key, &active_set, active_set_hash(&active_set))
-        .expect("submit controlled owner boundary");
+        .expect("submit forbidden owner boundary");
     assert!(
-        outcome.success,
-        "controlled owner omission transaction reverted: {}",
+        !outcome.success,
+        "owner omission unexpectedly succeeded: {}",
         outcome.transaction_hash
     );
     let block = outcome.block_number().expect("owner omission block");
     wait_until_all_nodes_observe_height(world, block);
 }
 
-#[then(expr = "{string} is ACTIVE without a share and is not a consensus participant")]
-fn omitted_validator_is_shareless(world: &mut World, validator_name: String) {
-    let address = validator_address(world, &validator_name);
-    for port in world.validators.committee_ports() {
-        assert_eq!(
-            world.rpc.validator_status(port, &address),
-            Some(2),
-            "{validator_name} status changed instead of remaining ACTIVE on RPC {port}"
-        );
-        assert_eq!(
-            world.rpc.has_share(port, &address),
-            Some(false),
-            "{validator_name} retained a share on RPC {port}"
-        );
-        assert!(
-            !world.rpc.is_participant(port, &address),
-            "{validator_name} remained an on-chain consensus participant on RPC {port}"
-        );
-    }
-}
-
-#[then("pending set change remains true on every validator")]
-fn repair_flag_is_visible_everywhere(world: &mut World) {
-    for port in world.validators.committee_ports() {
-        assert_eq!(
-            world.rpc.has_pending_set_change(port),
-            Some(true),
-            "RPC {port} did not retain the repair flag"
-        );
-    }
-}
-
-#[when(expr = "the next periodic reshare includes {string}")]
-fn wait_for_periodic_recovery(world: &mut World, validator_name: String) {
-    let primary = world.validators.primary_port();
-    let address = validator_address(world, &validator_name);
-    let expected_activation = planned_activation(world);
-    let observation_end = expected_activation
-        .saturating_add(ACTIVATION_GRACE_BLOCKS)
-        .saturating_add(RECOVERY_POST_GRACE_BLOCKS);
-    let mut last_progress = Instant::now();
-    let mut last_finalized = world.rpc.finalized(primary);
-
-    loop {
-        if let Some(line) = world
-            .localnet
-            .first_runtime_log_line_containing(BOUNDARY_HASH_FATAL)
-            .expect("scan runtime logs for recovery boundary fatal")
-        {
-            panic!(
-                "{validator_name} recovery boundary failed before activation \
-                 {expected_activation}: {line}"
+#[then("the owner omission is rejected with all four validators still ACTIVE with shares")]
+fn owner_omission_is_rejected_atomically(world: &mut World) {
+    for index in 0..4 {
+        let validator_name = format!("validator-{index}");
+        let address = validator_address(world, &validator_name);
+        for port in world.validators.committee_ports() {
+            assert_eq!(
+                world.rpc.validator_status(port, &address),
+                Some(2),
+                "{validator_name} is not ACTIVE on RPC {port}"
+            );
+            assert_eq!(
+                world.rpc.has_share(port, &address),
+                Some(true),
+                "{validator_name} lost its share on RPC {port}"
+            );
+            assert!(
+                world.rpc.is_participant(port, &address),
+                "{validator_name} stopped participating on RPC {port}"
             );
         }
-
-        let participant = world.rpc.is_participant(primary, &address);
-        let finalized = world.rpc.finalized(primary);
-        let advanced = match (last_finalized, finalized) {
-            (None, Some(_)) => true,
-            (Some(previous), Some(current)) => current > previous,
-            _ => false,
-        };
-        if advanced {
-            last_finalized = finalized;
-            last_progress = Instant::now();
-        }
-
-        match recovery_decision(
-            participant,
-            finalized,
-            observation_end,
-            last_progress.elapsed(),
-        ) {
-            RecoveryDecision::Recovered => return,
-            RecoveryDecision::WindowMissed => panic!(
-                "{validator_name} missed recovery activation {expected_activation} and its \
-                 grace window ending at {observation_end}; finalized height: {finalized:?}"
-            ),
-            RecoveryDecision::FinalityStalled => panic!(
-                "{validator_name} recovery stopped making finality progress for {}s \
-                 before activation {expected_activation} (observation end {observation_end}); \
-                 last finalized height: {:?}",
-                RECOVERY_STALL_TIMEOUT.as_secs(),
-                last_finalized
-            ),
-            RecoveryDecision::Continue => {}
-        }
-
-        sleep(RECOVERY_POLL_INTERVAL);
-    }
-}
-
-#[then(expr = "{string} is ACTIVE with a share and participates again")]
-fn recovered_validator_participates(world: &mut World, validator_name: String) {
-    let address = validator_address(world, &validator_name);
-    for port in world.validators.committee_ports() {
-        assert_eq!(
-            world.rpc.validator_status(port, &address),
-            Some(2),
-            "{validator_name} is not ACTIVE on RPC {port}"
-        );
-        assert_eq!(
-            world.rpc.has_share(port, &address),
-            Some(true),
-            "{validator_name} has no recovered share on RPC {port}"
-        );
-        assert!(
-            world.rpc.is_participant(port, &address),
-            "{validator_name} is not a recovered participant on RPC {port}"
-        );
     }
 }
 
 #[then("committee membership and state roots converge on every validator")]
-fn recovered_committee_converges(world: &mut World) {
+fn committee_converges(world: &mut World) {
     let ports = world.validators.committee_ports();
     let common_height = world
         .rpc
         .finalized(ports[0])
-        .expect("primary recovery finalization");
+        .expect("primary finalization after rejected owner omission");
     wait_until_all_nodes_observe_height(world, common_height);
     let expected_members = world
         .rpc
@@ -583,7 +467,7 @@ fn recovered_committee_converges(world: &mut World) {
     assert_eq!(
         expected_members.len(),
         4,
-        "recovered consensus set is not complete"
+        "consensus set changed after rejected owner omission"
     );
     let expected_root = world
         .rpc
@@ -734,35 +618,4 @@ fn restaked_joiner_stays_excluded(world: &mut World) {
         Some(4),
         "unconfirmed restake changed the ACTIVE set"
     );
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{recovery_decision, RecoveryDecision, RECOVERY_STALL_TIMEOUT};
-    use std::time::Duration;
-
-    #[test]
-    fn recovery_wait_respects_grace_and_idle_progress() {
-        let end = 92;
-        assert_eq!(
-            recovery_decision(false, Some(end), end, Duration::from_secs(179)),
-            RecoveryDecision::Continue
-        );
-        assert_eq!(
-            recovery_decision(false, Some(end + 1), end, Duration::ZERO),
-            RecoveryDecision::WindowMissed
-        );
-        assert_eq!(
-            recovery_decision(false, Some(end), end, RECOVERY_STALL_TIMEOUT),
-            RecoveryDecision::FinalityStalled
-        );
-    }
-
-    #[test]
-    fn observed_recovery_wins_at_the_last_allowed_height() {
-        assert_eq!(
-            recovery_decision(true, Some(92), 92, RECOVERY_STALL_TIMEOUT),
-            RecoveryDecision::Recovered
-        );
-    }
 }

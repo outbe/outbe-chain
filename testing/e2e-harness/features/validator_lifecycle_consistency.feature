@@ -10,7 +10,7 @@ Feature: Validator lifecycle state remains internally consistent
   Scenario: A registration proof cannot be replayed on another valid chain
     Given a funded validator registration fixture on a valid localnet with chain id 54322345
     And the fixture is accepted without changing its identity material
-    When the localnet is re-bootstrapped with valid chain id 54322346
+    When the localnet is re-bootstrapped with valid chain id 424242
     And the same validator address, BLS public key, and proof are submitted
     Then the cross-chain proof replay is rejected without changing the registry identity bundle
 
@@ -30,14 +30,11 @@ Feature: Validator lifecycle state remains internally consistent
     And the flag remains set until a matching boundary activates the joiner
     And the joiner becomes active no later than that scheduled DKG window
 
-  @risk-d-04 @tee
-  Scenario: An active validator omitted at a boundary remains a recovery target
+  @risk-d-04
+  Scenario: An owner cannot omit an active validator from the committee
     Given a fresh localnet whose four active validators have BLS shares
-    When the configured owner activates a canonical reshared set omitting "validator-3"
-    Then "validator-3" is ACTIVE without a share and is not a consensus participant
-    And pending set change remains true on every validator
-    When the next periodic reshare includes "validator-3"
-    Then "validator-3" is ACTIVE with a share and participates again
+    When the configured owner attempts to activate a canonical reshared set omitting "validator-3"
+    Then the owner omission is rejected with all four validators still ACTIVE with shares
     And committee membership and state roots converge on every validator
 
   @risk-d-05

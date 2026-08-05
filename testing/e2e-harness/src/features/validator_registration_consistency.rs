@@ -316,6 +316,10 @@ fn rebootstrap_with_valid_chain_id(world: &mut World, chain_id: u64) {
         .rebootstrap_with_profile(world.validators.size(), &profile)
         .expect("re-bootstrap with another checked profile");
     world
+        .mongodb
+        .reset_projection_state()
+        .expect("reset first-chain projection state");
+    world
         .localnet
         .start(&StartOpts::with_voting_window(6))
         .expect("start re-bootstrapped localnet");

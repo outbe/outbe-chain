@@ -4407,7 +4407,7 @@ mod tests {
     use outbe_stablecoin::StablecoinContract;
     use outbe_stablecoinfactory::{precompile::IStablecoinFactory, StablecoinFactoryContract};
     use outbe_tribute::{TributeContract, TributeData, TributeRepositoryReader};
-    use outbe_validatorset::{ValidatorHistory, ValidatorLifecycle};
+    use outbe_validatorset::ValidatorHistory;
     use outbe_vote::{
         constants::VOTING_WINDOW_BLOCKS,
         precompile::IVote,
@@ -11915,14 +11915,10 @@ mod tests {
 
             let retained = address!("0x1111111111111111111111111111111111111111");
             let expired = address!("0x2222222222222222222222222222222222222222");
-            vs.register_validator(OWNER, retained, &dummy_pubkey(0xA1))
-                .unwrap();
-            vs.register_validator(OWNER, expired, &dummy_pubkey(0xB2))
-                .unwrap();
-            for validator in [retained, expired] {
-                vs.activate_validator_via_boundary_for_test(validator)
-                    .unwrap();
-            }
+            test_register_active(&mut vs, retained, &dummy_pubkey(0xA1));
+            test_register_active(&mut vs, expired, &dummy_pubkey(0xB2));
+            let current_hash = super::hash_boundary_active_set(&[retained, expired]);
+            vs.test_set_active_consensus_set_hash(current_hash).unwrap();
 
             let mut boundary = boundary_with(true, vec![(retained, dummy_pubkey(0xA1))]);
             boundary.tee_expired_target_exclusions = vec![expired];
@@ -11935,14 +11931,18 @@ mod tests {
                 .unwrap();
 
             let vs_after = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-            assert!(matches!(
-                vs_after.validator_lifecycle(expired).unwrap(),
-                ValidatorLifecycle::WaitingForReadiness(_)
-            ));
-            assert!(vs_after
-                .validator_lifecycle(retained)
-                .unwrap()
-                .is_active_status());
+            let expired_state = vs_after.validator_state(expired).unwrap();
+            assert_eq!(
+                expired_state.stored_status().unwrap(),
+                outbe_validatorset::runtime::status::PENDING
+            );
+            assert!(!expired_state.has_bls_share());
+            assert!(!expired_state.join_confirmed());
+            let retained_state = vs_after.validator_state(retained).unwrap();
+            assert_eq!(
+                retained_state.stored_status().unwrap(),
+                outbe_validatorset::runtime::status::ACTIVE
+            );
         });
     }
 
@@ -11955,10 +11955,9 @@ mod tests {
             vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
             let retained = address!("0x1111111111111111111111111111111111111111");
-            vs.register_validator(OWNER, retained, &dummy_pubkey(0xA1))
-                .unwrap();
-            vs.activate_validator_via_boundary_for_test(retained)
-                .unwrap();
+            test_register_active(&mut vs, retained, &dummy_pubkey(0xA1));
+            let hash = super::hash_boundary_active_set(&[retained]);
+            vs.test_set_active_consensus_set_hash(hash).unwrap();
 
             let mut boundary = boundary_with(false, vec![(retained, dummy_pubkey(0xA1))]);
             boundary.tee_expired_target_exclusions_hash = B256::with_last_byte(0xFF);

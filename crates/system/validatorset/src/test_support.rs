@@ -278,7 +278,8 @@ impl ValidatorSet<'_> {
         self.activate_validated_boundary_set(new_active_set, active_set_hash, freeze_height)
     }
 
-    /// Calls the certified TEE-expiry boundary seam from a test.
+    /// Calls the consensus-validated boundary seam with certified TEE-expiry
+    /// exclusions from a test without exposing it in production.
     pub fn test_activate_validated_boundary_set_with_expiry_exclusions(
         &mut self,
         new_active_set: &[Address],

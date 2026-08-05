@@ -42,10 +42,10 @@ impl P2pInfo {
             ));
         }
         if version != P2P_ADDRESS_VERSION_V1 {
-            return Err(corrupt_state(
-                validator,
-                format_args!("unsupported P2P address version {version}"),
-            ));
+            return Ok(Self::Opaque {
+                version,
+                payload: payload.to_vec(),
+            });
         }
         let address = decode_versioned(version, payload).map_err(|error| {
             corrupt_state(
@@ -61,6 +61,7 @@ impl P2pInfo {
         match self {
             Self::Unset => (0, Vec::new()),
             Self::V1(address) => (P2P_ADDRESS_VERSION_V1, encode_v1(address)),
+            Self::Opaque { version, payload } => (*version, payload.clone()),
         }
     }
 }

@@ -222,6 +222,24 @@ fn p2p_version_and_payload_decode_atomically() {
         0,
     )
     .is_err());
+
+    let opaque_payload = vec![0xAA, 0xBB];
+    let opaque = ValidatorState::decode_stored(
+        ADDRESS,
+        1,
+        KEY,
+        StakeProjection::zero(),
+        REGISTERED,
+        99,
+        &opaque_payload,
+        history(),
+        false,
+        false,
+        0,
+    )
+    .unwrap();
+    assert_eq!(opaque.p2p().and_then(P2pInfo::address), None);
+    assert_eq!(opaque.p2p().unwrap().encode_stored(), (99, opaque_payload));
 }
 
 #[test]

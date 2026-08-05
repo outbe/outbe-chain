@@ -62,18 +62,24 @@ pub enum ValidatorLifecycle {
 
 /// Versioned validator P2P information. P2P publication is informational and
 /// is not a lifecycle prerequisite, so every registered state can carry
-/// `Unset`.
+/// `Unset`. Unknown persisted versions remain opaque so state readers can
+/// preserve forward-compatible registry entries without admitting them as
+/// usable peers.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum P2pInfo {
     #[default]
     Unset,
     V1(P2pAddress),
+    Opaque {
+        version: u8,
+        payload: Vec<u8>,
+    },
 }
 
 impl P2pInfo {
     pub const fn address(&self) -> Option<&P2pAddress> {
         match self {
-            Self::Unset => None,
+            Self::Unset | Self::Opaque { .. } => None,
             Self::V1(address) => Some(address),
         }
     }

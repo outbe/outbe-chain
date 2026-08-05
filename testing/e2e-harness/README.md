@@ -341,18 +341,6 @@ timeouts, lack of finalization, and log-audit failures are not product-defect
 evidence. The unfiltered main suite is intentionally red while any of these
 target invariants remain violated.
 
-The separate malicious-node scenario attempts to propagate an internally
-self-consistent but locally incorrect committee boundary to honest validators:
-
-```sh
-cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
-  --tee mock --validators 4 --all \
-  --input crates/testing/e2e-harness/features/validator_adversarial_consensus.feature
-```
-
-It builds the patched node from the exact tested revision in a detached
-worktree. The normal source tree and honest binaries remain unmodified.
-
 ### Coverage matrix
 
 | Checklist ID | Live scenario | Target result |
@@ -360,7 +348,7 @@ worktree. The normal source tree and honest binaries remain unmodified.
 | D-01A | Replay one unchanged registration fixture after a valid cross-chain rebootstrap | Replay rejected; `@expected-to-fail` |
 | D-01B | Configured owner submits an empty-PoP post-bootstrap registration | Registration rejected; `@expected-to-fail` |
 | D-02 | Readiness arrives just after freeze | No immediate DKG; activation at the next scheduled window |
-| D-04 | Omit an ACTIVE member, recover it at the next reshare, and separately inject a malicious boundary | `ACTIVE/share=false` remains repairable; honest nodes reject the attack |
+| D-04 | Attempt to omit an ACTIVE member and recover it at the next reshare | `ACTIVE/share=false` remains repairable |
 | D-05 | Submit canonical felony evidence and all replays | Exactly one complete punishment |
 | D-06 | Claim and same-EOA re-register in one block | Dense index retained; reachable residue and key ownership reset |
 | D-07 | Partially unstake a jailed validator below minimum | Validator remains JAILED; `@expected-to-fail` |

@@ -735,6 +735,7 @@ mod tests {
     #[test]
     fn test_read_consensus_validators_includes_exiting_with_share() {
         let mut provider = HashMapStorageProvider::new(1);
+        provider.set_block_number(1);
         let active = Address::with_last_byte(0x01);
         let exiting = Address::with_last_byte(0x02);
 
