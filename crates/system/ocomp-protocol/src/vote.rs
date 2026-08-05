@@ -711,7 +711,7 @@ impl OcompAccountabilitySummaryV1 {
             validate_bitmap(bitmap, self.member_count)?;
         }
         let mask = participant_mask(self.member_count)?;
-        for index in 0..self.timely_bitmap.len() {
+        for (index, mask_byte) in mask.iter().copied().enumerate() {
             let timely = self.timely_bitmap[index];
             let matching = self.matching_bitmap[index];
             let divergent = self.divergent_bitmap[index];
@@ -720,7 +720,7 @@ impl OcompAccountabilitySummaryV1 {
             require(
                 matching & divergent == 0
                     && matching | divergent == timely
-                    && missing == mask[index] & !timely
+                    && missing == mask_byte & !timely
                     && equivocation & !timely == 0,
                 "accountability bitmap partition",
             )?;
