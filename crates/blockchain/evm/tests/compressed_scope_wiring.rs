@@ -51,7 +51,7 @@ fn execution_db(proposer: Address, parent_root: B256) -> CacheDB<EmptyDBTyped<Pr
         let mut public_key = [0_u8; 48];
         public_key[0] = 0xa2;
         validators
-            .register_validator(owner, proposer, &public_key)
+            .test_register_validator_without_pop(proposer, &public_key)
             .unwrap();
         validators
             .activate_validator_via_boundary_for_test(proposer)

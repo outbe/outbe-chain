@@ -2224,7 +2224,7 @@ mod tests {
                 {
                     let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
                     for (i, a) in members.iter().enumerate() {
-                        vs.register_validator(OWNER, *a, &[0xC0u8 + i as u8; 48])
+                        vs.test_register_validator_without_pop(*a, &[0xC0u8 + i as u8; 48])
                             .unwrap();
                         vs.activate_validator_via_boundary_for_test(*a).unwrap();
                     }

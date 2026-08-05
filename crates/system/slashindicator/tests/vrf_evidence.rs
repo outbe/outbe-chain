@@ -327,6 +327,7 @@ fn setup_storage(
     vs.config_owner.write(OWNER).unwrap();
     vs.set_config_max_validators(100).unwrap();
     set_current_epoch(&mut vs, current_epoch);
+    let stake = U256::from(STAKE_AMOUNT);
     let proposer_pubkey = snapshot
         .committee
         .iter()
@@ -334,6 +335,8 @@ fn setup_storage(
         .expect("proposer belongs to snapshot")
         .consensus_pubkey;
     vs.register_validator(OWNER, proposer, &proposer_pubkey)
+        .unwrap();
+    vs.test_set_stake_projection(proposer, StakeProjection::new(stake, None))
         .unwrap();
     vs.activate_validator_via_boundary_for_test(proposer)
         .unwrap();
@@ -347,16 +350,12 @@ fn setup_storage(
     }
 
     let staking = Staking::new(storage.clone());
-    let stake = U256::from(STAKE_AMOUNT);
     staking.stake_amount.write(&proposer, stake).unwrap();
     staking.total_staked.write(stake).unwrap();
     staking
         .storage
         .increase_balance(STAKING_ADDRESS, stake)
         .unwrap();
-    vs.test_set_stake_projection(proposer, StakeProjection::new(stake, None))
-        .unwrap();
-
     write_committee_snapshot(storage, CHILD_EPOCH, snapshot).unwrap();
 }
 
@@ -812,7 +811,7 @@ fn invalid_vrf_proof_evidence_slashes_child_proposer() {
         assert!(
             matches!(
                 vs.validator_lifecycle(proposer).unwrap(),
-                ValidatorLifecycle::Jailed(_)
+                ValidatorLifecycle::JailRetained(_)
             ),
             "proposer must be jailed"
         );

@@ -440,7 +440,7 @@ fn slash_window_resets_penalty_counters_at_the_window_end() {
         let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         assert!(matches!(
             vs.validator_lifecycle(v1).unwrap(),
-            ValidatorLifecycle::Jailed(_)
+            ValidatorLifecycle::JailRetained(_) | ValidatorLifecycle::Jail(_)
         ));
     });
 }
@@ -485,7 +485,7 @@ fn slash_window_rolls_back_slash_state_when_force_exit_fails() {
 
         let validator = Address::new([0x33; 20]);
         let stake = U256::in_units(100u64);
-        register_validator(storage.clone(), validator, stake);
+        register_waiting_for_readiness(storage.clone(), validator, stake);
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         vs.test_set_pending_set_change(false).unwrap();
 
@@ -495,10 +495,6 @@ fn slash_window_rolls_back_slash_state_when_force_exit_fails() {
         oracle
             .storage
             .set_balance(outbe_primitives::addresses::STAKING_ADDRESS, stake)
-            .unwrap();
-
-        let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        vs.test_set_lifecycle(validator, ValidatorLifecycle::Registered)
             .unwrap();
 
         oracle.increment_miss(&validator).unwrap();
@@ -518,14 +514,11 @@ fn slash_window_rolls_back_slash_state_when_force_exit_fails() {
         );
 
         let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        assert_eq!(
-            vs.validator_state(validator).unwrap().stake().bonded(),
-            stake
-        );
-        assert_eq!(
+        assert_eq!(vs.validator_state(validator).unwrap().bonded_stake(), stake);
+        assert!(matches!(
             vs.validator_lifecycle(validator).unwrap(),
-            ValidatorLifecycle::Registered
-        );
+            ValidatorLifecycle::WaitingForReadiness(_)
+        ));
 
         assert_eq!(oracle.penalty_miss_count.read(&validator).unwrap(), 1);
     });

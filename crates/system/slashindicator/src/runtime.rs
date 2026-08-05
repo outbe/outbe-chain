@@ -120,8 +120,10 @@ impl SlashIndicator<'_> {
     fn validator_already_penalized(&self, validator: Address) -> Result<bool> {
         let vs = ValidatorSet::new(self.storage.clone());
         Ok(matches!(
-            vs.validator_lifecycle(validator)?.phase(),
-            ValidatorLifecycle::Jailed(_) | ValidatorLifecycle::Exiting(_)
+            vs.validator_lifecycle(validator)?,
+            ValidatorLifecycle::JailRetained(_)
+                | ValidatorLifecycle::Jail(_)
+                | ValidatorLifecycle::Exiting(_)
         ))
     }
 

@@ -4,7 +4,7 @@ use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_staking::contract::Staking;
 use outbe_validatorset::contract::ValidatorSet;
-use outbe_validatorset::{ActiveState, StakeProjection, ValidatorLifecycle};
+use outbe_validatorset::{StakeProjection, ValidatorLifecycle};
 
 use crate::hooks;
 use crate::schema::SlashIndicator;
@@ -19,6 +19,7 @@ const SUBMITTER: Address = address!("0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD"
 /// Runs `f` inside a fresh HashMapStorageProvider context.
 fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_block_number(1);
     StorageHandle::enter(&mut storage, f)
 }
 
@@ -49,10 +50,7 @@ fn register_and_activate_with_pubkey_and_stake(
     let mut vs = ValidatorSet::new(storage.clone());
     vs.config_owner.write(OWNER).unwrap();
     vs.set_config_max_validators(100).unwrap();
-    vs.register_validator(OWNER, validator, consensus_pubkey)
-        .unwrap();
-    vs.activate_validator_via_boundary_for_test(validator)
-        .unwrap();
+    register_active_fixture(&mut vs, validator, consensus_pubkey, stake_amount);
 
     // Give the validator some stake so slash_stake has an effect
     let staking = Staking::new(storage.clone());
@@ -67,9 +65,6 @@ fn register_and_activate_with_pubkey_and_stake(
         .increase_balance(STAKING_ADDRESS, stake_amount)
         .unwrap();
     staking.total_staked.write(stake_amount).unwrap();
-    vs.test_set_stake_projection(validator, StakeProjection::new(stake_amount, None))
-        .unwrap();
-
     // the evidence precompiles now require an ACTIVE-validator submitter.
     // Register SUBMITTER as ACTIVE so the evidence tests reach the verifier (a
     // distinct test asserts a non-ACTIVE caller is rejected).
@@ -80,10 +75,22 @@ fn register_and_activate_with_pubkey_and_stake(
     {
         let mut sub_pk = [0u8; 48];
         sub_pk[0] = 0xEE;
-        vs.register_validator(OWNER, SUBMITTER, &sub_pk).unwrap();
-        vs.activate_validator_via_boundary_for_test(SUBMITTER)
-            .unwrap();
+        register_active_fixture(&mut vs, SUBMITTER, &sub_pk, U256::from(1));
     }
+}
+
+fn register_active_fixture(
+    vs: &mut ValidatorSet<'_>,
+    validator: Address,
+    consensus_pubkey: &[u8; 48],
+    stake: U256,
+) {
+    vs.test_register_validator_without_pop(validator, consensus_pubkey)
+        .unwrap();
+    vs.test_set_stake_projection(validator, StakeProjection::new(stake, None))
+        .unwrap();
+    vs.activate_validator_via_boundary_for_test(validator)
+        .unwrap();
 }
 
 // ---------------------------------------------------------------------------
@@ -141,7 +148,7 @@ fn test_slash_proposer_felony() {
         let vs = ValidatorSet::new(storage.clone());
         assert!(matches!(
             vs.validator_lifecycle(VAL_A).unwrap(),
-            ValidatorLifecycle::Jailed(_)
+            ValidatorLifecycle::JailRetained(_)
         ));
 
         // Stake must be reduced (5% slashed from 1_000_000)
@@ -185,7 +192,7 @@ fn test_felony_stays_jailed_when_slash_drops_below_min_stake() {
         assert!(
             matches!(
                 vs.validator_lifecycle(VAL_A).unwrap(),
-                ValidatorLifecycle::Jailed(_)
+                ValidatorLifecycle::JailRetained(_)
             ),
             "jail-before-slash must keep JAILED even when the slash drops below min_stake"
         );
@@ -278,11 +285,16 @@ fn test_felony_count_cumulative() {
         // Felony count must survive the reset
         assert_eq!(si.get_felony_count(VAL_A).unwrap(), 1);
 
-        // Re-activate in test storage to verify cumulative felony accounting.
+        // Exclude, unjail, and re-activate through the canonical lifecycle before
+        // verifying cumulative felony accounting for a later independent fault.
         let mut vs = ValidatorSet::new(storage.clone());
-        vs.test_set_lifecycle(
+        vs.test_activate_validated_boundary_set(&[SUBMITTER], B256::ZERO, 1)
+            .unwrap();
+        vs.unjail_after_stake_check(VAL_A).unwrap();
+        vs.test_activate_validator_canonically(
             VAL_A,
-            ValidatorLifecycle::Active(ActiveState::Participating),
+            StakeProjection::new(U256::from(950_000u64), None),
+            U256::from(1),
         )
         .unwrap();
 
@@ -304,6 +316,7 @@ fn test_felony_count_cumulative() {
 #[test]
 fn test_evidence_reward() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_block_number(1);
     // Seed STAKING_ADDRESS with funds for the reward transfer
     storage.set_balance(STAKING_ADDRESS, U256::from(10_000_000u64));
 
@@ -320,15 +333,11 @@ fn test_evidence_reward() {
         let mut vs = ValidatorSet::new(storage.clone());
         vs.config_owner.write(OWNER).unwrap();
         vs.set_config_max_validators(100).unwrap();
-        vs.register_validator(OWNER, validator, &pk_bytes).unwrap();
-        vs.activate_validator_via_boundary_for_test(validator)
-            .unwrap();
+        register_active_fixture(&mut vs, validator, &pk_bytes, U256::from(1));
         {
             let mut sub_pk = [0u8; 48];
             sub_pk[0] = 0xEE;
-            vs.register_validator(OWNER, SUBMITTER, &sub_pk).unwrap();
-            vs.activate_validator_via_boundary_for_test(SUBMITTER)
-                .unwrap();
+            register_active_fixture(&mut vs, SUBMITTER, &sub_pk, U256::from(1));
         }
 
         // Set stake
@@ -359,7 +368,7 @@ fn test_evidence_reward() {
         assert_eq!(si.get_felony_count(validator).unwrap(), 1);
         assert!(matches!(
             vs.validator_lifecycle(validator).unwrap(),
-            ValidatorLifecycle::Jailed(_)
+            ValidatorLifecycle::JailRetained(_)
         ));
 
         // Verify evidence reward paid to submitter
@@ -378,6 +387,7 @@ fn test_evidence_reward() {
 #[test]
 fn test_conflicting_vote_evidence() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_block_number(1);
     storage.set_balance(STAKING_ADDRESS, U256::from(10_000_000u64));
 
     StorageHandle::enter(&mut storage, |storage| {
@@ -391,21 +401,12 @@ fn test_conflicting_vote_evidence() {
         let mut vs = ValidatorSet::new(storage.clone());
         vs.config_owner.write(OWNER).unwrap();
         vs.set_config_max_validators(100).unwrap();
-        vs.register_validator(OWNER, validator, &pk_bytes).unwrap();
-        vs.activate_validator_via_boundary_for_test(validator)
-            .unwrap();
+        register_active_fixture(&mut vs, validator, &pk_bytes, U256::from(1));
         {
             let mut sub_pk = [0u8; 48];
             sub_pk[0] = 0xEE;
-            vs.register_validator(OWNER, SUBMITTER, &sub_pk).unwrap();
-            vs.activate_validator_via_boundary_for_test(SUBMITTER)
-                .unwrap();
+            register_active_fixture(&mut vs, SUBMITTER, &sub_pk, U256::from(1));
         }
-        vs.test_set_lifecycle(
-            validator,
-            ValidatorLifecycle::Active(ActiveState::Participating),
-        )
-        .unwrap();
 
         let stake = U256::from(2_000_000u64);
         let staking = Staking::new(storage.clone());
@@ -433,7 +434,7 @@ fn test_conflicting_vote_evidence() {
         assert_eq!(si.get_felony_count(validator).unwrap(), 1);
         assert!(matches!(
             vs.validator_lifecycle(validator).unwrap(),
-            ValidatorLifecycle::Jailed(_)
+            ValidatorLifecycle::JailRetained(_)
         ));
 
         // Verify evidence reward
@@ -451,6 +452,7 @@ fn test_conflicting_vote_evidence() {
 #[test]
 fn test_conflicting_vote_evidence_reversed_order() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_block_number(1);
     storage.set_balance(STAKING_ADDRESS, U256::from(10_000_000u64));
 
     StorageHandle::enter(&mut storage, |storage| {
@@ -464,15 +466,11 @@ fn test_conflicting_vote_evidence_reversed_order() {
         let mut vs = ValidatorSet::new(storage.clone());
         vs.config_owner.write(OWNER).unwrap();
         vs.set_config_max_validators(100).unwrap();
-        vs.register_validator(OWNER, validator, &pk_bytes).unwrap();
-        vs.activate_validator_via_boundary_for_test(validator)
-            .unwrap();
+        register_active_fixture(&mut vs, validator, &pk_bytes, U256::from(1));
         {
             let mut sub_pk = [0u8; 48];
             sub_pk[0] = 0xEE;
-            vs.register_validator(OWNER, SUBMITTER, &sub_pk).unwrap();
-            vs.activate_validator_via_boundary_for_test(SUBMITTER)
-                .unwrap();
+            register_active_fixture(&mut vs, SUBMITTER, &sub_pk, U256::from(1));
         }
 
         let stake = U256::from(1_000_000u64);
@@ -516,15 +514,11 @@ fn test_conflicting_vote_same_type_fails() {
         let mut vs = ValidatorSet::new(storage.clone());
         vs.config_owner.write(OWNER).unwrap();
         vs.set_config_max_validators(100).unwrap();
-        vs.register_validator(OWNER, validator, &pk_bytes).unwrap();
-        vs.activate_validator_via_boundary_for_test(validator)
-            .unwrap();
+        register_active_fixture(&mut vs, validator, &pk_bytes, U256::from(1));
         {
             let mut sub_pk = [0u8; 48];
             sub_pk[0] = 0xEE;
-            vs.register_validator(OWNER, SUBMITTER, &sub_pk).unwrap();
-            vs.activate_validator_via_boundary_for_test(SUBMITTER)
-                .unwrap();
+            register_active_fixture(&mut vs, SUBMITTER, &sub_pk, U256::from(1));
         }
 
         // Two notarize proposals for the same round
@@ -550,6 +544,7 @@ fn test_conflicting_vote_same_type_fails() {
 #[test]
 fn test_full_lifecycle_integration() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_block_number(1);
     storage.set_timestamp(U256::from(100_000u64));
     StorageHandle::enter(&mut storage, |storage| {
         let validator = VAL_A;
@@ -562,11 +557,12 @@ fn test_full_lifecycle_integration() {
 
         // 2. Register validator
         let pk = [0x42u8; 48];
-        vs.register_validator(OWNER, validator, &pk).unwrap();
-        assert_eq!(
+        vs.test_register_validator_without_pop(validator, &pk)
+            .unwrap();
+        assert!(matches!(
             vs.validator_lifecycle(validator).unwrap(),
-            ValidatorLifecycle::Registered
-        );
+            ValidatorLifecycle::WaitingForStake(_)
+        ));
 
         // 3. Setup Staking config and stake
         let mut staking = Staking::new(storage.clone());
@@ -579,7 +575,7 @@ fn test_full_lifecycle_integration() {
 
         // Stake to meet min_stake → PENDING (PoS lifecycle), then activate so the
         // felony has an ACTIVE consensus participant to act on (the DKG reshare
-        // normally promotes PENDING→ACTIVE; use the owner-manual path in the test).
+        // normally promotes PENDING→ACTIVE; use the semantic boundary fixture).
         staking
             .stake(validator, validator, U256::from(10_000u64))
             .unwrap();
@@ -589,7 +585,7 @@ fn test_full_lifecycle_integration() {
             .unwrap();
         assert!(matches!(
             vs.validator_lifecycle(validator).unwrap(),
-            ValidatorLifecycle::Pending(_)
+            ValidatorLifecycle::WaitingForReadiness(_)
         ));
         vs.activate_validator_via_boundary_for_test(validator)
             .unwrap();
@@ -615,7 +611,7 @@ fn test_full_lifecycle_integration() {
         // 6. Verify forced exit
         assert!(matches!(
             vs.validator_lifecycle(validator).unwrap(),
-            ValidatorLifecycle::Jailed(_)
+            ValidatorLifecycle::JailRetained(_)
         ));
         assert_eq!(si.get_felony_count(validator).unwrap(), 1);
 
@@ -638,7 +634,7 @@ fn test_full_lifecycle_integration() {
         let vs = ValidatorSet::new(storage.clone());
         assert!(matches!(
             vs.validator_lifecycle(validator).unwrap(),
-            ValidatorLifecycle::Jailed(_)
+            ValidatorLifecycle::JailRetained(_)
         ));
     });
 }
@@ -670,7 +666,7 @@ fn slash_voter_felony_force_exits_and_slashes_at_threshold() {
         assert_eq!(si.get_felony_count(VAL_A).unwrap(), 1);
         assert!(matches!(
             vs.validator_lifecycle(VAL_A).unwrap(),
-            ValidatorLifecycle::Jailed(_)
+            ValidatorLifecycle::JailRetained(_)
         ));
 
         // 1_000_000 stake slashed by 5% → 950_000.
@@ -714,18 +710,9 @@ fn already_jailed_voter_is_not_re_slashed() {
         assert_eq!(si.get_felony_count(VAL_A).unwrap(), 1);
         assert!(matches!(
             vs.validator_lifecycle(VAL_A).unwrap(),
-            ValidatorLifecycle::Jailed(_)
+            ValidatorLifecycle::JailRetained(_)
         ));
         assert_eq!(staking.get_stake(VAL_A).unwrap(), U256::from(950_000u64));
-        // A retained readiness residue wraps JAILED but must not bypass the
-        // already-penalized guard.
-        let mut vs = ValidatorSet::new(storage.clone());
-        let jailed = vs.validator_lifecycle(VAL_A).unwrap();
-        vs.test_set_lifecycle(
-            VAL_A,
-            ValidatorLifecycle::ReadinessOutsidePending(Box::new(jailed)),
-        )
-        .unwrap();
 
         // Two more misses reach count==4 (another threshold multiple), but the
         // validator is already JAILED → no second felony, no second slash.
@@ -742,8 +729,8 @@ fn already_jailed_voter_is_not_re_slashed() {
             "no second felony while already JAILED"
         );
         assert!(matches!(
-            vs.validator_lifecycle(VAL_A).unwrap().phase(),
-            ValidatorLifecycle::Jailed(_)
+            vs.validator_lifecycle(VAL_A).unwrap(),
+            ValidatorLifecycle::JailRetained(_)
         ));
         assert_eq!(
             staking.get_stake(VAL_A).unwrap(),
@@ -928,6 +915,7 @@ fn test_evidence_dedup_rejects_duplicate() {
     use blst::min_pk::SecretKey;
 
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_block_number(1);
     storage.set_balance(STAKING_ADDRESS, U256::from(10_000_000u64));
     storage.set_timestamp(U256::from(100_000u64));
 

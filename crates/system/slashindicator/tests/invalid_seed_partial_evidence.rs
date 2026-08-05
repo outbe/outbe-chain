@@ -70,14 +70,14 @@ fn setup(storage: StorageHandle) -> Fixture {
     let mut committee = Vec::new();
     for i in 0..N {
         let addr = validator_addr(i);
-        vs.register_validator(OWNER, addr, &pubkeys[i as usize])
+        vs.test_register_validator_without_pop(addr, &pubkeys[i as usize])
             .unwrap();
-        vs.activate_validator_via_boundary_for_test(addr).unwrap();
         let stake = U256::from(1_000_000u64);
         let staking = Staking::new(storage.clone());
         staking.stake_amount.write(&addr, stake).unwrap();
         vs.test_set_stake_projection(addr, StakeProjection::new(stake, None))
             .unwrap();
+        vs.activate_validator_via_boundary_for_test(addr).unwrap();
         committee.push(CommitteeEntry {
             address: addr,
             consensus_pubkey: pubkeys[i as usize],
@@ -96,7 +96,10 @@ fn setup(storage: StorageHandle) -> Fixture {
     // SUBMITTER active.
     let mut sub_pk = [0u8; 48];
     sub_pk[0] = 0x77;
-    vs.register_validator(OWNER, SUBMITTER, &sub_pk).unwrap();
+    vs.test_register_validator_without_pop(SUBMITTER, &sub_pk)
+        .unwrap();
+    vs.test_set_stake_projection(SUBMITTER, StakeProjection::new(U256::from(1), None))
+        .unwrap();
     vs.activate_validator_via_boundary_for_test(SUBMITTER)
         .unwrap();
 
@@ -169,7 +172,9 @@ fn build_ipe1(
 }
 
 fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
-    HashMapStorageProvider::new(CHAIN_ID).enter(f)
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_block_number(1);
+    storage.enter(f)
 }
 
 #[test]
@@ -190,7 +195,7 @@ fn invalid_partial_jails_and_slashes_then_dedups() {
         assert!(matches!(
             vs.validator_lifecycle(validator_addr(signer as u32))
                 .unwrap(),
-            ValidatorLifecycle::Jailed(_)
+            ValidatorLifecycle::JailRetained(_)
         ));
         let si = SlashIndicator::new(storage.clone());
         assert_eq!(
