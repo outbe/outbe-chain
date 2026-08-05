@@ -464,10 +464,14 @@ fn production_candidate_source() -> ProductionCandidateFixture {
     let source = Arc::new(RethFinalizedInputProofSource::new(
         provider,
         FinalizedParentCertStore::new(),
-        move || {
+        move |block_hash| {
             receipt_reader
                 .lock()
-                .map(|pending| pending.clone())
+                .map(|pending| {
+                    pending.as_ref().and_then(|(hash, receipts)| {
+                        (*hash == block_hash).then(|| receipts.clone())
+                    })
+                })
                 .map_err(|_| "pending receipt fixture lock is poisoned".to_owned())
         },
         10,
@@ -865,6 +869,59 @@ async fn ocm_pin_001_new_payload_pending_receipts_reach_the_production_journal_b
         }
     );
     assert!(root.path().join("pin.v1").is_file());
+}
+
+#[test]
+fn ocm_pin_001_candidate_falls_back_to_canonical_receipts_when_the_local_reader_is_empty() {
+    // A validator that adopted someone else's payload has no locally built
+    // block to answer for, so the reader returns nothing and the canonical
+    // lookup has to carry the pin. Production regressed exactly here.
+    let ProductionCandidateFixture {
+        request,
+        candidate,
+        source,
+        pending_receipts,
+    } = production_candidate_source();
+    let (_, receipts) = pending_receipts
+        .lock()
+        .expect("pending receipt fixture lock")
+        .take()
+        .expect("pending execution fixture");
+    source.provider.add_receipts(request.number(), receipts);
+
+    assert_eq!(
+        source
+            .candidate_for_block(&request)
+            .expect("canonical receipts back the candidate pin"),
+        Some(candidate)
+    );
+}
+
+#[test]
+fn ocm_pin_001_local_reader_answers_only_for_the_exact_block_hash() {
+    // The reader is keyed by block hash: receipts of a sibling block must never
+    // be mistaken for this one's.
+    let ProductionCandidateFixture {
+        request,
+        candidate: _,
+        source,
+        pending_receipts,
+    } = production_candidate_source();
+    {
+        let mut fixture = pending_receipts
+            .lock()
+            .expect("pending receipt fixture lock");
+        let (_, receipts) = fixture.take().expect("pending execution fixture");
+        *fixture = Some((B256::repeat_byte(0xd5), receipts));
+    }
+
+    assert_eq!(
+        source
+            .candidate_for_block(&request)
+            .expect_err("receipts of another block cannot back this pin")
+            .to_string(),
+        "finalized input source failed: candidate receipts are unavailable from pending and canonical execution"
+    );
 }
 
 #[test]

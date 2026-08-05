@@ -2,7 +2,7 @@
 //! enclaves (ported `run-testnet.sh` start), owned as Rust child processes.
 
 use std::fs;
-use std::os::unix::fs::{FileTypeExt as _, MetadataExt as _};
+use std::os::unix::fs::FileTypeExt as _;
 #[cfg(any(test, feature = "ocomp-integration"))]
 use std::path::Path;
 use std::path::PathBuf;
@@ -414,17 +414,12 @@ impl Localnet {
             let domain = vd.join("ocomp").join("domain-v1");
             fs::create_dir_all(&domain)?;
             fs::create_dir_all(self.cfg.ocomp_socket_dir(i))?;
-            let effective_uid = fs::metadata("/proc/self")?.uid();
             let boot_nonce = format!("0x{}", hex::encode([u8::try_from(i + 1)?; 32]));
             a.extend(args![
                 "--ocomp.supervisor-socket",
                 self.cfg.ocomp_supervisor_socket(i).display(),
                 "--ocomp.snapshot-exporter-socket",
                 self.cfg.ocomp_snapshot_exporter_socket(i).display(),
-                "--ocomp.supervisor-uid",
-                effective_uid,
-                "--ocomp.snapshot-exporter-uid",
-                effective_uid,
                 "--ocomp.protocol-bundle-hash",
                 protocol_bundle_hash,
                 "--ocomp.boot-nonce",

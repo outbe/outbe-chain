@@ -38,7 +38,7 @@ use outbe_node::ocomp::{
 use outbe_ocomp::{
     bundle::PinnedProtocolBundle,
     cas::{CasLimits, CasWriterRole, FilesystemCas, FilesystemCasReader},
-    control::{effective_uid, poc_schema_limits, EndpointIdentity},
+    control::{poc_schema_limits, EndpointIdentity},
     export_binding::{ExportBindingCandidate, ExportBindingError, ExportedManifestBindingStore},
     export_receipt::ExportReceiptReader,
     input_artifacts::poc_input_list_limits,
@@ -73,7 +73,6 @@ use outbe_tribute::{from_canonical_body, precompile::ITribute, TributeRepository
 const CHILD_MODE: &str = "OCM_EXP_CHILD_MODE";
 const CHILD_DATADIR: &str = "OCM_EXP_CE_DATADIR";
 const CHILD_NODE_SOCKET: &str = "OCM_EXP_NODE_SOCKET";
-const CHILD_NODE_UID: &str = "OCM_EXP_NODE_UID";
 const CHILD_SKIP_ACK: &str = "OCM_EXP_SKIP_ACK";
 const CHILD_MONGO_URI: &str = "OCM_EXP_MONGO_URI";
 const CHILD_MONGO_DATABASE: &str = "OCM_EXP_MONGO_DATABASE";
@@ -108,10 +107,6 @@ fn ocm_exp_001_production_child() {
             node_socket: env::var_os(CHILD_NODE_SOCKET)
                 .expect("child snapshot UDS")
                 .into(),
-            expected_node_uid: env::var(CHILD_NODE_UID)
-                .expect("child node uid")
-                .parse()
-                .expect("parse node uid"),
             identity: endpoint_identity(),
             limits,
         },
@@ -347,22 +342,20 @@ fn exact_read_only_export_view_closes_root_count_and_each_commitment() {
     retention
         .reconcile_finalized(&finalized_block)
         .expect("finalize exact export candidate");
-    let uid = effective_uid().expect("effective OCOMP test uid");
     let node = Arc::new(
-        OcompControlServer::new(retention, uid, endpoint_identity(), 1, poc_schema_limits())
+        OcompControlServer::new(retention, endpoint_identity(), 1, poc_schema_limits())
             .expect("node OCOMP control")
-            .with_snapshot_export(service.clone(), projection_containment.clone(), uid),
+            .with_snapshot_export(service.clone(), projection_containment.clone()),
     );
     let supervisor_socket = directory.path().join("supervisor-node.sock");
     let exporter_socket = directory.path().join("exporter-node.sock");
     let controls = RunningNodeControls::start(node, &supervisor_socket, &exporter_socket);
-    let handoff = open_snapshot_from_supervisor(&supervisor_socket, uid);
+    let handoff = open_snapshot_from_supervisor(&supervisor_socket);
     assert_eq!(handoff.job_id, job_id);
 
     let output = run_exporter_child(
         directory.path(),
         &exporter_socket,
-        uid,
         false,
         mongo.uri(),
         &database,
@@ -539,7 +532,6 @@ fn exact_read_only_export_view_closes_root_count_and_each_commitment() {
     let mutation = run_exporter_child(
         directory.path(),
         &exporter_socket,
-        uid,
         true,
         mongo.uri(),
         &database,
@@ -555,13 +547,12 @@ fn exact_read_only_export_view_closes_root_count_and_each_commitment() {
     let restarted_node = Arc::new(
         OcompControlServer::new(
             restarted_retention,
-            uid,
             endpoint_identity(),
             2,
             poc_schema_limits(),
         )
         .expect("restart node OCOMP control")
-        .with_snapshot_export(service, projection_containment, uid),
+        .with_snapshot_export(service, projection_containment),
     );
     let restarted_supervisor_socket = directory.path().join("supervisor-node-restarted.sock");
     let restarted_exporter_socket = directory.path().join("exporter-node-restarted.sock");
@@ -573,7 +564,6 @@ fn exact_read_only_export_view_closes_root_count_and_each_commitment() {
     let recovered_exporter = run_exporter_child(
         directory.path(),
         &restarted_exporter_socket,
-        uid,
         false,
         mongo.uri(),
         &database,
@@ -589,7 +579,6 @@ fn exact_read_only_export_view_closes_root_count_and_each_commitment() {
     );
     let mut restarted_exporter = SnapshotExporterNodeClient::connect(&SnapshotExporterNodeConfig {
         node_socket: restarted_exporter_socket,
-        expected_node_uid: uid,
         identity: endpoint_identity(),
         limits: poc_schema_limits(),
     })
@@ -644,7 +633,6 @@ fn exact_read_only_export_view_closes_root_count_and_each_commitment() {
 fn run_exporter_child(
     ce_datadir: &Path,
     node_socket: &Path,
-    node_uid: u32,
     skip_ack: bool,
     mongo_uri: &str,
     mongo_database: &str,
@@ -657,7 +645,6 @@ fn run_exporter_child(
         .env(CHILD_MODE, "production-role")
         .env(CHILD_DATADIR, ce_datadir)
         .env(CHILD_NODE_SOCKET, node_socket)
-        .env(CHILD_NODE_UID, node_uid.to_string())
         .env(CHILD_MONGO_URI, mongo_uri)
         .env(CHILD_MONGO_DATABASE, mongo_database);
     if skip_ack {
@@ -767,12 +754,12 @@ impl Drop for RunningNodeControls {
     }
 }
 
-fn open_snapshot_from_supervisor(node_socket: &Path, node_uid: u32) -> SnapshotHandoffV1 {
+fn open_snapshot_from_supervisor(node_socket: &Path) -> SnapshotHandoffV1 {
     let limits = poc_schema_limits();
     let stream = UnixStream::connect(node_socket).expect("connect supervisor-node OCOMP UDS");
     let mut session = ControlClientSession::connect(
         stream,
-        ClientPolicy::supervisor_to_node(node_uid, endpoint_identity(), limits),
+        ClientPolicy::supervisor_to_node(endpoint_identity(), limits),
     )
     .expect("open supervisor control session");
     session.handshake().expect("supervisor-node handshake");

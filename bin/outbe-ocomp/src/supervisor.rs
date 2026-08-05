@@ -36,7 +36,6 @@ const JOURNAL_FIXED_BYTES: usize = 8 + 2 + 8 + 8 + 4 + 32;
 pub struct SupervisorDiscoveryConfig {
     pub node_socket: PathBuf,
     pub journal_root: PathBuf,
-    pub expected_node_uid: u32,
     pub identity: EndpointIdentity,
     pub limits: SchemaLimits,
 }
@@ -255,11 +254,7 @@ impl SupervisorDiscovery {
         })?;
         let mut session = ControlClientSession::connect(
             stream,
-            ClientPolicy::supervisor_to_node(
-                self.config.expected_node_uid,
-                self.config.identity,
-                self.config.limits,
-            ),
+            ClientPolicy::supervisor_to_node(self.config.identity, self.config.limits),
         )?;
         session.handshake()?;
         Ok(session)

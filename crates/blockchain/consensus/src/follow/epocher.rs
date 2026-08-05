@@ -1,79 +1,124 @@
-//! Height→epoch strategy for the follower, matching outbe's on-chain
-//! committee-epoch boundaries.
+//! Height→epoch strategy for the follower, read from the chain rather than
+//! computed.
 //!
-//! **Why not [`FixedEpocher`].** outbe's consensus epoch `E` (the epoch carried
-//! in every finalization certificate, `finalization.epoch()`) spans blocks
-//! `[E·L+1, (E+1)·L]` — the boundary `BoundaryOutcome` that activates epoch `E`
-//! rides block `E·L+1` (the FIRST block epoch `E` signs), and block `E·L` is the
-//! LAST block of epoch `E-1`. (Verified on a live localnet, `L=60`: block 60 →
-//! cert epoch 0, block 61 → cert epoch 1, block 120 → cert epoch 1, block 121 →
-//! cert epoch 2; boundary outcomes ride blocks 1, 61, 121, 181.)
+//! **Why no formula.** A consensus epoch is a plain counter — activating a DKG
+//! bumps it by one (`next_consensus_epoch_after_dkg_activation`). The height it
+//! activates at is a running accumulator: the next planned activation is
+//! `last_activation + L`, the anchor is then re-set to
+//! `max(observed_height, planned)`, and a ceremony may legitimately land up to
+//! `activation_grace_blocks` late. Nothing keeps epoch boundaries on multiples
+//! of `L`, and a live chain has been observed with epoch 185 spanning
+//! 222_001..=223_122 (1122 blocks) and epoch 186 starting at 223_123 — 78
+//! blocks before any fixed grid would put it.
 //!
-//! `FixedEpocher(L)` instead puts the boundary at `E·L` (`containing(h)=h/L`),
-//! so it disagrees with the cert epoch by one at every block that is a multiple
-//! of `L` (block 60: `FixedEpocher`→epoch 1, but the cert is epoch 0). A
-//! validator never notices: its marshal verifies finalizations delivered by the
-//! Simplex *engine*, keyed by `finalization.epoch()` directly. A follower has no
-//! engine and verifies *every* block through the marshal's resolver-delivery
-//! path, which keys the committee by `epocher.containing(height).epoch()` AND
-//! asserts `finalization.epoch() == that`. With `FixedEpocher` that assertion
-//! fails on every block `E·L` (60, 120, …), stalling the follower one block
-//! before each epoch boundary.
+//! That matters only for a follower. A validator's marshal takes finalizations
+//! straight from the Simplex engine, keyed by `finalization.epoch()`. A
+//! follower has no engine: every block arrives through the marshal's
+//! resolver-delivery path, which keys the committee by
+//! `epocher.containing(height).epoch()` and then asserts
+//! `finalization.epoch() == that`. One wrong answer there rejects the block
+//! permanently — the marshal re-requests it forever and the follower never
+//! moves past it.
 //!
-//! [`FollowerEpocher`] fixes this by placing epoch boundaries where the chain
-//! actually puts them: `containing(h).epoch() = (h−1)/L` for `h ≥ 1`, with epoch
-//! `E≥1` covering `[E·L+1, (E+1)·L]`. Epoch 0 covers `[0, L]` — it additionally
-//! owns the genesis anchor at height 0, which has no committee (it is never
-//! verified via a certificate), so the extra slot is harmless. With this
-//! epocher `containing(height) == finalization.epoch()` for every certified
-//! block, and `first(E)` lands exactly on epoch `E`'s boundary-outcome block —
-//! which is also where the follower driver must look to register epoch `E`'s
-//! committee.
+//! So [`FollowerEpocher`] answers from observation: the block carrying epoch
+//! `E`'s `BoundaryOutcome` IS `first(E)` (the producer emits it on the first
+//! block the new committee signs), and the resolver records that height while
+//! it is already decoding the artifact to register the committee. Heights below
+//! the first recorded boundary are unknown rather than guessed.
+
+use std::collections::BTreeMap;
+use std::sync::{Arc, RwLock};
 
 use commonware_consensus::types::{Epoch, EpochInfo, Epocher, Height};
 
-/// Boundary-aligned epocher for the follower marshal + driver. Epoch `E≥1`
-/// covers `[E·L+1, (E+1)·L]`; epoch 0 covers `[0, L]`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Observed epoch boundaries, shared between the resolver (which records them)
+/// and the marshal (which reads them). Clones share one map.
+#[derive(Clone, Debug, Default)]
 pub struct FollowerEpocher {
-    length: u64,
+    /// First height of each epoch, keyed by that height so a lookup for `h` is
+    /// "the greatest boundary at or below `h`".
+    boundaries: Arc<RwLock<BTreeMap<u64, u64>>>,
 }
 
 impl FollowerEpocher {
-    /// Create an epocher for epoch length `length` blocks (must be > 0).
-    pub const fn new(length: u64) -> Self {
-        Self { length }
+    /// An empty epocher. It knows nothing until boundaries are recorded.
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    /// `(first, last)` height bounds for `epoch`, or `None` on overflow.
-    fn bounds(&self, epoch: Epoch) -> Option<(Height, Height)> {
-        let e = epoch.get();
-        let last = e.checked_add(1)?.checked_mul(self.length)?;
-        let first = if e == 0 {
-            0
-        } else {
-            e.checked_mul(self.length)?.checked_add(1)?
+    /// Record that `epoch` begins at `height`.
+    ///
+    /// Idempotent, and monotone downward per epoch: fetches arrive out of
+    /// order, so a later observation may reveal a LOWER first height for an
+    /// epoch already known. Keeping the higher one would map the blocks in
+    /// between to the previous epoch and have them rejected forever.
+    pub fn record(&self, height: Height, epoch: Epoch) {
+        let mut boundaries = match self.boundaries.write() {
+            Ok(guard) => guard,
+            // A poisoned lock means a writer panicked mid-update. The map is a
+            // cache of observations, not authority — drop the write rather than
+            // take down the follower.
+            Err(poisoned) => poisoned.into_inner(),
         };
-        Some((Height::new(first), Height::new(last)))
+        let (height, epoch) = (height.get(), epoch.get());
+        if let Some((&known_height, _)) = boundaries.iter().find(|(_, &e)| e == epoch) {
+            if known_height <= height {
+                return;
+            }
+            boundaries.remove(&known_height);
+        }
+        boundaries.insert(height, epoch);
     }
 }
 
 impl Epocher for FollowerEpocher {
     fn containing(&self, height: Height) -> Option<EpochInfo> {
-        // Epoch E covers (E·L, (E+1)·L]; height 0 (genesis anchor) is epoch 0.
-        // So epoch = ceil(h / L) − 1 = (h − 1) / L for h ≥ 1, and 0 for h = 0.
+        let boundaries = match self.boundaries.read() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
         let h = height.get();
-        let epoch = Epoch::new(h.saturating_sub(1) / self.length);
-        let (first, last) = self.bounds(epoch)?;
-        Some(EpochInfo::new(epoch, height, first, last))
+        let (&first, &epoch) = boundaries.range(..=h).next_back()?;
+        // The newest epoch has no successor yet, so it extends to the end of
+        // the range. `EpochInfo` subtracts without checking, so `last` must
+        // never fall below the queried height.
+        let last = boundaries
+            .range((h + 1)..)
+            .next()
+            .map_or(u64::MAX, |(&next_first, _)| next_first.saturating_sub(1));
+        Some(EpochInfo::new(
+            Epoch::new(epoch),
+            height,
+            Height::new(first),
+            Height::new(last),
+        ))
     }
 
     fn first(&self, epoch: Epoch) -> Option<Height> {
-        self.bounds(epoch).map(|(first, _)| first)
+        let boundaries = match self.boundaries.read() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        boundaries
+            .iter()
+            .find(|(_, &e)| e == epoch.get())
+            .map(|(&first, _)| Height::new(first))
     }
 
     fn last(&self, epoch: Epoch) -> Option<Height> {
-        self.bounds(epoch).map(|(_, last)| last)
+        let boundaries = match self.boundaries.read() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let first = boundaries
+            .iter()
+            .find(|(_, &e)| e == epoch.get())
+            .map(|(&first, _)| first)?;
+        let last = boundaries
+            .range((first + 1)..)
+            .next()
+            .map_or(u64::MAX, |(&next_first, _)| next_first.saturating_sub(1));
+        Some(Height::new(last))
     }
 }
 
@@ -81,55 +126,136 @@ impl Epocher for FollowerEpocher {
 mod tests {
     use super::*;
 
-    /// Pin `containing(height).epoch()` against the live-localnet ground truth
-    /// (`L=60`): block 60 → cert epoch 0, 61 → 1, 120 → 1, 121 → 2. With this
-    /// mapping the marshal's `finalization.epoch() == containing(height)` check
-    /// holds for every certified block, so a follower can verify boundary blocks.
+    /// Ground truth read off the LIVE chain with `outbe_getFinalization` (the
+    /// certificate's first varint is the epoch), not invented:
+    ///
+    /// | height  | epoch |
+    /// |---------|-------|
+    /// | 222_001 | 185   |
+    /// | 223_122 | 185   |
+    /// | 223_123 | 186   |
+    /// | 224_400 | 186   |
+    ///
+    /// Epoch 186 therefore begins at 223_123, while a fixed `L = 1200` grid
+    /// would place it at 223_201 — the 78-block gap that stalls the follower,
+    /// because the marshal asserts `finalization.epoch() == containing(h)`.
     #[test]
-    fn containing_matches_onchain_cert_epochs() {
-        let e = FollowerEpocher::new(60);
+    fn containing_follows_recorded_boundaries_not_a_grid() {
+        let e = FollowerEpocher::new();
+        e.record(Height::new(222_001), Epoch::new(185));
+        e.record(Height::new(223_123), Epoch::new(186));
+
         let epoch_of = |h: u64| e.containing(Height::new(h)).unwrap().epoch().get();
-        assert_eq!(epoch_of(0), 0, "genesis anchor is epoch 0");
-        assert_eq!(epoch_of(1), 0);
-        assert_eq!(epoch_of(59), 0);
-        assert_eq!(epoch_of(60), 0, "block 60 is the LAST block of epoch 0");
+        assert_eq!(epoch_of(222_001), 185, "boundary block itself is epoch 185");
         assert_eq!(
-            epoch_of(61),
-            1,
-            "block 61 (boundary) is the FIRST of epoch 1"
+            epoch_of(223_122),
+            185,
+            "last block before the next boundary"
         );
-        assert_eq!(epoch_of(120), 1, "block 120 is the LAST block of epoch 1");
-        assert_eq!(epoch_of(121), 2);
-        assert_eq!(epoch_of(180), 2);
-        assert_eq!(epoch_of(181), 3);
+        assert_eq!(epoch_of(223_123), 186, "off-grid boundary starts epoch 186");
+        assert_eq!(
+            epoch_of(224_400),
+            186,
+            "still epoch 186 well past the 223_201 grid line"
+        );
     }
 
-    /// `first(E)` lands on epoch `E`'s boundary-outcome block (1, 61, 121, …) —
-    /// exactly where the driver fetches to register epoch `E`'s committee.
+    /// `EpochInfo::length()` and `relative()` subtract without checking, so a
+    /// returned `first` above the queried height — or a `last` below it — is a
+    /// panic waiting to happen inside commonware.
     #[test]
-    fn first_lands_on_boundary_block() {
-        let e = FollowerEpocher::new(60);
-        // first(0) = 0 (genesis anchor); epoch 0's boundary outcome rides block 1.
-        assert_eq!(e.first(Epoch::new(0)).unwrap().get(), 0);
-        assert_eq!(e.first(Epoch::new(1)).unwrap().get(), 61);
-        assert_eq!(e.first(Epoch::new(2)).unwrap().get(), 121);
-        assert_eq!(e.first(Epoch::new(3)).unwrap().get(), 181);
-    }
+    fn containing_always_brackets_the_queried_height() {
+        let e = FollowerEpocher::new();
+        e.record(Height::new(100), Epoch::new(1));
+        e.record(Height::new(200), Epoch::new(2));
 
-    /// `last(E)` is the block `(E+1)·L` (60, 120, 180) — the last block epoch `E`
-    /// signs, contiguous with `first(E+1) − 1`.
-    #[test]
-    fn last_is_epoch_final_block() {
-        let e = FollowerEpocher::new(60);
-        assert_eq!(e.last(Epoch::new(0)).unwrap().get(), 60);
-        assert_eq!(e.last(Epoch::new(1)).unwrap().get(), 120);
-        assert_eq!(e.last(Epoch::new(2)).unwrap().get(), 180);
-        // Contiguity: last(E) + 1 == first(E+1) for E >= 1.
-        for ep in 1..5u64 {
-            assert_eq!(
-                e.last(Epoch::new(ep)).unwrap().get() + 1,
-                e.first(Epoch::new(ep + 1)).unwrap().get()
+        for h in [100u64, 101, 150, 199, 200, 201, 10_000] {
+            let info = e.containing(Height::new(h)).unwrap();
+            assert!(
+                info.first().get() <= h,
+                "first {} above queried height {h}",
+                info.first().get()
+            );
+            assert!(
+                info.last().get() >= h,
+                "last {} below queried height {h}",
+                info.last().get()
             );
         }
+    }
+
+    /// Out-of-order fetches can surface a lower first height for an epoch that
+    /// is already recorded. Keeping the higher one would map the blocks in
+    /// between to the previous epoch and get them rejected forever.
+    #[test]
+    fn record_lowers_an_already_known_boundary() {
+        let e = FollowerEpocher::new();
+        e.record(Height::new(500), Epoch::new(7));
+        e.record(Height::new(480), Epoch::new(7));
+
+        assert_eq!(e.first(Epoch::new(7)).unwrap().get(), 480);
+        assert_eq!(e.containing(Height::new(480)).unwrap().epoch().get(), 7);
+        assert_eq!(e.containing(Height::new(490)).unwrap().epoch().get(), 7);
+    }
+
+    /// A higher height for a known epoch must NOT move the boundary up.
+    #[test]
+    fn record_keeps_the_lowest_boundary_seen() {
+        let e = FollowerEpocher::new();
+        e.record(Height::new(480), Epoch::new(7));
+        e.record(Height::new(500), Epoch::new(7));
+
+        assert_eq!(e.first(Epoch::new(7)).unwrap().get(), 480);
+    }
+
+    /// Nothing recorded yet means "I do not know" — never a guess. The marshal
+    /// answers `true` to a `None` and silently drops the delivery, so this has
+    /// to be a deliberate, covered behaviour.
+    #[test]
+    fn empty_map_knows_nothing() {
+        let e = FollowerEpocher::new();
+        assert!(e.containing(Height::new(0)).is_none());
+        assert!(e.containing(Height::new(1_000)).is_none());
+        assert!(e.first(Epoch::new(0)).is_none());
+        assert!(e.last(Epoch::new(0)).is_none());
+    }
+
+    /// Below the first recorded boundary the map must not invent an epoch.
+    #[test]
+    fn heights_below_the_first_boundary_are_unknown() {
+        let e = FollowerEpocher::new();
+        e.record(Height::new(222_001), Epoch::new(185));
+
+        assert!(e.containing(Height::new(222_000)).is_none());
+        assert_eq!(
+            e.containing(Height::new(222_001)).unwrap().epoch().get(),
+            185
+        );
+    }
+
+    /// `last(E)` is bounded by the next recorded boundary; the newest epoch has
+    /// no upper bound yet, so it must still bracket any height above it.
+    #[test]
+    fn last_tracks_the_following_boundary() {
+        let e = FollowerEpocher::new();
+        e.record(Height::new(100), Epoch::new(1));
+        e.record(Height::new(200), Epoch::new(2));
+
+        assert_eq!(e.last(Epoch::new(1)).unwrap().get(), 199);
+        let newest = e.containing(Height::new(10_000)).unwrap();
+        assert_eq!(newest.epoch().get(), 2);
+        assert!(newest.last().get() >= 10_000);
+    }
+
+    /// The epocher is shared between the resolver (writer) and the marshal
+    /// (reader) as a clone, so a write through one clone must be visible
+    /// through the other.
+    #[test]
+    fn clones_share_one_map() {
+        let writer = FollowerEpocher::new();
+        let reader = writer.clone();
+        writer.record(Height::new(42), Epoch::new(3));
+
+        assert_eq!(reader.containing(Height::new(42)).unwrap().epoch().get(), 3);
     }
 }

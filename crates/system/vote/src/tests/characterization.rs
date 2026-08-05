@@ -19,7 +19,7 @@ use crate::{
 };
 
 use super::{
-    create_proposal_test, setup_default_validators, test_vote_registry, PROPOSER, VOTER_A,
+    create_proposal_test, setup_default_validators, test_vote_registry, PROPOSER, VOTER_A, VOTER_B,
 };
 
 struct RejectingApprovedTarget;
@@ -136,6 +136,41 @@ impl VoteTarget for RawContextTarget {
         Ok(TargetExecutionOutcome::Applied)
     }
 }
+
+/// Same payload contract as [`RawContextTarget`], but without pinning the
+/// execution height: early finalization is exactly the case where approval no
+/// longer lands on the deadline block.
+struct AnyHeightTarget;
+
+impl VoteTarget for AnyHeightTarget {
+    fn target_module(&self) -> Address {
+        UPDATE_ADDRESS
+    }
+
+    fn validate(&self, payload: &[u8], context: VoteTargetContext) -> Result<()> {
+        if payload != RAW_PAYLOAD.as_bytes() || context.proposer != PROPOSER {
+            return Err(PrecompileError::Revert("unexpected proposal".into()));
+        }
+        Ok(())
+    }
+
+    fn handle_approved(
+        &self,
+        _ctx: &BlockRuntimeContext,
+        _proposal_id: U256,
+        payload: &[u8],
+        _context: VoteTargetContext,
+    ) -> Result<TargetExecutionOutcome> {
+        if payload != RAW_PAYLOAD.as_bytes() {
+            return Err(PrecompileError::Fatal("unexpected payload".into()));
+        }
+        Ok(TargetExecutionOutcome::Applied)
+    }
+}
+
+static ANY_HEIGHT_TARGET: AnyHeightTarget = AnyHeightTarget;
+static ANY_HEIGHT_HANDLERS: &[&dyn VoteTarget] = &[&ANY_HEIGHT_TARGET];
+static ANY_HEIGHT_REGISTRY: VoteTargetRegistry = VoteTargetRegistry::new(ANY_HEIGHT_HANDLERS);
 
 static RAW_CONTEXT_TARGET: RawContextTarget = RawContextTarget;
 static RAW_CONTEXT_HANDLERS: &[&dyn VoteTarget] = &[&RAW_CONTEXT_TARGET];
@@ -1130,5 +1165,247 @@ fn outer_hook_checkpoint_revert_restores_pending_state_index_and_logs() {
             .filter(|log| log.topics().first() == Some(&IVote::ProposalCreated::SIGNATURE_HASH))
             .count(),
         1
+    );
+}
+
+/// A proposal that already holds a `yes` quorum finalizes on the next
+/// begin-block, without waiting out the rest of the voting window. Nothing that
+/// happens inside the window could change the outcome: only active validators
+/// vote and none may vote twice.
+#[test]
+fn quorum_reached_before_the_deadline_approves_on_the_next_begin_block() {
+    let mut provider = HashMapStorageProvider::new(1);
+    let storage = StorageHandle::new(&mut provider);
+    setup_default_validators(storage.clone());
+    let mut vote = Vote::new(storage.clone());
+    let proposal_id = vote
+        .create_proposal(
+            PROPOSER,
+            UPDATE_ADDRESS,
+            RAW_PAYLOAD,
+            10,
+            &ANY_HEIGHT_REGISTRY,
+        )
+        .unwrap();
+    vote.cast_vote_approve(proposal_id, PROPOSER, true, 11)
+        .unwrap();
+    vote.cast_vote_approve(proposal_id, VOTER_A, true, 11)
+        .unwrap();
+
+    // Far from the deadline: the old rule would leave this pending for the
+    // remaining ~86_400 blocks.
+    vote.process_begin_block(&block_context(storage, 12), &ANY_HEIGHT_REGISTRY)
+        .unwrap();
+
+    let proposal = vote.proposals.get(proposal_id).unwrap().unwrap();
+    assert!(
+        12 < proposal.voting_deadline_height,
+        "the test must finalize strictly before the deadline"
+    );
+    assert_eq!(
+        proposal.proposal_status().unwrap(),
+        ProposalStatus::Approved
+    );
+}
+
+/// Below quorum the proposal stays open. This is the guard that keeps early
+/// finalization from burying a live proposal: `finalize_voting` records
+/// `Expired` whenever the tally falls short, so it must not be reached before
+/// the deadline.
+#[test]
+fn a_proposal_below_quorum_is_not_finalized_before_its_deadline() {
+    let mut provider = HashMapStorageProvider::new(1);
+    let storage = StorageHandle::new(&mut provider);
+    setup_default_validators(storage.clone());
+    let mut vote = Vote::new(storage.clone());
+    let proposal_id = vote
+        .create_proposal(
+            PROPOSER,
+            UPDATE_ADDRESS,
+            RAW_PAYLOAD,
+            10,
+            &ANY_HEIGHT_REGISTRY,
+        )
+        .unwrap();
+    // One yes out of three active validators: 1/3 is short of the 2/3 quorum.
+    vote.cast_vote_approve(proposal_id, PROPOSER, true, 11)
+        .unwrap();
+
+    for height in [12, 13, 500] {
+        vote.process_begin_block(
+            &block_context(storage.clone(), height),
+            &ANY_HEIGHT_REGISTRY,
+        )
+        .unwrap();
+        assert_eq!(
+            vote.proposals
+                .get(proposal_id)
+                .unwrap()
+                .unwrap()
+                .proposal_status()
+                .unwrap(),
+            ProposalStatus::Pending,
+            "an open proposal must survive begin-block at height {height}"
+        );
+    }
+}
+
+/// The deadline path is unchanged: a proposal that never reaches quorum still
+/// expires once its window closes.
+#[test]
+fn a_proposal_below_quorum_still_expires_at_its_deadline() {
+    let mut provider = HashMapStorageProvider::new(1);
+    let storage = StorageHandle::new(&mut provider);
+    setup_default_validators(storage.clone());
+    let mut vote = Vote::new(storage.clone());
+    let proposal_id = vote
+        .create_proposal(
+            PROPOSER,
+            UPDATE_ADDRESS,
+            RAW_PAYLOAD,
+            10,
+            &ANY_HEIGHT_REGISTRY,
+        )
+        .unwrap();
+    vote.cast_vote_approve(proposal_id, PROPOSER, true, 11)
+        .unwrap();
+
+    vote.process_begin_block(
+        &block_context(storage, 10 + VOTING_WINDOW_BLOCKS + 1),
+        &ANY_HEIGHT_REGISTRY,
+    )
+    .unwrap();
+
+    assert_eq!(
+        vote.proposals
+            .get(proposal_id)
+            .unwrap()
+            .unwrap()
+            .proposal_status()
+            .unwrap(),
+        ProposalStatus::Expired
+    );
+}
+
+/// Voting on a proposal that early-finalization already approved is rejected
+/// the same way as voting on any non-pending proposal.
+#[test]
+fn casting_a_vote_after_early_approval_is_rejected() {
+    let mut provider = HashMapStorageProvider::new(1);
+    let storage = StorageHandle::new(&mut provider);
+    setup_default_validators(storage.clone());
+    let mut vote = Vote::new(storage.clone());
+    let proposal_id = vote
+        .create_proposal(
+            PROPOSER,
+            UPDATE_ADDRESS,
+            RAW_PAYLOAD,
+            10,
+            &ANY_HEIGHT_REGISTRY,
+        )
+        .unwrap();
+    vote.cast_vote_approve(proposal_id, PROPOSER, true, 11)
+        .unwrap();
+    vote.cast_vote_approve(proposal_id, VOTER_A, true, 11)
+        .unwrap();
+    vote.process_begin_block(&block_context(storage, 12), &ANY_HEIGHT_REGISTRY)
+        .unwrap();
+
+    let late = vote.cast_vote_approve(proposal_id, VOTER_B, true, 13);
+    assert!(
+        late.is_err(),
+        "a late vote on an already approved proposal must be rejected"
+    );
+}
+
+/// Proposer and validator execute the same begin-block over the same state, so
+/// early finalization must land on both paths identically — an asymmetry here
+/// would be a chain split.
+#[test]
+fn early_finalization_is_identical_on_both_execution_paths() {
+    let run = || {
+        let mut provider = HashMapStorageProvider::new(1);
+        let storage = StorageHandle::new(&mut provider);
+        setup_default_validators(storage.clone());
+        let mut vote = Vote::new(storage.clone());
+        let proposal_id = vote
+            .create_proposal(
+                PROPOSER,
+                UPDATE_ADDRESS,
+                RAW_PAYLOAD,
+                10,
+                &ANY_HEIGHT_REGISTRY,
+            )
+            .unwrap();
+        vote.cast_vote_approve(proposal_id, PROPOSER, true, 11)
+            .unwrap();
+        vote.cast_vote_approve(proposal_id, VOTER_A, true, 11)
+            .unwrap();
+        vote.process_begin_block(&block_context(storage, 12), &ANY_HEIGHT_REGISTRY)
+            .unwrap();
+        let proposal = vote.proposals.get(proposal_id).unwrap().unwrap();
+        (
+            proposal.proposal_status().unwrap(),
+            vote.proposal_bond(proposal_id).unwrap().settlement,
+            vote.list_pending_proposal_ids().unwrap(),
+        )
+    };
+
+    assert_eq!(run(), run(), "begin-block must be deterministic");
+}
+
+/// Early finalization changes what begin-block writes, so on the chain that
+/// already has history under the old rule it must switch on at exactly the
+/// height the producers switched. Below it a quorum-holding proposal stays
+/// pending — otherwise a replaying node writes an approval the canonical block
+/// never had and dies on the receipt root.
+#[test]
+fn early_finalization_is_gated_by_height_on_the_chain_that_predates_it() {
+    let mut provider = HashMapStorageProvider::new(54_322_345);
+    let storage = StorageHandle::new(&mut provider);
+    setup_default_validators(storage.clone());
+    let mut vote = Vote::new(storage.clone());
+    let proposal_id = vote
+        .create_proposal(
+            PROPOSER,
+            UPDATE_ADDRESS,
+            RAW_PAYLOAD,
+            234_281,
+            &ANY_HEIGHT_REGISTRY,
+        )
+        .unwrap();
+    vote.cast_vote_approve(proposal_id, PROPOSER, true, 234_600)
+        .unwrap();
+    vote.cast_vote_approve(proposal_id, VOTER_A, true, 234_610)
+        .unwrap();
+
+    // The block right after quorum, under the old rule: still pending.
+    vote.process_begin_block(
+        &block_context(storage.clone(), 234_611),
+        &ANY_HEIGHT_REGISTRY,
+    )
+    .unwrap();
+    assert_eq!(
+        vote.proposals
+            .get(proposal_id)
+            .unwrap()
+            .unwrap()
+            .proposal_status()
+            .unwrap(),
+        ProposalStatus::Pending,
+        "history built before the switch must replay unchanged"
+    );
+
+    // The first block the producers built with the new rule.
+    vote.process_begin_block(&block_context(storage, 235_507), &ANY_HEIGHT_REGISTRY)
+        .unwrap();
+    assert_eq!(
+        vote.proposals
+            .get(proposal_id)
+            .unwrap()
+            .unwrap()
+            .proposal_status()
+            .unwrap(),
+        ProposalStatus::Approved
     );
 }

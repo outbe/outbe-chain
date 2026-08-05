@@ -330,7 +330,18 @@ fn update_wwd_status_machine(
     let current_status = metadosis.get_wwd_status(wwd)?;
 
     match current_status {
-        status::IN_PROGRESS | status::COMPLETED | status::FAILED | status::READY => {
+        // `OFFCHAIN_PENDING` belongs to the OCOMP FSM, not to the time windows.
+        // The window machine below recomputes a status purely from the clock and
+        // has no notion of a live job, so once a day's offering window elapses it
+        // would move it to `READY` while the FSM still says `OffchainPending` —
+        // and the next `start_metadosis` kills the block on that exact
+        // disagreement (`validate_persisted_equivalences`). The day leaves this
+        // status only through the FSM: completion, retry, or attempts exhausted.
+        status::IN_PROGRESS
+        | status::COMPLETED
+        | status::FAILED
+        | status::READY
+        | status::OFFCHAIN_PENDING => {
             return Ok(());
         }
         _ => {}

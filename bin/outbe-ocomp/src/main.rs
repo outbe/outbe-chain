@@ -10,9 +10,7 @@ use outbe_compressed_entities::{
 use outbe_consensus::{config::init_consensus_chain_id, proof::constants::consensus_chain_id};
 use outbe_ocomp::bundle::PinnedProtocolBundle;
 use outbe_ocomp::cas::CasLimits;
-use outbe_ocomp::control::{
-    effective_uid, poc_schema_limits, require_effective_uid, uid_for_user, EndpointIdentity,
-};
+use outbe_ocomp::control::{poc_schema_limits, EndpointIdentity};
 use outbe_ocomp::inbox::WorkerInboxLimits;
 use outbe_ocomp::snapshot_client::SnapshotExporterNodeConfig;
 use outbe_ocomp::snapshot_exporter::{SnapshotExporter, SnapshotExporterConfig};
@@ -82,36 +80,35 @@ struct RuntimeArgs {
     development_node_snapshot_exporter_socket: Option<PathBuf>,
 }
 
-const SUPERVISOR_USER: &str = "outbe-ocomp-supervisor";
-const SNAPSHOT_EXPORTER_USER: &str = "outbe-ocomp-export";
-const WORKER_USER: &str = "outbe-ocomp-worker";
-const CAS_ROOT: &str = "/var/lib/outbe-ocomp/cas-v1";
+const CAS_ROOT: &str = "/opt/outbe-chain/ocomp/data/cas-v1";
 const CAS_MAX_OBJECT_BYTES: u64 = 1_048_576;
 const CAS_MAX_TOTAL_BYTES: u64 = OCOMP_POC_CAS_QUOTA_BYTES;
-const WORKER_INBOX_ROOT: &str = "/var/lib/outbe-ocomp/worker-inbox-v1";
+const WORKER_INBOX_ROOT: &str = "/opt/outbe-chain/ocomp/data/worker-inbox-v1";
 const WORKER_INBOX_MAX_ARTIFACT_BYTES: u64 = 1_048_576;
 const WORKER_INBOX_MAX_TOTAL_BYTES: u64 = 67_108_864;
 const SOCKET_ACTIVATION_FD: i32 = 0;
-const NODE_USER: &str = "outbe";
-const NODE_SUPERVISOR_SOCKET: &str = "/run/outbe-ocomp/node-supervisor.sock";
-const NODE_SNAPSHOT_EXPORTER_SOCKET: &str = "/run/outbe-ocomp/node-snapshot-exporter.sock";
-const WORKER_SOCKET: &str = "/run/outbe-ocomp/worker.sock";
-const SUPERVISOR_JOURNAL_ROOT: &str = "/var/lib/outbe-ocomp/supervisor-v1/discovery";
-const SUPERVISOR_EXPORT_BINDING_ROOT: &str = "/var/lib/outbe-ocomp/supervisor-v1/export-bindings";
-const SUPERVISOR_JOB_ROOT: &str = "/var/lib/outbe-ocomp/supervisor-v1/jobs";
-const SUPERVISOR_VOTE_SUBMISSION_ROOT: &str = "/var/lib/outbe-ocomp/supervisor-v1/vote-submissions";
+const NODE_SUPERVISOR_SOCKET: &str = "/opt/outbe-chain/ocomp/run/node-supervisor.sock";
+const NODE_SNAPSHOT_EXPORTER_SOCKET: &str =
+    "/opt/outbe-chain/ocomp/run/node-snapshot-exporter.sock";
+const WORKER_SOCKET: &str = "/opt/outbe-chain/ocomp/run/worker.sock";
+const SUPERVISOR_JOURNAL_ROOT: &str = "/opt/outbe-chain/ocomp/data/supervisor-v1/discovery";
+const SUPERVISOR_EXPORT_BINDING_ROOT: &str =
+    "/opt/outbe-chain/ocomp/data/supervisor-v1/export-bindings";
+const SUPERVISOR_JOB_ROOT: &str = "/opt/outbe-chain/ocomp/data/supervisor-v1/jobs";
+const SUPERVISOR_VOTE_SUBMISSION_ROOT: &str =
+    "/opt/outbe-chain/ocomp/data/supervisor-v1/vote-submissions";
 const SUPERVISOR_VOTE_RPC_MAX_RESPONSE_BYTES: usize = 1_048_576;
 const SUPERVISOR_RECONCILE_INTERVAL: Duration = Duration::from_secs(1);
 const SNAPSHOT_EXPORTER_RECONCILE_INTERVAL: Duration = Duration::from_secs(1);
-const SNAPSHOT_EXPORTER_CE_DATADIR: &str = "/var/lib/outbe/ce";
-const SNAPSHOT_EXPORTER_INPUT_REF_ROOT: &str = "/var/lib/outbe-ocomp/exporter-v1/input-refs";
-const SNAPSHOT_EXPORTER_RECEIPT_ROOT: &str = "/var/lib/outbe-ocomp/exporter-v1/receipts";
+const SNAPSHOT_EXPORTER_CE_DATADIR: &str = "/opt/outbe-chain/ocomp/ce";
+const SNAPSHOT_EXPORTER_INPUT_REF_ROOT: &str = "/opt/outbe-chain/ocomp/data/exporter-v1/input-refs";
+const SNAPSHOT_EXPORTER_RECEIPT_ROOT: &str = "/opt/outbe-chain/ocomp/data/exporter-v1/receipts";
 const SNAPSHOT_EXPORTER_TRIBUTE_PAGE_LIMIT: usize = 256;
 const SNAPSHOT_EXPORTER_MAX_RECOVERABLE_PREPARED_JOBS: usize = 8;
 const PROJECTION_START_BLOCK: u64 = 1;
 const CE_TREE_FORMAT: &str = "ckb-smt-v0.6.1-poseidon-catalog-v3";
 const CE_VENDOR_REVISION: &str = "ad555350c866b2265d87d2d7fbd146fbc918bfe5";
-const PROTOCOL_BUNDLE_PATH: &str = "/etc/outbe/ocomp/protocol-bundle-v1.ocb1";
+const PROTOCOL_BUNDLE_PATH: &str = "/opt/outbe-chain/protocol-bundle-v1.ocb1";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ProcessRole {
@@ -120,22 +117,8 @@ enum ProcessRole {
     Worker,
 }
 
-impl ProcessRole {
-    const fn production_user(self) -> &'static str {
-        match self {
-            Self::Supervisor => SUPERVISOR_USER,
-            Self::SnapshotExporter => SNAPSHOT_EXPORTER_USER,
-            Self::Worker => WORKER_USER,
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 struct RuntimeProfile {
-    effective_role_uid: u32,
-    supervisor_uid: u32,
-    worker_uid: u32,
-    node_uid: u32,
     node_supervisor_socket: PathBuf,
     node_snapshot_exporter_socket: PathBuf,
     worker_socket: PathBuf,
@@ -161,10 +144,6 @@ impl RuntimeProfile {
                 return Err("development path overrides require --development-root".into());
             }
             return Ok(Self {
-                effective_role_uid: uid_for_user(role.production_user())?,
-                supervisor_uid: uid_for_user(SUPERVISOR_USER)?,
-                worker_uid: uid_for_user(WORKER_USER)?,
-                node_uid: uid_for_user(NODE_USER)?,
                 node_supervisor_socket: PathBuf::from(NODE_SUPERVISOR_SOCKET),
                 node_snapshot_exporter_socket: PathBuf::from(NODE_SNAPSHOT_EXPORTER_SOCKET),
                 worker_socket: PathBuf::from(WORKER_SOCKET),
@@ -232,12 +211,7 @@ impl RuntimeProfile {
             }
             _ => root.join("unused-node-snapshot-exporter.sock"),
         };
-        let uid = effective_uid()?;
         Ok(Self {
-            effective_role_uid: uid,
-            supervisor_uid: uid,
-            worker_uid: uid,
-            node_uid: uid,
             node_supervisor_socket,
             node_snapshot_exporter_socket,
             worker_socket: root.join("worker.sock"),
@@ -268,8 +242,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &limits,
             )?;
             run_one_from_inherited_fd(WorkerConfig {
-                expected_effective_uid: runtime.effective_role_uid,
-                expected_supervisor_uid: runtime.supervisor_uid,
                 identity: EndpointIdentity {
                     chain_id: args.chain_id,
                     genesis_hash: args.genesis_hash,
@@ -299,7 +271,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn run_supervisor(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> {
     let runtime = RuntimeProfile::resolve(args, ProcessRole::Supervisor)?;
-    require_effective_uid(runtime.effective_role_uid)?;
     let limits = poc_schema_limits();
     let identity = EndpointIdentity {
         chain_id: required_env("OCOMP_CHAIN_ID")?.parse()?,
@@ -316,7 +287,6 @@ fn run_supervisor(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> 
     let discovery = SupervisorDiscovery::open(SupervisorDiscoveryConfig {
         node_socket: runtime.node_supervisor_socket.clone(),
         journal_root: runtime.supervisor_journal_root.clone(),
-        expected_node_uid: runtime.node_uid,
         identity,
         limits,
     })?;
@@ -346,7 +316,6 @@ fn run_supervisor(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> 
             max_total_bytes: WORKER_INBOX_MAX_TOTAL_BYTES,
         },
         worker_socket: runtime.worker_socket,
-        expected_worker_uid: runtime.worker_uid,
         identity,
         protocol_bundle,
         limits,
@@ -462,7 +431,6 @@ fn run_supervisor(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> 
 
 fn run_snapshot_exporter(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> {
     let runtime = RuntimeProfile::resolve(args, ProcessRole::SnapshotExporter)?;
-    require_effective_uid(runtime.effective_role_uid)?;
     let limits = poc_schema_limits();
     let identity = EndpointIdentity {
         chain_id: required_env("OCOMP_CHAIN_ID")?.parse()?,
@@ -479,7 +447,6 @@ fn run_snapshot_exporter(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::E
     let mut exporter = SnapshotExporter::open(SnapshotExporterConfig {
         node: SnapshotExporterNodeConfig {
             node_socket: runtime.node_snapshot_exporter_socket,
-            expected_node_uid: runtime.node_uid,
             identity,
             limits,
         },
@@ -590,11 +557,9 @@ mod tests {
             development_ce_datadir: None,
             development_node_supervisor_socket: Some(supervisor_socket.clone()),
             development_node_snapshot_exporter_socket: None,
-            ..RuntimeArgs::default()
         };
         let profile = RuntimeProfile::resolve(&args, ProcessRole::Supervisor).unwrap();
 
-        assert_eq!(profile.effective_role_uid, effective_uid().unwrap());
         assert_eq!(profile.node_supervisor_socket, supervisor_socket);
         assert!(profile.cas_root.starts_with(root.path()));
         assert!(profile.protocol_bundle_path.starts_with(root.path()));
@@ -608,7 +573,6 @@ mod tests {
             development_ce_datadir: None,
             development_node_supervisor_socket: None,
             development_node_snapshot_exporter_socket: None,
-            ..RuntimeArgs::default()
         };
         assert!(RuntimeProfile::resolve(&relative, ProcessRole::Supervisor).is_err());
     }

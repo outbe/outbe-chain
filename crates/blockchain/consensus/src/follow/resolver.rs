@@ -44,7 +44,7 @@ use tracing::{debug, warn};
 
 use crate::digest::Digest;
 use crate::follow::upstream::{CertifiedFinalizedBlock, FinalizedSource, LocalBlockSource};
-use crate::follow::CommitteeChain;
+use crate::follow::{CommitteeChain, FollowerEpocher};
 
 /// The marshal backfill key type for outbe blocks (commitment = block digest).
 pub(super) type ResolverKey = Key<Digest>;
@@ -73,6 +73,9 @@ pub(super) struct ResolverActor<E, F, L> {
     /// This closes the boundary-block circularity: the block that *announces*
     /// epoch N's committee is also the first block *signed by* epoch N.
     chain: Arc<Mutex<CommitteeChain>>,
+    /// Observed epoch boundaries, shared with the marshal. Written here from
+    /// each fetched certificate before the value is delivered.
+    epoch_map: FollowerEpocher,
     rx: FetchRx,
 }
 
@@ -83,6 +86,7 @@ pub(super) fn init<E, F, L>(
     upstream: F,
     local: L,
     chain: Arc<Mutex<CommitteeChain>>,
+    epoch_map: FollowerEpocher,
 ) -> (ResolverActor<E, F, L>, FollowResolver) {
     let (tx, rx) = futures::channel::mpsc::unbounded();
     let actor = ResolverActor {
@@ -91,6 +95,7 @@ pub(super) fn init<E, F, L>(
         upstream,
         local,
         chain,
+        epoch_map,
         rx,
     };
     (actor, FollowResolver { tx })
@@ -114,6 +119,7 @@ where
                     upstream,
                     local,
                     chain,
+                    epoch_map,
                     mut rx,
                 } = self;
                 while let Some(fetch) = rx.next().await {
@@ -122,7 +128,10 @@ where
                     let upstream = upstream.clone();
                     let local = local.clone();
                     let chain = chain.clone();
-                    task_ctx.spawn(move |_| resolve_one(fetch, handler, upstream, local, chain));
+                    let epoch_map = epoch_map.clone();
+                    task_ctx.spawn(move |_| {
+                        resolve_one(fetch, handler, upstream, local, chain, epoch_map)
+                    });
                 }
             })
     }
@@ -135,6 +144,7 @@ async fn resolve_one<F, L>(
     upstream: F,
     local: L,
     chain: Arc<Mutex<CommitteeChain>>,
+    epoch_map: FollowerEpocher,
 ) where
     F: FinalizedSource,
     L: LocalBlockSource,
@@ -198,6 +208,19 @@ async fn resolve_one<F, L>(
                         return;
                     }
                 }
+                // Record where this epoch starts, so the marshal can map the
+                // height back to it. The certificate names the epoch and this
+                // fetch names the height; nothing else in the follower knows
+                // both. It must happen BEFORE `deliver` — the marshal calls
+                // `epocher.containing(height)` inside that call, and an empty
+                // answer makes it drop the delivery silently.
+                //
+                // Recording every height (not only boundary blocks) is what
+                // keeps a mid-chain restart working: the first fetch after the
+                // recovered floor seeds the map without needing to find the
+                // epoch's true first block first. `record` only ever lowers a
+                // known boundary, so a later boundary block corrects it.
+                epoch_map.record(*height, finalization.round().epoch());
                 // Wire format the marshal expects for a `Finalized` delivery: the
                 // finalization certificate immediately followed by the block.
                 let mut buf = finalization.encode().to_vec();
@@ -215,6 +238,7 @@ async fn resolve_one<F, L>(
         }
     };
 
+    let value_len = value.len();
     let delivery = Delivery {
         key,
         subscribers: NonEmptyVec::new(subscriber),
@@ -229,7 +253,22 @@ async fn resolve_one<F, L>(
     // still needs the height).
     match handler.deliver(delivery, value).await {
         Ok(true) => debug!(%key, "delivery accepted by marshal"),
-        Ok(false) => warn!(%key, "delivery rejected by marshal"),
+        Ok(false) => {
+            let (registered, anchor) = {
+                let guard = chain.lock().expect("committee chain mutex poisoned");
+                (
+                    guard.highest_registered().map(|e| e.get()),
+                    guard.anchor_epoch(),
+                )
+            };
+            warn!(
+                %key,
+                value_len,
+                highest_registered = registered,
+                anchor_epoch = anchor,
+                "delivery rejected by marshal"
+            );
+        }
         Err(_) => debug!(%key, "marshal dropped delivery response (shutdown or batch prune)"),
     }
 }
@@ -320,5 +359,173 @@ impl TargetedResolver for FollowResolver {
             }
         }
         feedback
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::block::ConsensusBlock;
+    use crate::follow::tests::{committee, Committee};
+    use commonware_consensus::types::{Epoch, Epocher as _};
+    use commonware_runtime::Runner as _;
+    use futures::{pin_mut, poll};
+
+    #[derive(Clone)]
+    struct StubUpstream(Option<CertifiedFinalizedBlock>);
+
+    impl FinalizedSource for StubUpstream {
+        async fn get_finalization(&self, _height: Height) -> Option<CertifiedFinalizedBlock> {
+            self.0.clone()
+        }
+    }
+
+    #[derive(Clone)]
+    struct NoLocalBlocks;
+
+    impl LocalBlockSource for NoLocalBlocks {
+        async fn get_block_by_digest(&self, _digest: Digest) -> Option<ConsensusBlock> {
+            None
+        }
+    }
+
+    fn certified(
+        c: &Committee,
+        epoch: Epoch,
+        height: u64,
+        extra: Vec<u8>,
+    ) -> CertifiedFinalizedBlock {
+        use alloy_primitives::Bytes;
+        use outbe_primitives::OutbeHeader;
+        use reth_ethereum::primitives::SealedBlock;
+        use reth_ethereum::Block;
+
+        let mut b = Block::default();
+        b.header.number = height;
+        b.header.extra_data = Bytes::from(extra);
+        let block =
+            ConsensusBlock::from_sealed(SealedBlock::seal_slow(b.map_header(OutbeHeader::new)));
+        CertifiedFinalizedBlock {
+            finalization: c.finalization(epoch),
+            block,
+        }
+    }
+
+    fn finalized_fetch(height: u64) -> Fetch<ResolverKey, Annotation> {
+        let height = Height::new(height);
+        Fetch {
+            key: Key::Finalized { height },
+            subscriber: Annotation::Finalized(handler::Finalized::ByHeight { height }),
+        }
+    }
+
+    /// Poll `resolve_one` far enough to reach `deliver`, which parks forever
+    /// because nothing drains the marshal mailbox. Whatever the epoch map holds
+    /// at that point is what the marshal would see inside `deliver`.
+    fn state_at_delivery(
+        certified: Option<CertifiedFinalizedBlock>,
+        chain: Arc<Mutex<CommitteeChain>>,
+        height: u64,
+    ) -> FollowerEpocher {
+        let epoch_map = FollowerEpocher::new();
+        let observed = epoch_map.clone();
+        commonware_runtime::deterministic::Runner::default().start(|context| async move {
+            let (_receiver, handler) = handler::init::<Digest>(
+                context,
+                std::num::NonZeroUsize::new(4).expect("non-zero capacity"),
+            );
+            let fut = resolve_one(
+                finalized_fetch(height),
+                handler,
+                StubUpstream(certified),
+                NoLocalBlocks,
+                chain,
+                epoch_map,
+            );
+            pin_mut!(fut);
+            let _ = poll!(fut.as_mut());
+        });
+        observed
+    }
+
+    /// The whole bug in one assertion: the marshal reads
+    /// `epocher.containing(height)` INSIDE `deliver` and drops the delivery
+    /// silently when it disagrees with the certificate. So the boundary must be
+    /// recorded before `deliver` is ever called — recording after it would work
+    /// in every test that inspects the map afterwards and still fail on the one
+    /// block that matters, the boundary block.
+    #[test]
+    fn boundary_epoch_is_recorded_before_the_delivery_is_made() {
+        let epoch = Epoch::new(186);
+        let c = committee(20);
+        let chain = Arc::new(Mutex::new(CommitteeChain::new(
+            epoch,
+            c.participants.clone(),
+        )));
+        let block = certified(&c, epoch, 223_123, c.boundary_block_extra_data(epoch));
+
+        let map = state_at_delivery(Some(block), chain, 223_123);
+
+        assert_eq!(
+            map.containing(Height::new(223_123))
+                .expect("the map must already answer for the delivered height")
+                .epoch()
+                .get(),
+            186,
+        );
+    }
+
+    /// A non-boundary block carries no committee artifact, but its certificate
+    /// still names the epoch in force. Recording it is what lets a follower
+    /// resuming mid-chain answer for heights before it ever reaches a boundary.
+    #[test]
+    fn a_block_without_a_boundary_artifact_still_records_its_epoch() {
+        let epoch = Epoch::new(186);
+        let c = committee(20);
+        let chain = Arc::new(Mutex::new(CommitteeChain::new(
+            epoch,
+            c.participants.clone(),
+        )));
+        let block = certified(&c, epoch, 223_500, Vec::new());
+
+        let map = state_at_delivery(Some(block), chain, 223_500);
+
+        assert_eq!(
+            map.containing(Height::new(223_500)).unwrap().epoch().get(),
+            186,
+        );
+    }
+
+    /// Committee registration failing aborts the fetch. Recording the boundary
+    /// anyway would leave the map claiming an epoch whose committee was never
+    /// registered — every later height in it would map to a verifier that does
+    /// not exist.
+    #[test]
+    fn a_rejected_block_records_nothing() {
+        let epoch = Epoch::new(186);
+        let c = committee(20);
+        let chain = Arc::new(Mutex::new(CommitteeChain::new(
+            epoch,
+            c.participants.clone(),
+        )));
+        let block = certified(&c, epoch, 223_123, vec![0xff, 0xff, 0xff, 0xff]);
+
+        let map = state_at_delivery(Some(block), chain, 223_123);
+
+        assert!(map.containing(Height::new(223_123)).is_none());
+    }
+
+    /// An upstream miss must not record anything either — the marshal will
+    /// re-request the height, and a map entry with no delivered block behind it
+    /// would answer for a height the follower has never verified.
+    #[test]
+    fn an_upstream_miss_records_nothing() {
+        let epoch = Epoch::new(186);
+        let c = committee(20);
+        let chain = Arc::new(Mutex::new(CommitteeChain::new(epoch, c.participants)));
+
+        let map = state_at_delivery(None, chain, 223_123);
+
+        assert!(map.containing(Height::new(223_123)).is_none());
     }
 }

@@ -107,13 +107,11 @@ impl OcompControlReadiness {
 
 pub struct OcompControlServer {
     retention: Arc<OcompRetentionCoordinator>,
-    expected_supervisor_uid: u32,
     identity: EndpointIdentity,
     session_generation: u64,
     limits: SchemaLimits,
     readiness: OcompControlReadiness,
     snapshot_export: Option<Arc<SnapshotExportAuthority>>,
-    expected_snapshot_exporter_uid: Option<u32>,
     attestation: Option<Arc<OcompAttestationGate>>,
     attestation_height: Option<Arc<AtomicHeightSource>>,
     vote_transaction_signer: Option<SharedOutbeEvmSigner>,
@@ -123,7 +121,6 @@ pub struct OcompControlServer {
 pub struct OcompNodeAttestationConfig {
     pub key_path: PathBuf,
     pub sign_once_root: PathBuf,
-    pub expected_owner_uid: u32,
     pub validator_index: u8,
     pub committee: OcompCommitteeSnapshotV1,
     pub initial_height: u64,
@@ -132,7 +129,6 @@ pub struct OcompNodeAttestationConfig {
 impl OcompControlServer {
     pub fn new(
         retention: Arc<OcompRetentionCoordinator>,
-        expected_supervisor_uid: u32,
         identity: EndpointIdentity,
         session_generation: u64,
         limits: SchemaLimits,
@@ -142,13 +138,11 @@ impl OcompControlServer {
         }
         Ok(Self {
             retention,
-            expected_supervisor_uid,
             identity,
             session_generation,
             limits,
             readiness: OcompControlReadiness::default(),
             snapshot_export: None,
-            expected_snapshot_exporter_uid: None,
             attestation: None,
             attestation_height: None,
             vote_transaction_signer: None,
@@ -185,14 +179,9 @@ impl OcompControlServer {
         config: OcompNodeAttestationConfig,
         height: Arc<dyn CurrentHeightSource>,
     ) -> Result<Self, NodeControlError> {
-        let signer = OcompSigner::from_file(&config.key_path, config.expected_owner_uid)
+        let signer = OcompSigner::from_file(&config.key_path).map_err(AttestationError::from)?;
+        let sign_once = SignOnceStore::open(config.sign_once_root, self.limits)
             .map_err(AttestationError::from)?;
-        let sign_once = SignOnceStore::open(
-            config.sign_once_root,
-            config.expected_owner_uid,
-            self.limits,
-        )
-        .map_err(AttestationError::from)?;
         let gate = OcompAttestationGate::new(
             self.retention.clone(),
             height,
@@ -234,7 +223,6 @@ impl OcompControlServer {
         self,
         tree: Arc<CompressedTreeService>,
         projection_containment: Arc<dyn ProjectionContainmentAuthority>,
-        expected_snapshot_exporter_uid: u32,
     ) -> Self {
         let authority = Arc::new(SnapshotExportAuthority::new(
             Arc::clone(&self.retention),
@@ -243,7 +231,7 @@ impl OcompControlServer {
             self.identity.boot_nonce,
             self.limits,
         ));
-        self.with_snapshot_export_authority(authority, expected_snapshot_exporter_uid)
+        self.with_snapshot_export_authority(authority)
     }
 
     /// Installs the same node-owned snapshot authority used by finalized-job
@@ -252,10 +240,8 @@ impl OcompControlServer {
     pub fn with_snapshot_export_authority(
         mut self,
         authority: Arc<SnapshotExportAuthority>,
-        expected_snapshot_exporter_uid: u32,
     ) -> Self {
         self.snapshot_export = Some(authority);
-        self.expected_snapshot_exporter_uid = Some(expected_snapshot_exporter_uid);
         self
     }
 
@@ -295,8 +281,11 @@ impl OcompControlServer {
                             error,
                             NodeControlError::Control(ControlError::NoCommonBundle)
                         ) {
-                            eprintln!(
-                                "OCOMP node local-control {peer_role:?} session failed: {error}"
+                            tracing::warn!(
+                                target: "outbe::ocomp",
+                                ?peer_role,
+                                %error,
+                                "OCOMP node local-control session failed"
                             );
                             self.readiness.failed();
                         }
@@ -327,18 +316,19 @@ impl OcompControlServer {
         stream: UnixStream,
         peer_role: ControlRole,
     ) -> Result<(), NodeControlError> {
-        let expected_uid = match peer_role {
-            ControlRole::Supervisor => self.expected_supervisor_uid,
-            ControlRole::SnapshotExporter => self
-                .expected_snapshot_exporter_uid
-                .ok_or(NodeControlError::SnapshotExportUnavailable)?,
+        match peer_role {
+            ControlRole::Supervisor => {}
+            ControlRole::SnapshotExporter => {
+                if self.snapshot_export.is_none() {
+                    return Err(NodeControlError::SnapshotExportUnavailable);
+                }
+            }
             _ => return Err(NodeControlError::UnsupportedPeerRole(peer_role)),
-        };
+        }
         let mut session = ControlServerSession::accept(
             stream,
             ServerPolicy::node(
                 peer_role,
-                expected_uid,
                 self.identity,
                 self.session_generation,
                 self.limits,

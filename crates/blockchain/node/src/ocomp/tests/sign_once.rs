@@ -3,7 +3,7 @@
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, Write as _},
-    os::unix::fs::{MetadataExt as _, PermissionsExt as _},
+    os::unix::fs::PermissionsExt as _,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
@@ -97,12 +97,8 @@ fn ocm_sig_001_exact_replay_and_equivocation_survive_restart() {
     let root = temporary.path().join("sign-once");
     let signed = AtomicUsize::new(0);
     let first_subject = subject(B256::repeat_byte(0x44));
-    let owner_uid = std::fs::metadata(temporary.path())
-        .expect("temporary directory metadata")
-        .uid();
 
-    let store =
-        SignOnceStore::open(root.clone(), owner_uid, poc_schema_limits()).expect("open store");
+    let store = SignOnceStore::open(root.clone(), poc_schema_limits()).expect("open store");
     let first = store
         .record_or_replay(first_subject, |digest| {
             assert_eq!(digest, expected_signing_digest(first_subject));
@@ -122,8 +118,7 @@ fn ocm_sig_001_exact_replay_and_equivocation_survive_restart() {
     assert_eq!(signed.load(Ordering::SeqCst), 1);
 
     drop(store);
-    let reopened =
-        SignOnceStore::open(root.clone(), owner_uid, poc_schema_limits()).expect("reopen store");
+    let reopened = SignOnceStore::open(root.clone(), poc_schema_limits()).expect("reopen store");
     let replay_after_restart = reopened
         .record_or_replay(first_subject, |_| {
             panic!("restart replay must not sign again")
@@ -140,8 +135,8 @@ fn ocm_sig_001_exact_replay_and_equivocation_survive_restart() {
     ));
 
     drop(reopened);
-    let reopened = SignOnceStore::open(root, owner_uid, poc_schema_limits())
-        .expect("reopen after equivocation");
+    let reopened =
+        SignOnceStore::open(root, poc_schema_limits()).expect("reopen after equivocation");
     assert!(matches!(
         reopened.record_or_replay(conflicting, |_| {
             panic!("a restart must not erase equivocation protection")
@@ -163,13 +158,9 @@ fn ocm_sig_001_every_persistence_boundary_fails_closed_and_recovers_only_when_pu
     ] {
         let temporary = tempfile::tempdir().expect("temporary directory");
         let root = temporary.path().join("sign-once");
-        let owner_uid = std::fs::metadata(temporary.path())
-            .expect("temporary directory metadata")
-            .uid();
         let first_subject = subject(B256::repeat_byte(0x77));
         let store = SignOnceStore::open_with_durability(
             root.clone(),
-            owner_uid,
             poc_schema_limits(),
             Arc::new(FailAfterBoundary {
                 boundary,
@@ -197,11 +188,11 @@ fn ocm_sig_001_every_persistence_boundary_fails_closed_and_recovers_only_when_pu
                 | PersistenceBoundary::FileSynced
         ) {
             assert!(matches!(
-                SignOnceStore::open(root, owner_uid, poc_schema_limits()),
+                SignOnceStore::open(root, poc_schema_limits()),
                 Err(SignOnceError::UncertainState { .. })
             ));
         } else {
-            let reopened = SignOnceStore::open(root, owner_uid, poc_schema_limits())
+            let reopened = SignOnceStore::open(root, poc_schema_limits())
                 .expect("published record must reconcile");
             let recovered = reopened
                 .record_or_replay(first_subject, |_| {
@@ -217,19 +208,15 @@ fn ocm_sig_001_every_persistence_boundary_fails_closed_and_recovers_only_when_pu
 fn ocm_sig_001_lost_response_reconnect_replays_the_durable_signature() {
     let temporary = tempfile::tempdir().expect("temporary directory");
     let root = temporary.path().join("sign-once");
-    let owner_uid = fs::metadata(temporary.path())
-        .expect("temporary directory metadata")
-        .uid();
     let first_subject = subject(B256::repeat_byte(0x89));
-    let store =
-        SignOnceStore::open(root.clone(), owner_uid, poc_schema_limits()).expect("open store");
+    let store = SignOnceStore::open(root.clone(), poc_schema_limits()).expect("open store");
     store
         .record_or_replay(first_subject, |_| Ok([0x8a; 64]))
         .expect("durably publish signature before simulated response loss");
     drop(store);
 
     let reconnected =
-        SignOnceStore::open(root, owner_uid, poc_schema_limits()).expect("reopen after disconnect");
+        SignOnceStore::open(root, poc_schema_limits()).expect("reopen after disconnect");
     let replay = reconnected
         .record_or_replay(first_subject, |_| {
             panic!("reconnect must replay without another key operation")
@@ -241,13 +228,9 @@ fn ocm_sig_001_lost_response_reconnect_replays_the_durable_signature() {
 #[test]
 fn ocm_sig_001_full_corrupt_and_unsafe_storage_fail_closed() {
     let temporary = tempfile::tempdir().expect("temporary directory");
-    let owner_uid = fs::metadata(temporary.path())
-        .expect("temporary directory metadata")
-        .uid();
     let full_root = temporary.path().join("full");
     let full = SignOnceStore::open_with_durability(
         full_root,
-        owner_uid,
         poc_schema_limits(),
         Arc::new(NoSpaceDurability),
     )
@@ -265,7 +248,7 @@ fn ocm_sig_001_full_corrupt_and_unsafe_storage_fail_closed() {
     ));
 
     let corrupt_root = temporary.path().join("corrupt");
-    let store = SignOnceStore::open(corrupt_root.clone(), owner_uid, poc_schema_limits())
+    let store = SignOnceStore::open(corrupt_root.clone(), poc_schema_limits())
         .expect("open corruption fixture store");
     store
         .record_or_replay(first_subject, |_| Ok([0x93; 64]))
@@ -287,7 +270,7 @@ fn ocm_sig_001_full_corrupt_and_unsafe_storage_fail_closed() {
         .expect("corrupt record");
     record.sync_all().expect("sync corrupted record");
     assert!(matches!(
-        SignOnceStore::open(corrupt_root, owner_uid, poc_schema_limits()),
+        SignOnceStore::open(corrupt_root, poc_schema_limits()),
         Err(SignOnceError::CorruptRecord { .. })
     ));
 
@@ -296,7 +279,7 @@ fn ocm_sig_001_full_corrupt_and_unsafe_storage_fail_closed() {
     fs::set_permissions(&unsafe_root, fs::Permissions::from_mode(0o755))
         .expect("set unsafe root mode");
     assert!(matches!(
-        SignOnceStore::open(unsafe_root, owner_uid, poc_schema_limits()),
+        SignOnceStore::open(unsafe_root, poc_schema_limits()),
         Err(SignOnceError::UnsafeStore { .. })
     ));
 }

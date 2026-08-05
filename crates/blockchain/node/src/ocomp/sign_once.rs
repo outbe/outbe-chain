@@ -134,37 +134,25 @@ struct StoreState {
 
 pub struct SignOnceStore {
     root: PathBuf,
-    expected_owner_uid: u32,
     limits: SchemaLimits,
     durability: Arc<dyn SignOnceDurability>,
     state: Mutex<StoreState>,
 }
 
 impl SignOnceStore {
-    pub fn open(
-        root: PathBuf,
-        expected_owner_uid: u32,
-        limits: SchemaLimits,
-    ) -> Result<Self, SignOnceError> {
-        Self::open_with_durability(
-            root,
-            expected_owner_uid,
-            limits,
-            Arc::new(OsSignOnceDurability),
-        )
+    pub fn open(root: PathBuf, limits: SchemaLimits) -> Result<Self, SignOnceError> {
+        Self::open_with_durability(root, limits, Arc::new(OsSignOnceDurability))
     }
 
     pub fn open_with_durability(
         root: PathBuf,
-        expected_owner_uid: u32,
         limits: SchemaLimits,
         durability: Arc<dyn SignOnceDurability>,
     ) -> Result<Self, SignOnceError> {
         create_private_directory(&root)?;
-        validate_directory(&root, expected_owner_uid)?;
+        validate_directory(&root)?;
         let store = Self {
             root,
-            expected_owner_uid,
             limits,
             durability,
             state: Mutex::new(StoreState::default()),
@@ -344,10 +332,8 @@ impl SignOnceStore {
                 reason: "pending record exists without a published record",
             });
         }
-        let pending_metadata =
-            validated_linked_record_metadata(pending_path, self.expected_owner_uid)?;
-        let final_metadata =
-            validated_linked_record_metadata(&final_path, self.expected_owner_uid)?;
+        let pending_metadata = validated_linked_record_metadata(pending_path)?;
+        let final_metadata = validated_linked_record_metadata(&final_path)?;
         if pending_metadata.dev() != final_metadata.dev()
             || pending_metadata.ino() != final_metadata.ino()
         {
@@ -372,7 +358,7 @@ impl SignOnceStore {
     }
 
     fn read_record(&self, path: &Path) -> Result<SignOnceRecordV1, SignOnceError> {
-        let metadata = validated_record_metadata(path, self.expected_owner_uid)?;
+        let metadata = validated_record_metadata(path)?;
         if metadata.len() > MAX_RECORD_BYTES {
             return Err(SignOnceError::CorruptRecord {
                 path: path.to_path_buf(),
@@ -384,7 +370,7 @@ impl SignOnceStore {
         let opened_metadata = file
             .metadata()
             .map_err(|source| self.io("inspect opened sign-once record", path, source))?;
-        validate_opened_record_metadata(path, &opened_metadata, self.expected_owner_uid)?;
+        validate_opened_record_metadata(path, &opened_metadata)?;
         if metadata.dev() != opened_metadata.dev() || metadata.ino() != opened_metadata.ino() {
             return Err(SignOnceError::UnsafeStore {
                 path: path.to_path_buf(),
@@ -477,7 +463,7 @@ fn create_private_directory(path: &Path) -> Result<(), SignOnceError> {
     }
 }
 
-fn validate_directory(path: &Path, expected_owner_uid: u32) -> Result<(), SignOnceError> {
+fn validate_directory(path: &Path) -> Result<(), SignOnceError> {
     let metadata = fs::symlink_metadata(path).map_err(|source| SignOnceError::Io {
         operation: "stat sign-once directory",
         path: path.to_path_buf(),
@@ -489,12 +475,6 @@ fn validate_directory(path: &Path, expected_owner_uid: u32) -> Result<(), SignOn
             reason: "sign-once root is not a directory",
         });
     }
-    if metadata.uid() != expected_owner_uid {
-        return Err(SignOnceError::UnsafeStore {
-            path: path.to_path_buf(),
-            reason: "sign-once directory has the wrong owner",
-        });
-    }
     if metadata.permissions().mode() & 0o777 != DIRECTORY_MODE {
         return Err(SignOnceError::UnsafeStore {
             path: path.to_path_buf(),
@@ -504,10 +484,7 @@ fn validate_directory(path: &Path, expected_owner_uid: u32) -> Result<(), SignOn
     Ok(())
 }
 
-fn validated_record_metadata(
-    path: &Path,
-    expected_owner_uid: u32,
-) -> Result<fs::Metadata, SignOnceError> {
+fn validated_record_metadata(path: &Path) -> Result<fs::Metadata, SignOnceError> {
     let metadata = fs::symlink_metadata(path).map_err(|source| SignOnceError::Io {
         operation: "stat sign-once record",
         path: path.to_path_buf(),
@@ -517,12 +494,6 @@ fn validated_record_metadata(
         return Err(SignOnceError::UnsafeStore {
             path: path.to_path_buf(),
             reason: "sign-once record is not a regular file",
-        });
-    }
-    if metadata.uid() != expected_owner_uid {
-        return Err(SignOnceError::UnsafeStore {
-            path: path.to_path_buf(),
-            reason: "sign-once record has the wrong owner",
         });
     }
     if metadata.permissions().mode() & 0o777 != RECORD_MODE {
@@ -543,10 +514,8 @@ fn validated_record_metadata(
 fn validate_opened_record_metadata(
     path: &Path,
     metadata: &fs::Metadata,
-    expected_owner_uid: u32,
 ) -> Result<(), SignOnceError> {
     if !metadata.file_type().is_file()
-        || metadata.uid() != expected_owner_uid
         || metadata.permissions().mode() & 0o777 != RECORD_MODE
         || metadata.nlink() != 1
     {
@@ -558,17 +527,13 @@ fn validate_opened_record_metadata(
     Ok(())
 }
 
-fn validated_linked_record_metadata(
-    path: &Path,
-    expected_owner_uid: u32,
-) -> Result<fs::Metadata, SignOnceError> {
+fn validated_linked_record_metadata(path: &Path) -> Result<fs::Metadata, SignOnceError> {
     let metadata = fs::symlink_metadata(path).map_err(|source| SignOnceError::Io {
         operation: "stat linked sign-once record",
         path: path.to_path_buf(),
         source,
     })?;
     if !metadata.file_type().is_file()
-        || metadata.uid() != expected_owner_uid
         || metadata.permissions().mode() & 0o777 != RECORD_MODE
         || metadata.nlink() != 2
     {

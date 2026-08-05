@@ -1,6 +1,5 @@
 use std::{
     fs,
-    os::unix::fs::MetadataExt as _,
     os::unix::net::UnixStream,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -28,7 +27,7 @@ use outbe_ocomp_protocol::{
         FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
         MetadosisExpectedStatus, NodTargetPreconditionV1, TributeInputBindingV1,
     },
-    local_control::{effective_uid, ClientPolicy, ControlClientSession, EndpointIdentity},
+    local_control::{ClientPolicy, ControlClientSession, EndpointIdentity},
     profile::poc_schema_limits as protocol_limits,
     registry::HashDomain,
     result::{
@@ -398,10 +397,7 @@ pub(super) fn attestation_gate(
     let limits = protocol_limits();
     let signer = OcompSigner::from_secret([1; 32]).expect("local OCOMP signer");
     let root = directory.path().join("sign-once");
-    let owner_uid = fs::metadata(directory.path())
-        .expect("temporary directory metadata")
-        .uid();
-    let store = SignOnceStore::open(root, owner_uid, limits).expect("sign-once store");
+    let store = SignOnceStore::open(root, limits).expect("sign-once store");
     OcompAttestationGate::new(
         authority,
         height,
@@ -437,7 +433,6 @@ fn base_control_server(directory: &tempfile::TempDir) -> OcompControlServer {
     ));
     OcompControlServer::new(
         retention,
-        effective_uid().expect("effective uid"),
         EndpointIdentity {
             chain_id: 42,
             genesis_hash: hash(40),
@@ -553,7 +548,7 @@ fn ocm_sig_001_real_control_socket_attests_and_returns_typed_conflict_without_dr
     };
     let mut client = ControlClientSession::connect(
         supervisor_stream,
-        ClientPolicy::supervisor_to_node(effective_uid().expect("effective uid"), identity, limits),
+        ClientPolicy::supervisor_to_node(identity, limits),
     )
     .expect("connect supervisor control session");
     client.handshake().expect("control handshake");
@@ -738,7 +733,7 @@ fn ocm_vot_001_supervisor_prepares_vote_transaction_over_the_real_control_socket
     };
     let mut client = ControlClientSession::connect(
         supervisor_stream,
-        ClientPolicy::supervisor_to_node(effective_uid().expect("effective uid"), identity, limits),
+        ClientPolicy::supervisor_to_node(identity, limits),
     )
     .expect("connect supervisor control session");
     client.handshake().expect("control handshake");
@@ -849,7 +844,6 @@ fn ocm_sig_001_unavailable_signing_disables_only_attestation_on_the_node_control
     let mut client = ControlClientSession::connect(
         supervisor_stream,
         ClientPolicy::supervisor_to_node(
-            effective_uid().expect("effective uid"),
             EndpointIdentity {
                 chain_id: 42,
                 genesis_hash: hash(40),

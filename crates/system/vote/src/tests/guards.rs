@@ -228,9 +228,11 @@ fn begin_block_does_not_tally_at_exact_deadline() {
             current,
         )
         .unwrap();
+        // One yes out of three actives stays below the 2/3 quorum, so the only
+        // thing that can finalize this proposal is its deadline — which is what
+        // this test is about. A quorum-reaching tally would now finalize early
+        // and say nothing about the deadline comparison.
         vote.cast_vote_approve(proposal_id, VOTER_A, true, current + 1)
-            .unwrap();
-        vote.cast_vote_approve(proposal_id, VOTER_B, true, current + 2)
             .unwrap();
 
         let record = vote.proposals.get(proposal_id).unwrap().unwrap();

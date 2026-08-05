@@ -42,6 +42,25 @@ impl TributeContract<'_> {
         })
     }
 
+    /// TESTNET-ONLY (chain 54322345, v0.3.1-testnet.3): flips the OCOMP flag on
+    /// a Tribute state that already holds supply, which
+    /// [`Self::initialize_fresh_ocomp_profile`] refuses by design.
+    ///
+    /// Days that already carry tributes keep an empty `DayPreAdmission`
+    /// accumulator, because `update_pre_admission_for_tribute` only accumulates
+    /// while the flag is set. Only WorldwideDays whose tributes are all issued
+    /// after the flip carry consistent `canonical_body_bytes` /
+    /// `distinct_*_count` values. Delete with the chain it targets.
+    pub fn force_ocomp_profile_ready(&mut self) -> Result<()> {
+        let storage = self.storage_handle();
+        storage.with_checkpoint(|| {
+            if self.ocomp_profile_ready.read()? {
+                return Ok(());
+            }
+            self.ocomp_profile_ready.write(true)
+        })
+    }
+
     pub fn total_supply(&self) -> Result<u64> {
         self.total_supply.read()
     }

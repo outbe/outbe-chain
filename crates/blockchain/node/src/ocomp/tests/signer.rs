@@ -1,7 +1,7 @@
 use std::{
     fs::{self, OpenOptions},
     io::Write as _,
-    os::unix::fs::{symlink, MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _},
+    os::unix::fs::{symlink, OpenOptionsExt as _, PermissionsExt as _},
     path::Path,
 };
 
@@ -32,9 +32,8 @@ fn ocm_sig_001_strict_ocomp_key_signs_only_result_prehashes() {
     let temporary = tempfile::tempdir().expect("temporary directory");
     let key_path = temporary.path().join("ocomp-key.hex");
     write_key(&key_path, &canonical_secret([7; 32]), 0o600);
-    let owner_uid = fs::metadata(&key_path).expect("key metadata").uid();
 
-    let signer = OcompSigner::from_file(&key_path, owner_uid).expect("load OCOMP key");
+    let signer = OcompSigner::from_file(&key_path).expect("load OCOMP key");
     assert_eq!(signer.key_epoch(), POC_KEY_EPOCH);
     let digest = B256::repeat_byte(0x41);
     let signature = signer
@@ -73,9 +72,8 @@ fn ocm_sig_001_ocomp_key_rejects_unsafe_files_and_noncanonical_bytes() {
         let temporary = tempfile::tempdir().expect("temporary directory");
         let key_path = temporary.path().join(name);
         write_key(&key_path, bytes, 0o600);
-        let owner_uid = fs::metadata(&key_path).expect("key metadata").uid();
         assert!(
-            OcompSigner::from_file(&key_path, owner_uid).is_err(),
+            OcompSigner::from_file(&key_path).is_err(),
             "{name} must be rejected"
         );
     }
@@ -84,13 +82,8 @@ fn ocm_sig_001_ocomp_key_rejects_unsafe_files_and_noncanonical_bytes() {
     let key_path = temporary.path().join("wrong-mode.hex");
     write_key(&key_path, &canonical_secret([7; 32]), 0o600);
     fs::set_permissions(&key_path, fs::Permissions::from_mode(0o640)).expect("change key mode");
-    let owner_uid = fs::metadata(&key_path).expect("key metadata").uid();
     assert!(matches!(
-        OcompSigner::from_file(&key_path, owner_uid),
-        Err(OcompKeyError::UnsafeFile { .. })
-    ));
-    assert!(matches!(
-        OcompSigner::from_file(&key_path, owner_uid.saturating_add(1)),
+        OcompSigner::from_file(&key_path),
         Err(OcompKeyError::UnsafeFile { .. })
     ));
 
@@ -99,7 +92,7 @@ fn ocm_sig_001_ocomp_key_rejects_unsafe_files_and_noncanonical_bytes() {
     let symlink_path = temporary.path().join("symlink.hex");
     symlink(&target_path, &symlink_path).expect("create key symlink");
     assert!(matches!(
-        OcompSigner::from_file(&symlink_path, owner_uid),
+        OcompSigner::from_file(&symlink_path),
         Err(OcompKeyError::UnsafeFile { .. })
     ));
 }

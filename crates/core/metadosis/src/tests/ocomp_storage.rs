@@ -337,7 +337,7 @@ fn certified_parent_finality_records_only_the_exact_live_request_and_fails_close
         assert_eq!(finalized.open_height, finality_height + 4);
         assert_eq!(
             finalized.deadline_height,
-            finality_height + 4 + capacity_profile().result_deadline_blocks
+            finality_height + 4 + outbe_ocomp_protocol::capacity::RESULT_DEADLINE_BLOCKS
         );
 
         assert!(

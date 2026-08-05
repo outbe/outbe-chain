@@ -6,7 +6,7 @@ use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::Write as _;
 use std::os::fd::OwnedFd;
-use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
+use std::os::unix::fs::OpenOptionsExt as _;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -37,10 +37,7 @@ use outbe_ocomp::{
     admission_catalog::{AdmissionCatalogError, AdmissionOutcome, VerifiedAdmissionCatalog},
     bundle::PinnedProtocolBundle,
     cas::{CasLimits, CasWriterRole, FilesystemCas, FilesystemCasReader},
-    control::{
-        effective_uid, effective_user_name, poc_schema_limits, ClientPolicy, ControlClientSession,
-        EndpointIdentity,
-    },
+    control::{poc_schema_limits, ClientPolicy, ControlClientSession, EndpointIdentity},
     inbox::{WorkerInbox, WorkerInboxLimits},
     input_artifacts::{
         poc_input_list_limits, publish_input_artifact_set, InputArtifactContents,
@@ -88,7 +85,6 @@ use outbe_primitives::addresses::{FIDELITY_ADDRESS, ORACLE_ADDRESS};
 use tempfile::tempdir;
 
 const CHILD_MODE: &str = "OUTBE_OCOMP_DET_WORKER_CHILD";
-const CHILD_USER: &str = "OUTBE_OCOMP_DET_WORKER_USER";
 const CHILD_CHAIN_ID: &str = "OUTBE_OCOMP_DET_CHAIN_ID";
 const CHILD_GENESIS: &str = "OUTBE_OCOMP_DET_GENESIS";
 const CHILD_BOOT_NONCE: &str = "OUTBE_OCOMP_DET_BOOT_NONCE";
@@ -446,7 +442,6 @@ fn request_node_attestation(
     let supervisor = SupervisorDiscovery::open(SupervisorDiscoveryConfig {
         node_socket: socket,
         journal_root: root.join(format!("supervisor-{run}")),
-        expected_node_uid: effective_uid().expect("effective uid"),
         identity: endpoint_identity(0x92),
         limits: poc_schema_limits(),
     })
@@ -477,24 +472,17 @@ fn run_child_node() {
         root.join("retention"),
         Arc::new(source),
     ));
-    let uid = fs::metadata(&root).expect("node child root metadata").uid();
-    let server = OcompControlServer::new(
-        coordinator,
-        uid,
-        endpoint_identity(0x91),
-        1,
-        poc_schema_limits(),
-    )
-    .expect("construct node control server")
-    .with_node_attestation(OcompNodeAttestationConfig {
-        key_path: root.join("ocomp-key-v1.hex"),
-        sign_once_root: root.join("sign-once"),
-        expected_owner_uid: uid,
-        validator_index: 0,
-        committee: deterministic_committee(),
-        initial_height,
-    })
-    .expect("configure closed node attestation");
+    let server =
+        OcompControlServer::new(coordinator, endpoint_identity(0x91), 1, poc_schema_limits())
+            .expect("construct node control server")
+            .with_node_attestation(OcompNodeAttestationConfig {
+                key_path: root.join("ocomp-key-v1.hex"),
+                sign_once_root: root.join("sign-once"),
+                validator_index: 0,
+                committee: deterministic_committee(),
+                initial_height,
+            })
+            .expect("configure closed node attestation");
     let listener = UnixListener::bind(&socket).expect("bind node attestation UDS");
     let (stream, _) = listener.accept().expect("accept supervisor attestation");
     server
@@ -704,8 +692,6 @@ fn run_schedule(worker_count: usize, seed: u64) -> ScheduleOutcome {
         WorkerInbox::open(&inbox_root, INBOX_LIMITS).expect("open deterministic worker inbox");
     let replay_inbox = WorkerInbox::open(&replay_inbox_root, INBOX_LIMITS)
         .expect("open deterministic replay inbox");
-    let user = effective_user_name().expect("deterministic worker user");
-    let uid = effective_uid().expect("deterministic worker uid");
 
     let mut completed = vec![false; total_units as usize];
     let mut schedule = Vec::new();
@@ -748,7 +734,6 @@ fn run_schedule(worker_count: usize, seed: u64) -> ScheduleOutcome {
                 .into_iter()
                 .enumerate()
                 .map(|(slot, (ordinal, request))| {
-                    let user = &user;
                     let cas_root = &cas_root;
                     let inbox_root = &inbox_root;
                     (
@@ -758,8 +743,6 @@ fn run_schedule(worker_count: usize, seed: u64) -> ScheduleOutcome {
                             execute_worker_request(
                                 10_000 + round * 16 + slot as u64,
                                 0x20_u8.wrapping_add(ordinal as u8),
-                                user,
-                                uid,
                                 cas_root,
                                 inbox_root,
                                 &request,
@@ -787,8 +770,6 @@ fn run_schedule(worker_count: usize, seed: u64) -> ScheduleOutcome {
                 interrupt_worker_request(
                     20_000 + round,
                     0x90_u8.wrapping_add(ordinal as u8),
-                    &user,
-                    uid,
                     &cas_root,
                     &inbox_root,
                     &request,
@@ -797,8 +778,6 @@ fn run_schedule(worker_count: usize, seed: u64) -> ScheduleOutcome {
                 let retry = execute_worker_request(
                     30_000 + round,
                     0xa0_u8.wrapping_add(ordinal as u8),
-                    &user,
-                    uid,
                     &cas_root,
                     &inbox_root,
                     &request,
@@ -1166,8 +1145,6 @@ fn schedule_key(seed: u64, round: u64, ordinal: u32) -> u64 {
 fn launch_worker(
     generation: u64,
     boot: u8,
-    user: &str,
-    uid: u32,
     cas_root: &Path,
     inbox_root: &Path,
     limits: SchemaLimits,
@@ -1179,7 +1156,6 @@ fn launch_worker(
     command
         .args(["--exact", TEST_NAME, "--nocapture"])
         .env(CHILD_MODE, "1")
-        .env(CHILD_USER, user)
         .env(CHILD_CHAIN_ID, worker_identity.chain_id.to_string())
         .env(
             CHILD_GENESIS,
@@ -1213,7 +1189,7 @@ fn launch_worker(
     };
     let mut client = ControlClientSession::connect(
         parent_stream,
-        ClientPolicy::supervisor_to_worker(uid, client_identity, limits),
+        ClientPolicy::supervisor_to_worker(client_identity, limits),
     )
     .expect("connect deterministic worker");
     client.handshake().expect("handshake deterministic worker");
@@ -1224,15 +1200,12 @@ fn launch_worker(
 fn execute_worker_request(
     generation: u64,
     boot: u8,
-    user: &str,
-    uid: u32,
     cas_root: &Path,
     inbox_root: &Path,
     request: &RunUnitV1,
     limits: SchemaLimits,
 ) -> UnitFinishedV1 {
-    let (child, mut client) =
-        launch_worker(generation, boot, user, uid, cas_root, inbox_root, limits);
+    let (child, mut client) = launch_worker(generation, boot, cas_root, inbox_root, limits);
     client
         .send_request(
             WorkerMessageKind::RunUnit as u16,
@@ -1272,15 +1245,12 @@ fn execute_worker_request(
 fn interrupt_worker_request(
     generation: u64,
     boot: u8,
-    user: &str,
-    uid: u32,
     cas_root: &Path,
     inbox_root: &Path,
     request: &RunUnitV1,
     limits: SchemaLimits,
 ) {
-    let (mut child, mut client) =
-        launch_worker(generation, boot, user, uid, cas_root, inbox_root, limits);
+    let (mut child, mut client) = launch_worker(generation, boot, cas_root, inbox_root, limits);
     client
         .send_request(
             WorkerMessageKind::RunUnit as u16,
@@ -1306,16 +1276,12 @@ fn run_child_worker() {
             .parse::<B256>()
             .unwrap_or_else(|_| panic!("invalid {name}"))
     };
-    let user = env::var(CHILD_USER).expect("deterministic worker child user");
-    let uid = outbe_ocomp::control::uid_for_user(&user).expect("deterministic worker child uid");
     let limits = poc_schema_limits();
     let expected_bundle_hash = parse_b256(CHILD_BUNDLE);
     let canonical_bundle = support::protocol_bundle()
         .encode_canonical(&limits)
         .expect("canonical deterministic child bundle");
     run_one_from_inherited_fd(WorkerConfig {
-        expected_effective_uid: uid,
-        expected_supervisor_uid: uid,
         identity: EndpointIdentity {
             chain_id: parse_u64(CHILD_CHAIN_ID),
             genesis_hash: parse_b256(CHILD_GENESIS),

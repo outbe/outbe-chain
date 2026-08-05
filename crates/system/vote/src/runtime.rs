@@ -19,9 +19,26 @@ use crate::notify::ProposalFinalization;
 use crate::schema::{BondSettlement, Vote};
 use crate::state::{
     active_validator_addresses, calculate_vote_tally, ProposalBond, ProposalStatus, VoteKind,
+    VoteTally,
 };
 
 const LOCALNET_CHAIN_ID: u64 = 54_322_345;
+
+/// First block on chain `54_322_345` whose begin-zone finalizes a proposal as
+/// soon as it holds a quorum.
+///
+/// Early finalization changes what `process_begin_block` writes, so a node
+/// replaying history must apply it exactly where the producers did. Blocks
+/// before this height were built under the deadline-only rule — proposal 1
+/// reached quorum at 234_610 and was only approved at 235_507, the first block
+/// the validators produced with this code. Without the gate a re-executing node
+/// approves it at 234_611 and dies on a receipt-root mismatch.
+const EARLY_QUORUM_FINALIZATION_HEIGHT: u64 = 235_507;
+
+/// Whether the quorum-triggered finalization rule is in force at `block_number`.
+fn early_quorum_finalization_active(chain_id: u64, block_number: u64) -> bool {
+    chain_id != LOCALNET_CHAIN_ID || block_number >= EARLY_QUORUM_FINALIZATION_HEIGHT
+}
 
 fn voting_window_blocks(chain_id: u64) -> u64 {
     if chain_id != LOCALNET_CHAIN_ID {
@@ -249,10 +266,21 @@ impl Vote<'_> {
         Ok(())
     }
 
-    /// Tally proposals whose voting windows have closed.
+    /// Tally proposals that have reached quorum or whose voting windows have
+    /// closed.
     ///
     /// Transitions `Pending` -> `Approved` | `Expired` | `Error`. Dispatches the
     /// tally outcome to the registered target-module handler in the same pass.
+    ///
+    /// A proposal that already holds a `yes` quorum is finalized immediately
+    /// rather than sitting `Pending` for the rest of the voting window: the
+    /// outcome cannot change, since only active validators vote and none may
+    /// vote twice.
+    ///
+    /// Cost per block is one `calculate_vote_tally` per pending proposal, i.e.
+    /// one `proposal_voters` read each. Both factors are bounded:
+    /// `MAX_PENDING_PROPOSALS` proposals, and a voter list that cannot exceed
+    /// the active validator set.
     pub fn process_begin_block(
         &mut self,
         ctx: &BlockRuntimeContext,
@@ -260,14 +288,28 @@ impl Vote<'_> {
     ) -> Result<()> {
         let block_number = ctx.block.block_number;
         let pending_ids = self.list_pending_proposal_ids()?;
+        if pending_ids.is_empty() {
+            return Ok(());
+        }
+        let early = early_quorum_finalization_active(self.storage.chain_id()?, block_number);
+        // The validator set is the same for every proposal in this block, so it
+        // is read once instead of per proposal.
+        let active = active_validator_addresses(self.storage.clone())?;
+        let active_count = ValidatorSet::new(self.storage.clone()).active_validator_count()?;
         for proposal_id in pending_ids {
             let Some(proposal) = self.proposals.get(proposal_id)? else {
                 return Err(VoteError::ProposalNotFound.into());
             };
-            if proposal.proposal_status()? == ProposalStatus::Pending
-                && block_number > proposal.voting_deadline_height
-            {
-                self.finalize_voting(ctx, proposal_id, registry)?;
+            if proposal.proposal_status()? != ProposalStatus::Pending {
+                continue;
+            }
+            let tally = calculate_vote_tally(self, &proposal, &active)?;
+            let deadline_passed = block_number > proposal.voting_deadline_height;
+            // Finalizing early is only safe on a reached quorum: below it
+            // `finalize_voting` records `Expired`, which would bury a proposal
+            // that is still open for votes.
+            if deadline_passed || (early && quorum_reached(tally.yes, active_count)) {
+                self.finalize_voting(ctx, proposal_id, registry, &tally, active_count)?;
             }
         }
         Ok(())
@@ -278,6 +320,8 @@ impl Vote<'_> {
         ctx: &BlockRuntimeContext,
         proposal_id: U256,
         registry: &VoteTargetRegistry,
+        tally: &VoteTally,
+        active_count: u32,
     ) -> Result<()> {
         let proposal = self
             .proposals
@@ -287,10 +331,6 @@ impl Vote<'_> {
             return Ok(());
         }
 
-        let active = active_validator_addresses(self.storage.clone())?;
-        let tally = calculate_vote_tally(self, &proposal, &active)?;
-        let vs = ValidatorSet::new(self.storage.clone());
-        let active_count = vs.active_validator_count()?;
         let status = if quorum_reached(tally.yes, active_count) {
             ProposalStatus::Approved
         } else {
@@ -328,7 +368,7 @@ impl Vote<'_> {
             }
         };
 
-        self.notify_proposal_finalized(&proposal, &tally, outcome)?;
+        self.notify_proposal_finalized(&proposal, tally, outcome)?;
         finalization_checkpoint.commit();
         Ok(())
     }

@@ -146,15 +146,36 @@ impl SnapshotExporter {
         )?;
         let mut completed = Vec::new();
         for listed in listing.handoffs {
-            let handoff = stage(
+            // One unexportable handoff must not stop the pass. Its CE snapshot
+            // may be permanently gone (marker advanced past it), and the node
+            // lists handoffs oldest-generation first, so aborting here would
+            // park the exporter on the oldest dead job and never reach the live
+            // one behind it.
+            let handoff = match stage(
                 "get exact node snapshot handoff",
                 self.node.get(listed.job_id, listed.lease_generation),
-            )?;
-            require(handoff == listed, "listed snapshot handoff")?;
+            ) {
+                Ok(handoff) => handoff,
+                Err(error) => {
+                    eprintln!("OCOMP snapshot exporter skipping handoff: {error}");
+                    continue;
+                }
+            };
+            if handoff != listed {
+                eprintln!(
+                    "OCOMP snapshot exporter skipping handoff: listed snapshot handoff changed"
+                );
+                continue;
+            }
             if replayed_job_ids.binary_search(&handoff.job_id).is_ok() {
                 continue;
             }
-            completed.push(self.export_handoff(handoff)?);
+            match self.export_handoff(handoff) {
+                Ok(export) => completed.push(export),
+                Err(error) => {
+                    eprintln!("OCOMP snapshot exporter skipping handoff: {error}");
+                }
+            }
         }
         Ok(SnapshotExporterReconcile {
             next_lease_generation: listing.next_lease_generation,

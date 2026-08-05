@@ -33,7 +33,7 @@ use outbe_ocomp_protocol::{
     },
     common::BoundedBytes,
     hash::hash_framed,
-    local_control::{effective_uid, ClientPolicy, ControlClientSession, EndpointIdentity},
+    local_control::{ClientPolicy, ControlClientSession, EndpointIdentity},
     profile::{CapacityProfileV1, ProtocolBundleV1},
     registry::{
         HashDomain, FIDELITY_OPENING_CODEC_ID, ORACLE_OPENING_CODEC_ID, TRIBUTE_BODY_CODEC_ID,
@@ -479,7 +479,6 @@ impl OcompTopology {
             .ok_or_else(|| eyre::eyre!("OCOMP launch identity is unavailable"))?;
         let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
         let stream = UnixStream::connect(self.node_supervisor_socket(validator_index)?)?;
-        let uid = effective_uid()?;
         let endpoint_identity = EndpointIdentity {
             chain_id: identity.chain_id,
             genesis_hash: identity.genesis_hash,
@@ -488,7 +487,7 @@ impl OcompTopology {
         };
         let mut session = ControlClientSession::connect(
             stream,
-            ClientPolicy::supervisor_to_node(uid, endpoint_identity, limits),
+            ClientPolicy::supervisor_to_node(endpoint_identity, limits),
         )?;
         session.handshake()?;
         let request = PrepareVoteTransactionV1 {
@@ -900,7 +899,6 @@ impl OcompTopology {
             command,
         )?;
 
-        let uid = effective_uid()?;
         let supervisor_identity = EndpointIdentity {
             chain_id: identity.chain_id,
             genesis_hash: identity.genesis_hash,
@@ -910,7 +908,6 @@ impl OcompTopology {
         let mut control = ControlClientSession::connect(
             supervisor_stream,
             ClientPolicy::supervisor_to_worker(
-                uid,
                 supervisor_identity,
                 outbe_ocomp_protocol::profile::poc_schema_limits(),
             ),

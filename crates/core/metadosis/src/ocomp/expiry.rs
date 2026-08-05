@@ -61,7 +61,7 @@ pub fn record_certified_parent_finality(
         finalized_request_block_hash,
         finalized_request_state_root,
         ctx.block.block_number,
-        profile.capacity_profile.result_deadline_blocks,
+        outbe_ocomp_protocol::capacity::RESULT_DEADLINE_BLOCKS,
         &schema_limits,
     )?;
     Ok(true)
@@ -76,6 +76,52 @@ pub fn run_lifecycle_begin(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
         return Ok(());
     };
     let limits = fsm_limits(&profile);
+
+    // The OCOMP lifecycle must never stop block production. Its failures are
+    // real and are logged at ERROR with the exact cause, but they are failures
+    // of one WorldwideDay, not of the chain: the day is closed as `FAILED` and
+    // whatever Lysis budget it still holds is credited back to the PromisLimit
+    // carry-over, and the block continues without it.
+    let storage = ctx.storage.clone();
+    let outcome = storage
+        .with_checkpoint(|| lifecycle_begin_exact(ctx, &mut metadosis, &schema_limits, limits));
+    let Err(error) = outcome else {
+        return Ok(());
+    };
+    tracing::error!(
+        target: "outbe::ocomp",
+        %error,
+        block_number = ctx.block.block_number,
+        "OCOMP lifecycle failed; failing the affected day instead of the block"
+    );
+
+    // Bounded by `max_pending_jobs`, so this is a fixed-cost probe, not a scan.
+    for wwd in metadosis.live_ocomp_worldwide_days()? {
+        if metadosis
+            .ocomp_fsm_state(wwd, &schema_limits, limits)
+            .is_ok()
+        {
+            continue;
+        }
+        let credited = metadosis.fail_ocomp_day_with_carry_over(wwd, &schema_limits)?;
+        tracing::error!(
+            target: "outbe::ocomp",
+            wwd = wwd.value(),
+            block_number = ctx.block.block_number,
+            credited = %credited,
+            "OCOMP day cannot advance; marked FAILED and its budget carried over"
+        );
+    }
+    Ok(())
+}
+
+fn lifecycle_begin_exact(
+    ctx: &BlockRuntimeContext<'_>,
+    metadosis: &mut MetadosisContract<'_>,
+    schema_limits: &outbe_ocomp_protocol::SchemaLimits,
+    limits: super::state::JobFsmLimits,
+) -> Result<()> {
+    let schema_limits = *schema_limits;
     metadosis.open_due_ocomp_voting(ctx.block.block_number, &schema_limits, limits)?;
     let storage = ctx.storage.clone();
     storage.with_checkpoint(|| {
@@ -94,7 +140,7 @@ pub fn run_lifecycle_begin(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
                 {
                     return Err(fatal("no-quorum OCOMP close/live state mismatch"));
                 }
-                expire_exact(&mut metadosis, ctx, before, limits)
+                expire_exact(metadosis, ctx, before, limits)
             }
         }
     })

@@ -123,8 +123,20 @@ impl SnapshotExportAuthority {
             .collect::<BTreeSet<_>>();
         let mut handoffs = self.lock_handoffs()?;
         handoffs.retain(|existing_job_id, _| live_job_ids.contains(existing_job_id));
+        // A cached handoff is only worth serving while its lease can still be
+        // opened. Once the lease times out the exporter can never complete it —
+        // the CE marker has moved on and an in-place tree cannot reopen a past
+        // parent — so serving it again would pin the exporter to a dead job
+        // forever. Drop it instead and fall through to a fresh arming attempt.
         if let Some(existing) = handoffs.get(&job_id) {
-            return Ok(existing.clone());
+            match self.tree.export_lease_status(existing.lease_generation) {
+                Ok(ExportLeaseStatus::Pending | ExportLeaseStatus::Opened) => {
+                    return Ok(existing.clone());
+                }
+                Ok(ExportLeaseStatus::TimedOut) | Err(_) => {
+                    handoffs.remove(&job_id);
+                }
+            }
         }
         if handoffs.len() >= MAX_TRACKED_SNAPSHOT_HANDOFFS && !handoffs.contains_key(&job_id) {
             return Err(SnapshotExportError::HandoffCapacity);
@@ -141,14 +153,6 @@ impl SnapshotExportAuthority {
                 })?;
         let candidate = finalized.candidate;
         let marker = self.tree.finalized_marker()?;
-        if marker.height != candidate.block_number || marker.block_hash != candidate.block_hash {
-            return Err(SnapshotExportError::CeMarkerMismatch {
-                expected_height: candidate.block_number,
-                expected_hash: candidate.block_hash,
-                actual_height: marker.height,
-                actual_hash: marker.block_hash,
-            });
-        }
         let ce_schema_version = u16::try_from(
             self.tree
                 .environment_identity()
@@ -378,15 +382,6 @@ pub enum SnapshotExportError {
     JobNotFinalized,
     #[error("OCOMP retention is quarantined: {0}")]
     RetentionQuarantined(String),
-    #[error(
-        "CE marker mismatch: expected {expected_height}/{expected_hash}, got {actual_height}/{actual_hash}"
-    )]
-    CeMarkerMismatch {
-        expected_height: u64,
-        expected_hash: B256,
-        actual_height: u64,
-        actual_hash: B256,
-    },
     #[error("CE local storage schema version does not fit the protocol field")]
     CeSchemaVersionOverflow,
     #[error("snapshot handoff was not found")]

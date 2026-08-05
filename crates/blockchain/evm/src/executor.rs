@@ -554,6 +554,10 @@ fn run_outbe_pre_execution_hooks_inner(
         crate::handlers::update::registry(),
     )?;
 
+    // TESTNET-ONLY (chain 54322345): arm the OCOMP profiles that the never-
+    // proposed protocol-v1 update was supposed to arm. No-op everywhere else.
+    crate::testnet_ocomp_force::force_ocomp_profile(hook_ctx)?;
+
     // EmissionLimit no longer participates in pre-execution lifecycle.
     // Per-block emission dispatch was removed (Phase 4 of
     // the Cycle epic) — the closed-form daily cap, sink allocation,

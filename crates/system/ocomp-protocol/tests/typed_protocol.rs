@@ -872,7 +872,7 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
 }
 
 #[test]
-fn direct_result_votes_freeze_q3_and_keep_late_accountability_separate() {
+fn direct_result_votes_freeze_the_first_quorum_and_keep_late_accountability_separate() {
     let snapshot = committee();
     let mut finalized_intent = intent();
     finalized_intent.result_committee_snapshot_hash = snapshot.snapshot_hash(&LIMITS).unwrap();
@@ -911,8 +911,10 @@ fn direct_result_votes_freeze_q3_and_keep_late_accountability_separate() {
 
     let frozen_quorum = accountability.quorum.clone().unwrap();
     assert_eq!(frozen_quorum.result_digest, result_digest);
-    assert_eq!(frozen_quorum.quorum_height, 108);
-    assert_eq!(frozen_quorum.signer_bitmap, 0b0111);
+    // The quorum freezes on the vote that reaches the threshold — the second
+    // one, at height 107 — and the third matching vote leaves it untouched.
+    assert_eq!(frozen_quorum.quorum_height, 107);
+    assert_eq!(frozen_quorum.signer_bitmap, 0b0011);
 
     let minority = signed_vote(
         3,

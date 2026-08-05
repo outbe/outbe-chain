@@ -17,6 +17,13 @@ use crate::{
     profile::CapacityProfileV1,
 };
 
+/// Blocks a job has to reach a certified result before it goes terminal,
+/// counted from the block that records its request finality.
+///
+/// Same split as [`MAX_PENDING_JOBS`]: the profile keeps its genesis value,
+/// the runtime bound is this constant.
+pub const RESULT_DEADLINE_BLOCKS: u64 = 640;
+
 /// Runtime CAS quota assigned to one OCOMP validator domain in the PoC.
 ///
 /// The process launcher and OCM-26 capacity budget share this authority so a

@@ -38,17 +38,14 @@ impl std::fmt::Debug for OcompSigner {
 }
 
 impl OcompSigner {
-    pub fn from_file(
-        path: impl AsRef<Path>,
-        expected_owner_uid: u32,
-    ) -> Result<Self, OcompKeyError> {
+    pub fn from_file(path: impl AsRef<Path>) -> Result<Self, OcompKeyError> {
         let path = path.as_ref();
         let path_metadata =
             std::fs::symlink_metadata(path).map_err(|source| OcompKeyError::Inspect {
                 path: path.to_path_buf(),
                 source,
             })?;
-        validate_key_metadata(path, &path_metadata, expected_owner_uid)?;
+        validate_key_metadata(path, &path_metadata)?;
 
         let mut file = File::open(path).map_err(|source| OcompKeyError::Read {
             path: path.to_path_buf(),
@@ -58,7 +55,7 @@ impl OcompSigner {
             path: path.to_path_buf(),
             source,
         })?;
-        validate_key_metadata(path, &opened_metadata, expected_owner_uid)?;
+        validate_key_metadata(path, &opened_metadata)?;
         if path_metadata.dev() != opened_metadata.dev()
             || path_metadata.ino() != opened_metadata.ino()
         {
@@ -113,21 +110,11 @@ impl OcompSigner {
     }
 }
 
-fn validate_key_metadata(
-    path: &Path,
-    metadata: &std::fs::Metadata,
-    expected_owner_uid: u32,
-) -> Result<(), OcompKeyError> {
+fn validate_key_metadata(path: &Path, metadata: &std::fs::Metadata) -> Result<(), OcompKeyError> {
     if !metadata.file_type().is_file() {
         return Err(OcompKeyError::UnsafeFile {
             path: path.to_path_buf(),
             reason: "key is not a regular file",
-        });
-    }
-    if metadata.uid() != expected_owner_uid {
-        return Err(OcompKeyError::UnsafeFile {
-            path: path.to_path_buf(),
-            reason: "key has the wrong owner",
         });
     }
     if metadata.permissions().mode() & 0o777 != SECRET_MODE {

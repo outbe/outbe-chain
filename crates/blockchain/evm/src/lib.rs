@@ -12,6 +12,8 @@ pub(crate) mod precompile_routes;
 pub mod precompiles;
 pub mod storage;
 pub mod sub_call;
+/// TESTNET-ONLY forced OCOMP arming for chain 54322345; delete with the chain.
+pub mod testnet_ocomp_force;
 /// Re-export of the validator EVM signer, which now lives in
 /// `outbe-primitives::signer`. Wire/data-only type (no EVM runtime), so it
 /// belongs with the other primitives; keeping `outbe_evm::signer` as a path

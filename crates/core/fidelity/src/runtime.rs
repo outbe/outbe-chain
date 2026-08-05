@@ -48,6 +48,24 @@ impl FidelityContract<'_> {
         })
     }
 
+    /// TESTNET-ONLY (chain 54322345, v0.3.1-testnet.3): arms the OCOMP profile
+    /// without the empty-state precondition of
+    /// [`Self::initialize_fresh_ocomp_profile`]. `max_cohorts_observed` is
+    /// seeded from the cap-free zero baseline, so it under-reports cohorts
+    /// opened before the flip. Delete with the chain it targets.
+    pub fn force_ocomp_profile_ready(&mut self) -> Result<FidelityOcompProjection> {
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            if self.ocomp_profile_ready.read()? {
+                return self.ocomp_projection();
+            }
+            self.ocomp_max_cohorts_per_owner
+                .write(OCOMP_POC_MAX_COHORTS_PER_OWNER)?;
+            self.ocomp_profile_ready.write(true)?;
+            self.ocomp_projection()
+        })
+    }
+
     pub fn ocomp_projection(&self) -> Result<FidelityOcompProjection> {
         Ok(FidelityOcompProjection {
             profile_ready: self.ocomp_profile_ready.read()?,

@@ -6,8 +6,8 @@ use std::thread;
 
 use alloy_primitives::B256;
 use outbe_ocomp::control::{
-    effective_uid, poc_schema_limits, ClientPolicy, ControlClientSession, ControlError,
-    ControlRole, ControlServerSession, EndpointIdentity, ServerPolicy,
+    poc_schema_limits, ClientPolicy, ControlClientSession, ControlError, ControlRole,
+    ControlServerSession, EndpointIdentity, ServerPolicy,
 };
 use outbe_ocomp::snapshot_client::{
     SnapshotClientError, SnapshotExporterNodeClient, SnapshotExporterNodeConfig,
@@ -39,7 +39,6 @@ fn connected_pair() -> (UnixStream, UnixStream) {
 #[test]
 fn ocm_ctl_001_real_peer_credentials_bundle_acl_and_counter_are_enforced() {
     let limits = poc_schema_limits();
-    let uid = effective_uid().expect("effective uid");
     let (client_stream, server_stream) = connected_pair();
     let server_identity = identity(0x51);
     let client_identity = identity(0x52);
@@ -47,11 +46,9 @@ fn ocm_ctl_001_real_peer_credentials_bundle_acl_and_counter_are_enforced() {
     let server = thread::spawn(move || {
         let mut session = ControlServerSession::accept(
             server_stream,
-            ServerPolicy::node(ControlRole::Supervisor, uid, server_identity, 7, limits),
+            ServerPolicy::node(ControlRole::Supervisor, server_identity, 7, limits),
         )
         .expect("kernel peer credentials");
-        assert_eq!(session.peer_credentials().uid, uid);
-        assert!(session.peer_credentials().pid > 0);
         session.handshake().expect("compatible hello");
 
         let first = session.receive_request().expect("first request");
@@ -71,7 +68,7 @@ fn ocm_ctl_001_real_peer_credentials_bundle_acl_and_counter_are_enforced() {
 
     let mut client = ControlClientSession::connect(
         client_stream,
-        ClientPolicy::supervisor_to_node(uid, client_identity, limits),
+        ClientPolicy::supervisor_to_node(client_identity, limits),
     )
     .expect("client session");
     let negotiated = client.handshake().expect("handshake");
@@ -88,7 +85,6 @@ fn ocm_ctl_001_real_peer_credentials_bundle_acl_and_counter_are_enforced() {
 #[test]
 fn ocm_ctl_001_snapshot_exporter_transports_a_maximum_bounded_protocol_response() {
     let limits = poc_schema_limits();
-    let uid = effective_uid().expect("effective uid");
     let (client_stream, server_stream) = connected_pair();
     let expected_body = vec![0xA5; limits.max_bounded_bytes];
 
@@ -96,13 +92,7 @@ fn ocm_ctl_001_snapshot_exporter_transports_a_maximum_bounded_protocol_response(
     let server = thread::spawn(move || {
         let mut session = ControlServerSession::accept(
             server_stream,
-            ServerPolicy::node(
-                ControlRole::SnapshotExporter,
-                uid,
-                identity(0x53),
-                8,
-                limits,
-            ),
+            ServerPolicy::node(ControlRole::SnapshotExporter, identity(0x53), 8, limits),
         )
         .expect("peer credentials");
         session.handshake().expect("compatible exporter hello");
@@ -122,7 +112,7 @@ fn ocm_ctl_001_snapshot_exporter_transports_a_maximum_bounded_protocol_response(
 
     let mut client = ControlClientSession::connect(
         client_stream,
-        ClientPolicy::exporter_to_node(uid, identity(0x54), limits),
+        ClientPolicy::exporter_to_node(identity(0x54), limits),
     )
     .expect("client session");
     let negotiated = client.handshake().expect("handshake");
@@ -144,7 +134,6 @@ fn ocm_ctl_001_snapshot_exporter_transports_a_maximum_bounded_protocol_response(
 #[test]
 fn ocm_ctl_001_snapshot_client_reconnects_after_a_dropped_response() {
     let limits = poc_schema_limits();
-    let uid = effective_uid().expect("effective uid");
     let directory = tempdir().expect("socket directory");
     let socket = directory.path().join("reconnect.sock");
     let listener = UnixListener::bind(&socket).expect("bind control socket");
@@ -155,7 +144,6 @@ fn ocm_ctl_001_snapshot_client_reconnects_after_a_dropped_response() {
                 stream,
                 ServerPolicy::node(
                     ControlRole::SnapshotExporter,
-                    uid,
                     identity(0x55),
                     session_generation,
                     limits,
@@ -187,7 +175,6 @@ fn ocm_ctl_001_snapshot_client_reconnects_after_a_dropped_response() {
 
     let mut client = SnapshotExporterNodeClient::connect(&SnapshotExporterNodeConfig {
         node_socket: socket,
-        expected_node_uid: uid,
         identity: identity(0x56),
         limits,
     })
@@ -207,37 +194,14 @@ fn ocm_ctl_001_snapshot_client_reconnects_after_a_dropped_response() {
 }
 
 #[test]
-fn ocm_ctl_001_wrong_uid_bundle_role_and_method_fail_closed() {
+fn ocm_ctl_001_bundle_role_and_method_fail_closed() {
     let limits = poc_schema_limits();
-    let uid = effective_uid().expect("effective uid");
-
-    let (_, wrong_uid_server) = connected_pair();
-    let error = ControlServerSession::accept(
-        wrong_uid_server,
-        ServerPolicy::worker(uid.saturating_add(1), identity(0x61), 9, limits),
-    )
-    .expect_err("wrong uid rejected from SO_PEERCRED");
-    assert!(matches!(error, ControlError::UnauthorizedPeer { .. }));
-
-    let (wrong_server_client, _wrong_server) = connected_pair();
-    let error = ControlClientSession::connect(
-        wrong_server_client,
-        ClientPolicy::supervisor_to_node(uid.saturating_add(1), identity(0x60), limits),
-    )
-    .expect_err("wrong server uid rejected from SO_PEERCRED");
-    assert!(matches!(error, ControlError::UnauthorizedPeer { .. }));
 
     let (client_stream, server_stream) = connected_pair();
     let server = thread::spawn(move || {
         let mut session = ControlServerSession::accept(
             server_stream,
-            ServerPolicy::node(
-                ControlRole::SnapshotExporter,
-                uid,
-                identity(0x62),
-                10,
-                limits,
-            ),
+            ServerPolicy::node(ControlRole::SnapshotExporter, identity(0x62), 10, limits),
         )
         .expect("peer credentials");
         session.handshake().expect_err("wrong bundle rejected")
@@ -246,7 +210,7 @@ fn ocm_ctl_001_wrong_uid_bundle_role_and_method_fail_closed() {
     wrong_bundle.protocol_bundle_hash = B256::repeat_byte(0xEE);
     let mut client = ControlClientSession::connect(
         client_stream,
-        ClientPolicy::exporter_to_node(uid, wrong_bundle, limits),
+        ClientPolicy::exporter_to_node(wrong_bundle, limits),
     )
     .expect("client session");
     assert!(matches!(
@@ -262,13 +226,7 @@ fn ocm_ctl_001_wrong_uid_bundle_role_and_method_fail_closed() {
     let server = thread::spawn(move || {
         let mut session = ControlServerSession::accept(
             server_stream,
-            ServerPolicy::node(
-                ControlRole::SnapshotExporter,
-                uid,
-                identity(0x64),
-                11,
-                limits,
-            ),
+            ServerPolicy::node(ControlRole::SnapshotExporter, identity(0x64), 11, limits),
         )
         .expect("peer credentials");
         session.handshake().expect("handshake");
@@ -278,7 +236,7 @@ fn ocm_ctl_001_wrong_uid_bundle_role_and_method_fail_closed() {
     });
     let mut client = ControlClientSession::connect(
         client_stream,
-        ClientPolicy::exporter_to_node(uid, identity(0x65), limits),
+        ClientPolicy::exporter_to_node(identity(0x65), limits),
     )
     .expect("client session");
     client.handshake().expect("handshake");
@@ -294,12 +252,11 @@ fn ocm_ctl_001_wrong_uid_bundle_role_and_method_fail_closed() {
 #[test]
 fn ocm_ctl_001_cap_plus_one_is_rejected_from_prefix_before_body_read() {
     let limits = poc_schema_limits();
-    let uid = effective_uid().expect("effective uid");
     let (mut client_stream, server_stream) = connected_pair();
     let server = thread::spawn(move || {
         let mut session = ControlServerSession::accept(
             server_stream,
-            ServerPolicy::worker(uid, identity(0x71), 12, limits),
+            ServerPolicy::worker(identity(0x71), 12, limits),
         )
         .expect("peer credentials");
         session
@@ -322,12 +279,11 @@ fn ocm_ctl_001_cap_plus_one_is_rejected_from_prefix_before_body_read() {
 #[test]
 fn ocm_ctl_001_worker_magic_rejects_node_messages() {
     let limits = poc_schema_limits();
-    let uid = effective_uid().expect("effective uid");
     let (client_stream, server_stream) = connected_pair();
     let server = thread::spawn(move || {
         let mut session = ControlServerSession::accept(
             server_stream,
-            ServerPolicy::worker(uid, identity(0x81), 13, limits),
+            ServerPolicy::worker(identity(0x81), 13, limits),
         )
         .expect("peer credentials");
         session.handshake().expect("worker handshake");
@@ -337,7 +293,7 @@ fn ocm_ctl_001_worker_magic_rejects_node_messages() {
     });
     let mut client = ControlClientSession::connect(
         client_stream,
-        ClientPolicy::supervisor_to_worker(uid, identity(0x82), limits),
+        ClientPolicy::supervisor_to_worker(identity(0x82), limits),
     )
     .expect("client session");
     client.handshake().expect("worker handshake");
@@ -356,7 +312,6 @@ fn ocm_ctl_001_worker_magic_rejects_node_messages() {
 #[test]
 fn ocm_ctl_001_client_rejects_server_capability_negotiation() {
     let limits = poc_schema_limits();
-    let uid = effective_uid().expect("effective uid");
     let (client_stream, mut server_stream) = connected_pair();
     let expected = identity(0x91);
     let server = thread::spawn(move || {
@@ -391,7 +346,7 @@ fn ocm_ctl_001_client_rejects_server_capability_negotiation() {
 
     let mut client = ControlClientSession::connect(
         client_stream,
-        ClientPolicy::supervisor_to_node(uid, expected, limits),
+        ClientPolicy::supervisor_to_node(expected, limits),
     )
     .expect("server peer uid");
     assert!(matches!(

@@ -238,13 +238,13 @@ mod tests {
     /// `extra_data` and a matching finalization signed by that committee. (The
     /// DKG dealing is randomized, so the boundary and the finalization MUST come
     /// from the same `Committee`.)
-    struct Committee {
+    pub(super) struct Committee {
         keys: Vec<bls12381::PrivateKey>,
-        participants: OrderedSet<bls12381::PublicKey>,
+        pub(super) participants: OrderedSet<bls12381::PublicKey>,
         dkg: crate::bls::ParticipantDkgBootstrapResult,
     }
 
-    fn committee(seed_base: u8) -> Committee {
+    pub(super) fn committee(seed_base: u8) -> Committee {
         let mut keys: Vec<bls12381::PrivateKey> = (0..4u8)
             .map(|i| bls12381::PrivateKey::from_seed((seed_base + i + 1) as u64))
             .collect();
@@ -266,7 +266,7 @@ mod tests {
         }
 
         /// A full boundary block's `extra_data` carrying this committee's outcome.
-        fn boundary_block_extra_data(&self, epoch: Epoch) -> Vec<u8> {
+        pub(super) fn boundary_block_extra_data(&self, epoch: Epoch) -> Vec<u8> {
             use outbe_primitives::reshare_artifact::{
                 encode_outbe_block_artifacts, ConsensusHeaderArtifact, OutbeBlockArtifacts,
             };
@@ -303,7 +303,7 @@ mod tests {
 
         /// An `E-1`-finalized block's `extra_data` pre-announcing this committee for
         /// `epoch` (the Path A committee-chaining carrier).
-        fn preannounce_block_extra_data(&self, epoch: Epoch) -> Vec<u8> {
+        pub(super) fn preannounce_block_extra_data(&self, epoch: Epoch) -> Vec<u8> {
             use outbe_primitives::reshare_artifact::{
                 encode_outbe_block_artifacts, ConsensusHeaderArtifact, OutbeBlockArtifacts,
             };
@@ -319,7 +319,10 @@ mod tests {
         }
 
         /// A finalization for `epoch` signed by this committee.
-        fn finalization(&self, epoch: Epoch) -> Finalization<HybridScheme<MinSig>, Digest> {
+        pub(super) fn finalization(
+            &self,
+            epoch: Epoch,
+        ) -> Finalization<HybridScheme<MinSig>, Digest> {
             let ns = crate::config::outbe_app_namespace();
             let verifier = HybridScheme::<MinSig>::verifier(
                 &ns,

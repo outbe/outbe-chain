@@ -21,7 +21,7 @@ use outbe_node::ocomp::{
     },
 };
 use outbe_ocomp::{
-    control::{effective_uid, poc_schema_limits, EndpointIdentity},
+    control::{poc_schema_limits, EndpointIdentity},
     supervisor::{
         DiscoveryOutcome, SupervisorDiscovery, SupervisorDiscoveryConfig, SupervisorDiscoveryError,
     },
@@ -41,7 +41,6 @@ use reth_ethereum::{primitives::SealedBlock, Block};
 const CHILD_MODE: &str = "OCM_DIS_CHILD_MODE";
 const CHILD_SOCKET: &str = "OCM_DIS_NODE_SOCKET";
 const CHILD_JOURNAL: &str = "OCM_DIS_JOURNAL_ROOT";
-const CHILD_NODE_UID: &str = "OCM_DIS_NODE_UID";
 const CHILD_CHAIN_ID: &str = "OCM_DIS_CHAIN_ID";
 const CHILD_GENESIS: &str = "OCM_DIS_GENESIS_HASH";
 const CHILD_BOOT_NONCE: &str = "OCM_DIS_BOOT_NONCE";
@@ -239,10 +238,6 @@ fn child_config() -> SupervisorDiscoveryConfig {
     SupervisorDiscoveryConfig {
         node_socket: env::var_os(CHILD_SOCKET).expect("child socket").into(),
         journal_root: env::var_os(CHILD_JOURNAL).expect("child journal").into(),
-        expected_node_uid: env::var(CHILD_NODE_UID)
-            .expect("child node uid")
-            .parse()
-            .expect("parse child node uid"),
         identity: EndpointIdentity {
             chain_id: env::var(CHILD_CHAIN_ID)
                 .expect("child chain id")
@@ -292,7 +287,6 @@ fn run_supervisor_child(
     mode: &str,
     socket: &Path,
     journal: &Path,
-    uid: u32,
     identity: EndpointIdentity,
 ) -> Output {
     Command::new(env::current_exe().expect("current integration test executable"))
@@ -302,7 +296,6 @@ fn run_supervisor_child(
         .env(CHILD_MODE, mode)
         .env(CHILD_SOCKET, socket)
         .env(CHILD_JOURNAL, journal)
-        .env(CHILD_NODE_UID, uid.to_string())
         .env(CHILD_CHAIN_ID, identity.chain_id.to_string())
         .env(CHILD_GENESIS, identity.genesis_hash.to_string())
         .env(CHILD_BOOT_NONCE, identity.boot_nonce.to_string())
@@ -326,7 +319,6 @@ fn ocm_dis_001_production_supervisor_discovers_finalized_jobs_exactly_once() {
     let socket = temp.path().join("node-control.sock");
     let retention_root = temp.path().join("retention");
     let discovery_root = temp.path().join("discovery");
-    let uid = effective_uid().expect("effective test uid");
     let identity = EndpointIdentity {
         chain_id: 42,
         genesis_hash: B256::repeat_byte(0x21),
@@ -362,7 +354,7 @@ fn ocm_dis_001_production_supervisor_discovers_finalized_jobs_exactly_once() {
     });
     let retention = Arc::new(OcompRetentionCoordinator::open(retention_root, source));
     let server = Arc::new(
-        OcompControlServer::new(retention.clone(), uid, identity, 1, limits)
+        OcompControlServer::new(retention.clone(), identity, 1, limits)
             .expect("production node control server"),
     );
 
@@ -384,7 +376,6 @@ fn ocm_dis_001_production_supervisor_discovers_finalized_jobs_exactly_once() {
         "poll",
         &socket,
         &discovery_root,
-        uid,
         incompatible,
     ));
     assert!(incompatible_output.contains("OCM_DIS_OUTCOME=ERROR:"));
@@ -397,7 +388,6 @@ fn ocm_dis_001_production_supervisor_discovers_finalized_jobs_exactly_once() {
         "poll",
         &socket,
         &discovery_root,
-        uid,
         identity,
     ));
     assert!(first.contains("OCM_DIS_OUTCOME=DISCOVERED:1:100"));
@@ -411,7 +401,6 @@ fn ocm_dis_001_production_supervisor_discovers_finalized_jobs_exactly_once() {
         "hint",
         &socket,
         &discovery_root,
-        uid,
         identity,
     ));
     assert!(duplicate.contains("OCM_DIS_OUTCOME=NO_NEW_JOB"));
@@ -425,7 +414,6 @@ fn ocm_dis_001_production_supervisor_discovers_finalized_jobs_exactly_once() {
         "poll",
         &socket,
         &discovery_root,
-        uid,
         identity,
     ));
     assert!(restarted.contains("OCM_DIS_OUTCOME=NO_NEW_JOB"));
@@ -438,7 +426,6 @@ fn ocm_dis_001_production_supervisor_discovers_finalized_jobs_exactly_once() {
     let record = SupervisorDiscovery::open(SupervisorDiscoveryConfig {
         node_socket: socket,
         journal_root: discovery_root,
-        expected_node_uid: uid,
         identity,
         limits,
     })
@@ -463,7 +450,6 @@ fn ocm_dis_001_production_supervisor_discovers_finalized_jobs_exactly_once() {
         SupervisorDiscovery::open(SupervisorDiscoveryConfig {
             node_socket: temp.path().join("unused.sock"),
             journal_root: temp.path().join("discovery"),
-            expected_node_uid: uid,
             identity,
             limits,
         }),

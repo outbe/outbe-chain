@@ -45,7 +45,6 @@ pub struct SupervisorJobRunnerConfigV1 {
     pub worker_inbox_root: PathBuf,
     pub worker_inbox_limits: WorkerInboxLimits,
     pub worker_socket: PathBuf,
-    pub expected_worker_uid: u32,
     pub identity: EndpointIdentity,
     pub protocol_bundle: PinnedProtocolBundle,
     pub limits: SchemaLimits,
@@ -302,11 +301,7 @@ impl SupervisorJobRunnerV1 {
             "authenticate one-unit worker",
             ControlClientSession::connect(
                 stream,
-                ClientPolicy::supervisor_to_worker(
-                    self.config.expected_worker_uid,
-                    self.config.identity,
-                    self.config.limits,
-                ),
+                ClientPolicy::supervisor_to_worker(self.config.identity, self.config.limits),
             ),
         )?;
         stage("handshake one-unit worker", session.handshake())?;

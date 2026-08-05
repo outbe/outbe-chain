@@ -1229,7 +1229,7 @@ fn ocm_fin_001_production_source_resolves_exact_finality_and_refuses_ambiguity()
         .put_finalization(fixture.finalization_record.clone())
         .expect("persist exact finalization");
     let exact_source =
-        RethFinalizedInputProofSource::new(fixture.provider.clone(), exact_store, || Ok(None), 64);
+        RethFinalizedInputProofSource::new(fixture.provider.clone(), exact_store, |_| Ok(None), 64);
     assert_eq!(
         exact_source
             .resolve_finality(candidate)
@@ -1252,7 +1252,7 @@ fn ocm_fin_001_production_source_resolves_exact_finality_and_refuses_ambiguity()
     let competing_source = RethFinalizedInputProofSource::new(
         fixture.provider.clone(),
         competing_store,
-        || Ok(None),
+        |_| Ok(None),
         64,
     );
     assert_eq!(
@@ -1274,7 +1274,7 @@ fn ocm_fin_001_production_source_resolves_exact_finality_and_refuses_ambiguity()
     let ambiguous_source = RethFinalizedInputProofSource::new(
         fixture.provider.clone(),
         ambiguous_store,
-        || Ok(None),
+        |_| Ok(None),
         64,
     );
     assert!(ambiguous_source.resolve_finality(candidate).is_err());

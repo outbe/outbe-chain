@@ -4,8 +4,8 @@ use std::thread;
 use alloy_primitives::B256;
 use outbe_ocomp_protocol::{
     local_control::{
-        effective_uid, ClientPolicy, ControlClientSession, ControlRole, ControlServerSession,
-        EndpointIdentity, ServerPolicy,
+        ClientPolicy, ControlClientSession, ControlRole, ControlServerSession, EndpointIdentity,
+        ServerPolicy,
     },
     profile::poc_schema_limits,
     LocalErrorCode, LocalErrorV1, NodeMessageKind,
@@ -25,19 +25,12 @@ fn identity(byte: u8) -> EndpointIdentity {
 #[test]
 fn ocm_ctl_001_oversized_node_response_is_typed_and_session_remains_usable() {
     let limits = poc_schema_limits();
-    let uid = effective_uid().expect("effective uid");
     let (client_stream, server_stream) = UnixStream::pair().expect("local control socket pair");
 
     let server = thread::spawn(move || {
         let mut session = ControlServerSession::accept(
             server_stream,
-            ServerPolicy::node(
-                ControlRole::SnapshotExporter,
-                uid,
-                identity(0x51),
-                7,
-                limits,
-            ),
+            ServerPolicy::node(ControlRole::SnapshotExporter, identity(0x51), 7, limits),
         )
         .expect("server session");
         session.handshake().expect("server handshake");
@@ -65,7 +58,7 @@ fn ocm_ctl_001_oversized_node_response_is_typed_and_session_remains_usable() {
 
     let mut client = ControlClientSession::connect(
         client_stream,
-        ClientPolicy::exporter_to_node(uid, identity(0x52), limits),
+        ClientPolicy::exporter_to_node(identity(0x52), limits),
     )
     .expect("client session");
     client.handshake().expect("client handshake");

@@ -51,9 +51,11 @@ const JOURNAL_FILENAME: &str = "pin.v1";
 const JOURNAL_TEMP_FILENAME: &str = "pin.v1.tmp";
 const RETAINED_EVIDENCE_WINDOW_BLOCKS: u64 = 64;
 
-type PendingCandidateReceipts = Option<(B256, Vec<OutbeReceipt>)>;
+/// Locally executed receipts for one exact block hash, when the node still
+/// holds them outside the canonical database.
+type PendingCandidateReceipts = Option<Vec<OutbeReceipt>>;
 type PendingCandidateReceiptReader =
-    dyn Fn() -> Result<PendingCandidateReceipts, String> + Send + Sync;
+    dyn Fn(B256) -> Result<PendingCandidateReceipts, String> + Send + Sync;
 
 /// Exact source identity retained before a local positive vote.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -268,7 +270,7 @@ impl<P: Clone> RethFinalizedInputProofSource<P> {
     pub fn new(
         provider: P,
         parent_proofs: FinalizedParentCertStore,
-        pending_receipts: impl Fn() -> Result<Option<(B256, Vec<OutbeReceipt>)>, String>
+        pending_receipts: impl Fn(B256) -> Result<Option<Vec<OutbeReceipt>>, String>
             + Send
             + Sync
             + 'static,
@@ -347,12 +349,16 @@ where
         &self,
         block: &ConsensusBlock,
     ) -> Result<Option<CandidatePinV1>, RetentionError> {
-        let pending = (self.pending_receipts)().map_err(|error| {
+        // The pin is built the moment consensus finalizes the block, before the
+        // executed block reaches the canonical chain or the database. The local
+        // reader answers for that exact hash; the canonical lookup stays as the
+        // fallback for blocks the node already persisted.
+        let pending = (self.pending_receipts)(block.block_hash()).map_err(|error| {
             RetentionError::Source(format!("load pending candidate receipts: {error}"))
         })?;
         let receipts = match pending {
-            Some((pending_hash, receipts)) if pending_hash == block.block_hash() => receipts,
-            _ => self
+            Some(receipts) => receipts,
+            None => self
                 .provider
                 .receipts_by_block(block.block_hash().into())
                 .map_err(|error| {
@@ -871,11 +877,27 @@ impl OcompRetentionService {
                         .reconcile_finalized(&finalized_block)
                         .map_err(|error| error.to_string())?;
                     if let Some(snapshot_armer) = snapshot_armer {
+                        // Arming is per-job best effort. A job whose CE marker
+                        // window has already passed can never be armed again, so
+                        // propagating its error would abort the whole pass —
+                        // and `finalized_live_jobs` is ordered oldest-first, so
+                        // the stalest job would starve every newer one whose
+                        // window is open right now. It must also stay out of the
+                        // reconciliation retry ladder: retrying an unarmable job
+                        // only makes this worker fall further behind the chain.
                         for job in coordinator
                             .finalized_live_jobs()
                             .map_err(|error| error.to_string())?
                         {
-                            snapshot_armer.arm_finalized_snapshot(job.job_id)?;
+                            if let Err(error) = snapshot_armer.arm_finalized_snapshot(job.job_id) {
+                                tracing::debug!(
+                                    target: "outbe::ocomp",
+                                    job_id = %job.job_id,
+                                    job_block = job.candidate.block_number,
+                                    %error,
+                                    "OCOMP snapshot arming skipped for this job"
+                                );
+                            }
                         }
                     }
                     Ok::<(), String>(())
@@ -1147,13 +1169,18 @@ impl OcompRetentionCoordinator {
                     .map_err(hook_error)?;
             }
         }
-        if self.retained_tributes.is_some() {
-            while self
-                .release_due(block.number())
-                .map_err(hook_error)?
-                .is_some()
-            {}
-        }
+        // Releasing is NOT conditional on the retained-tribute writer. That
+        // writer only owns the input-lease page GC; the registry slot itself
+        // must be reclaimed either way. Gating the whole loop on it meant the
+        // production wiring (`open`, which passes `None`) never released a
+        // single record: `Terminal` piled up until the 256-slot registry was
+        // full, every later `record_tentative` failed with `RegistryCapacity`,
+        // and every proposer withheld its block — a network-wide stall.
+        while self
+            .release_due(block.number())
+            .map_err(hook_error)?
+            .is_some()
+        {}
         Ok(())
     }
 
@@ -1184,15 +1211,56 @@ impl OcompRetentionCoordinator {
                 _ => Err(RetentionError::ConflictingCandidate),
             };
         }
-        if inner.registry.as_ref().is_some_and(|registry| {
-            registry
-                .records
-                .values()
-                .filter(|record| !matches!(record.state, PinStateV1::Released { .. }))
-                .count()
-                >= MAX_TRACKED_JOBS
-        }) {
-            return Err(RetentionError::RegistryCapacity);
+        // Reclaim before refusing, and only under pressure — the registry is
+        // otherwise left untouched so an exact retry stays byte-identical.
+        //
+        // Two tiers. `Released`, and `Terminal` past its release height, are
+        // spent records: dropping them is free. Beyond that a `Tentative` pin
+        // for a block older than the one being pinned is also dead — its
+        // candidate either finalized (and the record would have advanced) or
+        // lost, and `reconcile_finalized` has already spent its retry ladder on
+        // it. Those accumulate one per block whose finalization proof never
+        // landed in time, which is what filled the registry; but concurrent
+        // tentative pins at different heights are legitimate, so they are only
+        // dropped when the registry has no room left.
+        if let Some(registry) = inner.registry.as_mut() {
+            let spent = |record: &PinRecordV1| {
+                matches!(record.state, PinStateV1::Released { .. })
+                    || matches!(
+                        record.state,
+                        PinStateV1::Terminal { release_height, .. }
+                            if release_height <= candidate.block_number
+                    )
+            };
+            let stale_tentative = |record: &PinRecordV1| {
+                matches!(
+                    record.state,
+                    PinStateV1::Tentative { candidate: older }
+                        if older.block_number < candidate.block_number
+                )
+            };
+            let occupied = |predicate: &dyn Fn(&PinRecordV1) -> bool| {
+                registry
+                    .records
+                    .values()
+                    .filter(|record| !predicate(record))
+                    .count()
+            };
+
+            if occupied(&spent) >= MAX_TRACKED_JOBS {
+                let drop_it = |record: &PinRecordV1| spent(record) || stale_tentative(record);
+                if occupied(&drop_it) >= MAX_TRACKED_JOBS {
+                    return Err(RetentionError::RegistryCapacity);
+                }
+                let before = registry.records.len();
+                registry.records.retain(|_, record| !drop_it(record));
+                tracing::info!(
+                    target: "outbe::ocomp",
+                    reclaimed = before - registry.records.len(),
+                    remaining = registry.records.len(),
+                    "reclaimed spent and stale retention registry slots"
+                );
+            }
         }
         let generation = next_registry_generation(&inner)?;
         self.persist_locked(
@@ -1435,14 +1503,19 @@ impl OcompRetentionCoordinator {
         if finalized_height < release_height {
             return Ok(None);
         }
+        // No retained-tribute writer means there is no input-lease page to
+        // collect, so the release is already complete. Erring here would pin
+        // the record forever; `release_orphan_locked` has always taken the
+        // same view of a missing writer.
         let complete = if lease_has_other_references(&inner, key, candidate.input_lease_id) {
             true
         } else {
-            self.retained_tributes
-                .as_ref()
-                .ok_or(RetentionError::RetainedTributeStorageUnavailable)?
-                .release_input_lease_page(candidate.input_lease_id)
-                .map_err(|error| RetentionError::RetainedTributeGc(error.to_string()))?
+            match self.retained_tributes.as_ref() {
+                Some(retained_tributes) => retained_tributes
+                    .release_input_lease_page(candidate.input_lease_id)
+                    .map_err(|error| RetentionError::RetainedTributeGc(error.to_string()))?,
+                None => true,
+            }
         };
         if !complete {
             return Ok(None);

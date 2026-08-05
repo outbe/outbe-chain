@@ -1,8 +1,6 @@
 //! Bounded local control sessions shared by the four fixed OCOMP roles.
 
-use std::fs;
 use std::io::{ErrorKind, Read, Write};
-use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
 
 use crate::{
@@ -76,13 +74,6 @@ pub struct EndpointIdentity {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct PeerCredentials {
-    pub pid: u32,
-    pub uid: u32,
-    pub gid: u32,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NegotiatedSession {
     pub session_generation: u64,
     pub max_control_body_bytes: usize,
@@ -94,7 +85,6 @@ pub struct ServerPolicy {
     magic: ControlMagic,
     local_role: ControlRole,
     peer_role: ControlRole,
-    expected_peer_uid: u32,
     identity: EndpointIdentity,
     session_generation: u64,
     limits: SchemaLimits,
@@ -104,7 +94,6 @@ impl ServerPolicy {
     #[must_use]
     pub const fn node(
         peer_role: ControlRole,
-        expected_peer_uid: u32,
         identity: EndpointIdentity,
         session_generation: u64,
         limits: SchemaLimits,
@@ -113,7 +102,6 @@ impl ServerPolicy {
             magic: ControlMagic::Node,
             local_role: ControlRole::Node,
             peer_role,
-            expected_peer_uid,
             identity,
             session_generation,
             limits,
@@ -122,7 +110,6 @@ impl ServerPolicy {
 
     #[must_use]
     pub const fn worker(
-        expected_supervisor_uid: u32,
         identity: EndpointIdentity,
         session_generation: u64,
         limits: SchemaLimits,
@@ -131,7 +118,6 @@ impl ServerPolicy {
             magic: ControlMagic::Worker,
             local_role: ControlRole::Worker,
             peer_role: ControlRole::Supervisor,
-            expected_peer_uid: expected_supervisor_uid,
             identity,
             session_generation,
             limits,
@@ -144,55 +130,39 @@ pub struct ClientPolicy {
     magic: ControlMagic,
     local_role: ControlRole,
     expected_server_role: ControlRole,
-    expected_server_uid: u32,
     identity: EndpointIdentity,
     limits: SchemaLimits,
 }
 
 impl ClientPolicy {
     #[must_use]
-    pub const fn supervisor_to_node(
-        expected_server_uid: u32,
-        identity: EndpointIdentity,
-        limits: SchemaLimits,
-    ) -> Self {
+    pub const fn supervisor_to_node(identity: EndpointIdentity, limits: SchemaLimits) -> Self {
         Self {
             magic: ControlMagic::Node,
             local_role: ControlRole::Supervisor,
             expected_server_role: ControlRole::Node,
-            expected_server_uid,
             identity,
             limits,
         }
     }
 
     #[must_use]
-    pub const fn exporter_to_node(
-        expected_server_uid: u32,
-        identity: EndpointIdentity,
-        limits: SchemaLimits,
-    ) -> Self {
+    pub const fn exporter_to_node(identity: EndpointIdentity, limits: SchemaLimits) -> Self {
         Self {
             magic: ControlMagic::Node,
             local_role: ControlRole::SnapshotExporter,
             expected_server_role: ControlRole::Node,
-            expected_server_uid,
             identity,
             limits,
         }
     }
 
     #[must_use]
-    pub const fn supervisor_to_worker(
-        expected_server_uid: u32,
-        identity: EndpointIdentity,
-        limits: SchemaLimits,
-    ) -> Self {
+    pub const fn supervisor_to_worker(identity: EndpointIdentity, limits: SchemaLimits) -> Self {
         Self {
             magic: ControlMagic::Worker,
             local_role: ControlRole::Supervisor,
             expected_server_role: ControlRole::Worker,
-            expected_server_uid,
             identity,
             limits,
         }
@@ -205,8 +175,6 @@ pub enum ControlError {
     Io(#[from] std::io::Error),
     #[error("local control frame failed canonical validation: {0}")]
     Protocol(#[from] ProtocolError),
-    #[error("local control peer uid {actual} is not the fixed expected uid {expected}")]
-    UnauthorizedPeer { expected: u32, actual: u32 },
     #[error("local control peer claimed role {actual:?}, expected {expected:?}")]
     RoleMismatch {
         expected: ControlRoleV1,
@@ -236,23 +204,12 @@ pub enum ControlError {
     ZeroSessionGeneration,
     #[error("local control limit does not fit its wire field")]
     LimitOverflow,
-    #[error("cannot determine effective uid from /proc/self/status")]
-    EffectiveUidUnavailable,
-    #[error("local service user {0} does not exist in /etc/passwd")]
-    UnknownUser(String),
-    #[error("process effective uid {actual} does not match service user {user} uid {expected}")]
-    EffectiveUserMismatch {
-        user: String,
-        expected: u32,
-        actual: u32,
-    },
 }
 
 #[derive(Debug)]
 pub struct ControlServerSession {
     stream: UnixStream,
     policy: ServerPolicy,
-    peer_credentials: PeerCredentials,
     handshaken: bool,
     next_request_id: u64,
 }
@@ -262,25 +219,12 @@ impl ControlServerSession {
         if policy.session_generation == 0 {
             return Err(ControlError::ZeroSessionGeneration);
         }
-        let peer_credentials = peer_credentials(&stream)?;
-        if peer_credentials.uid != policy.expected_peer_uid {
-            return Err(ControlError::UnauthorizedPeer {
-                expected: policy.expected_peer_uid,
-                actual: peer_credentials.uid,
-            });
-        }
         Ok(Self {
             stream,
             policy,
-            peer_credentials,
             handshaken: false,
             next_request_id: 1,
         })
-    }
-
-    #[must_use]
-    pub const fn peer_credentials(&self) -> PeerCredentials {
-        self.peer_credentials
     }
 
     pub fn handshake(&mut self) -> Result<NegotiatedSession, ControlError> {
@@ -442,13 +386,6 @@ pub struct ControlClientSession {
 
 impl ControlClientSession {
     pub fn connect(stream: UnixStream, policy: ClientPolicy) -> Result<Self, ControlError> {
-        let credentials = peer_credentials(&stream)?;
-        if credentials.uid != policy.expected_server_uid {
-            return Err(ControlError::UnauthorizedPeer {
-                expected: policy.expected_server_uid,
-                actual: credentials.uid,
-            });
-        }
         Ok(Self {
             stream,
             policy,
@@ -678,99 +615,4 @@ const fn error_kind(magic: ControlMagic) -> u16 {
 #[must_use]
 pub fn poc_schema_limits() -> SchemaLimits {
     crate::profile::poc_schema_limits()
-}
-
-pub fn effective_uid() -> Result<u32, ControlError> {
-    let status = fs::read_to_string("/proc/self/status")?;
-    let uid_line = status
-        .lines()
-        .find(|line| line.starts_with("Uid:"))
-        .ok_or(ControlError::EffectiveUidUnavailable)?;
-    uid_line
-        .split_ascii_whitespace()
-        .nth(2)
-        .ok_or(ControlError::EffectiveUidUnavailable)?
-        .parse()
-        .map_err(|_| ControlError::EffectiveUidUnavailable)
-}
-
-pub fn uid_for_user(user: &str) -> Result<u32, ControlError> {
-    let passwd = fs::read_to_string("/etc/passwd")?;
-    passwd
-        .lines()
-        .filter_map(parse_passwd_entry)
-        .find_map(|(name, uid)| (name == user).then_some(uid))
-        .ok_or_else(|| ControlError::UnknownUser(user.to_owned()))
-}
-
-pub fn effective_user_name() -> Result<String, ControlError> {
-    let uid = effective_uid()?;
-    let passwd = fs::read_to_string("/etc/passwd")?;
-    passwd
-        .lines()
-        .filter_map(parse_passwd_entry)
-        .find_map(|(name, candidate)| (candidate == uid).then_some(name.to_owned()))
-        .ok_or_else(|| ControlError::UnknownUser(format!("uid:{uid}")))
-}
-
-pub fn require_effective_user(user: &str) -> Result<u32, ControlError> {
-    let expected = uid_for_user(user)?;
-    require_effective_uid_for(expected, user.to_owned())
-}
-
-pub fn require_effective_uid(expected: u32) -> Result<u32, ControlError> {
-    require_effective_uid_for(expected, format!("uid:{expected}"))
-}
-
-fn require_effective_uid_for(expected: u32, user: String) -> Result<u32, ControlError> {
-    let actual = effective_uid()?;
-    if expected != actual {
-        return Err(ControlError::EffectiveUserMismatch {
-            user,
-            expected,
-            actual,
-        });
-    }
-    Ok(actual)
-}
-
-fn parse_passwd_entry(line: &str) -> Option<(&str, u32)> {
-    let mut fields = line.split(':');
-    let name = fields.next()?;
-    fields.next()?;
-    let uid = fields.next()?.parse().ok()?;
-    Some((name, uid))
-}
-
-#[allow(unsafe_code)]
-fn peer_credentials(stream: &UnixStream) -> Result<PeerCredentials, ControlError> {
-    let mut credentials = libc::ucred {
-        pid: 0,
-        uid: 0,
-        gid: 0,
-    };
-    let mut length = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
-    // SAFETY: `credentials` and `length` are valid writable objects for the
-    // exact sizes supplied, and `stream.as_raw_fd()` remains owned and open for
-    // the duration of this non-owning `getsockopt` call.
-    let result = unsafe {
-        libc::getsockopt(
-            stream.as_raw_fd(),
-            libc::SOL_SOCKET,
-            libc::SO_PEERCRED,
-            (&raw mut credentials).cast(),
-            &raw mut length,
-        )
-    };
-    if result != 0 {
-        return Err(ControlError::Io(std::io::Error::last_os_error()));
-    }
-    if usize::try_from(length).ok() != Some(std::mem::size_of::<libc::ucred>()) {
-        return Err(ControlError::EffectiveUidUnavailable);
-    }
-    Ok(PeerCredentials {
-        pid: u32::try_from(credentials.pid).unwrap_or_default(),
-        uid: credentials.uid,
-        gid: credentials.gid,
-    })
 }

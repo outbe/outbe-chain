@@ -609,7 +609,15 @@ impl MetadosisContract<'_> {
             {
                 return Err(fatal("OCOMP terminal index/count mismatch"));
             }
-            if self.ocomp_terminal_intents.len()? >= u32::from(fsm_limits.max_terminal_records) {
+            // The cap is per WorldwideDay, so it is checked against this day's
+            // own terminal count. `ocomp_terminal_intents` is one global vector
+            // shared by every live day: comparing its total length against a
+            // per-day limit made two concurrent days trip the guard at their
+            // COMBINED count, and the guard is fatal, so block production died
+            // with it. Reaching the real per-day cap is not an error — it is
+            // the `TerminalNoRetry` disposition below, which credits the
+            // retained budget to carry-over and fails the day cleanly.
+            if state.projection().terminal_records > fsm_limits.max_terminal_records {
                 return Err(fatal("OCOMP terminal record cap exhausted"));
             }
             let projection = state.projection();
@@ -742,7 +750,9 @@ impl MetadosisContract<'_> {
             {
                 return Err(fatal("OCOMP conflict terminal index/count mismatch"));
             }
-            if self.ocomp_terminal_intents.len()? >= u32::from(fsm_limits.max_terminal_records) {
+            // Per-day cap; see the expiry path for why the global vector length
+            // is the wrong quantity to compare here.
+            if state.projection().terminal_records > fsm_limits.max_terminal_records {
                 return Err(fatal("OCOMP terminal record cap exhausted"));
             }
 
@@ -821,7 +831,9 @@ impl MetadosisContract<'_> {
             {
                 return Err(fatal("OCOMP completion job already has a quorum"));
             }
-            if self.ocomp_terminal_intents.len()? >= u32::from(fsm_limits.max_terminal_records) {
+            // Per-day cap; see the expiry path for why the global vector length
+            // is the wrong quantity to compare here.
+            if projection.terminal_records > fsm_limits.max_terminal_records {
                 return Err(fatal("OCOMP terminal record cap exhausted"));
             }
 
@@ -1078,10 +1090,12 @@ impl MetadosisContract<'_> {
             return Err(fatal("OCOMP WWD FSM storage key mismatch"));
         }
 
-        let terminal_count = self.ocomp_terminal_intents.len()?;
-        if terminal_count > u32::from(fsm_limits.max_terminal_records) {
-            return Err(fatal("OCOMP terminal index exceeds profile cap"));
-        }
+        // `ocomp_terminal_intents` is a single global vector shared by every
+        // day and is only ever pushed to, so its total length is neither this
+        // day's terminal count nor bounded by the per-day cap. Comparing the
+        // two halted block production once two live days had produced 365
+        // records between them. The per-day count is what the cap governs, and
+        // it is checked below, after the loop filters this day's entries out.
         let terminal_ids = self.ocomp_terminal_intents.read_all()?;
         let mut terminal_attempts = Vec::new();
         terminal_attempts
@@ -1122,6 +1136,9 @@ impl MetadosisContract<'_> {
                 next_pending_nonce,
                 outcome,
             });
+        }
+        if terminal_attempts.len() > usize::from(fsm_limits.max_terminal_records) {
+            return Err(fatal("OCOMP terminal index exceeds profile cap"));
         }
         snapshot.terminal = terminal_attempts;
 
@@ -1318,6 +1335,61 @@ impl MetadosisContract<'_> {
         index.sort_by_key(live_snapshot_key);
         self.ocomp_scheduler
             .write(&encode_live_scheduler_index(&index)?)
+    }
+
+    /// The WorldwideDays currently in the live scheduler, without restoring
+    /// their FSMs. Bounded by `max_pending_jobs`.
+    pub(crate) fn live_ocomp_worldwide_days(&self) -> Result<Vec<WorldwideDay>> {
+        Ok(decode_live_scheduler_index(&self.ocomp_scheduler.read()?)?
+            .into_iter()
+            .map(|snapshot| snapshot.worldwide_day)
+            .collect())
+    }
+
+    /// Closes a WorldwideDay that cannot advance its OCOMP job: the day becomes
+    /// `FAILED` and whatever Lysis budget it still holds is credited to the
+    /// PromisLimit carry-over.
+    ///
+    /// This is the same terminal shape as the `TerminalNoRetry` expiry
+    /// disposition, reachable without a restorable FSM. A day whose OCOMP state
+    /// is stuck must never stop block production: the day is what failed, not
+    /// the chain, and its unused budget belongs back in the carry-over rather
+    /// than burnt.
+    pub(crate) fn fail_ocomp_day_with_carry_over(
+        &mut self,
+        wwd: WorldwideDay,
+        schema_limits: &SchemaLimits,
+    ) -> Result<U256> {
+        // The budget is read from the day's own frozen request. The FSM may be
+        // unreadable — that is precisely why this path exists — so nothing here
+        // depends on restoring it.
+        let retained = self
+            .latest_terminal_job_record(wwd, schema_limits)?
+            .map(|(_, record)| record.intent.frozen_metadosis_values.lysis_budget)
+            .unwrap_or_default();
+        let credited = if retained.is_zero() {
+            U256::ZERO
+        } else {
+            PromisLimitContract::new(self.storage.clone()).checked_add_carry_over(retained)?;
+            retained
+        };
+
+        // Drop every index that could point back at the day, then retire it.
+        let live = decode_live_scheduler_index(&self.ocomp_scheduler.read()?)?;
+        for snapshot in live {
+            if snapshot.worldwide_day != wwd {
+                continue;
+            }
+            if let Some(live_job) = snapshot.live.as_ref() {
+                self.remove_live_scheduler(live_job.intent_id)?;
+            }
+        }
+        let mut ready = self.read_ready_index()?;
+        ready.retain(|key| key.worldwide_day != wwd);
+        self.write_ready_index(&ready)?;
+        self.ocomp_fsm_states.get_bytes(&wwd).clear()?;
+        self.mark_wwd_failed(wwd)?;
+        Ok(credited)
     }
 
     fn remove_live_scheduler(&self, intent_id: B256) -> Result<()> {

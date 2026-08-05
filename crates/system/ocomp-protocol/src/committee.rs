@@ -11,7 +11,15 @@ use crate::{
 };
 
 pub const POC_COMMITTEE_SIZE: usize = 4;
-pub const POC_COMMITTEE_THRESHOLD: u8 = 3;
+
+/// Signatures required to certify a result.
+pub const POC_COMMITTEE_THRESHOLD: u8 = 2;
+
+/// `threshold` carried by the installed committee snapshot. It is part of the
+/// snapshot's identity and cannot change without re-installing the committee,
+/// so it stays at its genesis value and is checked separately from the number
+/// of signatures a quorum needs.
+pub const POC_COMMITTEE_SNAPSHOT_THRESHOLD: u8 = 3;
 pub const POC_KEY_EPOCH: u64 = 1;
 pub const RESULT_SIGNATURE_PURPOSE_BITMAP: u32 = 1;
 
@@ -120,7 +128,7 @@ impl OcompCommitteeSnapshotV1 {
     pub fn validate_semantics(&self, limits: &SchemaLimits) -> Result<(), ProtocolError> {
         require(self.snapshot_epoch == 1, "PoC committee snapshot epoch")?;
         require(
-            self.threshold == POC_COMMITTEE_THRESHOLD,
+            self.threshold == POC_COMMITTEE_SNAPSHOT_THRESHOLD,
             "PoC committee threshold",
         )?;
         require(

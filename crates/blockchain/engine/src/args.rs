@@ -20,8 +20,6 @@ pub struct OffchainDataArgs {
 pub struct OcompNodeControlConfig {
     pub supervisor_socket: PathBuf,
     pub snapshot_exporter_socket: PathBuf,
-    pub supervisor_uid: u32,
-    pub snapshot_exporter_uid: u32,
     pub protocol_bundle_hash: B256,
     pub boot_nonce: B256,
     pub session_generation: u64,
@@ -39,14 +37,6 @@ pub struct OcompArgs {
     /// Separate node UDS serving the fixed SnapshotExporter capability set.
     #[arg(long = "ocomp.snapshot-exporter-socket", value_name = "PATH")]
     pub snapshot_exporter_socket: Option<PathBuf>,
-
-    /// Effective UID accepted on the Supervisor UDS via SO_PEERCRED.
-    #[arg(long = "ocomp.supervisor-uid", value_name = "UID")]
-    pub supervisor_uid: Option<u32>,
-
-    /// Effective UID accepted on the SnapshotExporter UDS via SO_PEERCRED.
-    #[arg(long = "ocomp.snapshot-exporter-uid", value_name = "UID")]
-    pub snapshot_exporter_uid: Option<u32>,
 
     /// Exact pinned OCOMP protocol bundle identity.
     #[arg(long = "ocomp.protocol-bundle-hash", value_name = "B256")]
@@ -74,8 +64,6 @@ impl Default for OcompArgs {
         Self {
             supervisor_socket: None,
             snapshot_exporter_socket: None,
-            supervisor_uid: None,
-            snapshot_exporter_uid: None,
             protocol_bundle_hash: None,
             boot_nonce: None,
             session_generation: 1,
@@ -91,8 +79,6 @@ impl OcompArgs {
         let configured = [
             self.supervisor_socket.is_some(),
             self.snapshot_exporter_socket.is_some(),
-            self.supervisor_uid.is_some(),
-            self.snapshot_exporter_uid.is_some(),
             self.protocol_bundle_hash.is_some(),
             self.boot_nonce.is_some(),
             self.key_path.is_some(),
@@ -103,7 +89,7 @@ impl OcompArgs {
         }
         if !configured.iter().all(|value| *value) {
             eyre::bail!(
-                "OCOMP node control requires both role sockets, both peer UIDs, \
+                "OCOMP node control requires both role sockets, \
                  --ocomp.protocol-bundle-hash, --ocomp.boot-nonce, --ocomp.key \
                  and --ocomp.validator-index"
             );
@@ -137,10 +123,6 @@ impl OcompArgs {
         Ok(Some(OcompNodeControlConfig {
             supervisor_socket,
             snapshot_exporter_socket,
-            supervisor_uid: self.supervisor_uid.expect("complete profile checked above"),
-            snapshot_exporter_uid: self
-                .snapshot_exporter_uid
-                .expect("complete profile checked above"),
             protocol_bundle_hash,
             boot_nonce,
             session_generation: self.session_generation,
@@ -577,15 +559,11 @@ mod tests {
         assert!(args.validate().is_err());
 
         args.ocomp.snapshot_exporter_socket = Some("/tmp/exporter.sock".into());
-        args.ocomp.supervisor_uid = Some(1001);
-        args.ocomp.snapshot_exporter_uid = Some(1002);
         args.ocomp.protocol_bundle_hash = Some(B256::repeat_byte(0x11));
         args.ocomp.boot_nonce = Some(B256::repeat_byte(0x22));
         args.ocomp.key_path = Some("/tmp/ocomp-key.hex".into());
         args.ocomp.validator_index = Some(2);
         let config = args.ocomp.node_control().unwrap().unwrap();
-        assert_eq!(config.supervisor_uid, 1001);
-        assert_eq!(config.snapshot_exporter_uid, 1002);
         assert_eq!(config.validator_index, 2);
 
         args.ocomp.snapshot_exporter_socket = args.ocomp.supervisor_socket.clone();

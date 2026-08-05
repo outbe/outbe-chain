@@ -63,8 +63,7 @@ use thiserror::Error;
 use crate::bundle::PinnedProtocolBundle;
 use crate::cas::{CasError, CasLimits, FilesystemCasReader};
 use crate::control::{
-    poc_schema_limits, require_effective_uid, ControlError, ControlServerSession, EndpointIdentity,
-    ServerPolicy,
+    poc_schema_limits, ControlError, ControlServerSession, EndpointIdentity, ServerPolicy,
 };
 use crate::inbox::{WorkerInbox, WorkerInboxError, WorkerInboxLimits};
 use crate::input_artifacts::{
@@ -75,8 +74,6 @@ use crate::lysis_phase_replay::{replay_output_finalize_artifact, LysisPhaseRepla
 
 #[derive(Clone, Debug)]
 pub struct WorkerConfig {
-    pub expected_effective_uid: u32,
-    pub expected_supervisor_uid: u32,
     pub identity: EndpointIdentity,
     pub session_generation: u64,
     pub cas_root: PathBuf,
@@ -156,7 +153,6 @@ pub enum WorkerError {
 }
 
 pub fn run_one_from_inherited_fd(config: WorkerConfig) -> Result<WorkerOutcome, WorkerError> {
-    require_effective_uid(config.expected_effective_uid)?;
     if config.protocol_bundle.hash() != config.identity.protocol_bundle_hash {
         return Err(WorkerError::BundleIdentityMismatch);
     }
@@ -166,12 +162,7 @@ pub fn run_one_from_inherited_fd(config: WorkerConfig) -> Result<WorkerOutcome, 
     let limits = poc_schema_limits();
     let mut session = ControlServerSession::accept(
         stream,
-        ServerPolicy::worker(
-            config.expected_supervisor_uid,
-            config.identity,
-            config.session_generation,
-            limits,
-        ),
+        ServerPolicy::worker(config.identity, config.session_generation, limits),
     )?;
     session.handshake()?;
     let frame = session.receive_request()?;

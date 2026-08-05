@@ -7944,6 +7944,7 @@ dependencies = [
  "outbe-promislimit",
  "outbe-tribute",
  "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]

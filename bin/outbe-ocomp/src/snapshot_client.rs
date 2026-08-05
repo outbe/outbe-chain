@@ -25,7 +25,6 @@ use thiserror::Error;
 #[derive(Clone, Debug)]
 pub struct SnapshotExporterNodeConfig {
     pub node_socket: PathBuf,
-    pub expected_node_uid: u32,
     pub identity: EndpointIdentity,
     pub limits: SchemaLimits,
 }
@@ -56,11 +55,7 @@ impl SnapshotExporterNodeClient {
             })?;
         let mut session = ControlClientSession::connect(
             stream,
-            ClientPolicy::exporter_to_node(
-                config.expected_node_uid,
-                config.identity,
-                config.limits,
-            ),
+            ClientPolicy::exporter_to_node(config.identity, config.limits),
         )?;
         session.handshake()?;
         Ok(session)

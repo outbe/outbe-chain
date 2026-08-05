@@ -1774,7 +1774,15 @@ where
         + Sync
         + 'static,
 {
-    let epoch_length = epoch_length_blocks_from_genesis(&node)?;
+    // Not an epoch-boundary formula: this bounds how far the follower bootstrap
+    // may walk its own history looking for the block that published the in-force
+    // committee. One epoch cannot outlive its length plus the activation grace,
+    // so those same genesis parameters bound the walk.
+    let epoch_length_blocks = epoch_length_blocks_from_genesis(&node)?;
+    let rotation = DkgRotationParams::from_genesis(&node, epoch_length_blocks);
+    let committee_walkback_limit = rotation
+        .epoch_length_blocks
+        .saturating_add(rotation.activation_grace_blocks);
 
     if args.upstream_nocertify {
         return Err(eyre::eyre!(
@@ -1786,8 +1794,16 @@ where
     // set), read from the follower's OWN genesis state. Consensus finality is a
     // multisig over these keys, so this set — not the VRF group key — is the
     // trust root, and it is already in genesis (the operator provides nothing).
-    let genesis_validators = validators::read_consensus_validators_at_latest(&node.provider)
-        .wrap_err("failed to read genesis validator set for the follower trust anchor")?;
+    // Read the set at the GENESIS block, not at the local head: the anchor is
+    // compared against the start-epoch committee, so it must be the membership
+    // as of genesis. Reading `latest` only happens to be right on an empty
+    // datadir; on a node that already holds history it returns today's set and
+    // the anchor check fails against the start-epoch committee for every chain
+    // whose membership ever changed.
+    let genesis_block_hash = genesis_hash(&node)?;
+    let genesis_validators =
+        validators::read_consensus_validators_at_block(&node.provider, genesis_block_hash)
+            .wrap_err("failed to read genesis validator set for the follower trust anchor")?;
     let anchor_participants: commonware_utils::ordered::Set<bls12381::PublicKey> =
         genesis_validators
             .public_keys
@@ -1829,7 +1845,6 @@ where
     info!(
         %upstream,
         anchor_validators = anchor_participants.len(),
-        epoch_length,
         "follower mode (--upstream) selected; anchored on the genesis validator set"
     );
 
@@ -1839,7 +1854,7 @@ where
         node,
         bridge,
         upstream,
-        epoch_length,
+        committee_walkback_limit,
         projection_readiness,
         finalized_ce_committer,
         ce_startup_recovery,
@@ -1858,7 +1873,7 @@ async fn run_certified_follow_stack<E>(
     node: OutbeFullNode,
     bridge: ConsensusExecutionBridge,
     upstream: String,
-    epoch_length_blocks: u32,
+    committee_walkback_limit: u64,
     projection_readiness: ProjectionReadinessHandle,
     finalized_ce_committer: Arc<dyn FinalizedCeCommitter>,
     ce_startup_recovery: Arc<dyn CeStartupRecovery>,
@@ -1910,7 +1925,6 @@ where
     // Genesis anchor: epoch 0, the genesis validator committee.
     let chain = CommitteeChain::new(Epoch::new(0), anchor_participants);
     let certificate_scheme_provider: HybridSchemeProvider<MinSig> = chain.scheme_provider().clone();
-    let anchor_epoch = Epoch::new(chain.anchor_epoch());
     let chain = Arc::new(Mutex::new(chain));
 
     // ── 2. Page cache + marshal archives (mirrors run_consensus_stack) ───
@@ -1996,12 +2010,14 @@ where
     .await
     .wrap_err("failed to initialize blocks archive")?;
 
-    // The follower marshal uses the boundary-aligned `FollowerEpocher`, whose
-    // epoch boundaries match outbe's on-chain committee epochs (`[E·L+1,
-    // (E+1)·L]`). The validator's `FixedEpocher` disagrees by one block at every
-    // multiple of L, which would stall a resolver-only follower at boundary
-    // blocks (see outbe_consensus::follow::epocher).
-    let epocher = outbe_consensus::follow::FollowerEpocher::new(u64::from(epoch_length_blocks));
+    // The follower marshal reads epoch boundaries from the chain rather than
+    // computing them: `FollowerEpocher` is a map filled by the resolver as it
+    // decodes each boundary block's artifact. No height formula holds here —
+    // activation heights accumulate and a late ceremony shifts every later
+    // boundary — and one wrong answer makes the marshal reject that block
+    // forever (see outbe_consensus::follow::epocher). The same handle goes to
+    // the marshal (reader) and the follow engine (writer).
+    let epocher = outbe_consensus::follow::FollowerEpocher::new();
     let view_retention_timeout = u64::from(config::ACTIVITY_TIMEOUT)
         .checked_mul(config::VIEW_RETENTION_MULTIPLIER)
         .ok_or_else(|| eyre::eyre!("view retention timeout overflow"))?;
@@ -2104,7 +2120,8 @@ where
             tip: tip_client,
             epocher,
             chain,
-            anchor_epoch,
+            recovered_floor: last_consensus_finalized,
+            committee_walkback_limit,
             mailbox_size: nonzero_usize(config::ENGINE_MAILBOX_SIZE, "ENGINE_MAILBOX_SIZE")?,
         },
     )
@@ -3560,22 +3577,32 @@ where
         .as_ref()
         .expect("storage_dir was required above");
     let ocomp_retention_dir = ocomp_storage_root.join("ocomp_retention");
-    let ocomp_result_deadline_blocks = ocomp_fork_install.as_deref().map_or(0, |install| {
-        install
-            .request_profile
-            .capacity_profile
-            .result_deadline_blocks
+    // Pins must outlive the job deadline that execution enforces, so both sides
+    // read the same runtime bound instead of the profile's genesis value.
+    let ocomp_result_deadline_blocks = ocomp_fork_install.as_deref().map_or(0, |_| {
+        outbe_ocomp_protocol::capacity::RESULT_DEADLINE_BLOCKS
     });
     let pending_receipts_provider = node.provider.clone();
     let ocomp_proof_source = Arc::new(
         outbe_node::ocomp::retention::RethFinalizedInputProofSource::new(
             node.provider.clone(),
             finalized_parent_cert_store.clone(),
-            move || {
+            move |block_hash| {
+                // A finalized block is normally still in the in-memory tree and
+                // not yet canonical, so the canonical/database lookup would miss
+                // it. The in-memory state answers for any executed block hash.
+                if let Some(state) = pending_receipts_provider
+                    .canonical_in_memory_state()
+                    .state_by_hash(block_hash)
+                {
+                    return Ok(Some(state.executed_block_receipts()));
+                }
                 pending_receipts_provider
                     .pending_block_and_receipts()
                     .map(|pending| {
-                        pending.map(|(block, receipts)| (B256::new(*block.hash()), receipts))
+                        pending.and_then(|(block, receipts)| {
+                            (B256::new(*block.hash()) == block_hash).then_some(receipts)
+                        })
                     })
                     .map_err(|error| error.to_string())
             },
@@ -3633,7 +3660,6 @@ where
         );
         let server = OcompControlServer::new(
             ocomp_retention_coordinator.clone(),
-            config.supervisor_uid,
             identity,
             config.session_generation,
             poc_schema_limits(),
@@ -3642,7 +3668,6 @@ where
             OcompNodeAttestationConfig {
                 key_path: config.key_path,
                 sign_once_root: ocomp_storage_root.join("ocomp_sign_once"),
-                expected_owner_uid: outbe_ocomp_protocol::local_control::effective_uid()?,
                 validator_index: config.validator_index,
                 committee: install.result_committee.clone(),
                 initial_height: recovery_anchor_height,
@@ -3650,10 +3675,7 @@ where
             Arc::new(ProviderHeightSource::new(node.provider.clone())),
         )?
         .with_vote_transaction_signer(vote_evm_signer)
-        .with_snapshot_export_authority(
-            snapshot_export_authority.clone(),
-            config.snapshot_exporter_uid,
-        );
+        .with_snapshot_export_authority(snapshot_export_authority.clone());
         ocomp_snapshot_armer = Some(
             snapshot_export_authority
                 as Arc<dyn outbe_node::ocomp::retention::FinalizedSnapshotArmer>,
