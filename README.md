@@ -55,7 +55,7 @@ permanent degraded mode; degraded fallback is not adversarially reachable.
 **Reshare cadence.** DKG and reshare are height-periodic. Validator-set changes
 (joins, exits) are frozen at an epoch boundary and activated at the next one —
 there is no on-demand reshare request. An `EXITING` validator stays accountable
-in the current consensus set until `activateResharedSet()` completes. A live-chain
+in the current consensus set until the certified boundary activation completes. A live-chain
 reshare completes on threshold participation, so an unreachable validator does not
 block it. The one exception is the **genesis bootstrap DKG**, which requires all
 `n` genesis dealer logs and fail-fast aborts if a genesis validator is unreachable

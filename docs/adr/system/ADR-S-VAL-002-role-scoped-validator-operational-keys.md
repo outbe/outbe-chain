@@ -86,10 +86,16 @@ consumer; no global "is validator" predicate treats a delegate as a validator.
 
 OCOMP uses two separate keys:
 
-- the node-owned OCOMP attestation key signs the canonical inner
+- the node-owned OCOMP result key is registered with proof of possession during
+  `confirmValidatorReady(registration)` and signs the canonical inner
   `ResultVoteV1` behind sign-once and finalized-job checks; and
 - the supervisor-owned, role-delegated EVM key signs the outer fixed-shape
   EIP-1559 `submitLysisResult` transaction.
+
+The first key is membership material: every validator admitted to an `ACTIVE`
+ValidatorSet snapshot has one registered OCOMP key, and historical jobs verify its
+inner signature against that pinned snapshot. The delegate is not membership
+material; changing or revoking it changes only who may submit the outer transaction.
 
 The authenticated node socket may return only the canonical inner attestation.
 It does not expose an EVM transaction-signing method and production node startup
@@ -126,6 +132,11 @@ Role ids, storage slots, fallback behavior and eligibility rules are consensus
 formats. Any change requires an activated migration and mixed-version evidence.
 Legacy Oracle feeder storage remains reserved for layout compatibility but is no
 longer authoritative.
+
+The OCOMP result-key registration and its reverse key reservation are distinct
+ValidatorSet fields owned by ADR-S-VAL-001. They are consensus membership material,
+not role delegation. Replacing an OCOMP registration never changes the OCOMP EVM
+delegate, and changing the delegate never changes a pinned result-signing key.
 
 ## Invariants
 
@@ -175,7 +186,7 @@ isolation, same-role collision, rotation, revocation, inactive/shareless
 fail-closed behavior, Oracle principal resolution, OCOMP ZeroFee resolution and
 local restricted transaction construction.
 
-PFS-011 defines the live four-validator flow. Its release gate uses four
-different OCOMP keys, finalizes their delegations, proves the keys do not resolve
-for `ORACLE`, submits real EIP-1559 transactions and finalizes one OCOMP result
-vote without validator-account signing.
+PFS-011 defines the live delegated-signing flow. Its release gate uses a distinct
+OCOMP result key for every active validator, finalizes their delegations, proves
+the keys do not resolve for `ORACLE`, submits real EIP-1559 transactions and
+finalizes an OCOMP result vote without validator-account signing.

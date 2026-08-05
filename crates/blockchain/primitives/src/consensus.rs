@@ -146,9 +146,8 @@ pub struct FinalizedParentCertificateData {
     pub encoded_certificate: Bytes,
 }
 
-/// Result of a DKG/reshare ceremony, consumed by the executor to call
-/// `activateResharedSet()` on the ValidatorSet contract in the first block
-/// after the ceremony completes.
+/// Result of a DKG/reshare ceremony, consumed by the executor's certified
+/// ValidatorSet boundary hook in the first block after the ceremony completes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReshareResult {
     /// EVM addresses of validators who participated in the ceremony.

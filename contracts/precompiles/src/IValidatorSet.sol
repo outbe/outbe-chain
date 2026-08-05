@@ -97,6 +97,5 @@ interface IValidatorSet {
     /// caught up to head and may be frozen into the next DKG reshare target.
     /// Caller must be the validator itself and currently PENDING. Until called,
     /// a staked joiner stays PENDING and is excluded from the reshare target.
-    function confirmValidatorReady() external;
-    function activateResharedSet(address[] calldata newActiveSet, bytes32 groupPublicKey) external;
+    function confirmValidatorReady(bytes calldata registration) external;
 }

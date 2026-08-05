@@ -1206,7 +1206,7 @@ fn prepare_parent(proposer: Address, snapshot: &StoredCommitteeSnapshot) -> Prep
 
         let mut validators = ValidatorSet::new(storage.clone());
         validators.config_owner.write(VALIDATOR_OWNER).unwrap();
-        validators.config_max_validators.write(128).unwrap();
+        validators.set_config_max_validators(128).unwrap();
         validators.config_epoch_length_blocks.write(60).unwrap();
         validators.config_is_initialized.write(true).unwrap();
         for entry in &snapshot.committee {

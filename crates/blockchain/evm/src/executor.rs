@@ -4576,14 +4576,14 @@ mod tests {
             seed_compressed_entities_genesis(storage.clone());
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_epoch_length_blocks.write(60).unwrap();
             vs.config_is_initialized.write(true).unwrap();
             for (validator, pk) in validators {
                 vs.register_validator(OWNER, *validator, pk).unwrap();
+                vs.activate_validator_via_boundary_for_test(*validator)
+                    .unwrap();
             }
-            let active: Vec<Address> = validators.iter().map(|(validator, _)| *validator).collect();
-            vs.activate_reshared_set(&active, B256::ZERO).unwrap();
             seed_test_committee_snapshot(storage.clone(), validators);
             // Seed the COEN/0xUSD oracle pair + a 1.0 rate so begin-block NOD/GEM/INTEX
             // floor-price promotion reads a registered pair instead of reverting
@@ -4671,15 +4671,15 @@ mod tests {
             seed_compressed_entities_genesis(storage.clone());
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_epoch_length_blocks.write(60).unwrap();
             vs.config_is_initialized.write(true).unwrap();
             vs.register_validator(OWNER, active, &dummy_pubkey(0xA2))
                 .unwrap();
             vs.register_validator(OWNER, candidate, &dummy_pubkey(0xB3))
                 .unwrap();
-            vs.activate_reshared_set(&[active], B256::with_last_byte(0x01))
-                .unwrap();
+            vs.activate_validator_via_boundary_for_test(active).unwrap();
+            vs.admit_validator_for_boundary_for_test(candidate).unwrap();
             seed_test_committee_snapshot(storage.clone(), &[(active, dummy_pubkey(0xA2))]);
             // Seed the COEN/0xUSD oracle pair + a 1.0 rate so begin-block NOD/GEM/INTEX
             // floor-price promotion reads a registered pair instead of reverting
@@ -7749,8 +7749,8 @@ mod tests {
             // only `settle_voter`). At a single miss this is counter-only (no felony),
             // adding no balance effect — only the parity-checked miss counters.
             let mut seeded: Vec<(Address, [u8; 48])> = vec![(proposer, dummy_pubkey(0xA2))];
-            for (i, a) in addrs.iter().enumerate() {
-                seeded.push((*a, dummy_pubkey(0x50u8 + i as u8)));
+            for member in &snapshot.committee {
+                seeded.push((member.address, member.consensus_pubkey));
             }
             let mut state = state_with_active_validators_seeded(&seeded, move |storage| {
                 // The live credit's escrow binding is written by the N+K CPA
@@ -10574,11 +10574,12 @@ mod tests {
     fn seed_registered_active_validator(storage: StorageHandle, validator: Address, pk: &[u8; 48]) {
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         vs.config_owner.write(OWNER).unwrap();
-        vs.config_max_validators.write(128).unwrap();
+        vs.set_config_max_validators(128).unwrap();
         vs.config_epoch_length_blocks.write(60).unwrap();
         vs.config_is_initialized.write(true).unwrap();
         vs.register_validator(OWNER, validator, pk).unwrap();
-        vs.activate_reshared_set(&[validator], B256::ZERO).unwrap();
+        vs.activate_validator_via_boundary_for_test(validator)
+            .unwrap();
         seed_test_committee_snapshot(storage.clone(), &[(validator, *pk)]);
         // Seed COEN/0xUSD pair + 1.0 rate so begin-block NOD/GEM/INTEX promotion
         // reads a registered pair instead of reverting "pair not registered".
@@ -10665,7 +10666,7 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
             // Register and activate validators A, B, C.
@@ -10683,10 +10684,11 @@ mod tests {
             vs.register_validator(OWNER, val_d, &dummy_pubkey(0xD4))
                 .unwrap();
 
-            // Initial reshare: activate A, B, C (not D).
-            let old_hash = B256::with_last_byte(0x01);
-            vs.activate_reshared_set(&[val_a, val_b, val_c], old_hash)
-                .unwrap();
+            // Initial certified boundary: activate A, B, C (not D).
+            for validator in [val_a, val_b, val_c] {
+                vs.activate_validator_via_boundary_for_test(validator)
+                    .unwrap();
+            }
 
             // Step 1: Read old active set — should be [A, B, C].
             let old_set = vs.get_active_consensus_set().unwrap();
@@ -10701,7 +10703,6 @@ mod tests {
             // (We just verify the set is correct — actual slashing tested in Task 01 code.)
 
             // Step 4: NOW activate new reshare with [A, B, D] (C removed, D added).
-            let new_hash = B256::with_last_byte(0x02);
             // First deactivate C (simulate EXITING).
             vs.deactivate_validator(OWNER, val_c).unwrap();
 
@@ -10716,10 +10717,7 @@ mod tests {
             vs.record_participation(&[val_a, val_b], &[val_c]).unwrap();
 
             // Activate D.
-            vs.activate_validator(val_d).unwrap();
-            // Reshare with new set.
-            vs.activate_reshared_set(&[val_a, val_b, val_d], new_hash)
-                .unwrap();
+            vs.activate_validator_via_boundary_for_test(val_d).unwrap();
 
             // After reshare: active set is [A, B, D].
             let new_set = vs.get_active_consensus_set().unwrap();
@@ -10743,7 +10741,7 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
             let val_a = address!("0x1111111111111111111111111111111111111111");
@@ -10761,8 +10759,10 @@ mod tests {
                 .unwrap();
 
             // Old set: 3 validators [A, B, C].
-            vs.activate_reshared_set(&[val_a, val_b, val_c], B256::with_last_byte(0x01))
-                .unwrap();
+            for validator in [val_a, val_b, val_c] {
+                vs.activate_validator_via_boundary_for_test(validator)
+                    .unwrap();
+            }
             let old_set = vs.get_active_consensus_set().unwrap();
             assert_eq!(old_set.len(), 3, "old set must have 3 validators");
 
@@ -10779,9 +10779,7 @@ mod tests {
             .unwrap();
 
             // Now activate new set with 4 validators.
-            vs.activate_validator(val_d).unwrap();
-            vs.activate_reshared_set(&[val_a, val_b, val_c, val_d], B256::with_last_byte(0x02))
-                .unwrap();
+            vs.activate_validator_via_boundary_for_test(val_d).unwrap();
             let new_set = vs.get_active_consensus_set().unwrap();
             assert_eq!(new_set.len(), 4, "new set must have 4 validators");
 
@@ -10816,7 +10814,7 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
             let val_a = address!("0x1111111111111111111111111111111111111111");
@@ -10827,8 +10825,9 @@ mod tests {
             vs.register_validator(OWNER, val_b, &dummy_pubkey(0xB2))
                 .unwrap();
 
-            let hash = B256::with_last_byte(0x42);
-            vs.activate_reshared_set(&[val_a, val_b], hash).unwrap();
+            vs.activate_validator_via_boundary_for_test(val_a).unwrap();
+            vs.activate_validator_via_boundary_for_test(val_b).unwrap();
+            let hash = vs.active_consensus_set_hash.read().unwrap();
 
             // Read state after first activation.
             let set1 = vs.get_active_consensus_set().unwrap();
@@ -10841,9 +10840,7 @@ mod tests {
             assert_eq!(current_hash, hash, "hash must match after first activation");
 
             // Simulate executor's guard: skip if hash matches.
-            if current_hash != hash {
-                vs.activate_reshared_set(&[val_a, val_b], hash).unwrap();
-            }
+            assert_eq!(current_hash, hash);
             // State unchanged.
             let set2 = vs.get_active_consensus_set().unwrap();
             let hash2 = vs.active_consensus_set_hash.read().unwrap();
@@ -10890,7 +10887,7 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
             let val_a = address!("0x1111111111111111111111111111111111111111");
@@ -10909,8 +10906,10 @@ mod tests {
             }
             // Live active set is [A, B, D]; C is registered but no longer a
             // current consensus participant after a reshare.
-            vs.activate_reshared_set(&[val_a, val_b, val_d], B256::with_last_byte(0x02))
-                .unwrap();
+            for validator in [val_a, val_b, val_d] {
+                vs.activate_validator_via_boundary_for_test(validator)
+                    .unwrap();
+            }
             let live_active = vs.get_active_consensus_set().unwrap();
             let live_addrs: Vec<Address> =
                 live_active.iter().map(|v| v.validator_address).collect();
@@ -10928,7 +10927,7 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
             let val_a = address!("0x1111111111111111111111111111111111111111");
@@ -10937,8 +10936,10 @@ mod tests {
                 .unwrap();
             vs.register_validator(OWNER, val_b, &dummy_pubkey(0xB2))
                 .unwrap();
-            vs.activate_reshared_set(&[val_a, val_b], B256::with_last_byte(0x01))
-                .unwrap();
+            for validator in [val_a, val_b] {
+                vs.activate_validator_via_boundary_for_test(validator)
+                    .unwrap();
+            }
 
             let metadata = metadata_with(vec![val_a, val_b, val_a], vec![1, 1, 1], vec![]);
             let err = super::validate_finalized_metadata(storage.clone(), &metadata).unwrap_err();
@@ -10955,14 +10956,13 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
             let val_a = address!("0x1111111111111111111111111111111111111111");
             vs.register_validator(OWNER, val_a, &dummy_pubkey(0xA1))
                 .unwrap();
-            vs.activate_reshared_set(&[val_a], B256::with_last_byte(0x01))
-                .unwrap();
+            vs.activate_validator_via_boundary_for_test(val_a).unwrap();
 
             let stranger = address!("0x9999999999999999999999999999999999999999");
             let metadata = metadata_with(vec![val_a, stranger], vec![1, 1], vec![]);
@@ -10980,7 +10980,7 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
             let val_a = address!("0x1111111111111111111111111111111111111111");
@@ -10990,8 +10990,10 @@ mod tests {
                 vs.register_validator(OWNER, addr, &dummy_pubkey(seed))
                     .unwrap();
             }
-            vs.activate_reshared_set(&[val_a, val_b, val_c], B256::with_last_byte(0x01))
-                .unwrap();
+            for validator in [val_a, val_b, val_c] {
+                vs.activate_validator_via_boundary_for_test(validator)
+                    .unwrap();
+            }
 
             let metadata = metadata_with(vec![val_a, val_b], vec![1, 1], vec![val_c]);
             let err = super::validate_finalized_metadata(storage.clone(), &metadata).unwrap_err();
@@ -11008,14 +11010,13 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
             let val_a = address!("0x1111111111111111111111111111111111111111");
             vs.register_validator(OWNER, val_a, &dummy_pubkey(0xA1))
                 .unwrap();
-            vs.activate_reshared_set(&[val_a], B256::with_last_byte(0x01))
-                .unwrap();
+            vs.activate_validator_via_boundary_for_test(val_a).unwrap();
 
             let metadata = metadata_with(vec![val_a], vec![1, 0], vec![]);
             let err = super::validate_finalized_metadata(storage.clone(), &metadata).unwrap_err();
@@ -11080,7 +11081,7 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
             let val_a = address!("0x1111111111111111111111111111111111111111");
@@ -11089,9 +11090,10 @@ mod tests {
                 .unwrap();
             vs.register_validator(OWNER, val_b, &dummy_pubkey(0xB2))
                 .unwrap();
-            let current_hash = super::hash_boundary_active_set(&[val_a, val_b]);
-            vs.activate_reshared_set(&[val_a, val_b], current_hash)
-                .unwrap();
+            for validator in [val_a, val_b] {
+                vs.activate_validator_via_boundary_for_test(validator)
+                    .unwrap();
+            }
 
             // Boundary claims membership unchanged but carries a different active set.
             let boundary = boundary_with(false, vec![(val_a, dummy_pubkey(0xA1))]);
@@ -11110,7 +11112,7 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
             let val_a = address!("0x1111111111111111111111111111111111111111");
@@ -11120,9 +11122,11 @@ mod tests {
                 vs.register_validator(OWNER, addr, &dummy_pubkey(seed))
                     .unwrap();
             }
-            let current_hash = super::hash_boundary_active_set(&[val_a, val_b]);
-            vs.activate_reshared_set(&[val_a, val_b], current_hash)
-                .unwrap();
+            for validator in [val_a, val_b] {
+                vs.activate_validator_via_boundary_for_test(validator)
+                    .unwrap();
+            }
+            vs.admit_validator_for_boundary_for_test(val_c).unwrap();
 
             let boundary = boundary_with(
                 true,
@@ -11150,7 +11154,7 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
             let retained = address!("0x1111111111111111111111111111111111111111");
@@ -11159,9 +11163,10 @@ mod tests {
                 .unwrap();
             vs.register_validator(OWNER, expired, &dummy_pubkey(0xB2))
                 .unwrap();
-            let current_hash = super::hash_boundary_active_set(&[retained, expired]);
-            vs.activate_reshared_set(&[retained, expired], current_hash)
-                .unwrap();
+            for validator in [retained, expired] {
+                vs.activate_validator_via_boundary_for_test(validator)
+                    .unwrap();
+            }
 
             let mut boundary = boundary_with(true, vec![(retained, dummy_pubkey(0xA1))]);
             boundary.tee_expired_target_exclusions = vec![expired];
@@ -11192,13 +11197,13 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
             let retained = address!("0x1111111111111111111111111111111111111111");
             vs.register_validator(OWNER, retained, &dummy_pubkey(0xA1))
                 .unwrap();
-            let hash = super::hash_boundary_active_set(&[retained]);
-            vs.activate_reshared_set(&[retained], hash).unwrap();
+            vs.activate_validator_via_boundary_for_test(retained)
+                .unwrap();
 
             let mut boundary = boundary_with(false, vec![(retained, dummy_pubkey(0xA1))]);
             boundary.tee_expired_target_exclusions_hash = B256::with_last_byte(0xFF);
@@ -11215,14 +11220,14 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
             let val_a = address!("0x1111111111111111111111111111111111111111");
             vs.register_validator(OWNER, val_a, &dummy_pubkey(0xA1))
                 .unwrap();
-            let hash = super::hash_boundary_active_set(&[val_a]);
-            vs.activate_reshared_set(&[val_a], hash).unwrap();
+            vs.activate_validator_via_boundary_for_test(val_a).unwrap();
+            let hash = vs.active_consensus_set_hash.read().unwrap();
 
             let boundary = boundary_with(false, vec![(val_a, dummy_pubkey(0xA1))]);
             super::apply_boundary_outcome(storage.clone(), &boundary).unwrap();
@@ -11255,14 +11260,13 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
             let val_a = address!("0x1111111111111111111111111111111111111111");
             vs.register_validator(OWNER, val_a, &dummy_pubkey(0xA1))
                 .unwrap();
-            let hash = super::hash_boundary_active_set(&[val_a]);
-            vs.activate_reshared_set(&[val_a], hash).unwrap();
+            vs.activate_validator_via_boundary_for_test(val_a).unwrap();
 
             let mut boundary = boundary_with(false, vec![(val_a, dummy_pubkey(0xA1))]);
             boundary.committee_set_hash = B256::with_last_byte(0xFE);

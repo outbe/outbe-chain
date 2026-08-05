@@ -1195,10 +1195,11 @@ mod tests {
                 .unwrap();
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_epoch_length_blocks.write(10).unwrap();
             vs.register_validator(OWNER, VALIDATOR, &[7u8; 48]).unwrap();
-            vs.activate_validator(VALIDATOR).unwrap();
+            vs.activate_validator_via_boundary_for_test(VALIDATOR)
+                .unwrap();
             vs.val_has_bls_share.write(&VALIDATOR, true).unwrap();
             vs.active_consensus_set_hash
                 .write(active_set_hash(&[VALIDATOR]))
@@ -1638,14 +1639,15 @@ mod tests {
         provider.enter(|storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_epoch_length_blocks.write(10).unwrap();
             for (i, member) in members.iter().enumerate() {
                 // Distinct consensus pubkey per member (uniqueness is enforced).
                 let mut pubkey = [7u8; 48];
                 pubkey[0] = i as u8;
                 vs.register_validator(OWNER, *member, &pubkey).unwrap();
-                vs.activate_validator(*member).unwrap();
+                vs.activate_validator_via_boundary_for_test(*member)
+                    .unwrap();
                 vs.val_has_bls_share.write(member, true).unwrap();
             }
         });
@@ -2083,9 +2085,9 @@ mod tests {
             {
                 let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
                 vs.register_validator(OWNER, V0, &[0xB0; 48]).unwrap();
-                vs.activate_validator(V0).unwrap();
+                vs.activate_validator_via_boundary_for_test(V0).unwrap();
                 vs.register_validator(OWNER, V1, &[0xB1; 48]).unwrap();
-                vs.activate_validator(V1).unwrap();
+                vs.activate_validator_via_boundary_for_test(V1).unwrap();
             }
 
             // Committee snapshot [V0, V1] under (epoch, csh); escrow must bind csh.
@@ -2093,11 +2095,11 @@ mod tests {
                 committee: vec![
                     CommitteeEntry {
                         address: V0,
-                        consensus_pubkey: [0xC0; 48],
+                        consensus_pubkey: [0xB0; 48],
                     },
                     CommitteeEntry {
                         address: V1,
-                        consensus_pubkey: [0xC1; 48],
+                        consensus_pubkey: [0xB1; 48],
                     },
                 ],
                 vrf_material_version: 1,
@@ -2189,7 +2191,7 @@ mod tests {
                     for (i, a) in members.iter().enumerate() {
                         vs.register_validator(OWNER, *a, &[0xC0u8 + i as u8; 48])
                             .unwrap();
-                        vs.activate_validator(*a).unwrap();
+                        vs.activate_validator_via_boundary_for_test(*a).unwrap();
                     }
                 }
                 let snapshot = CommitteeSnapshot {
@@ -2198,7 +2200,7 @@ mod tests {
                         .enumerate()
                         .map(|(i, a)| CommitteeEntry {
                             address: *a,
-                            consensus_pubkey: [0xD0u8 + i as u8; 48],
+                            consensus_pubkey: [0xC0u8 + i as u8; 48],
                         })
                         .collect(),
                     vrf_material_version: 1,
@@ -2285,19 +2287,19 @@ mod tests {
             {
                 let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
                 vs.register_validator(OWNER, A, &[0xE0; 48]).unwrap();
-                vs.activate_validator(A).unwrap();
+                vs.activate_validator_via_boundary_for_test(A).unwrap();
                 vs.register_validator(OWNER, B, &[0xE1; 48]).unwrap();
-                vs.activate_validator(B).unwrap();
+                vs.activate_validator_via_boundary_for_test(B).unwrap();
             }
             let snapshot = CommitteeSnapshot {
                 committee: vec![
                     CommitteeEntry {
                         address: A,
-                        consensus_pubkey: [0xF0; 48],
+                        consensus_pubkey: [0xE0; 48],
                     },
                     CommitteeEntry {
                         address: B,
-                        consensus_pubkey: [0xF1; 48],
+                        consensus_pubkey: [0xE1; 48],
                     },
                 ],
                 vrf_material_version: 1,

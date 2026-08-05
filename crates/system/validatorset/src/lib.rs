@@ -16,6 +16,8 @@ pub mod precompile;
 pub mod runtime;
 pub mod schema;
 pub mod state;
+#[doc(hidden)]
+pub mod test_support;
 
 #[cfg(test)]
 mod tests;
@@ -30,8 +32,11 @@ pub mod logic {
 pub use errors::ActivationError;
 pub use state::{
     clear_committee_snapshot, committee_set_hash_v2, committee_snapshot_key,
-    next_vrf_material_version, read_committee_snapshot, read_committee_snapshot_for_epoch,
-    snapshot_identity, write_committee_snapshot, CommitteeEntry, CommitteeSnapshot,
-    COMMITTEE_SNAPSHOT_RETAIN_EPOCHS, OUTBE_COMMITTEE_SET_HASH_V2_DOMAIN,
-    OUTBE_COMMITTEE_SNAPSHOT_KEY_V2_DOMAIN, VRF_MATERIAL_VERSION_GENESIS,
+    next_vrf_material_version, ocomp_binding_hash_v1, read_committee_snapshot,
+    read_committee_snapshot_for_epoch, read_ocomp_snapshot_extension,
+    read_ocomp_snapshot_extension_for_binding, read_ocomp_snapshot_member_at, snapshot_identity,
+    write_committee_snapshot, CommitteeEntry, CommitteeSnapshot, OcompSnapshotExtensionV1,
+    OcompSnapshotMemberV1, COMMITTEE_SNAPSHOT_RETAIN_EPOCHS, OUTBE_COMMITTEE_SET_HASH_V2_DOMAIN,
+    OUTBE_COMMITTEE_SNAPSHOT_KEY_V2_DOMAIN, OUTBE_OCOMP_SNAPSHOT_BINDING_V1_DOMAIN,
+    VRF_MATERIAL_VERSION_GENESIS,
 };

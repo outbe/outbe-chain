@@ -40,9 +40,10 @@ fn register_and_activate_with_stake(
 
     let mut vs = ValidatorSet::new(storage.clone());
     vs.config_owner.write(OWNER).unwrap();
-    vs.config_max_validators.write(100).unwrap();
+    vs.set_config_max_validators(100).unwrap();
     vs.register_validator(OWNER, validator, &pk).unwrap();
-    vs.activate_validator(validator).unwrap();
+    vs.activate_validator_via_boundary_for_test(validator)
+        .unwrap();
     vs.val_has_bls_share.write(&validator, true).unwrap();
 
     // Give the validator some stake so slash_stake has an effect
@@ -67,7 +68,8 @@ fn register_and_activate_with_stake(
         let mut sub_pk = [0u8; 48];
         sub_pk[0] = 0xEE;
         vs.register_validator(OWNER, SUBMITTER, &sub_pk).unwrap();
-        vs.activate_validator(SUBMITTER).unwrap();
+        vs.activate_validator_via_boundary_for_test(SUBMITTER)
+            .unwrap();
     }
 }
 
@@ -296,14 +298,16 @@ fn test_evidence_reward() {
         let validator = VAL_A;
         let mut vs = ValidatorSet::new(storage.clone());
         vs.config_owner.write(OWNER).unwrap();
-        vs.config_max_validators.write(100).unwrap();
+        vs.set_config_max_validators(100).unwrap();
         vs.register_validator(OWNER, validator, &pk_bytes).unwrap();
-        vs.activate_validator(validator).unwrap();
+        vs.activate_validator_via_boundary_for_test(validator)
+            .unwrap();
         {
             let mut sub_pk = [0u8; 48];
             sub_pk[0] = 0xEE;
             vs.register_validator(OWNER, SUBMITTER, &sub_pk).unwrap();
-            vs.activate_validator(SUBMITTER).unwrap();
+            vs.activate_validator_via_boundary_for_test(SUBMITTER)
+                .unwrap();
         }
 
         // Set stake
@@ -361,14 +365,16 @@ fn test_conflicting_vote_evidence() {
         let validator = VAL_B;
         let mut vs = ValidatorSet::new(storage.clone());
         vs.config_owner.write(OWNER).unwrap();
-        vs.config_max_validators.write(100).unwrap();
+        vs.set_config_max_validators(100).unwrap();
         vs.register_validator(OWNER, validator, &pk_bytes).unwrap();
-        vs.activate_validator(validator).unwrap();
+        vs.activate_validator_via_boundary_for_test(validator)
+            .unwrap();
         {
             let mut sub_pk = [0u8; 48];
             sub_pk[0] = 0xEE;
             vs.register_validator(OWNER, SUBMITTER, &sub_pk).unwrap();
-            vs.activate_validator(SUBMITTER).unwrap();
+            vs.activate_validator_via_boundary_for_test(SUBMITTER)
+                .unwrap();
         }
         vs.val_has_bls_share.write(&validator, true).unwrap();
 
@@ -424,14 +430,16 @@ fn test_conflicting_vote_evidence_reversed_order() {
         let validator = VAL_A;
         let mut vs = ValidatorSet::new(storage.clone());
         vs.config_owner.write(OWNER).unwrap();
-        vs.config_max_validators.write(100).unwrap();
+        vs.set_config_max_validators(100).unwrap();
         vs.register_validator(OWNER, validator, &pk_bytes).unwrap();
-        vs.activate_validator(validator).unwrap();
+        vs.activate_validator_via_boundary_for_test(validator)
+            .unwrap();
         {
             let mut sub_pk = [0u8; 48];
             sub_pk[0] = 0xEE;
             vs.register_validator(OWNER, SUBMITTER, &sub_pk).unwrap();
-            vs.activate_validator(SUBMITTER).unwrap();
+            vs.activate_validator_via_boundary_for_test(SUBMITTER)
+                .unwrap();
         }
 
         let stake = U256::from(1_000_000u64);
@@ -473,14 +481,16 @@ fn test_conflicting_vote_same_type_fails() {
         let validator = VAL_A;
         let mut vs = ValidatorSet::new(storage.clone());
         vs.config_owner.write(OWNER).unwrap();
-        vs.config_max_validators.write(100).unwrap();
+        vs.set_config_max_validators(100).unwrap();
         vs.register_validator(OWNER, validator, &pk_bytes).unwrap();
-        vs.activate_validator(validator).unwrap();
+        vs.activate_validator_via_boundary_for_test(validator)
+            .unwrap();
         {
             let mut sub_pk = [0u8; 48];
             sub_pk[0] = 0xEE;
             vs.register_validator(OWNER, SUBMITTER, &sub_pk).unwrap();
-            vs.activate_validator(SUBMITTER).unwrap();
+            vs.activate_validator_via_boundary_for_test(SUBMITTER)
+                .unwrap();
         }
 
         // Two notarize proposals for the same round
@@ -514,7 +524,7 @@ fn test_full_lifecycle_integration() {
         // 1. Setup ValidatorSet config
         let mut vs = ValidatorSet::new(storage.clone());
         vs.config_owner.write(OWNER).unwrap();
-        vs.config_max_validators.write(128).unwrap();
+        vs.set_config_max_validators(128).unwrap();
 
         // 2. Register validator
         let pk = [0x42u8; 48];
@@ -541,7 +551,8 @@ fn test_full_lifecycle_integration() {
         ctx.set_balance(STAKING_ADDRESS, U256::from(10_000u64))
             .unwrap();
         assert_eq!(vs.val_status.read(&validator).unwrap(), status::PENDING);
-        vs.activate_validator(validator).unwrap();
+        vs.activate_validator_via_boundary_for_test(validator)
+            .unwrap();
         vs.val_has_bls_share.write(&validator, true).unwrap();
         assert_eq!(vs.val_status.read(&validator).unwrap(), status::ACTIVE);
         assert_eq!(staking.get_stake(validator).unwrap(), U256::from(10_000u64));
@@ -789,6 +800,20 @@ fn write_test_committee(storage: &StorageHandle) {
         vrf_group_public_key_bytes: vec![0x11; 96],
         vrf_public_polynomial_hash: B256::ZERO,
     };
+    let mut validators = ValidatorSet::new(storage.clone());
+    validators.config_owner.write(OWNER).unwrap();
+    validators.set_config_max_validators(100).unwrap();
+    for member in &snapshot.committee {
+        if !validators.is_validator(member.address).unwrap() {
+            validators
+                .register_validator(OWNER, member.address, &member.consensus_pubkey)
+                .unwrap();
+            validators
+                .activate_validator_via_boundary_for_test(member.address)
+                .unwrap();
+        }
+    }
+    drop(validators);
     for epoch in 0..outbe_validatorset::state::COMMITTEE_SNAPSHOT_RETAIN_EPOCHS {
         outbe_validatorset::state::write_committee_snapshot(storage.clone(), epoch, &snapshot)
             .unwrap();

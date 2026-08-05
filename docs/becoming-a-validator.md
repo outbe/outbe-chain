@@ -221,11 +221,24 @@ until the total reaches `min_stake`.)
 ### 2.5 Confirm readiness (→ eligible) and wait for the reshare (→ ACTIVE)
 
 A PENDING validator is not admitted to the next reshare until it confirms, on-chain,
-that it has caught up — preventing a behind node from being frozen into the committee
-before it can vote. Send it **only after** your node is at the finalized tip:
+that it has caught up and supplies the canonical proof-of-possession registration
+for its OCOMP result key. Generate the immutable key and registration for this
+chain, genesis, validator address and exact BLS MinPk public key:
 
 ```sh
-outbe-cli validator confirm-ready --private-key "$EVM_KEY" --rpc-url http://<rpc>:8545
+outbe-keygen ocomp --output-dir <ocomp-key-dir> \
+  --chain-id <chain-id> --genesis-hash <0x-genesis-hash> \
+  --validator-address "$VALIDATOR_ADDR" \
+  --consensus-bls-min-pk <96-hex-character-bls-minpk>
+```
+
+Then, only after the node has reached the finalized tip, submit the generated
+public registration:
+
+```sh
+outbe-cli validator confirm-ready \
+  --registration <ocomp-key-dir>/ocomp-registration-v1.ocb1 \
+  --private-key "$EVM_KEY" --rpc-url http://<rpc>:8545
 ```
 
 DKG reshares are **periodic** (one per epoch, height-driven). At the first reshare
@@ -388,7 +401,7 @@ fallback for production.
 | `outbe-cli validator register` / `set-p2p`                  | register (→ REGISTERED) / publish the P2P address              |
 | `outbe-cli staking stake` / `unstake` / `claim`             | stake (→ PENDING at `min_stake`) / unstake / withdraw          |
 | `outbe-cli staking unjail`                                  | return a JAILED validator → PENDING (stake ≥ min_stake)        |
-| `outbe-cli validator confirm-ready`                         | confirm caught-up (stale-join guard)                           |
+| `outbe-cli validator confirm-ready --registration <file>`   | confirm caught-up and register the OCOMP result key            |
 | `outbe-cli validator deactivate`                            | leave the active set (→ EXITING)                               |
 | `outbe-cli monitor health` / `readiness` / `watch`          | health / readiness / dashboard                                 |
 | `outbe-cli validator participation` / `list` / `info`       | participation + set inspection                                 |

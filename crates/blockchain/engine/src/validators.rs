@@ -625,10 +625,11 @@ mod tests {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage);
             vs.config_owner.write(OWNER).unwrap();
             vs.config_is_initialized.write(true).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.register_validator(OWNER, validator, &valid_consensus_pubkey(11))
                 .unwrap();
-            vs.activate_validator(validator).unwrap();
+            vs.activate_validator_via_boundary_for_test(validator)
+                .unwrap();
             p2p_writer(&mut vs, validator);
         });
         TestStateAccess {
@@ -648,7 +649,7 @@ mod tests {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
             vs.config_is_initialized.write(true).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             let registry = outbe_teeregistry::TeeRegistry::new(storage);
 
             for (index, (&validator, &lease_end)) in
@@ -657,7 +658,8 @@ mod tests {
                 let consensus_pubkey = valid_consensus_pubkey((index + 1) as u8);
                 vs.register_validator(OWNER, validator, &consensus_pubkey)
                     .unwrap();
-                vs.activate_validator(validator).unwrap();
+                vs.activate_validator_via_boundary_for_test(validator)
+                    .unwrap();
 
                 let node_hash = NodeIdV1::Validator {
                     address: validator.into_array(),
@@ -715,7 +717,7 @@ mod tests {
         StorageHandle::enter(&mut provider, |storage| {
             let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
             vs.config_is_initialized.write(true).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
         });
 
         let access = TestStateAccess {
@@ -736,12 +738,13 @@ mod tests {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage);
             vs.config_owner.write(OWNER).unwrap();
             vs.config_is_initialized.write(true).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.register_validator(OWNER, active, &valid_consensus_pubkey(1))
                 .unwrap();
             vs.register_validator(OWNER, exiting, &valid_consensus_pubkey(2))
                 .unwrap();
-            vs.activate_reshared_set(&[active, exiting], B256::with_last_byte(0xAA))
+            vs.activate_validator_via_boundary_for_test(active).unwrap();
+            vs.activate_validator_via_boundary_for_test(exiting)
                 .unwrap();
             vs.deactivate_validator(OWNER, exiting).unwrap();
         });
@@ -933,7 +936,7 @@ mod tests {
         StorageHandle::enter(&mut provider, |storage| {
             let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
             vs.config_is_initialized.write(true).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
         });
 
         let access = TestStateAccess {
@@ -950,7 +953,7 @@ mod tests {
         StorageHandle::enter(&mut provider, |storage| {
             let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
             vs.config_is_initialized.write(true).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.pending_set_change.write(true).unwrap();
         });
 

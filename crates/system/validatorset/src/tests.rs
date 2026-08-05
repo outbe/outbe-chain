@@ -1,4 +1,12 @@
-use alloy_primitives::{address, Address, B256};
+use alloy_primitives::{address, keccak256, Address, B256};
+use k256::ecdsa::{signature::hazmat::PrehashSigner as _, Signature, SigningKey};
+use outbe_ocomp_protocol::{
+    committee::{
+        validator_identity_hash_v1, OcompKeyRegistrationCoreV1, OcompKeyRegistrationV1,
+        POC_KEY_EPOCH, RESULT_SIGNATURE_PURPOSE_BITMAP,
+    },
+    profile::poc_schema_limits,
+};
 use outbe_primitives::consensus_p2p::{
     encode_v1, P2pAddress, P2pIngress, MAX_P2P_ADDRESS_ENCODED_LEN, P2P_ADDRESS_VERSION_V1,
 };
@@ -21,7 +29,7 @@ fn with_vs_configured<R>(max: u32, f: impl FnOnce(&mut ValidatorSet) -> R) -> R 
     StorageHandle::enter(&mut storage, |storage| {
         let mut vs = ValidatorSet::new(storage.clone());
         vs.config_owner.write(OWNER).unwrap();
-        vs.config_max_validators.write(max).unwrap();
+        vs.set_config_max_validators(max).unwrap();
         vs.config_epoch_length_blocks.write(10).unwrap();
         f(&mut vs)
     })
@@ -32,6 +40,57 @@ fn dummy_consensus_pubkey(seed: u8) -> [u8; 48] {
     let mut pk = [0u8; 48];
     pk[0] = seed;
     pk
+}
+
+fn ocomp_registration(
+    validator: Address,
+    consensus_pubkey: &[u8; 48],
+    key_seed: u8,
+) -> (OcompKeyRegistrationV1, Vec<u8>) {
+    let signing_key = SigningKey::from_bytes((&[key_seed; 32]).into()).unwrap();
+    let ocomp_public_key_sec1 = signing_key
+        .verifying_key()
+        .to_encoded_point(true)
+        .as_bytes()
+        .try_into()
+        .unwrap();
+    let mut registration = OcompKeyRegistrationV1 {
+        core: OcompKeyRegistrationCoreV1 {
+            chain_id: CHAIN_ID,
+            genesis_hash: B256::ZERO,
+            validator_identity_hash: validator_identity_hash_v1(validator, consensus_pubkey)
+                .unwrap(),
+            ocomp_public_key_sec1,
+            key_epoch: POC_KEY_EPOCH,
+            allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
+        },
+        proof_of_possession: [0; 64],
+    };
+    let limits = poc_schema_limits();
+    let digest = registration.proof_of_possession_digest(&limits).unwrap();
+    let signature: Signature = signing_key.sign_prehash(digest.as_slice()).unwrap();
+    registration.proof_of_possession = signature
+        .normalize_s()
+        .unwrap_or(signature)
+        .to_bytes()
+        .into();
+    let encoded = registration.encode_canonical(&limits).unwrap();
+    (registration, encoded)
+}
+
+fn confirm_ready(vs: &mut ValidatorSet<'_>, validator: Address, key_seed: u8) {
+    let consensus_pubkey = vs
+        .get_validator(validator)
+        .unwrap()
+        .unwrap()
+        .consensus_pubkey;
+    let (_, encoded) = ocomp_registration(validator, &consensus_pubkey, key_seed);
+    vs.confirm_validator_ready(validator, &encoded).unwrap();
+}
+
+fn admit_pending(vs: &mut ValidatorSet<'_>, validator: Address, key_seed: u8) {
+    vs.mark_pending(validator).unwrap();
+    confirm_ready(vs, validator, key_seed);
 }
 
 fn symmetric_p2p(port: u16) -> Vec<u8> {
@@ -83,9 +142,11 @@ fn test_activate_missing_validator_returns_revert() {
     let val_addr = address!("0x1111111111111111111111111111111111111111");
 
     with_vs_configured(10, |vs| {
-        let err = vs.activate_validator(val_addr).unwrap_err();
+        let err = vs
+            .activate_validator_via_boundary_for_test(val_addr)
+            .unwrap_err();
         assert!(
-            matches!(err, PrecompileError::Revert(message) if message == "validator not registered")
+            matches!(err, PrecompileError::Revert(message) if message == "test validator is not registered")
         );
     });
 }
@@ -261,7 +322,8 @@ fn test_activate_deactivate() {
         // Initially REGISTERED
         assert_eq!(vs.val_status.read(&val_addr).unwrap(), status::REGISTERED);
 
-        vs.activate_validator(val_addr).unwrap();
+        vs.activate_validator_via_boundary_for_test(val_addr)
+            .unwrap();
         assert_eq!(vs.val_status.read(&val_addr).unwrap(), status::ACTIVE);
 
         vs.deactivate_validator(OWNER, val_addr).unwrap();
@@ -283,7 +345,8 @@ fn test_force_exit() {
     with_vs_configured(10, |vs| {
         vs.register_validator(OWNER, val_addr, &dummy_consensus_pubkey(5))
             .unwrap();
-        vs.activate_validator(val_addr).unwrap();
+        vs.activate_validator_via_boundary_for_test(val_addr)
+            .unwrap();
         vs.val_has_bls_share.write(&val_addr, true).unwrap();
 
         vs.force_exit_validator(val_addr).unwrap();
@@ -303,7 +366,8 @@ fn test_record_proposer() {
     with_vs_configured(10, |vs| {
         vs.register_validator(OWNER, val_addr, &dummy_consensus_pubkey(6))
             .unwrap();
-        vs.activate_validator(val_addr).unwrap();
+        vs.activate_validator_via_boundary_for_test(val_addr)
+            .unwrap();
         vs.val_has_bls_share.write(&val_addr, true).unwrap();
 
         assert_eq!(vs.val_blocks_proposed.read(&val_addr).unwrap(), 0);
@@ -336,7 +400,7 @@ fn test_record_participation() {
         vs.register_validator(OWNER, val3, &dummy_consensus_pubkey(73))
             .unwrap();
         for val in [val1, val2, val3] {
-            vs.activate_validator(val).unwrap();
+            vs.activate_validator_via_boundary_for_test(val).unwrap();
             vs.val_has_bls_share.write(&val, true).unwrap();
         }
 
@@ -371,7 +435,8 @@ fn test_record_finalized_participation_accepts_historical_validators() {
         // Active current participant.
         vs.register_validator(OWNER, val_active, &dummy_consensus_pubkey(81))
             .unwrap();
-        vs.activate_validator(val_active).unwrap();
+        vs.activate_validator_via_boundary_for_test(val_active)
+            .unwrap();
         vs.val_has_bls_share.write(&val_active, true).unwrap();
 
         // Registered historical participant: status UNBONDING, no BLS share.
@@ -436,7 +501,8 @@ fn test_update_epoch() {
     with_vs_configured(10, |vs| {
         vs.register_validator(OWNER, val_addr, &dummy_consensus_pubkey(91))
             .unwrap();
-        vs.activate_validator(val_addr).unwrap();
+        vs.activate_validator_via_boundary_for_test(val_addr)
+            .unwrap();
         vs.val_has_bls_share.write(&val_addr, true).unwrap();
 
         // Accumulate some stats
@@ -518,8 +584,8 @@ fn test_get_active_validators() {
             .unwrap();
 
         // Activate only val1 and val3
-        vs.activate_validator(val1).unwrap();
-        vs.activate_validator(val3).unwrap();
+        vs.activate_validator_via_boundary_for_test(val1).unwrap();
+        vs.activate_validator_via_boundary_for_test(val3).unwrap();
 
         let active = vs.get_active_validators().unwrap();
         let active_addrs: Vec<Address> = active.iter().map(|v| v.validator_address).collect();
@@ -551,6 +617,34 @@ fn test_is_validator() {
     });
 }
 
+#[test]
+fn config_max_validators_cannot_exceed_consensus_bound() {
+    with_vs_configured(10, |vs| {
+        let consensus_bound = outbe_consensus::bls::MAX_VALIDATORS;
+        vs.set_config_max_validators(consensus_bound).unwrap();
+        assert_eq!(vs.config_max_validators.read().unwrap(), consensus_bound);
+
+        assert!(vs
+            .set_config_max_validators(consensus_bound.saturating_add(1))
+            .is_err());
+        assert_eq!(
+            vs.config_max_validators.read().unwrap(),
+            consensus_bound,
+            "rejected bound must not mutate config",
+        );
+    });
+}
+
+#[test]
+fn owner_manual_reshare_selector_is_not_exposed() {
+    let digest = keccak256("activateResharedSet(address[],bytes32)");
+    let selector: [u8; 4] = digest[..4].try_into().unwrap();
+    assert!(
+        !crate::precompile::IValidatorSet::IValidatorSetCalls::SELECTORS.contains(&selector),
+        "owner/manual activation must not be reachable through ValidatorSet ABI",
+    );
+}
+
 // ---------------------------------------------------------------------------
 // 12. test_consensus_set
 // ---------------------------------------------------------------------------
@@ -573,6 +667,8 @@ fn test_consensus_set() {
         assert_eq!(vs.val_status.read(&val1).unwrap(), status::REGISTERED);
         assert_eq!(vs.val_status.read(&val2).unwrap(), status::REGISTERED);
 
+        admit_pending(vs, val1, 0xC1);
+        admit_pending(vs, val2, 0xC2);
         // Activate reshared set with val1 and val2 (not val3)
         vs.activate_reshared_set(&[val1, val2], group_key).unwrap();
 
@@ -615,6 +711,8 @@ fn test_exiting_to_unbonding_via_reshare() {
             .unwrap();
         vs.register_validator(OWNER, val2, &dummy_consensus_pubkey(0xD2))
             .unwrap();
+        admit_pending(vs, val1, 0xD1);
+        admit_pending(vs, val2, 0xD2);
 
         // First reshare: both active
         vs.activate_reshared_set(&[val1, val2], group_key).unwrap();
@@ -649,6 +747,8 @@ fn test_deactivated_validator_stays_current_consensus_participant_until_reshare(
             .unwrap();
         vs.register_validator(OWNER, val2, &dummy_consensus_pubkey(0xD2))
             .unwrap();
+        admit_pending(vs, val1, 0xD3);
+        admit_pending(vs, val2, 0xD4);
         vs.activate_reshared_set(&[val1, val2], B256::with_last_byte(0xD1))
             .unwrap();
 
@@ -687,6 +787,8 @@ fn test_force_exited_validator_stays_current_consensus_participant_until_reshare
             .unwrap();
         vs.register_validator(OWNER, val2, &dummy_consensus_pubkey(0xF2))
             .unwrap();
+        admit_pending(vs, val1, 0xF1);
+        admit_pending(vs, val2, 0xF2);
         vs.activate_reshared_set(&[val1, val2], B256::with_last_byte(0xF1))
             .unwrap();
 
@@ -728,7 +830,8 @@ fn test_pending_set_change() {
             .unwrap();
         assert!(vs.has_pending_set_change().unwrap());
 
-        // activateResharedSet clears it
+        admit_pending(vs, val_addr, 0xE1);
+        // Certified boundary activation clears it.
         let group_key = B256::with_last_byte(0xEE);
         vs.activate_reshared_set(&[val_addr], group_key).unwrap();
         assert!(!vs.has_pending_set_change().unwrap());
@@ -757,6 +860,9 @@ fn test_pending_set_change_missed_validator() {
             .unwrap();
         vs.register_validator(OWNER, val3, &dummy_consensus_pubkey(0xA3))
             .unwrap();
+        admit_pending(vs, val1, 0xA1);
+        admit_pending(vs, val2, 0xA2);
+        admit_pending(vs, val3, 0xA3);
 
         // First reshare: all 3 validators participate → all ACTIVE
         vs.activate_reshared_set(&[val1, val2, val3], group_key1)
@@ -838,7 +944,8 @@ fn test_reregister_inactive_validator() {
     with_vs_configured(10, |vs| {
         // Register and transition to INACTIVE
         vs.register_validator(OWNER, val_addr, &pk_old).unwrap();
-        vs.activate_validator(val_addr).unwrap();
+        vs.activate_validator_via_boundary_for_test(val_addr)
+            .unwrap();
         vs.val_status.write(&val_addr, status::INACTIVE).unwrap();
 
         // Re-register with a new pubkey
@@ -885,7 +992,8 @@ fn test_reregister_active_fails() {
     with_vs_configured(10, |vs| {
         vs.register_validator(OWNER, val_addr, &dummy_consensus_pubkey(0x21))
             .unwrap();
-        vs.activate_validator(val_addr).unwrap();
+        vs.activate_validator_via_boundary_for_test(val_addr)
+            .unwrap();
 
         // Re-registration of ACTIVE validator must fail
         let result = vs.register_validator(OWNER, val_addr, &dummy_consensus_pubkey(0x22));
@@ -906,7 +1014,8 @@ fn test_forced_exit_preserves_staking_lifecycle() {
 
         vs.register_validator(OWNER, val_addr, &dummy_consensus_pubkey(0x33))
             .unwrap();
-        vs.activate_validator(val_addr).unwrap();
+        vs.activate_validator_via_boundary_for_test(val_addr)
+            .unwrap();
 
         // Set stake above min then force exit.
         vs.val_stake.write(&val_addr, U256::from(1000u64)).unwrap();
@@ -1016,11 +1125,11 @@ fn test_reregistration_cooldown_gates_then_allows() {
     StorageHandle::enter(&mut storage, |storage| {
         let mut vs = ValidatorSet::new(storage.clone());
         vs.config_owner.write(OWNER).unwrap();
-        vs.config_max_validators.write(128).unwrap();
+        vs.set_config_max_validators(128).unwrap();
         vs.config_reregistration_cooldown.write(1000).unwrap();
         vs.register_validator(OWNER, val, &dummy_consensus_pubkey(0xCC))
             .unwrap();
-        vs.activate_validator(val).unwrap();
+        vs.activate_validator_via_boundary_for_test(val).unwrap();
         vs.val_status.write(&val, status::INACTIVE).unwrap();
         vs.val_deactivated_at_height.write(&val, 100).unwrap();
     });
@@ -1058,7 +1167,7 @@ fn test_reregistration_no_cooldown_configured() {
         assert_eq!(vs.config_reregistration_cooldown.read().unwrap(), 0);
 
         vs.register_validator(OWNER, val, &pk).unwrap();
-        vs.activate_validator(val).unwrap();
+        vs.activate_validator_via_boundary_for_test(val).unwrap();
         vs.val_status.write(&val, status::INACTIVE).unwrap();
         vs.val_deactivated_at_height.write(&val, 50).unwrap();
 
@@ -1074,9 +1183,7 @@ fn test_reregistration_no_cooldown_configured() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_activate_validator_sets_pending_set_change() {
-    // register → reshare (without new validator) → stake triggers activate_validator
-    // which must set pending_set_change = true so consensus picks up the new participant.
+fn test_confirm_ready_signals_pending_until_certified_boundary() {
     with_vs_configured(128, |vs| {
         let val = address!("0x1111111111111111111111111111111111111111");
         let pk = dummy_consensus_pubkey(0x01);
@@ -1091,12 +1198,18 @@ fn test_activate_validator_sets_pending_set_change() {
             .unwrap();
         assert!(!vs.has_pending_set_change().unwrap());
 
-        // Now activate_validator (from staking auto-activate) → must set pending again.
-        vs.activate_validator(val).unwrap();
+        // Staking and confirm-ready signal that a new certified boundary is due.
+        vs.mark_pending(val).unwrap();
+        confirm_ready(vs, val, 0x01);
+        assert!(vs.has_pending_set_change().unwrap());
+
+        // The shared helper drives the certified boundary and clears the signal
+        // once the admitted validator is part of the complete ACTIVE set.
+        vs.activate_validator_via_boundary_for_test(val).unwrap();
         assert_eq!(vs.val_status.read(&val).unwrap(), status::ACTIVE);
         assert!(
-            vs.has_pending_set_change().unwrap(),
-            "activate_validator must set pending_set_change = true"
+            !vs.has_pending_set_change().unwrap(),
+            "certified boundary must clear the covered set-change signal"
         );
     });
 }
@@ -1110,12 +1223,12 @@ fn test_activate_reshared_set_clears_pending_after_join() {
         let pk = dummy_consensus_pubkey(0x01);
 
         vs.register_validator(OWNER, val, &pk).unwrap();
-        vs.activate_validator(val).unwrap();
+        vs.mark_pending(val).unwrap();
+        confirm_ready(vs, val, 0x02);
         assert!(vs.has_pending_set_change().unwrap());
 
-        // Reshare now includes the new validator.
-        vs.activate_reshared_set(&[val], B256::with_last_byte(0x02))
-            .unwrap();
+        // The production boundary path now includes the admitted validator.
+        vs.activate_validator_via_boundary_for_test(val).unwrap();
         assert!(
             !vs.has_pending_set_change().unwrap(),
             "pending should be cleared after reshare includes all active validators"
@@ -1141,7 +1254,7 @@ fn test_admitted_non_consensus_includes_registered_and_pending_not_active() {
         vs.mark_pending(pend).unwrap();
         vs.register_validator(OWNER, act, &dummy_consensus_pubkey(0x03))
             .unwrap();
-        vs.activate_validator(act).unwrap();
+        vs.activate_validator_via_boundary_for_test(act).unwrap();
 
         let admitted: Vec<_> = vs
             .get_admitted_non_consensus_validators()
@@ -1178,7 +1291,7 @@ fn test_admitted_non_consensus_includes_registered_and_pending_not_active() {
         assert!(reshare_before.contains(&act));
 
         // After confirming readiness the PENDING joiner enters the target.
-        vs.confirm_validator_ready(pend).unwrap();
+        confirm_ready(vs, pend, 0x12);
         let reshare_after: Vec<_> = vs
             .get_reshare_target_set()
             .unwrap()
@@ -1202,21 +1315,190 @@ fn test_confirm_validator_ready_requires_pending() {
             .unwrap();
         vs.register_validator(OWNER, act, &dummy_consensus_pubkey(0x03))
             .unwrap();
-        vs.activate_validator(act).unwrap();
+        vs.activate_validator_via_boundary_for_test(act).unwrap();
 
         assert!(
-            vs.confirm_validator_ready(reg).is_err(),
+            vs.confirm_validator_ready(reg, &[]).is_err(),
             "REGISTERED cannot confirm readiness"
         );
         assert!(
-            vs.confirm_validator_ready(act).is_err(),
+            vs.confirm_validator_ready(act, &[]).is_err(),
             "ACTIVE cannot confirm readiness"
         );
         let unregistered = address!("0x9999999999999999999999999999999999999999");
         assert!(
-            vs.confirm_validator_ready(unregistered).is_err(),
+            vs.confirm_validator_ready(unregistered, &[]).is_err(),
             "unregistered address cannot confirm readiness"
         );
+    });
+}
+
+#[test]
+fn confirm_ready_persists_valid_ocomp_registration_before_readiness() {
+    with_vs_configured(128, |vs| {
+        let validator = address!("0x5555555555555555555555555555555555555555");
+        let consensus_pubkey = dummy_consensus_pubkey(0x55);
+        vs.register_validator(OWNER, validator, &consensus_pubkey)
+            .unwrap();
+        vs.mark_pending(validator).unwrap();
+        let (registration, encoded) = ocomp_registration(validator, &consensus_pubkey, 0x56);
+
+        vs.confirm_validator_ready(validator, &encoded).unwrap();
+
+        assert_eq!(
+            vs.ocomp_registration(validator).unwrap(),
+            Some(registration.clone())
+        );
+        let key_hash = keccak256(registration.core.ocomp_public_key_sec1);
+        assert_eq!(
+            vs.ocomp_key_hash_to_validator.read(&key_hash).unwrap(),
+            validator
+        );
+        assert!(vs.val_join_confirmed.read(&validator).unwrap());
+    });
+}
+
+#[test]
+fn confirm_ready_exact_replay_and_atomic_ocomp_key_replacement() {
+    with_vs_configured(128, |vs| {
+        let validator = address!("0x5656565656565656565656565656565656565656");
+        let consensus_pubkey = dummy_consensus_pubkey(0x56);
+        vs.register_validator(OWNER, validator, &consensus_pubkey)
+            .unwrap();
+        vs.mark_pending(validator).unwrap();
+        let (first, first_encoded) = ocomp_registration(validator, &consensus_pubkey, 0x57);
+        vs.confirm_validator_ready(validator, &first_encoded)
+            .unwrap();
+
+        vs.confirm_validator_ready(validator, &first_encoded)
+            .expect("byte-identical registration replay");
+
+        let (replacement, replacement_encoded) =
+            ocomp_registration(validator, &consensus_pubkey, 0x58);
+        vs.confirm_validator_ready(validator, &replacement_encoded)
+            .expect("atomic OCOMP key replacement");
+
+        assert_eq!(
+            vs.ocomp_registration(validator).unwrap(),
+            Some(replacement.clone())
+        );
+        assert_eq!(
+            vs.ocomp_key_hash_to_validator
+                .read(&keccak256(first.core.ocomp_public_key_sec1))
+                .unwrap(),
+            Address::ZERO
+        );
+        assert_eq!(
+            vs.ocomp_key_hash_to_validator
+                .read(&keccak256(replacement.core.ocomp_public_key_sec1))
+                .unwrap(),
+            validator
+        );
+        assert!(vs.val_join_confirmed.read(&validator).unwrap());
+    });
+}
+
+#[test]
+fn reshare_target_requires_registration_even_if_readiness_flag_is_set() {
+    with_vs_configured(128, |vs| {
+        let validator = address!("0x5757575757575757575757575757575757575757");
+        vs.register_validator(OWNER, validator, &dummy_consensus_pubkey(0x57))
+            .unwrap();
+        vs.mark_pending(validator).unwrap();
+
+        // Model a stale/legacy/corrupt flag without the registration whose
+        // admission must now be authoritative.
+        vs.val_join_confirmed.write(&validator, true).unwrap();
+
+        assert!(
+            !vs.get_reshare_target_set()
+                .unwrap()
+                .iter()
+                .any(|record| record.validator_address == validator),
+            "readiness without a canonical OCOMP registration must fail closed"
+        );
+    });
+}
+
+#[test]
+fn bls_key_change_clears_ocomp_registration_and_reservation() {
+    with_vs_configured(128, |vs| {
+        let validator = address!("0x5858585858585858585858585858585858585858");
+        let first_consensus_pubkey = dummy_consensus_pubkey(0x58);
+        vs.register_validator(OWNER, validator, &first_consensus_pubkey)
+            .unwrap();
+        vs.mark_pending(validator).unwrap();
+        let (registration, encoded) = ocomp_registration(validator, &first_consensus_pubkey, 0x59);
+        vs.confirm_validator_ready(validator, &encoded).unwrap();
+        let old_ocomp_key_hash = keccak256(registration.core.ocomp_public_key_sec1);
+
+        vs.val_status.write(&validator, status::INACTIVE).unwrap();
+        vs.register_validator(OWNER, validator, &dummy_consensus_pubkey(0x5A))
+            .unwrap();
+
+        assert_eq!(vs.ocomp_registration(validator).unwrap(), None);
+        assert_eq!(
+            vs.ocomp_key_hash_to_validator
+                .read(&old_ocomp_key_hash)
+                .unwrap(),
+            Address::ZERO
+        );
+        assert!(!vs.val_join_confirmed.read(&validator).unwrap());
+        assert_eq!(vs.val_status.read(&validator).unwrap(), status::REGISTERED);
+    });
+}
+
+#[test]
+fn full_validator_cleanup_releases_ocomp_registration_and_key() {
+    with_vs_configured(128, |vs| {
+        let validator = address!("0x5959595959595959595959595959595959595959");
+        let consensus_pubkey = dummy_consensus_pubkey(0x59);
+        vs.register_validator(OWNER, validator, &consensus_pubkey)
+            .unwrap();
+        vs.mark_pending(validator).unwrap();
+        let (registration, encoded) = ocomp_registration(validator, &consensus_pubkey, 0x5A);
+        vs.confirm_validator_ready(validator, &encoded).unwrap();
+        let ocomp_key_hash = keccak256(registration.core.ocomp_public_key_sec1);
+        vs.val_status.write(&validator, status::INACTIVE).unwrap();
+
+        assert_eq!(vs.cleanup_inactive_validators(1).unwrap(), 1);
+
+        assert_eq!(vs.ocomp_registration(validator).unwrap(), None);
+        assert_eq!(
+            vs.ocomp_key_hash_to_validator
+                .read(&ocomp_key_hash)
+                .unwrap(),
+            Address::ZERO
+        );
+        assert_eq!(vs.address_to_index.read(&validator).unwrap(), 0);
+    });
+}
+
+#[test]
+fn certified_activation_rejects_registered_and_keyless_pending_members() {
+    let registered = Address::repeat_byte(0x5A);
+    with_vs_configured(128, |vs| {
+        vs.register_validator(OWNER, registered, &dummy_consensus_pubkey(0x5A))
+            .unwrap();
+        let error = vs
+            .activate_reshared_set(&[registered], B256::repeat_byte(0xA1))
+            .unwrap_err();
+        assert!(matches!(error, PrecompileError::Fatal(_)));
+        assert_eq!(vs.val_status.read(&registered).unwrap(), status::REGISTERED);
+    });
+
+    let pending = Address::repeat_byte(0x5B);
+    with_vs_configured(128, |vs| {
+        vs.register_validator(OWNER, pending, &dummy_consensus_pubkey(0x5B))
+            .unwrap();
+        vs.mark_pending(pending).unwrap();
+        vs.val_join_confirmed.write(&pending, true).unwrap();
+        let error = vs
+            .activate_reshared_set(&[pending], B256::repeat_byte(0xA2))
+            .unwrap_err();
+        assert!(matches!(error, PrecompileError::Fatal(_)));
+        assert_eq!(vs.val_status.read(&pending).unwrap(), status::PENDING);
+        assert!(!vs.val_has_bls_share.read(&pending).unwrap());
     });
 }
 
@@ -1229,7 +1511,7 @@ fn test_stale_join_guard_resets_on_restake() {
         vs.register_validator(OWNER, pend, &dummy_consensus_pubkey(0x02))
             .unwrap();
         vs.mark_pending(pend).unwrap();
-        vs.confirm_validator_ready(pend).unwrap();
+        confirm_ready(vs, pend, 0x22);
         let in_target = |vs: &mut crate::schema::ValidatorSet| {
             vs.get_reshare_target_set()
                 .unwrap()
@@ -1256,18 +1538,65 @@ fn test_stale_join_guard_resets_on_restake() {
 }
 
 #[test]
+fn inactive_reentry_with_same_bls_requires_fresh_ocomp_confirmation() {
+    with_vs_configured(128, |vs| {
+        let validator = address!("0x5555555555555555555555555555555555555555");
+        let consensus_pubkey = dummy_consensus_pubkey(0x55);
+        let (_, encoded_registration) = ocomp_registration(validator, &consensus_pubkey, 0x55);
+
+        vs.register_validator(OWNER, validator, &consensus_pubkey)
+            .unwrap();
+        vs.mark_pending(validator).unwrap();
+        vs.confirm_validator_ready(validator, &encoded_registration)
+            .unwrap();
+        vs.activate_validator_via_boundary_for_test(validator)
+            .unwrap();
+
+        vs.val_status.write(&validator, status::INACTIVE).unwrap();
+        vs.register_validator(OWNER, validator, &consensus_pubkey)
+            .unwrap();
+        assert_eq!(vs.val_status.read(&validator).unwrap(), status::REGISTERED);
+        assert!(!vs.val_join_confirmed.read(&validator).unwrap());
+        assert_eq!(
+            vs.ocomp_registration(validator).unwrap().unwrap(),
+            OcompKeyRegistrationV1::decode_canonical(&encoded_registration, &poc_schema_limits())
+                .unwrap(),
+            "same-BLS re-entry retains the identity-bound registration for exact replay"
+        );
+
+        vs.mark_pending(validator).unwrap();
+        assert!(
+            vs.get_reshare_target_set().unwrap().is_empty(),
+            "re-entry must remain outside DKG until readiness is confirmed again"
+        );
+
+        vs.confirm_validator_ready(validator, &encoded_registration)
+            .unwrap();
+        assert_eq!(
+            vs.get_reshare_target_set()
+                .unwrap()
+                .into_iter()
+                .map(|record| record.validator_address)
+                .collect::<Vec<_>>(),
+            vec![validator]
+        );
+    });
+}
+
+#[test]
 fn certified_tee_expiry_demotes_active_and_clears_pending_readiness() {
     with_vs_configured(128, |vs| {
         let active = address!("0x1111111111111111111111111111111111111111");
         let pending = address!("0x2222222222222222222222222222222222222222");
         vs.register_validator(OWNER, active, &dummy_consensus_pubkey(0x01))
             .unwrap();
+        admit_pending(vs, active, 0x31);
         vs.activate_reshared_set(&[active], B256::with_last_byte(0xA1))
             .unwrap();
         vs.register_validator(OWNER, pending, &dummy_consensus_pubkey(0x02))
             .unwrap();
         vs.mark_pending(pending).unwrap();
-        vs.confirm_validator_ready(pending).unwrap();
+        confirm_ready(vs, pending, 0x32);
 
         vs.activate_reshared_set_with_expiry_exclusions(
             &[],
@@ -1285,8 +1614,8 @@ fn certified_tee_expiry_demotes_active_and_clears_pending_readiness() {
 
         // Renewal alone does not touch ValidatorSet readiness. Explicit operator
         // confirmation is required before either validator can return to target.
-        vs.confirm_validator_ready(active).unwrap();
-        vs.confirm_validator_ready(pending).unwrap();
+        confirm_ready(vs, active, 0x31);
+        confirm_ready(vs, pending, 0x32);
         let target: Vec<_> = vs
             .get_reshare_target_set()
             .unwrap()
@@ -1303,6 +1632,7 @@ fn ordinary_dkg_omission_without_expiry_proof_keeps_active_retry_state() {
         let active = address!("0x1111111111111111111111111111111111111111");
         vs.register_validator(OWNER, active, &dummy_consensus_pubkey(0x01))
             .unwrap();
+        admit_pending(vs, active, 0x41);
         vs.activate_reshared_set(&[active], B256::with_last_byte(0xB1))
             .unwrap();
 
@@ -1322,6 +1652,7 @@ fn expiry_branch_rejects_contradictory_duplicate_and_unknown_authority() {
         let unknown = address!("0x9999999999999999999999999999999999999999");
         vs.register_validator(OWNER, active, &dummy_consensus_pubkey(0x01))
             .unwrap();
+        admit_pending(vs, active, 0x51);
         vs.activate_reshared_set(&[active], B256::with_last_byte(0xC1))
             .unwrap();
 
@@ -1358,7 +1689,7 @@ fn test_jail_validator_from_active() {
         let v = address!("0x1111111111111111111111111111111111111111");
         vs.register_validator(OWNER, v, &dummy_consensus_pubkey(0x01))
             .unwrap();
-        vs.activate_validator(v).unwrap();
+        vs.activate_validator_via_boundary_for_test(v).unwrap();
         vs.val_has_bls_share.write(&v, true).unwrap();
         assert!(vs.is_consensus_participant(v).unwrap());
 
@@ -1390,7 +1721,7 @@ fn test_jailed_loses_share_at_reshare() {
         let v = address!("0x1111111111111111111111111111111111111111");
         vs.register_validator(OWNER, v, &dummy_consensus_pubkey(0x01))
             .unwrap();
-        vs.activate_validator(v).unwrap();
+        vs.activate_validator_via_boundary_for_test(v).unwrap();
         vs.val_has_bls_share.write(&v, true).unwrap();
         vs.jail_validator(v).unwrap();
 
@@ -1409,7 +1740,7 @@ fn test_unjail_to_pending_resets_readiness() {
         let v = address!("0x1111111111111111111111111111111111111111");
         vs.register_validator(OWNER, v, &dummy_consensus_pubkey(0x01))
             .unwrap();
-        vs.activate_validator(v).unwrap();
+        vs.activate_validator_via_boundary_for_test(v).unwrap();
         vs.val_has_bls_share.write(&v, true).unwrap();
         vs.jail_validator(v).unwrap();
 
@@ -1423,7 +1754,7 @@ fn test_unjail_to_pending_resets_readiness() {
             .unwrap()
             .iter()
             .any(|r| r.validator_address == v));
-        vs.confirm_validator_ready(v).unwrap();
+        confirm_ready(vs, v, 0x41);
         assert!(vs
             .get_reshare_target_set()
             .unwrap()
@@ -1438,7 +1769,7 @@ fn test_unjail_requires_jailed_status() {
         let active = address!("0x1111111111111111111111111111111111111111");
         vs.register_validator(OWNER, active, &dummy_consensus_pubkey(0x01))
             .unwrap();
-        vs.activate_validator(active).unwrap();
+        vs.activate_validator_via_boundary_for_test(active).unwrap();
         assert!(
             vs.unjail_to_pending(active).is_err(),
             "cannot unjail an ACTIVE validator"
@@ -1462,11 +1793,11 @@ fn test_unjail_cooldown_blocks() {
     StorageHandle::enter(&mut storage, |storage| {
         let mut vs = ValidatorSet::new(storage.clone());
         vs.config_owner.write(OWNER).unwrap();
-        vs.config_max_validators.write(128).unwrap();
+        vs.set_config_max_validators(128).unwrap();
         vs.config_unjail_cooldown_blocks.write(50).unwrap();
         vs.register_validator(OWNER, v, &dummy_consensus_pubkey(0x01))
             .unwrap();
-        vs.activate_validator(v).unwrap();
+        vs.activate_validator_via_boundary_for_test(v).unwrap();
         vs.val_has_bls_share.write(&v, true).unwrap();
         vs.jail_validator(v).unwrap();
         assert_eq!(vs.val_jailed_at_height.read(&v).unwrap(), 100);
@@ -1493,7 +1824,7 @@ fn test_already_active_validator_does_not_raise_pending() {
         let pk = dummy_consensus_pubkey(0x01);
 
         vs.register_validator(OWNER, val, &pk).unwrap();
-        vs.activate_validator(val).unwrap();
+        vs.activate_validator_via_boundary_for_test(val).unwrap();
 
         // Clear pending by completing reshare.
         vs.activate_reshared_set(&[val], B256::with_last_byte(0x01))
@@ -1501,7 +1832,7 @@ fn test_already_active_validator_does_not_raise_pending() {
         assert!(!vs.has_pending_set_change().unwrap());
 
         // Calling activate_validator again should NOT re-raise pending.
-        vs.activate_validator(val).unwrap();
+        vs.activate_validator_via_boundary_for_test(val).unwrap();
         assert!(
             !vs.has_pending_set_change().unwrap(),
             "already-active validator should not trigger spurious pending_set_change"
@@ -1576,7 +1907,7 @@ fn test_repeated_force_exit_remains_exiting() {
         let val = address!("0x0909090909090909090909090909090909090909");
         vs.register_validator(OWNER, val, &dummy_consensus_pubkey(92))
             .unwrap();
-        vs.activate_validator(val).unwrap();
+        vs.activate_validator_via_boundary_for_test(val).unwrap();
         vs.force_exit_validator(val).unwrap();
         vs.force_exit_validator(val).unwrap();
         assert_eq!(vs.val_status.read(&val).unwrap(), status::EXITING);
@@ -1622,7 +1953,7 @@ fn activate_rejected_from_non_promotable_status() {
                 .unwrap();
             vs.val_status.write(&val, *s).unwrap();
             assert!(
-                vs.activate_validator(val).is_err(),
+                vs.activate_validator_via_boundary_for_test(val).is_err(),
                 "case '{label}': activate must be rejected"
             );
         });
@@ -1639,7 +1970,7 @@ fn test_epoch_reset_includes_exiting() {
         let val = address!("0x4444444444444444444444444444444444444444");
         vs.register_validator(OWNER, val, &dummy_consensus_pubkey(44))
             .unwrap();
-        vs.activate_validator(val).unwrap();
+        vs.activate_validator_via_boundary_for_test(val).unwrap();
 
         // Accumulate counters then transition to EXITING
         vs.val_missed_blocks.write(&val, 10).unwrap();
@@ -1770,7 +2101,7 @@ mod record_finalized_participation_idempotency {
     fn register_active(vs: &mut ValidatorSet, addr: Address, seed: u8) {
         vs.register_validator(OWNER, addr, &dummy_consensus_pubkey_local(seed))
             .unwrap();
-        vs.activate_validator(addr).unwrap();
+        vs.activate_validator_via_boundary_for_test(addr).unwrap();
         vs.val_has_bls_share.write(&addr, true).unwrap();
     }
 
@@ -1842,11 +2173,11 @@ fn finalized_participation_guard_prune_ring_bounds_growth() {
     StorageHandle::enter(&mut storage, |storage| {
         let mut vs = ValidatorSet::new(storage.clone());
         vs.config_owner.write(OWNER).unwrap();
-        vs.config_max_validators.write(128).unwrap();
+        vs.set_config_max_validators(128).unwrap();
         let v = address!("0x0101010101010101010101010101010101010101");
         vs.register_validator(OWNER, v, &dummy_consensus_pubkey(0x01))
             .unwrap();
-        vs.activate_validator(v).unwrap();
+        vs.activate_validator_via_boundary_for_test(v).unwrap();
 
         let retain = crate::hooks::FINALIZED_PARTICIPATION_RETAIN;
         let total = retain + 3;
@@ -1889,7 +2220,8 @@ mod operational_key_delegation {
     fn register_active(vs: &mut ValidatorSet, validator: Address, seed: u8) {
         vs.register_validator(OWNER, validator, &dummy_consensus_pubkey(seed))
             .unwrap();
-        vs.activate_validator(validator).unwrap();
+        vs.activate_validator_via_boundary_for_test(validator)
+            .unwrap();
         vs.val_has_bls_share.write(&validator, true).unwrap();
     }
 
