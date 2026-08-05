@@ -906,6 +906,8 @@ mod lysis_activation_entitlement_tests {
             },
             tee_recipient_pubkeys: Vec::new(),
             tee_reshare_registrations: Vec::new(),
+            tee_expired_target_exclusions: Vec::new(),
+            tee_expired_target_exclusions_hash: B256::ZERO,
             endorsement_signature: Bytes::new(),
         }
     }

@@ -3,6 +3,8 @@
 use alloy_primitives::{address, Address};
 use alloy_sol_types::sol;
 
+pub use outbe_primitives::tee_registry_abi_v1::ITeeRegistryV1 as ITeeRegistry;
+
 pub use outbe_primitives::addresses::VOTE_ADDRESS;
 
 // Precompile contract addresses
@@ -137,23 +139,6 @@ sol! {
             bytes zkMerkleRoot,
             bytes signature
         ) external returns (uint256 tributeId);
-    }
-
-    #[derive(Debug)]
-    interface ITeeRegistry {
-        function isBootstrapped() external view returns (bool);
-        function tributeOfferPublicKey() external view returns (uint256);
-        function tributeOfferEpoch() external view returns (uint256);
-        function activePolicyV1() external view returns (bytes memory);
-        function registerEnclave(
-            bytes evidence,
-            bytes nodeSignature,
-            bytes enclaveSignature
-        ) external returns (bool);
-        event OfferKeySealedForRegistryV1(
-            bytes32 indexed nodeIdHash,
-            bytes sealedOfferKey
-        );
     }
 
     #[derive(Debug)]

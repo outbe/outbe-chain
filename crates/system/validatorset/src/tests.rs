@@ -1254,6 +1254,104 @@ fn test_stale_join_guard_resets_on_restake() {
         );
     });
 }
+
+#[test]
+fn certified_tee_expiry_demotes_active_and_clears_pending_readiness() {
+    with_vs_configured(128, |vs| {
+        let active = address!("0x1111111111111111111111111111111111111111");
+        let pending = address!("0x2222222222222222222222222222222222222222");
+        vs.register_validator(OWNER, active, &dummy_consensus_pubkey(0x01))
+            .unwrap();
+        vs.activate_reshared_set(&[active], B256::with_last_byte(0xA1))
+            .unwrap();
+        vs.register_validator(OWNER, pending, &dummy_consensus_pubkey(0x02))
+            .unwrap();
+        vs.mark_pending(pending).unwrap();
+        vs.confirm_validator_ready(pending).unwrap();
+
+        vs.activate_reshared_set_with_expiry_exclusions(
+            &[],
+            B256::with_last_byte(0xA2),
+            &[active, pending],
+        )
+        .unwrap();
+
+        for validator in [active, pending] {
+            assert_eq!(vs.val_status.read(&validator).unwrap(), status::PENDING);
+            assert!(!vs.val_has_bls_share.read(&validator).unwrap());
+            assert!(!vs.val_join_confirmed.read(&validator).unwrap());
+        }
+        assert!(vs.get_reshare_target_set().unwrap().is_empty());
+
+        // Renewal alone does not touch ValidatorSet readiness. Explicit operator
+        // confirmation is required before either validator can return to target.
+        vs.confirm_validator_ready(active).unwrap();
+        vs.confirm_validator_ready(pending).unwrap();
+        let target: Vec<_> = vs
+            .get_reshare_target_set()
+            .unwrap()
+            .into_iter()
+            .map(|record| record.validator_address)
+            .collect();
+        assert_eq!(target, vec![active, pending]);
+    });
+}
+
+#[test]
+fn ordinary_dkg_omission_without_expiry_proof_keeps_active_retry_state() {
+    with_vs_configured(128, |vs| {
+        let active = address!("0x1111111111111111111111111111111111111111");
+        vs.register_validator(OWNER, active, &dummy_consensus_pubkey(0x01))
+            .unwrap();
+        vs.activate_reshared_set(&[active], B256::with_last_byte(0xB1))
+            .unwrap();
+
+        vs.activate_reshared_set_with_expiry_exclusions(&[], B256::with_last_byte(0xB2), &[])
+            .unwrap();
+
+        assert_eq!(vs.val_status.read(&active).unwrap(), status::ACTIVE);
+        assert!(!vs.val_has_bls_share.read(&active).unwrap());
+        assert!(vs.pending_set_change.read().unwrap());
+    });
+}
+
+#[test]
+fn expiry_branch_rejects_contradictory_duplicate_and_unknown_authority() {
+    with_vs_configured(128, |vs| {
+        let active = address!("0x1111111111111111111111111111111111111111");
+        let unknown = address!("0x9999999999999999999999999999999999999999");
+        vs.register_validator(OWNER, active, &dummy_consensus_pubkey(0x01))
+            .unwrap();
+        vs.activate_reshared_set(&[active], B256::with_last_byte(0xC1))
+            .unwrap();
+
+        assert!(vs
+            .activate_reshared_set_with_expiry_exclusions(
+                &[active],
+                B256::with_last_byte(0xC2),
+                &[active],
+            )
+            .is_err());
+        assert!(vs
+            .activate_reshared_set_with_expiry_exclusions(
+                &[],
+                B256::with_last_byte(0xC2),
+                &[active, active],
+            )
+            .is_err());
+        assert!(vs
+            .activate_reshared_set_with_expiry_exclusions(
+                &[],
+                B256::with_last_byte(0xC2),
+                &[unknown],
+            )
+            .is_err());
+
+        assert_eq!(vs.val_status.read(&active).unwrap(), status::ACTIVE);
+        assert!(vs.val_has_bls_share.read(&active).unwrap());
+    });
+}
+
 #[test]
 fn test_jail_validator_from_active() {
     with_vs_configured(128, |vs| {

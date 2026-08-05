@@ -5,7 +5,7 @@
 //! caller-authorized registration selector is not decoded or accepted.
 
 use alloy_primitives::{Address, Bytes, B256, U256};
-use alloy_sol_types::{sol, SolCall, SolInterface};
+use alloy_sol_types::{SolCall, SolInterface};
 use outbe_primitives::{
     dispatch::{dispatch_call, reject_value, view},
     error::{PrecompileError, Result},
@@ -14,92 +14,13 @@ use outbe_primitives::{
         AttestationEvidenceV1, AttestationMode, RegistryMutatorV1, TeeRegistryGasScheduleV1,
         MAX_ATTESTATION_EVIDENCE_BYTES, MAX_EVIDENCE_CALL_FRAMING_BYTES,
     },
+    tee_registry_abi_v1::{ITeeRegistryV1, NodeEnclaveBindingV1View},
 };
 
 use crate::{NodeEnclaveBindingV1, TeeRegistry, V1RegistrationOutcome};
 
 /// TeeRegistry V1 never accepts native token value on any selector.
 pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
-
-sol! {
-    #[derive(Debug, PartialEq, Eq)]
-    struct NodeEnclaveBindingV1View {
-        bool exists;
-        bytes32 nodeIdHash;
-        bytes32 enclaveId;
-        bytes32 bindingId;
-        bytes32 intentHash;
-        bytes32 evidenceHash;
-        bytes32 policyHash;
-        uint64 bindingVersion;
-        uint64 registrationVersion;
-        uint64 renewalNonce;
-        uint64 transitionNonce;
-        uint64 leaseStartedAt;
-        uint64 validUntil;
-        uint64 collateralValidUntil;
-        bytes32 recipientX25519;
-        bytes32 attestationEd25519;
-        bytes32 noiseResponderX25519;
-        bytes32 mrenclave;
-        bytes32 mrsigner;
-        uint16 isvProdId;
-        uint16 isvSvn;
-        uint8 platformTcbStatus;
-        bytes32 verdictHash;
-        bytes32 nodeHostAuthorizationHash;
-    }
-
-    interface ITeeRegistryV1 {
-        function isBootstrapped() external view returns (bool);
-        function tributeOfferPublicKey() external view returns (uint256);
-        function policyHash() external view returns (uint256);
-        function keyEpoch() external view returns (uint256);
-        function tributeOfferEpoch() external view returns (uint256);
-        function activePolicyV1() external view returns (bytes memory);
-
-        function registerEnclave(
-            bytes calldata evidence,
-            bytes calldata nodeSignature,
-            bytes calldata enclaveSignature
-        ) external returns (bool);
-
-        function renewEnclave(
-            bytes calldata evidence,
-            bytes calldata nodeSignature,
-            bytes calldata enclaveSignature
-        ) external returns (bool);
-
-        function replaceEnclaveBinding(
-            bytes calldata evidence,
-            bytes calldata nodeSignature,
-            bytes calldata enclaveSignature
-        ) external returns (bool);
-
-        function transitionEnclaveMeasurement(
-            bytes calldata evidence,
-            bytes calldata nodeSignature,
-            bytes calldata enclaveSignature
-        ) external returns (bool);
-
-        function validatorEnclaveBinding(address validator)
-            external
-            view
-            returns (NodeEnclaveBindingV1View memory);
-
-        function fullNodeEnclaveBinding(uint8 rethP2pPrefix, bytes32 rethP2pX)
-            external
-            view
-            returns (NodeEnclaveBindingV1View memory);
-
-        function isValidatorEnclaveReady(address validator) external view returns (bool);
-
-        function isFullNodeEnclaveReady(uint8 rethP2pPrefix, bytes32 rethP2pX)
-            external
-            view
-            returns (bool);
-    }
-}
 
 /// Feature-gated V1 ABI entry point. The caller is deliberately ignored for
 /// registration authority: both proofs of possession are bound to the exact
@@ -194,6 +115,28 @@ pub fn dispatch(
                             ))
                         })
                 }),
+                stagedSuccessorPolicyV1(call) => view(call, |_| {
+                    let Some((proposal_id, policy)) = registry.staged_successor_policy_v1()? else {
+                        return Ok(ITeeRegistryV1::stagedSuccessorPolicyV1Return {
+                            exists: false,
+                            proposalId: U256::ZERO,
+                            policy: Bytes::new(),
+                        });
+                    };
+                    let policy = policy
+                        .encode_canonical()
+                        .map(Bytes::from)
+                        .map_err(|error| {
+                            PrecompileError::Fatal(format!(
+                                "staged successor V1 policy cannot be encoded: {error}"
+                            ))
+                        })?;
+                    Ok(ITeeRegistryV1::stagedSuccessorPolicyV1Return {
+                        exists: true,
+                        proposalId: proposal_id,
+                        policy,
+                    })
+                }),
                 registerEnclave(_) => {
                     let policy = active_policy.as_ref().ok_or_else(|| {
                         PrecompileError::Fatal("V1 registration preflight was bypassed".into())
@@ -211,17 +154,32 @@ pub fn dispatch(
                         })?;
                     let (node_id_hash, recipient_x25519) =
                         registration_onboarding_target(preflight.evidence)?;
-                    let outcome = registry.register_enclave_with_active_policy_v1(
-                        preflight.evidence,
-                        &node_signature,
-                        &enclave_signature,
-                        policy,
-                    )?;
-                    registry.emit_offer_key_sealed_for_registry_v1(
-                        outcome,
-                        node_id_hash,
-                        recipient_x25519,
-                    )?;
+                    let outcome = if policy.attestation_mode == AttestationMode::DcapRequired {
+                        let onboarding = registry.register_enclave_with_onboarding_v1(
+                            preflight.evidence,
+                            &node_signature,
+                            &enclave_signature,
+                            policy,
+                        )?;
+                        registry.emit_verified_onboarding_artifact_v1(&onboarding, node_id_hash)?;
+                        onboarding.registration
+                    } else {
+                        // The separate GramineDirectDev chain keeps its existing
+                        // development-only transport. It is not a production
+                        // fallback and never enters the DcapRequired capability.
+                        let outcome = registry.register_enclave_with_active_policy_v1(
+                            preflight.evidence,
+                            &node_signature,
+                            &enclave_signature,
+                            policy,
+                        )?;
+                        registry.emit_offer_key_sealed_for_registry_v1(
+                            outcome,
+                            node_id_hash,
+                            recipient_x25519,
+                        )?;
+                        outcome
+                    };
                     Ok(Bytes::from(
                         ITeeRegistryV1::registerEnclaveCall::abi_encode_returns(&matches!(
                             outcome,
@@ -593,6 +551,13 @@ fn dispatch_mutator_after_verifier_for_test(
         .try_into()
         .map_err(|_| PrecompileError::Fatal("preflight enclave signature mismatch".into()))?;
     let mut registry = TeeRegistry::new(storage);
+    if kind == RegistryMutatorV1::TransitionEnclaveMeasurement {
+        let evidence =
+            AttestationEvidenceV1::decode_canonical(preflight.evidence).map_err(|error| {
+                PrecompileError::Revert(format!("attestation evidence is not canonical: {error}"))
+            })?;
+        registry.validate_transition_key_ready_proof_v1(&evidence)?;
+    }
     match kind {
         RegistryMutatorV1::RegisterEnclave => registry
             .register_enclave_after_verifier_with_active_policy_for_test(
@@ -793,6 +758,46 @@ mod tests {
         }
     }
 
+    #[test]
+    fn staged_successor_view_is_canonical_and_distinguishes_absence() {
+        let mut provider = HashMapStorageProvider::new_with_chain_identity(31337, GENESIS);
+        provider.set_block_number(10);
+        let current = policy();
+        provider
+            .enter(|storage| TeeRegistry::new(storage).install_initial_policy_v1(&current))
+            .unwrap();
+        let call = ITeeRegistryV1::stagedSuccessorPolicyV1Call {};
+        let empty = provider
+            .enter(|storage| dispatch(storage, &call.abi_encode(), Address::ZERO, U256::ZERO))
+            .unwrap();
+        let empty =
+            ITeeRegistryV1::stagedSuccessorPolicyV1Call::abi_decode_returns(&empty).unwrap();
+        assert!(!empty.exists);
+        assert!(empty.proposalId.is_zero());
+        assert!(empty.policy.is_empty());
+
+        let mut successor = current.clone();
+        successor.policy_version = 2;
+        successor.activation_height = 50;
+        successor.predecessor_policy_hash = current.policy_hash().unwrap();
+        provider
+            .enter(|storage| {
+                TeeRegistry::new(storage).stage_successor_policy_v1(U256::from(7), &successor)
+            })
+            .unwrap();
+        let encoded = provider
+            .enter(|storage| dispatch(storage, &call.abi_encode(), Address::ZERO, U256::ZERO))
+            .unwrap();
+        let staged =
+            ITeeRegistryV1::stagedSuccessorPolicyV1Call::abi_decode_returns(&encoded).unwrap();
+        assert!(staged.exists);
+        assert_eq!(staged.proposalId, U256::from(7));
+        assert_eq!(
+            TeePolicyV1::decode_canonical(&staged.policy).unwrap(),
+            successor
+        );
+    }
+
     fn call(evidence: Vec<u8>, node_len: usize, enclave_len: usize) -> Vec<u8> {
         ITeeRegistryV1::registerEnclaveCall {
             evidence: Bytes::from(evidence),
@@ -885,6 +890,7 @@ mod tests {
                     bytes: vec![value],
                 })
                 .collect(),
+            transition_key_ready_proof: None,
         })
         .encode_canonical()
         .unwrap()

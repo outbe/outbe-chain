@@ -167,7 +167,7 @@ pub enum GratisOp {
     /// (`pledged_total_supply -= amount`).
     Unpledge,
     /// Consume a `PledgeLockTicket` for a credis request: verify `spend_auth` binds
-    /// it to `bundle_account`, credit the ticket `amount` into the EOA's own pledged
+    /// it to `smart_account`, credit the ticket `amount` into the EOA's own pledged
     /// ledger, and delete the ticket (no aggregate change — it stays pledged). Returns
     /// `gratis_amount` so credis can size the position.
     ConsumePledge,
@@ -233,10 +233,10 @@ pub struct GratisOpRequest {
     pub modify_auth: ModifyAuth,
     /// Pledge handle identifying the ticket (set for `Unpledge`/`ConsumePledge`).
     pub pledge_handle: Option<B256>,
-    /// Destination bundle account (set for `ConsumePledge`).
-    pub bundle_account: Option<Address>,
-    /// Spend authorization binding the pledge to `bundle_account`
-    /// (`spend_auth_mac(pledge_secret, bundle_account)`), set for `ConsumePledge`.
+    /// Destination smart account (set for `ConsumePledge`).
+    pub smart_account: Option<Address>,
+    /// Spend authorization binding the pledge to `smart_account`
+    /// (`spend_auth_mac(pledge_secret, smart_account)`), set for `ConsumePledge`.
     pub spend_auth: Option<[u8; 32]>,
     /// Optional co-located Fidelity cohort update/probe, applied atomically with
     /// the Gratis op in the SAME enclave round-trip (Mint → `In`, Burn/BurnPledged
@@ -557,9 +557,11 @@ pub enum EnclaveRequest {
         deadline: u64,
         finalized_block_hash: B256,
     },
-    /// Generate a fresh DCAP quote for the exact canonical registration or
-    /// renewal intent. Production accepts this only inside an authenticated
-    /// NodeHost session and only when the intent matches the sealed identity.
+    /// Generate a fresh DCAP quote for the exact canonical registration,
+    /// renewal or transition intent. Production accepts this only inside an
+    /// authenticated NodeHost session and only when the intent matches the
+    /// sealed identity. A transition additionally returns a purpose-bound
+    /// proof that this enclave has the permanent offer key resident.
     GenerateDcapQuote { intent: Vec<u8> },
     /// Sign one exact GramineDirectDev registration intent inside the enclave.
     /// This command is accepted only by the separate development transport and
@@ -574,6 +576,20 @@ pub enum EnclaveRequest {
         evidence_len: u32,
         policy_len: u32,
         block_timestamp: u64,
+    },
+    /// Start the dedicated `RegisterEnclave` verify-and-seal flow. Unlike the
+    /// generic verifier, this request commits both authorization signatures and
+    /// exact Registry offer-key epochs before any evidence bytes are accepted.
+    BeginDcapOnboardingVerificationV1 {
+        request_hash: B256,
+        evidence_len: u32,
+        policy_len: u32,
+        block_timestamp: u64,
+        node_signature: Vec<u8>,
+        enclave_signature: Vec<u8>,
+        expected_tribute_offer_public: [u8; 32],
+        key_epoch: u64,
+        tribute_offer_epoch: u64,
     },
     /// Append the next exact byte range to the active verification upload.
     DcapVerificationChunkV1 {
@@ -664,6 +680,17 @@ pub enum EnclaveRequest {
         expected_tribute_offer_public: [u8; 32],
         chain_id: B256,
         tribute_offer_epoch: u64,
+    },
+
+    /// Install one purpose-bound onboarding artifact into an initialized,
+    /// keyless enclave. Finalized Registry values are repeated explicitly so
+    /// the enclave can require exact intent/offer/epoch equality.
+    IngestDcapOnboardingArtifactV1 {
+        artifact: Vec<u8>,
+        expected_intent_hash: B256,
+        expected_tribute_offer_public: [u8; 32],
+        expected_key_epoch: u64,
+        expected_tribute_offer_epoch: u64,
     },
 
     /// On-chain key delivery, SERVER side: DETERMINISTICALLY
@@ -877,6 +904,9 @@ pub enum EnclaveResponse {
         /// Ed25519 proof of possession by the persistent quote-bound
         /// attestation key over `RegistrationIntentV1::intent_hash()`.
         enclave_signature: Vec<u8>,
+        /// Canonical `TransitionKeyReadyProofV1` for a transition intent;
+        /// empty for every other operation.
+        transition_key_ready_proof: Vec<u8>,
     },
     /// Development-only proof of possession over the exact canonical intent.
     /// The echoed bytes prevent a host from associating the signature with a
@@ -897,6 +927,14 @@ pub enum EnclaveResponse {
     DcapVerificationFinishedV1 {
         request_hash: B256,
         outcome: Vec<u8>,
+        attestation_tag: Vec<u8>,
+    },
+    /// Purpose-bound onboarding verdict plus its deterministic Registry
+    /// artifact. Rejected verdicts carry an empty artifact.
+    DcapOnboardingVerificationFinishedV1 {
+        request_hash: B256,
+        outcome: Vec<u8>,
+        onboarding_artifact: Vec<u8>,
         attestation_tag: Vec<u8>,
     },
     Handshake {
@@ -1053,7 +1091,7 @@ pub fn gratis_op_canonical_hash(req: &GratisOpRequest) -> B256 {
         }
         None => buf.push(0),
     }
-    match req.bundle_account {
+    match req.smart_account {
         Some(a) => {
             buf.push(1);
             buf.extend_from_slice(a.as_slice());

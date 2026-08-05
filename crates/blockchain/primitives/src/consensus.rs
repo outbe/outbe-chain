@@ -225,6 +225,14 @@ pub struct DkgBoundaryArtifact {
     /// begin-zone `BoundaryOutcome` handler writes these into `TeeRegistry`. The
     /// offer key is preserved across a reshare. OART wire `v0.08`.
     pub tee_reshare_registrations: Vec<TeeReshareRegistration>,
+    /// Canonical storage-order list of ValidatorSet target members excluded at
+    /// the exact DKG freeze block because their DcapRequired lease was not ready.
+    /// This is the only authority for the narrow replayable expiry demotion.
+    pub tee_expired_target_exclusions: Vec<Address>,
+    /// Domain-separated commitment to [`Self::tee_expired_target_exclusions`].
+    /// Honest voters compare the complete locally frozen artifact, including
+    /// both this commitment and the ordered list.
+    pub tee_expired_target_exclusions_hash: B256,
     /// Prior- (outgoing-) committee threshold GROUP signature over
     /// `reshare_endorsement_message(chain_id, committee_set_hash, offer_pub)`,
     /// authorizing the incoming committee's TEE re-registrations. The begin-zone

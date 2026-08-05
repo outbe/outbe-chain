@@ -21,6 +21,17 @@ use alloy_primitives::hex;
 use eyre::{bail, eyre, Result, WrapErr};
 
 const TEST_ENCLAVE_IMAGE: &str = "outbe-tee-enclave-gramine-test";
+const PINNED_QVL_RUNTIME_FILES: &[(&str, &str)] = &[
+    (
+        "/usr/lib/x86_64-linux-gnu/libsgx_dcap_quoteverify.so.1.13.103.0",
+        "libsgx_dcap_quoteverify.so.1",
+    ),
+    (
+        "/usr/lib/x86_64-linux-gnu/libstdc++.so.6.0.33",
+        "libstdc++.so.6",
+    ),
+    ("/usr/lib/x86_64-linux-gnu/libgcc_s.so.1", "libgcc_s.so.1"),
+];
 
 const SENSITIVE_ARG_FLAGS: &[&str] = &[
     "--private-key",
@@ -193,6 +204,104 @@ pub(crate) struct EnclaveSpec {
     pub debug: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TestSgxMeasurement {
+    pub mrenclave: String,
+    pub mrsigner: String,
+    pub isv_prod_id: u16,
+    pub isv_svn: u16,
+}
+
+/// Sign the exact test manifest used by every localnet enclave and return the
+/// policy inputs before genesis is frozen. This runs only the signer/viewer;
+/// it does not launch SGX or make a hardware-attestation claim.
+pub(crate) fn inspect_test_sgx_measurement(
+    repo: &Path,
+    enclave_bin: &Path,
+    signing_key: &Path,
+    image_id: &DockerImageId,
+    sudo: bool,
+) -> Result<TestSgxMeasurement> {
+    let enclave_bin = enclave_bin
+        .canonicalize()
+        .wrap_err("resolve test enclave binary")?;
+    let signing_key = signing_key
+        .canonicalize()
+        .wrap_err("resolve scenario test SGX signing key")?;
+    let inspector = repo
+        .join("bin/outbe-tee-enclave/gramine/inspect-test-measurement.sh")
+        .canonicalize()
+        .wrap_err("resolve test SGX measurement inspector")?;
+    let output = base_cmd("docker", sudo)
+        .args(["run", "--rm", "--entrypoint", "/inspect-test-measurement"])
+        .args(pinned_qvl_mount_args()?)
+        .args([
+            "-v",
+            &format!("{}:/app/outbe-tee-enclave:ro", enclave_bin.display()),
+        ])
+        .args([
+            "-v",
+            &format!(
+                "{}:/run/secrets/outbe-test-sgx-key.pem:ro",
+                signing_key.display()
+            ),
+        ])
+        .args([
+            "-v",
+            &format!("{}:/inspect-test-measurement:ro", inspector.display()),
+        ])
+        .arg(image_id.as_str())
+        .output()
+        .wrap_err("inspect exact test SGX measurement")?;
+    if !output.status.success() {
+        bail!(
+            "test SGX measurement inspection failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    parse_test_sgx_measurement(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn parse_test_sgx_measurement(output: &str) -> Result<TestSgxMeasurement> {
+    fn field<'a>(output: &'a str, name: &str) -> Result<&'a str> {
+        output
+            .lines()
+            .find_map(|line| {
+                let (actual, value) = line.split_once(':')?;
+                actual
+                    .trim()
+                    .eq_ignore_ascii_case(name)
+                    .then(|| value.trim())
+            })
+            .ok_or_else(|| eyre!("SIGSTRUCT output has no {name}"))
+    }
+    fn measurement(output: &str, name: &str) -> Result<String> {
+        let value = field(output, name)?
+            .strip_prefix("0x")
+            .unwrap_or(field(output, name)?);
+        if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            bail!("SIGSTRUCT {name} is not 32 hexadecimal bytes");
+        }
+        Ok(value.to_ascii_lowercase())
+    }
+    fn number(output: &str, name: &str) -> Result<u16> {
+        let value = field(output, name)?;
+        if let Some(hex) = value.strip_prefix("0x") {
+            u16::from_str_radix(hex, 16).wrap_err_with(|| format!("parse SIGSTRUCT {name}"))
+        } else {
+            value
+                .parse::<u16>()
+                .wrap_err_with(|| format!("parse SIGSTRUCT {name}"))
+        }
+    }
+    Ok(TestSgxMeasurement {
+        mrenclave: measurement(output, "mr_enclave")?,
+        mrsigner: measurement(output, "mr_signer")?,
+        isv_prod_id: number(output, "isv_prod_id")?,
+        isv_svn: number(output, "isv_svn")?,
+    })
+}
+
 /// Build the explicit test-only Gramine image and create one scenario-scoped
 /// signing key outside the image. Release images are pre-signed and do not use
 /// this adapter.
@@ -201,47 +310,11 @@ pub(crate) fn ensure_enclave_image(
     sudo: bool,
     signing_key: &Path,
 ) -> Result<DockerImageId> {
-    let present = base_cmd("docker", sudo)
-        .args(["image", "inspect", TEST_ENCLAVE_IMAGE])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-    if !present {
-        let ctx = repo.join("bin/outbe-tee-enclave/gramine");
-        let dockerfile = ctx.join("Dockerfile.test");
-        let status = base_cmd("docker", sudo)
-            .args(["build", "-f"])
-            .arg(&dockerfile)
-            .args(["-t", TEST_ENCLAVE_IMAGE])
-            .arg(&ctx)
-            .status()
-            .wrap_err("docker build test-only Gramine enclave image")?;
-        if !status.success() {
-            bail!("docker build {TEST_ENCLAVE_IMAGE} failed");
-        }
-    }
-
-    let inspected = base_cmd("docker", sudo)
-        .args([
-            "image",
-            "inspect",
-            "--format",
-            "{{.Id}}",
-            TEST_ENCLAVE_IMAGE,
-        ])
-        .output()
-        .wrap_err("inspect test-only Gramine enclave image identity")?;
-    if !inspected.status.success() {
-        bail!(
-            "inspect Docker image {TEST_ENCLAVE_IMAGE} failed: {}",
-            String::from_utf8_lossy(&inspected.stderr)
-        );
-    }
-    let image_id = DockerImageId::from_inspect_output(&String::from_utf8_lossy(&inspected.stdout))
-        .wrap_err("validate test-only Gramine enclave image identity")?;
-
+    // The first setup call creates the scenario signing key and freezes the
+    // mutable image tag. Join/restart calls must inspect that same tag instead
+    // of rebuilding it: a rebuild can produce a new image ID and would no
+    // longer match the SIGSTRUCT already bound into genesis. A fresh scenario
+    // has no key and therefore always rebuilds from the current worktree.
     if signing_key.exists() {
         let metadata = fs::symlink_metadata(signing_key)?;
         if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
@@ -256,8 +329,24 @@ pub(crate) fn ensure_enclave_image(
                 signing_key.display()
             );
         }
-        return Ok(image_id);
+        return inspect_enclave_image_id(sudo);
     }
+
+    let ctx = repo.join("bin/outbe-tee-enclave/gramine");
+    let dockerfile = ctx.join("Dockerfile.test");
+    let status = base_cmd("docker", sudo)
+        .args(["build", "-f"])
+        .arg(&dockerfile)
+        .args(["-t", TEST_ENCLAVE_IMAGE])
+        .arg(&ctx)
+        .status()
+        .wrap_err("docker build test-only Gramine enclave image")?;
+    if !status.success() {
+        bail!("docker build {TEST_ENCLAVE_IMAGE} failed");
+    }
+
+    let image_id = inspect_enclave_image_id(sudo)?;
+
     let parent = signing_key
         .parent()
         .ok_or_else(|| eyre!("test SGX signing key has no parent"))?;
@@ -281,6 +370,27 @@ pub(crate) fn ensure_enclave_image(
     }
     fs::set_permissions(signing_key, fs::Permissions::from_mode(0o600))?;
     Ok(image_id)
+}
+
+fn inspect_enclave_image_id(sudo: bool) -> Result<DockerImageId> {
+    let inspected = base_cmd("docker", sudo)
+        .args([
+            "image",
+            "inspect",
+            "--format",
+            "{{.Id}}",
+            TEST_ENCLAVE_IMAGE,
+        ])
+        .output()
+        .wrap_err("inspect test-only Gramine enclave image identity")?;
+    if !inspected.status.success() {
+        bail!(
+            "inspect Docker image {TEST_ENCLAVE_IMAGE} failed: {}",
+            String::from_utf8_lossy(&inspected.stderr)
+        );
+    }
+    DockerImageId::from_inspect_output(&String::from_utf8_lossy(&inspected.stdout))
+        .wrap_err("validate test-only Gramine enclave image identity")
 }
 
 fn build_enclave_command(spec: &EnclaveSpec) -> Result<Command> {
@@ -313,6 +423,7 @@ fn build_enclave_command(spec: &EnclaveSpec) -> Result<Command> {
                 "/var/run/aesmd/aesm.socket:/var/run/aesmd/aesm.socket",
             ]);
         }
+        cmd.args(pinned_qvl_mount_args()?);
     }
 
     // Sealed-restart persistent mount.
@@ -350,6 +461,22 @@ fn build_enclave_command(spec: &EnclaveSpec) -> Result<Command> {
         cmd.args(["--tee-dir", "/tee", "--chain-id", &seal.chain_id_hex]);
     }
     Ok(cmd)
+}
+
+fn pinned_qvl_mount_args() -> Result<Vec<String>> {
+    let mut arguments = Vec::with_capacity(PINNED_QVL_RUNTIME_FILES.len() * 2);
+    for (source, install_name) in PINNED_QVL_RUNTIME_FILES {
+        let source = Path::new(source);
+        if !source.is_file() {
+            bail!(
+                "pinned native-QVL runtime artifact is missing: {}",
+                source.display()
+            );
+        }
+        arguments.push("-v".to_owned());
+        arguments.push(format!("{}:/qvl/{install_name}:ro", source.display()));
+    }
+    Ok(arguments)
 }
 
 /// `docker run` the enclave in the **foreground** (no `-d`) as an owned child,
@@ -519,6 +646,21 @@ pub(crate) fn run_capture(program: &Path, args: &[&str]) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sigstruct_parser_requires_exact_measurements_and_versions() {
+        let parsed = parse_test_sgx_measurement(&format!(
+            "mr_enclave: 0x{}\nmr_signer: {}\nisv_prod_id: 7\nisv_svn: 0x0008\n",
+            "ab".repeat(32),
+            "cd".repeat(32)
+        ))
+        .unwrap();
+        assert_eq!(parsed.mrenclave, "ab".repeat(32));
+        assert_eq!(parsed.mrsigner, "cd".repeat(32));
+        assert_eq!(parsed.isv_prod_id, 7);
+        assert_eq!(parsed.isv_svn, 8);
+        assert!(parse_test_sgx_measurement("mr_enclave: 00\n").is_err());
+    }
 
     #[test]
     fn docker_image_identity_accepts_only_a_canonical_sha256_id() {

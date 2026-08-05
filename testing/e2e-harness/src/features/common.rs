@@ -89,8 +89,8 @@ pub(crate) fn bootstrap_final_ocomp_localnet(world: &mut World, window: u64) {
         .expect("materialize canonical OCOMP Final fixture");
     world
         .localnet
-        .bind_dev_tee_genesis()
-        .expect("bind canonical GramineDirectDev fixture manifest");
+        .bind_tee_genesis()
+        .expect("bind canonical TEE fixture manifest");
     world.state.wwd = Some(
         world
             .localnet
@@ -112,8 +112,8 @@ pub(crate) fn start_bootstrapped_localnet(world: &mut World, opts: &StartOpts) {
     }
     world
         .localnet
-        .bind_dev_tee_genesis()
-        .expect("bind canonical GramineDirectDev genesis manifest");
+        .bind_tee_genesis()
+        .expect("bind canonical TEE genesis manifest");
     world.localnet.start(opts).expect("start localnet");
 
     let bootstrap_wait_attempts = world.localnet.tee_bootstrap_wait_attempts();

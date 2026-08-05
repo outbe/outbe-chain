@@ -17,10 +17,11 @@ use std::sync::{Mutex, OnceLock};
 
 use alloy_primitives::B256;
 
-use crate::client::{AuthorizedEnclaveClient, EnclaveClient};
-use crate::dcap_protocol::DcapVerificationOutcomeV1;
+use crate::client::{AuthorizedEnclaveClient, EnclaveClient, GeneratedDcapQuoteV1};
+use crate::dcap_protocol::{DcapOnboardingVerificationResultV1, DcapVerificationOutcomeV1};
 use crate::errors::TransportError;
 use crate::protocol::{EnclaveRequest, EnclaveResponse};
+use outbe_primitives::tee_attestation_v1::RegistrationIntentV1;
 
 pub enum RuntimeEnclaveClient {
     Development(EnclaveClient),
@@ -97,6 +98,60 @@ pub fn verify_dcap_evidence_v1(
         }
         RuntimeEnclaveClient::Development(_) => Err(TransportError::DcapVerification(
             "development enclave client cannot verify consensus DCAP evidence".into(),
+        )),
+    }) else {
+        return Err(TransportError::DcapVerification(
+            "production enclave client is not configured or its lock is poisoned".into(),
+        ));
+    };
+    result
+}
+
+/// Generate one intent-bound quote through the already installed production
+/// NodeHost session. The lifecycle worker cannot create a second enclave
+/// identity or fall back to the development transport.
+pub fn generate_dcap_quote_v1(
+    intent: &RegistrationIntentV1,
+) -> Result<GeneratedDcapQuoteV1, TransportError> {
+    let Some(result) = try_with_enclave(|client| match client {
+        RuntimeEnclaveClient::Production(client) => client.generate_dcap_quote(intent),
+        RuntimeEnclaveClient::Development(_) => Err(TransportError::Attestation(
+            "development enclave client cannot generate production renewal quotes".into(),
+        )),
+    }) else {
+        return Err(TransportError::Attestation(
+            "production enclave client is not configured or its lock is poisoned".into(),
+        ));
+    };
+    result
+}
+
+/// Invoke the dedicated purpose-bound `RegisterEnclave` verifier and obtain
+/// its deterministic one-time onboarding artifact from a production enclave.
+#[allow(clippy::too_many_arguments)]
+pub fn verify_dcap_registration_and_seal_v1(
+    evidence: &[u8],
+    policy: &[u8],
+    block_timestamp: u64,
+    node_signature: &[u8; 65],
+    enclave_signature: &[u8; 64],
+    expected_tribute_offer_public: [u8; 32],
+    key_epoch: u64,
+    tribute_offer_epoch: u64,
+) -> Result<DcapOnboardingVerificationResultV1, TransportError> {
+    let Some(result) = try_with_enclave(|client| match client {
+        RuntimeEnclaveClient::Production(client) => client.verify_dcap_registration_and_seal_v1(
+            evidence,
+            policy,
+            block_timestamp,
+            node_signature,
+            enclave_signature,
+            expected_tribute_offer_public,
+            key_epoch,
+            tribute_offer_epoch,
+        ),
+        RuntimeEnclaveClient::Development(_) => Err(TransportError::DcapVerification(
+            "development enclave client cannot issue DCAP onboarding artifacts".into(),
         )),
     }) else {
         return Err(TransportError::DcapVerification(

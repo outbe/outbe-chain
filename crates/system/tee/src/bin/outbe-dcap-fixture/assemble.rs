@@ -111,6 +111,7 @@ pub fn run(arguments: &[String]) -> Result<(), String> {
         intent: intent.clone(),
         quote: quote.clone(),
         components,
+        transition_key_ready_proof: None,
     };
     let evidence_bytes = AttestationEvidenceV1::Dcap(evidence.clone())
         .encode_canonical()

@@ -3,9 +3,15 @@ use alloy_primitives::{Address, Bytes, B256, U256};
 use crate::{
     consensus::{DkgBoundaryArtifact, ReshareResult, OUTBE_MAX_EXTRA_DATA_SIZE},
     error::{PrecompileError, Result},
+    validators::MAX_TEE_EXPIRED_TARGET_EXCLUSIONS,
 };
 
 const MAGIC: &[u8; 4] = b"OART";
+/// Version 0x0B adds the bounded ordered `tee_expired_target_exclusions` list
+/// and its domain-separated commitment to the `DkgBoundaryArtifact` payload.
+/// This pre-genesis hard fork makes the exact freeze-height expiry authority
+/// committee-notarized and replayable by execution.
+///
 /// Version 0x08 (R5): the `DkgBoundaryArtifact` boundary payload (tag 0x02) is
 /// extended with a trailing `tee_reshare_registrations` section (u16 count +
 /// per-validator `Address(20) + recipient_x25519(32) + attestation_pub(32) +
@@ -41,7 +47,8 @@ const MAGIC: &[u8; 4] = b"OART";
 ///
 /// Pre-genesis hard fork; nodes built before this change will reject
 /// blocks carrying earlier artifact versions.
-const VERSION: u8 = 0x0A;
+const VERSION: u8 = 0x0B;
+const TEE_EXPIRED_TARGET_EXCLUSIONS_DOMAIN: &[u8] = b"outbe/tee-expired-target-exclusions/v1";
 const EXECUTION_SUMMARY_TAG: u8 = 0x01;
 const BOUNDARY_TAG: u8 = 0x02;
 const DEALER_LOG_TAG: u8 = 0x03;
@@ -212,6 +219,14 @@ pub fn encode_outbe_block_artifacts(artifacts: &OutbeBlockArtifacts) -> Result<B
                     result.vrf_group_public_key_bytes.len(),
                 )?;
                 ensure_count_fits_u16("tee recipient pubkeys", result.tee_recipient_pubkeys.len())?;
+                validate_tee_expired_target_exclusions(&result.tee_expired_target_exclusions)?;
+                let exclusions_hash =
+                    tee_expired_target_exclusions_hash(&result.tee_expired_target_exclusions)?;
+                if exclusions_hash != result.tee_expired_target_exclusions_hash {
+                    return Err(PrecompileError::Fatal(
+                        "boundary TEE expiry exclusions commitment mismatch".into(),
+                    ));
+                }
 
                 let mut payload = Vec::with_capacity(
                     8 + 8
@@ -231,7 +246,10 @@ pub fn encode_outbe_block_artifacts(artifacts: &OutbeBlockArtifacts) -> Result<B
                         + 4 // V2 vrf_group_public_key_bytes length prefix
                         + result.vrf_group_public_key_bytes.len()
                         + 2 // V0.07 tee_recipient_pubkeys count
-                        + (result.tee_recipient_pubkeys.len() * (20 + 32)),
+                        + (result.tee_recipient_pubkeys.len() * (20 + 32))
+                        + 32 // V0.0B expiry exclusions commitment
+                        + 2 // V0.0B expiry exclusions count
+                        + (result.tee_expired_target_exclusions.len() * 20),
                 );
                 payload.extend_from_slice(&result.epoch.to_be_bytes());
                 payload.extend_from_slice(&result.dkg_cycle.to_be_bytes());
@@ -276,6 +294,16 @@ pub fn encode_outbe_block_artifacts(artifacts: &OutbeBlockArtifacts) -> Result<B
                     payload.extend_from_slice(reg.recipient_x25519.as_slice());
                     payload.extend_from_slice(reg.attestation_pub.as_slice());
                     payload.extend_from_slice(reg.noise_static_pub.as_slice());
+                }
+                // V0.0B: exact freeze-height TEE expiry exclusions. The explicit
+                // commitment is carried with the ordered unique list so proposal
+                // equality and execution bind the same authority.
+                payload.extend_from_slice(result.tee_expired_target_exclusions_hash.as_slice());
+                payload.extend_from_slice(
+                    &(result.tee_expired_target_exclusions.len() as u16).to_be_bytes(),
+                );
+                for address in &result.tee_expired_target_exclusions {
+                    payload.extend_from_slice(address.as_slice());
                 }
                 // V0.09: endorsement_signature (u32 length prefix + bytes). Empty
                 // except at a reshare boundary carrying a prior-committee endorsement.
@@ -613,6 +641,46 @@ pub fn decode_boundary_artifact(extra_data: &[u8]) -> Result<Option<DkgBoundaryA
     }
 }
 
+/// Domain-separated commitment to the exact ordered expiry-exclusion list.
+pub fn tee_expired_target_exclusions_hash(addresses: &[Address]) -> Result<B256> {
+    validate_tee_expired_target_exclusions(addresses)?;
+    if addresses.is_empty() {
+        return Ok(B256::ZERO);
+    }
+    let mut bytes =
+        Vec::with_capacity(TEE_EXPIRED_TARGET_EXCLUSIONS_DOMAIN.len() + 2 + addresses.len() * 20);
+    bytes.extend_from_slice(TEE_EXPIRED_TARGET_EXCLUSIONS_DOMAIN);
+    bytes.extend_from_slice(&(addresses.len() as u16).to_be_bytes());
+    for address in addresses {
+        bytes.extend_from_slice(address.as_slice());
+    }
+    Ok(alloy_primitives::keccak256(bytes))
+}
+
+fn validate_tee_expired_target_exclusions(addresses: &[Address]) -> Result<()> {
+    if addresses.len() > MAX_TEE_EXPIRED_TARGET_EXCLUSIONS {
+        return Err(PrecompileError::Fatal(format!(
+            "TEE expiry exclusions exceed protocol cap: {} > {}",
+            addresses.len(),
+            MAX_TEE_EXPIRED_TARGET_EXCLUSIONS
+        )));
+    }
+    let mut unique = std::collections::BTreeSet::new();
+    for address in addresses {
+        if address.is_zero() {
+            return Err(PrecompileError::Fatal(
+                "TEE expiry exclusions contain zero validator address".into(),
+            ));
+        }
+        if !unique.insert(*address) {
+            return Err(PrecompileError::Fatal(
+                "TEE expiry exclusions contain duplicate validator address".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Encode a standalone `LateFinalizeCreditsArtifact` for the `LateFinalizeCredits`
 /// system-transaction body (mirrors [`encode_boundary_artifact`]). An empty batch
 /// encodes to empty bytes — the mandatory system tx then carries an empty body
@@ -892,10 +960,11 @@ fn decode_boundary_payload(payload: &[u8]) -> Result<DkgBoundaryArtifact> {
         .ok_or_else(|| {
             PrecompileError::Fatal("tee reshare registrations length overflow".into())
         })?;
-    // Need room for the registrations + the V0.09 endorsement_signature u32 prefix.
+    // Need room for the registrations + V0.0B expiry commitment/count + the
+    // V0.09 endorsement_signature u32 prefix.
     let needed_after_reshare = offset
         .checked_add(reshare_bytes)
-        .and_then(|v| v.checked_add(4))
+        .and_then(|v| v.checked_add(32 + 2 + 4))
         .ok_or_else(|| PrecompileError::Fatal("boundary payload length overflow".into()))?;
     if payload.len() < needed_after_reshare {
         return Err(PrecompileError::Fatal(format!(
@@ -919,6 +988,43 @@ fn decode_boundary_payload(payload: &[u8]) -> Result<DkgBoundaryArtifact> {
             attestation_pub,
             noise_static_pub,
         });
+    }
+
+    // V0.0B: domain-separated commitment plus bounded ordered unique list.
+    let carried_tee_expired_target_exclusions_hash =
+        B256::from_slice(&payload[offset..offset + 32]);
+    offset += 32;
+    let exclusions_count = u16::from_be_bytes([payload[offset], payload[offset + 1]]) as usize;
+    offset += 2;
+    if exclusions_count > MAX_TEE_EXPIRED_TARGET_EXCLUSIONS {
+        return Err(PrecompileError::Fatal(format!(
+            "TEE expiry exclusions exceed protocol cap: {exclusions_count} > {MAX_TEE_EXPIRED_TARGET_EXCLUSIONS}"
+        )));
+    }
+    let exclusions_bytes = exclusions_count
+        .checked_mul(20)
+        .ok_or_else(|| PrecompileError::Fatal("TEE expiry exclusions length overflow".into()))?;
+    let needed_after_exclusions = offset
+        .checked_add(exclusions_bytes)
+        .and_then(|v| v.checked_add(4))
+        .ok_or_else(|| PrecompileError::Fatal("boundary payload length overflow".into()))?;
+    if payload.len() < needed_after_exclusions {
+        return Err(PrecompileError::Fatal(format!(
+            "invalid boundary header artifact payload length: {} < {needed_after_exclusions}",
+            payload.len()
+        )));
+    }
+    let mut tee_expired_target_exclusions = Vec::with_capacity(exclusions_count);
+    for _ in 0..exclusions_count {
+        tee_expired_target_exclusions.push(Address::from_slice(&payload[offset..offset + 20]));
+        offset += 20;
+    }
+    let expected_exclusions_hash =
+        tee_expired_target_exclusions_hash(&tee_expired_target_exclusions)?;
+    if expected_exclusions_hash != carried_tee_expired_target_exclusions_hash {
+        return Err(PrecompileError::Fatal(
+            "boundary TEE expiry exclusions commitment mismatch".into(),
+        ));
     }
 
     // V0.09: endorsement_signature (u32 length prefix + bytes), exact end match.
@@ -959,6 +1065,8 @@ fn decode_boundary_payload(payload: &[u8]) -> Result<DkgBoundaryArtifact> {
         },
         tee_recipient_pubkeys,
         tee_reshare_registrations,
+        tee_expired_target_exclusions,
+        tee_expired_target_exclusions_hash: carried_tee_expired_target_exclusions_hash,
         endorsement_signature,
     })
 }
@@ -1010,12 +1118,74 @@ mod tests {
     use super::{
         decode_boundary_artifact, decode_consensus_header_artifact, decode_outbe_block_artifacts,
         encode_boundary_artifact, encode_consensus_header_artifact, encode_outbe_block_artifacts,
-        sanitize_prefinal_outbe_block_artifacts, CompressedEntitiesRootArtifact,
-        ConsensusHeaderArtifact, ExecutionSummaryArtifact, OutbeBlockArtifacts,
-        COMPRESSED_ENTITIES_ROOT_PAYLOAD_LEN, COMPRESSED_ENTITIES_ROOT_RECORD_LEN,
-        OUTBE_MAX_NON_ROOT_ARTIFACT_SIZE,
+        sanitize_prefinal_outbe_block_artifacts, tee_expired_target_exclusions_hash,
+        CompressedEntitiesRootArtifact, ConsensusHeaderArtifact, ExecutionSummaryArtifact,
+        OutbeBlockArtifacts, COMPRESSED_ENTITIES_ROOT_PAYLOAD_LEN,
+        COMPRESSED_ENTITIES_ROOT_RECORD_LEN, OUTBE_MAX_NON_ROOT_ARTIFACT_SIZE,
     };
     use crate::consensus::{DkgBoundaryArtifact, ReshareResult};
+
+    fn boundary_with_expiry_exclusions(exclusions: Vec<Address>) -> DkgBoundaryArtifact {
+        let exclusions_hash = tee_expired_target_exclusions_hash(&exclusions).unwrap();
+        DkgBoundaryArtifact {
+            epoch: 1,
+            dkg_cycle: 1,
+            freeze_height: 100,
+            planned_activation_height: 120,
+            target_set_hash: B256::with_last_byte(0x11),
+            vrf_material_version: 1,
+            vrf_group_public_key: alloy_primitives::keccak256([]),
+            vrf_group_public_key_bytes: Bytes::new(),
+            committee_set_hash: B256::with_last_byte(0x22),
+            is_validator_set_change: true,
+            outcome: Bytes::new(),
+            is_full_dkg: false,
+            reshare: ReshareResult {
+                new_active_set: Vec::new(),
+                active_set_hash: B256::ZERO,
+            },
+            tee_recipient_pubkeys: Vec::new(),
+            tee_reshare_registrations: Vec::new(),
+            tee_expired_target_exclusions: exclusions,
+            tee_expired_target_exclusions_hash: exclusions_hash,
+            endorsement_signature: Bytes::new(),
+        }
+    }
+
+    #[test]
+    fn boundary_roundtrip_binds_ordered_tee_expiry_exclusions() {
+        let exclusions = vec![
+            address!("0x1111111111111111111111111111111111111111"),
+            address!("0x2222222222222222222222222222222222222222"),
+        ];
+        let artifact = boundary_with_expiry_exclusions(exclusions.clone());
+        let encoded = encode_boundary_artifact(&artifact).unwrap();
+        let decoded = decode_boundary_artifact(&encoded).unwrap().unwrap();
+        assert_eq!(decoded, artifact);
+        assert_eq!(decoded.tee_expired_target_exclusions, exclusions);
+    }
+
+    #[test]
+    fn boundary_rejects_duplicate_oversized_and_tampered_tee_expiry_exclusions() {
+        let validator = address!("0x1111111111111111111111111111111111111111");
+        assert!(tee_expired_target_exclusions_hash(&[validator, validator]).is_err());
+
+        let oversized: Vec<_> = (0..=crate::validators::MAX_TEE_EXPIRED_TARGET_EXCLUSIONS)
+            .map(|index| {
+                let word = U256::from(index + 1).to_be_bytes::<32>();
+                Address::from_slice(&word[12..])
+            })
+            .collect();
+        assert!(tee_expired_target_exclusions_hash(&oversized).is_err());
+
+        let artifact = boundary_with_expiry_exclusions(vec![validator]);
+        let mut encoded = encode_boundary_artifact(&artifact).unwrap().to_vec();
+        // The final four bytes are the empty endorsement length; the preceding
+        // twenty bytes are the sole exclusion address.
+        let address_last_byte = encoded.len() - 5;
+        encoded[address_last_byte] ^= 0x01;
+        assert!(decode_boundary_artifact(&encoded).is_err());
+    }
 
     #[test]
     fn roundtrip_block_artifacts_with_execution_summary_and_boundary() {
@@ -1034,6 +1204,8 @@ mod tests {
             is_full_dkg: true,
             tee_recipient_pubkeys: Vec::new(),
             tee_reshare_registrations: Vec::new(),
+            tee_expired_target_exclusions: Vec::new(),
+            tee_expired_target_exclusions_hash: B256::ZERO,
             endorsement_signature: Bytes::new(),
             reshare: ReshareResult {
                 new_active_set: vec![
@@ -1083,6 +1255,8 @@ mod tests {
             is_full_dkg: true,
             tee_recipient_pubkeys: Vec::new(),
             tee_reshare_registrations: Vec::new(),
+            tee_expired_target_exclusions: Vec::new(),
+            tee_expired_target_exclusions_hash: B256::ZERO,
             endorsement_signature: Bytes::new(),
             reshare: ReshareResult {
                 new_active_set: vec![
@@ -1134,6 +1308,8 @@ mod tests {
                     noise_static_pub: B256::with_last_byte(0xC3),
                 },
             ],
+            tee_expired_target_exclusions: Vec::new(),
+            tee_expired_target_exclusions_hash: B256::ZERO,
             endorsement_signature: Bytes::from(vec![0xEE; 48]),
             reshare: ReshareResult {
                 new_active_set: vec![
@@ -1238,6 +1414,8 @@ mod tests {
             is_full_dkg: false,
             tee_recipient_pubkeys: Vec::new(),
             tee_reshare_registrations: Vec::new(),
+            tee_expired_target_exclusions: Vec::new(),
+            tee_expired_target_exclusions_hash: B256::ZERO,
             endorsement_signature: Bytes::new(),
             reshare: ReshareResult {
                 new_active_set: vec![],
@@ -1312,6 +1490,8 @@ mod tests {
             is_full_dkg,
             tee_recipient_pubkeys: Vec::new(),
             tee_reshare_registrations: Vec::new(),
+            tee_expired_target_exclusions: Vec::new(),
+            tee_expired_target_exclusions_hash: B256::ZERO,
             endorsement_signature: Bytes::new(),
             reshare: ReshareResult {
                 new_active_set,
@@ -1453,10 +1633,11 @@ mod tests {
         // blob. We size the outcome so the total framed length is just over the
         // 64 KiB budget while the record payload stays <= 65535.
         // (180 V0.06 fields + 2-byte V0.07 tee_recipient_pubkeys count + 2-byte
-        // V0.08 tee_reshare_registrations count + 4-byte V0.09 endorsement_signature
-        // length prefix.)
+        // V0.08 tee_reshare_registrations count + 32-byte V0.0B expiry-exclusions
+        // commitment + 2-byte exclusions count + 4-byte V0.09
+        // endorsement_signature length prefix.)
         const FIXED_PREFIX: usize =
-            8 + 8 + 8 + 8 + 32 + 8 + 32 + 32 + 1 + 1 + 32 + 2 + 4 + 4 + 2 + 2 + 4;
+            8 + 8 + 8 + 8 + 32 + 8 + 32 + 32 + 1 + 1 + 32 + 2 + 4 + 4 + 2 + 2 + 32 + 2 + 4;
         const ENVELOPE: usize = 4 + 1 + 1; // MAGIC + version + record count
         const RECORD_HEADER: usize = 1 + 2; // tag + u16 length
 
@@ -1702,7 +1883,7 @@ mod tests {
         })
         .unwrap();
 
-        let mut expected = b"OART\x0A\x01\x08\x00\x24\x00\x00\x00\x01".to_vec();
+        let mut expected = b"OART\x0B\x01\x08\x00\x24\x00\x00\x00\x01".to_vec();
         expected.extend_from_slice(&[0xAB; 32]);
         assert_eq!(encoded.as_ref(), expected);
         assert_eq!(COMPRESSED_ENTITIES_ROOT_PAYLOAD_LEN, 36);
@@ -1730,7 +1911,7 @@ mod tests {
             ..Default::default()
         })
         .unwrap();
-        let mut expected = b"OART\x0A\x02\x01\x00\x20".to_vec();
+        let mut expected = b"OART\x0B\x02\x01\x00\x20".to_vec();
         expected.extend_from_slice(&[0_u8; 32]);
         expected.extend_from_slice(b"\x08\x00\x24\x00\x00\x00\x01");
         expected.extend_from_slice(root.as_slice());

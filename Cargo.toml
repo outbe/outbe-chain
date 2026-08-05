@@ -11,6 +11,7 @@ members = [
     "crates/blockchain/txpool",
     "crates/blockchain/node",
     "crates/blockchain/offchain-storage",
+    "crates/blockchain/operator",
     # system
     "crates/system/validatorset",
     "crates/system/slashindicator",
@@ -103,6 +104,7 @@ outbe-rpc = { path = "crates/blockchain/rpc" }
 outbe-txpool = { path = "crates/blockchain/txpool" }
 outbe-node = { path = "crates/blockchain/node" }
 outbe-offchain-storage = { path = "crates/blockchain/offchain-storage" }
+outbe-operator = { path = "crates/blockchain/operator" }
 # Internal — system
 outbe-validatorset = { path = "crates/system/validatorset" }
 outbe-slashindicator = { path = "crates/system/slashindicator" }

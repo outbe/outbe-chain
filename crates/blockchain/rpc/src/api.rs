@@ -3,6 +3,7 @@
 use alloy_primitives::{Address, B256, U256};
 use jsonrpsee::proc_macros::rpc;
 use outbe_primitives::consensus::RandomnessStatus;
+use outbe_primitives::tee_operator_v1::TeeRenewalScheduleV1;
 
 /// Response type for validator information.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -248,6 +249,10 @@ pub trait OutbeApi {
     /// Returns current epoch information.
     #[method(name = "getEpochInfo")]
     async fn get_epoch_info(&self) -> jsonrpsee::core::RpcResult<EpochInfo>;
+
+    /// Exact finalized epoch/freeze schedule for host-side TEE renewal alerts.
+    #[method(name = "teeRenewalScheduleV1")]
+    async fn tee_renewal_schedule_v1(&self) -> jsonrpsee::core::RpcResult<TeeRenewalScheduleV1>;
 
     /// Returns the stake amount for a validator address.
     #[method(name = "getStake")]

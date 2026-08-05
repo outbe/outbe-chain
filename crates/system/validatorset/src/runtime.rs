@@ -949,6 +949,47 @@ impl ValidatorSet<'_> {
         new_active_set: &[Address],
         active_set_hash: B256,
     ) -> Result<()> {
+        self.activate_reshared_set_with_expiry_exclusions(new_active_set, active_set_hash, &[])
+    }
+
+    /// Activate one certified reshare boundary and apply only its explicit TEE
+    /// expiry exclusions. Ordinary DKG nonparticipation is not an expiry proof:
+    /// an omitted ACTIVE validator is demoted only when its address appears in
+    /// `tee_expired_target_exclusions`.
+    pub fn activate_reshared_set_with_expiry_exclusions(
+        &mut self,
+        new_active_set: &[Address],
+        active_set_hash: B256,
+        tee_expired_target_exclusions: &[Address],
+    ) -> Result<()> {
+        if tee_expired_target_exclusions.len()
+            > outbe_primitives::validators::MAX_TEE_EXPIRED_TARGET_EXCLUSIONS
+        {
+            return Err(PrecompileError::Fatal(format!(
+                "TEE expiry exclusions exceed protocol cap: {} > {}",
+                tee_expired_target_exclusions.len(),
+                outbe_primitives::validators::MAX_TEE_EXPIRED_TARGET_EXCLUSIONS
+            )));
+        }
+        let mut unique_exclusions = std::collections::BTreeSet::new();
+        for address in tee_expired_target_exclusions {
+            if address.is_zero() || !unique_exclusions.insert(*address) {
+                return Err(PrecompileError::Fatal(
+                    "TEE expiry exclusions must contain unique non-zero validators".into(),
+                ));
+            }
+            if new_active_set.contains(address) {
+                return Err(PrecompileError::Fatal(format!(
+                    "TEE-expired validator {address} is also present in the new active set"
+                )));
+            }
+            if self.address_to_index.read(address)? == 0 {
+                return Err(PrecompileError::Fatal(format!(
+                    "TEE expiry exclusions contain unregistered validator {address}"
+                )));
+            }
+        }
+
         // First, clear has_bls_share for all validators
         let all = self.get_all_validators()?;
         for v in &all {
@@ -983,6 +1024,29 @@ impl ValidatorSet<'_> {
                         "reshared active set contains validator {addr} with non-active status {st}"
                     )));
                 }
+            }
+        }
+
+        // Apply the narrow certified expiry transition. ACTIVE loses its share,
+        // becomes PENDING and must explicitly confirm readiness after renewal.
+        // A confirmed PENDING target simply loses confirmation. EXITING,
+        // UNBONDING, JAILED and every other status are intentionally unchanged.
+        let mut tee_expired_active = Vec::new();
+        let mut tee_expired_pending = Vec::new();
+        for &addr in tee_expired_target_exclusions {
+            match self.val_status.read(&addr)? {
+                status::ACTIVE => {
+                    self.val_status.write(&addr, status::PENDING)?;
+                    self.val_has_bls_share.write(&addr, false)?;
+                    self.val_join_confirmed.write(&addr, false)?;
+                    tee_expired_active.push(addr);
+                }
+                status::PENDING => {
+                    self.val_has_bls_share.write(&addr, false)?;
+                    self.val_join_confirmed.write(&addr, false)?;
+                    tee_expired_pending.push(addr);
+                }
+                _ => {}
             }
         }
 
@@ -1028,6 +1092,17 @@ impl ValidatorSet<'_> {
         for addr in &transitioned_to_unbonding {
             crate::metrics::record_validator_status(*addr, status::UNBONDING);
         }
+        for addr in &tee_expired_active {
+            crate::metrics::record_validator_status(*addr, status::PENDING);
+            crate::metrics::record_validator_tee_expiry(*addr, "active_demoted");
+        }
+        for addr in &tee_expired_pending {
+            crate::metrics::record_validator_tee_expiry(*addr, "pending_cleared");
+        }
+        crate::metrics::record_tee_expiry_exclusions(
+            tee_expired_active.len(),
+            tee_expired_pending.len(),
+        );
 
         let block_number = self.storage.block_number().unwrap_or(0);
         journal_record(JournalRecord::ResharedSetActivated {
@@ -1078,6 +1153,24 @@ impl ValidatorSet<'_> {
                 validator = %addr,
                 block_number = self.storage.block_number().unwrap_or(0),
                 "validator transitioned EXITING -> UNBONDING (excluded from new set)",
+            );
+        }
+        for addr in &tee_expired_active {
+            warn!(
+                target: "outbe::validatorset",
+                event = "validator_tee_expired_demoted",
+                validator = %addr,
+                block_number = self.storage.block_number().unwrap_or(0),
+                "certified freeze-height TEE expiry demoted ACTIVE validator to PENDING"
+            );
+        }
+        for addr in &tee_expired_pending {
+            warn!(
+                target: "outbe::validatorset",
+                event = "validator_tee_expired_readiness_cleared",
+                validator = %addr,
+                block_number = self.storage.block_number().unwrap_or(0),
+                "certified freeze-height TEE expiry cleared PENDING validator readiness"
             );
         }
 

@@ -20,6 +20,87 @@
   },
   {
     "type": "function",
+    "name": "certifiedGeneration",
+    "inputs": [
+      {
+        "name": "worldwideDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct INod.CertifiedGenerationData",
+        "components": [
+          {
+            "name": "exists",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "worldwideDay",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "generation",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "nodRoot",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "bucketRoot",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "outputManifestRoot",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "tributeCount",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "nodCount",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "bucketCount",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "nodAmountTotal",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "nodGratisConsumed",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "issuedAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "name",
     "inputs": [],
     "outputs": [
