@@ -6,7 +6,7 @@ use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_validatorset::contract::ValidatorSet;
-use outbe_validatorset::ValidatorLifecycle;
+use outbe_validatorset::{StakeProjection, ValidatorLifecycle};
 
 use crate::api::{get_proposal, get_proposal_voters, list_proposals, list_proposals_by_status};
 use crate::constants::VOTING_WINDOW_BLOCKS;
@@ -93,22 +93,28 @@ pub(super) fn register_active_validator(storage: StorageHandle, addr: Address, s
     let mut vs = ValidatorSet::new(storage.clone());
     vs.config_owner.write(VALIDATOR_OWNER).unwrap();
     vs.config_max_validators.write(100).unwrap();
-    vs.register_validator(VALIDATOR_OWNER, addr, &dummy_pubkey(seed))
+    vs.test_register_validator_without_pop(addr, &dummy_pubkey(seed))
         .unwrap();
-    vs.activate_validator(addr).unwrap();
+    vs.test_activate_validator_canonically(
+        addr,
+        StakeProjection::new(U256::from(1), None),
+        U256::from(1),
+    )
+    .unwrap();
 }
 
 pub(super) fn register_pending_validator(storage: StorageHandle, addr: Address, seed: u8) {
     let mut vs = ValidatorSet::new(storage.clone());
     vs.config_owner.write(VALIDATOR_OWNER).unwrap();
     vs.config_max_validators.write(100).unwrap();
-    vs.register_validator(VALIDATOR_OWNER, addr, &dummy_pubkey(seed))
+    vs.test_register_validator_without_pop(addr, &dummy_pubkey(seed))
         .unwrap();
-    vs.mark_pending(addr).unwrap();
+    vs.record_stake_increase(addr, U256::from(1), U256::from(1))
+        .unwrap();
     assert!(
         matches!(
             vs.validator_lifecycle(addr).unwrap(),
-            ValidatorLifecycle::Pending(_)
+            ValidatorLifecycle::WaitingForReadiness(_)
         ),
         "fixture must leave validator in PENDING status"
     );
@@ -142,6 +148,7 @@ pub(super) fn empty_update_payload(current_height: u64) -> String {
 
 pub(super) fn with_vote<F: FnOnce(StorageHandle)>(f: F) {
     let mut provider = HashMapStorageProvider::new(1);
+    provider.set_block_number(1);
     let storage = StorageHandle::new(&mut provider);
     setup_default_validators(storage.clone());
     f(storage);

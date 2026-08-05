@@ -136,8 +136,8 @@ impl Staking<'_> {
         validator: Address,
     ) -> Result<()> {
         if matches!(
-            val_set.validator_lifecycle(validator)?.phase(),
-            ValidatorLifecycle::Unbonding
+            val_set.validator_lifecycle(validator)?,
+            ValidatorLifecycle::Unbonding(_)
         ) && self.stake_amount.read(&validator)?.is_zero()
             && !self.has_pending_unbonding(validator)?
         {
@@ -356,7 +356,7 @@ impl Staking<'_> {
         let validators = val_set.registered_validator_addresses()?;
         for validator in validators {
             let state = val_set.validator_state(validator)?;
-            if !matches!(state.lifecycle().phase(), ValidatorLifecycle::Unbonding) {
+            if !matches!(state.lifecycle(), ValidatorLifecycle::Unbonding(_)) {
                 continue;
             }
 

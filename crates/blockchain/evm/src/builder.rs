@@ -690,10 +690,16 @@ mod tests {
             for (idx, validator) in validators.iter().copied().enumerate() {
                 let mut pk = [0u8; 48];
                 pk[0] = idx as u8 + 1;
-                vs.register_validator(Address::ZERO, validator, &pk)
+                vs.test_register_validator_without_pop(validator, &pk)
                     .unwrap();
+                vs.test_activate_validator_canonically(
+                    validator,
+                    outbe_validatorset::StakeProjection::new(U256::from(1), None),
+                    U256::from(1),
+                )
+                .unwrap();
             }
-            vs.activate_reshared_set(validators, B256::repeat_byte(0xBB))
+            vs.test_set_active_consensus_set_hash(B256::repeat_byte(0xBB))
                 .unwrap();
             // Seed the COEN/0xUSD oracle pair + a 1.0 rate so begin-block NOD/GEM/INTEX
             // floor-price promotion reads a registered pair instead of reverting

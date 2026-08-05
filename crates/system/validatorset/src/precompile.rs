@@ -154,18 +154,16 @@ pub fn dispatch(
                     let pubkey: [u8; 48] = c.consensusPubkey[..48].try_into().map_err(|_| {
                         PrecompileError::Revert("consensus pubkey conversion failed".into())
                     })?;
-                    let sig: Option<&[u8; 96]> = if c.blsSignature.len() == 96 {
-                        Some(c.blsSignature[..96].try_into().map_err(|_| {
+                    let sig: &[u8; 96] = if c.blsSignature.len() == 96 {
+                        c.blsSignature[..96].try_into().map_err(|_| {
                             PrecompileError::Revert("BLS signature conversion failed".into())
-                        })?)
-                    } else if c.blsSignature.is_empty() {
-                        None
+                        })?
                     } else {
                         return Err(PrecompileError::Revert(
-                            "BLS signature must be 96 bytes or empty".into(),
+                            "BLS proof of possession must be exactly 96 bytes".into(),
                         ));
                     };
-                    vs.register_validator_with_sig(sender, c.validatorAddress, &pubkey, sig)
+                    vs.register_validator_with_sig(sender, c.validatorAddress, &pubkey, Some(sig))
                 }),
                 setP2pAddress(c) => mutate_void(c, caller, |sender, c| {
                     vs.set_p2p_address(sender, c.validatorAddress, c.version, &c.encoded)
@@ -182,15 +180,10 @@ pub fn dispatch(
                 confirmValidatorReady(c) => {
                     mutate_void(c, caller, |sender, _c| vs.confirm_validator_ready(sender))
                 }
-                activateResharedSet(c) => mutate_void(c, caller, |sender, c| {
-                    // Only the config owner (system) can call activateResharedSet
-                    let owner = vs.config_owner.read()?;
-                    if sender != owner {
-                        return Err(PrecompileError::Revert(
-                            "unauthorized: only owner can activate reshared set".into(),
-                        ));
-                    }
-                    vs.legacy_activate_reshared_set(&c.newActiveSet, c.groupPublicKey)
+                activateResharedSet(c) => mutate_void(c, caller, |_sender, _c| {
+                    Err(PrecompileError::Revert(
+                        "activateResharedSet is system-boundary-only".into(),
+                    ))
                 }),
             }
         },

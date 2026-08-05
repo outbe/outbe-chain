@@ -71,7 +71,7 @@ use outbe_validatorset::contract::ValidatorSet;
 use outbe_validatorset::state::{
     committee_set_hash_v2, write_committee_snapshot, CommitteeEntry, CommitteeSnapshot,
 };
-use outbe_validatorset::{ActiveState, StakeProjection, ValidatorLifecycle};
+use outbe_validatorset::{StakeProjection, ValidatorLifecycle};
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 
@@ -329,25 +329,23 @@ fn setup_storage(
     set_current_epoch(&mut vs, current_epoch);
     let mut pk = [0u8; 48];
     pk[0] = 0x42;
-    vs.register_validator(OWNER, proposer, &pk).unwrap();
-    vs.activate_validator(proposer).unwrap();
-    vs.test_set_lifecycle(
+    let stake = U256::from(STAKE_AMOUNT);
+    vs.test_register_validator_without_pop(proposer, &pk)
+        .unwrap();
+    vs.test_activate_validator_canonically(
         proposer,
-        ValidatorLifecycle::Active(ActiveState::Participating),
+        StakeProjection::new(stake, None),
+        U256::from(1),
     )
     .unwrap();
 
     let staking = Staking::new(storage.clone());
-    let stake = U256::from(STAKE_AMOUNT);
     staking.stake_amount.write(&proposer, stake).unwrap();
     staking.total_staked.write(stake).unwrap();
     staking
         .storage
         .increase_balance(STAKING_ADDRESS, stake)
         .unwrap();
-    vs.test_set_stake_projection(proposer, StakeProjection::new(stake, None))
-        .unwrap();
-
     write_committee_snapshot(storage, CHILD_EPOCH, snapshot).unwrap();
 }
 
@@ -380,8 +378,14 @@ fn register_submitter_as_active(storage: StorageHandle) {
     pk[0] = 0x77;
     vs.config_owner.write(OWNER).unwrap();
     vs.config_max_validators.write(100).unwrap();
-    vs.register_validator(OWNER, SUBMITTER, &pk).unwrap();
-    vs.activate_validator(SUBMITTER).unwrap();
+    vs.test_register_validator_without_pop(SUBMITTER, &pk)
+        .unwrap();
+    vs.test_activate_validator_canonically(
+        SUBMITTER,
+        StakeProjection::new(U256::from(1), None),
+        U256::from(1),
+    )
+    .unwrap();
 }
 
 fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
@@ -485,8 +489,14 @@ fn invalid_vrf_evidence_rejects_non_active_submitter() {
         pk[0] = 0x44;
         vs.config_owner.write(OWNER).unwrap();
         vs.config_max_validators.write(100).unwrap();
-        vs.register_validator(OWNER, SUBMITTER, &pk).unwrap();
-        vs.activate_validator(SUBMITTER).unwrap();
+        vs.test_register_validator_without_pop(SUBMITTER, &pk)
+            .unwrap();
+        vs.test_activate_validator_canonically(
+            SUBMITTER,
+            StakeProjection::new(U256::from(1), None),
+            U256::from(1),
+        )
+        .unwrap();
         vs.force_exit_validator(SUBMITTER).unwrap();
 
         let mut si = SlashIndicator::new(storage);
@@ -801,7 +811,7 @@ fn invalid_vrf_proof_evidence_slashes_child_proposer() {
         assert!(
             matches!(
                 vs.validator_lifecycle(proposer).unwrap(),
-                ValidatorLifecycle::Jailed(_)
+                ValidatorLifecycle::JailRetained(_)
             ),
             "proposer must be jailed"
         );

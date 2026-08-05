@@ -416,14 +416,14 @@ where
                         "registered validator has no persisted status".into(),
                     )
                 })?,
-                stake: state.stake().bonded(),
+                stake: state.bonded_stake(),
                 slash_count: history.slash_count(),
                 missed_blocks: history.missed_blocks(),
                 missed_votes: history.missed_votes(),
                 blocks_proposed: history.blocks_proposed(),
                 joined_at_height: history.joined_at_height(),
                 deactivated_at_height: history.last_deactivated_at_height().unwrap_or(0),
-                unbonding_end: state.stake().unbonding_end_hint().unwrap_or(0),
+                unbonding_end: state.unbonding_end_hint().unwrap_or(0),
                 has_bls_share: state.has_bls_share(),
             }))
         })

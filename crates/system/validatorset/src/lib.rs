@@ -2,7 +2,7 @@
 //! - `schema.rs` — storage schema for the `ValidatorSet` facade.
 //! - `state.rs` — `CommitteeSnapshotStore` helpers.
 //! - `runtime.rs` — validator-set use-cases and the raw-storage adapter.
-//! - `state_machine.rs` — typed validator lifecycle and coupled-field rules.
+//! - `state_machine/` — typed validator lifecycle, transitions and storage adapter.
 //! - `hooks.rs` — per-finalized-block guard wrappers.
 //! - `precompile.rs` — ABI dispatch.
 //! - `errors.rs` — module-local activation error type.
@@ -43,6 +43,7 @@ pub use state::{
     OUTBE_COMMITTEE_SNAPSHOT_KEY_V2_DOMAIN, VRF_MATERIAL_VERSION_GENESIS,
 };
 pub use state_machine::{
-    ActiveState, ExitingState, JailedState, P2pInfo, PendingState, StakeProjection,
-    ValidatorHistory, ValidatorLifecycle, ValidatorState,
+    Active, ConsensusPubkey, Exiting, Inactive, Jail, JailRetained, Joining, P2pInfo,
+    StakeProjection, Unbonding, ValidatorHistory, ValidatorLifecycle, ValidatorState,
+    WaitingForReadiness, WaitingForStake,
 };

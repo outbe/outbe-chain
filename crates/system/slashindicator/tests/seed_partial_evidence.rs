@@ -79,9 +79,8 @@ fn setup(storage: StorageHandle, accused_pubkey: &[u8; 48]) {
     epoch.number = U256::from(ROUND_EPOCH);
     vs.test_set_epoch_snapshot(epoch).unwrap();
 
-    vs.register_validator(OWNER, ACCUSED, accused_pubkey)
+    vs.test_register_validator_without_pop(ACCUSED, accused_pubkey)
         .unwrap();
-    vs.activate_validator(ACCUSED).unwrap();
     let staking = Staking::new(storage.clone());
     let stake = U256::from(STAKE_AMOUNT);
     staking.stake_amount.write(&ACCUSED, stake).unwrap();
@@ -90,18 +89,29 @@ fn setup(storage: StorageHandle, accused_pubkey: &[u8; 48]) {
         .storage
         .increase_balance(STAKING_ADDRESS, stake)
         .unwrap();
-    vs.test_set_stake_projection(ACCUSED, StakeProjection::new(stake, None))
-        .unwrap();
+    vs.test_activate_validator_canonically(
+        ACCUSED,
+        StakeProjection::new(stake, None),
+        U256::from(1),
+    )
+    .unwrap();
 
     let mut submitter_pk = [0u8; 48];
     submitter_pk[0] = 0x77;
-    vs.register_validator(OWNER, SUBMITTER, &submitter_pk)
+    vs.test_register_validator_without_pop(SUBMITTER, &submitter_pk)
         .unwrap();
-    vs.activate_validator(SUBMITTER).unwrap();
+    vs.test_activate_validator_canonically(
+        SUBMITTER,
+        StakeProjection::new(U256::from(1), None),
+        U256::from(1),
+    )
+    .unwrap();
 }
 
 fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
-    HashMapStorageProvider::new(CHAIN_ID).enter(f)
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_block_number(1);
+    storage.enter(f)
 }
 
 #[test]
@@ -123,7 +133,7 @@ fn equivocation_jails_and_slashes_then_dedups() {
         assert!(
             matches!(
                 vs.validator_lifecycle(ACCUSED).unwrap(),
-                ValidatorLifecycle::Jailed(_)
+                ValidatorLifecycle::JailRetained(_)
             ),
             "accused must be JAILED"
         );
@@ -189,9 +199,14 @@ fn unregistered_signer_is_rejected() {
         vs.test_set_epoch_snapshot(epoch).unwrap();
         let mut submitter_pk = [0u8; 48];
         submitter_pk[0] = 0x77;
-        vs.register_validator(OWNER, SUBMITTER, &submitter_pk)
+        vs.test_register_validator_without_pop(SUBMITTER, &submitter_pk)
             .unwrap();
-        vs.activate_validator(SUBMITTER).unwrap();
+        vs.test_activate_validator_canonically(
+            SUBMITTER,
+            StakeProjection::new(U256::from(1), None),
+            U256::from(1),
+        )
+        .unwrap();
 
         let key = accused_key();
         let pubkey = pubkey_bytes(&key);
@@ -216,8 +231,14 @@ fn non_active_submitter_is_rejected() {
         let mut epoch = vs.epoch_snapshot().unwrap();
         epoch.number = U256::from(ROUND_EPOCH);
         vs.test_set_epoch_snapshot(epoch).unwrap();
-        vs.register_validator(OWNER, ACCUSED, &pubkey).unwrap();
-        vs.activate_validator(ACCUSED).unwrap();
+        vs.test_register_validator_without_pop(ACCUSED, &pubkey)
+            .unwrap();
+        vs.test_activate_validator_canonically(
+            ACCUSED,
+            StakeProjection::new(U256::from(1), None),
+            U256::from(1),
+        )
+        .unwrap();
 
         let evidence = build_evidence(&key, &pubkey, &[0x11; 48], &[0x22; 48]);
         let mut si = SlashIndicator::new(storage.clone());

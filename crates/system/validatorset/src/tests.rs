@@ -9,6 +9,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use crate::runtime::status;
 use crate::schema::ValidatorSet;
+use crate::state_machine::{StakeProjection, ValidatorLifecycle};
 
 const CHAIN_ID: u64 = 1;
 
@@ -18,6 +19,10 @@ const OWNER: Address = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
 /// Convenience: set config_owner and config_max_validators, then run test.
 fn with_vs_configured<R>(max: u32, f: impl FnOnce(&mut ValidatorSet) -> R) -> R {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    // Height zero is the storage sentinel for an absent lifecycle height. Keep
+    // semantic transition fixtures at a real block so EXITING/INACTIVE decode
+    // through the same path as production records.
+    storage.set_block_number(1);
     StorageHandle::enter(&mut storage, |storage| {
         let mut vs = ValidatorSet::new(storage.clone());
         vs.config_owner.write(OWNER).unwrap();
@@ -25,6 +30,26 @@ fn with_vs_configured<R>(max: u32, f: impl FnOnce(&mut ValidatorSet) -> R) -> R 
         vs.config_epoch_length_blocks.write(10).unwrap();
         f(&mut vs)
     })
+}
+
+/// Move a registered validator through the canonical committee-entry path.
+fn activate_for_test(vs: &mut ValidatorSet, addr: Address) {
+    vs.activate_validator(addr).unwrap();
+}
+
+/// Activate through the complete stake/readiness/boundary type-state path.
+fn activate_staked_for_test(vs: &mut ValidatorSet, addr: Address) {
+    let minimum = U256::from(1_000u64);
+    vs.test_activate_validator_canonically(addr, StakeProjection::new(minimum, None), minimum)
+        .unwrap();
+}
+
+/// Move a registered validator through a complete canonical economic exit.
+fn make_inactive_for_test(vs: &mut ValidatorSet, addr: Address) {
+    activate_for_test(vs, addr);
+    vs.deactivate_validator(OWNER, addr).unwrap();
+    vs.activate_reshared_set(&[], B256::ZERO).unwrap();
+    vs.complete_unbonding(addr).unwrap();
 }
 
 /// Generate a dummy 48-byte consensus pubkey with a unique seed byte.
@@ -100,7 +125,7 @@ fn test_register_self_without_sig_rejected() {
 
     with_vs_configured(10, |vs| {
         // Self-registration without BLS signature must fail
-        let result = vs.register_validator(val_addr, val_addr, &pk);
+        let result = vs.register_validator_with_sig(val_addr, val_addr, &pk, None);
         assert!(
             result.is_err(),
             "self-registration without BLS sig must be rejected"
@@ -213,7 +238,7 @@ fn test_set_p2p_address_rejects_oversized_and_accepts_asymmetric() {
 }
 
 #[test]
-fn malformed_p2p_isolated_from_legacy_record_projection() {
+fn malformed_p2p_fails_all_complete_record_projections_closed() {
     let val_addr = address!("0x2222222222222222222222222222222222222226");
     let pk = dummy_consensus_pubkey(6);
 
@@ -227,12 +252,16 @@ fn malformed_p2p_isolated_from_legacy_record_projection() {
             .write(&[0xFF])
             .unwrap();
 
-        // ValidatorRecord is deliberately a legacy ABI projection and does not
-        // broaden P2P corruption into failure of unrelated tuple reads.
-        assert!(vs.get_validator(val_addr).unwrap().is_some());
-        assert_eq!(vs.get_all_validators().unwrap().len(), 1);
-
-        // The complete typed aggregate owns P2P invariants and fails closed.
+        // Every complete projection now passes through the canonical aggregate;
+        // malformed coupled P2P fields therefore fail closed consistently.
+        assert!(matches!(
+            vs.get_validator(val_addr),
+            Err(PrecompileError::Fatal(_))
+        ));
+        assert!(matches!(
+            vs.get_all_validators(),
+            Err(PrecompileError::Fatal(_))
+        ));
         assert!(matches!(
             vs.validator_state(val_addr),
             Err(PrecompileError::Fatal(_))
@@ -241,17 +270,24 @@ fn malformed_p2p_isolated_from_legacy_record_projection() {
 }
 
 #[test]
-fn typed_storage_adapter_handles_pre_registration_stake_and_fails_closed() {
+fn typed_storage_adapter_rejects_pre_registration_stake_and_fails_closed() {
     let addr = address!("0x2222222222222222222222222222222222222227");
 
     with_vs_configured(10, |vs| {
         vs.val_stake.write(&addr, U256::from(900)).unwrap();
         vs.val_unbonding_end.write(&addr, 55).unwrap();
 
-        let state = vs.validator_state(addr).unwrap();
-        assert_eq!(state.lifecycle(), &crate::ValidatorLifecycle::Unregistered);
-        assert_eq!(state.stake().bonded(), U256::from(900));
-        assert_eq!(state.stake().unbonding_end_hint(), Some(55));
+        assert!(matches!(
+            vs.validator_state(addr),
+            Err(PrecompileError::Fatal(_))
+        ));
+
+        vs.val_stake.write(&addr, U256::ZERO).unwrap();
+        vs.val_unbonding_end.write(&addr, 0).unwrap();
+        assert_eq!(
+            vs.validator_state(addr).unwrap().lifecycle(),
+            &crate::ValidatorLifecycle::Absent
+        );
 
         vs.val_join_confirmed.write(&addr, true).unwrap();
         assert!(matches!(
@@ -269,7 +305,7 @@ fn typed_storage_adapter_handles_pre_registration_stake_and_fails_closed() {
 }
 
 #[test]
-fn full_and_hot_lifecycle_reads_agree_on_combined_residue() {
+fn full_and_hot_lifecycle_reads_both_reject_combined_residue() {
     let addr = address!("0x2222222222222222222222222222222222222228");
 
     with_vs_configured(10, |vs| {
@@ -280,20 +316,14 @@ fn full_and_hot_lifecycle_reads_agree_on_combined_residue() {
         vs.val_has_bls_share.write(&addr, true).unwrap();
         vs.val_jailed_at_height.write(&addr, 99).unwrap();
 
-        let full = vs.validator_state(addr).unwrap().lifecycle().clone();
-        let hot = vs.validator_lifecycle(addr).unwrap();
-        assert_eq!(full, hot);
-        assert_eq!(
-            hot,
-            crate::ValidatorLifecycle::JailHeightOutsideJailed {
-                lifecycle: Box::new(crate::ValidatorLifecycle::ShareOutsideCommitteeLifecycle(
-                    Box::new(crate::ValidatorLifecycle::ReadinessOutsidePending(
-                        Box::new(crate::ValidatorLifecycle::Unbonding,)
-                    ),)
-                ),),
-                jailed_at: 99,
-            }
-        );
+        assert!(matches!(
+            vs.validator_state(addr),
+            Err(PrecompileError::Fatal(_))
+        ));
+        assert!(matches!(
+            vs.validator_lifecycle(addr),
+            Err(PrecompileError::Fatal(_))
+        ));
     });
 }
 
@@ -368,10 +398,7 @@ fn test_force_exit() {
     with_vs_configured(10, |vs| {
         vs.register_validator(OWNER, val_addr, &dummy_consensus_pubkey(5))
             .unwrap();
-        vs.activate_validator(val_addr).unwrap();
-        vs.val_has_bls_share.write(&val_addr, true).unwrap();
-        // D-03 compatibility residue must not hide the ACTIVE phase from epoch work.
-        vs.val_join_confirmed.write(&val_addr, true).unwrap();
+        activate_for_test(vs, val_addr);
 
         vs.force_exit_validator(val_addr).unwrap();
         assert_eq!(vs.val_status.read(&val_addr).unwrap(), status::EXITING);
@@ -461,14 +488,14 @@ fn test_record_finalized_participation_accepts_historical_validators() {
         vs.activate_validator(val_active).unwrap();
         vs.val_has_bls_share.write(&val_active, true).unwrap();
 
-        // Registered historical participant: status UNBONDING, no BLS share.
-        // record_participation would reject this, but record_finalized_participation must accept.
+        // Registered historical participant: canonically exit the live set to
+        // UNBONDING. record_participation rejects it, while finalized-parent
+        // accounting still accepts its retained registry/history record.
         vs.register_validator(OWNER, val_unbonding, &dummy_consensus_pubkey(82))
             .unwrap();
-        vs.val_status
-            .write(&val_unbonding, status::UNBONDING)
-            .unwrap();
-        vs.val_has_bls_share.write(&val_unbonding, false).unwrap();
+        activate_for_test(vs, val_unbonding);
+        vs.deactivate_validator(OWNER, val_unbonding).unwrap();
+        vs.activate_reshared_set(&[val_active], B256::ZERO).unwrap();
 
         // Sanity: record_participation rejects historical val_unbonding.
         // Participation/registration checks revert (not Fatal) so the error
@@ -660,7 +687,12 @@ fn test_consensus_set() {
         assert_eq!(vs.val_status.read(&val1).unwrap(), status::REGISTERED);
         assert_eq!(vs.val_status.read(&val2).unwrap(), status::REGISTERED);
 
-        // Activate reshared set with val1 and val2 (not val3)
+        // Stake/readiness fixtures make val1 and val2 eligible for boundary
+        // inclusion. val3 deliberately remains WaitingForStake.
+        activate_for_test(vs, val1);
+        activate_for_test(vs, val2);
+
+        // Commit a same-member reshared set with val1 and val2 (not val3).
         vs.activate_reshared_set(&[val1, val2], group_key).unwrap();
 
         // val1 and val2 should be ACTIVE with has_bls_share
@@ -703,7 +735,10 @@ fn test_exiting_to_unbonding_via_reshare() {
         vs.register_validator(OWNER, val2, &dummy_consensus_pubkey(0xD2))
             .unwrap();
 
-        // First reshare: both active
+        activate_for_test(vs, val1);
+        activate_for_test(vs, val2);
+
+        // First reshare: both remain active.
         vs.activate_reshared_set(&[val1, val2], group_key).unwrap();
         assert_eq!(vs.val_status.read(&val1).unwrap(), status::ACTIVE);
         assert_eq!(vs.val_status.read(&val2).unwrap(), status::ACTIVE);
@@ -736,6 +771,8 @@ fn test_deactivated_validator_stays_current_consensus_participant_until_reshare(
             .unwrap();
         vs.register_validator(OWNER, val2, &dummy_consensus_pubkey(0xD2))
             .unwrap();
+        activate_for_test(vs, val1);
+        activate_for_test(vs, val2);
         vs.activate_reshared_set(&[val1, val2], B256::with_last_byte(0xD1))
             .unwrap();
 
@@ -774,6 +811,8 @@ fn test_force_exited_validator_stays_current_consensus_participant_until_reshare
             .unwrap();
         vs.register_validator(OWNER, val2, &dummy_consensus_pubkey(0xF2))
             .unwrap();
+        activate_for_test(vs, val1);
+        activate_for_test(vs, val2);
         vs.activate_reshared_set(&[val1, val2], B256::with_last_byte(0xF1))
             .unwrap();
 
@@ -790,12 +829,163 @@ fn test_force_exited_validator_stays_current_consensus_participant_until_reshare
         vs.force_exit_validator(val2).unwrap();
         assert!(vs.val_has_bls_share.read(&val2).unwrap());
         assert!(vs.is_consensus_participant(val2).unwrap());
-        assert_eq!(vs.val_slash_count.read(&val2).unwrap(), 2);
+        assert_eq!(vs.val_slash_count.read(&val2).unwrap(), 1);
 
         vs.activate_reshared_set(&[val1], B256::with_last_byte(0xF2))
             .unwrap();
         assert_eq!(vs.val_status.read(&val2).unwrap(), status::UNBONDING);
         assert!(!vs.is_consensus_participant(val2).unwrap());
+    });
+}
+
+#[test]
+fn post_freeze_exit_is_retained_then_excluded_at_a_later_boundary() {
+    let survivor = address!("0x0000000000000000000000000000000000000E11");
+    let exiting = address!("0x0000000000000000000000000000000000000E12");
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    // The target was frozen at height 10; the exit request lands afterwards.
+    storage.set_block_number(11);
+
+    StorageHandle::enter(&mut storage, |storage| {
+        let mut vs = ValidatorSet::new(storage);
+        vs.config_owner.write(OWNER).unwrap();
+        vs.config_max_validators.write(10).unwrap();
+        vs.register_validator(OWNER, survivor, &dummy_consensus_pubkey(0xE1))
+            .unwrap();
+        vs.register_validator(OWNER, exiting, &dummy_consensus_pubkey(0xE2))
+            .unwrap();
+        activate_staked_for_test(&mut vs, survivor);
+        activate_staked_for_test(&mut vs, exiting);
+
+        vs.deactivate_validator(OWNER, exiting).unwrap();
+        assert!(matches!(
+            vs.validator_lifecycle(exiting).unwrap(),
+            ValidatorLifecycle::Exiting(_)
+        ));
+
+        // The height-10 frozen target still contains the validator. Retaining it
+        // is required: excluding it here would apply post-freeze state to a
+        // historical target and make honest nodes disagree about the boundary.
+        let retained_hash = B256::with_last_byte(0xE1);
+        vs.test_activate_validated_boundary_set(&[survivor, exiting], retained_hash, 10)
+            .unwrap();
+        assert!(matches!(
+            vs.validator_lifecycle(exiting).unwrap(),
+            ValidatorLifecycle::Exiting(_)
+        ));
+        assert!(vs.is_consensus_participant(exiting).unwrap());
+        assert!(vs.has_pending_set_change().unwrap());
+
+        // Once the exit is visible at the freeze height, retaining it is an
+        // invalid artifact. Verify the failed plan leaves every observed field
+        // unchanged before applying the correct exclusion boundary.
+        let survivor_before = vs.validator_lifecycle(survivor).unwrap();
+        let exiting_before = vs.validator_lifecycle(exiting).unwrap();
+        let pending_before = vs.has_pending_set_change().unwrap();
+        let hash_before = vs.active_consensus_set_hash().unwrap();
+        let err = vs
+            .test_activate_validated_boundary_set(
+                &[survivor, exiting],
+                B256::with_last_byte(0xEE),
+                11,
+            )
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            PrecompileError::Fatal(message)
+                if message.contains("retained validator")
+                    && message.contains("exited at 11 before freeze 11")
+        ));
+        assert_eq!(vs.validator_lifecycle(survivor).unwrap(), survivor_before);
+        assert_eq!(vs.validator_lifecycle(exiting).unwrap(), exiting_before);
+        assert_eq!(vs.has_pending_set_change().unwrap(), pending_before);
+        assert_eq!(vs.active_consensus_set_hash().unwrap(), hash_before);
+
+        let excluded_hash = B256::with_last_byte(0xE2);
+        vs.test_activate_validated_boundary_set(&[survivor], excluded_hash, 12)
+            .unwrap();
+        assert!(matches!(
+            vs.validator_lifecycle(exiting).unwrap(),
+            ValidatorLifecycle::Unbonding(_)
+        ));
+        assert!(!vs.is_consensus_participant(exiting).unwrap());
+        assert!(!vs.has_pending_set_change().unwrap());
+        assert_eq!(vs.active_consensus_set_hash().unwrap(), excluded_hash);
+    });
+}
+
+#[test]
+fn post_freeze_jail_is_retained_then_excluded_at_a_later_boundary() {
+    let survivor = address!("0x0000000000000000000000000000000000000A11");
+    let jailed = address!("0x0000000000000000000000000000000000000A12");
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    // The target was frozen at height 10; punishment lands afterwards.
+    storage.set_block_number(11);
+
+    StorageHandle::enter(&mut storage, |storage| {
+        let mut vs = ValidatorSet::new(storage);
+        vs.config_owner.write(OWNER).unwrap();
+        vs.config_max_validators.write(10).unwrap();
+        vs.register_validator(OWNER, survivor, &dummy_consensus_pubkey(0xA1))
+            .unwrap();
+        vs.register_validator(OWNER, jailed, &dummy_consensus_pubkey(0xA2))
+            .unwrap();
+        activate_staked_for_test(&mut vs, survivor);
+        activate_staked_for_test(&mut vs, jailed);
+
+        vs.jail_validator(jailed).unwrap();
+        assert!(matches!(
+            vs.validator_lifecycle(jailed).unwrap(),
+            ValidatorLifecycle::JailRetained(_)
+        ));
+        assert_eq!(vs.val_jailed_at_height.read(&jailed).unwrap(), 11);
+
+        // The historical height-10 target still contains the newly jailed
+        // validator, so this boundary retains its live-share accountability.
+        let retained_hash = B256::with_last_byte(0xA1);
+        vs.test_activate_validated_boundary_set(&[survivor, jailed], retained_hash, 10)
+            .unwrap();
+        assert!(matches!(
+            vs.validator_lifecycle(jailed).unwrap(),
+            ValidatorLifecycle::JailRetained(_)
+        ));
+        assert!(vs.is_consensus_participant(jailed).unwrap());
+        assert!(vs.has_pending_set_change().unwrap());
+
+        // At a freeze that can see the jail, retaining it must fail without
+        // committing lifecycle/hash/signal changes.
+        let survivor_before = vs.validator_lifecycle(survivor).unwrap();
+        let jailed_before = vs.validator_lifecycle(jailed).unwrap();
+        let pending_before = vs.has_pending_set_change().unwrap();
+        let hash_before = vs.active_consensus_set_hash().unwrap();
+        let err = vs
+            .test_activate_validated_boundary_set(
+                &[survivor, jailed],
+                B256::with_last_byte(0xAA),
+                11,
+            )
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            PrecompileError::Fatal(message)
+                if message.contains("retained validator")
+                    && message.contains("jailed at 11 before freeze 11")
+        ));
+        assert_eq!(vs.validator_lifecycle(survivor).unwrap(), survivor_before);
+        assert_eq!(vs.validator_lifecycle(jailed).unwrap(), jailed_before);
+        assert_eq!(vs.has_pending_set_change().unwrap(), pending_before);
+        assert_eq!(vs.active_consensus_set_hash().unwrap(), hash_before);
+
+        let excluded_hash = B256::with_last_byte(0xA2);
+        vs.test_activate_validated_boundary_set(&[survivor], excluded_hash, 12)
+            .unwrap();
+        assert!(matches!(
+            vs.validator_lifecycle(jailed).unwrap(),
+            ValidatorLifecycle::Jail(_)
+        ));
+        assert!(!vs.is_consensus_participant(jailed).unwrap());
+        assert!(!vs.has_pending_set_change().unwrap());
+        assert_eq!(vs.active_consensus_set_hash().unwrap(), excluded_hash);
     });
 }
 
@@ -815,7 +1005,9 @@ fn test_pending_set_change() {
             .unwrap();
         assert!(vs.has_pending_set_change().unwrap());
 
-        // activateResharedSet clears it
+        activate_for_test(vs, val_addr);
+
+        // A valid same-member boundary clears it.
         let group_key = B256::with_last_byte(0xEE);
         vs.activate_reshared_set(&[val_addr], group_key).unwrap();
         assert!(!vs.has_pending_set_change().unwrap());
@@ -830,7 +1022,7 @@ fn test_pending_set_change() {
 // 14b. test_pending_set_change_missed_validator
 // ---------------------------------------------------------------------------
 #[test]
-fn test_pending_set_change_missed_validator() {
+fn test_boundary_rejects_missed_active_validator_atomically() {
     let val1 = address!("0x00000000000000000000000000000000000000A1");
     let val2 = address!("0x00000000000000000000000000000000000000A2");
     let val3 = address!("0x00000000000000000000000000000000000000A3");
@@ -845,7 +1037,11 @@ fn test_pending_set_change_missed_validator() {
         vs.register_validator(OWNER, val3, &dummy_consensus_pubkey(0xA3))
             .unwrap();
 
-        // First reshare: all 3 validators participate → all ACTIVE
+        for val in [val1, val2, val3] {
+            activate_for_test(vs, val);
+        }
+
+        // First reshare: all 3 validators participate → all ACTIVE.
         vs.activate_reshared_set(&[val1, val2, val3], group_key1)
             .unwrap();
         assert_eq!(vs.val_status.read(&val1).unwrap(), status::ACTIVE);
@@ -854,26 +1050,20 @@ fn test_pending_set_change_missed_validator() {
         // All covered → pending cleared
         assert!(!vs.has_pending_set_change().unwrap());
 
-        // Second reshare: val3 missed the ceremony → only val1, val2 in new set
-        vs.activate_reshared_set(&[val1, val2], group_key2).unwrap();
+        // A purported validated boundary may not silently omit an existing
+        // ACTIVE participant. The planner rejects it before writing anything.
+        assert!(matches!(
+            vs.activate_reshared_set(&[val1, val2], group_key2),
+            Err(PrecompileError::Fatal(_))
+        ));
 
-        // val1 and val2 have shares
+        // The complete prior committee, hash, and repair signal are unchanged.
         assert!(vs.val_has_bls_share.read(&val1).unwrap());
         assert!(vs.val_has_bls_share.read(&val2).unwrap());
-
-        // val3 is still ACTIVE but has NO share (missed ceremony)
         assert_eq!(vs.val_status.read(&val3).unwrap(), status::ACTIVE);
-        assert!(!vs.val_has_bls_share.read(&val3).unwrap());
-
-        // pending_set_change remains true — triggers another reshare
-        assert!(vs.has_pending_set_change().unwrap());
-
-        // Third reshare: all 3 participate again → pending cleared
-        let group_key3 = B256::with_last_byte(0xCC);
-        vs.activate_reshared_set(&[val1, val2, val3], group_key3)
-            .unwrap();
-        assert!(!vs.has_pending_set_change().unwrap());
         assert!(vs.val_has_bls_share.read(&val3).unwrap());
+        assert_eq!(vs.active_consensus_set_hash.read().unwrap(), group_key1);
+        assert!(!vs.has_pending_set_change().unwrap());
     });
 }
 
@@ -925,12 +1115,7 @@ fn test_reregister_inactive_validator() {
     with_vs_configured(10, |vs| {
         // Register and transition to INACTIVE
         vs.register_validator(OWNER, val_addr, &pk_old).unwrap();
-        vs.activate_validator(val_addr).unwrap();
-        vs.val_status.write(&val_addr, status::INACTIVE).unwrap();
-        // D-06 residues do not change the persisted phase and must not block
-        // re-registration.
-        vs.val_join_confirmed.write(&val_addr, true).unwrap();
-        vs.val_jailed_at_height.write(&val_addr, 44).unwrap();
+        make_inactive_for_test(vs, val_addr);
 
         // Re-register with a new pubkey
         vs.register_validator(OWNER, val_addr, &pk_new).unwrap();
@@ -963,8 +1148,8 @@ fn test_reregister_inactive_validator() {
         assert_eq!(record.slash_count, 0);
         assert_eq!(record.missed_blocks, 0);
         assert!(record.stake.is_zero());
-        assert!(vs.val_join_confirmed.read(&val_addr).unwrap());
-        assert_eq!(vs.val_jailed_at_height.read(&val_addr).unwrap(), 44);
+        assert!(!vs.val_join_confirmed.read(&val_addr).unwrap());
+        assert_eq!(vs.val_jailed_at_height.read(&val_addr).unwrap(), 0);
     });
 }
 
@@ -1039,12 +1224,10 @@ fn test_cleanup_inactive_validators() {
             .unwrap();
         assert_eq!(vs.validator_count.read().unwrap(), 5);
 
-        // Mark val2 and val4 as INACTIVE
-        vs.val_status.write(&val2, status::INACTIVE).unwrap();
-        vs.val_status.write(&val4, status::INACTIVE).unwrap();
-        // Preserved D-06 fields wrap the lifecycle but must not hide its phase.
-        vs.val_join_confirmed.write(&val2, true).unwrap();
-        vs.val_jailed_at_height.write(&val4, 44).unwrap();
+        // Move val2 and val4 through the canonical exit and claim-completion
+        // transitions before cleaning their registry slots.
+        make_inactive_for_test(vs, val2);
+        make_inactive_for_test(vs, val4);
 
         // Cleanup all INACTIVE entries
         let removed = vs.cleanup_inactive_validators(0).unwrap();
@@ -1079,10 +1262,10 @@ fn test_cleanup_capped() {
         vs.register_validator(OWNER, val3, &dummy_consensus_pubkey(0xB3))
             .unwrap();
 
-        // Mark all as INACTIVE
-        vs.val_status.write(&val1, status::INACTIVE).unwrap();
-        vs.val_status.write(&val2, status::INACTIVE).unwrap();
-        vs.val_status.write(&val3, status::INACTIVE).unwrap();
+        // Move all three through canonical INACTIVE records.
+        make_inactive_for_test(vs, val1);
+        make_inactive_for_test(vs, val2);
+        make_inactive_for_test(vs, val3);
 
         // Cap at 2
         let removed = vs.cleanup_inactive_validators(2).unwrap();
@@ -1116,9 +1299,7 @@ fn test_reregistration_cooldown_gates_then_allows() {
         vs.config_reregistration_cooldown.write(1000).unwrap();
         vs.register_validator(OWNER, val, &dummy_consensus_pubkey(0xCC))
             .unwrap();
-        vs.activate_validator(val).unwrap();
-        vs.val_status.write(&val, status::INACTIVE).unwrap();
-        vs.val_deactivated_at_height.write(&val, 100).unwrap();
+        make_inactive_for_test(&mut vs, val);
     });
 
     // h500: only 400 blocks elapsed → rejected with a cooldown error.
@@ -1154,9 +1335,7 @@ fn test_reregistration_no_cooldown_configured() {
         assert_eq!(vs.config_reregistration_cooldown.read().unwrap(), 0);
 
         vs.register_validator(OWNER, val, &pk).unwrap();
-        vs.activate_validator(val).unwrap();
-        vs.val_status.write(&val, status::INACTIVE).unwrap();
-        vs.val_deactivated_at_height.write(&val, 50).unwrap();
+        make_inactive_for_test(vs, val);
 
         // Re-register immediately — should succeed (no cooldown)
         let pk_new = dummy_consensus_pubkey(0xBB);
@@ -1326,13 +1505,13 @@ fn test_stale_join_guard_resets_on_restake() {
             .unwrap();
         vs.mark_pending(pend).unwrap();
         vs.confirm_validator_ready(pend).unwrap();
-        let in_target = |vs: &mut crate::schema::ValidatorSet| {
+        let in_target = |vs: &mut crate::schema::ValidatorSet, addr| {
             vs.get_reshare_target_set()
                 .unwrap()
                 .into_iter()
-                .any(|v| v.validator_address == pend)
+                .any(|v| v.validator_address == addr)
         };
-        assert!(in_target(vs), "confirmed PENDING is in the target");
+        assert!(in_target(vs, pend), "confirmed PENDING is in the target");
 
         // Promotion clears the flag; demote back to REGISTERED then re-PENDING.
         vs.activate_reshared_set(&[pend], B256::ZERO).unwrap();
@@ -1345,7 +1524,7 @@ fn test_stale_join_guard_resets_on_restake() {
             .unwrap();
         vs.mark_pending(pend2).unwrap();
         assert!(
-            !in_target(vs),
+            !in_target(vs, pend2),
             "freshly re-PENDING joiner must NOT be in the target without re-confirming"
         );
     });
@@ -1500,18 +1679,26 @@ fn test_jailed_loses_share_at_reshare() {
 }
 
 #[test]
-fn test_unjail_to_pending_resets_readiness() {
+fn test_unjail_after_exclusion_returns_to_unconfirmed_pending() {
     with_vs_configured(128, |vs| {
         let v = address!("0x1111111111111111111111111111111111111111");
         vs.register_validator(OWNER, v, &dummy_consensus_pubkey(0x01))
             .unwrap();
         vs.activate_validator(v).unwrap();
         vs.val_has_bls_share.write(&v, true).unwrap();
+        vs.val_missed_blocks.write(&v, 7).unwrap();
+        vs.val_missed_votes.write(&v, 9).unwrap();
         vs.jail_validator(v).unwrap();
 
+        // A retained jailed member cannot be unjailed before the committee
+        // boundary has removed its old share.
+        assert!(vs.unjail_to_pending(v).is_err());
+        vs.activate_reshared_set(&[], B256::ZERO).unwrap();
         vs.unjail_to_pending(v).unwrap();
         assert_eq!(vs.val_status.read(&v).unwrap(), status::PENDING);
         assert_eq!(vs.val_jailed_at_height.read(&v).unwrap(), 0);
+        assert_eq!(vs.val_missed_blocks.read(&v).unwrap(), 0);
+        assert_eq!(vs.val_missed_votes.read(&v).unwrap(), 0);
         // Must re-confirm readiness before re-entering the reshare target.
         assert!(!vs.val_join_confirmed.read(&v).unwrap());
         assert!(!vs
@@ -1525,6 +1712,38 @@ fn test_unjail_to_pending_resets_readiness() {
             .unwrap()
             .iter()
             .any(|r| r.validator_address == v));
+    });
+}
+
+#[test]
+fn excluded_jail_accepts_late_finalized_participation_then_unjail_clears_it() {
+    with_vs_configured(128, |vs| {
+        let v = address!("0x1111111111111111111111111111111111111111");
+        vs.register_validator(OWNER, v, &dummy_consensus_pubkey(0x01))
+            .unwrap();
+        vs.activate_validator(v).unwrap();
+        vs.val_has_bls_share.write(&v, true).unwrap();
+        vs.val_missed_blocks.write(&v, 7).unwrap();
+        vs.val_missed_votes.write(&v, 9).unwrap();
+        vs.jail_validator(v).unwrap();
+
+        vs.activate_reshared_set(&[], B256::ZERO).unwrap();
+        assert_eq!(vs.val_missed_blocks.read(&v).unwrap(), 0);
+        assert_eq!(vs.val_missed_votes.read(&v).unwrap(), 0);
+
+        // A late certificate for the historical committee may arrive after the
+        // exclusion boundary. The excluded Jail state must remain decodable.
+        vs.record_finalized_participation(&[], &[v]).unwrap();
+        assert_eq!(vs.val_missed_votes.read(&v).unwrap(), 1);
+        let jailed = vs.validator_state(v).unwrap();
+        assert!(matches!(jailed.lifecycle(), ValidatorLifecycle::Jail(_)));
+        assert_eq!(jailed.history().unwrap().missed_votes(), 1);
+
+        // Rejoining always starts from a clean per-epoch miss slate, including
+        // late historical misses recorded after exclusion.
+        vs.unjail_to_pending(v).unwrap();
+        assert_eq!(vs.val_missed_blocks.read(&v).unwrap(), 0);
+        assert_eq!(vs.val_missed_votes.read(&v).unwrap(), 0);
     });
 }
 
@@ -1566,6 +1785,7 @@ fn test_unjail_cooldown_blocks() {
         vs.val_has_bls_share.write(&v, true).unwrap();
         vs.jail_validator(v).unwrap();
         assert_eq!(vs.val_jailed_at_height.read(&v).unwrap(), 100);
+        vs.activate_reshared_set(&[], B256::ZERO).unwrap();
         // 100 < 100 + 50 → still in cooldown.
         assert!(
             vs.unjail_to_pending(v).is_err(),
@@ -1612,43 +1832,56 @@ fn test_already_active_validator_does_not_raise_pending() {
 #[test]
 fn force_exit_from_each_status() {
     // force_exit_validator across every starting status: ACTIVE→EXITING, an
-    // already-EXITING re-signal, the UNBONDING/INACTIVE idempotent no-ops, and the
-    // REGISTERED rejection. (Repeated-call slash_count accumulation is below.)
+    // already-EXITING idempotent call, the UNBONDING/INACTIVE idempotent no-ops,
+    // and the REGISTERED rejection.
     let val = address!("0x0909090909090909090909090909090909090909");
-    // (label, status to write before force-exit (None = stay REGISTERED), expect_ok, final status)
-    let cases: &[(&str, Option<u8>, bool, u8)] = &[
-        (
-            "ACTIVE -> EXITING",
-            Some(status::ACTIVE),
-            true,
-            status::EXITING,
-        ),
-        (
-            "EXITING re-signal",
-            Some(status::EXITING),
-            true,
-            status::EXITING,
-        ),
+    #[derive(Clone, Copy)]
+    enum Setup {
+        Active,
+        Exiting,
+        Unbonding,
+        Inactive,
+        Registered,
+    }
+    let cases: &[(&str, Setup, bool, u8)] = &[
+        ("ACTIVE -> EXITING", Setup::Active, true, status::EXITING),
+        ("EXITING idempotent", Setup::Exiting, true, status::EXITING),
         (
             "UNBONDING idempotent",
-            Some(status::UNBONDING),
+            Setup::Unbonding,
             true,
             status::UNBONDING,
         ),
         (
             "INACTIVE idempotent",
-            Some(status::INACTIVE),
+            Setup::Inactive,
             true,
             status::INACTIVE,
         ),
-        ("REGISTERED rejected", None, false, status::REGISTERED),
+        (
+            "REGISTERED rejected",
+            Setup::Registered,
+            false,
+            status::REGISTERED,
+        ),
     ];
-    for (i, (label, start, expect_ok, final_status)) in cases.iter().enumerate() {
+    for (i, (label, setup, expect_ok, final_status)) in cases.iter().enumerate() {
         with_vs_configured(10, |vs| {
             vs.register_validator(OWNER, val, &dummy_consensus_pubkey(90 + i as u8))
                 .unwrap();
-            if let Some(s) = start {
-                vs.val_status.write(&val, *s).unwrap();
+            match setup {
+                Setup::Active => activate_for_test(vs, val),
+                Setup::Exiting => {
+                    activate_for_test(vs, val);
+                    vs.force_exit_validator(val).unwrap();
+                }
+                Setup::Unbonding => {
+                    activate_for_test(vs, val);
+                    vs.deactivate_validator(OWNER, val).unwrap();
+                    vs.activate_reshared_set(&[], B256::ZERO).unwrap();
+                }
+                Setup::Inactive => make_inactive_for_test(vs, val),
+                Setup::Registered => {}
             }
             assert_eq!(
                 vs.force_exit_validator(val).is_ok(),
@@ -1676,7 +1909,7 @@ fn test_repeated_force_exit_remains_exiting() {
         vs.force_exit_validator(val).unwrap();
         vs.force_exit_validator(val).unwrap();
         assert_eq!(vs.val_status.read(&val).unwrap(), status::EXITING);
-        assert_eq!(vs.val_slash_count.read(&val).unwrap(), 2);
+        assert_eq!(vs.val_slash_count.read(&val).unwrap(), 1);
     });
 }
 
@@ -1741,7 +1974,7 @@ fn test_epoch_reset_includes_exiting() {
         vs.val_missed_blocks.write(&val, 10).unwrap();
         vs.val_missed_votes.write(&val, 5).unwrap();
         vs.val_blocks_proposed.write(&val, 3).unwrap();
-        vs.val_status.write(&val, status::EXITING).unwrap();
+        vs.deactivate_validator(OWNER, val).unwrap();
 
         // Epoch transition should reset counters even for EXITING
         vs.update_epoch(1000, 42).unwrap();
@@ -1817,7 +2050,12 @@ fn m27_self_registration_capped_owner_bypasses() {
 
         // The owner can still register validators directly, bypassing the cap.
         let owner_val = address!("0x000000000000000000000000000000000000beef");
-        vs.register_validator_with_sig(OWNER, owner_val, &[0xABu8; 48], None)
+        let mut ikm = [9u8; 32];
+        ikm[28..].copy_from_slice(&(MAX_SELF_REGISTERED_UNSTAKED + 1).to_be_bytes());
+        let owner_sk = SecretKey::key_gen(&ikm, &[]).unwrap();
+        let owner_pk: [u8; 48] = owner_sk.sk_to_pk().to_bytes();
+        let owner_sig: [u8; 96] = owner_sk.sign(owner_val.as_slice(), DST, &[]).to_bytes();
+        vs.register_validator_with_sig(OWNER, owner_val, &owner_pk, Some(&owner_sig))
             .expect("owner registration must bypass the self-registration cap");
         assert!(vs.is_validator(owner_val).unwrap());
     });

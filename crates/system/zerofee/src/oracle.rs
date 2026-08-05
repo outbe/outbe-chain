@@ -8,7 +8,7 @@ use crate::hooks::{
     ZeroFeeTransaction,
 };
 use outbe_oracle::precompile::IOracle;
-use outbe_validatorset::{ActiveState, ValidatorLifecycle};
+use outbe_validatorset::ValidatorLifecycle;
 
 /// Maximum calldata bytes accepted for a zero-fee oracle vote.
 pub const MAX_ZERO_FEE_ORACLE_CALLDATA_BYTES: usize = 16 * 1024;
@@ -104,8 +104,8 @@ fn validate_oracle_submit_vote_state(
         )?
         .ok_or(ZeroFeePolicyError::UnauthorizedSigner)?;
     if !matches!(
-        vs.validator_lifecycle(validator)?.phase(),
-        ValidatorLifecycle::Active(ActiveState::Participating)
+        vs.validator_lifecycle(validator)?,
+        ValidatorLifecycle::Active(_)
     ) {
         return Err(ZeroFeePolicyError::UnauthorizedSigner);
     }
@@ -209,12 +209,12 @@ mod tests {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(owner).unwrap();
             vs.config_max_validators.write(1).unwrap();
-            vs.register_validator(owner, VALIDATOR, &[1; 48]).unwrap();
-            vs.test_set_lifecycle(
+            vs.test_register_validator_without_pop(VALIDATOR, &[1; 48])
+                .unwrap();
+            vs.test_activate_validator_canonically(
                 VALIDATOR,
-                ValidatorLifecycle::ReadinessOutsidePending(Box::new(ValidatorLifecycle::Active(
-                    ActiveState::Participating,
-                ))),
+                outbe_validatorset::StakeProjection::new(U256::from(1), None),
+                U256::from(1),
             )
             .unwrap();
 

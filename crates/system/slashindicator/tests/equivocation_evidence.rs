@@ -126,19 +126,26 @@ fn setup(storage: StorageHandle, sk: &SecretKey) {
     epoch.number = U256::from(1u64);
     vs.test_set_epoch_snapshot(epoch).unwrap();
     let pk: [u8; 48] = sk.sk_to_pk().to_bytes();
-    vs.register_validator(OWNER, ACCUSED, &pk).unwrap();
-    vs.activate_validator(ACCUSED).unwrap();
-    vs.test_set_stake_projection(
+    vs.test_register_validator_without_pop(ACCUSED, &pk)
+        .unwrap();
+    vs.test_activate_validator_canonically(
         ACCUSED,
         StakeProjection::new(U256::from(1_000_000u64), None),
+        U256::from(1),
     )
     .unwrap();
 
     // evidence precompiles require an ACTIVE-validator submitter.
     let mut sub_pk = [0u8; 48];
     sub_pk[0] = 0x77;
-    vs.register_validator(OWNER, SUBMITTER, &sub_pk).unwrap();
-    vs.activate_validator(SUBMITTER).unwrap();
+    vs.test_register_validator_without_pop(SUBMITTER, &sub_pk)
+        .unwrap();
+    vs.test_activate_validator_canonically(
+        SUBMITTER,
+        StakeProjection::new(U256::from(1), None),
+        U256::from(1),
+    )
+    .unwrap();
 
     // the evidence verifier resolves the committee for the vote's epoch via
     // the snapshot ring. Seed it across the retained ring window so any test
@@ -150,14 +157,16 @@ fn setup(storage: StorageHandle, sk: &SecretKey) {
 }
 
 fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
-    HashMapStorageProvider::new(CHAIN_ID).enter(f)
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_block_number(1);
+    storage.enter(f)
 }
 
 fn assert_jailed_once(storage: &StorageHandle) {
     let vs = ValidatorSet::new(storage.clone());
     assert!(matches!(
         vs.validator_lifecycle(ACCUSED).unwrap(),
-        ValidatorLifecycle::Jailed(_)
+        ValidatorLifecycle::JailRetained(_)
     ));
     let si = SlashIndicator::new(storage.clone());
     assert_eq!(si.felony_count.read(&ACCUSED).unwrap(), 1);
