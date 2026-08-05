@@ -94,10 +94,7 @@ pub fn is_active_ocomp_fork_install(
     let profile = contract.read_ocomp_request_profile(&limits)?;
     let authority = contract.read_ocomp_activation_authority(&limits)?;
     Ok(profile.as_ref() == Some(&install.request_profile)
-        && authority.is_some_and(|authority| {
-            authority.bundle == install.protocol_bundle
-                && authority.result_committee == install.result_committee
-        }))
+        && authority.is_some_and(|authority| authority.bundle == install.protocol_bundle))
 }
 
 /// Reads the durable Metadosis-owned semantic result for one Cycle day-limit

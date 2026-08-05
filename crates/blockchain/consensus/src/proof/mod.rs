@@ -46,8 +46,8 @@ pub use seed_partial::{
     verify_seed_partial_attest, verify_seed_partial_attest_bytes, verify_seed_signature_plain,
 };
 pub use verifier::{
-    verify_v2_proof, verify_v2_proof_low_level, CommitteeSnapshotView, VerifiedProof, VoteBinding,
-    VoteSubject,
+    simplex_n3f1_quorum, verify_v2_proof, verify_v2_proof_low_level, CommitteeSnapshotView,
+    VerifiedProof, VoteBinding, VoteSubject,
 };
 
 // Generic re-exports of Simplex certificate envelope types. Callers parameterize

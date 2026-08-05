@@ -229,8 +229,10 @@ impl OcompJobRecordV1 {
                     "completed applied receipt",
                 )
             }
-            (OcompJobStatus::Expired, Some(finalized), Some(terminal)) => require(
-                finalized.quorum.is_none()
+            (OcompJobStatus::Expired, finalized, Some(terminal)) => require(
+                finalized
+                    .as_ref()
+                    .is_none_or(|finalized| finalized.quorum.is_none())
                     && terminal.outcome == OcompTerminalOutcome::Expired
                     && terminal.next_pending_nonce.is_some()
                     && terminal.completed_binding.is_none(),

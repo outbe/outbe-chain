@@ -12,6 +12,9 @@ use outbe_primitives::{
     storage::{hashmap::HashMapStorageProvider, MetadosisMutationPurposeTag, StorageHandle},
 };
 use outbe_tribute::{TributeContract, TributeData};
+use outbe_validatorset::{
+    contract::ValidatorSet, read_ocomp_snapshot_extension, OcompSnapshotExtensionV1,
+};
 
 use super::{ocomp_storage::request_profile, TestParent};
 use crate::{
@@ -34,6 +37,32 @@ use crate::{
 
 mod p5_models;
 
+fn seed_active_ocomp_snapshot(
+    storage: StorageHandle<'_>,
+    member_count: u8,
+) -> OcompSnapshotExtensionV1 {
+    let owner = address!("0A0000000000000000000000000000000000000A");
+    let mut validators = ValidatorSet::new(storage.clone());
+    validators.config_owner.write(owner).unwrap();
+    validators
+        .set_config_max_validators(u32::from(member_count))
+        .unwrap();
+    let mut snapshot_key = B256::ZERO;
+    for index in 0..member_count {
+        let validator = alloy_primitives::Address::repeat_byte(0xA0 + index);
+        let consensus_pubkey = [0x20 + index; 48];
+        validators
+            .register_validator(owner, validator, &consensus_pubkey)
+            .unwrap();
+        snapshot_key = validators
+            .activate_validator_via_boundary_for_test(validator)
+            .unwrap();
+    }
+    read_ocomp_snapshot_extension(storage, snapshot_key)
+        .unwrap()
+        .expect("active ValidatorSet boundary stores its OCOMP extension")
+}
+
 #[test]
 fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
@@ -50,6 +79,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
     profile.chain_id = chain::CHAIN_ID;
 
     StorageHandle::enter(&mut provider, |storage| {
+        let expected_ocomp_snapshot = seed_active_ocomp_snapshot(storage.clone(), 5);
         seed_ce_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
 
@@ -143,13 +173,27 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
         let requested = fsm.projection();
         assert_eq!(requested.phase, DayPhase::OffchainPending);
         assert_eq!(requested.pending_nonce, 0);
-        assert_eq!(requested.deadline_height, None);
+        assert_eq!(requested.deadline_height, Some(block_number + 64));
         let intent_id = requested.live_intent_id.unwrap();
         let mut record = metadosis
             .ocomp_job_record(intent_id, &poc_schema_limits())
             .unwrap()
             .unwrap();
         assert_eq!(record.status, OcompJobStatus::AwaitingFinality);
+        assert_eq!(
+            record.intent.result_validator_set_epoch,
+            expected_ocomp_snapshot.epoch
+        );
+        assert_eq!(
+            record.intent.result_committee_set_hash,
+            expected_ocomp_snapshot.committee_set_hash
+        );
+        assert_eq!(
+            record.intent.result_ocomp_binding_hash,
+            expected_ocomp_snapshot.ocomp_binding_hash
+        );
+        assert_eq!(record.intent.result_member_count, 5);
+        assert_eq!(record.intent.result_quorum_threshold, 4);
         assert_eq!(
             record.intent.ce_sealed_root,
             scope.completed_sealed_root().unwrap()
@@ -308,6 +352,24 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
             Some(1)
         );
 
+        let mut validators = ValidatorSet::new(storage.clone());
+        validators.set_config_max_validators(6).unwrap();
+        let sixth = alloy_primitives::Address::repeat_byte(0xA5);
+        validators
+            .register_validator(
+                address!("0A0000000000000000000000000000000000000A"),
+                sixth,
+                &[0x25; 48],
+            )
+            .unwrap();
+        let next_snapshot_key = validators
+            .activate_validator_via_boundary_for_test(sixth)
+            .unwrap();
+        let next_ocomp_snapshot = read_ocomp_snapshot_extension(storage.clone(), next_snapshot_key)
+            .unwrap()
+            .unwrap();
+        assert_eq!(next_ocomp_snapshot.member_count, 6);
+
         let retry_height = expiry_height + 1;
         let retry = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(retry_height, block_time + 65, chain::CHAIN_ID),
@@ -329,7 +391,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
             .projection();
         assert_eq!(retried.phase, DayPhase::OffchainPending);
         assert_eq!(retried.pending_nonce, 1);
-        assert_eq!(retried.deadline_height, None);
+        assert_eq!(retried.deadline_height, Some(retry_height + 64));
         let retry_intent_id = retried.live_intent_id.unwrap();
         assert_ne!(retry_intent_id, intent_id);
         let retried_record = metadosis
@@ -339,6 +401,18 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
         assert_eq!(retried_record.status, OcompJobStatus::AwaitingFinality);
         assert_eq!(retried_record.intent.pending_nonce, 1);
         assert_eq!(retried_record.intent.attempt, 1);
+        assert_eq!(
+            retried_record.intent.result_committee_set_hash,
+            next_ocomp_snapshot.committee_set_hash
+        );
+        assert_eq!(
+            retried_record.intent.result_ocomp_binding_hash,
+            next_ocomp_snapshot.ocomp_binding_hash
+        );
+        assert_eq!(retried_record.intent.result_member_count, 6);
+        assert_eq!(retried_record.intent.result_quorum_threshold, 5);
+        assert_eq!(terminal.intent.result_member_count, 5);
+        assert_eq!(terminal.intent.result_quorum_threshold, 4);
         assert_eq!(
             retried_record
                 .intent
@@ -670,6 +744,99 @@ fn two_eligible_days_create_independently_progressing_live_jobs() {
 }
 
 #[test]
+fn awaiting_finality_expires_at_own_deadline_and_releases_live_capacity() {
+    let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
+    outbe_fidelity::enclave_client::test_enclave::install();
+    let fixture = prepare_two_ready_days_fixture(&mut provider, true);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        for (block_number, block_time) in [
+            (fixture.block_number, fixture.block_time),
+            (fixture.block_number + 1, fixture.block_time + 1),
+        ] {
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(block_number, block_time, chain::CHAIN_ID),
+                storage.clone(),
+            );
+            run_terminal_request(&ctx, &fixture.scope).unwrap();
+        }
+
+        let limits = JobFsmLimits {
+            max_terminal_records: 365,
+        };
+        let metadosis = MetadosisContract::new(storage.clone());
+        let live = metadosis
+            .live_ocomp_fsm_states(&poc_schema_limits(), limits)
+            .unwrap();
+        assert_eq!(live.len(), 2);
+        let expiring = live
+            .iter()
+            .map(|state| state.projection())
+            .min_by_key(|projection| projection.deadline_height)
+            .unwrap();
+        assert_eq!(expiring.deadline_height, Some(fixture.block_number + 64));
+        let expiring_intent = expiring.live_intent_id.unwrap();
+
+        let expiry = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(
+                fixture.block_number + 64,
+                fixture.block_time + 64,
+                chain::CHAIN_ID,
+            ),
+            storage.clone(),
+        );
+        run_lifecycle_begin(&expiry).unwrap();
+
+        let metadosis = MetadosisContract::new(storage.clone());
+        assert_eq!(
+            metadosis
+                .live_ocomp_fsm_states(&poc_schema_limits(), limits)
+                .unwrap()
+                .len(),
+            1
+        );
+        let expired = metadosis
+            .ocomp_job_record(expiring_intent, &poc_schema_limits())
+            .unwrap()
+            .unwrap();
+        assert_eq!(expired.status, OcompJobStatus::Expired);
+        assert_eq!(
+            expired.terminal.unwrap().outcome,
+            OcompTerminalOutcome::Expired
+        );
+    });
+}
+
+#[test]
+fn terminal_request_rejects_a_missing_current_validator_snapshot() {
+    let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
+    outbe_fidelity::enclave_client::test_enclave::install();
+    let fixture = prepare_request_fixture(&mut provider, true);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        ValidatorSet::new(storage.clone())
+            .committee_snapshot_key_ring
+            .write(&0, B256::ZERO)
+            .unwrap();
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(
+                fixture.block_number,
+                fixture.block_time,
+                chain::CHAIN_ID,
+            ),
+            storage,
+        );
+        let error = run_terminal_request(&ctx, &fixture.scope).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("current ValidatorSet OCOMP snapshot is missing or inconsistent"),
+            "{error}"
+        );
+    });
+}
+
+#[test]
 fn nonzero_owner_projections_are_snapshotted_in_the_created_intent() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
     outbe_fidelity::enclave_client::test_enclave::install();
@@ -936,6 +1103,7 @@ fn prepare_request_fixture_with_day_type(
 
     outbe_fidelity::enclave_client::test_enclave::install();
     StorageHandle::enter(provider, |storage| {
+        seed_active_ocomp_snapshot(storage.clone(), 5);
         seed_ce_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
 
@@ -1038,6 +1206,7 @@ fn prepare_two_ready_days_fixture(
 
     outbe_fidelity::enclave_client::test_enclave::install();
     StorageHandle::enter(provider, |storage| {
+        seed_active_ocomp_snapshot(storage.clone(), 5);
         seed_ce_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
         let mut oracle = OracleContract::new(storage.clone());

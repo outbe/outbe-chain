@@ -163,13 +163,12 @@ fn verify_v2_proof_rejects_wrong_seed_message() {
 
 #[test]
 fn quorum_constant_matches_n3f1() {
-    // Sanity: the verifier's internal `simplex_n3f1_quorum` must match
+    // The exported helper is the single source used by both consensus proof
+    // verification and OCOMP attempt construction.
     // commonware_utils::N3f1::quorum for every committee size we test.
-    for n in [1usize, 2, 3, 4, 5, 7, 10, 16, 64, 128] {
+    for n in [1usize, 2, 3, 4, 5, 6, 7, 10, 16, 64, 128] {
         let expected = N3f1::quorum(n as u32) as usize;
-        // Re-derive the verifier formula here; if these disagree, BelowQuorum
-        // would silently misfire.
-        let derived = (2 * n) / 3 + 1;
+        let derived = outbe_consensus::proof::simplex_n3f1_quorum(n);
         assert_eq!(derived, expected, "N3f1 quorum mismatch at n={n}");
     }
 }

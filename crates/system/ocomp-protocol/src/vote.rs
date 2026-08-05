@@ -269,12 +269,16 @@ impl ResultVoteSigningSubjectV1 {
 }
 
 impl ResultVoteV1 {
+    /// Verifies a vote against one member resolved by a stateful caller from
+    /// the exact historical ValidatorSet snapshot pinned by the intent.
     #[allow(clippy::too_many_arguments)]
-    pub fn verify(
+    pub fn verify_historical_member(
         &self,
         finalized_intent: &JobIntentV1,
         expected_job_id: B256,
-        committee: &OcompCommitteeSnapshotV1,
+        member_count: u16,
+        member_key_epoch: u64,
+        member_ocomp_public_key_sec1: &[u8; 33],
         inclusion_height: u64,
         open_height: u64,
         deadline_height: u64,
@@ -302,6 +306,37 @@ impl ResultVoteV1 {
         )?;
         require(
             self.result_validator_set_epoch == finalized_intent.result_validator_set_epoch
+                && self.result_committee_set_hash == finalized_intent.result_committee_set_hash
+                && self.result_ocomp_binding_hash == finalized_intent.result_ocomp_binding_hash
+                && finalized_intent.result_member_count == member_count,
+            "vote committee binding",
+        )?;
+        require(self.validator_index < member_count, "vote validator index")?;
+        require(
+            self.key_epoch == POC_KEY_EPOCH && member_key_epoch == self.key_epoch,
+            "vote key epoch",
+        )?;
+        let signing_digest = self.signing_digest(finalized_intent, limits)?;
+        verify_low_s_prehash(
+            member_ocomp_public_key_sec1,
+            signing_digest,
+            &self.signature_rs,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn verify(
+        &self,
+        finalized_intent: &JobIntentV1,
+        expected_job_id: B256,
+        committee: &OcompCommitteeSnapshotV1,
+        inclusion_height: u64,
+        open_height: u64,
+        deadline_height: u64,
+        limits: &SchemaLimits,
+    ) -> Result<(), ProtocolError> {
+        require(
+            self.result_validator_set_epoch == finalized_intent.result_validator_set_epoch
                 && self.result_validator_set_epoch == committee.snapshot_epoch
                 && self.result_committee_set_hash == finalized_intent.result_committee_set_hash
                 && self.result_ocomp_binding_hash == finalized_intent.result_ocomp_binding_hash
@@ -314,16 +349,24 @@ impl ResultVoteV1 {
             .get(usize::from(self.validator_index))
             .ok_or(ProtocolError::InvalidInvariant("vote validator index"))?;
         require(
-            member.key_epoch == self.key_epoch
-                && member.valid_from_height <= inclusion_height
+            member.valid_from_height <= inclusion_height
                 && inclusion_height < member.valid_until_height_exclusive,
             "vote member validity",
         )?;
-        let signing_digest = self.signing_digest(finalized_intent, limits)?;
-        verify_low_s_prehash(
+        self.verify_historical_member(
+            finalized_intent,
+            expected_job_id,
+            u16::try_from(committee.ordered_members.len()).map_err(|_| {
+                ProtocolError::IntegerOverflow {
+                    what: "vote committee member count",
+                }
+            })?,
+            member.key_epoch,
             &member.ocomp_public_key_sec1,
-            signing_digest,
-            &self.signature_rs,
+            inclusion_height,
+            open_height,
+            deadline_height,
+            limits,
         )
     }
 

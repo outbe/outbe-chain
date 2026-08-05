@@ -10,7 +10,7 @@ use super::state::JobFsmLimits;
 
 const REQUEST_PROFILE_MAGIC: [u8; 4] = *b"OMRP";
 const REQUEST_PROFILE_VERSION: u16 = 1;
-const REQUEST_PROFILE_FIXED_LEN: usize = 4 + 2 + 8 + 8 + 2 + 2 + 32 * 7 + 4;
+const REQUEST_PROFILE_FIXED_LEN: usize = 4 + 2 + 8 + 32 * 5 + 4;
 
 /// Fork-installed authority needed to assemble `JobIntentV1`.
 ///
@@ -26,11 +26,6 @@ pub struct OcompRequestProfile {
     pub correctness_profile_id: B256,
     pub capacity_profile: CapacityProfileV1,
     pub source_availability_policy_id: B256,
-    pub result_validator_set_epoch: u64,
-    pub result_committee_set_hash: B256,
-    pub result_ocomp_binding_hash: B256,
-    pub result_member_count: u16,
-    pub result_quorum_threshold: u16,
 }
 
 impl OcompRequestProfile {
@@ -118,11 +113,6 @@ pub(super) fn validate_request_profile(profile: &OcompRequestProfile) -> Result<
         || profile.protocol_bundle_hash.is_zero()
         || profile.correctness_profile_id.is_zero()
         || profile.source_availability_policy_id.is_zero()
-        || profile.result_committee_set_hash.is_zero()
-        || profile.result_ocomp_binding_hash.is_zero()
-        || profile.result_member_count == 0
-        || profile.result_quorum_threshold == 0
-        || profile.result_quorum_threshold > profile.result_member_count
         || capacity.profile_id.is_zero()
         || capacity.generated_limits_manifest_hash.is_zero()
     {
@@ -188,11 +178,6 @@ fn encode_request_profile(profile: &OcompRequestProfile, limits: &SchemaLimits) 
     encoded.extend_from_slice(profile.protocol_bundle_hash.as_slice());
     encoded.extend_from_slice(profile.correctness_profile_id.as_slice());
     encoded.extend_from_slice(profile.source_availability_policy_id.as_slice());
-    encoded.extend_from_slice(&profile.result_validator_set_epoch.to_be_bytes());
-    encoded.extend_from_slice(profile.result_committee_set_hash.as_slice());
-    encoded.extend_from_slice(profile.result_ocomp_binding_hash.as_slice());
-    encoded.extend_from_slice(&profile.result_member_count.to_be_bytes());
-    encoded.extend_from_slice(&profile.result_quorum_threshold.to_be_bytes());
     encoded.extend_from_slice(&capacity_len.to_be_bytes());
     encoded.extend_from_slice(&capacity);
     if encoded.len() != total {
@@ -217,11 +202,6 @@ fn decode_request_profile(encoded: &[u8], limits: &SchemaLimits) -> Result<Ocomp
     let protocol_bundle_hash = B256::from(reader.take::<32>()?);
     let correctness_profile_id = B256::from(reader.take::<32>()?);
     let source_availability_policy_id = B256::from(reader.take::<32>()?);
-    let result_validator_set_epoch = reader.u64()?;
-    let result_committee_set_hash = B256::from(reader.take::<32>()?);
-    let result_ocomp_binding_hash = B256::from(reader.take::<32>()?);
-    let result_member_count = u16::from_be_bytes(reader.take::<2>()?);
-    let result_quorum_threshold = u16::from_be_bytes(reader.take::<2>()?);
     let capacity_len = usize::try_from(reader.u32()?)
         .map_err(|_| fatal("OCOMP capacity profile length exceeds usize"))?;
     if capacity_len != reader.remaining() {
@@ -239,11 +219,6 @@ fn decode_request_profile(encoded: &[u8], limits: &SchemaLimits) -> Result<Ocomp
         correctness_profile_id,
         capacity_profile,
         source_availability_policy_id,
-        result_validator_set_epoch,
-        result_committee_set_hash,
-        result_ocomp_binding_hash,
-        result_member_count,
-        result_quorum_threshold,
     };
     validate_request_profile(&profile)?;
     if encode_request_profile(&profile, limits)? != encoded {

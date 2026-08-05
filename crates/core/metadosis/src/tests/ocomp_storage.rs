@@ -29,6 +29,7 @@ use crate::precompile::IMetadosis;
 use crate::{
     fixture_kernel::FixtureKernelExt,
     ocomp::{
+        fork::OcompForkInstallClassification,
         schema::{poc_schema_limits, OcompRequestProfile},
         state::{DayPhase, JobFsmLimits},
     },
@@ -77,11 +78,6 @@ pub(super) fn request_profile() -> OcompRequestProfile {
         correctness_profile_id: B256::repeat_byte(0x24),
         capacity_profile: capacity_profile(),
         source_availability_policy_id: B256::repeat_byte(0x35),
-        result_validator_set_epoch: 2,
-        result_committee_set_hash: B256::repeat_byte(0x36),
-        result_ocomp_binding_hash: B256::repeat_byte(0x37),
-        result_member_count: 4,
-        result_quorum_threshold: 3,
     }
 }
 
@@ -112,6 +108,45 @@ fn request_profile_initialization_is_exact_idempotent_and_chain_bound() {
             contract.read_ocomp_request_profile(&limits).unwrap(),
             Some(request_profile())
         );
+    });
+}
+
+#[test]
+fn fork_install_is_exactly_profile_plus_bundle_and_keeps_reserved_slot_zero() {
+    with_storage(|storage| {
+        let limits = poc_schema_limits();
+        let install = crate::fixture_kernel::fork_install_fixture(
+            OcompForkInstallClassification::Measurement,
+            1,
+            1,
+            B256::repeat_byte(0x11),
+        );
+        let encoded = install.encode_canonical(&limits).unwrap();
+        let nested_bytes = install
+            .request_profile
+            .encode_canonical(&limits)
+            .unwrap()
+            .len()
+            + install
+                .protocol_bundle
+                .encode_canonical(&limits)
+                .unwrap()
+                .len();
+        assert_eq!(encoded.len() - nested_bytes, 4 + 2 + 1 + 8 + 4 + 4);
+        assert_eq!(
+            crate::config::OcompForkInstallV1::decode_canonical(&encoded, &limits).unwrap(),
+            install
+        );
+
+        let mut contract = MetadosisContract::new(storage);
+        contract
+            .initialize_ocomp_fork_install(&install, 1, &limits)
+            .unwrap();
+        assert!(contract.ocomp_result_committee_snapshot.is_empty().unwrap());
+        contract
+            .initialize_ocomp_fork_install(&install, 1, &limits)
+            .unwrap();
+        assert!(contract.ocomp_result_committee_snapshot.is_empty().unwrap());
     });
 }
 

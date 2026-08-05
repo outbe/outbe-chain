@@ -243,7 +243,7 @@ fn verify_v2_certificate_low_level(
 
 /// `N3f1` quorum threshold: `floor(2n/3) + 1`. Matches
 /// `commonware_utils::N3f1::quorum(n)` for any `n >= 1`.
-const fn simplex_n3f1_quorum(n: usize) -> usize {
+pub const fn simplex_n3f1_quorum(n: usize) -> usize {
     (2 * n) / 3 + 1
 }
 

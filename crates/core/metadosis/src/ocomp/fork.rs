@@ -5,9 +5,7 @@
 //! reload never select these values.
 
 use alloy_primitives::{keccak256, B256};
-use outbe_ocomp_protocol::{
-    committee::OcompCommitteeSnapshotV1, profile::ProtocolBundleV1, SchemaLimits,
-};
+use outbe_ocomp_protocol::{profile::ProtocolBundleV1, SchemaLimits};
 use outbe_primitives::error::{PrecompileError, Result};
 
 use super::{
@@ -18,10 +16,10 @@ use crate::schema::MetadosisContract;
 
 const FORK_INSTALL_MAGIC: [u8; 4] = *b"OFI1";
 const FORK_INSTALL_VERSION: u16 = 1;
-const FORK_INSTALL_FIXED_LEN: usize = 4 + 2 + 1 + 8 + 4 + 4 + 4;
+const FORK_INSTALL_FIXED_LEN: usize = 4 + 2 + 1 + 8 + 4 + 4;
 const FORK_INSTALL_HASH_DOMAIN: &[u8] = b"OUTBE_OCOMP_FORK_INSTALL_V1\0";
 
-/// Frozen activation height of the existing Final PoC profile.
+/// Frozen activation height of the current Final profile.
 pub const OCOMP_POC_FINAL_ACTIVATION_HEIGHT: u64 = 32;
 
 /// Evidence eligibility of one chain-manifest binding.
@@ -49,7 +47,6 @@ pub struct OcompForkInstallV1 {
     pub activation_height: u64,
     pub request_profile: OcompRequestProfile,
     pub protocol_bundle: ProtocolBundleV1,
-    pub result_committee: OcompCommitteeSnapshotV1,
 }
 
 impl OcompForkInstallV1 {
@@ -79,20 +76,7 @@ impl OcompForkInstallV1 {
         if self.protocol_bundle.protocol_version != 1 {
             return Err(fatal("unsupported OCOMP protocol bundle version"));
         }
-        validate_activation_authority(
-            &self.request_profile,
-            &self.protocol_bundle,
-            &self.result_committee,
-            limits,
-        )?;
-        if self.result_committee.ordered_members.iter().any(|member| {
-            member.valid_from_height > self.activation_height
-                || member.valid_until_height_exclusive <= self.activation_height
-        }) {
-            return Err(fatal(
-                "OCOMP result committee is not valid at fork activation height",
-            ));
-        }
+        validate_activation_authority(&self.request_profile, &self.protocol_bundle, limits)?;
         Ok(())
     }
 
@@ -108,18 +92,12 @@ impl OcompForkInstallV1 {
             .protocol_bundle
             .encode_canonical(limits)
             .map_err(protocol_error)?;
-        let result_committee = self
-            .result_committee
-            .encode_canonical(limits)
-            .map_err(protocol_error)?;
         validate_nested_length("request profile", request_profile.len(), limits)?;
         validate_nested_length("protocol bundle", protocol_bundle.len(), limits)?;
-        validate_nested_length("result committee", result_committee.len(), limits)?;
 
         let total = FORK_INSTALL_FIXED_LEN
             .checked_add(request_profile.len())
             .and_then(|value| value.checked_add(protocol_bundle.len()))
-            .and_then(|value| value.checked_add(result_committee.len()))
             .ok_or_else(|| fatal("OCOMP fork-install length overflow"))?;
         validate_total_length(total, limits)?;
         let mut encoded = Vec::new();
@@ -132,7 +110,6 @@ impl OcompForkInstallV1 {
         encoded.extend_from_slice(&self.activation_height.to_be_bytes());
         append_bounded(&mut encoded, &request_profile)?;
         append_bounded(&mut encoded, &protocol_bundle)?;
-        append_bounded(&mut encoded, &result_committee)?;
         if encoded.len() != total {
             return Err(fatal("OCOMP fork-install encoded length mismatch"));
         }
@@ -153,7 +130,6 @@ impl OcompForkInstallV1 {
         let activation_height = reader.u64()?;
         let request_profile_bytes = reader.bounded(limits)?;
         let protocol_bundle_bytes = reader.bounded(limits)?;
-        let result_committee_bytes = reader.bounded(limits)?;
         if reader.remaining() != 0 {
             return Err(fatal("trailing OCOMP fork-install bytes"));
         }
@@ -163,11 +139,6 @@ impl OcompForkInstallV1 {
             request_profile: OcompRequestProfile::decode_canonical(request_profile_bytes, limits)?,
             protocol_bundle: ProtocolBundleV1::decode_canonical(protocol_bundle_bytes, limits)
                 .map_err(protocol_error)?,
-            result_committee: OcompCommitteeSnapshotV1::decode_canonical(
-                result_committee_bytes,
-                limits,
-            )
-            .map_err(protocol_error)?,
         };
         install.validate_for_chain(
             install.request_profile.chain_id,
@@ -215,7 +186,6 @@ impl MetadosisContract<'_> {
         install.validate_for_chain(chain_id, install.request_profile.genesis_hash, limits)?;
         let expected_authority = OcompActivationAuthorityV1 {
             bundle: install.protocol_bundle.clone(),
-            result_committee: install.result_committee.clone(),
         };
         match (
             self.read_ocomp_request_profile(limits)?,
@@ -237,11 +207,7 @@ impl MetadosisContract<'_> {
 
         (|| {
             self.initialize_ocomp_request_profile(&install.request_profile, limits)?;
-            self.initialize_ocomp_activation_authority(
-                &install.protocol_bundle,
-                &install.result_committee,
-                limits,
-            )
+            self.initialize_ocomp_activation_authority(&install.protocol_bundle, limits)
         })()
     }
 }
@@ -265,7 +231,7 @@ fn validate_total_length(length: usize, limits: &SchemaLimits) -> Result<()> {
     let nested_cap = limits
         .codec
         .max_allocation_bytes
-        .checked_mul(3)
+        .checked_mul(2)
         .and_then(|value| value.checked_add(FORK_INSTALL_FIXED_LEN))
         .ok_or_else(|| fatal("OCOMP fork-install byte cap overflow"))?;
     if length < FORK_INSTALL_FIXED_LEN || length > nested_cap {

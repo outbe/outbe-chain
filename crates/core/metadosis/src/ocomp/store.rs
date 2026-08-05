@@ -21,7 +21,10 @@ use super::{
         read_canonical_optional, scheduler_snapshot, MAX_LIVE_JOBS,
     },
     index::ReadyIndexKey,
-    state::{DayPhase, JobFsmLimits, JobFsmState, RetryTerminalOutcome, TerminalAttempt},
+    state::{
+        DayPhase, JobFsmLimits, JobFsmState, RetryTerminalOutcome, TerminalAttempt,
+        OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS,
+    },
 };
 
 impl MetadosisContract<'_> {
@@ -317,7 +320,12 @@ impl MetadosisContract<'_> {
                     .ocomp_job_record(intent_id, limits)?
                     .ok_or_else(|| fatal("OCOMP live scheduler key has no job record"))?;
                 let expected_deadline = match record.status {
-                    OcompJobStatus::AwaitingFinality => None,
+                    OcompJobStatus::AwaitingFinality => Some(
+                        record
+                            .intent_height
+                            .checked_add(OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS)
+                            .ok_or_else(|| fatal("OCOMP awaiting-finality deadline overflow"))?,
+                    ),
                     OcompJobStatus::VotingOpen => Some(
                         record
                             .finalized

@@ -2,8 +2,8 @@
 //!
 //! The public transaction supplies one canonical signed vote. This module
 //! resolves the finalized job from the bounded response-window index, verifies
-//! the inner OCOMP signature against fork-installed committee state and owns
-//! the atomic four-slot/q=3 transition. It never decodes or executes Lysis.
+//! the inner OCOMP signature against the pinned historical ValidatorSet and owns
+//! the atomic pinned-ValidatorSet vote transition. It never executes Lysis.
 
 use alloy_primitives::{Bytes, U256};
 use outbe_compressed_entities::ExecutionScope;
@@ -169,11 +169,31 @@ impl MetadosisContract<'_> {
             }
             let authority = self
                 .read_ocomp_activation_authority(limits)?
-                .ok_or_else(|| fatal("OCOMP result-vote committee is not installed"))?;
-            vote.verify(
+                .ok_or_else(|| fatal("OCOMP activation authority is not installed"))?;
+            let snapshot = outbe_validatorset::read_ocomp_snapshot_extension_for_binding(
+                storage.clone(),
+                record.intent.result_validator_set_epoch,
+                record.intent.result_committee_set_hash,
+                record.intent.result_ocomp_binding_hash,
+            )?
+            .filter(|snapshot| snapshot.member_count == record.intent.result_member_count)
+            .ok_or_else(|| reject("OCOMP result vote historical snapshot is missing"))?;
+            let snapshot_key = outbe_validatorset::committee_snapshot_key(
+                record.intent.result_validator_set_epoch,
+                record.intent.result_committee_set_hash,
+            );
+            let member = outbe_validatorset::read_ocomp_snapshot_member_at(
+                storage.clone(),
+                snapshot_key,
+                vote.validator_index,
+            )?
+            .ok_or_else(|| reject("OCOMP result vote member is missing"))?;
+            vote.verify_historical_member(
                 &record.intent,
                 finalized.job_id,
-                &authority.result_committee,
+                snapshot.member_count,
+                member.key_epoch,
+                &member.ocomp_public_key_sec1,
                 inclusion_height,
                 finalized.open_height,
                 finalized.deadline_height,
@@ -260,9 +280,9 @@ impl MetadosisContract<'_> {
         outcome
     }
 
-    /// Closes the one due PoC response window and persists the objective
-    /// four-slot accountability summary. A timely quorum is never erased;
-    /// callers expire only the returned `NoQuorum` live attempt.
+    /// Closes the one due response window and persists the objective bounded
+    /// accountability summary for the pinned ValidatorSet. A timely quorum is
+    /// never erased; callers expire only the returned `NoQuorum` live attempt.
     pub(crate) fn close_due_ocomp_response_window(
         &mut self,
         at_height: u64,

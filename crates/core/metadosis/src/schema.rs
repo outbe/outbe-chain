@@ -321,19 +321,20 @@ pub struct MetadosisContract {
     #[attribute(order = 16)]
     pub ocomp_active_protocol_bundle: StorageBytes,
 
-    /// Canonical OCB1 `OcompCommitteeSnapshotV1` installed with the bundle.
-    /// Result votes are verified only against this consensus state.
+    /// Reserved zero-valued slot from the removed static OCOMP committee.
+    /// The field name, type and ordinal stay unchanged so the storage layout
+    /// hash and every following field remain byte-identical.
     #[attribute(order = 17)]
     pub ocomp_result_committee_snapshot: StorageBytes,
 
-    /// Four fixed result-vote slots and their independently closing
+    /// Dynamic monolithic result-vote slots and their independently closing
     /// accountability summary, keyed by finalized JobId.
     #[attribute(order = 18)]
     pub ocomp_vote_accountability: Mapping<B256, StorageBytes>,
 
     /// Canonical bounded response-window index ordered by
     /// `(deadline_height, JobId)`. It deliberately survives activation so the
-    /// fourth validator and bounded equivocation evidence remain admissible
+    /// pinned participants and bounded equivocation evidence remain admissible
     /// until the exclusive deadline.
     #[attribute(order = 19)]
     pub ocomp_response_deadline_index: StorageBytes,

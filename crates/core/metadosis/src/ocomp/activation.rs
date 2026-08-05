@@ -6,7 +6,6 @@ use outbe_nod::schema::NodContract;
 use outbe_nodfactory::certified::{install_certified_generation, CertifiedNodGenerationV1};
 use outbe_ocomp_protocol::{
     abi::OCOMP_ACTIVATION_REJECTED_SELECTOR,
-    committee::OcompCommitteeSnapshotV1,
     error::ProtocolError,
     hash::hash_framed,
     intent::{
@@ -48,7 +47,6 @@ const REJECT_RECEIPT_MISMATCH: u16 = 17;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OcompActivationAuthorityV1 {
     pub bundle: ProtocolBundleV1,
-    pub result_committee: OcompCommitteeSnapshotV1,
 }
 
 /// Consensus finality authority supplied by the node execution environment.
@@ -119,10 +117,10 @@ struct CertifiedResultInput<'a> {
     result_evidence_hash: B256,
 }
 
-/// Verifies and applies the full result carried by the vote that first forms
-/// q=3. The caller owns the outer storage checkpoint that also contains the
-/// q-forming vote slot and quorum, so any verifier/owner failure rolls the
-/// complete transition back.
+/// Verifies and applies the full result carried by the vote that first reaches
+/// the intent's pinned quorum. The caller owns the outer storage checkpoint
+/// that also contains the q-forming vote slot and quorum, so any verifier/owner
+/// failure rolls the complete transition back.
 pub(crate) fn apply_quorum_result(
     context: QuorumApplyContext<'_, '_>,
     metadosis: &mut MetadosisContract<'_>,
@@ -157,13 +155,14 @@ pub(crate) fn apply_quorum_result(
     {
         return Err(reject(REJECT_FORK_OR_BUNDLE_MISMATCH));
     }
-    if record.intent.result_validator_set_epoch != authority.result_committee.snapshot_epoch
-        || record.intent.result_ocomp_binding_hash
-            != authority
-                .result_committee
-                .snapshot_hash(limits)
-                .map_err(|error| protocol_reject(error, REJECT_COMMITTEE_SNAPSHOT_INVALID))?
-    {
+    let historical_snapshot = outbe_validatorset::read_ocomp_snapshot_extension_for_binding(
+        context.storage.clone(),
+        record.intent.result_validator_set_epoch,
+        record.intent.result_committee_set_hash,
+        record.intent.result_ocomp_binding_hash,
+    )?
+    .filter(|snapshot| snapshot.member_count == record.intent.result_member_count);
+    if historical_snapshot.is_none() {
         return Err(reject(REJECT_COMMITTEE_SNAPSHOT_INVALID));
     }
 
@@ -508,43 +507,32 @@ fn reject(code: u16) -> PrecompileError {
 }
 
 impl MetadosisContract<'_> {
-    /// Installs the complete bundle and result committee exactly once.
-    ///
-    /// Their hashes must already be pinned by the immutable request profile.
-    /// Repeating the exact pair is idempotent; partial or replacement state is
-    /// fatal because it would make request and activation authority diverge.
+    /// Installs the immutable protocol bundle exactly once. Voting membership
+    /// comes only from each job's pinned ValidatorSet snapshot. The former
+    /// committee storage field stays reserved and must remain zero.
     pub fn initialize_ocomp_activation_authority(
         &mut self,
         bundle: &ProtocolBundleV1,
-        result_committee: &OcompCommitteeSnapshotV1,
         limits: &SchemaLimits,
     ) -> PrecompileResult<()> {
         (|| {
             let profile = self
                 .read_ocomp_request_profile(limits)?
                 .ok_or_else(|| fatal("OCOMP request profile is not initialized"))?;
-            validate_activation_authority(&profile, bundle, result_committee, limits)?;
+            validate_activation_authority(&profile, bundle, limits)?;
+            if !self.ocomp_result_committee_snapshot.is_empty()? {
+                return Err(fatal("reserved OCOMP committee slot is non-zero"));
+            }
 
             match self.read_ocomp_activation_authority(limits)? {
-                Some(existing)
-                    if existing.bundle == *bundle
-                        && existing.result_committee == *result_committee =>
-                {
-                    Ok(())
-                }
+                Some(existing) if existing.bundle == *bundle => Ok(()),
                 Some(_) => Err(fatal("OCOMP activation authority is immutable")),
                 None => {
                     self.ocomp_active_protocol_bundle
                         .write(&bundle.encode_canonical(limits).map_err(protocol_error)?)?;
-                    self.ocomp_result_committee_snapshot.write(
-                        &result_committee
-                            .encode_canonical(limits)
-                            .map_err(protocol_error)?,
-                    )?;
                     if self.read_ocomp_activation_authority(limits)?
                         != Some(OcompActivationAuthorityV1 {
                             bundle: bundle.clone(),
-                            result_committee: result_committee.clone(),
                         })
                     {
                         return Err(fatal("OCOMP activation authority write/read mismatch"));
@@ -560,43 +548,34 @@ impl MetadosisContract<'_> {
         limits: &SchemaLimits,
     ) -> PrecompileResult<Option<OcompActivationAuthorityV1>> {
         let bundle_len = self.ocomp_active_protocol_bundle.len()?;
-        let committee_len = self.ocomp_result_committee_snapshot.len()?;
-        match (bundle_len, committee_len) {
-            (0, 0) => return Ok(None),
-            (0, _) | (_, 0) => return Err(fatal("OCOMP activation authority is partial")),
-            _ => {}
+        if !self.ocomp_result_committee_snapshot.is_empty()? {
+            return Err(fatal("reserved OCOMP committee slot is non-zero"));
+        }
+        if bundle_len == 0 {
+            return Ok(None);
         }
         let max = limits
             .codec
             .max_body_bytes
             .checked_add(OCB1_HEADER_LEN)
             .ok_or_else(|| fatal("OCOMP activation authority byte cap overflow"))?;
-        if bundle_len > max || committee_len > max {
+        if bundle_len > max {
             return Err(fatal("OCOMP activation authority exceeds byte cap"));
         }
         let bundle =
             ProtocolBundleV1::decode_canonical(&self.ocomp_active_protocol_bundle.read()?, limits)
                 .map_err(protocol_error)?;
-        let result_committee = OcompCommitteeSnapshotV1::decode_canonical(
-            &self.ocomp_result_committee_snapshot.read()?,
-            limits,
-        )
-        .map_err(protocol_error)?;
         let profile = self
             .read_ocomp_request_profile(limits)?
             .ok_or_else(|| fatal("OCOMP activation authority has no request profile"))?;
-        validate_activation_authority(&profile, &bundle, &result_committee, limits)?;
-        Ok(Some(OcompActivationAuthorityV1 {
-            bundle,
-            result_committee,
-        }))
+        validate_activation_authority(&profile, &bundle, limits)?;
+        Ok(Some(OcompActivationAuthorityV1 { bundle }))
     }
 }
 
 pub(crate) fn validate_activation_authority(
     profile: &OcompRequestProfile,
     bundle: &ProtocolBundleV1,
-    result_committee: &OcompCommitteeSnapshotV1,
     limits: &SchemaLimits,
 ) -> PrecompileResult<()> {
     let bundle_hash = bundle
@@ -615,20 +594,6 @@ pub(crate) fn validate_activation_authority(
         .validate_lysis_v1_input_codecs()
         .map_err(protocol_error)?;
 
-    let committee_hash = result_committee
-        .snapshot_hash(limits)
-        .map_err(protocol_error)?;
-    if result_committee.chain_id != profile.chain_id
-        || result_committee.genesis_hash != profile.genesis_hash
-        || result_committee.fork_id != profile.fork_id
-        || result_committee.protocol_bundle_hash != profile.protocol_bundle_hash
-        || result_committee.snapshot_epoch != profile.result_validator_set_epoch
-        || committee_hash != profile.result_ocomp_binding_hash
-    {
-        return Err(fatal(
-            "OCOMP result committee differs from the request profile",
-        ));
-    }
     Ok(())
 }
 

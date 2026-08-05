@@ -637,11 +637,6 @@ mod tests {
                 generated_limits_manifest_hash: B256::repeat_byte(0x23),
             },
             source_availability_policy_id: B256::repeat_byte(0x35),
-            result_validator_set_epoch: 2,
-            result_committee_set_hash: B256::repeat_byte(0x36),
-            result_ocomp_binding_hash: B256::repeat_byte(0x37),
-            result_member_count: 4,
-            result_quorum_threshold: 3,
         }
     }
 

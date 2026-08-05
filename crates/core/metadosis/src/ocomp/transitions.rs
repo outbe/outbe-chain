@@ -28,7 +28,9 @@ use super::{
         insert_ready_key, insert_response_deadline_key, remove_ready_key, ReadyIndexKey,
         ResponseDeadlineKey,
     },
-    state::{JobFsmCommand, JobFsmLimits, RetryTerminalOutcome},
+    state::{
+        JobFsmCommand, JobFsmLimits, RetryTerminalOutcome, OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS,
+    },
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -57,6 +59,7 @@ impl MetadosisContract<'_> {
         fsm_limits: JobFsmLimits,
     ) -> Result<()> {
         (|| {
+            super::authority::require_current_ocomp_attempt_snapshot(self.storage.clone(), intent)?;
             if !matches!(
                 outer_transition.kind(),
                 OuterWwdTransitionKind::OcompRequestCommitted
@@ -104,6 +107,10 @@ impl MetadosisContract<'_> {
             let intent_id = intent
                 .intent_id(schema_limits)
                 .map_err(|error| fatal(format!("hash OCOMP intent: {error}")))?;
+            let awaiting_finality_deadline = intent
+                .logical_evaluation_height
+                .checked_add(OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS)
+                .ok_or_else(|| fatal("OCOMP awaiting-finality deadline overflow"))?;
             let storage_key = intent_storage_key(intent_id)
                 .map_err(|error| fatal(format!("derive OCOMP intent storage key: {error}")))?;
             if !self.ocomp_job_records.get_bytes(&storage_key).is_empty()? {
@@ -113,6 +120,7 @@ impl MetadosisContract<'_> {
                 .apply(
                     JobFsmCommand::Request {
                         at_height: intent.logical_evaluation_height,
+                        deadline_height: awaiting_finality_deadline,
                         intent_id,
                         lysis_budget: intent.frozen_metadosis_values.lysis_budget,
                         request_budget_receipt_hash: receipt_hash,
@@ -168,7 +176,14 @@ impl MetadosisContract<'_> {
             if record.status != OcompJobStatus::AwaitingFinality || record.terminal.is_some() {
                 return Err(fatal("OCOMP finality requires AWAITING_FINALITY"));
             }
-            if finality_recorded_height < record.intent_height || response_window_blocks == 0 {
+            let awaiting_finality_deadline = record
+                .intent_height
+                .checked_add(OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS)
+                .ok_or_else(|| fatal("OCOMP awaiting-finality deadline overflow"))?;
+            if finality_recorded_height < record.intent_height
+                || finality_recorded_height > awaiting_finality_deadline
+                || response_window_blocks == 0
+            {
                 return Err(fatal("OCOMP finality/window height is invalid"));
             }
             let open_height = finality_recorded_height

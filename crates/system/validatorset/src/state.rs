@@ -442,6 +442,51 @@ pub fn read_ocomp_snapshot_extension_for_binding(
     Ok(Some(extension))
 }
 
+/// Resolves the one canonical snapshot retained for `epoch` from the bounded
+/// ring and validates both its consensus and OCOMP bindings. A missing,
+/// evicted or colliding record returns `None`; it is never substituted with a
+/// snapshot from another epoch.
+pub fn read_ocomp_snapshot_extension_at_epoch(
+    storage: StorageHandle,
+    epoch: u64,
+) -> Result<Option<(B256, OcompSnapshotExtensionV1)>> {
+    let vs = ValidatorSet::new(storage.clone());
+    let ring_index = epoch % COMMITTEE_SNAPSHOT_RETAIN_EPOCHS;
+    let snapshot_key = vs.committee_snapshot_key_ring.read(&ring_index)?;
+    if snapshot_key.is_zero() {
+        return Ok(None);
+    }
+    let Some(snapshot) = read_committee_snapshot(storage.clone(), snapshot_key)? else {
+        return Ok(None);
+    };
+    let committee_set_hash = committee_set_hash_v2(epoch, &snapshot);
+    if committee_snapshot_key(epoch, committee_set_hash) != snapshot_key {
+        return Ok(None);
+    }
+    let Some(extension) = read_ocomp_snapshot_extension(storage.clone(), snapshot_key)? else {
+        return Ok(None);
+    };
+    if extension.epoch != epoch
+        || extension.committee_set_hash != committee_set_hash
+        || usize::from(extension.member_count) != snapshot.committee.len()
+    {
+        return Ok(None);
+    }
+
+    let mut members = Vec::with_capacity(usize::from(extension.member_count));
+    for index in 0..extension.member_count {
+        let Some(member) = read_ocomp_snapshot_member_at(storage.clone(), snapshot_key, index)?
+        else {
+            return Ok(None);
+        };
+        members.push(member);
+    }
+    if ocomp_binding_hash_v1(epoch, committee_set_hash, &members) != extension.ocomp_binding_hash {
+        return Ok(None);
+    }
+    Ok(Some((snapshot_key, extension)))
+}
+
 /// Read one OCOMP member at the consensus committee's stable ordered index.
 pub fn read_ocomp_snapshot_member_at(
     storage: StorageHandle,
