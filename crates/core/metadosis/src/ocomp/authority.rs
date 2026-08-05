@@ -4,7 +4,7 @@ use outbe_primitives::{
     storage::StorageHandle,
 };
 
-use crate::{constants::MAX_RETAINED_WWDS, schema::MetadosisContract};
+use crate::schema::MetadosisContract;
 
 use super::{
     activation::validate_activation_authority,
@@ -81,11 +81,6 @@ pub(crate) fn require_active_ocomp_profile(
             fatal("fresh-devnet Metadosis requires complete OCOMP activation authority")
         })?;
     validate_activation_authority(&profile, &authority.bundle, &limits)?;
-    if usize::from(profile.capacity_profile.max_pending_jobs) != MAX_RETAINED_WWDS {
-        return Err(fatal(
-            "genesis OCOMP retained capacity differs from Metadosis derived bound",
-        ));
-    }
     Ok(profile)
 }
 

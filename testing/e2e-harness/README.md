@@ -28,7 +28,7 @@ to Cucumber's `--tags` filter. Current live-node mappings are:
 | PFS examples | Feature coverage |
 |---|---|
 | `PFS-001-01`, `-02`, `-03`, `-05` | Tribute creation/projection/proof, two absence scopes and duplicate logical offer rejection |
-| `PFS-002-01` through `-24` | OCOMP implementation and focused production-adapter tests exist; independent FullNode Lysis following remains deferred and the dynamic-membership 4→5 process closure is the current acceptance lane |
+| `PFS-002-01` through `-24` | Dynamic OCOMP membership, the validator system-vote lane, deadline accountability and independent FullNode Lysis following; the 4→5 process is the current reachable acceptance lane |
 | `PFS-005-01`, `-09` plus named recovery/rejection tags | Vote approval/activation, restart boundaries, rejection paths, unsupported-version stall and operator binary replacement |
 | `PFS-006-01`, `-02`, `-03`, `-04`, `-06`, `-09` | Join/exit/claim accounting, stale join, DKG recovery, slash idempotency, checkpoint restarts and full-committee sealed TEE recovery |
 | `PFS-007-01` through `-12` | Pectra/ZeroFee readiness, native EIP-7702 delegation, quota/fallback, exact replay, restart persistence, invalid authorization and day reset |
@@ -101,6 +101,20 @@ validator mode and drives registration, stake, `PENDING`, delegation,
 `confirmValidatorReady` and the certified DKG/reshare boundary. Job B must then
 pin `N=5`, quorum `4`; node 5 may vote in B and must not vote in A, while A keeps
 its original snapshot. A restart must recover both live jobs and sign-once state.
+
+Each finalized attempt gives its pinned participants exactly 1,800 blocks to
+compute and submit a valid vote. Quorum may apply the result earlier, but it does
+not close the remaining vote slots. At the exclusive deadline the deterministic
+deadline transition jails every pinned participant without a timely included
+vote. Votes use the canonical validator-authenticated OCOMP system carrier with
+visible `gas_limit = 30_000`; its bounded internal work does not consume the
+ordinary user-transaction gas lane.
+
+The FullNode phase is not only a synchronization prelude. A FullNode has no OCOMP
+signing key and never votes, but independently runs the same canonical Lysis,
+retains its local result data, and refuses activation unless digest, roots and
+manifest match the finalized quorum result. The process scenario must cover
+matching, unavailable-input/mismatch fail-closed behavior and restart recovery.
 
 Those counts are scenario inputs, not OCOMP constants. Fixture generation reads
 the ordered validator manifest, produces one founder registration per genesis

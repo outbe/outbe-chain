@@ -76,7 +76,6 @@ wire_struct! {
         pub profile_id: B256,
         pub max_tributes_per_work_shard: u32,
         pub max_workers_per_domain: u8,
-        pub max_pending_jobs: u8,
         pub max_intents_per_block: u8,
         pub max_activations_per_block: u8,
         pub max_ready_inspections_per_block: u8,

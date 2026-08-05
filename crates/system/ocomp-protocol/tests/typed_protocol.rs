@@ -731,7 +731,6 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         profile_id: hash(96),
         max_tributes_per_work_shard: 32,
         max_workers_per_domain: 4,
-        max_pending_jobs: 8,
         max_intents_per_block: 2,
         max_activations_per_block: 2,
         max_ready_inspections_per_block: 4,

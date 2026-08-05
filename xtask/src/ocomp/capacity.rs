@@ -57,7 +57,6 @@ struct CapacityProfileDocumentV1 {
     profile_id: B256,
     max_tributes_per_work_shard: u32,
     max_workers_per_domain: u8,
-    max_pending_jobs: u8,
     max_intents_per_block: u8,
     max_activations_per_block: u8,
     max_ready_inspections_per_block: u8,
@@ -78,7 +77,6 @@ impl From<CapacityProfileV1> for CapacityProfileDocumentV1 {
             profile_id: profile.profile_id,
             max_tributes_per_work_shard: profile.max_tributes_per_work_shard,
             max_workers_per_domain: profile.max_workers_per_domain,
-            max_pending_jobs: profile.max_pending_jobs,
             max_intents_per_block: profile.max_intents_per_block,
             max_activations_per_block: profile.max_activations_per_block,
             max_ready_inspections_per_block: profile.max_ready_inspections_per_block,
@@ -841,9 +839,11 @@ mod tests {
             document["capacity_profile"]["max_tributes_per_work_shard"],
             256
         );
-        assert_eq!(
-            document["capacity_profile"]["max_pending_jobs"], 2,
-            "capacity profile must retain concurrent independent Job progress"
+        assert!(
+            document["capacity_profile"]
+                .get("max_pending_jobs")
+                .is_none(),
+            "capacity artifacts must not publish an OCOMP-specific live-job limit"
         );
         assert_eq!(
             document["capacity_profile_ocb1_hex"]

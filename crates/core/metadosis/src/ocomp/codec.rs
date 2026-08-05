@@ -16,7 +16,6 @@ const SCHEDULER_ENCODED_LEN: usize = 4 + 2 + 1 + 4 + 8 + 8 + 32 + 8 + 8 + 1 + 8 
 const LIVE_INDEX_MAGIC: [u8; 4] = *b"OMLI";
 const LIVE_INDEX_VERSION: u16 = 1;
 const LIVE_INDEX_HEADER_LEN: usize = 4 + 2 + 2;
-pub(super) const MAX_LIVE_JOBS: usize = 2;
 
 pub(super) struct FixedReader<'a> {
     encoded: &'a [u8],
@@ -185,8 +184,8 @@ pub(super) fn decode_live_scheduler_index(encoded: &[u8]) -> Result<Vec<JobFsmSn
         return Err(fatal("OCOMP live index magic/version mismatch"));
     }
     let count = usize::from(u16::from_be_bytes(reader.take::<2>()?));
-    if count == 0 || count > MAX_LIVE_JOBS {
-        return Err(fatal("OCOMP live index count is outside its bound"));
+    if count == 0 {
+        return Err(fatal("OCOMP live index must use empty bytes for zero jobs"));
     }
     let expected_len = SCHEDULER_ENCODED_LEN
         .checked_mul(count)
@@ -208,9 +207,6 @@ pub(super) fn decode_live_scheduler_index(encoded: &[u8]) -> Result<Vec<JobFsmSn
 }
 
 fn validate_live_scheduler_index(index: &[JobFsmSnapshot]) -> Result<()> {
-    if index.len() > MAX_LIVE_JOBS {
-        return Err(fatal("OCOMP live index exceeds its fixed capacity"));
-    }
     for snapshot in index {
         if snapshot.ready.is_some()
             || !snapshot.terminal.is_empty()

@@ -12,7 +12,12 @@ preserve the removed static-committee design.
 4. Existing jobs retain their historical membership while later jobs use the new
    active set.
 5. Votes bind epoch, consensus set hash and OCOMP key binding hash.
-6. FullNodes replay the same canonical state transitions but do not vote.
+6. Every pinned validator has exactly 1,800 blocks to compute and submit a valid
+   vote; missing validators are jailed by the deterministic deadline transition.
+7. OCOMP votes use the canonical 30,000-gas system carrier and consume no user
+   transaction gas.
+8. FullNodes do not vote, but independently run Lysis, retain canonical local data
+   and fail closed unless digest, roots and manifest match the quorum result.
 
 ## Focused verification
 
@@ -36,10 +41,13 @@ The required focused behaviors include:
 - two live historical snapshots across a membership change;
 - dynamic `N`, quorum, slots and LSB0 bitmaps;
 - old-member authorization for an old job after current membership changes;
-- ordinary vote rejection for a missing/evicted snapshot;
-- identical ZeroFee classification in pool and execution;
+- vote rejection for a missing/evicted snapshot;
+- identical OCOMP system-carrier classification in pool, execution and replay;
+- exact 1,800-block voting deadline, continued voting after quorum and idempotent
+  jail for every missing pinned participant;
 - sign-once exact retry across restart and boundary;
-- validator startup failure without OCOMP config and FullNode startup success.
+- validator startup failure without OCOMP config and FullNode startup success;
+- FullNode independent Lysis match, mismatch/missing-input failure and restart.
 
 ## Genesis and artifact checks
 
@@ -77,10 +85,10 @@ cargo test -p outbe-ocomp-protocol \
   --test generated_capacity -- --nocapture
 ```
 
-At the current consensus bound the synthetic gate expects `N=256`, quorum `171`,
-a 58,760-byte worst closed accountability value and 32-byte bitmaps. The gate also
-checks canonical decode and response-window work. It is not hardware benchmark
-evidence.
+The synthetic gate reads the current consensus validator bound and derives N,
+quorum, encoding size and bitmap width from it. No measured value becomes an
+OCOMP-specific validator limit. The gate also checks canonical decode and bounded
+system work; a failure blocks the release rather than introducing a hidden cap.
 
 ## Reachable process E2E
 
@@ -96,16 +104,18 @@ The final harness scenario uses real node roles and normal admission:
 7. open job B and observe `N=5`, quorum `4`;
 8. prove node 5 votes in B but cannot vote in A;
 9. prove A still completes against its original snapshot;
-10. restart participants and prove both live-job and sign-once state recover;
-11. compare finalized height, block hash and state root on validators and FullNode.
+10. prove every pinned member may still vote after quorum and a missing member is
+    jailed exactly once at the 1,800-block deadline;
+11. restart participants and prove all live-job and sign-once state recovers;
+12. have the FullNode independently execute Lysis, retain local result data and
+    accept only the matching digest, roots and manifest;
+13. compare finalized height, block hash and state root on validators and FullNode.
 
 The values in this scenario are examples used to expose the membership transition.
 They are not OCOMP constants.
 
 ## What this does not prove
 
-- It does not prove independent FullNode Lysis recomputation; that follower is a
-  separate task.
 - It does not provide DCAP or production hardware evidence.
 - It does not add OCOMP key rotation, expiry or recovery; `key_epoch` remains 1.
 - It does not preserve or migrate a legacy static committee; networks start from a

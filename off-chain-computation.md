@@ -129,21 +129,29 @@ uses the finalized job bindings. If its pinned snapshot is unavailable, the node
 abstains, emits an error log and metric, and never signs against the current set.
 Startup of an OCOMP-enabled validator requires its complete signing configuration.
 
-A FullNode does not vote and needs no OCOMP signing key or delegate. It imports and
-executes the same canonical blocks as validators and must reach the same EVM/state
-roots and on-chain Lysis/Nod state.
-
-Independent local recomputation of Lysis by FullNodes, local result-chunk storage
-and comparison with the voted result are a separate required follower task. This
-document does not claim that follower exists.
+A FullNode does not vote and needs no OCOMP signing key or delegate. It consumes
+the finalized intent and authenticated source bodies/proofs, independently runs
+the same canonical Lysis program as validators and retains the required local
+result chunks. Before accepting activation it compares its digest, roots and
+manifest with the finalized quorum result. Missing authenticated input, local
+compute failure or any mismatch is fail-closed and observable; restart resumes
+from the durable follower state.
 
 ## 8. Capacity and failure behavior
 
-OCOMP reads the validator bound from consensus `MAX_VALIDATORS`; it has no fixed
-four-member model and no OCOMP-specific maximum. The current synthetic boundary
-gate runs at `N=256`, quorum `171`. The worst closed monolithic accountability
-encoding is 58,760 bytes, each bitmap is 32 bytes, and the checked quorum work fits
-the 64-block response window. These are synthetic bounds, not hardware evidence.
+OCOMP reads the validator bound from the current consensus configuration; it has
+no fixed-member model, OCOMP-specific validator maximum or arbitrary global
+live-job limit. Capacity gates exercise the current consensus bound and fail the
+release if the monolithic accountability encoding, codec allocations or bounded
+system work no longer fit. They do not turn the measured bound into OCOMP policy.
+
+The finalized attempt stores one exclusive compute-and-vote deadline exactly
+1,800 blocks after its start. All pinned members must vote before that deadline,
+including members whose votes are not needed to form quorum. The deadline system
+transition jails every missing member exactly once. OCOMP vote carriers expose
+canonical `gas_limit = 30_000`; classification precedes ordinary intrinsic-gas
+handling and their bounded execution uses the system-work lane rather than the
+user block-gas lane.
 
 If a future consensus bound no longer fits codec, storage or response-window
 limits, release is blocked. The implementation must not silently cap OCOMP
@@ -162,7 +170,8 @@ The main code-review surfaces are:
 - `crates/system/validatorset`: registration, readiness and historical extension;
 - `crates/system/ocomp-protocol`: canonical types, bindings, bitmaps and capacity;
 - `crates/core/metadosis`: job pinning, vote processing and fork installation;
-- `crates/system/zerofee` and `crates/blockchain/txpool`: shared vote prefix policy;
+- `crates/blockchain/txpool` and `crates/blockchain/evm`: canonical system-vote
+  classification, admission and bounded execution;
 - `crates/blockchain/node/src/ocomp`: pinned-snapshot signing and restart recovery;
 - `bin/outbe-chain`, `bin/outbe-keygen` and `xtask`: genesis and canonical artifacts;
 - `testing/e2e-harness`: FullNode-to-validator join and historical-job scenarios.

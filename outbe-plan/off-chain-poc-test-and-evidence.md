@@ -387,7 +387,7 @@ The run manifest binds:
   identity/hash;
 - chain ID, genesis/block-0 hash, fork height/ID, protocol bundle, correctness
   profile, capacity profile, object registry and generated limit manifests;
-- static OCOMP committee indexes, public keys, PoPs and key epoch;
+- ordered pinned ACTIVE ValidatorSet identity, its OCOMP public keys, PoPs and key epochs;
 - command line, test discovery set, seed, machine/kernel/filesystem facts and
   Mongo image digest;
 - per-domain PIDs, sockets, peer credentials, databases, CAS identity and

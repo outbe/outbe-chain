@@ -1,4 +1,4 @@
-//! Exact, bounded multi-job snapshot-export authority behind the node-local control seam.
+//! Exact multi-job snapshot-export authority behind the node-local control seam.
 //!
 //! The module deliberately owns the coordination between the durable OCOMP pin
 //! and the CE next-apply lease. Callers receive bounded protocol values only:
@@ -31,8 +31,6 @@ use thiserror::Error;
 use crate::projection::{ocomp_projection_contains, OcompProjectionContainment};
 
 use super::retention::{FinalizedSnapshotArmer, OcompRetentionCoordinator, RetentionError};
-
-const MAX_TRACKED_SNAPSHOT_HANDOFFS: usize = 256;
 
 const EXPORT_LEASE_CHALLENGE_DOMAIN: &[u8] = b"OUTBE_OCOMP_EXPORT_LEASE_CHALLENGE_V1";
 
@@ -81,7 +79,7 @@ where
     }
 }
 
-/// Node-owned bounded broker for independently addressed finalized Jobs.
+/// Node-owned broker for independently addressed finalized Jobs.
 pub struct SnapshotExportAuthority {
     retention: Arc<OcompRetentionCoordinator>,
     tree: Arc<CompressedTreeService>,
@@ -126,10 +124,6 @@ impl SnapshotExportAuthority {
         if let Some(existing) = handoffs.get(&job_id) {
             return Ok(existing.clone());
         }
-        if handoffs.len() >= MAX_TRACKED_SNAPSHOT_HANDOFFS && !handoffs.contains_key(&job_id) {
-            return Err(SnapshotExportError::HandoffCapacity);
-        }
-
         let (pin_generation, finalized) =
             self.retention
                 .finalized_job_record(job_id)
@@ -372,8 +366,6 @@ pub enum SnapshotExportError {
     Protocol(#[from] ProtocolError),
     #[error("snapshot export authority mutex is poisoned")]
     Poisoned,
-    #[error("snapshot export handoff registry reached its bounded capacity")]
-    HandoffCapacity,
     #[error("requested OCOMP job is not in the exact finalized pin state")]
     JobNotFinalized,
     #[error("OCOMP retention is quarantined: {0}")]

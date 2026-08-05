@@ -5,12 +5,12 @@
   "generator": {
     "invocation": "cargo xtask ocomp shape",
     "source_sha256": "314ae728ab570fcebb236c2f71f24818c615e2c9ea832229b54933849b0a9944",
-    "input_set_sha256": "9f8caa4aaef4a118d742e677ae355f29b6ebd5c7a837182cf8cdadcc6d1465d9"
+    "input_set_sha256": "f6604e3364002166aed43b2fe4e406518fa4cfa575955895eefa052c78689886"
   },
   "registries": {
     "object_domain_list_sha256": "73cd32f4b40796ad1dda9088b14edea698317862c3eac30fe01eed07baa36ac9",
     "input_codecs_sha256": "27af1b6c7146845b7e5c54cc69804a473332e0931be3e678e98f144f41bcdfac",
-    "canonical_schema_sha256": "7bf5153b6c5d80f47ab713de10173afddaba26f8c6fdae87bff06c4cef4e2f9f",
+    "canonical_schema_sha256": "5931f36aa1595b9ea81cbef5a99a4b5b048999402575705d04040f26624b50db",
     "domain_preimage_sha256": "80d722edcbce8e6cfd270883daaccd7e525b2b11d41694c13f5bfde278e24145",
     "object_count": 34,
     "tribute_body_codec_id": "52e3d1c35620ae70cc1da8e840348c60c4b58971960badea704a37fe3340ffca",

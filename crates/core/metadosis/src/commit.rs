@@ -622,7 +622,6 @@ mod tests {
                 profile_id: B256::repeat_byte(0x25),
                 max_tributes_per_work_shard: 256,
                 max_workers_per_domain: 4,
-                max_pending_jobs: 2,
                 max_intents_per_block: 1,
                 max_activations_per_block: 1,
                 max_ready_inspections_per_block: 1,

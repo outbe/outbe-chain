@@ -63,7 +63,7 @@ the origin chain.
 | Step | Owner | Command/effect | Durable evidence |
 |---:|---|---|---|
 | 1 | Metadosis | READY processing splits the formed limit; GREEN sends one typed Desis brief, RED routes auction base to carry-over; populated positive-gratis work creates an OCOMP intent without Lysis effects | split/brief receipt, Desis `Briefed` or exact carry-over, `JobIntentV1` |
-| 2 | OCOMP q-forming apply | certified Lysis result installs Nod/contributor state and retires the Tribute generation atomically; no synchronous fallback exists | q=3 receipt, contributor list/total, terminal Metadosis receipt |
+| 2 | OCOMP quorum-forming apply | certified Lysis result installs Nod/contributor state and retires the Tribute generation atomically; quorum is derived from the job-pinned ACTIVE ValidatorSet and no synchronous fallback exists | dynamic quorum receipt, contributor list/total, terminal Metadosis receipt |
 | 3 | Desis | schedule tick at anchor: accepted green starts, red cancels; STAGE_START to every snapshot chain | stage, `AuctionCreated`/`AuctionCancelledRedDay`, sends |
 | 4 | Target stacks | commit window: bond-locked commitments; reveal window: revealed bids, bond release | escrow receipts, auction records |
 | 5 | TargetRouter | relay bid batches + BIDS_DONE after clearing signal | relayed batches, marker |

@@ -1,4 +1,4 @@
-//! Crash-conservative bounded multi-job OCOMP retention journal.
+//! Crash-conservative wire-bounded multi-job OCOMP retention journal.
 //!
 //! Candidate discovery uses an event only as a bounded locator. The production
 //! source re-opens the exact execution-valid block state and authenticates the
@@ -45,8 +45,18 @@ const JOURNAL_VERSION: u16 = 5;
 const LEGACY_RECORD_VERSION: u16 = 3;
 const PIN_RECORD_VERSION: u16 = 4;
 const PIN_RECORD_MAX_BYTES: usize = 512;
-const MAX_TRACKED_JOBS: usize = 256;
-const JOURNAL_MAX_BYTES: usize = PIN_RECORD_MAX_BYTES * MAX_TRACKED_JOBS + 64;
+/// The registry has no OCOMP product count limit. Its only cardinality ceiling
+/// is the count width committed by the durable journal wire format.
+const JOURNAL_RECORD_COUNT_MAX: usize = u16::MAX as usize;
+const JOURNAL_MAX_BYTES: usize =
+    (PIN_RECORD_MAX_BYTES + B256::len_bytes() + std::mem::size_of::<u16>())
+        * JOURNAL_RECORD_COUNT_MAX
+        + 8
+        + std::mem::size_of::<u16>()
+        + std::mem::size_of::<u64>()
+        + B256::len_bytes()
+        + std::mem::size_of::<u16>()
+        + B256::len_bytes();
 const JOURNAL_FILENAME: &str = "pin.v1";
 const JOURNAL_TEMP_FILENAME: &str = "pin.v1.tmp";
 const RETAINED_EVIDENCE_WINDOW_BLOCKS: u64 = 64;
@@ -185,7 +195,7 @@ pub enum RetentionError {
     UnsupportedJournalVersion { actual: u16 },
     #[error("pin generation overflow")]
     GenerationOverflow,
-    #[error("OCOMP active-job registry reached its bounded capacity")]
+    #[error("OCOMP journal record count exceeds its u16 wire format")]
     RegistryCapacity,
     #[error("conflicting tentative candidate cannot replace the active pin")]
     ConflictingCandidate,
@@ -793,7 +803,7 @@ struct CoordinatorInner {
     registry: Option<JobRegistryV1>,
 }
 
-/// Node-owned bounded multi-job OCOMP pin coordinator.
+/// Node-owned independently keyed multi-job OCOMP pin coordinator.
 pub struct OcompRetentionCoordinator {
     store: JournalStore,
     inner: Mutex<CoordinatorInner>,
@@ -1070,7 +1080,7 @@ impl OcompRetentionCoordinator {
 
     /// Returns the exact live `Exported` record addressed by `JobId`.
     ///
-    /// This deliberately consults the bounded multi-job registry rather than
+    /// This deliberately consults the durable multi-job registry rather than
     /// [`Self::status`], whose single operational summary may describe a newer
     /// job. Callers must not substitute another live job.
     pub(crate) fn exported_job_record(&self, job_id: B256) -> Result<PinRecordV1, RetentionError> {
@@ -1211,7 +1221,7 @@ impl OcompRetentionCoordinator {
                 .values()
                 .filter(|record| !matches!(record.state, PinStateV1::Released { .. }))
                 .count()
-                >= MAX_TRACKED_JOBS
+                >= JOURNAL_RECORD_COUNT_MAX
         }) {
             return Err(RetentionError::RegistryCapacity);
         }
@@ -1662,7 +1672,9 @@ impl OcompRetentionCoordinator {
             last_updated: key,
             records: BTreeMap::new(),
         });
-        if !registry.records.contains_key(&key) && registry.records.len() >= MAX_TRACKED_JOBS {
+        if !registry.records.contains_key(&key)
+            && registry.records.len() >= JOURNAL_RECORD_COUNT_MAX
+        {
             registry
                 .records
                 .retain(|_, existing| !matches!(existing.state, PinStateV1::Released { .. }));
@@ -1900,7 +1912,7 @@ fn encode_registry(registry: &JobRegistryV1) -> Vec<u8> {
     encoded.extend_from_slice(registry.last_updated.as_slice());
     encoded.extend_from_slice(
         &u16::try_from(registry.records.len())
-            .expect("bounded registry length fits u16")
+            .expect("journal registry length fits its u16 wire count")
             .to_be_bytes(),
     );
     for (key, record) in &registry.records {
@@ -1963,9 +1975,9 @@ fn decode_registry(encoded: &[u8]) -> Result<JobRegistryV1, RetentionError> {
     }
     let last_updated = B256::new(reader.take::<32>()?);
     let count = usize::from(u16::from_be_bytes(reader.take::<2>()?));
-    if count == 0 || count > MAX_TRACKED_JOBS {
+    if count == 0 {
         return Err(RetentionError::MalformedJournal(
-            "registry count is outside its bound",
+            "registry must use an absent file for zero records",
         ));
     }
     let mut records = BTreeMap::new();

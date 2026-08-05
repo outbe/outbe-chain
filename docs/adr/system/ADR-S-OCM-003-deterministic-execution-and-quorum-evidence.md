@@ -279,13 +279,12 @@ The participant index and committee are never configured. A FullNode starts
 without this profile or key and has no result-voting capability; supplying the
 validator-only profile without `--validator` is a startup error.
 
-### On-chain result votes
+### Validator-authenticated system result votes
 
 After its attestation gate signs the closed result subject, the validator
-domain's existing `OffchainLysis Supervisor` owns submission. It replaces its
-superseded relay publication edge with one signed
-`submitLysisResult` EVM transaction through the public RPC, txpool,
-gossip, proposal, import and replay path:
+domain's existing `OffchainLysis Supervisor` owns submission. It publishes one
+signed `submitLysisResult` system carrier through the public RPC, transaction
+propagation, proposal, import and replay path:
 
 ```text
 ResultVoteV1 {
@@ -312,19 +311,23 @@ The executor bounded-decodes and structurally verifies the canonical result,
 then reconstructs `ResultDigest`. The inner OCOMP signature binds the
 chain/genesis/fork, bundle, job, attempt, all three historical snapshot
 bindings, participant index, key epoch, result purpose and that exact digest.
-The outer EVM transaction uses the Supervisor's
+The outer replay-visible carrier uses the Supervisor's
 role-delegated OCOMP EVM key. The node never receives that private key and the
-Supervisor never receives the node's attestation key. A dedicated ZeroFee hook,
-constrained like Oracle's existing hook to the exact selector, zero value,
-bounded envelope and eligible represented validator, waives the native fee.
-ZeroFee performs no JobIntent, finality, window, digest, quorum or slashing
-validation. Those checks belong exclusively to the OCOMP on-chain module.
+Supervisor never receives the node's attestation key. Its visible signed
+`gas_limit` is canonically `30_000`, but that value accounts for the carrier;
+ordinary EVM intrinsic gas does not pay for OCOMP execution. Classification
+runs before ordinary Ethereum intrinsic-gas rejection, charges no validator
+fee and consumes none of the 30,000,000 user-transaction gas lane. Decode,
+historical authorization, signature verification, accountability writes and
+q-forming apply run under the separate deterministic system-work budget.
+Malformed or unauthorized lookalikes fail closed before that authority is
+granted.
 
 The Supervisor persists `prepared -> submitted -> included -> finalized`,
 rebroadcasts the same logical vote after an orphaned inclusion while the slot
 is empty and the window is open, and stops at finality or window close.
 For the PoC it reads the validator account nonce from canonical `latest` state,
-uses the frozen bounded gas envelope and never calls `eth_estimateGas` or asks
+uses the exact `30_000` carrier value and never calls `eth_estimateGas` or asks
 RPC to execute a `pending` block. Its single-writer vote journal preserves the
 exact locally signed transaction bytes and nonce for rebroadcast; an exact retry
 does not reconstruct or re-sign the envelope.
@@ -383,15 +386,30 @@ record keyed by `JobId`:
 - no timely vote produces a missing-response bit;
 - two different signed digests produce objective equivocation evidence.
 
-At the deadline consensus closes `OcompAccountabilitySummaryV1` inside that
-record. The immutable `LysisTerminalV1`, apply receipt, active-generation
-hash, applied domain state and exact-retry identity bind only the already-fixed
-quorum evidence and never change because of later votes or deadline close.
-The PoC records this evidence but does not introduce monetary slashing policy
-or call `SlashIndicator`. Missing-response and equivocation policy, penalty
-size, appeals and operator exceptions require a separate ADR. Any later
-slashing mechanism must consume only canonical on-chain evidence; relay logs,
-mempool observations and supervisor journals are never authority.
+The finalized binding opens one exact compute-and-vote window of 1,800 blocks.
+It includes both local Lysis execution and canonical vote inclusion; there is
+no separate short vote-only window. At the exclusive deadline consensus closes
+`OcompAccountabilitySummaryV1`, derives `missing_bitmap` from the pinned slots
+and sends every missing participant to `JAILED` exactly once using
+JobId/participant-bound replay-idempotent evidence. A timely valid minority
+vote is present and is not punished as missing. The immutable
+`LysisTerminalV1`, apply receipt, active-generation hash, applied domain state
+and exact-retry identity bind only the already-fixed quorum evidence and never
+change because of later votes or deadline close. Monetary penalties,
+equivocation punishment, appeals and operator exceptions remain separate
+policy; relay logs, mempool observations and supervisor journals are never
+authority.
+
+### FullNode independent execution
+
+An OCOMP-enabled FullNode has no voting key, delegate or vote capability. It
+still consumes the finalized intent and authenticated source bodies/proofs,
+executes the same canonical Lysis program, materializes local canonical result
+chunks, and compares its digest, roots and manifest with the quorum result
+before activation. Missing authenticated input, local computation failure or
+any mismatch is fail-closed and observable. Restart restores the follower
+checkpoint and never substitutes ordinary EVM replay for the independent
+off-chain calculation.
 
 ### Quorum-applied result evidence
 
@@ -420,14 +438,17 @@ Three votes over different result bytes do not form quorum evidence.
 | OCOMP key custody | node attestation gate plus ADR-S-KEY-001 backend |
 | signer eligibility/weight | job-pinned historical ValidatorSet OCOMP snapshot |
 | vote submission/rebroadcast | validator-domain `OffchainLysis Supervisor` |
-| EVM transport signature | Supervisor-owned role-delegated OCOMP EVM key |
-| vote fee waiver | exact-selector validator-only ZeroFee hook |
-| vote inclusion | ordinary public transaction path |
+| carrier signature | Supervisor-owned role-delegated OCOMP EVM key |
+| visible carrier accounting | exact `gas_limit = 30_000`, no validator debit or user-lane gas |
+| actual vote execution | separately bounded system-work lane |
+| vote inclusion | authenticated system-carrier path before ordinary intrinsic-gas rejection |
 | vote eligibility/signature validity | every node while executing the vote transaction |
 | quorum selection | bounded consensus vote state |
 | result-apply trigger | the q-forming full-result submission |
 | terminal result identity | immutable `LysisTerminalV1` |
 | post-quorum evidence | separate bounded `OcompVoteAccountabilityV1` with `ceil(N/8)` LSB0 bitmaps |
+| missed-vote consequence | exact-deadline system transition to `JAILED` |
+| FullNode assurance | independent local Lysis plus fail-closed digest/roots/manifest comparison |
 | semantic reference | independent golden/reference implementation |
 
 ## Invariants
@@ -447,6 +468,12 @@ Three votes over different result bytes do not form quorum evidence.
   on-chain vote slots.
 - Every remaining pinned slot remains writable until the response deadline even
   after quorum application.
+- The response deadline is exactly 1,800 blocks after the finalized binding.
+- Every pinned participant without a timely valid included vote is jailed
+  exactly once at that deadline.
+- OCOMP carrier work never reduces the 30,000,000 user-transaction gas budget.
+- A FullNode cannot accept activation without a matching independent local
+  Lysis result.
 - A later vote or deadline close cannot change terminal/result,
   active-generation or exact-retry identity.
 - A conflicting second vote records equivocation evidence and never replaces
@@ -464,13 +491,13 @@ sign-once journal update is write-before-sign and crash-safe: an uncertain write
 disables signing until reconciled. A worker/supervisor crash cannot corrupt
 consensus state.
 
-Each non-q-forming vote transaction changes only its bounded accountability
-state. The q-forming vote executes the constant-size certified apply inside the
-same outer checkpoint. Exact vote retry is idempotent. A conflicting retry
-records bounded equivocation evidence without replacing the first vote or
-contributing twice. ZeroFee classification only waives native fee debit; all
-execution still consumes consensus-accounted gas/work, and a protocol-invalid
-vote is rejected by OCOMP with no vote-state change.
+Each non-q-forming vote carrier changes only its bounded accountability state.
+The q-forming vote executes the constant-size certified apply inside the same
+outer checkpoint. Exact vote retry is idempotent. A conflicting retry records
+bounded equivocation evidence without replacing the first vote or contributing
+twice. System-carrier classification grants only the narrow OCOMP execution
+authority; all real work consumes the deterministic internal system budget, and
+a protocol-invalid vote is rejected with no vote-state change.
 
 The pinned quorum tolerates exactly the fault budget implied by
 `simplex_n3f1_quorum(N)`. There is no post-quorum liveness dependency on a
@@ -489,9 +516,9 @@ is bounded by the current consensus validator limit and remains independent of
 total Tribute count. Total Tribute, unit and result-chunk counts
 are checked for arithmetic validity and exact committed coverage, not capped by
 the PoC. Unit and result-chunk artifacts do not enter activation state
-individually. At most `N` bounded full-result vote transactions are carried
-through the normal public path; the q-forming one also performs the bounded
-root/scalar apply. `ShuffleRunArtifactV1` bounds each leaf to 256 records
+individually. At most `N` bounded full-result system carriers are included per
+job; the q-forming one also performs the bounded root/scalar apply, and none
+consume the ordinary user gas lane. `ShuffleRunArtifactV1` bounds each leaf to 256 records
 and each internal node to two child references; the number of leaves and nodes
 is derived from the uncapped Tribute population and is never a consensus cap.
 
@@ -519,15 +546,17 @@ transition in which an old attempt remains pinned while a newly active validator
 participates automatically in a new attempt. It also includes synthetic
 accountability/capacity vectors at the current consensus validator bound,
 1/2/4-worker equality, randomized order/retry, restart-safe sign-once refusal,
-public vote inclusion and replay, duplicate/wrong/late voter rejection,
-conflicting-vote evidence, one-byte/ordering/JobId mutation rejection and
-comparison with a separate reference corpus.
+system-vote inclusion and replay, continued post-quorum participation, exact
+1,800-block deadline jail, duplicate/wrong/late voter rejection,
+conflicting-vote evidence, independent FullNode recomputation/fail-closed
+vectors, one-byte/ordering/JobId mutation rejection and comparison with a
+separate reference corpus.
 
 ## Consequences
 
 The profile establishes decentralised correctness and consensus-visible
 accountability through bounded work without on-chain Lysis or a total Tribute
-cap, but accepts up to `N` additional public transactions per job and that a
+cap, but accepts up to `N` additional system carriers per job and that a
 quorum of implementations can share one semantic bug. The reference corpus,
 adversarial vectors and later implementation diversity remain required; quorum
 is not an excuse to skip specification testing.
@@ -558,9 +587,9 @@ is not an excuse to skip specification testing.
 4. Generate all `UnitSpecV1`, `UnitId`, result, vote-slot, quorum and
    accountability golden vectors.
 5. Prove maximum result/vote-signature verification work through the public
-   RPC/txpool/P2P/import/replay path.
+   RPC/propagation/system-work/import/replay path.
 6. Define durable mismatch diagnostics without leaking raw user data.
 7. Define monetary missed-response/equivocation policy in a separate slashing
-   ADR; the PoC supplies evidence only.
+   ADR; immediate missing-vote jail is already consensus behavior.
 8. Define BoundedMVP cleanup/retention for closed vote slots and terminal result
    records.

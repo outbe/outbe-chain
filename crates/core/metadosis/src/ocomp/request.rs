@@ -79,14 +79,6 @@ fn run_terminal_request_inner(
         return Ok(TerminalRequestOutcome::Inactive);
     };
     let fsm_limits = profile.fsm_limits();
-    if metadosis
-        .live_ocomp_fsm_states(&schema_limits, fsm_limits)?
-        .len()
-        >= usize::from(profile.capacity_profile.max_pending_jobs)
-    {
-        return Ok(TerminalRequestOutcome::NoReadyJob);
-    }
-
     let Some(projection) = metadosis.next_ocomp_ready(&schema_limits, fsm_limits)? else {
         return Ok(TerminalRequestOutcome::NoReadyJob);
     };

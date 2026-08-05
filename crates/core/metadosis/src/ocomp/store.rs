@@ -18,7 +18,7 @@ use super::{
     codec::{
         decode_live_scheduler_index, decode_scheduler, encode_live_scheduler_index,
         encode_scheduler, encode_scheduler_snapshot, live_snapshot_key, max_canonical_object_bytes,
-        read_canonical_optional, scheduler_snapshot, MAX_LIVE_JOBS,
+        read_canonical_optional, scheduler_snapshot,
     },
     index::ReadyIndexKey,
     state::{
@@ -409,9 +409,6 @@ impl MetadosisContract<'_> {
             }
             index[position] = snapshot;
         } else {
-            if index.len() >= MAX_LIVE_JOBS {
-                return Err(fatal("OCOMP live scheduler capacity exhausted"));
-            }
             index.push(snapshot);
         }
         index.sort_by_key(live_snapshot_key);

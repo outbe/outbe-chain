@@ -155,7 +155,6 @@ fn canonical_final_artifacts_are_complete_hash_bound_and_node_loadable() {
             .max_tributes_per_work_shard,
         256
     );
-    assert_eq!(install.request_profile.capacity_profile.max_pending_jobs, 2);
 }
 
 fn require_regular_file(path: &Path) {

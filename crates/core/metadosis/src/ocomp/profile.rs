@@ -133,7 +133,6 @@ pub(super) fn validate_request_profile(profile: &OcompRequestProfile) -> Result<
 
     if capacity.max_tributes_per_work_shard != max_tributes_per_work_shard
         || capacity.max_workers_per_domain != 4
-        || capacity.max_pending_jobs != 2
         || capacity.max_intents_per_block != 1
         || capacity.max_activations_per_block != 1
         || capacity.max_ready_inspections_per_block != 1

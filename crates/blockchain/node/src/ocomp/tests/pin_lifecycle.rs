@@ -48,10 +48,10 @@ use reth_ethereum::{primitives::SealedBlock, Block, Receipt, TxType};
 use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
 
 use crate::ocomp::retention::{
-    CandidateFinalityV1, CandidatePinV1, FinalizedInputProofSource, FinalizedJobPinV1,
-    FinalizedSnapshotArmer, JournalDurability, OcompRetentionCoordinator, OcompRetentionService,
-    PinRecordV1, PinReleaseReason, PinStateV1, RetentionError, RetentionStatus,
-    RethFinalizedInputProofSource,
+    inspect_retention_journal, CandidateFinalityV1, CandidatePinV1, FinalizedInputProofSource,
+    FinalizedJobPinV1, FinalizedSnapshotArmer, JournalDurability, OcompRetentionCoordinator,
+    OcompRetentionService, PinRecordV1, PinReleaseReason, PinStateV1, RetentionError,
+    RetentionStatus, RethFinalizedInputProofSource,
 };
 use crate::ocomp::{
     attestation::{AtomicHeightSource, AttestationAuthorityError, AttestationError},
@@ -1381,6 +1381,40 @@ fn ocm_pin_001_retained_predecessor_does_not_block_a_retry_job() {
             .observe_terminal(first_job_id, first_terminal.generation, 219)
             .expect("both Job entries survive restart"),
         first_terminal
+    );
+}
+
+#[test]
+fn durable_registry_tracks_more_than_256_independent_jobs_across_restart() {
+    let source = Arc::new(DeterministicProofSource::default());
+    let root = tempfile::tempdir().expect("multi-job journal root");
+    let coordinator = OcompRetentionCoordinator::open(root.path(), source.clone());
+
+    for ordinal in 0_u64..257 {
+        let request = block(
+            1_000 + ordinal,
+            keccak256(ordinal.to_be_bytes()),
+            u8::try_from(ordinal & 0xff).unwrap(),
+        );
+        coordinator
+            .record_tentative(candidate(
+                &request,
+                keccak256((ordinal + 10_000).to_be_bytes()),
+            ))
+            .expect("journal wire format, not an OCOMP product cap, bounds records");
+    }
+    drop(coordinator);
+
+    let snapshot = inspect_retention_journal(root.path()).expect("inspect durable multi-job state");
+    assert_eq!(snapshot.records.len(), 257);
+    let restarted = OcompRetentionCoordinator::open(root.path(), source);
+    assert!(matches!(restarted.status(), RetentionStatus::Ready(_)));
+    assert_eq!(
+        inspect_retention_journal(root.path())
+            .unwrap()
+            .records
+            .len(),
+        257
     );
 }
 

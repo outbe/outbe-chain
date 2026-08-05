@@ -23,7 +23,6 @@ use crate::{
 };
 
 use super::{
-    codec::{decode_live_scheduler_index, MAX_LIVE_JOBS},
     index::{
         insert_ready_key, insert_response_deadline_key, remove_ready_key, ReadyIndexKey,
         ResponseDeadlineKey,
@@ -94,9 +93,6 @@ impl MetadosisContract<'_> {
                 || receipt.lysis_budget != intent.frozen_metadosis_values.lysis_budget
             {
                 return Err(fatal("OCOMP intent/request receipt binding mismatch"));
-            }
-            if decode_live_scheduler_index(&self.ocomp_scheduler.read()?)?.len() >= MAX_LIVE_JOBS {
-                return Err(fatal("OCOMP live Job capacity exhausted"));
             }
             let mut state = self.ocomp_fsm_state(wwd, schema_limits, fsm_limits)?;
             let ready_key = ReadyIndexKey::from_projection(state.projection())?;

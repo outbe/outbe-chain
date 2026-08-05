@@ -24,9 +24,9 @@ which exact domain effects it may authorize. Re-executing Lysis on-chain is
 forbidden, while interpreting arbitrary writes would discard all domain
 invariants.
 
-The job lifecycle and the bounded full-result vote transactions therefore form
+The job lifecycle and the bounded full-result system vote carriers therefore form
 one typed consensus protocol. Result transport, quorum formation and typed
-application are not separate liveness steps: the q-forming transaction already
+application are not separate liveness steps: the q-forming carrier already
 carries the exact `LysisResultV1` and applies it atomically.
 
 ## Decision
@@ -81,6 +81,9 @@ open_height = checked_add(finality_recorded_height, 4)
 deadline_height = checked_add(open_height, response_window_blocks)
 ```
 
+`response_window_blocks` is exactly `1_800`. This single window covers both
+local Lysis computation and inclusion of every pinned validator's vote.
+
 At begin-zone `open_height`, OCOMP writes the finalized `JobId`, inserts the
 response-deadline index and moves the job to
 `VOTING_OPEN(open_height, deadline_height)`. A pre-finality reorg removes the
@@ -96,10 +99,10 @@ state.
 
 Several Job attempts may be live at once. Consensus and every validator-local
 OCOMP module address lifecycle, vote slots, artifacts and deadlines by exact
-`JobId`; there is no global “current Job”. A bounded active-job admission limit
-may apply to local resources, but reaching it causes local backpressure or
-abstention and never overwrites another Job, rejects part of a Tribute
-population or changes consensus validity. Retry is a new Job attempt and may
+`JobId`; there is no global “current Job”, `MAX_LIVE_JOBS` or replacement global
+live-job counter. Local queues remain bounded by their owning resource contracts,
+but they cannot change consensus membership/lifecycle or overwrite another Job.
+Retry is a new Job attempt and may
 share an Authenticated Input Lease with its retained predecessor under
 ADR-S-OCM-002.
 
@@ -133,8 +136,10 @@ At block height `h`, the begin-zone closes vote windows with
 - a `VOTING_OPEN` job without its pinned quorum becomes `EXPIRED`;
 - a `COMPLETED` or `CONFLICTED` job retains its terminal result and receives its closed
   `OcompAccountabilitySummaryV1`;
-- a result-vote transaction included at the deadline is late and cannot alter
-  the summary.
+- every pinned participant without a timely valid included vote is sent to
+  `JAILED` exactly once from JobId/participant-bound evidence;
+- a result-vote carrier included at the deadline is late and cannot alter the
+  summary or avoid jail.
 
 When the matching first-vote count reaches the pinned quorum before the deadline,
 consensus verifies and stores that canonical `LysisResultV1` once, records the
@@ -211,19 +216,21 @@ slot follow.
 
 ### Full-result vote verification
 
-`submitLysisResult` is a normal signed bounded EVM transaction carried
-through RPC, txpool, gossip, proposal, import and replay. The represented
-validator does not pay its native fee: a dedicated exact-selector ZeroFee hook,
-constrained like Oracle's hook, authorizes only an eligible validator or its
-role-delegated OCOMP signer, zero value and bounded envelope. That hook does not
+`submitLysisResult` is a signed bounded system carrier propagated through RPC,
+transaction gossip, proposal, import and replay. Its canonical visible
+`gas_limit` is `30_000`, but classification happens before ordinary Ethereum
+intrinsic-gas rejection. The represented validator pays no native fee and the
+carrier consumes none of the 30,000,000 user-transaction gas lane. Decode,
+authorization, signature verification, vote-state writes and q-forming apply
+consume a separate deterministic system-work budget. Classification does not
 decide protocol validity.
 
 The `OffchainLysis Supervisor` owns transaction construction, local outer EVM
 signing with its role-delegated key, submission, inclusion/finality tracking and
 reorg rebroadcast. It requests only the inner OCOMP attestation through the
 restricted node-owned seam and never receives the node attestation key. The PoC
-submission path uses the canonical `latest` account nonce and the frozen gas
-limit; it does not use `eth_estimateGas` or a `pending` block build. The durable
+submission path uses the canonical `latest` account nonce and exact `30_000`
+carrier value; it does not use `eth_estimateGas` or a `pending` block build. The durable
 single-writer journal reuses the exact locally signed raw transaction for
 retry/reorg. Before recording a vote, the OCOMP
 executor:
@@ -247,13 +254,15 @@ executor:
    q-forming canonical result once and performs the typed apply before the
    outer checkpoint commits.
 
-The vote transaction never executes Lysis or traverses result chunks. Matching
+The vote carrier never executes Lysis or traverses result chunks. Matching
 submissions below quorum change only bounded vote state. The q-forming
 submission installs roots and constant-size owner effects. The dynamic slots and
 closed summary live in a separate bounded `OcompVoteAccountabilityV1` keyed by
 `JobId`; they store digests/signatures/heights, not four copies of the result.
 After completion or conflict, missing first-vote slots and first
 bounded conflicting-vote evidence remain writable until the response deadline.
+At the exact deadline a system transition closes them and jails every missing
+pinned participant once; a timely minority vote counts as present.
 
 `LysisTerminalV1`, the apply receipt, active-generation hash, applied
 domain state and exact retry identity are immutable and exclude the
@@ -365,7 +374,9 @@ planner, result or apply contract is a new protocol, not operational hardening.
 | immutable terminal result and receipt | `LysisTerminalV1` in OCOMP consensus state |
 | result-vote slots and closed summary | separate bounded `OcompVoteAccountabilityV1` |
 | vote submission/rebroadcast | validator-domain `OffchainLysis Supervisor` |
-| result-vote fee waiver | exact-selector validator-only ZeroFee hook |
+| result-vote carrier | exact `gas_limit = 30_000`, pre-intrinsic system classification |
+| actual result-vote execution | separately bounded system-work lane, zero user gas |
+| deadline consequence | replay-idempotent missing-participant transition to `JAILED` |
 | trigger/day status | ADR-C-MET-001 |
 | finality identity | ADR-B-CNS-001/003 proof contract |
 | evidence validity | ADR-S-OCM-003 |
@@ -385,15 +396,15 @@ planner, result or apply contract is a new protocol, not operational hardening.
 - Lifecycle, voting and application are keyed by exact `JobId`; one Job's
   retention or failure never blocks an unrelated Job.
 - Voting cannot open before `finality_recorded_height + 4`.
-- Only a timely eligible signed transaction can fill a result-vote slot.
+- Only a timely eligible signed system carrier can fill a result-vote slot.
 - The intent's consensus-derived number of matching first-vote slots atomically
   establishes quorum and produces `COMPLETED` or the defined `CONFLICTED` outcome.
 - Every remaining pinned participant can still vote until the response deadline
   after quorum or completion.
 - Post-quorum accountability writes never change immutable terminal, apply
   receipt, active generation or exact-retry identity.
-- Missing-response and equivocation evidence are consensus-visible; this design applies
-  no monetary slashing policy.
+- Missing-response and equivocation evidence are consensus-visible; missing
+  response causes immediate jail, while this design applies no monetary penalty.
 - Worker-shard completion is never a consensus terminal state and cannot be
   applied independently.
 - A late vote cannot race response-window closure.
@@ -410,7 +421,8 @@ planner, result or apply contract is a new protocol, not operational hardening.
 The request split, early Desis/carry-over effect, intent and
 `AWAITING_FINALITY` share one checkpoint. Four blocks after
 consensus-certified finality, the minimum gate installs `JobId`, `open_height`,
-`deadline_height`, its due index and `VOTING_OPEN` in one checkpoint.
+`deadline_height = open_height + 1_800`, its due index and `VOTING_OPEN` in one
+checkpoint.
 
 Each accepted vote, optional equivocation record and resulting quorum transition
 share one checkpoint. Vote failure has no partial slot/tally state.

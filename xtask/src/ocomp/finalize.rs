@@ -1037,7 +1037,6 @@ mod tests {
             profile_id: parse_b256(OCOMP_CAPACITY_PROFILE_ID_HEX).unwrap(),
             max_tributes_per_work_shard: 256,
             max_workers_per_domain: 4,
-            max_pending_jobs: 2,
             max_intents_per_block: 1,
             max_activations_per_block: 1,
             max_ready_inspections_per_block: 1,
@@ -1243,7 +1242,6 @@ mod tests {
         assert_eq!(install.founder_registrations.len(), 5);
         assert!(!output.join("result-committee-v1.ocb1").exists());
         assert!(!output.join("result-committee-public-v1.json").exists());
-        assert_eq!(install.request_profile.capacity_profile.max_pending_jobs, 2);
         assert_eq!(
             install
                 .request_profile

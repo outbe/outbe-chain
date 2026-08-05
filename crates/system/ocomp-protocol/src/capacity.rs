@@ -487,9 +487,6 @@ impl VerifiedCapacityEvidenceV1 {
             max_tributes_per_work_shard: u32::try_from(candidate.max_tributes_per_work_shard)
                 .map_err(|_| CapacityEvidenceError::GeneratedLimitOverflow)?,
             max_workers_per_domain: 4,
-            // Two is the smallest bounded profile that proves independent
-            // concurrent Job progress without widening any per-block work cap.
-            max_pending_jobs: 2,
             max_intents_per_block: 1,
             max_activations_per_block: 1,
             max_ready_inspections_per_block: 1,

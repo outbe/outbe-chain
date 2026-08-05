@@ -155,10 +155,6 @@ fn ocm_cap_001_five_exact_cold_runs_generate_one_canonical_profile() {
         .unwrap();
     assert_eq!(profile.max_tributes_per_work_shard, 256);
     assert_eq!(profile.max_workers_per_domain, 4);
-    assert!(
-        profile.max_pending_jobs >= 2,
-        "the PoC profile must admit more than one independently progressing Job"
-    );
     assert_eq!(
         profile.max_intents_per_block, 1,
         "multi-job state must not increase per-block request work"

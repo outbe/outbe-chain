@@ -480,7 +480,6 @@ fn capacity_profile() -> CapacityProfileV1 {
         profile_id: hash(13),
         max_tributes_per_work_shard: 256,
         max_workers_per_domain: 4,
-        max_pending_jobs: 2,
         max_intents_per_block: 1,
         max_activations_per_block: 1,
         max_ready_inspections_per_block: 1,
@@ -546,6 +545,54 @@ fn signing_key(index: u8) -> SigningKey {
 fn sign(key: &SigningKey, digest: B256) -> [u8; 64] {
     let signature: Signature = key.sign_prehash(digest.as_slice()).unwrap();
     signature.to_bytes().into()
+}
+
+pub(crate) fn founder_registrations_for_validators(
+    validators: &[(Address, [u8; 48])],
+    chain_id: u64,
+    genesis_hash: B256,
+    limits: &SchemaLimits,
+) -> PrecompileResult<Vec<OcompKeyRegistrationV1>> {
+    let mut registrations = Vec::with_capacity(validators.len());
+    for (index, (validator, consensus_pubkey)) in validators.iter().enumerate() {
+        let index = u8::try_from(index).map_err(|_| {
+            PrecompileError::Fatal("test founder validator index exceeds u8".into())
+        })?;
+        let key = signing_key(index);
+        let mut registration = OcompKeyRegistrationV1 {
+            core: OcompKeyRegistrationCoreV1 {
+                chain_id,
+                genesis_hash,
+                validator_identity_hash: validator_identity_hash_v1(*validator, consensus_pubkey)
+                    .map_err(|error| {
+                    PrecompileError::Fatal(format!(
+                        "test founder validator identity failed: {error}"
+                    ))
+                })?,
+                ocomp_public_key_sec1: key
+                    .verifying_key()
+                    .to_encoded_point(true)
+                    .as_bytes()
+                    .try_into()
+                    .map_err(|_| {
+                        PrecompileError::Fatal("test founder OCOMP key is not 33 bytes".into())
+                    })?,
+                key_epoch: 1,
+                allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
+            },
+            proof_of_possession: [0; 64],
+        };
+        registration.proof_of_possession = sign(
+            &key,
+            registration
+                .proof_of_possession_digest(limits)
+                .map_err(|error| {
+                    PrecompileError::Fatal(format!("test founder PoP digest failed: {error}"))
+                })?,
+        );
+        registrations.push(registration);
+    }
+    Ok(registrations)
 }
 
 pub(crate) fn seed_validator_snapshot(

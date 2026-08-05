@@ -528,7 +528,7 @@ fn deferred_day_does_not_starve_a_later_eligible_job_intent() {
     outbe_fidelity::enclave_client::test_enclave::install();
     // Oracle starts un-armed so the first ready day defers (OracleProfileNotReady);
     // it is armed mid-test so the later day becomes eligible.
-    let fixture = prepare_two_ready_days_fixture(&mut provider, false);
+    let fixture = prepare_ready_days_fixture(&mut provider, false);
 
     StorageHandle::enter(&mut provider, |storage| {
         let first_ctx = BlockRuntimeContext::new(
@@ -624,7 +624,7 @@ fn deferred_day_does_not_starve_a_later_eligible_job_intent() {
 fn two_eligible_days_create_independently_progressing_live_jobs() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
     outbe_fidelity::enclave_client::test_enclave::install();
-    let fixture = prepare_two_ready_days_fixture(&mut provider, true);
+    let fixture = prepare_ready_days_fixture(&mut provider, true);
 
     StorageHandle::enter(&mut provider, |storage| {
         for (block_number, block_time) in [
@@ -744,10 +744,70 @@ fn two_eligible_days_create_independently_progressing_live_jobs() {
 }
 
 #[test]
+fn three_eligible_days_create_independently_progressing_live_jobs() {
+    let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
+    outbe_fidelity::enclave_client::test_enclave::install();
+    let fixture = prepare_ready_days_fixture(&mut provider, true);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        for offset in 0..3 {
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(
+                    fixture.block_number + offset,
+                    fixture.block_time + offset,
+                    chain::CHAIN_ID,
+                ),
+                storage.clone(),
+            );
+            run_terminal_request(&ctx, &fixture.scope).unwrap();
+        }
+
+        let metadosis = MetadosisContract::new(storage);
+        let live = metadosis
+            .live_ocomp_fsm_states(
+                &poc_schema_limits(),
+                JobFsmLimits {
+                    max_terminal_records: 365,
+                },
+            )
+            .unwrap();
+        assert_eq!(live.len(), 3);
+
+        let intent_ids = live
+            .iter()
+            .map(|state| {
+                let projection = state.projection();
+                assert_eq!(projection.phase, DayPhase::OffchainPending);
+                projection.live_intent_id.unwrap()
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(intent_ids.len(), 3);
+        assert_eq!(
+            live.iter()
+                .map(|state| state.projection().worldwide_day)
+                .collect::<std::collections::BTreeSet<_>>(),
+            [fixture.first_wwd, fixture.later_wwd, fixture.third_wwd]
+                .into_iter()
+                .collect()
+        );
+        for intent_id in intent_ids {
+            assert_eq!(
+                metadosis
+                    .ocomp_job_record(intent_id, &poc_schema_limits())
+                    .unwrap()
+                    .unwrap()
+                    .status,
+                OcompJobStatus::AwaitingFinality
+            );
+        }
+    });
+}
+
+#[test]
 fn awaiting_finality_expires_at_own_deadline_and_releases_live_capacity() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
     outbe_fidelity::enclave_client::test_enclave::install();
-    let fixture = prepare_two_ready_days_fixture(&mut provider, true);
+    let fixture = prepare_ready_days_fixture(&mut provider, true);
 
     StorageHandle::enter(&mut provider, |storage| {
         for (block_number, block_time) in [
@@ -1071,10 +1131,11 @@ struct PreparedRequestFixture {
     block_time: u64,
 }
 
-struct TwoReadyDaysFixture {
+struct ReadyDaysFixture {
     scope: ExecutionScope,
     first_wwd: outbe_common::WorldwideDay,
     later_wwd: outbe_common::WorldwideDay,
+    third_wwd: outbe_common::WorldwideDay,
     block_number: u64,
     block_time: u64,
 }
@@ -1191,16 +1252,17 @@ fn prepare_request_fixture_with_day_type(
     }
 }
 
-fn prepare_two_ready_days_fixture(
+fn prepare_ready_days_fixture(
     provider: &mut HashMapStorageProvider,
     oracle_ready: bool,
-) -> TwoReadyDaysFixture {
+) -> ReadyDaysFixture {
     let scope = ExecutionScope::new();
     let parent = TestParent::empty();
     let first_wwd = outbe_common::WorldwideDay::new(2026_0710);
     let later_wwd = outbe_common::WorldwideDay::new(2026_0711);
+    let third_wwd = outbe_common::WorldwideDay::new(2026_0712);
     let block_number = 29;
-    let block_time = later_wwd.start_timestamp() + 8 * SECONDS_PER_HOUR;
+    let block_time = third_wwd.start_timestamp() + 8 * SECONDS_PER_HOUR;
     let mut profile = request_profile();
     profile.chain_id = chain::CHAIN_ID;
 
@@ -1221,7 +1283,7 @@ fn prepare_two_ready_days_fixture(
         metadosis
             .initialize_ocomp_request_profile(&profile, &poc_schema_limits())
             .unwrap();
-        for wwd in [first_wwd, later_wwd] {
+        for wwd in [first_wwd, later_wwd, third_wwd] {
             metadosis
                 .create_worldwide_day(
                     wwd,
@@ -1259,12 +1321,12 @@ fn prepare_two_ready_days_fixture(
 
         let mut tribute = TributeContract::new(storage.clone());
         tribute.initialize_fresh_ocomp_profile().unwrap();
-        for (ordinal, wwd) in [first_wwd, later_wwd].into_iter().enumerate() {
+        for (ordinal, wwd) in [first_wwd, later_wwd, third_wwd].into_iter().enumerate() {
             tribute.unseal_day(wwd).unwrap();
-            let owner = if ordinal == 0 {
-                address!("7300000000000000000000000000000000000073")
-            } else {
-                address!("7400000000000000000000000000000000000074")
+            let owner = match ordinal {
+                0 => address!("7300000000000000000000000000000000000073"),
+                1 => address!("7400000000000000000000000000000000000074"),
+                _ => address!("7500000000000000000000000000000000000075"),
             };
             tribute
                 .issue(
@@ -1293,10 +1355,11 @@ fn prepare_two_ready_days_fixture(
         end_block(storage, &scope).unwrap();
     });
 
-    TwoReadyDaysFixture {
+    ReadyDaysFixture {
         scope,
         first_wwd,
         later_wwd,
+        third_wwd,
         block_number,
         block_time,
     }

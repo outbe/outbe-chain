@@ -186,7 +186,7 @@ fn seed_capacity_fixture_with_victim_state(
                 U256::from(1),
             );
         }
-        let victim = outbe_common::WorldwideDay::new(2026_0110);
+        let victim = outbe_common::WorldwideDay::new(2099_1231);
         let scheduled = seed_day(&storage, victim, victim_state, U256::from(100));
         tribute
             .day_totals
@@ -273,23 +273,13 @@ fn run_advance(
 #[test]
 fn derived_caps_are_bound_to_production_phase_and_tick_cadence() {
     assert_eq!(MAX_PIPELINE_WWDS, 27);
-    assert_eq!(MAX_RETAINED_WWDS, 2);
-    assert_eq!(MAX_ACTIVE_WWDS, 29);
+    assert_eq!(MAX_RETAINED_WWDS, MAX_RECORDS_KEPT);
+    assert_eq!(MAX_ACTIVE_WWDS, MAX_PIPELINE_WWDS + MAX_RECORDS_KEPT);
     assert_eq!(MAX_ADMISSION_WAIT_TICKS, 27);
     assert_eq!(MAX_ADMISSION_WAIT_HOURS, 324);
     const {
         assert!(WWD_ADVANCE_TICK_CADENCE_HOURS < WWD_CREATION_CADENCE_HOURS);
     }
-    let install = crate::fixture_kernel::fork_install_fixture(
-        crate::ocomp::fork::OcompForkInstallClassification::Measurement,
-        1,
-        CHAIN_ID,
-        B256::repeat_byte(0x11),
-    );
-    assert_eq!(
-        usize::from(install.request_profile.capacity_profile.max_pending_jobs),
-        MAX_RETAINED_WWDS
-    );
 }
 
 #[test]
@@ -517,12 +507,12 @@ fn multiple_due_candidates_advance_exactly_one_per_tick_in_protocol_order() {
         let metadosis = MetadosisContract::new(storage);
         assert_eq!(
             candidates.map(|wwd| metadosis.get_wwd_status(wwd).unwrap()),
-            [status::READY, status::READY, status::FAILED]
+            [status::READY, status::READY, status::READY]
         );
         assert!(metadosis
             .read_capacity_forfeiture_receipt(candidates[2])
             .unwrap()
-            .is_some());
+            .is_none());
     });
 }
 
@@ -614,7 +604,7 @@ fn continuous_creation_cadence_keeps_due_candidates_within_the_derived_wait_boun
     StorageHandle::enter(&mut provider, |storage| {
         let aggregate =
             crate::aggregate::ValidatedWwdAggregate::load_and_validate(storage).unwrap();
-        assert_eq!(aggregate.retained_count(), MAX_RETAINED_WWDS);
+        assert_eq!(aggregate.retained_count(), total_candidates);
     });
 }
 
@@ -786,7 +776,7 @@ fn capacity_forfeiture_preserves_retained_work_and_replays_without_effects() {
 }
 
 #[test]
-fn capacity_forfeiture_preserves_real_pending_ocomp_job_and_indexes_byte_for_byte() {
+fn additional_ready_day_preserves_real_pending_ocomp_job_and_indexes_byte_for_byte() {
     let mut fixture = crate::fixture_kernel::ActivationFixture::new_voting(50, 5_000, true);
     let pending = crate::fixture_kernel::TEST_WWD;
     let ready = outbe_common::WorldwideDay::new(2026_0724);
@@ -870,7 +860,12 @@ fn capacity_forfeiture_preserves_real_pending_ocomp_job_and_indexes_byte_for_byt
             status::OFFCHAIN_PENDING
         );
         assert_eq!(metadosis.get_wwd_status(ready).unwrap(), status::READY);
-        assert_eq!(metadosis.get_wwd_status(victim).unwrap(), status::FAILED);
+        assert_eq!(metadosis.get_wwd_status(victim).unwrap(), status::READY);
+        assert!(metadosis.active_wwd.read_all().unwrap().contains(&victim));
+        assert!(metadosis
+            .read_capacity_forfeiture_receipt(victim)
+            .unwrap()
+            .is_none());
         assert!(metadosis
             .ocomp_fsm_states
             .get_bytes(&victim)

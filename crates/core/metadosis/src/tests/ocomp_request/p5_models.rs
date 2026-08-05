@@ -26,8 +26,8 @@ use proptest::{
 };
 
 use super::{
-    poc_schema_limits, prepare_request_fixture, prepare_request_fixture_with_day_type,
-    prepare_two_ready_days_fixture, DayPhase, IMetadosis,
+    poc_schema_limits, prepare_ready_days_fixture, prepare_request_fixture,
+    prepare_request_fixture_with_day_type, DayPhase, IMetadosis,
 };
 use crate::{
     api, commands,
@@ -1545,7 +1545,7 @@ fn seed_near_cap_history(
 #[test]
 fn terminal_cap_is_per_worldwide_day_not_global() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
-    let fixture = prepare_two_ready_days_fixture(&mut provider, true);
+    let fixture = prepare_ready_days_fixture(&mut provider, true);
     let limits = poc_schema_limits();
     let fsm_limits = crate::ocomp::state::JobFsmLimits {
         max_terminal_records: 365,
@@ -1647,7 +1647,7 @@ fn terminal_cap_is_per_worldwide_day_not_global() {
 #[test]
 fn two_concurrent_live_days_do_not_share_terminal_budget() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
-    let fixture = prepare_two_ready_days_fixture(&mut provider, true);
+    let fixture = prepare_ready_days_fixture(&mut provider, true);
     let limits = poc_schema_limits();
     let fsm_limits = crate::ocomp::state::JobFsmLimits {
         max_terminal_records: 365,
