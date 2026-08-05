@@ -126,11 +126,15 @@ pub fn request_credis(
 /// installment first, the last one reached possibly only partially) and releases the
 /// matching share of collateral from the pledger's OWN confidential pledged ledger back
 /// to its balance. When `amount` exceeds what the schedule still needs, only the
-/// required part is pulled from the caller. The pledger EOA is stored sealed on the
-/// position and recovered here through the enclave (`reveal_owner`), so the release
-/// reaches the rightful pledger without the EOA ever appearing on-chain. The payment
-/// (the ERC20 → vault deposit below) is the authorization for the release — no separate
-/// proof is required. Returns the stablecoin actually pulled.
+/// required part is pulled from the caller.
+///
+/// ANY caller may pay — a third party can settle someone else's position. That is safe
+/// by construction rather than by an access check: the debt is pulled from `caller`'s
+/// own balance, while the freed collateral goes to the pledger EOA stored sealed on the
+/// position and recovered here through the enclave (`reveal_owner`). The payer can
+/// therefore never redirect value to themselves, and the EOA never appears on-chain.
+/// The payment (the ERC20 → vault deposit below) is the authorization for the release —
+/// no separate proof is required. Returns the stablecoin actually pulled.
 pub fn pay_anadosis(
     storage: StorageHandle<'_>,
     caller: Address,
@@ -152,9 +156,6 @@ pub fn pay_anadosis(
 
         if position.asset.is_zero() {
             return Err(CredisFactoryError::InvalidAsset.into());
-        }
-        if caller != position.smart_account {
-            return Err(CredisFactoryError::UnauthorizedCaller.into());
         }
         outbe_gratis::api::reveal_owner(storage.clone(), &position.eoa_ct)?
     };

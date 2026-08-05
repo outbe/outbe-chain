@@ -24,7 +24,10 @@ interface ICredisFactory {
     ///         last one reached may be covered partially (its remainder stays on
     ///         `Anadosis.unpaidAmount`). When `amount` exceeds the position's
     ///         outstanding balance only the required part is pulled from the caller.
-    ///         Caller MUST be the position's smart account.
+    ///         Any caller may pay, including on behalf of another account: the debt
+    ///         is pulled from the caller's own balance while the freed collateral is
+    ///         always released to the original pledger, so a payer can never redirect
+    ///         value to themselves.
     /// @return totalPaidAmount Stablecoin actually pulled — `min(amount, outstanding)`.
     function anadosis(uint256 positionId, uint256 amount) external returns (uint256 totalPaidAmount);
 

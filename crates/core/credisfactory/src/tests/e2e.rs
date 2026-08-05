@@ -438,15 +438,17 @@ fn request_credis_rejects_zero_smart_account() {
 }
 
 #[test]
-fn pay_anadosis_rejects_non_owner_caller() {
+fn pay_anadosis_accepts_third_party_payer() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
-        let amount = one_e18();
+        let pledge_amount = one_e18();
+        let installment = pledge_amount / U256::from(NUMBER_OF_ANADOSIS);
+
         outbe_gratis::api::mint(
             storage.clone(),
             alice(),
-            amount,
-            auth(GratisOp::Mint, alice(), amount, 0),
+            pledge_amount,
+            auth(GratisOp::Mint, alice(), pledge_amount, 0),
         )
         .unwrap();
         seed_fidelity(storage.clone(), alice());
@@ -454,8 +456,8 @@ fn pay_anadosis_rejects_non_owner_caller() {
         let handle = gf::pledge_gratis(
             storage.clone(),
             alice(),
-            amount,
-            auth(GratisOp::Pledge, alice(), amount, 1),
+            pledge_amount,
+            auth(GratisOp::Pledge, alice(), pledge_amount, 1),
         )
         .unwrap();
         let spend = credis_spend_auth(alice(), handle, alice());
@@ -463,10 +465,29 @@ fn pay_anadosis_rejects_non_owner_caller() {
             runtime::request_credis(storage.clone(), alice(), asset(), alice(), handle, spend)
                 .unwrap();
 
-        // bob is not the position's smart account.
-        let err =
-            runtime::pay_anadosis(storage.clone(), bob(), position_id, one_e18()).unwrap_err();
-        assert!(err.to_string().contains("smartAccount"), "got: {err}");
+        // bob is not the position's smart account, but anyone may pay it down.
+        let owed = CredisContract::new(storage.clone())
+            .get_next_anadosis(position_id)
+            .unwrap()
+            .unwrap()
+            .unpaid_amount;
+        let paid = runtime::pay_anadosis(storage.clone(), bob(), position_id, owed).unwrap();
+        assert_eq!(paid, owed);
+        assert_eq!(
+            CredisContract::new(storage.clone())
+                .get_position(position_id)
+                .unwrap()
+                .next_anadosis_number,
+            2,
+            "third-party payment advances the schedule"
+        );
+
+        // The freed collateral goes to the ORIGINAL pledger, never to the payer — this
+        // is what makes an open payer safe without an access check.
+        assert_eq!(view_balance(&storage, alice()), installment);
+        assert_eq!(view_pledged(&storage, alice()), pledge_amount - installment);
+        assert_eq!(view_balance(&storage, bob()), U256::ZERO);
+        assert_eq!(view_pledged(&storage, bob()), U256::ZERO);
     });
     fidelity_enclave::uninstall();
     test_enclave::uninstall();
