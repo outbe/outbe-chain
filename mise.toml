@@ -1,7 +1,7 @@
 [tools]
 # ── Core ────────────────────────────────────────────────────────────── #
-rust = "1.96"                      # build outbe-chain + all crates
-foundry = "latest"                 # forge, cast, anvil (Solidity + Ethereum CLI)
+rust = "1.96"      # build outbe-chain + all crates
+foundry = "latest" # forge, cast, anvil (Solidity + Ethereum CLI)
 
 # ── System deps ─────────────────────────────────── #
 # These must come from the system package manager:
@@ -14,20 +14,20 @@ foundry = "latest"                 # forge, cast, anvil (Solidity + Ethereum CLI
 # Core tools needed by build/test/audit tasks. The heavier audit toolchain
 # (machete, udeps, bloat, llvm-lines, llvm-cov) is installed on
 # demand by `mise run audit-tools-install` to mirror the old Makefile.
-"cargo:cargo-binstall"  = "latest"
-"cargo:cargo-nextest"   = "latest"
-"cargo:cargo-deny"      = "latest"
+"cargo:cargo-binstall" = "latest"
+"cargo:cargo-nextest" = "latest"
+"cargo:cargo-deny" = "latest"
 "cargo:cargo-auditable" = "latest"
-"cargo:cargo-audit"     = "latest"
+"cargo:cargo-audit" = "latest"
 
 # ── Release / versioning ────────────────────────────────────────────── #
-cocogitto = "7"                    # `cog` — conventional-commit check + auto-version bump
+cocogitto = "7"   # `cog` — conventional-commit check + auto-version bump
 duckdb = "latest"
 
 [env]
 # Localnet harness knobs (override per-invocation, e.g. `OUT_DIR=/tmp/x mise run localnet`).
-OUT_DIR            = "/tmp/outbe-testnet"
-VALIDATORS         = "4"
+OUT_DIR = "/tmp/outbe-testnet"
+VALIDATORS = "4"
 OUTBE_CHAIN_BINARY = "./target/release/outbe-chain"
 # SEED_FILE is optional; localnet-bootstrap branches on whether it is set.
 # The projection sink needs a transaction-capable Mongo; localnet-start brings up
@@ -66,10 +66,7 @@ run = "cargo check --workspace"
 
 [tasks.test]
 description = "Run the default test suite (cargo nextest run + cargo test --doc)"
-run = [
-  "cargo nextest run --workspace",
-  "cargo test --doc --workspace",
-]
+run = ["cargo nextest run --workspace", "cargo test --doc --workspace"]
 
 [tasks.test-doc]
 description = "Run workspace doctests only (nextest skips doctests)"
