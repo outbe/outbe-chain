@@ -15,7 +15,7 @@ use alloy_primitives::B256;
 
 use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
 use outbe_tee::tee_dkg::{Ack, DealerBundle, FinalizedLog};
-use outbe_tee::{CeremonyCoordinator, EnclaveClient, QuotePolicy};
+use outbe_tee::{CeremonyCoordinator, EnclaveClient};
 use outbe_tee_enclave::keys::EnclaveKeys;
 use outbe_tee_enclave::transport::serve_connection;
 
@@ -44,7 +44,7 @@ fn full_dkg_ceremony_over_real_noise_transport() {
     // Connect a host client per enclave (GetQuote -> verify -> Noise-IK).
     let mut clients: Vec<EnclaveClient> = socks
         .iter()
-        .map(|s| EnclaveClient::connect(s, &QuotePolicy::dev_accept_any()).unwrap())
+        .map(|s| EnclaveClient::connect(s).unwrap())
         .collect();
 
     // Announce each enclave's DKG identity (tee_bls_pub, dkg_enc_pub).

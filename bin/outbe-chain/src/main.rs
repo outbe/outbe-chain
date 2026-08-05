@@ -1075,10 +1075,7 @@ fn run_node() -> eyre::Result<()> {
                 }
             }
             outbe_primitives::tee_attestation_v1::AttestationMode::GramineDirectDev => {
-                let client = outbe_tee::EnclaveClient::connect_endpoint(
-                    endpoint,
-                    &outbe_tee::QuotePolicy::dev_accept_any(),
-                )
+                let client = outbe_tee::EnclaveClient::connect_endpoint(endpoint)
                 .wrap_err(
                     "GramineDirectDev enclave connection failed; production transport is not a fallback",
                 )?;
