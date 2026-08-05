@@ -10,9 +10,8 @@ use outbe_ocomp_protocol::{
     activation::{ActivationCallCoreV1, SignOncePurpose, SignOnceRecordV1},
     codec::CodecLimits,
     committee::{
-        validator_identity_hash_v1, verify_low_s_prehash, OcompCommitteeSnapshotV1,
-        OcompKeyRegistrationCoreV1, OcompKeyRegistrationV1, OcompMemberV1,
-        RESULT_SIGNATURE_PURPOSE_BITMAP,
+        validator_identity_hash_v1, verify_low_s_prehash, OcompKeyRegistrationCoreV1,
+        OcompKeyRegistrationV1, RESULT_SIGNATURE_PURPOSE_BITMAP,
     },
     common::{BoundedBytes, EntityId36, ProofBytes},
     control::{
@@ -81,6 +80,24 @@ const LIMITS: SchemaLimits = SchemaLimits {
 
 fn hash(byte: u8) -> B256 {
     B256::repeat_byte(byte)
+}
+
+#[derive(Clone)]
+struct TestMember {
+    ocomp_public_key_sec1: [u8; 33],
+    key_epoch: u64,
+}
+
+#[derive(Clone)]
+struct TestCommittee {
+    snapshot_epoch: u64,
+    ordered_members: Vec<TestMember>,
+}
+
+impl TestCommittee {
+    fn snapshot_hash(&self, _limits: &SchemaLimits) -> Result<B256, ProtocolError> {
+        Ok(hash(46))
+    }
 }
 
 fn bundle() -> ProtocolBundleV1 {
@@ -512,33 +529,6 @@ fn dynamic_accountability_uses_supplied_n_quorum_and_lsb0_bitmaps() {
 }
 
 #[test]
-fn committee_snapshot_has_no_protocol_fixed_size_threshold_or_epoch() {
-    let mut snapshot = committee();
-    snapshot.snapshot_epoch = 2;
-    snapshot.threshold = 4;
-    snapshot.ordered_members.push({
-        let registration = registration(4);
-        OcompMemberV1 {
-            validator_index: 4,
-            validator_identity_hash: registration.core.validator_identity_hash,
-            ocomp_public_key_sec1: registration.core.ocomp_public_key_sec1,
-            key_epoch: registration.core.key_epoch,
-            allowed_purpose_bitmap: registration.core.allowed_purpose_bitmap,
-            valid_from_height: 1,
-            valid_until_height_exclusive: 1_000,
-            proof_of_possession: registration.proof_of_possession,
-        }
-    });
-
-    snapshot.validate_semantics(&LIMITS).unwrap();
-    let encoded = snapshot.encode_canonical(&LIMITS).unwrap();
-    assert_eq!(
-        OcompCommitteeSnapshotV1::decode_canonical(&encoded, &LIMITS).unwrap(),
-        snapshot
-    );
-}
-
-#[test]
 fn submit_result_prefix_decoder_is_canonical_bounded_and_panic_free() {
     let snapshot = committee();
     let mut finalized_intent = intent();
@@ -600,26 +590,15 @@ fn submit_result_prefix_decoder_is_canonical_bounded_and_panic_free() {
     assert!(decode_submit_lysis_result_prefix(&non_zero_padding, &LIMITS).is_err());
 }
 
-fn committee() -> OcompCommitteeSnapshotV1 {
-    OcompCommitteeSnapshotV1 {
-        chain_id: 42,
-        genesis_hash: hash(40),
-        fork_id: hash(1),
-        protocol_bundle_hash: hash(41),
+fn committee() -> TestCommittee {
+    TestCommittee {
         snapshot_epoch: 1,
-        threshold: 3,
         ordered_members: (0..4)
             .map(|index| {
                 let registration = registration(index);
-                OcompMemberV1 {
-                    validator_index: u16::from(index),
-                    validator_identity_hash: registration.core.validator_identity_hash,
+                TestMember {
                     ocomp_public_key_sec1: registration.core.ocomp_public_key_sec1,
                     key_epoch: registration.core.key_epoch,
-                    allowed_purpose_bitmap: registration.core.allowed_purpose_bitmap,
-                    valid_from_height: 1,
-                    valid_until_height_exclusive: 1_000,
-                    proof_of_possession: registration.proof_of_possession,
                 }
             })
             .collect(),
@@ -631,7 +610,7 @@ fn signed_vote(
     result: LysisResultV1,
     finalized_intent: &JobIntentV1,
     job_id: B256,
-    snapshot: &OcompCommitteeSnapshotV1,
+    snapshot: &TestCommittee,
 ) -> ResultVoteV1 {
     let mut vote = ResultVoteV1 {
         protocol_bundle_hash: finalized_intent.protocol_bundle_hash,
@@ -651,6 +630,37 @@ fn signed_vote(
         signing_digest,
     );
     vote
+}
+
+fn verify_vote(
+    vote: &ResultVoteV1,
+    finalized_intent: &JobIntentV1,
+    job_id: B256,
+    snapshot: &TestCommittee,
+    inclusion_height: u64,
+    open_height: u64,
+    deadline_height: u64,
+) -> Result<(), ProtocolError> {
+    if finalized_intent.result_ocomp_binding_hash != snapshot.snapshot_hash(&LIMITS)? {
+        return Err(ProtocolError::InvalidInvariant(
+            "test historical snapshot binding",
+        ));
+    }
+    let member = snapshot
+        .ordered_members
+        .get(usize::from(vote.validator_index))
+        .ok_or(ProtocolError::InvalidInvariant("vote validator index"))?;
+    vote.verify_historical_member(
+        finalized_intent,
+        job_id,
+        u16::try_from(snapshot.ordered_members.len()).unwrap(),
+        member.key_epoch,
+        &member.ocomp_public_key_sec1,
+        inclusion_height,
+        open_height,
+        deadline_height,
+        &LIMITS,
+    )
 }
 
 fn vote_result(job_id: B256, result_chunk_root: u8) -> LysisResultV1 {
@@ -1006,11 +1016,6 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
     assert_round_trip!(result.clone(), LysisResultV1, LysisResultV1);
     assert_round_trip!(activation_payload, ActivationPayloadV1, ActivationPayloadV1);
     assert_round_trip!(
-        snapshot.clone(),
-        OcompCommitteeSnapshotV1,
-        OcompCommitteeSnapshotV1
-    );
-    assert_round_trip!(
         registration(0),
         OcompKeyRegistrationV1,
         OcompKeyRegistrationV1
@@ -1144,14 +1149,14 @@ fn direct_result_votes_freeze_supplied_quorum_and_keep_late_accountability_separ
             job_id,
             &snapshot,
         );
-        vote.verify(
+        verify_vote(
+            &vote,
             &finalized_intent,
             job_id,
             &snapshot,
             106 + u64::from(validator_index),
             106,
             120,
-            &LIMITS,
         )
         .unwrap();
         assert_eq!(
@@ -1174,9 +1179,16 @@ fn direct_result_votes_freeze_supplied_quorum_and_keep_late_accountability_separ
         job_id,
         &snapshot,
     );
-    minority
-        .verify(&finalized_intent, job_id, &snapshot, 109, 106, 120, &LIMITS)
-        .unwrap();
+    verify_vote(
+        &minority,
+        &finalized_intent,
+        job_id,
+        &snapshot,
+        109,
+        106,
+        120,
+    )
+    .unwrap();
     accountability
         .record_verified_vote(&minority, 109, &LIMITS)
         .unwrap();
@@ -1209,7 +1221,6 @@ fn direct_result_votes_freeze_supplied_quorum_and_keep_late_accountability_separ
 #[test]
 fn committee_and_signatures_fail_closed() {
     let digest = hash(120);
-    committee().validate_semantics(&LIMITS).unwrap();
 
     let invalid_key = [0_u8; 33];
     assert_eq!(
@@ -1393,13 +1404,12 @@ fn result_vote_verification_requires_the_finalized_intent_binding() {
         job_id,
         &snapshot,
     );
-    vote.verify(&finalized_intent, job_id, &snapshot, 106, 106, 120, &LIMITS)
-        .unwrap();
+    verify_vote(&vote, &finalized_intent, job_id, &snapshot, 106, 106, 120).unwrap();
 
     let mut wrong_intent = finalized_intent;
     wrong_intent.fork_id = hash(99);
     assert!(matches!(
-        vote.verify(&wrong_intent, job_id, &snapshot, 106, 106, 120, &LIMITS),
+        verify_vote(&vote, &wrong_intent, job_id, &snapshot, 106, 106, 120),
         Err(ProtocolError::InvalidSignature)
     ));
 }

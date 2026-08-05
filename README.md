@@ -319,7 +319,7 @@ The fresh-devnet profile requires a hash-bound, genesis-active
 `metadosisStorageLayoutV1.layoutHash` before Cycle block 1. Both bindings are
 validated before process launch. Its retained Linux scenario starts without a
 pre-seeded active Metadosis day, observes runtime `Create` in finalized block
-1, and then advances the whole four-validator committee's existing testnet
+1, and then advances the whole local test ValidatorSet's existing testnet
 logical clock at two restart barriers. It preserves the canonical
 `50h/0h/48h/12h` phase durations and proves one continuous
 `FORMING → OFFERING → READY → OCOMP → COMPLETED` chain history. READY work is ordered by
@@ -345,6 +345,16 @@ transaction; it never fails block production. With the lifecycle active the
 EVM dispatcher routes the selector to the verified result-vote command path,
 which uses the same rejection ABI (codes 1–4) for call-mode, encoding, size,
 and protocol-vote failures.
+
+OCOMP voting membership is not configured separately. Every attempt pins the
+ordered `ACTIVE ValidatorSet` snapshot that exists when the job is committed,
+derives `N` from that snapshot and derives quorum with
+`simplex_n3f1_quorum(N)`. A validator joins future jobs only after its OCOMP
+registration is accepted by `confirmValidatorReady` and the certified
+DKG/reshare boundary makes it `ACTIVE`; already-open jobs keep their historical
+snapshot. Genesis OCOMP material contains one validated founder key registration
+per genesis validator, but it does not contain a committee, member indices or a
+threshold.
 
 ## RPC
 

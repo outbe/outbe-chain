@@ -110,7 +110,10 @@ fn generated_manifest_has_no_network_binding() {
         serde_json::from_str(include_str!("../registry/generated-shape-manifest.json")).unwrap();
     assert_eq!(manifest["classification"], "measurement_only");
     assert_eq!(manifest["armable"], false);
-    assert_eq!(manifest["registries"]["object_count"], 35);
+    assert_eq!(
+        manifest["registries"]["object_count"].as_u64(),
+        Some(ObjectKind::ALL.len() as u64)
+    );
     assert_eq!(manifest["independent_verification"]["result"], "PASS");
     for field in [
         "chain_id",

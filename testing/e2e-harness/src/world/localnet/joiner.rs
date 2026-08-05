@@ -45,6 +45,31 @@ impl Localnet {
             .ok_or_else(|| eyre!("no BLS pubkey from keygen"))?;
         let key = read_evm_key(&vd)?;
         let addr = eth::address_of(&key).ok_or_else(|| eyre!("bad joiner evm key"))?;
+        let chain_id = eth::raw_json(&self.cfg.rpc0, "eth_chainId")
+            .and_then(|value| value.as_str().map(ToOwned::to_owned))
+            .and_then(|value| u64::from_str_radix(value.trim_start_matches("0x"), 16).ok())
+            .ok_or_else(|| eyre!("cannot read chain id for joiner OCOMP registration"))?;
+        let genesis_hash = eth::raw_json_with_params(
+            &self.cfg.rpc0,
+            "eth_getBlockByNumber",
+            serde_json::json!(["0x0", false]),
+        )
+        .and_then(|block| block.get("hash").cloned())
+        .and_then(|value| value.as_str().map(ToOwned::to_owned))
+        .ok_or_else(|| eyre!("cannot read genesis hash for joiner OCOMP registration"))?;
+        self.keygen(&[
+            "ocomp",
+            "--output-dir",
+            &vd.display().to_string(),
+            "--chain-id",
+            &chain_id.to_string(),
+            "--genesis-hash",
+            &genesis_hash,
+            "--validator-address",
+            &format!("{addr:#x}"),
+            "--consensus-bls-min-pk",
+            &bls,
+        ])?;
         let sig = first_hex(
             &self.keygen(&[
                 "sign-registration",

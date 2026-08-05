@@ -10,6 +10,7 @@ use outbe_ocomp_protocol::{
     },
     generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1,
     profile::poc_schema_limits,
+    vote::{EquivocationEvidenceV1, OcompVoteAccountabilityV1, ResultVoteSlotV1},
 };
 
 fn conforming_machine() -> ObservedMachineFactsV1 {
@@ -328,5 +329,76 @@ fn ocm_cap_001_internal_work_uses_the_frozen_checked_q_forming_formula() {
     assert_eq!(
         result_vote_internal_work(vote_cap + 1).unwrap_err(),
         CapacityEvidenceError::ResultVoteBytesExceeded
+    );
+}
+
+#[test]
+fn dynamic_membership_capacity_fits_the_consensus_validator_bound() {
+    let member_count = u16::try_from(outbe_consensus::bls::MAX_VALIDATORS).unwrap();
+    let quorum_threshold = u16::try_from(outbe_consensus::proof::simplex_n3f1_quorum(usize::from(
+        member_count,
+    )))
+    .unwrap();
+    let limits = poc_schema_limits();
+    let mut accountability = OcompVoteAccountabilityV1::empty(
+        B256::repeat_byte(0x31),
+        7,
+        B256::repeat_byte(0x32),
+        B256::repeat_byte(0x33),
+        member_count,
+        quorum_threshold,
+    )
+    .unwrap();
+
+    for validator_index in 0..member_count {
+        let mut digest = [0_u8; 32];
+        digest[30..].copy_from_slice(&validator_index.to_be_bytes());
+        accountability.slots[usize::from(validator_index)] = Some(ResultVoteSlotV1 {
+            validator_index,
+            first_result_digest: B256::from(digest),
+            key_epoch: 1,
+            first_signature_rs: [0x44; 64],
+            submitted_height: 100 + u64::from(validator_index),
+            equivocation: Some(EquivocationEvidenceV1 {
+                conflicting_result_digest: B256::repeat_byte(0xEE),
+                conflicting_key_epoch: 1,
+                conflicting_signature_rs: [0x55; 64],
+                submitted_height: 400 + u64::from(validator_index),
+            }),
+        });
+    }
+    let summary = accountability.close(1_000, &limits).unwrap();
+    let expected_bitmap_bytes = usize::from(member_count).div_ceil(8);
+    assert_eq!(summary.timely_bitmap.len(), expected_bitmap_bytes);
+    assert_eq!(summary.equivocation_bitmap.len(), expected_bitmap_bytes);
+
+    let encoded = accountability.encode_canonical(&limits).unwrap();
+    assert!(
+        encoded.len() <= limits.codec.max_body_bytes + 12,
+        "worst-case dynamic accountability is {} bytes, above the canonical codec ceiling",
+        encoded.len()
+    );
+    assert_eq!(
+        OcompVoteAccountabilityV1::decode_canonical(&encoded, &limits).unwrap(),
+        accountability,
+        "the consensus-bound accountability must remain canonically decodable"
+    );
+
+    let vote_cap = usize::try_from(OCOMP_POC_CANDIDATE_LIMITS_V1.max_result_vote_bytes).unwrap();
+    let one_vote_internal_work = result_vote_internal_work(vote_cap).unwrap();
+    let response_window_work = OCOMP_POC_CANDIDATE_LIMITS_V1
+        .max_activation_gas
+        .checked_mul(64)
+        .unwrap();
+    let quorum_work = one_vote_internal_work
+        .checked_mul(u64::from(quorum_threshold))
+        .unwrap();
+    eprintln!(
+        "dynamic OCOMP capacity: N={member_count}, quorum={quorum_threshold}, accountability_bytes={}, bitmap_bytes={expected_bitmap_bytes}, one_vote_internal_work={one_vote_internal_work}, quorum_work={quorum_work}, response_window_work={response_window_work}",
+        encoded.len()
+    );
+    assert!(
+        quorum_work <= response_window_work,
+        "consensus-bound quorum needs {quorum_work} internal-work units, above the 64-block response-window budget {response_window_work}"
     );
 }

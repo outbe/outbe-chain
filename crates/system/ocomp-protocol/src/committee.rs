@@ -1,5 +1,3 @@
-use std::collections::BTreeSet;
-
 use alloy_primitives::{Address, B256};
 use k256::ecdsa::{signature::hazmat::PrehashVerifier, Signature, VerifyingKey};
 
@@ -28,33 +26,6 @@ pub fn validator_identity_hash_v1(
 }
 
 wire_struct! {
-    pub struct OcompMemberV1 {
-        pub validator_index: u16,
-        pub validator_identity_hash: B256,
-        pub ocomp_public_key_sec1: [u8; 33],
-        pub key_epoch: u64,
-        pub allowed_purpose_bitmap: u32,
-        pub valid_from_height: u64,
-        pub valid_until_height_exclusive: u64,
-        pub proof_of_possession: [u8; 64],
-    }
-}
-
-wire_struct! {
-    pub struct OcompCommitteeSnapshotV1 {
-        pub chain_id: u64,
-        pub genesis_hash: B256,
-        pub fork_id: B256,
-        pub protocol_bundle_hash: B256,
-        pub snapshot_epoch: u64,
-        pub threshold: u16,
-        pub ordered_members: Vec<OcompMemberV1>,
-    }
-    validate = validate_committee;
-}
-impl_top_level_codec!(OcompCommitteeSnapshotV1, OcompCommitteeSnapshotV1);
-
-wire_struct! {
     pub struct OcompKeyRegistrationCoreV1 {
         pub chain_id: u64,
         pub genesis_hash: B256,
@@ -73,23 +44,6 @@ wire_struct! {
     validate = validate_key_registration;
 }
 impl_top_level_codec!(OcompKeyRegistrationV1, OcompKeyRegistrationV1);
-
-impl OcompMemberV1 {
-    #[must_use]
-    pub fn registration_core(
-        &self,
-        snapshot: &OcompCommitteeSnapshotV1,
-    ) -> OcompKeyRegistrationCoreV1 {
-        OcompKeyRegistrationCoreV1 {
-            chain_id: snapshot.chain_id,
-            genesis_hash: snapshot.genesis_hash,
-            validator_identity_hash: self.validator_identity_hash,
-            ocomp_public_key_sec1: self.ocomp_public_key_sec1,
-            key_epoch: self.key_epoch,
-            allowed_purpose_bitmap: self.allowed_purpose_bitmap,
-        }
-    }
-}
 
 impl OcompKeyRegistrationV1 {
     pub fn proof_of_possession_digest(&self, limits: &SchemaLimits) -> Result<B256, ProtocolError> {
@@ -114,48 +68,6 @@ impl OcompKeyRegistrationV1 {
     }
 }
 
-impl OcompCommitteeSnapshotV1 {
-    pub fn validate_semantics(&self, limits: &SchemaLimits) -> Result<(), ProtocolError> {
-        require(
-            !self.ordered_members.is_empty()
-                && usize::from(self.threshold) <= self.ordered_members.len()
-                && self.threshold > 0,
-            "committee threshold",
-        )?;
-        let mut identities = BTreeSet::new();
-        let mut keys = BTreeSet::new();
-        for (index, member) in self.ordered_members.iter().enumerate() {
-            require(
-                usize::from(member.validator_index) == index,
-                "committee index order",
-            )?;
-            require(
-                identities.insert(member.validator_identity_hash),
-                "unique validator identity",
-            )?;
-            require(
-                keys.insert(member.ocomp_public_key_sec1),
-                "unique OCOMP key",
-            )?;
-            require(
-                member.valid_from_height < member.valid_until_height_exclusive,
-                "committee member validity range",
-            )?;
-            OcompKeyRegistrationV1 {
-                core: member.registration_core(self),
-                proof_of_possession: member.proof_of_possession,
-            }
-            .validate_proof_of_possession(limits)?;
-        }
-        Ok(())
-    }
-
-    pub fn snapshot_hash(&self, limits: &SchemaLimits) -> Result<B256, ProtocolError> {
-        self.validate_semantics(limits)?;
-        hash_framed(HashDomain::Committee, &self.encode_canonical(limits)?)
-    }
-}
-
 pub fn verify_low_s_prehash(
     public_key_sec1: &[u8; 33],
     digest: B256,
@@ -170,13 +82,6 @@ pub fn verify_low_s_prehash(
     }
     key.verify_prehash(digest.as_slice(), &signature)
         .map_err(|_| ProtocolError::InvalidSignature)
-}
-
-fn validate_committee(
-    snapshot: &OcompCommitteeSnapshotV1,
-    limits: &SchemaLimits,
-) -> Result<(), ProtocolError> {
-    snapshot.validate_semantics(limits)
 }
 
 fn validate_key_registration(

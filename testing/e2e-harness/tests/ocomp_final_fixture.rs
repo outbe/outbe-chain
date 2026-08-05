@@ -28,8 +28,6 @@ const ARTIFACT_FILES: &[&str] = &[
     "genesis-final.json",
     "network-binding-v1.json",
     "protocol-bundle-v1.ocb1",
-    "result-committee-public-v1.json",
-    "result-committee-v1.ocb1",
     "semantic-artifacts-v1.json",
 ];
 
@@ -132,11 +130,24 @@ fn canonical_final_artifacts_are_complete_hash_bound_and_node_loadable() {
         outbe_metadosis::config::OcompForkInstallClassification::Final
     );
     assert_eq!(install.activation_height, 32);
-    assert_eq!(
-        install.result_committee.ordered_members.len(),
-        VALIDATOR_COUNT
-    );
-    assert_eq!(install.result_committee.threshold, 3);
+    for obsolete in [
+        "result-committee-public-v1.json",
+        "result-committee-v1.ocb1",
+    ] {
+        assert!(
+            !root.join(obsolete).exists(),
+            "canonical install must not retain independent OCOMP membership: {obsolete}"
+        );
+    }
+    for obsolete_binding in [
+        "result_committee_snapshot_hash",
+        "result_committee_ocb1_sha256",
+    ] {
+        assert!(
+            network.get(obsolete_binding).is_none(),
+            "network binding must not retain independent OCOMP membership: {obsolete_binding}"
+        );
+    }
     assert_eq!(
         install
             .request_profile

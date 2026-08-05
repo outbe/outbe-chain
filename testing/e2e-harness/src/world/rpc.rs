@@ -1858,6 +1858,10 @@ impl Rpc {
 
     /// Confirm a PENDING joiner is synced/ready (stale-join guard).
     pub fn confirm_ready(&self, key: &str) -> Result<String> {
+        let registration = self
+            .cfg
+            .validator_dir(self.cfg.validators)
+            .join("ocomp-registration-v1.ocb1");
         let out = self.sh().cli([
             "--private-key",
             key,
@@ -1865,6 +1869,8 @@ impl Rpc {
             self.cfg.rpc0.as_str(),
             "validator",
             "confirm-ready",
+            "--registration",
+            &registration.display().to_string(),
         ])?;
         let tx_hash = parse::extract_tx_hash(&out)
             .ok_or_else(|| eyre!("no tx hash in confirm-ready output:\n{out}"))?;

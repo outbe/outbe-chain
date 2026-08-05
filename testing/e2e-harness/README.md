@@ -28,7 +28,7 @@ to Cucumber's `--tags` filter. Current live-node mappings are:
 | PFS examples | Feature coverage |
 |---|---|
 | `PFS-001-01`, `-02`, `-03`, `-05` | Tribute creation/projection/proof, two absence scopes and duplicate logical offer rejection |
-| `PFS-002-01` through `-24` | OCOMP implementation and focused production-adapter tests exist; `-07`/`-08` remain deferred and exact-revision Linux four-domain closure evidence is pending |
+| `PFS-002-01` through `-24` | OCOMP implementation and focused production-adapter tests exist; independent FullNode Lysis following remains deferred and the dynamic-membership 4→5 process closure is the current acceptance lane |
 | `PFS-005-01`, `-09` plus named recovery/rejection tags | Vote approval/activation, restart boundaries, rejection paths, unsupported-version stall and operator binary replacement |
 | `PFS-006-01`, `-02`, `-03`, `-04`, `-06`, `-09` | Join/exit/claim accounting, stale join, DKG recovery, slash idempotency, checkpoint restarts and full-committee sealed TEE recovery |
 | `PFS-007-01` through `-12` | Pectra/ZeroFee readiness, native EIP-7702 delegation, quota/fallback, exact replay, restart persistence, invalid authorization and day reset |
@@ -91,6 +91,20 @@ the harness reads no configuration from the environment.** Flags:
   workspace package version, builds the requested binary offline, and removes
   the worktree after the build.
 - plus cucumber's own `--tags`, `--name`, `--input`.
+
+## Dynamic OCOMP membership scenario
+
+The OCOMP acceptance lane does not configure a result committee. It starts with
+four ACTIVE validators only to create a visible membership transition, opens job
+A (`N=4`, quorum `3`), synchronizes node 5 as a real FullNode, then restarts it in
+validator mode and drives registration, stake, `PENDING`, delegation,
+`confirmValidatorReady` and the certified DKG/reshare boundary. Job B must then
+pin `N=5`, quorum `4`; node 5 may vote in B and must not vote in A, while A keeps
+its original snapshot. A restart must recover both live jobs and sign-once state.
+
+Those counts are scenario inputs, not OCOMP constants. Fixture generation reads
+the ordered validator manifest, produces one founder registration per genesis
+validator and contains no static committee or threshold artifact.
 
 Actually executing a scenario needs a Linux box with `sudo` + `docker` + `gramine`
 (same prerequisites as `mise run e2e`). First build the binaries the steps call:

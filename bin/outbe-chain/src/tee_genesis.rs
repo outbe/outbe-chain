@@ -253,6 +253,7 @@ mod tests {
         let mut genesis = serde_json::json!({
             "config": {
                 "chainId": chain_id,
+                "epochLengthBlocks": 120,
                 "homesteadBlock": 0,
                 "eip150Block": 0,
                 "eip155Block": 0,

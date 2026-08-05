@@ -615,6 +615,33 @@ pub fn fork_install_fixture(
     let limits = poc_schema_limits();
     let protocol_bundle = bundle();
     let bundle_hash = protocol_bundle.protocol_bundle_hash(&limits).unwrap();
+    let founder_key = signing_key(0);
+    let mut founder_registration = OcompKeyRegistrationV1 {
+        core: OcompKeyRegistrationCoreV1 {
+            chain_id,
+            genesis_hash,
+            validator_identity_hash: validator_identity_hash_v1(
+                Address::repeat_byte(0xB0),
+                &[0x30; 48],
+            )
+            .unwrap(),
+            ocomp_public_key_sec1: founder_key
+                .verifying_key()
+                .to_encoded_point(true)
+                .as_bytes()
+                .try_into()
+                .unwrap(),
+            key_epoch: 1,
+            allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
+        },
+        proof_of_possession: [0; 64],
+    };
+    founder_registration.proof_of_possession = sign(
+        &founder_key,
+        founder_registration
+            .proof_of_possession_digest(&limits)
+            .unwrap(),
+    );
     OcompForkInstallV1 {
         classification,
         activation_height,
@@ -628,6 +655,7 @@ pub fn fork_install_fixture(
             source_availability_policy_id: hash(44),
         },
         protocol_bundle,
+        founder_registrations: vec![founder_registration],
     }
 }
 

@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     fs::{self, OpenOptions},
     io::Write as _,
     path::{Path, PathBuf},
@@ -14,14 +15,11 @@ use outbe_metadosis::{
 };
 use outbe_ocomp_protocol::{
     committee::{
-        OcompCommitteeSnapshotV1, OcompKeyRegistrationV1, OcompMemberV1, POC_COMMITTEE_SIZE,
-        POC_COMMITTEE_THRESHOLD, POC_KEY_EPOCH, RESULT_SIGNATURE_PURPOSE_BITMAP,
+        validator_identity_hash_v1, OcompKeyRegistrationV1, POC_KEY_EPOCH,
+        RESULT_SIGNATURE_PURPOSE_BITMAP,
     },
-    hash::hash_framed,
     profile::{CapacityProfileV1, ProtocolBundleV1},
-    registry::{
-        HashDomain, FIDELITY_OPENING_CODEC_ID, ORACLE_OPENING_CODEC_ID, TRIBUTE_BODY_CODEC_ID,
-    },
+    registry::{FIDELITY_OPENING_CODEC_ID, ORACLE_OPENING_CODEC_ID, TRIBUTE_BODY_CODEC_ID},
 };
 use outbe_primitives::OutbeHeader;
 use reth_chainspec::ChainSpec;
@@ -41,9 +39,9 @@ struct OcompCli {
 
 #[derive(Debug, Subcommand)]
 enum OcompCommand {
-    /// Derive the exact chain bindings needed to generate four OCOMP registrations.
+    /// Derive the exact chain bindings needed to generate founder OCOMP registrations.
     Bindings(OcompBindingsArgs),
-    /// Install a block-1 Measurement OCOMP profile using four real registrations.
+    /// Install a block-1 Measurement OCOMP profile using all founder registrations.
     Genesis(OcompGenesisArgs),
 }
 
@@ -52,7 +50,7 @@ struct OcompBindingsArgs {
     /// Seeded genesis JSON without OCOMP or TEE extensions.
     #[arg(long)]
     input: PathBuf,
-    /// Exact four-validator public bootstrap manifest.
+    /// Ordered public bootstrap manifest for every genesis validator.
     #[arg(long)]
     validators: PathBuf,
     /// New JSON document consumed by network preparation tooling.
@@ -65,7 +63,7 @@ struct OcompGenesisArgs {
     /// Seeded genesis JSON without OCOMP or TEE extensions.
     #[arg(long)]
     input: PathBuf,
-    /// Exact four-validator public bootstrap manifest.
+    /// Ordered public bootstrap manifest for every genesis validator.
     #[arg(long)]
     validators: PathBuf,
     /// Directory containing validator-N/ocomp-registration-v1.ocb1.
@@ -85,11 +83,7 @@ struct OcompBindingsDocumentV1 {
     schema_version: u16,
     chain_id: u64,
     genesis_hash: B256,
-    fork_id: B256,
-    protocol_bundle_hash: B256,
-    activation_height: u64,
-    valid_until_height_exclusive: u64,
-    validator_identity_hashes: [B256; POC_COMMITTEE_SIZE],
+    validator_identity_hashes: Vec<B256>,
 }
 
 pub(crate) fn run(arguments: &[String]) -> eyre::Result<()> {
@@ -105,16 +99,10 @@ fn write_bindings(args: &OcompBindingsArgs) -> eyre::Result<()> {
     require_new_output(&args.output, "OCOMP bindings")?;
     let (chain_id, genesis_hash) = parse_base_identity(&args.input)?;
     let validator_identity_hashes = validator_identities(&args.validators)?;
-    let protocol_bundle = measurement_protocol_bundle();
-    let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
     let document = OcompBindingsDocumentV1 {
         schema_version: 1,
         chain_id,
         genesis_hash,
-        fork_id: protocol_bundle.fork_id,
-        protocol_bundle_hash: protocol_bundle.protocol_bundle_hash(&limits)?,
-        activation_height: ACTIVATION_HEIGHT,
-        valid_until_height_exclusive: u64::MAX,
         validator_identity_hashes,
     };
     write_new_file(&args.output, &pretty_json(&document)?, "OCOMP bindings")?;
@@ -137,54 +125,15 @@ fn generate_genesis(args: &OcompGenesisArgs) -> eyre::Result<()> {
     let validator_identity_hashes = validator_identities(&args.validators)?;
     let protocol_bundle = measurement_protocol_bundle();
     let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
-    let protocol_bundle_hash = protocol_bundle.protocol_bundle_hash(&limits)?;
-    let registrations = load_registrations(&args.registrations_dir)?;
-
-    let mut ordered_members = Vec::with_capacity(POC_COMMITTEE_SIZE);
-    for (index, (identity, registration)) in validator_identity_hashes
-        .into_iter()
-        .zip(registrations)
-        .enumerate()
-    {
-        let validator_index = u8::try_from(index)?;
-        ensure!(
-            registration.core.chain_id == chain_id
-                && registration.core.genesis_hash == genesis_hash
-                && registration.core.fork_id == protocol_bundle.fork_id
-                && registration.core.protocol_bundle_hash == protocol_bundle_hash
-                && registration.core.validator_index == validator_index
-                && registration.core.validator_identity_hash == identity
-                && registration.core.key_epoch == POC_KEY_EPOCH
-                && registration.core.allowed_purpose_bitmap == RESULT_SIGNATURE_PURPOSE_BITMAP
-                && registration.core.valid_from_height == ACTIVATION_HEIGHT
-                && registration.core.valid_until_height_exclusive == u64::MAX,
-            "validator-{validator_index} OCOMP registration does not match this genesis"
-        );
-        registration
-            .validate_proof_of_possession(&limits)
-            .wrap_err_with(|| format!("verify validator-{validator_index} OCOMP registration"))?;
-        ordered_members.push(OcompMemberV1 {
-            validator_index,
-            validator_identity_hash: identity,
-            ocomp_public_key_sec1: registration.core.ocomp_public_key_sec1,
-            key_epoch: registration.core.key_epoch,
-            allowed_purpose_bitmap: registration.core.allowed_purpose_bitmap,
-            valid_from_height: registration.core.valid_from_height,
-            valid_until_height_exclusive: registration.core.valid_until_height_exclusive,
-            proof_of_possession: registration.proof_of_possession,
-        });
-    }
-    let result_committee = OcompCommitteeSnapshotV1 {
+    let registrations =
+        load_registrations(&args.registrations_dir, validator_identity_hashes.len())?;
+    validate_founder_registrations(
         chain_id,
         genesis_hash,
-        fork_id: protocol_bundle.fork_id,
-        protocol_bundle_hash,
-        snapshot_epoch: 1,
-        threshold: POC_COMMITTEE_THRESHOLD,
-        ordered_members,
-    };
-    result_committee.validate_semantics(&limits)?;
-    let result_committee_snapshot_hash = result_committee.snapshot_hash(&limits)?;
+        &validator_identity_hashes,
+        &registrations,
+    )?;
+    let protocol_bundle_hash = protocol_bundle.protocol_bundle_hash(&limits)?;
     let install = OcompForkInstallV1 {
         classification: OcompForkInstallClassification::Measurement,
         activation_height: ACTIVATION_HEIGHT,
@@ -196,10 +145,9 @@ fn generate_genesis(args: &OcompGenesisArgs) -> eyre::Result<()> {
             correctness_profile_id: protocol_bundle.correctness_profile_id,
             capacity_profile: measurement_capacity_profile(),
             source_availability_policy_id: B256::repeat_byte(44),
-            result_committee_snapshot_hash,
         },
         protocol_bundle,
-        result_committee,
+        founder_registrations: registrations,
     };
     install.validate_for_chain(chain_id, genesis_hash, &limits)?;
     let canonical_install = install.encode_canonical(&limits)?;
@@ -263,7 +211,7 @@ fn parse_base_identity(path: &Path) -> eyre::Result<(u64, B256)> {
     Ok((spec.chain().id(), spec.genesis_hash()))
 }
 
-fn validator_identities(path: &Path) -> eyre::Result<[B256; POC_COMMITTEE_SIZE]> {
+fn validator_identities(path: &Path) -> eyre::Result<Vec<B256>> {
     let validators: serde_json::Value = serde_json::from_slice(
         &fs::read(path).wrap_err_with(|| format!("read validators {}", path.display()))?,
     )
@@ -271,12 +219,18 @@ fn validator_identities(path: &Path) -> eyre::Result<[B256; POC_COMMITTEE_SIZE]>
     let validators = validators
         .as_array()
         .ok_or_else(|| eyre::eyre!("validators manifest must be a JSON array"))?;
+    let max_validators = usize::try_from(outbe_consensus::bls::MAX_VALIDATORS)
+        .map_err(|_| eyre::eyre!("consensus validator bound does not fit usize"))?;
     ensure!(
-        validators.len() == POC_COMMITTEE_SIZE,
-        "OCOMP V1 requires exactly {POC_COMMITTEE_SIZE} founding validators, got {}",
+        !validators.is_empty(),
+        "validators manifest must not be empty"
+    );
+    ensure!(
+        validators.len() <= max_validators,
+        "validators manifest contains {} entries, above consensus bound {max_validators}",
         validators.len()
     );
-    let mut identities = [B256::ZERO; POC_COMMITTEE_SIZE];
+    let mut identities = Vec::with_capacity(validators.len());
     for (index, validator) in validators.iter().enumerate() {
         let address = validator
             .get("address")
@@ -292,22 +246,44 @@ fn validator_identities(path: &Path) -> eyre::Result<[B256; POC_COMMITTEE_SIZE]>
             public_key.len() == 48,
             "validator-{index} public key must be 48 bytes"
         );
-        let mut payload = Vec::with_capacity(1 + 20 + 4 + public_key.len());
-        payload.push(u8::try_from(index)?);
-        payload.extend_from_slice(address.as_slice());
-        payload.extend_from_slice(&u32::try_from(public_key.len())?.to_be_bytes());
-        payload.extend_from_slice(&public_key);
-        identities[index] = hash_framed(HashDomain::ValidatorIdentity, &payload)?;
+        let public_key: [u8; 48] = public_key
+            .try_into()
+            .map_err(|_| eyre::eyre!("validator-{index} public key must be 48 bytes"))?;
+        identities.push(validator_identity_hash_v1(address, &public_key)?);
     }
     Ok(identities)
 }
 
-fn load_registrations(
-    directory: &Path,
-) -> eyre::Result<[OcompKeyRegistrationV1; POC_COMMITTEE_SIZE]> {
+fn load_registrations(directory: &Path, count: usize) -> eyre::Result<Vec<OcompKeyRegistrationV1>> {
     let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
-    let mut registrations = Vec::with_capacity(POC_COMMITTEE_SIZE);
-    for index in 0..POC_COMMITTEE_SIZE {
+    for entry in fs::read_dir(directory)
+        .wrap_err_with(|| format!("read OCOMP registrations directory {}", directory.display()))?
+    {
+        let entry = entry.wrap_err("read OCOMP registration directory entry")?;
+        let name = entry
+            .file_name()
+            .into_string()
+            .map_err(|_| eyre::eyre!("OCOMP registration directory entry is not UTF-8"))?;
+        let Some(index) = name.strip_prefix("validator-") else {
+            continue;
+        };
+        let index = index
+            .parse::<usize>()
+            .wrap_err_with(|| format!("invalid OCOMP registration directory {name}"))?;
+        ensure!(
+            index < count,
+            "extra OCOMP registration directory {name} for {count} validators"
+        );
+        ensure!(
+            entry
+                .file_type()
+                .wrap_err_with(|| format!("inspect OCOMP registration directory {name}"))?
+                .is_dir(),
+            "OCOMP registration entry {name} is not a directory"
+        );
+    }
+    let mut registrations = Vec::with_capacity(count);
+    for index in 0..count {
         let path = directory
             .join(format!("validator-{index}"))
             .join("ocomp-registration-v1.ocb1");
@@ -320,9 +296,45 @@ fn load_registrations(
             .wrap_err_with(|| format!("decode OCOMP registration {}", path.display()))?,
         );
     }
-    registrations
-        .try_into()
-        .map_err(|_| eyre::eyre!("expected exactly {POC_COMMITTEE_SIZE} registrations"))
+    Ok(registrations)
+}
+
+fn validate_founder_registrations(
+    chain_id: u64,
+    genesis_hash: B256,
+    validator_identity_hashes: &[B256],
+    registrations: &[OcompKeyRegistrationV1],
+) -> eyre::Result<()> {
+    ensure!(
+        registrations.len() == validator_identity_hashes.len(),
+        "founder registration count {} does not match validator count {}",
+        registrations.len(),
+        validator_identity_hashes.len()
+    );
+    let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
+    let mut keys = BTreeSet::new();
+    for (index, (identity, registration)) in validator_identity_hashes
+        .iter()
+        .zip(registrations)
+        .enumerate()
+    {
+        ensure!(
+            registration.core.chain_id == chain_id
+                && registration.core.genesis_hash == genesis_hash
+                && registration.core.validator_identity_hash == *identity
+                && registration.core.key_epoch == POC_KEY_EPOCH
+                && registration.core.allowed_purpose_bitmap == RESULT_SIGNATURE_PURPOSE_BITMAP,
+            "validator-{index} OCOMP registration does not match this genesis"
+        );
+        registration
+            .validate_proof_of_possession(&limits)
+            .wrap_err_with(|| format!("verify validator-{index} OCOMP registration"))?;
+        ensure!(
+            keys.insert(registration.core.ocomp_public_key_sec1),
+            "validator-{index} reuses an OCOMP public key"
+        );
+    }
+    Ok(())
 }
 
 fn validate_output(
@@ -452,4 +464,134 @@ fn pretty_json(value: &impl Serialize) -> eyre::Result<Vec<u8>> {
 fn utf8_path<'a>(path: &'a Path, description: &str) -> eyre::Result<&'a str> {
     path.to_str()
         .ok_or_else(|| eyre::eyre!("{description} path is not UTF-8: {}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use k256::ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey};
+
+    fn registration(identity: B256, key_byte: u8) -> OcompKeyRegistrationV1 {
+        let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
+        let key = SigningKey::from_bytes((&[key_byte; 32]).into()).unwrap();
+        let mut registration = OcompKeyRegistrationV1 {
+            core: outbe_ocomp_protocol::committee::OcompKeyRegistrationCoreV1 {
+                chain_id: 42,
+                genesis_hash: B256::repeat_byte(0x42),
+                validator_identity_hash: identity,
+                ocomp_public_key_sec1: key
+                    .verifying_key()
+                    .to_encoded_point(true)
+                    .as_bytes()
+                    .try_into()
+                    .unwrap(),
+                key_epoch: POC_KEY_EPOCH,
+                allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
+            },
+            proof_of_possession: [0; 64],
+        };
+        let digest = registration.proof_of_possession_digest(&limits).unwrap();
+        let signature: Signature = key.sign_prehash(digest.as_slice()).unwrap();
+        registration.proof_of_possession = signature.to_bytes().into();
+        registration
+    }
+
+    #[test]
+    fn validator_bindings_follow_the_manifest_length_and_shared_identity_helper() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("validators.json");
+        let validators = (0..5_u8)
+            .map(|index| {
+                serde_json::json!({
+                    "address": Address::repeat_byte(index.saturating_add(1)),
+                    "public_key": format!("0x{}", hex::encode([index.saturating_add(0x31); 48])),
+                })
+            })
+            .collect::<Vec<_>>();
+        fs::write(&path, serde_json::to_vec(&validators).unwrap()).unwrap();
+
+        let identities = validator_identities(&path).unwrap();
+        assert_eq!(identities.len(), validators.len());
+        for (index, identity) in identities.into_iter().enumerate() {
+            assert_eq!(
+                identity,
+                validator_identity_hash_v1(
+                    Address::repeat_byte(u8::try_from(index).unwrap().saturating_add(1)),
+                    &[u8::try_from(index).unwrap().saturating_add(0x31); 48],
+                )
+                .unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn genesis_founder_registration_set_is_exact_ordered_and_unique() {
+        let identities = [B256::repeat_byte(0x11), B256::repeat_byte(0x22)];
+        let first = registration(identities[0], 1);
+        let second = registration(identities[1], 2);
+
+        validate_founder_registrations(
+            42,
+            B256::repeat_byte(0x42),
+            &identities,
+            &[first.clone(), second.clone()],
+        )
+        .unwrap();
+        assert!(validate_founder_registrations(
+            42,
+            B256::repeat_byte(0x42),
+            &identities,
+            &[second.clone(), first.clone()],
+        )
+        .is_err());
+        assert!(validate_founder_registrations(
+            42,
+            B256::repeat_byte(0x42),
+            &identities,
+            std::slice::from_ref(&first),
+        )
+        .is_err());
+        assert!(validate_founder_registrations(
+            42,
+            B256::repeat_byte(0x42),
+            &identities,
+            &[
+                first.clone(),
+                second.clone(),
+                registration(B256::repeat_byte(0x33), 3)
+            ],
+        )
+        .is_err());
+
+        let duplicate_key = registration(identities[1], 1);
+        assert!(validate_founder_registrations(
+            42,
+            B256::repeat_byte(0x42),
+            &identities,
+            &[first, duplicate_key],
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn registration_directory_rejects_extra_validator_material() {
+        let directory = tempfile::tempdir().unwrap();
+        let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
+        for index in 0..2_u8 {
+            let validator_dir = directory.path().join(format!("validator-{index}"));
+            fs::create_dir(&validator_dir).unwrap();
+            fs::write(
+                validator_dir.join("ocomp-registration-v1.ocb1"),
+                registration(
+                    B256::repeat_byte(index.saturating_add(1)),
+                    index.saturating_add(1),
+                )
+                .encode_canonical(&limits)
+                .unwrap(),
+            )
+            .unwrap();
+        }
+
+        assert!(load_registrations(directory.path(), 1).is_err());
+    }
 }

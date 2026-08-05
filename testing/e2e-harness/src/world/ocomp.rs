@@ -34,16 +34,13 @@ use outbe_metadosis::proof_layout::METADOSIS_STORAGE_LAYOUT_V1_HASH;
 #[cfg(feature = "ocomp-integration")]
 use outbe_ocomp_protocol::{
     committee::{
-        OcompCommitteeSnapshotV1, OcompKeyRegistrationCoreV1, OcompKeyRegistrationV1,
-        OcompMemberV1, RESULT_SIGNATURE_PURPOSE_BITMAP,
+        validator_identity_hash_v1, OcompKeyRegistrationCoreV1, OcompKeyRegistrationV1,
+        POC_KEY_EPOCH, RESULT_SIGNATURE_PURPOSE_BITMAP,
     },
     common::BoundedBytes,
-    hash::hash_framed,
     local_control::{effective_uid, ClientPolicy, ControlClientSession, EndpointIdentity},
     profile::{CapacityProfileV1, ProtocolBundleV1},
-    registry::{
-        HashDomain, FIDELITY_OPENING_CODEC_ID, ORACLE_OPENING_CODEC_ID, TRIBUTE_BODY_CODEC_ID,
-    },
+    registry::{FIDELITY_OPENING_CODEC_ID, ORACLE_OPENING_CODEC_ID, TRIBUTE_BODY_CODEC_ID},
     vote::ResultVoteV1,
     AttestationResponseV1, NodeMessageKind, PreparedVoteTransactionV1, RequestAttestationV1,
 };
@@ -565,9 +562,9 @@ impl OcompTopology {
     /// node process starts.
     ///
     /// The existing Update schema authors the protocol-v1 schedule in genesis.
-    /// The resulting base genesis hash then binds the request profile, bundle,
-    /// four-member committee and their PoPs. Adding the canonical install under
-    /// `genesis.config` does not alter that header hash.
+    /// The resulting base genesis hash then binds the request profile and
+    /// protocol bundle. Adding the canonical install under `genesis.config`
+    /// does not alter that header hash.
     #[cfg(feature = "ocomp-integration")]
     pub fn prepare_measurement_fork_install(&self) -> Result<OcompMeasurementForkV1> {
         self.prepare_measurement_fork_install_inner(None, &[], false)
@@ -868,14 +865,12 @@ impl OcompTopology {
 
         let base_spec = parse_outbe_chain_spec(&genesis_path)?;
         let base_genesis_hash = base_spec.genesis_hash();
-        let validator_identities =
-            measurement_validator_identities(&self.cfg.dir.join("validators.json"))?;
         let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
         let install = measurement_fork_install(
             chain_id,
             base_genesis_hash,
             OCOMP_MEASUREMENT_ACTIVATION_HEIGHT,
-            validator_identities,
+            &self.cfg.dir.join("validators.json"),
             &limits,
         )?;
         install.validate_for_chain(chain_id, base_genesis_hash, &limits)?;
@@ -2161,66 +2156,17 @@ fn fund_capacity_tribute_accounts(
 }
 
 #[cfg(feature = "ocomp-integration")]
-fn measurement_validator_identities(path: &Path) -> Result<[B256; 4]> {
-    let validators: serde_json::Value = serde_json::from_slice(&fs::read(path)?)?;
-    let validators = validators
-        .as_array()
-        .ok_or_else(|| eyre::eyre!("validators.json is not an array"))?;
-    if validators.len() != 4 {
-        eyre::bail!(
-            "OCOMP measurement requires exactly four validators, got {}",
-            validators.len()
-        );
-    }
-
-    let mut identities = [B256::ZERO; 4];
-    for (index, validator) in validators.iter().enumerate() {
-        let address = validator
-            .get("address")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| eyre::eyre!("validator-{index} has no address"))
-            .and_then(|address| Address::from_str(address).map_err(Into::into))?;
-        let public_key = validator
-            .get("public_key")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| eyre::eyre!("validator-{index} has no public_key"))?;
-        let public_key = hex::decode(public_key.strip_prefix("0x").unwrap_or(public_key))?;
-        if public_key.len() != 48 {
-            eyre::bail!(
-                "validator-{index} consensus public key is {} bytes, expected 48",
-                public_key.len()
-            );
-        }
-        let mut payload = Vec::with_capacity(1 + 20 + 4 + public_key.len());
-        payload.push(u8::try_from(index)?);
-        payload.extend_from_slice(address.as_slice());
-        payload.extend_from_slice(&u32::try_from(public_key.len())?.to_be_bytes());
-        payload.extend_from_slice(&public_key);
-        identities[index] = hash_framed(HashDomain::ValidatorIdentity, &payload)?;
-    }
-    Ok(identities)
-}
-
-#[cfg(feature = "ocomp-integration")]
 fn measurement_fork_install(
     chain_id: u64,
     genesis_hash: B256,
     activation_height: u64,
-    validator_identities: [B256; 4],
+    validators_path: &Path,
     limits: &outbe_ocomp_protocol::SchemaLimits,
 ) -> Result<OcompForkInstallV1> {
     let protocol_bundle = provisional_measurement_bundle();
     let protocol_bundle_hash = protocol_bundle.protocol_bundle_hash(limits)?;
-    let result_committee = measurement_committee(
-        chain_id,
-        genesis_hash,
-        protocol_bundle.fork_id,
-        protocol_bundle_hash,
-        activation_height,
-        validator_identities,
-        limits,
-    )?;
-    let result_ocomp_binding_hash = result_committee.snapshot_hash(limits)?;
+    let founder_registrations =
+        measurement_founder_registrations(validators_path, chain_id, genesis_hash, limits)?;
     Ok(OcompForkInstallV1 {
         classification: OcompForkInstallClassification::Measurement,
         activation_height,
@@ -2232,70 +2178,81 @@ fn measurement_fork_install(
             correctness_profile_id: protocol_bundle.correctness_profile_id,
             capacity_profile: provisional_measurement_capacity_profile(),
             source_availability_policy_id: B256::repeat_byte(44),
-            result_validator_set_epoch: result_committee.snapshot_epoch,
-            result_committee_set_hash: B256::repeat_byte(45),
-            result_ocomp_binding_hash,
-            result_member_count: u16::try_from(result_committee.ordered_members.len())?,
-            result_quorum_threshold: result_committee.threshold,
         },
         protocol_bundle,
-        result_committee,
+        founder_registrations,
     })
 }
 
 #[cfg(feature = "ocomp-integration")]
-fn measurement_committee(
+fn measurement_founder_registrations(
+    validators_path: &Path,
     chain_id: u64,
     genesis_hash: B256,
-    fork_id: B256,
-    protocol_bundle_hash: B256,
-    activation_height: u64,
-    validator_identities: [B256; 4],
     limits: &outbe_ocomp_protocol::SchemaLimits,
-) -> Result<OcompCommitteeSnapshotV1> {
-    let mut ordered_members = Vec::with_capacity(4);
-    for (validator_index, validator_identity_hash) in validator_identities.into_iter().enumerate() {
-        let signing_key_index = u8::try_from(validator_index)?;
-        let validator_index = u16::try_from(validator_index)?;
-        let key = measurement_signing_key(signing_key_index);
-        let public_key: [u8; 33] = key
-            .verifying_key()
-            .to_encoded_point(true)
-            .as_bytes()
-            .try_into()?;
-        let mut registration = OcompKeyRegistrationV1 {
-            core: OcompKeyRegistrationCoreV1 {
-                chain_id,
-                genesis_hash,
-                validator_identity_hash,
-                ocomp_public_key_sec1: public_key,
-                key_epoch: 1,
-                allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
-            },
-            proof_of_possession: [0; 64],
-        };
-        registration.proof_of_possession =
-            sign_measurement_digest(&key, registration.proof_of_possession_digest(limits)?)?;
-        ordered_members.push(OcompMemberV1 {
-            validator_index,
-            validator_identity_hash,
-            ocomp_public_key_sec1: public_key,
-            key_epoch: registration.core.key_epoch,
-            allowed_purpose_bitmap: registration.core.allowed_purpose_bitmap,
-            valid_from_height: activation_height,
-            valid_until_height_exclusive: activation_height.saturating_add(1_000_000),
-            proof_of_possession: registration.proof_of_possession,
-        });
-    }
-    Ok(OcompCommitteeSnapshotV1 {
-        chain_id,
-        genesis_hash,
-        fork_id,
-        protocol_bundle_hash,
-        snapshot_epoch: 1,
-        threshold: 3,
-        ordered_members,
-    })
+) -> Result<Vec<OcompKeyRegistrationV1>> {
+    let manifest: serde_json::Value = serde_json::from_slice(&fs::read(validators_path)?)?;
+    let validators = manifest
+        .as_array()
+        .ok_or_else(|| eyre::eyre!("validators manifest must be a JSON array"))?;
+    let max_validators = usize::try_from(outbe_consensus::bls::MAX_VALIDATORS)?;
+    eyre::ensure!(
+        !validators.is_empty(),
+        "validators manifest must not be empty"
+    );
+    eyre::ensure!(
+        validators.len() <= max_validators,
+        "validators manifest exceeds consensus bound {max_validators}"
+    );
+
+    validators
+        .iter()
+        .enumerate()
+        .map(|(index, validator)| {
+            let address = validator
+                .get("address")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| eyre::eyre!("validator-{index} has no address"))
+                .and_then(|value| Address::from_str(value).map_err(Into::into))?;
+            let consensus_key = validator
+                .get("public_key")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| eyre::eyre!("validator-{index} has no public_key"))?;
+            let consensus_key =
+                hex::decode(consensus_key.strip_prefix("0x").unwrap_or(consensus_key))?;
+            let consensus_key: [u8; 48] = consensus_key.try_into().map_err(|value: Vec<u8>| {
+                eyre::eyre!(
+                    "validator-{index} BLS MinPk must be 48 bytes, got {}",
+                    value.len()
+                )
+            })?;
+            let signing_key = measurement_signing_key(u8::try_from(index)?);
+            let public_key: [u8; 33] = signing_key
+                .verifying_key()
+                .to_encoded_point(true)
+                .as_bytes()
+                .try_into()
+                .map_err(|_| eyre::eyre!("measurement OCOMP public key is not SEC1-33"))?;
+            let mut registration = OcompKeyRegistrationV1 {
+                core: OcompKeyRegistrationCoreV1 {
+                    chain_id,
+                    genesis_hash,
+                    validator_identity_hash: validator_identity_hash_v1(address, &consensus_key)?,
+                    ocomp_public_key_sec1: public_key,
+                    key_epoch: POC_KEY_EPOCH,
+                    allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
+                },
+                proof_of_possession: [0; 64],
+            };
+            let proof: Signature = signing_key
+                .sign_prehash(registration.proof_of_possession_digest(limits)?.as_slice())
+                .map_err(|_| eyre::eyre!("cannot sign validator-{index} OCOMP PoP"))?;
+            registration.proof_of_possession =
+                proof.normalize_s().unwrap_or(proof).to_bytes().into();
+            registration.validate_proof_of_possession(limits)?;
+            Ok(registration)
+        })
+        .collect()
 }
 
 #[cfg(feature = "ocomp-integration")]
@@ -2310,16 +2267,6 @@ fn ocomp_evm_private_key(validator_index: u8) -> String {
         "0x{}",
         hex::encode([validator_index.saturating_add(0x71); 32])
     )
-}
-
-#[cfg(feature = "ocomp-integration")]
-fn sign_measurement_digest(key: &SigningKey, digest: B256) -> Result<[u8; 64]> {
-    let signature: Signature = key.sign_prehash(digest.as_slice())?;
-    Ok(signature
-        .normalize_s()
-        .unwrap_or(signature)
-        .to_bytes()
-        .into())
 }
 
 #[cfg(feature = "ocomp-integration")]
@@ -2790,6 +2737,27 @@ mod tests {
             OCOMP_MEASUREMENT_ACTIVATION_HEIGHT
         );
         assert_eq!(
+            prepared.install.founder_registrations.len(),
+            usize::from(OCOMP_VALIDATOR_DOMAINS)
+        );
+        for (index, registration) in prepared.install.founder_registrations.iter().enumerate() {
+            assert_eq!(
+                registration.core.validator_identity_hash,
+                validator_identity_hash_v1(
+                    Address::with_last_byte(u8::try_from(index).unwrap() + 1),
+                    &[u8::try_from(index).unwrap() + 11; 48],
+                )
+                .unwrap()
+            );
+            assert_eq!(
+                registration.core.ocomp_public_key_sec1.as_slice(),
+                measurement_signing_key(u8::try_from(index).unwrap())
+                    .verifying_key()
+                    .to_encoded_point(true)
+                    .as_bytes()
+            );
+        }
+        assert_eq!(
             format!("{METADOSIS_STORAGE_LAYOUT_V1_HASH:#x}"),
             METADOSIS_STORAGE_LAYOUT_V1_HASH_HEX
         );
@@ -2862,8 +2830,10 @@ mod tests {
                 SigningKey::from_bytes((&hex::decode(key.trim()).unwrap()[..]).into()).unwrap();
             assert_eq!(
                 signer.verifying_key().to_encoded_point(true).as_bytes(),
-                prepared.install.result_committee.ordered_members[usize::from(index)]
-                    .ocomp_public_key_sec1
+                measurement_signing_key(index)
+                    .verifying_key()
+                    .to_encoded_point(true)
+                    .as_bytes()
             );
         }
         assert_eq!(
@@ -3090,7 +3060,9 @@ mod tests {
     fn prepare_measurement_genesis_fixture(topology: &OcompTopology) {
         std::fs::create_dir_all(&topology.cfg.dir).unwrap();
         let spec = reth_chainspec::ChainSpec::<OutbeHeader>::default();
-        let genesis = serde_json::to_value(&spec.genesis).unwrap();
+        let mut genesis = serde_json::to_value(&spec.genesis).unwrap();
+        genesis["config"][outbe_node::ocomp::fork::EPOCH_LENGTH_BLOCKS_GENESIS_KEY] =
+            serde_json::json!(120_u64);
         std::fs::write(
             topology.cfg.dir.join("genesis.json"),
             serde_json::to_vec_pretty(&genesis).unwrap(),

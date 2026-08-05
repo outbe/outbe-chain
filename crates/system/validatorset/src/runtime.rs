@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_ocomp_protocol::{
     committee::{validator_identity_hash_v1, OcompKeyRegistrationV1},
@@ -761,6 +763,119 @@ impl ValidatorSet<'_> {
         // is eligible (the stake-time signal may already have lapsed).
         self.pending_set_change.write(true)?;
         crate::metrics::record_pending_set_change(true);
+        guard.commit();
+        Ok(())
+    }
+
+    /// Imports the chain-manifest OCOMP key material for the ordered genesis
+    /// ACTIVE set. The manifest vector is not membership authority: it must
+    /// cover the already-persisted ACTIVE ValidatorSet exactly and in order.
+    ///
+    /// This is purpose-built for the one-time OCOMP lifecycle activation. A
+    /// byte-identical replay is accepted; partial or conflicting pre-existing
+    /// state is fatal rather than repaired.
+    pub fn initialize_founder_ocomp_registrations(
+        &mut self,
+        registrations: &[OcompKeyRegistrationV1],
+    ) -> Result<()> {
+        let active = self.get_active_validators()?;
+        if active.is_empty() || active.len() != registrations.len() {
+            return Err(PrecompileError::Fatal(format!(
+                "OCOMP founder registrations must exactly cover ACTIVE ValidatorSet: {} registrations for {} validators",
+                registrations.len(),
+                active.len()
+            )));
+        }
+
+        let chain_id = self.storage.chain_id()?;
+        let genesis_hash = self.storage.genesis_hash()?;
+        let limits = poc_schema_limits();
+        let mut identities = BTreeSet::new();
+        let mut keys = BTreeSet::new();
+        let mut prepared = Vec::new();
+        prepared
+            .try_reserve_exact(registrations.len())
+            .map_err(|_| PrecompileError::Fatal("allocate OCOMP founder import".into()))?;
+
+        let mut exact_existing = 0usize;
+        for (validator, registration) in active.iter().zip(registrations) {
+            registration
+                .validate_proof_of_possession(&limits)
+                .map_err(|error| {
+                    PrecompileError::Fatal(format!(
+                        "invalid OCOMP founder proof of possession: {error}"
+                    ))
+                })?;
+            if registration.core.chain_id != chain_id
+                || registration.core.genesis_hash != genesis_hash
+            {
+                return Err(PrecompileError::Fatal(
+                    "OCOMP founder registration chain binding mismatch".into(),
+                ));
+            }
+            let expected_identity = validator_identity_hash_v1(
+                validator.validator_address,
+                &validator.consensus_pubkey,
+            )
+            .map_err(|error| {
+                PrecompileError::Fatal(format!("derive OCOMP founder validator identity: {error}"))
+            })?;
+            if registration.core.validator_identity_hash != expected_identity {
+                return Err(PrecompileError::Fatal(format!(
+                    "OCOMP founder registration identity mismatch for {}",
+                    validator.validator_address
+                )));
+            }
+            if !identities.insert(expected_identity)
+                || !keys.insert(registration.core.ocomp_public_key_sec1)
+            {
+                return Err(PrecompileError::Fatal(
+                    "OCOMP founder registrations contain duplicate identity or key".into(),
+                ));
+            }
+
+            let encoded = registration.encode_canonical(&limits).map_err(|error| {
+                PrecompileError::Fatal(format!(
+                    "encode canonical OCOMP founder registration: {error}"
+                ))
+            })?;
+            let key_hash = keccak256(registration.core.ocomp_public_key_sec1);
+            let stored = self.ocomp_registration(validator.validator_address)?;
+            let owner = self.ocomp_key_hash_to_validator.read(&key_hash)?;
+            match stored {
+                Some(existing)
+                    if existing == *registration && owner == validator.validator_address =>
+                {
+                    exact_existing += 1;
+                }
+                None if owner.is_zero() => {}
+                _ => {
+                    return Err(PrecompileError::Fatal(format!(
+                        "partial or conflicting OCOMP founder state for {}",
+                        validator.validator_address
+                    )));
+                }
+            }
+            prepared.push((validator.validator_address, key_hash, encoded));
+        }
+
+        if exact_existing == registrations.len() {
+            return Ok(());
+        }
+        if exact_existing != 0 {
+            return Err(PrecompileError::Fatal(
+                "partial OCOMP founder registration import is fatal".into(),
+            ));
+        }
+
+        let guard = self.storage.checkpoint_guard();
+        for (validator, key_hash, encoded) in prepared {
+            self.val_ocomp_registration
+                .get_bytes(&validator)
+                .write(&encoded)?;
+            self.ocomp_key_hash_to_validator
+                .write(&key_hash, validator)?;
+        }
         guard.commit();
         Ok(())
     }

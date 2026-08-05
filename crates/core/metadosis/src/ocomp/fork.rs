@@ -4,8 +4,12 @@
 //! consensus configuration: local OCOMP process readiness and runtime file
 //! reload never select these values.
 
+use std::collections::BTreeSet;
+
 use alloy_primitives::{keccak256, B256};
-use outbe_ocomp_protocol::{profile::ProtocolBundleV1, SchemaLimits};
+use outbe_ocomp_protocol::{
+    committee::OcompKeyRegistrationV1, profile::ProtocolBundleV1, SchemaLimits,
+};
 use outbe_primitives::error::{PrecompileError, Result};
 
 use super::{
@@ -16,7 +20,7 @@ use crate::schema::MetadosisContract;
 
 const FORK_INSTALL_MAGIC: [u8; 4] = *b"OFI1";
 const FORK_INSTALL_VERSION: u16 = 1;
-const FORK_INSTALL_FIXED_LEN: usize = 4 + 2 + 1 + 8 + 4 + 4;
+const FORK_INSTALL_FIXED_LEN: usize = 4 + 2 + 1 + 8 + 4 + 4 + 4;
 const FORK_INSTALL_HASH_DOMAIN: &[u8] = b"OUTBE_OCOMP_FORK_INSTALL_V1\0";
 
 /// Frozen activation height of the current Final profile.
@@ -47,6 +51,9 @@ pub struct OcompForkInstallV1 {
     pub activation_height: u64,
     pub request_profile: OcompRequestProfile,
     pub protocol_bundle: ProtocolBundleV1,
+    /// Ordered genesis validator key registrations. This bootstraps key
+    /// material only; membership, indices and quorum come from ValidatorSet.
+    pub founder_registrations: Vec<OcompKeyRegistrationV1>,
 }
 
 impl OcompForkInstallV1 {
@@ -77,6 +84,40 @@ impl OcompForkInstallV1 {
             return Err(fatal("unsupported OCOMP protocol bundle version"));
         }
         validate_activation_authority(&self.request_profile, &self.protocol_bundle, limits)?;
+        self.validate_founder_registrations(limits)?;
+        Ok(())
+    }
+
+    fn validate_founder_registrations(&self, limits: &SchemaLimits) -> Result<()> {
+        let max_validators = usize::try_from(outbe_consensus::bls::MAX_VALIDATORS)
+            .map_err(|_| fatal("consensus validator bound exceeds usize"))?;
+        if self.founder_registrations.is_empty()
+            || self.founder_registrations.len() > max_validators
+        {
+            return Err(fatal(format!(
+                "OCOMP founder registration count must be 1..={max_validators}"
+            )));
+        }
+        let mut identities = BTreeSet::new();
+        let mut keys = BTreeSet::new();
+        for registration in &self.founder_registrations {
+            if registration.core.chain_id != self.request_profile.chain_id
+                || registration.core.genesis_hash != self.request_profile.genesis_hash
+            {
+                return Err(fatal("OCOMP founder registration chain binding mismatch"));
+            }
+            if registration.core.validator_identity_hash.is_zero()
+                || !identities.insert(registration.core.validator_identity_hash)
+            {
+                return Err(fatal("OCOMP founder validator identities must be unique"));
+            }
+            if !keys.insert(registration.core.ocomp_public_key_sec1) {
+                return Err(fatal("OCOMP founder public keys must be unique"));
+            }
+            registration
+                .validate_proof_of_possession(limits)
+                .map_err(protocol_error)?;
+        }
         Ok(())
     }
 
@@ -92,12 +133,27 @@ impl OcompForkInstallV1 {
             .protocol_bundle
             .encode_canonical(limits)
             .map_err(protocol_error)?;
+        let mut founder_registrations = Vec::with_capacity(self.founder_registrations.len());
+        for registration in &self.founder_registrations {
+            let encoded = registration
+                .encode_canonical(limits)
+                .map_err(protocol_error)?;
+            validate_nested_length("founder registration", encoded.len(), limits)?;
+            founder_registrations.push(encoded);
+        }
         validate_nested_length("request profile", request_profile.len(), limits)?;
         validate_nested_length("protocol bundle", protocol_bundle.len(), limits)?;
 
         let total = FORK_INSTALL_FIXED_LEN
             .checked_add(request_profile.len())
             .and_then(|value| value.checked_add(protocol_bundle.len()))
+            .and_then(|value| {
+                founder_registrations
+                    .iter()
+                    .try_fold(value, |total, registration| {
+                        total.checked_add(4)?.checked_add(registration.len())
+                    })
+            })
             .ok_or_else(|| fatal("OCOMP fork-install length overflow"))?;
         validate_total_length(total, limits)?;
         let mut encoded = Vec::new();
@@ -110,6 +166,14 @@ impl OcompForkInstallV1 {
         encoded.extend_from_slice(&self.activation_height.to_be_bytes());
         append_bounded(&mut encoded, &request_profile)?;
         append_bounded(&mut encoded, &protocol_bundle)?;
+        encoded.extend_from_slice(
+            &u32::try_from(founder_registrations.len())
+                .map_err(|_| fatal("OCOMP founder registration count exceeds u32"))?
+                .to_be_bytes(),
+        );
+        for registration in &founder_registrations {
+            append_bounded(&mut encoded, registration)?;
+        }
         if encoded.len() != total {
             return Err(fatal("OCOMP fork-install encoded length mismatch"));
         }
@@ -130,6 +194,23 @@ impl OcompForkInstallV1 {
         let activation_height = reader.u64()?;
         let request_profile_bytes = reader.bounded(limits)?;
         let protocol_bundle_bytes = reader.bounded(limits)?;
+        let founder_count = usize::try_from(reader.u32()?)
+            .map_err(|_| fatal("OCOMP founder registration count exceeds usize"))?;
+        let max_validators = usize::try_from(outbe_consensus::bls::MAX_VALIDATORS)
+            .map_err(|_| fatal("consensus validator bound exceeds usize"))?;
+        if founder_count == 0 || founder_count > max_validators {
+            return Err(fatal("invalid OCOMP founder registration count"));
+        }
+        let mut founder_registrations = Vec::new();
+        founder_registrations
+            .try_reserve_exact(founder_count)
+            .map_err(|_| fatal("allocate OCOMP founder registrations"))?;
+        for _ in 0..founder_count {
+            founder_registrations.push(
+                OcompKeyRegistrationV1::decode_canonical(reader.bounded(limits)?, limits)
+                    .map_err(protocol_error)?,
+            );
+        }
         if reader.remaining() != 0 {
             return Err(fatal("trailing OCOMP fork-install bytes"));
         }
@@ -139,6 +220,7 @@ impl OcompForkInstallV1 {
             request_profile: OcompRequestProfile::decode_canonical(request_profile_bytes, limits)?,
             protocol_bundle: ProtocolBundleV1::decode_canonical(protocol_bundle_bytes, limits)
                 .map_err(protocol_error)?,
+            founder_registrations,
         };
         install.validate_for_chain(
             install.request_profile.chain_id,
@@ -228,13 +310,7 @@ fn validate_nested_length(name: &'static str, length: usize, limits: &SchemaLimi
 }
 
 fn validate_total_length(length: usize, limits: &SchemaLimits) -> Result<()> {
-    let nested_cap = limits
-        .codec
-        .max_allocation_bytes
-        .checked_mul(2)
-        .and_then(|value| value.checked_add(FORK_INSTALL_FIXED_LEN))
-        .ok_or_else(|| fatal("OCOMP fork-install byte cap overflow"))?;
-    if length < FORK_INSTALL_FIXED_LEN || length > nested_cap {
+    if length < FORK_INSTALL_FIXED_LEN || length > limits.codec.max_allocation_bytes {
         return Err(fatal("OCOMP fork-install exceeds byte cap"));
     }
     Ok(())

@@ -36,10 +36,9 @@ use crate::internal::config::Config;
 use crate::internal::proc::{args, redact_args_for_log, ChildGuard, DockerImageId, EnclaveGuard};
 use crate::internal::shell::Sh;
 
-/// Per-node execution cache for the four validators co-located by the PoC
-/// devnet harness. The upstream 4 GiB default is a single-node deployment
-/// default; applying it four times would consume the declared 12 GiB process
-/// budget before OCOMP begins.
+/// Per-node execution cache for validators co-located by the devnet harness.
+/// The upstream 4 GiB default is a single-node deployment default; applying it
+/// to every local validator would consume the process budget before OCOMP begins.
 const CO_LOCATED_DEVNET_CROSS_BLOCK_CACHE_MIB: u64 = 512;
 
 /// Test-provided knobs for a localnet start. The **enclave mode** is NOT here —

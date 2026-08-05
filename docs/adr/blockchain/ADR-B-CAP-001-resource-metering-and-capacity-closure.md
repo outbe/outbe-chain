@@ -148,6 +148,24 @@ system hook or wire field fails CI until its cost dimensions and boundary tests 
 registered. Governance activation cannot increase limits beyond independently
 verified implementation maxima.
 
+### OCOMP dynamic-membership capacity
+
+OCOMP has no private validator-count limit. Its only allocation bound is the
+current consensus `MAX_VALIDATORS`; participant indices use `u16`, and all
+bounded collections and synthetic checks read the consensus constant rather
+than an OCOMP literal. Each job derives `N` and quorum from its pinned
+ValidatorSet snapshot.
+
+The result-vote state remains one bounded monolithic accountability value with
+dynamic slots and `ceil(N/8)` LSB0 bitmaps. CI constructs its worst closed shape
+at the consensus bound, round-trips the canonical codec, checks the one-vote
+internal-work formula and proves the quorum work fits the 64-block response
+window. At the current consensus bound (`N=256`, quorum `171`) the checked
+worst shape is 58,760 bytes and each bitmap is 32 bytes. This is synthetic
+boundary evidence, not hardware benchmark evidence. A future failure of this
+gate blocks the release; it must not be hidden by an OCOMP-specific cap or an
+unapproved state decomposition.
+
 ## Authoritative interfaces
 
 | Responsibility                   | Authority                                               |

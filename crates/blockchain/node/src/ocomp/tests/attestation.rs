@@ -16,8 +16,7 @@ use outbe_consensus::block::ConsensusBlock;
 use outbe_metadosis::config::poc_schema_limits;
 use outbe_ocomp_protocol::{
     committee::{
-        OcompCommitteeSnapshotV1, OcompKeyRegistrationCoreV1, OcompKeyRegistrationV1,
-        OcompMemberV1, RESULT_SIGNATURE_PURPOSE_BITMAP,
+        OcompKeyRegistrationCoreV1, OcompKeyRegistrationV1, RESULT_SIGNATURE_PURPOSE_BITMAP,
     },
     common::BoundedBytes,
     hash::hash_framed,
@@ -44,8 +43,8 @@ use outbe_primitives::{
     OutbePrimitives,
 };
 use outbe_validatorset::{
-    read_committee_snapshot, read_ocomp_snapshot_extension, write_committee_snapshot,
-    COMMITTEE_SNAPSHOT_RETAIN_EPOCHS,
+    ocomp_binding_hash_v1, read_committee_snapshot, read_ocomp_snapshot_extension,
+    write_committee_snapshot, OcompSnapshotMemberV1, COMMITTEE_SNAPSHOT_RETAIN_EPOCHS,
 };
 use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
 use tracing::{
@@ -218,29 +217,34 @@ fn registration(index: u8, limits: &SchemaLimits) -> OcompKeyRegistrationV1 {
     registration
 }
 
-fn committee(limits: &SchemaLimits) -> OcompCommitteeSnapshotV1 {
-    OcompCommitteeSnapshotV1 {
-        chain_id: 42,
-        genesis_hash: hash(40),
+#[derive(Clone)]
+pub(super) struct TestHistoricalCommittee {
+    fork_id: B256,
+    snapshot: HistoricalOcompSnapshotV1,
+}
+
+fn committee(limits: &SchemaLimits) -> TestHistoricalCommittee {
+    let epoch = 1;
+    let committee_set_hash = hash(45);
+    let ordered_members = (0..4)
+        .map(|index| {
+            let registration = registration(index, limits);
+            OcompSnapshotMemberV1 {
+                validator_address: Address::repeat_byte(index.saturating_add(1)),
+                ocomp_public_key_sec1: registration.core.ocomp_public_key_sec1,
+                key_epoch: registration.core.key_epoch,
+            }
+        })
+        .collect::<Vec<_>>();
+    let ocomp_binding_hash = ocomp_binding_hash_v1(epoch, committee_set_hash, &ordered_members);
+    TestHistoricalCommittee {
         fork_id: hash(1),
-        protocol_bundle_hash: hash(41),
-        snapshot_epoch: 1,
-        threshold: 3,
-        ordered_members: (0..4)
-            .map(|index| {
-                let registration = registration(index, limits);
-                OcompMemberV1 {
-                    validator_index: u16::from(index),
-                    validator_identity_hash: registration.core.validator_identity_hash,
-                    ocomp_public_key_sec1: registration.core.ocomp_public_key_sec1,
-                    key_epoch: registration.core.key_epoch,
-                    allowed_purpose_bitmap: registration.core.allowed_purpose_bitmap,
-                    valid_from_height: 1,
-                    valid_until_height_exclusive: 1_000,
-                    proof_of_possession: registration.proof_of_possession,
-                }
-            })
-            .collect(),
+        snapshot: HistoricalOcompSnapshotV1 {
+            epoch,
+            committee_set_hash,
+            ocomp_binding_hash,
+            ordered_members,
+        },
     }
 }
 
@@ -276,7 +280,7 @@ fn preconditions() -> ActivationPreconditionsV1 {
 }
 
 pub(super) fn fixture() -> (
-    OcompCommitteeSnapshotV1,
+    TestHistoricalCommittee,
     ExportedAttestationAuthorityV1,
     LysisResultV1,
 ) {
@@ -313,11 +317,13 @@ pub(super) fn fixture() -> (
         logical_evaluation_height: 100,
         logical_evaluation_time: 1_000,
         activation_preconditions: preconditions(),
-        result_validator_set_epoch: committee.snapshot_epoch,
-        result_committee_set_hash: hash(45),
-        result_ocomp_binding_hash: committee.snapshot_hash(&limits).expect("committee hash"),
-        result_member_count: committee.ordered_members.len() as u16,
-        result_quorum_threshold: committee.threshold,
+        result_validator_set_epoch: committee.snapshot.epoch,
+        result_committee_set_hash: committee.snapshot.committee_set_hash,
+        result_ocomp_binding_hash: committee.snapshot.ocomp_binding_hash,
+        result_member_count: committee.snapshot.ordered_members.len() as u16,
+        result_quorum_threshold: outbe_consensus::proof::simplex_n3f1_quorum(
+            committee.snapshot.ordered_members.len(),
+        ) as u16,
         custody_committee_epoch_hash: None,
     };
     intent.validate_semantics().expect("valid test intent");
@@ -567,27 +573,11 @@ pub(super) fn attestation_gate(
     directory: &tempfile::TempDir,
     authority: Arc<dyn FinalizedAttestationAuthority>,
     height: Arc<AtomicHeightSource>,
-    committee: OcompCommitteeSnapshotV1,
+    committee: TestHistoricalCommittee,
 ) -> OcompAttestationGate {
     let limits = protocol_limits();
     let snapshots = Arc::new(StaticHistoricalSnapshotSource {
-        snapshot: Some(HistoricalOcompSnapshotV1 {
-            epoch: committee.snapshot_epoch,
-            committee_set_hash: hash(45),
-            ocomp_binding_hash: committee.snapshot_hash(&limits).expect("committee hash"),
-            ordered_members: committee
-                .ordered_members
-                .iter()
-                .enumerate()
-                .map(
-                    |(index, member)| outbe_validatorset::OcompSnapshotMemberV1 {
-                        validator_address: Address::repeat_byte((index + 1) as u8),
-                        ocomp_public_key_sec1: member.ocomp_public_key_sec1,
-                        key_epoch: member.key_epoch,
-                    },
-                )
-                .collect(),
-        }),
+        snapshot: Some(committee.snapshot),
     });
     let signer = OcompSigner::from_secret([1; 32]).expect("local OCOMP signer");
     let root = directory.path().join("sign-once");
@@ -614,6 +604,33 @@ pub(super) fn attestation_gate(
         limits,
     )
     .expect("attestation gate")
+}
+
+fn assert_historical_vote(
+    vote: &ResultVoteV1,
+    exported: &ExportedAttestationAuthorityV1,
+    committee: &TestHistoricalCommittee,
+    inclusion_height: u64,
+    limits: &SchemaLimits,
+) {
+    let member = committee
+        .snapshot
+        .ordered_members
+        .get(usize::from(vote.validator_index))
+        .expect("vote member in historical ValidatorSet snapshot");
+    vote.verify_historical_member(
+        &exported.finalized_intent,
+        exported.job_id,
+        u16::try_from(committee.snapshot.ordered_members.len())
+            .expect("historical ValidatorSet member count fits u16"),
+        member.key_epoch,
+        &member.ocomp_public_key_sec1,
+        inclusion_height,
+        exported.open_height,
+        exported.deadline_height,
+        limits,
+    )
+    .expect("historical ValidatorSet vote verification");
 }
 
 fn control_server(
@@ -802,18 +819,7 @@ fn ocm_sig_001_derives_the_local_u16_index_from_the_job_snapshot() {
     let limits = protocol_limits();
     let (committee, exported, result) = fixture();
     let local_address = Address::repeat_byte(0xA1);
-    let mut members = committee
-        .ordered_members
-        .iter()
-        .enumerate()
-        .map(
-            |(index, member)| outbe_validatorset::OcompSnapshotMemberV1 {
-                validator_address: Address::repeat_byte((index + 1) as u8),
-                ocomp_public_key_sec1: member.ocomp_public_key_sec1,
-                key_epoch: member.key_epoch,
-            },
-        )
-        .collect::<Vec<_>>();
+    let mut members = committee.snapshot.ordered_members.clone();
     members.swap(0, 2);
     members[2].validator_address = local_address;
     let snapshots = Arc::new(StaticHistoricalSnapshotSource {
@@ -876,18 +882,7 @@ fn ocm_sig_001_two_live_membership_epochs_sign_with_their_own_indices() {
     let limits = protocol_limits();
     let (committee, first_exported, first_result) = fixture();
     let local_address = Address::repeat_byte(1);
-    let first_members = committee
-        .ordered_members
-        .iter()
-        .enumerate()
-        .map(
-            |(index, member)| outbe_validatorset::OcompSnapshotMemberV1 {
-                validator_address: Address::repeat_byte((index + 1) as u8),
-                ocomp_public_key_sec1: member.ocomp_public_key_sec1,
-                key_epoch: member.key_epoch,
-            },
-        )
-        .collect::<Vec<_>>();
+    let first_members = committee.snapshot.ordered_members.clone();
     let first_snapshot = HistoricalOcompSnapshotV1 {
         epoch: first_exported.finalized_intent.result_validator_set_epoch,
         committee_set_hash: first_exported.finalized_intent.result_committee_set_hash,
@@ -1032,18 +1027,7 @@ fn ocm_sig_001_unusable_historical_membership_abstains_observably_without_signin
     assert_eq!(missing.abstention_count(), 1);
     assert_no_sign_once_record(&missing_directory);
 
-    let members = committee
-        .ordered_members
-        .iter()
-        .enumerate()
-        .map(
-            |(index, member)| outbe_validatorset::OcompSnapshotMemberV1 {
-                validator_address: Address::repeat_byte((index + 1) as u8),
-                ocomp_public_key_sec1: member.ocomp_public_key_sec1,
-                key_epoch: member.key_epoch,
-            },
-        )
-        .collect::<Vec<_>>();
+    let members = committee.snapshot.ordered_members.clone();
 
     let binding_mismatch_directory = tempfile::tempdir().expect("binding mismatch directory");
     let binding_mismatch = make_gate(
@@ -1161,17 +1145,7 @@ fn ocm_sig_001_node_reconstructs_digest_replays_exactly_and_refuses_second_resul
     let first = gate
         .attest_canonical_result(&canonical)
         .expect("first attestation");
-    first
-        .verify(
-            &exported.finalized_intent,
-            exported.job_id,
-            &committee,
-            105,
-            exported.open_height,
-            exported.deadline_height,
-            &limits,
-        )
-        .expect("candidate verification");
+    assert_historical_vote(&first, &exported, &committee, 105, &limits);
     let replay = gate
         .attest_canonical_result(&canonical)
         .expect("exact replay");
@@ -1242,16 +1216,7 @@ fn ocm_sig_001_real_control_socket_attests_and_returns_typed_conflict_without_dr
         .expect("attestation response");
     let vote = ResultVoteV1::decode_canonical(&first.canonical_vote.0, &limits)
         .expect("canonical result vote");
-    vote.verify(
-        &exported.finalized_intent,
-        exported.job_id,
-        &committee,
-        105,
-        exported.open_height,
-        exported.deadline_height,
-        &limits,
-    )
-    .expect("result vote verification");
+    assert_historical_vote(&vote, &exported, &committee, 105, &limits);
 
     let mut conflicting = result;
     conflicting.roots.nod_root = hash(62);

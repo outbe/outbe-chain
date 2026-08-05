@@ -34,7 +34,6 @@ const GENERATED_CAPACITY_SCHEMA_VERSION: u16 = 1;
 const GENERATED_CAPACITY_KIND: &str = "outbe-ocomp-generated-capacity-v1";
 const CAPACITY_MEMORY_MAX_BYTES: u64 = OCOMP_POC_DEVNET_MACHINE_V1.minimum_process_memory_bytes;
 const CAPACITY_CPU_QUOTA_PERCENT: u16 = 400;
-const OCOMP_POC_COMMITTEE_MEMBERS: u64 = 4;
 const OCOMP_POC_BLOCK_GAS_LIMIT: u64 = 30_000_000;
 const OCOMP_POC_RESULT_DEADLINE_BLOCKS: u64 = 64;
 
@@ -329,9 +328,10 @@ fn frozen_capacity_budget() -> Result<CapacityBudgetV1> {
         .logical_cpu_count
         .checked_mul(finality_latency_micros)
         .ok_or_else(|| eyre::eyre!("OCOMP PoC CPU budget overflows"))?;
-    let directed_committee_edges = OCOMP_POC_COMMITTEE_MEMBERS
-        .checked_mul(OCOMP_POC_COMMITTEE_MEMBERS.saturating_sub(1))
-        .ok_or_else(|| eyre::eyre!("OCOMP PoC committee edge count overflows"))?;
+    let validator_count = u64::from(outbe_consensus::bls::MAX_VALIDATORS);
+    let directed_committee_edges = validator_count
+        .checked_mul(validator_count.saturating_sub(1))
+        .ok_or_else(|| eyre::eyre!("consensus validator edge count overflows"))?;
     let network_bytes = u64::from(MAX_P2P_MESSAGE_SIZE)
         .checked_mul(directed_committee_edges)
         .and_then(|value| value.checked_mul(OCOMP_POC_RESULT_DEADLINE_BLOCKS))
@@ -937,7 +937,14 @@ mod tests {
             OCOMP_POC_CANDIDATE_LIMITS_V1.max_activation_internal_work
         );
         assert_eq!(budget.cpu_micros, 2_048_000_000);
-        assert_eq!(budget.network_bytes, 1_610_612_736);
+        let validator_count = u64::from(outbe_consensus::bls::MAX_VALIDATORS);
+        assert_eq!(
+            budget.network_bytes,
+            u64::from(MAX_P2P_MESSAGE_SIZE)
+                * validator_count
+                * (validator_count - 1)
+                * OCOMP_POC_RESULT_DEADLINE_BLOCKS
+        );
         assert_eq!(
             budget.assigned_memory_bytes,
             OCOMP_POC_DEVNET_MACHINE_V1.minimum_process_memory_bytes
@@ -1000,14 +1007,14 @@ mod tests {
                     tribute_count: 257,
                     nod_count: 257,
                     worker_shard_count: 2,
-                    validator_block_processing: std::array::from_fn(|validator_index| {
-                        CapacityValidatorBlockProcessingV1 {
-                            validator_index: u8::try_from(validator_index).unwrap(),
+                    validator_block_processing: (0_u16..5)
+                        .map(|validator_index| CapacityValidatorBlockProcessingV1 {
+                            validator_index,
                             block_number: 40,
                             block_hash: B256::repeat_byte(6),
                             elapsed_micros: if validator_index == 3 { 800 } else { 100 },
-                        }
-                    }),
+                        })
+                        .collect(),
                     historical_replay:
                         outbe_ocomp_protocol::capacity::CapacityHistoricalReplayBindingV1 {
                             validator_index: 0,

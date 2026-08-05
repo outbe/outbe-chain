@@ -132,7 +132,15 @@ fn fork_install_is_exactly_profile_plus_bundle_and_keeps_reserved_slot_zero() {
                 .encode_canonical(&limits)
                 .unwrap()
                 .len();
-        assert_eq!(encoded.len() - nested_bytes, 4 + 2 + 1 + 8 + 4 + 4);
+        let founder_bytes = install
+            .founder_registrations
+            .iter()
+            .map(|registration| 4 + registration.encode_canonical(&limits).unwrap().len())
+            .sum::<usize>();
+        assert_eq!(
+            encoded.len() - nested_bytes,
+            4 + 2 + 1 + 8 + 4 + 4 + 4 + founder_bytes
+        );
         assert_eq!(
             crate::config::OcompForkInstallV1::decode_canonical(&encoded, &limits).unwrap(),
             install
@@ -148,6 +156,26 @@ fn fork_install_is_exactly_profile_plus_bundle_and_keeps_reserved_slot_zero() {
             .unwrap();
         assert!(contract.ocomp_result_committee_snapshot.is_empty().unwrap());
     });
+}
+
+#[test]
+fn fork_install_round_trips_founder_keys_without_defining_membership() {
+    let limits = poc_schema_limits();
+    let install = crate::fixture_kernel::fork_install_fixture(
+        OcompForkInstallClassification::Measurement,
+        1,
+        1,
+        B256::repeat_byte(0x11),
+    );
+    assert!(
+        !install.founder_registrations.is_empty(),
+        "an OCOMP-enabled fresh network must bootstrap every founder key"
+    );
+
+    let encoded = install.encode_canonical(&limits).unwrap();
+    let decoded = crate::config::OcompForkInstallV1::decode_canonical(&encoded, &limits).unwrap();
+    assert_eq!(decoded.founder_registrations, install.founder_registrations);
+    assert_eq!(decoded, install);
 }
 
 fn create_ready_day(contract: &mut MetadosisContract<'_>, wwd: WorldwideDay) {

@@ -5,7 +5,7 @@ use alloy_primitives::B256;
 use crate::{
     abi::SUBMIT_LYSIS_RESULT_SELECTOR,
     codec::{decode_envelope, CanonicalReader},
-    committee::{verify_low_s_prehash, OcompCommitteeSnapshotV1, POC_KEY_EPOCH},
+    committee::{verify_low_s_prehash, POC_KEY_EPOCH},
     error::ProtocolError,
     hash::hash_framed,
     intent::JobIntentV1,
@@ -321,52 +321,6 @@ impl ResultVoteV1 {
             member_ocomp_public_key_sec1,
             signing_digest,
             &self.signature_rs,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn verify(
-        &self,
-        finalized_intent: &JobIntentV1,
-        expected_job_id: B256,
-        committee: &OcompCommitteeSnapshotV1,
-        inclusion_height: u64,
-        open_height: u64,
-        deadline_height: u64,
-        limits: &SchemaLimits,
-    ) -> Result<(), ProtocolError> {
-        require(
-            self.result_validator_set_epoch == finalized_intent.result_validator_set_epoch
-                && self.result_validator_set_epoch == committee.snapshot_epoch
-                && self.result_committee_set_hash == finalized_intent.result_committee_set_hash
-                && self.result_ocomp_binding_hash == finalized_intent.result_ocomp_binding_hash
-                && self.result_ocomp_binding_hash == committee.snapshot_hash(limits)?,
-            "vote committee binding",
-        )?;
-        require(self.key_epoch == POC_KEY_EPOCH, "vote key epoch")?;
-        let member = committee
-            .ordered_members
-            .get(usize::from(self.validator_index))
-            .ok_or(ProtocolError::InvalidInvariant("vote validator index"))?;
-        require(
-            member.valid_from_height <= inclusion_height
-                && inclusion_height < member.valid_until_height_exclusive,
-            "vote member validity",
-        )?;
-        self.verify_historical_member(
-            finalized_intent,
-            expected_job_id,
-            u16::try_from(committee.ordered_members.len()).map_err(|_| {
-                ProtocolError::IntegerOverflow {
-                    what: "vote committee member count",
-                }
-            })?,
-            member.key_epoch,
-            &member.ocomp_public_key_sec1,
-            inclusion_height,
-            open_height,
-            deadline_height,
-            limits,
         )
     }
 

@@ -227,13 +227,13 @@ fn validate_input(input: &Value) -> Result<()> {
     }
     let crypto = required(input, "crypto_profile")?;
     ensure!(
-        u64_field(crypto, "committee_size")? == 4
-            && u64_field(crypto, "fault_tolerance")? == 1
-            && u64_field(crypto, "threshold")? == 3
+        string_field(crypto, "scheme")? == "ECDSA_secp256k1"
+            && string_field(crypto, "public_key_encoding")? == "compressed_SEC1_33"
+            && string_field(crypto, "signature_encoding")? == "r_s_64_byte_big_endian"
             && u64_field(crypto, "key_epoch")? == 1
             && bool_field(crypto, "low_s_required")?
             && !bool_field(crypto, "recovery_byte")?,
-        "crypto profile must remain n=4/f=1/q=3, epoch=1, low-s, no recovery"
+        "crypto profile must remain secp256k1, epoch=1, low-s and recovery-free"
     );
     let limits = required(input, "candidate_limits")?;
     let max_tributes_per_work_shard = u64_field(limits, "max_tributes_per_work_shard")?;
@@ -310,7 +310,7 @@ fn load_objects(repository_root: &Path) -> Result<Vec<ObjectRow>> {
             name: fields[3].to_owned(),
         });
     }
-    ensure!(objects.len() == 35, "OCOMP V1 must have exactly 35 objects");
+    ensure!(objects.len() == 34, "OCOMP V1 must have exactly 34 objects");
     ensure!(
         objects.first().is_some_and(|object| object.tag == 0x0001)
             && objects.last().is_some_and(|object| object.tag == 0x0026),
@@ -737,5 +737,20 @@ mod tests {
             hex::encode(envelope(0x001e, &[])),
             "4f434231001e000100000000"
         );
+    }
+
+    #[test]
+    fn shape_input_does_not_define_static_ocomp_membership() {
+        let input: Value = serde_json::from_str(include_str!(
+            "../../../crates/system/ocomp-protocol/registry/shape-freeze-v1.json"
+        ))
+        .unwrap();
+        let crypto = required(&input, "crypto_profile").unwrap();
+        for forbidden in ["committee_size", "fault_tolerance", "threshold"] {
+            assert!(
+                crypto.get(forbidden).is_none(),
+                "shape input must not define static OCOMP {forbidden}"
+            );
+        }
     }
 }

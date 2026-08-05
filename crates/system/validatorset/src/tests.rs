@@ -88,6 +88,72 @@ fn confirm_ready(vs: &mut ValidatorSet<'_>, validator: Address, key_seed: u8) {
     vs.confirm_validator_ready(validator, &encoded).unwrap();
 }
 
+#[test]
+fn founder_key_bootstrap_imports_exact_active_order_and_replays_idempotently() {
+    let validators = [Address::repeat_byte(0x61), Address::repeat_byte(0x62)];
+    let consensus_keys = [dummy_consensus_pubkey(0x31), dummy_consensus_pubkey(0x32)];
+
+    with_vs_configured(2, |vs| {
+        let mut registrations = Vec::new();
+        for (index, (validator, consensus_key)) in
+            validators.into_iter().zip(consensus_keys).enumerate()
+        {
+            vs.register_validator(OWNER, validator, &consensus_key)
+                .unwrap();
+            vs.mark_pending(validator).unwrap();
+            let (registration, encoded) = ocomp_registration(
+                validator,
+                &consensus_key,
+                u8::try_from(index).unwrap().saturating_add(0x71),
+            );
+            vs.confirm_validator_ready(validator, &encoded).unwrap();
+            vs.activate_validator_via_boundary_for_test(validator)
+                .unwrap();
+            registrations.push(registration);
+        }
+
+        for (validator, registration) in validators.into_iter().zip(&registrations) {
+            let key_hash = keccak256(registration.core.ocomp_public_key_sec1);
+            vs.val_ocomp_registration
+                .get_bytes(&validator)
+                .clear()
+                .unwrap();
+            vs.ocomp_key_hash_to_validator
+                .write(&key_hash, Address::ZERO)
+                .unwrap();
+            vs.val_join_confirmed.write(&validator, false).unwrap();
+        }
+
+        vs.initialize_founder_ocomp_registrations(&registrations)
+            .unwrap();
+        for (validator, registration) in validators.into_iter().zip(&registrations) {
+            assert_eq!(
+                vs.ocomp_registration(validator).unwrap().as_ref(),
+                Some(registration)
+            );
+            assert_eq!(
+                vs.ocomp_key_hash_to_validator
+                    .read(&keccak256(registration.core.ocomp_public_key_sec1))
+                    .unwrap(),
+                validator
+            );
+            assert!(
+                !vs.val_join_confirmed.read(&validator).unwrap(),
+                "founder key bootstrap must not mutate ACTIVE admission readiness"
+            );
+        }
+
+        vs.initialize_founder_ocomp_registrations(&registrations)
+            .unwrap();
+        let mut reordered = registrations;
+        reordered.swap(0, 1);
+        assert!(matches!(
+            vs.initialize_founder_ocomp_registrations(&reordered),
+            Err(PrecompileError::Fatal(_))
+        ));
+    });
+}
+
 fn admit_pending(vs: &mut ValidatorSet<'_>, validator: Address, key_seed: u8) {
     vs.mark_pending(validator).unwrap();
     confirm_ready(vs, validator, key_seed);
