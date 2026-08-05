@@ -8106,6 +8106,7 @@ dependencies = [
  "outbe-oracle",
  "outbe-primitives",
  "outbe-tribute",
+ "outbe-validatorset",
  "outbe-zerofee",
  "reqwest 0.12.28",
  "reth-ethereum",

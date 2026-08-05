@@ -15,7 +15,7 @@ use std::thread;
 use std::time::Duration;
 
 use alloy_primitives::{keccak256, Address, B256, U256};
-use k256::ecdsa::{signature::hazmat::PrehashSigner as _, Signature, SigningKey};
+use k256::ecdsa::SigningKey;
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
 use outbe_consensus::block::ConsensusBlock;
@@ -29,6 +29,7 @@ use outbe_node::ocomp::{
         CandidateFinalityV1, CandidatePinV1, FinalizedInputProofSource, FinalizedJobPinV1,
         OcompRetentionCoordinator, RetentionError,
     },
+    HistoricalOcompSnapshotSource, HistoricalOcompSnapshotV1, SnapshotSourceError,
 };
 use outbe_ocomp::{
     admission_catalog::{AdmissionCatalogError, AdmissionOutcome, VerifiedAdmissionCatalog},
@@ -54,10 +55,6 @@ use outbe_ocomp::{
     worker::{run_one_from_inherited_fd, WorkerConfig},
 };
 use outbe_ocomp_protocol::{
-    committee::{
-        OcompCommitteeSnapshotV1, OcompKeyRegistrationCoreV1, OcompKeyRegistrationV1,
-        OcompMemberV1, RESULT_SIGNATURE_PURPOSE_BITMAP,
-    },
     common::ProofBytes,
     hash::hash_framed,
     input::{
@@ -139,71 +136,55 @@ fn ocomp_signing_key(index: u8) -> SigningKey {
         .expect("deterministic OCOMP key")
 }
 
-fn ocomp_signature(key: &SigningKey, digest: B256) -> [u8; 64] {
-    let signature: Signature = key
-        .sign_prehash(digest.as_slice())
-        .expect("deterministic OCOMP signature");
-    signature
-        .normalize_s()
-        .unwrap_or(signature)
-        .to_bytes()
-        .into()
+struct DeterministicHistoricalSnapshotSource {
+    snapshot: HistoricalOcompSnapshotV1,
 }
 
-fn deterministic_committee() -> OcompCommitteeSnapshotV1 {
-    let limits = poc_schema_limits();
-    let bundle = support::protocol_bundle();
-    let bundle_hash = bundle
-        .protocol_bundle_hash(&limits)
-        .expect("deterministic bundle hash");
-    OcompCommitteeSnapshotV1 {
-        chain_id: 41,
-        genesis_hash: B256::repeat_byte(0x41),
-        fork_id: B256::repeat_byte(0x42),
-        protocol_bundle_hash: bundle_hash,
-        snapshot_epoch: 1,
-        threshold: 3,
-        ordered_members: (0..4)
-            .map(|index| {
-                let key = ocomp_signing_key(index);
-                let public_key: [u8; 33] = key
+impl HistoricalOcompSnapshotSource for DeterministicHistoricalSnapshotSource {
+    fn load_snapshot(
+        &self,
+        epoch: u64,
+        committee_set_hash: B256,
+        ocomp_binding_hash: B256,
+    ) -> Result<Option<HistoricalOcompSnapshotV1>, SnapshotSourceError> {
+        Ok((self.snapshot.epoch == epoch
+            && self.snapshot.committee_set_hash == committee_set_hash
+            && self.snapshot.ocomp_binding_hash == ocomp_binding_hash)
+            .then(|| self.snapshot.clone()))
+    }
+}
+
+fn deterministic_historical_snapshot() -> HistoricalOcompSnapshotV1 {
+    let epoch = 1;
+    let committee_set_hash = B256::repeat_byte(0x45);
+    let ordered_members = (0..4)
+        .map(|index| {
+            let key = ocomp_signing_key(index);
+            outbe_validatorset::OcompSnapshotMemberV1 {
+                validator_address: if index == 0 {
+                    Address::repeat_byte(0xA1)
+                } else {
+                    Address::repeat_byte(index.saturating_add(1))
+                },
+                ocomp_public_key_sec1: key
                     .verifying_key()
                     .to_encoded_point(true)
                     .as_bytes()
                     .try_into()
-                    .expect("compressed deterministic OCOMP key");
-                let mut registration = OcompKeyRegistrationV1 {
-                    core: OcompKeyRegistrationCoreV1 {
-                        chain_id: 41,
-                        genesis_hash: B256::repeat_byte(0x41),
-                        fork_id: B256::repeat_byte(0x42),
-                        protocol_bundle_hash: bundle_hash,
-                        validator_index: index,
-                        validator_identity_hash: B256::repeat_byte(0x90 + index),
-                        ocomp_public_key_sec1: public_key,
-                        key_epoch: 1,
-                        allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
-                        valid_from_height: 1,
-                        valid_until_height_exclusive: 1_000,
-                    },
-                    proof_of_possession: [0; 64],
-                };
-                let pop_digest = registration
-                    .proof_of_possession_digest(&limits)
-                    .expect("deterministic OCOMP PoP digest");
-                registration.proof_of_possession = ocomp_signature(&key, pop_digest);
-                OcompMemberV1 {
-                    validator_index: index,
-                    validator_identity_hash: registration.core.validator_identity_hash,
-                    ocomp_public_key_sec1: registration.core.ocomp_public_key_sec1,
-                    key_epoch: registration.core.key_epoch,
-                    allowed_purpose_bitmap: registration.core.allowed_purpose_bitmap,
-                    valid_from_height: registration.core.valid_from_height,
-                    valid_until_height_exclusive: registration.core.valid_until_height_exclusive,
-                    proof_of_possession: registration.proof_of_possession,
-                }
-            })
-            .collect(),
+                    .expect("compressed deterministic OCOMP key"),
+                key_epoch: 1,
+            }
+        })
+        .collect::<Vec<_>>();
+    HistoricalOcompSnapshotV1 {
+        epoch,
+        committee_set_hash,
+        ocomp_binding_hash: outbe_validatorset::ocomp_binding_hash_v1(
+            epoch,
+            committee_set_hash,
+            &ordered_members,
+        ),
+        ordered_members,
     }
 }
 
@@ -369,11 +350,15 @@ fn attest_finalized_schedule_across_node_restart(outcome: &ScheduleOutcome) {
 
     let first = request_node_attestation(root.path(), "first", &outcome.result_bytes)
         .expect("first process attestation");
+    let snapshot = deterministic_historical_snapshot();
+    let member = &snapshot.ordered_members[usize::from(first.validator_index)];
     first
-        .verify(
+        .verify_historical_member(
             &intent,
             outcome.job_id,
-            &deterministic_committee(),
+            u16::try_from(snapshot.ordered_members.len()).expect("bounded snapshot"),
+            member.key_epoch,
+            &member.ocomp_public_key_sec1,
             open_height,
             open_height,
             deadline_height,
@@ -484,14 +469,19 @@ fn run_child_node() {
         poc_schema_limits(),
     )
     .expect("construct node control server")
-    .with_node_attestation(OcompNodeAttestationConfig {
-        key_path: root.join("ocomp-key-v1.hex"),
-        sign_once_root: root.join("sign-once"),
-        expected_owner_uid: uid,
-        validator_index: 0,
-        committee: deterministic_committee(),
-        initial_height,
-    })
+    .with_node_attestation(
+        OcompNodeAttestationConfig {
+            key_path: root.join("ocomp-key-v1.hex"),
+            sign_once_root: root.join("sign-once"),
+            expected_owner_uid: uid,
+            fork_id: B256::repeat_byte(0x42),
+            validator_address: Address::repeat_byte(0xA1),
+            initial_height,
+        },
+        Arc::new(DeterministicHistoricalSnapshotSource {
+            snapshot: deterministic_historical_snapshot(),
+        }),
+    )
     .expect("configure closed node attestation");
     let listener = UnixListener::bind(&socket).expect("bind node attestation UDS");
     let (stream, _) = listener.accept().expect("accept supervisor attestation");
@@ -1055,9 +1045,13 @@ fn raw_oracle_opening(day: WorldwideDay, finalized_state_root: B256) -> RawContr
 fn job_intent(day: WorldwideDay, protocol_bundle_hash: B256, nominal_total: U256) -> JobIntentV1 {
     let collection_key = B256::repeat_byte(0x51);
     let collection_root = B256::repeat_byte(0x52);
-    let result_committee_snapshot_hash = deterministic_committee()
-        .snapshot_hash(&poc_schema_limits())
-        .expect("deterministic committee snapshot hash");
+    let snapshot = deterministic_historical_snapshot();
+    let result_member_count =
+        u16::try_from(snapshot.ordered_members.len()).expect("bounded deterministic members");
+    let result_quorum_threshold = u16::try_from(outbe_consensus::proof::simplex_n3f1_quorum(
+        usize::from(result_member_count),
+    ))
+    .expect("bounded deterministic quorum");
     JobIntentV1 {
         chain_id: 41,
         genesis_hash: B256::repeat_byte(0x41),
@@ -1115,7 +1109,11 @@ fn job_intent(day: WorldwideDay, protocol_bundle_hash: B256, nominal_total: U256
                 state_version: 1,
             },
         },
-        result_committee_snapshot_hash,
+        result_validator_set_epoch: snapshot.epoch,
+        result_committee_set_hash: snapshot.committee_set_hash,
+        result_ocomp_binding_hash: snapshot.ocomp_binding_hash,
+        result_member_count,
+        result_quorum_threshold,
         custody_committee_epoch_hash: None,
     }
 }

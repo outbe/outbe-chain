@@ -38,6 +38,7 @@ thiserror.workspace = true
 alloy-sol-types.workspace = true
 k256.workspace = true
 outbe-e2e-harness = { path = "../../testing/e2e-harness", features = ["ocomp-integration"] }
+outbe-validatorset.workspace = true
 reth-ethereum.workspace = true
 tempfile.workspace = true
 
