@@ -90,6 +90,9 @@ fn dispatch_local(
                     .vault_reference_currencies
                     .read(&c.vault)
             }),
+            referenceCurrencyAssets(c) => view(c, |c| {
+                runtime::reference_currency_assets(&storage, c.isoCode)
+            }),
 
             // --- liquidity source / target enumeration ---
             liquiditySourcesCount(c) => view(c, |_c| {
