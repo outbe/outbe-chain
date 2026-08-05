@@ -27,10 +27,7 @@ interface IUpdate {
     event UpgradeCanceled(uint256 indexed proposalId, uint32 version, uint64 activationHeight);
 
     /// @notice Emitted when a new update was accepted by vote.
-    event ScheduledUpdateCreated(
-        uint256 indexed proposalId, uint32 version, uint64 activationHeight, bytes info
-    );
-
+    event ScheduledUpdateCreated(uint256 indexed proposalId, uint32 version, uint64 activationHeight, bytes info);
 
     /// @notice Returns the active protocol version.
     function getActiveVersion() external view returns (uint32);

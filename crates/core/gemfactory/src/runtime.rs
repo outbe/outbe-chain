@@ -41,8 +41,7 @@ pub fn mint_gem(
     // COEN/<reference> rate the qualify/call scans compare against).
     let coen_rate = read_oracle_rate(storage, reference_currency)?;
     let issued_at = storage.timestamp()?.to::<u64>();
-    let (cost_amount, floor_price, initial_state) =
-        compute_params(gem_type, gem_load, coen_rate)?;
+    let (cost_amount, floor_price, initial_state) = compute_params(gem_type, gem_load, coen_rate)?;
     let entry_price = coen_rate;
     let call_price = call_threshold_with_markup(entry_price)?;
 
