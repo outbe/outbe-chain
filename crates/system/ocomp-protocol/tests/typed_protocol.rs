@@ -53,6 +53,11 @@ use outbe_ocomp_protocol::{
         ActiveGenerationV1, LysisTerminalV1, OcompFinalizedJobV1, OcompJobRecordV1, OcompJobStatus,
         OcompTerminalOutcome,
     },
+    system_carrier::{
+        classify_ocomp_system_carrier, OcompSystemCarrierError, OcompSystemCarrierView,
+        MAX_OCOMP_SYSTEM_CARRIER_CALLDATA_BYTES, MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS,
+        OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
+    },
     unit::{
         BinaryReducerNode, EntityIdHalfOpenRange, PlanCommitmentV1, UnitArtifactV1, UnitInterval,
         UnitPhase, UnitSpecV1, WorkOutputHeaderV1,
@@ -588,6 +593,103 @@ fn submit_result_prefix_decoder_is_canonical_bounded_and_panic_free() {
     let mut non_zero_padding = calldata;
     *non_zero_padding.last_mut().unwrap() = 1;
     assert!(decode_submit_lysis_result_prefix(&non_zero_padding, &LIMITS).is_err());
+}
+
+#[test]
+fn ocomp_system_carrier_classifier_is_exact_and_fail_closed() {
+    let snapshot = committee();
+    let mut finalized_intent = intent();
+    finalized_intent.result_validator_set_epoch = snapshot.snapshot_epoch;
+    finalized_intent.result_ocomp_binding_hash = snapshot.snapshot_hash(&LIMITS).unwrap();
+    let vote = signed_vote(
+        3,
+        vote_result(hash(60), 120),
+        &finalized_intent,
+        hash(60),
+        &snapshot,
+    );
+    let calldata =
+        outbe_ocomp_protocol::abi::encode_submit_lysis_result_calldata(&vote, &LIMITS).unwrap();
+    let canonical = OcompSystemCarrierView {
+        is_eip1559: true,
+        to: Some(outbe_ocomp_protocol::abi::METADOSIS_ADDRESS),
+        value: U256::ZERO,
+        input: &calldata,
+        gas_limit: OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
+        max_fee_per_gas: MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS,
+        max_priority_fee_per_gas: Some(0),
+    };
+
+    let candidate = classify_ocomp_system_carrier(canonical, &LIMITS)
+        .unwrap()
+        .expect("canonical carrier");
+    assert_eq!(candidate.prefix.validator_index, vote.validator_index);
+    assert_eq!(candidate.prefix.job_id, vote.job_id);
+
+    assert!(matches!(
+        classify_ocomp_system_carrier(
+            OcompSystemCarrierView {
+                gas_limit: OCOMP_SYSTEM_CARRIER_GAS_LIMIT - 1,
+                ..canonical
+            },
+            &LIMITS,
+        ),
+        Err(OcompSystemCarrierError::WrongGasLimit { .. })
+    ));
+    assert!(matches!(
+        classify_ocomp_system_carrier(
+            OcompSystemCarrierView {
+                max_priority_fee_per_gas: Some(1),
+                ..canonical
+            },
+            &LIMITS,
+        ),
+        Err(OcompSystemCarrierError::NonZeroPriorityFee)
+    ));
+    assert!(matches!(
+        classify_ocomp_system_carrier(
+            OcompSystemCarrierView {
+                is_eip1559: false,
+                ..canonical
+            },
+            &LIMITS,
+        ),
+        Err(OcompSystemCarrierError::NotEip1559)
+    ));
+
+    let oversized = vec![0_u8; MAX_OCOMP_SYSTEM_CARRIER_CALLDATA_BYTES + 1];
+    let mut oversized = oversized;
+    oversized[..4].copy_from_slice(&outbe_ocomp_protocol::abi::SUBMIT_LYSIS_RESULT_SELECTOR);
+    assert!(matches!(
+        classify_ocomp_system_carrier(
+            OcompSystemCarrierView {
+                input: &oversized,
+                ..canonical
+            },
+            &LIMITS,
+        ),
+        Err(OcompSystemCarrierError::CalldataTooLarge { .. })
+    ));
+
+    assert!(classify_ocomp_system_carrier(
+        OcompSystemCarrierView {
+            to: Some(Address::ZERO),
+            ..canonical
+        },
+        &LIMITS,
+    )
+    .unwrap()
+    .is_none());
+    assert!(matches!(
+        classify_ocomp_system_carrier(
+            OcompSystemCarrierView {
+                input: &outbe_ocomp_protocol::abi::SUBMIT_LYSIS_RESULT_SELECTOR,
+                ..canonical
+            },
+            &LIMITS,
+        ),
+        Err(OcompSystemCarrierError::MalformedVote(_))
+    ));
 }
 
 fn committee() -> TestCommittee {

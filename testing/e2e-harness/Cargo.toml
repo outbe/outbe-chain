@@ -26,8 +26,8 @@ ocomp-integration = [
     "dep:outbe-offchain-data",
     "dep:outbe-offchain-storage",
     "dep:outbe-oracle",
+    "dep:outbe-tribute",
     "dep:outbe-update",
-    "dep:outbe-zerofee",
     "dep:reth-chainspec",
     "dep:reth-ethereum",
     "dep:reth-primitives-traits",
@@ -85,8 +85,8 @@ outbe-ocomp-protocol = { workspace = true, optional = true }
 outbe-offchain-data = { workspace = true, optional = true }
 outbe-offchain-storage = { workspace = true, optional = true }
 outbe-oracle = { workspace = true, optional = true }
+outbe-tribute = { workspace = true, optional = true }
 outbe-update = { workspace = true, optional = true }
-outbe-zerofee = { workspace = true, optional = true }
 rand.workspace = true
 reth-chainspec = { workspace = true, optional = true }
 reth-ethereum = { workspace = true, optional = true }

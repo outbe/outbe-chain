@@ -196,7 +196,11 @@ fn intent(block_number: u64, identity: EndpointIdentity) -> JobIntentV1 {
                 state_version: 1,
             },
         },
-        result_committee_snapshot_hash: B256::repeat_byte(0x1B),
+        result_validator_set_epoch: 7,
+        result_committee_set_hash: B256::repeat_byte(0x1B),
+        result_ocomp_binding_hash: B256::repeat_byte(0x1C),
+        result_member_count: 4,
+        result_quorum_threshold: 3,
         custody_committee_epoch_hash: None,
     }
 }

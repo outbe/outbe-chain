@@ -1280,7 +1280,7 @@ impl Rpc {
     /// the canonical block independently read from the same validator.
     #[cfg(feature = "ocomp-integration")]
     pub fn finalized_ocomp_job_request(&self, from_height: u64) -> Option<OcompPublicJobRequestV1> {
-        self.finalized_ocomp_job_request_on_url(&self.cfg.rpc0, from_height)
+        self.finalized_ocomp_job_request_on_url(&self.cfg.rpc0, from_height, None)
     }
 
     /// Observe the same finalized OCOMP request on one named validator.
@@ -1290,7 +1290,19 @@ impl Rpc {
         port: u16,
         from_height: u64,
     ) -> Option<OcompPublicJobRequestV1> {
-        self.finalized_ocomp_job_request_on_url(&self.url(port), from_height)
+        self.finalized_ocomp_job_request_on_url(&self.url(port), from_height, None)
+    }
+
+    /// Observe the latest finalized OCOMP request for one exact WorldwideDay.
+    /// Later retry-chain events for another day cannot hide the requested job.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn finalized_ocomp_job_request_for_worldwide_day_on(
+        &self,
+        port: u16,
+        from_height: u64,
+        worldwide_day: u32,
+    ) -> Option<OcompPublicJobRequestV1> {
+        self.finalized_ocomp_job_request_on_url(&self.url(port), from_height, Some(worldwide_day))
     }
 
     #[cfg(feature = "ocomp-integration")]
@@ -1298,6 +1310,7 @@ impl Rpc {
         &self,
         rpc_url: &str,
         from_height: u64,
+        worldwide_day: Option<u32>,
     ) -> Option<OcompPublicJobRequestV1> {
         const EVENT_SIGNATURE: &str = "OffchainJobRequested(bytes32,uint32,uint64,uint32,bytes32)";
         let finalized_height = eth::finalized_number(rpc_url)?;
@@ -1316,7 +1329,7 @@ impl Rpc {
             }]),
         )?;
         let logs = logs.as_array()?;
-        let log = logs.last()?;
+        let log = select_ocomp_job_request_log(logs, worldwide_day)?;
         let topics = log.get("topics")?.as_array()?;
         if topics.len() != 3 || topics[0].as_str()? != format!("{topic0:#x}") {
             return None;
@@ -2591,6 +2604,24 @@ fn parse_rpc_word(encoded: &str) -> Option<U256> {
 }
 
 #[cfg(feature = "ocomp-integration")]
+fn select_ocomp_job_request_log(
+    logs: &[serde_json::Value],
+    worldwide_day: Option<u32>,
+) -> Option<&serde_json::Value> {
+    logs.iter().rev().find(|log| {
+        worldwide_day.is_none_or(|expected| {
+            log.get("topics")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|topics| topics.get(2))
+                .and_then(serde_json::Value::as_str)
+                .and_then(parse_rpc_word)
+                .and_then(|word| u32::try_from(word).ok())
+                == Some(expected)
+        })
+    })
+}
+
+#[cfg(feature = "ocomp-integration")]
 fn decode_rpc_data_words(log: &serde_json::Value, expected: usize) -> Option<Vec<U256>> {
     let bytes = hex::decode(log.get("data")?.as_str()?.trim_start_matches("0x")).ok()?;
     if bytes.len() != expected.checked_mul(32)? {
@@ -2713,5 +2744,26 @@ mod ocomp_tests {
         };
 
         assert!(package.evidence_identity().is_err());
+    }
+
+    #[test]
+    fn job_request_selection_keeps_the_requested_day_visible_after_later_retries() {
+        let day = |worldwide_day: u32| {
+            serde_json::json!({
+                "topics": [
+                    "0x00",
+                    "0x00",
+                    format!("0x{worldwide_day:064x}")
+                ]
+            })
+        };
+        let requested = day(20260807);
+        let later_retry = day(20260806);
+        let logs = vec![requested.clone(), later_retry];
+
+        assert_eq!(
+            select_ocomp_job_request_log(&logs, Some(20260807)),
+            Some(&requested)
+        );
     }
 }

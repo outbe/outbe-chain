@@ -174,6 +174,19 @@ impl Localnet {
         self.cfg.tee_mode.enabled()
     }
 
+    /// Canonical ValidatorSet epoch length authored into this scenario's
+    /// ChainSpec. Admission scheduling must derive its boundary window from
+    /// this value rather than duplicating a devnet literal.
+    pub fn epoch_length_blocks(&self) -> Result<u64> {
+        let genesis: serde_json::Value =
+            serde_json::from_slice(&fs::read(self.cfg.dir.join("genesis.json"))?)?;
+        genesis
+            .pointer("/config/epochLengthBlocks")
+            .and_then(serde_json::Value::as_u64)
+            .filter(|epoch| *epoch > 0)
+            .ok_or_else(|| eyre::eyre!("genesis config has no positive epochLengthBlocks"))
+    }
+
     /// Five-second RPC polls allowed for block-1 TEE bootstrap. Consecutive
     /// four-enclave real-SGX evidence exceeded the production-oriented node and
     /// per-request deadlines; keep the harness outside its five-minute
@@ -246,6 +259,42 @@ impl Localnet {
             "--log.file.directory",
             node_dir.join("logs").display(),
         ]
+    }
+
+    /// Node-side OCOMP profile shared by genesis validators and validators
+    /// promoted later through the canonical activation boundary.
+    fn ocomp_validator_args(
+        &self,
+        validator_index: usize,
+        protocol_bundle_hash: &str,
+        effective_uid: u32,
+    ) -> Result<Vec<String>> {
+        let boot_nonce_byte = u8::try_from(validator_index + 1)?;
+        let domain = self
+            .cfg
+            .validator_dir(validator_index)
+            .join("ocomp")
+            .join("domain-v1");
+        Ok(args![
+            "--ocomp.supervisor-socket",
+            self.cfg.ocomp_supervisor_socket(validator_index).display(),
+            "--ocomp.snapshot-exporter-socket",
+            self.cfg
+                .ocomp_snapshot_exporter_socket(validator_index)
+                .display(),
+            "--ocomp.supervisor-uid",
+            effective_uid,
+            "--ocomp.snapshot-exporter-uid",
+            effective_uid,
+            "--ocomp.protocol-bundle-hash",
+            protocol_bundle_hash,
+            "--ocomp.boot-nonce",
+            format!("0x{}", hex::encode([boot_nonce_byte; 32])),
+            "--ocomp.session-generation",
+            1_u64,
+            "--ocomp.key",
+            domain.join("ocomp-key-v1.hex").display(),
+        ])
     }
 
     /// Comma-joined reth bootnodes from `reth-bootnodes.txt` (comments stripped).
@@ -485,6 +534,30 @@ mod tests {
             .map(|pair| pair[1].as_str());
 
         assert_eq!(cache_size, Some("512"));
+    }
+
+    #[test]
+    fn promoted_joiner_uses_the_same_ocomp_node_profile_as_genesis_validators() {
+        let env = Environment::default();
+        env.ports
+            .start_scenario(env.validators)
+            .expect("allocate deterministic scenario ports");
+        let localnet = Localnet::new(Config::for_scenario(&env, 1));
+
+        let args = localnet.ocomp_validator_args(4, "0xbundle", 1_000).unwrap();
+
+        for required in [
+            "--ocomp.supervisor-socket",
+            "--ocomp.snapshot-exporter-socket",
+            "--ocomp.protocol-bundle-hash",
+            "--ocomp.key",
+        ] {
+            assert!(args.iter().any(|arg| arg == required), "{required}");
+        }
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["--ocomp.protocol-bundle-hash", "0xbundle"]));
+        assert!(!args.iter().any(|arg| arg == "--ocomp.validator-index"));
     }
 
     /// Both layouts, and nothing else — in particular not `validator-*/data`.

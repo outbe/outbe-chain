@@ -320,6 +320,9 @@ runs before ordinary Ethereum intrinsic-gas rejection, charges no validator
 fee and consumes none of the 30,000,000 user-transaction gas lane. Decode,
 historical authorization, signature verification, accountability writes and
 q-forming apply run under the separate deterministic system-work budget.
+Actual execution gas is accumulated across system transactions and checked
+against `SYSTEM_TX_ARTIFACT_GAS_LIMIT = 10_000_000_000` before state or receipt
+commit; exceeding that ceiling invalidates the carrier atomically.
 Malformed or unauthorized lookalikes fail closed before that authority is
 granted.
 

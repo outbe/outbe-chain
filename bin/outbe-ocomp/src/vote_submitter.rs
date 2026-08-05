@@ -25,7 +25,13 @@ use alloy_consensus::{
 use alloy_eips::eip2718::{Decodable2718 as _, Encodable2718 as _};
 use alloy_primitives::{keccak256, Address, Bytes, TxKind, B256, U256};
 use outbe_ocomp_protocol::{
-    abi::encode_submit_lysis_result_calldata, common::BoundedBytes, vote::ResultVoteV1,
+    abi::encode_submit_lysis_result_calldata,
+    common::BoundedBytes,
+    system_carrier::{
+        MAX_OCOMP_SYSTEM_CARRIER_CALLDATA_BYTES, MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS,
+        OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
+    },
+    vote::ResultVoteV1,
     PreparedVoteTransactionV1, ProtocolError, SchemaLimits,
 };
 use outbe_primitives::addresses::METADOSIS_ADDRESS;
@@ -43,7 +49,7 @@ const JOURNAL_FIXED_BYTES_WITHOUT_RAW: usize =
 const RPC_TIMEOUT: Duration = Duration::from_secs(10);
 /// Operational ceiling for the outer OCOMP transaction's fee cap.
 ///
-/// ZeroFee waives the canonical execution debit, but a compromised RPC must
+/// System-carrier authorization waives the canonical execution debit, but a compromised RPC must
 /// still be unable to induce the supervisor to sign an unbounded fee promise.
 pub const MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS: u128 = 1_000_000_000_000;
 
@@ -188,9 +194,8 @@ impl<A: ResultVoteAttesterV1> VoteTransactionPreparerV1 for LocalVoteTransaction
         if canonical_result.is_empty() {
             return Err(LocalVotePreparationErrorV1::EmptyCanonicalResult);
         }
-        if gas_limit != outbe_zerofee::MAX_ZERO_FEE_OCOMP_GAS_LIMIT
-            || !(outbe_zerofee::MIN_ZERO_FEE_OCOMP_MAX_FEE_PER_GAS
-                ..=MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS)
+        if gas_limit != OCOMP_SYSTEM_CARRIER_GAS_LIMIT
+            || !(MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS..=MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS)
                 .contains(&max_fee_per_gas)
         {
             return Err(LocalVotePreparationErrorV1::InvalidFeeEnvelope);
@@ -202,7 +207,7 @@ impl<A: ResultVoteAttesterV1> VoteTransactionPreparerV1 for LocalVoteTransaction
             .map_err(|error| LocalVotePreparationErrorV1::Attestation(error.to_string()))?;
         let canonical_vote = vote.encode_canonical(&self.limits)?;
         let calldata = encode_submit_lysis_result_calldata(&vote, &self.limits)?;
-        if calldata.len() > outbe_zerofee::MAX_ZERO_FEE_OCOMP_CALLDATA_BYTES {
+        if calldata.len() > MAX_OCOMP_SYSTEM_CARRIER_CALLDATA_BYTES {
             return Err(LocalVotePreparationErrorV1::CalldataTooLarge);
         }
 
@@ -274,6 +279,8 @@ pub struct SupervisorVoteSubmitterV1<R> {
     config: VoteSubmissionConfigV1,
     rpc: R,
     journal: VoteSubmissionJournalV1,
+    reserved_nonce_high_watermark: Option<u64>,
+    nonce_high_watermark_loaded: bool,
 }
 
 impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
@@ -283,6 +290,8 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
             config,
             rpc,
             journal,
+            reserved_nonce_high_watermark: None,
+            nonce_high_watermark_loaded: false,
         })
     }
 
@@ -328,21 +337,31 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
                 actual: chain_id,
             });
         }
-        let nonce = self
+        let canonical_nonce = self
             .rpc
             .canonical_nonce(self.config.sender_address)
             .map_err(rpc_error)?;
+        if !self.nonce_high_watermark_loaded {
+            self.reserved_nonce_high_watermark = self.journal.highest_reserved_nonce()?;
+            self.nonce_high_watermark_loaded = true;
+        }
+        let nonce = match self.reserved_nonce_high_watermark {
+            Some(reserved) if reserved >= canonical_nonce => reserved
+                .checked_add(1)
+                .ok_or(VoteSubmissionErrorV1::AccountNonceExhausted)?,
+            _ => canonical_nonce,
+        };
         let max_fee_per_gas = self
             .rpc
             .gas_price()
             .map_err(rpc_error)?
-            .max(outbe_zerofee::MIN_ZERO_FEE_OCOMP_MAX_FEE_PER_GAS);
+            .max(MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS);
         let prepared = preparer
             .prepare_vote_transaction(
                 canonical_result,
                 nonce,
                 max_fee_per_gas,
-                outbe_zerofee::MAX_ZERO_FEE_OCOMP_GAS_LIMIT,
+                OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
             )
             .map_err(node_error)?;
         self.validate_prepared(&prepared, job_id, result_digest, nonce, max_fee_per_gas)?;
@@ -358,6 +377,7 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
             raw_transaction: prepared.raw_transaction.0,
             inclusion: None,
         })?;
+        self.reserved_nonce_high_watermark = Some(nonce);
         Ok(VoteSubmissionOutcomeV1::Prepared)
     }
 
@@ -527,7 +547,7 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
         if recovered != self.config.sender_address
             || transaction.chain_id() != Some(self.config.expected_chain_id)
             || transaction.nonce() != nonce
-            || transaction.gas_limit() != outbe_zerofee::MAX_ZERO_FEE_OCOMP_GAS_LIMIT
+            || transaction.gas_limit() != OCOMP_SYSTEM_CARRIER_GAS_LIMIT
             || transaction.max_fee_per_gas() != max_fee_per_gas
             || transaction.max_priority_fee_per_gas() != Some(0)
             || transaction.kind() != TxKind::Call(METADOSIS_ADDRESS)
@@ -635,34 +655,7 @@ impl PublicVoteRpcClientV1 {
         if bytes.len() > self.max_response_bytes {
             return Err(PublicVoteRpcErrorV1::ResponseTooLarge);
         }
-        #[derive(serde::Deserialize)]
-        struct RpcError {
-            code: i64,
-            message: String,
-        }
-        #[derive(serde::Deserialize)]
-        struct RpcResponse {
-            jsonrpc: String,
-            id: u64,
-            result: Option<serde_json::Value>,
-            error: Option<RpcError>,
-        }
-        let envelope: RpcResponse = serde_json::from_slice(&bytes)
-            .map_err(|error| PublicVoteRpcErrorV1::Malformed(error.to_string()))?;
-        if envelope.jsonrpc != "2.0" || envelope.id != id {
-            return Err(PublicVoteRpcErrorV1::Malformed(
-                "JSON-RPC envelope mismatch".to_owned(),
-            ));
-        }
-        if let Some(error) = envelope.error {
-            return Err(PublicVoteRpcErrorV1::Remote {
-                code: error.code,
-                message: error.message,
-            });
-        }
-        envelope
-            .result
-            .ok_or_else(|| PublicVoteRpcErrorV1::Malformed("missing result".to_owned()))
+        decode_public_vote_rpc_response(&bytes, id)
     }
 
     fn block_for_tag(&self, tag: serde_json::Value) -> Result<VoteBlockV1, PublicVoteRpcErrorV1> {
@@ -674,6 +667,62 @@ impl PublicVoteRpcClientV1 {
             number: parse_quantity_field(&value, "number")?,
             hash: parse_b256_field(&value, "hash")?,
         })
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct PublicVoteRpcErrorEnvelopeV1 {
+    code: i64,
+    message: String,
+}
+
+#[derive(Default)]
+enum PublicVoteRpcResultFieldV1 {
+    #[default]
+    Missing,
+    Present(serde_json::Value),
+}
+
+fn deserialize_public_vote_rpc_result<'de, D>(
+    deserializer: D,
+) -> Result<PublicVoteRpcResultFieldV1, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    serde::Deserialize::deserialize(deserializer).map(PublicVoteRpcResultFieldV1::Present)
+}
+
+#[derive(serde::Deserialize)]
+struct PublicVoteRpcResponseV1 {
+    jsonrpc: String,
+    id: u64,
+    #[serde(default, deserialize_with = "deserialize_public_vote_rpc_result")]
+    result: PublicVoteRpcResultFieldV1,
+    error: Option<PublicVoteRpcErrorEnvelopeV1>,
+}
+
+fn decode_public_vote_rpc_response(
+    bytes: &[u8],
+    expected_id: u64,
+) -> Result<serde_json::Value, PublicVoteRpcErrorV1> {
+    let envelope: PublicVoteRpcResponseV1 = serde_json::from_slice(bytes)
+        .map_err(|error| PublicVoteRpcErrorV1::Malformed(error.to_string()))?;
+    if envelope.jsonrpc != "2.0" || envelope.id != expected_id {
+        return Err(PublicVoteRpcErrorV1::Malformed(
+            "JSON-RPC envelope mismatch".to_owned(),
+        ));
+    }
+    if let Some(error) = envelope.error {
+        return Err(PublicVoteRpcErrorV1::Remote {
+            code: error.code,
+            message: error.message,
+        });
+    }
+    match envelope.result {
+        PublicVoteRpcResultFieldV1::Present(result) => Ok(result),
+        PublicVoteRpcResultFieldV1::Missing => {
+            Err(PublicVoteRpcErrorV1::Malformed("missing result".to_owned()))
+        }
     }
 }
 
@@ -890,6 +939,39 @@ impl VoteSubmissionJournalV1 {
             return Err(VoteSubmissionErrorV1::InvalidJournal);
         }
         Ok(Some(record))
+    }
+
+    fn highest_reserved_nonce(&self) -> Result<Option<u64>, VoteSubmissionErrorV1> {
+        let mut highest = None;
+        let entries = fs::read_dir(&self.root)
+            .map_err(|source| io_error("read vote submission directory", &self.root, source))?;
+        for entry in entries {
+            let entry = entry.map_err(|source| {
+                io_error("read vote submission directory entry", &self.root, source)
+            })?;
+            let path = entry.path();
+            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                return Err(VoteSubmissionErrorV1::InvalidJournal);
+            };
+            if name == JOURNAL_LOCK_FILE {
+                continue;
+            }
+            if name.ends_with(".vote.v1.tmp") {
+                return Err(VoteSubmissionErrorV1::AmbiguousJournal(path));
+            }
+            let Some(encoded_job_id) = name.strip_suffix(".vote.v1") else {
+                return Err(VoteSubmissionErrorV1::InvalidJournal);
+            };
+            let mut job_id = [0_u8; 32];
+            hex::decode_to_slice(encoded_job_id, &mut job_id)
+                .map_err(|_| VoteSubmissionErrorV1::InvalidJournal)?;
+            let job_id = B256::from(job_id);
+            let record = self
+                .load(job_id)?
+                .ok_or(VoteSubmissionErrorV1::InvalidJournal)?;
+            highest = Some(highest.map_or(record.nonce, |nonce: u64| nonce.max(record.nonce)));
+        }
+        Ok(highest)
     }
 
     fn persist(&self, record: VoteSubmissionRecordV1) -> Result<(), VoteSubmissionErrorV1> {
@@ -1175,6 +1257,8 @@ pub enum VoteSubmissionErrorV1 {
     DifferentResultForJournaledJob,
     #[error("vote submission journal generation overflow")]
     JournalGenerationOverflow,
+    #[error("OCOMP vote signer account nonce is exhausted")]
+    AccountNonceExhausted,
     #[error("vote submission journal is malformed")]
     InvalidJournal,
     #[error("vote submission journal checksum mismatch")]
@@ -1378,8 +1462,8 @@ mod tests {
             .prepare_vote_transaction(
                 &canonical_result(),
                 7,
-                outbe_zerofee::MIN_ZERO_FEE_OCOMP_MAX_FEE_PER_GAS,
-                outbe_zerofee::MAX_ZERO_FEE_OCOMP_GAS_LIMIT,
+                MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS,
+                OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
             )
             .unwrap();
         let mut raw = prepared.raw_transaction.0.as_slice();
@@ -1390,13 +1474,10 @@ mod tests {
         assert_eq!(envelope.chain_id(), Some(42));
         assert_eq!(envelope.nonce(), 7);
         assert_eq!(envelope.kind(), TxKind::Call(METADOSIS_ADDRESS));
-        assert_eq!(
-            envelope.gas_limit(),
-            outbe_zerofee::MAX_ZERO_FEE_OCOMP_GAS_LIMIT
-        );
+        assert_eq!(envelope.gas_limit(), OCOMP_SYSTEM_CARRIER_GAS_LIMIT);
         assert_eq!(
             envelope.max_fee_per_gas(),
-            outbe_zerofee::MIN_ZERO_FEE_OCOMP_MAX_FEE_PER_GAS
+            MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS
         );
         assert_eq!(envelope.max_priority_fee_per_gas(), Some(0));
         assert_eq!(envelope.value(), U256::ZERO);
@@ -1407,7 +1488,7 @@ mod tests {
                 &canonical_result(),
                 7,
                 MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS + 1,
-                outbe_zerofee::MAX_ZERO_FEE_OCOMP_GAS_LIMIT,
+                OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
             ),
             Err(LocalVotePreparationErrorV1::InvalidFeeEnvelope)
         ));
@@ -1418,6 +1499,7 @@ mod tests {
         target: Address,
         calls: Arc<AtomicU64>,
         limits: SchemaLimits,
+        job_id: B256,
     }
 
     impl VoteTransactionPreparerV1 for FakePreparer {
@@ -1433,7 +1515,7 @@ mod tests {
             self.calls.fetch_add(1, Ordering::SeqCst);
             let vote = ResultVoteV1 {
                 protocol_bundle_hash: B256::repeat_byte(0x20),
-                job_id: JOB_ID,
+                job_id: self.job_id,
                 attempt: 0,
                 result_validator_set_epoch: 7,
                 result_committee_set_hash: B256::repeat_byte(0x22),
@@ -1527,7 +1609,7 @@ mod tests {
         }
 
         fn gas_price(&self) -> Result<u128, Self::Error> {
-            Ok(outbe_zerofee::MIN_ZERO_FEE_OCOMP_MAX_FEE_PER_GAS)
+            Ok(MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS)
         }
 
         fn send_raw_transaction(
@@ -1580,6 +1662,7 @@ mod tests {
             target,
             calls: calls.clone(),
             limits: poc_schema_limits(),
+            job_id: JOB_ID,
         };
         let submitter = SupervisorVoteSubmitterV1::open(
             VoteSubmissionConfigV1 {
@@ -1801,6 +1884,75 @@ mod tests {
         assert_eq!(
             canonical_nonce_params(Address::repeat_byte(0x44)),
             serde_json::json!([format!("{:#x}", Address::repeat_byte(0x44)), "latest"])
+        );
+    }
+
+    #[test]
+    fn two_live_jobs_reserve_distinct_nonces_across_restart() {
+        const JOB_B: B256 = B256::repeat_byte(0x22);
+
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let (mut submitter, rpc, preparer_a, calls) = fixture(directory.path(), METADOSIS_ADDRESS);
+        assert_eq!(
+            submitter
+                .reconcile(&preparer_a, JOB_ID, result_digest(), &canonical_result(),)
+                .unwrap(),
+            VoteSubmissionOutcomeV1::Prepared
+        );
+        drop(submitter);
+
+        let signer = OutbeEvmSigner::from_secret_bytes([9; 32]).expect("validator EVM test signer");
+        let preparer_b = FakePreparer {
+            signer: OutbeEvmSigner::from_secret_bytes([9; 32]).expect("validator EVM test signer"),
+            target: METADOSIS_ADDRESS,
+            calls,
+            limits: poc_schema_limits(),
+            job_id: JOB_B,
+        };
+        let mut restarted = SupervisorVoteSubmitterV1::open(
+            VoteSubmissionConfigV1 {
+                journal_root: directory.path().to_path_buf(),
+                expected_chain_id: 42,
+                sender_address: signer.address(),
+                limits: poc_schema_limits(),
+            },
+            rpc,
+        )
+        .expect("restarted vote submitter");
+        assert_eq!(
+            restarted
+                .reconcile(&preparer_b, JOB_B, result_digest(), &canonical_result())
+                .unwrap(),
+            VoteSubmissionOutcomeV1::Prepared
+        );
+
+        assert_eq!(
+            restarted
+                .journal
+                .load(JOB_ID)
+                .unwrap()
+                .expect("job A journal")
+                .nonce,
+            7
+        );
+        assert_eq!(
+            restarted
+                .journal
+                .load(JOB_B)
+                .unwrap()
+                .expect("job B journal")
+                .nonce,
+            8,
+            "a second live job must not replace the first job's pending transaction"
+        );
+    }
+
+    #[test]
+    fn public_vote_rpc_accepts_null_result_as_a_present_value() {
+        let response = br#"{"jsonrpc":"2.0","id":7,"result":null}"#;
+        assert_eq!(
+            decode_public_vote_rpc_response(response, 7).unwrap(),
+            serde_json::Value::Null
         );
     }
 }

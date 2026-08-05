@@ -27,7 +27,6 @@ outbe-offchain-storage.workspace = true
 outbe-oracle.workspace = true
 outbe-primitives.workspace = true
 outbe-tribute.workspace = true
-outbe-zerofee.workspace = true
 reqwest = { workspace = true, features = ["blocking"] }
 serde.workspace = true
 serde_json.workspace = true

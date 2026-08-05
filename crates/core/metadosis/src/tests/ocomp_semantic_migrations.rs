@@ -384,6 +384,78 @@ fn historical_vote_participant_resolution_does_not_consult_current_active_status
 }
 
 #[test]
+fn system_carrier_signer_is_bound_to_the_historical_validator_or_its_delegate() {
+    let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
+    let vote = fixture.signed_result_vote(1);
+    let prefix = ResultVotePrefixV1 {
+        protocol_bundle_hash: vote.protocol_bundle_hash,
+        job_id: vote.job_id,
+        attempt: vote.attempt,
+        result_validator_set_epoch: vote.result_validator_set_epoch,
+        result_committee_set_hash: vote.result_committee_set_hash,
+        result_ocomp_binding_hash: vote.result_ocomp_binding_hash,
+        validator_index: vote.validator_index,
+        key_epoch: vote.key_epoch,
+    };
+    let historical_validator = Address::repeat_byte(0xB1);
+    let delegate = Address::repeat_byte(0xD1);
+
+    StorageHandle::enter(&mut fixture.provider, |storage| {
+        assert_eq!(
+            crate::ocomp::vote::resolve_historical_result_vote_carrier_signer(
+                storage.clone(),
+                &prefix,
+                historical_validator,
+                &fixture.limits,
+            )
+            .unwrap(),
+            Some(historical_validator)
+        );
+        assert_eq!(
+            crate::ocomp::vote::resolve_historical_result_vote_carrier_signer(
+                storage.clone(),
+                &prefix,
+                delegate,
+                &fixture.limits,
+            )
+            .unwrap(),
+            None
+        );
+
+        let mut validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+        validators
+            .set_delegate(
+                historical_validator,
+                outbe_validatorset::delegation::ValidatorDelegateRole::Ocomp,
+                delegate,
+            )
+            .unwrap();
+
+        assert_eq!(
+            crate::ocomp::vote::resolve_historical_result_vote_carrier_signer(
+                storage.clone(),
+                &prefix,
+                historical_validator,
+                &fixture.limits,
+            )
+            .unwrap(),
+            None,
+            "an explicit delegate disables direct carrier submission"
+        );
+        assert_eq!(
+            crate::ocomp::vote::resolve_historical_result_vote_carrier_signer(
+                storage,
+                &prefix,
+                delegate,
+                &fixture.limits,
+            )
+            .unwrap(),
+            Some(historical_validator)
+        );
+    });
+}
+
+#[test]
 fn vote_binding_mismatch_is_rejected_before_historical_snapshot_lookup() {
     let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
     let mut vote = fixture.signed_result_vote(1);

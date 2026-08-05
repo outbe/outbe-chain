@@ -8,8 +8,6 @@ publish.workspace = true
 [dependencies]
 outbe-primitives.workspace = true
 outbe-oracle.workspace = true
-outbe-ocomp-protocol.workspace = true
-outbe-metadosis.workspace = true
 outbe-validatorset.workspace = true
 outbe-macros.workspace = true
 
@@ -20,6 +18,7 @@ alloy-sol-types.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+outbe-ocomp-protocol.workspace = true
 proptest.workspace = true
 revm.workspace = true
 

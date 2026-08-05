@@ -19,6 +19,9 @@ use alloy_evm::{
 };
 use alloy_primitives::{keccak256, map::AddressMap, Address, Bytes, Log, B256, U256};
 use outbe_compressed_entities::ExecutionScope;
+use outbe_ocomp_protocol::system_carrier::{
+    classify_ocomp_system_carrier, OcompSystemCarrierView, OCOMP_SYSTEM_CARRIER_INTERNAL_GAS_LIMIT,
+};
 use outbe_offchain_data::{ExecutionReadBudgetGuard, RuntimeBodyReaders};
 use outbe_primitives::{
     block::{BlockContext, BlockLifecycle, BlockRuntimeContext},
@@ -1694,7 +1697,7 @@ where
     /// Commits an Outbe begin-zone system transaction with separate internal
     /// and visible gas accounting.
     ///
-    /// The precompile executes under the internal 100M system-call budget.
+    /// The precompile executes under the separate internal system-work budget.
     /// The public Ethereum block gas lane charges the signed envelope's visible
     /// base gas (intrinsic plus any schedule-hashed protocol precharge) and any
     /// explicit compressed-entity gas, without exposing the internal execution
@@ -1721,16 +1724,11 @@ where
                     "system tx visible gas overflow".into(),
                 ))
             })?;
+        let system_cumulative_gas_used =
+            self.checked_system_tx_execution_gas(output.result.result.tx_gas_used())?;
 
-        let gas_output = self.inner.commit_transaction(output);
-        self.system_tx_execution_gas = self
-            .system_tx_execution_gas
-            .checked_add(gas_output.tx_gas_used())
-            .ok_or_else(|| {
-                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-                    "system tx execution gas overflow".into(),
-                ))
-            })?;
+        let _ = self.inner.commit_transaction(output);
+        self.system_tx_execution_gas = system_cumulative_gas_used;
 
         if let Some(receipt) = self.inner.receipts.last_mut() {
             receipt.cumulative_gas_used = visible_cumulative_tx_gas;
@@ -1741,6 +1739,29 @@ where
         self.inner.block_state_gas_used = user_state_gas.saturating_add(visible_gas_used);
 
         Ok(GasOutput::new(visible_gas_used))
+    }
+
+    fn checked_system_tx_execution_gas(&self, additional: u64) -> Result<u64, BlockExecutionError> {
+        let cumulative = self
+            .system_tx_execution_gas
+            .checked_add(additional)
+            .ok_or_else(|| {
+                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                    "internal system-work gas overflow".into(),
+                ))
+            })?;
+        let limit = outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT;
+        if cumulative > limit {
+            return Err(BlockExecutionError::Internal(
+                InternalBlockExecutionError::Other(
+                    format!(
+                        "internal system-work budget exceeded: cumulative={cumulative}, limit={limit}, additional={additional}"
+                    )
+                    .into(),
+                ),
+            ));
+        }
+        Ok(cumulative)
     }
 
     fn visible_system_gas_with_compressed_entities(
@@ -1810,14 +1831,8 @@ where
             input.code,
             input.reason,
         );
-        let system_cumulative_gas_used = self
-            .system_tx_execution_gas
-            .checked_add(input.internal_gas_used)
-            .ok_or_else(|| {
-                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-                    "system tx internal gas overflow".into(),
-                ))
-            })?;
+        let system_cumulative_gas_used =
+            self.checked_system_tx_execution_gas(input.internal_gas_used)?;
         let user_cumulative_gas_used = self
             .inner
             .cumulative_tx_gas_used
@@ -3606,6 +3621,89 @@ where
                 return commit_outcome;
             }
 
+            let ocomp_system_carrier = classify_ocomp_system_carrier(
+                OcompSystemCarrierView {
+                    is_eip1559: tx.tx_type() == alloy_consensus::TxType::Eip1559,
+                    to: tx.to(),
+                    value: tx.value(),
+                    input: tx.input().as_ref(),
+                    gas_limit: tx.gas_limit(),
+                    max_fee_per_gas: tx.max_fee_per_gas(),
+                    max_priority_fee_per_gas: tx.max_priority_fee_per_gas(),
+                },
+                &outbe_ocomp_protocol::profile::poc_schema_limits(),
+            )
+            .map_err(|error| {
+                BlockExecutionError::msg(format!("invalid OCOMP system carrier: {error}"))
+            })?;
+
+            if let Some(candidate) = ocomp_system_carrier {
+                if !self.ocomp_lifecycle_active {
+                    return Err(BlockExecutionError::msg(
+                        "OCOMP system carrier is not active for this block",
+                    ));
+                }
+                let block_number = self.inner.evm.block().number().saturating_to::<u64>();
+                let timestamp = self.inner.evm.block().timestamp().saturating_to::<u64>();
+                let chain_id = self.inner.evm.chain_id();
+                let proposer = self.inner.evm.block().beneficiary();
+                let authorized = {
+                    let db = self.inner.evm.db_mut();
+                    let ctx = BlockContext::new_with_genesis_hash(
+                        block_number,
+                        timestamp,
+                        chain_id,
+                        self.genesis_hash,
+                        proposer,
+                        Vec::new(),
+                    );
+                    let mut provider = DirectStorageProvider::new(db, ctx);
+                    let storage = StorageHandle::new(&mut provider);
+                    outbe_metadosis::resolve_historical_result_vote_carrier_signer(
+                        storage,
+                        &candidate.prefix,
+                        signer,
+                        &outbe_ocomp_protocol::profile::poc_schema_limits(),
+                    )
+                }
+                .map_err(|error| {
+                    BlockExecutionError::msg(format!(
+                        "OCOMP system carrier authorization failed: {error}"
+                    ))
+                })?;
+                if authorized.is_none() {
+                    return Err(BlockExecutionError::msg(
+                        "OCOMP system carrier signer is not authorized by its pinned snapshot",
+                    ));
+                }
+
+                let signed_gas_limit = tx.gas_limit();
+                let tx_type = tx.tx_type();
+                let snapshot = self.inner.evm.enable_zero_fee_overrides();
+                tx_env.gas_limit = OCOMP_SYSTEM_CARRIER_INTERNAL_GAS_LIMIT;
+                tx_env.gas_price = 0;
+                tx_env.gas_priority_fee = Some(0);
+                let execution = self.inner.execute_transaction_without_commit(WithTxEnv {
+                    tx_env,
+                    tx: Arc::new(recovered),
+                });
+                self.inner.evm.restore_zero_fee_overrides(snapshot);
+                let output = execution?;
+                if !output.result.result.is_success() {
+                    return Err(BlockExecutionError::msg(format!(
+                        "OCOMP system carrier execution did not succeed: {:?}",
+                        output.result.result
+                    )));
+                }
+                if !f(&output).should_commit() {
+                    return Ok(None);
+                }
+                debug_assert_eq!(output.tx_type, tx_type);
+                return self
+                    .commit_system_transaction(output, 0, 0, signed_gas_limit)
+                    .map(Some);
+            }
+
             if tx.gas_limit() < Self::SOFT_FAILURE_GAS {
                 return Err(BlockExecutionError::msg(format!(
                     "transaction gas limit {} is below intrinsic gas floor {}",
@@ -5099,8 +5197,9 @@ mod tests {
         TxEip1559 {
             chain_id: CHAIN_ID,
             nonce: 0,
-            gas_limit: outbe_zerofee::MAX_ZERO_FEE_OCOMP_GAS_LIMIT,
-            max_fee_per_gas: outbe_zerofee::MIN_ZERO_FEE_OCOMP_MAX_FEE_PER_GAS,
+            gas_limit: outbe_ocomp_protocol::system_carrier::OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
+            max_fee_per_gas:
+                outbe_ocomp_protocol::system_carrier::MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS,
             max_priority_fee_per_gas: 0,
             to: TxKind::Call(METADOSIS_ADDRESS),
             value: U256::ZERO,
@@ -5112,19 +5211,24 @@ mod tests {
     }
 
     #[test]
-    fn executor_adapter_classifies_the_canonical_ocomp_vote_prefix() {
+    fn executor_adapter_classifies_the_canonical_ocomp_system_carrier_prefix() {
         let tx = test_ocomp_submit_result_vote_tx();
-        let zero_fee = super::zero_fee_transaction(&tx, Address::ZERO);
-        let candidate = outbe_zerofee::registry()
-            .classify(&zero_fee)
-            .expect("canonical OCOMP envelope must classify")
-            .expect("canonical OCOMP envelope must select its hook");
+        let candidate = outbe_ocomp_protocol::system_carrier::classify_ocomp_system_carrier(
+            outbe_ocomp_protocol::system_carrier::OcompSystemCarrierView {
+                is_eip1559: true,
+                to: tx.to(),
+                value: tx.value(),
+                input: tx.input().as_ref(),
+                gas_limit: tx.gas_limit(),
+                max_fee_per_gas: tx.max_fee_per_gas(),
+                max_priority_fee_per_gas: tx.max_priority_fee_per_gas(),
+            },
+            &outbe_ocomp_protocol::profile::poc_schema_limits(),
+        )
+        .expect("canonical OCOMP envelope must classify")
+        .expect("canonical OCOMP envelope must select the system carrier");
 
-        assert_eq!(
-            candidate.hook,
-            outbe_zerofee::ZeroFeeHookId::OcompSubmitResultVote
-        );
-        assert_eq!(candidate.ocomp_vote_prefix().unwrap().validator_index, 1);
+        assert_eq!(candidate.prefix.validator_index, 1);
     }
 
     #[allow(dead_code)] // retained for follow-up tests
@@ -7270,7 +7374,7 @@ mod tests {
     fn system_protocol_precharge_and_ce_gas_are_published_and_block_limited() {
         let signer = test_evm_signer();
         let proposer = signer.address();
-        let mut state = state_with_active_proposer(proposer);
+        let mut state = state_with_active_proposer_without_ocomp(proposer);
         let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer);
         let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
         let mut executor = config.create_executor(evm, execution_ctx(Some(0), Bytes::new()));
@@ -7322,6 +7426,41 @@ mod tests {
         assert_eq!(executor.receipts().len(), receipts_before);
         assert_eq!(executor.inner.cumulative_tx_gas_used, cumulative_before);
         assert_eq!(executor.system_tx_execution_gas, 123);
+    }
+
+    #[test]
+    fn system_internal_work_budget_rejects_before_receipt_or_state_accounting() {
+        let signer = test_evm_signer();
+        let proposer = signer.address();
+        let mut state = state_with_active_proposer_without_ocomp(proposer);
+        let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer);
+        let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
+        let mut executor = config.create_executor(evm, execution_ctx(Some(0), Bytes::new()));
+        executor.system_tx_execution_gas =
+            outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT - 1;
+
+        let receipts_before = executor.receipts().len();
+        let cumulative_before = executor.inner.cumulative_tx_gas_used;
+        let error = executor
+            .push_system_failure_receipt(SystemFailureReceiptInput {
+                tx_type: alloy_consensus::TxType::Eip1559,
+                log_address: outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
+                code: 299,
+                reason: "must not commit past the internal system-work budget".into(),
+                visible_base_gas: 0,
+                compressed_entities_gas: 0,
+                signed_gas_limit: 0,
+                internal_gas_used: 2,
+            })
+            .expect_err("system internal work must be bounded independently from user gas");
+
+        assert!(error.to_string().contains("internal system-work budget"));
+        assert_eq!(executor.receipts().len(), receipts_before);
+        assert_eq!(executor.inner.cumulative_tx_gas_used, cumulative_before);
+        assert_eq!(
+            executor.system_tx_execution_gas,
+            outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT - 1
+        );
     }
 
     #[test]

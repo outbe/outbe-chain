@@ -175,6 +175,40 @@ pub fn resolve_historical_result_vote_participant(
     Ok(Some(member.validator_address))
 }
 
+/// Resolves and authorizes the outer EVM signer of an OCOMP system carrier.
+///
+/// The represented validator comes exclusively from the exact historical
+/// snapshot pinned by the vote. Its own address is accepted only when no OCOMP
+/// delegate is configured; otherwise only the current reverse-verified OCOMP
+/// delegate is accepted. Current ACTIVE status is deliberately irrelevant for
+/// an already-open historical job.
+pub fn resolve_historical_result_vote_carrier_signer(
+    storage: StorageHandle<'_>,
+    prefix: &ResultVotePrefixV1,
+    signer: Address,
+    limits: &SchemaLimits,
+) -> Result<Option<Address>> {
+    let Some(historical_validator) =
+        resolve_historical_result_vote_participant(storage.clone(), prefix, limits)?
+    else {
+        return Ok(None);
+    };
+    let validators = outbe_validatorset::contract::ValidatorSet::new(storage);
+    let role = outbe_validatorset::delegation::ValidatorDelegateRole::Ocomp;
+    let explicit = validators.get_delegate(historical_validator, role)?;
+    if signer == historical_validator {
+        return Ok(explicit.is_zero().then_some(historical_validator));
+    }
+    if explicit != signer {
+        return Ok(None);
+    }
+    let reverse = validators
+        .validator_by_role_delegate
+        .get_nested(&role.id())
+        .read(&signer)?;
+    Ok((reverse == historical_validator).then_some(historical_validator))
+}
+
 impl MetadosisContract<'_> {
     /// Verifies and records one direct result vote at its canonical inclusion
     /// height. The response-window index, job record, vote slots and immutable
