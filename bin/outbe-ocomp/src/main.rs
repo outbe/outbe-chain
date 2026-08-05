@@ -37,7 +37,7 @@ use outbe_ocomp::worker::{run_one_from_inherited_fd, WorkerConfig};
 use outbe_ocomp_protocol::capacity::OCOMP_POC_CAS_QUOTA_BYTES;
 use outbe_offchain_storage::MongoStorageConfig;
 use outbe_primitives::signer::OutbeEvmSigner;
-use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
+use outbe_primitives::time::{previous_date_key, worldwide_day_from_timestamp};
 
 #[derive(Debug, Parser)]
 #[command(name = "outbe-ocomp")]
@@ -582,28 +582,30 @@ fn run_supervisor(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> 
         // Payouts share the vote signer's nonce, so a tick runs only while no
         // vote work is pending, and one tick drives its batch to finality.
         if completed_result.is_none() {
-            let today = timestamp_to_date_key(
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)?
-                    .as_secs(),
-            );
-            let mut days = Vec::with_capacity(SUPERVISOR_PAYOUT_LOOKBACK_DAYS as usize + 1);
-            let mut day = today;
-            for _ in 0..=SUPERVISOR_PAYOUT_LOOKBACK_DAYS {
-                days.push(day);
-                day = previous_date_key(day);
-            }
-            days.reverse();
-            match payout_submitter.tick(&payout_preparer, &days) {
-                Ok(outcome) => {
-                    if last_payout_outcome != Some(outcome) {
-                        if outcome != PayoutTickOutcomeV1::Idle {
-                            eprintln!("OCOMP supervisor payout: {outcome:?}");
+            match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+                Err(error) => eprintln!("OCOMP supervisor payout clock retry: {error}"),
+                Ok(now) => {
+                    // Payout days live in worldwide-day space (UTC+14).
+                    let today = worldwide_day_from_timestamp(now.as_secs());
+                    let mut days = Vec::with_capacity(SUPERVISOR_PAYOUT_LOOKBACK_DAYS as usize + 1);
+                    let mut day = today;
+                    for _ in 0..=SUPERVISOR_PAYOUT_LOOKBACK_DAYS {
+                        days.push(day);
+                        day = previous_date_key(day);
+                    }
+                    days.reverse();
+                    match payout_submitter.tick(&payout_preparer, &days) {
+                        Ok(outcome) => {
+                            if last_payout_outcome != Some(outcome) {
+                                if outcome != PayoutTickOutcomeV1::Idle {
+                                    eprintln!("OCOMP supervisor payout: {outcome:?}");
+                                }
+                                last_payout_outcome = Some(outcome);
+                            }
                         }
-                        last_payout_outcome = Some(outcome);
+                        Err(error) => eprintln!("OCOMP supervisor payout retry: {error}"),
                     }
                 }
-                Err(error) => eprintln!("OCOMP supervisor payout retry: {error}"),
             }
         }
         std::thread::sleep(SUPERVISOR_RECONCILE_INTERVAL);

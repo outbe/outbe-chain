@@ -5,9 +5,12 @@
 //! A day is refused unless the artifact's root, count and total match the
 //! certified values. Payouts share the role-delegated key with result votes,
 //! so the caller must not run a tick while vote work is pending, and one tick
-//! drives its batch to finality before yielding the nonce.
+//! drives its batch to finality before yielding the nonce. The gate is
+//! best-effort across a restart; the nonce self-heal on both machines closes
+//! the residual overlap.
 
 use std::{
+    collections::{HashMap, HashSet},
     fs::{self, File, OpenOptions},
     io::{Read, Write},
     os::{
@@ -22,7 +25,7 @@ use alloy_consensus::{
     transaction::SignerRecoverable as _, EthereumTxEnvelope, Transaction as _, TxEip1559, TxEip4844,
 };
 use alloy_eips::eip2718::{Decodable2718 as _, Encodable2718 as _};
-use alloy_primitives::{Address, Bytes, TxKind, B256, U256};
+use alloy_primitives::{keccak256, Address, Bytes, TxKind, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_intex::payout::{
     contributor_list_root, decode_contributor_leaf, CONTRIBUTOR_CHUNK_CAPACITY,
@@ -49,6 +52,8 @@ const JOURNAL_LOCK_FILE: &str = "payout-submissions.lock";
 const MAX_RAW_PAYOUT_TRANSACTION_BYTES: usize = 64 * 1024;
 const JOURNAL_FIXED_BYTES_WITHOUT_RAW: usize = 8 + 2 + 8 + 1 + 4 + 4 + 4 + 20 + 8 + 16 + 32 + 4 + 1;
 const INCLUSION_BYTES: usize = 8 + 32 + 1;
+const JOURNAL_CHECKSUM_BYTES: usize = 32;
+const REVERT_BACKOFF_CAP: Duration = Duration::from_secs(600);
 /// One tick drives its batch to finality so the shared nonce is never left
 /// pinned under a pending payout when vote work arrives.
 const FINALITY_WAIT: Duration = Duration::from_secs(30);
@@ -154,6 +159,8 @@ pub enum PayoutSubmissionErrorV1 {
     AmbiguousJournal(PathBuf),
     #[error("payout journal record too large")]
     JournalTooLarge,
+    #[error("payout journal record checksum mismatch")]
+    JournalChecksumMismatch,
     #[error("payout journal generation overflow")]
     GenerationOverflow,
     #[error("payout transaction hash mismatch: expected {expected}, actual {actual}")]
@@ -300,7 +307,7 @@ struct PayoutWorkV1 {
 /// fully paid for its expected bits or holds the first unpaid batch.
 fn first_unpaid_batch(words: &[U256], contributor_count: u32) -> Option<(u32, u32)> {
     let mut remaining = contributor_count;
-    for (index, word) in words.iter().enumerate() {
+    for (index, word) in (0_u32..).zip(words.iter()) {
         let bits = remaining.min(CONTRIBUTOR_CHUNK_CAPACITY);
         if bits == 0 {
             return None;
@@ -311,8 +318,7 @@ fn first_unpaid_batch(words: &[U256], contributor_count: u32) -> Option<(u32, u3
             (U256::from(1_u8) << bits) - U256::from(1_u8)
         };
         if *word & expected != expected {
-            let start = u32::try_from(index).ok()? * CONTRIBUTOR_CHUNK_CAPACITY;
-            return Some((start, bits));
+            return Some((index * CONTRIBUTOR_CHUNK_CAPACITY, bits));
         }
         remaining -= bits;
     }
@@ -324,6 +330,22 @@ pub struct SupervisorPayoutSubmitterV1<R> {
     rpc: R,
     journal: PayoutSubmissionJournalV1,
     open_submission: Option<(u32, u32)>,
+    day_cache: Option<VerifiedDayCacheV1>,
+    scan_frontier: HashMap<u32, u32>,
+    skip_log: HashMap<u32, String>,
+    revert_backoff: HashMap<(u32, u32), RevertBackoffV1>,
+    cleaned_days: HashSet<u32>,
+}
+
+struct VerifiedDayCacheV1 {
+    worldwide_day: u32,
+    contributor_root: B256,
+    leaves: Vec<[u8; CONTRIBUTOR_LEAF_BYTES]>,
+}
+
+struct RevertBackoffV1 {
+    attempts: u32,
+    retry_at: Instant,
 }
 
 impl<R: PayoutSubmissionRpcV1> SupervisorPayoutSubmitterV1<R> {
@@ -335,12 +357,12 @@ impl<R: PayoutSubmissionRpcV1> SupervisorPayoutSubmitterV1<R> {
             rpc,
             journal,
             open_submission,
+            day_cache: None,
+            scan_frontier: HashMap::new(),
+            skip_log: HashMap::new(),
+            revert_backoff: HashMap::new(),
+            cleaned_days: HashSet::new(),
         })
-    }
-
-    /// Whether an earlier delivery still pins the shared nonce.
-    pub const fn has_open_submission(&self) -> bool {
-        self.open_submission.is_some()
     }
 
     /// Advances payout work by at most one batch.
@@ -349,6 +371,12 @@ impl<R: PayoutSubmissionRpcV1> SupervisorPayoutSubmitterV1<R> {
         preparer: &P,
         candidate_days: &[u32],
     ) -> Result<PayoutTickOutcomeV1, PayoutSubmissionErrorV1> {
+        self.skip_log.retain(|day, _| candidate_days.contains(day));
+        self.scan_frontier
+            .retain(|day, _| candidate_days.contains(day));
+        self.cleaned_days.retain(|day| candidate_days.contains(day));
+        self.revert_backoff
+            .retain(|(day, _), _| candidate_days.contains(day));
         if let Some((worldwide_day, start_index)) = self.open_submission {
             let record = self
                 .journal
@@ -366,6 +394,21 @@ impl<R: PayoutSubmissionRpcV1> SupervisorPayoutSubmitterV1<R> {
         let Some(work) = self.discover(candidate_days)? else {
             return Ok(PayoutTickOutcomeV1::Idle);
         };
+        if let Some(prior) = self.journal.load(work.worldwide_day, work.start_index)? {
+            let adoptable = match prior.stage {
+                PayoutSubmissionStageV1::Included => true,
+                PayoutSubmissionStageV1::Prepared | PayoutSubmissionStageV1::Submitted => {
+                    !self.nonce_was_bypassed(&prior)?
+                }
+                PayoutSubmissionStageV1::Finalized => false,
+            };
+            // A live record for this window (a receipt racing the nonce view)
+            // is resumed, not replaced.
+            if adoptable {
+                self.open_submission = Some((work.worldwide_day, work.start_index));
+                return self.drive_to_finality(work.worldwide_day, work.start_index);
+            }
+        }
         self.prepare_and_persist(preparer, &work)?;
         self.open_submission = Some((work.worldwide_day, work.start_index));
         self.drive_to_finality(work.worldwide_day, work.start_index)
@@ -379,8 +422,25 @@ impl<R: PayoutSubmissionRpcV1> SupervisorPayoutSubmitterV1<R> {
         let deadline = Instant::now() + FINALITY_WAIT;
         loop {
             let outcome = self.reconcile_once(worldwide_day, start_index)?;
-            if let PayoutTickOutcomeV1::Finalized { .. } = outcome {
+            if let PayoutTickOutcomeV1::Finalized { success, .. } = outcome {
                 self.open_submission = None;
+                if success {
+                    self.revert_backoff.remove(&(worldwide_day, start_index));
+                    self.journal.remove(worldwide_day, start_index)?;
+                } else {
+                    let backoff = self
+                        .revert_backoff
+                        .entry((worldwide_day, start_index))
+                        .or_insert(RevertBackoffV1 {
+                            attempts: 0,
+                            retry_at: Instant::now(),
+                        });
+                    backoff.attempts = backoff.attempts.saturating_add(1);
+                    // A lost race resolves through the bitmap; only a
+                    // deterministic revert keeps hitting the same window.
+                    let delay = FINALITY_WAIT.saturating_mul(1 << backoff.attempts.min(5));
+                    backoff.retry_at = Instant::now() + delay.min(REVERT_BACKOFF_CAP);
+                }
                 return Ok(outcome);
             }
             if Instant::now() >= deadline {
@@ -699,34 +759,58 @@ impl<R: PayoutSubmissionRpcV1> SupervisorPayoutSubmitterV1<R> {
     }
 
     fn discover(
-        &self,
+        &mut self,
         candidate_days: &[u32],
     ) -> Result<Option<PayoutWorkV1>, PayoutSubmissionErrorV1> {
         for &worldwide_day in candidate_days {
             let round = self.read_round(worldwide_day)?;
-            if round.contributorCount == 0 || round.paidLeafCount >= round.contributorCount {
+            if round.contributorCount == 0 {
+                continue;
+            }
+            if round.paidLeafCount >= round.contributorCount {
+                self.clean_day(worldwide_day)?;
                 continue;
             }
             let certified = self.read_certified_generation(worldwide_day)?;
             if certified.contributor_count != round.contributorCount {
-                return Err(PayoutSubmissionErrorV1::StateDecode(
-                    "round and certified contributor counts disagree".to_owned(),
-                ));
+                // Two finalized reads raced a recertification; retry next tick.
+                self.log_skip(worldwide_day, "certified and round counts disagree");
+                continue;
             }
             let Some((start_index, expected_len)) =
                 self.find_first_unpaid(worldwide_day, certified.contributor_count)?
             else {
+                self.clean_day(worldwide_day)?;
                 continue;
             };
-            let Some(leaves) = self.load_verified_day(worldwide_day, &certified)? else {
+            if self
+                .revert_backoff
+                .get(&(worldwide_day, start_index))
+                .is_some_and(|backoff| Instant::now() < backoff.retry_at)
+            {
                 continue;
-            };
+            }
+            let cached = self.day_cache.as_ref().is_some_and(|cache| {
+                cache.worldwide_day == worldwide_day
+                    && cache.contributor_root == certified.contributor_root
+            });
+            if !cached {
+                let Some(leaves) = self.load_verified_day(worldwide_day, &certified)? else {
+                    continue;
+                };
+                self.day_cache = Some(VerifiedDayCacheV1 {
+                    worldwide_day,
+                    contributor_root: certified.contributor_root,
+                    leaves,
+                });
+            }
+            let leaves = &self.day_cache.as_ref().expect("day cache is warm").leaves;
             let calldata = build_batch_calldata(
                 worldwide_day,
                 start_index,
                 expected_len,
                 certified.contributor_count,
-                &leaves,
+                leaves,
             )?;
             return Ok(Some(PayoutWorkV1 {
                 worldwide_day,
@@ -775,13 +859,21 @@ impl<R: PayoutSubmissionRpcV1> SupervisorPayoutSubmitterV1<R> {
     }
 
     fn find_first_unpaid(
-        &self,
+        &mut self,
         worldwide_day: u32,
         contributor_count: u32,
     ) -> Result<Option<(u32, u32)>, PayoutSubmissionErrorV1> {
         let word_count = contributor_count.div_ceil(CONTRIBUTOR_CHUNK_CAPACITY);
-        let mut remaining = contributor_count;
-        for word_index in 0..word_count {
+        // Words before the frontier were observed fully paid; bits never clear.
+        let frontier = self
+            .scan_frontier
+            .get(&worldwide_day)
+            .copied()
+            .unwrap_or(0)
+            .min(word_count);
+        let mut remaining =
+            contributor_count.saturating_sub(frontier.saturating_mul(CONTRIBUTOR_CHUNK_CAPACITY));
+        for word_index in frontier..word_count {
             let bits = remaining.min(CONTRIBUTOR_CHUNK_CAPACITY);
             let data = IIntexFactory::contributorPaidWordCall {
                 worldwideDay: worldwide_day,
@@ -795,6 +887,7 @@ impl<R: PayoutSubmissionRpcV1> SupervisorPayoutSubmitterV1<R> {
             let word = IIntexFactory::contributorPaidWordCall::abi_decode_returns(&out)
                 .map_err(state_error)?;
             if let Some(found) = first_unpaid_batch(&[word], remaining) {
+                self.scan_frontier.insert(worldwide_day, word_index);
                 return Ok(Some((
                     word_index * CONTRIBUTOR_CHUNK_CAPACITY + found.0,
                     found.1,
@@ -802,13 +895,33 @@ impl<R: PayoutSubmissionRpcV1> SupervisorPayoutSubmitterV1<R> {
             }
             remaining -= bits;
         }
+        self.scan_frontier.insert(worldwide_day, word_count);
         Ok(None)
+    }
+
+    fn clean_day(&mut self, worldwide_day: u32) -> Result<(), PayoutSubmissionErrorV1> {
+        if !self.cleaned_days.insert(worldwide_day) {
+            return Ok(());
+        }
+        self.journal.remove_day(worldwide_day)
+    }
+
+    fn log_skip(&mut self, worldwide_day: u32, reason: &str) {
+        if self
+            .skip_log
+            .get(&worldwide_day)
+            .is_some_and(|last| last == reason)
+        {
+            return;
+        }
+        eprintln!("OCOMP payout: day {worldwide_day}: {reason}; skipping");
+        self.skip_log.insert(worldwide_day, reason.to_owned());
     }
 
     /// Any mismatch with the certified values — missing file, wrong size,
     /// different root or total — disqualifies this validator for the day.
     fn load_verified_day(
-        &self,
+        &mut self,
         worldwide_day: u32,
         certified: &CertifiedDayViewV1,
     ) -> Result<Option<Vec<[u8; CONTRIBUTOR_LEAF_BYTES]>>, PayoutSubmissionErrorV1> {
@@ -818,20 +931,33 @@ impl<R: PayoutSubmissionRpcV1> SupervisorPayoutSubmitterV1<R> {
             .job_root
             .join(hex::encode(job_id.as_slice()))
             .join(CONTRIBUTOR_PAYOUT_ARTIFACT_FILE);
-        if !path.exists() {
-            eprintln!(
-                "OCOMP payout: no artifact for day {worldwide_day} at {}; skipping",
-                path.display()
+        let mut file = match open_regular_nofollow(&path) {
+            Ok(file) => file,
+            Err(PayoutSubmissionErrorV1::Io { ref source, .. })
+                if source.kind() == std::io::ErrorKind::NotFound =>
+            {
+                self.log_skip(worldwide_day, &format!("no artifact at {}", path.display()));
+                return Ok(None);
+            }
+            Err(error) => return Err(error),
+        };
+        let len = file
+            .metadata()
+            .map_err(|source| io_error("stat artifact", &path, source))?
+            .len();
+        let expected_len = u64::from(certified.contributor_count) * CONTRIBUTOR_LEAF_BYTES as u64;
+        if len != expected_len {
+            self.log_skip(
+                worldwide_day,
+                &format!("artifact is {len} bytes, certified count needs {expected_len}"),
             );
             return Ok(None);
         }
-        let bytes = fs::read(&path).map_err(|source| io_error("read artifact", &path, source))?;
-        let expected_len = certified.contributor_count as usize * CONTRIBUTOR_LEAF_BYTES;
-        if bytes.len() != expected_len {
-            eprintln!(
-                "OCOMP payout: artifact for day {worldwide_day} is {} bytes, certified count needs {expected_len}; skipping",
-                bytes.len()
-            );
+        let mut bytes = Vec::with_capacity(expected_len as usize);
+        file.read_to_end(&mut bytes)
+            .map_err(|source| io_error("read artifact", &path, source))?;
+        if bytes.len() as u64 != expected_len {
+            self.log_skip(worldwide_day, "artifact changed size mid-read");
             return Ok(None);
         }
         let mut leaves = Vec::with_capacity(certified.contributor_count as usize);
@@ -840,9 +966,7 @@ impl<R: PayoutSubmissionRpcV1> SupervisorPayoutSubmitterV1<R> {
             let mut leaf = [0u8; CONTRIBUTOR_LEAF_BYTES];
             leaf.copy_from_slice(record);
             let Some(next) = total.checked_add(decode_contributor_leaf(&leaf).nominal) else {
-                eprintln!(
-                    "OCOMP payout: artifact for day {worldwide_day} overflows the nominal total; skipping"
-                );
+                self.log_skip(worldwide_day, "records overflow the nominal total");
                 return Ok(None);
             };
             total = next;
@@ -851,8 +975,9 @@ impl<R: PayoutSubmissionRpcV1> SupervisorPayoutSubmitterV1<R> {
         let root = contributor_list_root(certified.contributor_count, leaves.iter())
             .map_err(state_error)?;
         if root != certified.contributor_root || total != certified.eligible_nominal_total {
-            eprintln!(
-                "OCOMP payout: local records for day {worldwide_day} diverge from the certified root; skipping"
+            self.log_skip(
+                worldwide_day,
+                "local records diverge from the certified values",
             );
             return Ok(None);
         }
@@ -962,10 +1087,10 @@ impl PayoutSubmissionJournalV1 {
     ) -> Result<Option<PayoutSubmissionRecordV1>, PayoutSubmissionErrorV1> {
         let path = self.record_path(worldwide_day, start_index);
         let temp = self.temp_path(worldwide_day, start_index);
-        if temp.exists() {
+        if path_exists(&temp)? {
             return Err(PayoutSubmissionErrorV1::AmbiguousJournal(temp));
         }
-        if !path.exists() {
+        if !path_exists(&path)? {
             return Ok(None);
         }
         let record = self.load_path(&path)?;
@@ -982,8 +1107,11 @@ impl PayoutSubmissionJournalV1 {
             .map_err(|source| io_error("stat record", path, source))?;
         let len = usize::try_from(metadata.len())
             .map_err(|_| PayoutSubmissionErrorV1::JournalTooLarge)?;
-        if !(JOURNAL_FIXED_BYTES_WITHOUT_RAW
-            ..=JOURNAL_FIXED_BYTES_WITHOUT_RAW + INCLUSION_BYTES + MAX_RAW_PAYOUT_TRANSACTION_BYTES)
+        if !(JOURNAL_FIXED_BYTES_WITHOUT_RAW + 1 + JOURNAL_CHECKSUM_BYTES
+            ..=JOURNAL_FIXED_BYTES_WITHOUT_RAW
+                + INCLUSION_BYTES
+                + MAX_RAW_PAYOUT_TRANSACTION_BYTES
+                + JOURNAL_CHECKSUM_BYTES)
             .contains(&len)
         {
             return Err(PayoutSubmissionErrorV1::JournalTooLarge);
@@ -999,7 +1127,7 @@ impl PayoutSubmissionJournalV1 {
         let encoded = encode_record(&record);
         let temp = self.temp_path(record.worldwide_day, record.start_index);
         let final_path = self.record_path(record.worldwide_day, record.start_index);
-        if temp.exists() {
+        if path_exists(&temp)? {
             return Err(PayoutSubmissionErrorV1::AmbiguousJournal(temp));
         }
         let mut file = OpenOptions::new()
@@ -1035,6 +1163,39 @@ impl PayoutSubmissionJournalV1 {
             }
         }
         Ok(None)
+    }
+
+    fn remove(&self, worldwide_day: u32, start_index: u32) -> Result<(), PayoutSubmissionErrorV1> {
+        let path = self.record_path(worldwide_day, start_index);
+        match fs::remove_file(&path) {
+            Ok(()) => sync_directory(&self.root),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(source) => Err(io_error("remove record", &path, source)),
+        }
+    }
+
+    /// Drops every record of a fully paid day; none can be needed again.
+    fn remove_day(&self, worldwide_day: u32) -> Result<(), PayoutSubmissionErrorV1> {
+        let prefix = format!("{worldwide_day}-");
+        let entries = fs::read_dir(&self.root)
+            .map_err(|source| io_error("scan journal", &self.root, source))?;
+        let mut removed = false;
+        for entry in entries {
+            let entry =
+                entry.map_err(|source| io_error("scan journal entry", &self.root, source))?;
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            if !name.starts_with(&prefix) || !name.ends_with(".payout.v1") {
+                continue;
+            }
+            let path = entry.path();
+            fs::remove_file(&path).map_err(|source| io_error("remove record", &path, source))?;
+            removed = true;
+        }
+        if removed {
+            sync_directory(&self.root)?;
+        }
+        Ok(())
     }
 
     fn record_path(&self, worldwide_day: u32, start_index: u32) -> PathBuf {
@@ -1094,10 +1255,19 @@ fn encode_record(record: &PayoutSubmissionRecordV1) -> Vec<u8> {
             out.push(u8::from(inclusion.success));
         }
     }
+    let checksum = keccak256(&out);
+    out.extend_from_slice(checksum.as_slice());
     out
 }
 
 fn decode_record(bytes: &[u8]) -> Result<PayoutSubmissionRecordV1, PayoutSubmissionErrorV1> {
+    let Some(body_len) = bytes.len().checked_sub(JOURNAL_CHECKSUM_BYTES) else {
+        return Err(PayoutSubmissionErrorV1::InvalidJournal);
+    };
+    if keccak256(&bytes[..body_len]).as_slice() != &bytes[body_len..] {
+        return Err(PayoutSubmissionErrorV1::JournalChecksumMismatch);
+    }
+    let bytes = &bytes[..body_len];
     let mut cursor = Cursor { bytes, offset: 0 };
     if cursor.take(8)? != JOURNAL_MAGIC {
         return Err(PayoutSubmissionErrorV1::InvalidJournal);
@@ -1176,6 +1346,14 @@ impl<'a> Cursor<'a> {
         let slice = &self.bytes[self.offset..end];
         self.offset = end;
         Ok(slice)
+    }
+}
+
+fn path_exists(path: &Path) -> Result<bool, PayoutSubmissionErrorV1> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(source) => Err(io_error("probe path", path, source)),
     }
 }
 
@@ -1417,5 +1595,37 @@ mod tests {
         assert_eq!(first_unpaid_batch(&[full, full, tail_mask], 600), None);
         assert_eq!(first_unpaid_batch(&[tail_mask], 88), None);
         assert_eq!(first_unpaid_batch(&[U256::ZERO], 88), Some((0, 88)));
+    }
+
+    #[test]
+    fn a_corrupted_record_fails_the_checksum() {
+        let mut encoded = encode_record(&record(PayoutSubmissionStageV1::Submitted));
+        let flip = encoded.len() - JOURNAL_CHECKSUM_BYTES - 1;
+        encoded[flip] ^= 1;
+        assert!(matches!(
+            decode_record(&encoded),
+            Err(PayoutSubmissionErrorV1::JournalChecksumMismatch)
+        ));
+    }
+
+    #[test]
+    fn finished_days_are_swept_from_the_journal() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = PayoutSubmissionJournalV1::open(dir.path()).unwrap();
+        let mut first = record(PayoutSubmissionStageV1::Submitted);
+        first.worldwide_day = 20_260_101;
+        let mut second = record(PayoutSubmissionStageV1::Submitted);
+        second.worldwide_day = 20_260_102;
+        let start = first.start_index;
+        journal.persist(first).unwrap();
+        journal.persist(second).unwrap();
+
+        journal.remove_day(20_260_101).unwrap();
+        assert!(journal.load(20_260_101, start).unwrap().is_none());
+        assert!(journal.load(20_260_102, start).unwrap().is_some());
+
+        journal.remove(20_260_102, start).unwrap();
+        journal.remove(20_260_102, start).unwrap();
+        assert!(journal.load(20_260_102, start).unwrap().is_none());
     }
 }

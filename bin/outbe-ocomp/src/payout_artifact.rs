@@ -5,6 +5,7 @@
 
 use std::fs;
 use std::io::{BufWriter, Write};
+use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::{Path, PathBuf};
 
 use outbe_intex::payout::{encode_contributor_leaf, ContributorLeafData};
@@ -50,7 +51,17 @@ impl PayoutArtifactWriter {
     fn open(job_root: &Path) -> Result<Self, PayoutArtifactError> {
         let target = job_root.join(CONTRIBUTOR_PAYOUT_ARTIFACT_FILE);
         let temp = job_root.join(format!("{CONTRIBUTOR_PAYOUT_ARTIFACT_FILE}{TEMP_SUFFIX}"));
-        let file = fs::File::create(&temp).map_err(|error| io_error("create temp", error))?;
+        match fs::remove_file(&temp) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(io_error("clear stale temp", error)),
+        }
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temp)
+            .map_err(|error| io_error("create temp", error))?;
         Ok(Self {
             file: BufWriter::new(file),
             temp,
@@ -83,6 +94,10 @@ impl PayoutArtifactWriter {
         file.sync_all()
             .map_err(|error| io_error("sync records", error))?;
         fs::rename(&temp, &target).map_err(|error| io_error("install artifact", error))?;
+        let directory = target.parent().expect("artifact path has a parent");
+        fs::File::open(directory)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| io_error("sync directory", error))?;
         Ok(count)
     }
 }
