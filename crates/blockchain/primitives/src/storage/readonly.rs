@@ -40,12 +40,39 @@ pub trait StorageReader {
 /// Read-only [`PrecompileStorageProvider`](super::PrecompileStorageProvider) for
 /// consensus-layer reads of precompile state.
 ///
-/// Only `sload()` works — all write operations are no-ops. Block context
-/// fields return defaults (they're not needed for pure storage reads).
+/// Exact immutable block context for state reads whose answer depends on the
+/// execution environment as well as storage slots.
+///
+/// Callers must source every field from the same canonical block and the
+/// immutable chain specification. A zero/default context is intentionally kept
+/// distinct from this type so consensus-sensitive readers can reject it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReadOnlyBlockContext {
+    pub chain_id: u64,
+    pub genesis_hash: B256,
+    pub block_number: u64,
+    pub timestamp: u64,
+}
+
+impl ReadOnlyBlockContext {
+    #[must_use]
+    pub fn is_complete(self) -> bool {
+        self.chain_id != 0
+            && !self.genesis_hash.is_zero()
+            && self.block_number != 0
+            && self.timestamp != 0
+    }
+}
+
+/// Only `sload()` works — all write operations are rejected. Context-free
+/// constructors retain zero block fields for pure storage reads; readers whose
+/// answer depends on time or height must require [`ReadOnlyBlockContext`].
 pub struct ReadOnlyStorageProvider<R> {
     reader: R,
     chain_id: u64,
     genesis_hash: B256,
+    block_number: u64,
+    timestamp: u64,
 }
 
 impl<R: StorageReader> ReadOnlyStorageProvider<R> {
@@ -62,6 +89,20 @@ impl<R: StorageReader> ReadOnlyStorageProvider<R> {
             reader,
             chain_id,
             genesis_hash,
+            block_number: 0,
+            timestamp: 0,
+        }
+    }
+
+    /// Create a read-only provider bound to one exact canonical block context.
+    #[must_use]
+    pub const fn new_with_block_context(reader: R, context: ReadOnlyBlockContext) -> Self {
+        Self {
+            reader,
+            chain_id: context.chain_id,
+            genesis_hash: context.genesis_hash,
+            block_number: context.block_number,
+            timestamp: context.timestamp,
         }
     }
 }
@@ -76,7 +117,7 @@ impl<R: StorageReader> super::PrecompileStorageProvider for ReadOnlyStorageProvi
     }
 
     fn timestamp(&self) -> U256 {
-        U256::ZERO
+        U256::from(self.timestamp)
     }
 
     fn beneficiary(&self) -> Address {
@@ -84,7 +125,7 @@ impl<R: StorageReader> super::PrecompileStorageProvider for ReadOnlyStorageProvi
     }
 
     fn block_number(&self) -> u64 {
-        0
+        self.block_number
     }
 
     fn canonical_block_hash(&mut self, number: u64) -> Result<Option<B256>> {

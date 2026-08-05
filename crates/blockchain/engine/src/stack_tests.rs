@@ -417,6 +417,8 @@ fn test_boundary_with_vrf_hash(vrf_group_public_key: B256, dkg_cycle: u64) -> Dk
         is_full_dkg: false,
         tee_recipient_pubkeys: Vec::new(),
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
+        tee_expired_target_exclusions_hash: B256::ZERO,
         endorsement_signature: alloy_primitives::Bytes::new(),
         reshare: outbe_primitives::consensus::ReshareResult {
             new_active_set: Vec::new(),
@@ -1286,6 +1288,7 @@ fn test_build_boundary_artifact_maps_addresses() {
         vrf_material_version: 1,
         is_validator_set_change: true,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
 
@@ -1351,6 +1354,7 @@ fn test_build_boundary_artifact_deterministic() {
         vrf_material_version: 1,
         is_validator_set_change: true,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
     let r2 = dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
@@ -1364,6 +1368,7 @@ fn test_build_boundary_artifact_deterministic() {
         vrf_material_version: 1,
         is_validator_set_change: true,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
     assert_eq!(r1.vrf_group_public_key, r2.vrf_group_public_key);
@@ -1401,6 +1406,7 @@ fn test_build_boundary_artifact_allows_extra_validator_not_in_threshold_output()
         vrf_material_version: 1,
         is_validator_set_change: true,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
     assert_eq!(result.reshare.new_active_set.len(), 3);
@@ -1426,6 +1432,7 @@ fn test_build_boundary_artifact_rejects_removed_validator_in_output() {
         vrf_material_version: 1,
         is_validator_set_change: true,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap_err()
     .to_string();
@@ -1457,6 +1464,7 @@ fn test_decode_boundary_output_round_trips_full_output() {
         vrf_material_version: 1,
         is_validator_set_change: true,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
 
@@ -1489,6 +1497,7 @@ fn test_decode_boundary_output_rejects_corrupted_outcome() {
         vrf_material_version: 1,
         is_validator_set_change: true,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
 
@@ -1523,6 +1532,7 @@ fn test_pending_dkg_boundary_snapshot_round_trips_and_rejects_corruption() {
         vrf_material_version: 2,
         is_validator_set_change: true,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
     let snapshot = PendingDkgBoundarySnapshot {
@@ -1579,6 +1589,7 @@ fn test_completed_dkg_is_durable_before_activation_boundary() {
         planned_activation_height: 120,
         validator_set,
         participants: participants.clone(),
+        tee_expired_target_exclusions: Vec::new(),
         is_validator_set_change: false,
     };
     let complete = dkg_actor::DkgComplete {
@@ -1660,6 +1671,7 @@ fn test_pending_boundary_snapshot_restores_manager_before_commit() {
         vrf_material_version: 2,
         is_validator_set_change: true,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
     let snapshot = PendingDkgBoundarySnapshot {
@@ -1720,6 +1732,7 @@ fn test_pending_boundary_commit_requires_matching_finalized_artifact_then_clears
         vrf_material_version: 2,
         is_validator_set_change: true,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
     let mut different = artifact.clone();
@@ -1887,6 +1900,7 @@ fn test_startup_live_join_round_follows_chain_dkg_cycle() {
         vrf_material_version: 41,
         is_validator_set_change: true,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
 
@@ -1982,6 +1996,7 @@ fn test_recovered_boundary_addresses_survive_latest_state_removal() {
         vrf_material_version: 2,
         is_validator_set_change: true,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
 
@@ -2040,6 +2055,7 @@ fn test_recovered_boundary_evm_signer_authorization_survives_latest_state_remova
         vrf_material_version: 2,
         is_validator_set_change: true,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
 
@@ -2069,6 +2085,11 @@ fn test_recovered_boundary_evm_signer_authorization_survives_latest_state_remova
         bls_passphrase: None,
         tee_enclave_socket: None,
         tee_bootstrap_timeout_secs: 60,
+        tee_renewal_relay_key: None,
+        tee_renewal_rpc_url: "http://127.0.0.1:8545".to_owned(),
+        tee_renewal_poll_secs: 30,
+        tee_renewal_warning_blocks: 600,
+        tee_renewal_critical_blocks: 120,
         upstream: None,
         upstream_nocertify: false,
         projection_mongodb_uri: Some("mongodb://localhost:27017".to_owned()),
@@ -3045,6 +3066,11 @@ fn evm_signer_validation_allows_active_validator_waiting_for_live_join_share() {
         bls_passphrase: None,
         tee_enclave_socket: None,
         tee_bootstrap_timeout_secs: 60,
+        tee_renewal_relay_key: None,
+        tee_renewal_rpc_url: "http://127.0.0.1:8545".to_owned(),
+        tee_renewal_poll_secs: 30,
+        tee_renewal_warning_blocks: 600,
+        tee_renewal_critical_blocks: 120,
         upstream: None,
         upstream_nocertify: false,
         projection_mongodb_uri: Some("mongodb://localhost:27017".to_owned()),
@@ -3417,6 +3443,7 @@ mod restart_recovery {
                 vrf_material_version: 2,
                 is_validator_set_change: true,
                 tee_reshare_registrations: Vec::new(),
+                tee_expired_target_exclusions: Vec::new(),
             })
             .unwrap();
         let boundary_participants =
@@ -3477,6 +3504,11 @@ mod restart_recovery {
             bls_passphrase: None,
             tee_enclave_socket: None,
             tee_bootstrap_timeout_secs: 60,
+            tee_renewal_relay_key: None,
+            tee_renewal_rpc_url: "http://127.0.0.1:8545".to_owned(),
+            tee_renewal_poll_secs: 30,
+            tee_renewal_warning_blocks: 600,
+            tee_renewal_critical_blocks: 120,
             upstream: None,
             upstream_nocertify: false,
             projection_mongodb_uri: Some("mongodb://localhost:27017".to_owned()),

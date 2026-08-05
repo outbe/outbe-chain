@@ -15,6 +15,8 @@
 //! the [`env::Environment`] (validators / TEE mode / sudo), and Gherkin tags
 //! define each scenario's requirements.
 
+#[cfg(feature = "dcap-lifecycle-sgx")]
+pub mod dcap_lifecycle_sgx;
 pub mod env;
 pub mod features;
 pub mod metadosis_evidence;

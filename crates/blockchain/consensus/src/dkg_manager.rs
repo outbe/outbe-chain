@@ -781,6 +781,9 @@ pub struct BoundaryArtifactInput<'a> {
     /// non-reshare boundary; populated by the epoch loop from the TEE reshare
     /// result. The offer key is preserved across the reshare.
     pub tee_reshare_registrations: Vec<TeeReshareRegistration>,
+    /// Exact ordered ValidatorSet members excluded by the DcapRequired readiness
+    /// check at this boundary's canonical freeze block.
+    pub tee_expired_target_exclusions: Vec<Address>,
 }
 
 pub fn build_boundary_artifact(input: BoundaryArtifactInput<'_>) -> Result<DkgBoundaryArtifact> {
@@ -795,6 +798,7 @@ pub fn build_boundary_artifact(input: BoundaryArtifactInput<'_>) -> Result<DkgBo
         vrf_material_version,
         is_validator_set_change,
         tee_reshare_registrations,
+        tee_expired_target_exclusions,
     } = input;
 
     let participants = output.players();
@@ -815,6 +819,11 @@ pub fn build_boundary_artifact(input: BoundaryArtifactInput<'_>) -> Result<DkgBo
     let target_set_hash =
         hash_target_set(&new_active_set, freeze_height, planned_activation_height);
     let outcome = encode_outcome(epoch, output, is_full_dkg);
+    let tee_expired_target_exclusions_hash =
+        outbe_primitives::reshare_artifact::tee_expired_target_exclusions_hash(
+            &tee_expired_target_exclusions,
+        )
+        .map_err(|error| eyre::eyre!("invalid TEE expiry exclusions: {error}"))?;
 
     // V2 canonical committee snapshot identit.
     //
@@ -857,6 +866,8 @@ pub fn build_boundary_artifact(input: BoundaryArtifactInput<'_>) -> Result<DkgBo
         is_full_dkg,
         tee_recipient_pubkeys: Vec::new(),
         tee_reshare_registrations,
+        tee_expired_target_exclusions,
+        tee_expired_target_exclusions_hash,
         // Reshare authority endorsement is produced by the reshare round (R5);
         // empty here until that flow recovers the prior-committee group signature.
         endorsement_signature: Bytes::new(),

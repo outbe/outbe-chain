@@ -14,7 +14,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use zeroize::Zeroizing;
 
-use outbe_primitives::tee_attestation_v1::{AttestationMode, RegistrationIntentV1};
+use outbe_primitives::tee_attestation_v1::{
+    AttestationMode, AttestationOperationV1, EnclaveInitializationManifestV1, RegistrationIntentV1,
+    TransitionKeyReadyProofV1,
+};
 use outbe_tee::codec::{decode_request, encode_response, read_frame, write_frame};
 use outbe_tee::errors::TransportError;
 use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
@@ -44,11 +47,13 @@ pub struct DerivedTributeOfferKey {
     secret: Zeroizing<[u8; 32]>,
     public: [u8; 32],
     group_sig: Zeroizing<Vec<u8>>,
+    key_epoch: u64,
+    tribute_offer_epoch: u64,
 }
 
 impl DerivedTributeOfferKey {
     /// The resident offer secret (never leaves the enclave).
-    fn secret(&self) -> &[u8; 32] {
+    pub(crate) fn secret(&self) -> &[u8; 32] {
         &self.secret
     }
     /// The offer public key clients encrypt to (registered on-chain at bootstrap).
@@ -57,8 +62,14 @@ impl DerivedTributeOfferKey {
     }
     /// The resident group threshold signature (Seam F output). It never leaves
     /// the enclave unsealed and is persisted only inside sealed restart state.
-    fn group_sig(&self) -> &[u8] {
+    pub(crate) fn group_sig(&self) -> &[u8] {
         &self.group_sig
+    }
+    pub(crate) const fn key_epoch(&self) -> u64 {
+        self.key_epoch
+    }
+    pub(crate) const fn tribute_offer_epoch(&self) -> u64 {
+        self.tribute_offer_epoch
     }
     /// Build from explicit founding-finalization or registry-onboarding material,
     /// whose enclave-only path already holds the public component.
@@ -71,7 +82,15 @@ impl DerivedTributeOfferKey {
             secret,
             public,
             group_sig,
+            key_epoch: 0,
+            tribute_offer_epoch: 0,
         }
+    }
+
+    fn with_epochs(mut self, key_epoch: u64, tribute_offer_epoch: u64) -> Self {
+        self.key_epoch = key_epoch;
+        self.tribute_offer_epoch = tribute_offer_epoch;
+        self
     }
     /// Reconstruct from a resident offer secret + group signature (recomputes the
     /// public key). Used by the seal/unseal boot path to restore the DKG-derived
@@ -82,6 +101,17 @@ impl DerivedTributeOfferKey {
     ) -> Self {
         let public = crate::crypto::x25519_public(&secret);
         Self::from_parts(secret, public, group_sig)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test(
+        secret: [u8; 32],
+        group_sig: Vec<u8>,
+        key_epoch: u64,
+        tribute_offer_epoch: u64,
+    ) -> Self {
+        Self::from_secret_and_group_sig(Zeroizing::new(secret), Zeroizing::new(group_sig))
+            .with_epochs(key_epoch, tribute_offer_epoch)
     }
 }
 
@@ -173,14 +203,15 @@ pub fn unseal_tribute_offer_and_group_sig_on_boot(
         )
     })?;
     match unseal_tribute_offer_and_group_sig(&blob, &key, cfg.chain_id, cfg.isv_svn) {
-        Ok((secret, group_sig, _header)) => {
+        Ok((secret, group_sig, header)) => {
             eprintln!(
                 "outbe-tee-enclave: unsealed offer key + group signature <- {} (restart fast-path)",
                 path.display()
             );
             Ok(Some(DerivedTributeOfferKey::from_secret_and_group_sig(
                 secret, group_sig,
-            )))
+            )
+            .with_epochs(header.key_epoch, header.tribute_offer_epoch)))
         }
         Err(error) => Err(format!(
             "unseal permanent offer key {} failed: {error}; this identity has lost its key and no recovery or fallback exists",
@@ -189,11 +220,59 @@ pub fn unseal_tribute_offer_and_group_sig_on_boot(
     }
 }
 
-/// Persist the DKG-derived offer secret + the group threshold signature sealed
-/// under the enclave's MRSIGNER key. Write-once and best-effort: no-op without a
-/// boot config, before the offer key exists, without a sealing key (gramine-direct
-/// prod => not confidential), or when the blob already exists. Never fatal —
-/// sealing is local persistence, not consensus state.
+fn persist_offer_key_required(
+    cfg: &EnclaveBootConfig,
+    derived: &DerivedTributeOfferKey,
+) -> Result<(), String> {
+    let path = cfg.sealed_root_path();
+    let (key, policy) = sealing_key()
+        .ok_or_else(|| "production onboarding requires an SGX sealing key".to_string())?;
+    let mut nonce = [0u8; 12];
+    ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut nonce)
+        .map_err(|_| "offer-key seal nonce RNG failed".to_string())?;
+    let header = SealHeader {
+        format_version: SEAL_FORMAT,
+        key_policy: policy,
+        isv_svn: cfg.isv_svn,
+        key_epoch: derived.key_epoch(),
+        tribute_offer_epoch: derived.tribute_offer_epoch(),
+        nonce,
+    };
+    let blob = seal_tribute_offer_and_group_sig(
+        derived.secret(),
+        derived.group_sig(),
+        &key,
+        cfg.chain_id,
+        &header,
+    )
+    .map_err(|error| format!("seal permanent offer key: {error}"))?;
+    match write_once_0600(&path, &blob) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let existing = std::fs::read(&path)
+                .map_err(|error| format!("read concurrent sealed offer key: {error}"))?;
+            let (secret, group_sig, existing_header) =
+                unseal_tribute_offer_and_group_sig(&existing, &key, cfg.chain_id, cfg.isv_svn)
+                    .map_err(|error| format!("verify existing sealed offer key: {error}"))?;
+            if secret.as_ref() != derived.secret()
+                || group_sig.as_slice() != derived.group_sig()
+                || existing_header.key_epoch != derived.key_epoch()
+                || existing_header.tribute_offer_epoch != derived.tribute_offer_epoch()
+            {
+                return Err("existing sealed offer key differs from onboarding result".into());
+            }
+            Ok(())
+        }
+        Err(error) => Err(format!(
+            "write sealed offer key {}: {error}",
+            path.display()
+        )),
+    }
+}
+
+/// Persist founding DKG output. This legacy ceremony call still reports errors
+/// asynchronously; purpose-bound onboarding calls [`persist_offer_key_required`]
+/// directly and never acknowledges success before durable storage completes.
 fn seal_tribute_offer_and_group_sig_if_configured(
     boot: Option<&EnclaveBootConfig>,
     offer_key: &SharedTributeOfferKey,
@@ -202,45 +281,8 @@ fn seal_tribute_offer_and_group_sig_if_configured(
     let Some(derived) = offer_key.get() else {
         return;
     };
-    let path = cfg.sealed_root_path();
-    if path.exists() {
-        return;
-    }
-    let Some((key, policy)) = sealing_key() else {
-        eprintln!(
-            "outbe-tee-enclave: no sealing key (not gramine-sgx / not mock) — offer key \
-             NOT persisted (no confidential at-rest storage on this platform)"
-        );
-        return;
-    };
-    let mut nonce = [0u8; 12];
-    if ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut nonce).is_err() {
-        eprintln!("outbe-tee-enclave: seal nonce RNG failed — offer key NOT persisted");
-        return;
-    }
-    let header = SealHeader {
-        format_version: SEAL_FORMAT,
-        key_policy: policy,
-        isv_svn: cfg.isv_svn,
-        key_epoch: 0,
-        tribute_offer_epoch: 0,
-        nonce,
-    };
-    match seal_tribute_offer_and_group_sig(
-        derived.secret(),
-        derived.group_sig(),
-        &key,
-        cfg.chain_id,
-        &header,
-    ) {
-        Ok(blob) => match write_once_0600(&path, &blob) {
-            Ok(()) => eprintln!(
-                "outbe-tee-enclave: sealed offer key + group signature -> {}",
-                path.display()
-            ),
-            Err(e) => eprintln!("outbe-tee-enclave: write {} failed: {e}", path.display()),
-        },
-        Err(e) => eprintln!("outbe-tee-enclave: seal_tribute_offer_and_group_sig failed: {e}"),
+    if let Err(error) = persist_offer_key_required(cfg, derived) {
+        eprintln!("outbe-tee-enclave: persist offer key + group signature failed: {error}");
     }
 }
 
@@ -513,6 +555,7 @@ fn serve_connection_with_resident_chain<S: EnclaveTransportStream>(
 
         let resp = match req {
             request @ (EnclaveRequest::BeginDcapVerificationV1 { .. }
+            | EnclaveRequest::BeginDcapOnboardingVerificationV1 { .. }
             | EnclaveRequest::DcapVerificationChunkV1 { .. }
             | EnclaveRequest::FinishDcapVerificationV1 { .. }) => {
                 if initialization.mode() != InitializationMode::Production {
@@ -533,7 +576,15 @@ fn serve_connection_with_resident_chain<S: EnclaveTransportStream>(
                             next_offset,
                         },
                         Ok(DcapVerificationProgressV1::Complete(request)) => {
-                            complete_verification_response(request, keys)
+                            match initialization.manifest() {
+                                Ok(manifest) => complete_verification_response(
+                                    request,
+                                    keys,
+                                    offer_key.get(),
+                                    manifest.as_ref(),
+                                ),
+                                Err(message) => EnclaveResponse::Error { message },
+                            }
                         }
                         Err(message) => EnclaveResponse::Error {
                             message: message.to_string(),
@@ -547,6 +598,7 @@ fn serve_connection_with_resident_chain<S: EnclaveTransportStream>(
                 &mut dkg,
                 offer_key,
                 chain_id,
+                boot,
                 Some(initialization),
                 quote_generator,
             ),
@@ -607,6 +659,7 @@ pub fn dispatch(
         offer_key,
         chain_id,
         None,
+        None,
         crate::gramine::dcap_quote,
     )
 }
@@ -617,6 +670,7 @@ fn dispatch_with_initialization(
     dkg: &mut DkgSessionStore,
     offer_key: &SharedTributeOfferKey,
     chain_id: alloy_primitives::B256,
+    boot: Option<&EnclaveBootConfig>,
     initialization: Option<&InitializationState>,
     quote_generator: fn(&[u8; 64]) -> Result<Vec<u8>, String>,
 ) -> EnclaveResponse {
@@ -630,6 +684,7 @@ fn dispatch_with_initialization(
             message: "pre-handshake request is not valid inside a Noise session".to_string(),
         },
         EnclaveRequest::BeginDcapVerificationV1 { .. }
+        | EnclaveRequest::BeginDcapOnboardingVerificationV1 { .. }
         | EnclaveRequest::DcapVerificationChunkV1 { .. }
         | EnclaveRequest::FinishDcapVerificationV1 { .. } => EnclaveResponse::Error {
             message: "DCAP verification requires an authenticated production session".to_string(),
@@ -681,19 +736,63 @@ fn dispatch_with_initialization(
                         .to_string(),
                 };
             };
-            let result = (|| -> Result<(Vec<u8>, Vec<u8>), String> {
+            let result = (|| -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), String> {
                 let report_data = initialization.quote_report_data(&intent)?;
+                let decoded_intent = RegistrationIntentV1::decode_canonical(&intent)
+                    .map_err(|error| format!("registration intent is not canonical: {error}"))?;
+                let transition_key_ready_proof = if decoded_intent.operation
+                    == AttestationOperationV1::TransitionEnclaveMeasurement
+                {
+                    let resident_offer_public = offer_key
+                        .get()
+                        .ok_or_else(|| {
+                            "transition quote generation requires the permanent offer key"
+                                .to_string()
+                        })?
+                        .public();
+                    let manifest = initialization
+                        .manifest()?
+                        .ok_or_else(|| "enclave is not initialized".to_string())?;
+                    let mut proof = TransitionKeyReadyProofV1 {
+                        chain_id: decoded_intent.chain_id,
+                        genesis_hash: decoded_intent.genesis_hash,
+                        transition_intent_hash: decoded_intent
+                            .intent_hash()
+                            .map_err(|error| error.to_string())?,
+                        candidate_manifest_hash: manifest
+                            .authorization_hash()
+                            .map_err(|error| error.to_string())?,
+                        transition_nonce: decoded_intent.transition_nonce,
+                        resident_offer_public,
+                        candidate_attestation_signature: [0_u8; 64],
+                    };
+                    let signing_hash = proof.signing_hash().map_err(|error| error.to_string())?;
+                    proof.candidate_attestation_signature =
+                        keys.sign_attestation(signing_hash.as_slice());
+                    proof
+                        .encode_canonical()
+                        .map_err(|error| error.to_string())?
+                } else {
+                    Vec::new()
+                };
                 let quote = quote_generator(&report_data)?;
                 let quote_body = validate_generated_quote_binding(report_data, quote)?;
                 let enclave_signature = keys.sign_attestation(&report_data[..32]);
-                Ok((quote_body, enclave_signature.to_vec()))
+                Ok((
+                    quote_body,
+                    enclave_signature.to_vec(),
+                    transition_key_ready_proof,
+                ))
             })();
             match result {
-                Ok((quote_body, enclave_signature)) => EnclaveResponse::DcapQuote {
-                    intent,
-                    quote_body,
-                    enclave_signature,
-                },
+                Ok((quote_body, enclave_signature, transition_key_ready_proof)) => {
+                    EnclaveResponse::DcapQuote {
+                        intent,
+                        quote_body,
+                        enclave_signature,
+                        transition_key_ready_proof,
+                    }
+                }
                 Err(message) => EnclaveResponse::Error { message },
             }
         }
@@ -1017,6 +1116,63 @@ fn dispatch_with_initialization(
                 },
             }
         }
+        EnclaveRequest::IngestDcapOnboardingArtifactV1 {
+            artifact,
+            expected_intent_hash,
+            expected_tribute_offer_public,
+            expected_key_epoch,
+            expected_tribute_offer_epoch,
+        } => {
+            let derived = initialization
+                .ok_or_else(|| "onboarding ingest requires initialized production state".into())
+                .and_then(InitializationState::manifest)
+                .and_then(|manifest| {
+                    manifest.ok_or_else(|| {
+                        "onboarding ingest requires an initialization manifest".into()
+                    })
+                })
+                .map_err(crate::errors::TeeError::Dkg)
+                .and_then(|manifest| {
+                    derive_onboarding_offer_key_v1(
+                        keys,
+                        &manifest,
+                        &artifact,
+                        expected_intent_hash,
+                        expected_tribute_offer_public,
+                        expected_key_epoch,
+                        expected_tribute_offer_epoch,
+                    )
+                });
+            match derived {
+                Ok(derived) => {
+                    let Some(boot) = boot else {
+                        return EnclaveResponse::Error {
+                            message: "onboarding ingest requires durable production sealed storage"
+                                .into(),
+                        };
+                    };
+                    if let Err(error) = persist_offer_key_required(boot, &derived) {
+                        return EnclaveResponse::Error { message: error };
+                    }
+                    let public = derived.public();
+                    if let Err(rejected) = offer_key.set(derived) {
+                        if offer_key.get().map(DerivedTributeOfferKey::public)
+                            != Some(rejected.public())
+                        {
+                            return EnclaveResponse::Error {
+                                message: "offer key divergence after onboarding persistence".into(),
+                            };
+                        }
+                    }
+                    EnclaveResponse::OfferKeyForRegistryIngested {
+                        tribute_offer_public: public,
+                    }
+                }
+                Err(error) => EnclaveResponse::Error {
+                    message: error.to_string(),
+                },
+            }
+        }
         EnclaveRequest::IngestSealedOfferKeyForRegistry {
             sealed,
             expected_tribute_offer_public,
@@ -1164,7 +1320,8 @@ fn dispatch_with_initialization(
             });
             match result {
                 Ok((secret, public, group_sig, group_public_key)) => {
-                    let derived = DerivedTributeOfferKey::from_parts(secret, public, group_sig);
+                    let derived = DerivedTributeOfferKey::from_parts(secret, public, group_sig)
+                        .with_epochs(0, tribute_offer_epoch);
                     // Write-once: the first ceremony's key is canonical. A re-run
                     // that derives the SAME key is idempotent; a DIVERGENT key is a
                     // determinism fault — reject rather than keep a stale key.
@@ -1190,6 +1347,62 @@ fn dispatch_with_initialization(
             }
         }
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn derive_onboarding_offer_key_v1(
+    keys: &EnclaveKeys,
+    manifest: &EnclaveInitializationManifestV1,
+    artifact: &[u8],
+    expected_intent_hash: alloy_primitives::B256,
+    expected_tribute_offer_public: [u8; 32],
+    expected_key_epoch: u64,
+    expected_tribute_offer_epoch: u64,
+) -> crate::errors::Result<DerivedTributeOfferKey> {
+    let artifact = outbe_tee::dcap_protocol::DcapOnboardingArtifactV1::decode_canonical(artifact)
+        .map_err(|_| crate::errors::TeeError::DecryptFailed)?;
+    let context = artifact.context;
+    let manifest_node_id_hash = manifest
+        .node_id
+        .node_id_hash()
+        .map_err(|error| crate::errors::TeeError::Dkg(error.to_string()))?;
+    let manifest_enclave_id = manifest
+        .enclave_id()
+        .map_err(|error| crate::errors::TeeError::Dkg(error.to_string()))?;
+    if context.chain_id != manifest.chain_id
+        || context.genesis_hash != manifest.genesis_hash
+        || context.intent_hash != expected_intent_hash
+        || context.node_id_hash != manifest_node_id_hash
+        || context.enclave_id != manifest_enclave_id
+        || context.recipient_x25519 != manifest.recipient_x25519
+        || context.recipient_x25519 != keys.tribute_offer_public()
+        || context.tribute_offer_public != expected_tribute_offer_public
+        || context.key_epoch != expected_key_epoch
+        || context.tribute_offer_epoch != expected_tribute_offer_epoch
+    {
+        return Err(crate::errors::TeeError::Dkg(
+            "onboarding artifact does not match initialized identity or finalized Registry context"
+                .into(),
+        ));
+    }
+    let group_sig = crate::crypto::decrypt_onboarding_artifact_v1(
+        keys.tribute_offer_x25519_secret(),
+        &artifact,
+    )?;
+    let (secret, public) = crate::crypto::derive_tribute_offer_secret_from_group_sig(
+        group_sig.as_ref(),
+        alloy_primitives::B256::from(context.chain_id),
+        context.tribute_offer_epoch,
+    )?;
+    if public != context.tribute_offer_public {
+        return Err(crate::errors::TeeError::Dkg(
+            "onboarding artifact derives a different offer public key".into(),
+        ));
+    }
+    Ok(
+        DerivedTributeOfferKey::from_parts(secret, public, group_sig)
+            .with_epochs(context.key_epoch, context.tribute_offer_epoch),
+    )
 }
 
 #[cfg(feature = "mock")]
@@ -1386,6 +1599,115 @@ mod tests {
             .contains("does not match requested intent"));
     }
 
+    #[test]
+    fn transition_quote_requires_resident_offer_key_and_signs_candidate_manifest() {
+        use outbe_primitives::tee_attestation_v1::{
+            AttestationMode, AttestationOperationV1, EnclaveProfile, RegistrationIntentV1,
+            TransitionKeyReadyProofV1,
+        };
+
+        fn quote(report_data: &[u8; 64]) -> Result<Vec<u8>, String> {
+            let mut quote = vec![0_u8; outbe_tee::quote::MIN_QUOTE_LEN];
+            let offset = quote.len() - report_data.len();
+            quote[offset..].copy_from_slice(report_data);
+            Ok(quote)
+        }
+
+        let root = tempfile::tempdir().unwrap();
+        let boot = EnclaveBootConfig::new([0x10; 32], root.path().to_path_buf(), 0);
+        let keys = EnclaveKeys::new([0x31; 32], Some([0x31; 32])).unwrap();
+        let initialization =
+            InitializationState::production(Arc::new(boot.clone()), &keys).unwrap();
+        let challenge = match initialization.challenge_response(&keys).unwrap() {
+            EnclaveResponse::InitializationChallenge { challenge, .. } => challenge,
+            response => panic!("unexpected challenge response: {response:?}"),
+        };
+        let (manifest, node_signature) =
+            signed_initialization_manifest(&keys, challenge, [0x32; 32], EnclaveProfile::Validator);
+        let pending = initialization
+            .prepare(
+                &manifest.encode_canonical().unwrap(),
+                &node_signature,
+                &keys,
+            )
+            .unwrap();
+        initialization.commit(pending, &keys).unwrap();
+        let intent = RegistrationIntentV1 {
+            chain_id: manifest.chain_id,
+            genesis_hash: manifest.genesis_hash,
+            operation: AttestationOperationV1::TransitionEnclaveMeasurement,
+            attestation_mode: AttestationMode::DcapRequired,
+            policy_hash: B256::repeat_byte(0x33),
+            enclave_profile: manifest.enclave_profile,
+            node_id: manifest.node_id.clone(),
+            enclave_id: manifest.enclave_id().unwrap(),
+            binding_id: B256::repeat_byte(0x34),
+            binding_version: 2,
+            registration_version: 1,
+            renewal_nonce: 0,
+            transition_nonce: 5,
+            requested_valid_until: 7_200,
+            recipient_x25519: manifest.recipient_x25519,
+            attestation_ed25519: manifest.attestation_ed25519,
+            noise_responder_x25519: manifest.noise_responder_x25519,
+            node_host_authorization_hash: manifest.node_host_authorization_hash().unwrap(),
+        };
+        let request = EnclaveRequest::GenerateDcapQuote {
+            intent: intent.encode_canonical().unwrap(),
+        };
+        let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
+        let mut dkg = DkgSessionStore::new();
+        let missing = dispatch_with_initialization(
+            request.clone(),
+            &keys,
+            &mut dkg,
+            &offer_key,
+            B256::from(manifest.chain_id),
+            Some(&boot),
+            Some(&initialization),
+            quote,
+        );
+        assert!(matches!(
+            missing,
+            EnclaveResponse::Error { ref message }
+                if message.contains("requires the permanent offer key")
+        ));
+
+        let resident = DerivedTributeOfferKey::from_secret_and_group_sig(
+            Zeroizing::new([0x35; 32]),
+            Zeroizing::new(vec![0x36; 96]),
+        );
+        let resident_public = resident.public();
+        offer_key.set(resident).ok().expect("install offer key");
+        let response = dispatch_with_initialization(
+            request,
+            &keys,
+            &mut dkg,
+            &offer_key,
+            B256::from(manifest.chain_id),
+            Some(&boot),
+            Some(&initialization),
+            quote,
+        );
+        let EnclaveResponse::DcapQuote {
+            transition_key_ready_proof,
+            ..
+        } = response
+        else {
+            panic!("expected transition quote response");
+        };
+        let proof =
+            TransitionKeyReadyProofV1::decode_canonical(&transition_key_ready_proof).unwrap();
+        assert_eq!(
+            proof.candidate_manifest_hash,
+            manifest.authorization_hash().unwrap()
+        );
+        assert_eq!(proof.resident_offer_public, resident_public);
+        proof
+            .verify_for_transition(&intent, resident_public)
+            .unwrap();
+    }
+
     fn spawn_production_connection(
         keys: Arc<EnclaveKeys>,
         boot: Arc<EnclaveBootConfig>,
@@ -1505,6 +1827,7 @@ mod tests {
             intent,
             quote: std::fs::read(format!("{ROOT}quote.bin")).unwrap(),
             components,
+            transition_key_ready_proof: None,
         })
         .encode_canonical()
         .unwrap();
@@ -1956,6 +2279,134 @@ mod tests {
             }
             other => panic!("unexpected ready response: {other:?}"),
         }
+    }
+
+    #[test]
+    fn purpose_bound_target_derivation_requires_exact_manifest_context_and_nonce() {
+        let keys = EnclaveKeys::new([0x35; 32], None).unwrap();
+        let (manifest, _) = signed_initialization_manifest(
+            &keys,
+            [0x36; 32],
+            [0x37; 32],
+            outbe_primitives::tee_attestation_v1::EnclaveProfile::FullNode,
+        );
+        let group_sig = b"deterministic founding group signature";
+        let (offer_secret, offer_public) =
+            crate::crypto::derive_tribute_offer_secret_from_group_sig(
+                group_sig,
+                B256::from(manifest.chain_id),
+                4,
+            )
+            .unwrap();
+        let intent_hash = B256::repeat_byte(0x38);
+        let context = outbe_tee::dcap_protocol::DcapOnboardingContextV1 {
+            chain_id: manifest.chain_id,
+            genesis_hash: manifest.genesis_hash,
+            intent_hash,
+            node_id_hash: manifest.node_id.node_id_hash().unwrap(),
+            enclave_id: manifest.enclave_id().unwrap(),
+            recipient_x25519: manifest.recipient_x25519,
+            tribute_offer_public: offer_public,
+            key_epoch: 3,
+            tribute_offer_epoch: 4,
+        };
+        let artifact =
+            crate::crypto::encrypt_onboarding_artifact_v1(&offer_secret, context, group_sig)
+                .unwrap()
+                .encode_canonical()
+                .unwrap();
+        let derived = derive_onboarding_offer_key_v1(
+            &keys,
+            &manifest,
+            &artifact,
+            intent_hash,
+            offer_public,
+            3,
+            4,
+        )
+        .unwrap();
+        assert_eq!(derived.public(), offer_public);
+        assert_eq!(derived.group_sig(), group_sig);
+
+        let reject_context = |mutated: outbe_tee::dcap_protocol::DcapOnboardingContextV1| {
+            let mut artifact =
+                crate::crypto::encrypt_onboarding_artifact_v1(&offer_secret, context, group_sig)
+                    .unwrap();
+            artifact.context = mutated;
+            let artifact = artifact.encode_canonical().unwrap();
+            assert!(derive_onboarding_offer_key_v1(
+                &keys,
+                &manifest,
+                &artifact,
+                intent_hash,
+                offer_public,
+                3,
+                4,
+            )
+            .is_err());
+        };
+        let mut mutated = context;
+        mutated.chain_id[0] ^= 1;
+        reject_context(mutated);
+        let mut mutated = context;
+        mutated.genesis_hash = B256::repeat_byte(0x40);
+        reject_context(mutated);
+        let mut mutated = context;
+        mutated.intent_hash = B256::repeat_byte(0x41);
+        reject_context(mutated);
+        let mut mutated = context;
+        mutated.node_id_hash = B256::repeat_byte(0x42);
+        reject_context(mutated);
+        let mut mutated = context;
+        mutated.enclave_id = B256::repeat_byte(0x43);
+        reject_context(mutated);
+        let mut mutated = context;
+        mutated.recipient_x25519 = [0x44; 32];
+        reject_context(mutated);
+        let mut mutated = context;
+        mutated.tribute_offer_public = [0x45; 32];
+        reject_context(mutated);
+        let mut mutated = context;
+        mutated.key_epoch = 5;
+        reject_context(mutated);
+        let mut mutated = context;
+        mutated.tribute_offer_epoch = 6;
+        reject_context(mutated);
+
+        assert!(derive_onboarding_offer_key_v1(
+            &keys,
+            &manifest,
+            &artifact,
+            B256::repeat_byte(0xff),
+            offer_public,
+            3,
+            4,
+        )
+        .is_err());
+        assert!(derive_onboarding_offer_key_v1(
+            &keys,
+            &manifest,
+            &artifact,
+            intent_hash,
+            offer_public,
+            3,
+            5,
+        )
+        .is_err());
+
+        let mut tampered = artifact;
+        let nonce_offset = 1 + context.encode_canonical().len();
+        tampered[nonce_offset] ^= 1;
+        assert!(derive_onboarding_offer_key_v1(
+            &keys,
+            &manifest,
+            &tampered,
+            intent_hash,
+            offer_public,
+            3,
+            4,
+        )
+        .is_err());
     }
 
     // ---- Seal / unseal offer secret + share (cfg(test) mock sealing key) ----
@@ -2984,6 +3435,7 @@ mod tests {
             intent,
             quote: vec![0x51],
             components,
+            transition_key_ready_proof: None,
         });
         let submission = persist_replacement_candidate_submission(
             &node_data_dir,

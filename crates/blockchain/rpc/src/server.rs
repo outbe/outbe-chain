@@ -12,6 +12,7 @@ use outbe_compressed_entities::{
 };
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::header::OutbeHeader;
+use outbe_primitives::tee_operator_v1::TeeRenewalScheduleV1;
 use outbe_primitives::{
     consensus::ConsensusExecutionBridge,
     projection::{ProjectionReadinessHandle, ProjectionStatus},
@@ -76,6 +77,13 @@ pub struct OutbeApiHandler<P> {
     is_validator: bool,
     projection_readiness: ProjectionReadinessHandle,
     point_reads: Option<PointReadRuntime>,
+    tee_renewal_schedule: Option<TeeRenewalScheduleConfigV1>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct TeeRenewalScheduleConfigV1 {
+    dkg_prepare_window_blocks: u64,
+    minimum_block_time_millis: u64,
 }
 
 #[derive(Clone)]
@@ -114,6 +122,7 @@ impl<P> OutbeApiHandler<P> {
             is_validator: false,
             projection_readiness,
             point_reads: None,
+            tee_renewal_schedule: None,
         }
     }
 
@@ -129,6 +138,7 @@ impl<P> OutbeApiHandler<P> {
             is_validator: true,
             projection_readiness,
             point_reads: None,
+            tee_renewal_schedule: None,
         }
     }
 
@@ -146,6 +156,7 @@ impl<P> OutbeApiHandler<P> {
             is_validator: false,
             projection_readiness,
             point_reads: None,
+            tee_renewal_schedule: None,
         }
     }
 
@@ -160,6 +171,19 @@ impl<P> OutbeApiHandler<P> {
             tree,
             bodies,
             chain_id,
+        });
+        self
+    }
+
+    #[must_use]
+    pub fn with_tee_renewal_schedule(
+        mut self,
+        dkg_prepare_window_blocks: u64,
+        minimum_block_time_millis: u64,
+    ) -> Self {
+        self.tee_renewal_schedule = Some(TeeRenewalScheduleConfigV1 {
+            dkg_prepare_window_blocks,
+            minimum_block_time_millis,
         });
         self
     }
@@ -411,6 +435,85 @@ where
                 total_staked,
             })
         })
+    }
+
+    async fn tee_renewal_schedule_v1(&self) -> RpcResult<TeeRenewalScheduleV1> {
+        let config = self
+            .tee_renewal_schedule
+            .ok_or_else(|| internal_err("TEE renewal schedule is not configured".to_owned()))?;
+        if config.minimum_block_time_millis == 0 {
+            return Err(internal_err(
+                "TEE renewal schedule has zero minimum block time".to_owned(),
+            ));
+        }
+        let finalized = self
+            .provider
+            .finalized_block_num_hash()
+            .map_err(|error| internal_err(format!("failed to read finalized block: {error}")))?
+            .ok_or_else(|| internal_err("finalized block is unavailable".to_owned()))?;
+        let header = self
+            .provider
+            .sealed_header(finalized.number)
+            .map_err(|error| {
+                internal_err(format!(
+                    "failed to read finalized header {}: {error}",
+                    finalized.number
+                ))
+            })?
+            .ok_or_else(|| internal_err("finalized header is unavailable".to_owned()))?;
+        if header.hash() != finalized.hash {
+            return Err(internal_err(
+                "finalized block marker and canonical header disagree".to_owned(),
+            ));
+        }
+        let state = self
+            .provider
+            .state_by_block_hash(finalized.hash)
+            .map_err(|error| internal_err(format!("failed to read finalized state: {error}")))?;
+        let reader = RethStateReader { state: &state };
+        let mut provider = ReadOnlyStorageProvider::new(reader);
+        let storage = StorageHandle::new(&mut provider);
+        let validators = outbe_validatorset::contract::ValidatorSet::new(storage);
+        let epoch_number = validators
+            .epoch_number
+            .read()
+            .map_err(|error| internal_err(error.to_string()))?;
+        if epoch_number > U256::from(u64::MAX) {
+            return Err(internal_err(
+                "finalized epoch number exceeds u64".to_owned(),
+            ));
+        }
+        let epoch_start_height = validators
+            .epoch_start_block
+            .read()
+            .map_err(|error| internal_err(error.to_string()))?;
+        let epoch_length_blocks = validators
+            .config_epoch_length_blocks
+            .read()
+            .map_err(|error| internal_err(error.to_string()))?;
+        if epoch_length_blocks == 0 {
+            return Err(internal_err("finalized epoch length is zero".to_owned()));
+        }
+        let planned_activation_height = epoch_start_height
+            .checked_add(u64::from(epoch_length_blocks))
+            .ok_or_else(|| internal_err("planned activation height overflow".to_owned()))?;
+        let prepare = config
+            .dkg_prepare_window_blocks
+            .min(u64::from(epoch_length_blocks));
+        TeeRenewalScheduleV1 {
+            finalized_height: finalized.number,
+            finalized_hash: finalized.hash,
+            finalized_timestamp: header.timestamp(),
+            epoch_number: epoch_number.to::<u64>(),
+            epoch_start_height,
+            epoch_length_blocks,
+            next_freeze_height: planned_activation_height.saturating_sub(prepare),
+            planned_activation_height,
+            dkg_prepare_window_blocks: prepare,
+            minimum_block_time_millis: config.minimum_block_time_millis,
+        }
+        .validate()
+        .map_err(|error| internal_err(error.to_owned()))
     }
 
     async fn get_stake(&self, address: Address) -> RpcResult<U256> {

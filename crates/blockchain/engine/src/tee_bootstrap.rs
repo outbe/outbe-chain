@@ -366,6 +366,7 @@ pub fn build_local_tee_bootstrap_submission_v2(
                     intent,
                     quote: generated.quote_body,
                     components,
+                    transition_key_ready_proof: generated.transition_key_ready_proof,
                 }),
                 enclave_signature,
             )

@@ -177,11 +177,11 @@ impl Localnet {
 
     /// Five-second RPC polls allowed for block-1 TEE bootstrap. Consecutive
     /// four-enclave real-SGX evidence exceeded the production-oriented node and
-    /// per-request deadlines; keep the harness outside its 180-second fail-fast
-    /// deadline so it observes the node's verdict.
+    /// per-request deadlines; keep the harness outside its five-minute
+    /// co-located-EPC allowance so it observes the node's verdict.
     pub fn tee_bootstrap_wait_attempts(&self) -> u32 {
         if matches!(self.cfg.tee_mode, crate::env::TeeMode::Real) {
-            48
+            72
         } else {
             18
         }
@@ -384,7 +384,7 @@ impl Localnet {
 /// explicit operator-selected/default deadline.
 fn extend_real_sgx_process_environment(mode: crate::env::TeeMode, cmd: &mut Command) {
     if matches!(mode, crate::env::TeeMode::Real) {
-        cmd.env("OUTBE_TEE_IO_TIMEOUT_SECS", "120");
+        cmd.env("OUTBE_TEE_IO_TIMEOUT_SECS", "300");
     }
 }
 
@@ -467,7 +467,7 @@ mod tests {
     fn co_located_hardware_lane_alone_widens_enclave_io_timeout() {
         use crate::env::TeeMode;
 
-        assert_eq!(configured_timeout(TeeMode::Real).as_deref(), Some("120"));
+        assert_eq!(configured_timeout(TeeMode::Real).as_deref(), Some("300"));
         assert_eq!(configured_timeout(TeeMode::Mock), None);
         assert_eq!(configured_timeout(TeeMode::GramineDirect), None);
     }

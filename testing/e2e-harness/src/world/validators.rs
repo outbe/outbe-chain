@@ -90,6 +90,11 @@ impl Validators {
         self.cfg.http_port(i)
     }
 
+    /// Chain-specific node data directory for lifecycle evidence probes.
+    pub fn data_dir(&self, i: usize) -> PathBuf {
+        self.cfg.validator_dir(i).join("data")
+    }
+
     /// The joiner's index (one past the committee, e.g. `validator-4` for N=4).
     pub fn joiner_index(&self) -> usize {
         self.size

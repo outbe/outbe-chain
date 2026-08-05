@@ -21,7 +21,7 @@ holder, client-side) can read them.
   `pledgeHandle`; `unpledgeGratis(amount, handle, mac, opNonce)`;
   `mineCoen(amount, mac, opNonce)`. `mac = HMAC(modifyKey, op ‖ amount ‖ opNonce ‖
   chainId)` and `opNonce` must equal `gratis.opNonceOf(account)`.
-- **Credis.** `requestCredis(asset, bundleAccount, pledgeHandle, spendAuth)` — the
+- **Credis.** `requestCredis(asset, smartAccount, pledgeHandle, spendAuth)` — the
   user hands the CCA a `pledgeSecret` (`HMAC(modifyKey, handle)`); the CCA binds it
   to the bundle with `spendAuth = HMAC(pledgeSecret, "credis-bind" ‖ bundle)`.
   `anadosis(positionId)` pays one installment and **automatically** releases 1/N of
@@ -82,7 +82,7 @@ src/
 ├── confidential.ts             Client-side TEE crypto (key fetch, decrypt, MAC)
 ├── 1-pledge-gratis.ts          User pledges Gratis (amount + modify-key MAC) → pledge handle
 ├── 1.1-unpledge-gratis.ts      Direct reclaim of an UNSPENT pledge (e.g. credis rejected)
-├── 2-top-up-bundle-account.ts  Deploy bundle account; transfer ERC20 into it
+├── 2-top-up-bundle-account.ts  Deploy smart account; transfer ERC20 into it
 ├── 3-request-credis.ts         CCA calls requestCredis(handle, spendAuth); vault funds enter bundle balance
 ├── 4-cca-simulate-purchase.ts  CCA uses bundle funds via per-token permission
 ├── 4.1-user-sa-withdraw.ts     User withdraws their free (non-bundled) balance
@@ -190,7 +190,7 @@ npx tsx src/0-setup-gratis.ts                          # converts the whole gem 
 npx tsx src/1-pledge-gratis.ts                          # default amount/commitment
 npx tsx src/1-pledge-gratis.ts outbe-peira 77000000000000000000 0xabc...   # amount + commitment
 
-# Deploy bundle account (if needed) and fund with 1,000 USD
+# Deploy smart account (if needed) and fund with 1,000 USD
 npx tsx src/2-top-up-smart-account.ts
 
 # CCA requests credis using a prior pledge commitment

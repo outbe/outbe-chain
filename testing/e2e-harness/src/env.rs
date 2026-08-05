@@ -372,6 +372,12 @@ pub fn unmet(feature: &Feature, scenario: &Scenario, env: &Environment) -> Optio
             env.tee_mode.evidence_name()
         ));
     }
+    if has_tag(feature, scenario, "real-sgx") && !matches!(env.tee_mode, TeeMode::Real) {
+        return Some(format!(
+            "needs SGX hardware and DcapRequired (@real-sgx), but --tee {}",
+            env.tee_mode.evidence_name()
+        ));
+    }
     if has_tag(feature, scenario, "sudo") && !env.sudo {
         return Some("needs sudo (@sudo), but --no-sudo".to_string());
     }

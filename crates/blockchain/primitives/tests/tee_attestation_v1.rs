@@ -9,8 +9,9 @@ use outbe_primitives::tee_attestation_v1::{
     EnclaveProfile, NodeHostAuthorizationWitnessV1, NodeIdV1, PlatformTcbStatusSetV1,
     QvlTcbStatusV1, RegistrationIntentV1, RegistryMutatorV1, ResourceScheduleV1,
     SystemGasScheduleV1, TeeBootstrapGasInputV1, TeeMeasurementRuleV1, TeePolicyScheduleEntryV1,
-    TeePolicyScheduleV1, TeePolicyV1, TeeRegistryGasScheduleV1, ACTIVE_TEE_ATTESTATION_V1_MANIFEST,
-    MAX_ACTIVE_MEASUREMENT_RULES, MAX_ATTESTATION_EVIDENCE_BYTES, MAX_COLLATERAL_COMPONENT_BYTES,
+    TeePolicyScheduleV1, TeePolicyV1, TeeRegistryGasScheduleV1, TransitionKeyReadyProofV1,
+    ACTIVE_TEE_ATTESTATION_V1_MANIFEST, MAX_ACTIVE_MEASUREMENT_RULES,
+    MAX_ATTESTATION_EVIDENCE_BYTES, MAX_COLLATERAL_COMPONENT_BYTES,
     MAX_EVIDENCE_CALL_FRAMING_BYTES, MAX_NODE_HOST_AUTHORIZATION_WITNESS_BYTES, MAX_QUOTE_BYTES,
     MAX_TEE_BOOTSTRAP_BYTES,
 };
@@ -649,6 +650,7 @@ fn dcap_evidence_with_component_bytes(last_component_len: usize) -> AttestationE
         intent,
         quote: vec![0x61],
         components,
+        transition_key_ready_proof: None,
     })
 }
 
@@ -694,6 +696,105 @@ fn dcap_evidence_roundtrips_and_rejects_duplicate_unknown_and_trailing_component
         AttestationEvidenceV1::decode_canonical(&trailing).unwrap_err(),
         CodecError::TrailingBytes(1)
     );
+}
+
+#[test]
+fn transition_key_ready_proof_roundtrips_and_binds_exact_transition() {
+    let attestation = ed25519_dalek::SigningKey::from_bytes(&[0x71; 32]);
+    let mut intent = validator_intent(B256::repeat_byte(0x11));
+    intent.chain_id = [0x10; 32];
+    intent.operation = AttestationOperationV1::TransitionEnclaveMeasurement;
+    intent.registration_version = 1;
+    intent.transition_nonce = 9;
+    intent.attestation_ed25519 = attestation.verifying_key().to_bytes();
+
+    let mut proof = TransitionKeyReadyProofV1 {
+        chain_id: intent.chain_id,
+        genesis_hash: intent.genesis_hash,
+        transition_intent_hash: intent.intent_hash().unwrap(),
+        candidate_manifest_hash: B256::repeat_byte(0x72),
+        transition_nonce: intent.transition_nonce,
+        resident_offer_public: [0x73; 32],
+        candidate_attestation_signature: [0; 64],
+    };
+    proof.candidate_attestation_signature = attestation
+        .sign(proof.signing_hash().unwrap().as_slice())
+        .to_bytes();
+
+    let encoded = proof.encode_canonical().unwrap();
+    assert_eq!(encoded.len(), TransitionKeyReadyProofV1::CANONICAL_LEN);
+    assert_eq!(
+        TransitionKeyReadyProofV1::decode_canonical(&encoded).unwrap(),
+        proof
+    );
+    proof.verify_for_transition(&intent, [0x73; 32]).unwrap();
+
+    let mut wrong_chain = intent.clone();
+    wrong_chain.chain_id = [0x74; 32];
+    assert!(proof
+        .verify_for_transition(&wrong_chain, [0x73; 32])
+        .is_err());
+    let mut wrong_nonce = intent.clone();
+    wrong_nonce.transition_nonce += 1;
+    assert!(proof
+        .verify_for_transition(&wrong_nonce, [0x73; 32])
+        .is_err());
+    assert!(proof.verify_for_transition(&intent, [0x75; 32]).is_err());
+    let mut wrong_manifest = proof;
+    wrong_manifest.candidate_manifest_hash = B256::repeat_byte(0x76);
+    assert!(wrong_manifest
+        .verify_for_transition(&intent, [0x73; 32])
+        .is_err());
+    let mut wrong_signature = proof;
+    wrong_signature.candidate_attestation_signature[0] ^= 1;
+    assert!(wrong_signature
+        .verify_for_transition(&intent, [0x73; 32])
+        .is_err());
+}
+
+#[test]
+fn dcap_evidence_requires_transition_proof_only_for_transition() {
+    let attestation = ed25519_dalek::SigningKey::from_bytes(&[0x77; 32]);
+    let mut transition = match dcap_evidence_with_component_bytes(1) {
+        AttestationEvidenceV1::Dcap(value) => value,
+        AttestationEvidenceV1::GramineDirectDev(_) => unreachable!(),
+    };
+    transition.intent.chain_id = [0x10; 32];
+    transition.intent.operation = AttestationOperationV1::TransitionEnclaveMeasurement;
+    transition.intent.registration_version = 1;
+    transition.intent.transition_nonce = 7;
+    transition.intent.attestation_ed25519 = attestation.verifying_key().to_bytes();
+    assert!(AttestationEvidenceV1::Dcap(transition.clone())
+        .encode_canonical()
+        .is_err());
+
+    let mut proof = TransitionKeyReadyProofV1 {
+        chain_id: transition.intent.chain_id,
+        genesis_hash: transition.intent.genesis_hash,
+        transition_intent_hash: transition.intent.intent_hash().unwrap(),
+        candidate_manifest_hash: B256::repeat_byte(0x78),
+        transition_nonce: transition.intent.transition_nonce,
+        resident_offer_public: [0x79; 32],
+        candidate_attestation_signature: [0; 64],
+    };
+    proof.candidate_attestation_signature = attestation
+        .sign(proof.signing_hash().unwrap().as_slice())
+        .to_bytes();
+    transition.transition_key_ready_proof = Some(proof);
+    let encoded = AttestationEvidenceV1::Dcap(transition.clone())
+        .encode_canonical()
+        .unwrap();
+    assert_eq!(
+        AttestationEvidenceV1::decode_canonical(&encoded).unwrap(),
+        AttestationEvidenceV1::Dcap(transition.clone())
+    );
+
+    transition.intent.operation = AttestationOperationV1::RegisterEnclave;
+    transition.intent.registration_version = 0;
+    transition.intent.transition_nonce = 0;
+    assert!(AttestationEvidenceV1::Dcap(transition)
+        .encode_canonical()
+        .is_err());
 }
 
 #[test]

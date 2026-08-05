@@ -9,6 +9,11 @@ use alloy_primitives::Address;
 use commonware_cryptography::bls12381;
 use commonware_p2p::Address as CommonwareAddress;
 
+/// Consensus cap for canonical TEE-expiry exclusions carried by one DKG
+/// boundary. This equals the protocol validator cap and is enforced before any
+/// artifact is constructed or decoded.
+pub const MAX_TEE_EXPIRED_TARGET_EXCLUSIONS: usize = 256;
+
 /// Loaded validator set.
 #[derive(Debug, Clone)]
 pub struct ValidatorSet {

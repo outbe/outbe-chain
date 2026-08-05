@@ -24,6 +24,7 @@ outbe-consensus.workspace = true
 outbe-engine.workspace = true
 outbe-metadosis.workspace = true
 outbe-primitives.workspace = true
+outbe-operator.workspace = true
 outbe-tee.workspace = true
 outbe-zkproof.workspace = true
 
@@ -32,6 +33,7 @@ reth-chainspec.workspace = true
 reth-cli.workspace = true
 reth-node-builder.workspace = true
 reth-node-core.workspace = true
+reth-provider.workspace = true
 reth-rpc-server-types.workspace = true
 
 commonware-codec.workspace = true

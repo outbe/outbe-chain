@@ -317,7 +317,7 @@ description = "Run all Rust/Cucumber e2e features on real SGX hardware"
 run = """
 cargo build -p outbe-chain --bin outbe-chain
 cargo build --bin outbe-cli --bin outbe-keygen
-cargo build --release --bin outbe-tee-enclave
+cargo build --release --bin outbe-tee-enclave --features native-dcap
 OUTBE_TEE_IO_TIMEOUT_SECS=120 cargo run -p outbe-e2e-harness --bin outbe-e2e -- --tee real --validators 4 --all "$@"
 """
 

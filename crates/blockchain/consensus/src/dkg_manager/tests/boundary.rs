@@ -31,6 +31,7 @@ async fn boundary_requirement_is_derived_from_parent_snapshot_not_local_served_f
         vrf_material_version: 0,
         is_validator_set_change: true,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
     let parent =
@@ -78,6 +79,7 @@ async fn boundary_requirement_uses_marshal_ancestry_after_block_cache_eviction()
         vrf_material_version: 1,
         is_validator_set_change: false,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
     let mut parent_hash = B256::ZERO;
@@ -118,6 +120,7 @@ async fn boundary_requirement_finds_deep_committed_boundary() {
         vrf_material_version: 1,
         is_validator_set_change: false,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
     let mut parent_hash = B256::ZERO;
@@ -178,6 +181,7 @@ async fn boundary_requirement_finds_boundary_committed_at_late_activation_height
         vrf_material_version: 1,
         is_validator_set_change: false,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
     let mut parent_hash = B256::ZERO;
@@ -226,6 +230,7 @@ async fn boundary_requirement_uses_hash_lookup_when_height_lookup_is_stale() {
         vrf_material_version: 1,
         is_validator_set_change: false,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
     let stale_parent = block_with_number_and_parent(119, B256::from([0x11; 32]));
@@ -276,6 +281,7 @@ async fn boundary_requirement_rejects_missing_canonical_parent_after_stale_heigh
         vrf_material_version: 1,
         is_validator_set_change: false,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
     let stale_parent = block_with_number_and_parent(119, B256::from([0x11; 32]));
@@ -306,6 +312,7 @@ async fn boundary_requirement_reports_backfill_not_ready() {
         vrf_material_version: 1,
         is_validator_set_change: false,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
     let parent = block_with_number_and_parent(120, B256::from([0x33; 32]));
@@ -335,6 +342,7 @@ async fn boundary_requirement_rejects_same_epoch_conflict() {
         vrf_material_version: 1,
         is_validator_set_change: false,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
     let mut conflicting = artifact.clone();

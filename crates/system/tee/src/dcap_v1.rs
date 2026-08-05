@@ -177,6 +177,36 @@ pub fn verify_dcap_evidence(
     })
 }
 
+/// Signed Intel collateral time bounds needed by the host renewal scheduler.
+///
+/// This is deliberately narrower than [`verify_dcap_evidence`]: it validates
+/// the canonical TCB-info and QE-identity envelopes under the active policy and
+/// returns only their intersection. Quote acceptance remains consensus work in
+/// the enclave QVL path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DcapCollateralValidityWindowV1 {
+    pub issue_floor: u64,
+    pub expiration_ceiling: u64,
+}
+
+pub fn dcap_collateral_validity_window_v1(
+    evidence: &DcapEvidenceV1,
+    policy: &TeePolicyV1,
+) -> Result<DcapCollateralValidityWindowV1, DcapRejectCodeV1> {
+    AttestationEvidenceV1::Dcap(evidence.clone())
+        .encode_canonical()
+        .map_err(|_| DcapRejectCodeV1::EvidenceNonCanonical)?;
+    policy
+        .encode_canonical()
+        .map_err(|_| DcapRejectCodeV1::PolicyNonCanonical)?;
+    let tcb_info = parse_signed_tcb_info(component(evidence, 4)?, policy)?;
+    let qe_identity = parse_signed_qe_identity(component(evidence, 6)?, policy)?;
+    Ok(DcapCollateralValidityWindowV1 {
+        issue_floor: tcb_info.issue_date.max(qe_identity.issue_date),
+        expiration_ceiling: tcb_info.next_update.min(qe_identity.next_update),
+    })
+}
+
 #[derive(Clone, Copy)]
 struct SignedCollateralClaims {
     tee_type: u32,

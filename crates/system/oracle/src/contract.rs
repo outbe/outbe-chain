@@ -179,8 +179,8 @@ pub struct OracleContract {
     // so every day <= this watermark is considered finalized.
     pub utc_day_vwap_last_finalized: Slot<u32>,
 
-    // Reference-currency refinancing rates
-    pub reference_refinancing_rate: Mapping<u16, U256>,
+    // Reference-currency currency rates
+    pub reference_currency_rate: Mapping<u16, U256>,
 
     // === OCOMP PoC pre-admission projection ===
     // These trailing fields are inert until the fresh-devnet fork handler sets

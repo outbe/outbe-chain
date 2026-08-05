@@ -14,6 +14,7 @@ pub mod common;
 pub mod governance;
 pub mod update;
 
+pub mod dcap_onboarding;
 pub mod dkg;
 pub mod downtime;
 pub mod follower;
