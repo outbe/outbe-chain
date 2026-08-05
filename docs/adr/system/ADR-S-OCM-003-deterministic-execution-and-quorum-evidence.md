@@ -275,9 +275,12 @@ not stop consensus or FullNode execution.
 On an OCOMP-enabled chain, validator startup is fail-closed unless the complete
 validator-only OCOMP profile is present: both role sockets and peer UIDs, the
 pinned protocol-bundle hash, a nonzero boot nonce, and the node-owned OCOMP key.
-The participant index and committee are never configured. A FullNode starts
-without this profile or key and has no result-voting capability; supplying the
-validator-only profile without `--validator` is a startup error.
+The participant index and committee are never configured. A certified FullNode
+requires the same complete local-control profile but omits `--ocomp.key`; giving
+it a result-signing key is a startup error. Its `outbe-ocomp follower` process
+uses those control endpoints for snapshot discovery, independent execution and
+durable result publication, but cannot open the attestation or vote-submission
+path.
 
 ### Validator-authenticated system result votes
 
@@ -405,14 +408,28 @@ authority.
 
 ### FullNode independent execution
 
-An OCOMP-enabled FullNode has no voting key, delegate or vote capability. It
-still consumes the finalized intent and authenticated source bodies/proofs,
-executes the same canonical Lysis program, materializes local canonical result
-chunks, and compares its digest, roots and manifest with the quorum result
-before activation. Missing authenticated input, local computation failure or
-any mismatch is fail-closed and observable. Restart restores the follower
-checkpoint and never substitutes ordinary EVM replay for the independent
-off-chain calculation.
+An OCOMP-enabled FullNode has no voting key, delegate or vote capability, but it
+does run the complete keyless OCOMP control plane. Certified finality is rooted
+in the genesis ValidatorSet. On restart the follower rebuilds every later epoch
+verifier only from the previous epoch's finalized `CommitteePreAnnounce` before
+it processes current-epoch finality; a current boundary cannot certify itself.
+
+For every finalized height the node binds the exact finalized block and
+historical ValidatorSet snapshot to a durable parent-proof record, runs the
+normal retention and snapshot-arming path, and exposes the job to
+`outbe-ocomp follower`. That process reuses `SupervisorJobRunnerV1`: it consumes
+the authenticated source bodies/proofs, executes the same canonical Lysis
+program as validators and materializes the canonical chunks. Instead of asking
+for attestation or submitting a vote, it commits the exact canonical result to
+the node-owned immutable local-result store.
+
+Ordinary votes, including minority and conflicting votes, replay normally. Only
+the first vote that would form quorum reaches the local activation gate. If the
+FullNode calculation is not ready, execution waits for its durable publication;
+an exact result continues, while mismatch, corrupt storage or unavailable
+authenticated input is fail-closed and observable before terminal/result state
+is applied. Restart reopens the durable store and follower checkpoints; ordinary
+EVM replay is never substituted for the independent calculation.
 
 ### Quorum-applied result evidence
 

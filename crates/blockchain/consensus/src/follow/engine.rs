@@ -21,10 +21,11 @@
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
 
+use alloy_consensus::BlockHeader as _;
 use commonware_consensus::marshal::resolver::handler;
-use commonware_consensus::types::{Epoch, Epocher};
+use commonware_consensus::types::{Epoch, Epocher, Height};
 use commonware_runtime::{BufferPooler, Clock, Metrics, Spawner, Storage};
-use eyre::{eyre, Result};
+use eyre::{ensure, eyre, Result};
 use rand::{CryptoRng, RngCore};
 use tracing::info;
 
@@ -114,8 +115,16 @@ where
         mailbox_size,
     } = config;
 
-    // ── 1. Bootstrap the committee chain at the anchor epoch ────────────────
-    bootstrap_anchor(&chain, &upstream, &epocher, anchor_epoch).await?;
+    // ── 1. Rebuild the authenticated committee chain through the durable
+    //        marshal floor before any new certificate is admitted. ──────────
+    let processed_height = marshal_mailbox
+        .get_processed_height()
+        .await
+        .map_or(0, |height| height.get());
+    let recovered_epoch = epocher
+        .containing(Height::new(processed_height))
+        .map_or(anchor_epoch, |info| info.epoch());
+    prepare_committee_chain(&chain, &upstream, &epocher, anchor_epoch, recovered_epoch).await?;
 
     // ── 2. Build the marshal resolver handler pair + follow resolver ────────
     let (handler_receiver, handler): (handler::Receiver<Digest>, handler::Handler<Digest>) =
@@ -170,6 +179,97 @@ where
 /// boundary outcome (for epoch 0 that is BLOCK 1, since genesis `extra_data` is
 /// empty — but the epocher's `first(0)` resolves to the boundary-carrying block
 /// the same way the live stack commits it).
+/// Rebuild the authenticated follower committee chain from the trusted anchor
+/// through `target_epoch`.
+///
+/// Epoch 0 is anchored by the genesis ValidatorSet and block 1's boundary. Every
+/// later epoch is learned only from the previous epoch's last finalized block,
+/// whose `CommitteePreAnnounce` is verified by the already-trusted previous
+/// committee before it is installed. This is the restart path as well as the
+/// live-driver path: a current epoch's self-finalized boundary is never accepted
+/// as its own trust root.
+pub async fn prepare_committee_chain<F>(
+    chain: &Arc<Mutex<CommitteeChain>>,
+    source: &F,
+    epocher: &FollowerEpocher,
+    anchor_epoch: Epoch,
+    target_epoch: Epoch,
+) -> Result<()>
+where
+    F: FinalizedSource,
+{
+    ensure!(
+        target_epoch >= anchor_epoch,
+        "target epoch {} precedes follower anchor epoch {}",
+        target_epoch.get(),
+        anchor_epoch.get(),
+    );
+    bootstrap_anchor(chain, source, epocher, anchor_epoch).await?;
+
+    let mut epoch = Epoch::new(anchor_epoch.get().saturating_add(1));
+    while epoch <= target_epoch {
+        let already_registered = chain
+            .lock()
+            .expect("committee chain mutex poisoned")
+            .highest_registered()
+            .is_some_and(|highest| highest >= epoch);
+        if already_registered {
+            epoch = Epoch::new(epoch.get().saturating_add(1));
+            continue;
+        }
+
+        let previous_epoch = Epoch::new(epoch.get() - 1);
+        let carrier_height = epocher.last(previous_epoch).ok_or_else(|| {
+            eyre!(
+                "epocher has no last height for prior epoch {} while rebuilding epoch {}",
+                previous_epoch.get(),
+                epoch.get(),
+            )
+        })?;
+        let certified = source
+            .get_finalization(carrier_height)
+            .await
+            .ok_or_else(|| {
+                eyre!(
+                "finalized CommitteePreAnnounce carrier is unavailable at height {} for epoch {}",
+                carrier_height.get(),
+                epoch.get(),
+            )
+            })?;
+        ensure!(
+            certified.block.number() == carrier_height.get(),
+            "committee pre-announce carrier reports height {}, expected {}",
+            certified.block.number(),
+            carrier_height.get(),
+        );
+        ensure!(
+            certified.finalization.proposal.payload == certified.block.digest(),
+            "committee pre-announce finalization payload differs from block at height {}",
+            carrier_height.get(),
+        );
+        ensure!(
+            certified.finalization.proposal.round.epoch() == previous_epoch,
+            "committee pre-announce for epoch {} is not finalized by prior epoch {}",
+            epoch.get(),
+            previous_epoch.get(),
+        );
+
+        let registered = {
+            let mut guard = chain.lock().expect("committee chain mutex poisoned");
+            guard.verify_finalization(previous_epoch, &certified.finalization)?;
+            guard.advance_from_block_extra_data(certified.block.header().extra_data().as_ref())?
+        };
+        ensure!(
+            registered == Some(epoch),
+            "prior-epoch-finalized block {} did not carry the required CommitteePreAnnounce for epoch {}",
+            carrier_height.get(),
+            epoch.get(),
+        );
+        epoch = Epoch::new(epoch.get().saturating_add(1));
+    }
+    Ok(())
+}
+
 async fn bootstrap_anchor<F>(
     chain: &Arc<Mutex<CommitteeChain>>,
     upstream: &F,
@@ -180,6 +280,15 @@ where
     F: FinalizedSource,
 {
     use alloy_consensus::BlockHeader as _;
+
+    if chain
+        .lock()
+        .expect("committee chain mutex poisoned")
+        .highest_registered()
+        .is_some_and(|highest| highest >= anchor_epoch)
+    {
+        return Ok(());
+    }
 
     let first = epocher
         .first(anchor_epoch)
@@ -202,17 +311,32 @@ where
         )
     })?;
 
+    ensure!(
+        certified.block.number() == candidate.get(),
+        "anchor boundary block reports height {}, expected {}",
+        certified.block.number(),
+        candidate.get(),
+    );
+    ensure!(
+        certified.finalization.proposal.payload == certified.block.digest(),
+        "anchor finalization payload differs from boundary block at height {}",
+        candidate.get(),
+    );
+
     let extra = certified.block.header().extra_data().clone();
-    let registered = chain
-        .lock()
-        .expect("committee chain mutex poisoned")
-        .advance_from_block_extra_data(extra.as_ref())?
-        .ok_or_else(|| {
-            eyre!(
-                "anchor epoch {anchor_epoch}'s first block at height {candidate} carried no \
+    let registered = {
+        let mut guard = chain.lock().expect("committee chain mutex poisoned");
+        let registered = guard
+            .advance_from_block_extra_data(extra.as_ref())?
+            .ok_or_else(|| {
+                eyre!(
+                    "anchor epoch {anchor_epoch}'s first block at height {candidate} carried no \
                  boundary outcome; cannot establish the trust root"
-            )
-        })?;
+                )
+            })?;
+        guard.verify_finalization(anchor_epoch, &certified.finalization)?;
+        registered
+    };
 
     info!(
         anchor_epoch = anchor_epoch.get(),

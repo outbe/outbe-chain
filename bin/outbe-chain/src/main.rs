@@ -746,6 +746,7 @@ fn run_node() -> eyre::Result<()> {
         Arc<dyn FinalizedCeCommitter>,
         Arc<dyn CeStartupRecovery>,
         Arc<CompressedTreeService>,
+        Arc<outbe_node::ocomp::local_result::LocalLysisResultStore>,
     )>();
     let (consensus_dead_tx, mut consensus_dead_rx) = oneshot::channel::<()>();
     let shutdown_token = tokio_util::sync::CancellationToken::new();
@@ -762,6 +763,7 @@ fn run_node() -> eyre::Result<()> {
             finalized_ce_committer,
             ce_startup_recovery,
             compressed_tree_service,
+            local_lysis_results,
         ) = match node_rx.blocking_recv() {
             Ok(v) => v,
             Err(_) => return Ok(()),
@@ -850,6 +852,7 @@ fn run_node() -> eyre::Result<()> {
                         finalized_ce_committer,
                         ce_startup_recovery,
                         compressed_tree_service,
+                        local_lysis_results,
                     ),
                 ) => {
                     if let Err(e) = &result {
@@ -1404,6 +1407,7 @@ fn run_node() -> eyre::Result<()> {
                 finalized_ce_committer,
                 ce_startup_recovery,
                 compressed_tree_service,
+                local_lysis_results,
             ));
 
             tokio::select! {

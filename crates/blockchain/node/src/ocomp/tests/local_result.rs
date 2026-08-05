@@ -1,5 +1,7 @@
 use alloy_primitives::B256;
+use outbe_metadosis::api::OcompLocalResultAuthority;
 use outbe_ocomp_protocol::{profile::poc_schema_limits, result::LysisResultV1};
+use std::{sync::Arc, time::Duration};
 
 use crate::ocomp::local_result::{LocalLysisResultError, LocalLysisResultStore};
 
@@ -59,4 +61,23 @@ fn local_result_store_fails_closed_for_missing_mismatch_and_conflict() {
         store.verify_exact(job_id, &different),
         Err(LocalLysisResultError::Mismatch { .. })
     ));
+}
+
+#[test]
+fn fullnode_waits_for_exact_local_result_and_wakes_after_durable_commit() {
+    let root = tempfile::tempdir().unwrap();
+    let store_root = root.path().join("local-results");
+    let limits = poc_schema_limits();
+    let (job_id, result, encoded) = canonical_result();
+    let store = Arc::new(LocalLysisResultStore::open(&store_root, limits).unwrap());
+
+    let writer = store.clone();
+    let join = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(20));
+        writer.commit(job_id, &encoded).unwrap();
+    });
+
+    OcompLocalResultAuthority::verify_exact(store.as_ref(), job_id, &result, &limits)
+        .expect("the production q-forming authority must wait for the exact durable commit");
+    join.join().unwrap();
 }

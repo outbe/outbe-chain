@@ -94,6 +94,13 @@ outbe-chain node \
   --p2p-secret-key "$RETH_P2P_SECRET" \
   --bootnodes "<enode URLs>" \
   --upstream http://<selected-certified-upstream>:8545 \
+  --consensus.storage-dir /var/lib/outbe/consensus \
+  --ocomp.supervisor-socket /opt/outbe-chain/ocomp/run/node-supervisor.sock \
+  --ocomp.snapshot-exporter-socket /opt/outbe-chain/ocomp/run/node-snapshot-exporter.sock \
+  --ocomp.supervisor-uid "$(id -u outbe-ocomp-supervisor)" \
+  --ocomp.snapshot-exporter-uid "$(id -u outbe-ocomp-export)" \
+  --ocomp.protocol-bundle-hash <0x-protocol-bundle-hash> \
+  --ocomp.boot-nonce <nonzero-0x32-byte-boot-nonce> \
   --http --http.addr 127.0.0.1 --http.port 8545 --http.api eth,net,web3,outbe \
   --tee-enclave-socket 127.0.0.1:7000
 ```
@@ -101,6 +108,13 @@ outbe-chain node \
 `tee join` must finish successfully before the FullNode process starts. At
 startup the node reads the upstream canonical 32-byte offer key, requires a
 ready nonzero resident key and compares them exactly before launching Reth.
+The six `--ocomp.*` control arguments are an all-or-nothing FullNode profile;
+do not pass `--ocomp.key`. Run the normal SnapshotExporter/worker services and
+`outbe-ocomp follower` with the same `OCOMP_CHAIN_ID`, `OCOMP_GENESIS_HASH`,
+`OCOMP_BOOT_NONCE`, `OCOMP_PROTOCOL_BUNDLE_HASH`, `OUTBE_OCOMP_BASE_PATH` and
+`OUTBE_OCOMP_NODE_USER` deployment identity. The follower performs Lysis and
+durably publishes the exact local result, but it never reads an OCOMP signing
+key or `OUTBE_OCOMP_RPC_URL` and never submits a vote.
 
 > **RPC exposure.** Examples bind RPC to `127.0.0.1` and enable only the
 > `eth,net,web3,outbe` modules. Never add `admin` or `debug` to `--http.api` on a
@@ -110,8 +124,9 @@ ready nonzero resident key and compares them exactly before launching Reth.
 > `--consensus.listen-addr 0.0.0.0:30400` P2P port below is the consensus gossip
 > listener and is meant to be reachable by peers.
 
-Check it with `outbe-cli monitor health` / `cast block finalized`. A full node’s
-`outbe_consensusStatus` reports zeros — those fields are validator-only.
+Check it with `outbe-cli monitor health` / `cast block finalized`. A certified
+FullNode's `outbe_consensusStatus.lastFinalizedBlock` advances only after the
+exact parent proof, OCOMP retention and snapshot arming have all succeeded.
 
 If this FullNode later becomes a validator, keep the synchronized data directory,
 stop it, and restart it with the complete validator profile from sections 2–3.
@@ -150,8 +165,9 @@ outbe-keygen ocomp --output-dir /var/lib/outbe/ocomp \
 
 This writes `ocomp-key-v1.hex` and the public
 `ocomp-registration-v1.ocb1`. A validator startup without the OCOMP key and
-complete local-control configuration is rejected. A FullNode needs neither and
-must not be given the validator OCOMP configuration.
+complete local-control configuration is rejected. A FullNode needs no OCOMP
+signing key or registration, but it does require the complete keyless
+local-control profile described in section 1.
 
 ### 2.2 Register, announce P2P, and install the offer key once
 
@@ -431,10 +447,10 @@ fallback for production.
 | `--consensus.public-polynomial` / `--consensus.dkg-output` | public DKG artifacts to follow finality before holding a share                                                                                  |
 | `--consensus.keys-dir`                                     | where the DKG share/polynomial/output are persisted (default `<datadir>/keys`)                                                                  |
 | `--consensus.listen-addr` / `--consensus.peers`            | consensus P2P listen address / bootstrap hint `<bls_pubkey>@<host:port>`                                                                        |
-| `--ocomp.supervisor-socket` / `--ocomp.snapshot-exporter-socket` | validator-only local Supervisor and SnapshotExporter endpoints; both are mandatory together                                                |
+| `--ocomp.supervisor-socket` / `--ocomp.snapshot-exporter-socket` | local Supervisor/Follower and SnapshotExporter endpoints; both are mandatory together on validators and certified FullNodes              |
 | `--ocomp.supervisor-uid` / `--ocomp.snapshot-exporter-uid` | expected Unix peer identities for those two local endpoints                                                                                    |
 | `--ocomp.protocol-bundle-hash` / `--ocomp.boot-nonce`      | chain-pinned OCOMP bundle identity / nonzero per-boot control-session binding                                                                   |
-| `--ocomp.key`                                              | validator's node-owned OCOMP result-signing key registered through `confirm-ready`; no static participant index is configured                  |
+| `--ocomp.key`                                              | validator-only node-owned OCOMP result-signing key registered through `confirm-ready`; omit on FullNode; no static participant index is configured |
 | `--tee-enclave-socket`                                     | mandatory enclave sidecar endpoint; every V1 node fails startup if it is absent or cannot satisfy its genesis-fixed mode                        |
 | `--testnet.trust-el-head`                                  | disaster-recovery only: trust execution head when no durable consensus-finalized height exists (testnet/devnet; not normal production recovery) |
 
