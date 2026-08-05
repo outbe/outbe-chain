@@ -44,7 +44,7 @@ pub fn mint_gem(
     let (cost_amount, floor_price, initial_state) =
         compute_params(gem_type, gem_load, coen_rate)?;
     let entry_price = coen_rate;
-    let call_threshold = call_threshold_with_markup(entry_price)?;
+    let call_price = call_threshold_with_markup(entry_price)?;
 
     let params = GemAddParams {
         owner,
@@ -53,10 +53,10 @@ pub fn mint_gem(
         entry_price_minor: entry_price,
         cost_amount_minor: cost_amount,
         floor_price_minor: floor_price,
-        call_price_minor: call_threshold,
+        call_price_minor: call_price,
         call_rate: GEM_CALL_MARKUP_PERCENT as u16,
-        call_window_days: outbe_gem::GEM_CALL_WINDOW_DAYS,
-        call_threshold_days: outbe_gem::CALL_THRESHOLD_DAYS,
+        call_window: outbe_gem::CALL_WINDOW,
+        call_threshold: outbe_gem::CALL_THRESHOLD,
         issuance_currency,
         reference_currency,
         initial_state,
@@ -205,7 +205,7 @@ pub fn mint_merchant_gem(
     let entry_price = coen_rate.max(record.source_entry_price);
     let cost_amount = compute_cost(entry_price, gem_load, 100)?;
     let floor_price = floor_with_markup(entry_price)?.max(record.source_floor_price);
-    let call_threshold = call_threshold_with_markup(entry_price)?;
+    let call_price = call_threshold_with_markup(entry_price)?;
 
     let gem_id = gem_api::add_gem(
         storage,
@@ -216,10 +216,10 @@ pub fn mint_merchant_gem(
             entry_price_minor: entry_price,
             cost_amount_minor: cost_amount,
             floor_price_minor: floor_price,
-            call_price_minor: call_threshold,
+            call_price_minor: call_price,
             call_rate: GEM_CALL_MARKUP_PERCENT as u16,
-            call_window_days: outbe_gem::GEM_CALL_WINDOW_DAYS,
-            call_threshold_days: outbe_gem::CALL_THRESHOLD_DAYS,
+            call_window: outbe_gem::CALL_WINDOW,
+            call_threshold: outbe_gem::CALL_THRESHOLD,
             issuance_currency: record.issuance_currency,
             reference_currency: record.reference_currency,
             initial_state: GemState::Issued,
@@ -269,7 +269,7 @@ pub fn settle_gem(
         s if s == GemState::Qualified as u8 => {}
         s if s == GemState::Called as u8 => {
             let now = storage.timestamp()?.to::<u64>();
-            let deadline = item.called_at + u64::from(item.call_notice_period) * 86_400;
+            let deadline = item.called_at + u64::from(item.call_notice_period);
             if now > deadline {
                 return Err(GemFactoryError::DeadlineExpired.into());
             }

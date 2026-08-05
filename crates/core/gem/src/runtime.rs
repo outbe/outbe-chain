@@ -2,7 +2,7 @@ use alloy_primitives::U256;
 use outbe_primitives::error::Result;
 use outbe_primitives::time::timestamp_to_date_key;
 
-use crate::constants::{CALL_THRESHOLD_DAYS, QUALIFIER_REFERENCE_ISO};
+use crate::constants::{CALL_THRESHOLD, QUALIFIER_REFERENCE_ISO};
 use crate::errors::GemError;
 use crate::events::{GemBurned, GemCalled, GemQualified};
 use crate::schema::{GemContract, GemState};
@@ -31,7 +31,7 @@ impl GemContract<'_> {
     }
 
     /// `Qualified -> Called` when the coen daily VWAP exceeded this gem's Call
-    /// Threshold on at least `CALL_THRESHOLD_DAYS` of the trailing `window`
+    /// Threshold on at least `CALL_THRESHOLD` of the trailing `window`
     /// (newest-first `(day, vwap)` pairs). No-op unless the gem is Qualified
     /// against the qualifier pair. Returns true if called.
     pub(crate) fn trigger_call(
@@ -59,7 +59,8 @@ impl GemContract<'_> {
                 }
             }
         }
-        if breaches < u32::from(CALL_THRESHOLD_DAYS) {
+        // CALL_THRESHOLD is stored in seconds; the daily scan needs the day count.
+        if breaches < CALL_THRESHOLD / 86_400 {
             return Ok(false);
         }
 
@@ -79,7 +80,7 @@ impl GemContract<'_> {
         if item.state != GemState::Called as u8 {
             return Ok(false);
         }
-        let deadline = item.called_at + u64::from(item.call_notice_period) * 86_400;
+        let deadline = item.called_at + u64::from(item.call_notice_period);
         if now_ts <= deadline {
             return Ok(false);
         }

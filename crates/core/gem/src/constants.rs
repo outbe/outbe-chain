@@ -12,14 +12,15 @@ pub const QUALIFIER_REFERENCE_ISO: u16 = 840;
 
 pub const BIN_STEP_BP: u16 = 25;
 
-/// Call-trigger evaluation window: most recent completed days scanned for
-/// breaches of a gem's Call Threshold.
-pub const GEM_CALL_WINDOW_DAYS: u16 = 30;
+/// Call-trigger evaluation window in seconds (28 days): span scanned for
+/// breaches of a gem's Call Threshold. The daily scan divides by 86400.
+pub const CALL_WINDOW: u32 = 28 * 24 * 3600;
 
-/// Breach-days within the window required to force-call a gem
-/// (coen VWAP above the Call Threshold on this many of the last window days).
-pub const CALL_THRESHOLD_DAYS: u16 = 21;
+/// Breach threshold in seconds (21 days): a gem force-calls when the coen VWAP
+/// breaches its Call Price on 21 of the window's 28 days. The daily scan
+/// divides by 86400 to get the day count.
+pub const CALL_THRESHOLD: u32 = 21 * 24 * 3600;
 
-/// Call Notice Period: days after `called_at` within which the holder must
-/// settle. Once elapsed the gem is forfeit-burned.
-pub const CALL_NOTICE_PERIOD: u32 = 8;
+/// Call Notice Period in seconds (7 days): time after `called_at` within which
+/// the holder must settle. Once elapsed the gem is forfeit-burned.
+pub const CALL_NOTICE_PERIOD: u32 = 7 * 24 * 3600;

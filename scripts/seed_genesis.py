@@ -677,8 +677,8 @@ def seed_gems(storage: StorageBuilder, gems: list):
                      4 entry_price_minor  5 cost_amount_minor  6 floor_price_minor
                      7 issuance_currency  8 reference_currency 9 state
                      10 issued_at         11 call_price_minor   12 called_at
-                     13 call_notice_period 14 call_rate         15 call_window_days
-                     16 call_threshold_days 17 qualified_at     18 settled_at
+                     13 call_notice_period 14 call_rate         15 call_window
+                     16 call_threshold 17 qualified_at     18 settled_at
       slot 19:     owner_gem_counts Map<Address, u32>
       slot 20:     owner_gem_ids    Map<B256, U256>  (key = owner_index_key)
       slot 21:     all_gem_ids      List<U256>  (len @ slot 21, data @ keccak(21)+i)
@@ -712,16 +712,16 @@ def seed_gems(storage: StorageBuilder, gems: list):
         storage.set_mapping(9, gem_id, state)
         issued_at = parse_int(gem.get("issued_at", 0))
         storage.set_mapping(10, gem_id, issued_at)
-        storage.set_mapping(11, gem_id, parse_int(gem.get("call_threshold", "0")))
+        storage.set_mapping(11, gem_id, parse_int(gem.get("call_price_minor", "0")))
         storage.set_mapping(12, gem_id, parse_int(gem.get("called_at", 0)))
-        # call_notice_period: add_gem snapshots CALL_NOTICE_PERIOD (8 days).
-        storage.set_mapping(13, gem_id, parse_int(gem.get("call_notice_period", 8)))
+        # call_notice_period: add_gem snapshots CALL_NOTICE_PERIOD (7 days, in seconds).
+        storage.set_mapping(13, gem_id, parse_int(gem.get("call_notice_period", 7 * 24 * 3600)))
         # call_rate: add_gem snapshots GEM_CALL_MARKUP_PERCENT (228).
         storage.set_mapping(14, gem_id, parse_int(gem.get("call_rate", 228)))
-        # call_window_days: add_gem snapshots GEM_CALL_WINDOW_DAYS (30).
-        storage.set_mapping(15, gem_id, parse_int(gem.get("call_window_days", 30)))
-        # call_threshold_days: add_gem snapshots CALL_THRESHOLD_DAYS (21).
-        storage.set_mapping(16, gem_id, parse_int(gem.get("call_threshold_days", 21)))
+        # call_window: add_gem snapshots CALL_WINDOW (28 days, in seconds).
+        storage.set_mapping(15, gem_id, parse_int(gem.get("call_window", 28 * 24 * 3600)))
+        # call_threshold: add_gem snapshots CALL_THRESHOLD (21 days, in seconds).
+        storage.set_mapping(16, gem_id, parse_int(gem.get("call_threshold", 21 * 24 * 3600)))
         # qualified_at / settled_at: seeded gems are Settled, so both default to
         # issued_at (the gem reached those states at issuance).
         storage.set_mapping(17, gem_id, parse_int(gem.get("qualified_at", issued_at)))

@@ -21,8 +21,8 @@ pub struct GemAddParams {
     pub floor_price_minor: U256,
     pub call_price_minor: U256,
     pub call_rate: u16,
-    pub call_window_days: u16,
-    pub call_threshold_days: u16,
+    pub call_window: u32,
+    pub call_threshold: u32,
     pub issuance_currency: u16,
     pub reference_currency: u16,
     pub initial_state: GemState,
@@ -73,9 +73,9 @@ pub struct GemData {
     #[attribute(order = 11, default = 0)]
     pub called_at: u64,
 
-    /// Call Notice Period in days: after a Called gem passes
-    /// `called_at + call_notice_period * 86400` it is forfeit-burned. Snapshot
-    /// of the protocol constant at issuance.
+    /// Call Notice Period in seconds: after a Called gem passes
+    /// `called_at + call_notice_period` it is forfeit-burned. Snapshot of the
+    /// protocol constant at issuance.
     #[attribute(order = 12, default = 0)]
     pub call_notice_period: u32,
 
@@ -84,16 +84,15 @@ pub struct GemData {
     #[attribute(order = 13, default = 0)]
     pub call_rate: u16,
 
-    /// Call-trigger evaluation window in days (snapshot of
-    /// `GEM_CALL_WINDOW_DAYS` at issuance); the trailing span scanned for
-    /// Call Price breaches.
+    /// Call-trigger evaluation window in seconds (snapshot of `CALL_WINDOW` at
+    /// issuance); the trailing span scanned for Call Price breaches.
     #[attribute(order = 14, default = 0)]
-    pub call_window_days: u16,
+    pub call_window: u32,
 
-    /// Breach-days within the window required to force-call the gem (snapshot
-    /// of `CALL_THRESHOLD_DAYS` at issuance).
+    /// Breach threshold in seconds (snapshot of `CALL_THRESHOLD` at issuance);
+    /// divided by 86400 to get the required breach-day count.
     #[attribute(order = 15, default = 0)]
-    pub call_threshold_days: u16,
+    pub call_threshold: u32,
 
     /// Block timestamp when the gem became Qualified; `0` until Qualified.
     #[attribute(order = 16, default = 0)]

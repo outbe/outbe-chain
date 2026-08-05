@@ -7,7 +7,7 @@ use outbe_primitives::{
     time::{previous_date_key, timestamp_to_date_key},
 };
 
-use crate::constants::{GEM_CALL_WINDOW_DAYS, QUALIFIER_REFERENCE_ISO};
+use crate::constants::{CALL_WINDOW, QUALIFIER_REFERENCE_ISO};
 use crate::schema::GemContract;
 
 pub struct GemLifecycle;
@@ -119,9 +119,11 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
 
     // Trailing window of finalized daily VWAPs, newest first. Read once: every
     // candidate shares pair 840, so only the per-gem Call Threshold differs.
-    let mut window: Vec<(u32, Option<U256>)> = Vec::with_capacity(GEM_CALL_WINDOW_DAYS as usize);
+    // CALL_WINDOW is stored in seconds; the daily scan needs the day count.
+    let window_days = CALL_WINDOW / 86_400;
+    let mut window: Vec<(u32, Option<U256>)> = Vec::with_capacity(window_days as usize);
     let mut day = last_closed_day;
-    for _ in 0..GEM_CALL_WINDOW_DAYS {
+    for _ in 0..window_days {
         window.push((day, oracle.get_utc_day_vwap_for_pair_id(day, pair_id)?));
         day = previous_date_key(day);
     }

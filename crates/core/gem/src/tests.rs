@@ -29,8 +29,8 @@ fn sample_params(owner: Address) -> GemAddParams {
         floor_price_minor: U256::from(540_000_000_000_000_000u128),
         call_price_minor: U256::from(1_140_000_000_000_000_000u128),
         call_rate: 228,
-        call_window_days: 30,
-        call_threshold_days: 21,
+        call_window: 28 * 86_400,
+        call_threshold: 21 * 86_400,
         issuance_currency: 840,
         reference_currency: 840,
         initial_state: GemState::Issued,
@@ -323,12 +323,13 @@ fn gem_storage_layout_matches_genesis_seeder() {
         assert_eq!(gem.gem_index.base_slot(), U256::from(22u64));
     });
 }
-/// Build a 30-day window (newest-first) with `breach_days` entries above the
+/// Build a full-window (newest-first) list with `breach_days` entries above the
 /// gem's call threshold, the rest at zero.
 fn breach_window(now: u64, breach: U256, breach_days: usize) -> Vec<(u32, Option<U256>)> {
-    let mut window = Vec::with_capacity(30);
+    let window_days = (crate::constants::CALL_WINDOW / 86_400) as usize;
+    let mut window = Vec::with_capacity(window_days);
     let mut day = timestamp_to_date_key(now);
-    for i in 0..30 {
+    for i in 0..window_days {
         let v = if i < breach_days { breach } else { U256::ZERO };
         window.push((day, Some(v)));
         day = previous_date_key(day);
@@ -353,7 +354,7 @@ fn call_then_forfeit_lifecycle() {
             .unwrap()
             .unwrap()
             .call_price_minor;
-        let breach_days = usize::from(crate::constants::CALL_THRESHOLD_DAYS);
+        let breach_days = (crate::constants::CALL_THRESHOLD / 86_400) as usize;
         let window = breach_window(T_NOW, threshold + U256::from(1u64), breach_days);
 
         let mut gem = GemContract::new(storage.clone());
@@ -362,10 +363,10 @@ fn call_then_forfeit_lifecycle() {
         assert_eq!(item.state, GemState::Called as u8);
         assert_eq!(item.called_at, T_NOW);
 
-        // Within the 8-day notice period: no forfeit.
-        assert!(!gem.forfeit(gem_id, T_NOW + 7 * 86_400).unwrap());
+        // Within the 7-day notice period: no forfeit.
+        assert!(!gem.forfeit(gem_id, T_NOW + 6 * 86_400).unwrap());
         // Past the deadline: forfeit-burned.
-        assert!(gem.forfeit(gem_id, T_NOW + 8 * 86_400 + 1).unwrap());
+        assert!(gem.forfeit(gem_id, T_NOW + 7 * 86_400 + 1).unwrap());
         assert!(api::get_gem(storage, gem_id).unwrap().is_none());
     });
 }
@@ -379,7 +380,7 @@ fn call_skips_below_threshold() {
             .unwrap()
             .call_price_minor;
         // One below the threshold: not enough breach-days to force a call.
-        let breach_days = usize::from(crate::constants::CALL_THRESHOLD_DAYS) - 1;
+        let breach_days = (crate::constants::CALL_THRESHOLD / 86_400) as usize - 1;
         let window = breach_window(T_NOW, threshold + U256::from(1u64), breach_days);
 
         let mut gem = GemContract::new(storage.clone());
