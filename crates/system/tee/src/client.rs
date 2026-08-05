@@ -70,44 +70,7 @@ impl Write for Transport {
     }
 }
 
-/// Genesis-style attestation policy used to verify the enclave quote.
-#[derive(Debug, Clone)]
-pub struct QuotePolicy {
-    pub allowed_mrenclave: Vec<B256>,
-    pub allowed_mrsigner: Vec<B256>,
-    pub min_isv_svn: u16,
-    /// Dev/test escape hatch: accept any MRENCLAVE/MRSIGNER (still enforces the
-    /// REPORT_DATA key binding). MUST be false in production.
-    pub dev_accept_any_measurement: bool,
-}
-
-impl QuotePolicy {
-    pub fn new(
-        allowed_mrenclave: Vec<B256>,
-        allowed_mrsigner: Vec<B256>,
-        min_isv_svn: u16,
-    ) -> Self {
-        Self {
-            allowed_mrenclave,
-            allowed_mrsigner,
-            min_isv_svn,
-            dev_accept_any_measurement: false,
-        }
-    }
-
-    /// Dev policy: accept any measurement, but still enforce the key binding.
-    pub fn dev_accept_any() -> Self {
-        Self {
-            allowed_mrenclave: Vec::new(),
-            allowed_mrsigner: Vec::new(),
-            min_isv_svn: 0,
-            dev_accept_any_measurement: true,
-        }
-    }
-}
-
-/// The attested enclave identity captured from the quote at connect time, used
-/// to build this validator's [`crate::bootstrap::EnclaveRegistration`].
+/// The enclave identity fields captured from the quote response at connect time.
 #[derive(Debug, Clone)]
 struct QuoteIdentity {
     mrenclave: B256,
@@ -339,28 +302,29 @@ fn with_io_phase<T>(
 
 impl EnclaveClient {
     /// Connect to the enclave over a Unix domain socket (native sidecar), then
-    /// fetch+verify the quote, pin the enclave Noise static key, and complete the
-    /// Noise-IK handshake.
-    pub fn connect(path: &Path, policy: &QuotePolicy) -> Result<Self, TransportError> {
+    /// validate its key bindings, pin the enclave Noise static key, and complete
+    /// the Noise-IK handshake.
+    pub fn connect(path: &Path) -> Result<Self, TransportError> {
         let stream = UnixStream::connect(path)?;
         stream.set_read_timeout(Some(enclave_io_timeout()))?;
         stream.set_write_timeout(Some(enclave_io_timeout()))?;
-        Self::from_transport(Transport::Unix(stream), policy)
+        Self::from_transport(Transport::Unix(stream))
     }
 
     /// Connect to the enclave over TCP (`host:port`) — used when the enclave runs
     /// under Gramine, whose pathname UDS cannot be reached from a host process.
-    pub fn connect_tcp(addr: &str, policy: &QuotePolicy) -> Result<Self, TransportError> {
+    pub fn connect_tcp(addr: &str) -> Result<Self, TransportError> {
         let stream = TcpStream::connect(addr)?;
         let _ = stream.set_nodelay(true);
         stream.set_read_timeout(Some(enclave_io_timeout()))?;
         stream.set_write_timeout(Some(enclave_io_timeout()))?;
-        Self::from_transport(Transport::Tcp(stream), policy)
+        Self::from_transport(Transport::Tcp(stream))
     }
 
-    /// True only if the connected enclave is REMOTE-attested — it produced a real
-    /// DCAP/EPID quote. Measurements alone are NOT sufficient: under gramine-sgx
-    /// with `sgx.remote_attestation = "none"` the enclave reports REAL measurements
+    /// True when the enclave reports a DCAP/EPID attestation type. This structural
+    /// connect path does not verify the quote signature or establish production
+    /// admission; those guarantees come from native QVL and TeeRegistry. Under
+    /// gramine-sgx with `sgx.remote_attestation = "none"` the enclave reports REAL measurements
     /// (read from the local SGX report) but produces no quote, so it is confidential
     /// and measured yet unattested. False under gramine-direct / bare too. Gate
     /// quote-dependent trust on this, not on non-zero measurements.
@@ -385,26 +349,26 @@ impl EnclaveClient {
     }
 
     /// The enclave's Ed25519 attestation public key, pinned from this session's
-    /// quote (its `report_data` binding was verified at connect). Used to verify
+    /// structurally validated quote response. Used to verify
     /// per-offer attestation tags (`verify_tribute_offer_attestation`) — a local
-    /// verify-then-discard check that proves a batch's results were produced
-    /// inside this attested enclave.
+    /// verify-then-discard check that binds a batch's results to the peer holding
+    /// this session key. Production enclave identity is established separately.
     pub fn attestation_pub(&self) -> [u8; 32] {
         self.identity.attestation_pub
     }
 
     /// Connect using an endpoint string: `host:port` → TCP, otherwise a UDS path.
-    pub fn connect_endpoint(endpoint: &str, policy: &QuotePolicy) -> Result<Self, TransportError> {
+    pub fn connect_endpoint(endpoint: &str) -> Result<Self, TransportError> {
         if endpoint.contains(':') {
-            Self::connect_tcp(endpoint, policy)
+            Self::connect_tcp(endpoint)
         } else {
-            Self::connect(Path::new(endpoint), policy)
+            Self::connect(Path::new(endpoint))
         }
     }
 
-    /// Run the GetQuote + verification + Noise-IK handshake over an established
-    /// transport.
-    fn from_transport(mut stream: Transport, policy: &QuotePolicy) -> Result<Self, TransportError> {
+    /// Run GetQuote, structural binding validation, and the Noise-IK handshake
+    /// over an established transport.
+    fn from_transport(mut stream: Transport) -> Result<Self, TransportError> {
         // 1. GetQuote (cleartext, pre-handshake) with a fresh nonce.
         let nonce: [u8; 32] = rand::random();
         with_io_phase(
@@ -418,11 +382,11 @@ impl EnclaveClient {
             read_frame(&mut stream),
             "quote response read",
         )?)?;
-        let enclave_static = verify_quote(&quote, policy)?;
+        let enclave_static = verify_quote(&quote)?;
         let identity = quote_identity(&quote)?;
 
         // 2. Noise-IK handshake (initiator). The host static key is ephemeral
-        //    per connection; the enclave static key is the attested, pinned one.
+        //    per connection; the enclave static key is the bound, pinned one.
         let params = NOISE_PARAMS
             .parse()
             .map_err(|e| TransportError::Noise(format!("{e:?}")))?;
@@ -461,7 +425,7 @@ impl EnclaveClient {
         })
     }
 
-    /// This session's attested quote, already verified at connect.
+    /// This session's quote response, structurally validated at connect.
     pub fn quote(&self) -> &EnclaveResponse {
         &self.raw_quote
     }
@@ -1248,7 +1212,7 @@ fn connect_endpoint_transport(endpoint: &str) -> Result<Transport, TransportErro
     }
 }
 
-/// Extract the attested enclave identity from the quote response.
+/// Extract the enclave identity fields from the quote response.
 fn quote_identity(quote: &EnclaveResponse) -> Result<QuoteIdentity, TransportError> {
     let EnclaveResponse::Quote {
         mrenclave,
@@ -1270,9 +1234,9 @@ fn quote_identity(quote: &EnclaveResponse) -> Result<QuoteIdentity, TransportErr
     })
 }
 
-/// The attested public keys carried in a verified quote — all three are bound
-/// into REPORT_DATA, so a successful verification proves the enclave (not the
-/// host) owns them. Returned by [`verify_peer_quote`].
+/// Public keys carried in a quote response and bound together through REPORT_DATA.
+/// This structural validation does not perform DCAP signature verification or
+/// establish production enclave admission. Returned by [`verify_peer_quote`].
 #[derive(Clone, Copy, Debug)]
 pub struct AttestedPeerKeys {
     pub recipient_x25519: [u8; 32],
@@ -1280,20 +1244,16 @@ pub struct AttestedPeerKeys {
     pub noise_static_pub: [u8; 32],
 }
 
-/// Verify an enclave quote standalone and return its attested keys. The connect
+/// Validate an enclave quote response and return its bound keys. The connect
 /// path pins `noise_static_pub`; callers may also bind a one-time registration
 /// recipient without gaining any peer key-recovery surface.
 ///
 /// Chain: (1) the cleartext public keys must hash to `report_data` (key
-/// binding); (2) if the enclave produced a real SGX quote, the cleartext
-/// measurements + report_data must match what the hardware actually signed, and
-/// a strict policy additionally requires DCAP signature verification; an empty
-/// quote (gramine-direct/bare) is accepted only by a dev policy; (3) the
-/// measurements must satisfy the policy allowlist + min SVN.
-pub fn verify_peer_quote(
-    quote: &EnclaveResponse,
-    policy: &QuotePolicy,
-) -> Result<AttestedPeerKeys, TransportError> {
+/// binding); (2) for a non-empty quote, cleartext measurements and report_data
+/// must match the fields parsed from the quote. Empty quotes are accepted for
+/// development transports. Production attestation is enforced separately by
+/// the enclave-resident native QVL and TeeRegistry.
+pub fn verify_peer_quote(quote: &EnclaveResponse) -> Result<AttestedPeerKeys, TransportError> {
     let EnclaveResponse::Quote {
         mrenclave,
         mrsigner,
@@ -1321,11 +1281,8 @@ pub fn verify_peer_quote(
         ));
     }
 
-    // (2) Hardware quote vs unattested. A real (non-empty) quote is ALWAYS
-    // strictly verified (its measurements come from what the hardware signed);
-    // an empty quote (gramine-direct / no SGX) is accepted only by a dev or
-    // unattested-fallback policy — never with the measurement gate (its
-    // measurements are ZERO, not a real allowlist entry).
+    // (2) A non-empty quote must be structurally consistent with the cleartext
+    // fields. Signature and TCB verification belongs to the native QVL path.
     if !quote_body.is_empty() {
         let m = crate::quote::parse_quote_measurements(quote_body)
             .map_err(|e| TransportError::Attestation(format!("quote parse: {e}")))?;
@@ -1342,34 +1299,6 @@ pub fn verify_peer_quote(
                 "quote report_data does not match the key binding".to_string(),
             ));
         }
-        // Strict path (real quote, not dev-accept-any): DCAP signature/TCB +
-        // measurement allowlist + min SVN. Only the explicit development policy
-        // relaxes a real quote.
-        if !policy.dev_accept_any_measurement {
-            crate::quote::verify_dcap_signature(quote_body)
-                .map_err(|e| TransportError::Attestation(format!("DCAP verify: {e}")))?;
-            if !policy.allowed_mrsigner.contains(mrsigner) {
-                return Err(TransportError::Attestation(format!(
-                    "mrsigner {mrsigner} not in policy"
-                )));
-            }
-            if !policy.allowed_mrenclave.contains(mrenclave) {
-                return Err(TransportError::Attestation(format!(
-                    "mrenclave {mrenclave} not in policy"
-                )));
-            }
-            if *isv_svn < policy.min_isv_svn {
-                return Err(TransportError::Attestation(format!(
-                    "isv_svn {isv_svn} below min {}",
-                    policy.min_isv_svn
-                )));
-            }
-        }
-    } else if !policy.dev_accept_any_measurement {
-        // No SGX hardware quote under a strict policy.
-        return Err(TransportError::Attestation(
-            "enclave is unattested (no SGX quote) but policy is strict".to_string(),
-        ));
     }
 
     Ok(AttestedPeerKeys {
@@ -1379,18 +1308,18 @@ pub fn verify_peer_quote(
     })
 }
 
-/// Verify the quote and return the enclave Noise static public key to pin (the
-/// connect path). Thin wrapper over [`verify_peer_quote`].
-fn verify_quote(quote: &EnclaveResponse, policy: &QuotePolicy) -> Result<[u8; 32], TransportError> {
-    Ok(verify_peer_quote(quote, policy)?.noise_static_pub)
+/// Validate the quote bindings and return the enclave Noise static public key to
+/// pin in the connect path. Thin wrapper over [`verify_peer_quote`].
+fn verify_quote(quote: &EnclaveResponse) -> Result<[u8; 32], TransportError> {
+    Ok(verify_peer_quote(quote)?.noise_static_pub)
 }
 
 /// Verify a per-offer attestation tag — an Ed25519 signature over
-/// [`crate::protocol::tribute_offer_attestation_preimage`] — against the enclave's
-/// attestation public key (pinned from its quote this session, e.g.
-/// [`EnclaveClient::attestation_pub`]). A local verify-then-discard check proving
-/// the results were computed inside the attested enclave; the tag is never
-/// persisted. Returns a typed error on any mismatch.
+/// [`crate::protocol::tribute_offer_attestation_preimage`] — against the peer's
+/// session attestation public key, which [`verify_peer_quote`] binds to the quote
+/// report data. This proves that the session-key holder signed the results; it is
+/// not an independent enclave-attestation verdict. The tag is never persisted.
+/// Returns a typed error on any mismatch.
 pub fn verify_tribute_offer_attestation(
     attestation_pub: &[u8; 32],
     inputs_canonical_hash: B256,
@@ -1413,10 +1342,9 @@ pub fn verify_tribute_offer_attestation(
 }
 
 /// Verify a Gratis-op attestation tag — an Ed25519 signature over
-/// [`crate::protocol::gratis_op_attestation_preimage`] — against the enclave's
-/// pinned attestation key. Same verify-then-discard semantics as
-/// [`verify_tribute_offer_attestation`]: the tag proves the encrypted-state
-/// transition was computed inside the attested enclave and is never persisted.
+/// [`crate::protocol::gratis_op_attestation_preimage`] — against the peer's
+/// session attestation key. Same session-key-holder and verify-then-discard
+/// semantics as [`verify_tribute_offer_attestation`]; the tag is never persisted.
 pub fn verify_gratis_op_attestation(
     attestation_pub: &[u8; 32],
     inputs_canonical_hash: B256,
@@ -1438,8 +1366,8 @@ pub fn verify_gratis_op_attestation(
 
 /// Verify a Promis-op attestation tag — the [`verify_gratis_op_attestation`]
 /// analogue over [`crate::protocol::promis_op_attestation_preimage`]. Same
-/// verify-then-discard semantics; the tag proves the encrypted-balance transition
-/// was computed inside the attested enclave and is never persisted.
+/// session-key-holder and verify-then-discard semantics; the tag is never
+/// persisted.
 pub fn verify_promis_op_attestation(
     attestation_pub: &[u8; 32],
     inputs_canonical_hash: B256,
@@ -1861,21 +1789,13 @@ mod tests {
         }
     }
 
-    /// gramine-direct/bare: an empty (unattested) quote is accepted only by the
-    /// dev policy, and the pinned key is the enclave Noise static key.
+    /// gramine-direct/bare: an empty quote is accepted and the bound key is the
+    /// enclave Noise static key.
     #[test]
-    fn dev_policy_accepts_unattested_empty_quote() {
+    fn accepts_unattested_empty_quote() {
         let q = quote_with([1; 32], [2; 32], [3; 32], B256::ZERO, B256::ZERO, 0, vec![]);
-        let pinned = verify_quote(&q, &QuotePolicy::dev_accept_any()).unwrap();
+        let pinned = verify_quote(&q).unwrap();
         assert_eq!(pinned, [1u8; 32]);
-    }
-
-    /// A strict policy MUST reject an unattested enclave (no SGX quote).
-    #[test]
-    fn strict_policy_rejects_unattested_empty_quote() {
-        let q = quote_with([1; 32], [2; 32], [3; 32], B256::ZERO, B256::ZERO, 0, vec![]);
-        let policy = QuotePolicy::new(vec![B256::ZERO], vec![B256::ZERO], 0);
-        assert!(verify_quote(&q, &policy).is_err());
     }
 
     /// A valid per-offer attestation tag verifies; tampering with the
@@ -1956,7 +1876,7 @@ mod tests {
             attestation: "none (test)".to_string(),
         };
         assert!(
-            verify_quote(&q, &QuotePolicy::dev_accept_any()).is_err(),
+            verify_quote(&q).is_err(),
             "a non-canonical preimage order must fail the report_data binding"
         );
     }
@@ -1971,11 +1891,11 @@ mod tests {
         {
             *noise_static_pub = [9; 32]; // no longer hashes to report_data
         }
-        assert!(verify_quote(&q, &QuotePolicy::dev_accept_any()).is_err());
+        assert!(verify_quote(&q).is_err());
     }
 
-    /// Cleartext measurements that disagree with the real quote are rejected even
-    /// under the dev policy (the quote bytes are the source of truth).
+    /// Cleartext measurements that disagree with the quote are rejected (the
+    /// quote bytes are the source of truth for this structural check).
     #[test]
     fn rejects_cleartext_measurements_not_matching_quote() {
         let (noise, offer, attest) = ([1u8; 32], [2u8; 32], [3u8; 32]);
@@ -1998,7 +1918,7 @@ mod tests {
             0,
             body,
         );
-        assert!(verify_quote(&q, &QuotePolicy::dev_accept_any()).is_err());
+        assert!(verify_quote(&q).is_err());
     }
 
     #[test]
