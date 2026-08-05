@@ -441,11 +441,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
-    function parkIntex(address holder, uint32 seriesId, uint256 amount)
-        external
-        onlyRole(GEM_ROLE)
-        returns (uint256)
-    {
+    function parkIntex(address holder, uint32 seriesId, uint256 amount) external onlyRole(GEM_ROLE) returns (uint256) {
         if (holder == address(0)) revert ZeroAddress("holder", holder);
         if (amount == 0) revert ZeroAmount();
 
