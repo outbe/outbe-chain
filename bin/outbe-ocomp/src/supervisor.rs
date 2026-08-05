@@ -18,9 +18,10 @@ use outbe_ocomp_protocol::local_control::{
 };
 use outbe_ocomp_protocol::{
     common::BoundedBytes, result::LysisResultV1, vote::ResultVoteV1, AttestationResponseV1,
-    FinalizedJobSpecV1, FinalizedJobSummaryV1, GetJobSpecV1, ListFinalizedJobsResponseV1,
-    ListFinalizedJobsV1, LocalErrorV1, NodeMessageKind, OpenSnapshotLeaseV1, ProtocolError,
-    RequestAttestationV1, SchemaLimits, SnapshotHandoffV1, MAX_FINALIZED_JOBS_PER_RESPONSE,
+    CommitLocalResultV1, FinalizedJobSpecV1, FinalizedJobSummaryV1, GetJobSpecV1,
+    ListFinalizedJobsResponseV1, ListFinalizedJobsV1, LocalErrorV1, LocalResultCommittedV1,
+    NodeMessageKind, OpenSnapshotLeaseV1, ProtocolError, RequestAttestationV1, SchemaLimits,
+    SnapshotHandoffV1, MAX_FINALIZED_JOBS_PER_RESPONSE,
 };
 use thiserror::Error;
 
@@ -213,6 +214,37 @@ impl SupervisorDiscovery {
         Ok(vote)
     }
 
+    /// Publishes an independently computed canonical result into the node-owned
+    /// durable authority without requesting a vote, signature, or transaction.
+    pub fn commit_local_result(
+        &self,
+        canonical_result: &[u8],
+    ) -> Result<LocalResultCommittedV1, SupervisorDiscoveryError> {
+        require_bounded_result(canonical_result, &self.config.limits)?;
+        let result = LysisResultV1::decode_canonical(canonical_result, &self.config.limits)?;
+        let expected_digest = result.result_digest(&self.config.limits)?;
+        let request = CommitLocalResultV1 {
+            canonical_result: BoundedBytes(canonical_result.to_vec()),
+        };
+        let mut session = self.connect()?;
+        session.send_request(
+            NodeMessageKind::CommitLocalResult as u16,
+            request.encode_body(&self.config.limits)?,
+        )?;
+        let frame = session.receive_response()?;
+        let body = response_body(
+            frame.message_kind,
+            frame.body,
+            NodeMessageKind::CommitLocalResult,
+            &self.config.limits,
+        )?;
+        let committed = LocalResultCommittedV1::decode_body(&body, &self.config.limits)?;
+        if committed.job_id != result.job_id || committed.result_digest != expected_digest {
+            return Err(SupervisorDiscoveryError::LocalResultCommitChanged);
+        }
+        Ok(committed)
+    }
+
     fn connect(&self) -> Result<ControlClientSession, SupervisorDiscoveryError> {
         let stream = UnixStream::connect(&self.config.node_socket).map_err(|source| {
             SupervisorDiscoveryError::Io {
@@ -238,6 +270,24 @@ impl SupervisorDiscovery {
             .lock()
             .map_err(|_| SupervisorDiscoveryError::PoisonedJournalLock)
     }
+}
+
+fn require_bounded_result(
+    canonical_result: &[u8],
+    limits: &SchemaLimits,
+) -> Result<(), ProtocolError> {
+    if canonical_result.is_empty() {
+        return Err(ProtocolError::InvalidInvariant("local result is empty"));
+    }
+    let limit = limits.max_control_body_bytes.min(limits.max_bounded_bytes);
+    if canonical_result.len() > limit {
+        return Err(ProtocolError::CapacityExceeded {
+            what: "local result bytes",
+            limit,
+            actual: canonical_result.len(),
+        });
+    }
+    Ok(())
 }
 
 fn response_body(
@@ -601,6 +651,8 @@ pub enum SupervisorDiscoveryError {
     BundleChanged,
     #[error("node attestation response changed the submitted canonical result")]
     AttestationResultChanged,
+    #[error("node local-result acknowledgement changed the submitted canonical result")]
+    LocalResultCommitChanged,
     #[error("snapshot lease may only be opened for the durably discovered job")]
     SnapshotJobNotDiscovered,
     #[error("node returned unexpected OCOMP response kind {0:#06x}")]

@@ -25,6 +25,7 @@ use outbe_lysis::program_v1::planner::{
 };
 use outbe_node::ocomp::{
     control::{OcompControlServer, OcompNodeAttestationConfig},
+    local_result::LocalLysisResultStore,
     retention::{
         CandidateFinalityV1, CandidatePinV1, FinalizedInputProofSource, FinalizedJobPinV1,
         OcompRetentionCoordinator, RetentionError,
@@ -348,6 +349,11 @@ fn attest_finalized_schedule_across_node_restart(outcome: &ScheduleOutcome) {
         .expect("write node OCOMP key");
     key_file.sync_all().expect("sync node OCOMP key");
 
+    let committed = commit_node_local_result(root.path(), "fullnode", &outcome.result_bytes)
+        .expect("keyless FullNode commits its independently computed result");
+    assert_eq!(committed.job_id, outcome.job_id);
+    assert_eq!(committed.result_digest, outcome.result_digest);
+
     let first = request_node_attestation(root.path(), "first", &outcome.result_bytes)
         .expect("first process attestation");
     let snapshot = deterministic_historical_snapshot();
@@ -398,6 +404,53 @@ fn attest_finalized_schedule_across_node_restart(outcome: &ScheduleOutcome) {
             ..
         } if error_code == LocalErrorCode::Conflict as u16
     ));
+}
+
+fn commit_node_local_result(
+    root: &Path,
+    run: &str,
+    canonical_result: &[u8],
+) -> Result<outbe_ocomp_protocol::LocalResultCommittedV1, SupervisorDiscoveryError> {
+    let socket = root.join(format!("node-{run}.sock"));
+    let mut child = Command::new(env::current_exe().expect("current deterministic test binary"));
+    child
+        .args(["--exact", TEST_NAME, "--nocapture"])
+        .env(NODE_CHILD_MODE, "1")
+        .env(NODE_CHILD_ROOT, root)
+        .env(NODE_CHILD_SOCKET, &socket)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    let mut child = child.spawn().expect("spawn keyless result node process");
+    for _ in 0..500 {
+        if socket.exists() {
+            break;
+        }
+        if let Some(status) = child.try_wait().expect("poll keyless result node") {
+            panic!("keyless result node exited before binding UDS: {status}");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(socket.exists(), "keyless result node did not bind its UDS");
+
+    let supervisor = SupervisorDiscovery::open(SupervisorDiscoveryConfig {
+        node_socket: socket,
+        journal_root: root.join(format!("supervisor-{run}")),
+        expected_node_uid: effective_uid().expect("effective uid"),
+        identity: endpoint_identity(0x92),
+        limits: poc_schema_limits(),
+    })
+    .expect("open keyless result client");
+    let response = supervisor.commit_local_result(canonical_result);
+    drop(supervisor);
+    let output = child
+        .wait_with_output()
+        .expect("wait for keyless result node");
+    assert!(
+        output.status.success(),
+        "keyless result node failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    response
 }
 
 fn request_node_attestation(
@@ -469,6 +522,10 @@ fn run_child_node() {
         poc_schema_limits(),
     )
     .expect("construct node control server")
+    .with_local_result_store(Arc::new(
+        LocalLysisResultStore::open(root.join("local-results"), poc_schema_limits())
+            .expect("open node local result store"),
+    ))
     .with_node_attestation(
         OcompNodeAttestationConfig {
             key_path: root.join("ocomp-key-v1.hex"),

@@ -45,6 +45,8 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Role {
     Supervisor(RuntimeArgs),
+    /// Keyless FullNode role: computes and durably commits Lysis, never votes.
+    Follower(RuntimeArgs),
     SnapshotExporter(RuntimeArgs),
     Worker(WorkerArgs),
     /// Print the address of the role-delegated OCOMP transaction signer.
@@ -188,6 +190,7 @@ impl ProductionLayout {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ProcessRole {
     Supervisor,
+    Follower,
     SnapshotExporter,
     Worker,
 }
@@ -195,7 +198,7 @@ enum ProcessRole {
 impl ProcessRole {
     const fn production_user(self) -> &'static str {
         match self {
-            Self::Supervisor => SUPERVISOR_USER,
+            Self::Supervisor | Self::Follower => SUPERVISOR_USER,
             Self::SnapshotExporter => SNAPSHOT_EXPORTER_USER,
             Self::Worker => WORKER_USER,
         }
@@ -284,8 +287,12 @@ impl RuntimeProfile {
         };
         let node_supervisor_socket = match (role, args.development_node_supervisor_socket.as_ref())
         {
-            (ProcessRole::Supervisor, Some(path)) if path.is_absolute() => path.clone(),
-            (ProcessRole::Supervisor, None) => root.join("node-supervisor.sock"),
+            (ProcessRole::Supervisor | ProcessRole::Follower, Some(path)) if path.is_absolute() => {
+                path.clone()
+            }
+            (ProcessRole::Supervisor | ProcessRole::Follower, None) => {
+                root.join("node-supervisor.sock")
+            }
             (_, Some(_)) => {
                 return Err(
                     "--development-node-supervisor-socket is valid only for the Supervisor role"
@@ -370,6 +377,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         }
         Role::Supervisor(args) => run_supervisor(&args),
+        Role::Follower(args) => run_follower(&args),
         Role::SnapshotExporter(args) => run_snapshot_exporter(&args),
         Role::SignerAddress(args) => print_signer_address(&args),
     }
@@ -384,8 +392,67 @@ fn print_signer_address(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ComputeMode {
+    Validator,
+    Follower,
+}
+
+impl ComputeMode {
+    const fn process_role(self) -> ProcessRole {
+        match self {
+            Self::Validator => ProcessRole::Supervisor,
+            Self::Follower => ProcessRole::Follower,
+        }
+    }
+}
+
+type VotingRuntime<'a> = (
+    LocalVoteTransactionPreparerV1<'a, SupervisorDiscovery>,
+    SupervisorVoteSubmitterV1<PublicVoteRpcClientV1>,
+);
+
+fn open_voting_runtime<'a>(
+    mode: ComputeMode,
+    discovery: &'a SupervisorDiscovery,
+    runtime: &RuntimeProfile,
+    identity: EndpointIdentity,
+    limits: outbe_ocomp_protocol::SchemaLimits,
+) -> Result<Option<VotingRuntime<'a>>, Box<dyn std::error::Error>> {
+    if mode == ComputeMode::Follower {
+        return Ok(None);
+    }
+    let evm_signer =
+        OutbeEvmSigner::from_strict_file(&runtime.ocomp_evm_key_path, runtime.effective_role_uid)?;
+    let vote_preparer =
+        LocalVoteTransactionPreparerV1::new(discovery, evm_signer, identity.chain_id, limits)?;
+    let sender_address = vote_preparer.sender_address();
+    let vote_rpc = PublicVoteRpcClientV1::new(
+        required_env("OUTBE_OCOMP_RPC_URL")?,
+        SUPERVISOR_VOTE_RPC_MAX_RESPONSE_BYTES,
+    )?;
+    let vote_submitter = SupervisorVoteSubmitterV1::open(
+        VoteSubmissionConfigV1 {
+            journal_root: runtime.supervisor_vote_submission_root.clone(),
+            expected_chain_id: identity.chain_id,
+            sender_address,
+            limits,
+        },
+        vote_rpc,
+    )?;
+    Ok(Some((vote_preparer, vote_submitter)))
+}
+
 fn run_supervisor(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let runtime = RuntimeProfile::resolve(args, ProcessRole::Supervisor)?;
+    run_compute(args, ComputeMode::Validator)
+}
+
+fn run_follower(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> {
+    run_compute(args, ComputeMode::Follower)
+}
+
+fn run_compute(args: &RuntimeArgs, mode: ComputeMode) -> Result<(), Box<dyn std::error::Error>> {
+    let runtime = RuntimeProfile::resolve(args, mode.process_role())?;
     require_effective_uid(runtime.effective_role_uid)?;
     let limits = poc_schema_limits();
     let identity = EndpointIdentity {
@@ -407,6 +474,7 @@ fn run_supervisor(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> 
         identity,
         limits,
     })?;
+    let mut voting = open_voting_runtime(mode, &discovery, &runtime, identity, limits)?;
     let adoption = SupervisorExportAdoption::open(SupervisorExportAdoptionConfig {
         cas_root: runtime.cas_root.clone(),
         cas_limits: CasLimits {
@@ -448,24 +516,6 @@ fn run_supervisor(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> 
             })
             .transpose()?,
     })?;
-    let evm_signer =
-        OutbeEvmSigner::from_strict_file(&runtime.ocomp_evm_key_path, runtime.effective_role_uid)?;
-    let vote_preparer =
-        LocalVoteTransactionPreparerV1::new(&discovery, evm_signer, identity.chain_id, limits)?;
-    let sender_address = vote_preparer.sender_address();
-    let vote_rpc = PublicVoteRpcClientV1::new(
-        required_env("OUTBE_OCOMP_RPC_URL")?,
-        SUPERVISOR_VOTE_RPC_MAX_RESPONSE_BYTES,
-    )?;
-    let mut vote_submitter = SupervisorVoteSubmitterV1::open(
-        VoteSubmissionConfigV1 {
-            journal_root: runtime.supervisor_vote_submission_root,
-            expected_chain_id: identity.chain_id,
-            sender_address,
-            limits,
-        },
-        vote_rpc,
-    )?;
     let mut handled_job_id = None;
     let mut completed_result: Option<CompletedSupervisorJobV1> = None;
     let mut last_submission_outcome = None;
@@ -502,38 +552,58 @@ fn run_supervisor(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> 
                             }
                         }
                         if let Some(completed) = completed_result.as_ref() {
-                            match vote_submitter.reconcile(
-                                &vote_preparer,
-                                completed.job_id,
-                                completed.result_digest,
-                                &completed.canonical_result,
-                            ) {
-                                Ok(outcome) => {
-                                    if last_submission_outcome != Some(outcome) {
-                                        eprintln!(
-                                            "OCOMP supervisor vote submission for {}: {outcome:?}",
-                                            completed.job_id
-                                        );
-                                        last_submission_outcome = Some(outcome);
-                                    }
-                                    if let VoteSubmissionOutcomeV1::Finalized(inclusion) = outcome {
-                                        if inclusion.success {
+                            if let Some((vote_preparer, vote_submitter)) = voting.as_mut() {
+                                match vote_submitter.reconcile(
+                                    &*vote_preparer,
+                                    completed.job_id,
+                                    completed.result_digest,
+                                    &completed.canonical_result,
+                                ) {
+                                    Ok(outcome) => {
+                                        if last_submission_outcome != Some(outcome) {
                                             eprintln!(
-                                                "OCOMP supervisor finalized result vote {} in block {}",
-                                                completed.result_digest, inclusion.block_number
+                                                "OCOMP supervisor vote submission for {}: {outcome:?}",
+                                                completed.job_id
                                             );
-                                        } else {
-                                            eprintln!(
-                                                "OCOMP supervisor result vote {} finalized with a reverted receipt in block {}",
-                                                completed.result_digest, inclusion.block_number
-                                            );
+                                            last_submission_outcome = Some(outcome);
                                         }
+                                        if let VoteSubmissionOutcomeV1::Finalized(inclusion) =
+                                            outcome
+                                        {
+                                            if inclusion.success {
+                                                eprintln!(
+                                                    "OCOMP supervisor finalized result vote {} in block {}",
+                                                    completed.result_digest, inclusion.block_number
+                                                );
+                                            } else {
+                                                eprintln!(
+                                                    "OCOMP supervisor result vote {} finalized with a reverted receipt in block {}",
+                                                    completed.result_digest, inclusion.block_number
+                                                );
+                                            }
+                                            handled_job_id = Some(job_id);
+                                            completed_result = None;
+                                        }
+                                    }
+                                    Err(error) => {
+                                        eprintln!(
+                                            "OCOMP supervisor vote-submission retry: {error}"
+                                        );
+                                    }
+                                }
+                            } else {
+                                match discovery.commit_local_result(&completed.canonical_result) {
+                                    Ok(committed) => {
+                                        eprintln!(
+                                            "OCOMP FullNode follower durably committed result {} for job {}",
+                                            committed.result_digest, committed.job_id
+                                        );
                                         handled_job_id = Some(job_id);
                                         completed_result = None;
                                     }
-                                }
-                                Err(error) => {
-                                    eprintln!("OCOMP supervisor vote-submission retry: {error}");
+                                    Err(error) => {
+                                        eprintln!("OCOMP FullNode result-commit retry: {error}");
+                                    }
                                 }
                             }
                         }
@@ -736,6 +806,48 @@ mod tests {
         assert!(ProductionConfig::from_lookup(|_| None).is_err());
         assert!(ProductionLayout::from_base(std::path::Path::new("/")).is_err());
         assert!(ProductionLayout::from_base(std::path::Path::new("relative")).is_err());
+    }
+
+    #[test]
+    fn fullnode_follower_builds_compute_runtime_without_any_voting_material() {
+        let root = tempfile::tempdir().unwrap();
+        let cli = Cli::try_parse_from([
+            "outbe-ocomp",
+            "follower",
+            "--development-root",
+            root.path().to_str().unwrap(),
+        ])
+        .expect("parse keyless FullNode follower role");
+        let Role::Follower(args) = cli.role else {
+            panic!("expected follower role");
+        };
+        let runtime = RuntimeProfile::resolve(&args, ProcessRole::Follower).unwrap();
+        assert!(!runtime.ocomp_evm_key_path.exists());
+        let limits = poc_schema_limits();
+        let identity = EndpointIdentity {
+            chain_id: 42,
+            genesis_hash: B256::repeat_byte(1),
+            boot_nonce: B256::repeat_byte(2),
+            protocol_bundle_hash: B256::repeat_byte(3),
+        };
+        let discovery = SupervisorDiscovery::open(SupervisorDiscoveryConfig {
+            node_socket: runtime.node_supervisor_socket.clone(),
+            journal_root: runtime.supervisor_journal_root.clone(),
+            expected_node_uid: runtime.node_uid,
+            identity,
+            limits,
+        })
+        .unwrap();
+
+        let voting = open_voting_runtime(
+            ComputeMode::Follower,
+            &discovery,
+            &runtime,
+            identity,
+            limits,
+        )
+        .expect("follower does not read validator voting material");
+        assert!(voting.is_none());
     }
 
     #[test]
