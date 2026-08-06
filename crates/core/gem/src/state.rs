@@ -65,6 +65,7 @@ impl GemContract<'_> {
     pub fn token_uri(&self, gem_id: U256) -> Result<String> {
         let item = self.gem_items.get(gem_id)?.ok_or(GemError::GemNotFound)?;
         let gem_id_hex = Self::format_gem_id(gem_id);
+        // TODO: replace hand-rolled JSON with type-safe serialization (serde struct).
         let json = format!(
             "{{\"name\":\"Gem #{}\",\"description\":\"{}\",\"image\":\"{}{}\",\"attributes\":[{{\"trait_type\":\"gem_id\",\"value\":\"{}\"}},{{\"trait_type\":\"gem_type\",\"value\":{}}},{{\"trait_type\":\"state\",\"value\":{}}},{{\"trait_type\":\"gem_load_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"entry_price_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"cost_amount_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"floor_price_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"issuance_currency\",\"value\":{}}},{{\"trait_type\":\"reference_currency\",\"value\":{}}}]}}",
             &gem_id_hex[..8],

@@ -64,6 +64,7 @@ impl GemFactoryContract<'_> {
             .positions
             .get(position_id)?
             .ok_or(GemFactoryError::PositionNotFound)?;
+        // TODO: replace hand-rolled JSON with type-safe serialization (serde struct).
         let json = format!(
             "{{\"name\":\"GemPosition #{}\",\"attributes\":[{{\"trait_type\":\"merchant\",\"value\":\"{}\"}},{{\"trait_type\":\"source_intex_id\",\"value\":{}}},{{\"trait_type\":\"remaining_capacity\",\"value\":\"{}\"}}]}}",
             position_id, pos.merchant, pos.source_intex_id, pos.remaining_capacity,
