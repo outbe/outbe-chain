@@ -64,7 +64,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tracing::{debug, info, warn};
 
-use crate::args::{ConsensusArgs, OcompNodeControlConfig};
+use crate::args::ConsensusArgs;
 use crate::ce_recovery::CeStartupRecovery;
 use crate::validators;
 use outbe_consensus::{
@@ -95,12 +95,7 @@ use outbe_consensus::{
     vrf_safety::VrfSafetyGate,
 };
 
-use outbe_node::ocomp::control::{OcompControlServer, OcompNodeAttestationConfig};
-use outbe_node::ocomp::service::{OcompControlRuntime, OcompControlRuntimeConfig};
-use outbe_node::ocomp::snapshot_control::RethProjectionContainmentAuthority;
-use outbe_node::ocomp::{ProviderHeightSource, ProviderHistoricalOcompSnapshotSource};
 use outbe_node::OutbeFullNode;
-use outbe_ocomp_protocol::local_control::EndpointIdentity;
 use outbe_ocomp_protocol::profile::poc_schema_limits;
 use outbe_primitives::{
     consensus::{ConsensusExecutionBridge, DkgBoundaryArtifact},
@@ -126,8 +121,6 @@ pub struct ConsensusStackServices {
     projection_readiness: ProjectionReadinessHandle,
     finalized_ce_committer: Arc<dyn FinalizedCeCommitter>,
     ce_startup_recovery: Arc<dyn CeStartupRecovery>,
-    compressed_tree_service: Arc<outbe_compressed_entities::CompressedTreeService>,
-    local_lysis_results: Arc<outbe_node::ocomp::local_result::LocalLysisResultStore>,
 }
 
 impl ConsensusStackServices {
@@ -135,15 +128,11 @@ impl ConsensusStackServices {
         projection_readiness: ProjectionReadinessHandle,
         finalized_ce_committer: Arc<dyn FinalizedCeCommitter>,
         ce_startup_recovery: Arc<dyn CeStartupRecovery>,
-        compressed_tree_service: Arc<outbe_compressed_entities::CompressedTreeService>,
-        local_lysis_results: Arc<outbe_node::ocomp::local_result::LocalLysisResultStore>,
     ) -> Self {
         Self {
             projection_readiness,
             finalized_ce_committer,
             ce_startup_recovery,
-            compressed_tree_service,
-            local_lysis_results,
         }
     }
 }
@@ -1760,8 +1749,6 @@ async fn run_follow_stack<E>(
     projection_readiness: ProjectionReadinessHandle,
     finalized_ce_committer: Arc<dyn FinalizedCeCommitter>,
     ce_startup_recovery: Arc<dyn CeStartupRecovery>,
-    compressed_tree_service: Arc<outbe_compressed_entities::CompressedTreeService>,
-    local_lysis_results: Arc<outbe_node::ocomp::local_result::LocalLysisResultStore>,
 ) -> Result<()>
 where
     E: BufferPooler
@@ -1827,14 +1814,6 @@ where
         "follower mode (--upstream) selected; anchored on the genesis validator set"
     );
 
-    let ocomp_control = args
-        .ocomp
-        .node_control()?
-        .ok_or_else(|| eyre::eyre!("certified FullNode requires OCOMP node-control config"))?;
-    ensure!(
-        ocomp_control.key_path.is_none(),
-        "certified FullNode must not carry an OCOMP result-signing key"
-    );
     let ocomp_storage_root = args
         .storage_dir
         .clone()
@@ -1850,21 +1829,9 @@ where
         projection_readiness,
         finalized_ce_committer,
         ce_startup_recovery,
-        CertifiedFollowerOcompServices {
-            storage_root: ocomp_storage_root,
-            control: ocomp_control,
-            compressed_tree_service,
-            local_lysis_results,
-        },
+        ocomp_storage_root,
     )
     .await
-}
-
-struct CertifiedFollowerOcompServices {
-    storage_root: std::path::PathBuf,
-    control: OcompNodeControlConfig,
-    compressed_tree_service: Arc<outbe_compressed_entities::CompressedTreeService>,
-    local_lysis_results: Arc<outbe_node::ocomp::local_result::LocalLysisResultStore>,
 }
 
 /// Rebuild the exact parent-proof record a certified follower needs before
@@ -1923,12 +1890,10 @@ async fn reconcile_certified_follower_height(
     certificate_scheme_provider: &HybridSchemeProvider<MinSig>,
     parent_cert_store: &outbe_consensus::finalization::parent_cert_store::FinalizedParentCertStore,
     retention: &Arc<outbe_node::ocomp::retention::OcompRetentionCoordinator>,
-    snapshot_armer: &Arc<outbe_node::ocomp::snapshot_control::SnapshotExportAuthority>,
     height: u64,
 ) -> Result<outbe_consensus::block::ConsensusBlock> {
     use commonware_cryptography::certificate::Provider as _;
     use outbe_consensus::finalization::parent_cert_store::CertifiedParentProofStore as _;
-    use outbe_node::ocomp::retention::FinalizedSnapshotArmer as _;
 
     let finalization = marshal_mailbox
         .get_finalization(Height::new(height))
@@ -1980,19 +1945,6 @@ async fn reconcile_certified_follower_height(
     retention.reconcile_finalized(&block).map_err(|error| {
         eyre::eyre!("certified FullNode OCOMP retention failed at height {height}: {error}")
     })?;
-    for job in retention
-        .finalized_live_jobs()
-        .wrap_err("failed to list finalized FullNode OCOMP jobs")?
-    {
-        snapshot_armer
-            .arm_finalized_snapshot(job.job_id)
-            .map_err(|error| {
-                eyre::eyre!(
-                    "failed to arm FullNode OCOMP snapshot {} at height {height}: {error}",
-                    job.job_id
-                )
-            })?;
-    }
     Ok(block)
 }
 
@@ -2011,7 +1963,7 @@ async fn run_certified_follow_stack<E>(
     projection_readiness: ProjectionReadinessHandle,
     finalized_ce_committer: Arc<dyn FinalizedCeCommitter>,
     ce_startup_recovery: Arc<dyn CeStartupRecovery>,
-    ocomp_services: CertifiedFollowerOcompServices,
+    ocomp_storage_root: std::path::PathBuf,
 ) -> Result<()>
 where
     E: BufferPooler
@@ -2204,17 +2156,11 @@ where
         "follower marshal initialized"
     );
 
-    // ── 2b. Mandatory keyless OCOMP retention/control plane ─────────────
+    // ── 2b. Mandatory keyless OCOMP retention plane ─────────────────
     let ocomp_fork_install =
         outbe_node::ocomp::fork::require_startup_ocomp_fork_install(node.chain_spec().as_ref())?;
     let install = ocomp_fork_install.as_ref();
-    ensure!(
-        ocomp_services.control.protocol_bundle_hash == install.request_profile.protocol_bundle_hash,
-        "OCOMP FullNode bundle {} differs from chain manifest {}",
-        ocomp_services.control.protocol_bundle_hash,
-        install.request_profile.protocol_bundle_hash,
-    );
-    let parent_cert_dir = ocomp_services.storage_root.join("finalized_parent_certs");
+    let parent_cert_dir = ocomp_storage_root.join("finalized_parent_certs");
     let finalized_parent_cert_store =
         outbe_consensus::finalization::parent_cert_store::FinalizedParentCertStore::open(
             &parent_cert_dir,
@@ -2250,47 +2196,10 @@ where
     );
     let ocomp_retention_coordinator = Arc::new(
         outbe_node::ocomp::retention::OcompRetentionCoordinator::open(
-            ocomp_services.storage_root.join("ocomp_retention"),
+            ocomp_storage_root.join("ocomp_retention"),
             ocomp_proof_source,
         ),
     );
-    let snapshot_export_authority = Arc::new(
-        outbe_node::ocomp::snapshot_control::SnapshotExportAuthority::new(
-            ocomp_retention_coordinator.clone(),
-            ocomp_services.compressed_tree_service,
-            Arc::new(RethProjectionContainmentAuthority::new(
-                node.provider.clone(),
-            )),
-            ocomp_services.control.boot_nonce,
-            poc_schema_limits(),
-        ),
-    );
-    let control_identity = EndpointIdentity {
-        chain_id: node.chain_spec().chain().id(),
-        genesis_hash,
-        boot_nonce: ocomp_services.control.boot_nonce,
-        protocol_bundle_hash: ocomp_services.control.protocol_bundle_hash,
-    };
-    let control_server = OcompControlServer::new(
-        ocomp_retention_coordinator.clone(),
-        ocomp_services.control.supervisor_uid,
-        control_identity,
-        ocomp_services.control.session_generation,
-        poc_schema_limits(),
-    )?
-    .with_snapshot_export_authority(
-        snapshot_export_authority.clone(),
-        ocomp_services.control.snapshot_exporter_uid,
-    )
-    .with_local_result_store(ocomp_services.local_lysis_results);
-    let _ocomp_control_runtime = OcompControlRuntime::start(
-        Arc::new(control_server),
-        OcompControlRuntimeConfig {
-            supervisor_socket: ocomp_services.control.supervisor_socket,
-            snapshot_exporter_socket: ocomp_services.control.snapshot_exporter_socket,
-        },
-    )
-    .wrap_err("certified FullNode requires the OCOMP control runtime")?;
 
     // ── 3. Transports ────────────────────────────────────────────────────
     let local = crate::follow_transport::RethLocalBlockSource::new(node.clone());
@@ -2349,8 +2258,8 @@ where
         .start(marshal_mailbox.clone(), last_consensus_finalized);
 
     // ── 4b. Serve `outbe_getFinalization`. The critical observer below owns
-    // finality publication only after exact parent-proof persistence, OCOMP
-    // retention and snapshot arming all succeed. ───────────────────────────
+    // finality publication only after exact parent-proof persistence and OCOMP
+    // retention both succeed. ──────────────────────────────────────
     spawn_finalization_drainer(ctx, marshal_mailbox.clone(), bridge.clone());
 
     // ── 5. Assemble + run the follower engine ────────────────────────────
@@ -2359,7 +2268,6 @@ where
     let observer_schemes = certificate_scheme_provider.clone();
     let observer_store = finalized_parent_cert_store.clone();
     let observer_retention = ocomp_retention_coordinator.clone();
-    let observer_armer = snapshot_export_authority.clone();
     let observer_bridge = bridge.clone();
     let finality_observer = async move {
         let recovered_height = last_consensus_finalized.get();
@@ -2370,7 +2278,6 @@ where
                 &observer_schemes,
                 &observer_store,
                 &observer_retention,
-                &observer_armer,
                 recovered_height,
             )
             .await
@@ -2384,7 +2291,6 @@ where
                 &observer_schemes,
                 &observer_store,
                 &observer_retention,
-                &observer_armer,
                 height,
             )
             .await?;
@@ -2476,8 +2382,6 @@ where
         projection_readiness,
         finalized_ce_committer,
         ce_startup_recovery,
-        compressed_tree_service,
-        local_lysis_results,
     } = services;
 
     // Validate network-scoped flags before any mode-specific early return. A
@@ -2508,8 +2412,6 @@ where
             projection_readiness,
             finalized_ce_committer,
             ce_startup_recovery,
-            compressed_tree_service,
-            local_lysis_results,
         )
         .await;
     }
@@ -3854,96 +3756,8 @@ where
             ocomp_proof_source,
         ),
     );
-    let mut ocomp_snapshot_armer = None;
-    let _ocomp_control_runtime = if let Some(config) = args.ocomp.node_control()? {
-        let install = ocomp_fork_install.as_ref();
-        if config.protocol_bundle_hash != install.request_profile.protocol_bundle_hash {
-            return Err(eyre::eyre!(
-                "OCOMP node-control bundle {} differs from chain manifest {}",
-                config.protocol_bundle_hash,
-                install.request_profile.protocol_bundle_hash
-            ));
-        }
-        let validator_address = if let Some(address) = proposer_evm_address {
-            address
-        } else {
-            let key_path = args.effective_validator_evm_key()?.ok_or_else(|| {
-                eyre::eyre!("OCOMP validator voting requires --validator.evm-key")
-            })?;
-            outbe_primitives::signer::OutbeEvmSigner::from_file(&key_path)
-                .wrap_err_with(|| {
-                    format!(
-                        "failed to load OCOMP validator EVM identity from {}",
-                        key_path.display()
-                    )
-                })?
-                .address()
-        };
-        let identity = EndpointIdentity {
-            chain_id,
-            genesis_hash,
-            boot_nonce: config.boot_nonce,
-            protocol_bundle_hash: config.protocol_bundle_hash,
-        };
-        let projection_containment = Arc::new(RethProjectionContainmentAuthority::new(
-            node.provider.clone(),
-        ));
-        let snapshot_export_authority = Arc::new(
-            outbe_node::ocomp::snapshot_control::SnapshotExportAuthority::new(
-                ocomp_retention_coordinator.clone(),
-                compressed_tree_service,
-                projection_containment,
-                config.boot_nonce,
-                poc_schema_limits(),
-            ),
-        );
-        let server = OcompControlServer::new(
-            ocomp_retention_coordinator.clone(),
-            config.supervisor_uid,
-            identity,
-            config.session_generation,
-            poc_schema_limits(),
-        )?
-        .with_node_attestation_height_source(
-            OcompNodeAttestationConfig {
-                key_path: config.key_path.ok_or_else(|| {
-                    eyre::eyre!("validator OCOMP control requires a result-signing key")
-                })?,
-                sign_once_root: ocomp_storage_root.join("ocomp_sign_once"),
-                expected_owner_uid: outbe_ocomp_protocol::local_control::effective_uid()?,
-                fork_id: install.request_profile.fork_id,
-                validator_address,
-                initial_height: recovery_anchor_height,
-            },
-            Arc::new(ProviderHeightSource::new(node.provider.clone())),
-            Arc::new(ProviderHistoricalOcompSnapshotSource::new(
-                node.provider.clone(),
-            )),
-        )?
-        .with_snapshot_export_authority(
-            snapshot_export_authority.clone(),
-            config.snapshot_exporter_uid,
-        )
-        .with_local_result_store(local_lysis_results.clone());
-        ocomp_snapshot_armer = Some(
-            snapshot_export_authority
-                as Arc<dyn outbe_node::ocomp::retention::FinalizedSnapshotArmer>,
-        );
-        contain_ocomp_control_start(OcompControlRuntime::start(
-            Arc::new(server),
-            OcompControlRuntimeConfig {
-                supervisor_socket: config.supervisor_socket,
-                snapshot_exporter_socket: config.snapshot_exporter_socket,
-            },
-        ))
-    } else {
-        None
-    };
     let (ocomp_retention_service, ocomp_retention_handle) =
-        outbe_node::ocomp::retention::OcompRetentionService::new_with_snapshot_armer(
-            ocomp_retention_coordinator,
-            ocomp_snapshot_armer,
-        );
+        outbe_node::ocomp::retention::OcompRetentionService::new(ocomp_retention_coordinator);
     let ocomp_retention: Arc<dyn OcompRetentionHook> = Arc::new(ocomp_retention_handle);
 
     // Resolve consensus-sync block timings from genesis (timing.rs fallbacks,
@@ -5862,21 +5676,6 @@ where
     drop(bridge);
 
     Ok(())
-}
-
-fn contain_ocomp_control_start(
-    result: std::io::Result<OcompControlRuntime>,
-) -> Option<OcompControlRuntime> {
-    match result {
-        Ok(runtime) => Some(runtime),
-        Err(error) => {
-            tracing::error!(
-                %error,
-                "node OCOMP control runtime unavailable; consensus remains active"
-            );
-            None
-        }
-    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
