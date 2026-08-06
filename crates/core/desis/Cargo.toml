@@ -22,3 +22,8 @@ outbe-primitives = { workspace = true, features = ["test-utils"] }
 
 [lints]
 workspace = true
+
+[features]
+# Retarget the intex contract addresses at the throwaway CREATE3 set an
+# e2e chain deploys with the well-known anvil key. Never enabled in a release build.
+e2e-test = []
