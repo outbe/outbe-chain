@@ -19,8 +19,8 @@ use outbe_offchain_data::{
     ProjectionReadinessPublisher, ProjectionStatus, RuntimeBodyFailure, RuntimeBodyReaders,
 };
 use outbe_offchain_storage::{
-    MongoStorage, MongoStorageConfig, MongoWriterLease, StorageError, StorageErrorKind,
-    StorageReaderHandle, StorageWriterHandle,
+    AtomicWriteBatch, MongoStorage, MongoStorageConfig, MongoWriterLease, PendingOverlayStorage,
+    StorageError, StorageErrorKind, StorageReaderHandle, StorageWriterHandle,
 };
 use outbe_primitives::{
     chain::{is_devnet, is_testnet},
@@ -68,6 +68,12 @@ enum HistoricalProjectionDataError {
 
 type ProjectionAttempt = tokio::sync::oneshot::Receiver<eyre::Result<Option<FinalizedTarget>>>;
 
+struct DurableProjectionWrite {
+    checkpoint: FinalizedTarget,
+    batch: AtomicWriteBatch,
+    overlay_ack: Option<(Arc<PendingOverlayStorage>, u64)>,
+}
+
 fn spawn_detached_projection_work<T: Send + 'static>(
     name: &str,
     work: impl FnOnce() -> T + Send + 'static,
@@ -106,6 +112,7 @@ pub struct OffchainDataProjectionConfig {
 pub struct PreparedOffchainDataProjection {
     projector: OffchainDataProjection,
     storage: Arc<MongoStorage>,
+    overlay: Arc<PendingOverlayStorage>,
     writer_lease: MongoWriterLease,
     readiness_publisher: ProjectionReadinessPublisher,
     readiness: ProjectionReadinessHandle,
@@ -117,7 +124,7 @@ impl PreparedOffchainDataProjection {
     /// Typed read-only capabilities injected into EVM execution.
     #[must_use]
     pub fn runtime_body_readers(&self) -> RuntimeBodyReaders {
-        let reader: StorageReaderHandle = self.storage.clone();
+        let reader: StorageReaderHandle = self.overlay.clone();
         RuntimeBodyReaders::new_supervised(reader, self.runtime_failure_sender.clone())
     }
 
@@ -133,7 +140,8 @@ pub struct ReadyOffchainDataProjection {
     projector: OffchainDataProjection,
     readiness_publisher: ProjectionReadinessPublisher,
     projection_config: ProjectionConfig,
-    reader: StorageReaderHandle,
+    _reader: StorageReaderHandle,
+    overlay: Arc<PendingOverlayStorage>,
     writer: StorageWriterHandle,
     writer_lease: MongoWriterLease,
     runtime_failure_receiver: tokio::sync::watch::Receiver<Option<RuntimeBodyFailure>>,
@@ -180,7 +188,7 @@ pub fn prepare_offchain_data_projection(
             }
         };
         match attempt {
-            Ok((storage, projector, writer_lease)) => {
+            Ok((storage, overlay, projector, writer_lease)) => {
                 let initial = match projector.state().checkpoint {
                     Some(checkpoint) => ProjectionStatus::CatchingUp {
                         checkpoint: Some(checkpoint),
@@ -199,6 +207,7 @@ pub fn prepare_offchain_data_projection(
                 return Ok(PreparedOffchainDataProjection {
                     projector,
                     storage,
+                    overlay,
                     writer_lease,
                     readiness_publisher,
                     readiness,
@@ -243,7 +252,15 @@ impl PrepareProjectionError {
 
 fn prepare_projection_attempt(
     config: &OffchainDataProjectionConfig,
-) -> Result<(Arc<MongoStorage>, OffchainDataProjection, MongoWriterLease), PrepareProjectionError> {
+) -> Result<
+    (
+        Arc<MongoStorage>,
+        Arc<PendingOverlayStorage>,
+        OffchainDataProjection,
+        MongoWriterLease,
+    ),
+    PrepareProjectionError,
+> {
     let projection_config = ProjectionConfig {
         chain_id: config.chain_id,
         genesis_hash: config.genesis_hash,
@@ -264,12 +281,27 @@ fn prepare_projection_attempt(
         .map_err(PrepareProjectionError::Storage)?;
     gauge!("outbe_projection_mongo_topology_capable").set(1.0);
     let reader: StorageReaderHandle = storage.clone();
-    let projector = OffchainDataProjection::open(projection_config, reader, storage.clone())
+    OffchainDataProjection::open(projection_config, reader.clone(), storage.clone())
         .map_err(PrepareProjectionError::Projection)?;
     storage
         .verify_acknowledged_transaction()
         .map_err(PrepareProjectionError::Storage)?;
-    Ok((storage, projector, writer_lease))
+    let (overlay, projector) = open_logical_projection(projection_config, reader)
+        .map_err(PrepareProjectionError::Projection)?;
+    Ok((storage, overlay, projector, writer_lease))
+}
+
+fn open_logical_projection(
+    projection_config: ProjectionConfig,
+    durable_reader: StorageReaderHandle,
+) -> Result<
+    (Arc<PendingOverlayStorage>, OffchainDataProjection),
+    outbe_offchain_data::ProjectionError,
+> {
+    let overlay = Arc::new(PendingOverlayStorage::new(durable_reader));
+    let projector =
+        OffchainDataProjection::open(projection_config, overlay.clone(), overlay.clone())?;
+    Ok((overlay, projector))
 }
 
 /// Validates a persisted checkpoint against canonical Reth state during ExEx initialization.
@@ -286,7 +318,8 @@ where
         genesis_hash: projector.state().genesis_hash,
         start_block: projector.state().start_block,
     };
-    let reader: StorageReaderHandle = prepared.storage.clone();
+    let overlay = prepared.overlay;
+    let reader: StorageReaderHandle = overlay.clone();
     let writer: StorageWriterHandle = prepared.storage;
     let readiness_publisher = prepared.readiness_publisher;
     let runtime_failure_receiver = prepared.runtime_failure_receiver;
@@ -361,7 +394,8 @@ where
         projector,
         readiness_publisher,
         projection_config,
-        reader,
+        _reader: reader,
+        overlay,
         writer,
         writer_lease,
         runtime_failure_receiver,
@@ -526,9 +560,10 @@ struct ProjectionRuntime {
     projector: OffchainDataProjection,
     readiness_publisher: ProjectionReadinessPublisher,
     projection_config: ProjectionConfig,
-    reader: StorageReaderHandle,
+    _reader: StorageReaderHandle,
+    overlay: Option<Arc<PendingOverlayStorage>>,
     writer: StorageWriterHandle,
-    writer_lease: Option<MongoWriterLease>,
+    _writer_lease: Option<MongoWriterLease>,
     runtime_failure_receiver: Option<tokio::sync::watch::Receiver<Option<RuntimeBodyFailure>>>,
 }
 
@@ -538,17 +573,43 @@ impl ProjectionRuntime {
             projector: ready.projector,
             readiness_publisher: ready.readiness_publisher,
             projection_config: ready.projection_config,
-            reader: ready.reader,
+            _reader: ready._reader,
+            overlay: Some(ready.overlay),
             writer: ready.writer,
-            writer_lease: Some(ready.writer_lease),
+            _writer_lease: Some(ready.writer_lease),
             runtime_failure_receiver: Some(ready.runtime_failure_receiver),
         }
     }
+}
 
-    fn writer_lease_is_valid(&self) -> bool {
-        self.writer_lease
-            .as_ref()
-            .is_none_or(MongoWriterLease::is_valid)
+fn run_durable_projection_writer(
+    writer: StorageWriterHandle,
+    mut writes: tokio::sync::mpsc::UnboundedReceiver<DurableProjectionWrite>,
+    durable_checkpoint_tx: tokio::sync::mpsc::UnboundedSender<FinalizedTarget>,
+) {
+    while let Some(write) = writes.blocking_recv() {
+        loop {
+            match writer.apply_atomic(&write.batch) {
+                Ok(()) => {
+                    if let Some((overlay, generation)) = &write.overlay_ack {
+                        overlay.acknowledge(*generation);
+                    }
+                    if durable_checkpoint_tx.send(write.checkpoint).is_err() {
+                        return;
+                    }
+                    break;
+                }
+                Err(error) => {
+                    warn!(
+                        %error,
+                        block_number = write.checkpoint.number,
+                        block_hash = %write.checkpoint.hash,
+                        "MongoDB projection write failed; retrying without blocking logical projection"
+                    );
+                    std::thread::sleep(PROJECTION_RETRY_INTERVAL);
+                }
+            }
+        }
     }
 }
 
@@ -647,13 +708,22 @@ where
         .map(|checkpoint| FinalizedTarget::new(checkpoint.block_number, checkpoint.block_hash));
     let recovery_baseline = FinalizedTarget::new(0, runtime.projection_config.genesis_hash);
     let readiness_publisher = runtime.readiness_publisher.clone();
+    let durable_writer = runtime.writer.clone();
     let mut runtime_failures = runtime
         .runtime_failure_receiver
         .take()
         .ok_or_else(|| eyre::eyre!("projection body-read failure receiver is unavailable"))?;
     let projector = Arc::new(Mutex::new(runtime));
+    let (logical_checkpoint_tx, mut logical_checkpoint_rx) = tokio::sync::mpsc::unbounded_channel();
     let (durable_checkpoint_tx, mut durable_checkpoint_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (durable_write_tx, durable_write_rx) = tokio::sync::mpsc::unbounded_channel();
     let (recovery_ack_tx, mut recovery_ack_rx) = tokio::sync::mpsc::unbounded_channel();
+    std::thread::Builder::new()
+        .name("offchain-mongo-writer".to_owned())
+        .spawn(move || {
+            run_durable_projection_writer(durable_writer, durable_write_rx, durable_checkpoint_tx);
+        })
+        .wrap_err("spawn offchain-data MongoDB writer")?;
 
     // `finalized_block_stream` emits only changes, so the current provider value must be sampled
     // separately to avoid waiting forever when the node starts at an already-finalized height.
@@ -686,34 +756,20 @@ where
     retry.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
     loop {
-        if projection_attempt.is_none() && !finality_stalled {
-            let lease_valid = projector
-                .lock()
-                .map(|runtime| runtime.writer_lease_is_valid())
-                .unwrap_or(false);
-            if !lease_valid {
-                publish_fatal(
-                    &readiness_publisher,
-                    &projection_exit,
-                    ProjectionFailureClass::WriterLeaseLost,
-                    "MongoDB projection writer lease was lost",
-                );
-                can_start_attempt = false;
-                finality_stalled = true;
-            }
-        }
         if projection_attempt.is_none() && can_start_attempt && !finality_stalled {
             if let Some(target) = pending_target {
                 let provider = provider.clone();
                 let projector = Arc::clone(&projector);
-                let durable_checkpoint_tx = durable_checkpoint_tx.clone();
+                let logical_checkpoint_tx = logical_checkpoint_tx.clone();
+                let durable_write_tx = durable_write_tx.clone();
                 let recovery_ack_tx = recovery_ack_tx.clone();
                 match spawn_detached_projection_work("offchain-projector", move || {
                     project_through_target(
                         provider,
                         &projector,
                         target,
-                        &durable_checkpoint_tx,
+                        &logical_checkpoint_tx,
+                        &durable_write_tx,
                         &recovery_ack_tx,
                     )
                 }) {
@@ -936,7 +992,7 @@ where
                 }
             }
 
-            checkpoint = durable_checkpoint_rx.recv(), if !finality_stalled => {
+            checkpoint = logical_checkpoint_rx.recv(), if !finality_stalled => {
                 if let Some(checkpoint) = checkpoint {
                     let projection_checkpoint = ProjectionCheckpoint {
                         block_number: checkpoint.number,
@@ -952,6 +1008,11 @@ where
                             checkpoint: Some(projection_checkpoint),
                         }
                     }, latest_target);
+                }
+            }
+
+            checkpoint = durable_checkpoint_rx.recv(), if !finality_stalled => {
+                if let Some(checkpoint) = checkpoint {
                     let finished = (checkpoint.number, checkpoint.hash).into();
                     if events.send(ExExEvent::FinishedHeight(finished)).is_err() {
                         // The manager channel can disappear during shutdown. Returning from a
@@ -1265,7 +1326,8 @@ fn project_through_target<P>(
     provider: P,
     runtime: &Mutex<ProjectionRuntime>,
     target: FinalizedTarget,
-    durable_checkpoint_tx: &tokio::sync::mpsc::UnboundedSender<FinalizedTarget>,
+    logical_checkpoint_tx: &tokio::sync::mpsc::UnboundedSender<FinalizedTarget>,
+    durable_write_tx: &tokio::sync::mpsc::UnboundedSender<DurableProjectionWrite>,
     recovery_ack_tx: &tokio::sync::mpsc::UnboundedSender<()>,
 ) -> eyre::Result<Option<FinalizedTarget>>
 where
@@ -1276,16 +1338,7 @@ where
     let mut runtime = runtime
         .lock()
         .map_err(|_| eyre::eyre!("offchain-data projector lock is poisoned"))?;
-    runtime.projector = OffchainDataProjection::open(
-        runtime.projection_config,
-        runtime.reader.clone(),
-        runtime.writer.clone(),
-    )
-    .wrap_err("reload durable offchain-data projector state")?;
-    runtime
-        .writer
-        .verify_transaction_capability()
-        .wrap_err("verify recovered MongoDB transaction capability")?;
+    let overlay = runtime.overlay.clone();
     let projector = &mut runtime.projector;
     let state = projector.state();
     let checkpoint = state.checkpoint;
@@ -1341,9 +1394,9 @@ where
         }
         Some(checkpoint) if checkpoint.block_number == target.number => {
             let checkpoint = FinalizedTarget::new(checkpoint.block_number, checkpoint.block_hash);
-            durable_checkpoint_tx
+            logical_checkpoint_tx
                 .send(checkpoint)
-                .map_err(|_| eyre::eyre!("durable checkpoint receiver is closed"))?;
+                .map_err(|_| eyre::eyre!("logical checkpoint receiver is closed"))?;
             return Ok(Some(checkpoint));
         }
         Some(checkpoint) => checkpoint
@@ -1440,13 +1493,16 @@ where
             });
         }
 
-        let projected = projector
-            .project_block(&FinalizedBlock {
+        let prepared = projector
+            .prepare_block(&FinalizedBlock {
                 number: block_number,
                 hash: block_hash,
                 receipts: normalized_receipts,
             })
             .wrap_err_with(|| format!("project finalized block {block_number}"))?;
+        let (projected, durable_batch) = projector
+            .apply_prepared_with_batch(prepared)
+            .wrap_err_with(|| format!("apply logical finalized block {block_number}"))?;
         let projected = match projected {
             ProjectionOutcome::Applied { checkpoint, .. }
             | ProjectionOutcome::AlreadyApplied(checkpoint) => checkpoint,
@@ -1464,12 +1520,22 @@ where
             projected.block_number,
             projected.block_hash,
         ));
-        durable_checkpoint_tx
+        let overlay_ack = overlay
+            .as_ref()
+            .map(|overlay| (Arc::clone(overlay), overlay.current_generation()));
+        durable_write_tx
+            .send(DurableProjectionWrite {
+                checkpoint: FinalizedTarget::new(projected.block_number, projected.block_hash),
+                batch: durable_batch,
+                overlay_ack,
+            })
+            .map_err(|_| eyre::eyre!("durable MongoDB writer queue is closed"))?;
+        logical_checkpoint_tx
             .send(FinalizedTarget::new(
                 projected.block_number,
                 projected.block_hash,
             ))
-            .map_err(|_| eyre::eyre!("durable checkpoint receiver is closed"))?;
+            .map_err(|_| eyre::eyre!("logical checkpoint receiver is closed"))?;
     }
 
     Ok(durable_checkpoint)
@@ -1496,11 +1562,13 @@ mod tests {
     use alloy_consensus::Header;
     use alloy_primitives::B256;
     use outbe_offchain_data::{
-        OffchainDataProjection, ProjectionConfig, ProjectionFailure, ProjectionFailureClass,
+        FinalizedBlock, OffchainDataProjection, ProjectionConfig, ProjectionFailure,
+        ProjectionFailureClass,
     };
     use outbe_offchain_storage::{
-        AtomicWriteBatch, Key, MemoryStorage, Namespace, ScanPage, ScanRequest, StorageError,
-        StorageReader, StorageReaderHandle, StorageWriter, StorageWriterHandle, StoredValue,
+        AtomicWriteBatch, AtomicWriteOperation, Key, MemoryStorage, Namespace,
+        PendingOverlayStorage, ScanPage, ScanRequest, StorageError, StorageReader,
+        StorageReaderHandle, StorageWriter, StorageWriterHandle, StoredValue,
     };
     use reth_ethereum::{exex::ExExEvent, Block};
     use reth_provider::test_utils::MockEthProvider;
@@ -1825,33 +1893,83 @@ mod tests {
     }
 
     #[test]
+    fn node_runtime_opens_logical_projection_over_pending_overlay() {
+        let durable = Arc::new(MemoryStorage::new());
+        let projection_config = ProjectionConfig {
+            chain_id: 1,
+            genesis_hash: B256::repeat_byte(0x11),
+            start_block: 1,
+        };
+        OffchainDataProjection::open(projection_config, durable.clone(), durable.clone()).unwrap();
+        let durable_reader: StorageReaderHandle = durable.clone();
+        let (overlay, mut projector) =
+            super::open_logical_projection(projection_config, durable_reader).unwrap();
+        let block = FinalizedBlock {
+            number: 1,
+            hash: B256::repeat_byte(0x22),
+            receipts: Vec::new(),
+        };
+
+        projector.project_block(&block).unwrap();
+
+        assert_eq!(projector.state().checkpoint.unwrap().block_number, 1);
+        assert_eq!(
+            outbe_offchain_data::read_projection_state(projection_config, durable)
+                .unwrap()
+                .unwrap()
+                .checkpoint,
+            None,
+            "the durable Mongo-shaped base must not be written by the logical projector"
+        );
+        assert_eq!(
+            outbe_offchain_data::read_projection_state(projection_config, overlay)
+                .unwrap()
+                .unwrap()
+                .checkpoint
+                .unwrap()
+                .block_number,
+            1
+        );
+    }
+
+    #[test]
     fn projects_each_intermediate_block_and_reports_each_durable_checkpoint() {
         let provider = MockEthProvider::<reth_ethereum::EthPrimitives>::new();
         let first = add_empty_block(&provider, 1);
         let second = add_empty_block(&provider, 2);
         let runtime = initialized_runtime(1);
-        let (checkpoint_tx, mut checkpoint_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (logical_tx, mut logical_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (write_tx, mut write_rx) = tokio::sync::mpsc::unbounded_channel();
         let (recovery_tx, _recovery_rx) = tokio::sync::mpsc::unbounded_channel();
 
         let result = project_through_target(
             provider,
             &runtime,
             FinalizedTarget::new(2, second),
-            &checkpoint_tx,
+            &logical_tx,
+            &write_tx,
             &recovery_tx,
         )
         .unwrap();
 
         assert_eq!(result, Some(FinalizedTarget::new(2, second)));
         assert_eq!(
-            checkpoint_rx.try_recv().unwrap(),
+            logical_rx.try_recv().unwrap(),
             FinalizedTarget::new(1, first)
         );
         assert_eq!(
-            checkpoint_rx.try_recv().unwrap(),
+            logical_rx.try_recv().unwrap(),
             FinalizedTarget::new(2, second)
         );
-        assert!(checkpoint_rx.try_recv().is_err());
+        assert_eq!(
+            write_rx.try_recv().unwrap().checkpoint,
+            FinalizedTarget::new(1, first)
+        );
+        assert_eq!(
+            write_rx.try_recv().unwrap().checkpoint,
+            FinalizedTarget::new(2, second)
+        );
+        assert!(write_rx.try_recv().is_err());
         let state = runtime.lock().unwrap();
         let checkpoint = state.projector.state().checkpoint.unwrap();
         assert_eq!(checkpoint.block_number, 2);
@@ -1863,14 +1981,16 @@ mod tests {
         let provider = MockEthProvider::<reth_ethereum::EthPrimitives>::new();
         let first = add_empty_block(&provider, 1);
         let runtime = initialized_runtime(1);
-        let (checkpoint_tx, mut checkpoint_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (logical_tx, mut logical_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (write_tx, mut write_rx) = tokio::sync::mpsc::unbounded_channel();
         let (recovery_tx, _recovery_rx) = tokio::sync::mpsc::unbounded_channel();
 
         let error = project_through_target(
             provider,
             &runtime,
             FinalizedTarget::new(2, B256::repeat_byte(2)),
-            &checkpoint_tx,
+            &logical_tx,
+            &write_tx,
             &recovery_tx,
         )
         .unwrap_err();
@@ -1883,14 +2003,80 @@ mod tests {
             ProjectionFailureClass::HistoricalReceiptsUnavailable
         );
         assert_eq!(
-            checkpoint_rx.try_recv().unwrap(),
+            logical_rx.try_recv().unwrap(),
             FinalizedTarget::new(1, first)
         );
-        assert!(checkpoint_rx.try_recv().is_err());
+        assert_eq!(
+            write_rx.try_recv().unwrap().checkpoint,
+            FinalizedTarget::new(1, first)
+        );
+        assert!(write_rx.try_recv().is_err());
         let state = runtime.lock().unwrap();
         let checkpoint = state.projector.state().checkpoint.unwrap();
         assert_eq!(checkpoint.block_number, 1);
         assert_eq!(checkpoint.block_hash, first);
+    }
+
+    #[test]
+    fn ambiguous_mongo_result_retries_the_same_batch_before_advancing_durable_height() {
+        let storage = Arc::new(AmbiguousFirstWriteStorage::default());
+        let overlay = Arc::new(PendingOverlayStorage::new(storage.inner.clone()));
+        let writer: StorageWriterHandle = storage.clone();
+        let namespace = Namespace::new("records").unwrap();
+        let key = Key::new(b"key".to_vec()).unwrap();
+        let value = outbe_offchain_storage::Value::new(b"value".to_vec()).unwrap();
+        let batch = AtomicWriteBatch::from_operations(vec![AtomicWriteOperation::put(
+            namespace.clone(),
+            key.clone(),
+            value,
+        )]);
+        let checkpoint = FinalizedTarget::new(7, B256::repeat_byte(0x77));
+        let (write_tx, write_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (checkpoint_tx, mut checkpoint_rx) = tokio::sync::mpsc::unbounded_channel();
+        let writer_thread = std::thread::spawn(move || {
+            super::run_durable_projection_writer(writer, write_rx, checkpoint_tx);
+        });
+
+        storage.ambiguous_next.store(true, Ordering::Release);
+        overlay.apply_atomic(&batch).unwrap();
+        let overlay_generation = overlay.current_generation();
+        write_tx
+            .send(super::DurableProjectionWrite {
+                checkpoint,
+                batch,
+                overlay_ack: Some((overlay.clone(), overlay_generation)),
+            })
+            .unwrap();
+        let durable = checkpoint_rx
+            .blocking_recv()
+            .expect("the exact batch must be retried after an ambiguous result");
+
+        assert_eq!(durable, checkpoint);
+        assert_eq!(storage.attempts.load(Ordering::Acquire), 2);
+        assert_eq!(
+            storage
+                .inner
+                .get(namespace.clone(), &key)
+                .unwrap()
+                .unwrap()
+                .as_bytes(),
+            b"value"
+        );
+        storage
+            .inner
+            .put(
+                namespace.clone(),
+                &key,
+                &outbe_offchain_storage::Value::new(b"base-after-ack".to_vec()).unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            overlay.get(namespace, &key).unwrap().unwrap().as_bytes(),
+            b"base-after-ack",
+            "durable ACK must retire the acknowledged overlay generation"
+        );
+        drop(write_tx);
+        writer_thread.join().unwrap();
     }
 
     #[test]
@@ -1990,9 +2176,10 @@ mod tests {
                 projector,
                 readiness_publisher,
                 projection_config,
-                reader,
+                _reader: reader,
+                overlay: None,
                 writer,
-                writer_lease: None,
+                _writer_lease: None,
                 runtime_failure_receiver: Some(runtime_failure_rx),
             },
             exit_tx,
@@ -2067,9 +2254,10 @@ mod tests {
                 projector,
                 readiness_publisher,
                 projection_config,
-                reader,
+                _reader: reader,
+                overlay: None,
                 writer,
-                writer_lease: None,
+                _writer_lease: None,
                 runtime_failure_receiver: Some(runtime_failure_rx),
             },
             exit_tx,
@@ -2174,9 +2362,10 @@ mod tests {
                 projector,
                 readiness_publisher,
                 projection_config,
-                reader,
+                _reader: reader,
+                overlay: None,
                 writer,
-                writer_lease: None,
+                _writer_lease: None,
                 runtime_failure_receiver: Some(runtime_failure_rx),
             },
             exit_tx,
@@ -2219,21 +2408,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unavailable_projection_write_retries_and_advances_only_after_recovery() {
+    async fn unavailable_mongo_write_retries_without_changing_logical_readiness() {
         use futures::channel::mpsc;
 
         let provider = MockEthProvider::new();
         let block_hash = add_empty_block(&provider, 1);
         let storage = Arc::new(FailAfterStartupStorage::default());
-        let reader: StorageReaderHandle = storage.clone();
-        let writer: StorageWriterHandle = storage.clone();
         let projection_config = ProjectionConfig {
             chain_id: 1,
             genesis_hash: B256::repeat_byte(0x11),
             start_block: 1,
         };
+        OffchainDataProjection::open(projection_config, storage.clone(), storage.clone()).unwrap();
+        let overlay = Arc::new(PendingOverlayStorage::new(storage.clone()));
+        let reader: StorageReaderHandle = overlay.clone();
+        let logical_writer: StorageWriterHandle = overlay.clone();
+        let durable_writer: StorageWriterHandle = storage.clone();
         let projector =
-            OffchainDataProjection::open(projection_config, reader.clone(), writer.clone())
+            OffchainDataProjection::open(projection_config, reader.clone(), logical_writer)
                 .unwrap();
         let (readiness_publisher, readiness) = outbe_offchain_data::projection_readiness(
             outbe_offchain_data::ProjectionCheckpoint {
@@ -2261,9 +2453,10 @@ mod tests {
                 projector,
                 readiness_publisher,
                 projection_config,
-                reader,
-                writer,
-                writer_lease: None,
+                _reader: reader,
+                overlay: Some(overlay.clone()),
+                writer: durable_writer,
+                _writer_lease: None,
                 runtime_failure_receiver: Some(runtime_failure_rx),
             },
             exit_tx,
@@ -2279,7 +2472,8 @@ mod tests {
             loop {
                 if matches!(
                     readiness.current(),
-                    outbe_offchain_data::ProjectionStatus::MongoUnavailable { .. }
+                    outbe_offchain_data::ProjectionStatus::Ready { checkpoint }
+                        if checkpoint.block_number == 1 && checkpoint.block_hash == block_hash
                 ) {
                     break;
                 }
@@ -2287,8 +2481,9 @@ mod tests {
             }
         })
         .await
-        .expect("failed receipt transaction must enter recovery");
+        .expect("Mongo write failure must not hold back logical readiness");
         assert!(events_rx.try_recv().is_err());
+        assert!(exit_rx.try_recv().is_err());
 
         storage
             .fail_writes_unavailable
@@ -2305,6 +2500,242 @@ mod tests {
         ));
         assert!(exit_rx.try_recv().is_err());
         assert!(!task.is_finished());
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn blocked_mongo_write_does_not_block_logical_projection_readiness() {
+        use futures::channel::mpsc;
+
+        let provider = MockEthProvider::new();
+        let block_hash = add_empty_block(&provider, 1);
+        let next_block_hash = add_empty_block(&provider, 2);
+        let (durable, write_started, release_write, write_finished) = BlockingWriteStorage::new();
+        let projection_config = ProjectionConfig {
+            chain_id: 1,
+            genesis_hash: B256::repeat_byte(0x11),
+            start_block: 1,
+        };
+        OffchainDataProjection::open(projection_config, durable.clone(), durable.clone()).unwrap();
+        let overlay = Arc::new(PendingOverlayStorage::new(durable.clone()));
+        let logical_reader: StorageReaderHandle = overlay.clone();
+        let logical_writer: StorageWriterHandle = overlay.clone();
+        let durable_writer: StorageWriterHandle = durable.clone();
+        let projector =
+            OffchainDataProjection::open(projection_config, logical_reader.clone(), logical_writer)
+                .unwrap();
+        let checkpoint = ProjectionCheckpoint {
+            block_number: 0,
+            block_hash: projection_config.genesis_hash,
+        };
+        let (readiness_publisher, readiness) =
+            projection_readiness(checkpoint, ProjectionStatus::Ready { checkpoint });
+        let (_runtime_failure_tx, runtime_failure_rx) = tokio::sync::watch::channel(None);
+        let (_notification_tx, notification_rx) = mpsc::channel(1);
+        let (finality_tx, finality_rx) = mpsc::unbounded();
+        let (events_tx, mut events_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (exit_tx, _exit_rx) = tokio::sync::mpsc::unbounded_channel();
+        durable.block_next_write.store(true, Ordering::Release);
+        let task = tokio::spawn(run_projection_loop(
+            provider,
+            notification_rx,
+            finality_rx,
+            events_tx,
+            ProjectionRuntime {
+                projector,
+                readiness_publisher,
+                projection_config,
+                _reader: logical_reader,
+                overlay: Some(overlay.clone()),
+                writer: durable_writer,
+                _writer_lease: None,
+                runtime_failure_receiver: Some(runtime_failure_rx),
+            },
+            exit_tx,
+        ));
+
+        finality_tx
+            .unbounded_send(FinalizedTarget::new(1, block_hash))
+            .unwrap();
+        tokio::task::spawn_blocking(move || write_started.recv().unwrap())
+            .await
+            .unwrap();
+
+        let readiness_advanced = tokio::time::timeout(Duration::from_millis(200), async {
+            loop {
+                if matches!(
+                    readiness.current(),
+                    ProjectionStatus::Ready { checkpoint }
+                        if checkpoint.block_number == 1 && checkpoint.block_hash == block_hash
+                ) {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        finality_tx
+            .unbounded_send(FinalizedTarget::new(2, next_block_hash))
+            .unwrap();
+        let later_readiness_advanced = tokio::time::timeout(Duration::from_millis(200), async {
+            loop {
+                if matches!(
+                    readiness.current(),
+                    ProjectionStatus::Ready { checkpoint }
+                        if checkpoint.block_number == 2
+                            && checkpoint.block_hash == next_block_hash
+                ) {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        assert!(
+            events_rx.try_recv().is_err(),
+            "FinishedHeight must remain tied to the durable Mongo checkpoint"
+        );
+
+        release_write.send(()).unwrap();
+        tokio::task::spawn_blocking(move || write_finished.recv().unwrap())
+            .await
+            .unwrap();
+        let first_finished = tokio::time::timeout(Duration::from_secs(1), events_rx.recv())
+            .await
+            .expect("first Mongo commit must publish its durable height")
+            .expect("ExEx event sender remains live");
+        let second_finished = tokio::time::timeout(Duration::from_secs(1), events_rx.recv())
+            .await
+            .expect("queued Mongo commit must follow the first commit")
+            .expect("ExEx event sender remains live");
+        task.abort();
+
+        assert!(
+            readiness_advanced.is_ok(),
+            "logical readiness must advance before the blocked Mongo write is acknowledged"
+        );
+        assert!(
+            later_readiness_advanced.is_ok(),
+            "a blocked Mongo writer must not stop later finalized blocks from advancing readiness"
+        );
+        assert_eq!(
+            first_finished,
+            ExExEvent::FinishedHeight((1, block_hash).into())
+        );
+        assert_eq!(
+            second_finished,
+            ExExEvent::FinishedHeight((2, next_block_hash).into())
+        );
+    }
+
+    #[tokio::test]
+    async fn restart_replays_after_the_durable_checkpoint_before_mongo_catches_up() {
+        use futures::channel::mpsc;
+
+        let provider = MockEthProvider::new();
+        let durable_hash = add_empty_block(&provider, 1);
+        let replayed_hash = add_empty_block(&provider, 2);
+        let (durable, write_started, release_write, write_finished) = BlockingWriteStorage::new();
+        let projection_config = ProjectionConfig {
+            chain_id: 1,
+            genesis_hash: B256::repeat_byte(0x11),
+            start_block: 1,
+        };
+        let mut durable_projection =
+            OffchainDataProjection::open(projection_config, durable.clone(), durable.clone())
+                .unwrap();
+        durable_projection
+            .project_block(&FinalizedBlock {
+                number: 1,
+                hash: durable_hash,
+                receipts: Vec::new(),
+            })
+            .unwrap();
+        drop(durable_projection);
+
+        let overlay = Arc::new(PendingOverlayStorage::new(durable.clone()));
+        let logical_reader: StorageReaderHandle = overlay.clone();
+        let logical_writer: StorageWriterHandle = overlay.clone();
+        let projector =
+            OffchainDataProjection::open(projection_config, logical_reader.clone(), logical_writer)
+                .unwrap();
+        let durable_checkpoint = ProjectionCheckpoint {
+            block_number: 1,
+            block_hash: durable_hash,
+        };
+        let (readiness_publisher, readiness) = projection_readiness(
+            ProjectionCheckpoint {
+                block_number: 0,
+                block_hash: projection_config.genesis_hash,
+            },
+            ProjectionStatus::Ready {
+                checkpoint: durable_checkpoint,
+            },
+        );
+        let (_runtime_failure_tx, runtime_failure_rx) = tokio::sync::watch::channel(None);
+        let (_notification_tx, notification_rx) = mpsc::channel(1);
+        let (finality_tx, finality_rx) = mpsc::unbounded();
+        let (events_tx, mut events_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (exit_tx, mut exit_rx) = tokio::sync::mpsc::unbounded_channel();
+        durable.block_next_write.store(true, Ordering::Release);
+        let task = tokio::spawn(run_projection_loop(
+            provider,
+            notification_rx,
+            finality_rx,
+            events_tx,
+            ProjectionRuntime {
+                projector,
+                readiness_publisher,
+                projection_config,
+                _reader: logical_reader,
+                overlay: Some(overlay.clone()),
+                writer: durable.clone(),
+                _writer_lease: None,
+                runtime_failure_receiver: Some(runtime_failure_rx),
+            },
+            exit_tx,
+        ));
+
+        finality_tx
+            .unbounded_send(FinalizedTarget::new(2, replayed_hash))
+            .unwrap();
+        tokio::task::spawn_blocking(move || write_started.recv().unwrap())
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if matches!(
+                    readiness.current(),
+                    ProjectionStatus::Ready { checkpoint }
+                        if checkpoint.block_number == 2 && checkpoint.block_hash == replayed_hash
+                ) {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("retained finalized receipts must rebuild logical readiness after restart");
+        assert_eq!(
+            outbe_offchain_data::read_projection_state(projection_config, durable.clone())
+                .unwrap()
+                .unwrap()
+                .checkpoint,
+            Some(durable_checkpoint),
+            "Mongo checkpoint must remain the restart cursor until the replayed batch commits"
+        );
+        assert!(events_rx.try_recv().is_err());
+        assert!(exit_rx.try_recv().is_err());
+
+        release_write.send(()).unwrap();
+        tokio::task::spawn_blocking(move || write_finished.recv().unwrap())
+            .await
+            .unwrap();
+        let event = tokio::time::timeout(Duration::from_secs(1), events_rx.recv())
+            .await
+            .expect("replayed batch must eventually commit to Mongo")
+            .expect("ExEx event sender remains live");
+        assert_eq!(event, ExExEvent::FinishedHeight((2, replayed_hash).into()));
         task.abort();
     }
 
@@ -2348,9 +2779,10 @@ mod tests {
                 projector,
                 readiness_publisher,
                 projection_config,
-                reader,
+                _reader: reader,
+                overlay: None,
                 writer,
-                writer_lease: None,
+                _writer_lease: None,
                 runtime_failure_receiver: Some(runtime_failure_rx),
             },
             exit_tx,
@@ -2424,9 +2856,10 @@ mod tests {
             projector,
             readiness_publisher,
             projection_config,
-            reader,
+            _reader: reader,
+            overlay: None,
             writer,
-            writer_lease: None,
+            _writer_lease: None,
             runtime_failure_receiver: Some(runtime_failure_rx),
         })
     }
@@ -2506,6 +2939,26 @@ mod tests {
                 }
             }
             result
+        }
+    }
+
+    #[derive(Default)]
+    struct AmbiguousFirstWriteStorage {
+        inner: Arc<MemoryStorage>,
+        ambiguous_next: AtomicBool,
+        attempts: AtomicUsize,
+    }
+
+    impl StorageWriter for AmbiguousFirstWriteStorage {
+        fn apply_atomic(&self, batch: &AtomicWriteBatch) -> Result<(), StorageError> {
+            self.attempts.fetch_add(1, Ordering::AcqRel);
+            self.inner.apply_atomic(batch)?;
+            if self.ambiguous_next.swap(false, Ordering::AcqRel) {
+                return Err(StorageError::Unavailable {
+                    source: Box::new(std::io::Error::other("injected ambiguous MongoDB result")),
+                });
+            }
+            Ok(())
         }
     }
 
