@@ -8,11 +8,19 @@ use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
+use alloy_sol_types::sol;
 use eyre::{bail, eyre, Result};
 
 use crate::internal::config::Config;
 use crate::internal::proc::{attach_log, wait_tcp, ChildGuard};
+use crate::internal::eth;
+
+/// Which role id to read off a venue contract.
+enum Role {
+    Relayer,
+    SystemRelayer,
+}
 
 /// Chain id of the local target chain, distinct from the committee's so the two
 /// are never confused by cross-chain addressing.
@@ -37,7 +45,28 @@ pub struct TargetContracts {
     pub mailbox: Address,
     pub bridge: Address,
     pub intex_nft: Address,
+    pub escrow: Address,
+    pub auction: Address,
+    pub nft_bridge: Address,
     pub target_router: Address,
+}
+
+sol! {
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    interface ITargetRouterWire {
+        function wire(address auction, address intex, address escrowAdapter, address nftBridge) external;
+    }
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IAuctionWire {
+        function wire(address escrow) external;
+    }
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IVenueRoles {
+        function grantRole(bytes32 role, address account) external;
+        function hasRole(bytes32 role, address account) external view returns (bool);
+        function RELAYER_ROLE() external view returns (bytes32);
+        function SYSTEM_RELAYER_ROLE() external view returns (bytes32);
+    }
 }
 
 #[derive(Debug)]
@@ -176,8 +205,98 @@ impl TargetChain {
             mailbox,
             bridge,
             intex_nft: address_from(&venue, "IntexNFT1155:")?,
+            escrow: address_from(&venue, "EscrowAdapter:")?,
+            auction: address_from(&venue, "IntexAuction:")?,
+            nft_bridge: address_from(&venue, "IntexNFT1155Bridge:")?,
             target_router: address_from(&venue, "TargetRouter:")?,
         })
+    }
+
+    /// Point the freshly deployed contracts at each other and let the router act.
+    ///
+    /// The deploy scripts stop at standing contracts on purpose — wiring is a
+    /// separate step in production too. Without it the router holds no references
+    /// and may not mint, so an inbound message would arrive and do nothing.
+    pub fn wire(&self, contracts: &TargetContracts) -> Result<()> {
+        let url = self
+            .rpc_url()
+            .ok_or_else(|| eyre!("wiring needs a running target chain"))?;
+
+        self.send(
+            &url,
+            contracts.target_router,
+            &ITargetRouterWire::wireCall {
+                auction: contracts.auction,
+                intex: contracts.intex_nft,
+                escrowAdapter: contracts.escrow,
+                nftBridge: contracts.nft_bridge,
+            },
+        )?;
+        self.send(
+            &url,
+            contracts.auction,
+            &IAuctionWire::wireCall {
+                escrow: contracts.escrow,
+            },
+        )?;
+
+        // The router is what an inbound message becomes, so it is the account
+        // that has to be allowed to create series, mint and move bridged tokens.
+        let relayer = self.role(&url, contracts.intex_nft, Role::Relayer)?;
+        let system_relayer = self.role(&url, contracts.nft_bridge, Role::SystemRelayer)?;
+        for (holder, role) in [
+            (contracts.intex_nft, relayer),
+            (contracts.auction, relayer),
+            (contracts.nft_bridge, system_relayer),
+        ] {
+            self.send(
+                &url,
+                holder,
+                &IVenueRoles::grantRoleCall {
+                    role,
+                    account: contracts.target_router,
+                },
+            )?;
+        }
+        Ok(())
+    }
+
+    fn send<C: alloy_sol_types::SolCall>(&self, url: &str, to: Address, call: &C) -> Result<String> {
+        eth::send_call(url, to, DEPLOYER_KEY, call, None)
+    }
+
+    /// Whether `account` holds `role` on `holder`.
+    pub fn holds_role(&self, holder: Address, role_id: B256, account: Address) -> Result<bool> {
+        let url = self
+            .rpc_url()
+            .ok_or_else(|| eyre!("role check needs a running target chain"))?;
+        eth::read_call(
+            &url,
+            holder,
+            &IVenueRoles::hasRoleCall {
+                role: role_id,
+                account,
+            },
+        )
+        .ok_or_else(|| eyre!("read hasRole from {holder}"))
+    }
+
+    /// The relayer role id as `holder` defines it.
+    pub fn relayer_role(&self, holder: Address) -> Result<B256> {
+        let url = self
+            .rpc_url()
+            .ok_or_else(|| eyre!("role read needs a running target chain"))?;
+        self.role(&url, holder, Role::Relayer)
+    }
+
+    fn role(&self, url: &str, holder: Address, role: Role) -> Result<B256> {
+        let read = match role {
+            Role::Relayer => eth::read_call(url, holder, &IVenueRoles::RELAYER_ROLECall {}),
+            Role::SystemRelayer => {
+                eth::read_call(url, holder, &IVenueRoles::SYSTEM_RELAYER_ROLECall {})
+            }
+        };
+        read.ok_or_else(|| eyre!("read the role id from {holder}"))
     }
 
     /// Run one forge command in `dir` against this chain, returning its output.

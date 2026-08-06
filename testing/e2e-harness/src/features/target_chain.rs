@@ -60,6 +60,39 @@ fn target_chain_hosts_venue(world: &mut World) {
     }
 }
 
+#[when("the intex venue is wired")]
+fn wire_intex_venue(world: &mut World) {
+    let contracts = world
+        .state
+        .target_contracts
+        .clone()
+        .expect("a deploy recorded its addresses");
+    world
+        .target_chain
+        .wire(&contracts)
+        .expect("wire the intex venue");
+}
+
+#[then("the target router may mint on the venue")]
+fn router_may_mint(world: &mut World) {
+    let contracts = world
+        .state
+        .target_contracts
+        .clone()
+        .expect("a deploy recorded its addresses");
+    let relayer = world
+        .target_chain
+        .relayer_role(contracts.intex_nft)
+        .expect("read the relayer role id");
+    assert!(
+        world
+            .target_chain
+            .holds_role(contracts.intex_nft, relayer, contracts.target_router)
+            .expect("read hasRole on the collection"),
+        "the router cannot mint: an inbound issuance would arrive and do nothing"
+    );
+}
+
 #[then("the committee is still producing blocks")]
 fn committee_still_producing(world: &mut World) {
     let port = world.validators.primary_port();

@@ -13,3 +13,5 @@ Feature: Local target chain
     And the committee is still producing blocks
     When the intex venue is deployed on the target chain
     Then the target chain hosts the intex venue
+    When the intex venue is wired
+    Then the target router may mint on the venue
