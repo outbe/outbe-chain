@@ -392,6 +392,13 @@ record keyed by `JobId`:
 - no timely vote produces a missing-response bit;
 - two different signed digests produce objective equivocation evidence.
 
+`Completed`/`Conflicted` therefore means result-selected, not response-window
+closed. Node retention, local-control List/Get, snapshot export, attestation and
+sign-once keep the exact pinned job live through restart until the exclusive
+deadline. Only finalized deadline closure moves the node-facing record to
+terminal retention; quorum formation alone must never hide the job from a
+remaining pinned validator.
+
 The finalized binding opens one exact compute-and-vote window of 1,800 blocks.
 It includes both local Lysis execution and canonical vote inclusion; there is
 no separate short vote-only window. At the exclusive deadline consensus closes

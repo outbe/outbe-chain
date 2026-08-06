@@ -261,6 +261,9 @@ closed summary live in a separate bounded `OcompVoteAccountabilityV1` keyed by
 `JobId`; they store digests/signatures/heights, not four copies of the result.
 After completion or conflict, missing first-vote slots and first
 bounded conflicting-vote evidence remain writable until the response deadline.
+The node-side durable pin remains exported, discoverable, attestable and
+signable across restart for the same interval; `Completed`/`Conflicted` is not a
+retention terminal state before deadline closure.
 At the exact deadline a system transition closes them and records every missing
 pinned participant. It jails only a participant whose current ValidatorSet
 status is still `ACTIVE`; every non-ACTIVE status is left byte-identical and

@@ -564,7 +564,12 @@ where
                         "terminal Job binding differs from retained finalized Job".to_owned(),
                     ));
                 }
-                Ok(Some(terminal.terminal_height))
+                retention_terminal_height_for_status(
+                    record.status,
+                    block.number(),
+                    finalized.deadline_height,
+                    terminal.terminal_height,
+                )
             }
         }
     }
@@ -1892,6 +1897,26 @@ fn candidate_job_id(candidate: CandidatePinV1) -> Result<B256, RetentionError> {
         candidate.state_root,
     )
     .map_err(|error| RetentionError::Source(format!("derive tentative JobId: {error}")))
+}
+
+pub(super) fn retention_terminal_height_for_status(
+    status: OcompJobStatus,
+    observed_height: u64,
+    deadline_height: u64,
+    terminal_height: u64,
+) -> Result<Option<u64>, RetentionError> {
+    match status {
+        OcompJobStatus::AwaitingFinality | OcompJobStatus::VotingOpen => Ok(None),
+        OcompJobStatus::Completed | OcompJobStatus::Conflicted => {
+            if terminal_height >= deadline_height {
+                return Err(RetentionError::Source(
+                    "OCOMP quorum terminal height is outside its response window".to_owned(),
+                ));
+            }
+            Ok((observed_height >= deadline_height).then_some(deadline_height))
+        }
+        OcompJobStatus::Expired | OcompJobStatus::Canceled => Ok(Some(terminal_height)),
+    }
 }
 
 fn legacy_candidate_input_lease_id(candidate: CandidatePinV1) -> B256 {

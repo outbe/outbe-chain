@@ -48,10 +48,10 @@ use reth_ethereum::{primitives::SealedBlock, Block, Receipt, TxType};
 use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
 
 use crate::ocomp::retention::{
-    inspect_retention_journal, CandidateFinalityV1, CandidatePinV1, FinalizedInputProofSource,
-    FinalizedJobPinV1, FinalizedSnapshotArmer, JournalDurability, OcompRetentionCoordinator,
-    OcompRetentionService, PinRecordV1, PinReleaseReason, PinStateV1, RetentionError,
-    RetentionStatus, RethFinalizedInputProofSource,
+    inspect_retention_journal, retention_terminal_height_for_status, CandidateFinalityV1,
+    CandidatePinV1, FinalizedInputProofSource, FinalizedJobPinV1, FinalizedSnapshotArmer,
+    JournalDurability, OcompRetentionCoordinator, OcompRetentionService, PinRecordV1,
+    PinReleaseReason, PinStateV1, RetentionError, RetentionStatus, RethFinalizedInputProofSource,
 };
 use crate::ocomp::{
     attestation::{AtomicHeightSource, AttestationAuthorityError, AttestationError},
@@ -169,6 +169,57 @@ impl FinalizedInputProofSource for DeterministicProofSource {
             .expect("deterministic terminal lock")
             .get(&job_id)
             .copied())
+    }
+}
+
+#[derive(Clone)]
+struct ResponseWindowCompletedSource {
+    inner: DeterministicProofSource,
+}
+
+impl FinalizedInputProofSource for ResponseWindowCompletedSource {
+    fn candidate_for_block(
+        &self,
+        block: &ConsensusBlock,
+    ) -> Result<Option<CandidatePinV1>, RetentionError> {
+        self.inner.candidate_for_block(block)
+    }
+
+    fn resolve_finality(
+        &self,
+        candidate: CandidatePinV1,
+    ) -> Result<CandidateFinalityV1, RetentionError> {
+        self.inner.resolve_finality(candidate)
+    }
+
+    fn terminal_height_at(
+        &self,
+        block: &ConsensusBlock,
+        candidate: CandidatePinV1,
+        job_id: B256,
+    ) -> Result<Option<u64>, RetentionError> {
+        let Some(quorum_height) = self
+            .inner
+            .terminal
+            .lock()
+            .expect("deterministic terminal lock")
+            .get(&job_id)
+            .copied()
+        else {
+            return Ok(None);
+        };
+        let CandidateFinalityV1::Finalized(finalized) = self.inner.resolve_finality(candidate)?
+        else {
+            return Err(RetentionError::Source(
+                "completed response-window fixture became orphaned".to_owned(),
+            ));
+        };
+        retention_terminal_height_for_status(
+            OcompJobStatus::Completed,
+            block.number(),
+            finalized.deadline_height,
+            quorum_height,
+        )
     }
 }
 
@@ -1582,6 +1633,81 @@ fn ocm_pin_001_finalized_state_drives_terminal_retention_without_supervisor_inpu
             job_id: current,
             terminal_height: 160,
             release_height: 224,
+            ..
+        } if current == job_id
+    ));
+}
+
+#[test]
+fn ocm_pin_001_quorum_status_is_not_retention_terminal_before_response_deadline() {
+    for status in [OcompJobStatus::Completed, OcompJobStatus::Conflicted] {
+        assert_eq!(
+            retention_terminal_height_for_status(status, 160, 165, 160).unwrap(),
+            None,
+            "quorum at 160 must not hide a still-open job before deadline 165"
+        );
+        assert_eq!(
+            retention_terminal_height_for_status(status, 165, 165, 160).unwrap(),
+            Some(165),
+            "deadline closure, not quorum formation, terminalizes retention"
+        );
+    }
+}
+
+#[test]
+fn ocm_pin_001_restart_keeps_quorum_complete_export_live_until_deadline() {
+    let request = block(100, B256::repeat_byte(0x37), 7);
+    let candidate = candidate(&request, B256::repeat_byte(0x47));
+    let job_id = B256::repeat_byte(0x57);
+    let inner = DeterministicProofSource::with_jobs([(candidate, job_id)]);
+    let source = Arc::new(ResponseWindowCompletedSource {
+        inner: inner.clone(),
+    });
+    let root = tempfile::tempdir().expect("response-window journal root");
+
+    {
+        let coordinator = OcompRetentionCoordinator::open(root.path(), source.clone());
+        assert_eq!(
+            DeterministicConsensusDriver::vote(&coordinator, &request),
+            VoteOutcome::Positive
+        );
+        DeterministicConsensusDriver::finalize(&inner, &coordinator, &request);
+        let (generation, finalized) = coordinator
+            .finalized_job_record(job_id)
+            .expect("job reaches finalized state");
+        assert_eq!(finalized.deadline_height, 114);
+        coordinator
+            .record_exported(job_id, generation, 9, B256::repeat_byte(0x67))
+            .expect("job reaches exported state");
+
+        inner.observe_terminal(job_id, 110);
+        coordinator
+            .reconcile_finalized(&block(110, B256::repeat_byte(0x38), 8))
+            .expect("quorum block reconciles without terminalizing retention");
+        assert_eq!(coordinator.finalized_live_jobs().unwrap().len(), 1);
+        coordinator
+            .exported_job_record(job_id)
+            .expect("quorum-complete job remains exported before deadline");
+    }
+
+    let restarted = OcompRetentionCoordinator::open(root.path(), source);
+    restarted
+        .reconcile_finalized(&block(113, B256::repeat_byte(0x39), 9))
+        .expect("restart before deadline restores the live export");
+    assert_eq!(restarted.finalized_live_jobs().unwrap().len(), 1);
+    restarted
+        .exported_job_record(job_id)
+        .expect("restarted node can still serve the pinned job");
+
+    restarted
+        .reconcile_finalized(&block(114, B256::repeat_byte(0x3A), 10))
+        .expect("deadline closure terminalizes retention");
+    assert!(restarted.finalized_live_jobs().unwrap().is_empty());
+    assert!(matches!(
+        ready_record(&restarted).state,
+        PinStateV1::Terminal {
+            job_id: current,
+            terminal_height: 114,
             ..
         } if current == job_id
     ));
