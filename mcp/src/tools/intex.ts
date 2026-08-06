@@ -213,7 +213,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         callWindow: Number(d.callWindow),
         callThreshold: Number(d.callThreshold),
         callNoticePeriod: Number(d.callNoticePeriod),
-        costAmount: { raw: d.costAmountMinor.toString(), value: formatUnits(u256(d.costAmountMinor), 18) },
+        // 6 dec: implied by the entry(1e18) * load(1e18) / 1e30 derivation.
+        costAmount: { raw: d.costAmountMinor.toString(), value: formatUnits(u256(d.costAmountMinor), 6), scale: "settlement-token minor" },
         issuanceCurrency: Number(d.issuanceCurrency), // ISO 4217 numeric
         referenceCurrency: Number(d.referenceCurrency),
         worldwideDay: Number(d.worldwideDay),

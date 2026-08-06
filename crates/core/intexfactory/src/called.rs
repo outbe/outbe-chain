@@ -140,9 +140,9 @@ pub(crate) fn try_call(
     }
     let trigger = series.call_price_minor;
     // The scan walks finalized daily VWAPs, so both bounds floor to whole days.
-    let day = SECONDS_PER_DAY as u32;
-    let window = series.call_window / day;
-    let threshold = series.call_threshold / day;
+    let secs_per_day = SECONDS_PER_DAY as u32;
+    let window = series.call_window / secs_per_day;
+    let threshold = series.call_threshold / secs_per_day;
     if window == 0 || threshold == 0 {
         return Ok(false);
     }

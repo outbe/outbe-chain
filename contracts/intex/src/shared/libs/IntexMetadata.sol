@@ -18,8 +18,11 @@ library IntexMetadata {
     /// @dev Prices arrive on the 1e18 oracle scale; six fraction digits resolve sub-cent COEN rates.
     uint8 private constant PRICE_DECIMALS = 18;
     uint8 private constant PRICE_PRECISION = 6;
+    /// @dev Implied by the 1e30 divisor in `_costAmountMinor`.
+    uint8 private constant COST_DECIMALS = 6;
 
-    /// @dev Mirrors the Outbe-side derivation: entry (1e18) * promis load (PROMIS * 1e18) / 1e30.
+    /// @dev Mirrors the Outbe-side derivation: entry (1e18) * promis load (PROMIS * 1e18) / 1e30,
+    ///      which lands in COST_DECIMALS minor units of the settlement token.
     function _costAmountMinor(IIntexNFT1155.SeriesData memory data) private pure returns (uint256) {
         return (uint256(data.entryPriceMinor) * uint256(data.promisLoadMinor)) / 1e30;
     }
@@ -111,7 +114,7 @@ library IntexMetadata {
             Strings.toString(data.promisLoadMinor / 1e18),
             ",\"display_type\":\"number\"},",
             "{\"trait_type\":\"Cost Amount\",\"value\":",
-            _amountPlain(_costAmountMinor(data), PRICE_DECIMALS, PRICE_PRECISION),
+            _amountPlain(_costAmountMinor(data), COST_DECIMALS, PRICE_PRECISION),
             ",\"display_type\":\"number\"}"
         );
 

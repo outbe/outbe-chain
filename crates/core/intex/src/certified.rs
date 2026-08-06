@@ -540,8 +540,8 @@ mod tests {
                     floor_price_minor: U256::from(1),
                     call_price_minor: U256::from(1),
                     call_trigger: crate::IntexCallTrigger {
-                        call_window: 1,
-                        call_threshold: 1,
+                        call_window: 24 * 60 * 60,
+                        call_threshold: 24 * 60 * 60,
                         call_notice_period: 1,
                     },
                     issued_at: 1,
@@ -595,8 +595,8 @@ mod tests {
                     floor_price_minor: U256::from(1),
                     call_price_minor: U256::from(1),
                     call_trigger: crate::IntexCallTrigger {
-                        call_window: 1,
-                        call_threshold: 1,
+                        call_window: 24 * 60 * 60,
+                        call_threshold: 24 * 60 * 60,
                         call_notice_period: 1,
                     },
                     issued_at: 1,
