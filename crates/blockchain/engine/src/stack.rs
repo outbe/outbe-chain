@@ -2399,6 +2399,7 @@ where
         FollowEngineConfig {
             marshal_actor,
             marshal_mailbox,
+            recovered_height: last_consensus_finalized,
             executor_reporter: crate::marshal_update_reporter::MarshalUpdateReporter::new(
                 executor_mailbox,
             ),

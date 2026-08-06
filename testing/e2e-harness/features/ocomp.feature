@@ -16,9 +16,13 @@ Feature: Off-chain computation process topology
     Then job A opens with four members and quorum three while job B remains scheduled
     When a fifth node syncs as a non-voting FullNode
     Then the fifth node has canonical state parity without OCOMP vote capability
+    And the FullNode independently materializes job A without voting
     When the synced node completes OCOMP-ready validator admission
     Then the certified boundary adds exactly one fifth OCOMP validator domain
     And job B opens with five members and quorum four while job A remains four of three
+    When validator 2 OCOMP supervisor restarts and completes both pinned quorums
+    Then the FullNode result for job A matches the canonical quorum result
+    And both deadlines record validator 3 missing and keep the chain live after jailing it
 
   @ocomp-int-024
   Scenario: A supervisor failure is isolated from consensus

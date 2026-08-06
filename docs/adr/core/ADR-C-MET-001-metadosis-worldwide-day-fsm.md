@@ -280,8 +280,10 @@ receipt, active generation or exact-retry identity.
 Response-window close expires/retries only an attempt that never reached its
 snapshot-derived quorum. A timely quorum was already applied by its q-forming
 system vote. At the exact 1,800-block deadline every missing pinned participant
-is jailed once; timely minority votes count as present. Neither quorum apply,
-jail nor expiry rolls back or repeats the already committed auction split.
+is recorded; only one whose current ValidatorSet status is still `ACTIVE` moves
+to `JAILED`, while every non-ACTIVE status remains unchanged. Timely minority
+votes count as present. Neither quorum apply, jail nor expiry rolls back or
+repeats the already committed auction split.
 
 An invalid request rolls back to READY. An invalid vote or failed quorum apply
 leaves the first-vote/quorum and domain state unchanged as defined by

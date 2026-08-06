@@ -337,6 +337,14 @@ It logs the JobId and all three snapshot bindings and increments
 `outbe_ocomp_attestation_abstentions_total`; it never substitutes the current
 ValidatorSet. Other consensus and FullNode processing continues.
 
+Each pinned OCOMP participant has 1,800 blocks from the finalized job opening to
+compute and include its vote, even when quorum formed earlier. Deadline closure
+always records a missing pinned participant. It changes validator status only if
+that participant is still `ACTIVE`, in which case it performs `ACTIVE -> JAILED`;
+an already non-ACTIVE participant is recorded but not mutated. Operators should
+therefore alert on unfinished OCOMP work relative to the job deadline, not only
+on whether quorum has already been reached.
+
 ---
 
 ## 4. Validator statuses

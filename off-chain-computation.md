@@ -148,7 +148,9 @@ system work no longer fit. They do not turn the measured bound into OCOMP policy
 The finalized attempt stores one exclusive compute-and-vote deadline exactly
 1,800 blocks after its start. All pinned members must vote before that deadline,
 including members whose votes are not needed to form quorum. The deadline system
-transition jails every missing member exactly once. OCOMP vote carriers expose
+transition records every missing pinned member and moves only a member whose
+current ValidatorSet status is still `ACTIVE` to `JAILED`; every non-ACTIVE
+status remains unchanged. OCOMP vote carriers expose
 canonical `gas_limit = 30_000`; classification precedes ordinary intrinsic-gas
 handling and their bounded execution uses the system-work lane rather than the
 user block-gas lane.
@@ -178,5 +180,10 @@ The main code-review surfaces are:
 
 The acceptance process scenario starts with four ACTIVE validators, opens job A,
 joins a fifth node through FullNode sync and normal validator admission, then opens
-job B. The expected values are `A: N=4/quorum=3` and `B: N=5/quorum=4`; those
-numbers describe this test only, not protocol constants.
+job B. The FullNode must materialize job A without voting; after promotion its
+persisted result must match the canonical quorum result. Validator 2 then completes
+both pinned quorums while validator 3 remains absent. Both deadline summaries must
+record validator 3 missing; the first deadline moves it from `ACTIVE` to `JAILED`,
+and the later deadline must leave that already non-ACTIVE status unchanged while
+the chain continues. The expected values are `A: N=4/quorum=3` and
+`B: N=5/quorum=4`; those numbers describe this test only, not protocol constants.

@@ -281,14 +281,15 @@ JobId and all three bindings. This failure is local to that OCOMP job and does
 not stop consensus or FullNode execution.
 
 On an OCOMP-enabled chain, validator startup is fail-closed unless the complete
-validator-only OCOMP profile is present: both role sockets and peer UIDs, the
-pinned protocol-bundle hash, a nonzero boot nonce, and the node-owned OCOMP key.
-The participant index and committee are never configured. A certified FullNode
-requires the same complete local-control profile but omits `--ocomp.key`; giving
-it a result-signing key is a startup error. Its `outbe-ocomp follower` process
-uses those control endpoints for snapshot discovery, independent execution and
-durable result publication, but cannot open the attestation or vote-submission
-path.
+validator-only OCOMP profile is present: both node-facing role endpoints and
+their authenticated peer identities, the pinned protocol-bundle hash, a nonzero
+boot nonce, and the node-owned OCOMP key. The exact local transport is a runtime
+interface detail and does not define membership. The participant index and
+committee are never configured. A certified FullNode requires the same complete
+local-control profile but omits `--ocomp.key`; giving it a result-signing key is
+a startup error. Its `outbe-ocomp follower` process uses those control endpoints
+for snapshot discovery, independent execution and durable result publication,
+but cannot open the attestation or vote-submission path.
 
 ### Validator-authenticated system result votes
 
@@ -500,7 +501,7 @@ Three votes over different result bytes do not form quorum evidence.
 | result-apply trigger | the q-forming full-result submission |
 | terminal result identity | immutable `LysisTerminalV1` |
 | post-quorum evidence | separate bounded `OcompVoteAccountabilityV1` with `ceil(N/8)` LSB0 bitmaps |
-| missed-vote consequence | exact-deadline system transition to `JAILED` |
+| missed-vote consequence | exact-deadline evidence for every missing participant; only current `ACTIVE` moves to `JAILED` |
 | FullNode assurance | independent local Lysis plus fail-closed digest/roots/manifest comparison |
 | semantic reference | independent golden/reference implementation |
 

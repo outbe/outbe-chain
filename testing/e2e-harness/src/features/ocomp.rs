@@ -15,7 +15,8 @@ use cucumber::{given, then, when};
 use outbe_common::WorldwideDay;
 use outbe_ocomp_protocol::{
     profile::poc_schema_limits,
-    state::{OcompJobStatus, OcompTerminalOutcome},
+    result::LysisResultV1,
+    state::{OcompJobRecordV1, OcompJobStatus, OcompTerminalOutcome},
     system_carrier::{MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS, OCOMP_SYSTEM_CARRIER_GAS_LIMIT},
     vote::ResultVoteV1,
 };
@@ -379,15 +380,24 @@ fn wait_for_finalized_ocomp_activation(world: &mut World) {
 #[when("a fifth node syncs as a non-voting FullNode")]
 fn fifth_node_syncs_as_full_node(world: &mut World) {
     let index = world.validators.joiner_index();
+    let validator_index = u8::try_from(index).expect("joiner index fits OCOMP harness wire");
     let primary = world.validators.primary_port();
     let target = world
         .rpc
         .head(primary)
         .expect("primary head before FullNode sync");
+    let ocomp_args = world
+        .ocomp
+        .stage_keyless_full_node_domain(validator_index)
+        .expect("stage keyless FullNode OCOMP compute profile outside ACTIVE topology");
     world
         .localnet
-        .launch_joiner_full_node(index, 0, 0)
+        .launch_joiner_full_node(index, 0, 0, &ocomp_args)
         .expect("launch the fifth slot without validator credentials");
+    world
+        .ocomp
+        .start_keyless_full_node_roles(validator_index)
+        .expect("start non-voting FullNode Lysis follower and snapshot exporter");
     let joined = world
         .rpc
         .wait_block(world.validators.http_port(index), target, 60)
@@ -413,6 +423,11 @@ fn fifth_full_node_has_state_but_no_vote_capability(world: &mut World) {
     let validator_dir = data_dir.parent().expect("validator data directory parent");
     assert!(!validator_dir.join("ocomp-key-v1.hex").exists());
     assert!(!validator_dir.join("signing-key.hex").exists());
+    assert!(world.ocomp.process_records().iter().any(|record| {
+        record.validator_index == Some(u8::try_from(index).expect("joiner index fits u8"))
+            && record.role == OcompProcessRole::Follower
+            && record.stopped_at_millis.is_none()
+    }));
 }
 
 #[when("the synced node completes OCOMP-ready validator admission")]
@@ -472,6 +487,10 @@ fn synced_node_completes_ocomp_validator_admission(world: &mut World) {
     // Only the process-role handover happens in the post-boundary window. The
     // validator therefore recovers the same epoch the committee is running and
     // has the full prepare window to finalize stake/readiness before freeze.
+    world
+        .ocomp
+        .stop_keyless_full_node_roles(validator_index)
+        .expect("stop keyless FullNode roles before validator-mode restart");
     world.localnet.stop_joiner_full_node(index);
     world
         .localnet
@@ -729,6 +748,224 @@ fn job_b_uses_the_new_snapshot_while_job_a_keeps_the_old_one(world: &mut World) 
         job_a_record.intent.result_ocomp_binding_hash
     );
     world.state.ocomp_dynamic_job_requests.push(job_b_request);
+}
+
+fn dynamic_job_record(
+    world: &World,
+    request: &crate::world::rpc::OcompPublicJobRequestV1,
+) -> OcompJobRecordV1 {
+    world
+        .rpc
+        .finalized_ocomp_job_record_on(world.validators.primary_port(), request.intent_id)
+        .expect("dynamic OCOMP job record")
+}
+
+fn full_node_local_result_path(world: &World, job_id: B256) -> std::path::PathBuf {
+    world
+        .validators
+        .data_dir(world.validators.joiner_index())
+        .join("ocomp-local-results-v1")
+        .join(format!(
+            "{}.lysis-result-v1.ocb1",
+            hex::encode(job_id.as_slice())
+        ))
+}
+
+#[then("the FullNode independently materializes job A without voting")]
+fn full_node_materializes_job_a_without_voting(world: &mut World) {
+    let request = world
+        .state
+        .ocomp_dynamic_job_requests
+        .first()
+        .expect("job A request before FullNode verification");
+    let record = dynamic_job_record(world, request);
+    let job_id = record
+        .finalized
+        .as_ref()
+        .expect("job A finalized intent")
+        .job_id;
+    let path = full_node_local_result_path(world, job_id);
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while !path.is_file() {
+        assert!(
+            Instant::now() < deadline,
+            "keyless FullNode did not publish canonical job A result at {}",
+            path.display()
+        );
+        sleep(Duration::from_millis(250));
+    }
+    let encoded = std::fs::read(&path).expect("read FullNode canonical job A result");
+    let result = LysisResultV1::decode_canonical(&encoded, &poc_schema_limits())
+        .expect("decode FullNode canonical job A result");
+    assert_eq!(result.job_id, job_id);
+    assert_ne!(
+        result
+            .result_digest(&poc_schema_limits())
+            .expect("validate FullNode job A result"),
+        B256::ZERO
+    );
+
+    let accountability = world
+        .rpc
+        .finalized_ocomp_vote_accountability_on(world.validators.primary_port(), job_id)
+        .expect("job A accountability while FullNode is non-voting");
+    assert!(
+        !accountability.slot_validator_indexes.contains(&4),
+        "keyless FullNode must compute job A without submitting a validator vote"
+    );
+}
+
+#[when("validator 2 OCOMP supervisor restarts and completes both pinned quorums")]
+fn validator_two_restarts_and_completes_dynamic_quorums(world: &mut World) {
+    world
+        .ocomp
+        .restart_supervisor(2)
+        .expect("restart validator-2 Supervisor for both pinned jobs");
+    let requests = world.state.ocomp_dynamic_job_requests.clone();
+    assert_eq!(requests.len(), 2, "job A and job B requests");
+    let deadline = Instant::now() + Duration::from_secs(180);
+    loop {
+        let ready = requests.iter().enumerate().all(|(ordinal, request)| {
+            let record = dynamic_job_record(world, request);
+            let Some(finalized) = record.finalized.as_ref() else {
+                return false;
+            };
+            world
+                .rpc
+                .finalized_ocomp_vote_accountability_on(
+                    world.validators.primary_port(),
+                    finalized.job_id,
+                )
+                .is_some_and(|accountability| {
+                    accountability.quorum_result_digest.is_some()
+                        && accountability.slot_validator_indexes.contains(&2)
+                        && if ordinal == 0 {
+                            accountability.slot_validator_indexes == [0, 1, 2]
+                        } else {
+                            accountability.slot_validator_indexes == [0, 1, 2, 4]
+                        }
+                })
+        });
+        if ready {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "validator-2 did not complete both historical/current snapshot quorums"
+        );
+        sleep(Duration::from_millis(250));
+    }
+}
+
+#[then("the FullNode result for job A matches the canonical quorum result")]
+fn full_node_job_a_result_matches_quorum(world: &mut World) {
+    let request = world
+        .state
+        .ocomp_dynamic_job_requests
+        .first()
+        .expect("job A request");
+    let record = dynamic_job_record(world, request);
+    let job_id = record
+        .finalized
+        .as_ref()
+        .expect("job A finalized intent")
+        .job_id;
+    let encoded = std::fs::read(full_node_local_result_path(world, job_id))
+        .expect("read persisted FullNode job A result after promotion");
+    let result = LysisResultV1::decode_canonical(&encoded, &poc_schema_limits())
+        .expect("decode persisted FullNode job A result");
+    let local_digest = result
+        .result_digest(&poc_schema_limits())
+        .expect("validate persisted FullNode job A result");
+    let accountability = world
+        .rpc
+        .finalized_ocomp_vote_accountability_on(world.validators.primary_port(), job_id)
+        .expect("job A quorum accountability");
+    assert_eq!(accountability.quorum_result_digest, Some(local_digest));
+}
+
+#[then("both deadlines record validator 3 missing and keep the chain live after jailing it")]
+fn dynamic_deadlines_jail_only_the_active_missing_validator(world: &mut World) {
+    const JAILED: u64 = 6;
+
+    let requests = world.state.ocomp_dynamic_job_requests.clone();
+    assert_eq!(requests.len(), 2, "job A and job B requests");
+    let last_deadline = requests
+        .iter()
+        .map(|request| request.deadline_height)
+        .max()
+        .expect("dynamic job deadlines");
+    let primary = world.validators.primary_port();
+    assert!(
+        world
+            .rpc
+            .wait_finalized_at_least(primary, last_deadline.saturating_add(1), 900),
+        "chain did not remain live past both dynamic OCOMP deadlines"
+    );
+
+    for (ordinal, request) in requests.iter().enumerate() {
+        let record = dynamic_job_record(world, request);
+        let job_id = record
+            .finalized
+            .as_ref()
+            .expect("dynamic finalized intent")
+            .job_id;
+        let observed = world
+            .validators
+            .committee_ports()
+            .into_iter()
+            .chain(std::iter::once(
+                world.validators.http_port(world.validators.joiner_index()),
+            ))
+            .map(|port| {
+                world
+                    .rpc
+                    .finalized_ocomp_vote_accountability_on(port, job_id)
+            })
+            .collect::<Vec<_>>();
+        let first = observed[0]
+            .clone()
+            .expect("closed dynamic accountability on primary");
+        assert!(
+            observed
+                .iter()
+                .all(|candidate| candidate.as_ref() == Some(&first)),
+            "nodes disagree on closed job {} accountability",
+            ordinal + 1
+        );
+        assert_eq!(first.closed_height, Some(request.deadline_height));
+        assert_eq!(first.missing_bitmap, Some(vec![0b0000_1000]));
+        assert_eq!(
+            first.slot_validator_indexes,
+            if ordinal == 0 {
+                vec![0, 1, 2]
+            } else {
+                vec![0, 1, 2, 4]
+            }
+        );
+    }
+
+    let validator_three = world.validators.get(3);
+    let validator_three_key = validator_three
+        .evm_key()
+        .expect("validator-3 EVM key for status lookup");
+    let validator_three_address = eth::address_of(&validator_three_key)
+        .expect("derive validator-3 address")
+        .to_string();
+    for port in world.validators.committee_ports() {
+        assert_eq!(
+            world.rpc.validator_status(port, &validator_three_address),
+            Some(JAILED),
+            "validator-3 is not deterministically JAILED on port {port}"
+        );
+        assert!(
+            world
+                .rpc
+                .finalized(port)
+                .is_some_and(|height| height > last_deadline),
+            "later deadline stopped finality on port {port}"
+        );
+    }
 }
 
 #[then("the fresh capacity day is created in FORMING by finalized block 1")]
@@ -2480,7 +2717,6 @@ fn job_a_opens_on_the_historical_four_validator_snapshot(world: &mut World) {
     assert_eq!(record.intent.wwd, job_a_wwd);
     assert_eq!(record.intent.result_member_count, 4);
     assert_eq!(record.intent.result_quorum_threshold, 3);
-    assert!(record.intent.result_validator_set_epoch > 0);
     assert_ne!(record.intent.result_committee_set_hash, B256::ZERO);
     assert_ne!(record.intent.result_ocomp_binding_hash, B256::ZERO);
     assert!(

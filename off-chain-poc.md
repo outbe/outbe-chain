@@ -1,7 +1,7 @@
 # OCOMP verification guide
 
-This document explains how to verify the current OCOMP contract. It does not
-preserve the removed static-committee design.
+This document explains how to verify the current OCOMP contract. Membership is
+derived only from the ordered ACTIVE ValidatorSet pinned by each job attempt.
 
 ## What must be true
 
@@ -13,7 +13,8 @@ preserve the removed static-committee design.
    active set.
 5. Votes bind epoch, consensus set hash and OCOMP key binding hash.
 6. Every pinned validator has exactly 1,800 blocks to compute and submit a valid
-   vote; missing validators are jailed by the deterministic deadline transition.
+   vote. Deadline closure records every missing pinned participant and jails only
+   one whose current ValidatorSet status remains `ACTIVE`.
 7. OCOMP votes use the canonical 30,000-gas system carrier and consume no user
    transaction gas.
 8. FullNodes do not vote, but independently run Lysis, retain canonical local data
@@ -43,8 +44,8 @@ The required focused behaviors include:
 - old-member authorization for an old job after current membership changes;
 - vote rejection for a missing/evicted snapshot;
 - identical OCOMP system-carrier classification in pool, execution and replay;
-- exact 1,800-block voting deadline, continued voting after quorum and idempotent
-  jail for every missing pinned participant;
+- exact 1,800-block voting deadline, continued voting after quorum, complete
+  missing evidence and idempotent `ACTIVE -> JAILED` mutation;
 - sign-once exact retry across restart and boundary;
 - validator startup failure without OCOMP config and FullNode startup success;
 - FullNode independent Lysis match, mismatch/missing-input failure and restart.
@@ -104,8 +105,8 @@ The final harness scenario uses real node roles and normal admission:
 7. open job B and observe `N=5`, quorum `4`;
 8. prove node 5 votes in B but cannot vote in A;
 9. prove A still completes against its original snapshot;
-10. prove every pinned member may still vote after quorum and a missing member is
-    jailed exactly once at the 1,800-block deadline;
+10. prove every pinned member may still vote after quorum, every missing member is
+    recorded, and only a still-`ACTIVE` missing member is jailed at the deadline;
 11. restart participants and prove all live-job and sign-once state recovers;
 12. have the FullNode independently execute Lysis, retain local result data and
     accept only the matching digest, roots and manifest;
@@ -118,8 +119,8 @@ They are not OCOMP constants.
 
 - It does not provide DCAP or production hardware evidence.
 - It does not add OCOMP key rotation, expiry or recovery; `key_epoch` remains 1.
-- It does not preserve or migrate a legacy static committee; networks start from a
-  fresh genesis.
+- It assumes a fresh genesis whose OCOMP membership is derived only from the
+  ordered ACTIVE ValidatorSet.
 
 ## Release gates
 

@@ -57,6 +57,7 @@ impl Localnet {
         index: usize,
         upstream_slot: usize,
         tee_slot: usize,
+        ocomp_args: &[String],
     ) -> Result<()> {
         let vd = self.cfg.validator_dir(index);
         fs::create_dir_all(vd.join("data"))?;
@@ -72,6 +73,7 @@ impl Localnet {
             &format!("127.0.0.1:{}", self.cfg.tee_port(tee_slot)),
             &format!("http://localhost:{}", self.cfg.http_port(upstream_slot)),
         ));
+        process_args.extend_from_slice(ocomp_args);
         self.extend_real_sgx_startup_timeout(&mut process_args);
 
         let name = format!("joiner-full-node-{index}");

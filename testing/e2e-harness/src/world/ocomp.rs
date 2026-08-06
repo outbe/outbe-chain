@@ -115,6 +115,9 @@ pub(crate) const OCOMP_DYNAMIC_DKG_PREPARE_WINDOW_BLOCKS: u64 = 10;
 #[serde(rename_all = "snake_case")]
 pub enum OcompProcessRole {
     Supervisor,
+    /// Compute-only FullNode role: executes canonical Lysis and commits the
+    /// local result, but never opens a voting runtime.
+    Follower,
     SnapshotExporter,
     Worker,
 }
@@ -382,6 +385,10 @@ impl OcompDomain {
 pub struct OcompTopology {
     cfg: Config,
     domains: Vec<OcompDomain>,
+    /// One synchronized, non-voting FullNode compute domain awaiting canonical
+    /// validator admission. It is deliberately outside `domains`, whose order
+    /// is the ACTIVE OCOMP membership asserted by the harness.
+    keyless_full_node_domain: Option<(u8, OcompDomain)>,
     records: Vec<OcompProcessRecordV1>,
     faults: Vec<OcompFaultRecordV1>,
     launch_identity_evidence: Option<OcompLaunchIdentityEvidenceV1>,
@@ -402,6 +409,7 @@ impl OcompTopology {
             .expect("harness validator count must fit the validator index format");
         Self {
             domains,
+            keyless_full_node_domain: None,
             cfg,
             records: Vec::new(),
             faults: Vec::new(),
@@ -424,13 +432,93 @@ impl OcompTopology {
             usize::from(validator_index) == expected,
             "active validator domain must append at index {expected}"
         );
-        self.domains.push(OcompDomain::new(
-            self.cfg
-                .validator_dir(expected)
-                .join("ocomp")
-                .join("domain-v1"),
-        ));
+        let domain = match self.keyless_full_node_domain.take() {
+            Some((index, domain)) => {
+                eyre::ensure!(
+                    index == validator_index,
+                    "staged FullNode domain belongs to validator-{index}, not validator-{validator_index}"
+                );
+                eyre::ensure!(
+                    domain.supervisor.is_none()
+                        && domain.snapshot_exporter.is_none()
+                        && domain.workers.is_empty(),
+                    "keyless FullNode roles must stop before validator activation"
+                );
+                domain
+            }
+            None => OcompDomain::new(
+                self.cfg
+                    .validator_dir(expected)
+                    .join("ocomp")
+                    .join("domain-v1"),
+            ),
+        };
+        self.domains.push(domain);
         Ok(())
+    }
+
+    /// Stage the compute-only profile required by an OCOMP-enabled FullNode.
+    /// The returned node arguments intentionally omit `--ocomp.key`; the
+    /// durable domain is not inserted into ACTIVE voting topology.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn stage_keyless_full_node_domain(&mut self, validator_index: u8) -> Result<Vec<String>> {
+        let index = usize::from(validator_index);
+        eyre::ensure!(
+            index == self.domains.len(),
+            "keyless FullNode must use the next ordered validator slot"
+        );
+        eyre::ensure!(
+            self.keyless_full_node_domain.is_none(),
+            "a keyless FullNode domain is already staged"
+        );
+        let identity = self
+            .launch_identity
+            .ok_or_else(|| eyre::eyre!("OCOMP launch identity is not established"))?;
+        let source_bundle = self.domain_root(0)?.join("protocol-bundle-v1.ocb1");
+        let root = self
+            .cfg
+            .validator_dir(index)
+            .join("ocomp")
+            .join("domain-v1");
+        fs::create_dir_all(&root)?;
+        fs::create_dir_all(self.cfg.ocomp_socket_dir(index))?;
+        publish_exact_file(
+            &root.join("protocol-bundle-v1.ocb1"),
+            &fs::read(source_bundle)?,
+            0o640,
+        )?;
+        eyre::ensure!(
+            !root.join("ocomp-key-v1.hex").exists() && !root.join("ocomp-evm-key.hex").exists(),
+            "keyless FullNode domain contains validator voting material"
+        );
+        self.keyless_full_node_domain = Some((validator_index, OcompDomain::new(root)));
+
+        let uid = effective_uid()?;
+        Ok(vec![
+            "--ocomp.supervisor-socket".to_owned(),
+            self.cfg
+                .ocomp_supervisor_socket(index)
+                .display()
+                .to_string(),
+            "--ocomp.snapshot-exporter-socket".to_owned(),
+            self.cfg
+                .ocomp_snapshot_exporter_socket(index)
+                .display()
+                .to_string(),
+            "--ocomp.supervisor-uid".to_owned(),
+            uid.to_string(),
+            "--ocomp.snapshot-exporter-uid".to_owned(),
+            uid.to_string(),
+            "--ocomp.protocol-bundle-hash".to_owned(),
+            format!("{:#x}", identity.protocol_bundle_hash),
+            "--ocomp.boot-nonce".to_owned(),
+            format!(
+                "{:#x}",
+                B256::repeat_byte(validator_index.saturating_add(1))
+            ),
+            "--ocomp.session-generation".to_owned(),
+            "1".to_owned(),
+        ])
     }
 
     /// Stage the next validator's local runtime material before it starts in
@@ -1177,6 +1265,68 @@ impl OcompTopology {
         self.ensure_validator_roles_alive()
     }
 
+    /// Start the exact keyless compute plane required by a certified FullNode.
+    /// Its `follower` process shares the validator Supervisor pipeline but has
+    /// no signing key, EVM relay or vote submission path.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn start_keyless_full_node_roles(&mut self, validator_index: u8) -> Result<()> {
+        let identity = self
+            .launch_identity
+            .ok_or_else(|| eyre::eyre!("OCOMP launch identity is not established"))?;
+        let domain = self.keyless_full_node_domain(validator_index)?;
+        eyre::ensure!(
+            domain.supervisor.is_none() && domain.snapshot_exporter.is_none(),
+            "keyless FullNode OCOMP roles are already started"
+        );
+        wait_for_socket_entry(
+            &self
+                .cfg
+                .ocomp_supervisor_socket(usize::from(validator_index)),
+            "FullNode Supervisor",
+        )?;
+        wait_for_socket_entry(
+            &self
+                .cfg
+                .ocomp_snapshot_exporter_socket(usize::from(validator_index)),
+            "FullNode SnapshotExporter",
+        )?;
+
+        let follower = self.spawn_keyless_full_node_role(
+            validator_index,
+            OcompProcessRole::Follower,
+            identity,
+        )?;
+        self.attach_keyless_full_node_owned(validator_index, OcompProcessRole::Follower, follower)?;
+        let exporter = self.spawn_keyless_full_node_role(
+            validator_index,
+            OcompProcessRole::SnapshotExporter,
+            identity,
+        )?;
+        self.attach_keyless_full_node_owned(
+            validator_index,
+            OcompProcessRole::SnapshotExporter,
+            exporter,
+        )?;
+        sleep(Duration::from_secs(2));
+        self.ensure_keyless_full_node_roles_alive(validator_index)
+    }
+
+    /// Stop only the compute clients; the synchronized FullNode process and
+    /// durable domain remain intact for validator-mode promotion.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn stop_keyless_full_node_roles(&mut self, validator_index: u8) -> Result<()> {
+        let (follower, exporter) = {
+            let domain = self.keyless_full_node_domain_mut(validator_index)?;
+            (domain.supervisor.take(), domain.snapshot_exporter.take())
+        };
+        let follower = follower.ok_or_else(|| eyre::eyre!("FullNode follower is not running"))?;
+        let exporter =
+            exporter.ok_or_else(|| eyre::eyre!("FullNode snapshot exporter is not running"))?;
+        self.stop_owned(follower);
+        self.stop_owned(exporter);
+        Ok(())
+    }
+
     /// Network identity pinned when the genesis validator roles were started.
     #[cfg(feature = "ocomp-integration")]
     #[must_use]
@@ -1411,6 +1561,156 @@ impl OcompTopology {
             command,
         )?;
         Ok(guard)
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    fn spawn_keyless_full_node_role(
+        &self,
+        validator_index: u8,
+        role: OcompProcessRole,
+        identity: OcompLaunchIdentityV1,
+    ) -> Result<ChildGuard> {
+        let domain_root = self.keyless_full_node_domain(validator_index)?.root.clone();
+        let role_name = match role {
+            OcompProcessRole::Follower => "follower",
+            OcompProcessRole::SnapshotExporter => "snapshot-exporter",
+            _ => eyre::bail!("FullNode launcher accepts only follower/exporter roles"),
+        };
+        let log_path = domain_root.join(format!("{role_name}.log"));
+        let log = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)?;
+        let stderr = log.try_clone()?;
+        let index = usize::from(validator_index);
+        let mut command = Command::new(&self.cfg.bin_ocomp);
+        command
+            .arg(role_name)
+            .arg("--development-root")
+            .arg(&domain_root)
+            .current_dir(&self.cfg.repo)
+            .env("OCOMP_CHAIN_ID", identity.chain_id.to_string())
+            .env(
+                "OCOMP_GENESIS_HASH",
+                format!("{:#x}", identity.genesis_hash),
+            )
+            .env(
+                "OCOMP_BOOT_NONCE",
+                format!(
+                    "{:#x}",
+                    B256::repeat_byte(validator_index.saturating_add(1))
+                ),
+            )
+            .env(
+                "OCOMP_PROTOCOL_BUNDLE_HASH",
+                format!("{:#x}", identity.protocol_bundle_hash),
+            );
+        match role {
+            OcompProcessRole::Follower => {
+                command
+                    .arg("--development-node-supervisor-socket")
+                    .arg(self.cfg.ocomp_supervisor_socket(index));
+            }
+            OcompProcessRole::SnapshotExporter => {
+                command
+                    .arg("--development-node-snapshot-exporter-socket")
+                    .arg(self.cfg.ocomp_snapshot_exporter_socket(index))
+                    .arg("--development-ce-datadir")
+                    .arg(self.cfg.validator_dir(index).join("data"))
+                    .env(
+                        "OUTBE_PROJECTION_MONGODB_URI",
+                        &self.cfg.projection_mongodb_uri,
+                    )
+                    .env(
+                        "OUTBE_PROJECTION_MONGODB_DATABASE",
+                        self.cfg.validator_projection_database(index),
+                    );
+            }
+            _ => unreachable!("role validated above"),
+        }
+        command.stdout(Stdio::from(log)).stderr(Stdio::from(stderr));
+        ChildGuard::spawn(
+            format!("full-node-{validator_index} OCOMP {role_name}"),
+            command,
+        )
+        .map_err(Into::into)
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    fn attach_keyless_full_node_owned(
+        &mut self,
+        validator_index: u8,
+        role: OcompProcessRole,
+        guard: ChildGuard,
+    ) -> Result<()> {
+        if self.records.len() >= OCOMP_MAX_PROCESS_RECORDS {
+            eyre::bail!("OCOMP scenario reached the bounded process-record limit");
+        }
+        let domain = self.keyless_full_node_domain(validator_index)?;
+        match role {
+            OcompProcessRole::Follower if domain.supervisor.is_none() => {}
+            OcompProcessRole::SnapshotExporter if domain.snapshot_exporter.is_none() => {}
+            _ => eyre::bail!("invalid or duplicate keyless FullNode role attachment"),
+        }
+        let record_index = self.records.len();
+        self.records.push(OcompProcessRecordV1 {
+            validator_index: Some(validator_index),
+            role,
+            worker_ordinal: None,
+            pid: guard.pid(),
+            started_at_millis: unix_time_millis(),
+            stopped_at_millis: None,
+        });
+        let process = OwnedProcess {
+            guard,
+            record_index,
+            _worker_control: None,
+        };
+        let domain = self.keyless_full_node_domain_mut(validator_index)?;
+        match role {
+            OcompProcessRole::Follower => domain.supervisor = Some(process),
+            OcompProcessRole::SnapshotExporter => domain.snapshot_exporter = Some(process),
+            _ => unreachable!("role validated above"),
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    fn ensure_keyless_full_node_roles_alive(&mut self, validator_index: u8) -> Result<()> {
+        for role in [
+            OcompProcessRole::Follower,
+            OcompProcessRole::SnapshotExporter,
+        ] {
+            let (record_index, exited) = {
+                let domain = self.keyless_full_node_domain_mut(validator_index)?;
+                let process = match role {
+                    OcompProcessRole::Follower => domain.supervisor.as_mut(),
+                    OcompProcessRole::SnapshotExporter => domain.snapshot_exporter.as_mut(),
+                    _ => unreachable!(),
+                }
+                .ok_or_else(|| eyre::eyre!("FullNode OCOMP {role:?} is missing"))?;
+                (process.record_index, process.guard.exited())
+            };
+            if exited {
+                self.records[record_index].stopped_at_millis = Some(unix_time_millis());
+                let role_name = match role {
+                    OcompProcessRole::Follower => "follower",
+                    OcompProcessRole::SnapshotExporter => "snapshot-exporter",
+                    _ => unreachable!(),
+                };
+                eyre::bail!(
+                    "FullNode OCOMP {role_name} exited during startup:\n{}",
+                    tail_file(
+                        &self
+                            .keyless_full_node_domain(validator_index)?
+                            .root
+                            .join(format!("{role_name}.log")),
+                        20,
+                    )
+                );
+            }
+        }
+        Ok(())
     }
 
     #[cfg(feature = "ocomp-integration")]
@@ -1817,6 +2117,24 @@ impl OcompTopology {
             .ok_or_else(|| eyre::eyre!("validator index is outside the configured topology"))
     }
 
+    fn keyless_full_node_domain(&self, validator_index: u8) -> Result<&OcompDomain> {
+        match self.keyless_full_node_domain.as_ref() {
+            Some((index, domain)) if *index == validator_index => Ok(domain),
+            _ => Err(eyre::eyre!(
+                "validator-{validator_index} has no staged keyless FullNode domain"
+            )),
+        }
+    }
+
+    fn keyless_full_node_domain_mut(&mut self, validator_index: u8) -> Result<&mut OcompDomain> {
+        match self.keyless_full_node_domain.as_mut() {
+            Some((index, domain)) if *index == validator_index => Ok(domain),
+            _ => Err(eyre::eyre!(
+                "validator-{validator_index} has no staged keyless FullNode domain"
+            )),
+        }
+    }
+
     fn validator_indices(&self) -> Result<Vec<u8>> {
         (0..self.domains.len())
             .map(|index| {
@@ -1843,6 +2161,9 @@ impl OcompTopology {
             eyre::bail!("OCOMP scenario reached the bounded process-record limit");
         }
         match role {
+            OcompProcessRole::Follower => {
+                eyre::bail!("keyless FullNode roles use their dedicated attachment path")
+            }
             OcompProcessRole::Supervisor => {
                 let index = validator_index
                     .ok_or_else(|| eyre::eyre!("supervisor requires a validator index"))?;
@@ -1884,6 +2205,9 @@ impl OcompTopology {
             _worker_control: None,
         };
         match role {
+            OcompProcessRole::Follower => {
+                unreachable!("keyless FullNode roles use their dedicated attachment path")
+            }
             OcompProcessRole::Supervisor => {
                 self.domain_mut(validator_index.expect("validated above"))?
                     .supervisor = Some(process);
@@ -1919,6 +2243,11 @@ fn worker_boot_nonce(validator_index: u8, worker_ordinal: u32) -> B256 {
 #[cfg(feature = "ocomp-integration")]
 impl Drop for OcompTopology {
     fn drop(&mut self) {
+        if let Some((_, domain)) = self.keyless_full_node_domain.as_mut() {
+            domain.workers.clear();
+            domain.snapshot_exporter.take();
+            domain.supervisor.take();
+        }
         for domain in &mut self.domains {
             domain.workers.clear();
             domain.snapshot_exporter.take();
@@ -2962,6 +3291,41 @@ mod tests {
             );
         }
         assert!(topology.add_active_validator_domain(4).is_err());
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
+    fn keyless_full_node_profile_is_complete_without_joining_active_topology() {
+        let mut topology = topology_with_validators(4);
+        prepare_measurement_genesis_fixture(&topology);
+        let prepared = topology.prepare_measurement_fork_install().unwrap();
+        topology.launch_identity = Some(prepared.launch_identity());
+
+        let args = topology.stage_keyless_full_node_domain(4).unwrap();
+
+        assert_eq!(topology.evidence_snapshot().unwrap().domain_roots.len(), 4);
+        for required in [
+            "--ocomp.supervisor-socket",
+            "--ocomp.snapshot-exporter-socket",
+            "--ocomp.supervisor-uid",
+            "--ocomp.snapshot-exporter-uid",
+            "--ocomp.protocol-bundle-hash",
+            "--ocomp.boot-nonce",
+            "--ocomp.session-generation",
+        ] {
+            assert!(args.iter().any(|arg| arg == required), "{required}");
+        }
+        assert!(!args.iter().any(|arg| arg == "--ocomp.key"));
+
+        let root = topology
+            .cfg
+            .validator_dir(4)
+            .join("ocomp")
+            .join("domain-v1");
+        assert!(root.join("protocol-bundle-v1.ocb1").is_file());
+        assert!(!root.join("ocomp-key-v1.hex").exists());
+        assert!(!root.join("ocomp-evm-key.hex").exists());
+        assert!(topology.cfg.ocomp_socket_dir(4).is_dir());
     }
 
     #[test]

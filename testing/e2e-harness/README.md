@@ -96,17 +96,21 @@ the harness reads no configuration from the environment.** Flags:
 
 The OCOMP acceptance lane does not configure a result committee. It starts with
 four ACTIVE validators only to create a visible membership transition, opens job
-A (`N=4`, quorum `3`), synchronizes node 5 as a real FullNode, then restarts it in
-validator mode and drives registration, stake, `PENDING`, delegation,
+A (`N=4`, quorum `3`), synchronizes node 5 as a real FullNode and requires it to
+materialize job A without voting, then restarts it in validator mode and drives
+registration, stake, `PENDING`, delegation,
 `confirmValidatorReady` and the certified DKG/reshare boundary. Job B must then
 pin `N=5`, quorum `4`; node 5 may vote in B and must not vote in A, while A keeps
-its original snapshot. A restart must recover both live jobs and sign-once state.
+its original snapshot. Validator 2 completes both quorums; validator 3 remains
+absent so both deadline summaries exercise the same missing participant before
+and after its first `ACTIVE -> JAILED` transition.
 
 Each finalized attempt gives its pinned participants exactly 1,800 blocks to
 compute and submit a valid vote. Quorum may apply the result earlier, but it does
 not close the remaining vote slots. At the exclusive deadline the deterministic
-deadline transition jails every pinned participant without a timely included
-vote. Votes use the canonical validator-authenticated OCOMP system carrier with
+deadline transition records every pinned participant without a timely included
+vote and jails only one whose current ValidatorSet status is still `ACTIVE`.
+Votes use the canonical validator-authenticated OCOMP system carrier with
 visible `gas_limit = 30_000`; its bounded internal work does not consume the
 ordinary user-transaction gas lane.
 
@@ -140,6 +144,25 @@ cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
 # a fully-capable box: everything must run (unmet ⇒ fail, not skip)
 cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
   --tee mock --validators 4 --all
+```
+
+Compile the dynamic OCOMP acceptance source without starting processes:
+
+```sh
+cargo test --locked -p outbe-e2e-harness \
+  --features ocomp-integration --no-run
+```
+
+After integration with the current node/Supervisor/worker transport, run the
+focused process lanes:
+
+```sh
+cargo run --locked -p outbe-e2e-harness --features ocomp-integration \
+  --bin outbe-e2e -- --tee mock --validators 4 --all \
+  --tags '@ocomp-dynamic-admission'
+cargo run --locked -p outbe-e2e-harness --features ocomp-integration \
+  --bin outbe-e2e -- --tee mock --validators 4 --all \
+  --tags '@ocomp-dynamic-overlap'
 ```
 
 The Metadosis P0 env-independence closure is a separate Ubuntu 24.04 x86_64

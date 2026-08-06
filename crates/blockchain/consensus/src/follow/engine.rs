@@ -56,6 +56,11 @@ where
     pub marshal_actor: FollowMarshalActor<E>,
     /// The marshal mailbox (for the driver's `hint_finalized`).
     pub marshal_mailbox: MarshalMailbox,
+    /// Exact durable height recovered by `marshal::Actor::init`.
+    ///
+    /// This is supplied by the caller because the marshal actor has not been
+    /// started yet. Querying its mailbox before `start` would wait forever.
+    pub recovered_height: Height,
     /// The executor mailbox, used as the marshal's application reporter. It must
     /// implement `Reporter<Activity = MarshalUpdate>` (the outbe executor does).
     pub executor_reporter: R,
@@ -105,6 +110,7 @@ where
     let FollowEngineConfig {
         marshal_actor,
         marshal_mailbox,
+        recovered_height,
         executor_reporter,
         upstream,
         local,
@@ -117,12 +123,8 @@ where
 
     // ── 1. Rebuild the authenticated committee chain through the durable
     //        marshal floor before any new certificate is admitted. ──────────
-    let processed_height = marshal_mailbox
-        .get_processed_height()
-        .await
-        .map_or(0, |height| height.get());
     let recovered_epoch = epocher
-        .containing(Height::new(processed_height))
+        .containing(recovered_height)
         .map_or(anchor_epoch, |info| info.epoch());
     prepare_committee_chain(&chain, &upstream, &epocher, anchor_epoch, recovered_epoch).await?;
 
