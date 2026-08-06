@@ -44,13 +44,12 @@ pub const QUALIFIER_ISSUANCE_ISO: u16 = 840;
 /// Bin step (basis points) for the floor-price bin ladder.
 pub const BIN_STEP_BP: u16 = 25;
 
-/// Floor price = COEN/0xUSD price * 1.08; integer ratio 108/100.
-pub const FLOOR_PRICE_NUM: u64 = 108;
-pub const FLOOR_PRICE_DEN: u64 = 100;
-
-/// Call price = COEN/0xUSD price * 2.28; integer ratio 228/100.
-pub const CALL_PRICE_NUM: u64 = 228;
-pub const CALL_PRICE_DEN: u64 = 100;
+/// Markup rates in percentage points: price = entry * (PRICE_RATE_DEN + rate) / PRICE_RATE_DEN.
+pub const PRICE_RATE_DEN: u16 = 100;
+/// Floor price = entry * 1.08.
+pub const FLOOR_RATE: u16 = 8;
+/// Call price = entry * 2.28; its breach arms a Call Event.
+pub const CALL_RATE: u16 = 128;
 
 /// Notice a holder gets to settle after a series is Called.
 pub const CALL_NOTICE_PERIOD: u32 = 7 * DAY;

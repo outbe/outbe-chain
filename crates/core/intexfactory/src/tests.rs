@@ -8,9 +8,7 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key};
 
 use crate::called;
-use crate::constants::{
-    CALL_PRICE_NUM, FLOOR_PRICE_NUM, QUALIFICATION_PERIOD, QUALIFIER_REFERENCE_ISO,
-};
+use crate::constants::{CALL_RATE, FLOOR_RATE, QUALIFICATION_PERIOD, QUALIFIER_REFERENCE_ISO};
 use crate::precompile::{self, IIntexFactory};
 use crate::qualified;
 use crate::runtime;
@@ -153,18 +151,18 @@ fn issue_enrolls_series_in_dense_enumeration() {
 
 #[test]
 fn floor_and_call_derivation() {
-    let floor = runtime::derived_floor(U256::from(ENTRY_PRICE), FLOOR_PRICE_NUM).unwrap();
-    let call = runtime::derived_call_price(U256::from(ENTRY_PRICE), CALL_PRICE_NUM).unwrap();
+    let floor = runtime::marked_up(U256::from(ENTRY_PRICE), FLOOR_RATE).unwrap();
+    let call = runtime::marked_up(U256::from(ENTRY_PRICE), CALL_RATE).unwrap();
     assert_eq!(floor, U256::from(EXPECTED_FLOOR));
     assert_eq!(call, U256::from(EXPECTED_TRIGGER));
 
     let one = U256::from(1_000_000_000_000_000_000u64);
     assert_eq!(
-        runtime::derived_floor(one, FLOOR_PRICE_NUM).unwrap(),
+        runtime::marked_up(one, FLOOR_RATE).unwrap(),
         U256::from(1_080_000_000_000_000_000u64)
     );
     assert_eq!(
-        runtime::derived_call_price(one, CALL_PRICE_NUM).unwrap(),
+        runtime::marked_up(one, CALL_RATE).unwrap(),
         U256::from(2_280_000_000_000_000_000u64)
     );
 }
@@ -1104,11 +1102,11 @@ fn config_dev_profile_drives_issuance_and_qualification() {
         assert_eq!(r.call_notice_period, dev.call_notice_period);
         assert_eq!(
             r.floor_price_minor,
-            U256::from(ENTRY_PRICE * dev.floor_price_num / 100)
+            U256::from(ENTRY_PRICE * u64::from(100 + dev.floor_rate) / 100)
         );
         assert_eq!(
             r.call_price_minor,
-            U256::from(ENTRY_PRICE * dev.call_price_num / 100)
+            U256::from(ENTRY_PRICE * u64::from(100 + dev.call_rate) / 100)
         );
         assert_eq!(
             r.call_trigger(),

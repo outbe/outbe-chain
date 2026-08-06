@@ -8,9 +8,7 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_promislimit::PromisLimitContract;
 
-use outbe_intexfactory::constants::{
-    CALL_PRICE_DEN, FLOOR_PRICE_DEN, QUALIFIER_ISSUANCE_ISO, QUALIFIER_REFERENCE_ISO,
-};
+use outbe_intexfactory::constants::{QUALIFIER_ISSUANCE_ISO, QUALIFIER_REFERENCE_ISO};
 
 use crate::constants::{
     BIDS_FANIN_TIMEOUT_SECS, BID_QUANTITY_FLOOR_BPS, COMMIT_WINDOW_SECONDS, DAY_STATE_GREEN,
@@ -143,16 +141,8 @@ fn send_stage_start(
     issuance_end: u32,
     day_state: u8,
 ) -> Result<()> {
-    let floor_price = config
-        .entry_price_minor
-        .checked_mul(U256::from(iparams.floor_price_num))
-        .map(|v| v / U256::from(FLOOR_PRICE_DEN))
-        .ok_or_else(|| PrecompileError::Revert("entry floor overflow".into()))?;
-    let call_price = config
-        .entry_price_minor
-        .checked_mul(U256::from(iparams.call_price_num))
-        .map(|v| v / U256::from(CALL_PRICE_DEN))
-        .ok_or_else(|| PrecompileError::Revert("entry call overflow".into()))?;
+    let floor_price = outbe_intexfactory::marked_up(config.entry_price_minor, iparams.floor_rate)?;
+    let call_price = outbe_intexfactory::marked_up(config.entry_price_minor, iparams.call_rate)?;
     let entry_price_u64 = u64::try_from(config.entry_price_minor)
         .map_err(|_| PrecompileError::Revert("entry price exceeds u64".into()))?;
     let floor_price_u64 = u64::try_from(floor_price)

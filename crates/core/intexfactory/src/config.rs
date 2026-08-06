@@ -5,24 +5,24 @@
 use outbe_primitives::error::{PrecompileError, Result};
 
 use crate::constants::{
-    CALL_NOTICE_PERIOD, CALL_PRICE_NUM, CALL_THRESHOLD, CALL_WINDOW, COMMIT_BOND_MINOR,
-    FLOOR_PRICE_NUM, QUALIFICATION_PERIOD,
+    CALL_NOTICE_PERIOD, CALL_RATE, CALL_THRESHOLD, CALL_WINDOW, COMMIT_BOND_MINOR, FLOOR_RATE,
+    QUALIFICATION_PERIOD,
 };
 use crate::schema::IntexFactoryContract;
 
 pub const PROFILE_PROD: u8 = 0;
 pub const PROFILE_DEV: u8 = 1;
 
-/// Resolved IntexFactory protocol parameters. Price numerators are over the
-/// fixed `*_PRICE_DEN` denominators in [`crate::constants`].
+/// Resolved IntexFactory protocol parameters. Periods are seconds; rates are
+/// percentage points over [`crate::constants::PRICE_RATE_DEN`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IntexParams {
     pub qualification_period: u32,
     pub call_window: u32,
     pub call_threshold: u32,
     pub call_notice_period: u32,
-    pub call_price_num: u64,
-    pub floor_price_num: u64,
+    pub call_rate: u16,
+    pub floor_rate: u16,
     /// Commit-entry bond on the target-chain auction (payment-token 18-dec minor units).
     pub commit_bond_minor: u128,
 }
@@ -34,8 +34,8 @@ impl IntexParams {
         call_window: CALL_WINDOW,
         call_threshold: CALL_THRESHOLD,
         call_notice_period: CALL_NOTICE_PERIOD,
-        call_price_num: CALL_PRICE_NUM,
-        floor_price_num: FLOOR_PRICE_NUM,
+        call_rate: CALL_RATE,
+        floor_rate: FLOOR_RATE,
         commit_bond_minor: COMMIT_BOND_MINOR,
     };
 
@@ -47,8 +47,8 @@ impl IntexParams {
         call_window: 3 * 24 * 3600,
         call_threshold: 2 * 24 * 3600,
         call_notice_period: 3 * 24 * 3600,
-        call_price_num: 110,
-        floor_price_num: 105,
+        call_rate: 10,
+        floor_rate: 5,
         commit_bond_minor: 100 * 10u128.pow(18),
     };
 

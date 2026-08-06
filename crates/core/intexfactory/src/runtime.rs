@@ -12,8 +12,8 @@ use outbe_vaultrouter::api::IVaultRouter;
 
 use crate::config;
 use crate::constants::{
-    CALL_PRICE_DEN, DIST_CHUNK_LIMIT, FLOOR_PRICE_DEN, INTEX_NFT1155_ADDRESS,
-    ORIGIN_ROUTER_ADDRESS, POW_DIFFICULTY, PROCEEDS_FANIN_TIMEOUT_SECS,
+    DIST_CHUNK_LIMIT, INTEX_NFT1155_ADDRESS, ORIGIN_ROUTER_ADDRESS, POW_DIFFICULTY, PRICE_RATE_DEN,
+    PROCEEDS_FANIN_TIMEOUT_SECS,
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
@@ -43,8 +43,8 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
     let mut factory = IntexFactoryContract::new(storage.clone());
     let cfg = config::read(&factory)?;
 
-    let floor_price_minor = derived_floor(params.entry_price_minor, cfg.floor_price_num)?;
-    let call_price_minor = derived_call_price(params.entry_price_minor, cfg.call_price_num)?;
+    let floor_price_minor = marked_up(params.entry_price_minor, cfg.floor_rate)?;
+    let call_price_minor = marked_up(params.entry_price_minor, cfg.call_rate)?;
 
     let entry_price_minor_u64 = u64::try_from(params.entry_price_minor)
         .map_err(|_| PrecompileError::Revert("entry price exceeds u64".into()))?;
@@ -150,18 +150,12 @@ pub(crate) fn issuance_legs(params: &IssuanceParams) -> Vec<(u32, Vec<Address>, 
         .collect()
 }
 
-pub(crate) fn derived_floor(entry_price: U256, floor_price_num: u64) -> Result<U256> {
+/// Applies a markup rate in percentage points: `entry * (100 + rate) / 100`.
+pub fn marked_up(entry_price: U256, rate: u16) -> Result<U256> {
     entry_price
-        .checked_mul(U256::from(floor_price_num))
-        .map(|v| v / U256::from(FLOOR_PRICE_DEN))
-        .ok_or_else(|| PrecompileError::Revert("floor price overflow".into()))
-}
-
-pub(crate) fn derived_call_price(entry_price: U256, call_price_num: u64) -> Result<U256> {
-    entry_price
-        .checked_mul(U256::from(call_price_num))
-        .map(|v| v / U256::from(CALL_PRICE_DEN))
-        .ok_or_else(|| PrecompileError::Revert("call price overflow".into()))
+        .checked_mul(U256::from(PRICE_RATE_DEN + rate))
+        .map(|v| v / U256::from(PRICE_RATE_DEN))
+        .ok_or_else(|| PrecompileError::Revert("marked-up price overflow".into()))
 }
 
 /// Per-Intex cost = entry_price * promis_load / 1e30 (payment-token minor).
