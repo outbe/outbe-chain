@@ -37,8 +37,11 @@ All steps and the success event are one EVM rollback domain.
 
 ### Pay next Anadosis
 
-Only the position's smart account may pay. Before mutation the factory validates
-position, next installment, asset, amount and nonzero reclaim commitment. It then:
+Any caller may pay, including on behalf of another account: the debt is pulled from
+the caller's own balance while the freed collateral is always released to the original
+pledger, so a payer can never redirect value to themselves. Before mutation the factory
+validates position, next installment, asset, amount and nonzero reclaim commitment. It
+then:
 
 1. advances the Credis next installment at canonical time;
 2. pulls the exact recorded asset/amount from the caller;
