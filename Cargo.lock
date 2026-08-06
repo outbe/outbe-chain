@@ -7440,10 +7440,12 @@ dependencies = [
  "outbe-macros",
  "outbe-metadosis",
  "outbe-offchain-storage",
+ "outbe-oracle",
  "outbe-primitives",
  "outbe-promislimit",
  "outbe-rewards",
  "outbe-tribute",
+ "outbe-validatorset",
  "proptest",
  "tracing",
 ]

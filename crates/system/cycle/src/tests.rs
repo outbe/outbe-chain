@@ -23,6 +23,7 @@ use outbe_primitives::block::{BlockContext, BlockLifecycle, BlockRuntimeContext}
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::{MetadosisMutationPurposeTag, StorageHandle};
 use outbe_tribute::TributeRepositoryReader;
+use outbe_validatorset::contract::ValidatorSet;
 use std::sync::Arc;
 
 use crate::lifecycle::{CycleLifecycle, CycleLifecycleContext};
@@ -50,13 +51,14 @@ fn cycle_storage() -> HashMapStorageProvider {
 }
 
 fn cycle_storage_for(chain_id: u64) -> HashMapStorageProvider {
-    let mut storage = HashMapStorageProvider::new(chain_id);
+    let genesis_hash = B256::repeat_byte(0x11);
+    let mut storage = HashMapStorageProvider::new_with_chain_identity(chain_id, genesis_hash);
     storage.set_block_number(1);
     storage.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::ForkProfile);
     let install = outbe_metadosis::test_support::ForkInstallScenario::measurement_at(
         1,
         chain_id,
-        B256::repeat_byte(0x11),
+        genesis_hash,
     )
     .unwrap()
     .into_install();
@@ -65,6 +67,29 @@ fn cycle_storage_for(chain_id: u64) -> HashMapStorageProvider {
             BlockContext::empty_for_tests(1, GENESIS_TS, chain_id),
             handle,
         );
+        let owner = Address::repeat_byte(0xA0);
+        let founder = Address::repeat_byte(0xB0);
+        let consensus_key = [0x30; 48];
+        let mut validators = ValidatorSet::new(ctx.storage.clone());
+        validators.config_owner.write(owner).unwrap();
+        validators.set_config_max_validators(1).unwrap();
+        validators
+            .register_validator(owner, founder, &consensus_key)
+            .unwrap();
+        validators.mark_pending(founder).unwrap();
+        let registration = install.founder_registrations[0]
+            .encode_canonical(&outbe_metadosis::config::poc_schema_limits())
+            .unwrap();
+        validators
+            .confirm_validator_ready(founder, &registration)
+            .unwrap();
+        validators
+            .activate_validator_via_boundary_for_test(founder)
+            .unwrap();
+        let (base, quote) = outbe_oracle::api::DAY_TYPE_PAIR;
+        outbe_oracle::contract::OracleContract::new(ctx.storage.clone())
+            .register_pair(base, quote)
+            .unwrap();
         outbe_metadosis::commands::install_fork_profile(&ctx, &install).unwrap();
     });
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 4);
