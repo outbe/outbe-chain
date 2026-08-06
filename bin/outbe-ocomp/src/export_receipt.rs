@@ -1,10 +1,9 @@
-//! Exporter-owned durable receipt for one node-committed input manifest.
+//! Exporter-owned durable receipt for one published input manifest.
 //!
 //! Publishing input objects into CAS is not enough to make them eligible for
-//! supervisor adoption. The snapshot exporter records the exact node commit
-//! response in this content-addressed receipt after the node has durably moved
-//! the finalized pin to `Exported`. On restart the exporter can replay the
-//! receipt's commit request to the node and require the same response.
+//! supervisor adoption. The RPC-driven exporter records an exact local
+//! publication receipt after reconstructing and verifying the finalized input.
+//! On restart it requires the same content-addressed receipt before reuse.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
@@ -584,7 +583,7 @@ fn derive_receipt(
 ) -> Result<ExportReceiptV1, ExportReceiptError> {
     require(
         committed.job_id == prepared.prepared.job_id,
-        "node commit job id",
+        "publication receipt job id",
     )?;
     require(
         committed.pin_generation
@@ -595,7 +594,10 @@ fn derive_receipt(
                 .ok_or(ExportReceiptError::IntegerOverflow)?,
         "exported pin generation",
     )?;
-    require(!committed.record_hash.is_zero(), "node export record hash")?;
+    require(
+        !committed.record_hash.is_zero(),
+        "publication receipt record hash",
+    )?;
     Ok(ExportReceiptV1 {
         job_id: prepared.prepared.job_id,
         source_pin_generation: prepared.prepared.source_pin_generation,

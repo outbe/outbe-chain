@@ -89,6 +89,12 @@ pub struct Anadosis {
 
     #[attribute(order = 4, default = 0)]
     pub paid_at: u64,
+
+    /// Portion of `anadosis_amount` still owed. Starts equal to `anadosis_amount`
+    /// and is drawn down by each payment; `paid_at` is stamped only once this
+    /// reaches zero, so a partially paid installment still counts as overdue.
+    #[attribute(order = 5)]
+    pub unpaid_amount: U256,
 }
 
 /// EVM storage layout for the Credis position contract.
@@ -105,23 +111,23 @@ pub struct CredisContract {
     #[attribute(order = 0)]
     pub positions: outbe_primitives::storage::dsl::Map<U256, Position>,
 
-    /// slots 8..12: anadosis record keyed by anadosis_key (5 slots).
+    /// slots 8..13: anadosis record keyed by anadosis_key (6 slots).
     #[attribute(order = 1)]
     pub anadosis_records: outbe_primitives::storage::dsl::Map<B256, Anadosis>,
 
-    /// slot 13: per-account count of positions ever created.
+    /// slot 14: per-account count of positions ever created.
     #[attribute(order = 2)]
     pub address_position_counts: outbe_primitives::storage::dsl::Map<Address, u32>,
 
-    /// slot 14: per-account index — keccak(addr ++ idx_be32) → position_id.
+    /// slot 15: per-account index — keccak(addr ++ idx_be32) → position_id.
     #[attribute(order = 3)]
     pub address_position_ids: outbe_primitives::storage::dsl::Map<B256, U256>,
 
-    /// slot 15: total positions ever created (for getAllPositions iteration).
+    /// slot 16: total positions ever created (for getAllPositions iteration).
     #[attribute(order = 4)]
     pub total_positions: outbe_primitives::storage::dsl::Value<u64>,
 
-    /// slot 16: dense index — index → position_id.
+    /// slot 17: dense index — index → position_id.
     #[attribute(order = 5)]
     pub position_id_at_index: outbe_primitives::storage::dsl::Map<u64, U256>,
 }

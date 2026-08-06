@@ -55,9 +55,6 @@ pub struct StartOpts {
     /// immutable manifest binding from it. Nodes still receive the clock
     /// offset, but the common start path must not shift genesis a second time.
     pub genesis_timestamp_pre_shifted: bool,
-    /// Bundle identity already pinned by the measurement chain manifest; used
-    /// only for the node-local OCOMP UDS handshake.
-    pub ocomp_protocol_bundle_hash: Option<String>,
 }
 
 impl StartOpts {
@@ -67,7 +64,6 @@ impl StartOpts {
             voting_window: Some(window),
             unix_time_offset_secs: None,
             genesis_timestamp_pre_shifted: false,
-            ocomp_protocol_bundle_hash: None,
         }
     }
 
@@ -92,15 +88,6 @@ impl StartOpts {
             voting_window: Some(window),
             unix_time_offset_secs: Some(target as i64 - now_secs as i64),
             genesis_timestamp_pre_shifted: false,
-            ocomp_protocol_bundle_hash: None,
-        }
-    }
-
-    /// Enable node-local OCOMP UDS for an already-armed measurement manifest.
-    pub fn with_ocomp_measurement_bundle(protocol_bundle_hash: String) -> Self {
-        Self {
-            ocomp_protocol_bundle_hash: Some(protocol_bundle_hash),
-            ..Self::default()
         }
     }
 }

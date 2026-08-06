@@ -2,8 +2,6 @@
 
 use std::{fmt, net::SocketAddr, path::PathBuf};
 
-use alloy_primitives::B256;
-
 /// Complete required configuration for finalized offchain-data projection into MongoDB.
 #[derive(Clone, Eq, PartialEq)]
 pub struct OffchainDataArgs {
@@ -13,134 +11,6 @@ pub struct OffchainDataArgs {
     pub mongodb_database: String,
     /// First block projected when the managed database has no checkpoint.
     pub start_block: u64,
-}
-
-/// Complete optional node-side OCOMP control-plane configuration.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OcompNodeControlConfig {
-    pub supervisor_socket: PathBuf,
-    pub snapshot_exporter_socket: PathBuf,
-    pub supervisor_uid: u32,
-    pub snapshot_exporter_uid: u32,
-    pub protocol_bundle_hash: B256,
-    pub boot_nonce: B256,
-    pub session_generation: u64,
-    /// Present only for a validator that signs OCOMP result votes. A certified
-    /// FullNode runs the same discovery/export/compute control plane without a
-    /// signing key and can never request result attestation.
-    pub key_path: Option<PathBuf>,
-}
-
-/// Local process-boundary settings. Omitted as a whole until OCOMP is enabled.
-#[derive(Clone, Debug, clap::Args)]
-pub struct OcompArgs {
-    /// Node UDS serving the fixed Supervisor capability set.
-    #[arg(long = "ocomp.supervisor-socket", value_name = "PATH")]
-    pub supervisor_socket: Option<PathBuf>,
-
-    /// Separate node UDS serving the fixed SnapshotExporter capability set.
-    #[arg(long = "ocomp.snapshot-exporter-socket", value_name = "PATH")]
-    pub snapshot_exporter_socket: Option<PathBuf>,
-
-    /// Effective UID accepted on the Supervisor UDS via SO_PEERCRED.
-    #[arg(long = "ocomp.supervisor-uid", value_name = "UID")]
-    pub supervisor_uid: Option<u32>,
-
-    /// Effective UID accepted on the SnapshotExporter UDS via SO_PEERCRED.
-    #[arg(long = "ocomp.snapshot-exporter-uid", value_name = "UID")]
-    pub snapshot_exporter_uid: Option<u32>,
-
-    /// Exact pinned OCOMP protocol bundle identity.
-    #[arg(long = "ocomp.protocol-bundle-hash", value_name = "B256")]
-    pub protocol_bundle_hash: Option<B256>,
-
-    /// Per-node process boot nonce bound into every local-control handshake.
-    #[arg(long = "ocomp.boot-nonce", value_name = "B256")]
-    pub boot_nonce: Option<B256>,
-
-    /// Monotonic local-control session generation for this node boot.
-    #[arg(long = "ocomp.session-generation", default_value_t = 1)]
-    pub session_generation: u64,
-
-    /// Node-owned result-signing key registered on-chain by `confirmValidatorReady`.
-    #[arg(long = "ocomp.key", value_name = "PATH")]
-    pub key_path: Option<PathBuf>,
-}
-
-impl Default for OcompArgs {
-    fn default() -> Self {
-        Self {
-            supervisor_socket: None,
-            snapshot_exporter_socket: None,
-            supervisor_uid: None,
-            snapshot_exporter_uid: None,
-            protocol_bundle_hash: None,
-            boot_nonce: None,
-            session_generation: 1,
-            key_path: None,
-        }
-    }
-}
-
-impl OcompArgs {
-    /// Returns a complete fixed-role configuration or rejects a partial profile.
-    pub fn node_control(&self) -> eyre::Result<Option<OcompNodeControlConfig>> {
-        let configured = [
-            self.supervisor_socket.is_some(),
-            self.snapshot_exporter_socket.is_some(),
-            self.supervisor_uid.is_some(),
-            self.snapshot_exporter_uid.is_some(),
-            self.protocol_bundle_hash.is_some(),
-            self.boot_nonce.is_some(),
-        ];
-        if configured.iter().all(|value| !value) && self.key_path.is_none() {
-            return Ok(None);
-        }
-        if !configured.iter().all(|value| *value) {
-            eyre::bail!(
-                "OCOMP node control requires both role sockets, both peer UIDs, \
-                 --ocomp.protocol-bundle-hash and --ocomp.boot-nonce"
-            );
-        }
-        if self.session_generation == 0 {
-            eyre::bail!("--ocomp.session-generation must be greater than zero");
-        }
-
-        let supervisor_socket = self
-            .supervisor_socket
-            .clone()
-            .expect("complete profile checked above");
-        let snapshot_exporter_socket = self
-            .snapshot_exporter_socket
-            .clone()
-            .expect("complete profile checked above");
-        if supervisor_socket == snapshot_exporter_socket {
-            eyre::bail!("OCOMP Supervisor and SnapshotExporter require distinct sockets");
-        }
-        let protocol_bundle_hash = self
-            .protocol_bundle_hash
-            .expect("complete profile checked above");
-        let boot_nonce = self.boot_nonce.expect("complete profile checked above");
-        if protocol_bundle_hash.is_zero() {
-            eyre::bail!("--ocomp.protocol-bundle-hash must not be zero");
-        }
-        if boot_nonce.is_zero() {
-            eyre::bail!("--ocomp.boot-nonce must not be zero");
-        }
-
-        Ok(Some(OcompNodeControlConfig {
-            supervisor_socket,
-            snapshot_exporter_socket,
-            supervisor_uid: self.supervisor_uid.expect("complete profile checked above"),
-            snapshot_exporter_uid: self
-                .snapshot_exporter_uid
-                .expect("complete profile checked above"),
-            protocol_bundle_hash,
-            boot_nonce,
-            session_generation: self.session_generation,
-            key_path: self.key_path.clone(),
-        }))
-    }
 }
 
 impl fmt::Debug for OffchainDataArgs {
@@ -344,9 +214,6 @@ pub struct ConsensusArgs {
     /// First block to project into a new managed database.
     #[arg(long = "projection.start-block", default_value_t = 1)]
     pub projection_start_block: u64,
-
-    #[command(flatten)]
-    pub ocomp: OcompArgs,
 }
 
 impl fmt::Debug for ConsensusArgs {
@@ -381,10 +248,6 @@ impl fmt::Debug for ConsensusArgs {
                 &self.projection_mongodb_database,
             )
             .field("projection_start_block", &self.projection_start_block)
-            .field(
-                "ocomp_control_configured",
-                &self.ocomp.supervisor_socket.is_some(),
-            )
             .finish_non_exhaustive()
     }
 }
@@ -397,7 +260,6 @@ impl ConsensusArgs {
     /// - `--bls-key-backend encrypted` without `--bls-passphrase` → error
     pub fn validate(&self) -> eyre::Result<()> {
         self.offchain_data()?;
-        let ocomp_node_control = self.ocomp.node_control()?;
         if self.tee_renewal_poll_secs == 0 {
             eyre::bail!("--tee-renewal.poll-secs must be greater than zero");
         }
@@ -422,35 +284,6 @@ impl ConsensusArgs {
                 "--validator requires --consensus.signing-key. \
                  Provide the path to your BLS signing key file."
             );
-        }
-        if self.is_validator && ocomp_node_control.is_none() {
-            eyre::bail!(
-                "validator requires OCOMP voting configuration: provide both role sockets, \
-                 both peer UIDs, --ocomp.protocol-bundle-hash, --ocomp.boot-nonce and --ocomp.key"
-            );
-        }
-        if self.is_validator
-            && ocomp_node_control
-                .as_ref()
-                .is_some_and(|config| config.key_path.is_none())
-        {
-            eyre::bail!("validator OCOMP voting configuration requires --ocomp.key");
-        }
-        if self.upstream.is_some() && ocomp_node_control.is_none() {
-            eyre::bail!(
-                "certified FullNode requires OCOMP compute control: provide both role sockets, \
-                 both peer UIDs, --ocomp.protocol-bundle-hash and --ocomp.boot-nonce"
-            );
-        }
-        if self.upstream.is_some()
-            && ocomp_node_control
-                .as_ref()
-                .is_some_and(|config| config.key_path.is_some())
-        {
-            eyre::bail!("certified FullNode must not configure --ocomp.key");
-        }
-        if !self.is_validator && self.upstream.is_none() && ocomp_node_control.is_some() {
-            eyre::bail!("OCOMP control requires --validator or certified --upstream FullNode");
         }
         if !self.is_validator && self.signing_key.is_some() {
             tracing::warn!(
@@ -616,96 +449,12 @@ mod tests {
             projection_mongodb_uri: Some("mongodb://localhost:27017".to_owned()),
             projection_mongodb_database: Some("outbe_projection".to_owned()),
             projection_start_block: 1,
-            ocomp: OcompArgs::default(),
         }
-    }
-
-    fn configure_ocomp_control(args: &mut ConsensusArgs) {
-        args.ocomp.supervisor_socket = Some("/tmp/supervisor.sock".into());
-        args.ocomp.snapshot_exporter_socket = Some("/tmp/exporter.sock".into());
-        args.ocomp.supervisor_uid = Some(1001);
-        args.ocomp.snapshot_exporter_uid = Some(1002);
-        args.ocomp.protocol_bundle_hash = Some(B256::repeat_byte(0x11));
-        args.ocomp.boot_nonce = Some(B256::repeat_byte(0x22));
-    }
-
-    fn configure_ocomp_voting(args: &mut ConsensusArgs) {
-        configure_ocomp_control(args);
-        args.ocomp.key_path = Some("/tmp/ocomp-key.hex".into());
     }
 
     #[test]
     fn test_full_node_without_key_ok() {
         assert!(default_args().validate().is_ok());
-    }
-
-    #[test]
-    fn ocomp_node_control_is_all_or_nothing_and_uses_distinct_role_sockets() {
-        let mut args = default_args();
-        args.ocomp.supervisor_socket = Some("/tmp/supervisor.sock".into());
-        assert!(args.validate().is_err());
-
-        configure_ocomp_voting(&mut args);
-        let config = args.ocomp.node_control().unwrap().unwrap();
-        assert_eq!(config.supervisor_uid, 1001);
-        assert_eq!(config.snapshot_exporter_uid, 1002);
-
-        args.ocomp.snapshot_exporter_socket = args.ocomp.supervisor_socket.clone();
-        assert!(args.ocomp.node_control().is_err());
-    }
-
-    #[test]
-    fn validator_requires_complete_ocomp_voting_config() {
-        let non_participant = default_args();
-        assert!(non_participant.validate().is_ok());
-
-        let mut validator = default_args();
-        validator.is_validator = true;
-        validator.signing_key = Some("/tmp/bls-key.hex".into());
-        let error = validator
-            .validate()
-            .expect_err("validator without OCOMP voting configuration must fail closed")
-            .to_string();
-        assert!(error.contains("validator requires OCOMP"), "error: {error}");
-    }
-
-    #[test]
-    fn certified_full_node_requires_complete_keyless_ocomp_control() {
-        let mut follower = default_args();
-        follower.upstream = Some("http://upstream:8545".to_owned());
-        let error = follower
-            .validate()
-            .expect_err("OCOMP-enabled FullNode without its local compute control must fail")
-            .to_string();
-        assert!(error.contains("FullNode requires OCOMP"), "error: {error}");
-
-        configure_ocomp_control(&mut follower);
-        follower
-            .validate()
-            .expect("FullNode accepts a complete keyless OCOMP control profile");
-        let config = follower
-            .ocomp
-            .node_control()
-            .expect("complete profile parses")
-            .expect("profile is configured");
-        assert!(config.key_path.is_none(), "FullNode has no voting key");
-
-        follower.ocomp.key_path = Some("/tmp/forbidden-ocomp-key.hex".into());
-        let error = follower
-            .validate()
-            .expect_err("FullNode must not acquire validator vote capability")
-            .to_string();
-        assert!(
-            error.contains("must not configure --ocomp.key"),
-            "error: {error}"
-        );
-    }
-
-    #[test]
-    fn removed_ocomp_validator_index_flag_is_rejected() {
-        assert!(
-            TestConsensusCli::try_parse_from(["test", "--ocomp.validator-index", "4",]).is_err()
-        );
     }
 
     #[test]
@@ -792,7 +541,6 @@ mod tests {
     fn test_follower_upstream_ok_without_validator() {
         let mut args = default_args();
         args.upstream = Some("http://upstream:8545".to_string());
-        configure_ocomp_control(&mut args);
         assert!(args.validate().is_ok());
     }
 
@@ -826,11 +574,10 @@ mod tests {
     }
 
     #[test]
-    fn test_validator_with_signing_key_and_ocomp_voting_ok() {
+    fn test_validator_with_signing_key_ok() {
         let mut args = default_args();
         args.is_validator = true;
         args.signing_key = Some(PathBuf::from("/tmp/key.hex"));
-        configure_ocomp_voting(&mut args);
         assert!(args.validate().is_ok());
     }
 

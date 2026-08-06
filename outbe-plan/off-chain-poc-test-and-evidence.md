@@ -67,7 +67,7 @@ No single layer may claim a boundary it substitutes.
 | `PURE` | Lysis arithmetic, planner/reducer and receipt equations | storage-independent production functions plus independent reference |
 | `MODEL` | legal/illegal FSM sequences, indexes, retry and deadline invariants | generated state sequences checked against the frozen transition table |
 | `MODULE` | dispatch, authorization, owner methods, checkpoint rollback and events | production module entrypoint; substitutions declared |
-| `PROCESS` | UDS, checkpoint export, CAS, workers, attestation and restart | real sibling processes and real files/sockets/databases |
+| `PROCESS` | public-RPC export, CAS, Axum registration, ZeroMQ workers, voting and restart | real sibling processes and real files/TCP endpoints/databases |
 | `EXECUTION` | proposer/import/replay ordering, public transaction and state parity | real executor/storage/system-transaction path |
 | `E2E` | consensus/finality/RPC/P2P/process wiring and public outcome | fresh four-validator devnet using released-form binaries |
 
@@ -123,9 +123,10 @@ distributed behavior.
 The PoC extends this owner instead of creating another harness. Required gaps
 are:
 
-1. an `OcompTopology` handle owning four supervisor/exporter/CAS domains,
-   bounded one-unit worker processes and node control sockets;
-2. supervisor-only stop/restart, event-drop, CAS/Mongo corruption, worker
+1. an `OcompTopology` handle owning four Supervisor/exporter/CAS domains,
+   bounded one-unit Worker processes, Axum registration endpoints and ZeroMQ
+   TCP command channels;
+2. Supervisor-only stop/restart, message-drop, CAS/Mongo corruption, Worker
    schedule and bundle-mismatch controls;
 3. public OCOMP transaction/view/proof helpers and exact-block state snapshots;
 4. a deterministic persisted-finality/orphan fixture driving the production
@@ -178,10 +179,10 @@ testing/e2e-harness/tests/ocomp_evidence_verifier.rs
 |---|---|---|
 | `OCM-REQ-001` | payload builder -> begin/user/CE-seal/end executor -> Metadosis | split, exact GREEN Desis or RED carry-over, intent/index/event commit together; final CE root is bound; no Nod/contributor/Tribute-consume effect; retry does not repeat the early effect |
 | `OCM-PIN-001` | deterministic consensus boundary -> production node pin coordinator/journal/attestation gate | tentative record durable before positive vote; finalize/export transition; exact competing finality releases the orphan; restart preserves refusal; the real gate returns typed `NotExported` without creating a sign-once record |
-| `OCM-DIS-001` | finalized cursor -> real UDS supervisor | dropped event still discovers one job; duplicate/restart remains exactly once |
+| `OCM-DIS-001` | finalized cursor -> public RPC discovery | dropped event still discovers one job; duplicate/restart remains exactly once |
 | `OCM-EXP-001` | retained CE MDBX + real Mongo + historical openings -> exporter | complete fold/root/count/nominal; parent-job retention and cursor GC across at least `S+1` Tribute; deterministic left-first opening-proof bisection preserves owner order/completeness under the control cap and a one-owner oversize abstains; body omission/change, opening mutation, source-ahead/behind and exporter restart yield exact export or abstention |
 | `OCM-CAS-001` | exporter/supervisor/worker filesystem CAS | atomic publish, same-descriptor verify, membership/order/length; truncate/change/reorder/TOCTOU/quota faults never reach signing |
-| `OCM-CTL-001` | node/supervisor/exporter/worker UDS | exact frames, peer credentials, method ACL, incompatible bundle, stale generation and cap+1; oversized node response returns typed `LimitExceeded` while the authenticated session remains usable; blocks continue while OCOMP readiness is false |
+| `OCM-CTL-001` | Supervisor Axum registration plus ZeroMQ/TCP Worker transport | registration binding, stale generation, bounded 1..4 registry, asynchronous dispatch, cancellation/redelivery and stale completion rejection; blocks continue while OCOMP is unavailable |
 | `OCM-DET-001` | real worker processes and reducer | one `S+1` parent job produces two primary shards; 1/2/4 workers, randomized completion, kill/retry and cache hit/miss produce byte-identical plan commitment/result roots/digest; removing either shard prevents reduction/signing |
 | `OCM-SIG-001` | node attestation gate + real sign-once filesystem | file/directory fsync-before-release, fault at each persistence boundary, exact retry, different digest refusal before/after restart |
 | `OCM-VOT-001` | public full-result vote dispatch -> four compact slots -> quorum | each vote carries canonical `LysisResultV1`; exactly three matching eligible indexes form q; duplicate, unknown, wrong epoch/key, malformed result, minority and equivocation cases are bounded and deterministic; only one canonical result is retained at q |
@@ -288,7 +289,7 @@ validator node vote submitter
 ```
 
 Each domain has a distinct node data directory, Mongo logical database, CAS,
-pin/sign journal, UDS namespace and OCOMP key/index. Operating-system
+pin/sign journal, loopback TCP namespace and OCOMP key/index. Operating-system
 service-manager hardening remains outside the PoC: it is an MVP deployment
 concern, not protocol evidence.
 
@@ -554,7 +555,7 @@ crates/core/metadosis/tests/
   FSM model and request/expiry invariants
 
 bin/outbe-ocomp/tests/
-  real UDS/export/CAS/worker/reducer process seams
+  real public-RPC/export/CAS/ZeroMQ-worker/reducer process seams
 
 crates/blockchain/node/src/ocomp/tests/
   pin, cursor, attestation and sign-once persistence

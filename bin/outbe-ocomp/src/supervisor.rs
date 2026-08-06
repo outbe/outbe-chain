@@ -1,28 +1,16 @@
-//! Durable finalized-cursor discovery owned by the fixed OCOMP supervisor.
+//! Durable finalized-job journal owned by the OCOMP supervisor.
 //!
-//! A request event may wake this component, but carries no job authority. Every
-//! reconciliation starts from the last fsync'd cursor and reads the exact
-//! finalized job over the node's authenticated local control endpoint.
+//! Network discovery lives in `rpc_discovery`: this module deliberately owns
+//! only the restart-safe local record and contains no node transport.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::OpenOptionsExt;
-use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard};
 
 use alloy_primitives::{keccak256, B256};
-use outbe_ocomp_protocol::local_control::{
-    ClientPolicy, ControlClientSession, ControlError, EndpointIdentity,
-};
-use outbe_ocomp_protocol::{
-    common::BoundedBytes, result::LysisResultV1, vote::ResultVoteV1, AttestationResponseV1,
-    CommitLocalResultV1, FinalizedJobSpecV1, FinalizedJobSummaryV1, GetJobSpecV1,
-    ListFinalizedJobsResponseV1, ListFinalizedJobsV1, LocalErrorV1, LocalResultCommittedV1,
-    NodeMessageKind, OpenSnapshotLeaseV1, ProtocolError, RequestAttestationV1, SchemaLimits,
-    SnapshotHandoffV1, MAX_FINALIZED_JOBS_PER_RESPONSE,
-};
+use outbe_ocomp_protocol::{FinalizedJobSpecV1, ProtocolError, SchemaLimits};
 use thiserror::Error;
 
 const JOURNAL_MAGIC: [u8; 8] = *b"OUTBDIS1";
@@ -31,15 +19,6 @@ const JOURNAL_FILE: &str = "discovery.v1";
 const JOURNAL_TEMP_FILE: &str = "discovery.v1.tmp";
 const JOURNAL_LOCK_FILE: &str = "discovery.lock";
 const JOURNAL_FIXED_BYTES: usize = 8 + 2 + 8 + 8 + 4 + 32;
-
-#[derive(Clone, Debug)]
-pub struct SupervisorDiscoveryConfig {
-    pub node_socket: PathBuf,
-    pub journal_root: PathBuf,
-    pub expected_node_uid: u32,
-    pub identity: EndpointIdentity,
-    pub limits: SchemaLimits,
-}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DiscoveryRecord {
@@ -54,282 +33,7 @@ pub enum DiscoveryOutcome {
     Discovered(Box<DiscoveryRecord>),
 }
 
-pub struct SupervisorDiscovery {
-    config: SupervisorDiscoveryConfig,
-    journal: Mutex<DiscoveryJournal>,
-}
-
-impl SupervisorDiscovery {
-    pub fn open(config: SupervisorDiscoveryConfig) -> Result<Self, SupervisorDiscoveryError> {
-        let journal = DiscoveryJournal::open(&config.journal_root, config.limits)?;
-        Ok(Self {
-            config,
-            journal: Mutex::new(journal),
-        })
-    }
-
-    /// Reconciles from the durable cursor. This is the authority path used both
-    /// by periodic polling and by an optional low-latency event wakeup.
-    pub fn reconcile_once(&self) -> Result<DiscoveryOutcome, SupervisorDiscoveryError> {
-        let mut journal = self.lock_journal()?;
-        let after_cursor = journal.record().map_or(0, |record| record.cursor);
-        let mut session = self.connect()?;
-
-        let list_request = ListFinalizedJobsV1 {
-            after_cursor,
-            limit: MAX_FINALIZED_JOBS_PER_RESPONSE,
-        };
-        session.send_request(
-            NodeMessageKind::ListFinalizedJobs as u16,
-            list_request.encode_body(&self.config.limits)?,
-        )?;
-        let list_frame = session.receive_response()?;
-        let list_body = response_body(
-            list_frame.message_kind,
-            list_frame.body,
-            NodeMessageKind::ListFinalizedJobs,
-            &self.config.limits,
-        )?;
-        let listing = ListFinalizedJobsResponseV1::decode_body(&list_body, &self.config.limits)?;
-
-        let Some(summary) = listing.jobs.into_iter().next() else {
-            if listing.next_cursor != after_cursor {
-                return Err(SupervisorDiscoveryError::CursorAdvancedWithoutJob {
-                    before: after_cursor,
-                    after: listing.next_cursor,
-                });
-            }
-            return Ok(DiscoveryOutcome::NoNewJob);
-        };
-        validate_new_summary(&summary, after_cursor, &self.config.identity)?;
-
-        let spec_request = GetJobSpecV1 {
-            job_id: summary.job_id,
-        };
-        session.send_request(
-            NodeMessageKind::GetJobSpec as u16,
-            spec_request.encode_body(&self.config.limits)?,
-        )?;
-        let spec_frame = session.receive_response()?;
-        let spec_body = response_body(
-            spec_frame.message_kind,
-            spec_frame.body,
-            NodeMessageKind::GetJobSpec,
-            &self.config.limits,
-        )?;
-        let spec = FinalizedJobSpecV1::decode_body(&spec_body, &self.config.limits)?;
-        if spec.summary != summary {
-            return Err(SupervisorDiscoveryError::SummaryChanged);
-        }
-
-        let record = journal.persist(spec)?;
-        Ok(DiscoveryOutcome::Discovered(Box::new(record)))
-    }
-
-    /// The hint intentionally has no payload: it can only trigger the same
-    /// cursor reconciliation as the periodic poll.
-    pub fn on_wake_hint(&self) -> Result<DiscoveryOutcome, SupervisorDiscoveryError> {
-        self.reconcile_once()
-    }
-
-    pub fn current_record(&self) -> Result<Option<DiscoveryRecord>, SupervisorDiscoveryError> {
-        Ok(self.lock_journal()?.record().cloned())
-    }
-
-    /// Arms the node-owned finalized snapshot only after the exact job has
-    /// already been discovered and durably journaled.
-    pub fn open_snapshot_lease(
-        &self,
-        job_id: B256,
-    ) -> Result<SnapshotHandoffV1, SupervisorDiscoveryError> {
-        let current = self
-            .current_record()?
-            .ok_or(SupervisorDiscoveryError::SnapshotJobNotDiscovered)?;
-        if current.spec.summary.job_id != job_id {
-            return Err(SupervisorDiscoveryError::SnapshotJobNotDiscovered);
-        }
-        let mut session = self.connect()?;
-        let request = OpenSnapshotLeaseV1 { job_id };
-        session.send_request(
-            NodeMessageKind::OpenSnapshotLease as u16,
-            request.encode_body(&self.config.limits)?,
-        )?;
-        let frame = session.receive_response()?;
-        let body = response_body(
-            frame.message_kind,
-            frame.body,
-            NodeMessageKind::OpenSnapshotLease,
-            &self.config.limits,
-        )?;
-        SnapshotHandoffV1::decode_body(&body, &self.config.limits).map_err(Into::into)
-    }
-
-    pub fn request_attestation(
-        &self,
-        canonical_result: &[u8],
-    ) -> Result<ResultVoteV1, SupervisorDiscoveryError> {
-        if canonical_result.is_empty() {
-            return Err(ProtocolError::InvalidInvariant("attestation result is empty").into());
-        }
-        let limit = self
-            .config
-            .limits
-            .max_control_body_bytes
-            .min(self.config.limits.max_bounded_bytes);
-        if canonical_result.len() > limit {
-            return Err(ProtocolError::CapacityExceeded {
-                what: "attestation result bytes",
-                limit,
-                actual: canonical_result.len(),
-            }
-            .into());
-        }
-        let request = RequestAttestationV1 {
-            canonical_result: BoundedBytes(canonical_result.to_vec()),
-        };
-        let mut session = self.connect()?;
-        session.send_request(
-            NodeMessageKind::RequestAttestation as u16,
-            request.encode_body(&self.config.limits)?,
-        )?;
-        let frame = session.receive_response()?;
-        let body = response_body(
-            frame.message_kind,
-            frame.body,
-            NodeMessageKind::RequestAttestation,
-            &self.config.limits,
-        )?;
-        let response = AttestationResponseV1::decode_body(&body, &self.config.limits)?;
-        let vote = ResultVoteV1::decode_canonical(&response.canonical_vote.0, &self.config.limits)?;
-        let result = LysisResultV1::decode_canonical(canonical_result, &self.config.limits)?;
-        let expected_digest = result.result_digest(&self.config.limits)?;
-        if vote.protocol_bundle_hash != result.protocol_bundle_hash
-            || vote.job_id != result.job_id
-            || vote.attempt != result.attempt
-            || vote.result != result
-            || vote.result_digest(&self.config.limits)? != expected_digest
-        {
-            return Err(SupervisorDiscoveryError::AttestationResultChanged);
-        }
-        Ok(vote)
-    }
-
-    /// Publishes an independently computed canonical result into the node-owned
-    /// durable authority without requesting a vote, signature, or transaction.
-    pub fn commit_local_result(
-        &self,
-        canonical_result: &[u8],
-    ) -> Result<LocalResultCommittedV1, SupervisorDiscoveryError> {
-        require_bounded_result(canonical_result, &self.config.limits)?;
-        let result = LysisResultV1::decode_canonical(canonical_result, &self.config.limits)?;
-        let expected_digest = result.result_digest(&self.config.limits)?;
-        let request = CommitLocalResultV1 {
-            canonical_result: BoundedBytes(canonical_result.to_vec()),
-        };
-        let mut session = self.connect()?;
-        session.send_request(
-            NodeMessageKind::CommitLocalResult as u16,
-            request.encode_body(&self.config.limits)?,
-        )?;
-        let frame = session.receive_response()?;
-        let body = response_body(
-            frame.message_kind,
-            frame.body,
-            NodeMessageKind::CommitLocalResult,
-            &self.config.limits,
-        )?;
-        let committed = LocalResultCommittedV1::decode_body(&body, &self.config.limits)?;
-        if committed.job_id != result.job_id || committed.result_digest != expected_digest {
-            return Err(SupervisorDiscoveryError::LocalResultCommitChanged);
-        }
-        Ok(committed)
-    }
-
-    fn connect(&self) -> Result<ControlClientSession, SupervisorDiscoveryError> {
-        let stream = UnixStream::connect(&self.config.node_socket).map_err(|source| {
-            SupervisorDiscoveryError::Io {
-                operation: "connect node control socket",
-                path: self.config.node_socket.clone(),
-                source,
-            }
-        })?;
-        let mut session = ControlClientSession::connect(
-            stream,
-            ClientPolicy::supervisor_to_node(
-                self.config.expected_node_uid,
-                self.config.identity,
-                self.config.limits,
-            ),
-        )?;
-        session.handshake()?;
-        Ok(session)
-    }
-
-    fn lock_journal(&self) -> Result<MutexGuard<'_, DiscoveryJournal>, SupervisorDiscoveryError> {
-        self.journal
-            .lock()
-            .map_err(|_| SupervisorDiscoveryError::PoisonedJournalLock)
-    }
-}
-
-fn require_bounded_result(
-    canonical_result: &[u8],
-    limits: &SchemaLimits,
-) -> Result<(), ProtocolError> {
-    if canonical_result.is_empty() {
-        return Err(ProtocolError::InvalidInvariant("local result is empty"));
-    }
-    let limit = limits.max_control_body_bytes.min(limits.max_bounded_bytes);
-    if canonical_result.len() > limit {
-        return Err(ProtocolError::CapacityExceeded {
-            what: "local result bytes",
-            limit,
-            actual: canonical_result.len(),
-        });
-    }
-    Ok(())
-}
-
-fn response_body(
-    message_kind: u16,
-    body: Vec<u8>,
-    request_kind: NodeMessageKind,
-    limits: &SchemaLimits,
-) -> Result<Vec<u8>, SupervisorDiscoveryError> {
-    if message_kind == NodeMessageKind::Error as u16 {
-        let error = LocalErrorV1::decode_body(&body, limits)?;
-        return Err(SupervisorDiscoveryError::RemoteRejected {
-            request_kind: request_kind as u16,
-            error_code: error.error_code,
-            retryable: error.retryable,
-        });
-    }
-    if message_kind != NodeMessageKind::Response as u16 {
-        return Err(SupervisorDiscoveryError::UnexpectedResponseKind(
-            message_kind,
-        ));
-    }
-    Ok(body)
-}
-
-fn validate_new_summary(
-    summary: &FinalizedJobSummaryV1,
-    after_cursor: u64,
-    identity: &EndpointIdentity,
-) -> Result<(), SupervisorDiscoveryError> {
-    if summary.cursor <= after_cursor {
-        return Err(SupervisorDiscoveryError::NonMonotonicCursor {
-            before: after_cursor,
-            after: summary.cursor,
-        });
-    }
-    if summary.protocol_bundle_hash != identity.protocol_bundle_hash {
-        return Err(SupervisorDiscoveryError::BundleChanged);
-    }
-    Ok(())
-}
-
-struct DiscoveryJournal {
+pub(crate) struct DiscoveryJournal {
     root: PathBuf,
     limits: SchemaLimits,
     record: Option<DiscoveryRecord>,
@@ -337,7 +41,10 @@ struct DiscoveryJournal {
 }
 
 impl DiscoveryJournal {
-    fn open(root: &Path, limits: SchemaLimits) -> Result<Self, SupervisorDiscoveryError> {
+    pub(crate) fn open(
+        root: &Path,
+        limits: SchemaLimits,
+    ) -> Result<Self, SupervisorDiscoveryError> {
         create_private_directory(root)?;
         let lock = JournalLock::acquire(root)?;
         let temp = root.join(JOURNAL_TEMP_FILE);
@@ -358,11 +65,11 @@ impl DiscoveryJournal {
         })
     }
 
-    const fn record(&self) -> Option<&DiscoveryRecord> {
+    pub(crate) const fn record(&self) -> Option<&DiscoveryRecord> {
         self.record.as_ref()
     }
 
-    fn persist(
+    pub(crate) fn persist(
         &mut self,
         spec: FinalizedJobSpecV1,
     ) -> Result<DiscoveryRecord, SupervisorDiscoveryError> {
@@ -631,8 +338,6 @@ fn io_error(
 #[derive(Debug, Error)]
 pub enum SupervisorDiscoveryError {
     #[error(transparent)]
-    Control(#[from] ControlError),
-    #[error(transparent)]
     Protocol(#[from] ProtocolError),
     #[error("supervisor discovery I/O while trying to {operation} at {path}: {source}")]
     Io {
@@ -641,32 +346,8 @@ pub enum SupervisorDiscoveryError {
         #[source]
         source: std::io::Error,
     },
-    #[error("node advanced finalized cursor from {before} to {after} without returning a job")]
-    CursorAdvancedWithoutJob { before: u64, after: u64 },
-    #[error("node returned non-monotonic finalized cursor {after} after {before}")]
+    #[error("non-monotonic finalized cursor {after} after {before}")]
     NonMonotonicCursor { before: u64, after: u64 },
-    #[error("node changed the finalized job summary between list and exact read")]
-    SummaryChanged,
-    #[error("node returned a finalized job for a different protocol bundle")]
-    BundleChanged,
-    #[error("node attestation response changed the submitted canonical result")]
-    AttestationResultChanged,
-    #[error("node local-result acknowledgement changed the submitted canonical result")]
-    LocalResultCommitChanged,
-    #[error("snapshot lease may only be opened for the durably discovered job")]
-    SnapshotJobNotDiscovered,
-    #[error("node returned unexpected OCOMP response kind {0:#06x}")]
-    UnexpectedResponseKind(u16),
-    #[error(
-        "node rejected OCOMP request {request_kind:#06x} with code {error_code}, retryable={retryable}"
-    )]
-    RemoteRejected {
-        request_kind: u16,
-        error_code: u16,
-        retryable: bool,
-    },
-    #[error("supervisor discovery journal lock is poisoned")]
-    PoisonedJournalLock,
     #[error("supervisor discovery journal has an ambiguous temporary file at {0}")]
     AmbiguousJournal(PathBuf),
     #[error("supervisor discovery journal path is not a safe regular file/directory: {0}")]

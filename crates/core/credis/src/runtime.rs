@@ -12,14 +12,13 @@ use crate::errors::CredisError;
 use crate::precompile::ICredis;
 use crate::schema::{Anadosis, CredisContract, Position, NUMBER_OF_ANADOSIS, SECONDS_PER_MONTH};
 
-/// Result bundle returned by [`CredisContract::make_next_anadosis`].
+/// Result bundle returned by [`CredisContract::pay_anadosis`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AnadosisResult {
-    pub anadosis_number: u32,
-    pub due_date: u64,
-    pub anadosis_amount: U256,
-    pub gratis_amount: U256,
-    pub paid_at: u64,
+pub struct AnadosisPayment {
+    /// Stablecoin actually applied — `min(requested_amount, outstanding)`.
+    pub total_paid_amount: U256,
+    /// Collateral freed by this payment, summed over the installments it touched.
+    pub gratis_released: U256,
     pub asset: Address,
     pub smart_account: Address,
 }
@@ -104,13 +103,15 @@ impl CredisContract<'_> {
         })?;
 
         for n in 1..=NUMBER_OF_ANADOSIS {
+            let anadosis_amount = Self::split_amount(total_debt, n);
             self.create_anadosis_record(&Anadosis {
                 anadosis_key: CredisContract::anadosis_key(position_id, n),
                 anadosis_number: n,
                 due_date: current_time + (n as u64) * SECONDS_PER_MONTH,
-                anadosis_amount: Self::split_amount(total_debt, n),
+                anadosis_amount,
                 gratis_amount: Self::split_amount(gratis_amount, n),
                 paid_at: 0,
+                unpaid_amount: anadosis_amount,
             })?;
         }
 
@@ -126,47 +127,91 @@ impl CredisContract<'_> {
         Ok(position_id)
     }
 
-    /// Advances the position by one anadosis installment.
+    /// Collateral of `anadosis` still locked, given its current `unpaid_amount`.
+    /// Floor division: it reaches exactly zero when the installment is settled, so
+    /// the deltas taken across successive partial payments sum to `gratis_amount`
+    /// with no dust left behind and nothing over-released.
+    fn locked_gratis(anadosis: &Anadosis) -> U256 {
+        if anadosis.anadosis_amount.is_zero() {
+            return U256::ZERO;
+        }
+        anadosis.gratis_amount * anadosis.unpaid_amount / anadosis.anadosis_amount
+    }
+
+    /// Applies `amount` to the position's unpaid anadosis schedule, oldest first.
+    ///
+    /// Each installment is covered in full while the budget lasts; the last one
+    /// reached may be covered partially, keeping the remainder on its
+    /// `unpaid_amount` with `paid_at` still 0 (so it stays overdue-eligible). Only
+    /// what the schedule actually needs is consumed — the returned
+    /// `total_paid_amount` is `min(amount, outstanding)` and is what the caller
+    /// should pull from the payer.
     ///
     /// - Rejects when the position is missing.
     /// - Rejects when the position has already paid all 10 installments.
-    pub fn make_next_anadosis(
+    pub fn pay_anadosis(
         &mut self,
         position_id: U256,
+        amount: U256,
         current_time: u64,
-    ) -> Result<AnadosisResult> {
+    ) -> Result<AnadosisPayment> {
         let mut position = self.load_position(position_id)?;
         if position.next_anadosis_number > NUMBER_OF_ANADOSIS {
             return Err(CredisError::PositionCompleted.into());
         }
 
-        let n = position.next_anadosis_number;
-        let mut anadosis = self.load_anadosis(position_id, n)?;
+        let mut remaining = amount;
+        let mut total_paid = U256::ZERO;
+        let mut gratis_released = U256::ZERO;
 
-        anadosis.paid_at = current_time;
-        self.update_anadosis_record(&anadosis)?;
+        while position.next_anadosis_number <= NUMBER_OF_ANADOSIS {
+            let n = position.next_anadosis_number;
+            let mut anadosis = self.load_anadosis(position_id, n)?;
+
+            let pay = remaining.min(anadosis.unpaid_amount);
+            // Budget exhausted before this installment could be touched at all.
+            // (A zero-amount installment still settles here — it needs nothing.)
+            if pay.is_zero() && !anadosis.unpaid_amount.is_zero() {
+                break;
+            }
+
+            let locked_before = Self::locked_gratis(&anadosis);
+            anadosis.unpaid_amount -= pay;
+            let released = locked_before - Self::locked_gratis(&anadosis);
+
+            let settled = anadosis.unpaid_amount.is_zero();
+            if settled {
+                anadosis.paid_at = current_time;
+                position.next_anadosis_number = n + 1;
+            }
+            self.update_anadosis_record(&anadosis)?;
+
+            remaining -= pay;
+            total_paid += pay;
+            gratis_released += released;
+
+            self.emit(ICredis::AnadosisPaid {
+                positionId: position_id,
+                anadosisNumber: n,
+                anadosisAmount: pay,
+            })?;
+
+            if !settled {
+                break;
+            }
+        }
 
         position.outstanding_anadosis_amount = position
             .outstanding_anadosis_amount
-            .saturating_sub(anadosis.anadosis_amount);
+            .saturating_sub(total_paid);
         position.outstanding_gratis_amount = position
             .outstanding_gratis_amount
-            .saturating_sub(anadosis.gratis_amount);
-        position.next_anadosis_number = n + 1;
+            .saturating_sub(gratis_released);
         self.update_position_record(&position)?;
 
-        self.emit(ICredis::AnadosisPaid {
-            positionId: position_id,
-            anadosisNumber: anadosis.anadosis_number,
-            anadosisAmount: anadosis.anadosis_amount,
-        })?;
-
-        Ok(AnadosisResult {
-            anadosis_number: anadosis.anadosis_number,
-            due_date: anadosis.due_date,
-            anadosis_amount: anadosis.anadosis_amount,
-            gratis_amount: anadosis.gratis_amount,
-            paid_at: anadosis.paid_at,
+        Ok(AnadosisPayment {
+            total_paid_amount: total_paid,
+            gratis_released,
             asset: position.asset,
             smart_account: position.smart_account,
         })

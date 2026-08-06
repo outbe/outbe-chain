@@ -16,9 +16,89 @@ use reth_provider::StateProviderFactory;
 use reth_storage_api::StateProvider;
 
 use super::{
-    finality::{build_verified_raw_contract_opening, verify_raw_contract_opening},
+    finality::{
+        build_verified_raw_contract_opening, build_verified_raw_contract_opening_from_public_proof,
+        verify_raw_contract_opening, PublicExactBlockProofSourceV1,
+    },
     retention::{CandidatePinV1, RetentionError},
 };
+
+/// Builds the exact Lysis openings exclusively from standard public
+/// `eth_getProof` data at the authenticated request block.
+///
+/// Oracle storage has a count-dependent shape, so construction deliberately
+/// uses two proof rounds: first the fixed count slots, then the complete slot
+/// plan derived from those locally verified values.
+pub fn build_public_lysis_openings<S>(
+    source: &S,
+    finalized: &VerifiedFinalizedIntentV1,
+    subjects: OpeningSubjectsV1,
+    limits: &SchemaLimits,
+) -> Result<LysisOpeningsProofV1, RetentionError>
+where
+    S: PublicExactBlockProofSourceV1,
+{
+    validate_subjects(&subjects)?;
+    let state_root = finalized.request.state_root;
+    let block_hash = finalized.request.block_hash;
+    let fidelity_slots =
+        fidelity_league_slots(&subjects, finalized.intent.wwd, limits.max_collection_items)?;
+    let fidelity_proof = source
+        .account_proof(METADOSIS_ADDRESS, &fidelity_slots, block_hash)
+        .map_err(|error| RetentionError::Source(format!("read public Fidelity proof: {error}")))?;
+    let fidelity = build_verified_raw_contract_opening_from_public_proof(
+        &fidelity_proof,
+        state_root,
+        METADOSIS_ADDRESS,
+        &fidelity_slots,
+        limits,
+    )
+    .map_err(|error| RetentionError::Source(error.to_string()))?;
+
+    let day = outbe_common::WorldwideDay::new(finalized.intent.wwd);
+    let count_slots = oracle_count_slot_plan_v1(day, &subjects.settlement_isos)
+        .map_err(|error| RetentionError::Source(error.to_string()))?
+        .slots;
+    let count_proof = source
+        .account_proof(ORACLE_ADDRESS, &count_slots, block_hash)
+        .map_err(|error| {
+            RetentionError::Source(format!("read public Oracle count proof: {error}"))
+        })?;
+    let count_opening = build_verified_raw_contract_opening_from_public_proof(
+        &count_proof,
+        state_root,
+        ORACLE_ADDRESS,
+        &count_slots,
+        limits,
+    )
+    .map_err(|error| RetentionError::Source(error.to_string()))?;
+    let oracle_slots =
+        oracle_slots_from_authenticated_opening(&count_opening, finalized.intent.wwd, &subjects)?;
+    let oracle_proof = source
+        .account_proof(ORACLE_ADDRESS, &oracle_slots, block_hash)
+        .map_err(|error| RetentionError::Source(format!("read public Oracle proof: {error}")))?;
+    let oracle = build_verified_raw_contract_opening_from_public_proof(
+        &oracle_proof,
+        state_root,
+        ORACLE_ADDRESS,
+        &oracle_slots,
+        limits,
+    )
+    .map_err(|error| RetentionError::Source(error.to_string()))?;
+
+    let openings = LysisOpeningsProofV1 {
+        protocol_bundle_hash: finalized.intent.protocol_bundle_hash,
+        job_id: finalized.job_id,
+        finalized_block_hash: block_hash,
+        finalized_state_root: state_root,
+        wwd: finalized.intent.wwd,
+        subjects,
+        fidelity,
+        oracle,
+    };
+    verify_lysis_openings(&openings, finalized, &openings.subjects, limits)?;
+    Ok(openings)
+}
 
 pub fn build_lysis_openings<P>(
     provider: &P,

@@ -236,11 +236,11 @@ impl<A> FinalizedIntentVerifier<A> {
 }
 
 /// Verifies the self-contained finalized proof and closes every value repeated
-/// by the node-owned snapshot handoff.
+/// by the compatibility snapshot envelope.
 ///
 /// The exporter must call this before using the JobIntent's day, collection
-/// root, count or nominal total. A UDS response is transport, not finality
-/// authority.
+/// root, count or nominal total. The envelope is transport, not finality
+/// authority; current exporters obtain the proof and values through public RPC.
 pub fn authenticate_snapshot_handoff(
     handoff: &SnapshotHandoffV1,
     response: &FinalizedIntentProofResponseV1,
@@ -1544,6 +1544,65 @@ pub(crate) fn build_verified_raw_contract_opening(
         limits,
     )
     .map_err(FinalizedIntentProofBuildError::RawOpeningVerification)?;
+    Ok(opening)
+}
+
+/// Converts a standard `eth_getProof` response into the canonical OCOMP raw
+/// opening and verifies it against the finalized block state root.
+///
+/// The RPC server is only a proof transport: the account path, every storage
+/// path, the exact contract address, and the ordered slot set are checked
+/// locally before the opening is returned.
+pub fn build_verified_raw_contract_opening_from_public_proof(
+    proof: &PublicAccountProofV1,
+    state_root: B256,
+    contract_address: Address,
+    ordered_slots: &[B256],
+    limits: &SchemaLimits,
+) -> Result<RawContractOpeningProofV1, PublicFinalizedIntentProofBuildError> {
+    if ordered_slots.is_empty() || ordered_slots.len() > limits.max_collection_items {
+        return Err(PublicFinalizedIntentProofBuildError::ProofSlotSet);
+    }
+    verify_public_account_proof(proof, contract_address, ordered_slots, state_root)?;
+    let expected_slots = ordered_slots
+        .iter()
+        .copied()
+        .map(|slot| {
+            proof
+                .storage_value(slot)
+                .map(|value| (U256::from_be_bytes(slot.0), value))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let reth_proof = proof.to_reth_proof();
+    let opening = RawContractOpeningProofV1 {
+        contract_address,
+        state_root,
+        ordered_slots: expected_slots
+            .iter()
+            .map(|(slot, value)| RawStorageSlotV1 {
+                slot: B256::new(slot.to_be_bytes()),
+                value: *value,
+            })
+            .collect(),
+        account_proof: ProofBytes(
+            encode_account_witness(&reth_proof, contract_address).map_err(|error| {
+                PublicFinalizedIntentProofBuildError::Witness(error.to_string())
+            })?,
+        ),
+        storage_proof: ProofBytes(
+            encode_storage_witness(&reth_proof, &expected_slots).map_err(|error| {
+                PublicFinalizedIntentProofBuildError::Witness(error.to_string())
+            })?,
+        ),
+    };
+    verify_raw_contract_opening(
+        &opening,
+        contract_address,
+        state_root,
+        ordered_slots,
+        limits,
+    )
+    .map_err(|error| PublicFinalizedIntentProofBuildError::Witness(error.to_string()))?;
     Ok(opening)
 }
 
