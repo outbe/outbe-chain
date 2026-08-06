@@ -943,13 +943,32 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         token = tokens[0];
       }
       const costPerIntex = await settlementCost(n, series, token);
+      const factory = addr(n, "factory");
+      const total = costPerIntex * BigInt(amount);
+
+      const allowance = (await n.client.readContract({
+        address: token,
+        abi: ERC20_ABI,
+        functionName: "allowance",
+        args: [account.address, factory],
+      })) as bigint;
+      let autoApprove: { txHash: Hex; amount: string } | null = null;
+      if (allowance < total) {
+        const approveData = encodeFunctionData({
+          abi: ERC20_ABI,
+          functionName: "approve",
+          args: [factory, total],
+        });
+        const ar = await submit(n, token, approveData, 0n, true); // must be mined before settle
+        autoApprove = { txHash: ar.txHash, amount: total.toString() };
+      }
 
       const data = encodeFunctionData({
         abi: FACTORY_ABI,
         functionName: "settle",
         args: [series, intexHolder, BigInt(amount), token],
       });
-      const receipt = await submit(n, addr(n, "factory"), data, 0n, wait);
+      const receipt = await submit(n, factory, data, 0n, wait);
       return ok({
         network: n.name,
         series,
@@ -957,6 +976,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         amount,
         paymentToken: token,
         costPerIntex: costPerIntex.toString(),
+        total: total.toString(),
+        autoApprove,
         self: intexHolder === account.address,
         ...receipt,
       });
@@ -966,7 +987,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "intex_settlement_tokens",
     "Tokens you can settle a series with and the per-Intex cost in each. Pass one of these to " +
-      "auction_bid_settle as payment_token, and approve that amount times your quantity first.",
+      "auction_bid_settle as payment_token; it approves the factory for what it needs.",
     { series: seriesArg, network: networkArg.optional() },
     handler(async ({ series, network }) => {
       const n = await resolveNetwork(network ?? "outbe-testnet");
