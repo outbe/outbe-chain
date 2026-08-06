@@ -282,6 +282,27 @@ fn settlement_cost_rejects_missing_series() {
     });
 }
 
+#[test]
+fn settlement_cost_dispatch() {
+    with_payment_token(1, 840, 18, |s| {
+        let out = precompile::dispatch(
+            s.clone(),
+            &IIntexFactory::settlementCostCall {
+                seriesId: 7,
+                paymentToken: payment_token(),
+            }
+            .abi_encode(),
+            holder(),
+            U256::ZERO,
+        )
+        .unwrap();
+        assert_eq!(
+            IIntexFactory::settlementCostCall::abi_decode_returns(&out).unwrap(),
+            U256::from(1_000_000u64)
+        );
+    });
+}
+
 // ---------------------------------------------------------------------
 // settle gating (value movement is localnet-exercised, not unit tested)
 // ---------------------------------------------------------------------
