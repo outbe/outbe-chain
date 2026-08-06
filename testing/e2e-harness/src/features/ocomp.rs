@@ -579,6 +579,11 @@ fn fresh_domains_retain_authenticated_workers(world: &mut World) {
     }
 }
 
+/// How long the logical clock may stand still before the ratchet counts as
+/// stalled. Bounding the wait by progress rather than by the distance jumped
+/// keeps a loaded host from expiring a run that is still moving.
+const RATCHET_STALL_TIMEOUT: Duration = Duration::from_secs(180);
+
 fn advance_fresh_metadosis_time(
     world: &mut World,
     requested_timestamp: u64,
@@ -600,14 +605,18 @@ fn advance_fresh_metadosis_time(
     restart_ocomp_roles_after_committee_time_change(world);
 
     let worldwide_day = fresh_metadosis_wwd(world);
-    // The chain closes the gap one hour per block, so the wait scales with the
-    // distance jumped rather than a fixed budget.
-    let ratchet_blocks = requested_timestamp.saturating_sub(before_timestamp) / 3_600;
-    let deadline = Instant::now()
-        + Duration::from_secs(120 + 8 * ratchet_blocks.max(1));
+    // The chain closes the gap one hour per block, so wait on progress rather
+    // than on a budget derived from the distance: a loaded host slows block
+    // production without stalling it.
+    let mut deadline = Instant::now() + RATCHET_STALL_TIMEOUT;
+    let mut last_timestamp = before_timestamp;
     let (after_restart, changes) = loop {
         let points = finalized_points_at_common_height(world, before_height.saturating_add(1));
         let common_height = points[0].block_number;
+        if points[0].block_timestamp > last_timestamp {
+            last_timestamp = points[0].block_timestamp;
+            deadline = Instant::now() + RATCHET_STALL_TIMEOUT;
+        }
         let states = world
             .validators
             .committee_ports()
@@ -652,7 +661,8 @@ fn advance_fresh_metadosis_time(
             Instant::now() < deadline,
             "fresh Metadosis WWD did not reach status {expected_persisted_status} with edges \
              {expected_edges:?}; observed statuses {observed:?} and edges {seen:?} at logical \
-             timestamp {reached} (requested {requested_timestamp})",
+             timestamp {reached} (requested {requested_timestamp}); the drift ratchet made no \
+             progress for {stall:?}",
             observed = states
                 .iter()
                 .map(|state| state.as_ref().map(|state| state.status))
@@ -662,6 +672,7 @@ fn advance_fresh_metadosis_time(
                 .map(|edge| (edge.old_status, edge.new_status))
                 .collect::<Vec<_>>()),
             reached = points[0].block_timestamp,
+            stall = RATCHET_STALL_TIMEOUT,
         );
         sleep(Duration::from_millis(250));
     };
