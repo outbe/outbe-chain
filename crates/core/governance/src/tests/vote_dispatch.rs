@@ -49,11 +49,11 @@ fn setup_validators(storage: StorageHandle) {
     for (addr, seed) in [(PROPOSER, 1u8), (VOTER_A, 2), (VOTER_B, 3)] {
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         vs.config_owner.write(owner).unwrap();
-        vs.config_max_validators.write(100).unwrap();
+        vs.set_config_max_validators(100).unwrap();
         let mut pk = [0u8; 48];
         pk[0] = seed;
         vs.register_validator(owner, addr, &pk).unwrap();
-        vs.activate_validator(addr).unwrap();
+        vs.activate_validator_via_boundary_for_test(addr).unwrap();
     }
 }
 

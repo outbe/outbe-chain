@@ -1,4 +1,10 @@
+use std::collections::BTreeSet;
+
 use alloy_primitives::{keccak256, Address, B256, U256};
+use outbe_ocomp_protocol::{
+    committee::{validator_identity_hash_v1, OcompKeyRegistrationV1},
+    profile::poc_schema_limits,
+};
 use outbe_primitives::consensus_p2p::{
     validate_versioned, MAX_P2P_ADDRESS_ENCODED_LEN, P2P_ADDRESS_VERSION_V1,
 };
@@ -70,6 +76,35 @@ pub struct ValidatorRecord {
 }
 
 impl ValidatorSet<'_> {
+    /// Store the configured validator cap only when it fits the canonical
+    /// consensus codec/committee bound. OCOMP reads this consensus limit and
+    /// does not define a second participant ceiling.
+    pub fn set_config_max_validators(&mut self, max_validators: u32) -> Result<()> {
+        if max_validators > outbe_consensus::bls::MAX_VALIDATORS {
+            return Err(PrecompileError::Revert(format!(
+                "max validators exceeds consensus bound: {max_validators} > {}",
+                outbe_consensus::bls::MAX_VALIDATORS
+            )));
+        }
+        self.config_max_validators.write(max_validators)
+    }
+
+    /// Returns the canonical OCOMP registration admitted for `addr`.
+    /// Stored bytes that no longer decode are consensus-state corruption.
+    pub fn ocomp_registration(&self, addr: Address) -> Result<Option<OcompKeyRegistrationV1>> {
+        let bytes = self.val_ocomp_registration.get_bytes(&addr).read()?;
+        if bytes.is_empty() {
+            return Ok(None);
+        }
+        OcompKeyRegistrationV1::decode_canonical(&bytes, &poc_schema_limits())
+            .map(Some)
+            .map_err(|error| {
+                PrecompileError::Fatal(format!(
+                    "stored OCOMP registration for {addr} is invalid: {error}"
+                ))
+            })
+    }
+
     fn is_current_consensus_participant_status(validator_status: u8, has_bls_share: bool) -> bool {
         // JAILED is included alongside ACTIVE/EXITING: a just-jailed validator is
         // still cryptographically in the live committee (its share is only cleared
@@ -174,7 +209,10 @@ impl ValidatorSet<'_> {
                 // to head (`confirmValidatorReady()`). An unconfirmed joiner is
                 // deferred to a later reshare so a behind/stale node is never
                 // frozen into the ceremony and flipped ACTIVE before it can vote.
-                status::PENDING => self.val_join_confirmed.read(&v.validator_address)?,
+                status::PENDING => {
+                    self.val_join_confirmed.read(&v.validator_address)?
+                        && self.ocomp_registration(v.validator_address)?.is_some()
+                }
                 _ => false,
             };
             if include {
@@ -484,6 +522,7 @@ impl ValidatorSet<'_> {
             // remains the source of truth for stake and mirrors into val_stake.
             let old_pubkey = self.read_consensus_pubkey(&validator_addr)?;
             let old_pk_hash = Self::consensus_pubkey_hash(&old_pubkey);
+            self.val_join_confirmed.write(&validator_addr, false)?;
             self.consensus_pubkey_hash_to_address
                 .write(&old_pk_hash, Address::ZERO)?;
 
@@ -638,7 +677,11 @@ impl ValidatorSet<'_> {
     /// node at the finalized tip; until then the joiner stays PENDING and is
     /// excluded from [`Self::get_reshare_target_set`]. Caller must be the
     /// validator itself and currently PENDING.
-    pub fn confirm_validator_ready(&mut self, caller: Address) -> Result<()> {
+    pub fn confirm_validator_ready(
+        &mut self,
+        caller: Address,
+        encoded_registration: &[u8],
+    ) -> Result<()> {
         let index = self.address_to_index.read(&caller)?;
         if index == 0 {
             return Err(PrecompileError::Revert("validator not registered".into()));
@@ -649,46 +692,178 @@ impl ValidatorSet<'_> {
                 "confirmValidatorReady requires PENDING status, got {current_status}"
             )));
         }
+
+        let limits = poc_schema_limits();
+        let registration = OcompKeyRegistrationV1::decode_canonical(encoded_registration, &limits)
+            .map_err(|error| {
+                PrecompileError::Revert(format!("invalid OCOMP registration: {error}"))
+            })?;
+        if registration.core.chain_id != self.storage.chain_id()? {
+            return Err(PrecompileError::Revert(
+                "OCOMP registration chain id mismatch".into(),
+            ));
+        }
+        if registration.core.genesis_hash != self.storage.genesis_hash()? {
+            return Err(PrecompileError::Revert(
+                "OCOMP registration genesis hash mismatch".into(),
+            ));
+        }
+        let consensus_pubkey = self.read_consensus_pubkey(&caller)?;
+        let expected_identity = validator_identity_hash_v1(caller, &consensus_pubkey)
+            .map_err(|error| PrecompileError::Fatal(format!("validator identity hash: {error}")))?;
+        if registration.core.validator_identity_hash != expected_identity {
+            return Err(PrecompileError::Revert(
+                "OCOMP registration validator identity mismatch".into(),
+            ));
+        }
+
+        let existing_registration = self.ocomp_registration(caller)?;
+        let key_hash = keccak256(registration.core.ocomp_public_key_sec1);
+        if let Some(existing) = existing_registration.as_ref() {
+            let pinned_key_hash = keccak256(existing.core.ocomp_public_key_sec1);
+            if pinned_key_hash != key_hash {
+                return Err(PrecompileError::Revert(
+                    "OCOMP public key is immutable in key_epoch 1".into(),
+                ));
+            }
+            let pinned_owner = self.ocomp_key_hash_to_validator.read(&pinned_key_hash)?;
+            if pinned_owner != caller {
+                return Err(PrecompileError::Fatal(format!(
+                    "OCOMP key reservation for {caller} is inconsistent"
+                )));
+            }
+        }
+        let existing_owner = self.ocomp_key_hash_to_validator.read(&key_hash)?;
+        if !existing_owner.is_zero() && existing_owner != caller {
+            return Err(PrecompileError::Revert(
+                "OCOMP public key already registered by another validator".into(),
+            ));
+        }
+
+        let guard = self.storage.checkpoint_guard();
+        self.val_ocomp_registration
+            .get_bytes(&caller)
+            .write(encoded_registration)?;
+        self.ocomp_key_hash_to_validator.write(&key_hash, caller)?;
         self.val_join_confirmed.write(&caller, true)?;
         // Re-signal so consensus schedules a reshare now that a confirmed joiner
         // is eligible (the stake-time signal may already have lapsed).
         self.pending_set_change.write(true)?;
         crate::metrics::record_pending_set_change(true);
+        guard.commit();
         Ok(())
     }
 
-    /// Activates a registered validator (sets status to ACTIVE).
+    /// Imports the chain-manifest OCOMP key material for the ordered genesis
+    /// ACTIVE set. The manifest vector is not membership authority: it must
+    /// cover the already-persisted ACTIVE ValidatorSet exactly and in order.
     ///
-    /// Only REGISTERED and PENDING statuses are allowed as source states.
-    /// Also signals `pending_set_change` so the consensus layer triggers a DKG
-    /// reshare to include the newly-activated validator. Retained for owner/manual
-    /// activation; the normal PoS path is [`Self::mark_pending`] →
-    /// [`Self::activate_reshared_set`].
-    pub fn activate_validator(&mut self, addr: Address) -> Result<()> {
-        let index = self.address_to_index.read(&addr)?;
-        if index == 0 {
-            return Err(PrecompileError::Revert("validator not registered".into()));
-        }
-        let current_status = self.val_status.read(&addr)?;
-        if current_status == status::ACTIVE {
-            return Ok(()); // already active — no spurious churn
-        }
-        // Only REGISTERED and PENDING can transition to ACTIVE.
-        // This prevents exiting/unbonding validators from bypassing
-        // their lifecycle constraints.
-        if current_status != status::REGISTERED && current_status != status::PENDING {
-            return Err(PrecompileError::Revert(format!(
-                "cannot activate validator with status {current_status}: only REGISTERED or PENDING allowed"
+    /// This is purpose-built for the one-time OCOMP lifecycle activation. A
+    /// byte-identical replay is accepted; partial or conflicting pre-existing
+    /// state is fatal rather than repaired.
+    pub fn initialize_founder_ocomp_registrations(
+        &mut self,
+        registrations: &[OcompKeyRegistrationV1],
+    ) -> Result<()> {
+        let active = self.get_active_validators()?;
+        if active.is_empty() || active.len() != registrations.len() {
+            return Err(PrecompileError::Fatal(format!(
+                "OCOMP founder registrations must exactly cover ACTIVE ValidatorSet: {} registrations for {} validators",
+                registrations.len(),
+                active.len()
             )));
         }
-        self.val_status.write(&addr, status::ACTIVE)?;
-        self.val_deactivated_at_height.write(&addr, 0)?;
 
-        // Signal consensus to include this validator in the next reshare.
-        self.pending_set_change.write(true)?;
+        let chain_id = self.storage.chain_id()?;
+        let genesis_hash = self.storage.genesis_hash()?;
+        let limits = poc_schema_limits();
+        let mut identities = BTreeSet::new();
+        let mut keys = BTreeSet::new();
+        let mut prepared = Vec::new();
+        prepared
+            .try_reserve_exact(registrations.len())
+            .map_err(|_| PrecompileError::Fatal("allocate OCOMP founder import".into()))?;
 
-        self.emit(IValidatorSet::ValidatorActivated { validator: addr })?;
+        let mut exact_existing = 0usize;
+        for (validator, registration) in active.iter().zip(registrations) {
+            registration
+                .validate_proof_of_possession(&limits)
+                .map_err(|error| {
+                    PrecompileError::Fatal(format!(
+                        "invalid OCOMP founder proof of possession: {error}"
+                    ))
+                })?;
+            if registration.core.chain_id != chain_id
+                || registration.core.genesis_hash != genesis_hash
+            {
+                return Err(PrecompileError::Fatal(
+                    "OCOMP founder registration chain binding mismatch".into(),
+                ));
+            }
+            let expected_identity = validator_identity_hash_v1(
+                validator.validator_address,
+                &validator.consensus_pubkey,
+            )
+            .map_err(|error| {
+                PrecompileError::Fatal(format!("derive OCOMP founder validator identity: {error}"))
+            })?;
+            if registration.core.validator_identity_hash != expected_identity {
+                return Err(PrecompileError::Fatal(format!(
+                    "OCOMP founder registration identity mismatch for {}",
+                    validator.validator_address
+                )));
+            }
+            if !identities.insert(expected_identity)
+                || !keys.insert(registration.core.ocomp_public_key_sec1)
+            {
+                return Err(PrecompileError::Fatal(
+                    "OCOMP founder registrations contain duplicate identity or key".into(),
+                ));
+            }
 
+            let encoded = registration.encode_canonical(&limits).map_err(|error| {
+                PrecompileError::Fatal(format!(
+                    "encode canonical OCOMP founder registration: {error}"
+                ))
+            })?;
+            let key_hash = keccak256(registration.core.ocomp_public_key_sec1);
+            let stored = self.ocomp_registration(validator.validator_address)?;
+            let owner = self.ocomp_key_hash_to_validator.read(&key_hash)?;
+            match stored {
+                Some(existing)
+                    if existing == *registration && owner == validator.validator_address =>
+                {
+                    exact_existing += 1;
+                }
+                None if owner.is_zero() => {}
+                _ => {
+                    return Err(PrecompileError::Fatal(format!(
+                        "partial or conflicting OCOMP founder state for {}",
+                        validator.validator_address
+                    )));
+                }
+            }
+            prepared.push((validator.validator_address, key_hash, encoded));
+        }
+
+        if exact_existing == registrations.len() {
+            return Ok(());
+        }
+        if exact_existing != 0 {
+            return Err(PrecompileError::Fatal(
+                "partial OCOMP founder registration import is fatal".into(),
+            ));
+        }
+
+        let guard = self.storage.checkpoint_guard();
+        for (validator, key_hash, encoded) in prepared {
+            self.val_ocomp_registration
+                .get_bytes(&validator)
+                .write(&encoded)?;
+            self.ocomp_key_hash_to_validator
+                .write(&key_hash, validator)?;
+        }
+        guard.commit();
         Ok(())
     }
 
@@ -990,6 +1165,41 @@ impl ValidatorSet<'_> {
             }
         }
 
+        // A certified boundary may promote only a joiner that already passed
+        // the PENDING admission gate. Validate the whole incoming set before
+        // clearing any live shares so an impossible artifact cannot leave a
+        // partially-mutated raw runtime state even outside the outer boundary
+        // checkpoint.
+        for &addr in new_active_set {
+            if self.address_to_index.read(&addr)? == 0 {
+                return Err(PrecompileError::Fatal(format!(
+                    "certified active set contains unregistered validator {addr}"
+                )));
+            }
+            match self.val_status.read(&addr)? {
+                status::ACTIVE => {}
+                status::PENDING => {
+                    if !self.val_join_confirmed.read(&addr)?
+                        || self.ocomp_registration(addr)?.is_none()
+                    {
+                        return Err(PrecompileError::Fatal(format!(
+                            "certified active set contains PENDING validator {addr} without OCOMP admission"
+                        )));
+                    }
+                }
+                status::REGISTERED => {
+                    return Err(PrecompileError::Fatal(format!(
+                        "certified active set contains REGISTERED validator {addr}"
+                    )));
+                }
+                st => {
+                    return Err(PrecompileError::Fatal(format!(
+                        "certified active set contains validator {addr} with ineligible status {st}"
+                    )));
+                }
+            }
+        }
+
         // First, clear has_bls_share for all validators
         let all = self.get_all_validators()?;
         for v in &all {
@@ -1000,16 +1210,9 @@ impl ValidatorSet<'_> {
 
         // Set has_bls_share and activate validators in the new set
         for &addr in new_active_set {
-            let index = self.address_to_index.read(&addr)?;
-            if index == 0 {
-                return Err(PrecompileError::Revert(format!(
-                    "reshared active set contains unregistered validator {addr}"
-                )));
-            }
-
             let st = self.val_status.read(&addr)?;
             match st {
-                status::REGISTERED | status::PENDING => {
+                status::PENDING => {
                     self.val_status.write(&addr, status::ACTIVE)?;
                     self.val_has_bls_share.write(&addr, true)?;
                     // Clear the stale-join guard now that the joiner is ACTIVE; a
@@ -1020,9 +1223,9 @@ impl ValidatorSet<'_> {
                     self.val_has_bls_share.write(&addr, true)?;
                 }
                 _ => {
-                    return Err(PrecompileError::Revert(format!(
-                        "reshared active set contains validator {addr} with non-active status {st}"
-                    )));
+                    return Err(PrecompileError::Fatal(
+                        "certified active set changed eligibility during activation".into(),
+                    ));
                 }
             }
         }
@@ -1367,7 +1570,9 @@ impl ValidatorSet<'_> {
         self.val_p2p_address_payload.get_bytes(addr).clear()?;
         // Stale-join + jail per-validator state must be cleared too, so a future
         // re-registration at the same address starts clean (a leaked
-        // `val_join_confirmed = true` would bypass the stale-join guard).
+        // `val_join_confirmed = true` would bypass the stale-join guard). The
+        // admitted V1 OCOMP key and reverse reservation deliberately survive:
+        // key_epoch=1 has no rotation, loss, or recovery path.
         self.val_join_confirmed.write(addr, false)?;
         self.val_jailed_at_height.write(addr, 0)?;
         Ok(())

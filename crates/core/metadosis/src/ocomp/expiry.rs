@@ -19,8 +19,8 @@ use super::{
 };
 
 /// Records finality for the exact live OCOMP request whose request block is the
-/// consensus-certified parent. The lookup is bounded by the fork profile's
-/// live-Job cap; unrelated finalized parents are a no-op.
+/// consensus-certified parent. The lookup is bounded by the canonical retained
+/// WorldwideDay population; unrelated finalized parents are a no-op.
 pub fn record_certified_parent_finality(
     ctx: &BlockRuntimeContext<'_>,
     finalized_request_block_number: u64,
@@ -82,7 +82,7 @@ pub fn run_lifecycle_begin(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
     let limits = profile.fsm_limits();
     metadosis.open_due_ocomp_voting(ctx.block.block_number, &schema_limits, limits)?;
     let aggregate = ValidatedWwdAggregate::load_and_validate(ctx.storage.clone())?;
-    (|| match metadosis.close_due_ocomp_response_window(ctx.block.block_number, &schema_limits)? {
+    match metadosis.close_due_ocomp_response_window(ctx.block.block_number, &schema_limits)? {
         ResponseWindowCloseV1::NotDue | ResponseWindowCloseV1::QuorumPreserved { .. } => Ok(()),
         ResponseWindowCloseV1::NoQuorum { intent_id } => {
             let state = metadosis
@@ -112,7 +112,54 @@ pub fn run_lifecycle_begin(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
             let outer_transition = reduce_outer_wwd(Some(current), event)?;
             expire_exact(&mut metadosis, ctx, before, limits, &outer_transition)
         }
-    })()
+    }?;
+
+    let mut due = None;
+    for state in metadosis.live_ocomp_fsm_states(&schema_limits, limits)? {
+        let before = state.projection();
+        let intent_id = before
+            .live_intent_id
+            .ok_or_else(|| fatal("OCOMP live scheduler has no IntentId"))?;
+        let record = metadosis
+            .ocomp_job_record(intent_id, &schema_limits)?
+            .ok_or_else(|| fatal("OCOMP live scheduler job is missing"))?;
+        if record.status != OcompJobStatus::AwaitingFinality || record.finalized.is_some() {
+            continue;
+        }
+        let deadline = before
+            .deadline_height
+            .ok_or_else(|| fatal("OCOMP awaiting-finality job has no deadline"))?;
+        if deadline > ctx.block.block_number {
+            continue;
+        }
+        if deadline < ctx.block.block_number {
+            return Err(fatal(
+                "OCOMP consensus skipped the exact awaiting-finality expiry height",
+            ));
+        }
+        if due.replace(before).is_some() {
+            return Err(fatal(
+                "multiple OCOMP awaiting-finality jobs are due at one height",
+            ));
+        }
+    }
+    let Some(before) = due else {
+        return Ok(());
+    };
+    let current = aggregate
+        .record(before.worldwide_day)
+        .ok_or_else(|| fatal("awaiting-finality expiry has no persisted outer WorldwideDay"))?;
+    let event = if before
+        .terminal_records
+        .checked_add(1)
+        .is_some_and(|count| count == limits.max_terminal_records)
+    {
+        OuterWwdEvent::OcompAttemptsExhausted
+    } else {
+        OuterWwdEvent::OcompRetryScheduled(OcompRetryCause::Expired)
+    };
+    let outer_transition = reduce_outer_wwd(Some(current), event)?;
+    expire_exact(&mut metadosis, ctx, before, limits, &outer_transition)
 }
 
 fn expire_exact(

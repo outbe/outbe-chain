@@ -14,12 +14,6 @@ pub enum CredisFactoryError {
     PositionCompleted,
     #[error("address has overdue anadosis")]
     OverduePayments,
-    #[error("oracle COEN/USD rate unavailable")]
-    OracleRateUnavailable,
-    #[error("oracle COEN/USD rate too small (rounds to zero at 1e18 precision)")]
-    OracleRateTooSmall,
-    #[error("oracle conversion overflow")]
-    OracleConversionOverflow,
     #[error("asset isoCode() call returned undecodable data")]
     AssetIsoUndecodable,
     #[error("position has not reached its credis expiry")]

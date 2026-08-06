@@ -5,7 +5,7 @@ use outbe_primitives::error::{PrecompileError, Result};
 use crate::{constants::MAX_RECORDS_KEPT, schema::MetadosisContract};
 
 use super::{
-    codec::{FixedReader, MAX_LIVE_JOBS},
+    codec::FixedReader,
     state::{DayPhase, JobFsmProjection},
 };
 
@@ -17,7 +17,6 @@ const RESPONSE_INDEX_MAGIC: [u8; 4] = *b"OMDI";
 const RESPONSE_INDEX_VERSION: u16 = 1;
 const RESPONSE_INDEX_HEADER_LEN: usize = 4 + 2 + 2;
 const RESPONSE_INDEX_KEY_LEN: usize = 8 + 32 + 32;
-const MAX_RESPONSE_WINDOWS: usize = MAX_LIVE_JOBS;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct ReadyIndexKey {
@@ -214,9 +213,6 @@ pub(super) fn insert_response_deadline_key(
     {
         return Err(fatal("OCOMP response index already contains this job"));
     }
-    if index.len() >= MAX_RESPONSE_WINDOWS {
-        return Err(fatal("OCOMP response index capacity exhausted"));
-    }
     let position = index
         .binary_search(&key)
         .unwrap_or_else(|position| position);
@@ -275,8 +271,10 @@ fn decode_response_deadline_index(encoded: &[u8]) -> Result<Vec<ResponseDeadline
         return Err(fatal("OCOMP response index magic/version mismatch"));
     }
     let count = usize::from(u16::from_be_bytes(reader.take::<2>()?));
-    if count > MAX_RESPONSE_WINDOWS {
-        return Err(fatal("OCOMP response index exceeds its fixed capacity"));
+    if count == 0 {
+        return Err(fatal(
+            "OCOMP response index must use empty bytes for zero windows",
+        ));
     }
     let expected_len = RESPONSE_INDEX_KEY_LEN
         .checked_mul(count)
@@ -302,9 +300,6 @@ fn decode_response_deadline_index(encoded: &[u8]) -> Result<Vec<ResponseDeadline
 }
 
 fn validate_response_deadline_index(index: &[ResponseDeadlineKey]) -> Result<()> {
-    if index.len() > MAX_RESPONSE_WINDOWS {
-        return Err(fatal("OCOMP response index exceeds its fixed capacity"));
-    }
     if index
         .iter()
         .any(|key| key.deadline_height == 0 || key.job_id.is_zero() || key.intent_id.is_zero())

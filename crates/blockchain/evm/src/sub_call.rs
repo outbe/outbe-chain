@@ -20,7 +20,7 @@ use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::{Address, B256, U256};
 use core::fmt::Debug;
 use outbe_compressed_entities::ExecutionScope;
-use outbe_metadosis::api::OcompFinalizedIntentAuthority;
+use outbe_metadosis::api::{OcompFinalizedIntentAuthority, OcompLocalResultAuthority};
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::storage::{SubCallError, SubCallInput, SubCallOutput, SubCallStatus};
 use revm::{
@@ -65,6 +65,7 @@ where
         runtime_body_readers,
         execution_scope,
         None,
+        None,
         Arc::new(crate::precompiles::OcompActivationBlockMeter),
         false,
         input,
@@ -81,6 +82,7 @@ pub(crate) fn run_with_ocomp_context<DB>(
     runtime_body_readers: Option<RuntimeBodyReaders>,
     execution_scope: Arc<ExecutionScope>,
     ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
+    ocomp_local_result_authority: Option<Arc<dyn OcompLocalResultAuthority>>,
     ocomp_activation_block_meter: Arc<crate::precompiles::OcompActivationBlockMeter>,
     ocomp_lifecycle_active: bool,
     input: SubCallInput,
@@ -135,13 +137,15 @@ where
         EthInstructions::<EthInterpreter, &mut EthEvmContext<DB>>::new_mainnet_with_spec(spec);
     crate::create_guard::install(&mut instructions);
     let precompiles = crate::precompiles::OutbeSubCallPrecompiles::<DB>::new(
-        spec,
-        genesis_hash,
-        runtime_body_readers,
-        execution_scope,
-        ocomp_finality_authority,
+        crate::precompiles::OutbePrecompileExecutionContext::new(spec, genesis_hash),
+        crate::precompiles::OutbePrecompileRuntime::new(
+            runtime_body_readers,
+            execution_scope,
+            ocomp_finality_authority,
+            ocomp_local_result_authority,
+            ocomp_lifecycle_active,
+        ),
         ocomp_activation_block_meter,
-        ocomp_lifecycle_active,
     );
     #[allow(clippy::type_complexity)]
     let mut evm: Evm<

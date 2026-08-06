@@ -29,6 +29,7 @@ use crate::precompile::IMetadosis;
 use crate::{
     fixture_kernel::FixtureKernelExt,
     ocomp::{
+        fork::OcompForkInstallClassification,
         schema::{poc_schema_limits, OcompRequestProfile},
         state::{DayPhase, JobFsmLimits},
     },
@@ -40,7 +41,9 @@ use super::with_storage;
 
 const WWD: WorldwideDay = WorldwideDay::new(20_260_723);
 const REQUEST_HEIGHT: u64 = 10;
-const DEADLINE_HEIGHT: u64 = 74;
+const DEADLINE_HEIGHT: u64 = REQUEST_HEIGHT
+    + outbe_ocomp_protocol::state::RESULT_VOTE_MIN_FINALITY_DEPTH
+    + outbe_ocomp_protocol::profile::OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS;
 const REQUEST_TIME: u64 = 1_753_315_200;
 const DAY_LIMIT: U256 = U256::from_limbs([1_000, 0, 0, 0]);
 const LYSIS_BUDGET: U256 = U256::from_limbs([700, 0, 0, 0]);
@@ -52,7 +55,6 @@ pub(super) fn capacity_profile() -> CapacityProfileV1 {
         profile_id: B256::repeat_byte(0x22),
         max_tributes_per_work_shard: 256,
         max_workers_per_domain: 4,
-        max_pending_jobs: 2,
         max_intents_per_block: 1,
         max_activations_per_block: 1,
         max_ready_inspections_per_block: 1,
@@ -62,7 +64,7 @@ pub(super) fn capacity_profile() -> CapacityProfileV1 {
         max_reference_currencies: 256,
         max_oracle_wwd_pair_entries: 256,
         max_active_scurve_entries: 256,
-        result_deadline_blocks: 64,
+        result_deadline_blocks: outbe_ocomp_protocol::profile::OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS,
         source_retention_after_terminal_blocks: 64,
         generated_limits_manifest_hash: B256::repeat_byte(0x23),
     }
@@ -77,7 +79,6 @@ pub(super) fn request_profile() -> OcompRequestProfile {
         correctness_profile_id: B256::repeat_byte(0x24),
         capacity_profile: capacity_profile(),
         source_availability_policy_id: B256::repeat_byte(0x35),
-        result_committee_snapshot_hash: B256::repeat_byte(0x36),
     }
 }
 
@@ -109,6 +110,73 @@ fn request_profile_initialization_is_exact_idempotent_and_chain_bound() {
             Some(request_profile())
         );
     });
+}
+
+#[test]
+fn fork_install_is_exactly_profile_plus_bundle_and_keeps_reserved_slot_zero() {
+    with_storage(|storage| {
+        let limits = poc_schema_limits();
+        let install = crate::fixture_kernel::fork_install_fixture(
+            OcompForkInstallClassification::Measurement,
+            1,
+            1,
+            B256::repeat_byte(0x11),
+        );
+        let encoded = install.encode_canonical(&limits).unwrap();
+        let nested_bytes = install
+            .request_profile
+            .encode_canonical(&limits)
+            .unwrap()
+            .len()
+            + install
+                .protocol_bundle
+                .encode_canonical(&limits)
+                .unwrap()
+                .len();
+        let founder_bytes = install
+            .founder_registrations
+            .iter()
+            .map(|registration| 4 + registration.encode_canonical(&limits).unwrap().len())
+            .sum::<usize>();
+        assert_eq!(
+            encoded.len() - nested_bytes,
+            4 + 2 + 1 + 8 + 4 + 4 + 4 + founder_bytes
+        );
+        assert_eq!(
+            crate::config::OcompForkInstallV1::decode_canonical(&encoded, &limits).unwrap(),
+            install
+        );
+
+        let mut contract = MetadosisContract::new(storage);
+        contract
+            .initialize_ocomp_fork_install(&install, 1, &limits)
+            .unwrap();
+        assert!(contract.ocomp_result_committee_snapshot.is_empty().unwrap());
+        contract
+            .initialize_ocomp_fork_install(&install, 1, &limits)
+            .unwrap();
+        assert!(contract.ocomp_result_committee_snapshot.is_empty().unwrap());
+    });
+}
+
+#[test]
+fn fork_install_round_trips_founder_keys_without_defining_membership() {
+    let limits = poc_schema_limits();
+    let install = crate::fixture_kernel::fork_install_fixture(
+        OcompForkInstallClassification::Measurement,
+        1,
+        1,
+        B256::repeat_byte(0x11),
+    );
+    assert!(
+        !install.founder_registrations.is_empty(),
+        "an OCOMP-enabled fresh network must bootstrap every founder key"
+    );
+
+    let encoded = install.encode_canonical(&limits).unwrap();
+    let decoded = crate::config::OcompForkInstallV1::decode_canonical(&encoded, &limits).unwrap();
+    assert_eq!(decoded.founder_registrations, install.founder_registrations);
+    assert_eq!(decoded, install);
 }
 
 fn create_ready_day(contract: &mut MetadosisContract<'_>, wwd: WorldwideDay) {
@@ -153,6 +221,7 @@ fn intent(
     request_height: u64,
     _deadline_height: u64,
     receipt_hash: B256,
+    snapshot: &outbe_validatorset::OcompSnapshotExtensionV1,
 ) -> JobIntentV1 {
     let attempt = u32::try_from(pending_nonce).unwrap();
     JobIntentV1 {
@@ -212,7 +281,14 @@ fn intent(
                 state_version: 2,
             },
         },
-        result_committee_snapshot_hash: B256::repeat_byte(0x36),
+        result_validator_set_epoch: snapshot.epoch,
+        result_committee_set_hash: snapshot.committee_set_hash,
+        result_ocomp_binding_hash: snapshot.ocomp_binding_hash,
+        result_member_count: snapshot.member_count,
+        result_quorum_threshold: u16::try_from(outbe_consensus::proof::simplex_n3f1_quorum(
+            usize::from(snapshot.member_count),
+        ))
+        .unwrap(),
         custody_committee_epoch_hash: None,
     }
 }
@@ -246,12 +322,14 @@ fn certified_parent_finality_records_only_the_exact_live_request_and_fails_close
         let fsm_limits = JobFsmLimits {
             max_terminal_records: 2,
         };
+        let snapshot = crate::fixture_kernel::seed_validator_snapshot(storage.clone(), &limits, 4);
         let receipt = receipt();
         let requested = intent(
             0,
             REQUEST_HEIGHT,
             DEADLINE_HEIGHT,
             receipt.receipt_hash(&limits).unwrap(),
+            &snapshot,
         );
         let intent_id = requested.intent_id(&limits).unwrap();
         let mut contract = MetadosisContract::new(storage.clone());
@@ -356,6 +434,7 @@ fn persisted_request_and_expiry_keep_job_indexes_status_and_budget_equivalent() 
         let fsm_limits = JobFsmLimits {
             max_terminal_records: 2,
         };
+        let snapshot = crate::fixture_kernel::seed_validator_snapshot(storage.clone(), &limits, 4);
         let mut contract = MetadosisContract::new(storage);
         create_ready_day(&mut contract, WWD);
         contract
@@ -364,7 +443,7 @@ fn persisted_request_and_expiry_keep_job_indexes_status_and_budget_equivalent() 
 
         let receipt = receipt();
         let receipt_hash = receipt.receipt_hash(&limits).unwrap();
-        let first_intent = intent(0, REQUEST_HEIGHT, DEADLINE_HEIGHT, receipt_hash);
+        let first_intent = intent(0, REQUEST_HEIGHT, DEADLINE_HEIGHT, receipt_hash, &snapshot);
         let first_intent_id = first_intent.intent_id(&limits).unwrap();
         let request_transition = outer_transition(&contract, OuterWwdEvent::OcompRequestCommitted);
         contract
@@ -446,6 +525,7 @@ fn certified_conflict_is_terminal_for_the_old_job_and_requeues_the_same_budget()
         let fsm_limits = JobFsmLimits {
             max_terminal_records: 2,
         };
+        let snapshot = crate::fixture_kernel::seed_validator_snapshot(storage.clone(), &limits, 4);
         let mut contract = MetadosisContract::new(storage);
         create_ready_day(&mut contract, WWD);
         contract
@@ -454,7 +534,13 @@ fn certified_conflict_is_terminal_for_the_old_job_and_requeues_the_same_budget()
 
         let request_receipt = receipt();
         let request_receipt_hash = request_receipt.receipt_hash(&limits).unwrap();
-        let requested = intent(0, REQUEST_HEIGHT, DEADLINE_HEIGHT, request_receipt_hash);
+        let requested = intent(
+            0,
+            REQUEST_HEIGHT,
+            DEADLINE_HEIGHT,
+            request_receipt_hash,
+            &snapshot,
+        );
         let intent_id = requested.intent_id(&limits).unwrap();
         let request_transition = outer_transition(&contract, OuterWwdEvent::OcompRequestCommitted);
         contract
@@ -473,7 +559,9 @@ fn certified_conflict_is_terminal_for_the_old_job_and_requeues_the_same_budget()
         let quorum = OcompQuorumV1 {
             result_digest,
             quorum_height: finalized.open_height,
-            signer_bitmap: 0b0111,
+            member_count: 4,
+            quorum_threshold: 3,
+            signer_bitmap: vec![0b0111],
             evidence_hash: B256::repeat_byte(0x55),
         };
         let activation_call_id = B256::repeat_byte(0x53);
@@ -510,7 +598,7 @@ fn certified_conflict_is_terminal_for_the_old_job_and_requeues_the_same_budget()
             activation_call_id,
             result_digest,
             quorum_height: quorum.quorum_height,
-            quorum_signer_bitmap: quorum.signer_bitmap,
+            quorum_signer_bitmap: quorum.signer_bitmap.clone(),
             quorum_evidence_hash: quorum.evidence_hash,
             result_evidence_hash: B256::repeat_byte(0x54),
             terminal_receipt_hash: terminal_receipt.terminal_receipt_hash(&limits).unwrap(),
@@ -589,7 +677,11 @@ fn job_record_is_physically_bound_to_the_protocol_intent_slot_key() {
     };
     let receipt = receipt();
     let receipt_hash = receipt.receipt_hash(&limits).unwrap();
-    let requested = intent(0, REQUEST_HEIGHT, DEADLINE_HEIGHT, receipt_hash);
+    let mut provider = HashMapStorageProvider::new(1);
+    let snapshot = StorageHandle::enter(&mut provider, |storage| {
+        crate::fixture_kernel::seed_validator_snapshot(storage, &limits, 4)
+    });
+    let requested = intent(0, REQUEST_HEIGHT, DEADLINE_HEIGHT, receipt_hash, &snapshot);
     let intent_id = requested.intent_id(&limits).unwrap();
     let protocol_key = intent_storage_key(intent_id).unwrap();
     let records_base_slot = U256::from(OCOMP_JOB_RECORDS_BASE_SLOT);
@@ -597,7 +689,6 @@ fn job_record_is_physically_bound_to_the_protocol_intent_slot_key() {
     let raw_intent_slot = intent_id.mapping_slot(records_base_slot);
     assert_ne!(protocol_slot, raw_intent_slot);
 
-    let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
         let mut contract = MetadosisContract::new(storage.clone());
         assert_eq!(contract.ocomp_job_records.base_slot(), records_base_slot);
@@ -651,9 +742,10 @@ fn duplicate_request_cannot_replace_a_record_at_the_protocol_intent_slot_key() {
         let fsm_limits = JobFsmLimits {
             max_terminal_records: 2,
         };
+        let snapshot = crate::fixture_kernel::seed_validator_snapshot(storage.clone(), &limits, 4);
         let receipt = receipt();
         let receipt_hash = receipt.receipt_hash(&limits).unwrap();
-        let requested = intent(0, REQUEST_HEIGHT, DEADLINE_HEIGHT, receipt_hash);
+        let requested = intent(0, REQUEST_HEIGHT, DEADLINE_HEIGHT, receipt_hash, &snapshot);
         let intent_id = requested.intent_id(&limits).unwrap();
         let protocol_key = intent_storage_key(intent_id).unwrap();
         let original = OcompJobRecordV1 {
@@ -706,6 +798,7 @@ fn final_allowed_expiry_credits_full_lysis_budget_once_and_does_not_requeue() {
         let fsm_limits = JobFsmLimits {
             max_terminal_records: 1,
         };
+        let snapshot = crate::fixture_kernel::seed_validator_snapshot(storage.clone(), &limits, 4);
         let mut promis_limit = PromisLimitContract::new(storage.clone());
         let existing_carry_over = U256::from(17);
         promis_limit
@@ -720,7 +813,7 @@ fn final_allowed_expiry_credits_full_lysis_budget_once_and_does_not_requeue() {
 
         let receipt = receipt();
         let receipt_hash = receipt.receipt_hash(&limits).unwrap();
-        let first_intent = intent(0, REQUEST_HEIGHT, DEADLINE_HEIGHT, receipt_hash);
+        let first_intent = intent(0, REQUEST_HEIGHT, DEADLINE_HEIGHT, receipt_hash, &snapshot);
         let first_intent_id = first_intent.intent_id(&limits).unwrap();
         let request_transition = outer_transition(&contract, OuterWwdEvent::OcompRequestCommitted);
         contract

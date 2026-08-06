@@ -112,9 +112,8 @@ The scan bound is derived rather than configured:
 ```text
 normal pipeline = ceil((50h + 502h + 50h + 12h) / 24h) + 1 restart insertion
                 = 27 WorldwideDays
-retained OCOMP  = genesis profile max_pending_jobs
-                = 2 WorldwideDays
-MAX_ACTIVE_WWDS = 27 + 2 = 29
+retained work   <= canonical MAX_RECORDS_KEPT
+MAX_ACTIVE_WWDS = normal pipeline + canonical record-retention bound
 ```
 
 Production advances at midnight and noon, so the 12-hour catch-up cadence is
@@ -123,10 +122,11 @@ already-active candidate has at most 27 admission ticks (324 hours) of older
 pipeline work ahead. Missing external finality is classified as retained OCOMP
 progress, not scheduler starvation.
 
-The guard runs before `WAITING -> READY`. If two READY/OFFCHAIN_PENDING days
-are already retained, the new (therefore newest) admission candidate commits
-`CapacityForfeiture`; existing retained days and all OCOMP indexes remain
-unchanged. The ordered atomic effect is:
+There is no smaller OCOMP concurrent-job admission limit. The aggregate remains
+bounded by the canonical WWD record-retention policy used by all lifecycle
+storage. If that underlying record-retention population is exhausted, the new
+(therefore newest) admission candidate commits `CapacityForfeiture`; existing
+retained days and all OCOMP indexes remain unchanged. The ordered atomic effect is:
 
 1. validate aggregate, protocol order and exact cap;
 2. authenticate and forfeit the sealed Tribute generation by aggregate
@@ -273,13 +273,17 @@ repeat any Metadosis economic effect.
 The q-forming full-result vote commits immutable terminal state with all
 Lysis-owned effects and the `unused_lysis` carry-over credit in the command
 checkpoint; q-forming does not introduce a nested provider or CE savepoint.
-It does not close the separate fourth-slot accountability record before the
+It does not close the separate dynamic accountability record before the
 response deadline, and later accountability writes cannot change terminal
 receipt, active generation or exact-retry identity.
 
-Response-window close expires/retries only an attempt that never reached q=3.
-A timely q=3 was already applied by its q-forming vote transaction. Neither
-that apply nor expiry rolls back or repeats the already committed auction split.
+Response-window close expires/retries only an attempt that never reached its
+snapshot-derived quorum. A timely quorum was already applied by its q-forming
+system vote. At the exact 1,800-block deadline every missing pinned participant
+is recorded; only one whose current ValidatorSet status is still `ACTIVE` moves
+to `JAILED`, while every non-ACTIVE status remains unchanged. Timely minority
+votes count as present. Neither quorum apply, jail nor expiry rolls back or
+repeats the already committed auction split.
 
 An invalid request rolls back to READY. An invalid vote or failed quorum apply
 leaves the first-vote/quorum and domain state unchanged as defined by

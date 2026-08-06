@@ -10,7 +10,7 @@ use outbe_primitives::{
 
 use crate::{
     constants::{MAX_ACTIVE_WWDS, MAX_RECORDS_KEPT, MAX_RETAINED_WWDS},
-    ocomp::state::DayPhase,
+    ocomp::state::{DayPhase, OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS},
     ocomp::{poc_schema_limits, ResponseDeadlineKey},
     schema::{day_type, status, terminal_outcome, MetadosisContract},
     terminal::{
@@ -442,27 +442,40 @@ fn validate_ocomp_index_equivalence(
         if !live_scheduler_wwds.insert(projection.worldwide_day) {
             return Err(fatal("OCOMP live scheduler contains a duplicate WWD"));
         }
-        if let Some(deadline_height) = projection.deadline_height {
-            let intent_id = projection
-                .live_intent_id
-                .ok_or_else(|| fatal("OCOMP voting FSM has no live intent"))?;
-            let record = contract
-                .ocomp_job_record(intent_id, &schema_limits)?
-                .ok_or_else(|| fatal("OCOMP voting FSM has no job record"))?;
-            let finalized = record
-                .finalized
-                .as_ref()
-                .ok_or_else(|| fatal("OCOMP voting FSM job is not finalized"))?;
-            if record.status != OcompJobStatus::VotingOpen
-                || finalized.deadline_height != deadline_height
-            {
-                return Err(fatal("OCOMP voting FSM/job deadline mismatch"));
+        let deadline_height = projection
+            .deadline_height
+            .ok_or_else(|| fatal("OCOMP live FSM has no deadline"))?;
+        let intent_id = projection
+            .live_intent_id
+            .ok_or_else(|| fatal("OCOMP live FSM has no live intent"))?;
+        let record = contract
+            .ocomp_job_record(intent_id, &schema_limits)?
+            .ok_or_else(|| fatal("OCOMP live FSM has no job record"))?;
+        match record.status {
+            OcompJobStatus::AwaitingFinality => {
+                let expected = record
+                    .intent_height
+                    .checked_add(OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS)
+                    .ok_or_else(|| fatal("OCOMP awaiting-finality deadline overflow"))?;
+                if deadline_height != expected {
+                    return Err(fatal("OCOMP awaiting-finality FSM/job deadline mismatch"));
+                }
             }
-            unmatched_voting_windows.insert(ResponseDeadlineKey {
-                deadline_height,
-                job_id: finalized.job_id,
-                intent_id,
-            });
+            OcompJobStatus::VotingOpen => {
+                let finalized = record
+                    .finalized
+                    .as_ref()
+                    .ok_or_else(|| fatal("OCOMP voting FSM job is not finalized"))?;
+                if finalized.deadline_height != deadline_height {
+                    return Err(fatal("OCOMP voting FSM/job deadline mismatch"));
+                }
+                unmatched_voting_windows.insert(ResponseDeadlineKey {
+                    deadline_height,
+                    job_id: finalized.job_id,
+                    intent_id,
+                });
+            }
+            _ => return Err(fatal("terminal OCOMP job remains in the live scheduler")),
         }
     }
     if live_scheduler_wwds != pending_fsm_wwds {

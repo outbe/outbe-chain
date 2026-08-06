@@ -1,7 +1,7 @@
 # ADR-B-WIR-001: Protocol identifiers and consensus wire formats are one versioned registry
 
-- **Status:** Proposed; current implementation profiled
-- **Date:** 2026-07-17
+- **Status:** Proposed; current implementation profiled, dynamic OCOMP wire migration in progress
+- **Date:** 2026-08-04
 - **Decision owners:** Protocol, consensus and execution maintainers
 - **Scope:** `outbe-primitives` addresses, header/block/payload aliases, protocol schedule, block artifacts and shared wire records
 - **Depends on:** ADR-B-NOD-001, ADR-B-CNS-002, ADR-B-CNS-003, ADR-S-GOV-003
@@ -87,6 +87,26 @@ protocol value under a local constant.
 Changing registry, schedule, base envelope interpretation or artifact codec is a
 named protocol version activated by ADR-S-GOV-003 with compatibility/migration vectors.
 
+### OCOMP vote and historical-membership wire contract
+
+An OCOMP attempt binds its result vote to three independent coordinates:
+`result_validator_set_epoch`, `result_committee_set_hash` and
+`result_ocomp_binding_hash`. The same fields occur in `JobIntentV1`,
+`ResultVoteV1`, the signature preimage and the durable sign-once record. Changing
+any one changes the signed subject and quorum evidence.
+
+Participant indices are `u16`. Vote/accountability bitmaps are byte vectors of
+exact length `ceil(N / 8)` in LSB0 order: participant `i` uses byte `i / 8`, bit
+`i % 8`; unused high bits of the final byte are zero. `N` and quorum threshold
+are explicit in the attempt and accountability object. OCOMP defines no separate
+validator-count cap; allocation and synthetic capacity checks use the current
+consensus validator bound.
+
+`submitLysisResult(bytes)` has one canonical bounded prefix decoder. It verifies
+the selector, ABI offset and length, generated payload cap, zero padding and OCB1
+kind before exposing routing/binding fields. Full canonical decoding invokes the
+same prefix first; pool, fee policy and execution must not duplicate the layout.
+
 ### Ownership map for remaining primitives
 
 | Primitive family | Normative owner |
@@ -111,6 +131,9 @@ named protocol version activated by ADR-S-GOV-003 with compatibility/migration v
   same block-scoped facts.
 - Schedule/constants are single-source and activation-versioned.
 - RPC/database/wire conversions preserve exact consensus identity.
+- Every OCOMP result vote, sign-once record and quorum evidence binds the same
+  ValidatorSet epoch, consensus set hash and OCOMP key-binding hash.
+- Dynamic OCOMP bitmaps use normative LSB0 ordering and reject non-zero padding.
 
 ## Security and trust assumptions
 

@@ -5,15 +5,18 @@ pragma solidity ^0.8.30;
 interface ICredisFactory {
     event CredisRequested(address indexed smartAccount, uint256 amount);
 
-    /// @notice Open a credis position against a confidential Gratis pledge.
-    ///         The smart account presents `pledgeHandle` (the public id
-    ///         returned by `pledgeGratis`) and `spendAuth` = HMAC(pledgeSecret,
+    /// @notice Open a credis position against a confidential Gratis pledge. Called by
+    ///         the CCA, which presents `pledgeHandle` (the public id returned by
+    ///         `pledgeGratis`) and `spendAuth` = HMAC(pledgeSecret,
     ///         "credis-bind" || smartAccount), where the pledger EOA derived
     ///         `pledgeSecret` from its modify key + the handle off-chain. The
     ///         pledge-lock ticket is consumed once and bound to `smartAccount`.
+    ///         The disbursed amount and the asset are NOT calldata: both were sealed
+    ///         into the ticket at `pledgeGratis` time, so the loan is issued at the
+    ///         price the pledger accepted.
     /// @return positionId Derived from `pledgeHandle` and `smartAccount`.
-    /// @return amountStables Stablecoin amount disbursed (oracle-converted).
-    function requestCredis(address asset, address smartAccount, bytes32 pledgeHandle, bytes32 spendAuth)
+    /// @return amountStables Stablecoin amount disbursed, as quoted at pledge time.
+    function requestCredis(address smartAccount, bytes32 pledgeHandle, bytes32 spendAuth)
         external
         returns (uint256 positionId, uint256 amountStables);
 

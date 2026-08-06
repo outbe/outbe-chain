@@ -31,7 +31,67 @@ fn verifier_material_paths(run_dir: &Path) -> (PathBuf, PathBuf) {
     )
 }
 
+fn full_node_joiner_role_args(
+    p2p_secret: &str,
+    tee_enclave_socket: &str,
+    upstream: &str,
+) -> Vec<String> {
+    args![
+        "--p2p-secret-key-hex",
+        p2p_secret,
+        "--tee-enclave-socket",
+        tee_enclave_socket,
+        "--upstream",
+        upstream,
+    ]
+}
+
 impl Localnet {
+    /// Launch the future joiner as a non-voting full-execution follower while
+    /// preserving the validator slot's durable Reth datadir for promotion.
+    /// The dev harness shares an already-running enclave socket; the process
+    /// receives no validator BLS key and no OCOMP voting credentials.
+    pub fn launch_joiner_full_node(
+        &mut self,
+        index: usize,
+        upstream_slot: usize,
+        tee_slot: usize,
+        ocomp_args: &[String],
+    ) -> Result<()> {
+        let vd = self.cfg.validator_dir(index);
+        fs::create_dir_all(vd.join("data"))?;
+        fs::create_dir_all(vd.join("logs"))?;
+        let secret_path = vd.join("reth-p2p-secret.hex");
+        if !secret_path.is_file() {
+            fs::write(&secret_path, random_hex_32()?)?;
+        }
+        let secret = read_trimmed(&secret_path)?;
+        let mut process_args = self.reth_base_args(&vd, index);
+        process_args.extend(full_node_joiner_role_args(
+            &secret,
+            &format!("127.0.0.1:{}", self.cfg.tee_port(tee_slot)),
+            &format!("http://localhost:{}", self.cfg.http_port(upstream_slot)),
+        ));
+        process_args.extend_from_slice(ocomp_args);
+        self.extend_real_sgx_startup_timeout(&mut process_args);
+
+        let name = format!("joiner-full-node-{index}");
+        let mut command = Command::new(&self.cfg.bin_chain);
+        command
+            .env("RUST_MIN_STACK", "16777216")
+            .env("RUST_LOG", "info,outbe_consensus::follow=debug")
+            .args(&process_args);
+        attach_log(&mut command, &vd)?;
+        let guard = self.spawn_node(&name, &vd, command)?;
+        self.followers.insert(name, guard);
+        Ok(())
+    }
+
+    /// Stop the non-voting phase without deleting its synchronized Reth data.
+    pub fn stop_joiner_full_node(&mut self, index: usize) {
+        self.followers.remove(&format!("joiner-full-node-{index}"));
+    }
+
     /// Provision a joiner: keygen, fund, register, p2p, enclave, `tee join`
     /// (port of `e2e_provision_joiner`). Leaves keys under `validator-<index>/`.
     pub fn provision_joiner(&mut self, index: usize) -> Result<()> {
@@ -45,6 +105,31 @@ impl Localnet {
             .ok_or_else(|| eyre!("no BLS pubkey from keygen"))?;
         let key = read_evm_key(&vd)?;
         let addr = eth::address_of(&key).ok_or_else(|| eyre!("bad joiner evm key"))?;
+        let chain_id = eth::raw_json(&self.cfg.rpc0, "eth_chainId")
+            .and_then(|value| value.as_str().map(ToOwned::to_owned))
+            .and_then(|value| u64::from_str_radix(value.trim_start_matches("0x"), 16).ok())
+            .ok_or_else(|| eyre!("cannot read chain id for joiner OCOMP registration"))?;
+        let genesis_hash = eth::raw_json_with_params(
+            &self.cfg.rpc0,
+            "eth_getBlockByNumber",
+            serde_json::json!(["0x0", false]),
+        )
+        .and_then(|block| block.get("hash").cloned())
+        .and_then(|value| value.as_str().map(ToOwned::to_owned))
+        .ok_or_else(|| eyre!("cannot read genesis hash for joiner OCOMP registration"))?;
+        self.keygen(&[
+            "ocomp",
+            "--output-dir",
+            &vd.display().to_string(),
+            "--chain-id",
+            &chain_id.to_string(),
+            "--genesis-hash",
+            &genesis_hash,
+            "--validator-address",
+            &format!("{addr:#x}"),
+            "--consensus-bls-min-pk",
+            &bls,
+        ])?;
         let sig = first_hex(
             &self.keygen(&[
                 "sign-registration",
@@ -56,7 +141,10 @@ impl Localnet {
             120,
         )
         .ok_or_else(|| eyre!("no registration signature from keygen"))?;
-        fs::write(vd.join("reth-p2p-secret.hex"), random_hex_32()?)?;
+        let p2p_secret = vd.join("reth-p2p-secret.hex");
+        if !p2p_secret.is_file() {
+            fs::write(p2p_secret, random_hex_32()?)?;
+        }
 
         // Fund from validator-0, prove that an unrelated EOA cannot register
         // this validator identity, then self-register and publish the P2P
@@ -366,6 +454,28 @@ impl Localnet {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn full_node_joiner_role_has_no_validator_or_ocomp_vote_credentials() {
+        let args =
+            full_node_joiner_role_args("p2p-secret", "127.0.0.1:34000", "http://127.0.0.1:35000");
+
+        for forbidden in [
+            "--validator",
+            "--consensus.signing-key",
+            "--validator.evm-key",
+            "--ocomp-key",
+            "--ocomp-evm-key",
+        ] {
+            assert!(!args.iter().any(|arg| arg == forbidden), "{forbidden}");
+        }
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["--upstream", "http://127.0.0.1:35000"]));
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["--tee-enclave-socket", "127.0.0.1:34000"]));
+    }
 
     #[test]
     fn verifier_join_uses_active_committee_material_not_bootstrap_fixture() {

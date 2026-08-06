@@ -74,6 +74,7 @@ fn request_then_expiry_requeues_one_block_later_without_repeating_budget() {
         .apply(
             JobFsmCommand::Request {
                 at_height: REQUEST_HEIGHT,
+                deadline_height: DEADLINE_HEIGHT,
                 intent_id: FIRST_INTENT,
                 lysis_budget: LYSIS_BUDGET,
                 request_budget_receipt_hash: RECEIPT_HASH,
@@ -85,7 +86,7 @@ fn request_then_expiry_requeues_one_block_later_without_repeating_budget() {
     assert_eq!(requested.phase, DayPhase::OffchainPending);
     assert_eq!(requested.pending_nonce, 0);
     assert_eq!(requested.live_intent_id, Some(FIRST_INTENT));
-    assert_eq!(requested.deadline_height, None);
+    assert_eq!(requested.deadline_height, Some(DEADLINE_HEIGHT));
     let opened = state
         .apply(
             JobFsmCommand::OpenVoting {
@@ -144,7 +145,7 @@ enum ModelPhase {
     Pending {
         pending_nonce: u64,
         requested_height: u64,
-        deadline_height: Option<u64>,
+        deadline_height: u64,
     },
 }
 
@@ -193,11 +194,13 @@ impl IndependentModel {
                 },
                 JobFsmCommand::Request {
                     at_height,
+                    deadline_height,
                     intent_id,
                     lysis_budget,
                     request_budget_receipt_hash,
                 },
             ) if at_height >= next_check_height
+                && deadline_height > at_height
                 && !intent_id.is_zero()
                 && !request_budget_receipt_hash.is_zero()
                 && (!retained_effect
@@ -207,14 +210,14 @@ impl IndependentModel {
                 ModelPhase::Pending {
                     pending_nonce,
                     requested_height: at_height,
-                    deadline_height: None,
+                    deadline_height,
                 }
             }
             (
                 ModelPhase::Pending {
                     pending_nonce,
                     requested_height,
-                    deadline_height: None,
+                    deadline_height: _,
                 },
                 JobFsmCommand::OpenVoting {
                     at_height,
@@ -224,14 +227,14 @@ impl IndependentModel {
                 ModelPhase::Pending {
                     pending_nonce,
                     requested_height,
-                    deadline_height: Some(deadline_height),
+                    deadline_height,
                 }
             }
             (
                 ModelPhase::Pending {
                     pending_nonce,
                     requested_height: _,
-                    deadline_height: Some(deadline_height),
+                    deadline_height,
                 },
                 JobFsmCommand::Expire {
                     at_height,
@@ -351,6 +354,7 @@ fn generate_command(production: &JobFsmState, value: u64, operation_index: u64) 
                 let valid_retry = projection.pending_nonce == 0 || value & 2 == 0;
                 JobFsmCommand::Request {
                     at_height,
+                    deadline_height: at_height.saturating_add(64),
                     intent_id: B256::from(U256::from(operation_index + 1)),
                     lysis_budget: if valid_retry {
                         LYSIS_BUDGET
@@ -365,8 +369,9 @@ fn generate_command(production: &JobFsmState, value: u64, operation_index: u64) 
                 }
             }
         }
-        DayPhase::OffchainPending => match projection.deadline_height {
-            None => {
+        DayPhase::OffchainPending => {
+            let deadline = projection.deadline_height.expect("pending deadline");
+            if value & 0x20 == 0 {
                 let requested_height = production
                     .snapshot()
                     .live
@@ -384,26 +389,30 @@ fn generate_command(production: &JobFsmState, value: u64, operation_index: u64) 
                         requested_height
                     },
                 }
+            } else if value & 8 == 0 {
+                JobFsmCommand::Request {
+                    at_height: deadline,
+                    deadline_height: deadline.saturating_add(64),
+                    intent_id: B256::from(U256::from(operation_index + 1)),
+                    lysis_budget: LYSIS_BUDGET,
+                    request_budget_receipt_hash: RECEIPT_HASH,
+                }
+            } else if value & 0x10 == 0 {
+                JobFsmCommand::Conflict {
+                    at_height: deadline.saturating_sub(1),
+                    at_time: 1_753_315_200 + operation_index,
+                }
+            } else {
+                JobFsmCommand::Expire {
+                    at_height: if value & 1 == 0 {
+                        deadline
+                    } else {
+                        deadline - 1
+                    },
+                    at_time: 1_753_315_200 + operation_index,
+                }
             }
-            Some(deadline) if value & 8 == 0 => JobFsmCommand::Request {
-                at_height: deadline,
-                intent_id: B256::from(U256::from(operation_index + 1)),
-                lysis_budget: LYSIS_BUDGET,
-                request_budget_receipt_hash: RECEIPT_HASH,
-            },
-            Some(deadline) if value & 0x10 == 0 => JobFsmCommand::Conflict {
-                at_height: deadline.saturating_sub(1),
-                at_time: 1_753_315_200 + operation_index,
-            },
-            Some(deadline) => JobFsmCommand::Expire {
-                at_height: if value & 1 == 0 {
-                    deadline
-                } else {
-                    deadline - 1
-                },
-                at_time: 1_753_315_200 + operation_index,
-            },
-        },
+        }
     }
 }
 
@@ -430,7 +439,7 @@ fn assert_model_parity(production: &JobFsmState, model: &IndependentModel) {
         } => {
             assert_eq!(projection.phase, DayPhase::OffchainPending);
             assert_eq!(projection.pending_nonce, pending_nonce);
-            assert_eq!(projection.deadline_height, deadline_height);
+            assert_eq!(projection.deadline_height, Some(deadline_height));
             assert_eq!(projection.retained_lysis_budget, Some(LYSIS_BUDGET));
         }
     }
@@ -509,6 +518,7 @@ fn restored_snapshot_rejects_corrupted_status_index_and_budget_equivalences() {
         .apply(
             JobFsmCommand::Request {
                 at_height: REQUEST_HEIGHT,
+                deadline_height: DEADLINE_HEIGHT,
                 intent_id: FIRST_INTENT,
                 lysis_budget: LYSIS_BUDGET,
                 request_budget_receipt_hash: RECEIPT_HASH,

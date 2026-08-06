@@ -21,10 +21,7 @@
     "signature_encoding": "r_s_64_byte_big_endian",
     "low_s_required": true,
     "recovery_byte": false,
-    "key_epoch": 1,
-    "committee_size": 4,
-    "fault_tolerance": 1,
-    "threshold": 3
+    "key_epoch": 1
   },
   "correctness_profile": {
     "program": "LYSIS_V1",

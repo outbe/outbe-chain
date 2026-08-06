@@ -40,6 +40,38 @@ fn one_e18() -> U256 {
     U256::from(10u64).pow(U256::from(18u64))
 }
 
+/// COEN/0xUSD rate these tests seed: 2.0, 1e18-scaled.
+fn oracle_rate() -> U256 {
+    U256::from(2u64) * one_e18()
+}
+
+/// Credit a pledge asks for: $2.00 in 6-decimal minor units. At [`oracle_rate`] that
+/// costs exactly [`pledge_cost`] gratis.
+fn pledge_stables() -> U256 {
+    U256::from(2_000_000u64)
+}
+
+/// Gratis collateral [`pledge_stables`] costs: `2e6 * 1e12 * 1e18 / 2e18 = 1e18`.
+fn pledge_cost() -> U256 {
+    one_e18()
+}
+
+/// Pledge [`pledge_stables`] of credit for `who` at op-nonce `nonce` (uncapped), and
+/// return the resulting handle. The gratis it costs is derived from the seeded rate.
+fn pledge(storage: &StorageHandle<'_>, who: Address, nonce: u64) -> B256 {
+    let (handle, gratis_cost) = gf::pledge_gratis(
+        storage.clone(),
+        who,
+        pledge_stables(),
+        asset(),
+        U256::MAX,
+        auth(GratisOp::Pledge, who, pledge_stables(), nonce),
+    )
+    .unwrap();
+    assert_eq!(gratis_cost, pledge_cost(), "seeded rate drifted");
+    handle
+}
+
 fn chain_b256() -> B256 {
     B256::from(U256::from(CHAIN_ID))
 }
@@ -153,14 +185,8 @@ fn full_pledge_request_pay_unlock_flow() {
         )
         .unwrap();
         seed_fidelity(storage.clone(), alice());
-        seed_oracle(storage.clone(), U256::from(2u64) * one_e18());
-        let handle = gf::pledge_gratis(
-            storage.clone(),
-            alice(),
-            pledge_amount,
-            auth(GratisOp::Pledge, alice(), pledge_amount, 1),
-        )
-        .unwrap();
+        seed_oracle(storage.clone(), oracle_rate());
+        let handle = pledge(&storage, alice(), 1);
         // Pledge parks the amount in the ticket: balance drained, pledged ledger 0.
         assert_eq!(view_balance(&storage, alice()), U256::ZERO);
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
@@ -169,14 +195,11 @@ fn full_pledge_request_pay_unlock_flow() {
         // EOA. The collateral is credited into alice's OWN pledged ledger.
         let spend = credis_spend_auth(alice(), handle, alice());
         let (position_id, amount_stables) =
-            runtime::request_credis(storage.clone(), alice(), asset(), alice(), handle, spend)
-                .unwrap();
+            runtime::request_credis(storage.clone(), alice(), alice(), handle, spend).unwrap();
         assert_eq!(view_pledged(&storage, alice()), pledge_amount);
 
-        // amount_stables = pledge_amount * 2e18 / (1e12 * 1e18) for rate 2.0.
-        let expected_stables = pledge_amount * U256::from(2u64) * one_e18()
-            / (U256::from(1_000_000_000_000u128) * one_e18());
-        assert_eq!(amount_stables, expected_stables);
+        // The loan is exactly what the pledger asked for — credis does not re-price it.
+        assert_eq!(amount_stables, pledge_stables());
 
         let credis = CredisContract::new(storage.clone());
         let position = credis.get_position(position_id).unwrap();
@@ -189,6 +212,8 @@ fn full_pledge_request_pay_unlock_flow() {
             alice()
         );
         assert_eq!(position.credis_principal, amount_stables);
+        // The entry price is the rate the PLEDGE was quoted at, not a later read.
+        assert_eq!(position.entry_price_minor, oracle_rate());
         assert_eq!(position.currency_rate, refi_rate());
         assert_eq!(position.issuance_currency, ISSUANCE_ISO);
         let multiplier =
@@ -239,19 +264,12 @@ fn pay_anadosis_unlocks_one_installment() {
         )
         .unwrap();
         seed_fidelity(storage.clone(), alice());
-        seed_oracle(storage.clone(), U256::from(2u64) * one_e18());
-        let handle = gf::pledge_gratis(
-            storage.clone(),
-            alice(),
-            pledge_amount,
-            auth(GratisOp::Pledge, alice(), pledge_amount, 1),
-        )
-        .unwrap();
+        seed_oracle(storage.clone(), oracle_rate());
+        let handle = pledge(&storage, alice(), 1);
 
         let spend = credis_spend_auth(alice(), handle, alice());
         let (position_id, _) =
-            runtime::request_credis(storage.clone(), alice(), asset(), alice(), handle, spend)
-                .unwrap();
+            runtime::request_credis(storage.clone(), alice(), alice(), handle, spend).unwrap();
 
         // Pay a single installment: releases exactly pledge/10 from alice's pledged
         // ledger right away, without waiting for the loan to complete.
@@ -281,19 +299,12 @@ fn pay_anadosis_spans_installments_and_caps_at_outstanding() {
         )
         .unwrap();
         seed_fidelity(storage.clone(), alice());
-        seed_oracle(storage.clone(), U256::from(2u64) * one_e18());
-        let handle = gf::pledge_gratis(
-            storage.clone(),
-            alice(),
-            pledge_amount,
-            auth(GratisOp::Pledge, alice(), pledge_amount, 1),
-        )
-        .unwrap();
+        seed_oracle(storage.clone(), oracle_rate());
+        let handle = pledge(&storage, alice(), 1);
 
         let spend = credis_spend_auth(alice(), handle, alice());
         let (position_id, _) =
-            runtime::request_credis(storage.clone(), alice(), asset(), alice(), handle, spend)
-                .unwrap();
+            runtime::request_credis(storage.clone(), alice(), alice(), handle, spend).unwrap();
 
         let total_debt = CredisContract::new(storage.clone())
             .get_position(position_id)
@@ -367,57 +378,31 @@ fn request_credis_rejects_overdue_anadosis() {
         )
         .unwrap();
         seed_fidelity(storage.clone(), alice());
-        seed_oracle(storage.clone(), U256::from(2u64) * one_e18());
+        seed_oracle(storage.clone(), oracle_rate());
 
         // First pledge + request.
-        let h1 = gf::pledge_gratis(
-            storage.clone(),
-            alice(),
-            amount,
-            auth(GratisOp::Pledge, alice(), amount, 1),
-        )
-        .unwrap();
+        let h1 = pledge(&storage, alice(), 1);
         let spend1 = credis_spend_auth(alice(), h1, alice());
-        runtime::request_credis(storage.clone(), alice(), asset(), alice(), h1, spend1).unwrap();
+        runtime::request_credis(storage.clone(), alice(), alice(), h1, spend1).unwrap();
 
         // Second pledge — then attempt a second request once anadosis-1 is overdue
         // on the first position.
-        let h2 = gf::pledge_gratis(
-            storage.clone(),
-            alice(),
-            amount,
-            auth(GratisOp::Pledge, alice(), amount, 2),
-        )
-        .unwrap();
+        let h2 = pledge(&storage, alice(), 2);
         let spend2 = credis_spend_auth(alice(), h2, alice());
         storage
             .set_block_timestamp(U256::from(CREATED_AT + SECONDS_PER_MONTH + 1))
             .unwrap();
-        let err = runtime::request_credis(storage.clone(), alice(), asset(), alice(), h2, spend2)
-            .unwrap_err();
+        let err =
+            runtime::request_credis(storage.clone(), alice(), alice(), h2, spend2).unwrap_err();
         assert!(err.to_string().contains("overdue"), "got: {err}");
     });
     fidelity_enclave::uninstall();
     test_enclave::uninstall();
 }
 
-#[test]
-fn request_credis_rejects_zero_asset() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_timestamp(U256::from(CREATED_AT));
-    StorageHandle::enter(&mut storage, |storage| {
-        let err = runtime::request_credis(
-            storage.clone(),
-            alice(),
-            Address::ZERO,
-            alice(),
-            B256::ZERO,
-            [0u8; 32],
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains("asset"), "got: {err}");
-    });
-}
+// A zero asset can no longer reach requestCredis — it is rejected at pledge time now
+// that the asset travels in the ticket. See
+// `outbe_gratisfactory::tests::pledge_rejects_zero_asset`.
 
 #[test]
 fn request_credis_rejects_zero_smart_account() {
@@ -427,7 +412,6 @@ fn request_credis_rejects_zero_smart_account() {
         let err = runtime::request_credis(
             storage.clone(),
             alice(),
-            asset(),
             Address::ZERO,
             B256::ZERO,
             [0u8; 32],
@@ -452,18 +436,11 @@ fn pay_anadosis_accepts_third_party_payer() {
         )
         .unwrap();
         seed_fidelity(storage.clone(), alice());
-        seed_oracle(storage.clone(), U256::from(2u64) * one_e18());
-        let handle = gf::pledge_gratis(
-            storage.clone(),
-            alice(),
-            pledge_amount,
-            auth(GratisOp::Pledge, alice(), pledge_amount, 1),
-        )
-        .unwrap();
+        seed_oracle(storage.clone(), oracle_rate());
+        let handle = pledge(&storage, alice(), 1);
         let spend = credis_spend_auth(alice(), handle, alice());
         let (position_id, _) =
-            runtime::request_credis(storage.clone(), alice(), asset(), alice(), handle, spend)
-                .unwrap();
+            runtime::request_credis(storage.clone(), alice(), alice(), handle, spend).unwrap();
 
         // bob is not the position's smart account, but anyone may pay it down.
         let owed = CredisContract::new(storage.clone())
@@ -508,18 +485,11 @@ fn expiry_sweep_burns_outstanding_collateral() {
         )
         .unwrap();
         seed_fidelity(storage.clone(), alice());
-        seed_oracle(storage.clone(), U256::from(2u64) * one_e18());
-        let handle = gf::pledge_gratis(
-            storage.clone(),
-            alice(),
-            pledge_amount,
-            auth(GratisOp::Pledge, alice(), pledge_amount, 1),
-        )
-        .unwrap();
+        seed_oracle(storage.clone(), oracle_rate());
+        let handle = pledge(&storage, alice(), 1);
         let spend = credis_spend_auth(alice(), handle, alice());
         let (position_id, _) =
-            runtime::request_credis(storage.clone(), alice(), asset(), alice(), handle, spend)
-                .unwrap();
+            runtime::request_credis(storage.clone(), alice(), alice(), handle, spend).unwrap();
 
         // Pay 3 of 10 installments, leaving 7/10 of the collateral outstanding.
         for n in 1..=3u64 {

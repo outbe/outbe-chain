@@ -17,7 +17,9 @@ import { fileURLToPath } from "url";
 export interface Ticket {
   pledgeHandle: string; // 0x-prefixed 32-byte hex — the public pledge record id
   pledgeSecret: string; // 0x-prefixed 32-byte hex — HMAC(modifyKey, handle), hand to the CCA
-  amount: string; // pledged amount in minor units (decimal string)
+  stablesAmount: string; // credit the pledge was quoted for, in stablecoin minor units
+  asset: string; // the stablecoin the credis will be disbursed in
+  amount: string; // gratis collateral the quote cost (decimal string)
   opNonce: number; // the account op-nonce used for this pledge
   blockNumber: number;
   txHash: string;

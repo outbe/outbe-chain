@@ -35,7 +35,7 @@ wire_struct! {
         pub activation_call_id: B256,
         pub result_digest: B256,
         pub quorum_height: u64,
-        pub quorum_signer_bitmap: u8,
+        pub quorum_signer_bitmap: Vec<u8>,
         pub quorum_evidence_hash: B256,
         pub result_evidence_hash: B256,
         pub terminal_receipt_hash: B256,
@@ -229,8 +229,10 @@ impl OcompJobRecordV1 {
                     "completed applied receipt",
                 )
             }
-            (OcompJobStatus::Expired, Some(finalized), Some(terminal)) => require(
-                finalized.quorum.is_none()
+            (OcompJobStatus::Expired, finalized, Some(terminal)) => require(
+                finalized
+                    .as_ref()
+                    .is_none_or(|finalized| finalized.quorum.is_none())
                     && terminal.outcome == OcompTerminalOutcome::Expired
                     && terminal.next_pending_nonce.is_some()
                     && terminal.completed_binding.is_none(),

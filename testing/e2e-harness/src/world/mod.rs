@@ -40,8 +40,8 @@ pub struct World {
     pub rpc: Rpc,
     /// Validator/operator identities and committee size.
     pub validators: Validators,
-    /// Four independent OCOMP validator domains. Processes are
-    /// owned here so dropping a scenario cannot orphan compute work.
+    /// One isolated OCOMP domain per active validator. Processes are owned here
+    /// so dropping a scenario cannot orphan compute work.
     pub ocomp: OcompTopology,
     /// Present only when the Rust capacity runner explicitly starts this
     /// scenario inside its dedicated cold-run cgroup.

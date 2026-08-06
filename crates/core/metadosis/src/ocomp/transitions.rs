@@ -3,6 +3,7 @@ use outbe_common::WorldwideDay;
 use outbe_lysis::activation_v1::LysisTerminalPermitV1;
 use outbe_ocomp_protocol::{
     intent::{intent_storage_key, JobIntentV1},
+    profile::OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS,
     receipts::{ActivationOutcome, AggregateActivationReceiptV1, RequestBudgetSplitReceiptV1},
     state::{
         ActiveGenerationV1, LysisTerminalV1, OcompCompletedBindingV1, OcompFinalizedJobV1,
@@ -23,12 +24,13 @@ use crate::{
 };
 
 use super::{
-    codec::{decode_live_scheduler_index, MAX_LIVE_JOBS},
     index::{
         insert_ready_key, insert_response_deadline_key, remove_ready_key, ReadyIndexKey,
         ResponseDeadlineKey,
     },
-    state::{JobFsmCommand, JobFsmLimits, RetryTerminalOutcome},
+    state::{
+        JobFsmCommand, JobFsmLimits, RetryTerminalOutcome, OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS,
+    },
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -57,6 +59,7 @@ impl MetadosisContract<'_> {
         fsm_limits: JobFsmLimits,
     ) -> Result<()> {
         (|| {
+            super::authority::require_current_ocomp_attempt_snapshot(self.storage.clone(), intent)?;
             if !matches!(
                 outer_transition.kind(),
                 OuterWwdTransitionKind::OcompRequestCommitted
@@ -92,9 +95,6 @@ impl MetadosisContract<'_> {
             {
                 return Err(fatal("OCOMP intent/request receipt binding mismatch"));
             }
-            if decode_live_scheduler_index(&self.ocomp_scheduler.read()?)?.len() >= MAX_LIVE_JOBS {
-                return Err(fatal("OCOMP live Job capacity exhausted"));
-            }
             let mut state = self.ocomp_fsm_state(wwd, schema_limits, fsm_limits)?;
             let ready_key = ReadyIndexKey::from_projection(state.projection())?;
             let existing_receipt = self.request_budget_receipt(wwd, schema_limits)?;
@@ -104,6 +104,10 @@ impl MetadosisContract<'_> {
             let intent_id = intent
                 .intent_id(schema_limits)
                 .map_err(|error| fatal(format!("hash OCOMP intent: {error}")))?;
+            let awaiting_finality_deadline = intent
+                .logical_evaluation_height
+                .checked_add(OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS)
+                .ok_or_else(|| fatal("OCOMP awaiting-finality deadline overflow"))?;
             let storage_key = intent_storage_key(intent_id)
                 .map_err(|error| fatal(format!("derive OCOMP intent storage key: {error}")))?;
             if !self.ocomp_job_records.get_bytes(&storage_key).is_empty()? {
@@ -113,6 +117,7 @@ impl MetadosisContract<'_> {
                 .apply(
                     JobFsmCommand::Request {
                         at_height: intent.logical_evaluation_height,
+                        deadline_height: awaiting_finality_deadline,
                         intent_id,
                         lysis_budget: intent.frozen_metadosis_values.lysis_budget,
                         request_budget_receipt_hash: receipt_hash,
@@ -168,7 +173,14 @@ impl MetadosisContract<'_> {
             if record.status != OcompJobStatus::AwaitingFinality || record.terminal.is_some() {
                 return Err(fatal("OCOMP finality requires AWAITING_FINALITY"));
             }
-            if finality_recorded_height < record.intent_height || response_window_blocks == 0 {
+            let awaiting_finality_deadline = record
+                .intent_height
+                .checked_add(OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS)
+                .ok_or_else(|| fatal("OCOMP awaiting-finality deadline overflow"))?;
+            if finality_recorded_height < record.intent_height
+                || finality_recorded_height > awaiting_finality_deadline
+                || response_window_blocks != OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS
+            {
                 return Err(fatal("OCOMP finality/window height is invalid"));
             }
             let open_height = finality_recorded_height
@@ -263,7 +275,11 @@ impl MetadosisContract<'_> {
                 .map_err(|error| fatal(error.to_string()))?;
             let accountability = OcompVoteAccountabilityV1::empty(
                 finalized.job_id,
-                record.intent.result_committee_snapshot_hash,
+                record.intent.result_validator_set_epoch,
+                record.intent.result_committee_set_hash,
+                record.intent.result_ocomp_binding_hash,
+                record.intent.result_member_count,
+                record.intent.result_quorum_threshold,
             )
             .map_err(|error| fatal(format!("create OCOMP vote slots: {error}")))?;
             let slot = self.ocomp_vote_accountability.get_bytes(&finalized.job_id);
@@ -664,7 +680,7 @@ impl MetadosisContract<'_> {
                 activation_call_id: permit.activation_call_id(),
                 result_digest: binding.result_digest,
                 quorum_height: quorum.quorum_height,
-                quorum_signer_bitmap: quorum.signer_bitmap,
+                quorum_signer_bitmap: quorum.signer_bitmap.clone(),
                 quorum_evidence_hash: quorum.evidence_hash,
                 result_evidence_hash,
                 terminal_receipt_hash,

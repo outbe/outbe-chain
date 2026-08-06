@@ -25,7 +25,7 @@ documentation-only are requirements, not claims of executable coverage.
 | Test owner | Evidence supplied | PFS relationship |
 |---|---|---|
 | `crates/system/cycle/src/tests.rs` Metadosis cases | Real Cycle trigger/lease/command boundary for block-1 profile guard, missed OFFERING, cap forfeiture, day-limit replay consistency and typed Desis rejection | Metadosis H-1..H-3/M-1..M-2 production-interface evidence; process E2E still required |
-| `crates/blockchain/evm/tests/ocomp_request_lifecycle.rs` | Canonical proposer/import/historical-replay blocks cover request, certified finality, open, expiry, retry and a q-forming block containing three public vote transactions | PFS-002 and Metadosis production-adapter evidence; not a four-process closure run or a replacement for the removed PFS-009 day walk |
+| `crates/blockchain/evm/tests/ocomp_request_lifecycle.rs` | Canonical proposer/import/historical-replay blocks cover request, certified finality, open, expiry, retry and a quorum-forming block containing validator-authenticated OCOMP system vote carriers | PFS-002 and Metadosis production-adapter evidence; also proves canonical `gas_limit = 30_000` carriers use bounded system work without consuming the user gas lane |
 | `testing/e2e/tests/governance_lifecycle.rs` | Vote lifecycle and duplicate-ballot invariants | Partial PFS-005 |
 | `testing/e2e/tests/update_flow_spec.rs` | Update scheduling, activation and ordering/error edges | Partial PFS-005 |
 | `crates/core/credisfactory/src/tests/e2e.rs` | Pledge, Credis repayments and reclaim plus invalid-input edges | Partial PFS-003 |

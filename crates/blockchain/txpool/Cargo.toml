@@ -8,6 +8,8 @@ publish.workspace = true
 [dependencies]
 # Internal
 outbe-primitives.workspace = true
+outbe-ocomp-protocol.workspace = true
+outbe-metadosis.workspace = true
 outbe-zerofee.workspace = true
 
 # Reth
@@ -29,7 +31,9 @@ tracing.workspace = true
 
 [dev-dependencies]
 alloy-sol-types.workspace = true
+futures.workspace = true
 outbe-oracle.workspace = true
+reth-provider = { workspace = true, features = ["test-utils"] }
 
 [lints]
 workspace = true
