@@ -86,6 +86,7 @@ use outbe_primitives::{
     OutbeHeader, OutbePayloadAttributes, OutbePrimitives,
 };
 use outbe_tribute::{TributeContract, TributeData};
+use outbe_txpool::OutbeTransactionOrdering;
 use outbe_update::{
     schema::{ScheduledUpdateStatus, Update},
     ProtocolVersion,
@@ -113,8 +114,8 @@ use reth_provider::{
 };
 use reth_revm::database::StateProviderDatabase;
 use reth_transaction_pool::{
-    blobstore::InMemoryBlobStore, noop::MockTransactionValidator, CoinbaseTipOrdering,
-    EthPooledTransaction, Pool, PoolConfig, PoolTransaction, TransactionOrigin, TransactionPool,
+    blobstore::InMemoryBlobStore, noop::MockTransactionValidator, EthPooledTransaction, Pool,
+    PoolConfig, PoolTransaction, TransactionOrigin, TransactionPool,
 };
 use reth_trie::{
     test_utils::{state_root_prehashed, storage_root_prehashed},
@@ -135,10 +136,13 @@ const VRF_MATERIAL_VERSION: u64 = 5;
 const VALIDATOR_OWNER: Address = address!("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
 const OCOMP_UPDATE_PROPOSAL_ID: u64 = 1;
 const OCOMP_PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::from_raw(1);
+const SATURATED_USER_TRANSACTION_COUNT: u64 = 40;
+const SATURATED_USER_TRANSACTION_GAS: u64 = 1_000_000;
+const BURNER_ADDRESS: Address = address!("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
 
 type TestPool = Pool<
     MockTransactionValidator<EthPooledTransaction>,
-    CoinbaseTipOrdering<EthPooledTransaction>,
+    OutbeTransactionOrdering<EthPooledTransaction>,
     InMemoryBlobStore,
 >;
 type InnerTestProvider = MockEthProvider<OutbePrimitives, ChainSpec<OutbeHeader>>;
@@ -147,7 +151,7 @@ type HashedAccountState = BTreeMap<B256, (Account, BTreeMap<B256, U256>)>;
 fn test_pool(transactions: Vec<EthPooledTransaction>) -> TestPool {
     let pool = Pool::new(
         MockTransactionValidator::default(),
-        CoinbaseTipOrdering::default(),
+        OutbeTransactionOrdering::default(),
         InMemoryBlobStore::default(),
         PoolConfig::default(),
     );
@@ -197,6 +201,40 @@ fn pooled_vote_transaction(input: Bytes, validator_index: u8) -> EthPooledTransa
 
 fn vote_sender_balance() -> U256 {
     U256::from(100_000_000_000_000_000_000u128)
+}
+
+fn saturated_user_secret() -> B256 {
+    B256::repeat_byte(0xE1)
+}
+
+fn saturated_user_sender() -> Address {
+    OutbeEvmSigner::from_secret_bytes(saturated_user_secret().0)
+        .expect("fixture saturated-user key is valid")
+        .address()
+}
+
+fn pooled_saturated_user_transaction(nonce: u64) -> EthPooledTransaction {
+    let transaction: Transaction = TxEip1559 {
+        chain_id: CHAIN_ID,
+        nonce,
+        gas_limit: SATURATED_USER_TRANSACTION_GAS,
+        max_fee_per_gas: 2_000_000_000,
+        max_priority_fee_per_gas: 1_000_000_000,
+        to: TxKind::Call(BURNER_ADDRESS),
+        value: U256::ZERO,
+        access_list: Default::default(),
+        input: Bytes::new(),
+    }
+    .into();
+    let signature = sign_secp256k1_message(saturated_user_secret(), transaction.signature_hash())
+        .expect("fixture saturated-user signer");
+    let signed = TransactionSigned::new_unhashed(transaction, signature);
+    EthPooledTransaction::try_from_consensus(
+        signed
+            .try_into_recovered()
+            .expect("fixture saturated-user sender recovers"),
+    )
+    .expect("fixture saturated-user transaction converts to pooled transaction")
 }
 
 #[derive(Clone, Debug)]
@@ -928,6 +966,17 @@ fn real_payload_builder_commits_atomic_request_after_ce_seal_without_lysis_effec
             pooled_vote_transaction(Bytes::from(calldata), validator_index)
         })
         .collect::<Vec<_>>();
+    let vote_hashes = vote_transactions
+        .iter()
+        .map(PoolTransaction::hash)
+        .copied()
+        .collect::<Vec<_>>();
+    let mut saturated_transactions = (0..SATURATED_USER_TRANSACTION_COUNT)
+        .map(pooled_saturated_user_transaction)
+        .collect::<Vec<_>>();
+    // Deliberately insert the higher-tip user workload first. Production
+    // OutbeTransactionOrdering must still select every OCOMP carrier ahead of it.
+    saturated_transactions.extend(vote_transactions);
     let q_forming = build_canonical_ocomp_successor(
         &chain_spec,
         &prepared.tree_service,
@@ -943,9 +992,37 @@ fn real_payload_builder_commits_atomic_request_after_ce_seal_without_lysis_effec
         open_height + 1,
         prepared.request_time + (open_height + 1 - REQUEST_HEIGHT),
         requested.data.intentId,
-        vote_transactions,
+        saturated_transactions,
     );
-    assert_eq!(q_forming.user_transaction_count, 3);
+    assert!(
+        q_forming.user_transaction_count > vote_hashes.len(),
+        "saturated block must contain the OCOMP carriers plus ordinary user work"
+    );
+    assert!(
+        q_forming.user_transaction_count
+            < usize::try_from(SATURATED_USER_TRANSACTION_COUNT).unwrap() + vote_hashes.len(),
+        "offered user gas must exceed the block budget so priority is observable"
+    );
+    assert!(
+        q_forming.user_transaction_hashes[..vote_hashes.len()]
+            .iter()
+            .all(|hash| vote_hashes.contains(hash)),
+        "all OCOMP carriers must be selected before higher-tip ordinary transactions"
+    );
+    assert!(q_forming.user_receipt_successes[..vote_hashes.len()]
+        .iter()
+        .all(|success| *success));
+    assert!(q_forming.user_receipt_successes[vote_hashes.len()..]
+        .iter()
+        .all(|success| !*success));
+    assert!(q_forming.user_receipt_cumulative_gas[..vote_hashes.len()]
+        .windows(2)
+        .all(|window| window[0] == window[1]));
+    assert!(
+        q_forming.user_receipt_cumulative_gas.last().unwrap()
+            > &q_forming.user_receipt_cumulative_gas[vote_hashes.len() - 1],
+        "ordinary saturated transactions, unlike OCOMP carriers, consume user-lane gas"
+    );
     assert_eq!(q_forming.record.status, OcompJobStatus::Completed);
     let completed = q_forming
         .record
@@ -1039,6 +1116,9 @@ struct CanonicalOcompSuccessor {
     record: OcompJobRecordV1,
     requested_intents: Vec<B256>,
     user_transaction_count: usize,
+    user_transaction_hashes: Vec<B256>,
+    user_receipt_successes: Vec<bool>,
+    user_receipt_cumulative_gas: Vec<u64>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1137,56 +1217,53 @@ fn build_canonical_ocomp_successor(
         .begin_block_kinds()
         .expect("canonical OCOMP model begin zone decodes")
         .contains(&SystemTxKind::OcompLifecycleBegin));
-    assert_eq!(
-        layout.user.len(),
-        user_transaction_count,
-        "canonical OCOMP block must include every supplied public vote; \
-         block_gas_limit={} block_gas_used={} transaction_gas_limits={:?}",
-        payload.block().header().gas_limit(),
-        payload.block().header().gas_used(),
-        payload
-            .block()
-            .body()
-            .transactions
-            .iter()
-            .map(TransactionSigned::gas_limit)
-            .collect::<Vec<_>>()
+    assert!(
+        layout.user.len() <= user_transaction_count,
+        "payload cannot include more public transactions than the supplied pool"
     );
     let executed = payload
         .executed_block()
         .expect("canonical OCOMP model block exposes execution");
-    if user_transaction_count > 0 {
-        let user_receipts = &executed.execution_output.result.receipts
-            [layout.begin.len()..layout.begin.len() + layout.user.len()];
-        assert!(
-            layout
-                .user
-                .iter()
-                .all(|transaction| TransactionSigned::gas_limit(transaction) == 30_000),
-            "every OCOMP system carrier must preserve the canonical signed gas limit"
-        );
-        assert!(
-            user_receipts.iter().all(|receipt| receipt.success),
-            "q-forming canonical block must commit only successful receipts: {:?}",
-            user_receipts
-                .iter()
-                .map(|receipt| (receipt.success, receipt.cumulative_gas_used))
-                .collect::<Vec<_>>()
-        );
-        let user_lane_gas_before = executed.execution_output.result.receipts
-            [layout.begin.len().saturating_sub(1)]
-        .cumulative_gas_used;
-        assert!(
-            user_receipts
-                .iter()
-                .all(|receipt| receipt.cumulative_gas_used == user_lane_gas_before),
-            "OCOMP system carriers must not consume the ordinary user gas lane: before={user_lane_gas_before}, receipts={:?}",
-            user_receipts
-                .iter()
-                .map(|receipt| receipt.cumulative_gas_used)
-                .collect::<Vec<_>>()
-        );
-    }
+    let (user_transaction_hashes, user_receipt_successes, user_receipt_cumulative_gas) =
+        if !layout.user.is_empty() {
+            let user_receipts = &executed.execution_output.result.receipts
+                [layout.begin.len()..layout.begin.len() + layout.user.len()];
+            let mut prior_cumulative_gas = executed.execution_output.result.receipts
+                [layout.begin.len().saturating_sub(1)]
+            .cumulative_gas_used;
+            for (transaction, receipt) in layout.user.iter().zip(user_receipts) {
+                let transaction = *transaction;
+                if transaction.to() == Some(METADOSIS_ADDRESS) {
+                    assert_eq!(
+                        TransactionSigned::gas_limit(transaction),
+                        30_000,
+                        "every OCOMP system carrier preserves the canonical signed gas limit"
+                    );
+                    assert_eq!(
+                        receipt.cumulative_gas_used, prior_cumulative_gas,
+                        "OCOMP system carrier must not consume ordinary user-lane gas"
+                    );
+                }
+                prior_cumulative_gas = receipt.cumulative_gas_used;
+            }
+            (
+                layout
+                    .user
+                    .iter()
+                    .map(|transaction| *(*transaction).tx_hash())
+                    .collect(),
+                user_receipts
+                    .iter()
+                    .map(|receipt| receipt.success)
+                    .collect(),
+                user_receipts
+                    .iter()
+                    .map(|receipt| receipt.cumulative_gas_used)
+                    .collect(),
+            )
+        } else {
+            (Vec::new(), Vec::new(), Vec::new())
+        };
     let import = evm_config
         .executor(StateProviderDatabase::new(&provider))
         .execute(executed.recovered_block.as_ref())
@@ -1244,7 +1321,10 @@ fn build_canonical_ocomp_successor(
         storage: state.storage,
         record,
         requested_intents,
-        user_transaction_count,
+        user_transaction_count: layout.user.len(),
+        user_transaction_hashes,
+        user_receipt_successes,
+        user_receipt_cumulative_gas,
     }
 }
 
@@ -1505,6 +1585,15 @@ fn mock_provider(
             ExtendedAccount::new(0, vote_sender_balance()),
         );
     }
+    inner.add_account(
+        saturated_user_sender(),
+        ExtendedAccount::new(0, vote_sender_balance()),
+    );
+    inner.add_account(
+        BURNER_ADDRESS,
+        ExtendedAccount::new(0, U256::ZERO)
+            .with_bytecode(Bytes::from_static(&[0x5b, 0x60, 0x00, 0x56])),
+    );
     TestProvider {
         inner,
         base_state: Arc::new(hashed_marker_state(storage)),
@@ -1527,6 +1616,28 @@ fn hashed_marker_state(storage: &HashMap<(Address, U256), U256>) -> HashedAccoun
             ),
         );
     }
+    accounts.insert(
+        keccak256(saturated_user_sender()),
+        (
+            Account {
+                nonce: 0,
+                balance: vote_sender_balance(),
+                bytecode_hash: None,
+            },
+            BTreeMap::new(),
+        ),
+    );
+    accounts.insert(
+        keccak256(BURNER_ADDRESS),
+        (
+            Account {
+                nonce: 0,
+                balance: U256::ZERO,
+                bytecode_hash: Some(keccak256([0x5b, 0x60, 0x00, 0x56])),
+            },
+            BTreeMap::new(),
+        ),
+    );
     for ((address, slot), value) in storage {
         let (_, account_storage) = accounts.entry(keccak256(address)).or_insert_with(|| {
             (

@@ -232,6 +232,11 @@ authorization, signature verification, vote-state writes and q-forming apply
 consume a separate deterministic system-work budget. Classification does not
 decide protocol validity.
 
+The production pool assigns authentic OCOMP carriers a priority class above all
+ordinary tip values. Saturating the ordinary 30,000,000 gas budget therefore
+cannot strand a timely carrier behind user transactions; this ordering does not
+reserve or create another block gas lane.
+
 The `OffchainLysis Supervisor` owns transaction construction, local outer EVM
 signing with its role-delegated key, submission, inclusion/finality tracking and
 reorg rebroadcast. It requests only the inner OCOMP attestation through the

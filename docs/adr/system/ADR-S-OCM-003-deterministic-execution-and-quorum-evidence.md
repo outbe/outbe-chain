@@ -337,6 +337,12 @@ commit; exceeding that ceiling invalidates the carrier atomically.
 Malformed or unauthorized lookalikes fail closed before that authority is
 granted.
 
+The production transaction-pool ordering gives a canonical OCOMP carrier a
+reserved class above the ordinary tip market. This is scheduling priority, not
+a second public gas lane: even when higher-tip ordinary transactions offer more
+than the full 30,000,000 gas budget, authenticated carriers are selected first,
+retain visible `gas_limit = 30_000`, and leave user cumulative gas unchanged.
+
 The Supervisor persists `prepared -> submitted -> included -> finalized`,
 rebroadcasts the same logical vote after an orphaned inclusion while the slot
 is empty and the window is open, and stops at finality or window close.
@@ -599,6 +605,7 @@ accountability/capacity vectors at the current consensus validator bound,
 system-vote inclusion and replay, continued post-quorum participation, exact
 1,800-block deadline accountability with ACTIVE-only jail and non-ACTIVE
 non-mutation, duplicate/wrong voter rejection, controlled failed late carriers,
+production-pool priority under a saturated higher-tip user workload,
 conflicting-vote evidence, independent FullNode recomputation/fail-closed
 vectors, one-byte/ordering/JobId mutation rejection and comparison with a
 separate reference corpus.
