@@ -789,6 +789,7 @@ fn full_node(seed: u8) -> NodeIdV1 {
     NodeIdV1::FullNode { reth_p2p_public }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn seed_binding(
     registry: &TeeRegistry<'_>,
     node: &NodeIdV1,

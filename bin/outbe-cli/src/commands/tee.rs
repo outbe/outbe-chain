@@ -731,6 +731,8 @@ async fn pubkey(client: &(impl Rpc + Sync), enclave_socket: &str, diff_chain: bo
     }
 }
 
+// CLI command handler: args map 1:1 to `tee join` flags.
+#[allow(clippy::too_many_arguments)]
 async fn join(
     client: &(impl Rpc + Sync),
     private_key: Option<&str>,
@@ -1285,7 +1287,7 @@ fn parse_secp256k1_key_bytes(encoded: &[u8]) -> Result<k256::ecdsa::SigningKey> 
         secret.copy_from_slice(encoded);
         secret
     } else {
-        let text = std::str::from_utf8(&encoded)
+        let text = std::str::from_utf8(encoded)
             .wrap_err("Reth P2P secret is neither raw bytes nor UTF-8 hex")?;
         let text = text.trim();
         let text = text.strip_prefix("0x").unwrap_or(text);

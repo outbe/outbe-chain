@@ -205,6 +205,7 @@ async fn run_renewal_worker_v1(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_upgrade_promotion_worker_v1<P>(
     provider: P,
     chain_id: u64,
@@ -761,7 +762,7 @@ fn run_node() -> eyre::Result<()> {
             projection_readiness,
             finalized_ce_committer,
             ce_startup_recovery,
-            compressed_tree_service,
+            _compressed_tree_service,
         ) = match node_rx.blocking_recv() {
             Ok(v) => v,
             Err(_) => return Ok(()),
@@ -1515,8 +1516,10 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let explicit_secret = root.path().join("operator-p2p.key");
         let unused_default = root.path().join("default-discovery-secret");
-        let mut network = reth_node_core::args::NetworkArgs::default();
-        network.p2p_secret_key = Some(explicit_secret.clone());
+        let network = reth_node_core::args::NetworkArgs {
+            p2p_secret_key: Some(explicit_secret.clone()),
+            ..Default::default()
+        };
 
         let (first_signer, first_public) =
             super::load_reth_p2p_node_host_signer(&network, unused_default.clone()).unwrap();

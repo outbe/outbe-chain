@@ -149,6 +149,7 @@ pub fn dispatch_with_tee_attestation(
 
 /// Production dispatch with both finalized body readers and the immutable
 /// chain-manifest fork authority.
+#[allow(clippy::too_many_arguments)]
 pub fn dispatch_with_readers_and_ocomp_install(
     storage: StorageHandle,
     scope: &outbe_compressed_entities::ExecutionScope,

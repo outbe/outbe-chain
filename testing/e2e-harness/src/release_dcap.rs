@@ -349,7 +349,7 @@ fn run(cli: Cli) -> Result<()> {
         intent: intent.clone(),
         quote: generated.quote_body.clone(),
         components,
-        transition_key_ready_proof: generated.transition_key_ready_proof.clone(),
+        transition_key_ready_proof: generated.transition_key_ready_proof,
     });
     let evidence_bytes = evidence
         .encode_canonical()
