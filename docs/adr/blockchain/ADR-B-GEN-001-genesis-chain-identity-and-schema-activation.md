@@ -102,8 +102,20 @@ explicit chain profiles and cannot be mistaken for production.
 The Metadosis Citadel implementation supports only newly created devnet state.
 Its selected chain manifest contains one canonical `Measurement`
 `OcompForkInstallV1` bound to the exact chain id, base genesis hash, install
-hash, request profile, protocol bundle and committee, with activation height
-`1`. Startup rejects missing, malformed, wrong-chain, wrong-genesis,
+hash, request profile, protocol bundle and ordered founder OCOMP registrations,
+with activation height `1`. Founder registrations bootstrap one validated key
+for every already-seeded genesis `ACTIVE` validator; they do not define an
+independent committee, member indices, `N` or quorum. OCOMP membership is always
+derived from the pinned ordered `ACTIVE ValidatorSet` snapshot.
+
+The registrations bind the final genesis hash, so writing them into genesis
+alloc would create a hash fixed-point. The compiler therefore emits them in the
+chain-config fork-install artifact, outside the genesis header commitment. At
+lifecycle activation the production command validates exact ordered coverage,
+PoP, purpose, key epoch and key uniqueness, then imports registrations into
+ValidatorSet atomically with the OCOMP install. Missing, extra, reordered or
+duplicate material fails closed. Startup rejects missing, malformed,
+wrong-chain, wrong-genesis,
 wrong-hash, wrong-classification or later activation before block execution.
 The same genesis config must carry
 `metadosisStorageLayoutV1.layoutHash`, equal to the node's canonical
@@ -168,6 +180,8 @@ startup.
 - Every active stateful native precompile survives EIP-161 and has declared schema.
 - No address/slot/constant is independently retyped by the seeder.
 - Consensus bootstrap and on-chain validator/stake state agree exactly.
+- Founder OCOMP registrations exactly cover the ordered genesis ACTIVE set and
+  carry no voting-membership or quorum authority.
 - Block 1 is the first writer of fields explicitly reserved for bootstrap.
 - An incompatible existing DB/store/sidecar never starts under another identity.
 - Genesis validation is read-only, exhaustive and happens before service readiness.

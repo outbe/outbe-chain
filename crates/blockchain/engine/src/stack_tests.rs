@@ -1151,6 +1151,70 @@ fn recovery_finalization_fixture(
 }
 
 #[test]
+fn follower_parent_record_requires_exact_finalized_block_and_historical_committee() {
+    let block = recovery_block(42);
+    let round = Round::new(Epoch::new(4), View::new(9));
+    let (provider, finalization) = recovery_finalization_fixture(&block, round);
+    let scheme = provider
+        .scoped(round.epoch())
+        .expect("fixture registers the finalized epoch verifier");
+    let addresses = vec![
+        Address::repeat_byte(0x11),
+        Address::repeat_byte(0x22),
+        Address::repeat_byte(0x33),
+    ];
+    let encoded_pubkeys: Vec<Vec<u8>> = scheme
+        .participants()
+        .iter()
+        .map(|public_key| public_key.encode().as_ref().to_vec())
+        .collect();
+    let snapshot = outbe_consensus::proof::build_committee_snapshot(
+        &addresses,
+        &encoded_pubkeys,
+        scheme.active_vrf_material_version(),
+        scheme
+            .identity()
+            .map(|public_key| public_key.encode().as_ref().to_vec())
+            .unwrap_or_default(),
+        B256::ZERO,
+    )
+    .expect("fixture committee is canonical");
+
+    let record =
+        build_certified_follower_parent_record(&finalization, &block, &snapshot, scheme.as_ref())
+            .expect("exact certified follower inputs build the canonical parent record");
+    assert_eq!(record.finalized_block_number(), Some(block.number()));
+    assert_eq!(record.finalized_block_hash, block.block_hash());
+    assert_eq!(
+        record.committee_set_hash,
+        snapshot.committee_set_hash_v2(round.epoch().get())
+    );
+
+    let wrong_block = recovery_block(43);
+    let wrong_block_error = build_certified_follower_parent_record(
+        &finalization,
+        &wrong_block,
+        &snapshot,
+        scheme.as_ref(),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(wrong_block_error.contains("finalization payload"));
+
+    let mut wrong_snapshot = snapshot;
+    wrong_snapshot.committee[0].consensus_pubkey = [0x99; 48];
+    let wrong_snapshot_error = build_certified_follower_parent_record(
+        &finalization,
+        &block,
+        &wrong_snapshot,
+        scheme.as_ref(),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(wrong_snapshot_error.contains("historical committee snapshot"));
+}
+
+#[test]
 fn recover_application_finalized_round_returns_none_at_genesis_height() {
     let recovered = commonware_runtime::tokio::Runner::default().start(|context| async move {
         let clock = context.child("recover_clock");

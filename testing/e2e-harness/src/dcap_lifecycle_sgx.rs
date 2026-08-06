@@ -213,8 +213,8 @@ fn run(cli: Cli) -> Result<()> {
 
     let mut founders = Vec::new();
     let mut founder_processes = Vec::new();
-    for index in 0..4 {
-        let mut process = start_sgx(&specs[index])?;
+    for (index, spec) in specs.iter().take(4).enumerate() {
+        let mut process = start_sgx(spec)?;
         wait_for_log(
             &mut process,
             "listening on tcp://",
@@ -223,7 +223,7 @@ fn run(cli: Cli) -> Result<()> {
         let identity = validator_identity(&validator_signers[index], validator_bls[index]);
         let signer = &validator_signers[index];
         let client = connect_or_initialize_validator_enclave(
-            &specs[index].endpoint,
+            &spec.endpoint,
             &validator_data[index],
             identity,
             |hash| node_signature(signer, hash),
@@ -232,9 +232,9 @@ fn run(cli: Cli) -> Result<()> {
         founder_processes.push(process);
     }
     let offer_public = establish_offer_key(&mut founders)?;
-    for index in 0..4 {
+    for (index, spec) in specs.iter().take(4).enumerate() {
         ensure!(
-            specs[index].tee_dir.join("sealed_root.bin").is_file(),
+            spec.tee_dir.join("sealed_root.bin").is_file(),
             "founder {index} did not persist sealed_root.bin"
         );
     }
@@ -467,13 +467,12 @@ fn run(cli: Cli) -> Result<()> {
     let generated = candidate.generate_dcap_quote(&transition)?;
     let proof = generated
         .transition_key_ready_proof
-        .clone()
         .ok_or_else(|| eyre!("candidate returned no transition key-ready proof"))?;
     let transition_evidence = AttestationEvidenceV1::Dcap(DcapEvidenceV1 {
         intent: transition.clone(),
         quote: generated.quote_body,
         components: components.clone(),
-        transition_key_ready_proof: Some(proof.clone()),
+        transition_key_ready_proof: Some(proof),
     });
     verify_evidence(&mut founders[0], &transition_evidence, &policy_bytes, now)?;
     let ready =

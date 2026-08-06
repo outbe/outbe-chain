@@ -153,7 +153,11 @@ impl MetadosisContract<'_> {
                 .map_err(|error| fatal(format!("derive live fixture JobId: {error}")))?;
             let current_accountability = OcompVoteAccountabilityV1::empty(
                 current_finalized.job_id,
-                current_intent.result_committee_snapshot_hash,
+                current_intent.result_validator_set_epoch,
+                current_intent.result_committee_set_hash,
+                current_intent.result_ocomp_binding_hash,
+                current_intent.result_member_count,
+                current_intent.result_quorum_threshold,
             )
             .map_err(|error| fatal(format!("build live fixture vote slots: {error}")))?;
             self.write_result_vote_accountability(&current_accountability, schema_limits)?;

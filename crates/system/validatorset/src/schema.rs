@@ -84,6 +84,17 @@ use outbe_primitives::storage::types::{Mapping, Slot, StorageBytes};
 ///       explicit operational key selected by a validator for one protocol role.
 ///   49: validator_by_role_delegate — mapping(uint8 => mapping(address => address))
 ///       reverse role-scoped lookup used by protocol consumers and ZeroFee.
+///   50: val_ocomp_registration — mapping(address => bytes)
+///       canonical `OcompKeyRegistrationV1` accepted by `confirmValidatorReady`.
+///   51: ocomp_key_hash_to_validator — mapping(bytes32 => address)
+///       reverse reservation keyed by `keccak256(compressed SEC1 OCOMP public key)`.
+///   52: committee_snapshot_ocomp_epoch — mapping(bytes32 => uint64)
+///   53: committee_snapshot_ocomp_consensus_hash — mapping(bytes32 => bytes32)
+///   54: committee_snapshot_ocomp_binding_hash — mapping(bytes32 => bytes32)
+///   55: committee_snapshot_ocomp_member_count — mapping(bytes32 => uint64)
+///   56: committee_snapshot_ocomp_key_lo_at — mapping(bytes32 => mapping(uint64 => bytes32))
+///   57: committee_snapshot_ocomp_key_hi_at — mapping(bytes32 => mapping(uint64 => bytes32))
+///   58: committee_snapshot_ocomp_key_epoch_at — mapping(bytes32 => mapping(uint64 => uint64))
 #[contract(addr = VALIDATOR_SET_ADDRESS)]
 pub struct ValidatorSet {
     // Config (slots 0-4)
@@ -228,4 +239,22 @@ pub struct ValidatorSet {
     /// may serve different roles, but a `(role, delegate)` pair resolves to at
     /// most one validator.
     pub validator_by_role_delegate: Mapping<u8, Mapping<Address, Address>>,
+
+    /// Slot 50 — canonical OCOMP key registration per validator. Registration
+    /// validity is checked before the bytes become reachable or readiness is set.
+    pub val_ocomp_registration: Mapping<Address, StorageBytes>,
+
+    /// Slot 51 — unique ownership of a compressed SEC1 OCOMP key.
+    pub ocomp_key_hash_to_validator: Mapping<B256, Address>,
+
+    /// Slots 52..58 — OCOMP extension keyed by the unchanged consensus
+    /// `committee_snapshot_key`. It is deliberately separate from
+    /// `CommitteeEntry` and therefore cannot change `committee_set_hash_v2`.
+    pub committee_snapshot_ocomp_epoch: Mapping<B256, u64>,
+    pub committee_snapshot_ocomp_consensus_hash: Mapping<B256, B256>,
+    pub committee_snapshot_ocomp_binding_hash: Mapping<B256, B256>,
+    pub committee_snapshot_ocomp_member_count: Mapping<B256, u64>,
+    pub committee_snapshot_ocomp_key_lo_at: Mapping<B256, Mapping<u64, B256>>,
+    pub committee_snapshot_ocomp_key_hi_at: Mapping<B256, Mapping<u64, B256>>,
+    pub committee_snapshot_ocomp_key_epoch_at: Mapping<B256, Mapping<u64, u64>>,
 }

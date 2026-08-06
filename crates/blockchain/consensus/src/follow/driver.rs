@@ -20,7 +20,6 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use alloy_consensus::BlockHeader as _;
 use commonware_consensus::types::{Epoch, Epocher, Height};
 use commonware_cryptography::bls12381;
 use commonware_runtime::{Clock, Metrics, Spawner};
@@ -40,12 +39,6 @@ const TIP_POLL_INTERVAL: Duration = Duration::from_millis(500);
 /// on a busy upstream. Between tip queries the driver drives toward the last
 /// known tip.
 const TIP_REFRESH_EVERY: u32 = 4;
-
-/// How many blocks past `first(epoch)` to scan for the epoch's boundary
-/// outcome. The boundary normally rides `first(epoch)` exactly; a skipped view
-/// at the epoch start can push it a few blocks later. A small window absorbs
-/// that without unbounded scanning.
-const BOUNDARY_SCAN_WINDOW: u64 = 16;
 
 /// How many heights above the marshal's processed floor to keep hinted at once.
 /// The marshal fetches the lowest permitted height and processes in order; a
@@ -227,94 +220,28 @@ where
             return true;
         }
 
-        // Epoch E's `BoundaryOutcome` (which announces epoch E's committee)
-        // rides the FIRST block of epoch E — `epocher.first(E)` under the
-        // [`FollowerEpocher`](crate::follow::FollowerEpocher), i.e. block E·L+1.
-        // Normally the boundary is exactly there; a skipped view at the epoch
-        // start can push it a few blocks later (still within the epoch), so scan
-        // a bounded window forward from `first(E)` for the first block that
-        // `advance_from_block_extra_data` registers as epoch `E`.
-        let Some(first) = self.config.epocher.first(epoch) else {
-            warn!(epoch = epoch.get(), "epocher has no first height for epoch");
-            return false;
-        };
-        // Cap the scan at the epoch's last block (a boundary must land inside its
-        // own epoch); guard against an absurd window on a misconfigured epocher.
-        let last = self
-            .config
-            .epocher
-            .last(epoch)
-            .map(|h| h.get())
-            .unwrap_or(first.get());
-        let scan_end = last.min(first.get().saturating_add(BOUNDARY_SCAN_WINDOW));
-
-        let mut height = first.get();
-        while height <= scan_end {
-            let Some(certified) = self
-                .config
-                .upstream
-                .get_finalization(Height::new(height))
-                .await
-            else {
-                // The upstream does not have this height yet — the epoch's
-                // boundary block isn't available. Retry on the next poll.
-                debug!(
-                    epoch = epoch.get(),
-                    height,
-                    "upstream has no block yet while scanning for epoch boundary; will retry"
-                );
-                return false;
-            };
-            let extra = certified.block.header().extra_data().clone();
-            let registered = {
-                let mut chain = self
+        match super::engine::prepare_committee_chain(
+            &self.config.chain,
+            &self.config.upstream,
+            &self.config.epocher,
+            self.config.anchor_epoch,
+            epoch,
+        )
+        .await
+        {
+            Ok(()) => {
+                self.registered_epoch = self
                     .config
                     .chain
                     .lock()
-                    .expect("committee chain mutex poisoned");
-                chain.advance_from_block_extra_data(extra.as_ref())
-            };
-            match registered {
-                Ok(Some(reg)) if reg == epoch => {
-                    debug!(
-                        epoch = epoch.get(),
-                        height, "registered epoch committee from boundary block"
-                    );
-                    self.registered_epoch =
-                        Some(self.registered_epoch.map_or(epoch, |r| r.max(epoch)));
-                    return true;
-                }
-                Ok(Some(reg)) => {
-                    // A boundary for a DIFFERENT epoch than expected — the chain
-                    // model and the upstream disagree. Refuse rather than skip.
-                    warn!(
-                        epoch = epoch.get(),
-                        registered = reg.get(),
-                        height,
-                        "boundary block registered an unexpected epoch; refusing to advance"
-                    );
-                    return false;
-                }
-                Ok(None) => {
-                    // Not a boundary block — keep scanning forward.
-                    height = height.saturating_add(1);
-                }
-                Err(error) => {
-                    warn!(
-                        epoch = epoch.get(),
-                        height, %error, "failed to register epoch committee from block"
-                    );
-                    return false;
-                }
+                    .expect("committee chain mutex poisoned")
+                    .highest_registered();
+                true
+            }
+            Err(error) => {
+                warn!(epoch = epoch.get(), %error, "could not extend authenticated follower committee chain; will retry");
+                false
             }
         }
-
-        warn!(
-            epoch = epoch.get(),
-            first = first.get(),
-            scan_end,
-            "no boundary outcome found in the epoch's leading window; refusing to advance"
-        );
-        false
     }
 }

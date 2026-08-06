@@ -7,34 +7,37 @@ publish.workspace = true
 
 [features]
 default = []
-ocomp-integration = [
+ocomp-finality-fixture = [
     "dep:alloy-consensus",
     "dep:alloy-rlp",
     "dep:alloy-trie",
     "dep:commonware-consensus",
     "dep:commonware-utils",
-    "dep:k256",
     "dep:outbe-consensus",
     "dep:outbe-common",
     "dep:outbe-fidelity",
     "dep:outbe-metadosis",
-    "outbe-metadosis/test-utils",
-    "dep:outbe-nod",
-    "dep:outbe-nodfactory",
     "dep:outbe-node",
     "dep:outbe-ocomp-protocol",
-    "dep:outbe-offchain-data",
-    "dep:outbe-offchain-storage",
     "dep:outbe-oracle",
-    "dep:outbe-update",
-    "dep:outbe-zerofee",
     "dep:reth-chainspec",
-    "dep:reth-ethereum",
     "dep:reth-primitives-traits",
-    "dep:reth-provider",
     "dep:reth-storage-api",
     "dep:reth-trie",
     "dep:revm",
+]
+ocomp-integration = [
+    "ocomp-finality-fixture",
+    "dep:k256",
+    "outbe-metadosis/test-utils",
+    "dep:outbe-nod",
+    "dep:outbe-nodfactory",
+    "dep:outbe-offchain-data",
+    "dep:outbe-offchain-storage",
+    "dep:outbe-tribute",
+    "dep:outbe-update",
+    "dep:reth-ethereum",
+    "dep:reth-provider",
 ]
 dcap-lifecycle-sgx = ["dep:k256", "dep:outbe-operator"]
 
@@ -85,8 +88,8 @@ outbe-ocomp-protocol = { workspace = true, optional = true }
 outbe-offchain-data = { workspace = true, optional = true }
 outbe-offchain-storage = { workspace = true, optional = true }
 outbe-oracle = { workspace = true, optional = true }
+outbe-tribute = { workspace = true, optional = true }
 outbe-update = { workspace = true, optional = true }
-outbe-zerofee = { workspace = true, optional = true }
 rand.workspace = true
 reth-chainspec = { workspace = true, optional = true }
 reth-ethereum = { workspace = true, optional = true }

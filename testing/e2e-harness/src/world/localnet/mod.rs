@@ -36,10 +36,9 @@ use crate::internal::config::Config;
 use crate::internal::proc::{args, redact_args_for_log, ChildGuard, DockerImageId, EnclaveGuard};
 use crate::internal::shell::Sh;
 
-/// Per-node execution cache for the four validators co-located by the PoC
-/// devnet harness. The upstream 4 GiB default is a single-node deployment
-/// default; applying it four times would consume the declared 12 GiB process
-/// budget before OCOMP begins.
+/// Per-node execution cache for validators co-located by the devnet harness.
+/// The upstream 4 GiB default is a single-node deployment default; applying it
+/// to every local validator would consume the process budget before OCOMP begins.
 const CO_LOCATED_DEVNET_CROSS_BLOCK_CACHE_MIB: u64 = 512;
 
 /// Test-provided knobs for a localnet start. The **enclave mode** is NOT here —
@@ -160,6 +159,19 @@ impl Localnet {
     /// Every reachable harness mode runs an enclave.
     pub fn tee_enabled(&self) -> bool {
         self.cfg.tee_mode.enabled()
+    }
+
+    /// Canonical ValidatorSet epoch length authored into this scenario's
+    /// ChainSpec. Admission scheduling must derive its boundary window from
+    /// this value rather than duplicating a devnet literal.
+    pub fn epoch_length_blocks(&self) -> Result<u64> {
+        let genesis: serde_json::Value =
+            serde_json::from_slice(&fs::read(self.cfg.dir.join("genesis.json"))?)?;
+        genesis
+            .pointer("/config/epochLengthBlocks")
+            .and_then(serde_json::Value::as_u64)
+            .filter(|epoch| *epoch > 0)
+            .ok_or_else(|| eyre::eyre!("genesis config has no positive epochLengthBlocks"))
     }
 
     /// Five-second RPC polls allowed for block-1 TEE bootstrap. Consecutive

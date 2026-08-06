@@ -19,7 +19,6 @@
 | `0x000c` | `ResultChunkV1` | `ResultChunkV1` |
 | `0x000d` | `LysisResultV1` | `LysisResultV1` |
 | `0x000e` | `ActivationPayloadV1` | `ActivationPayloadV1` |
-| `0x000f` | `OcompCommitteeSnapshotV1` | `OcompCommitteeSnapshotV1` |
 | `0x0010` | `OcompKeyRegistrationV1` | `OcompKeyRegistrationV1` |
 | `0x0013` | `ActiveGenerationV1` | `ActiveGenerationV1` |
 | `0x0014` | `AggregateActivationReceiptV1` | `AggregateActivationReceiptV1` |
@@ -73,7 +72,6 @@
 | — | `VoteAccountability` | `OUTBE_OCOMP_VOTE_ACCOUNTABILITY_V1` |
 | — | `LysisTerminal` | `OUTBE_OCOMP_LYSIS_TERMINAL_V1` |
 | — | `ValidatorIdentity` | `OUTBE_OCOMP_VALIDATOR_IDENTITY_V1` |
-| — | `Committee` | `OUTBE_OCOMP_COMMITTEE_V1` |
 | — | `KeyPop` | `OUTBE_OCOMP_KEY_POP_V1` |
 | — | `SignOnceSlot` | `OUTBE_OCOMP_SIGN_ONCE_SLOT_V1` |
 | — | `ActivationCall` | `OUTBE_OCOMP_ACTIVATION_CALL_V1` |

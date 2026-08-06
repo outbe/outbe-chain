@@ -167,7 +167,7 @@ impl DcapTestnetChainSpecBindingV1 {
 
 /// Parsing never falls open. Constructors that cannot return a Result retain an
 /// Invalid state and make block construction/execution fail before mutation.
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum TeeAttestationChainSpecStateV1 {
     #[default]
     Unbound,

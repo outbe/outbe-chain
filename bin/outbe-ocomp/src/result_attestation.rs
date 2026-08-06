@@ -7,8 +7,7 @@
 use alloy_primitives::B256;
 use outbe_ocomp_protocol::{
     committee::{
-        verify_low_s_prehash, OcompCommitteeSnapshotV1, POC_COMMITTEE_SIZE,
-        RESULT_SIGNATURE_PURPOSE_BITMAP,
+        verify_low_s_prehash, POC_KEY_EPOCH,
     },
     control::FinalizedJobSpecV1,
     intent::JobIntentV1,
@@ -27,8 +26,7 @@ use crate::{
 pub struct LocalResultVoteAttesterV1 {
     identity: EndpointIdentity,
     fork_id: B256,
-    validator_index: u8,
-    committee: OcompCommitteeSnapshotV1,
+    validator_index: u16,
     signer: OcompSigner,
     sign_once: SignOnceStore,
     limits: SchemaLimits,
@@ -38,41 +36,20 @@ impl LocalResultVoteAttesterV1 {
     pub fn new(
         identity: EndpointIdentity,
         fork_id: B256,
-        validator_index: u8,
-        committee: OcompCommitteeSnapshotV1,
+        validator_index: u16,
         signer: OcompSigner,
         sign_once: SignOnceStore,
         limits: SchemaLimits,
     ) -> Result<Self, LocalResultAttestationErrorV1> {
-        if usize::from(validator_index) >= POC_COMMITTEE_SIZE {
+        if signer.key_epoch() != POC_KEY_EPOCH {
             return Err(LocalResultAttestationErrorV1::Binding(
-                "configured validator index",
-            ));
-        }
-        let member = committee
-            .ordered_members
-            .get(usize::from(validator_index))
-            .ok_or(LocalResultAttestationErrorV1::Binding(
-                "configured validator committee slot",
-            ))?;
-        if committee.chain_id != identity.chain_id
-            || committee.genesis_hash != identity.genesis_hash
-            || committee.fork_id != fork_id
-            || committee.protocol_bundle_hash != identity.protocol_bundle_hash
-            || member.validator_index != validator_index
-            || member.ocomp_public_key_sec1 != signer.public_key_sec1()
-            || member.key_epoch != signer.key_epoch()
-            || member.allowed_purpose_bitmap & RESULT_SIGNATURE_PURPOSE_BITMAP == 0
-        {
-            return Err(LocalResultAttestationErrorV1::Binding(
-                "configured OCOMP key and installed committee member",
+                "configured OCOMP key epoch",
             ));
         }
         Ok(Self {
             identity,
             fork_id,
             validator_index,
-            committee,
             signer,
             sign_once,
             limits,
@@ -94,20 +71,17 @@ impl LocalResultVoteAttesterV1 {
             ));
         }
         self.validate_finalized_binding(finalized, &intent, &result)?;
-        let member = &self.committee.ordered_members[usize::from(self.validator_index)];
         if finalized.summary.open_height >= finalized.summary.deadline_height
             || canonical_height < finalized.summary.open_height
             || canonical_height >= finalized.summary.deadline_height
-            || canonical_height < member.valid_from_height
-            || canonical_height >= member.valid_until_height_exclusive
         {
             return Err(LocalResultAttestationErrorV1::Binding(
-                "canonical voting and committee-member validity window",
+                "canonical voting window",
             ));
         }
-        if self.committee.snapshot_hash(&self.limits)? != intent.result_committee_snapshot_hash {
+        if self.validator_index >= intent.result_member_count {
             return Err(LocalResultAttestationErrorV1::Binding(
-                "finalized intent committee snapshot",
+                "configured validator index for finalized snapshot",
             ));
         }
 
@@ -119,7 +93,9 @@ impl LocalResultVoteAttesterV1 {
             job_id: result.job_id,
             attempt: result.attempt,
             protocol_bundle_hash: result.protocol_bundle_hash,
-            committee_snapshot_hash: intent.result_committee_snapshot_hash,
+            result_validator_set_epoch: intent.result_validator_set_epoch,
+            result_committee_set_hash: intent.result_committee_set_hash,
+            result_ocomp_binding_hash: intent.result_ocomp_binding_hash,
             validator_index: self.validator_index,
             key_epoch: self.signer.key_epoch(),
             result_digest,
@@ -134,7 +110,9 @@ impl LocalResultVoteAttesterV1 {
             protocol_bundle_hash: result.protocol_bundle_hash,
             job_id: result.job_id,
             attempt: result.attempt,
-            result_committee_snapshot_hash: intent.result_committee_snapshot_hash,
+            result_validator_set_epoch: intent.result_validator_set_epoch,
+            result_committee_set_hash: intent.result_committee_set_hash,
+            result_ocomp_binding_hash: intent.result_ocomp_binding_hash,
             validator_index: self.validator_index,
             key_epoch: self.signer.key_epoch(),
             result,

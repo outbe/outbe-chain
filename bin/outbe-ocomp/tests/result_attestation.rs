@@ -2,8 +2,7 @@ use std::{fs, os::unix::fs::MetadataExt as _};
 
 use alloy_primitives::{B256, U256};
 use k256::ecdsa::{
-    signature::hazmat::{PrehashSigner as _, PrehashVerifier as _},
-    Signature, SigningKey, VerifyingKey,
+    signature::hazmat::PrehashVerifier as _, Signature, VerifyingKey,
 };
 use outbe_ocomp::{
     control::EndpointIdentity,
@@ -12,10 +11,6 @@ use outbe_ocomp::{
     sign_once::{SignOnceError, SignOnceStore},
 };
 use outbe_ocomp_protocol::{
-    committee::{
-        OcompCommitteeSnapshotV1, OcompKeyRegistrationCoreV1, OcompKeyRegistrationV1,
-        OcompMemberV1, RESULT_SIGNATURE_PURPOSE_BITMAP,
-    },
     common::BoundedBytes,
     control::{FinalizedJobSpecV1, FinalizedJobSummaryV1},
     hash::hash_framed,
@@ -42,7 +37,6 @@ fn fixture() -> (
     B256,
     FinalizedJobSpecV1,
     LysisResultV1,
-    OcompCommitteeSnapshotV1,
 ) {
     let limits = poc_schema_limits();
     let fork_id = hash(1);
@@ -52,62 +46,6 @@ fn fixture() -> (
         boot_nonce: hash(99),
         protocol_bundle_hash: hash(41),
     };
-    let registrations = (0_u8..4)
-        .map(|validator_index| {
-            let signing_key = SigningKey::from_slice(&[validator_index + 1; 32]).unwrap();
-            let mut registration = OcompKeyRegistrationV1 {
-                core: OcompKeyRegistrationCoreV1 {
-                    chain_id: identity.chain_id,
-                    genesis_hash: identity.genesis_hash,
-                    fork_id,
-                    protocol_bundle_hash: identity.protocol_bundle_hash,
-                    validator_index,
-                    validator_identity_hash: hash(70 + validator_index),
-                    ocomp_public_key_sec1: signing_key
-                        .verifying_key()
-                        .to_encoded_point(true)
-                        .as_bytes()
-                        .try_into()
-                        .unwrap(),
-                    key_epoch: 1,
-                    allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
-                    valid_from_height: 1,
-                    valid_until_height_exclusive: 1_000,
-                },
-                proof_of_possession: [0; 64],
-            };
-            let digest = registration.proof_of_possession_digest(&limits).unwrap();
-            let signature: Signature = signing_key.sign_prehash(digest.as_slice()).unwrap();
-            registration.proof_of_possession = signature
-                .normalize_s()
-                .unwrap_or(signature)
-                .to_bytes()
-                .into();
-            registration
-        })
-        .collect::<Vec<_>>();
-    let committee = OcompCommitteeSnapshotV1 {
-        chain_id: identity.chain_id,
-        genesis_hash: identity.genesis_hash,
-        fork_id,
-        protocol_bundle_hash: identity.protocol_bundle_hash,
-        snapshot_epoch: 1,
-        threshold: 3,
-        ordered_members: registrations
-            .into_iter()
-            .map(|registration| OcompMemberV1 {
-                validator_index: registration.core.validator_index,
-                validator_identity_hash: registration.core.validator_identity_hash,
-                ocomp_public_key_sec1: registration.core.ocomp_public_key_sec1,
-                key_epoch: registration.core.key_epoch,
-                allowed_purpose_bitmap: registration.core.allowed_purpose_bitmap,
-                valid_from_height: registration.core.valid_from_height,
-                valid_until_height_exclusive: registration.core.valid_until_height_exclusive,
-                proof_of_possession: registration.proof_of_possession,
-            })
-            .collect(),
-    };
-    let committee_hash = committee.snapshot_hash(&limits).unwrap();
     let intent = JobIntentV1 {
         chain_id: identity.chain_id,
         genesis_hash: identity.genesis_hash,
@@ -165,7 +103,11 @@ fn fixture() -> (
                 state_version: 12,
             },
         },
-        result_committee_snapshot_hash: committee_hash,
+        result_validator_set_epoch: 1,
+        result_committee_set_hash: hash(70),
+        result_ocomp_binding_hash: hash(71),
+        result_member_count: 4,
+        result_quorum_threshold: 3,
         custody_committee_epoch_hash: None,
     };
     let block_hash = hash(90);
@@ -267,27 +209,26 @@ fn fixture() -> (
         },
         canonical_job_intent: BoundedBytes(intent.encode_canonical(&limits).unwrap()),
     };
-    (identity, fork_id, spec, result, committee)
+    (identity, fork_id, spec, result)
 }
 
 #[test]
 fn supervisor_signs_exact_result_vote_once_and_rejects_a_conflict() {
     let limits = poc_schema_limits();
-    let (identity, fork_id, spec, result, committee) = fixture();
+    let (identity, fork_id, spec, result) = fixture();
     let directory = tempfile::tempdir().unwrap();
     let owner_uid = fs::metadata(directory.path()).unwrap().uid();
     let signer = OcompSigner::from_secret([1; 32]).unwrap();
     let public_key = signer.public_key_sec1();
     let store = SignOnceStore::open(directory.path().join("sign-once"), owner_uid, limits).unwrap();
-    let attester =
-        LocalResultVoteAttesterV1::new(identity, fork_id, 0, committee, signer, store, limits)
-            .unwrap();
+    let attester = LocalResultVoteAttesterV1::new(identity, fork_id, 0, signer, store, limits)
+        .unwrap();
     let canonical = result.encode_canonical(&limits).unwrap();
 
     assert!(matches!(
         attester.attest(&canonical, &spec, 1_000),
         Err(LocalResultAttestationErrorV1::Binding(
-            "canonical voting and committee-member validity window"
+            "canonical voting window"
         ))
     ));
     let first = attester.attest(&canonical, &spec, 100).unwrap();

@@ -63,7 +63,7 @@ fn setup(storage: StorageHandle) -> Fixture {
 
     let mut vs = ValidatorSet::new(storage.clone());
     vs.config_owner.write(OWNER).unwrap();
-    vs.config_max_validators.write(100).unwrap();
+    vs.set_config_max_validators(100).unwrap();
     vs.epoch_number.write(U256::from(ROUND_EPOCH)).unwrap();
 
     let mut committee = Vec::new();
@@ -71,7 +71,7 @@ fn setup(storage: StorageHandle) -> Fixture {
         let addr = validator_addr(i);
         vs.register_validator(OWNER, addr, &pubkeys[i as usize])
             .unwrap();
-        vs.activate_validator(addr).unwrap();
+        vs.activate_validator_via_boundary_for_test(addr).unwrap();
         let stake = U256::from(1_000_000u64);
         let staking = Staking::new(storage.clone());
         staking.stake_amount.write(&addr, stake).unwrap();
@@ -95,7 +95,8 @@ fn setup(storage: StorageHandle) -> Fixture {
     let mut sub_pk = [0u8; 48];
     sub_pk[0] = 0x77;
     vs.register_validator(OWNER, SUBMITTER, &sub_pk).unwrap();
-    vs.activate_validator(SUBMITTER).unwrap();
+    vs.activate_validator_via_boundary_for_test(SUBMITTER)
+        .unwrap();
 
     let commitment = dkg.polynomial.encode().to_vec();
     let poly_hash = public_polynomial_hash(&dkg.polynomial);

@@ -683,7 +683,7 @@ mod tests {
                 .unwrap();
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(Address::ZERO).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_epoch_length_blocks.write(60).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
@@ -692,9 +692,9 @@ mod tests {
                 pk[0] = idx as u8 + 1;
                 vs.register_validator(Address::ZERO, validator, &pk)
                     .unwrap();
+                vs.activate_validator_via_boundary_for_test(validator)
+                    .unwrap();
             }
-            vs.activate_reshared_set(validators, B256::repeat_byte(0xBB))
-                .unwrap();
             // Seed the COEN/0xUSD oracle pair + a 1.0 rate so begin-block NOD/GEM/INTEX
             // floor-price promotion reads a registered pair instead of reverting
             // "pair not registered".

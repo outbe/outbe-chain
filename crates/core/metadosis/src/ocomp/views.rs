@@ -21,7 +21,7 @@ pub fn get_offchain_job(storage: StorageHandle<'_>, intent_id: B256) -> Result<V
         .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))
 }
 
-/// Returns the complete bounded four-slot vote/accountability record selected
+/// Returns the complete bounded vote/accountability record selected
 /// by consensus for one finalized JobId.
 pub fn get_offchain_vote_accountability(
     storage: StorageHandle<'_>,

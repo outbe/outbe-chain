@@ -53,6 +53,10 @@ mod fixture_kernel;
 pub mod genesis;
 mod lifecycle;
 mod ocomp;
+pub use ocomp::vote::{
+    deadline_passed_result_vote_revert_data, is_deadline_passed_result_vote_revert_data,
+    resolve_historical_result_vote_carrier_signer, resolve_historical_result_vote_participant,
+};
 pub(crate) mod ocomp_budget;
 mod pre_admission;
 pub mod precompile;

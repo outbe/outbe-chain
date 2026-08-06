@@ -228,7 +228,7 @@ terminal_order  = bounded ordered IntentId queue
 No READY or expiry scan is permitted. The PoC limits are:
 
 ```text
-max_pending_jobs = 2
+concurrent OCOMP jobs = no separate product cap
 max_ready_inspections_per_block = 1
 max_expirations_per_block = 1
 retry_backoff_blocks = 1

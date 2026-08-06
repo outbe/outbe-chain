@@ -4,7 +4,6 @@
 //! method that can insert a JobIntent, result, root or chain state; scenarios
 //! must observe those values through the production RPC/control/artifact path.
 
-use std::array;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -35,21 +34,18 @@ use outbe_metadosis::proof_layout::METADOSIS_STORAGE_LAYOUT_V1_HASH;
 use outbe_ocomp_protocol::{
     activation::SignOncePurpose,
     committee::{
-        OcompCommitteeSnapshotV1, OcompKeyRegistrationCoreV1, OcompKeyRegistrationV1,
-        OcompMemberV1, RESULT_SIGNATURE_PURPOSE_BITMAP,
+        validator_identity_hash_v1, OcompKeyRegistrationCoreV1, OcompKeyRegistrationV1,
+        POC_KEY_EPOCH, RESULT_SIGNATURE_PURPOSE_BITMAP,
     },
     common::BoundedBytes,
-    hash::hash_framed,
     profile::{CapacityProfileV1, ProtocolBundleV1},
-    registry::{
-        HashDomain, FIDELITY_OPENING_CODEC_ID, ORACLE_OPENING_CODEC_ID, TRIBUTE_BODY_CODEC_ID,
-    },
+    registry::{FIDELITY_OPENING_CODEC_ID, ORACLE_OPENING_CODEC_ID, TRIBUTE_BODY_CODEC_ID},
     vote::{ResultVoteSigningSubjectV1, ResultVoteV1},
     PreparedVoteTransactionV1,
 };
 #[cfg(feature = "ocomp-integration")]
 use outbe_primitives::{
-    addresses::{METADOSIS_ADDRESS, UPDATE_ADDRESS, VALIDATOR_SET_ADDRESS},
+    addresses::{METADOSIS_ADDRESS, TRIBUTE_ADDRESS, UPDATE_ADDRESS, VALIDATOR_SET_ADDRESS},
     signer::OutbeEvmSigner,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
     OutbeHeader,
@@ -60,8 +56,6 @@ use outbe_update::{schema::Update, ProtocolVersion};
 use std::fs::{self, OpenOptions};
 #[cfg(feature = "ocomp-integration")]
 use std::io::{Read as _, Seek as _, SeekFrom, Write as _};
-#[cfg(feature = "ocomp-integration")]
-use std::net::SocketAddr;
 #[cfg(feature = "ocomp-integration")]
 use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _};
 #[cfg(feature = "ocomp-integration")]
@@ -80,7 +74,6 @@ use crate::internal::proc::ChildGuard;
 use crate::ocomp_evidence::{
     CorrelatedTributeFixtureV1, CorrelationError, JobIntentCorrelationV1,
     PublicTributeCorrelationV1, TributeCorrelationBuilder, ValidatorSourceCorrelationV1,
-    OCOMP_VALIDATOR_DOMAINS,
 };
 
 #[cfg(feature = "ocomp-integration")]
@@ -102,12 +95,23 @@ const OCOMP_MEASUREMENT_BLOCK_GAS_LIMIT: u64 = 40_000_000;
 const OCOMP_PUBLIC_OFFERING_AFTER_GENESIS_SECS: u64 = 120;
 #[cfg(feature = "ocomp-integration")]
 pub(crate) const OCOMP_CAPACITY_OFFERING_AFTER_GENESIS_SECS: u64 = 360;
+#[cfg(feature = "ocomp-integration")]
+const OCOMP_DYNAMIC_FIRST_OFFERING_AFTER_GENESIS_SECS: u64 = 180;
+#[cfg(feature = "ocomp-integration")]
+const OCOMP_DYNAMIC_SECOND_OFFERING_AFTER_GENESIS_SECS: u64 = 700;
+#[cfg(feature = "ocomp-integration")]
+pub(crate) const OCOMP_TEST_EPOCH_LENGTH_BLOCKS: u64 = 300;
+#[cfg(feature = "ocomp-integration")]
+pub(crate) const OCOMP_DYNAMIC_DKG_PREPARE_WINDOW_BLOCKS: u64 = 10;
 
 /// Fixed process roles represented in one validator's OCOMP domain.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OcompProcessRole {
     Supervisor,
+    /// Compute-only FullNode role: executes canonical Lysis and commits the
+    /// local result, but never opens a voting runtime.
+    Follower,
     SnapshotExporter,
     Worker,
 }
@@ -164,8 +168,8 @@ pub struct OcompForkRestartEvidenceV1 {
 }
 
 impl OcompForkRestartEvidenceV1 {
-    fn validate(&self) -> Result<()> {
-        if self.validator_index >= OCOMP_VALIDATOR_DOMAINS {
+    fn validate(&self, validator_count: usize) -> Result<()> {
+        if usize::from(self.validator_index) >= validator_count {
             eyre::bail!("OCOMP fork restart validator index is outside the committee");
         }
         if self.activation_height == 0
@@ -203,8 +207,8 @@ pub struct OcompForkMismatchEvidenceV1 {
 }
 
 impl OcompForkMismatchEvidenceV1 {
-    pub fn validate(&self) -> Result<()> {
-        if self.validator_index >= OCOMP_VALIDATOR_DOMAINS {
+    pub fn validate(&self, validator_count: usize) -> Result<()> {
+        if usize::from(self.validator_index) >= validator_count {
             eyre::bail!("OCOMP fork mismatch validator index is outside the committee");
         }
         if self.canonical_install_hash.is_empty()
@@ -253,6 +257,11 @@ pub struct OcompScenarioTopologyV1 {
 
 impl OcompScenarioTopologyV1 {
     pub fn validate(&self) -> Result<()> {
+        let validator_count = self.domain_roots.len();
+        eyre::ensure!(
+            validator_count > 0,
+            "OCOMP topology has no validator domains"
+        );
         if let Some(identity) = &self.launch_identity {
             if !matches!(identity.classification.as_str(), "measurement" | "final")
                 || identity.activation_height == 0
@@ -262,10 +271,10 @@ impl OcompScenarioTopologyV1 {
             }
         }
         if let Some(restart) = &self.fork_restart {
-            restart.validate()?;
+            restart.validate(validator_count)?;
         }
         if let Some(mismatch) = &self.fork_mismatch {
-            mismatch.validate()?;
+            mismatch.validate(validator_count)?;
         }
         Ok(())
     }
@@ -283,7 +292,7 @@ pub struct OcompProcessRecordV1 {
     pub stopped_at_millis: Option<u64>,
 }
 
-/// Exact chain/bundle identity shared by one four-domain measurement network.
+/// Exact chain/bundle identity shared by one measurement network.
 #[cfg(feature = "ocomp-integration")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct OcompLaunchIdentityV1 {
@@ -302,6 +311,17 @@ pub struct OcompLaunchIdentityV1 {
 pub struct OcompMeasurementForkV1 {
     pub install: OcompForkInstallV1,
     pub install_hash: B256,
+}
+
+/// Exact two-job schedule plus immutable fork used by the dynamic-membership E2E.
+#[cfg(feature = "ocomp-integration")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OcompDynamicMembershipForkV1 {
+    pub fork: OcompMeasurementForkV1,
+    pub first_worldwide_day: WorldwideDay,
+    pub second_worldwide_day: WorldwideDay,
+    pub first_processing_time: u64,
+    pub second_processing_time: u64,
 }
 
 #[cfg(feature = "ocomp-integration")]
@@ -345,12 +365,15 @@ impl OcompDomain {
     }
 }
 
-/// Sole scenario owner of four independent validator compute domains.
+/// Sole scenario owner of one isolated compute domain per configured validator.
 #[derive(Debug)]
 pub struct OcompTopology {
-    #[cfg_attr(not(feature = "ocomp-integration"), allow(dead_code))]
     cfg: Config,
-    domains: [OcompDomain; OCOMP_VALIDATOR_DOMAINS as usize],
+    domains: Vec<OcompDomain>,
+    /// One synchronized, non-voting FullNode compute domain awaiting canonical
+    /// validator admission. It is deliberately outside `domains`, whose order
+    /// is the ACTIVE OCOMP membership asserted by the harness.
+    keyless_full_node_domain: Option<(u8, OcompDomain)>,
     records: Vec<OcompProcessRecordV1>,
     faults: Vec<OcompFaultRecordV1>,
     launch_identity_evidence: Option<OcompLaunchIdentityEvidenceV1>,
@@ -364,10 +387,14 @@ pub struct OcompTopology {
 
 impl OcompTopology {
     pub(crate) fn new(cfg: Config) -> Self {
+        let domains = (0..cfg.validators)
+            .map(|index| OcompDomain::new(cfg.validator_dir(index).join("ocomp").join("domain-v1")))
+            .collect();
+        let tribute_correlation = TributeCorrelationBuilder::new(cfg.validators)
+            .expect("harness validator count must fit the validator index format");
         Self {
-            domains: array::from_fn(|index| {
-                OcompDomain::new(cfg.validator_dir(index).join("ocomp").join("domain-v1"))
-            }),
+            domains,
+            keyless_full_node_domain: None,
             cfg,
             records: Vec::new(),
             faults: Vec::new(),
@@ -376,9 +403,108 @@ impl OcompTopology {
             fork_mismatch_evidence: None,
             #[cfg(feature = "ocomp-integration")]
             launch_identity: None,
-            tribute_correlation: TributeCorrelationBuilder::default(),
+            tribute_correlation,
             correlated_tribute: None,
         }
+    }
+
+    /// Extend the process topology after the canonical ValidatorSet has
+    /// activated exactly the next ordered validator. This allocates local
+    /// harness resources only; chain membership remains authoritative.
+    pub fn add_active_validator_domain(&mut self, validator_index: u8) -> Result<()> {
+        let expected = self.domains.len();
+        eyre::ensure!(
+            usize::from(validator_index) == expected,
+            "active validator domain must append at index {expected}"
+        );
+        let domain = match self.keyless_full_node_domain.take() {
+            Some((index, domain)) => {
+                eyre::ensure!(
+                    index == validator_index,
+                    "staged FullNode domain belongs to validator-{index}, not validator-{validator_index}"
+                );
+                eyre::ensure!(
+                    domain.supervisor.is_none()
+                        && domain.snapshot_exporter.is_none()
+                        && domain.workers.is_empty(),
+                    "keyless FullNode roles must stop before validator activation"
+                );
+                domain
+            }
+            None => OcompDomain::new(
+                self.cfg
+                    .validator_dir(expected)
+                    .join("ocomp")
+                    .join("domain-v1"),
+            ),
+        };
+        self.domains.push(domain);
+        Ok(())
+    }
+
+    /// Stage the compute-only profile required by an OCOMP-enabled FullNode.
+    /// The node itself no longer owns an OCOMP control transport, so this
+    /// returns no node CLI arguments. The durable domain remains outside the
+    /// ACTIVE voting topology and intentionally contains no voting keys.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn stage_keyless_full_node_domain(&mut self, validator_index: u8) -> Result<Vec<String>> {
+        let index = usize::from(validator_index);
+        eyre::ensure!(
+            index == self.domains.len(),
+            "keyless FullNode must use the next ordered validator slot"
+        );
+        eyre::ensure!(
+            self.keyless_full_node_domain.is_none(),
+            "a keyless FullNode domain is already staged"
+        );
+        self.launch_identity
+            .ok_or_else(|| eyre::eyre!("OCOMP launch identity is not established"))?;
+        let source_bundle = self.domain_root(0)?.join("protocol-bundle-v1.ocb1");
+        let root = self
+            .cfg
+            .validator_dir(index)
+            .join("ocomp")
+            .join("domain-v1");
+        fs::create_dir_all(&root)?;
+        publish_exact_file(
+            &root.join("protocol-bundle-v1.ocb1"),
+            &fs::read(source_bundle)?,
+            0o640,
+        )?;
+        eyre::ensure!(
+            !root.join("ocomp-key-v1.hex").exists() && !root.join("ocomp-evm-key.hex").exists(),
+            "keyless FullNode domain contains validator voting material"
+        );
+        self.keyless_full_node_domain = Some((validator_index, OcompDomain::new(root)));
+
+        Ok(Vec::new())
+    }
+
+    /// Stage the next validator's local runtime material before it starts in
+    /// validator mode. This does not add it to the voting topology; membership
+    /// changes only after the canonical ValidatorSet activation boundary.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn stage_joiner_domain_material(&self, validator_index: u8) -> Result<()> {
+        let index = usize::from(validator_index);
+        eyre::ensure!(
+            index == self.domains.len(),
+            "staged joiner must be the next ordered validator index"
+        );
+        let source_bundle = self.domain_root(0)?.join("protocol-bundle-v1.ocb1");
+        let source_key = self.cfg.validator_dir(index).join("ocomp-key-v1.hex");
+        let bundle = fs::read(&source_bundle)?;
+        let signing_key = fs::read(&source_key)?;
+        let root = self
+            .cfg
+            .validator_dir(index)
+            .join("ocomp")
+            .join("domain-v1");
+        fs::create_dir_all(&root)?;
+        publish_exact_file(&root.join("protocol-bundle-v1.ocb1"), &bundle, 0o640)?;
+        publish_exact_file(&root.join("ocomp-key-v1.hex"), &signing_key, 0o600)?;
+        let evm_key = format!("{}\n", ocomp_evm_private_key(validator_index));
+        publish_exact_file(&root.join("ocomp-evm-key.hex"), evm_key.as_bytes(), 0o600)?;
+        Ok(())
     }
 
     /// Scenario-owned root for one validator domain.
@@ -389,9 +515,11 @@ impl OcompTopology {
     /// Verify the durable footprint left by one completed production job in
     /// every isolated validator domain.
     ///
-    /// Development workers keep registered loopback ZeroMQ connections with the Supervisor.
-    /// Every assignment still executes exactly one unit, so post-activation
-    /// assertions inspect admitted outputs rather than process lifetime.
+    /// Development workers are deliberately short-lived: the Supervisor
+    /// authenticates one, executes one unit, waits for it to exit, and then
+    /// admits its output. Consequently, a post-activation E2E assertion must
+    /// inspect the admitted worker outputs rather than require idle worker
+    /// processes to remain alive.
     #[cfg(feature = "ocomp-integration")]
     pub fn verify_completed_job_artifacts(&self, job_id: B256) -> Result<()> {
         let job_component = hex::encode(job_id);
@@ -399,7 +527,7 @@ impl OcompTopology {
         let mut expected_worker_outputs = None;
         let mut physical_files = BTreeMap::<String, Vec<(u64, u64)>>::new();
 
-        for validator_index in 0..OCOMP_VALIDATOR_DOMAINS {
+        for validator_index in self.validator_indices()? {
             let root = self.domain_root(validator_index)?;
             let job_root = root.join("supervisor-v1").join("jobs").join(&job_component);
             let admissions = fingerprint_regular_directory(
@@ -461,15 +589,15 @@ impl OcompTopology {
                 .copied()
                 .collect::<std::collections::BTreeSet<_>>();
             eyre::ensure!(
-                unique.len() == usize::from(OCOMP_VALIDATOR_DOMAINS),
+                unique.len() == self.domains.len(),
                 "{logical_file} is shared by hard link across validator domains"
             );
         }
         Ok(())
     }
 
-    /// Build and sign the exact public transaction with this domain's dedicated
-    /// OCOMP delegate key. Validator identity is resolved on-chain from `msg.sender`.
+    /// Ask the node for only the inner OCOMP attestation, then build and sign
+    /// the exact public transaction with this domain's dedicated OCOMP EVM key.
     #[cfg(feature = "ocomp-integration")]
     pub fn prepare_held_vote_transaction(
         &self,
@@ -483,7 +611,7 @@ impl OcompTopology {
             .launch_identity
             .ok_or_else(|| eyre::eyre!("OCOMP launch identity is unavailable"))?;
         let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
-        vote.validator_index = validator_index;
+        vote.validator_index = u16::from(validator_index);
         vote.signature_rs = [0; 64];
         let bundle = ProtocolBundleV1::decode_canonical(
             &fs::read(
@@ -499,8 +627,10 @@ impl OcompTopology {
             protocol_bundle_hash: vote.protocol_bundle_hash,
             job_id: vote.job_id,
             attempt: vote.attempt,
-            result_committee_snapshot_hash: vote.result_committee_snapshot_hash,
-            validator_index,
+            result_validator_set_epoch: vote.result_validator_set_epoch,
+            result_committee_set_hash: vote.result_committee_set_hash,
+            result_ocomp_binding_hash: vote.result_ocomp_binding_hash,
+            validator_index: u16::from(validator_index),
             key_epoch: vote.key_epoch,
             purpose: SignOncePurpose::ResultSignature as u8,
             result_digest: vote.result_digest(&limits)?,
@@ -545,9 +675,9 @@ impl OcompTopology {
     /// node process starts.
     ///
     /// The existing Update schema authors the protocol-v1 schedule in genesis.
-    /// The resulting base genesis hash then binds the request profile, bundle,
-    /// four-member committee and their PoPs. Adding the canonical install under
-    /// `genesis.config` does not alter that header hash.
+    /// The resulting base genesis hash then binds the request profile and
+    /// protocol bundle. Adding the canonical install under `genesis.config`
+    /// does not alter that header hash.
     #[cfg(feature = "ocomp-integration")]
     pub fn prepare_measurement_fork_install(&self) -> Result<OcompMeasurementForkV1> {
         self.prepare_measurement_fork_install_inner(None, &[], false)
@@ -564,6 +694,43 @@ impl OcompTopology {
             &[],
             false,
         )
+    }
+
+    /// Prepare two independently scheduled public jobs around one real DKG
+    /// membership boundary. The shortened epoch is still above the normative
+    /// snapshot-retention lower bound; the exact production 1,800-block
+    /// compute-and-vote deadline is left unchanged.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn prepare_dynamic_membership_fork_install(&self) -> Result<OcompDynamicMembershipForkV1> {
+        let genesis_path = self.cfg.dir.join("genesis.json");
+        let mut genesis: serde_json::Value = serde_json::from_slice(&fs::read(&genesis_path)?)?;
+        let chain_id = genesis_chain_id(&genesis)?;
+        let schedule = schedule_dynamic_membership_days(&mut genesis, chain_id)?;
+        let config = genesis
+            .get("config")
+            .and_then(serde_json::Value::as_object)
+            .ok_or_else(|| eyre::eyre!("generated genesis config is not an object"))?;
+        eyre::ensure!(
+            config
+                .get(outbe_node::ocomp::fork::EPOCH_LENGTH_BLOCKS_GENESIS_KEY)
+                .and_then(serde_json::Value::as_u64)
+                == Some(OCOMP_TEST_EPOCH_LENGTH_BLOCKS)
+                && config
+                    .get("dkgPrepareWindowBlocks")
+                    .and_then(serde_json::Value::as_u64)
+                    == Some(OCOMP_DYNAMIC_DKG_PREPARE_WINDOW_BLOCKS),
+            "dynamic OCOMP epoch and DKG window must be configured before ValidatorSet genesis is seeded"
+        );
+        replace_json_atomically(&genesis_path, &genesis)?;
+
+        let fork = self.prepare_measurement_fork_install_inner(None, &[], false)?;
+        Ok(OcompDynamicMembershipForkV1 {
+            fork,
+            first_worldwide_day: schedule.0,
+            second_worldwide_day: schedule.1,
+            first_processing_time: schedule.2,
+            second_processing_time: schedule.3,
+        })
     }
 
     /// Prepare a public measurement chain whose base genesis funds exactly
@@ -652,17 +819,11 @@ impl OcompTopology {
     fn publish_validator_domain_material(&self, install: &OcompForkInstallV1) -> Result<()> {
         let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
         let canonical_bundle = install.protocol_bundle.encode_canonical(&limits)?;
-        let canonical_committee = install.result_committee.encode_canonical(&limits)?;
         for (validator_index, domain) in self.domains.iter().enumerate() {
             fs::create_dir_all(&domain.root)?;
             publish_exact_file(
                 &domain.root.join("protocol-bundle-v1.ocb1"),
                 &canonical_bundle,
-                0o640,
-            )?;
-            publish_exact_file(
-                &domain.root.join("result-committee-v1.ocb1"),
-                &canonical_committee,
                 0o640,
             )?;
             let key = measurement_signing_key(u8::try_from(validator_index)?);
@@ -685,7 +846,8 @@ impl OcompTopology {
     #[cfg(feature = "ocomp-integration")]
     pub fn install_ocomp_delegate_bindings(&self) -> Result<()> {
         const OCOMP_ROLE: u8 = 2;
-        for validator_index in 0..OCOMP_VALIDATOR_DOMAINS {
+        let validator_indices = self.validator_indices()?;
+        for validator_index in validator_indices.iter().copied() {
             let index = usize::from(validator_index);
             let validator_key =
                 crate::internal::proc::read_evm_key(&self.cfg.validator_dir(index))?;
@@ -705,11 +867,23 @@ impl OcompTopology {
                 crate::internal::eth::receipt_success(&url, &tx_hash) == Some(true),
                 "validator-{validator_index} OCOMP delegation transaction failed"
             );
+            if crate::internal::eth::balance(&url, delegate) == Some(U256::ZERO) {
+                let funding_tx = crate::internal::eth::send_value(
+                    &url,
+                    delegate,
+                    &validator_key,
+                    crate::internal::eth::coen(1),
+                )?;
+                eyre::ensure!(
+                    crate::internal::eth::receipt_success(&url, &funding_tx) == Some(true),
+                    "validator-{validator_index} OCOMP delegate funding transaction failed"
+                );
+            }
         }
 
         let deadline = Instant::now() + Duration::from_secs(30);
         loop {
-            let complete = (0..OCOMP_VALIDATOR_DOMAINS).all(|validator_index| {
+            let complete = validator_indices.iter().copied().all(|validator_index| {
                 let delegate = self
                     .ocomp_delegate_address(validator_index)
                     .unwrap_or(Address::ZERO);
@@ -719,15 +893,18 @@ impl OcompTopology {
                 .ok()
                 .and_then(|key| crate::internal::eth::address_of(&key))
                 .unwrap_or(Address::ZERO);
-                (0..usize::from(OCOMP_VALIDATOR_DOMAINS)).all(|rpc_index| {
+                (0..self.domains.len()).all(|rpc_index| {
+                    let rpc_url = self.cfg.rpc_url(rpc_index);
                     crate::internal::eth::read_call(
-                        &self.cfg.rpc_url(rpc_index),
+                        &rpc_url,
                         VALIDATOR_SET_ADDRESS,
                         &crate::internal::eth::IValidatorSet::resolveValidatorCall {
                             role: OCOMP_ROLE,
                             signer: delegate,
                         },
                     ) == Some(expected_validator)
+                        && crate::internal::eth::balance(&rpc_url, delegate)
+                            .is_some_and(|balance| !balance.is_zero())
                 })
             });
             if complete {
@@ -743,9 +920,7 @@ impl OcompTopology {
 
     #[cfg(feature = "ocomp-integration")]
     pub fn ocomp_delegate_address(&self, validator_index: u8) -> Result<Address> {
-        if validator_index >= OCOMP_VALIDATOR_DOMAINS {
-            eyre::bail!("OCOMP delegate validator index is outside the committee");
-        }
+        self.domain(validator_index)?;
         crate::internal::eth::address_of(&ocomp_evm_private_key(validator_index))
             .ok_or_else(|| eyre::eyre!("invalid deterministic OCOMP EVM key"))
     }
@@ -755,8 +930,8 @@ impl OcompTopology {
         const ORACLE_ROLE: u8 = 1;
         const OCOMP_ROLE: u8 = 2;
 
-        let mut observed_delegates = Vec::with_capacity(usize::from(OCOMP_VALIDATOR_DOMAINS));
-        for validator_index in 0..OCOMP_VALIDATOR_DOMAINS {
+        let mut observed_delegates = Vec::with_capacity(self.domains.len());
+        for validator_index in self.validator_indices()? {
             let index = usize::from(validator_index);
             let validator_key =
                 crate::internal::proc::read_evm_key(&self.cfg.validator_dir(index))?;
@@ -773,7 +948,7 @@ impl OcompTopology {
             );
             observed_delegates.push(delegate);
 
-            for rpc_index in 0..usize::from(OCOMP_VALIDATOR_DOMAINS) {
+            for rpc_index in 0..self.domains.len() {
                 let rpc_url = self.cfg.rpc_url(rpc_index);
                 eyre::ensure!(
                     crate::internal::eth::read_call(
@@ -854,14 +1029,12 @@ impl OcompTopology {
 
         let base_spec = parse_outbe_chain_spec(&genesis_path)?;
         let base_genesis_hash = base_spec.genesis_hash();
-        let validator_identities =
-            measurement_validator_identities(&self.cfg.dir.join("validators.json"))?;
         let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
         let install = measurement_fork_install(
             chain_id,
             base_genesis_hash,
             OCOMP_MEASUREMENT_ACTIVATION_HEIGHT,
-            validator_identities,
+            &self.cfg.dir.join("validators.json"),
             &limits,
         )?;
         install.validate_for_chain(chain_id, base_genesis_hash, &limits)?;
@@ -932,9 +1105,7 @@ impl OcompTopology {
         &self,
         validator_index: u8,
     ) -> Result<OcompMismatchedForkManifestV1> {
-        if validator_index >= OCOMP_VALIDATOR_DOMAINS {
-            eyre::bail!("mismatched fork validator index is outside the committee");
-        }
+        self.domain(validator_index)?;
         let canonical_path = self.cfg.dir.join("genesis.json");
         let canonical_spec = parse_outbe_chain_spec(&canonical_path)?;
         let canonical_genesis_hash = canonical_spec.genesis_hash();
@@ -997,8 +1168,8 @@ impl OcompTopology {
         })
     }
 
-    /// Start the production Supervisor in every validator domain. Each service
-    /// consumes finalized blocks and receipts from the validator's public RPC.
+    /// Start the production Supervisor and SnapshotExporter in every validator
+    /// domain after the corresponding node control sockets are ready.
     #[cfg(feature = "ocomp-integration")]
     pub fn start_validator_roles(&mut self, identity: OcompLaunchIdentityV1) -> Result<()> {
         if !self.cfg.bin_ocomp.is_file() {
@@ -1024,33 +1195,119 @@ impl OcompTopology {
             activation_height: identity.activation_height,
             metadosis_storage_layout_hash: format!("{:#x}", identity.metadosis_storage_layout_hash),
         });
-        for validator_index in 0..OCOMP_VALIDATOR_DOMAINS {
-            let supervisor =
-                self.spawn_validator_role(validator_index, OcompProcessRole::Supervisor, identity)?;
-            self.attach_owned(
-                Some(validator_index),
-                OcompProcessRole::Supervisor,
-                None,
-                supervisor,
-            )?;
-            let exporter = self.spawn_validator_role(
-                validator_index,
-                OcompProcessRole::SnapshotExporter,
-                identity,
-            )?;
-            self.attach_owned(
-                Some(validator_index),
-                OcompProcessRole::SnapshotExporter,
-                None,
-                exporter,
-            )?;
+        for validator_index in self.validator_indices()? {
+            self.start_validator_roles_for_domain(validator_index, identity)?;
         }
 
         sleep(Duration::from_secs(2));
         self.ensure_validator_roles_alive()
     }
 
-    /// Activate one production worker that registers with its validator Supervisor.
+    /// Start node-facing OCOMP roles for a validator only after the certified
+    /// boundary has made it ACTIVE and its domain has been appended.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn start_active_validator_roles(&mut self, validator_index: u8) -> Result<()> {
+        let identity = self
+            .launch_identity
+            .ok_or_else(|| eyre::eyre!("OCOMP launch identity is not established"))?;
+        self.start_validator_roles_for_domain(validator_index, identity)?;
+        sleep(Duration::from_secs(2));
+        self.ensure_validator_roles_alive()
+    }
+
+    /// Start the exact keyless compute plane required by a certified FullNode.
+    /// Its `follower` process shares the validator Supervisor pipeline but has
+    /// no signing key, EVM relay or vote submission path.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn start_keyless_full_node_roles(&mut self, validator_index: u8) -> Result<()> {
+        let identity = self
+            .launch_identity
+            .ok_or_else(|| eyre::eyre!("OCOMP launch identity is not established"))?;
+        let domain = self.keyless_full_node_domain(validator_index)?;
+        eyre::ensure!(
+            domain.supervisor.is_none() && domain.snapshot_exporter.is_none(),
+            "keyless FullNode OCOMP roles are already started"
+        );
+        let follower = self.spawn_keyless_full_node_role(
+            validator_index,
+            OcompProcessRole::Follower,
+            identity,
+        )?;
+        self.attach_keyless_full_node_owned(validator_index, OcompProcessRole::Follower, follower)?;
+        let exporter = self.spawn_keyless_full_node_role(
+            validator_index,
+            OcompProcessRole::SnapshotExporter,
+            identity,
+        )?;
+        self.attach_keyless_full_node_owned(
+            validator_index,
+            OcompProcessRole::SnapshotExporter,
+            exporter,
+        )?;
+        sleep(Duration::from_secs(2));
+        self.ensure_keyless_full_node_roles_alive(validator_index)
+    }
+
+    /// Stop only the compute clients; the synchronized FullNode process and
+    /// durable domain remain intact for validator-mode promotion.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn stop_keyless_full_node_roles(&mut self, validator_index: u8) -> Result<()> {
+        let (follower, exporter) = {
+            let domain = self.keyless_full_node_domain_mut(validator_index)?;
+            (domain.supervisor.take(), domain.snapshot_exporter.take())
+        };
+        let follower = follower.ok_or_else(|| eyre::eyre!("FullNode follower is not running"))?;
+        let exporter =
+            exporter.ok_or_else(|| eyre::eyre!("FullNode snapshot exporter is not running"))?;
+        self.stop_owned(follower);
+        self.stop_owned(exporter);
+        Ok(())
+    }
+
+    /// Network identity pinned when the genesis validator roles were started.
+    #[cfg(feature = "ocomp-integration")]
+    #[must_use]
+    pub fn launch_identity(&self) -> Option<OcompLaunchIdentityV1> {
+        self.launch_identity
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    fn start_validator_roles_for_domain(
+        &mut self,
+        validator_index: u8,
+        identity: OcompLaunchIdentityV1,
+    ) -> Result<()> {
+        let domain = self.domain(validator_index)?;
+        eyre::ensure!(
+            domain.supervisor.is_none() && domain.snapshot_exporter.is_none(),
+            "validator-{validator_index} OCOMP roles are already started"
+        );
+        let supervisor =
+            self.spawn_validator_role(validator_index, OcompProcessRole::Supervisor, identity)?;
+        self.attach_owned(
+            Some(validator_index),
+            OcompProcessRole::Supervisor,
+            None,
+            supervisor,
+        )?;
+
+        let exporter = self.spawn_validator_role(
+            validator_index,
+            OcompProcessRole::SnapshotExporter,
+            identity,
+        )?;
+        self.attach_owned(
+            Some(validator_index),
+            OcompProcessRole::SnapshotExporter,
+            None,
+            exporter,
+        )?;
+        Ok(())
+    }
+
+    /// Activate one production worker through the same inherited-FD boundary
+    /// used by the Supervisor. The authenticated control session remains
+    /// private to the topology so Cucumber steps cannot inject work.
     #[cfg(feature = "ocomp-integration")]
     pub fn activate_worker(
         &mut self,
@@ -1079,7 +1336,7 @@ impl OcompTopology {
             .append(true)
             .open(&log_path)?;
         let stderr = log.try_clone()?;
-        let supervisor_address = SocketAddr::from((
+        let supervisor_address = std::net::SocketAddr::from((
             [127, 0, 0, 1],
             self.cfg.ocomp_supervisor_port(usize::from(validator_index)),
         ));
@@ -1143,7 +1400,7 @@ impl OcompTopology {
         let role_name = match role {
             OcompProcessRole::Supervisor => "supervisor",
             OcompProcessRole::SnapshotExporter => "snapshot-exporter",
-            _ => eyre::bail!("validator service launcher accepts only fixed service roles"),
+            _ => eyre::bail!("validator service launcher accepts only fixed node-facing roles"),
         };
         let log_path = domain_root.join(format!("{role_name}.log"));
         let log = OpenOptions::new()
@@ -1184,8 +1441,8 @@ impl OcompTopology {
                         "127.0.0.1:{}",
                         self.cfg.ocomp_supervisor_port(validator_index)
                     ))
-                    .env("OUTBE_OCOMP_RPC_URL", self.cfg.rpc_url(validator_index));
-                command.env("OCOMP_VALIDATOR_INDEX", validator_index.to_string());
+                    .env("OUTBE_OCOMP_RPC_URL", self.cfg.rpc_url(validator_index))
+                    .env("OCOMP_VALIDATOR_INDEX", validator_index.to_string());
             }
             OcompProcessRole::SnapshotExporter => {
                 let validator_index = usize::from(validator_index);
@@ -1203,7 +1460,7 @@ impl OcompTopology {
                         ),
                     );
             }
-            _ => unreachable!("fixed service role validated above"),
+            _ => unreachable!("fixed node-facing role validated above"),
         }
         if self.cfg.debug {
             eprintln!(
@@ -1220,8 +1477,157 @@ impl OcompTopology {
     }
 
     #[cfg(feature = "ocomp-integration")]
+    fn spawn_keyless_full_node_role(
+        &self,
+        validator_index: u8,
+        role: OcompProcessRole,
+        identity: OcompLaunchIdentityV1,
+    ) -> Result<ChildGuard> {
+        let domain_root = self.keyless_full_node_domain(validator_index)?.root.clone();
+        let role_name = match role {
+            OcompProcessRole::Follower => "follower",
+            OcompProcessRole::SnapshotExporter => "snapshot-exporter",
+            _ => eyre::bail!("FullNode launcher accepts only follower/exporter roles"),
+        };
+        let log_path = domain_root.join(format!("{role_name}.log"));
+        let log = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)?;
+        let stderr = log.try_clone()?;
+        let index = usize::from(validator_index);
+        let mut command = Command::new(&self.cfg.bin_ocomp);
+        command
+            .arg(role_name)
+            .arg("--development-root")
+            .arg(&domain_root)
+            .current_dir(&self.cfg.repo)
+            .env("OCOMP_CHAIN_ID", identity.chain_id.to_string())
+            .env(
+                "OCOMP_GENESIS_HASH",
+                format!("{:#x}", identity.genesis_hash),
+            )
+            .env(
+                "OCOMP_BOOT_NONCE",
+                format!(
+                    "{:#x}",
+                    B256::repeat_byte(validator_index.saturating_add(1))
+                ),
+            )
+            .env(
+                "OCOMP_PROTOCOL_BUNDLE_HASH",
+                format!("{:#x}", identity.protocol_bundle_hash),
+            );
+        match role {
+            OcompProcessRole::Follower => {
+                command
+                    .arg("--supervisor-address")
+                    .arg(format!(
+                        "127.0.0.1:{}",
+                        self.cfg.ocomp_supervisor_port(index)
+                    ))
+                    .env("OUTBE_OCOMP_RPC_URL", self.cfg.rpc_url(index));
+            }
+            OcompProcessRole::SnapshotExporter => {
+                command
+                    .env("OUTBE_OCOMP_RPC_URL", self.cfg.rpc_url(index))
+                    .env(
+                        "OUTBE_OCOMP_PROJECTION_MONGODB_URI",
+                        &self.cfg.projection_mongodb_uri,
+                    )
+                    .env(
+                        "OUTBE_OCOMP_PROJECTION_MONGODB_DATABASE",
+                        format!("{}_ocomp", self.cfg.validator_projection_database(index)),
+                    );
+            }
+            _ => unreachable!("role validated above"),
+        }
+        command.stdout(Stdio::from(log)).stderr(Stdio::from(stderr));
+        ChildGuard::spawn(
+            format!("full-node-{validator_index} OCOMP {role_name}"),
+            command,
+        )
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    fn attach_keyless_full_node_owned(
+        &mut self,
+        validator_index: u8,
+        role: OcompProcessRole,
+        guard: ChildGuard,
+    ) -> Result<()> {
+        if self.records.len() >= OCOMP_MAX_PROCESS_RECORDS {
+            eyre::bail!("OCOMP scenario reached the bounded process-record limit");
+        }
+        let domain = self.keyless_full_node_domain(validator_index)?;
+        match role {
+            OcompProcessRole::Follower if domain.supervisor.is_none() => {}
+            OcompProcessRole::SnapshotExporter if domain.snapshot_exporter.is_none() => {}
+            _ => eyre::bail!("invalid or duplicate keyless FullNode role attachment"),
+        }
+        let record_index = self.records.len();
+        self.records.push(OcompProcessRecordV1 {
+            validator_index: Some(validator_index),
+            role,
+            worker_ordinal: None,
+            pid: guard.pid(),
+            started_at_millis: unix_time_millis(),
+            stopped_at_millis: None,
+        });
+        let process = OwnedProcess {
+            guard,
+            record_index,
+        };
+        let domain = self.keyless_full_node_domain_mut(validator_index)?;
+        match role {
+            OcompProcessRole::Follower => domain.supervisor = Some(process),
+            OcompProcessRole::SnapshotExporter => domain.snapshot_exporter = Some(process),
+            _ => unreachable!("role validated above"),
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    fn ensure_keyless_full_node_roles_alive(&mut self, validator_index: u8) -> Result<()> {
+        for role in [
+            OcompProcessRole::Follower,
+            OcompProcessRole::SnapshotExporter,
+        ] {
+            let (record_index, exited) = {
+                let domain = self.keyless_full_node_domain_mut(validator_index)?;
+                let process = match role {
+                    OcompProcessRole::Follower => domain.supervisor.as_mut(),
+                    OcompProcessRole::SnapshotExporter => domain.snapshot_exporter.as_mut(),
+                    _ => unreachable!(),
+                }
+                .ok_or_else(|| eyre::eyre!("FullNode OCOMP {role:?} is missing"))?;
+                (process.record_index, process.guard.exited())
+            };
+            if exited {
+                self.records[record_index].stopped_at_millis = Some(unix_time_millis());
+                let role_name = match role {
+                    OcompProcessRole::Follower => "follower",
+                    OcompProcessRole::SnapshotExporter => "snapshot-exporter",
+                    _ => unreachable!(),
+                };
+                eyre::bail!(
+                    "FullNode OCOMP {role_name} exited during startup:\n{}",
+                    tail_file(
+                        &self
+                            .keyless_full_node_domain(validator_index)?
+                            .root
+                            .join(format!("{role_name}.log")),
+                        20,
+                    )
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "ocomp-integration")]
     pub fn ensure_validator_roles_alive(&mut self) -> Result<()> {
-        for validator_index in 0..OCOMP_VALIDATOR_DOMAINS {
+        for validator_index in self.validator_indices()? {
             for role in [
                 OcompProcessRole::Supervisor,
                 OcompProcessRole::SnapshotExporter,
@@ -1348,7 +1754,7 @@ impl OcompTopology {
         Ok(())
     }
 
-    /// Restart the RPC-driven input exporter after a typed stop.
+    /// Restart the fixed SnapshotExporter role in one domain after a typed stop.
     #[cfg(feature = "ocomp-integration")]
     pub fn restart_snapshot_exporter(&mut self, validator_index: u8) -> Result<()> {
         if self.domain(validator_index)?.snapshot_exporter.is_some() {
@@ -1395,7 +1801,7 @@ impl OcompTopology {
 
     /// Replace a stopped Supervisor with a process that has a valid local
     /// protocol bundle but an incompatible endpoint identity. The process must
-    /// remain outside the active worker registry while the node and
+    /// remain outside the node-owned authenticated session while the node and
     /// the other validator domains continue normally.
     #[cfg(feature = "ocomp-integration")]
     pub fn restart_incompatible_supervisor(&mut self, validator_index: u8) -> Result<()> {
@@ -1450,7 +1856,7 @@ impl OcompTopology {
     /// Bounded, serializable process/correlation snapshot for scenario evidence.
     pub fn evidence_snapshot(&self) -> Result<OcompScenarioTopologyV1> {
         let mut domain_roots = Vec::with_capacity(self.domains.len());
-        for validator_index in 0..OCOMP_VALIDATOR_DOMAINS {
+        for validator_index in self.validator_indices()? {
             domain_roots.push(
                 self.domain_root(validator_index)?
                     .to_string_lossy()
@@ -1473,7 +1879,8 @@ impl OcompTopology {
         &mut self,
         evidence: OcompForkRestartEvidenceV1,
     ) -> Result<()> {
-        evidence.validate()?;
+        self.domain(evidence.validator_index)?;
+        evidence.validate(self.domains.len())?;
         if self.fork_restart_evidence.is_some() {
             eyre::bail!("OCOMP fork restart evidence was already recorded");
         }
@@ -1485,7 +1892,8 @@ impl OcompTopology {
         &mut self,
         evidence: OcompForkMismatchEvidenceV1,
     ) -> Result<()> {
-        evidence.validate()?;
+        self.domain(evidence.validator_index)?;
+        evidence.validate(self.domains.len())?;
         if self.fork_mismatch_evidence.is_some() {
             eyre::bail!("OCOMP fork mismatch evidence was already recorded");
         }
@@ -1511,7 +1919,7 @@ impl OcompTopology {
         self.tribute_correlation.record_validator_source(evidence)
     }
 
-    /// Bind the production-observed JobIntent only after all four sources exist.
+    /// Bind the production-observed JobIntent only after every pinned source exists.
     pub fn observe_job_intent(
         &mut self,
         evidence: JobIntentCorrelationV1,
@@ -1598,13 +2006,42 @@ impl OcompTopology {
     fn domain(&self, validator_index: u8) -> Result<&OcompDomain> {
         self.domains
             .get(usize::from(validator_index))
-            .ok_or_else(|| eyre::eyre!("validator index is outside the four-domain PoC"))
+            .ok_or_else(|| eyre::eyre!("validator index is outside the configured topology"))
     }
 
     fn domain_mut(&mut self, validator_index: u8) -> Result<&mut OcompDomain> {
         self.domains
             .get_mut(usize::from(validator_index))
-            .ok_or_else(|| eyre::eyre!("validator index is outside the four-domain PoC"))
+            .ok_or_else(|| eyre::eyre!("validator index is outside the configured topology"))
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    fn keyless_full_node_domain(&self, validator_index: u8) -> Result<&OcompDomain> {
+        match self.keyless_full_node_domain.as_ref() {
+            Some((index, domain)) if *index == validator_index => Ok(domain),
+            _ => Err(eyre::eyre!(
+                "validator-{validator_index} has no staged keyless FullNode domain"
+            )),
+        }
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    fn keyless_full_node_domain_mut(&mut self, validator_index: u8) -> Result<&mut OcompDomain> {
+        match self.keyless_full_node_domain.as_mut() {
+            Some((index, domain)) if *index == validator_index => Ok(domain),
+            _ => Err(eyre::eyre!(
+                "validator-{validator_index} has no staged keyless FullNode domain"
+            )),
+        }
+    }
+
+    fn validator_indices(&self) -> Result<Vec<u8>> {
+        (0..self.domains.len())
+            .map(|index| {
+                u8::try_from(index)
+                    .map_err(|_| eyre::eyre!("validator index exceeds the harness wire format"))
+            })
+            .collect()
     }
 
     fn stop_owned(&mut self, mut process: OwnedProcess) {
@@ -1624,6 +2061,9 @@ impl OcompTopology {
             eyre::bail!("OCOMP scenario reached the bounded process-record limit");
         }
         match role {
+            OcompProcessRole::Follower => {
+                eyre::bail!("keyless FullNode roles use their dedicated attachment path")
+            }
             OcompProcessRole::Supervisor => {
                 let index = validator_index
                     .ok_or_else(|| eyre::eyre!("supervisor requires a validator index"))?;
@@ -1663,6 +2103,9 @@ impl OcompTopology {
             record_index,
         };
         match role {
+            OcompProcessRole::Follower => {
+                unreachable!("keyless FullNode roles use their dedicated attachment path")
+            }
             OcompProcessRole::Supervisor => {
                 self.domain_mut(validator_index.expect("validated above"))?
                     .supervisor = Some(process);
@@ -1698,6 +2141,11 @@ fn worker_boot_nonce(validator_index: u8, worker_ordinal: u32) -> B256 {
 #[cfg(feature = "ocomp-integration")]
 impl Drop for OcompTopology {
     fn drop(&mut self) {
+        if let Some((_, domain)) = self.keyless_full_node_domain.as_mut() {
+            domain.workers.clear();
+            domain.snapshot_exporter.take();
+            domain.supervisor.take();
+        }
         for domain in &mut self.domains {
             domain.workers.clear();
             domain.snapshot_exporter.take();
@@ -1754,6 +2202,145 @@ fn genesis_chain_id(genesis: &serde_json::Value) -> Result<u64> {
         }
         _ => eyre::bail!("genesis chainId is neither a number nor a hex string"),
     }
+}
+
+#[cfg(feature = "ocomp-integration")]
+fn schedule_dynamic_membership_days(
+    genesis: &mut serde_json::Value,
+    chain_id: u64,
+) -> Result<(WorldwideDay, WorldwideDay, u64, u64)> {
+    const SECONDS_PER_DAY: u64 = 86_400;
+
+    let genesis_timestamp = genesis
+        .get("timestamp")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| eyre::eyre!("generated genesis has no timestamp"))
+        .and_then(|encoded| u64::try_from(parse_hex_word(encoded)?).map_err(Into::into))?;
+    let first_processing_time = genesis_timestamp
+        .checked_add(OCOMP_DYNAMIC_FIRST_OFFERING_AFTER_GENESIS_SECS)
+        .ok_or_else(|| eyre::eyre!("first dynamic OCOMP processing time overflow"))?;
+    let second_processing_time = genesis_timestamp
+        .checked_add(OCOMP_DYNAMIC_SECOND_OFFERING_AFTER_GENESIS_SECS)
+        .ok_or_else(|| eyre::eyre!("second dynamic OCOMP processing time overflow"))?;
+    let first_worldwide_day = crate::world::localnet::worldwide_day()
+        .parse::<WorldwideDay>()
+        .map_err(|error| eyre::eyre!("invalid measurement WorldwideDay: {error}"))?;
+    let second_worldwide_day = WorldwideDay::from_timestamp(
+        first_worldwide_day
+            .start_timestamp()
+            .checked_add(SECONDS_PER_DAY)
+            .ok_or_else(|| eyre::eyre!("second dynamic OCOMP WorldwideDay overflow"))?,
+    );
+
+    let mut provider = HashMapStorageProvider::new(chain_id);
+    {
+        let alloc = genesis
+            .get("alloc")
+            .and_then(serde_json::Value::as_object)
+            .ok_or_else(|| eyre::eyre!("generated genesis has no alloc object"))?;
+        let metadosis_key = find_alloc_address_key(alloc, METADOSIS_ADDRESS)?
+            .ok_or_else(|| eyre::eyre!("generated genesis has no Metadosis account"))?;
+        let words = alloc
+            .get(&metadosis_key)
+            .and_then(|account| account.get("storage"))
+            .and_then(serde_json::Value::as_object)
+            .ok_or_else(|| eyre::eyre!("Metadosis genesis account has no storage object"))?;
+        for (slot, value) in words {
+            provider.storage.insert(
+                (METADOSIS_ADDRESS, parse_hex_word(slot)?),
+                parse_storage_word(value)?,
+            );
+        }
+        if let Some(tribute_key) = find_alloc_address_key(alloc, TRIBUTE_ADDRESS)? {
+            let tribute_words = alloc
+                .get(&tribute_key)
+                .and_then(|account| account.get("storage"))
+                .and_then(serde_json::Value::as_object)
+                .ok_or_else(|| eyre::eyre!("Tribute genesis account has no storage object"))?;
+            for (slot, value) in tribute_words {
+                provider.storage.insert(
+                    (TRIBUTE_ADDRESS, parse_hex_word(slot)?),
+                    parse_storage_word(value)?,
+                );
+            }
+        }
+    }
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let first = outbe_metadosis::api::worldwide_day(storage.clone(), first_worldwide_day)?
+            .ok_or_else(|| {
+                outbe_primitives::error::PrecompileError::Fatal(
+                    "dynamic OCOMP genesis is missing its seeded WorldwideDay".into(),
+                )
+            })?;
+        FreshDevnetGenesisBuilder::new()
+            .retime_offering_day(first_worldwide_day, first_processing_time)
+            .seed_active_worldwide_day(outbe_metadosis::genesis::GenesisWorldwideDay {
+                worldwide_day: second_worldwide_day,
+                status: first.status,
+                day_type: first.day_type,
+                forming_start: first.forming_start,
+                forming_end: first.forming_end,
+                lookback_end: first.lookback_end,
+                offering_end: second_processing_time,
+                scheduled_process_time: second_processing_time,
+                metadosis_limit_amount: first.metadosis_limit_amount,
+                previous_vwap: first.previous_vwap,
+                current_vwap: first.current_vwap,
+            })
+            .apply(storage.clone())?;
+        outbe_tribute::TributeContract::new(storage).unseal_day(second_worldwide_day)
+    })?;
+
+    let alloc = genesis
+        .get_mut("alloc")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| eyre::eyre!("generated genesis has no alloc object"))?;
+    for (address, label) in [
+        (METADOSIS_ADDRESS, "Metadosis"),
+        (TRIBUTE_ADDRESS, "Tribute"),
+    ] {
+        let account_key = match find_alloc_address_key(alloc, address)? {
+            Some(account_key) => account_key,
+            None if address == TRIBUTE_ADDRESS => {
+                let account_key = hex::encode(address.as_slice());
+                alloc.insert(
+                    account_key.clone(),
+                    serde_json::json!({
+                        "code": "0xef",
+                        "balance": "0x0",
+                        "storage": {},
+                    }),
+                );
+                account_key
+            }
+            None => eyre::bail!("generated genesis has no {label} account"),
+        };
+        let words = alloc
+            .get_mut(&account_key)
+            .and_then(serde_json::Value::as_object_mut)
+            .and_then(|account| account.get_mut("storage"))
+            .and_then(serde_json::Value::as_object_mut)
+            .ok_or_else(|| eyre::eyre!("{label} genesis account has no storage object"))?;
+        for ((stored_address, slot), value) in &provider.storage {
+            if *stored_address != address {
+                continue;
+            }
+            let slot = format!("0x{slot:064x}");
+            if value.is_zero() {
+                words.remove(&slot);
+            } else {
+                words.insert(slot, serde_json::Value::String(format!("0x{value:064x}")));
+            }
+        }
+    }
+
+    Ok((
+        first_worldwide_day,
+        second_worldwide_day,
+        first_processing_time,
+        second_processing_time,
+    ))
 }
 
 #[cfg(feature = "ocomp-integration")]
@@ -2080,66 +2667,17 @@ fn fund_capacity_tribute_accounts(
 }
 
 #[cfg(feature = "ocomp-integration")]
-fn measurement_validator_identities(path: &Path) -> Result<[B256; 4]> {
-    let validators: serde_json::Value = serde_json::from_slice(&fs::read(path)?)?;
-    let validators = validators
-        .as_array()
-        .ok_or_else(|| eyre::eyre!("validators.json is not an array"))?;
-    if validators.len() != 4 {
-        eyre::bail!(
-            "OCOMP measurement requires exactly four validators, got {}",
-            validators.len()
-        );
-    }
-
-    let mut identities = [B256::ZERO; 4];
-    for (index, validator) in validators.iter().enumerate() {
-        let address = validator
-            .get("address")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| eyre::eyre!("validator-{index} has no address"))
-            .and_then(|address| Address::from_str(address).map_err(Into::into))?;
-        let public_key = validator
-            .get("public_key")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| eyre::eyre!("validator-{index} has no public_key"))?;
-        let public_key = hex::decode(public_key.strip_prefix("0x").unwrap_or(public_key))?;
-        if public_key.len() != 48 {
-            eyre::bail!(
-                "validator-{index} consensus public key is {} bytes, expected 48",
-                public_key.len()
-            );
-        }
-        let mut payload = Vec::with_capacity(1 + 20 + 4 + public_key.len());
-        payload.push(u8::try_from(index)?);
-        payload.extend_from_slice(address.as_slice());
-        payload.extend_from_slice(&u32::try_from(public_key.len())?.to_be_bytes());
-        payload.extend_from_slice(&public_key);
-        identities[index] = hash_framed(HashDomain::ValidatorIdentity, &payload)?;
-    }
-    Ok(identities)
-}
-
-#[cfg(feature = "ocomp-integration")]
 fn measurement_fork_install(
     chain_id: u64,
     genesis_hash: B256,
     activation_height: u64,
-    validator_identities: [B256; 4],
+    validators_path: &Path,
     limits: &outbe_ocomp_protocol::SchemaLimits,
 ) -> Result<OcompForkInstallV1> {
     let protocol_bundle = provisional_measurement_bundle();
     let protocol_bundle_hash = protocol_bundle.protocol_bundle_hash(limits)?;
-    let result_committee = measurement_committee(
-        chain_id,
-        genesis_hash,
-        protocol_bundle.fork_id,
-        protocol_bundle_hash,
-        activation_height,
-        validator_identities,
-        limits,
-    )?;
-    let result_committee_snapshot_hash = result_committee.snapshot_hash(limits)?;
+    let founder_registrations =
+        measurement_founder_registrations(validators_path, chain_id, genesis_hash, limits)?;
     Ok(OcompForkInstallV1 {
         classification: OcompForkInstallClassification::Measurement,
         activation_height,
@@ -2151,70 +2689,81 @@ fn measurement_fork_install(
             correctness_profile_id: protocol_bundle.correctness_profile_id,
             capacity_profile: provisional_measurement_capacity_profile(),
             source_availability_policy_id: B256::repeat_byte(44),
-            result_committee_snapshot_hash,
         },
         protocol_bundle,
-        result_committee,
+        founder_registrations,
     })
 }
 
 #[cfg(feature = "ocomp-integration")]
-fn measurement_committee(
+fn measurement_founder_registrations(
+    validators_path: &Path,
     chain_id: u64,
     genesis_hash: B256,
-    fork_id: B256,
-    protocol_bundle_hash: B256,
-    activation_height: u64,
-    validator_identities: [B256; 4],
     limits: &outbe_ocomp_protocol::SchemaLimits,
-) -> Result<OcompCommitteeSnapshotV1> {
-    let mut ordered_members = Vec::with_capacity(4);
-    for (validator_index, validator_identity_hash) in validator_identities.into_iter().enumerate() {
-        let validator_index = u8::try_from(validator_index)?;
-        let key = measurement_signing_key(validator_index);
-        let public_key: [u8; 33] = key
-            .verifying_key()
-            .to_encoded_point(true)
-            .as_bytes()
-            .try_into()?;
-        let mut registration = OcompKeyRegistrationV1 {
-            core: OcompKeyRegistrationCoreV1 {
-                chain_id,
-                genesis_hash,
-                fork_id,
-                protocol_bundle_hash,
-                validator_index,
-                validator_identity_hash,
-                ocomp_public_key_sec1: public_key,
-                key_epoch: 1,
-                allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
-                valid_from_height: activation_height,
-                valid_until_height_exclusive: activation_height.saturating_add(1_000_000),
-            },
-            proof_of_possession: [0; 64],
-        };
-        registration.proof_of_possession =
-            sign_measurement_digest(&key, registration.proof_of_possession_digest(limits)?)?;
-        ordered_members.push(OcompMemberV1 {
-            validator_index,
-            validator_identity_hash,
-            ocomp_public_key_sec1: public_key,
-            key_epoch: registration.core.key_epoch,
-            allowed_purpose_bitmap: registration.core.allowed_purpose_bitmap,
-            valid_from_height: registration.core.valid_from_height,
-            valid_until_height_exclusive: registration.core.valid_until_height_exclusive,
-            proof_of_possession: registration.proof_of_possession,
-        });
-    }
-    Ok(OcompCommitteeSnapshotV1 {
-        chain_id,
-        genesis_hash,
-        fork_id,
-        protocol_bundle_hash,
-        snapshot_epoch: 1,
-        threshold: 3,
-        ordered_members,
-    })
+) -> Result<Vec<OcompKeyRegistrationV1>> {
+    let manifest: serde_json::Value = serde_json::from_slice(&fs::read(validators_path)?)?;
+    let validators = manifest
+        .as_array()
+        .ok_or_else(|| eyre::eyre!("validators manifest must be a JSON array"))?;
+    let max_validators = usize::try_from(outbe_consensus::bls::MAX_VALIDATORS)?;
+    eyre::ensure!(
+        !validators.is_empty(),
+        "validators manifest must not be empty"
+    );
+    eyre::ensure!(
+        validators.len() <= max_validators,
+        "validators manifest exceeds consensus bound {max_validators}"
+    );
+
+    validators
+        .iter()
+        .enumerate()
+        .map(|(index, validator)| {
+            let address = validator
+                .get("address")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| eyre::eyre!("validator-{index} has no address"))
+                .and_then(|value| Address::from_str(value).map_err(Into::into))?;
+            let consensus_key = validator
+                .get("public_key")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| eyre::eyre!("validator-{index} has no public_key"))?;
+            let consensus_key =
+                hex::decode(consensus_key.strip_prefix("0x").unwrap_or(consensus_key))?;
+            let consensus_key: [u8; 48] = consensus_key.try_into().map_err(|value: Vec<u8>| {
+                eyre::eyre!(
+                    "validator-{index} BLS MinPk must be 48 bytes, got {}",
+                    value.len()
+                )
+            })?;
+            let signing_key = measurement_signing_key(u8::try_from(index)?);
+            let public_key: [u8; 33] = signing_key
+                .verifying_key()
+                .to_encoded_point(true)
+                .as_bytes()
+                .try_into()
+                .map_err(|_| eyre::eyre!("measurement OCOMP public key is not SEC1-33"))?;
+            let mut registration = OcompKeyRegistrationV1 {
+                core: OcompKeyRegistrationCoreV1 {
+                    chain_id,
+                    genesis_hash,
+                    validator_identity_hash: validator_identity_hash_v1(address, &consensus_key)?,
+                    ocomp_public_key_sec1: public_key,
+                    key_epoch: POC_KEY_EPOCH,
+                    allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
+                },
+                proof_of_possession: [0; 64],
+            };
+            let proof: Signature = signing_key
+                .sign_prehash(registration.proof_of_possession_digest(limits)?.as_slice())
+                .map_err(|_| eyre::eyre!("cannot sign validator-{index} OCOMP PoP"))?;
+            registration.proof_of_possession =
+                proof.normalize_s().unwrap_or(proof).to_bytes().into();
+            registration.validate_proof_of_possession(limits)?;
+            Ok(registration)
+        })
+        .collect()
 }
 
 #[cfg(feature = "ocomp-integration")]
@@ -2225,20 +2774,7 @@ fn measurement_signing_key(validator_index: u8) -> SigningKey {
 
 #[cfg(feature = "ocomp-integration")]
 fn ocomp_evm_private_key(validator_index: u8) -> String {
-    format!(
-        "0x{}",
-        hex::encode([validator_index.saturating_add(0x71); 32])
-    )
-}
-
-#[cfg(feature = "ocomp-integration")]
-fn sign_measurement_digest(key: &SigningKey, digest: B256) -> Result<[u8; 64]> {
-    let signature: Signature = key.sign_prehash(digest.as_slice())?;
-    Ok(signature
-        .normalize_s()
-        .unwrap_or(signature)
-        .to_bytes()
-        .into())
+    hex::encode([validator_index.saturating_add(0x71); 32])
 }
 
 #[cfg(feature = "ocomp-integration")]
@@ -2247,7 +2783,6 @@ fn provisional_measurement_capacity_profile() -> CapacityProfileV1 {
         profile_id: B256::repeat_byte(13),
         max_tributes_per_work_shard: 256,
         max_workers_per_domain: 4,
-        max_pending_jobs: 2,
         max_intents_per_block: 1,
         max_activations_per_block: 1,
         max_ready_inspections_per_block: 1,
@@ -2257,7 +2792,7 @@ fn provisional_measurement_capacity_profile() -> CapacityProfileV1 {
         max_reference_currencies: 256,
         max_oracle_wwd_pair_entries: 256,
         max_active_scurve_entries: 256,
-        result_deadline_blocks: 64,
+        result_deadline_blocks: outbe_ocomp_protocol::profile::OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS,
         source_retention_after_terminal_blocks: 64,
         generated_limits_manifest_hash: B256::repeat_byte(23),
     }
@@ -2456,10 +2991,11 @@ mod tests {
         }
     }
 
-    fn topology() -> TestTopology {
+    fn topology_with_validators(validators: usize) -> TestTopology {
         let directory = tempfile::tempdir().unwrap();
         let env = Environment {
             data_dir: directory.path().to_path_buf(),
+            validators,
             ..Environment::default()
         };
         env.ports.start_scenario(env.validators).unwrap();
@@ -2467,6 +3003,10 @@ mod tests {
             _directory: directory,
             topology: OcompTopology::new(Config::for_scenario(&env, 1)),
         }
+    }
+
+    fn topology() -> TestTopology {
+        topology_with_validators(Environment::default().validators)
     }
 
     fn child_guard() -> ChildGuard {
@@ -2482,7 +3022,7 @@ mod tests {
     #[cfg(feature = "ocomp-integration")]
     fn stage_completed_job_footprint(topology: &OcompTopology, job_id: B256) {
         let job_component = hex::encode(job_id);
-        for validator_index in 0..OCOMP_VALIDATOR_DOMAINS {
+        for validator_index in topology.validator_indices().unwrap() {
             let root = topology.domain_root(validator_index).unwrap();
             let admissions = root
                 .join("supervisor-v1")
@@ -2516,6 +3056,44 @@ mod tests {
 
     #[cfg(feature = "ocomp-integration")]
     #[test]
+    fn staged_joiner_domain_uses_its_registration_key_and_the_pinned_bundle() {
+        let topology = topology_with_validators(4);
+        let founder_bundle = topology
+            .domain_root(0)
+            .unwrap()
+            .join("protocol-bundle-v1.ocb1");
+        fs::create_dir_all(founder_bundle.parent().unwrap()).unwrap();
+        fs::write(&founder_bundle, b"pinned-bundle").unwrap();
+        let joiner_key = topology.cfg.validator_dir(4).join("ocomp-key-v1.hex");
+        fs::create_dir_all(joiner_key.parent().unwrap()).unwrap();
+        fs::write(&joiner_key, b"joiner-registration-secret\n").unwrap();
+
+        topology.stage_joiner_domain_material(4).unwrap();
+
+        let staged = topology
+            .cfg
+            .validator_dir(4)
+            .join("ocomp")
+            .join("domain-v1");
+        assert_eq!(
+            fs::read(staged.join("protocol-bundle-v1.ocb1")).unwrap(),
+            b"pinned-bundle"
+        );
+        assert_eq!(
+            fs::read(staged.join("ocomp-key-v1.hex")).unwrap(),
+            b"joiner-registration-secret\n"
+        );
+        let operational_key = fs::read(staged.join("ocomp-evm-key.hex")).unwrap();
+        assert_eq!(operational_key.len(), 65);
+        assert_eq!(operational_key[64], b'\n');
+        assert!(operational_key[..64]
+            .iter()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte)));
+        assert!(topology.domain_root(4).is_err());
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
     fn completed_job_artifacts_reject_one_domain_with_different_worker_output() {
         let topology = topology();
         let job_id = B256::repeat_byte(0x43);
@@ -2538,22 +3116,76 @@ mod tests {
     }
 
     #[test]
-    fn topology_has_exactly_four_isolated_domain_roots() {
-        let topology = topology();
-        let roots = (0..OCOMP_VALIDATOR_DOMAINS)
+    fn topology_follows_the_configured_validator_count() {
+        let topology = topology_with_validators(5);
+        let roots = (0..5_u8)
             .map(|index| topology.domain_root(index).unwrap().to_owned())
             .collect::<Vec<_>>();
 
-        assert_eq!(roots.len(), 4);
+        assert_eq!(roots.len(), 5);
         assert_eq!(
             roots
                 .iter()
                 .collect::<std::collections::BTreeSet<_>>()
                 .len(),
-            4
+            5
         );
-        assert!(topology.domain_root(4).is_err());
+        assert!(topology.domain_root(5).is_err());
         assert!(topology.process_records().is_empty());
+    }
+
+    #[test]
+    fn topology_evidence_covers_every_configured_validator() {
+        let topology = topology_with_validators(5);
+
+        let evidence = topology.evidence_snapshot().unwrap();
+
+        assert_eq!(evidence.domain_roots.len(), 5);
+    }
+
+    #[test]
+    fn active_joiner_appends_one_domain_without_rewriting_existing_roots() {
+        let mut topology = topology_with_validators(4);
+        let original = topology
+            .validator_indices()
+            .unwrap()
+            .into_iter()
+            .map(|index| topology.domain_root(index).unwrap().to_owned())
+            .collect::<Vec<_>>();
+
+        topology.add_active_validator_domain(4).unwrap();
+
+        assert_eq!(topology.evidence_snapshot().unwrap().domain_roots.len(), 5);
+        for (index, expected) in original.iter().enumerate() {
+            assert_eq!(
+                topology.domain_root(u8::try_from(index).unwrap()).unwrap(),
+                expected
+            );
+        }
+        assert!(topology.add_active_validator_domain(4).is_err());
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
+    fn keyless_full_node_profile_is_complete_without_joining_active_topology() {
+        let mut topology = topology_with_validators(4);
+        prepare_measurement_genesis_fixture(&topology);
+        let prepared = topology.prepare_measurement_fork_install().unwrap();
+        topology.launch_identity = Some(prepared.launch_identity());
+
+        let args = topology.stage_keyless_full_node_domain(4).unwrap();
+
+        assert_eq!(topology.evidence_snapshot().unwrap().domain_roots.len(), 4);
+        assert!(args.is_empty());
+
+        let root = topology
+            .cfg
+            .validator_dir(4)
+            .join("ocomp")
+            .join("domain-v1");
+        assert!(root.join("protocol-bundle-v1.ocb1").is_file());
+        assert!(!root.join("ocomp-key-v1.hex").exists());
+        assert!(!root.join("ocomp-evm-key.hex").exists());
     }
 
     #[test]
@@ -2673,6 +3305,27 @@ mod tests {
             OCOMP_MEASUREMENT_ACTIVATION_HEIGHT
         );
         assert_eq!(
+            prepared.install.founder_registrations.len(),
+            topology.domains.len()
+        );
+        for (index, registration) in prepared.install.founder_registrations.iter().enumerate() {
+            assert_eq!(
+                registration.core.validator_identity_hash,
+                validator_identity_hash_v1(
+                    Address::with_last_byte(u8::try_from(index).unwrap() + 1),
+                    &[u8::try_from(index).unwrap() + 11; 48],
+                )
+                .unwrap()
+            );
+            assert_eq!(
+                registration.core.ocomp_public_key_sec1.as_slice(),
+                measurement_signing_key(u8::try_from(index).unwrap())
+                    .verifying_key()
+                    .to_encoded_point(true)
+                    .as_bytes()
+            );
+        }
+        assert_eq!(
             format!("{METADOSIS_STORAGE_LAYOUT_V1_HASH:#x}"),
             METADOSIS_STORAGE_LAYOUT_V1_HASH_HEX
         );
@@ -2720,7 +3373,10 @@ mod tests {
             );
         });
 
-        let bundles = (0..OCOMP_VALIDATOR_DOMAINS)
+        let bundles = topology
+            .validator_indices()
+            .unwrap()
+            .into_iter()
             .map(|index| {
                 std::fs::read(
                     topology
@@ -2733,7 +3389,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert!(bundles.iter().all(|bundle| bundle == &bundles[0]));
-        for index in 0..OCOMP_VALIDATOR_DOMAINS {
+        for index in topology.validator_indices().unwrap() {
             let key = std::fs::read_to_string(
                 topology
                     .domain_root(index)
@@ -2745,8 +3401,10 @@ mod tests {
                 SigningKey::from_bytes((&hex::decode(key.trim()).unwrap()[..]).into()).unwrap();
             assert_eq!(
                 signer.verifying_key().to_encoded_point(true).as_bytes(),
-                prepared.install.result_committee.ordered_members[usize::from(index)]
-                    .ocomp_public_key_sec1
+                measurement_signing_key(index)
+                    .verifying_key()
+                    .to_encoded_point(true)
+                    .as_bytes()
             );
         }
         assert_eq!(
@@ -2819,6 +3477,102 @@ mod tests {
                 .unwrap()
                 .genesis_hash()
         );
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
+    fn dynamic_membership_fixture_schedules_two_distinct_public_jobs() {
+        let topology = topology();
+        prepare_public_measurement_genesis_fixture(&topology);
+        let genesis_path = topology.cfg.dir.join("genesis.json");
+        let mut configured: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&genesis_path).unwrap()).unwrap();
+        configured["config"][outbe_node::ocomp::fork::EPOCH_LENGTH_BLOCKS_GENESIS_KEY] =
+            serde_json::json!(OCOMP_TEST_EPOCH_LENGTH_BLOCKS);
+        configured["config"]["dkgPrepareWindowBlocks"] =
+            serde_json::json!(OCOMP_DYNAMIC_DKG_PREPARE_WINDOW_BLOCKS);
+        std::fs::write(
+            &genesis_path,
+            serde_json::to_vec_pretty(&configured).unwrap(),
+        )
+        .unwrap();
+
+        let prepared = topology.prepare_dynamic_membership_fork_install().unwrap();
+
+        let genesis: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(topology.cfg.dir.join("genesis.json")).unwrap())
+                .unwrap();
+        assert_eq!(
+            genesis["config"][outbe_node::ocomp::fork::EPOCH_LENGTH_BLOCKS_GENESIS_KEY],
+            serde_json::json!(OCOMP_TEST_EPOCH_LENGTH_BLOCKS)
+        );
+        let alloc = genesis["alloc"].as_object().unwrap();
+        let metadosis_key = find_alloc_address_key(alloc, METADOSIS_ADDRESS)
+            .unwrap()
+            .unwrap();
+        let tribute_key = find_alloc_address_key(alloc, TRIBUTE_ADDRESS)
+            .unwrap()
+            .unwrap();
+        let mut provider = HashMapStorageProvider::new(genesis_chain_id(&genesis).unwrap());
+        for (slot, value) in alloc[&metadosis_key]["storage"].as_object().unwrap() {
+            provider.storage.insert(
+                (METADOSIS_ADDRESS, parse_hex_word(slot).unwrap()),
+                parse_storage_word(value).unwrap(),
+            );
+        }
+        for (slot, value) in alloc[&tribute_key]["storage"].as_object().unwrap() {
+            provider.storage.insert(
+                (TRIBUTE_ADDRESS, parse_hex_word(slot).unwrap()),
+                parse_storage_word(value).unwrap(),
+            );
+        }
+        StorageHandle::enter(&mut provider, |storage| {
+            let days = outbe_metadosis::api::worldwide_days(storage.clone()).unwrap();
+            assert_eq!(days.len(), 2);
+            assert_eq!(
+                days.iter()
+                    .map(|day| (day.worldwide_day, day.status, day.scheduled_process_time))
+                    .collect::<Vec<_>>(),
+                vec![
+                    (
+                        prepared.first_worldwide_day,
+                        WwdStatus::Offering,
+                        prepared.first_processing_time,
+                    ),
+                    (
+                        prepared.second_worldwide_day,
+                        WwdStatus::Offering,
+                        prepared.second_processing_time,
+                    ),
+                ]
+            );
+            let second_totals = outbe_tribute::TributeContract::new(storage.clone())
+                .get_day_totals(prepared.second_worldwide_day)
+                .unwrap();
+            assert!(second_totals.initialized);
+            assert!(!second_totals.is_sealed);
+        });
+        assert!(prepared.first_processing_time < prepared.second_processing_time);
+        assert_eq!(prepared.fork.install.founder_registrations.len(), 4);
+        let chain_spec = parse_outbe_chain_spec(&topology.cfg.dir.join("genesis.json")).unwrap();
+        outbe_node::ocomp::fork::load_ocomp_fork_install(&chain_spec)
+            .unwrap()
+            .expect("dynamic membership fixture is startup-valid");
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
+    fn dynamic_membership_fixture_refuses_a_post_seed_epoch_rewrite() {
+        let topology = topology();
+        prepare_public_measurement_genesis_fixture(&topology);
+
+        let error = topology
+            .prepare_dynamic_membership_fork_install()
+            .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("must be configured before ValidatorSet genesis is seeded"));
     }
 
     #[cfg(feature = "ocomp-integration")]
@@ -2973,7 +3727,9 @@ mod tests {
     fn prepare_measurement_genesis_fixture(topology: &OcompTopology) {
         std::fs::create_dir_all(&topology.cfg.dir).unwrap();
         let spec = reth_chainspec::ChainSpec::<OutbeHeader>::default();
-        let genesis = serde_json::to_value(&spec.genesis).unwrap();
+        let mut genesis = serde_json::to_value(&spec.genesis).unwrap();
+        genesis["config"][outbe_node::ocomp::fork::EPOCH_LENGTH_BLOCKS_GENESIS_KEY] =
+            serde_json::json!(OCOMP_TEST_EPOCH_LENGTH_BLOCKS);
         std::fs::write(
             topology.cfg.dir.join("genesis.json"),
             serde_json::to_vec_pretty(&genesis).unwrap(),

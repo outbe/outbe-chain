@@ -24,7 +24,6 @@
 
 pub mod constants;
 pub mod hooks;
-mod ocomp;
 mod oracle;
 pub mod precompile;
 pub mod runtime;
@@ -38,10 +37,6 @@ pub use constants::{
 pub use hooks::{
     registry, ZeroFeeAuthorization, ZeroFeeCandidate, ZeroFeeHook, ZeroFeeHookId,
     ZeroFeePolicyError, ZeroFeeRegistry, ZeroFeeTransaction,
-};
-pub use ocomp::{
-    MAX_ZERO_FEE_OCOMP_CALLDATA_BYTES, MAX_ZERO_FEE_OCOMP_GAS_LIMIT,
-    MIN_ZERO_FEE_OCOMP_MAX_FEE_PER_GAS,
 };
 pub use outbe_primitives::addresses::ZEROFEE_ADDRESS;
 pub use runtime::{
