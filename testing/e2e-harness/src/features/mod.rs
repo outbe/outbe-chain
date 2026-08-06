@@ -25,5 +25,6 @@ pub mod ocomp;
 pub mod restart;
 pub mod stablecoin;
 pub mod stale_join;
+pub mod target_chain;
 pub mod tribute_projection;
 pub mod zerofee;
