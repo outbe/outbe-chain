@@ -2,11 +2,10 @@
 Feature: Validator lifecycle state remains internally consistent
   # These scenarios exercise only public/runtime-reachable transitions. Genesis
   # profiles may shorten positive protocol windows or select valid owners and
-  # capacities, but never seed malformed storage. An @expected-to-fail tag is a
-  # target-invariant marker, not a skip: the scenario must reach its named final
-  # assertion before its current failure is considered useful evidence.
+  # capacities, but never seed malformed storage. Every scenario is currently
+  # enforced by the main suite; there are no target-invariant exclusions.
 
-  @risk-d-01a @expected-to-fail
+  @risk-d-01a
   Scenario: A registration proof cannot be replayed on another valid chain
     Given a funded validator registration fixture on a valid localnet with chain id 54322345
     And the fixture is accepted without changing its identity material
@@ -14,7 +13,7 @@ Feature: Validator lifecycle state remains internally consistent
     And the same validator address, BLS public key, and proof are submitted
     Then the cross-chain proof replay is rejected without changing the registry identity bundle
 
-  @risk-d-01b @expected-to-fail
+  @risk-d-01b
   Scenario: ValidatorSet owner cannot register a validator without possession proof
     Given a fresh localnet whose configured ValidatorSet owner is "validator-0"
     And a funded unregistered validator identity
@@ -53,20 +52,20 @@ Feature: Validator lifecycle state remains internally consistent
     And a duplicate registration of the new BLS key is rejected without partial registry writes
     And staking without a new readiness confirmation cannot activate the re-registered validator
 
-  @risk-d-07 @expected-to-fail
+  @risk-d-07
   Scenario: Partial jailed unstake does not begin validator exit
     Given an active validator is jailed by valid felony evidence
     When it unstakes below minimum while leaving a nonzero bonded amount
     Then it remains JAILED with the remaining stake and no exit transition
 
-  @risk-d-10 @expected-to-fail
+  @risk-d-10
   Scenario: Early unjail never leaves a pending validator with a live share
     Given an active validator is jailed by valid felony evidence
     When it requests unjail before an exclusion boundary
     Then unjail is rejected or commits PENDING without a BLS share
     And the validator cannot participate until readiness is reconfirmed and a fresh reshare commits
 
-  @risk-s-01 @expected-to-fail @tee
+  @risk-s-01 @tee
   Scenario: Leaving pending through unstake clears readiness
     Given a staked PENDING joiner has confirmed readiness
     When it unstakes below minimum before activation
@@ -74,14 +73,14 @@ Feature: Validator lifecycle state remains internally consistent
     When it stakes again without another readiness confirmation
     Then it remains PENDING and excluded after the next scheduled reshare
 
-  @risk-s-02 @expected-to-fail
+  @risk-s-02
   Scenario: A direct owner activation cannot bypass boundary orchestration
     Given a fresh localnet whose configured ValidatorSet owner is "validator-0"
     And the public validator state bundle is snapshotted
     When the owner directly activates a registered unconfirmed member with an arbitrary group hash
     Then direct activation is rejected with the validator state bundle unchanged
 
-  @risk-s-03 @expected-to-fail
+  @risk-s-03
   Scenario Outline: A malformed reshared set is rejected atomically
     Given a fresh localnet whose configured ValidatorSet owner is "validator-0"
     And the public validator state bundle is snapshotted
@@ -117,7 +116,7 @@ Feature: Validator lifecycle state remains internally consistent
     When the validator completes cleanup and re-registration
     Then both P2P fields are cleared together on every node
 
-  @risk-s-12 @expected-to-fail
+  @risk-s-12
   Scenario: Evicted epoch evidence cannot use a colliding snapshot-ring entry
     Given valid conflicting-notarize evidence is retained for the current epoch
     When the unchanged committee advances beyond the snapshot-ring retention window

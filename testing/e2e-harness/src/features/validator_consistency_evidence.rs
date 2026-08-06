@@ -1,10 +1,8 @@
 //! Evidence-driven validator lifecycle consistency scenarios.
 //!
 //! These steps deliberately submit public SlashIndicator/Staking transactions.
-//! They do not patch storage or call runtime internals.  The three
-//! `@expected-to-fail` scenarios fail at their named target invariant:
-//! partial jailed unstake, early unjail share retention, and snapshot-ring
-//! aliasing.
+//! They do not patch storage or call runtime internals. All target invariants in
+//! this module are enforced by the main suite.
 
 use std::thread::sleep;
 use std::time::Duration;
@@ -467,8 +465,7 @@ fn partial_jailed_unstake_does_not_exit(world: &mut World) {
         .validator_record(port, &victim)
         .expect("victim after partial jailed unstake");
 
-    // D-07 target invariant. Current code changes this to EXITING even though
-    // a nonzero bonded amount remains, so @expected-to-fail stops here.
+    // D-07 target invariant: a nonzero bonded amount retains the jail state.
     assert_eq!(
         record.status, STATUS_JAILED,
         "D-07 target invariant: partial jailed unstake must remain JAILED, got status {} (EXITING={STATUS_EXITING})",
@@ -690,9 +687,8 @@ fn evicted_evidence_is_rejected_atomically(world: &mut World) {
     let victim = world.state.joiner_addr.clone().expect("victim address");
     let accepted = world.state.marker_count == Some(1);
 
-    // S-12 target invariant. With an unchanged committee, the current
-    // epoch-modulo ring lookup can return the newer colliding snapshot and
-    // validate an already-evicted epoch's signatures.
+    // S-12 target invariant: even with an unchanged committee, the epoch-bound
+    // snapshot key must reject evidence after the old ring entry is evicted.
     assert!(
         !accepted,
         "S-12 target invariant: evidence for an evicted epoch must be rejected even when the colliding snapshot has the same committee"

@@ -173,9 +173,10 @@ identity, storage or rotation semantics.
     Pin reviewed memory/time/parallelism values and support versioned migration.
 13. AES-GCM uses empty AAD, so algorithm, purpose, public fingerprint and network
     metadata are not authenticated or even stored.
-14. Registration signs only the 20-byte validator address. It is not bound to chain
-    id, ValidatorSet address, public key or expiry and may be replayable across
-    compatible deployments; coordinate a versioned statement with ADR-S-VAL-001.
+14. Registration now signs `chain_id || validator_address` under the registration
+    DST, preventing cross-chain replay. It is not yet a versioned statement bound
+    to ValidatorSet address or expiry; coordinate that remaining format with
+    ADR-S-VAL-001.
 15. `verify` proves a local sign/verify round trip under a test namespace, not that
     the key matches configured validator/genesis identity or current on-chain
     registration.

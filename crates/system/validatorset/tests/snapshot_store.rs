@@ -24,7 +24,7 @@ use outbe_validatorset::hooks::{activate_boundary_atomic, BoundaryActivationInpu
 use outbe_validatorset::test_support::activate_validator_via_boundary;
 use outbe_validatorset::{
     clear_committee_snapshot, committee_set_hash_v2, committee_snapshot_key,
-    read_committee_snapshot, read_ocomp_snapshot_extension,
+    read_committee_snapshot, read_committee_snapshot_for_epoch, read_ocomp_snapshot_extension,
     read_ocomp_snapshot_extension_for_binding, read_ocomp_snapshot_member_at, snapshot_identity,
     write_committee_snapshot, CommitteeEntry, CommitteeSnapshot,
 };
@@ -1187,5 +1187,46 @@ fn committee_snapshot_prune_ring_retains_recent_and_clears_old_epochs() {
             assert!(read.is_some(), "epoch {epoch} snapshot must be retained");
             assert_eq!(read.unwrap().committee.len(), 1, "epoch {epoch} intact");
         }
+    });
+}
+
+#[test]
+fn committee_snapshot_epoch_lookup_rejects_a_newer_colliding_ring_entry() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |storage| {
+        let validator = address!("0x0000000000000000000000000000000000000001");
+        let consensus_pubkey = pubkey_filled(0x11);
+        let mut vs = ValidatorSet::new(storage.clone());
+        vs.config_owner.write(Address::ZERO).unwrap();
+        vs.set_config_max_validators(128).unwrap();
+        admit_ocomp_key(&mut vs, validator, &consensus_pubkey, 0x61);
+        drop(vs);
+
+        let snapshot = CommitteeSnapshot {
+            committee: vec![CommitteeEntry {
+                address: validator,
+                consensus_pubkey,
+            }],
+            vrf_material_version: 0,
+            vrf_group_public_key_bytes: vec![0x22u8; 96],
+            vrf_public_polynomial_hash: B256::ZERO,
+        };
+        let retained_epoch = 7;
+        let colliding_epoch = retained_epoch + outbe_validatorset::COMMITTEE_SNAPSHOT_RETAIN_EPOCHS;
+
+        write_committee_snapshot(storage.clone(), retained_epoch, &snapshot).unwrap();
+        write_committee_snapshot(storage.clone(), colliding_epoch, &snapshot).unwrap();
+
+        assert!(
+            read_committee_snapshot_for_epoch(storage.clone(), retained_epoch)
+                .unwrap()
+                .is_none(),
+            "an evicted epoch must not resolve to the newer snapshot in the same ring slot"
+        );
+        assert_eq!(
+            read_committee_snapshot_for_epoch(storage.clone(), colliding_epoch).unwrap(),
+            Some(snapshot),
+            "the actual retained epoch must remain readable"
+        );
     });
 }

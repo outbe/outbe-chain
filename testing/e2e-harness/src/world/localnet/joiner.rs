@@ -94,7 +94,7 @@ impl Localnet {
     }
 
     /// Generate a reusable EOA + individual MinPk BLS identity and its exact
-    /// address-bound registration PoP.
+    /// chain-and-address-bound registration PoP.
     ///
     /// Generation happens in an ephemeral staging directory. The returned
     /// value owns the key/proof bytes, so it remains usable after
@@ -117,7 +117,7 @@ impl Localnet {
     }
 
     /// Bind an existing BLS private key to another prepared EOA and generate
-    /// the corresponding address-bound PoP. Duplicate-key and old-key reuse
+    /// the corresponding chain-and-address-bound PoP. Duplicate-key and old-key reuse
     /// tests use this without exposing the BLS secret through the public API.
     pub fn rebind_registration_bls(
         &self,
@@ -176,6 +176,7 @@ impl Localnet {
             };
             let address =
                 eth::address_of(&evm_key).ok_or_else(|| eyre!("bad generated EVM key"))?;
+            let chain_id = self.chain_id()?.to_string();
             let signature = first_hex(
                 &self.keygen(&[
                     "sign-registration",
@@ -183,6 +184,8 @@ impl Localnet {
                     &signing_key_arg,
                     "--validator-address",
                     &format!("{address:#x}"),
+                    "--chain-id",
+                    &chain_id,
                 ])?,
                 120,
             )

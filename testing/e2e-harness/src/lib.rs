@@ -337,7 +337,7 @@ mod validator_lifecycle_suite_contract {
     }
 
     #[test]
-    fn expected_failure_filter_expands_to_ten_real_examples() {
+    fn expected_failure_filter_is_empty() {
         let feature =
             Feature::parse(LIFECYCLE_FEATURE, GherkinEnv::default()).expect("parse lifecycle FSM");
         let selected = feature
@@ -347,6 +347,6 @@ mod validator_lifecycle_suite_contract {
             .map(expanded_examples)
             .sum::<usize>();
 
-        assert_eq!(selected, 10);
+        assert_eq!(selected, 0);
     }
 }

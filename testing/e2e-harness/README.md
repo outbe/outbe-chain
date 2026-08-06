@@ -311,10 +311,10 @@ captured and only printed if a setup step fails.
 [`validator_lifecycle_consistency.feature`](./features/validator_lifecycle_consistency.feature)
 contains target-state checks derived from
 `.cursor/validator-lifecycle-consistency-e2e-checklist.md`. It covers 16
-public/runtime-reachable checklist IDs without direct storage writes. A scenario
-tagged `@expected-to-fail` still runs normally and deliberately makes the main
-suite fail until the named invariant is implemented. It is a selection and
-traceability tag, not Cucumber skip or xfail semantics.
+public/runtime-reachable checklist IDs without direct storage writes. All current
+scenarios are enforced; none is tagged `@expected-to-fail`. If the tag is used
+for a future target invariant, it remains a selection and traceability tag, not
+Cucumber skip or xfail semantics.
 
 Run the currently enforced subset:
 
@@ -322,44 +322,32 @@ Run the currently enforced subset:
 cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
   --tee mock --validators 4 --all \
   --tags 'not @expected-to-fail' \
-  --input crates/testing/e2e-harness/features/validator_lifecycle_consistency.feature
+  --input testing/e2e-harness/features/validator_lifecycle_consistency.feature
 ```
 
-Run the target gaps:
-
-```sh
-cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
-  --tee mock --validators 4 --all \
-  --tags '@expected-to-fail' \
-  --input crates/testing/e2e-harness/features/validator_lifecycle_consistency.feature
-```
-
-The target-gap selection expands to exactly 10 examples: D-01A, D-01B, D-07,
-D-10, S-01, S-02, three S-03 examples, and S-12. Each useful failure must reach
-the named final invariant assertion. Setup errors, environment failures,
-timeouts, lack of finalization, and log-audit failures are not product-defect
-evidence. The unfiltered main suite is intentionally red while any of these
-target invariants remain violated.
+There are currently no target-gap examples. Setup errors, environment failures,
+timeouts, lack of finalization, and log-audit failures remain distinct from
+product-defect evidence.
 
 ### Coverage matrix
 
 | Checklist ID | Live scenario | Target result |
 |---|---|---|
-| D-01A | Replay one unchanged registration fixture after a valid cross-chain rebootstrap | Replay rejected; `@expected-to-fail` |
-| D-01B | Configured owner submits an empty-PoP post-bootstrap registration | Registration rejected; `@expected-to-fail` |
+| D-01A | Replay one unchanged registration fixture after a valid cross-chain rebootstrap | Replay rejected |
+| D-01B | Configured owner submits an empty-PoP post-bootstrap registration | Registration rejected |
 | D-02 | Readiness arrives just after freeze | No immediate DKG; activation at the next scheduled window |
 | D-04 | Attempt to omit an ACTIVE member and recover it at the next reshare | `ACTIVE/share=false` remains repairable |
 | D-05 | Submit canonical felony evidence and all replays | Exactly one complete punishment |
 | D-06 | Claim and same-EOA re-register in one block | Dense index retained; reachable residue and key ownership reset |
-| D-07 | Partially unstake a jailed validator below minimum | Validator remains JAILED; `@expected-to-fail` |
-| D-10 | Request unjail before exclusion | Rejected or `PENDING/share=false`; `@expected-to-fail` |
-| S-01 | Drop confirmed PENDING below minimum, then restake without reconfirming | Readiness cleared and no activation; `@expected-to-fail` |
-| S-02 | Owner calls the public raw activation facade | Rejected with the coupled bundle unchanged; `@expected-to-fail` |
-| S-03 | Duplicate, reorder, or hash-mismatch an activation set | Three atomic rejections; all `@expected-to-fail` |
+| D-07 | Partially unstake a jailed validator below minimum | Validator remains JAILED |
+| D-10 | Request unjail before exclusion | Rejected or `PENDING/share=false` |
+| S-01 | Drop confirmed PENDING below minimum, then restake without reconfirming | Readiness cleared and no activation |
+| S-02 | Owner calls the public raw activation facade | Rejected with the coupled bundle unchanged |
+| S-03 | Duplicate, reorder, or hash-mismatch an activation set | Three atomic rejections |
 | S-06 | Finalize successful and reverting lifecycle value transitions | Stake mirrors and native value remain conserved |
 | S-08 | Consume staggered claims one at a time | INACTIVE only after all bonded/live value is gone |
 | S-09 | Submit three invalid P2P updates, then reset identity | Pair is atomic and both fields clear together |
-| S-12 | Submit old evidence after an unchanged committee wraps the snapshot ring | Evidence rejected without punishment; `@expected-to-fail` |
+| S-12 | Submit old evidence after an unchanged committee wraps the snapshot ring | Evidence rejected without punishment |
 | S-14 | Submit invalid-PoP, duplicate-key, and over-capacity registrations | No partial identity, reverse-owner, index, or count writes |
 
 ### Fixture policy and deliberate exclusions

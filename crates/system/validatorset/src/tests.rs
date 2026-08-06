@@ -13,6 +13,7 @@ use outbe_primitives::consensus_p2p::{
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::validators::{validator_registration_message, VALIDATOR_REGISTRATION_DST};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use crate::runtime::status;
@@ -2450,7 +2451,6 @@ fn m27_self_registration_capped_owner_bypasses() {
     use crate::runtime::MAX_SELF_REGISTERED_UNSTAKED;
     use blst::min_pk::SecretKey;
 
-    const DST: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_outbe_REGISTER";
     fn self_reg_inputs(i: u32) -> (Address, [u8; 48], [u8; 96]) {
         let mut ikm = [7u8; 32];
         ikm[28..].copy_from_slice(&i.to_be_bytes());
@@ -2461,7 +2461,10 @@ fn m27_self_registration_capped_owner_bypasses() {
         ab[0] = 0x5a;
         let val = Address::from(ab);
         let pk: [u8; 48] = sk.sk_to_pk().to_bytes();
-        let sig: [u8; 96] = sk.sign(val.as_slice(), DST, &[]).to_bytes();
+        let message = validator_registration_message(CHAIN_ID, val);
+        let sig: [u8; 96] = sk
+            .sign(&message, VALIDATOR_REGISTRATION_DST, &[])
+            .to_bytes();
         (val, pk, sig)
     }
 
@@ -2495,7 +2498,10 @@ fn m27_self_registration_capped_owner_bypasses() {
         ikm[28..].copy_from_slice(&(MAX_SELF_REGISTERED_UNSTAKED + 1).to_be_bytes());
         let owner_sk = SecretKey::key_gen(&ikm, &[]).unwrap();
         let owner_pk: [u8; 48] = owner_sk.sk_to_pk().to_bytes();
-        let owner_sig: [u8; 96] = owner_sk.sign(owner_val.as_slice(), DST, &[]).to_bytes();
+        let owner_message = validator_registration_message(CHAIN_ID, owner_val);
+        let owner_sig: [u8; 96] = owner_sk
+            .sign(&owner_message, VALIDATOR_REGISTRATION_DST, &[])
+            .to_bytes();
         vs.register_validator_with_sig(OWNER, owner_val, &owner_pk, Some(&owner_sig))
             .expect("owner registration must bypass the self-registration cap");
         assert!(vs.is_validator(owner_val).unwrap());
@@ -2513,15 +2519,43 @@ fn test_register_self_valid_sig_accepted() {
         let pk = sk.sk_to_pk();
         let pk_bytes: [u8; 48] = pk.to_bytes();
 
-        // Sign validator address with registration DST
-        let dst = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_outbe_REGISTER";
-        let sig = sk.sign(val.as_slice(), dst, &[]);
+        let message = validator_registration_message(CHAIN_ID, val);
+        let sig = sk.sign(&message, VALIDATOR_REGISTRATION_DST, &[]);
         let sig_bytes: [u8; 96] = sig.to_bytes();
 
         vs.register_validator_with_sig(val, val, &pk_bytes, Some(&sig_bytes))
             .unwrap();
         assert!(vs.is_validator(val).unwrap());
     });
+}
+
+#[test]
+fn registration_pop_cannot_be_replayed_on_another_chain() {
+    use blst::min_pk::SecretKey;
+
+    let val = address!("0x4747474747474747474747474747474747474747");
+    let sk = SecretKey::key_gen(&[47u8; 32], &[]).unwrap();
+    let pk: [u8; 48] = sk.sk_to_pk().to_bytes();
+    let message = validator_registration_message(1, val);
+    let sig: [u8; 96] = sk
+        .sign(&message, VALIDATOR_REGISTRATION_DST, &[])
+        .to_bytes();
+
+    let register_on_chain = |chain_id| {
+        let mut storage = HashMapStorageProvider::new(chain_id);
+        StorageHandle::enter(&mut storage, |storage| {
+            let mut vs = ValidatorSet::new(storage);
+            vs.config_owner.write(OWNER).unwrap();
+            vs.config_max_validators.write(10).unwrap();
+            vs.register_validator_with_sig(val, val, &pk, Some(&sig))
+        })
+    };
+
+    register_on_chain(1).expect("proof must be valid on the chain it was created for");
+    assert!(
+        register_on_chain(2).is_err(),
+        "registration proof from chain 1 must be rejected on chain 2"
+    );
 }
 
 // ---- Step 8: idempotent record_finalized_participation hook tests --------

@@ -13,6 +13,7 @@ use outbe_primitives::consensus_p2p::{
 };
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::slashing_journal::{iso8601_now, record as journal_record, JournalRecord};
+use outbe_primitives::validators::{validator_registration_message, VALIDATOR_REGISTRATION_DST};
 use tracing::{info, warn};
 
 use crate::precompile::IValidatorSet;
@@ -698,7 +699,8 @@ impl ValidatorSet<'_> {
     /// Registers a new validator with BLS proof-of-possession verification.
     ///
     /// When `bls_signature` is `Some`, verifies that the BLS MinPk key was used to
-    /// sign `validator_addr` (20 bytes) under the "outbe_REGISTER" namespace.
+    /// sign the chain-bound registration message under the "outbe_REGISTER"
+    /// namespace.
     /// `None` is rejected by this production API. Genesis is storage-seeded;
     /// feature-gated tests use [`Self::register_validator`] explicitly.
     ///
@@ -747,7 +749,12 @@ impl ValidatorSet<'_> {
         // no-PoP path is the feature-gated bootstrap/test helper above; normal
         // owner authority does not weaken the consensus-key invariant.
         if let Some(sig_bytes) = bls_signature {
-            verify_bls_registration_sig(consensus_pubkey, sig_bytes, &validator_addr)?;
+            verify_bls_registration_sig(
+                consensus_pubkey,
+                sig_bytes,
+                self.storage.chain_id()?,
+                validator_addr,
+            )?;
         } else if !allow_bootstrap_without_pop {
             return Err(PrecompileError::Revert(
                 "validator registration requires BLS proof-of-possession signature".into(),
@@ -2294,12 +2301,12 @@ impl ValidatorSet<'_> {
 /// Uses the `blst` crate directly to verify the signature without needing
 /// the full commonware cryptography stack in the EVM precompile crate.
 ///
-/// The signed message is the validator's Ethereum address (20 bytes).
-/// The domain separation tag (DST) is "BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_outbe_REGISTER".
+/// The signed message is `chain_id (u64 big-endian) || validator address`.
 fn verify_bls_registration_sig(
     pubkey_bytes: &[u8; 48],
     sig_bytes: &[u8; 96],
-    validator_addr: &Address,
+    chain_id: u64,
+    validator_addr: Address,
 ) -> Result<()> {
     use blst::min_pk::{PublicKey, Signature};
     use blst::BLST_ERROR;
@@ -2309,8 +2316,8 @@ fn verify_bls_registration_sig(
     let sig = Signature::from_bytes(sig_bytes)
         .map_err(|_| PrecompileError::Revert("invalid BLS signature".into()))?;
 
-    let dst = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_outbe_REGISTER";
-    let result = sig.verify(true, validator_addr.as_slice(), dst, &[], &pk, true);
+    let message = validator_registration_message(chain_id, validator_addr);
+    let result = sig.verify(true, &message, VALIDATOR_REGISTRATION_DST, &[], &pk, true);
     if result != BLST_ERROR::BLST_SUCCESS {
         return Err(PrecompileError::Revert(
             "invalid BLS registration signature".into(),
