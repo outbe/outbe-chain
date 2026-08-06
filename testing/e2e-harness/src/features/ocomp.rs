@@ -376,8 +376,8 @@ fn fresh_capacity_day_is_created_in_forming(world: &mut World) {
     assert_eq!(state.lookback_end, state.forming_end);
     assert_eq!(
         state.offering_end - state.lookback_end,
-        48 * 3_600,
-        "fresh process evidence must retain the canonical 48-hour OFFERING duration"
+        50 * 3_600,
+        "fresh process evidence must retain the canonical 50-hour OFFERING duration"
     );
     assert_eq!(
         state.scheduled_process_time - state.offering_end,
