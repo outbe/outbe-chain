@@ -247,8 +247,8 @@ pub struct MetadosisContract {
     pub ocomp_pre_admission:
         outbe_primitives::storage::dsl::Map<WorldwideDayKey, OcompPreAdmissionState>,
 
-    /// Fork-profile authority installed by the OCOMP upgrade handler. Empty
-    /// before the disposable-devnet profile is armed.
+    /// Fork-profile authority installed by `OcompLifecycleBegin`. Empty before
+    /// the genesis-bound OCOMP profile is armed.
     #[attribute(order = 6)]
     pub ocomp_request_profile: outbe_primitives::storage::types::StorageBytes,
 

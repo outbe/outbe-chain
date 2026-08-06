@@ -212,10 +212,11 @@ This journal is restart/reconciliation evidence, not chain authority.
    `OcompForkInstallV1`. Every node has loaded the same immutable binding to
    the exact chain/genesis, `AtBlock(H)`, request profile and bundle. OCOMP
    membership is not stored in this install artifact.
-2. At `H`, the executor's deterministic pre-execution hooks activate the
-   protocol-version-1 Update and initialize the owner pre-admission profiles.
-   The existing empty-body `OcompLifecycleBegin` then atomically installs the
-   complete authority before expiry; no owner mutation is duplicated.
+2. At `H`, the empty-body `OcompLifecycleBegin` atomically installs founding
+   OCOMP registrations, the Metadosis request profile and bundle, and the
+   Tribute and Oracle admission profiles before expiry. Fresh OCOMP genesis has
+   no synthetic scheduled Update, and OCOMP activation leaves the generic
+   active protocol version at `0`.
 3. Every generated page, work shard, chunk, control message and result
    summary fits its frozen interface cap; total Tribute count is not capped.
 4. Every ACTIVE validator has a distinct OCOMP registration. At request commit,

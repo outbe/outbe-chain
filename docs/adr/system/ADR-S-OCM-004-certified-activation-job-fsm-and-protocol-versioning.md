@@ -204,22 +204,30 @@ The parsed value is immutable for the process lifetime; local
 environment variables, command-line height overrides, runtime file reload and
 OCOMP process readiness cannot select consensus semantics.
 
-At exactly `H`, the profile, bundle and any founding key registrations are
-validated before the first write and are
-installed under one outer storage checkpoint. Replaying the exact install is
-idempotent; partial state or any different value is fatal. The same typed
+At exactly `H`, the receipt-visible `OcompLifecycleBegin` validates the complete
+install before the first write and commits one atomic transition containing:
+
+- founding ValidatorSet OCOMP registrations;
+- the immutable Metadosis request profile and protocol bundle;
+- the Tribute OCOMP admission profile; and
+- the Oracle OCOMP admission profile.
+
+Each owner retains its own freshness, exact-replay and conflict checks. The
+outer Metadosis command owns the cross-module checkpoint, so a failure in any
+owner rolls back every earlier write and event. Replaying an exact complete
+install is idempotent; partial or conflicting state is fatal. The same typed
 install and activation height are supplied to proposer, importer, historical
 replay, consensus and txpool paths. Pre-fork blocks contain no OCOMP lifecycle
 envelopes.
 
-The existing protocol-version-1 Update handler remains the sole initializer of
-Tribute, Fidelity, Oracle and Metadosis pre-admission profiles. A fresh PoC
-network schedules that Update for the same height `H`; the fork install does
-not duplicate those owner mutations. The executor activates the Update in its
-deterministic pre-execution hooks. The receipt-visible begin zone then runs
-`OcompLifecycleBegin` (fork install followed by expiry), `CycleTick` and the
-remaining begin-zone phases; ordinary transactions and the terminal request
-slot follow.
+Fresh OCOMP genesis contains no synthetic scheduled Update. OCOMP activation
+does not change the generic active protocol version: it remains version `0`
+unless an independent, real protocol Update is scheduled and activated. The
+generic Update subsystem remains available for future upgrades but owns no
+genesis OCOMP initialization. After the atomic install, the begin zone proceeds
+with OCOMP expiry, `CycleTick` and the remaining phases; ordinary transactions
+and the terminal request slot follow and can observe the newly installed
+profiles in the same block.
 
 ### Full-result vote verification
 

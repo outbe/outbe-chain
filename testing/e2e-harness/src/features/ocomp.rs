@@ -2709,6 +2709,13 @@ fn job_a_opens_on_the_historical_four_validator_snapshot(world: &mut World) {
     assert_ne!(record.intent.result_committee_set_hash, B256::ZERO);
     assert_ne!(record.intent.result_ocomp_binding_hash, B256::ZERO);
     assert!(
+        ports
+            .iter()
+            .copied()
+            .all(|port| world.rpc.active_version_on(port) == Some(0)),
+        "a real post-activation OCOMP job must not depend on a generic Update"
+    );
+    assert!(
         ports.iter().copied().all(|port| world
             .rpc
             .metadosis_wwd_state_on(port, job_b_wwd)
@@ -3146,7 +3153,7 @@ fn validator_zero_supervisor_restarts(world: &mut World) {
 #[when("validator 0 restarts before, across, and after the OCOMP fork height")]
 fn validator_zero_restarts_across_fork(world: &mut World) {
     const VALIDATOR_INDEX: usize = 0;
-    const ACTIVE_PROTOCOL_VERSION: u64 = 1;
+    const GENERIC_PROTOCOL_BASELINE: u64 = 0;
 
     let activation = world
         .state
@@ -3212,13 +3219,13 @@ fn validator_zero_restarts_across_fork(world: &mut World) {
         .expect("validator-0 replays through the finalized activation block");
     assert_eq!(
         world.rpc.active_version_on(primary),
-        Some(ACTIVE_PROTOCOL_VERSION),
-        "restarted validator did not replay the protocol-v1 activation"
+        Some(GENERIC_PROTOCOL_BASELINE),
+        "OCOMP activation must not change the generic protocol version"
     );
     assert_eq!(
         world.rpc.active_version_on(witness),
-        Some(ACTIVE_PROTOCOL_VERSION),
-        "live committee did not activate protocol v1 at H"
+        Some(GENERIC_PROTOCOL_BASELINE),
+        "live committee changed the generic protocol version at OCOMP activation"
     );
 
     let post_fork_restart_from_height = world.rpc.head(primary).expect("post-H validator-0 head");
@@ -3233,8 +3240,8 @@ fn validator_zero_restarts_across_fork(world: &mut World) {
         .expect("validator-0 rejoins after H");
     assert_eq!(
         world.rpc.active_version_on(primary),
-        Some(ACTIVE_PROTOCOL_VERSION),
-        "post-H restart lost the activated protocol version"
+        Some(GENERIC_PROTOCOL_BASELINE),
+        "post-H restart changed the generic protocol version"
     );
     world
         .ocomp
@@ -3252,7 +3259,6 @@ fn validator_zero_restarts_across_fork(world: &mut World) {
             replayed_through_height,
             post_fork_restart_from_height,
             post_fork_rejoined_height,
-            active_protocol_version: ACTIVE_PROTOCOL_VERSION,
         })
         .expect("retain validated fork restart evidence");
 }
@@ -3275,7 +3281,7 @@ fn fork_restart_evidence_is_closed(world: &mut World) {
 #[when("validator 0 restarts with a different valid immutable OCOMP fork install")]
 fn validator_zero_restarts_with_mismatched_fork_install(world: &mut World) {
     const VALIDATOR_INDEX: usize = 0;
-    const ACTIVE_PROTOCOL_VERSION: u64 = 1;
+    const GENERIC_PROTOCOL_BASELINE: u64 = 0;
 
     let primary = world.validators.http_port(VALIDATOR_INDEX);
     let witness = world.validators.http_port(1);
@@ -3322,12 +3328,12 @@ fn validator_zero_restarts_with_mismatched_fork_install(world: &mut World) {
         .active_version_on(primary)
         .expect("mismatched validator active protocol version");
     assert_eq!(
-        canonical_active_protocol_version, ACTIVE_PROTOCOL_VERSION,
-        "canonical committee did not activate protocol v1"
+        canonical_active_protocol_version, GENERIC_PROTOCOL_BASELINE,
+        "canonical OCOMP activation changed the generic protocol version"
     );
     assert_eq!(
-        mismatched_active_protocol_version, 0,
-        "mismatched validator crossed the canonical Update boundary"
+        mismatched_active_protocol_version, GENERIC_PROTOCOL_BASELINE,
+        "mismatched OCOMP install changed the generic protocol version"
     );
 
     world
@@ -3341,8 +3347,6 @@ fn validator_zero_restarts_with_mismatched_fork_install(world: &mut World) {
             canonical_head_before_restart,
             mismatched_head_after_fork,
             canonical_finalized_after_fork,
-            canonical_active_protocol_version,
-            mismatched_active_protocol_version,
         })
         .expect("retain validated fork mismatch evidence");
 }
