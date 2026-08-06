@@ -158,16 +158,6 @@ pub fn marked_up(entry_price: U256, rate: u16) -> Result<U256> {
         .ok_or_else(|| PrecompileError::Revert("marked-up price overflow".into()))
 }
 
-/// Per-Intex cost = entry_price * promis_load / 1e30 (payment-token minor).
-/// Mirrors the desis derivation: entry(1e18) * PROMIS_LOAD / 1e12, expressed via
-/// promis_load_minor (= PROMIS_LOAD * 1e18), so the divisor is 1e30.
-pub(crate) fn derived_cost_amount(entry_price: U256, promis_load_minor: U256) -> Result<U256> {
-    entry_price
-        .checked_mul(promis_load_minor)
-        .map(|v| v / U256::from(10u64).pow(U256::from(30u64)))
-        .ok_or_else(|| PrecompileError::Revert("cost amount overflow".into()))
-}
-
 /// Set the dual-wallet authorized settler for `holder`'s position in `series_id`.
 /// `holder` is the caller (the precompile passes its caller).
 pub fn set_authorized_settler(
@@ -429,10 +419,10 @@ pub fn settle(
         return Err(IntexFactoryError::NotAuthorized.into());
     }
 
-    // payment = per-Intex cost * amount; cost derives from entry_price * promis_load.
-    let payment = derived_cost_amount(series.entry_price_minor, series.promis_load_minor)?
-        .checked_mul(amount)
-        .ok_or_else(|| PrecompileError::Revert("settlement cost overflow".into()))?;
+    let payment =
+        outbe_intex::cost_amount_minor(series.entry_price_minor, series.promis_load_minor)?
+            .checked_mul(amount)
+            .ok_or_else(|| PrecompileError::Revert("settlement cost overflow".into()))?;
 
     // Pull payment from the settler, deposit into the reserve vault.
     // Fee-on-transfer safe: measure the received delta.
