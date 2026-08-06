@@ -47,6 +47,8 @@ wire_struct! {
         pub finalized_block_hash: B256,
         pub finalized_state_root: B256,
         pub protocol_bundle_hash: B256,
+        pub open_height: u64,
+        pub deadline_height: u64,
     }
     validate = validate_finalized_job_summary;
 }
@@ -308,7 +310,7 @@ wire_struct! {
 wire_struct! {
     /// Deterministic EIP-1559 transaction produced by the local OCOMP signer.
     pub struct PreparedVoteTransactionV1 {
-        pub canonical_result: BoundedBytes,
+        pub canonical_vote: BoundedBytes,
         pub raw_transaction: BoundedBytes,
         pub transaction_hash: B256,
     }
@@ -463,6 +465,10 @@ fn validate_finalized_job_summary(
     require(
         !summary.protocol_bundle_hash.is_zero(),
         "finalized job protocol bundle",
+    )?;
+    require(
+        summary.open_height < summary.deadline_height,
+        "finalized job voting window",
     )
 }
 
@@ -669,11 +675,11 @@ fn validate_prepared_vote_transaction(
     response: &PreparedVoteTransactionV1,
     limits: &SchemaLimits,
 ) -> Result<(), ProtocolError> {
-    response.canonical_result.validate(limits)?;
+    response.canonical_vote.validate(limits)?;
     response.raw_transaction.validate(limits)?;
     require(
-        !response.canonical_result.0.is_empty()
-            && response.canonical_result.0.len() <= limits.max_control_body_bytes
+        !response.canonical_vote.0.is_empty()
+            && response.canonical_vote.0.len() <= limits.max_control_body_bytes
             && !response.raw_transaction.0.is_empty()
             && response.raw_transaction.0.len() <= limits.max_control_body_bytes
             && !response.transaction_hash.is_zero(),

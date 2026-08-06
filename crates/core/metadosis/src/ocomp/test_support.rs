@@ -1070,6 +1070,7 @@ pub struct ActivationFixture {
     pub provider: HashMapStorageProvider,
     pub scope: ExecutionScope,
     pub result: LysisResultV1,
+    pub intent: JobIntentV1,
     pub intent_id: B256,
     pub limits: SchemaLimits,
     pub request_receipt: RequestBudgetSplitReceiptV1,
@@ -1260,7 +1261,7 @@ impl ActivationFixture {
                 vote.signature_rs = sign(&signing_key(index), signing_digest);
                 contract
                     .record_ocomp_result_vote(
-                        &vote.result,
+                        &vote,
                         Self::validator_caller(index),
                         finalized.open_height + u64::from(index),
                         &scope,
@@ -1275,10 +1276,31 @@ impl ActivationFixture {
             provider,
             scope,
             result,
+            intent,
             intent_id,
             limits,
             request_receipt,
         }
+    }
+
+    /// Creates the canonical signed vote for one fixture committee member.
+    #[must_use]
+    pub fn signed_result_vote(&self, validator_index: u8) -> ResultVoteV1 {
+        let mut vote = ResultVoteV1 {
+            protocol_bundle_hash: self.intent.protocol_bundle_hash,
+            job_id: self.result.job_id,
+            attempt: self.intent.attempt,
+            result_committee_snapshot_hash: self.intent.result_committee_snapshot_hash,
+            validator_index,
+            key_epoch: 1,
+            result: self.result.clone(),
+            signature_rs: [0; 64],
+        };
+        vote.signature_rs = sign(
+            &signing_key(validator_index),
+            vote.signing_digest(&self.intent, &self.limits).unwrap(),
+        );
+        vote
     }
 
     pub fn apply(&mut self) -> PrecompileResult<Bytes> {
@@ -1306,7 +1328,7 @@ impl ActivationFixture {
     pub fn calldata(&self) -> Bytes {
         Bytes::from(
             outbe_ocomp_protocol::abi::encode_submit_lysis_result_calldata(
-                &self.result,
+                &self.signed_result_vote(2),
                 &self.limits,
             )
             .unwrap(),

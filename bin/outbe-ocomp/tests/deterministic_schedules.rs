@@ -384,6 +384,8 @@ fn run_schedule(worker_count: usize, seed: u64) -> ScheduleOutcome {
                 finalized_block_hash: proof_fixture.header_hash,
                 finalized_state_root: proof_fixture.state_root,
                 protocol_bundle_hash: bundle_hash,
+                open_height: 1,
+                deadline_height: 1_000,
             },
             canonical_job_intent: proof_fixture.proof.canonical_job_intent.clone(),
         },

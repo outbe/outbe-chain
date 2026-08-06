@@ -1,6 +1,6 @@
 use alloy_primitives::{address, b256, Address, B256, U256};
 
-use crate::{result::LysisResultV1, ProtocolError, SchemaLimits};
+use crate::{vote::ResultVoteV1, ProtocolError, SchemaLimits};
 
 pub const METADOSIS_ADDRESS: Address = address!("000000000000000000000000000000000000100e");
 
@@ -28,10 +28,10 @@ pub const OCOMP_ACTIVATION_REJECTION_CODES: core::ops::RangeInclusive<u8> = 1..=
 
 /// Encodes the one canonical public ingress for a validator result vote.
 pub fn encode_submit_lysis_result_calldata(
-    result: &LysisResultV1,
+    vote: &ResultVoteV1,
     limits: &SchemaLimits,
 ) -> Result<Vec<u8>, ProtocolError> {
-    let payload = result.encode_canonical(limits)?;
+    let payload = vote.encode_canonical(limits)?;
     let vote_cap = usize::try_from(
         crate::generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1.max_result_vote_bytes,
     )

@@ -33,6 +33,7 @@ use outbe_metadosis::genesis::FreshDevnetGenesisBuilder;
 use outbe_metadosis::proof_layout::METADOSIS_STORAGE_LAYOUT_V1_HASH;
 #[cfg(feature = "ocomp-integration")]
 use outbe_ocomp_protocol::{
+    activation::SignOncePurpose,
     committee::{
         OcompCommitteeSnapshotV1, OcompKeyRegistrationCoreV1, OcompKeyRegistrationV1,
         OcompMemberV1, RESULT_SIGNATURE_PURPOSE_BITMAP,
@@ -43,7 +44,7 @@ use outbe_ocomp_protocol::{
     registry::{
         HashDomain, FIDELITY_OPENING_CODEC_ID, ORACLE_OPENING_CODEC_ID, TRIBUTE_BODY_CODEC_ID,
     },
-    result::LysisResultV1,
+    vote::{ResultVoteSigningSubjectV1, ResultVoteV1},
     PreparedVoteTransactionV1,
 };
 #[cfg(feature = "ocomp-integration")]
@@ -473,7 +474,7 @@ impl OcompTopology {
     pub fn prepare_held_vote_transaction(
         &self,
         validator_index: u8,
-        canonical_result: Vec<u8>,
+        mut vote: ResultVoteV1,
         nonce: u64,
         max_fee_per_gas: u128,
         gas_limit: u64,
@@ -482,9 +483,40 @@ impl OcompTopology {
             .launch_identity
             .ok_or_else(|| eyre::eyre!("OCOMP launch identity is unavailable"))?;
         let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
-        let result = LysisResultV1::decode_canonical(&canonical_result, &limits)?;
+        vote.validator_index = validator_index;
+        vote.signature_rs = [0; 64];
+        let bundle = ProtocolBundleV1::decode_canonical(
+            &fs::read(
+                self.domain_root(validator_index)?
+                    .join("protocol-bundle-v1.ocb1"),
+            )?,
+            &limits,
+        )?;
+        let subject = ResultVoteSigningSubjectV1 {
+            chain_id: identity.chain_id,
+            genesis_hash: identity.genesis_hash,
+            fork_id: bundle.fork_id,
+            protocol_bundle_hash: vote.protocol_bundle_hash,
+            job_id: vote.job_id,
+            attempt: vote.attempt,
+            result_committee_snapshot_hash: vote.result_committee_snapshot_hash,
+            validator_index,
+            key_epoch: vote.key_epoch,
+            purpose: SignOncePurpose::ResultSignature as u8,
+            result_digest: vote.result_digest(&limits)?,
+        };
+        let key = fs::read_to_string(self.domain_root(validator_index)?.join("ocomp-key-v1.hex"))?;
+        let signing_key = SigningKey::from_slice(&hex::decode(key.trim())?)?;
+        let signature: Signature =
+            signing_key.sign_prehash(subject.signing_digest()?.as_slice())?;
+        vote.signature_rs = signature
+            .normalize_s()
+            .unwrap_or(signature)
+            .to_bytes()
+            .into();
+        let canonical_vote = vote.encode_canonical(&limits)?;
         let calldata =
-            outbe_ocomp_protocol::abi::encode_submit_lysis_result_calldata(&result, &limits)?;
+            outbe_ocomp_protocol::abi::encode_submit_lysis_result_calldata(&vote, &limits)?;
         let signer = OutbeEvmSigner::from_file(
             self.domain_root(validator_index)?.join("ocomp-evm-key.hex"),
         )?;
@@ -503,7 +535,7 @@ impl OcompTopology {
         let mut raw_transaction = Vec::with_capacity(signed.encode_2718_len());
         signed.encode_2718(&mut raw_transaction);
         Ok(PreparedVoteTransactionV1 {
-            canonical_result: BoundedBytes(canonical_result),
+            canonical_vote: BoundedBytes(canonical_vote),
             raw_transaction: BoundedBytes(raw_transaction),
             transaction_hash,
         })
@@ -620,11 +652,17 @@ impl OcompTopology {
     fn publish_validator_domain_material(&self, install: &OcompForkInstallV1) -> Result<()> {
         let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
         let canonical_bundle = install.protocol_bundle.encode_canonical(&limits)?;
+        let canonical_committee = install.result_committee.encode_canonical(&limits)?;
         for (validator_index, domain) in self.domains.iter().enumerate() {
             fs::create_dir_all(&domain.root)?;
             publish_exact_file(
                 &domain.root.join("protocol-bundle-v1.ocb1"),
                 &canonical_bundle,
+                0o640,
+            )?;
+            publish_exact_file(
+                &domain.root.join("result-committee-v1.ocb1"),
+                &canonical_committee,
                 0o640,
             )?;
             let key = measurement_signing_key(u8::try_from(validator_index)?);
@@ -1147,6 +1185,7 @@ impl OcompTopology {
                         self.cfg.ocomp_supervisor_port(validator_index)
                     ))
                     .env("OUTBE_OCOMP_RPC_URL", self.cfg.rpc_url(validator_index));
+                command.env("OCOMP_VALIDATOR_INDEX", validator_index.to_string());
             }
             OcompProcessRole::SnapshotExporter => {
                 let validator_index = usize::from(validator_index);
