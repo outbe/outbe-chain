@@ -8,7 +8,6 @@
 use alloy_primitives::{address, Address};
 use outbe_primitives::time::SECONDS_PER_DAY;
 
-/// Every protocol period below is `u32` seconds.
 const DAY: u32 = SECONDS_PER_DAY as u32;
 
 /// IntexNFT1155 on Outbe (balance ledger: settle / burnSettled / balanceOf).
