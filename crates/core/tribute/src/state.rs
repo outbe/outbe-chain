@@ -26,7 +26,8 @@ pub struct TributePreAdmissionProjection {
 
 impl TributeContract<'_> {
     /// Initializes the OCOMP accumulator only on an empty fresh-devnet
-    /// Tribute state. The later fork handler owns the production call site.
+    /// Tribute state. The genesis-bound OCOMP lifecycle owns the production
+    /// call site.
     pub fn initialize_fresh_ocomp_profile(&mut self) -> Result<()> {
         let storage = self.storage_handle();
         storage.with_checkpoint(|| {

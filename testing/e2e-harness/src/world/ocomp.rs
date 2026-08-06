@@ -45,13 +45,11 @@ use outbe_ocomp_protocol::{
 };
 #[cfg(feature = "ocomp-integration")]
 use outbe_primitives::{
-    addresses::{METADOSIS_ADDRESS, TRIBUTE_ADDRESS, UPDATE_ADDRESS, VALIDATOR_SET_ADDRESS},
+    addresses::{METADOSIS_ADDRESS, TRIBUTE_ADDRESS, VALIDATOR_SET_ADDRESS},
     signer::OutbeEvmSigner,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
     OutbeHeader,
 };
-#[cfg(feature = "ocomp-integration")]
-use outbe_update::{schema::Update, ProtocolVersion};
 #[cfg(feature = "ocomp-integration")]
 use std::fs::{self, OpenOptions};
 #[cfg(feature = "ocomp-integration")]
@@ -166,7 +164,6 @@ pub struct OcompForkRestartEvidenceV1 {
     pub replayed_through_height: u64,
     pub post_fork_restart_from_height: u64,
     pub post_fork_rejoined_height: u64,
-    pub active_protocol_version: u64,
 }
 
 impl OcompForkRestartEvidenceV1 {
@@ -183,9 +180,15 @@ impl OcompForkRestartEvidenceV1 {
             || self.replayed_through_height < self.finalized_while_down_height
             || self.post_fork_restart_from_height < self.activation_height
             || self.post_fork_rejoined_height < self.post_fork_restart_from_height
-            || self.active_protocol_version != 1
         {
             eyre::bail!("OCOMP fork restart evidence does not span H-1/H/H+1 safely");
+        }
+        Ok(())
+    }
+
+    fn validate_launch_identity(&self, identity: &OcompLaunchIdentityEvidenceV1) -> Result<()> {
+        if self.activation_height != identity.activation_height {
+            eyre::bail!("OCOMP fork restart evidence does not match the launch identity");
         }
         Ok(())
     }
@@ -204,8 +207,6 @@ pub struct OcompForkMismatchEvidenceV1 {
     pub canonical_head_before_restart: u64,
     pub mismatched_head_after_fork: u64,
     pub canonical_finalized_after_fork: u64,
-    pub canonical_active_protocol_version: u64,
-    pub mismatched_active_protocol_version: u64,
 }
 
 impl OcompForkMismatchEvidenceV1 {
@@ -226,10 +227,17 @@ impl OcompForkMismatchEvidenceV1 {
             || self.canonical_finalized_after_fork
                 < self.canonical_activation_height.saturating_add(1)
             || self.canonical_finalized_after_fork <= self.mismatched_head_after_fork
-            || self.canonical_active_protocol_version != 1
-            || self.mismatched_active_protocol_version != 0
         {
             eyre::bail!("OCOMP fork mismatch evidence does not prove fail-closed isolation");
+        }
+        Ok(())
+    }
+
+    fn validate_launch_identity(&self, identity: &OcompLaunchIdentityEvidenceV1) -> Result<()> {
+        if self.canonical_activation_height != identity.activation_height
+            || self.canonical_install_hash != identity.fork_install_hash
+        {
+            eyre::bail!("OCOMP fork mismatch evidence does not match the launch identity");
         }
         Ok(())
     }
@@ -274,9 +282,17 @@ impl OcompScenarioTopologyV1 {
         }
         if let Some(restart) = &self.fork_restart {
             restart.validate(validator_count)?;
+            let identity = self.launch_identity.as_ref().ok_or_else(|| {
+                eyre::eyre!("OCOMP fork evidence requires the exact OCOMP launch identity")
+            })?;
+            restart.validate_launch_identity(identity)?;
         }
         if let Some(mismatch) = &self.fork_mismatch {
             mismatch.validate(validator_count)?;
+            let identity = self.launch_identity.as_ref().ok_or_else(|| {
+                eyre::eyre!("OCOMP fork evidence requires the exact OCOMP launch identity")
+            })?;
+            mismatch.validate_launch_identity(identity)?;
         }
         Ok(())
     }
@@ -538,6 +554,14 @@ impl OcompTopology {
         Ok(&self.domain(validator_index)?.root)
     }
 
+    /// Canonical chain manifest selected for this scenario before any
+    /// mismatched-install fault is injected.
+    #[cfg(feature = "ocomp-integration")]
+    #[must_use]
+    pub fn canonical_chain_manifest_path(&self) -> PathBuf {
+        self.cfg.dir.join("genesis.json")
+    }
+
     /// Verify the durable footprint left by one completed production job in
     /// every isolated validator domain.
     ///
@@ -700,10 +724,9 @@ impl OcompTopology {
     /// Generate and publish the complete immutable measurement fork before any
     /// node process starts.
     ///
-    /// The existing Update schema authors the protocol-v1 schedule in genesis.
-    /// The resulting base genesis hash then binds the request profile and
-    /// protocol bundle. Adding the canonical install under `genesis.config`
-    /// does not alter that header hash.
+    /// The resulting base genesis hash binds the request profile and protocol
+    /// bundle without a synthetic generic Update. Adding the canonical install
+    /// under `genesis.config` does not alter that header hash.
     #[cfg(feature = "ocomp-integration")]
     pub fn prepare_measurement_fork_install(&self) -> Result<OcompMeasurementForkV1> {
         self.prepare_measurement_fork_install_inner(None, &[], false)
@@ -1194,16 +1217,10 @@ impl OcompTopology {
         } else {
             false
         };
-        let update_changed = schedule_protocol_v1_update(
-            &mut genesis,
-            chain_id,
-            OCOMP_MEASUREMENT_ACTIVATION_HEIGHT,
-        )?;
         let gas_envelope_changed = apply_measurement_gas_envelope(&mut genesis)?;
         if capacity_accounts_changed
             || public_day_changed
             || seeded_metadosis_changed
-            || update_changed
             || gas_envelope_changed
         {
             replace_json_atomically(&genesis_path, &genesis)?;
@@ -2063,6 +2080,10 @@ impl OcompTopology {
     ) -> Result<()> {
         self.domain(evidence.validator_index)?;
         evidence.validate(self.domains.len())?;
+        let identity = self.launch_identity_evidence.as_ref().ok_or_else(|| {
+            eyre::eyre!("OCOMP fork evidence requires the exact OCOMP launch identity")
+        })?;
+        evidence.validate_launch_identity(identity)?;
         if self.fork_restart_evidence.is_some() {
             eyre::bail!("OCOMP fork restart evidence was already recorded");
         }
@@ -2076,6 +2097,10 @@ impl OcompTopology {
     ) -> Result<()> {
         self.domain(evidence.validator_index)?;
         evidence.validate(self.domains.len())?;
+        let identity = self.launch_identity_evidence.as_ref().ok_or_else(|| {
+            eyre::eyre!("OCOMP fork evidence requires the exact OCOMP launch identity")
+        })?;
+        evidence.validate_launch_identity(identity)?;
         if self.fork_mismatch_evidence.is_some() {
             eyre::bail!("OCOMP fork mismatch evidence was already recorded");
         }
@@ -2743,80 +2768,6 @@ fn apply_measurement_gas_envelope(genesis: &mut serde_json::Value) -> Result<boo
 }
 
 #[cfg(feature = "ocomp-integration")]
-fn schedule_protocol_v1_update(
-    genesis: &mut serde_json::Value,
-    chain_id: u64,
-    activation_height: u64,
-) -> Result<bool> {
-    let mut provider = HashMapStorageProvider::new(chain_id);
-    StorageHandle::enter(&mut provider, |storage| {
-        Update::new(storage).write_scheduled_update(
-            measurement_update_proposal_id(),
-            ProtocolVersion::from_raw(1),
-            activation_height,
-            "OCOMP PoC measurement profile",
-        )
-    })?;
-
-    let alloc = genesis
-        .get_mut("alloc")
-        .and_then(serde_json::Value::as_object_mut)
-        .ok_or_else(|| eyre::eyre!("generated genesis has no alloc object"))?;
-    let mut changed = false;
-    let update_key = match find_alloc_address_key(alloc, UPDATE_ADDRESS)? {
-        Some(key) => key,
-        None => {
-            // Native precompiles do not need bytecode accounts. A fresh seeded
-            // genesis may therefore omit Update until its first non-zero
-            // storage word; create only that canonical alloc container.
-            let key = hex::encode(UPDATE_ADDRESS.as_slice());
-            alloc.insert(
-                key.clone(),
-                serde_json::json!({
-                    "balance": "0x0",
-                    "storage": {},
-                }),
-            );
-            changed = true;
-            key
-        }
-    };
-    let update_account = alloc
-        .get_mut(&update_key)
-        .and_then(serde_json::Value::as_object_mut)
-        .ok_or_else(|| eyre::eyre!("Update genesis account is not an object"))?;
-    let storage = update_account
-        .entry("storage")
-        .or_insert_with(|| serde_json::json!({}))
-        .as_object_mut()
-        .ok_or_else(|| eyre::eyre!("Update genesis storage is not an object"))?;
-
-    for ((address, slot), value) in &provider.storage {
-        if *address != UPDATE_ADDRESS || value.is_zero() {
-            continue;
-        }
-        let slot = format!("0x{slot:064x}");
-        let value = format!("0x{value:064x}");
-        match storage.get(&slot) {
-            Some(existing) if parse_storage_word(existing)? == parse_hex_word(&value)? => {}
-            Some(_) => eyre::bail!("Update genesis slot {slot} conflicts with OCOMP schedule"),
-            None => {
-                storage.insert(slot, serde_json::Value::String(value));
-                changed = true;
-            }
-        }
-    }
-    Ok(changed)
-}
-
-#[cfg(feature = "ocomp-integration")]
-fn measurement_update_proposal_id() -> U256 {
-    U256::from_be_bytes(
-        alloy_primitives::keccak256(b"OUTBE_OCOMP_MEASUREMENT_UPDATE_PROPOSAL_V1").0,
-    )
-}
-
-#[cfg(feature = "ocomp-integration")]
 fn find_alloc_address_key(
     alloc: &serde_json::Map<String, serde_json::Value>,
     expected: Address,
@@ -3269,6 +3220,21 @@ mod tests {
         ChildGuard::spawn("ocomp topology child", command).unwrap()
     }
 
+    fn launch_identity_evidence(
+        activation_height: u64,
+        fork_install_hash: B256,
+    ) -> OcompLaunchIdentityEvidenceV1 {
+        OcompLaunchIdentityEvidenceV1 {
+            chain_id: 1,
+            genesis_hash: format!("{:#x}", B256::repeat_byte(9)),
+            protocol_bundle_hash: format!("{:#x}", B256::repeat_byte(8)),
+            fork_install_hash: format!("{fork_install_hash:#x}"),
+            classification: "final".to_owned(),
+            activation_height,
+            metadosis_storage_layout_hash: METADOSIS_STORAGE_LAYOUT_V1_HASH_HEX.to_owned(),
+        }
+    }
+
     #[cfg(feature = "ocomp-integration")]
     fn stage_completed_job_footprint(topology: &OcompTopology, job_id: B256) {
         let job_component = hex::encode(job_id);
@@ -3441,6 +3407,8 @@ mod tests {
     #[test]
     fn fork_restart_evidence_requires_recovery_on_each_side_of_h() {
         let mut topology = topology();
+        topology.launch_identity_evidence =
+            Some(launch_identity_evidence(32, B256::repeat_byte(1)));
         topology
             .record_fork_restart_evidence(OcompForkRestartEvidenceV1 {
                 validator_index: 0,
@@ -3452,7 +3420,6 @@ mod tests {
                 replayed_through_height: 34,
                 post_fork_restart_from_height: 35,
                 post_fork_rejoined_height: 36,
-                active_protocol_version: 1,
             })
             .unwrap();
 
@@ -3462,8 +3429,31 @@ mod tests {
     }
 
     #[test]
+    fn fork_restart_evidence_requires_the_exact_launch_identity() {
+        let mut topology = topology();
+        let error = topology
+            .record_fork_restart_evidence(OcompForkRestartEvidenceV1 {
+                validator_index: 0,
+                activation_height: 32,
+                pre_fork_restart_from_height: 2,
+                pre_fork_rejoined_height: 4,
+                down_across_fork_from_height: 30,
+                finalized_while_down_height: 33,
+                replayed_through_height: 34,
+                post_fork_restart_from_height: 35,
+                post_fork_rejoined_height: 36,
+            })
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("requires the exact OCOMP launch identity"));
+    }
+
+    #[test]
     fn fork_restart_evidence_rejects_a_validator_that_did_not_replay_h() {
         let mut topology = topology();
+        topology.launch_identity_evidence =
+            Some(launch_identity_evidence(32, B256::repeat_byte(1)));
         let error = topology
             .record_fork_restart_evidence(OcompForkRestartEvidenceV1 {
                 validator_index: 0,
@@ -3475,7 +3465,6 @@ mod tests {
                 replayed_through_height: 31,
                 post_fork_restart_from_height: 35,
                 post_fork_rejoined_height: 36,
-                active_protocol_version: 1,
             })
             .unwrap_err();
 
@@ -3486,6 +3475,8 @@ mod tests {
     #[test]
     fn fork_mismatch_evidence_requires_canonical_progress_and_isolated_head() {
         let mut topology = topology();
+        topology.launch_identity_evidence =
+            Some(launch_identity_evidence(32, B256::repeat_byte(1)));
         topology
             .record_fork_mismatch_evidence(OcompForkMismatchEvidenceV1 {
                 validator_index: 0,
@@ -3496,8 +3487,6 @@ mod tests {
                 canonical_head_before_restart: 7,
                 mismatched_head_after_fork: 31,
                 canonical_finalized_after_fork: 33,
-                canonical_active_protocol_version: 1,
-                mismatched_active_protocol_version: 0,
             })
             .unwrap();
 
@@ -3513,8 +3502,33 @@ mod tests {
     }
 
     #[test]
+    fn fork_mismatch_evidence_rejects_a_different_canonical_launch_identity() {
+        let mut topology = topology();
+        topology.launch_identity_evidence =
+            Some(launch_identity_evidence(32, B256::repeat_byte(3)));
+        let error = topology
+            .record_fork_mismatch_evidence(OcompForkMismatchEvidenceV1 {
+                validator_index: 0,
+                canonical_install_hash: format!("{:#x}", B256::repeat_byte(1)),
+                mismatched_install_hash: format!("{:#x}", B256::repeat_byte(2)),
+                canonical_activation_height: 32,
+                mismatched_activation_height: 32,
+                canonical_head_before_restart: 7,
+                mismatched_head_after_fork: 31,
+                canonical_finalized_after_fork: 33,
+            })
+            .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("does not match the launch identity"));
+    }
+
+    #[test]
     fn fork_mismatch_evidence_rejects_a_node_that_imported_h() {
         let mut topology = topology();
+        topology.launch_identity_evidence =
+            Some(launch_identity_evidence(32, B256::repeat_byte(1)));
         let error = topology
             .record_fork_mismatch_evidence(OcompForkMismatchEvidenceV1 {
                 validator_index: 0,
@@ -3525,8 +3539,6 @@ mod tests {
                 canonical_head_before_restart: 7,
                 mismatched_head_after_fork: 32,
                 canonical_finalized_after_fork: 33,
-                canonical_active_protocol_version: 1,
-                mismatched_active_protocol_version: 0,
             })
             .unwrap_err();
 
@@ -3542,7 +3554,7 @@ mod tests {
 
     #[cfg(feature = "ocomp-integration")]
     #[test]
-    fn measurement_fork_install_arms_genesis_and_update_before_node_start() {
+    fn measurement_fork_install_arms_genesis_without_a_synthetic_update() {
         let topology = topology();
         prepare_measurement_genesis_fixture(&topology);
         let prepared = topology.prepare_measurement_fork_install().unwrap();
@@ -3595,33 +3607,12 @@ mod tests {
             serde_json::from_slice(&std::fs::read(topology.cfg.dir.join("genesis.json")).unwrap())
                 .unwrap();
         let alloc = genesis["alloc"].as_object().unwrap();
-        let update_key = find_alloc_address_key(alloc, UPDATE_ADDRESS)
-            .unwrap()
-            .expect("measurement generator creates the Update alloc account");
-        let update_storage = alloc[&update_key]["storage"].as_object().unwrap();
-        let mut provider = HashMapStorageProvider::new(chain_spec.chain().id());
-        for (slot, value) in update_storage {
-            provider.storage.insert(
-                (UPDATE_ADDRESS, parse_hex_word(slot).unwrap()),
-                parse_storage_word(value).unwrap(),
-            );
-        }
-        StorageHandle::enter(&mut provider, |storage| {
-            let update = Update::new(storage);
-            let scheduled = update
-                .read_scheduled_update(measurement_update_proposal_id())
+        assert!(
+            find_alloc_address_key(alloc, outbe_primitives::addresses::UPDATE_ADDRESS)
                 .unwrap()
-                .unwrap();
-            assert_eq!(scheduled.version, ProtocolVersion::from_raw(1));
-            assert_eq!(
-                scheduled.activation_height,
-                OCOMP_MEASUREMENT_ACTIVATION_HEIGHT
-            );
-            assert_eq!(
-                scheduled.status,
-                outbe_update::schema::ScheduledUpdateStatus::Scheduled
-            );
-        });
+                .is_none(),
+            "measurement genesis must not schedule a generic Update for OCOMP"
+        );
 
         let bundles = topology
             .validator_indices()

@@ -7532,7 +7532,6 @@ dependencies = [
  "outbe-protocol-derive",
  "outbe-tee",
  "outbe-tribute",
- "outbe-update",
  "outbe-zk-backend",
  "outbe-zk-canonical",
  "outbe-zkproof",

@@ -1,9 +1,11 @@
 //! Canonical block-1 TEE policy and ChainSpec-manifest construction.
 //!
-//! The development profile is a distinct chain identity, never a fallback for
-//! an unavailable DCAP verifier. `DcapRequired` construction requires the
-//! exact signed-enclave measurement tuple; no placeholder DCAP policy can
-//! be emitted through this API.
+//! The development profile is selected explicitly in genesis, never as a
+//! fallback for an unavailable DCAP verifier. It is admitted on the devnet and
+//! testnet identities so the same fresh testnet topology can run without SGX.
+//! `DcapRequired` construction still requires the exact signed-enclave
+//! measurement tuple; no placeholder DCAP policy can be emitted through this
+//! API.
 
 use alloy_primitives::{keccak256, B256, U256};
 use serde_json::{json, Value};
@@ -17,9 +19,15 @@ use crate::{
     },
 };
 
-/// Chain ID for the runnable Gramine Direct devnet.
-/// The DCAP testnet uses [`TESTNET_CHAIN_ID`] and cannot reuse this identity.
+/// Primary chain ID for the runnable Gramine Direct devnet.
 pub const GRAMINE_DIRECT_DEV_CHAIN_ID: u64 = DEVNET_CHAIN_ID;
+
+/// Returns whether an explicitly configured development policy may use this
+/// fresh-network identity. Testnet keeps requiring an explicit genesis
+/// `GramineDirectDev` policy; this is not a runtime fallback from DCAP.
+pub const fn is_gramine_direct_dev_chain_id(chain_id: u64) -> bool {
+    chain_id == DEVNET_CHAIN_ID || chain_id == TESTNET_CHAIN_ID
+}
 
 /// SHA-256 of Intel's pinned SGX Root CA DER certificate.
 pub const INTEL_SGX_ROOT_CA_DER_SHA256: [u8; 32] = [
@@ -79,9 +87,9 @@ pub fn initial_tee_policy_v1(
                 "DcapRequired requires testnet chain ID {TESTNET_CHAIN_ID}"
             ));
         }
-        InitialTeeProfileV1::GramineDirectDev if chain_id != GRAMINE_DIRECT_DEV_CHAIN_ID => {
+        InitialTeeProfileV1::GramineDirectDev if !is_gramine_direct_dev_chain_id(chain_id) => {
             return Err(format!(
-                "GramineDirectDev requires reserved chain ID {GRAMINE_DIRECT_DEV_CHAIN_ID}"
+                "GramineDirectDev requires devnet or testnet chain ID ({DEVNET_CHAIN_ID} or {TESTNET_CHAIN_ID})"
             ));
         }
         _ => {}
@@ -219,7 +227,7 @@ mod tests {
     }
 
     #[test]
-    fn dcap_testnet_and_gramine_direct_devnet_identities_cannot_overlap() {
+    fn dcap_stays_testnet_only_while_gramine_accepts_devnet_and_testnet() {
         let genesis_hash = B256::repeat_byte(0x33);
         assert_eq!(GRAMINE_DIRECT_DEV_CHAIN_ID, DEVNET_CHAIN_ID);
         assert_ne!(GRAMINE_DIRECT_DEV_CHAIN_ID, TESTNET_CHAIN_ID);
@@ -248,14 +256,20 @@ mod tests {
             TESTNET_CHAIN_ID,
             genesis_hash,
         )
-        .unwrap_err()
-        .contains("requires reserved"));
+        .is_ok());
         assert!(initial_tee_policy_v1(
             InitialTeeProfileV1::GramineDirectDev,
             DEVNET_CHAIN_ID,
             genesis_hash,
         )
         .is_ok());
+        assert!(initial_tee_policy_v1(
+            InitialTeeProfileV1::GramineDirectDev,
+            TESTNET_CHAIN_ID + 1,
+            genesis_hash,
+        )
+        .unwrap_err()
+        .contains("devnet or testnet chain ID"));
     }
 
     #[test]
