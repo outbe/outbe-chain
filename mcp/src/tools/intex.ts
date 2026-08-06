@@ -29,6 +29,7 @@ import {
   NFT_BRIDGE_ABI,
   INTEX_ABI,
   ORIGIN_ROUTER_ABI,
+  VAULT_ROUTER_ABI,
   bridgeDstChainId,
   intexAddress,
 } from "../intex/registry.js";
@@ -187,6 +188,33 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       return undefined;
     }
   }
+  /** Payment tokens a series accepts: the vault router's assets for its reference currency. */
+  async function settlementTokens(n: Network, series: number): Promise<`0x${string}`[]> {
+    const d = (await n.client.readContract({
+      address: addr(n, "intex"),
+      abi: INTEX_ABI,
+      functionName: "seriesData",
+      args: [series],
+    })) as { referenceCurrency: number };
+    const assets = (await n.client.readContract({
+      address: addr(n, "vaultRouter"),
+      abi: VAULT_ROUTER_ABI,
+      functionName: "referenceCurrencyAssets",
+      args: [d.referenceCurrency],
+    })) as readonly `0x${string}`[];
+    return assets.map((t) => getAddress(t));
+  }
+
+  /** Per-Intex cost of settling `series` in `token`, in that token's minor units. */
+  async function settlementCost(n: Network, series: number, token: `0x${string}`): Promise<bigint> {
+    return (await n.client.readContract({
+      address: addr(n, "factory"),
+      abi: FACTORY_ABI,
+      functionName: "settlementCost",
+      args: [series, token],
+    })) as bigint;
+  }
+
   /** Bid rate as a fraction of strike ("0.8" = 80%) to the uint32 1e6 fixed-point the contract expects. */
   function toBidRate(rate: string): bigint {
     const raw = parseUnits(rate, 6);
@@ -904,20 +932,17 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       const account = requireAccount();
       const intexHolder = holder ? getAddress(holder) : account.address;
 
-      const [tokens, costs] = (await n.client.readContract({
-        address: addr(n, "factory"),
-        abi: FACTORY_ABI,
-        functionName: "settlementQuote",
-        args: [series],
-      })) as [readonly `0x${string}`[], readonly bigint[]];
-      if (tokens.length === 0) {
-        throw new Error(`no settlement token is registered for series ${series}`);
+      let token: `0x${string}`;
+      if (payment_token) {
+        token = getAddress(payment_token);
+      } else {
+        const tokens = await settlementTokens(n, series);
+        if (tokens.length === 0) {
+          throw new Error(`no settlement token is registered for series ${series}`);
+        }
+        token = tokens[0];
       }
-      const token = payment_token ? getAddress(payment_token) : tokens[0];
-      const idx = tokens.findIndex((t) => getAddress(t) === token);
-      if (idx === -1) {
-        throw new Error(`token ${token} is not accepted for series ${series}; accepted: ${tokens.join(", ")}`);
-      }
+      const costPerIntex = await settlementCost(n, series, token);
 
       const data = encodeFunctionData({
         abi: FACTORY_ABI,
@@ -931,10 +956,37 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         intexHolder,
         amount,
         paymentToken: token,
-        costPerIntex: costs[idx].toString(),
+        costPerIntex: costPerIntex.toString(),
         self: intexHolder === account.address,
         ...receipt,
       });
+    }),
+  );
+
+  server.tool(
+    "intex_settlement_tokens",
+    "Tokens you can settle a series with and the per-Intex cost in each. Pass one of these to " +
+      "auction_bid_settle as payment_token, and approve that amount times your quantity first.",
+    { series: seriesArg, network: networkArg.optional() },
+    handler(async ({ series, network }) => {
+      const n = await resolveNetwork(network ?? "outbe-testnet");
+      const tokens = await settlementTokens(n, series);
+      const priced = await Promise.all(
+        tokens.map(async (token) => {
+          const [decimals, symbol, cost] = await Promise.all([
+            n.client.readContract({ address: token, abi: ERC20_ABI, functionName: "decimals" }),
+            n.client.readContract({ address: token, abi: ERC20_ABI, functionName: "symbol" }),
+            settlementCost(n, series, token),
+          ]);
+          return {
+            token,
+            symbol: symbol as string,
+            decimals: Number(decimals),
+            costPerIntex: { raw: cost.toString(), value: formatUnits(cost, Number(decimals)) },
+          };
+        }),
+      );
+      return ok({ network: n.name, series, tokens: priced });
     }),
   );
 

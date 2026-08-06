@@ -50,12 +50,8 @@ pub fn dispatch(
                         c.paymentToken,
                     )
                 }),
-                settlementQuote(c) => view(c, |c| {
-                    let (tokens, costs) = runtime::settlement_quote(&storage, c.seriesId)?;
-                    Ok(IIntexFactory::settlementQuoteReturn {
-                        tokens,
-                        costPerIntex: costs,
-                    })
+                settlementCost(c) => view(c, |c| {
+                    runtime::settlement_cost(&storage, c.seriesId, c.paymentToken)
                 }),
                 // Off-chain the holder brute-forces `nonce` so the work hash
                 // SHA256(hex(holder ++ promisAmount ++ seriesId ++ seq) ++ nonce_be8)

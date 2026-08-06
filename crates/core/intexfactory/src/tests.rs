@@ -210,35 +210,75 @@ fn cost_amount_rejects_decimals_above_the_product_scale() {
     assert!(err.to_string().contains("unsupported decimals"), "{err}");
 }
 
-#[test]
-fn settlement_quote_is_empty_without_registered_assets() {
+fn word(value: u64) -> alloy_primitives::Bytes {
+    alloy_primitives::Bytes::from(U256::from(value).to_be_bytes::<32>().to_vec())
+}
+
+/// Storage with an issued series 7 and a payment token the router reports
+/// `vaults` vaults for, reporting `iso` and `decimals`.
+fn with_payment_token<R>(
+    vaults: u64,
+    iso: u64,
+    decimals: u64,
+    f: impl FnOnce(StorageHandle) -> R,
+) -> R {
+    use crate::sol_ext::{IReferenceCurrency, IERC20};
+    use outbe_vaultrouter::api::IVaultRouter;
+
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ISSUED_AT as u64));
-    storage.stub_sub_call_at(
-        crate::constants::INTEX_NFT1155_ADDRESS,
-        alloy_primitives::Bytes::from(vec![0u8; 32]),
-    );
-    storage.stub_sub_call_at(
-        crate::constants::ORIGIN_ROUTER_ADDRESS,
-        alloy_primitives::Bytes::from(vec![0u8; 32]),
-    );
-    storage.stub_sub_call_at(
+    storage.stub_sub_call_at(crate::constants::INTEX_NFT1155_ADDRESS, word(0));
+    storage.stub_sub_call_at(crate::constants::ORIGIN_ROUTER_ADDRESS, word(0));
+    storage.stub_sub_call_at_selector(
         outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
-        alloy_primitives::Bytes::from(vec![0u8; 32]),
+        IVaultRouter::assetVaultsCountCall::SELECTOR,
+        word(vaults),
+    );
+    storage.stub_sub_call_at_selector(
+        payment_token(),
+        IReferenceCurrency::isoCodeCall::SELECTOR,
+        word(iso),
+    );
+    storage.stub_sub_call_at_selector(
+        payment_token(),
+        IERC20::decimalsCall::SELECTOR,
+        word(decimals),
     );
 
     StorageHandle::enter(&mut storage, |s| {
         runtime::issue(&s, sample(7)).unwrap();
-        let (tokens, costs) = runtime::settlement_quote(&s, 7).unwrap();
-        assert!(tokens.is_empty());
-        assert!(costs.is_empty());
+        f(s)
+    })
+}
+
+#[test]
+fn settlement_cost_prices_an_accepted_token() {
+    with_payment_token(1, 840, 18, |s| {
+        let cost = runtime::settlement_cost(&s, 7, payment_token()).unwrap();
+        assert_eq!(cost, U256::from(1_000_000u64));
     });
 }
 
 #[test]
-fn settlement_quote_rejects_missing_series() {
+fn settlement_cost_rejects_an_unregistered_token() {
+    with_payment_token(0, 840, 18, |s| {
+        let err = runtime::settlement_cost(&s, 7, payment_token()).unwrap_err();
+        assert!(err.to_string().contains("no registered vault"), "{err}");
+    });
+}
+
+#[test]
+fn settlement_cost_rejects_a_foreign_currency() {
+    with_payment_token(1, 978, 18, |s| {
+        let err = runtime::settlement_cost(&s, 7, payment_token()).unwrap_err();
+        assert!(err.to_string().contains("does not match"), "{err}");
+    });
+}
+
+#[test]
+fn settlement_cost_rejects_missing_series() {
     with_factory(|s| {
-        assert!(runtime::settlement_quote(&s, 7).is_err());
+        assert!(runtime::settlement_cost(&s, 7, payment_token()).is_err());
     });
 }
 

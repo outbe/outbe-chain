@@ -17,7 +17,7 @@ use crate::constants::{
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
-use crate::sol_ext::{IIntexNFT1155, IOriginRouter, IERC20};
+use crate::sol_ext::{IIntexNFT1155, IOriginRouter, IReferenceCurrency, IERC20};
 
 /// Emit an IntexFactory event from `INTEX_FACTORY_ADDRESS`.
 pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> Result<()> {
@@ -442,11 +442,7 @@ pub fn settle(
         return Err(IntexFactoryError::NotAuthorized.into());
     }
 
-    let iso = asset_reference_currency(storage, payment_token)?;
-    // TODO: accept the issuance currency once an FX rule converts the amount.
-    if iso != series.reference_currency {
-        return Err(IntexFactoryError::SettlementCurrencyMismatch(iso).into());
-    }
+    accept_payment_token(storage, payment_token, series.reference_currency)?;
 
     let payment = derived_cost_amount(
         series.entry_price_minor,
@@ -532,91 +528,57 @@ fn nft_balance_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Re
         .map_err(|_| PrecompileError::Revert("NFT balanceOf undecodable".into()))
 }
 
-/// Payment tokens accepted for `series_id` and the per-Intex cost in each.
-/// Assets the router cannot report on are skipped.
-pub fn settlement_quote(
+/// Per-Intex cost of settling `series_id` in `payment_token`, in that token's
+/// minor units. Rejects a token the series does not accept.
+pub fn settlement_cost(
     storage: &StorageHandle<'_>,
     series_id: u32,
-) -> Result<(Vec<Address>, Vec<U256>)> {
+    payment_token: Address,
+) -> Result<U256> {
     let series = outbe_intex::api::read_series(storage, series_id)?;
-    let count = assets_count(storage)?;
-
-    let mut tokens = Vec::new();
-    let mut costs = Vec::new();
-    let mut index = U256::ZERO;
-    while index < count {
-        let asset = asset_at(storage, index)?;
-        index += U256::from(1u8);
-
-        if asset_reference_currency(storage, asset).ok() != Some(series.reference_currency) {
-            continue;
-        }
-        let Ok(decimals) = erc20_decimals(storage, asset) else {
-            continue;
-        };
-        let Ok(cost) =
-            derived_cost_amount(series.entry_price_minor, series.promis_load_minor, decimals)
-        else {
-            continue;
-        };
-        costs.push(cost);
-        tokens.push(asset);
-    }
-    Ok((tokens, costs))
+    accept_payment_token(storage, payment_token, series.reference_currency)?;
+    derived_cost_amount(
+        series.entry_price_minor,
+        series.promis_load_minor,
+        erc20_decimals(storage, payment_token)?,
+    )
 }
 
-fn assets_count(storage: &StorageHandle<'_>) -> Result<U256> {
+/// Rejects `token` unless the router holds a vault for it and the token reports
+/// `reference_currency`. Registration is checked first: an unregistered token
+/// need not implement `isoCode()` at all.
+fn accept_payment_token(
+    storage: &StorageHandle<'_>,
+    token: Address,
+    reference_currency: u16,
+) -> Result<()> {
     let ret = storage.staticcall(
         VAULT_ROUTER_ADDRESS,
-        IVaultRouter::assetsCountCall {}.abi_encode().into(),
-    )?;
-    IVaultRouter::assetsCountCall::abi_decode_returns(&ret)
-        .map_err(|_| PrecompileError::Revert("assetsCount undecodable".into()))
-}
-
-fn asset_at(storage: &StorageHandle<'_>, index: U256) -> Result<Address> {
-    let ret = storage.staticcall(
-        VAULT_ROUTER_ADDRESS,
-        IVaultRouter::assetAtCall { index }.abi_encode().into(),
-    )?;
-    IVaultRouter::assetAtCall::abi_decode_returns(&ret)
-        .map_err(|_| PrecompileError::Revert("assetAt undecodable".into()))
-}
-
-/// Reference currency the router recorded for `asset`, via its first vault.
-pub(crate) fn asset_reference_currency(storage: &StorageHandle<'_>, asset: Address) -> Result<u16> {
-    let ret = storage.staticcall(
-        VAULT_ROUTER_ADDRESS,
-        IVaultRouter::assetVaultsCountCall { asset }
+        IVaultRouter::assetVaultsCountCall { asset: token }
             .abi_encode()
             .into(),
     )?;
-    let count = IVaultRouter::assetVaultsCountCall::abi_decode_returns(&ret)
+    let vaults = IVaultRouter::assetVaultsCountCall::abi_decode_returns(&ret)
         .map_err(|_| PrecompileError::Revert("assetVaultsCount undecodable".into()))?;
-    if count.is_zero() {
-        return Err(IntexFactoryError::PaymentTokenNotRegistered(asset).into());
+    if vaults.is_zero() {
+        return Err(IntexFactoryError::PaymentTokenNotRegistered(token).into());
     }
 
-    let ret = storage.staticcall(
-        VAULT_ROUTER_ADDRESS,
-        IVaultRouter::assetVaultAtCall {
-            asset,
-            index: U256::ZERO,
-        }
-        .abi_encode()
-        .into(),
-    )?;
-    let vault = IVaultRouter::assetVaultAtCall::abi_decode_returns(&ret)
-        .map_err(|_| PrecompileError::Revert("assetVaultAt undecodable".into()))?;
+    let iso = asset_iso_code(storage, token)?;
+    // TODO: accept the issuance currency once an FX rule converts the amount.
+    if iso != reference_currency {
+        return Err(IntexFactoryError::SettlementCurrencyMismatch(iso).into());
+    }
+    Ok(())
+}
 
+fn asset_iso_code(storage: &StorageHandle<'_>, token: Address) -> Result<u16> {
     let ret = storage.staticcall(
-        VAULT_ROUTER_ADDRESS,
-        IVaultRouter::vaultReferenceCurrencyCall { vault }
-            .abi_encode()
-            .into(),
+        token,
+        IReferenceCurrency::isoCodeCall {}.abi_encode().into(),
     )?;
-    IVaultRouter::vaultReferenceCurrencyCall::abi_decode_returns(&ret)
-        .map_err(|_| PrecompileError::Revert("vaultReferenceCurrency undecodable".into()))
+    IReferenceCurrency::isoCodeCall::abi_decode_returns(&ret)
+        .map_err(|_| PrecompileError::Revert("isoCode undecodable".into()))
 }
 
 fn erc20_balance_of(storage: &StorageHandle<'_>, token: Address, account: Address) -> Result<U256> {

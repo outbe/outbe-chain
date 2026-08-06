@@ -42,6 +42,11 @@ sol! {
     }
 
     #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IReferenceCurrency {
+        function isoCode() external view returns (uint16);
+    }
+
+    #[sol(alloy_sol_types = alloy_sol_types)]
     interface IIntexNFT1155 {
         struct IntexCallTrigger {
             uint16 windowDays;
