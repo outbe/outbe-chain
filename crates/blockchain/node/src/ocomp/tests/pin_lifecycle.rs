@@ -1497,7 +1497,7 @@ fn ocm_pin_001_each_exported_job_remains_addressable_after_a_newer_export() {
 }
 
 #[test]
-fn ocm_pin_001_attestation_authority_reloads_every_live_export_by_job_id() {
+fn ocm_pin_001_exported_record_reloads_every_live_export_by_job_id() {
     let limits = poc_schema_limits();
     let first_request = block(151, B256::repeat_byte(0x31), 1);
     let second_request = block(221, B256::repeat_byte(0x32), 2);
@@ -1576,13 +1576,16 @@ fn ocm_pin_001_attestation_authority_reloads_every_live_export_by_job_id() {
     }
 
     for job_id in [first_job_id, second_job_id] {
-        let authority = crate::ocomp::attestation::FinalizedAttestationAuthority::reload_exported(
-            &coordinator,
-            job_id,
-            &limits,
-        )
-        .expect("every live Exported job must remain attestable");
-        assert_eq!(authority.job_id, job_id);
+        let record = coordinator
+            .exported_job_record(job_id)
+            .expect("every live Exported job must remain independently addressable");
+        assert!(matches!(
+            record.state,
+            PinStateV1::Exported {
+                job_id: current,
+                ..
+            } if current == job_id
+        ));
     }
 }
 

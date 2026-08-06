@@ -1,18 +1,110 @@
-use alloy_primitives::B256;
+use alloy_primitives::{B256, U256};
 use outbe_metadosis::api::OcompLocalResultAuthority;
-use outbe_ocomp_protocol::{profile::poc_schema_limits, result::LysisResultV1};
+use outbe_ocomp_protocol::{
+    hash::hash_framed,
+    intent::DayType,
+    profile::poc_schema_limits,
+    registry::HashDomain,
+    result::{
+        lysis_v1_empty_semantic_event_root, CarryOverCreditActionV1, CarryOverReason,
+        CompletionStatus, ConservationTotalsV1, ExactCountsV1, LysisArithmeticSummaryV1,
+        LysisResultV1, MetadosisCompletionSummaryV1, ResultRootsV1,
+    },
+};
 use std::{sync::Arc, time::Duration};
 
 use crate::ocomp::local_result::{LocalLysisResultError, LocalLysisResultStore};
 
-use super::attestation::fixture;
-
 fn canonical_result() -> (B256, LysisResultV1, Vec<u8>) {
-    let (_, authority, result) = fixture();
+    let limits = poc_schema_limits();
+    let roots = ResultRootsV1 {
+        nod_root: B256::repeat_byte(0x31),
+        bucket_root: B256::repeat_byte(0x32),
+        contributor_root: B256::repeat_byte(0x33),
+        output_manifest_root: B256::repeat_byte(0x34),
+    };
+    let counts = ExactCountsV1 {
+        tribute_count: 1,
+        nod_count: 1,
+        bucket_count: 0,
+        contributor_count: 0,
+        semantic_event_count: 0,
+    };
+    let conservation = ConservationTotalsV1 {
+        tribute_nominal_total: U256::ZERO,
+        eligible_nominal_total: U256::ZERO,
+        day_limit: U256::ZERO,
+        gratis_demand: U256::ZERO,
+        gratis_supply: U256::ZERO,
+        lysis_budget: U256::ZERO,
+        auction_base: U256::ZERO,
+        nod_gratis_consumed: U256::ZERO,
+        unused_lysis: U256::ZERO,
+        carry_over_credit: U256::ZERO,
+        nod_cost_total: U256::ZERO,
+    };
+    let summary = LysisArithmeticSummaryV1 {
+        input_manifest_hash: B256::repeat_byte(0x35),
+        plan_hash: B256::repeat_byte(0x36),
+        unit_artifact_root: B256::repeat_byte(0x37),
+        fidelity_fraction_root: B256::repeat_byte(0x38),
+        gratis_prefix_root: B256::repeat_byte(0x39),
+        roots: roots.clone(),
+        counts: counts.clone(),
+        conservation: conservation.clone(),
+        first_error_ordinal: None,
+    };
+    let job_id = B256::repeat_byte(0x21);
+    let result = LysisResultV1 {
+        protocol_bundle_hash: B256::repeat_byte(0x20),
+        job_id,
+        attempt: 0,
+        input_manifest_hash: summary.input_manifest_hash,
+        plan_hash: summary.plan_hash,
+        unit_artifact_root: summary.unit_artifact_root,
+        fidelity_fraction_root: summary.fidelity_fraction_root,
+        gratis_prefix_root: summary.gratis_prefix_root,
+        result_chunk_count: 1,
+        result_chunk_list_root: B256::repeat_byte(0x3a),
+        carry_over_credit: CarryOverCreditActionV1 {
+            source_wwd: 1,
+            reason: CarryOverReason::UnusedLysis,
+            amount: U256::ZERO,
+        },
+        metadosis_completion_summary: MetadosisCompletionSummaryV1 {
+            wwd: 1,
+            pending_nonce: 0,
+            day_type: DayType::Green,
+            tribute_nominal_total: U256::ZERO,
+            day_limit: U256::ZERO,
+            gratis_demand: U256::ZERO,
+            gratis_supply: U256::ZERO,
+            lysis_budget: U256::ZERO,
+            auction_base: U256::ZERO,
+            nod_gratis_consumed: U256::ZERO,
+            unused_lysis: U256::ZERO,
+            carry_over_credit: U256::ZERO,
+            status: CompletionStatus::Completed,
+            logical_evaluation_height: 1,
+            logical_evaluation_time: 1,
+        },
+        tribute_count: 1,
+        tribute_nominal_total: U256::ZERO,
+        unused_lysis: U256::ZERO,
+        roots,
+        counts,
+        conservation,
+        arithmetic_commitment: hash_framed(
+            HashDomain::LysisArithmetic,
+            &summary.encode_canonical(&limits).unwrap(),
+        )
+        .unwrap(),
+        event_summary_hash: lysis_v1_empty_semantic_event_root().unwrap(),
+    };
     let encoded = result
-        .encode_canonical(&poc_schema_limits())
+        .encode_canonical(&limits)
         .expect("fixture result encodes canonically");
-    (authority.job_id, result, encoded)
+    (job_id, result, encoded)
 }
 
 #[test]
