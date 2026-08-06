@@ -261,7 +261,7 @@ pub(super) fn register_validator(storage: StorageHandle, addr: Address, stake: U
     // Only write config once (if not already initialized)
     if !vs.config_is_initialized.read().unwrap() {
         vs.config_is_initialized.write(true).unwrap();
-        vs.config_max_validators.write(128).unwrap();
+        vs.set_config_max_validators(128).unwrap();
         vs.config_min_stake.write(U256::in_units(1u64)).unwrap();
         vs.config_epoch_length_blocks.write(3600).unwrap();
         vs.config_owner.write(Address::ZERO).unwrap();

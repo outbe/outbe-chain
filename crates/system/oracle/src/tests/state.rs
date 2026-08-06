@@ -8,7 +8,7 @@ use crate::schema::{OracleContract, SCALE_1E18};
 use super::common::*;
 
 #[test]
-fn test_pair_registration() {
+fn register_pair_assigns_sequential_ids_and_marks_vote_targets() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
 
@@ -43,7 +43,7 @@ fn test_pair_registration() {
 }
 
 #[test]
-fn test_get_pairs_returns_ids_symbols_and_active() {
+fn get_pairs_returns_ids_symbols_and_active_flags() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
 
@@ -67,7 +67,7 @@ fn test_get_pairs_returns_ids_symbols_and_active() {
 }
 
 #[test]
-fn test_get_pairs_empty() {
+fn get_pairs_returns_empty_arrays_without_registered_pairs() {
     with_storage(|storage| {
         let oracle = OracleContract::new(storage.clone());
         let (ids, bases, quotes, active) = oracle.get_pairs().unwrap();
@@ -79,7 +79,7 @@ fn test_get_pairs_empty() {
 }
 
 #[test]
-fn test_pair_hash_determinism() {
+fn pair_hash_is_deterministic_and_distinct_per_pair() {
     let h1 = OracleContract::pair_hash("COEN", "USDT");
     let h2 = OracleContract::pair_hash("COEN", "USDT");
     assert_eq!(h1, h2);
@@ -89,7 +89,7 @@ fn test_pair_hash_determinism() {
 }
 
 #[test]
-fn test_exchange_rate_read_write() {
+fn set_exchange_rate_round_trips_rate_block_and_timestamp() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         oracle.register_pair("COEN", "USDT").unwrap();
@@ -109,7 +109,7 @@ fn test_exchange_rate_read_write() {
 }
 
 #[test]
-fn test_exchange_rate_non_system_rejected() {
+fn set_exchange_rate_rejects_a_non_system_caller() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         oracle.register_pair("COEN", "USDT").unwrap();
@@ -121,14 +121,14 @@ fn test_exchange_rate_non_system_rejected() {
 }
 
 #[test]
-fn test_exchange_rate_unregistered_pair() {
+fn get_exchange_rate_reverts_for_an_unregistered_pair() {
     with_storage(|storage| {
         let oracle = OracleContract::new(storage.clone());
         assert!(oracle.get_exchange_rate("BTC", "USDT").is_err());
     });
 }
 #[test]
-fn test_config_read_write() {
+fn config_slots_round_trip_every_genesis_parameter() {
     with_storage(|storage| {
         let oracle = OracleContract::new(storage.clone());
 
@@ -155,7 +155,7 @@ fn test_config_read_write() {
 }
 
 #[test]
-fn test_penalty_counters() {
+fn penalty_counters_increment_per_outcome_and_reset_together() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         let validator = Address::new([0x11; 20]);
@@ -177,7 +177,7 @@ fn test_penalty_counters() {
 }
 
 #[test]
-fn test_snapshot_write_and_read() {
+fn write_snapshot_advances_the_ring_buffer_and_feeds_vwap() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         oracle.register_pair("COEN", "USDT").unwrap();
@@ -208,7 +208,7 @@ fn test_snapshot_write_and_read() {
 }
 
 #[test]
-fn test_snapshot_time_filtering() {
+fn calculate_vwap_includes_only_snapshots_inside_the_window() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         oracle.register_pair("COEN", "USDT").unwrap();
@@ -233,7 +233,7 @@ fn test_snapshot_time_filtering() {
 }
 
 #[test]
-fn test_vwap_empty_window() {
+fn calculate_vwap_reverts_for_a_window_without_snapshots() {
     with_storage(|storage| {
         let oracle = OracleContract::new(storage.clone());
         // No snapshots at all
@@ -242,7 +242,7 @@ fn test_vwap_empty_window() {
 }
 
 #[test]
-fn test_vwap_zero_volume_fallback() {
+fn calculate_vwap_treats_zero_volume_as_one_scaled_unit() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         oracle.register_pair("COEN", "USDT").unwrap();
@@ -265,7 +265,7 @@ fn test_vwap_zero_volume_fallback() {
 }
 
 #[test]
-fn test_multiple_pairs_in_snapshot() {
+fn calculate_vwap_isolates_each_pair_within_one_snapshot() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         let id1 = oracle.register_pair("COEN", "USDT").unwrap();
@@ -287,7 +287,7 @@ fn test_multiple_pairs_in_snapshot() {
     });
 }
 #[test]
-fn test_vote_submission_and_clear() {
+fn submit_vote_stores_tuples_until_clear_votes_drains_them() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
@@ -323,7 +323,7 @@ fn test_vote_submission_and_clear() {
 }
 
 #[test]
-fn test_vote_rejects_duplicate_pair() {
+fn submit_vote_rejects_a_duplicated_pair() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
@@ -350,7 +350,7 @@ fn test_vote_rejects_duplicate_pair() {
 }
 
 #[test]
-fn test_vote_duplicate_check_precedes_vote_target_check() {
+fn submit_vote_reports_a_duplicate_before_an_inactive_vote_target() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
@@ -383,7 +383,7 @@ fn test_vote_duplicate_check_precedes_vote_target_check() {
 // -----------------------------------------------------------------------
 
 #[test]
-fn test_get_exchange_rates() {
+fn get_exchange_rates_returns_parallel_arrays_in_pair_id_order() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         oracle.register_pair("COEN", "USDT").unwrap();
@@ -410,7 +410,7 @@ fn test_get_exchange_rates() {
 }
 
 #[test]
-fn test_get_exchange_rates_empty() {
+fn get_exchange_rates_returns_empty_arrays_without_registered_pairs() {
     with_storage(|storage| {
         let oracle = OracleContract::new(storage.clone());
         let (rates, blocks, timestamps) = oracle.get_exchange_rates().unwrap();
@@ -421,7 +421,7 @@ fn test_get_exchange_rates_empty() {
 }
 
 #[test]
-fn test_get_vote_targets() {
+fn get_vote_targets_lists_only_active_pairs() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         oracle.register_pair("COEN", "USDT").unwrap();
@@ -439,7 +439,7 @@ fn test_get_vote_targets() {
 }
 
 #[test]
-fn test_get_vote_targets_empty() {
+fn get_vote_targets_returns_empty_without_registered_pairs() {
     with_storage(|storage| {
         let oracle = OracleContract::new(storage.clone());
         let pair_ids = oracle.get_vote_targets().unwrap();
@@ -448,7 +448,7 @@ fn test_get_vote_targets_empty() {
 }
 
 #[test]
-fn test_get_aggregate_vote_exists() {
+fn get_aggregate_vote_returns_the_stored_tuples() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
@@ -482,7 +482,7 @@ fn test_get_aggregate_vote_exists() {
 }
 
 #[test]
-fn test_get_aggregate_vote_not_exists() {
+fn get_aggregate_vote_reports_absent_for_a_non_voter() {
     with_storage(|storage| {
         let oracle = OracleContract::new(storage.clone());
         let validator = Address::new([0x11; 20]);
@@ -496,7 +496,7 @@ fn test_get_aggregate_vote_not_exists() {
 }
 
 #[test]
-fn test_get_slash_window_progress() {
+fn get_slash_window_progress_reports_counters_with_the_window_length() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
@@ -519,7 +519,7 @@ fn test_get_slash_window_progress() {
     });
 }
 #[test]
-fn test_feeder_delegation() {
+fn delegate_feeder_round_trips_and_revokes_on_the_zero_address() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
@@ -547,7 +547,7 @@ fn test_feeder_delegation() {
 /// its length at the base slot; we push two values and then linearly scan
 /// slots 0..128 looking for the length cell (== 2) to recover the slot.
 #[test]
-fn test_reference_currencies_slot_parity() {
+fn reference_currencies_occupies_slot_55() {
     use outbe_primitives::addresses::ORACLE_ADDRESS;
 
     with_storage(|storage| {
@@ -602,7 +602,7 @@ fn test_reference_currencies_slot_parity() {
 /// descriptor is hashed into the protocol bundle) but have no live writer, so
 /// they must read as zero after a full genesis init.
 #[test]
-fn test_ocomp_opening_plan_slot_parity() {
+fn ocomp_opening_plan_slots_match_the_schema_layout() {
     use alloy_primitives::B256;
     use outbe_primitives::addresses::ORACLE_ADDRESS;
     use outbe_primitives::storage::types::StorageKey;
@@ -714,7 +714,7 @@ fn test_ocomp_opening_plan_slot_parity() {
 /// The two retired denom slots must stay empty: they remain in the frozen V1
 /// opening plan, so a resurrected writer would change what the plan proves.
 #[test]
-fn test_retired_denom_slots_stay_zero_after_genesis() {
+fn retired_denom_slots_stay_zero_after_genesis() {
     use outbe_primitives::addresses::ORACLE_ADDRESS;
     use outbe_primitives::storage::types::StorageKey;
 
@@ -743,7 +743,7 @@ fn test_retired_denom_slots_stay_zero_after_genesis() {
 /// scans base slots 0..128 to recover the macro-assigned slot via the
 /// known `keccak256(left_pad(key, 32) || be(base, 32))` derivation.
 #[test]
-fn test_settlement_iso_to_pair_slot_parity() {
+fn settlement_iso_to_pair_occupies_slot_42() {
     use alloy_primitives::{keccak256, B256};
     use outbe_primitives::addresses::ORACLE_ADDRESS;
 
@@ -777,7 +777,7 @@ fn test_settlement_iso_to_pair_slot_parity() {
 /// slots 0..128 to recover the macro-assigned slot via the known
 /// `keccak256(left_pad(key, 32) || be(base, 32))` mapping derivation.
 #[test]
-fn test_reference_currency_rate_slot_parity() {
+fn reference_currency_rate_occupies_slot_60() {
     use alloy_primitives::keccak256;
     use outbe_primitives::addresses::ORACLE_ADDRESS;
 
@@ -806,7 +806,7 @@ fn test_reference_currency_rate_slot_parity() {
 }
 
 #[test]
-fn test_genesis_seeds_currency_rate() {
+fn genesis_seeds_the_usd_currency_rate() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         crate::genesis::init_from_genesis(
@@ -822,7 +822,7 @@ fn test_genesis_seeds_currency_rate() {
 }
 
 #[test]
-fn test_get_currency_rate_reverts_for_unregistered() {
+fn get_currency_rate_reverts_for_an_unregistered_iso_code() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         crate::genesis::init_from_genesis(

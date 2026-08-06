@@ -216,7 +216,7 @@ fn scurve_count_overflow_rejects_before_any_owner_write() {
     });
 }
 #[test]
-fn test_run_tally_single_validator() {
+fn run_tally_accepts_a_single_validator_as_the_weighted_median() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
@@ -256,7 +256,7 @@ fn test_run_tally_single_validator() {
 }
 
 #[test]
-fn test_run_tally_convergent_votes() {
+fn run_tally_rewards_every_voter_inside_the_reward_band() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
@@ -302,7 +302,7 @@ fn test_run_tally_convergent_votes() {
 }
 
 #[test]
-fn test_run_tally_with_outlier() {
+fn run_tally_penalizes_a_voter_outside_the_reward_band() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
@@ -343,7 +343,7 @@ fn test_run_tally_with_outlier() {
 }
 
 #[test]
-fn test_run_tally_no_votes_all_abstain() {
+fn run_tally_counts_an_abstain_for_every_silent_validator() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
@@ -361,7 +361,7 @@ fn test_run_tally_no_votes_all_abstain() {
 }
 
 #[test]
-fn test_hooks_begin_block() {
+fn begin_block_tallies_only_on_a_vote_period_boundary() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
@@ -393,7 +393,7 @@ fn test_hooks_begin_block() {
 }
 
 #[test]
-fn test_slash_window_processing() {
+fn slash_window_resets_penalty_counters_at_the_window_end() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
@@ -450,7 +450,7 @@ fn slash_window_rejects_unbounded_validator_work() {
 }
 
 #[test]
-fn test_slash_and_force_exit_failure_rolls_back_slash_state() {
+fn slash_window_rolls_back_slash_state_when_force_exit_fails() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
@@ -506,7 +506,7 @@ fn test_slash_and_force_exit_failure_rolls_back_slash_state() {
 }
 
 #[test]
-fn test_slash_failure_after_force_exit_rolls_back_exit_state() {
+fn slash_window_rolls_back_the_forced_exit_when_slashing_fails() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
@@ -549,7 +549,7 @@ fn test_slash_failure_after_force_exit_rolls_back_exit_state() {
 }
 
 #[test]
-fn test_protected_validator_not_force_exited() {
+fn slash_window_never_force_exits_a_protected_validator() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
@@ -576,7 +576,7 @@ fn test_protected_validator_not_force_exited() {
     });
 }
 #[test]
-fn test_scurve_hook_integration_detects_daily_peak() {
+fn begin_block_scurve_hook_records_the_daily_peak() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
@@ -621,7 +621,7 @@ fn test_scurve_hook_integration_detects_daily_peak() {
     });
 }
 #[test]
-fn test_lifecycle_finalizes_closed_utc_day() {
+fn begin_block_finalizes_the_closed_utc_day() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         oracle.config_is_initialized.write(true).unwrap();

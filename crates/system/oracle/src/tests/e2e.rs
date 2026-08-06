@@ -15,7 +15,7 @@ use super::common::*;
 // -----------------------------------------------------------------------
 
 #[test]
-fn test_init_from_genesis_default_matches_hardcoded() {
+fn init_from_genesis_default_config_matches_the_hardcoded_state() {
     with_storage(|storage| {
         // Reference: manually-written init (mirrors the old executor code).
         let mut expected = OracleContract::new(storage.clone());
@@ -92,7 +92,7 @@ fn test_init_from_genesis_default_matches_hardcoded() {
 }
 
 #[test]
-fn test_init_from_genesis_custom_config() {
+fn init_from_genesis_imports_every_custom_config_collection() {
     with_storage(|storage| {
         register_validator(
             storage.clone(),
@@ -202,7 +202,7 @@ fn test_init_from_genesis_custom_config() {
 }
 
 #[test]
-fn test_init_from_genesis_idempotent() {
+fn init_from_genesis_is_idempotent_on_replay() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         let config = crate::genesis::OracleGenesisConfig::default_config();
@@ -218,7 +218,7 @@ fn test_init_from_genesis_idempotent() {
     });
 }
 #[test]
-fn test_precompile_dispatch_get_params() {
+fn precompile_dispatch_returns_the_configured_params() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
@@ -241,7 +241,7 @@ fn test_precompile_dispatch_get_params() {
 }
 
 #[test]
-fn test_precompile_dispatch_get_exchange_rate_round_trip() {
+fn precompile_dispatch_round_trips_an_exchange_rate() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
@@ -270,7 +270,7 @@ fn test_precompile_dispatch_get_exchange_rate_round_trip() {
     });
 }
 #[test]
-fn test_precompile_dispatch_cosmos_query_surface_round_trips() {
+fn precompile_dispatch_round_trips_the_whole_query_surface() {
     with_storage_at(3_000, |storage| {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
@@ -427,7 +427,7 @@ fn test_precompile_dispatch_cosmos_query_surface_round_trips() {
 }
 
 #[test]
-fn test_ioracle_selectors_unique() {
+fn ioracle_selectors_are_unique() {
     use crate::precompile::IOracle;
     use alloy_sol_types::SolInterface;
     use std::collections::HashSet;
@@ -459,7 +459,7 @@ fn test_ioracle_selectors_unique() {
 // -----------------------------------------------------------------------
 
 #[test]
-fn test_genesis_import_penalty_counters() {
+fn genesis_imports_penalty_counters() {
     with_storage(|storage| {
         let v1 = Address::new([0x11; 20]);
         let v2 = Address::new([0x22; 20]);
@@ -480,7 +480,7 @@ fn test_genesis_import_penalty_counters() {
 }
 
 #[test]
-fn test_genesis_import_snapshots() {
+fn genesis_imports_price_snapshots() {
     with_storage(|storage| {
         let config = crate::genesis::OracleGenesisConfig {
             snapshots: vec![
@@ -506,7 +506,7 @@ fn test_genesis_import_snapshots() {
 }
 
 #[test]
-fn test_genesis_import_scurve_entries() {
+fn genesis_imports_scurve_entries() {
     with_storage(|storage| {
         let config = crate::genesis::OracleGenesisConfig {
             scurve_entries: vec![
@@ -538,7 +538,7 @@ fn test_genesis_import_scurve_entries() {
 }
 
 #[test]
-fn test_genesis_import_protected_validators() {
+fn genesis_imports_protected_validators() {
     with_storage(|storage| {
         let v1 = Address::new([0x11; 20]);
         let v2 = Address::new([0x22; 20]);
@@ -561,7 +561,7 @@ fn test_genesis_import_protected_validators() {
 }
 
 #[test]
-fn test_genesis_import_aggregate_votes() {
+fn genesis_imports_pending_aggregate_votes() {
     with_storage(|storage| {
         let validator = Address::new([0x11; 20]);
         let rate1 = U256::in_units(42u64);
@@ -594,7 +594,7 @@ fn test_genesis_import_aggregate_votes() {
 }
 
 #[test]
-fn test_genesis_rejects_duplicate_aggregate_vote_pair() {
+fn genesis_rejects_a_duplicate_aggregate_vote_pair() {
     with_storage(|storage| {
         let validator = Address::new([0x11; 20]);
         let config = crate::genesis::OracleGenesisConfig {
@@ -618,7 +618,7 @@ fn test_genesis_rejects_duplicate_aggregate_vote_pair() {
 }
 
 #[test]
-fn test_genesis_rejects_duplicate_settlement_iso_code() {
+fn genesis_rejects_a_duplicate_settlement_iso_code() {
     with_storage(|storage| {
         let config = crate::genesis::OracleGenesisConfig {
             settlement_currencies: vec![
@@ -634,7 +634,7 @@ fn test_genesis_rejects_duplicate_settlement_iso_code() {
 }
 
 #[test]
-fn test_genesis_rejects_unregistered_settlement_pair() {
+fn genesis_rejects_an_unregistered_settlement_pair() {
     with_storage(|storage| {
         let config = crate::genesis::OracleGenesisConfig {
             settlement_currencies: vec![(840, "ETH".into(), "840".into())],
@@ -647,7 +647,7 @@ fn test_genesis_rejects_unregistered_settlement_pair() {
 }
 
 #[test]
-fn test_genesis_export_round_trip() {
+fn export_genesis_round_trips_the_full_oracle_state() {
     let v1 = Address::new([0x11; 20]);
     let v2 = Address::new([0x22; 20]);
     let config = crate::genesis::OracleGenesisConfig {
@@ -776,7 +776,7 @@ fn test_genesis_export_round_trip() {
 }
 
 #[test]
-fn test_genesis_export_fails_without_pair_string_metadata() {
+fn export_genesis_fails_without_pair_string_metadata() {
     with_storage(|storage| {
         let hash = OracleContract::pair_hash("COEN", "840");
         let oracle = OracleContract::new(storage.clone());
@@ -789,7 +789,7 @@ fn test_genesis_export_fails_without_pair_string_metadata() {
 }
 
 #[test]
-fn test_genesis_export_fails_without_settlement_pair_metadata() {
+fn export_genesis_fails_without_settlement_pair_metadata() {
     with_storage(|storage| {
         let config = crate::genesis::OracleGenesisConfig {
             settlement_currencies: vec![(840, "COEN".into(), "840".into())],
@@ -807,7 +807,7 @@ fn test_genesis_export_fails_without_settlement_pair_metadata() {
 }
 
 #[test]
-fn test_genesis_export_omits_zero_initial_rate() {
+fn export_genesis_omits_a_zero_initial_rate() {
     with_storage(|storage| {
         let config = crate::genesis::OracleGenesisConfig {
             pairs: vec![("COEN".into(), "840".into()), ("BTC".into(), "USDT".into())],
@@ -822,7 +822,7 @@ fn test_genesis_export_omits_zero_initial_rate() {
     });
 }
 #[test]
-fn test_store_and_query_worldwide_day_vwap_snapshot() {
+fn store_worldwide_day_vwap_snapshot_round_trips_every_pair() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         let coen_id = oracle.register_pair("COEN", "840").unwrap();
@@ -880,7 +880,7 @@ fn test_store_and_query_worldwide_day_vwap_snapshot() {
 }
 
 #[test]
-fn test_api_day_type_pair_vwap_and_snapshot_store() {
+fn day_type_pair_vwap_reports_missing_data_without_reverting() {
     with_storage(|storage| {
         let wwd = outbe_common::WorldwideDay::new(20260302u32);
 
@@ -920,7 +920,7 @@ fn test_api_day_type_pair_vwap_and_snapshot_store() {
 }
 
 #[test]
-fn test_finalize_utc_day_vwap_writes_and_reads() {
+fn finalize_utc_day_vwap_persists_every_vote_target_pair() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         let coen = oracle.register_pair("COEN", "840").unwrap();
@@ -980,7 +980,7 @@ fn test_finalize_utc_day_vwap_writes_and_reads() {
 }
 
 #[test]
-fn test_finalize_empty_utc_day_writes_nothing() {
+fn finalize_utc_day_vwap_writes_nothing_for_a_day_without_data() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         let coen = oracle.register_pair("COEN", "840").unwrap();
@@ -1000,7 +1000,7 @@ fn test_finalize_empty_utc_day_writes_nothing() {
 }
 
 #[test]
-fn test_get_utc_day_vwap_precompile() {
+fn get_utc_day_vwap_precompile_returns_the_finalized_value() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         let coen = oracle.register_pair("COEN", "840").unwrap();
@@ -1099,7 +1099,7 @@ fn gas_cost_vwap_50h_window_with_varying_snapshot_counts() {
 // === Reference currencies tests ===
 
 #[test]
-fn test_genesis_seeds_reference_currencies_with_usd() {
+fn genesis_seeds_reference_currencies_with_usd() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         crate::genesis::init_from_genesis(
@@ -1114,7 +1114,7 @@ fn test_genesis_seeds_reference_currencies_with_usd() {
 }
 
 #[test]
-fn test_genesis_seeds_custom_reference_currencies() {
+fn genesis_seeds_custom_reference_currencies() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         let config = crate::genesis::OracleGenesisConfig {
@@ -1131,7 +1131,7 @@ fn test_genesis_seeds_custom_reference_currencies() {
 }
 
 #[test]
-fn test_init_from_genesis_rejects_zero_reference_iso_code() {
+fn init_from_genesis_rejects_a_zero_reference_iso_code() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         let config = crate::genesis::OracleGenesisConfig {
@@ -1148,7 +1148,7 @@ fn test_init_from_genesis_rejects_zero_reference_iso_code() {
 }
 
 #[test]
-fn test_init_from_genesis_rejects_duplicate_reference_iso_code() {
+fn init_from_genesis_rejects_a_duplicate_reference_iso_code() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         let config = crate::genesis::OracleGenesisConfig {
@@ -1165,7 +1165,7 @@ fn test_init_from_genesis_rejects_duplicate_reference_iso_code() {
 }
 
 #[test]
-fn test_export_genesis_round_trips_reference_currencies() {
+fn export_genesis_round_trips_reference_currencies() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         let config = crate::genesis::OracleGenesisConfig {
@@ -1183,7 +1183,7 @@ fn test_export_genesis_round_trips_reference_currencies() {
 }
 
 #[test]
-fn test_check_reference_currency_ok_for_seeded_code() {
+fn check_reference_currency_accepts_a_seeded_code() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         crate::genesis::init_from_genesis(
@@ -1202,7 +1202,7 @@ fn test_check_reference_currency_ok_for_seeded_code() {
 }
 
 #[test]
-fn test_check_reference_currency_err_for_missing_code() {
+fn check_reference_currency_rejects_an_unseeded_code() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         crate::genesis::init_from_genesis(
@@ -1226,7 +1226,7 @@ fn test_check_reference_currency_err_for_missing_code() {
 }
 
 #[test]
-fn test_get_reference_currencies_precompile_returns_seeded_list() {
+fn get_reference_currencies_precompile_returns_the_seeded_list() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         let config = crate::genesis::OracleGenesisConfig {
