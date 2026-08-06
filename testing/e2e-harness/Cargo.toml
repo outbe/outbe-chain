@@ -12,9 +12,7 @@ ocomp-integration = [
     "dep:alloy-rlp",
     "dep:alloy-trie",
     "dep:commonware-consensus",
-    "dep:commonware-utils",
     "dep:k256",
-    "dep:outbe-consensus",
     "dep:outbe-common",
     "dep:outbe-fidelity",
     "dep:outbe-metadosis",
@@ -74,7 +72,7 @@ outbe-zk-backend.workspace = true
 outbe-zk-canonical.workspace = true
 outbe-zkproof.workspace = true
 outbe-common = { workspace = true, optional = true }
-outbe-consensus = { workspace = true, optional = true }
+outbe-consensus.workspace = true
 outbe-fidelity = { workspace = true, optional = true }
 outbe-metadosis = { workspace = true, optional = true }
 outbe-nod = { workspace = true, optional = true }
@@ -120,7 +118,9 @@ bytes.workspace = true
 commonware-codec.workspace = true
 commonware-consensus = { workspace = true, optional = true }
 commonware-cryptography.workspace = true
-commonware-utils = { workspace = true, optional = true }
+commonware-math.workspace = true
+commonware-utils.workspace = true
+blst.workspace = true
 k256 = { workspace = true, optional = true }
 rand_core.workspace = true
 rustix.workspace = true

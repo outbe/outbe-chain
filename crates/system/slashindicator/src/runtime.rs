@@ -12,10 +12,10 @@ use outbe_primitives::slashing_journal::{iso8601_now, record as journal_record, 
 use outbe_primitives::system_tx::{recover_phase1_proposer, SystemTxInputV2};
 use outbe_staking::contract::Staking;
 use outbe_validatorset::contract::ValidatorSet;
-use outbe_validatorset::runtime::status as validator_status;
 use outbe_validatorset::state::{
     committee_snapshot_key, read_committee_snapshot, read_committee_snapshot_for_epoch,
 };
+use outbe_validatorset::ValidatorLifecycle;
 use tracing::{info, warn};
 
 use crate::evidence::{EvidenceBlock, EvidenceCommittee};
@@ -119,8 +119,12 @@ impl SlashIndicator<'_> {
     /// would compound to far more than the intended single-felony penalty.
     fn validator_already_penalized(&self, validator: Address) -> Result<bool> {
         let vs = ValidatorSet::new(self.storage.clone());
-        let status = vs.val_status.read(&validator)?;
-        Ok(status == validator_status::JAILED || status == validator_status::EXITING)
+        Ok(matches!(
+            vs.validator_lifecycle(validator)?,
+            ValidatorLifecycle::JailRetained(_)
+                | ValidatorLifecycle::Jail(_)
+                | ValidatorLifecycle::Exiting(_)
+        ))
     }
 
     /// Records a proposer miss for `validator`.
@@ -371,10 +375,11 @@ impl SlashIndicator<'_> {
     /// slashable stake at risk) instead of free on the ZeroFee chain.
     fn require_active_submitter(&self, caller: Address) -> Result<()> {
         let vs = ValidatorSet::new(self.storage.clone());
-        let caller_status = vs.val_status.read(&caller)?;
-        if caller_status != validator_status::ACTIVE {
+        let lifecycle = vs.validator_lifecycle(caller)?;
+        if !lifecycle.is_active_status() {
             return Err(PrecompileError::Revert(format!(
-                "submitter {caller} is not an ACTIVE validator (status: {caller_status})"
+                "submitter {caller} is not an ACTIVE validator (status: {})",
+                lifecycle.stored_status().unwrap_or_default()
             )));
         }
         Ok(())
@@ -800,13 +805,7 @@ impl SlashIndicator<'_> {
         // ecrecover + storage reads); restricting the entry-point to the
         // staked set means any griefer pays gas AND has slashable stake at
         // risk, so DoS becomes self-destructive rather than free.
-        let vs = ValidatorSet::new(self.storage.clone());
-        let caller_status = vs.val_status.read(&caller)?;
-        if caller_status != validator_status::ACTIVE {
-            return Err(PrecompileError::Revert(format!(
-                "submitter {caller} is not an ACTIVE validator (status: {caller_status})"
-            )));
-        }
+        self.require_active_submitter(caller)?;
 
         // (2) Size cap. Bound the work the precompile body does on
         // attacker-controlled input.
@@ -838,10 +837,7 @@ impl SlashIndicator<'_> {
         // state, recorded by update_epoch at boundaries; we do NOT
         // re-derive it from block height).
         let vs = ValidatorSet::new(self.storage.clone());
-        let current_epoch_u256 = vs.epoch_number.read()?;
-        let current_epoch: u64 = current_epoch_u256
-            .try_into()
-            .map_err(|_| PrecompileError::Revert("ValidatorSet.epoch_number exceeds u64".into()))?;
+        let current_epoch = vs.current_epoch_u64()?;
         let max_acceptable_epoch = ev
             .child_epoch
             .saturating_add(schedule.invalid_vrf_evidence_max_epoch_lag);
@@ -1064,13 +1060,7 @@ impl SlashIndicator<'_> {
     ) -> Result<()> {
         // (1) Submitter ACL: ACTIVE validators only — verification is BLS-heavy,
         // so gating to the staked set makes DoS self-destructive.
-        let vs = ValidatorSet::new(self.storage.clone());
-        let caller_status = vs.val_status.read(&caller)?;
-        if caller_status != validator_status::ACTIVE {
-            return Err(PrecompileError::Revert(format!(
-                "submitter {caller} is not an ACTIVE validator (status: {caller_status})"
-            )));
-        }
+        self.require_active_submitter(caller)?;
 
         // (2) Decode the fixed-length wire form (length-checked inside).
         let ev = SeedPartialEquivocationEvidence::decode(evidence_bytes)?;
@@ -1110,10 +1100,8 @@ impl SlashIndicator<'_> {
 
         // (5) Epoch-lag admissibility: bound how old the offense round can be
         // (reuses the shared evidence epoch-lag cap).
-        let current_epoch_u256 = vs.epoch_number.read()?;
-        let current_epoch: u64 = current_epoch_u256
-            .try_into()
-            .map_err(|_| PrecompileError::Revert("ValidatorSet.epoch_number exceeds u64".into()))?;
+        let vs = ValidatorSet::new(self.storage.clone());
+        let current_epoch = vs.current_epoch_u64()?;
         let max_acceptable_epoch = ev
             .round_epoch
             .saturating_add(schedule.invalid_vrf_evidence_max_epoch_lag);
@@ -1181,13 +1169,7 @@ impl SlashIndicator<'_> {
         schedule: &OutbeProtocolSchedule,
     ) -> Result<()> {
         // (1) Submitter ACL: ACTIVE validators only (BLS-heavy verification).
-        let vs = ValidatorSet::new(self.storage.clone());
-        let caller_status = vs.val_status.read(&caller)?;
-        if caller_status != validator_status::ACTIVE {
-            return Err(PrecompileError::Revert(format!(
-                "submitter {caller} is not an ACTIVE validator (status: {caller_status})"
-            )));
-        }
+        self.require_active_submitter(caller)?;
 
         // (2) Size cap — the polynomial commitment dominates; reuse the VRF
         // evidence cap (the only other commitment-carrying evidence).
@@ -1203,10 +1185,8 @@ impl SlashIndicator<'_> {
         let ev = InvalidSeedPartialEvidence::decode(evidence_bytes)?;
 
         // (4) Epoch-lag admissibility.
-        let current_epoch: u64 =
-            vs.epoch_number.read()?.try_into().map_err(|_| {
-                PrecompileError::Revert("ValidatorSet.epoch_number exceeds u64".into())
-            })?;
+        let vs = ValidatorSet::new(self.storage.clone());
+        let current_epoch = vs.current_epoch_u64()?;
         let max_acceptable_epoch = ev
             .round_epoch
             .saturating_add(schedule.invalid_vrf_evidence_max_epoch_lag);

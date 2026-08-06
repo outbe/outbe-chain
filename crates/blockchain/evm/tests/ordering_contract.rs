@@ -1,15 +1,14 @@
 //! — executor ordering contract.
 //!
 //! Pins the invariant that backs the slashindicator precompile's epoch-lag
-//! admissibility: the precompile reads
-//! `ValidatorSet.epoch_number` directly from storage and trusts that the
-//! value is post-bump for the current block because `transition_epoch`
+//! admissibility: the precompile reads ValidatorSet's current epoch projection
+//! and trusts that the value is post-bump for the current block because `transition_epoch`
 //! runs in the pre-execution hook chain BEFORE any user transaction.
 //!
 //! The behaviour test here drives `run_outbe_pre_execution_hooks`
 //! against a primed in-memory storage provider and asserts that, when
 //! the block height is exactly an epoch boundary, the hook bumps
-//! `ValidatorSet.epoch_number` AND `ValidatorSet.epoch_start_block` —
+//! ValidatorSet's epoch number AND epoch start block —
 //! and that these writes are visible to a fresh `ValidatorSet` facade
 //! attached to the same storage after the hook returns. Because the
 //! function returns control to the executor's tx-execution phase, the
@@ -21,6 +20,7 @@ use outbe_evm::executor::run_outbe_pre_execution_hooks;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_validatorset::contract::ValidatorSet;
+use outbe_validatorset::EpochSnapshot;
 
 const CHAIN_ID: u64 = 1;
 const EPOCH_LENGTH: u32 = 10;
@@ -32,10 +32,14 @@ const PROPOSER: Address = Address::ZERO;
 ///   * `epoch_start_block = 0`
 ///   * `epoch_number = 1` (we expect post-call value of 2)
 fn seed_validator_set(storage: StorageHandle, initial_epoch: u64) {
-    let vs = ValidatorSet::new(storage.clone());
-    vs.config_epoch_length_blocks.write(EPOCH_LENGTH).unwrap();
-    vs.epoch_start_block.write(0).unwrap();
-    vs.epoch_number.write(U256::from(initial_epoch)).unwrap();
+    let mut vs = ValidatorSet::new(storage.clone());
+    vs.test_set_epoch_snapshot(EpochSnapshot {
+        number: U256::from(initial_epoch),
+        start_timestamp: 0,
+        start_block: 0,
+        length_blocks: EPOCH_LENGTH,
+    })
+    .unwrap();
     // Seed COEN/0xUSD pair + 1.0 rate so begin-block NOD/GEM/INTEX promotion
     // reads a registered pair instead of reverting "pair not registered".
     let mut oracle = outbe_oracle::contract::OracleContract::new(storage);
@@ -65,14 +69,14 @@ fn transition_epoch_runs_in_pre_execution_before_user_txs() {
         // Sanity: epoch_number BEFORE the pre-exec hook chain is the
         // pre-bump value.
         let vs_before = ValidatorSet::new(storage.clone());
+        let epoch_before = vs_before.epoch_snapshot().unwrap();
         assert_eq!(
-            vs_before.epoch_number.read().unwrap(),
+            epoch_before.number,
             U256::from(1u64),
             "pre-condition: epoch_number must be 1 before pre-exec",
         );
         assert_eq!(
-            vs_before.epoch_start_block.read().unwrap(),
-            0,
+            epoch_before.start_block, 0,
             "pre-condition: epoch_start_block must be 0 before pre-exec",
         );
 
@@ -97,19 +101,18 @@ fn transition_epoch_runs_in_pre_execution_before_user_txs() {
         // this hook chain immediately before handing control to the
         // tx-execution loop, so "visible after return" implies
         // "visible before any user tx runs". This is the contract the
-        // slashindicator precompile relies on when it reads
-        // `epoch_number` directly via
-        // `ValidatorSet::new(storage).epoch_number.read()`.
+        // slashindicator precompile relies on when it reads the named current-epoch
+        // projection from a fresh ValidatorSet facade.
         let vs_after = ValidatorSet::new(storage);
+        let epoch_after = vs_after.epoch_snapshot().unwrap();
         assert_eq!(
-            vs_after.epoch_number.read().unwrap(),
+            epoch_after.number,
             U256::from(2u64),
             "transition_epoch must have run inside pre-exec, bumping \
              epoch_number 1 → 2",
         );
         assert_eq!(
-            vs_after.epoch_start_block.read().unwrap(),
-            boundary_block,
+            epoch_after.start_block, boundary_block,
             "transition_epoch must have anchored epoch_start_block at \
              the boundary block",
         );
@@ -143,14 +146,14 @@ fn transition_epoch_does_not_fire_inside_an_epoch() {
         run_outbe_pre_execution_hooks(&ctx, None).expect("pre-exec hook chain must succeed");
 
         let vs_after = ValidatorSet::new(storage);
+        let epoch_after = vs_after.epoch_snapshot().unwrap();
         assert_eq!(
-            vs_after.epoch_number.read().unwrap(),
+            epoch_after.number,
             U256::from(1u64),
             "mid-epoch block must NOT bump epoch_number",
         );
         assert_eq!(
-            vs_after.epoch_start_block.read().unwrap(),
-            0,
+            epoch_after.start_block, 0,
             "mid-epoch block must NOT advance epoch_start_block",
         );
     });

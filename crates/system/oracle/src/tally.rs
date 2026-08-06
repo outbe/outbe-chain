@@ -474,18 +474,16 @@ pub fn slash_and_reset_counters(oracle: &mut OracleContract, _timestamp: u64) ->
     let allow_protected = oracle.config_allow_protected.read()?;
 
     let vs = outbe_validatorset::contract::ValidatorSet::new(oracle.storage.clone());
-    let all_validators = vs.get_all_validators()?;
-    if all_validators.len() > MAX_ORACLE_SLASH_WINDOW_VALIDATORS {
+    let validator_addresses = vs.registered_validator_addresses()?;
+    if validator_addresses.len() > MAX_ORACLE_SLASH_WINDOW_VALIDATORS {
         return Err(PrecompileError::Revert(format!(
             "Oracle slash-window validator set size {} exceeds cap {}",
-            all_validators.len(),
+            validator_addresses.len(),
             MAX_ORACLE_SLASH_WINDOW_VALIDATORS
         )));
     }
 
-    for v in &all_validators {
-        let addr = v.validator_address;
-
+    for addr in validator_addresses {
         // Skip protected validators
         if allow_protected {
             let is_protected = oracle.protected_validator.read(&addr)?;

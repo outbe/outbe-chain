@@ -1084,6 +1084,7 @@ mod tests {
     use super::*;
     use alloy_primitives::{address, keccak256, B256};
     use outbe_primitives::{consensus::ReshareResult, storage::hashmap::HashMapStorageProvider};
+    use outbe_validatorset::StakeProjection;
 
     const CHAIN_ID: u64 = 2026;
     const OWNER: Address = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
@@ -1197,11 +1198,15 @@ mod tests {
             vs.config_owner.write(OWNER).unwrap();
             vs.config_max_validators.write(128).unwrap();
             vs.config_epoch_length_blocks.write(10).unwrap();
-            vs.register_validator(OWNER, VALIDATOR, &[7u8; 48]).unwrap();
-            vs.activate_validator(VALIDATOR).unwrap();
-            vs.val_has_bls_share.write(&VALIDATOR, true).unwrap();
-            vs.active_consensus_set_hash
-                .write(active_set_hash(&[VALIDATOR]))
+            vs.test_register_validator_without_pop(VALIDATOR, &[7u8; 48])
+                .unwrap();
+            vs.test_activate_validator_canonically(
+                VALIDATOR,
+                StakeProjection::new(U256::from(1), None),
+                U256::from(1),
+            )
+            .unwrap();
+            vs.test_set_active_consensus_set_hash(active_set_hash(&[VALIDATOR]))
                 .unwrap();
         });
         provider.set_block_number(1);
@@ -1644,9 +1649,14 @@ mod tests {
                 // Distinct consensus pubkey per member (uniqueness is enforced).
                 let mut pubkey = [7u8; 48];
                 pubkey[0] = i as u8;
-                vs.register_validator(OWNER, *member, &pubkey).unwrap();
-                vs.activate_validator(*member).unwrap();
-                vs.val_has_bls_share.write(member, true).unwrap();
+                vs.test_register_validator_without_pop(*member, &pubkey)
+                    .unwrap();
+                vs.test_activate_validator_canonically(
+                    *member,
+                    StakeProjection::new(U256::from(1), None),
+                    U256::from(1),
+                )
+                .unwrap();
             }
         });
         provider
@@ -2082,10 +2092,22 @@ mod tests {
             // contract of `record_finalized_participation` accepts them.
             {
                 let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-                vs.register_validator(OWNER, V0, &[0xB0; 48]).unwrap();
-                vs.activate_validator(V0).unwrap();
-                vs.register_validator(OWNER, V1, &[0xB1; 48]).unwrap();
-                vs.activate_validator(V1).unwrap();
+                vs.test_register_validator_without_pop(V0, &[0xB0; 48])
+                    .unwrap();
+                vs.test_activate_validator_canonically(
+                    V0,
+                    StakeProjection::new(U256::from(1), None),
+                    U256::from(1),
+                )
+                .unwrap();
+                vs.test_register_validator_without_pop(V1, &[0xB1; 48])
+                    .unwrap();
+                vs.test_activate_validator_canonically(
+                    V1,
+                    StakeProjection::new(U256::from(1), None),
+                    U256::from(1),
+                )
+                .unwrap();
             }
 
             // Committee snapshot [V0, V1] under (epoch, csh); escrow must bind csh.
@@ -2145,8 +2167,8 @@ mod tests {
                 "credited voter is not counted missed"
             );
             let vs = outbe_validatorset::contract::ValidatorSet::new(ctx.storage.clone());
-            assert_eq!(vs.val_missed_votes.read(&V1).unwrap(), 1);
-            assert_eq!(vs.val_missed_votes.read(&V0).unwrap(), 0);
+            assert_eq!(vs.participation(V1).unwrap().missed_votes, 1);
+            assert_eq!(vs.participation(V0).unwrap().missed_votes, 0);
 
             // Replay the closed window: settle freed the escrow and the per-fb_hash
             // guards short-circuit, so re-running must not double-count.
@@ -2156,7 +2178,7 @@ mod tests {
                 1,
                 "replay must not double-count the absentee miss"
             );
-            assert_eq!(vs.val_missed_votes.read(&V1).unwrap(), 1);
+            assert_eq!(vs.participation(V1).unwrap().missed_votes, 1);
         });
     }
 
@@ -2187,9 +2209,14 @@ mod tests {
                 {
                     let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
                     for (i, a) in members.iter().enumerate() {
-                        vs.register_validator(OWNER, *a, &[0xC0u8 + i as u8; 48])
+                        vs.test_register_validator_without_pop(*a, &[0xC0u8 + i as u8; 48])
                             .unwrap();
-                        vs.activate_validator(*a).unwrap();
+                        vs.test_activate_validator_canonically(
+                            *a,
+                            StakeProjection::new(U256::from(1), None),
+                            U256::from(1),
+                        )
+                        .unwrap();
                     }
                 }
                 let snapshot = CommitteeSnapshot {
@@ -2238,7 +2265,7 @@ mod tests {
                 for a in members {
                     out.push((
                         si.get_voter_miss_count(a).unwrap(),
-                        vs.val_missed_votes.read(&a).unwrap(),
+                        vs.participation(a).unwrap().missed_votes,
                     ));
                 }
             });
@@ -2284,10 +2311,22 @@ mod tests {
         provider.enter(|storage| {
             {
                 let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-                vs.register_validator(OWNER, A, &[0xE0; 48]).unwrap();
-                vs.activate_validator(A).unwrap();
-                vs.register_validator(OWNER, B, &[0xE1; 48]).unwrap();
-                vs.activate_validator(B).unwrap();
+                vs.test_register_validator_without_pop(A, &[0xE0; 48])
+                    .unwrap();
+                vs.test_activate_validator_canonically(
+                    A,
+                    StakeProjection::new(U256::from(1), None),
+                    U256::from(1),
+                )
+                .unwrap();
+                vs.test_register_validator_without_pop(B, &[0xE1; 48])
+                    .unwrap();
+                vs.test_activate_validator_canonically(
+                    B,
+                    StakeProjection::new(U256::from(1), None),
+                    U256::from(1),
+                )
+                .unwrap();
             }
             let snapshot = CommitteeSnapshot {
                 committee: vec![

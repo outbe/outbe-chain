@@ -104,6 +104,30 @@ impl MongoDb {
         }
     }
 
+    /// Drop this scenario's per-validator projection namespaces before a
+    /// deliberate chain re-bootstrap. The localnet must already be stopped so
+    /// the old chain cannot recreate its identity record after the reset.
+    pub fn reset_projection_state(&self) -> Result<()> {
+        let uri = self.uri.clone();
+        let database_prefix = self.database_prefix.clone();
+        let scenario = self.scenario;
+        let validators = self.validators;
+        std::thread::spawn(move || {
+            let client = Client::with_uri_str(&uri).wrap_err("connect projection MongoDB")?;
+            for validator in 0..validators {
+                let name = format!("{database_prefix}_scenario_{scenario}_validator-{validator}");
+                client
+                    .database(&name)
+                    .drop()
+                    .run()
+                    .wrap_err_with(|| format!("drop projection database {name}"))?;
+            }
+            Ok(())
+        })
+        .join()
+        .map_err(|_| eyre!("projection MongoDB reset worker panicked"))?
+    }
+
     /// Wait for all three tribute namespaces in every validator database, then
     /// assert the complete BSON documents are identical across the committee.
     pub fn wait_for_tribute_projection(&self, tx_hash: &str, tries: u32) -> Result<()> {

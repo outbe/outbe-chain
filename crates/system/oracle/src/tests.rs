@@ -6,6 +6,7 @@ mod oracle_tests {
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
     use outbe_primitives::storage::StorageHandle;
     use outbe_primitives::units::Units;
+    use outbe_validatorset::{StakeProjection, ValidatorLifecycle};
 
     use crate::contract::{OracleContract, SCALE_1E18};
 
@@ -14,11 +15,13 @@ mod oracle_tests {
     /// scoped `StorageHandle` passed into the closure.
     fn with_storage<F: FnOnce(StorageHandle)>(f: F) {
         let mut storage = HashMapStorageProvider::new(1);
+        storage.set_block_number(1);
         StorageHandle::enter(&mut storage, f);
     }
 
     fn with_storage_at<F: FnOnce(StorageHandle)>(timestamp: u64, f: F) {
         let mut storage = HashMapStorageProvider::new(1);
+        storage.set_block_number(1);
         storage.set_timestamp(U256::from(timestamp));
         StorageHandle::enter(&mut storage, f);
     }
@@ -758,8 +761,6 @@ mod oracle_tests {
     /// Helper: register a validator in the ValidatorSet with given stake.
     /// Uses the first byte of addr as the pubkey seed to avoid BLS pubkey collision.
     fn register_validator(storage: StorageHandle, addr: Address, stake: U256) {
-        use outbe_validatorset::logic::status;
-
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         // Only write config once (if not already initialized)
         if !vs.config_is_initialized.read().unwrap() {
@@ -774,10 +775,27 @@ mod oracle_tests {
         let mut pubkey = [0u8; 48];
         pubkey[..20].copy_from_slice(addr.as_slice());
         vs.register_validator(Address::ZERO, addr, &pubkey).unwrap();
-        // Set stake and status to ACTIVE
-        vs.val_stake.write(&addr, stake).unwrap();
-        vs.val_status.write(&addr, status::ACTIVE).unwrap();
-        vs.val_has_bls_share.write(&addr, true).unwrap();
+        vs.test_activate_validator_canonically(addr, StakeProjection::new(stake, None), U256::ZERO)
+            .unwrap();
+    }
+
+    /// Register a validator and move it to the canonical staked-but-not-ready
+    /// phase without constructing or overwriting a lifecycle payload.
+    fn register_waiting_for_readiness(storage: StorageHandle, addr: Address, stake: U256) {
+        let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage);
+        if !vs.config_is_initialized.read().unwrap() {
+            vs.config_is_initialized.write(true).unwrap();
+            vs.config_max_validators.write(128).unwrap();
+            vs.config_min_stake.write(U256::in_units(1u64)).unwrap();
+            vs.config_epoch_length_blocks.write(3600).unwrap();
+            vs.config_owner.write(Address::ZERO).unwrap();
+        }
+
+        let mut pubkey = [0u8; 48];
+        pubkey[..20].copy_from_slice(addr.as_slice());
+        vs.test_register_validator_without_pop(addr, &pubkey)
+            .unwrap();
+        vs.record_stake_increase(addr, stake, stake).unwrap();
     }
 
     #[test]
@@ -1017,8 +1035,10 @@ mod oracle_tests {
 
             // Validator should be force-exited (check via ValidatorSet)
             let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-            let info = vs.get_validator(v1).unwrap().unwrap();
-            assert_eq!(info.status, outbe_validatorset::logic::status::JAILED);
+            assert!(matches!(
+                vs.validator_lifecycle(v1).unwrap(),
+                ValidatorLifecycle::JailRetained(_) | ValidatorLifecycle::Jail(_)
+            ));
         });
     }
 
@@ -1062,9 +1082,9 @@ mod oracle_tests {
 
             let validator = Address::new([0x33; 20]);
             let stake = U256::in_units(100u64);
-            register_validator(storage.clone(), validator, stake);
-            let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-            vs.pending_set_change.write(false).unwrap();
+            register_waiting_for_readiness(storage.clone(), validator, stake);
+            let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+            vs.test_set_pending_set_change(false).unwrap();
 
             let staking = outbe_staking::contract::Staking::new(storage.clone());
             staking.stake_amount.write(&validator, stake).unwrap();
@@ -1072,11 +1092,6 @@ mod oracle_tests {
             oracle
                 .storage
                 .set_balance(outbe_primitives::addresses::STAKING_ADDRESS, stake)
-                .unwrap();
-
-            let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-            vs.val_status
-                .write(&validator, outbe_validatorset::logic::status::REGISTERED)
                 .unwrap();
 
             oracle.increment_miss(&validator).unwrap();
@@ -1096,11 +1111,11 @@ mod oracle_tests {
             );
 
             let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-            assert_eq!(vs.val_stake.read(&validator).unwrap(), stake);
-            assert_eq!(
-                vs.val_status.read(&validator).unwrap(),
-                outbe_validatorset::logic::status::REGISTERED
-            );
+            assert_eq!(vs.validator_state(validator).unwrap().bonded_stake(), stake);
+            assert!(matches!(
+                vs.validator_lifecycle(validator).unwrap(),
+                ValidatorLifecycle::WaitingForReadiness(_)
+            ));
 
             assert_eq!(oracle.penalty_miss_count.read(&validator).unwrap(), 1);
         });
@@ -1119,8 +1134,8 @@ mod oracle_tests {
             let validator = Address::new([0x44; 20]);
             let stake = U256::in_units(100u64);
             register_validator(storage.clone(), validator, stake);
-            let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-            vs.pending_set_change.write(false).unwrap();
+            let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+            vs.test_set_pending_set_change(false).unwrap();
 
             let staking = outbe_staking::contract::Staking::new(storage.clone());
             staking.stake_amount.write(&validator, stake).unwrap();
@@ -1138,11 +1153,11 @@ mod oracle_tests {
                 "unexpected error: {err}"
             );
 
-            assert_eq!(
-                vs.val_status.read(&validator).unwrap(),
-                outbe_validatorset::logic::status::ACTIVE
-            );
-            assert!(!vs.pending_set_change.read().unwrap());
+            assert!(vs
+                .validator_lifecycle(validator)
+                .unwrap()
+                .is_active_status());
+            assert!(!vs.has_pending_set_change().unwrap());
             assert_eq!(oracle.penalty_miss_count.read(&validator).unwrap(), 1);
             assert_eq!(staking.stake_amount.read(&validator).unwrap(), stake);
             assert_eq!(staking.total_staked.read().unwrap(), stake);
@@ -1172,8 +1187,7 @@ mod oracle_tests {
             // Counters reset but validator NOT force-exited
             assert_eq!(oracle.penalty_miss_count.read(&v1).unwrap(), 0);
             let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-            let info = vs.get_validator(v1).unwrap().unwrap();
-            assert_eq!(info.status, outbe_validatorset::logic::status::ACTIVE);
+            assert!(vs.validator_lifecycle(v1).unwrap().is_active_status());
         });
     }
 

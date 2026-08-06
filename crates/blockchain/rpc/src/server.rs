@@ -394,43 +394,55 @@ where
     async fn get_validator(&self, address: Address) -> RpcResult<Option<ValidatorDetailInfo>> {
         self.with_latest_state(|storage| {
             let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-            match vs.get_validator(address)? {
-                Some(r) => Ok(Some(ValidatorDetailInfo {
-                    address: r.validator_address,
-                    consensus_pubkey: hex::encode(r.consensus_pubkey),
-                    status: r.status,
-                    stake: r.stake,
-                    slash_count: r.slash_count,
-                    missed_blocks: r.missed_blocks,
-                    missed_votes: r.missed_votes,
-                    blocks_proposed: r.blocks_proposed,
-                    joined_at_height: r.joined_at_height,
-                    deactivated_at_height: r.deactivated_at_height,
-                    unbonding_end: r.unbonding_end,
-                    has_bls_share: r.has_bls_share,
-                })),
-                None => Ok(None),
+            let state = vs.validator_state(address)?;
+            if !state.is_registered() {
+                return Ok(None);
             }
+            let consensus_pubkey = state.consensus_pubkey().ok_or_else(|| {
+                outbe_primitives::error::PrecompileError::Fatal(
+                    "registered validator is missing consensus pubkey".into(),
+                )
+            })?;
+            let history = state.history().ok_or_else(|| {
+                outbe_primitives::error::PrecompileError::Fatal(
+                    "registered validator is missing history".into(),
+                )
+            })?;
+            Ok(Some(ValidatorDetailInfo {
+                address,
+                consensus_pubkey: hex::encode(consensus_pubkey),
+                status: state.lifecycle().stored_status().ok_or_else(|| {
+                    outbe_primitives::error::PrecompileError::Fatal(
+                        "registered validator has no persisted status".into(),
+                    )
+                })?,
+                stake: state.bonded_stake(),
+                slash_count: history.slash_count(),
+                missed_blocks: history.missed_blocks(),
+                missed_votes: history.missed_votes(),
+                blocks_proposed: history.blocks_proposed(),
+                joined_at_height: history.joined_at_height(),
+                deactivated_at_height: history.last_deactivated_at_height().unwrap_or(0),
+                unbonding_end: state.unbonding_end_hint().unwrap_or(0),
+                has_bls_share: state.has_bls_share(),
+            }))
         })
     }
 
     async fn get_epoch_info(&self) -> RpcResult<EpochInfo> {
         self.with_latest_state(|storage| {
             let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-            let epoch_number = vs.epoch_number.read()?;
-            let epoch_start_timestamp = vs.epoch_start_timestamp.read()?;
-            let epoch_start_block = vs.epoch_start_block.read()?;
-            let epoch_length_blocks = vs.config_epoch_length_blocks.read()?;
+            let epoch = vs.epoch_snapshot()?;
             let active_count = vs.active_validator_count()?;
 
             let staking = outbe_staking::contract::Staking::new(storage);
             let total_staked = staking.get_total_staked()?;
 
             Ok(EpochInfo {
-                epoch_number,
-                epoch_start_timestamp,
-                epoch_start_block,
-                epoch_length_blocks,
+                epoch_number: epoch.number,
+                epoch_start_timestamp: epoch.start_timestamp,
+                epoch_start_block: epoch.start_block,
+                epoch_length_blocks: epoch.length_blocks,
                 active_validator_count: active_count,
                 total_staked,
             })
@@ -609,11 +621,12 @@ where
     async fn get_participation(&self, address: Address) -> RpcResult<ParticipationInfo> {
         self.with_latest_state(|storage| {
             let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
+            let participation = vs.participation(address)?;
             Ok(ParticipationInfo {
                 address,
-                blocks_proposed: vs.val_blocks_proposed.read(&address)?,
-                missed_blocks: vs.val_missed_blocks.read(&address)?,
-                missed_votes: vs.val_missed_votes.read(&address)?,
+                blocks_proposed: participation.blocks_proposed,
+                missed_blocks: participation.missed_blocks,
+                missed_votes: participation.missed_votes,
             })
         })
     }

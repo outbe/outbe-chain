@@ -21,6 +21,7 @@ mod follower;
 mod joiner;
 mod probes;
 
+pub use bootstrap::BootstrapProfile;
 pub(crate) use probes::LogAudit;
 pub use probes::{CeStartupReplayObservationV1, OcompRuntimeTraceMarkerV1};
 

@@ -17,9 +17,8 @@ use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_slashindicator::schema::SlashIndicator;
 use outbe_staking::contract::Staking;
 use outbe_validatorset::contract::ValidatorSet;
-use outbe_validatorset::logic::status;
 use outbe_validatorset::state::write_committee_snapshot;
-use outbe_validatorset::{CommitteeEntry, CommitteeSnapshot};
+use outbe_validatorset::{CommitteeEntry, CommitteeSnapshot, StakeProjection, ValidatorLifecycle};
 
 const CHAIN_ID: u64 = 1;
 const OWNER: Address = address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC");
@@ -64,18 +63,24 @@ fn setup(storage: StorageHandle) -> Fixture {
     let mut vs = ValidatorSet::new(storage.clone());
     vs.config_owner.write(OWNER).unwrap();
     vs.config_max_validators.write(100).unwrap();
-    vs.epoch_number.write(U256::from(ROUND_EPOCH)).unwrap();
+    let mut epoch = vs.epoch_snapshot().unwrap();
+    epoch.number = U256::from(ROUND_EPOCH);
+    vs.test_set_epoch_snapshot(epoch).unwrap();
 
     let mut committee = Vec::new();
     for i in 0..N {
         let addr = validator_addr(i);
-        vs.register_validator(OWNER, addr, &pubkeys[i as usize])
+        vs.test_register_validator_without_pop(addr, &pubkeys[i as usize])
             .unwrap();
-        vs.activate_validator(addr).unwrap();
         let stake = U256::from(1_000_000u64);
         let staking = Staking::new(storage.clone());
         staking.stake_amount.write(&addr, stake).unwrap();
-        vs.val_stake.write(&addr, stake).unwrap();
+        vs.test_activate_validator_canonically(
+            addr,
+            StakeProjection::new(stake, None),
+            U256::from(1),
+        )
+        .unwrap();
         committee.push(CommitteeEntry {
             address: addr,
             consensus_pubkey: pubkeys[i as usize],
@@ -94,8 +99,14 @@ fn setup(storage: StorageHandle) -> Fixture {
     // SUBMITTER active.
     let mut sub_pk = [0u8; 48];
     sub_pk[0] = 0x77;
-    vs.register_validator(OWNER, SUBMITTER, &sub_pk).unwrap();
-    vs.activate_validator(SUBMITTER).unwrap();
+    vs.test_register_validator_without_pop(SUBMITTER, &sub_pk)
+        .unwrap();
+    vs.test_activate_validator_canonically(
+        SUBMITTER,
+        StakeProjection::new(U256::from(1), None),
+        U256::from(1),
+    )
+    .unwrap();
 
     let commitment = dkg.polynomial.encode().to_vec();
     let poly_hash = public_polynomial_hash(&dkg.polynomial);
@@ -166,7 +177,9 @@ fn build_ipe1(
 }
 
 fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
-    HashMapStorageProvider::new(CHAIN_ID).enter(f)
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_block_number(1);
+    storage.enter(f)
 }
 
 #[test]
@@ -184,10 +197,11 @@ fn invalid_partial_jails_and_slashes_then_dedups() {
             .expect("an invalid identity-signed partial must slash");
 
         let vs = ValidatorSet::new(storage.clone());
-        assert_eq!(
-            vs.val_status.read(&validator_addr(signer as u32)).unwrap(),
-            status::JAILED
-        );
+        assert!(matches!(
+            vs.validator_lifecycle(validator_addr(signer as u32))
+                .unwrap(),
+            ValidatorLifecycle::JailRetained(_)
+        ));
         let si = SlashIndicator::new(storage.clone());
         assert_eq!(
             si.felony_count

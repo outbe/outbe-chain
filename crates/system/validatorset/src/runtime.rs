@@ -1,6 +1,8 @@
+use std::{collections::HashSet, num::NonZeroU64};
+
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_primitives::consensus_p2p::{
-    validate_versioned, MAX_P2P_ADDRESS_ENCODED_LEN, P2P_ADDRESS_VERSION_V1,
+    decode_versioned, MAX_P2P_ADDRESS_ENCODED_LEN, P2P_ADDRESS_VERSION_V1,
 };
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::slashing_journal::{iso8601_now, record as journal_record, JournalRecord};
@@ -8,19 +10,13 @@ use tracing::{info, warn};
 
 use crate::precompile::IValidatorSet;
 use crate::schema::ValidatorSet;
+use crate::state_machine::{
+    self, P2pInfo, StakeProjection, ValidatorHistory, ValidatorLifecycle, ValidatorState,
+};
 
-/// Validator status constants.
-///
-/// Lifecycle: Registered → Pending → Active → Exiting → Unbonding → Inactive.
-///
-/// JAILED branches off the active path on a consensus/oracle felony: instead of
-/// being force-exited out of the registry, the validator is slashed and frozen in
-/// JAILED. It keeps its current-epoch consensus accountability until the next
-/// reshare drops it (same as EXITING — a member cannot leave a threshold committee
-/// mid-epoch), then it stops voting. From JAILED there are two exits:
-///   - return: `unjailValidator()` (self, stake ≥ min_stake, cooldown) → PENDING →
-///     (confirm-ready + reshare) → ACTIVE;
-///   - leave: unstake the full stake → EXITING → UNBONDING → INACTIVE.
+/// Stable ABI status constants. The effective Rust states are richer: PENDING
+/// distinguishes readiness from joining, and JAILED distinguishes retained from
+/// boundary-excluded. See [`ValidatorLifecycle`].
 pub mod status {
     pub const REGISTERED: u8 = 0;
     pub const PENDING: u8 = 1;
@@ -28,8 +24,6 @@ pub mod status {
     pub const EXITING: u8 = 3;
     pub const UNBONDING: u8 = 4;
     pub const INACTIVE: u8 = 5;
-    /// Punished (felony) + frozen: slashed, removed from the next committee, but
-    /// retained in the registry pending unjail (→ PENDING) or unstake (→ exit).
     pub const JAILED: u8 = 6;
 }
 
@@ -51,7 +45,11 @@ pub mod status {
 /// register validators directly beyond it.
 pub const MAX_SELF_REGISTERED_UNSTAKED: u32 = 32;
 
-/// A fully-hydrated validator record read from storage.
+/// Legacy flat read/ABI projection.
+///
+/// Lifecycle decisions must use [`ValidatorState`] or [`ValidatorLifecycle`].
+/// This shape remains public for compatibility with existing Rust consumers
+/// and the Solidity `validatorByAddress` / `validatorByIndex` tuples.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ValidatorRecord {
     pub validator_address: Address,
@@ -69,20 +67,30 @@ pub struct ValidatorRecord {
     pub has_bls_share: bool,
 }
 
-impl ValidatorSet<'_> {
-    fn is_current_consensus_participant_status(validator_status: u8, has_bls_share: bool) -> bool {
-        // JAILED is included alongside ACTIVE/EXITING: a just-jailed validator is
-        // still cryptographically in the live committee (its share is only cleared
-        // at the next reshare), so it remains accountable — and `record_proposer` /
-        // `record_participation` would Fatal if a current-committee member that was
-        // jailed mid-epoch were rejected here. JAILED stops counting once the reshare
-        // clears its share (then `has_bls_share == false`), exactly like EXITING.
-        matches!(
-            validator_status,
-            status::ACTIVE | status::EXITING | status::JAILED
-        ) && has_bls_share
-    }
+/// Read-only epoch metadata exposed without leaking raw storage slots.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EpochSnapshot {
+    pub number: U256,
+    pub start_timestamp: u64,
+    pub start_block: u64,
+    pub length_blocks: u32,
+}
 
+/// Read-only participation counters exposed independently of lifecycle writes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ValidatorParticipation {
+    pub blocks_proposed: u64,
+    pub missed_blocks: u64,
+    pub missed_votes: u64,
+}
+
+fn registered_status(lifecycle: &ValidatorLifecycle) -> Result<u8> {
+    lifecycle.stored_status().ok_or_else(|| {
+        PrecompileError::Fatal("Unregistered lifecycle has no persisted status".into())
+    })
+}
+
+impl ValidatorSet<'_> {
     /// Reads the 48-byte BLS MinPk consensus pubkey from two storage slots.
     fn read_consensus_pubkey(&self, addr: &Address) -> Result<[u8; 48]> {
         let lo: B256 = self.val_consensus_pubkey_lo.read(addr)?;
@@ -104,84 +112,311 @@ impl ValidatorSet<'_> {
         Ok(())
     }
 
+    /// Returns the complete typed state for an address.
+    ///
+    /// Unlike [`Self::get_validator`], this also represents an absent address as
+    /// [`ValidatorLifecycle::Absent`]. Unknown status bytes and malformed coupled
+    /// storage fail closed.
+    pub fn validator_state(&self, addr: Address) -> Result<ValidatorState> {
+        let registry_index = self.address_to_index.read(&addr)?;
+        let stored_status = self.val_status.read(&addr)?;
+
+        let consensus_pubkey = self.read_consensus_pubkey(&addr)?;
+        let bonded = self.val_stake.read(&addr)?;
+        let unbonding_end = self.val_unbonding_end.read(&addr)?;
+        let stake = StakeProjection::new(bonded, (unbonding_end != 0).then_some(unbonding_end));
+        let slash_count = self.val_slash_count.read(&addr)?;
+        let missed_blocks = self.val_missed_blocks.read(&addr)?;
+        let missed_votes = self.val_missed_votes.read(&addr)?;
+        let blocks_proposed = self.val_blocks_proposed.read(&addr)?;
+        let joined_at_height = self.val_joined_at_height.read(&addr)?;
+        let deactivated_at_height = self.val_deactivated_at_height.read(&addr)?;
+        let has_bls_share = self.val_has_bls_share.read(&addr)?;
+        let join_confirmed = self.val_join_confirmed.read(&addr)?;
+        let jailed_at = self.val_jailed_at_height.read(&addr)?;
+        let p2p_version = self.val_p2p_address_version.read(&addr)?;
+        let p2p_payload = self.val_p2p_address_payload.get_bytes(&addr).read()?;
+
+        let history = ValidatorHistory::new(
+            joined_at_height,
+            (deactivated_at_height != 0).then_some(deactivated_at_height),
+            slash_count,
+            missed_blocks,
+            missed_votes,
+            blocks_proposed,
+        );
+        let state = ValidatorState::decode_stored(
+            addr,
+            registry_index,
+            consensus_pubkey,
+            stake,
+            stored_status,
+            p2p_version,
+            &p2p_payload,
+            history,
+            has_bls_share,
+            join_confirmed,
+            jailed_at,
+        )?;
+
+        if let Some(index) = state.registry_index() {
+            let index = index.get();
+            let count = u64::from(self.validator_count.read()?);
+            if index > count {
+                return Err(PrecompileError::Fatal(format!(
+                    "validator {addr} registry index {index} exceeds validator_count {count}"
+                )));
+            }
+            let indexed_address = self.index_to_address.read(&index)?;
+            if indexed_address != addr {
+                return Err(PrecompileError::Fatal(format!(
+                    "validator registry forward index mismatch at {index}: expected {addr}, got {indexed_address}"
+                )));
+            }
+            let pubkey = state.consensus_pubkey().ok_or_else(|| {
+                PrecompileError::Fatal("registered validator is missing consensus pubkey".into())
+            })?;
+            let pubkey_owner = self
+                .consensus_pubkey_hash_to_address
+                .read(&Self::consensus_pubkey_hash(pubkey))?;
+            if pubkey_owner != addr {
+                return Err(PrecompileError::Fatal(format!(
+                    "validator consensus pubkey reverse mapping mismatch for {addr}: got {pubkey_owner}"
+                )));
+            }
+        }
+
+        Ok(state)
+    }
+
+    /// Returns the lifecycle from the fully validated validator aggregate.
+    ///
+    /// Hydrating the complete aggregate is intentional: lifecycle payloads own
+    /// registry identity, stake, P2P data, and history, so every query observes
+    /// the same coupled-field and index invariants.
+    pub fn validator_lifecycle(&self, addr: Address) -> Result<ValidatorLifecycle> {
+        Ok(self.validator_state(addr)?.into_lifecycle())
+    }
+
+    /// Writes only changed fields of an already-decoded validator aggregate.
+    /// Registry identity is deliberately excluded: registration, re-registration,
+    /// and cleanup own the dense-index and consensus-key invariants.
+    pub(crate) fn persist_validator_state_delta(
+        &mut self,
+        before: &ValidatorState,
+        after: &ValidatorState,
+    ) -> Result<()> {
+        self.persist_validator_state_delta_inner(before, after, false)
+    }
+
+    fn persist_registry_state_delta(
+        &mut self,
+        before: &ValidatorState,
+        after: &ValidatorState,
+    ) -> Result<()> {
+        self.persist_validator_state_delta_inner(before, after, true)
+    }
+
+    fn persist_validator_state_delta_inner(
+        &mut self,
+        before: &ValidatorState,
+        after: &ValidatorState,
+        allow_registry_identity_change: bool,
+    ) -> Result<()> {
+        before.validate()?;
+        after.validate()?;
+        if before.address() != after.address()
+            || (!allow_registry_identity_change
+                && (before.registry_index() != after.registry_index()
+                    || before.consensus_pubkey() != after.consensus_pubkey()))
+        {
+            return Err(PrecompileError::Fatal(
+                "validator lifecycle transition attempted to change registry identity".into(),
+            ));
+        }
+
+        if allow_registry_identity_change {
+            let pubkey = after.consensus_pubkey().ok_or_else(|| {
+                PrecompileError::Fatal("registered validator is missing consensus pubkey".into())
+            })?;
+            if after.registry_index().is_none() {
+                return Err(PrecompileError::Fatal(
+                    "registered validator is missing registry index".into(),
+                ));
+            }
+            if before.consensus_pubkey() != Some(pubkey) {
+                self.write_consensus_pubkey(&after.address(), pubkey)?;
+            }
+        }
+
+        let addr = after.address();
+        if before.bonded_stake() != after.bonded_stake() {
+            self.val_stake.write(&addr, after.bonded_stake())?;
+        }
+        if before.stored_status() != after.stored_status() {
+            let status = after.stored_status().ok_or_else(|| {
+                PrecompileError::Fatal(
+                    "generic validator persistence cannot write an absent lifecycle".into(),
+                )
+            })?;
+            self.val_status.write(&addr, status)?;
+        }
+
+        let before_history = before.history();
+        let after_history = after.history();
+        let before_slash_count = before_history.map_or(0, ValidatorHistory::slash_count);
+        let after_slash_count = after_history.map_or(0, ValidatorHistory::slash_count);
+        if before_slash_count != after_slash_count {
+            self.val_slash_count.write(&addr, after_slash_count)?;
+        }
+        let before_missed_blocks = before_history.map_or(0, ValidatorHistory::missed_blocks);
+        let after_missed_blocks = after_history.map_or(0, ValidatorHistory::missed_blocks);
+        if before_missed_blocks != after_missed_blocks {
+            self.val_missed_blocks.write(&addr, after_missed_blocks)?;
+        }
+        let before_missed_votes = before_history.map_or(0, ValidatorHistory::missed_votes);
+        let after_missed_votes = after_history.map_or(0, ValidatorHistory::missed_votes);
+        if before_missed_votes != after_missed_votes {
+            self.val_missed_votes.write(&addr, after_missed_votes)?;
+        }
+        let before_blocks_proposed = before_history.map_or(0, ValidatorHistory::blocks_proposed);
+        let after_blocks_proposed = after_history.map_or(0, ValidatorHistory::blocks_proposed);
+        if before_blocks_proposed != after_blocks_proposed {
+            self.val_blocks_proposed
+                .write(&addr, after_blocks_proposed)?;
+        }
+        let before_joined_at = before_history.map_or(0, ValidatorHistory::joined_at_height);
+        let after_joined_at = after_history.map_or(0, ValidatorHistory::joined_at_height);
+        if before_joined_at != after_joined_at {
+            self.val_joined_at_height.write(&addr, after_joined_at)?;
+        }
+        let before_deactivated_at = before_history
+            .and_then(ValidatorHistory::last_deactivated_at_height)
+            .unwrap_or(0);
+        let after_deactivated_at = after_history
+            .and_then(ValidatorHistory::last_deactivated_at_height)
+            .unwrap_or(0);
+        if before_deactivated_at != after_deactivated_at {
+            self.val_deactivated_at_height
+                .write(&addr, after_deactivated_at)?;
+        }
+        let before_unbonding_end = before.unbonding_end_hint().unwrap_or(0);
+        let after_unbonding_end = after.unbonding_end_hint().unwrap_or(0);
+        if before_unbonding_end != after_unbonding_end {
+            self.val_unbonding_end.write(&addr, after_unbonding_end)?;
+        }
+        if before.has_bls_share() != after.has_bls_share() {
+            self.val_has_bls_share.write(&addr, after.has_bls_share())?;
+        }
+        if before.join_confirmed() != after.join_confirmed() {
+            self.val_join_confirmed
+                .write(&addr, after.join_confirmed())?;
+        }
+        if before.stored_jailed_at() != after.stored_jailed_at() {
+            self.val_jailed_at_height
+                .write(&addr, after.stored_jailed_at())?;
+        }
+        let before_p2p = before.p2p().map_or((0, Vec::new()), P2pInfo::encode_stored);
+        let after_p2p = after.p2p().map_or((0, Vec::new()), P2pInfo::encode_stored);
+        if before_p2p != after_p2p {
+            self.val_p2p_address_version.write(&addr, after_p2p.0)?;
+            if after_p2p.1.is_empty() {
+                self.val_p2p_address_payload.get_bytes(&addr).clear()?;
+            } else {
+                self.val_p2p_address_payload
+                    .get_bytes(&addr)
+                    .write(&after_p2p.1)?;
+            }
+        }
+
+        Ok(())
+    }
+
     /// Returns the keccak256 hash of a 48-byte consensus pubkey (for reverse lookup).
     pub fn consensus_pubkey_hash(pubkey: &[u8; 48]) -> B256 {
         keccak256(pubkey)
     }
 
-    /// Returns the full record for a given validator address, or `None` if not registered.
+    fn read_validator_record(&self, addr: Address) -> Result<ValidatorRecord> {
+        let state = self.validator_state(addr)?;
+        let stored_status = state.stored_status().ok_or_else(|| {
+            PrecompileError::Fatal("cannot project absent validator into ValidatorRecord".into())
+        })?;
+        let history = state.history().ok_or_else(|| {
+            PrecompileError::Fatal("registered validator is missing history".into())
+        })?;
+        let consensus_pubkey = state.consensus_pubkey().copied().ok_or_else(|| {
+            PrecompileError::Fatal("registered validator is missing consensus public key".into())
+        })?;
+        Ok(ValidatorRecord {
+            validator_address: addr,
+            consensus_pubkey,
+            stake: state.bonded_stake(),
+            status: stored_status,
+            slash_count: history.slash_count(),
+            missed_blocks: history.missed_blocks(),
+            missed_votes: history.missed_votes(),
+            blocks_proposed: history.blocks_proposed(),
+            joined_at_height: history.joined_at_height(),
+            deactivated_at_height: history.last_deactivated_at_height().unwrap_or(0),
+            unbonding_end: state.unbonding_end_hint().unwrap_or(0),
+            has_bls_share: state.has_bls_share(),
+        })
+    }
+
+    /// Returns the full ABI-compatible record for a validator address, or
+    /// `None` if it has no registry identity. Unknown status bytes fail closed.
     pub fn get_validator(&self, addr: Address) -> Result<Option<ValidatorRecord>> {
-        let index = self.address_to_index.read(&addr)?;
-        if index == 0 {
+        if self.address_to_index.read(&addr)? == 0 {
             return Ok(None);
         }
-        Ok(Some(ValidatorRecord {
-            validator_address: addr,
-            consensus_pubkey: self.read_consensus_pubkey(&addr)?,
-            stake: self.val_stake.read(&addr)?,
-            status: self.val_status.read(&addr)?,
-            slash_count: self.val_slash_count.read(&addr)?,
-            missed_blocks: self.val_missed_blocks.read(&addr)?,
-            missed_votes: self.val_missed_votes.read(&addr)?,
-            blocks_proposed: self.val_blocks_proposed.read(&addr)?,
-            joined_at_height: self.val_joined_at_height.read(&addr)?,
-            deactivated_at_height: self.val_deactivated_at_height.read(&addr)?,
-            unbonding_end: self.val_unbonding_end.read(&addr)?,
-            has_bls_share: self.val_has_bls_share.read(&addr)?,
-        }))
+        Ok(Some(self.read_validator_record(addr)?))
     }
 
     /// Returns all registered validators, including inactive and exiting ones.
     pub fn get_all_validators(&self) -> Result<Vec<ValidatorRecord>> {
-        let count = self.validator_count.read()?;
-        let mut result = Vec::with_capacity(count as usize);
-        for i in 1..=count as u64 {
-            let addr = self.index_to_address.read(&i)?;
-            if addr.is_zero() {
-                continue;
-            }
-            if let Some(record) = self.get_validator(addr)? {
-                result.push(record);
+        let addresses = self.registered_validator_addresses()?;
+        let mut result = Vec::with_capacity(addresses.len());
+        for addr in addresses {
+            result.push(self.read_validator_record(addr)?);
+        }
+        Ok(result)
+    }
+
+    fn validator_addresses_matching(
+        &self,
+        predicate: impl Fn(&ValidatorLifecycle) -> bool,
+    ) -> Result<Vec<Address>> {
+        let mut result = Vec::new();
+        for addr in self.registered_validator_addresses()? {
+            if predicate(&self.validator_lifecycle(addr)?) {
+                result.push(addr);
             }
         }
         Ok(result)
     }
 
-    /// Returns only validators with `status == ACTIVE`.
-    pub fn get_active_validators(&self) -> Result<Vec<ValidatorRecord>> {
-        let all = self.get_all_validators()?;
-        Ok(all
+    fn get_validators_matching(
+        &self,
+        predicate: impl Fn(&ValidatorLifecycle) -> bool,
+    ) -> Result<Vec<ValidatorRecord>> {
+        self.validator_addresses_matching(predicate)?
             .into_iter()
-            .filter(|v| v.status == status::ACTIVE)
-            .collect())
+            .map(|addr| self.read_validator_record(addr))
+            .collect()
     }
 
-    /// Returns validators eligible to be in the NEXT consensus committee — the DKG
-    /// reshare target / `next_players` set: `status ∈ {ACTIVE, PENDING}`. ACTIVE
-    /// members stay; PENDING members are staked joiners awaiting their first share.
-    /// EXITING validators are excluded (a reshare removes them). This is distinct
-    /// from [`Self::get_active_validators`] (voting set, ACTIVE-only): a PENDING
-    /// joiner must be in the reshare target so the ceremony grants it a share and
-    /// [`Self::activate_reshared_set`] promotes it PENDING→ACTIVE.
+    /// Returns only validators with `status == ACTIVE`.
+    pub fn get_active_validators(&self) -> Result<Vec<ValidatorRecord>> {
+        self.get_validators_matching(ValidatorLifecycle::is_active_status)
+    }
+
+    /// Returns validators eligible for the NEXT consensus committee: `Active`
+    /// plus readiness-confirmed `Joining`. `WaitingForReadiness`, `Exiting`, and
+    /// both jailed phases are excluded. Boundary activation grants each included
+    /// joiner a share while changing it to `Active` atomically.
     pub fn get_reshare_target_set(&self) -> Result<Vec<ValidatorRecord>> {
-        let all = self.get_all_validators()?;
-        let mut target = Vec::new();
-        for v in all {
-            let include = match v.status {
-                status::ACTIVE => true,
-                // Stale-join guard: a PENDING joiner enters the reshare target
-                // only after it has confirmed on-chain that its node caught up
-                // to head (`confirmValidatorReady()`). An unconfirmed joiner is
-                // deferred to a later reshare so a behind/stale node is never
-                // frozen into the ceremony and flipped ACTIVE before it can vote.
-                status::PENDING => self.val_join_confirmed.read(&v.validator_address)?,
-                _ => false,
-            };
-            if include {
-                target.push(v);
-            }
-        }
-        Ok(target)
+        self.get_validators_matching(ValidatorLifecycle::is_reshare_target)
     }
 
     /// Returns validators with `status == PENDING` — staked joiners admitted to the
@@ -189,57 +424,31 @@ impl ValidatorSet<'_> {
     /// consensus P2P as SECONDARY peers so they can sync to head before the reshare
     /// that makes them signers; they are NOT consensus participants (no share).
     pub fn get_pending_validators(&self) -> Result<Vec<ValidatorRecord>> {
-        let all = self.get_all_validators()?;
-        Ok(all
-            .into_iter()
-            .filter(|v| v.status == status::PENDING)
-            .collect())
+        self.get_validators_matching(ValidatorLifecycle::is_pending)
     }
 
-    /// Returns validators admitted to consensus P2P as non-voting SECONDARY peers so
-    /// they sync to head: `status ∈ {REGISTERED, PENDING}`. This is the
-    /// TEE full-node admission: a REGISTERED node (registered +
-    /// P2P-announced + enclave-registered, but NOT yet staked) syncs and executes
-    /// offer blocks as a verifier WITHOUT voting; a PENDING joiner is the staked case
-    /// on its way to ACTIVE. Voting requires `has_bls_share` (granted only by a
-    /// reshare), so admitting these peers cannot affect consensus. Distinct from
-    /// [`Self::get_reshare_target_set`] ({ACTIVE, PENDING}) — REGISTERED nodes are not
-    /// staked and must NOT receive a threshold share. Peers without a registered P2P
-    /// address are dropped downstream (the address read yields `Missing`).
+    /// Returns validators admitted to consensus P2P as secondary peers:
+    /// `WaitingForStake`, both pending phases, and both jailed phases. This view
+    /// controls network admission only; the current-participant predicate remains
+    /// independently gated by a live share. Peers without P2P information are
+    /// dropped downstream.
     pub fn get_admitted_non_consensus_validators(&self) -> Result<Vec<ValidatorRecord>> {
-        let all = self.get_all_validators()?;
-        Ok(all
-            .into_iter()
-            .filter(|v| {
-                // JAILED nodes stay admitted as non-voting followers: once the
-                // reshare clears their share they keep syncing to head so the
-                // operator can later unjail (re-confirm + rejoin) or unstake out.
-                v.status == status::REGISTERED
-                    || v.status == status::PENDING
-                    || v.status == status::JAILED
-            })
-            .collect())
+        self.get_validators_matching(ValidatorLifecycle::is_secondary_admission)
     }
 
     /// Returns validators in the current consensus set.
     ///
-    /// EXITING validators retain current-epoch consensus accountability until a
-    /// successful reshare excludes them and clears their BLS share.
+    /// `Exiting` and `JailRetained` validators retain consensus accountability
+    /// until a successful boundary excludes them and clears their BLS share.
     pub fn get_active_consensus_set(&self) -> Result<Vec<ValidatorRecord>> {
-        let all = self.get_all_validators()?;
-        Ok(all
-            .into_iter()
-            .filter(|v| Self::is_current_consensus_participant_status(v.status, v.has_bls_share))
-            .collect())
+        self.get_validators_matching(ValidatorLifecycle::is_current_consensus_participant)
     }
 
     /// Returns the number of active validators.
     pub fn active_validator_count(&self) -> Result<u32> {
-        let all = self.get_all_validators()?;
-        let count: u32 = all
-            .iter()
-            .filter(|v| v.status == status::ACTIVE)
-            .count()
+        let count: u32 = self
+            .validator_addresses_matching(ValidatorLifecycle::is_active_status)?
+            .len()
             .try_into()
             .map_err(|_| PrecompileError::Revert("active validator count exceeds u32".into()))?;
         Ok(count)
@@ -249,11 +458,9 @@ impl ValidatorSet<'_> {
     /// not-yet-staked) state. Used to bound the free, permissionless
     /// self-registration Sybil surface; see [`MAX_SELF_REGISTERED_UNSTAKED`].
     pub fn registered_count(&self) -> Result<u32> {
-        let all = self.get_all_validators()?;
-        let count: u32 = all
-            .iter()
-            .filter(|v| v.status == status::REGISTERED)
-            .count()
+        let count: u32 = self
+            .validator_addresses_matching(ValidatorLifecycle::is_registered_status)?
+            .len()
             .try_into()
             .map_err(|_| {
                 PrecompileError::Revert("registered validator count exceeds u32".into())
@@ -263,11 +470,9 @@ impl ValidatorSet<'_> {
 
     /// Returns the number of validators in the active consensus set.
     pub fn active_consensus_count(&self) -> Result<u32> {
-        let all = self.get_all_validators()?;
-        let count: u32 = all
-            .iter()
-            .filter(|v| Self::is_current_consensus_participant_status(v.status, v.has_bls_share))
-            .count()
+        let count: u32 = self
+            .validator_addresses_matching(ValidatorLifecycle::is_current_consensus_participant)?
+            .len()
             .try_into()
             .map_err(|_| PrecompileError::Revert("active consensus count exceeds u32".into()))?;
         Ok(count)
@@ -275,18 +480,98 @@ impl ValidatorSet<'_> {
 
     /// Returns true if the validator is a current consensus participant.
     pub fn is_consensus_participant(&self, addr: Address) -> Result<bool> {
-        let index = self.address_to_index.read(&addr)?;
-        if index == 0 {
-            return Ok(false);
-        }
-        let st = self.val_status.read(&addr)?;
-        let has_bls = self.val_has_bls_share.read(&addr)?;
-        Ok(Self::is_current_consensus_participant_status(st, has_bls))
+        Ok(self
+            .validator_lifecycle(addr)?
+            .is_current_consensus_participant())
     }
 
     /// Returns whether there is a pending validator set change that consensus should detect.
     pub fn has_pending_set_change(&self) -> Result<bool> {
         self.pending_set_change.read()
+    }
+
+    /// Returns the number of entries in the dense validator registry.
+    pub fn validator_count(&self) -> Result<u32> {
+        self.validator_count.read()
+    }
+
+    /// Returns the persisted active-set hash without exposing its storage slot.
+    pub fn active_consensus_set_hash(&self) -> Result<B256> {
+        self.active_consensus_set_hash.read()
+    }
+
+    /// Returns the current epoch as `u64`; an oversized persisted value is
+    /// deterministic state corruption and therefore fails closed.
+    pub fn current_epoch_u64(&self) -> Result<u64> {
+        self.epoch_number
+            .read()?
+            .try_into()
+            .map_err(|_| PrecompileError::Fatal("ValidatorSet.epoch_number exceeds u64".into()))
+    }
+
+    /// Returns all public epoch metadata as one consistent read projection.
+    pub fn epoch_snapshot(&self) -> Result<EpochSnapshot> {
+        Ok(EpochSnapshot {
+            number: self.epoch_number.read()?,
+            start_timestamp: self.epoch_start_timestamp.read()?,
+            start_block: self.epoch_start_block.read()?,
+            length_blocks: self.config_epoch_length_blocks.read()?,
+        })
+    }
+
+    /// Returns registered addresses in dense registry-index order.
+    pub fn registered_validator_addresses(&self) -> Result<Vec<Address>> {
+        let count = self.validator_count.read()?;
+        let mut addresses = Vec::with_capacity(count as usize);
+        for index in 1..=u64::from(count) {
+            let address = self.validator_address_at(index)?.ok_or_else(|| {
+                PrecompileError::Fatal(format!(
+                    "validator registry index {index} is empty below validator_count {count}"
+                ))
+            })?;
+            addresses.push(address);
+        }
+        Ok(addresses)
+    }
+
+    /// Resolves a one-based dense registry index and checks its reverse mapping.
+    pub fn validator_address_at(&self, index: u64) -> Result<Option<Address>> {
+        let count = u64::from(self.validator_count.read()?);
+        if index == 0 || index > count {
+            return Ok(None);
+        }
+        let address = self.index_to_address.read(&index)?;
+        if address.is_zero() {
+            return Err(PrecompileError::Fatal(format!(
+                "validator registry index {index} is empty below validator_count {count}"
+            )));
+        }
+        let reverse_index = self.address_to_index.read(&address)?;
+        if reverse_index != index {
+            return Err(PrecompileError::Fatal(format!(
+                "validator registry reverse index mismatch for {address}: expected {index}, got {reverse_index}"
+            )));
+        }
+        Ok(Some(address))
+    }
+
+    /// Returns the registered validator's consensus identity key.
+    pub fn consensus_pubkey_of(&self, addr: Address) -> Result<Option<[u8; 48]>> {
+        Ok(self.validator_state(addr)?.consensus_pubkey().copied())
+    }
+
+    /// Returns participation counters, preserving the legacy all-zero result for
+    /// an address that has no registry history.
+    pub fn participation(&self, addr: Address) -> Result<ValidatorParticipation> {
+        let state = self.validator_state(addr)?;
+        let Some(history) = state.history() else {
+            return Ok(ValidatorParticipation::default());
+        };
+        Ok(ValidatorParticipation {
+            blocks_proposed: history.blocks_proposed(),
+            missed_blocks: history.missed_blocks(),
+            missed_votes: history.missed_votes(),
+        })
     }
 
     /// Stores a validator's versioned Commonware P2P address payload.
@@ -320,55 +605,54 @@ impl ValidatorSet<'_> {
                 MAX_P2P_ADDRESS_ENCODED_LEN
             )));
         }
-        validate_versioned(version, encoded)
+        let decoded = decode_versioned(version, encoded)
             .map_err(|err| PrecompileError::Revert(format!("invalid p2p address: {err}")))?;
 
-        self.val_p2p_address_version
-            .write(&validator_addr, version)?;
-        self.val_p2p_address_payload
-            .get_bytes(&validator_addr)
-            .write(encoded)?;
+        let before = self.validator_state(validator_addr)?;
+        let lifecycle = state_machine::with_p2p(before.lifecycle().clone(), P2pInfo::V1(decoded))?;
+        let after = before.clone().with_lifecycle(lifecycle)?;
+        let guard = self.storage.checkpoint_guard();
+        self.persist_validator_state_delta(&before, &after)?;
+        guard.commit();
         Ok(())
     }
 
     /// Returns the stored versioned P2P address payload, if one is registered.
     pub fn get_p2p_address(&self, validator_addr: Address) -> Result<Option<(u8, Vec<u8>)>> {
-        if self.address_to_index.read(&validator_addr)? == 0 {
+        let state = self.validator_state(validator_addr)?;
+        let Some(p2p) = state.p2p() else {
             return Err(PrecompileError::Revert("validator not registered".into()));
-        }
-        let version = self.val_p2p_address_version.read(&validator_addr)?;
-        let encoded = self
-            .val_p2p_address_payload
-            .get_bytes(&validator_addr)
-            .read()?;
-        if version == 0 && encoded.is_empty() {
+        };
+        if matches!(p2p, P2pInfo::Unset) {
             return Ok(None);
         }
-        Ok(Some((version, encoded)))
+        Ok(Some(p2p.encode_stored()))
     }
 
     /// Registers a new validator.
     ///
     /// The caller must be either the config owner or the validator address itself.
     /// The address must not already be registered, and the count must be below max.
-    /// Initial status is REGISTERED (waiting for DKG reshare to become Active).
+    /// Initial state is `WaitingForStake` (`REGISTERED`); reaching the minimum,
+    /// confirming readiness, and boundary activation are separate transitions.
     ///
     /// `consensus_pubkey` is a 48-byte BLS12-381 MinPk public key.
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn register_validator(
         &mut self,
         caller: Address,
         validator_addr: Address,
         consensus_pubkey: &[u8; 48],
     ) -> Result<()> {
-        self.register_validator_with_sig(caller, validator_addr, consensus_pubkey, None)
+        self.register_validator_inner(caller, validator_addr, consensus_pubkey, None, true)
     }
 
-    /// Registers a new validator with optional BLS signature verification.
+    /// Registers a new validator with BLS proof-of-possession verification.
     ///
     /// When `bls_signature` is `Some`, verifies that the BLS MinPk key was used to
     /// sign `validator_addr` (20 bytes) under the "outbe_REGISTER" namespace.
-    /// When `None`, signature verification is skipped (used by system/owner
-    /// registrations and tests).
+    /// `None` is rejected by this production API. Genesis is storage-seeded;
+    /// feature-gated tests use [`Self::register_validator`] explicitly.
     ///
     /// `consensus_pubkey` is a 48-byte BLS12-381 MinPk public key.
     /// `bls_signature` is an optional 96-byte BLS MinPk signature.
@@ -379,7 +663,29 @@ impl ValidatorSet<'_> {
         consensus_pubkey: &[u8; 48],
         bls_signature: Option<&[u8; 96]>,
     ) -> Result<()> {
+        self.register_validator_inner(
+            caller,
+            validator_addr,
+            consensus_pubkey,
+            bls_signature,
+            false,
+        )
+    }
+
+    fn register_validator_inner(
+        &mut self,
+        caller: Address,
+        validator_addr: Address,
+        consensus_pubkey: &[u8; 48],
+        bls_signature: Option<&[u8; 96]>,
+        allow_bootstrap_without_pop: bool,
+    ) -> Result<()> {
         let owner = self.config_owner.read()?;
+        if *consensus_pubkey == [0; 48] {
+            return Err(PrecompileError::Revert(
+                "consensus public key must not be zero".into(),
+            ));
+        }
 
         // Authorization: owner or self-registration
         if caller != owner && caller != validator_addr {
@@ -389,46 +695,15 @@ impl ValidatorSet<'_> {
         }
         self.ensure_not_operational_delegate(validator_addr)?;
 
-        // BLS proof-of-key-ownership is mandatory for self-registration.
-        // Owner registrations (caller == owner && caller != validator_addr) may
-        // skip the signature for system bootstrapping.
-        if caller == validator_addr {
-            // Self-registration: signature is required
-            match bls_signature {
-                Some(sig_bytes) => {
-                    verify_bls_registration_sig(consensus_pubkey, sig_bytes, &validator_addr)?;
-                }
-                None => {
-                    return Err(PrecompileError::Revert(
-                        "self-registration requires BLS proof-of-key-ownership signature".into(),
-                    ));
-                }
-            }
-        } else if let Some(sig_bytes) = bls_signature {
-            // Owner registration WITH a proof-of-key-ownership signature: verify
-            // it (defence against the owner inserting a key it does not possess).
+        // Every runtime registration requires proof of possession. The only
+        // no-PoP path is the feature-gated bootstrap/test helper above; normal
+        // owner authority does not weaken the consensus-key invariant.
+        if let Some(sig_bytes) = bls_signature {
             verify_bls_registration_sig(consensus_pubkey, sig_bytes, &validator_addr)?;
-        } else {
-            // owner registration WITHOUT a PoP signature. Permitted because
-            // the owner is a trusted role used for system/genesis bootstrapping,
-            // but the committee's MinPk aggregate vote uses the rogue-key-vulnerable
-            // same-message construction, so an externally-supplied key whose
-            // possession the owner did not verify is a rogue-key surface. TRUST
-            // ASSUMPTION: the owner MUST verify proof-of-possession out-of-band for
-            // any externally-supplied consensus key (genesis-set collusion is out
-            // of the BFT model). The full on-chain defence — mandatory PoP for every
-            // committee-bound key, including genesis-seeded keys — would break the
-            // bootstrap flow and is disproportionate to a privilege-gated threat;
-            // see audit.md. Surface the unverified insertion so it is
-            // auditable.
-            warn!(
-                target: "outbe::validatorset",
-                event = "owner_registration_without_pop",
-                validator = %validator_addr,
-                "owner registered a validator WITHOUT a BLS proof-of-possession signature; the \
-                 owner must verify key possession out-of-band (rogue-key surface on the MinPk \
-                 aggregate —)"
-            );
+        } else if !allow_bootstrap_without_pop {
+            return Err(PrecompileError::Revert(
+                "validator registration requires BLS proof-of-possession signature".into(),
+            ));
         }
 
         // bound the free, permissionless self-registration Sybil surface.
@@ -459,55 +734,68 @@ impl ValidatorSet<'_> {
             ));
         }
 
-        // Check not already registered (allow re-registration of INACTIVE validators)
-        let existing_index = self.address_to_index.read(&validator_addr)?;
-        if existing_index != 0 {
-            let current_status = self.val_status.read(&validator_addr)?;
-            if current_status != status::INACTIVE {
-                return Err(PrecompileError::Revert(
-                    "validator already registered".into(),
-                ));
-            }
+        // Decode registry presence and lifecycle before selecting first-time vs
+        // re-registration. This is the sole raw-to-typed construction boundary.
+        let existing_state = self.validator_state(validator_addr)?;
+        let block_number = self.storage.block_number()?;
+        if let Some(existing_index) = existing_state.registry_index() {
+            let inactive = match existing_state.lifecycle().clone() {
+                ValidatorLifecycle::Inactive(inactive) => inactive,
+                _ => {
+                    return Err(PrecompileError::Revert(
+                        "validator already registered".into(),
+                    ));
+                }
+            };
             // Re-registration path: check cooldown then reuse existing index
             let cooldown = self.config_reregistration_cooldown.read()?;
             if cooldown > 0 {
-                let deactivated_at = self.val_deactivated_at_height.read(&validator_addr)?;
-                let current_height = self.storage.block_number()?;
-                if deactivated_at > 0 && current_height < deactivated_at + cooldown as u64 {
+                let deactivated_at = existing_state
+                    .history()
+                    .ok_or_else(|| {
+                        PrecompileError::Fatal("registered validator is missing history".into())
+                    })?
+                    .last_deactivated_at_height();
+                let ready_at = deactivated_at
+                    .map(|height| {
+                        height.checked_add(u64::from(cooldown)).ok_or_else(|| {
+                            PrecompileError::Fatal(
+                                "re-registration cooldown height overflow".into(),
+                            )
+                        })
+                    })
+                    .transpose()?;
+                if ready_at.is_some_and(|height| block_number < height) {
                     return Err(PrecompileError::Revert(
                         "re-registration cooldown not expired".into(),
                     ));
                 }
             }
 
-            // Reset lifecycle metadata without changing stake accounting. Staking
-            // remains the source of truth for stake and mirrors into val_stake.
-            let old_pubkey = self.read_consensus_pubkey(&validator_addr)?;
-            let old_pk_hash = Self::consensus_pubkey_hash(&old_pubkey);
+            let old_pubkey = existing_state.consensus_pubkey().ok_or_else(|| {
+                PrecompileError::Fatal("registered validator is missing consensus pubkey".into())
+            })?;
+            let old_pk_hash = Self::consensus_pubkey_hash(old_pubkey);
+            let pk_hash = Self::consensus_pubkey_hash(consensus_pubkey);
+            let lifecycle = ValidatorLifecycle::WaitingForStake(state_machine::reregister(
+                inactive,
+                *consensus_pubkey,
+                block_number,
+            )?);
+            let after = existing_state.clone().with_lifecycle(lifecycle)?;
+
+            let guard = self.storage.checkpoint_guard();
             self.consensus_pubkey_hash_to_address
                 .write(&old_pk_hash, Address::ZERO)?;
-
-            self.write_consensus_pubkey(&validator_addr, consensus_pubkey)?;
-            let pk_hash = Self::consensus_pubkey_hash(consensus_pubkey);
             self.consensus_pubkey_hash_to_address
                 .write(&pk_hash, validator_addr)?;
-
-            self.val_status.write(&validator_addr, status::REGISTERED)?;
-            self.val_slash_count.write(&validator_addr, 0)?;
-            self.val_missed_blocks.write(&validator_addr, 0)?;
-            self.val_missed_votes.write(&validator_addr, 0)?;
-            self.val_blocks_proposed.write(&validator_addr, 0)?;
-            self.val_joined_at_height
-                .write(&validator_addr, self.storage.block_number()?)?;
-            self.val_deactivated_at_height.write(&validator_addr, 0)?;
-            self.val_unbonding_end.write(&validator_addr, 0)?;
-            self.val_has_bls_share.write(&validator_addr, false)?;
-            self.val_p2p_address_version.write(&validator_addr, 0)?;
-            self.val_p2p_address_payload
-                .get_bytes(&validator_addr)
-                .clear()?;
-
+            self.persist_registry_state_delta(&existing_state, &after)?;
             self.pending_set_change.write(true)?;
+            self.emit(IValidatorSet::ValidatorRegistered {
+                validator: validator_addr,
+                index: existing_index.get(),
+            })?;
+            guard.commit();
 
             crate::metrics::record_validator_status(validator_addr, status::REGISTERED);
             crate::metrics::record_validator_register(validator_addr, true);
@@ -515,24 +803,19 @@ impl ValidatorSet<'_> {
 
             journal_record(JournalRecord::ValidatorReregistered {
                 wall_clock: iso8601_now(),
-                block_number: self.storage.block_number().unwrap_or(0),
+                block_number,
                 validator: format!("{validator_addr:?}"),
-                index: existing_index,
+                index: existing_index.get(),
             });
 
             info!(
                 target: "outbe::validatorset",
                 event = "validator_reregistered",
                 validator = %validator_addr,
-                index = existing_index,
-                block_number = self.storage.block_number().unwrap_or(0),
+                index = existing_index.get(),
+                block_number,
                 "validator re-registered (was INACTIVE, lifecycle metadata reset)",
             );
-
-            self.emit(IValidatorSet::ValidatorRegistered {
-                validator: validator_addr,
-                index: existing_index,
-            })?;
 
             return Ok(());
         }
@@ -545,18 +828,28 @@ impl ValidatorSet<'_> {
         }
 
         // Assign 1-based index
-        let new_index = count + 1;
+        let new_index = count
+            .checked_add(1)
+            .ok_or_else(|| PrecompileError::Fatal("validator count overflow".into()))?;
         let new_index_u64 = new_index as u64;
+
+        // Construct and persist the complete first-time registry bundle. The
+        // typed decoder guarantees that absent addresses carry no stake residue.
+        let registered_state = state_machine::register(
+            existing_state.clone(),
+            NonZeroU64::new(new_index_u64).ok_or_else(|| {
+                PrecompileError::Fatal("validator registry index must be non-zero".into())
+            })?,
+            *consensus_pubkey,
+            block_number,
+        )?;
+
+        let guard = self.storage.checkpoint_guard();
         self.address_to_index
             .write(&validator_addr, new_index_u64)?;
         self.index_to_address
             .write(&new_index_u64, validator_addr)?;
-
-        // Store per-validator fields; initial status is REGISTERED
-        self.write_consensus_pubkey(&validator_addr, consensus_pubkey)?;
-        self.val_status.write(&validator_addr, status::REGISTERED)?;
-        self.val_joined_at_height
-            .write(&validator_addr, self.storage.block_number()?)?;
+        self.persist_registry_state_delta(&existing_state, &registered_state)?;
 
         // Pubkey reverse lookup (keyed by keccak256 of full 48-byte pubkey)
         let pk_hash = Self::consensus_pubkey_hash(consensus_pubkey);
@@ -568,6 +861,11 @@ impl ValidatorSet<'_> {
 
         // Signal pending set change so consensus detects the new validator
         self.pending_set_change.write(true)?;
+        self.emit(IValidatorSet::ValidatorRegistered {
+            validator: validator_addr,
+            index: new_index as u64,
+        })?;
+        guard.commit();
 
         crate::metrics::record_validator_status(validator_addr, status::REGISTERED);
         crate::metrics::record_validator_register(validator_addr, false);
@@ -575,7 +873,7 @@ impl ValidatorSet<'_> {
 
         journal_record(JournalRecord::ValidatorRegistered {
             wall_clock: iso8601_now(),
-            block_number: self.storage.block_number().unwrap_or(0),
+            block_number,
             validator: format!("{validator_addr:?}"),
             index: new_index as u64,
         });
@@ -585,46 +883,239 @@ impl ValidatorSet<'_> {
             event = "validator_registered",
             validator = %validator_addr,
             index = new_index as u64,
-            block_number = self.storage.block_number().unwrap_or(0),
+            block_number,
             "validator registered (first-time)",
         );
-
-        self.emit(IValidatorSet::ValidatorRegistered {
-            validator: validator_addr,
-            index: new_index as u64,
-        })?;
 
         Ok(())
     }
 
-    /// Marks a REGISTERED validator as PENDING — staked and admitted to the
-    /// validator set, but NOT yet a consensus participant (no threshold share).
+    /// Records a successful stake increase from Staking and performs the
+    /// REGISTERED -> PENDING threshold transition when required.
     ///
-    /// This is the staking entrypoint (PoS): reaching `min_stake` moves a validator
-    /// REGISTERED→PENDING (not directly ACTIVE). The validator then syncs to head and
-    /// is included in the next DKG reshare target; only when the reshare grants it a
-    /// share does [`Self::activate_reshared_set`] promote it PENDING→ACTIVE. Signals
-    /// `pending_set_change` so consensus schedules that reshare. Idempotent for a
-    /// validator already PENDING/ACTIVE.
+    /// Staking owns the authoritative balance. This method is the only
+    /// production write seam for the ValidatorSet mirror and its coupled
+    /// lifecycle fields.
+    pub fn record_stake_increase(
+        &mut self,
+        addr: Address,
+        bonded: U256,
+        minimum: U256,
+    ) -> Result<()> {
+        let before = self.validator_state(addr)?;
+        let stake = StakeProjection::new(bonded, before.unbonding_end_hint());
+        let (lifecycle, became_pending) = match before.lifecycle().clone() {
+            ValidatorLifecycle::Absent => {
+                return Err(PrecompileError::Revert(
+                    "cannot stake before validator registration".into(),
+                ));
+            }
+            ValidatorLifecycle::Inactive(_) => {
+                return Err(PrecompileError::Revert(
+                    "inactive validator must re-register before staking".into(),
+                ));
+            }
+            ValidatorLifecycle::Exiting(_) | ValidatorLifecycle::Unbonding(_) => {
+                return Err(PrecompileError::Revert(
+                    "cannot increase stake while validator is exiting or unbonding".into(),
+                ));
+            }
+            ValidatorLifecycle::WaitingForStake(waiting) if bonded >= minimum => (
+                ValidatorLifecycle::WaitingForReadiness(state_machine::reach_minimum(
+                    waiting, stake, minimum,
+                )?),
+                true,
+            ),
+            lifecycle => (state_machine::with_stake(lifecycle, stake)?, false),
+        };
+        let after = before.clone().with_lifecycle(lifecycle)?;
+
+        let guard = self.storage.checkpoint_guard();
+        self.persist_validator_state_delta(&before, &after)?;
+        if became_pending {
+            self.pending_set_change.write(true)?;
+        }
+        guard.commit();
+        if became_pending {
+            crate::metrics::record_validator_status(addr, status::PENDING);
+            crate::metrics::record_pending_set_change(true);
+        }
+        Ok(())
+    }
+
+    /// Records a voluntary withdrawal and applies the complete coupled lifecycle
+    /// transition. Readiness is consumed on demotion, and a jailed validator may
+    /// leave only after fully unstaking.
+    pub fn record_unstake(
+        &mut self,
+        addr: Address,
+        bonded: U256,
+        minimum: U256,
+        unbonding_end_hint: u64,
+    ) -> Result<()> {
+        let before = self.validator_state(addr)?;
+        let lifecycle = before.lifecycle().clone();
+        let stake = StakeProjection::new(
+            bonded,
+            (unbonding_end_hint != 0).then_some(unbonding_end_hint),
+        );
+        let mut set_change = false;
+        let height = self.storage.block_number()?;
+        let next = match lifecycle {
+            ValidatorLifecycle::Absent => {
+                return Err(PrecompileError::Revert("validator not registered".into()));
+            }
+            ValidatorLifecycle::Inactive(_) => {
+                return Err(PrecompileError::Revert("validator is inactive".into()));
+            }
+            ValidatorLifecycle::WaitingForReadiness(waiting) if bonded < minimum => {
+                set_change = true;
+                ValidatorLifecycle::WaitingForStake(state_machine::demote_waiting_for_readiness(
+                    waiting, stake, minimum,
+                )?)
+            }
+            ValidatorLifecycle::Joining(joining) if bonded < minimum => {
+                set_change = true;
+                ValidatorLifecycle::WaitingForStake(state_machine::demote_joining(
+                    joining, stake, minimum,
+                )?)
+            }
+            ValidatorLifecycle::Active(active) if bonded < minimum => {
+                set_change = true;
+                ValidatorLifecycle::Exiting(state_machine::begin_exit(active, stake, height)?)
+            }
+            ValidatorLifecycle::JailRetained(jailed) if bonded.is_zero() => {
+                set_change = true;
+                ValidatorLifecycle::Exiting(state_machine::full_exit_jailed_retained(
+                    jailed, stake,
+                )?)
+            }
+            ValidatorLifecycle::Jail(jailed) if bonded.is_zero() => {
+                ValidatorLifecycle::Unbonding(state_machine::full_exit_jailed(jailed, stake)?)
+            }
+            lifecycle => state_machine::with_stake(lifecycle, stake)?,
+        };
+        let after = before.clone().with_lifecycle(next)?;
+
+        let guard = self.storage.checkpoint_guard();
+        self.persist_validator_state_delta(&before, &after)?;
+        if set_change {
+            self.pending_set_change.write(true)?;
+        }
+        guard.commit();
+        if set_change {
+            crate::metrics::record_pending_set_change(true);
+        }
+        Ok(())
+    }
+
+    /// Records a stake slash. This is intentionally distinct from voluntary
+    /// withdrawal: a JAILED validator remains JAILED after the slash.
+    pub fn record_stake_slash(
+        &mut self,
+        addr: Address,
+        bonded: U256,
+        minimum: U256,
+        unbonding_end_hint: Option<u64>,
+    ) -> Result<()> {
+        let before = self.validator_state(addr)?;
+        let lifecycle = before.lifecycle().clone();
+        let hint = unbonding_end_hint.or(before.unbonding_end_hint());
+        let stake = StakeProjection::new(bonded, hint);
+        let mut set_change = false;
+        let below_minimum = !minimum.is_zero() && bonded < minimum;
+        let height = self.storage.block_number()?;
+        let next = match lifecycle {
+            ValidatorLifecycle::Absent => {
+                return Err(PrecompileError::Revert("validator not registered".into()));
+            }
+            ValidatorLifecycle::Inactive(_) => {
+                return Err(PrecompileError::Revert("validator is inactive".into()));
+            }
+            ValidatorLifecycle::WaitingForReadiness(waiting) if below_minimum => {
+                set_change = true;
+                ValidatorLifecycle::WaitingForStake(state_machine::demote_waiting_for_readiness(
+                    waiting, stake, minimum,
+                )?)
+            }
+            ValidatorLifecycle::Joining(joining) if below_minimum => {
+                set_change = true;
+                ValidatorLifecycle::WaitingForStake(state_machine::demote_joining(
+                    joining, stake, minimum,
+                )?)
+            }
+            ValidatorLifecycle::Active(active) if below_minimum => {
+                set_change = true;
+                ValidatorLifecycle::Exiting(state_machine::begin_exit(active, stake, height)?)
+            }
+            lifecycle => state_machine::with_stake(lifecycle, stake)?,
+        };
+        let after = before.clone().with_lifecycle(next)?;
+
+        let guard = self.storage.checkpoint_guard();
+        self.persist_validator_state_delta(&before, &after)?;
+        if set_change {
+            self.pending_set_change.write(true)?;
+        }
+        guard.commit();
+        if set_change {
+            crate::metrics::record_pending_set_change(true);
+        }
+        Ok(())
+    }
+
+    /// Completes UNBONDING after Staking has verified zero bonded stake and no
+    /// remaining live claims.
+    pub fn complete_unbonding(&mut self, addr: Address) -> Result<()> {
+        let before = self.validator_state(addr)?;
+        let unbonding = match before.lifecycle().clone() {
+            ValidatorLifecycle::Unbonding(unbonding) => unbonding,
+            _ => return Ok(()),
+        };
+        let cleared = match state_machine::with_stake(
+            ValidatorLifecycle::Unbonding(unbonding),
+            StakeProjection::new(before.bonded_stake(), None),
+        )? {
+            ValidatorLifecycle::Unbonding(unbonding) => unbonding,
+            _ => unreachable!("with_stake preserves lifecycle variant"),
+        };
+        let inactive = state_machine::complete_unbonding(cleared)?;
+        let after = before
+            .clone()
+            .with_lifecycle(ValidatorLifecycle::Inactive(inactive))?;
+        let guard = self.storage.checkpoint_guard();
+        self.persist_validator_state_delta(&before, &after)?;
+        guard.commit();
+        Ok(())
+    }
+
+    /// Test-only compatibility helper for moving `WaitingForStake` to
+    /// `WaitingForReadiness`. Production Staking uses [`Self::record_stake_increase`]
+    /// with the authoritative minimum.
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn mark_pending(&mut self, addr: Address) -> Result<()> {
-        let index = self.address_to_index.read(&addr)?;
-        if index == 0 {
-            return Err(PrecompileError::Revert("validator not registered".into()));
-        }
-        let current_status = self.val_status.read(&addr)?;
-        // Only a freshly-REGISTERED validator transitions to PENDING. A validator
-        // already PENDING or ACTIVE is left untouched (no spurious churn / no
-        // demotion of an active validator on a top-up stake).
-        if current_status != status::REGISTERED {
-            return Ok(());
-        }
-        self.val_status.write(&addr, status::PENDING)?;
-        // A freshly-staked joiner has NOT yet confirmed it caught up to head, so
-        // it is not eligible for the reshare target until `confirmValidatorReady()`
-        // (stale-join guard). Reset here so a re-staked validator must re-confirm.
-        self.val_join_confirmed.write(&addr, false)?;
+        let before = self.validator_state(addr)?;
+        let waiting = match before.lifecycle().clone() {
+            ValidatorLifecycle::WaitingForStake(waiting) => waiting,
+            ValidatorLifecycle::Absent => {
+                return Err(PrecompileError::Revert("validator not registered".into()));
+            }
+            _ => return Ok(()),
+        };
+        let stake = *before.stake().ok_or_else(|| {
+            PrecompileError::Fatal("registered validator is missing stake projection".into())
+        })?;
+        let lifecycle = ValidatorLifecycle::WaitingForReadiness(state_machine::reach_minimum(
+            waiting,
+            stake,
+            U256::ZERO,
+        )?);
+        let after = before.clone().with_lifecycle(lifecycle)?;
+        let guard = self.storage.checkpoint_guard();
+        self.persist_validator_state_delta(&before, &after)?;
         // Signal consensus to include this validator in the next reshare target.
         self.pending_set_change.write(true)?;
+        guard.commit();
 
         crate::metrics::record_validator_status(addr, status::PENDING);
         crate::metrics::record_pending_set_change(true);
@@ -639,55 +1130,74 @@ impl ValidatorSet<'_> {
     /// excluded from [`Self::get_reshare_target_set`]. Caller must be the
     /// validator itself and currently PENDING.
     pub fn confirm_validator_ready(&mut self, caller: Address) -> Result<()> {
-        let index = self.address_to_index.read(&caller)?;
-        if index == 0 {
-            return Err(PrecompileError::Revert("validator not registered".into()));
-        }
-        let current_status = self.val_status.read(&caller)?;
-        if current_status != status::PENDING {
-            return Err(PrecompileError::Revert(format!(
-                "confirmValidatorReady requires PENDING status, got {current_status}"
-            )));
-        }
-        self.val_join_confirmed.write(&caller, true)?;
+        let before = self.validator_state(caller)?;
+        let lifecycle = match before.lifecycle().clone() {
+            ValidatorLifecycle::WaitingForReadiness(waiting) => {
+                ValidatorLifecycle::Joining(state_machine::confirm_ready(waiting))
+            }
+            ValidatorLifecycle::Joining(_) => return Ok(()),
+            ValidatorLifecycle::Absent => {
+                return Err(PrecompileError::Revert("validator not registered".into()));
+            }
+            lifecycle => {
+                return Err(PrecompileError::Revert(format!(
+                    "confirmValidatorReady requires PENDING status, got {}",
+                    registered_status(&lifecycle)?
+                )))
+            }
+        };
+        let after = before.clone().with_lifecycle(lifecycle)?;
+        let guard = self.storage.checkpoint_guard();
+        self.persist_validator_state_delta(&before, &after)?;
         // Re-signal so consensus schedules a reshare now that a confirmed joiner
         // is eligible (the stake-time signal may already have lapsed).
         self.pending_set_change.write(true)?;
+        guard.commit();
         crate::metrics::record_pending_set_change(true);
         Ok(())
     }
 
-    /// Activates a registered validator (sets status to ACTIVE).
-    ///
-    /// Only REGISTERED and PENDING statuses are allowed as source states.
-    /// Also signals `pending_set_change` so the consensus layer triggers a DKG
-    /// reshare to include the newly-activated validator. Retained for owner/manual
-    /// activation; the normal PoS path is [`Self::mark_pending`] →
-    /// [`Self::activate_reshared_set`].
+    /// Test-only fixture activation through the canonical join transitions.
+    /// Production activation is system-boundary-only.
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn activate_validator(&mut self, addr: Address) -> Result<()> {
-        let index = self.address_to_index.read(&addr)?;
-        if index == 0 {
-            return Err(PrecompileError::Revert("validator not registered".into()));
-        }
-        let current_status = self.val_status.read(&addr)?;
-        if current_status == status::ACTIVE {
-            return Ok(()); // already active — no spurious churn
-        }
-        // Only REGISTERED and PENDING can transition to ACTIVE.
-        // This prevents exiting/unbonding validators from bypassing
-        // their lifecycle constraints.
-        if current_status != status::REGISTERED && current_status != status::PENDING {
-            return Err(PrecompileError::Revert(format!(
-                "cannot activate validator with status {current_status}: only REGISTERED or PENDING allowed"
-            )));
-        }
-        self.val_status.write(&addr, status::ACTIVE)?;
-        self.val_deactivated_at_height.write(&addr, 0)?;
+        let before = self.validator_state(addr)?;
+        let active = match before.lifecycle().clone() {
+            ValidatorLifecycle::Active(_) => return Ok(()),
+            ValidatorLifecycle::Joining(joining) => state_machine::activate_at_boundary(joining),
+            ValidatorLifecycle::WaitingForReadiness(waiting) => {
+                state_machine::activate_at_boundary(state_machine::confirm_ready(waiting))
+            }
+            ValidatorLifecycle::WaitingForStake(waiting) => {
+                let stake = *before.stake().ok_or_else(|| {
+                    PrecompileError::Fatal(
+                        "registered validator is missing stake projection".into(),
+                    )
+                })?;
+                let ready = state_machine::reach_minimum(waiting, stake, U256::ZERO)?;
+                state_machine::activate_at_boundary(state_machine::confirm_ready(ready))
+            }
+            ValidatorLifecycle::Absent => {
+                return Err(PrecompileError::Revert("validator not registered".into()));
+            }
+            lifecycle => {
+                return Err(PrecompileError::Revert(format!(
+                    "cannot activate validator with status {}: only REGISTERED or PENDING allowed in test fixtures",
+                    registered_status(&lifecycle)?
+                )))
+            }
+        };
+        let after = before
+            .clone()
+            .with_lifecycle(ValidatorLifecycle::Active(active))?;
+        let guard = self.storage.checkpoint_guard();
+        self.persist_validator_state_delta(&before, &after)?;
 
         // Signal consensus to include this validator in the next reshare.
         self.pending_set_change.write(true)?;
 
         self.emit(IValidatorSet::ValidatorActivated { validator: addr })?;
+        guard.commit();
 
         Ok(())
     }
@@ -702,22 +1212,36 @@ impl ValidatorSet<'_> {
                 "unauthorized: caller must be owner or validator itself".into(),
             ));
         }
-        let index = self.address_to_index.read(&addr)?;
-        if index == 0 {
-            return Err(PrecompileError::Revert("validator not registered".into()));
-        }
-        let current_status = self.val_status.read(&addr)?;
-        if current_status != status::ACTIVE {
-            return Err(PrecompileError::Revert(
-                "can only deactivate an active validator".into(),
-            ));
-        }
-        self.val_status.write(&addr, status::EXITING)?;
+        let before = self.validator_state(addr)?;
+        let active = match before.lifecycle().clone() {
+            ValidatorLifecycle::Active(active) => active,
+            ValidatorLifecycle::Absent => {
+                return Err(PrecompileError::Revert("validator not registered".into()))
+            }
+            _ => {
+                return Err(PrecompileError::Revert(
+                    "can only deactivate an active validator".into(),
+                ))
+            }
+        };
         let height = self.storage.block_number()?;
-        self.val_deactivated_at_height.write(&addr, height)?;
+        let stake = *before.stake().ok_or_else(|| {
+            PrecompileError::Fatal("active validator is missing stake projection".into())
+        })?;
+        let lifecycle =
+            ValidatorLifecycle::Exiting(state_machine::begin_exit(active, stake, height)?);
+        let after = before.clone().with_lifecycle(lifecycle)?;
+        let guard = self.storage.checkpoint_guard();
+        self.persist_validator_state_delta(&before, &after)?;
 
         // Signal pending set change so consensus triggers DKG reshare to exclude
         self.pending_set_change.write(true)?;
+
+        self.emit(IValidatorSet::ValidatorDeactivated {
+            validator: addr,
+            atHeight: height,
+        })?;
+        guard.commit();
 
         crate::metrics::record_validator_status(addr, status::EXITING);
         crate::metrics::record_validator_deactivate(addr);
@@ -741,11 +1265,6 @@ impl ValidatorSet<'_> {
             "validator transitioned ACTIVE -> EXITING (voluntary deactivation)",
         );
 
-        self.emit(IValidatorSet::ValidatorDeactivated {
-            validator: addr,
-            atHeight: height,
-        })?;
-
         Ok(())
     }
 
@@ -762,10 +1281,12 @@ impl ValidatorSet<'_> {
     /// [`Self::force_exit_validator`], the validator is NOT removed from the
     /// registry: it is frozen in JAILED, excluded from the next reshare target
     /// (so the reshare clears its share), and may later return via
-    /// `unjailValidator` (→ PENDING → ACTIVE) or leave via a full unstake
-    /// (→ EXITING → UNBONDING → INACTIVE). The slash itself is applied by the
-    /// caller AFTER this call (slash_stake leaves a JAILED status untouched).
-    /// Increments `slash_count` (mirrors force-exit). Idempotent for JAILED.
+    /// `unjailValidator` (`Jail → WaitingForReadiness → Joining → Active`) or,
+    /// after boundary exclusion, leave via a full unstake
+    /// (`Jail → Unbonding → Inactive`). The slash itself is applied by the caller
+    /// AFTER this call (`slash_stake` leaves a jailed lifecycle untouched).
+    /// Increments `slash_count` once. Repeated punishment of the same lifecycle
+    /// is a no-op even if a caller bypasses SlashIndicator's replay guard.
     pub fn jail_validator(&mut self, addr: Address) -> Result<()> {
         self.punish_validator(addr, true)
     }
@@ -773,16 +1294,15 @@ impl ValidatorSet<'_> {
     /// Shared punitive transition for [`Self::force_exit_validator`] (`jail =
     /// false` → ACTIVE→EXITING, the validator leaves the registry via UNBONDING)
     /// and [`Self::jail_validator`] (`jail = true` → ACTIVE→JAILED, the validator
-    /// is frozen in the registry). Both signal a reshare, bump `slash_count`, and
-    /// are idempotent on the already-punished status; the only differences are the
-    /// target status, the `val_jailed_at_height` write, and the emitted events.
+    /// is frozen in the registry). Both signal a reshare and bump `slash_count`
+    /// exactly once.
     fn punish_validator(&mut self, addr: Address, jail: bool) -> Result<()> {
-        let index = self.address_to_index.read(&addr)?;
-        if index == 0 {
+        let before = self.validator_state(addr)?;
+        let lifecycle = before.lifecycle().clone();
+        if matches!(lifecycle, ValidatorLifecycle::Absent) {
             return Err(PrecompileError::Revert("validator not registered".into()));
         }
-
-        let current_status = self.val_status.read(&addr)?;
+        let current_status = registered_status(&lifecycle)?;
         let block_number = self.storage.block_number()?;
         let (target, target_label, action) = if jail {
             (status::JAILED, "JAILED", "jail")
@@ -790,93 +1310,85 @@ impl ValidatorSet<'_> {
             (status::EXITING, "EXITING", "force-exit")
         };
 
-        match current_status {
-            status::ACTIVE => {
-                self.val_status.write(&addr, target)?;
-                if jail {
-                    self.val_jailed_at_height.write(&addr, block_number)?;
-                }
-                self.val_deactivated_at_height.write(&addr, block_number)?;
-                self.pending_set_change.write(true)?;
-
-                crate::metrics::record_validator_status(addr, target);
-                crate::metrics::record_validator_force_exit(addr);
-                crate::metrics::record_pending_set_change(true);
-
-                journal_record(JournalRecord::ValidatorForcedExit {
-                    wall_clock: iso8601_now(),
-                    block_number,
-                    validator: format!("{addr:?}"),
-                    status_before: "ACTIVE".into(),
-                    status_after: target_label.into(),
-                });
-
-                warn!(
-                    target: "outbe::validatorset",
-                    event = if jail { "validator_jailed" } else { "validator_force_exit" },
-                    validator = %addr,
-                    status_after = target_label,
-                    block_number,
-                    "validator punished from ACTIVE (force-exit/jail)",
-                );
-
-                if jail {
-                    self.emit(IValidatorSet::ValidatorJailed {
-                        validator: addr,
-                        atHeight: block_number,
-                    })?;
-                } else {
-                    self.emit(IValidatorSet::ValidatorDeactivated {
-                        validator: addr,
-                        atHeight: block_number,
-                    })?;
-                    self.emit(IValidatorSet::ValidatorForcedExit {
-                        validator: addr,
-                        atHeight: block_number,
-                    })?;
-                }
+        let history = before.history().copied().ok_or_else(|| {
+            PrecompileError::Fatal("registered validator is missing history".into())
+        })?;
+        let active = match lifecycle {
+            ValidatorLifecycle::Active(active) => active,
+            ValidatorLifecycle::JailRetained(_) | ValidatorLifecycle::Jail(_) if jail => {
+                return Ok(())
             }
-            // Idempotent re-signal of the already-jailed validator (jail path only).
-            status::JAILED if jail => {
-                self.pending_set_change.write(true)?;
-                let height = self.val_jailed_at_height.read(&addr)?;
-                self.emit(IValidatorSet::ValidatorJailed {
-                    validator: addr,
-                    atHeight: height,
-                })?;
-            }
-            // Already EXITING: re-emit the force-exit signal. For the jail path a
-            // leaver is NOT pulled back into JAILED — it stays EXITING.
-            status::EXITING => {
-                self.pending_set_change.write(true)?;
-                let height = self.val_deactivated_at_height.read(&addr)?;
-                crate::metrics::record_validator_force_exit(addr);
-                crate::metrics::record_pending_set_change(true);
-                self.emit(IValidatorSet::ValidatorForcedExit {
-                    validator: addr,
-                    atHeight: height,
-                })?;
-            }
-            status::UNBONDING | status::INACTIVE => {
-                // Already excluded from consensus.
-                info!(
-                    target: "outbe::validatorset",
-                    event = "validator_punish_noop",
-                    validator = %addr,
-                    status = current_status,
-                    block_number,
-                    "punish no-op: validator already in UNBONDING or INACTIVE",
-                );
-            }
+            ValidatorLifecycle::Exiting(_)
+            | ValidatorLifecycle::Unbonding(_)
+            | ValidatorLifecycle::Inactive(_) => return Ok(()),
             _ => {
                 return Err(PrecompileError::Revert(format!(
                     "cannot {action} validator with status {current_status}: only ACTIVE, EXITING, UNBONDING, or INACTIVE allowed"
                 )));
             }
-        }
+        };
+        let stake = *before.stake().ok_or_else(|| {
+            PrecompileError::Fatal("active validator is missing stake projection".into())
+        })?;
+        let next = if jail {
+            ValidatorLifecycle::JailRetained(state_machine::jail(active, block_number)?)
+        } else {
+            ValidatorLifecycle::Exiting(state_machine::begin_exit(active, stake, block_number)?)
+        };
+        let next = state_machine::with_history(
+            next,
+            ValidatorHistory::new(
+                history.joined_at_height(),
+                Some(block_number),
+                history
+                    .slash_count()
+                    .checked_add(1)
+                    .ok_or_else(|| PrecompileError::Fatal("slash count overflow".into()))?,
+                history.missed_blocks(),
+                history.missed_votes(),
+                history.blocks_proposed(),
+            ),
+        )?;
+        let after = before.clone().with_lifecycle(next)?;
+        let guard = self.storage.checkpoint_guard();
+        self.persist_validator_state_delta(&before, &after)?;
 
-        let sc = self.val_slash_count.read(&addr)?;
-        self.val_slash_count.write(&addr, sc + 1)?;
+        self.pending_set_change.write(true)?;
+        if jail {
+            self.emit(IValidatorSet::ValidatorJailed {
+                validator: addr,
+                atHeight: block_number,
+            })?;
+        } else {
+            self.emit(IValidatorSet::ValidatorDeactivated {
+                validator: addr,
+                atHeight: block_number,
+            })?;
+            self.emit(IValidatorSet::ValidatorForcedExit {
+                validator: addr,
+                atHeight: block_number,
+            })?;
+        }
+        guard.commit();
+
+        crate::metrics::record_validator_status(addr, target);
+        crate::metrics::record_validator_force_exit(addr);
+        crate::metrics::record_pending_set_change(true);
+        journal_record(JournalRecord::ValidatorForcedExit {
+            wall_clock: iso8601_now(),
+            block_number,
+            validator: format!("{addr:?}"),
+            status_before: "ACTIVE".into(),
+            status_after: target_label.into(),
+        });
+        warn!(
+            target: "outbe::validatorset",
+            event = if jail { "validator_jailed" } else { "validator_force_exit" },
+            validator = %addr,
+            status_after = target_label,
+            block_number,
+            "validator punished from ACTIVE (force-exit/jail)",
+        );
 
         Ok(())
     }
@@ -884,48 +1396,56 @@ impl ValidatorSet<'_> {
     /// Unjails a JAILED validator back to PENDING. Called by Staking's
     /// `unjailValidator` (which first verifies the caller's stake ≥ min_stake);
     /// the caller must be the validator itself. Enforces the unjail cooldown,
-    /// resets the stale-join readiness flag (the node must re-confirm before the
-    /// next reshare) and the per-epoch miss metrics, and signals a reshare so the
-    /// normal PENDING → ACTIVE promotion runs.
-    pub fn unjail_to_pending(&mut self, addr: Address) -> Result<()> {
-        let index = self.address_to_index.read(&addr)?;
-        if index == 0 {
-            return Err(PrecompileError::Revert("validator not registered".into()));
-        }
-        let current_status = self.val_status.read(&addr)?;
-        if current_status != status::JAILED {
-            return Err(PrecompileError::Revert(format!(
-                "unjailValidator requires JAILED status, got {current_status}"
-            )));
-        }
+    /// clears missed-block/vote counters, and signals a reshare. Identity,
+    /// deactivation, slash and proposal history remain intact.
+    pub fn unjail_after_stake_check(&mut self, addr: Address) -> Result<()> {
+        let before = self.validator_state(addr)?;
+        let jailed = match before.lifecycle().clone() {
+            ValidatorLifecycle::Jail(jailed) => jailed,
+            ValidatorLifecycle::JailRetained(_) => {
+                return Err(PrecompileError::Revert(
+                    "jailed validator is still retained in the current committee".into(),
+                ));
+            }
+            ValidatorLifecycle::Absent => {
+                return Err(PrecompileError::Revert("validator not registered".into()));
+            }
+            lifecycle => {
+                return Err(PrecompileError::Revert(format!(
+                    "unjailValidator requires JAILED status, got {}",
+                    registered_status(&lifecycle)?
+                )));
+            }
+        };
         let block_number = self.storage.block_number()?;
-        let jailed_at = self.val_jailed_at_height.read(&addr)?;
         let cooldown = self.unjail_cooldown_blocks()?;
-        let ready_at = jailed_at.saturating_add(cooldown);
-        if block_number < ready_at {
-            return Err(PrecompileError::Revert(format!(
-                "unjail cooldown not elapsed: jailed_at {jailed_at} + cooldown {cooldown} = {ready_at}, current {block_number}"
-            )));
-        }
+        // Staking checked its authoritative minimum before entering this facade.
+        let pending = state_machine::unjail(jailed, block_number, cooldown, before.bonded_stake())?;
+        let after = before
+            .clone()
+            .with_lifecycle(ValidatorLifecycle::WaitingForReadiness(pending))?;
+        let guard = self.storage.checkpoint_guard();
+        self.persist_validator_state_delta(&before, &after)?;
 
-        self.val_status.write(&addr, status::PENDING)?;
-        self.val_jailed_at_height.write(&addr, 0)?;
-        // Re-joining via PENDING: must re-confirm readiness (stale-join guard) and
-        // start from a clean per-epoch miss slate so stale counts cannot trip a
-        // felony immediately on return.
-        self.val_join_confirmed.write(&addr, false)?;
-        self.val_missed_blocks.write(&addr, 0)?;
-        self.val_missed_votes.write(&addr, 0)?;
+        // Re-joining requires a fresh readiness confirmation before DKG.
         self.pending_set_change.write(true)?;
-
-        crate::metrics::record_validator_status(addr, status::PENDING);
-        crate::metrics::record_pending_set_change(true);
 
         self.emit(IValidatorSet::ValidatorUnjailed {
             validator: addr,
             atHeight: block_number,
         })?;
+        guard.commit();
+
+        crate::metrics::record_validator_status(addr, status::PENDING);
+        crate::metrics::record_pending_set_change(true);
         Ok(())
+    }
+
+    /// Compatibility wrapper retained while callers migrate to the named
+    /// Staking-checked transition.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn unjail_to_pending(&mut self, addr: Address) -> Result<()> {
+        self.unjail_after_stake_check(addr)
     }
 
     /// Unjail cooldown in blocks (default 0 — immediate unjail allowed).
@@ -933,35 +1453,46 @@ impl ValidatorSet<'_> {
         self.config_unjail_cooldown_blocks.read()
     }
 
-    /// Called by consensus after DKG reshare completes.
-    ///
-    /// Transitions:
-    /// - REGISTERED/PENDING validators in `new_active_set` → ACTIVE + has_bls_share = true
-    /// - EXITING validators NOT in `new_active_set` → UNBONDING + has_bls_share = false
-    /// - Updates active_consensus_set_hash
-    /// - Clears pending_set_change only if ALL active validators have shares
-    ///
-    /// NOTE: The initial clear-all-shares loop is O(n). Acceptable because DKG
-    /// reshare events are rare (validator join/leave) and never occur more than
-    /// once per epoch.
+    /// Test-only compatibility entrypoint. Production activation is reachable
+    /// exclusively through the consensus boundary hook.
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn activate_reshared_set(
         &mut self,
         new_active_set: &[Address],
         active_set_hash: B256,
     ) -> Result<()> {
-        self.activate_reshared_set_with_expiry_exclusions(new_active_set, active_set_hash, &[])
+        self.activate_validated_boundary_set(new_active_set, active_set_hash, u64::MAX)
     }
 
-    /// Activate one certified reshare boundary and apply only its explicit TEE
-    /// expiry exclusions. Ordinary DKG nonparticipation is not an expiry proof:
-    /// an omitted ACTIVE validator is demoted only when its address appears in
-    /// `tee_expired_target_exclusions`.
-    pub fn activate_reshared_set_with_expiry_exclusions(
+    /// Applies inputs already validated against the locally expected consensus
+    /// boundary artifact. Snapshot/hash validation remains in the EVM boundary
+    /// orchestrator; this method owns only the ValidatorSet state transition.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub(crate) fn activate_validated_boundary_set(
         &mut self,
         new_active_set: &[Address],
         active_set_hash: B256,
+        freeze_height: u64,
+    ) -> Result<()> {
+        self.activate_validated_boundary_set_with_expiry_exclusions(
+            new_active_set,
+            active_set_hash,
+            freeze_height,
+            &[],
+        )
+    }
+
+    /// Applies a validated boundary and its certified TEE-expiry exclusions.
+    pub(crate) fn activate_validated_boundary_set_with_expiry_exclusions(
+        &mut self,
+        new_active_set: &[Address],
+        active_set_hash: B256,
+        freeze_height: u64,
         tee_expired_target_exclusions: &[Address],
     ) -> Result<()> {
+        if tee_expired_target_exclusions.is_empty() {
+            return self.apply_reshared_set(new_active_set, active_set_hash, freeze_height, &[]);
+        }
         if tee_expired_target_exclusions.len()
             > outbe_primitives::validators::MAX_TEE_EXPIRED_TARGET_EXCLUSIONS
         {
@@ -989,108 +1520,204 @@ impl ValidatorSet<'_> {
                 )));
             }
         }
+        self.apply_reshared_set(
+            new_active_set,
+            active_set_hash,
+            freeze_height,
+            tee_expired_target_exclusions,
+        )
+    }
 
-        // First, clear has_bls_share for all validators
-        let all = self.get_all_validators()?;
-        for v in &all {
-            if v.has_bls_share {
-                self.val_has_bls_share.write(&v.validator_address, false)?;
-            }
-        }
-
-        // Set has_bls_share and activate validators in the new set
-        for &addr in new_active_set {
-            let index = self.address_to_index.read(&addr)?;
-            if index == 0 {
-                return Err(PrecompileError::Revert(format!(
-                    "reshared active set contains unregistered validator {addr}"
-                )));
-            }
-
-            let st = self.val_status.read(&addr)?;
-            match st {
-                status::REGISTERED | status::PENDING => {
-                    self.val_status.write(&addr, status::ACTIVE)?;
-                    self.val_has_bls_share.write(&addr, true)?;
-                    // Clear the stale-join guard now that the joiner is ACTIVE; a
-                    // future re-stake (PENDING again) must re-confirm readiness.
-                    self.val_join_confirmed.write(&addr, false)?;
-                }
-                status::ACTIVE => {
-                    self.val_has_bls_share.write(&addr, true)?;
-                }
-                _ => {
-                    return Err(PrecompileError::Revert(format!(
-                        "reshared active set contains validator {addr} with non-active status {st}"
-                    )));
-                }
-            }
-        }
-
-        // Apply the narrow certified expiry transition. ACTIVE loses its share,
-        // becomes PENDING and must explicitly confirm readiness after renewal.
-        // A confirmed PENDING target simply loses confirmation. EXITING,
-        // UNBONDING, JAILED and every other status are intentionally unchanged.
-        let mut tee_expired_active = Vec::new();
-        let mut tee_expired_pending = Vec::new();
-        for &addr in tee_expired_target_exclusions {
-            match self.val_status.read(&addr)? {
-                status::ACTIVE => {
-                    self.val_status.write(&addr, status::PENDING)?;
-                    self.val_has_bls_share.write(&addr, false)?;
-                    self.val_join_confirmed.write(&addr, false)?;
-                    tee_expired_active.push(addr);
-                }
-                status::PENDING => {
-                    self.val_has_bls_share.write(&addr, false)?;
-                    self.val_join_confirmed.write(&addr, false)?;
-                    tee_expired_pending.push(addr);
-                }
-                _ => {}
-            }
-        }
-
-        // Transition EXITING validators not in new set → UNBONDING
-        let mut transitioned_to_unbonding: Vec<Address> = Vec::new();
-        for v in &all {
-            if v.status == status::EXITING {
-                let in_new_set = new_active_set.contains(&v.validator_address);
-                if !in_new_set {
-                    self.val_status
-                        .write(&v.validator_address, status::UNBONDING)?;
-                    self.val_has_bls_share.write(&v.validator_address, false)?;
-                    transitioned_to_unbonding.push(v.validator_address);
-                }
-            }
-        }
-
-        // Store deterministic active consensus set hash.
-        self.active_consensus_set_hash.write(active_set_hash)?;
-
-        // Only clear pending_set_change if ALL active validators now have shares.
-        // If an ACTIVE validator missed the ceremony (not in new_active_set),
-        // keep pending = true so a new reshare is triggered automatically.
-        let active_validators = self.get_active_validators()?;
-        let all_covered = active_validators
-            .iter()
-            .all(|v| new_active_set.contains(&v.validator_address));
-        self.pending_set_change.write(!all_covered)?;
-
+    fn apply_reshared_set(
+        &mut self,
+        new_active_set: &[Address],
+        active_set_hash: B256,
+        freeze_height: u64,
+        tee_expired_target_exclusions: &[Address],
+    ) -> Result<()> {
         let active_count: u32 = new_active_set
             .len()
             .try_into()
             .map_err(|_| PrecompileError::Revert("active set count exceeds u32".into()))?;
+        let addresses = self.registered_validator_addresses()?;
+        let mut states = Vec::with_capacity(addresses.len());
+        for addr in addresses {
+            states.push(self.validator_state(addr)?);
+        }
+
+        // Plan the entire state transition before the first write. Canonical
+        // Commonware order and the address hash are validated by the executor
+        // against the incoming snapshot; this layer validates unique membership
+        // and lifecycle eligibility.
+        let mut transitions = Vec::with_capacity(states.len());
+        let mut transitioned_to_unbonding = Vec::new();
+        let mut tee_expired_active = Vec::new();
+        let mut tee_expired_pending = Vec::new();
+        for before in states {
+            let included = new_active_set.contains(&before.address());
+            let tee_expired = tee_expired_target_exclusions.contains(&before.address());
+            let changed_at = before
+                .history()
+                .and_then(ValidatorHistory::last_deactivated_at_height);
+            let lifecycle = match (before.lifecycle().clone(), included, tee_expired) {
+                (ValidatorLifecycle::Active(active), false, true) => {
+                    tee_expired_active.push(before.address());
+                    ValidatorLifecycle::WaitingForReadiness(state_machine::expire_active_tee(
+                        active,
+                    ))
+                }
+                (ValidatorLifecycle::Joining(joining), false, true) => {
+                    tee_expired_pending.push(before.address());
+                    ValidatorLifecycle::WaitingForReadiness(state_machine::expire_joining_tee(
+                        joining,
+                    ))
+                }
+                (ValidatorLifecycle::WaitingForReadiness(waiting), false, true) => {
+                    tee_expired_pending.push(before.address());
+                    ValidatorLifecycle::WaitingForReadiness(waiting)
+                }
+                (ValidatorLifecycle::Joining(joining), true, false) => {
+                    ValidatorLifecycle::Active(state_machine::activate_at_boundary(joining))
+                }
+                (ValidatorLifecycle::Active(active), true, false) => {
+                    ValidatorLifecycle::Active(state_machine::retain_active_at_boundary(active))
+                }
+                (ValidatorLifecycle::Active(_), false, false) => {
+                    return Err(PrecompileError::Fatal(format!(
+                        "validated boundary omitted active validator {}",
+                        before.address()
+                    )));
+                }
+                (ValidatorLifecycle::Exiting(exiting), true, false) => {
+                    let changed_at = changed_at.ok_or_else(|| {
+                        PrecompileError::Fatal(format!(
+                            "exiting validator {} has no deactivation height",
+                            before.address()
+                        ))
+                    })?;
+                    if changed_at <= freeze_height {
+                        return Err(PrecompileError::Fatal(format!(
+                            "validated boundary retained validator {} that exited at {changed_at} before freeze {freeze_height}",
+                            before.address()
+                        )));
+                    }
+                    ValidatorLifecycle::Exiting(exiting)
+                }
+                (ValidatorLifecycle::Exiting(exiting), false, false) => {
+                    let changed_at = changed_at.ok_or_else(|| {
+                        PrecompileError::Fatal(format!(
+                            "exiting validator {} has no deactivation height",
+                            before.address()
+                        ))
+                    })?;
+                    if changed_at > freeze_height {
+                        return Err(PrecompileError::Fatal(format!(
+                            "validated boundary omitted validator {} that exited at {changed_at} after freeze {freeze_height}",
+                            before.address()
+                        )));
+                    }
+                    transitioned_to_unbonding.push(before.address());
+                    ValidatorLifecycle::Unbonding(state_machine::exclude_exiting_at_boundary(
+                        exiting,
+                    ))
+                }
+                (ValidatorLifecycle::JailRetained(jailed), true, false) => {
+                    let jailed_at = before.stored_jailed_at();
+                    if jailed_at <= freeze_height {
+                        return Err(PrecompileError::Fatal(format!(
+                            "validated boundary retained validator {} jailed at {jailed_at} before freeze {freeze_height}",
+                            before.address()
+                        )));
+                    }
+                    ValidatorLifecycle::JailRetained(jailed)
+                }
+                (ValidatorLifecycle::JailRetained(jailed), false, false) => {
+                    let jailed_at = before.stored_jailed_at();
+                    if jailed_at > freeze_height {
+                        return Err(PrecompileError::Fatal(format!(
+                            "validated boundary omitted validator {} jailed at {jailed_at} after freeze {freeze_height}",
+                            before.address()
+                        )));
+                    }
+                    ValidatorLifecycle::Jail(state_machine::exclude_jailed_at_boundary(jailed))
+                }
+                (ValidatorLifecycle::Joining(joining), false, false) => {
+                    ValidatorLifecycle::Joining(joining)
+                }
+                (lifecycle, false, false) => lifecycle,
+                (lifecycle, true, false) => {
+                    return Err(PrecompileError::Fatal(format!(
+                        "validated boundary included ineligible validator {} with status {}",
+                        before.address(),
+                        registered_status(&lifecycle)?
+                    )));
+                }
+                (lifecycle, _, true) => {
+                    return Err(PrecompileError::Fatal(format!(
+                        "TEE expiry exclusion contains validator {} with ineligible status {}",
+                        before.address(),
+                        registered_status(&lifecycle)?
+                    )));
+                }
+            };
+            let after = before.clone().with_lifecycle(lifecycle)?;
+            transitions.push((before, after));
+        }
+
+        let planned_participants: Vec<_> = transitions
+            .iter()
+            .filter_map(|(_, after)| {
+                after
+                    .lifecycle()
+                    .is_current_consensus_participant()
+                    .then_some(after.address())
+            })
+            .collect();
+        let unique_artifact_members: HashSet<_> = new_active_set.iter().copied().collect();
+        if unique_artifact_members.len() != new_active_set.len()
+            || planned_participants.len() != new_active_set.len()
+            || planned_participants
+                .iter()
+                .any(|address| !unique_artifact_members.contains(address))
+        {
+            return Err(PrecompileError::Fatal(format!(
+                "validated boundary participant membership mismatch: planned {planned_participants:?}, artifact {new_active_set:?}"
+            )));
+        }
+
+        let pending = transitions.iter().any(|(_, after)| {
+            matches!(
+                after.lifecycle(),
+                ValidatorLifecycle::WaitingForReadiness(_)
+                    | ValidatorLifecycle::Joining(_)
+                    | ValidatorLifecycle::Exiting(_)
+                    | ValidatorLifecycle::JailRetained(_)
+            )
+        });
+
+        // The planner above performs every fallible semantic check before this
+        // checkpoint. Storage writes, hash, repair flag, and event commit as one
+        // bundle even for direct legacy calls.
+        let guard = self.storage.checkpoint_guard();
+        for (before, after) in &transitions {
+            self.persist_validator_state_delta(before, after)?;
+        }
+        self.active_consensus_set_hash.write(active_set_hash)?;
+        self.pending_set_change.write(pending)?;
+        self.emit(IValidatorSet::ConsensusSetUpdated {
+            activeCount: active_count,
+        })?;
+        guard.commit();
 
         crate::metrics::record_reshared_set_activated(
             active_count,
             transitioned_to_unbonding.len(),
         );
-        crate::metrics::record_pending_set_change(!all_covered);
-        for addr in new_active_set {
-            crate::metrics::record_validator_status(*addr, status::ACTIVE);
-        }
-        for addr in &transitioned_to_unbonding {
-            crate::metrics::record_validator_status(*addr, status::UNBONDING);
+        crate::metrics::record_pending_set_change(pending);
+        for (_, after) in &transitions {
+            if let Some(stored_status) = after.stored_status() {
+                crate::metrics::record_validator_status(after.address(), stored_status);
+            }
         }
         for addr in &tee_expired_active {
             crate::metrics::record_validator_status(*addr, status::PENDING);
@@ -1110,7 +1737,7 @@ impl ValidatorSet<'_> {
             block_number,
             active_count,
             transitioned_to_unbonding: transitioned_to_unbonding.len() as u64,
-            pending_set_change: !all_covered,
+            pending_set_change: pending,
             active_set_hash: format!("{active_set_hash:?}"),
         });
         for addr in &transitioned_to_unbonding {
@@ -1120,29 +1747,27 @@ impl ValidatorSet<'_> {
                 validator: format!("{addr:?}"),
             });
         }
-        // Aggregate counts after all transitions written.
-        if let Ok(all_after) = self.get_all_validators() {
-            let mut active = 0usize;
-            let mut exiting = 0usize;
-            let mut unbonding = 0usize;
-            for v in &all_after {
-                match v.status {
-                    status::ACTIVE => active += 1,
-                    status::EXITING => exiting += 1,
-                    status::UNBONDING => unbonding += 1,
-                    _ => {}
-                }
+
+        let mut active = 0usize;
+        let mut exiting = 0usize;
+        let mut unbonding = 0usize;
+        for (_, after) in &transitions {
+            match after.lifecycle() {
+                ValidatorLifecycle::Active(_) => active += 1,
+                ValidatorLifecycle::Exiting(_) => exiting += 1,
+                ValidatorLifecycle::Unbonding(_) => unbonding += 1,
+                _ => {}
             }
-            crate::metrics::record_aggregate_status_counts(active, exiting, unbonding);
         }
+        crate::metrics::record_aggregate_status_counts(active, exiting, unbonding);
 
         info!(
             target: "outbe::validatorset",
             event = "reshared_set_activated",
             active_count,
             transitioned_to_unbonding = transitioned_to_unbonding.len(),
-            pending_set_change = !all_covered,
-            block_number = self.storage.block_number().unwrap_or(0),
+            pending_set_change = pending,
+            block_number,
             active_set_hash = %active_set_hash,
             "DKG reshare activated; new active set committed",
         );
@@ -1151,7 +1776,7 @@ impl ValidatorSet<'_> {
                 target: "outbe::validatorset",
                 event = "validator_unbonding",
                 validator = %addr,
-                block_number = self.storage.block_number().unwrap_or(0),
+                block_number,
                 "validator transitioned EXITING -> UNBONDING (excluded from new set)",
             );
         }
@@ -1174,10 +1799,6 @@ impl ValidatorSet<'_> {
             );
         }
 
-        self.emit(IValidatorSet::ConsensusSetUpdated {
-            activeCount: active_count,
-        })?;
-
         Ok(())
     }
 
@@ -1191,7 +1812,12 @@ impl ValidatorSet<'_> {
             )));
         }
         let proposed = self.val_blocks_proposed.read(&addr)?;
-        self.val_blocks_proposed.write(&addr, proposed + 1)?;
+        self.val_blocks_proposed.write(
+            &addr,
+            proposed
+                .checked_add(1)
+                .ok_or_else(|| PrecompileError::Fatal("blocks proposed overflow".into()))?,
+        )?;
 
         Ok(())
     }
@@ -1199,7 +1825,12 @@ impl ValidatorSet<'_> {
     /// Records a missed block for the given validator.
     pub fn record_missed_block(&mut self, addr: Address) -> Result<()> {
         let missed = self.val_missed_blocks.read(&addr)?;
-        self.val_missed_blocks.write(&addr, missed + 1)?;
+        self.val_missed_blocks.write(
+            &addr,
+            missed
+                .checked_add(1)
+                .ok_or_else(|| PrecompileError::Fatal("missed blocks overflow".into()))?,
+        )?;
         Ok(())
     }
 
@@ -1219,7 +1850,12 @@ impl ValidatorSet<'_> {
                 )));
             }
             let missed = self.val_missed_votes.read(addr)?;
-            self.val_missed_votes.write(addr, missed + 1)?;
+            self.val_missed_votes.write(
+                addr,
+                missed
+                    .checked_add(1)
+                    .ok_or_else(|| PrecompileError::Fatal("missed votes overflow".into()))?,
+            )?;
         }
         Ok(())
     }
@@ -1251,7 +1887,12 @@ impl ValidatorSet<'_> {
                 )));
             }
             let missed = self.val_missed_votes.read(addr)?;
-            self.val_missed_votes.write(addr, missed + 1)?;
+            self.val_missed_votes.write(
+                addr,
+                missed
+                    .checked_add(1)
+                    .ok_or_else(|| PrecompileError::Fatal("missed votes overflow".into()))?,
+            )?;
         }
         Ok(())
     }
@@ -1264,27 +1905,30 @@ impl ValidatorSet<'_> {
     /// NOTE: O(n) scan over all validators. Acceptable because epoch transitions
     /// happen every configured epoch length in blocks.
     pub fn update_epoch(&mut self, timestamp: u64, block_number: u64) -> Result<()> {
-        let all = self.get_all_validators()?;
-        for v in all {
+        for addr in self.registered_validator_addresses()? {
             // Only reset counters for validators that accumulate them.
             // Include EXITING — they still participate in consensus
             // until reshare completes and accumulate per-epoch counters.
-            // JAILED is likewise still in the live committee until the next
-            // reshare clears its share, so reset its counters too.
-            if v.status != status::ACTIVE
-                && v.status != status::EXITING
-                && v.status != status::JAILED
-            {
+            // JailRetained is likewise still in the live committee until the
+            // next reshare clears its share, so reset its counters too. Jail is
+            // already excluded; late historical counters are cleared on unjail.
+            if !matches!(
+                self.validator_lifecycle(addr)?,
+                ValidatorLifecycle::Active(_)
+                    | ValidatorLifecycle::Exiting(_)
+                    | ValidatorLifecycle::JailRetained(_)
+            ) {
                 continue;
             }
-            let addr = v.validator_address;
             self.val_missed_blocks.write(&addr, 0)?;
             self.val_missed_votes.write(&addr, 0)?;
             self.val_blocks_proposed.write(&addr, 0)?;
         }
 
         let epoch = self.epoch_number.read()?;
-        let new_epoch = epoch + U256::from(1);
+        let new_epoch = epoch
+            .checked_add(U256::from(1))
+            .ok_or_else(|| PrecompileError::Fatal("epoch number overflow".into()))?;
         self.epoch_number.write(new_epoch)?;
         self.epoch_start_timestamp.write(timestamp)?;
         self.epoch_start_block.write(block_number)?;
@@ -1304,9 +1948,12 @@ impl ValidatorSet<'_> {
     /// `max_removals` caps how many entries are cleaned per call (0 = unlimited).
     /// Returns the number of entries removed.
     pub fn cleanup_inactive_validators(&mut self, max_removals: u32) -> Result<u32> {
+        let guard = self.storage.checkpoint_guard();
         let mut count = self.validator_count.read()?;
         let mut removed = 0u32;
         let mut i = 1u64;
+        let current_height = self.storage.block_number()?;
+        let cooldown = u64::from(self.config_reregistration_cooldown.read()?);
 
         while i <= count as u64 {
             if max_removals > 0 && removed >= max_removals {
@@ -1317,11 +1964,28 @@ impl ValidatorSet<'_> {
                 i += 1;
                 continue;
             }
-            let st = self.val_status.read(&addr)?;
-            if st != status::INACTIVE {
+            let state = self.validator_state(addr)?;
+            let ValidatorLifecycle::Inactive(inactive) = state.lifecycle().clone() else {
+                i += 1;
+                continue;
+            };
+            let deactivated_at = state
+                .history()
+                .and_then(ValidatorHistory::last_deactivated_at_height)
+                .ok_or_else(|| {
+                    PrecompileError::Fatal(format!(
+                        "inactive validator {addr} has no deactivation height"
+                    ))
+                })?;
+            let cleanup_at = deactivated_at
+                .checked_add(cooldown)
+                .ok_or_else(|| PrecompileError::Fatal("inactive cleanup height overflow".into()))?;
+            if current_height < cleanup_at {
                 i += 1;
                 continue;
             }
+
+            debug_assert_eq!(state_machine::cleanup(inactive), ValidatorLifecycle::Absent);
 
             // Clear all per-validator storage
             self.clear_validator_storage(&addr)?;
@@ -1342,6 +2006,7 @@ impl ValidatorSet<'_> {
         }
 
         self.validator_count.write(count)?;
+        guard.commit();
         Ok(removed)
     }
 
@@ -1375,8 +2040,7 @@ impl ValidatorSet<'_> {
 
     /// Returns `true` if the address is a registered validator.
     pub fn is_validator(&self, addr: Address) -> Result<bool> {
-        let index = self.address_to_index.read(&addr)?;
-        Ok(index > 0)
+        Ok(self.validator_state(addr)?.is_registered())
     }
 
     /// Looks up a validator address by consensus pubkey hash.

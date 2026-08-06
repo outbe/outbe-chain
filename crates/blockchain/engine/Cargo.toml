@@ -74,6 +74,7 @@ jsonrpsee = { version = "0.26", default-features = false, features = ["http-clie
 
 [dev-dependencies]
 outbe-consensus = { workspace = true, features = ["test-utils"] }
+outbe-validatorset = { workspace = true, features = ["test-utils"] }
 commonware-resolver = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.5.0" }
 tempfile.workspace = true
 tracing-subscriber = { version = "0.3", features = ["fmt"] }

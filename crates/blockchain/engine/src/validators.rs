@@ -729,6 +729,7 @@ mod tests {
     #[test]
     fn test_read_consensus_validators_includes_exiting_with_share() {
         let mut provider = HashMapStorageProvider::new(1);
+        provider.set_block_number(1);
         let active = Address::with_last_byte(0x01);
         let exiting = Address::with_last_byte(0x02);
 
@@ -741,8 +742,8 @@ mod tests {
                 .unwrap();
             vs.register_validator(OWNER, exiting, &valid_consensus_pubkey(2))
                 .unwrap();
-            vs.activate_reshared_set(&[active, exiting], B256::with_last_byte(0xAA))
-                .unwrap();
+            vs.activate_validator(active).unwrap();
+            vs.activate_validator(exiting).unwrap();
             vs.deactivate_validator(OWNER, exiting).unwrap();
         });
 
@@ -893,11 +894,7 @@ mod tests {
     #[test]
     fn test_read_validators_from_state_marks_invalid_registry_entry() {
         let access = populated_p2p_state(|vs, validator| {
-            vs.val_p2p_address_version.write(&validator, 99).unwrap();
-            vs.val_p2p_address_payload
-                .get_bytes(&validator)
-                .write(&[0])
-                .unwrap();
+            vs.test_corrupt_p2p_storage(validator, 99, &[0]).unwrap();
         });
 
         let validators = read_validators_from_state(&access).unwrap();
@@ -948,10 +945,10 @@ mod tests {
         let mut provider = HashMapStorageProvider::new(1);
 
         StorageHandle::enter(&mut provider, |storage| {
-            let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
+            let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage);
             vs.config_is_initialized.write(true).unwrap();
             vs.config_max_validators.write(128).unwrap();
-            vs.pending_set_change.write(true).unwrap();
+            vs.test_set_pending_set_change(true).unwrap();
         });
 
         let access = TestStateAccess {

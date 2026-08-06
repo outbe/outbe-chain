@@ -27,24 +27,29 @@ atomic boundary-activation command.
 
 Consumers must use named queries for the exact authority they need:
 
-- `ACTIVE` validators are the present governance/reward population;
-- current consensus participants are `ACTIVE | EXITING | JAILED` with a live share;
-- the next reshare target is `ACTIVE` plus confirmed `PENDING` joiners;
+- `Active` validators are the present governance/reward population;
+- current consensus participants are `Active`, `Exiting` and `JailRetained`;
+- the next reshare target is `Active` plus `Joining` validators;
 - non-voting secondary admission is `REGISTERED | PENDING | JAILED`; and
 - historical finalized-parent verification uses the committee snapshot keyed by
   canonical epoch and committee hash, not the current registry view.
 
 ## Authoritative mutation interface
 
-User-facing ABI commands are registration with BLS proof of possession,
-owner/self P2P-address update, owner/self voluntary deactivation, self readiness
-confirmation and owner-only manual reshare activation. Owner registration may omit
-on-chain proof of possession for bootstrap and therefore carries an explicit
-out-of-band key-possession trust assumption.
+User-facing ABI commands are registration with BLS proof of possession, optional
+owner/self P2P-address update, owner/self voluntary deactivation and self readiness
+confirmation. No ordinary owner/manual call is an independent committee-activation
+authority. If the historical `activateResharedSet` selector is retained for ABI
+compatibility, it must route through the same validated consensus-boundary
+capability and cannot independently mutate membership.
 
-System commands invoked from Staking, SlashIndicator and consensus include
-`mark_pending`, `unjail_to_pending`, jail/force-exit, participation accounting,
-epoch transition, inactive cleanup and atomic reshare boundary activation. These
+A proof-free registration constructor is permitted only for internally assembled
+genesis/bootstrap state. It is not exposed by the general runtime API and becomes
+unavailable after bootstrap.
+
+System commands invoked from Staking, SlashIndicator and consensus include typed
+stake-state transitions, unjail, jail/force-exit, participation accounting, epoch
+transition, cooldown-gated inactive cleanup and atomic reshare boundary activation. These
 commands require a closed internal capability/seam; public construction of the raw
 generated `ValidatorSet` facade is not itself authority.
 
@@ -57,39 +62,80 @@ monotonic count. For every registered validator:
 address_to_index[a] = i > 0 <=> index_to_address[i] = a
 hash(consensus_pubkey[a]) -> a
 status in the closed ValidatorStatus set
+status == ACTIVE => has_bls_share
+status == EXITING => has_bls_share
 has_bls_share => status in {ACTIVE, EXITING, JAILED}
 join_confirmed => status == PENDING
 JAILED => jailed_at_height is defined
-INACTIVE => has_bls_share == false
+status in {REGISTERED, PENDING, UNBONDING, INACTIVE} => has_bls_share == false
 ```
 
-Cleanup swap-removes only `INACTIVE` records and must atomically repair both dense
-indexes, reverse pubkey ownership and every per-validator field. Re-registration
-reuses the old dense index after cooldown, replaces pubkey ownership, clears
-lifecycle/readiness/P2P/counter state, and does not invent stake.
+Cleanup swap-removes only cooldown-expired `INACTIVE` records with no bonded stake
+or live claim, and must atomically repair both dense indexes, reverse pubkey
+ownership and every per-validator field. Direct re-registration is allowed only
+after the same cooldown, reuses the old dense index, replaces pubkey ownership,
+clears lifecycle/readiness/P2P/counter state, and does not invent stake. Cleanup
+cannot erase a record early to bypass re-registration cooldown.
 
 `active_consensus_set_hash` must commit to exactly the live post-activation set.
-`pending_set_change` is false only when every `ACTIVE` validator has a share in the
-committed set. Historical snapshot `exists` is written last and gates all reads;
+Every `Active` validator must be in that set; a boundary that omits one rejects as a
+whole rather than persisting `ACTIVE` without a share. `pending_set_change` is false
+only when the committed target and live set agree. Historical snapshot `exists` is
+written last and gates all reads;
 snapshot pruning and finalized-participation replay guards use bounded rings whose
 retention exceeds the accepted late-finalization horizon.
 
 ## Lifecycle state machine
 
-```text
-new -> REGISTERED --minimum stake--> PENDING --ready + reshare--> ACTIVE
-ACTIVE --voluntary/forced exit--> EXITING --reshare exclusion--> UNBONDING
-UNBONDING --Staking completion--> INACTIVE --re-register cooldown--> REGISTERED
+The effective Rust lifecycle is richer than the persisted ABI status. Its mapping
+is closed and explicit:
 
-ACTIVE --felony--> JAILED --self unjail + stake + cooldown--> PENDING
-                        \--full unstake--> EXITING
+| Effective state | Persisted ABI tag | Canonical meaning |
+|---|---|---|
+| `Absent` | no persisted tag | no dense registry entry and no validator-owned residue |
+| `WaitingForStake` | `REGISTERED = 0` | registered identity, below minimum stake, no share |
+| `WaitingForReadiness` | `PENDING = 1` | minimum stake, not yet confirmed, no share |
+| `Joining` | `PENDING = 1` | confirmed and eligible for the next target, no share |
+| `Active` | `ACTIVE = 2` | current committee member with a live share |
+| `Exiting` | `EXITING = 3` | current member retaining its share until exclusion |
+| `Unbonding` | `UNBONDING = 4` | outside consensus while stake/claims settle |
+| `Inactive` | `INACTIVE = 5` | no bonded stake, live claim or share; retained through cooldown |
+| `JailRetained` | `JAILED = 6` | jailed current member retaining its share |
+| `Jail` | `JAILED = 6` | jailed, excluded and without a share |
+
+```text
+no record --register + PoP--> WaitingForStake
+WaitingForStake --minimum stake--> WaitingForReadiness --confirm--> Joining
+Joining --successful boundary inclusion--> Active
+WaitingForReadiness/Joining --stake below minimum--> WaitingForStake
+
+Active --voluntary/forced exit--> Exiting --boundary exclusion--> Unbonding
+Active --felony--> JailRetained --boundary exclusion--> Jail
+Jail --self unjail + stake + cooldown--> WaitingForReadiness
+Jail --full unstake--> Unbonding
+
+Unbonding --no bonded stake/live claim--> Inactive
+Inactive --cooldown + re-register--> WaitingForStake
+Inactive --cooldown + cleanup--> no record
 ```
 
-An `EXITING` or newly `JAILED` validator remains accountable while its threshold
-share is live. `PENDING` readiness is reset on entry and after activation; this
-prevents a stale joiner from entering a DKG target before catching up. Manual
-`REGISTERED/PENDING -> ACTIVE` exists in the raw runtime but is not the normal PoS
-path and must not bypass share establishment.
+`Exiting` has one canonical representation and always retains its threshold share
+until a boundary atomically moves it to `Unbonding`. A felony first produces
+`JailRetained`; only boundary exclusion produces `Jail`. Once excluded, a fully
+unstaked `Jail` moves directly to `Unbonding` rather than passing through a
+shareless `Exiting`; a partial unstake leaves it jailed.
+
+`Jail` deliberately retains the full persisted history shape rather than a reduced
+history type. Finalized-parent accounting is snapshot-based and may still add a
+historical missed vote after committee exclusion. `JailRetained -> Jail` clears the
+old live-committee miss slate, and `Jail -> WaitingForReadiness` clears missed blocks
+and votes again before rejoin; joined/deactivated heights, slash count and proposal
+history survive both transitions.
+
+Readiness is reset on entry to `WaitingForReadiness` and after activation, so a
+stale joiner cannot enter a DKG target before catching up. Only a finalized,
+validated consensus boundary creates `Active` together with its share. There is no
+normal manual `REGISTERED/PENDING -> ACTIVE` transition.
 
 Unknown persisted status bytes are corruption and must fail closed. All unlisted
 state/event combinations reject without writes; terminal replay semantics must be
@@ -100,7 +146,8 @@ defined per command rather than implemented as incidental no-op branches.
 Ordinary precompile writes and EVM events are transactionally journaled. V2 boundary
 activation opens its own checkpoint and atomically writes the outgoing snapshot,
 changes membership/share flags and active-set hash, then writes the incoming
-snapshot. A failed step rolls all three back.
+snapshot. The same commit moves every excluded `Exiting -> Unbonding` and
+`JailRetained -> Jail`. A failed step rolls all state changes back.
 
 Metrics are diagnostic and may survive rollback. The current slashing journal and
 structured logs include process wall-clock time and are outside EVM state; they are
@@ -120,7 +167,8 @@ ordering, as committee snapshots do. Registration is capped by configured maximu
 and permissionless unstaked self-registration is separately capped at 32.
 
 Epoch reset, reshare activation and several queries scan every registered validator.
-Inactive cleanup is optionally bounded, but `max_removals == 0` is unbounded. Snapshot
+Cooldown-gated inactive cleanup is optionally bounded, but `max_removals == 0` is
+unbounded. Snapshot
 retention is eight epochs and participation replay retention is 64 finalized blocks;
 changing either alters state roots and is a hard-fork decision.
 
@@ -130,7 +178,8 @@ heights into permanent states.
 
 ## Replay, retry and failure classification
 
-Duplicate registration rejects except deliberate `INACTIVE` re-registration.
+Duplicate registration rejects except deliberate cooldown-complete `INACTIVE`
+re-registration.
 Readiness confirmation is currently effect-idempotent but re-signals the change.
 Boundary activation is retry-safe only after rollback; committed replay needs the
 same canonical input/result contract rather than relying on current state rejection.
@@ -142,10 +191,10 @@ committed receipt.
 
 ## Security and compatibility
 
-BLS key uniqueness and self-registration proof of possession defend aggregate
-signature identity. Owner registration without proof is trusted bootstrap authority
-and must be removed or operationally constrained before that role becomes unsafe.
-P2P bytes use an Outbe-owned versioned envelope, not Commonware's unstable codec.
+BLS key uniqueness and registration proof of possession defend aggregate signature
+identity. Proof-free construction is an internal genesis/bootstrap operation only;
+the general runtime ABI has no owner proof bypass. P2P bytes use an Outbe-owned
+versioned envelope, not Commonware's unstable codec.
 
 Storage slots, status tags, committee-hash domains, snapshot encoding, retention,
 P2P version and BLS registration DST are consensus formats. Changes require an
@@ -168,35 +217,28 @@ and stateful reference-model tests through the real dispatch/system-command seam
 
 One registry prevents each consumer from inventing its own validator definition,
 while named eligibility views preserve the distinct clocks of voting, resharing and
-historical verification. Treating `ACTIVE` as the only consensus predicate was
-rejected because exiting/jailed members retain shares until boundary activation.
+historical verification. Treating the raw `ACTIVE` tag as the only consensus
+predicate was rejected because `Exiting` and `JailRetained` members retain shares
+until boundary activation.
 Immediate activation on stake was rejected because a joining node must sync and
-participate in DKG first. Deleting inactive entries immediately was rejected because
-unbonding and cooldown semantics require an explicit terminal transition.
+participate in DKG first. Deleting inactive entries immediately, or before cooldown,
+was rejected because unbonding and cooldown semantics require an explicit terminal
+transition and re-registration must not bypass the cooldown by cleanup.
 
 ## Open questions and technical debt
 
 - Close the effective mutation interface: public raw facade methods currently let
-  in-process callers invoke `mark_pending`, activation, jail, counters or cleanup
+  in-process callers invoke lifecycle transitions, jail, counters or cleanup
   without the ABI/system authority checks and orchestration that give them meaning.
-- Persisted statuses are raw `u8`; introduce a closed decoder and fail fatally on
-  corrupt tags instead of letting unknown values flow through queries and matches.
-- `punish_validator` increments `slash_count` even for repeated JAILED/EXITING and
-  UNBONDING/INACTIVE calls, and repeats events/signals. Define intent-bound replay
-  semantics and ensure one offense produces exactly one punishment receipt.
-- `activate_validator` can move `REGISTERED` directly to `ACTIVE` without setting a
-  BLS share. Remove it, restrict it to genesis capability, or specify the invariant.
-- Owner bootstrap can register a BLS key without proof of possession. Define the
-  sunset/rotation policy and production evidence for the out-of-band trust step.
+- Prove that proof-free genesis construction is unreachable through the general ABI
+  and ensure production builds never enable the test-only bootstrap feature.
 - Diagnostic slashing-journal writes occur before EVM commit, use wall-clock time,
   and cannot roll back. Move committed receipts on-chain or explicitly label and
   reconcile attempted versus committed records.
-- Replace unchecked `count + 1`, epoch/counter increments, slash/miss/proposal
-  counters and participation-ring sequence with explicit exhaustion behavior.
-- Prove `pending_set_change`, active-set hash, share flags and snapshot identity are
-  mutually closed after every boundary failure and replay.
-- Validate duplicate addresses and canonical ordering in `new_active_set` both
-  inside the owning command and during upstream artifact validation.
+- Extend atomic-boundary fault injection beyond semantic-plan rejection to every
+  individual snapshot/share/hash write and committed replay point.
+- Keep canonical `new_active_set` ordering validation in the executor synchronized
+  with the runtime's duplicate/membership checks and the incoming snapshot builder.
 - Formalize the maximum late-finalization/replay horizon that justifies pruning
   participation guards at 64 and committee snapshots at eight epochs.
 - Bound or cursor the O(n) epoch/reshare/query scans and the unlimited inactive
