@@ -82,7 +82,7 @@ fn issue_creates_series_in_registry() {
         assert_eq!(
             r.call_trigger(),
             outbe_intex::IntexCallTrigger {
-                call_window: 30 * DAY as u32,
+                call_window: 28 * DAY as u32,
                 call_threshold: 21 * DAY as u32,
                 call_notice_period: CALL_NOTICE_PERIOD,
             }

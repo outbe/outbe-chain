@@ -55,7 +55,7 @@ pub const CALL_RATE: u16 = 128;
 pub const CALL_NOTICE_PERIOD: u32 = 7 * DAY;
 
 /// Call-trigger evaluation window: the most recent stretch scanned for breaches.
-pub const CALL_WINDOW: u32 = 30 * DAY;
+pub const CALL_WINDOW: u32 = 28 * DAY;
 /// Call-trigger threshold: how much of the window must be in breach to force-call.
 pub const CALL_THRESHOLD: u32 = 21 * DAY;
 
