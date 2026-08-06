@@ -3366,6 +3366,36 @@ fn fork_mismatch_is_fail_closed(world: &mut World) {
     );
 }
 
+#[when("validator 0 returns to the canonical OCOMP fork install")]
+fn validator_zero_returns_to_canonical_fork_install(world: &mut World) {
+    const VALIDATOR_INDEX: usize = 0;
+
+    let primary = world.validators.http_port(VALIDATOR_INDEX);
+    let witness = world.validators.http_port(1);
+    let target = world
+        .rpc
+        .finalized(witness)
+        .expect("canonical finality before restoring validator-0");
+    let canonical_manifest = world.ocomp.canonical_chain_manifest_path();
+    world
+        .localnet
+        .restart_validator_with_chain_manifest(VALIDATOR_INDEX, canonical_manifest)
+        .expect("restart validator-0 with the canonical immutable OCOMP install");
+    world
+        .rpc
+        .wait_block(primary, target, 60)
+        .expect("restored validator-0 replays the canonical OCOMP activation");
+    assert_eq!(
+        world.rpc.active_version_on(primary),
+        Some(0),
+        "restored OCOMP validator changed the generic protocol version"
+    );
+    world
+        .ocomp
+        .ensure_validator_roles_alive()
+        .expect("canonical OCOMP roles remain available after validator restoration");
+}
+
 #[when("validator 0 OCOMP supervisor is replaced by an incompatible peer")]
 fn replace_validator_zero_with_incompatible_supervisor(world: &mut World) {
     let primary = world.validators.primary_port();

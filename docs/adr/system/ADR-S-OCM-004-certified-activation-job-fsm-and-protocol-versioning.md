@@ -204,17 +204,18 @@ The parsed value is immutable for the process lifetime; local
 environment variables, command-line height overrides, runtime file reload and
 OCOMP process readiness cannot select consensus semantics.
 
-At exactly `H`, the receipt-visible `OcompLifecycleBegin` validates the complete
-install before the first write and commits one atomic transition containing:
+At exactly `H`, the receipt-visible `OcompLifecycleBegin` validates the
+canonical install object before the first write and commits one atomic
+transition containing:
 
 - founding ValidatorSet OCOMP registrations;
 - the immutable Metadosis request profile and protocol bundle;
 - the Tribute OCOMP admission profile; and
 - the Oracle OCOMP admission profile.
 
-Each owner retains its own freshness, exact-replay and conflict checks. The
-outer Metadosis command owns the cross-module checkpoint, so a failure in any
-owner rolls back every earlier write and event. Replaying an exact complete
+Each owner checks its own freshness, exact-replay and conflicts before its
+respective writes. The outer Metadosis command owns the cross-module checkpoint,
+so a failure in any owner rolls back every earlier write and event. Replaying an exact complete
 install is idempotent; partial or conflicting state is fatal. The same typed
 install and activation height are supplied to proposer, importer, historical
 replay, consensus and txpool paths. Pre-fork blocks contain no OCOMP lifecycle

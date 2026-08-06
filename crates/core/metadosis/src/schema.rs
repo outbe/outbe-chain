@@ -315,7 +315,7 @@ pub struct MetadosisContract {
     #[attribute(order = 15)]
     pub ocomp_active_lysis_generations: Mapping<WorldwideDayKey, StorageBytes>,
 
-    /// Canonical OCB1 `ProtocolBundleV1` installed by the OCOMP fork handler.
+    /// Canonical OCB1 `ProtocolBundleV1` installed by `OcompLifecycleBegin`.
     /// The request profile stores its hash; activation needs the complete
     /// immutable bundle to select the frozen LYSIS_V1 program semantics.
     #[attribute(order = 16)]

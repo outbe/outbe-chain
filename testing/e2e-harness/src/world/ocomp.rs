@@ -185,6 +185,13 @@ impl OcompForkRestartEvidenceV1 {
         }
         Ok(())
     }
+
+    fn validate_launch_identity(&self, identity: &OcompLaunchIdentityEvidenceV1) -> Result<()> {
+        if self.activation_height != identity.activation_height {
+            eyre::bail!("OCOMP fork restart evidence does not match the launch identity");
+        }
+        Ok(())
+    }
 }
 
 /// Behavioral proof that one valid but different immutable fork install cannot
@@ -222,6 +229,15 @@ impl OcompForkMismatchEvidenceV1 {
             || self.canonical_finalized_after_fork <= self.mismatched_head_after_fork
         {
             eyre::bail!("OCOMP fork mismatch evidence does not prove fail-closed isolation");
+        }
+        Ok(())
+    }
+
+    fn validate_launch_identity(&self, identity: &OcompLaunchIdentityEvidenceV1) -> Result<()> {
+        if self.canonical_activation_height != identity.activation_height
+            || self.canonical_install_hash != identity.fork_install_hash
+        {
+            eyre::bail!("OCOMP fork mismatch evidence does not match the launch identity");
         }
         Ok(())
     }
@@ -266,9 +282,17 @@ impl OcompScenarioTopologyV1 {
         }
         if let Some(restart) = &self.fork_restart {
             restart.validate(validator_count)?;
+            let identity = self.launch_identity.as_ref().ok_or_else(|| {
+                eyre::eyre!("OCOMP fork evidence requires the exact OCOMP launch identity")
+            })?;
+            restart.validate_launch_identity(identity)?;
         }
         if let Some(mismatch) = &self.fork_mismatch {
             mismatch.validate(validator_count)?;
+            let identity = self.launch_identity.as_ref().ok_or_else(|| {
+                eyre::eyre!("OCOMP fork evidence requires the exact OCOMP launch identity")
+            })?;
+            mismatch.validate_launch_identity(identity)?;
         }
         Ok(())
     }
@@ -528,6 +552,14 @@ impl OcompTopology {
     /// Scenario-owned root for one validator domain.
     pub fn domain_root(&self, validator_index: u8) -> Result<&Path> {
         Ok(&self.domain(validator_index)?.root)
+    }
+
+    /// Canonical chain manifest selected for this scenario before any
+    /// mismatched-install fault is injected.
+    #[cfg(feature = "ocomp-integration")]
+    #[must_use]
+    pub fn canonical_chain_manifest_path(&self) -> PathBuf {
+        self.cfg.dir.join("genesis.json")
     }
 
     /// Verify the durable footprint left by one completed production job in
@@ -2048,6 +2080,10 @@ impl OcompTopology {
     ) -> Result<()> {
         self.domain(evidence.validator_index)?;
         evidence.validate(self.domains.len())?;
+        let identity = self.launch_identity_evidence.as_ref().ok_or_else(|| {
+            eyre::eyre!("OCOMP fork evidence requires the exact OCOMP launch identity")
+        })?;
+        evidence.validate_launch_identity(identity)?;
         if self.fork_restart_evidence.is_some() {
             eyre::bail!("OCOMP fork restart evidence was already recorded");
         }
@@ -2061,6 +2097,10 @@ impl OcompTopology {
     ) -> Result<()> {
         self.domain(evidence.validator_index)?;
         evidence.validate(self.domains.len())?;
+        let identity = self.launch_identity_evidence.as_ref().ok_or_else(|| {
+            eyre::eyre!("OCOMP fork evidence requires the exact OCOMP launch identity")
+        })?;
+        evidence.validate_launch_identity(identity)?;
         if self.fork_mismatch_evidence.is_some() {
             eyre::bail!("OCOMP fork mismatch evidence was already recorded");
         }
@@ -3180,6 +3220,21 @@ mod tests {
         ChildGuard::spawn("ocomp topology child", command).unwrap()
     }
 
+    fn launch_identity_evidence(
+        activation_height: u64,
+        fork_install_hash: B256,
+    ) -> OcompLaunchIdentityEvidenceV1 {
+        OcompLaunchIdentityEvidenceV1 {
+            chain_id: 1,
+            genesis_hash: format!("{:#x}", B256::repeat_byte(9)),
+            protocol_bundle_hash: format!("{:#x}", B256::repeat_byte(8)),
+            fork_install_hash: format!("{fork_install_hash:#x}"),
+            classification: "final".to_owned(),
+            activation_height,
+            metadosis_storage_layout_hash: METADOSIS_STORAGE_LAYOUT_V1_HASH_HEX.to_owned(),
+        }
+    }
+
     #[cfg(feature = "ocomp-integration")]
     fn stage_completed_job_footprint(topology: &OcompTopology, job_id: B256) {
         let job_component = hex::encode(job_id);
@@ -3352,6 +3407,8 @@ mod tests {
     #[test]
     fn fork_restart_evidence_requires_recovery_on_each_side_of_h() {
         let mut topology = topology();
+        topology.launch_identity_evidence =
+            Some(launch_identity_evidence(32, B256::repeat_byte(1)));
         topology
             .record_fork_restart_evidence(OcompForkRestartEvidenceV1 {
                 validator_index: 0,
@@ -3372,8 +3429,31 @@ mod tests {
     }
 
     #[test]
+    fn fork_restart_evidence_requires_the_exact_launch_identity() {
+        let mut topology = topology();
+        let error = topology
+            .record_fork_restart_evidence(OcompForkRestartEvidenceV1 {
+                validator_index: 0,
+                activation_height: 32,
+                pre_fork_restart_from_height: 2,
+                pre_fork_rejoined_height: 4,
+                down_across_fork_from_height: 30,
+                finalized_while_down_height: 33,
+                replayed_through_height: 34,
+                post_fork_restart_from_height: 35,
+                post_fork_rejoined_height: 36,
+            })
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("requires the exact OCOMP launch identity"));
+    }
+
+    #[test]
     fn fork_restart_evidence_rejects_a_validator_that_did_not_replay_h() {
         let mut topology = topology();
+        topology.launch_identity_evidence =
+            Some(launch_identity_evidence(32, B256::repeat_byte(1)));
         let error = topology
             .record_fork_restart_evidence(OcompForkRestartEvidenceV1 {
                 validator_index: 0,
@@ -3395,6 +3475,8 @@ mod tests {
     #[test]
     fn fork_mismatch_evidence_requires_canonical_progress_and_isolated_head() {
         let mut topology = topology();
+        topology.launch_identity_evidence =
+            Some(launch_identity_evidence(32, B256::repeat_byte(1)));
         topology
             .record_fork_mismatch_evidence(OcompForkMismatchEvidenceV1 {
                 validator_index: 0,
@@ -3420,8 +3502,33 @@ mod tests {
     }
 
     #[test]
+    fn fork_mismatch_evidence_rejects_a_different_canonical_launch_identity() {
+        let mut topology = topology();
+        topology.launch_identity_evidence =
+            Some(launch_identity_evidence(32, B256::repeat_byte(3)));
+        let error = topology
+            .record_fork_mismatch_evidence(OcompForkMismatchEvidenceV1 {
+                validator_index: 0,
+                canonical_install_hash: format!("{:#x}", B256::repeat_byte(1)),
+                mismatched_install_hash: format!("{:#x}", B256::repeat_byte(2)),
+                canonical_activation_height: 32,
+                mismatched_activation_height: 32,
+                canonical_head_before_restart: 7,
+                mismatched_head_after_fork: 31,
+                canonical_finalized_after_fork: 33,
+            })
+            .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("does not match the launch identity"));
+    }
+
+    #[test]
     fn fork_mismatch_evidence_rejects_a_node_that_imported_h() {
         let mut topology = topology();
+        topology.launch_identity_evidence =
+            Some(launch_identity_evidence(32, B256::repeat_byte(1)));
         let error = topology
             .record_fork_mismatch_evidence(OcompForkMismatchEvidenceV1 {
                 validator_index: 0,
