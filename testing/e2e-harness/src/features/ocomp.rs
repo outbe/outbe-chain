@@ -569,6 +569,26 @@ fn fresh_domains_retain_authenticated_workers(world: &mut World) {
     }
 }
 
+/// Largest clock gap crossed in one committee restart.
+const CLOCK_HOP_SECS: u64 = 24 * 3_600;
+
+/// Wait for chain time to reach `target` after a hop, so the next restart finds
+/// a settled committee rather than one still closing the gap.
+fn settle_clock_hop(world: &mut World, target: u64) {
+    let deadline = Instant::now() + Duration::from_secs(300);
+    loop {
+        let points = finalized_points_at_common_height(world, 1);
+        if points.iter().all(|point| point.block_timestamp >= target) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "committee did not reach logical timestamp {target} after a clock hop"
+        );
+        sleep(Duration::from_millis(500));
+    }
+}
+
 fn advance_fresh_metadosis_time(
     world: &mut World,
     requested_timestamp: u64,
@@ -578,16 +598,27 @@ fn advance_fresh_metadosis_time(
     let before_restart = finalized_points_at_common_height(world, 1);
     let before_height = before_restart[0].block_number;
     let before_timestamp = before_restart[0].block_timestamp;
-    let offset = logical_time_offset(requested_timestamp, unix_time_secs());
-    world
-        .localnet
-        .restart_committee_at_unix_time_offset(offset)
-        .unwrap_or_else(|error| {
-            panic!(
-                "restart the complete committee at logical timestamp {requested_timestamp}: {error:#}"
-            )
-        });
-    restart_ocomp_roles_after_committee_time_change(world);
+
+    // Cross the gap in hops the committee can settle between: one long jump
+    // leaves it ratcheting for hundreds of blocks, and finalisation has been
+    // seen to stall before it arrives.
+    let mut hop_from = before_timestamp;
+    let mut offset = 0;
+    while hop_from < requested_timestamp {
+        let hop_to = requested_timestamp.min(hop_from.saturating_add(CLOCK_HOP_SECS));
+        offset = logical_time_offset(hop_to, unix_time_secs());
+        world
+            .localnet
+            .restart_committee_at_unix_time_offset(offset)
+            .unwrap_or_else(|error| {
+                panic!("restart the complete committee at logical timestamp {hop_to}: {error:#}")
+            });
+        restart_ocomp_roles_after_committee_time_change(world);
+        if hop_to < requested_timestamp {
+            settle_clock_hop(world, hop_to);
+        }
+        hop_from = hop_to;
+    }
 
     let worldwide_day = fresh_metadosis_wwd(world);
     // The chain closes the gap one hour per block, so the wait scales with the
