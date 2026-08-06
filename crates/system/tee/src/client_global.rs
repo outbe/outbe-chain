@@ -28,7 +28,7 @@ use outbe_primitives::tee_attestation_v1::RegistrationIntentV1;
 // would add indirection for no benefit.
 #[allow(clippy::large_enum_variant)]
 pub enum RuntimeEnclaveClient {
-    Development(EnclaveClient),
+    Development(Box<EnclaveClient>),
     Production(AuthorizedEnclaveClient),
 }
 
@@ -58,7 +58,9 @@ pub fn is_enclave_configured() -> bool {
 /// Install the separate dev/mock client once.
 pub fn install_enclave_client(client: EnclaveClient) -> Result<(), &'static str> {
     ENCLAVE_CLIENT
-        .set(Mutex::new(RuntimeEnclaveClient::Development(client)))
+        .set(Mutex::new(RuntimeEnclaveClient::Development(Box::new(
+            client,
+        ))))
         .map_err(|_| "enclave client already initialized")
 }
 

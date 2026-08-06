@@ -74,12 +74,13 @@ fn build_evidence(
 fn setup(storage: StorageHandle, accused_pubkey: &[u8; 48]) {
     let mut vs = ValidatorSet::new(storage.clone());
     vs.config_owner.write(OWNER).unwrap();
-    vs.config_max_validators.write(100).unwrap();
+    vs.set_config_max_validators(100).unwrap();
     vs.epoch_number.write(U256::from(ROUND_EPOCH)).unwrap();
 
     vs.register_validator(OWNER, ACCUSED, accused_pubkey)
         .unwrap();
-    vs.activate_validator(ACCUSED).unwrap();
+    vs.activate_validator_via_boundary_for_test(ACCUSED)
+        .unwrap();
     let staking = Staking::new(storage.clone());
     let stake = U256::from(STAKE_AMOUNT);
     staking.stake_amount.write(&ACCUSED, stake).unwrap();
@@ -94,7 +95,8 @@ fn setup(storage: StorageHandle, accused_pubkey: &[u8; 48]) {
     submitter_pk[0] = 0x77;
     vs.register_validator(OWNER, SUBMITTER, &submitter_pk)
         .unwrap();
-    vs.activate_validator(SUBMITTER).unwrap();
+    vs.activate_validator_via_boundary_for_test(SUBMITTER)
+        .unwrap();
 }
 
 fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
@@ -178,13 +180,14 @@ fn unregistered_signer_is_rejected() {
         // Do NOT register the accused; only the submitter.
         let mut vs = ValidatorSet::new(storage.clone());
         vs.config_owner.write(OWNER).unwrap();
-        vs.config_max_validators.write(100).unwrap();
+        vs.set_config_max_validators(100).unwrap();
         vs.epoch_number.write(U256::from(ROUND_EPOCH)).unwrap();
         let mut submitter_pk = [0u8; 48];
         submitter_pk[0] = 0x77;
         vs.register_validator(OWNER, SUBMITTER, &submitter_pk)
             .unwrap();
-        vs.activate_validator(SUBMITTER).unwrap();
+        vs.activate_validator_via_boundary_for_test(SUBMITTER)
+            .unwrap();
 
         let key = accused_key();
         let pubkey = pubkey_bytes(&key);
@@ -205,10 +208,11 @@ fn non_active_submitter_is_rejected() {
         // Register accused but NOT the submitter (submitter status = 0).
         let mut vs = ValidatorSet::new(storage.clone());
         vs.config_owner.write(OWNER).unwrap();
-        vs.config_max_validators.write(100).unwrap();
+        vs.set_config_max_validators(100).unwrap();
         vs.epoch_number.write(U256::from(ROUND_EPOCH)).unwrap();
         vs.register_validator(OWNER, ACCUSED, &pubkey).unwrap();
-        vs.activate_validator(ACCUSED).unwrap();
+        vs.activate_validator_via_boundary_for_test(ACCUSED)
+            .unwrap();
 
         let evidence = build_evidence(&key, &pubkey, &[0x11; 48], &[0x22; 48]);
         let mut si = SlashIndicator::new(storage.clone());

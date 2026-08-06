@@ -17,7 +17,7 @@
     "shanghaiTime": 0,
     "cancunTime": 0,
     "pragueTime": 0,
-    "epochLengthBlocks": 120,
+    "epochLengthBlocks": 300,
     "dkgPrepareWindowBlocks": 30,
     "dkgActivationGraceBlocks": 30,
     "genesisTime": "2026-07-26T13:02:40Z"

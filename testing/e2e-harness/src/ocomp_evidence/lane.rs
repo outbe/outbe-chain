@@ -54,12 +54,12 @@ const PUBLIC_SCENARIOS: [(&str, &str, &str); 4] = [
 const E2E_SCENARIOS: [(&str, &str, &str); 4] = [
     (
         "OCM-E2E-001",
-        "Final public Tribute flows through four independent domains to certified Nod",
+        "Final public Tribute flows through every pinned validator domain to certified Nod",
         "FINALIZED_PUBLIC_STATE",
     ),
     (
         "OCM-TRC-001",
-        "Final public Tribute flows through four independent domains to certified Nod",
+        "Final public Tribute flows through every pinned validator domain to certified Nod",
         "RUNTIME_BOUNDARY_TRACE",
     ),
     (

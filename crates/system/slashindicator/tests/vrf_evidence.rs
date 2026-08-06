@@ -325,13 +325,26 @@ fn setup_storage(
 ) {
     let mut vs = ValidatorSet::new(storage.clone());
     vs.config_owner.write(OWNER).unwrap();
-    vs.config_max_validators.write(100).unwrap();
+    vs.set_config_max_validators(100).unwrap();
     vs.epoch_number.write(U256::from(current_epoch)).unwrap();
-    let mut pk = [0u8; 48];
-    pk[0] = 0x42;
-    vs.register_validator(OWNER, proposer, &pk).unwrap();
-    vs.activate_validator(proposer).unwrap();
-    vs.val_has_bls_share.write(&proposer, true).unwrap();
+    let proposer_pubkey = snapshot
+        .committee
+        .iter()
+        .find(|member| member.address == proposer)
+        .expect("proposer belongs to snapshot")
+        .consensus_pubkey;
+    vs.register_validator(OWNER, proposer, &proposer_pubkey)
+        .unwrap();
+    vs.activate_validator_via_boundary_for_test(proposer)
+        .unwrap();
+    for member in &snapshot.committee {
+        if !vs.is_validator(member.address).unwrap() {
+            vs.register_validator(OWNER, member.address, &member.consensus_pubkey)
+                .unwrap();
+            vs.activate_validator_via_boundary_for_test(member.address)
+                .unwrap();
+        }
+    }
 
     let staking = Staking::new(storage.clone());
     let stake = U256::from(STAKE_AMOUNT);
@@ -368,9 +381,10 @@ fn register_submitter_as_active(storage: StorageHandle) {
     let mut pk = [0u8; 48];
     pk[0] = 0x77;
     vs.config_owner.write(OWNER).unwrap();
-    vs.config_max_validators.write(100).unwrap();
+    vs.set_config_max_validators(100).unwrap();
     vs.register_validator(OWNER, SUBMITTER, &pk).unwrap();
-    vs.activate_validator(SUBMITTER).unwrap();
+    vs.activate_validator_via_boundary_for_test(SUBMITTER)
+        .unwrap();
 }
 
 fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
@@ -473,9 +487,10 @@ fn invalid_vrf_evidence_rejects_non_active_submitter() {
         let mut pk = [0u8; 48];
         pk[0] = 0x44;
         vs.config_owner.write(OWNER).unwrap();
-        vs.config_max_validators.write(100).unwrap();
+        vs.set_config_max_validators(100).unwrap();
         vs.register_validator(OWNER, SUBMITTER, &pk).unwrap();
-        vs.activate_validator(SUBMITTER).unwrap();
+        vs.activate_validator_via_boundary_for_test(SUBMITTER)
+            .unwrap();
         vs.force_exit_validator(SUBMITTER).unwrap();
 
         let mut si = SlashIndicator::new(storage);

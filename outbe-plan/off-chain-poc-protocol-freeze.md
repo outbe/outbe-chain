@@ -781,7 +781,6 @@ CapacityProfileV1 {
   profile_id: Hash,
   max_tributes_per_work_shard: u32,
   max_workers_per_domain: u8,
-  max_pending_jobs: u8,
   max_intents_per_block: u8,
   max_activations_per_block: u8,
   max_ready_inspections_per_block: u8,
@@ -2455,7 +2454,7 @@ closure. Runtime code reads generated registries and compile ceilings; it must
 not hardcode a provisional genesis hash, bundle hash, committee or final
 capacity value.
 
-After the complete public four-node vertical slice exists,
+After the complete public fresh-network vertical slice exists,
 `P1-POC-CAPACITY-AND-ARMING` runs the section 8.3 algorithm and checks in:
 
 ```text
@@ -2463,8 +2462,8 @@ generated capacity profile
 ProtocolBundleV1 bytes and ProtocolBundleHash
 fresh-devnet base genesis and genesis hash
 network-binding artifact
-four-member OCOMP committee/key-registration public artifacts
-final chain manifest binding fork height, bundle and committee snapshot
+founder OCOMP key-registration public artifacts for every genesis ACTIVE validator
+final chain manifest binding fork height, bundle and dynamic ACTIVE ValidatorSet snapshot
 final cap-1/cap positive vectors and cap+1 negative vectors
 all final chain/bundle-bound positive and negative golden vectors
 benchmark/environment/evidence manifest

@@ -1,5 +1,29 @@
 @ocomp @min-validators-4
 Feature: Off-chain computation process topology
+  @ocomp-dynamic-admission
+  Scenario: A non-voting FullNode becomes the fifth OCOMP validator only after activation
+    Given a fresh four-validator OCOMP measurement localnet
+    When a fifth node syncs as a non-voting FullNode
+    Then the fifth node has canonical state parity without OCOMP vote capability
+    When the synced node completes OCOMP-ready validator admission
+    Then the certified boundary adds exactly one fifth OCOMP validator domain
+
+  @ocomp-dynamic-overlap
+  Scenario: A live four-validator job keeps its snapshot while the fifth validator joins a new job
+    Given a fresh four-validator OCOMP dynamic-membership localnet with two scheduled jobs
+    When one public Tribute is submitted for each scheduled OCOMP job
+    And validators 2 and 3 OCOMP supervisors are stopped before the job
+    Then job A opens with four members and quorum three while job B remains scheduled
+    When a fifth node syncs as a non-voting FullNode
+    Then the fifth node has canonical state parity without OCOMP vote capability
+    And the FullNode independently materializes job A without voting
+    When the synced node completes OCOMP-ready validator admission
+    Then the certified boundary adds exactly one fifth OCOMP validator domain
+    And job B opens with five members and quorum four while job A remains four of three
+    When validator 2 OCOMP supervisor restarts and completes both pinned quorums
+    Then the FullNode result for job A matches the canonical quorum result
+    And both deadlines record validator 3 missing and keep the chain live after jailing it
+
   @ocomp-int-024
   Scenario: A supervisor failure is isolated from consensus
     Given a fresh four-validator OCOMP measurement localnet

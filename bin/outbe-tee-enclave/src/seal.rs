@@ -195,11 +195,10 @@ fn encode_sealed_payload(
     Ok(out)
 }
 
-/// Decoded sealed payload: `(tribute_offer_secret, group_sig_bytes)`.
-type SealedPayload = (Zeroizing<[u8; 32]>, Zeroizing<Vec<u8>>);
-
 /// Decode a sealed payload into `(tribute_offer_secret, group_sig_bytes)`, length-checked.
-fn decode_sealed_payload(pt: &[u8]) -> Result<SealedPayload> {
+type DecodedSealedPayload = (Zeroizing<[u8; 32]>, Zeroizing<Vec<u8>>);
+
+fn decode_sealed_payload(pt: &[u8]) -> Result<DecodedSealedPayload> {
     if pt.len() < 34 {
         return Err(TeeError::SealedBlobBadPayload(pt.len()));
     }

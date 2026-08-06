@@ -43,7 +43,7 @@ fn execution_db(proposer: Address, parent_root: B256) -> CacheDB<EmptyDBTyped<Pr
         let owner = Address::repeat_byte(0x11);
         let mut validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         validators.config_owner.write(owner).unwrap();
-        validators.config_max_validators.write(128).unwrap();
+        validators.set_config_max_validators(128).unwrap();
         validators.config_epoch_length_blocks.write(60).unwrap();
         validators.config_is_initialized.write(true).unwrap();
         let mut public_key = [0_u8; 48];

@@ -47,12 +47,12 @@ fn measurement_fork_install_uses_the_same_immutable_artifact_boundary() {
 }
 
 #[test]
-fn fork_install_scenarios_reject_non_production_heights() {
+fn fork_install_scenarios_reject_zero_and_do_not_inherit_a_static_committee_window() {
     let genesis_hash = B256::repeat_byte(0x33);
 
     assert!(ForkInstallScenario::final_at(31, 44, genesis_hash).is_err());
     assert!(ForkInstallScenario::measurement_at(0, 44, genesis_hash).is_err());
-    assert!(ForkInstallScenario::measurement_at(1_000, 44, genesis_hash).is_err());
+    assert!(ForkInstallScenario::measurement_at(1_000, 44, genesis_hash).is_ok());
 }
 
 #[test]

@@ -117,6 +117,8 @@ pub fn install_fork_profile(
     let limits = crate::config::poc_schema_limits();
     let binding = install.install_hash(&limits)?;
     commit_transition::<MetadosisForkProfile, _>(ctx.storage.clone(), binding, |storage| {
+        outbe_validatorset::contract::ValidatorSet::new(storage.clone())
+            .initialize_founder_ocomp_registrations(&install.founder_registrations)?;
         MetadosisContract::new(storage).initialize_ocomp_fork_install(
             install,
             ctx.block.block_number,
@@ -153,16 +155,21 @@ pub fn run_ocomp_terminal_request(
 pub fn submit_verified_result_vote(
     storage: StorageHandle<'_>,
     scope: &ExecutionScope,
-    caller: alloy_primitives::Address,
     data: &[u8],
     value: U256,
     is_static: bool,
+    local_result_authority: Option<&dyn crate::api::OcompLocalResultAuthority>,
 ) -> Result<Bytes> {
     let binding = metadosis_verified_vote_binding(data);
     with_ce_checkpoint(scope, || {
         commit_transition::<MetadosisVerifiedResultVote, _>(storage.clone(), binding, |_| {
             crate::ocomp::vote::dispatch_public_result_vote(
-                storage, scope, caller, data, value, is_static,
+                storage,
+                scope,
+                data,
+                value,
+                is_static,
+                local_result_authority,
             )
         })
     })
@@ -170,7 +177,7 @@ pub fn submit_verified_result_vote(
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, B256, U256};
+    use alloy_primitives::{keccak256, Address, B256, U256};
     use outbe_common::WorldwideDay;
     use outbe_compressed_entities::{begin_block, mint, BodyInput, EntityId36, TributeBodyV1};
     use outbe_primitives::{
@@ -181,17 +188,95 @@ mod tests {
             StorageHandle,
         },
     };
+    use outbe_validatorset::contract::ValidatorSet;
 
     use super::*;
+
+    fn seed_active_founder_without_ocomp(
+        provider: &mut HashMapStorageProvider,
+        install: &crate::config::OcompForkInstallV1,
+    ) {
+        let founder = Address::repeat_byte(0xB0);
+        let consensus_key = [0x30; 48];
+        StorageHandle::enter(provider, |storage| {
+            let mut validators = ValidatorSet::new(storage);
+            validators
+                .config_owner
+                .write(Address::repeat_byte(0xA0))
+                .unwrap();
+            validators.set_config_max_validators(1).unwrap();
+            validators
+                .register_validator(Address::repeat_byte(0xA0), founder, &consensus_key)
+                .unwrap();
+            validators.mark_pending(founder).unwrap();
+            let encoded = install.founder_registrations[0]
+                .encode_canonical(&crate::config::poc_schema_limits())
+                .unwrap();
+            validators
+                .confirm_validator_ready(founder, &encoded)
+                .unwrap();
+            validators
+                .activate_validator_via_boundary_for_test(founder)
+                .unwrap();
+            let key_hash = keccak256(install.founder_registrations[0].core.ocomp_public_key_sec1);
+            validators
+                .val_ocomp_registration
+                .get_bytes(&founder)
+                .clear()
+                .unwrap();
+            validators
+                .ocomp_key_hash_to_validator
+                .write(&key_hash, Address::ZERO)
+                .unwrap();
+            validators
+                .val_join_confirmed
+                .write(&founder, false)
+                .unwrap();
+        });
+    }
+
+    #[test]
+    fn fork_install_command_atomically_imports_founder_keys_into_active_validators() {
+        const CHAIN_ID: u64 = 1;
+        const ACTIVATION_HEIGHT: u64 = crate::config::OCOMP_POC_FINAL_ACTIVATION_HEIGHT;
+        let genesis_hash = B256::repeat_byte(0x91);
+        let install = crate::test_support::ForkInstallScenario::final_at(
+            ACTIVATION_HEIGHT,
+            CHAIN_ID,
+            genesis_hash,
+        )
+        .unwrap()
+        .into_install();
+        let mut provider = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, genesis_hash);
+        seed_active_founder_without_ocomp(&mut provider, &install);
+        provider.set_block_number(ACTIVATION_HEIGHT);
+        provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::ForkProfile);
+
+        StorageHandle::enter(&mut provider, |storage| {
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(ACTIVATION_HEIGHT, 0, CHAIN_ID),
+                storage.clone(),
+            );
+            install_fork_profile(&ctx, &install).unwrap();
+            let validators = ValidatorSet::new(storage);
+            assert_eq!(
+                validators
+                    .ocomp_registration(Address::repeat_byte(0xB0))
+                    .unwrap(),
+                Some(install.founder_registrations[0].clone())
+            );
+        });
+    }
 
     #[test]
     fn fork_install_command_rolls_back_every_mutation_and_retries_exactly() {
         const CHAIN_ID: u64 = 1;
         const ACTIVATION_HEIGHT: u64 = crate::config::OCOMP_POC_FINAL_ACTIVATION_HEIGHT;
+        let genesis_hash = B256::repeat_byte(0x91);
         let install = crate::test_support::ForkInstallScenario::final_at(
             ACTIVATION_HEIGHT,
             CHAIN_ID,
-            B256::repeat_byte(0x91),
+            genesis_hash,
         )
         .unwrap()
         .into_install();
@@ -208,7 +293,8 @@ mod tests {
             })
         };
 
-        let mut control = HashMapStorageProvider::new(CHAIN_ID);
+        let mut control = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, genesis_hash);
+        seed_active_founder_without_ocomp(&mut control, &install);
         control.fail_after_mutation_at(usize::MAX);
         run(&mut control).unwrap();
         let mutation_count = control.clear_mutation_failure();
@@ -220,7 +306,9 @@ mod tests {
         let clean_events = control.get_ordered_events().to_vec();
 
         for operation in 0..mutation_count {
-            let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+            let mut provider =
+                HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, genesis_hash);
+            seed_active_founder_without_ocomp(&mut provider, &install);
             let storage_before = provider.storage.clone();
             let events_before = provider.get_ordered_events().to_vec();
             provider.fail_after_mutation_at(operation);

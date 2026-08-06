@@ -1,6 +1,8 @@
 use alloy_primitives::B256;
 use outbe_ocomp_protocol::{
-    generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1, profile::CapacityProfileV1, SchemaLimits,
+    generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1,
+    profile::{CapacityProfileV1, OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS},
+    SchemaLimits,
 };
 use outbe_primitives::error::{PrecompileError, Result};
 
@@ -10,7 +12,7 @@ use super::state::JobFsmLimits;
 
 const REQUEST_PROFILE_MAGIC: [u8; 4] = *b"OMRP";
 const REQUEST_PROFILE_VERSION: u16 = 1;
-const REQUEST_PROFILE_FIXED_LEN: usize = 4 + 2 + 8 + 32 * 6 + 4;
+const REQUEST_PROFILE_FIXED_LEN: usize = 4 + 2 + 8 + 32 * 5 + 4;
 
 /// Fork-installed authority needed to assemble `JobIntentV1`.
 ///
@@ -26,7 +28,6 @@ pub struct OcompRequestProfile {
     pub correctness_profile_id: B256,
     pub capacity_profile: CapacityProfileV1,
     pub source_availability_policy_id: B256,
-    pub result_committee_snapshot_hash: B256,
 }
 
 impl OcompRequestProfile {
@@ -114,7 +115,6 @@ pub(super) fn validate_request_profile(profile: &OcompRequestProfile) -> Result<
         || profile.protocol_bundle_hash.is_zero()
         || profile.correctness_profile_id.is_zero()
         || profile.source_availability_policy_id.is_zero()
-        || profile.result_committee_snapshot_hash.is_zero()
         || capacity.profile_id.is_zero()
         || capacity.generated_limits_manifest_hash.is_zero()
     {
@@ -135,7 +135,6 @@ pub(super) fn validate_request_profile(profile: &OcompRequestProfile) -> Result<
 
     if capacity.max_tributes_per_work_shard != max_tributes_per_work_shard
         || capacity.max_workers_per_domain != 4
-        || capacity.max_pending_jobs != 2
         || capacity.max_intents_per_block != 1
         || capacity.max_activations_per_block != 1
         || capacity.max_ready_inspections_per_block != 1
@@ -148,7 +147,7 @@ pub(super) fn validate_request_profile(profile: &OcompRequestProfile) -> Result<
         || capacity.max_oracle_wwd_pair_entries > max_oracle_entries
         || capacity.max_active_scurve_entries == 0
         || capacity.max_active_scurve_entries > max_active_scurve_entries
-        || capacity.result_deadline_blocks != 64
+        || capacity.result_deadline_blocks != OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS
         || capacity.source_retention_after_terminal_blocks
             != candidate.source_retention_after_terminal_blocks
     {
@@ -180,7 +179,6 @@ fn encode_request_profile(profile: &OcompRequestProfile, limits: &SchemaLimits) 
     encoded.extend_from_slice(profile.protocol_bundle_hash.as_slice());
     encoded.extend_from_slice(profile.correctness_profile_id.as_slice());
     encoded.extend_from_slice(profile.source_availability_policy_id.as_slice());
-    encoded.extend_from_slice(profile.result_committee_snapshot_hash.as_slice());
     encoded.extend_from_slice(&capacity_len.to_be_bytes());
     encoded.extend_from_slice(&capacity);
     if encoded.len() != total {
@@ -205,7 +203,6 @@ fn decode_request_profile(encoded: &[u8], limits: &SchemaLimits) -> Result<Ocomp
     let protocol_bundle_hash = B256::from(reader.take::<32>()?);
     let correctness_profile_id = B256::from(reader.take::<32>()?);
     let source_availability_policy_id = B256::from(reader.take::<32>()?);
-    let result_committee_snapshot_hash = B256::from(reader.take::<32>()?);
     let capacity_len = usize::try_from(reader.u32()?)
         .map_err(|_| fatal("OCOMP capacity profile length exceeds usize"))?;
     if capacity_len != reader.remaining() {
@@ -223,7 +220,6 @@ fn decode_request_profile(encoded: &[u8], limits: &SchemaLimits) -> Result<Ocomp
         correctness_profile_id,
         capacity_profile,
         source_availability_policy_id,
-        result_committee_snapshot_hash,
     };
     validate_request_profile(&profile)?;
     if encode_request_profile(&profile, limits)? != encoded {

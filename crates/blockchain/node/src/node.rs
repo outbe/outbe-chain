@@ -9,6 +9,7 @@ use crate::{
 };
 use outbe_compressed_entities::CompressedTreeService;
 use outbe_evm::{OutbeExecutorBuilder, SharedOutbeEvmSigner};
+use outbe_metadosis::api::OcompLocalResultAuthority;
 use outbe_metadosis::config::OcompForkInstallV1;
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::{
@@ -46,6 +47,8 @@ pub struct OutbeNode {
     pub compressed_tree_service: std::sync::Arc<CompressedTreeService>,
     /// Immutable consensus binding loaded from the selected chain manifest.
     pub ocomp_fork_install: Option<std::sync::Arc<OcompForkInstallV1>>,
+    /// Node-owned durable proof of independently computed Lysis results.
+    pub ocomp_local_result_authority: Option<std::sync::Arc<dyn OcompLocalResultAuthority>>,
 }
 
 impl std::fmt::Debug for OutbeNode {
@@ -65,6 +68,10 @@ impl std::fmt::Debug for OutbeNode {
                     .as_ref()
                     .map(|install| install.activation_height),
             )
+            .field(
+                "ocomp_local_result_authority",
+                &self.ocomp_local_result_authority.is_some(),
+            )
             .finish()
     }
 }
@@ -82,6 +89,7 @@ impl OutbeNode {
             runtime_body_readers,
             compressed_tree_service,
             ocomp_fork_install: None,
+            ocomp_local_result_authority: None,
         }
     }
 
@@ -97,12 +105,22 @@ impl OutbeNode {
             runtime_body_readers,
             compressed_tree_service,
             ocomp_fork_install: None,
+            ocomp_local_result_authority: None,
         }
     }
 
     #[must_use]
     pub fn with_ocomp_fork_install(mut self, install: std::sync::Arc<OcompForkInstallV1>) -> Self {
         self.ocomp_fork_install = Some(install);
+        self
+    }
+
+    #[must_use]
+    pub fn with_ocomp_local_result_authority(
+        mut self,
+        authority: std::sync::Arc<dyn OcompLocalResultAuthority>,
+    ) -> Self {
+        self.ocomp_local_result_authority = Some(authority);
         self
     }
 }
@@ -159,6 +177,10 @@ where
             ));
         let executor = match &self.ocomp_fork_install {
             Some(install) => executor.with_ocomp_fork_install(install.clone()),
+            None => executor,
+        };
+        let executor = match &self.ocomp_local_result_authority {
+            Some(authority) => executor.with_ocomp_local_result_authority(authority.clone()),
             None => executor,
         };
 

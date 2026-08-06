@@ -19,6 +19,9 @@ use alloy_evm::{
 };
 use alloy_primitives::{keccak256, map::AddressMap, Address, Bytes, Log, B256, U256};
 use outbe_compressed_entities::ExecutionScope;
+use outbe_ocomp_protocol::system_carrier::{
+    classify_ocomp_system_carrier, OcompSystemCarrierView, OCOMP_SYSTEM_CARRIER_INTERNAL_GAS_LIMIT,
+};
 use outbe_offchain_data::{ExecutionReadBudgetGuard, RuntimeBodyReaders};
 use outbe_primitives::{
     block::{BlockContext, BlockLifecycle, BlockRuntimeContext},
@@ -1263,6 +1266,14 @@ pub(crate) fn system_tx_failure_code_for_result(result: &ExecutionResult<HaltRea
     }
 }
 
+fn is_ocomp_deadline_passed_revert(result: &ExecutionResult<HaltReason>) -> bool {
+    matches!(
+        result,
+        ExecutionResult::Revert { output, .. }
+            if outbe_metadosis::is_deadline_passed_result_vote_revert_data(output.as_ref())
+    )
+}
+
 #[cfg(test)]
 mod system_tx_failure_code_tests {
     use super::*;
@@ -1287,6 +1298,20 @@ mod system_tx_failure_code_tests {
     #[test]
     fn revert_maps_to_201() {
         assert_eq!(system_tx_failure_code_for_result(&revert_result()), 201);
+    }
+
+    #[test]
+    fn only_the_exact_ocomp_deadline_revert_is_a_failed_carrier_receipt() {
+        let deadline = ExecutionResult::Revert {
+            gas: ResultGas::default(),
+            logs: Vec::new(),
+            output: outbe_metadosis::deadline_passed_result_vote_revert_data(),
+        };
+        assert!(is_ocomp_deadline_passed_revert(&deadline));
+        assert!(!is_ocomp_deadline_passed_revert(&revert_result()));
+        assert!(!is_ocomp_deadline_passed_revert(&halt_result(
+            HaltReason::OutOfGas(OutOfGasError::Precompile)
+        )));
     }
 
     #[test]
@@ -1694,7 +1719,7 @@ where
     /// Commits an Outbe begin-zone system transaction with separate internal
     /// and visible gas accounting.
     ///
-    /// The precompile executes under the internal 100M system-call budget.
+    /// The precompile executes under the separate internal system-work budget.
     /// The public Ethereum block gas lane charges the signed envelope's visible
     /// base gas (intrinsic plus any schedule-hashed protocol precharge) and any
     /// explicit compressed-entity gas, without exposing the internal execution
@@ -1721,16 +1746,11 @@ where
                     "system tx visible gas overflow".into(),
                 ))
             })?;
+        let system_cumulative_gas_used =
+            self.checked_system_tx_execution_gas(output.result.result.tx_gas_used())?;
 
-        let gas_output = self.inner.commit_transaction(output);
-        self.system_tx_execution_gas = self
-            .system_tx_execution_gas
-            .checked_add(gas_output.tx_gas_used())
-            .ok_or_else(|| {
-                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-                    "system tx execution gas overflow".into(),
-                ))
-            })?;
+        let _ = self.inner.commit_transaction(output);
+        self.system_tx_execution_gas = system_cumulative_gas_used;
 
         if let Some(receipt) = self.inner.receipts.last_mut() {
             receipt.cumulative_gas_used = visible_cumulative_tx_gas;
@@ -1741,6 +1761,29 @@ where
         self.inner.block_state_gas_used = user_state_gas.saturating_add(visible_gas_used);
 
         Ok(GasOutput::new(visible_gas_used))
+    }
+
+    fn checked_system_tx_execution_gas(&self, additional: u64) -> Result<u64, BlockExecutionError> {
+        let cumulative = self
+            .system_tx_execution_gas
+            .checked_add(additional)
+            .ok_or_else(|| {
+                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                    "internal system-work gas overflow".into(),
+                ))
+            })?;
+        let limit = outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT;
+        if cumulative > limit {
+            return Err(BlockExecutionError::Internal(
+                InternalBlockExecutionError::Other(
+                    format!(
+                        "internal system-work budget exceeded: cumulative={cumulative}, limit={limit}, additional={additional}"
+                    )
+                    .into(),
+                ),
+            ));
+        }
+        Ok(cumulative)
     }
 
     fn visible_system_gas_with_compressed_entities(
@@ -1810,14 +1853,8 @@ where
             input.code,
             input.reason,
         );
-        let system_cumulative_gas_used = self
-            .system_tx_execution_gas
-            .checked_add(input.internal_gas_used)
-            .ok_or_else(|| {
-                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-                    "system tx internal gas overflow".into(),
-                ))
-            })?;
+        let system_cumulative_gas_used =
+            self.checked_system_tx_execution_gas(input.internal_gas_used)?;
         let user_cumulative_gas_used = self
             .inner
             .cumulative_tx_gas_used
@@ -3606,6 +3643,90 @@ where
                 return commit_outcome;
             }
 
+            let ocomp_system_carrier = classify_ocomp_system_carrier(
+                OcompSystemCarrierView {
+                    is_eip1559: tx.tx_type() == alloy_consensus::TxType::Eip1559,
+                    to: tx.to(),
+                    value: tx.value(),
+                    input: tx.input().as_ref(),
+                    gas_limit: tx.gas_limit(),
+                    max_fee_per_gas: tx.max_fee_per_gas(),
+                    max_priority_fee_per_gas: tx.max_priority_fee_per_gas(),
+                },
+                &outbe_ocomp_protocol::profile::poc_schema_limits(),
+            )
+            .map_err(|error| {
+                BlockExecutionError::msg(format!("invalid OCOMP system carrier: {error}"))
+            })?;
+
+            if let Some(candidate) = ocomp_system_carrier {
+                if !self.ocomp_lifecycle_active {
+                    return Err(BlockExecutionError::msg(
+                        "OCOMP system carrier is not active for this block",
+                    ));
+                }
+                let block_number = self.inner.evm.block().number().saturating_to::<u64>();
+                let timestamp = self.inner.evm.block().timestamp().saturating_to::<u64>();
+                let chain_id = self.inner.evm.chain_id();
+                let proposer = self.inner.evm.block().beneficiary();
+                let authorized = {
+                    let db = self.inner.evm.db_mut();
+                    let ctx = BlockContext::new_with_genesis_hash(
+                        block_number,
+                        timestamp,
+                        chain_id,
+                        self.genesis_hash,
+                        proposer,
+                        Vec::new(),
+                    );
+                    let mut provider = DirectStorageProvider::new(db, ctx);
+                    let storage = StorageHandle::new(&mut provider);
+                    outbe_metadosis::resolve_historical_result_vote_carrier_signer(
+                        storage,
+                        &candidate.prefix,
+                        signer,
+                        &outbe_ocomp_protocol::profile::poc_schema_limits(),
+                    )
+                }
+                .map_err(|error| {
+                    BlockExecutionError::msg(format!(
+                        "OCOMP system carrier authorization failed: {error}"
+                    ))
+                })?;
+                if authorized.is_none() {
+                    return Err(BlockExecutionError::msg(
+                        "OCOMP system carrier signer is not authorized by its pinned snapshot",
+                    ));
+                }
+
+                let signed_gas_limit = tx.gas_limit();
+                let tx_type = tx.tx_type();
+                let snapshot = self.inner.evm.enable_zero_fee_overrides();
+                tx_env.gas_limit = OCOMP_SYSTEM_CARRIER_INTERNAL_GAS_LIMIT;
+                tx_env.gas_price = 0;
+                tx_env.gas_priority_fee = Some(0);
+                let execution = self.inner.execute_transaction_without_commit(WithTxEnv {
+                    tx_env,
+                    tx: Arc::new(recovered),
+                });
+                self.inner.evm.restore_zero_fee_overrides(snapshot);
+                let output = execution?;
+                let deadline_revert = is_ocomp_deadline_passed_revert(&output.result.result);
+                if !output.result.result.is_success() && !deadline_revert {
+                    return Err(BlockExecutionError::msg(format!(
+                        "OCOMP system carrier execution did not succeed: {:?}",
+                        output.result.result
+                    )));
+                }
+                if !f(&output).should_commit() {
+                    return Ok(None);
+                }
+                debug_assert_eq!(output.tx_type, tx_type);
+                return self
+                    .commit_system_transaction(output, 0, 0, signed_gas_limit)
+                    .map(Some);
+            }
+
             if tx.gas_limit() < Self::SOFT_FAILURE_GAS {
                 return Err(BlockExecutionError::msg(format!(
                     "transaction gas limit {} is below intrinsic gas floor {}",
@@ -4576,14 +4697,14 @@ mod tests {
             seed_compressed_entities_genesis(storage.clone());
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_epoch_length_blocks.write(60).unwrap();
             vs.config_is_initialized.write(true).unwrap();
             for (validator, pk) in validators {
                 vs.register_validator(OWNER, *validator, pk).unwrap();
+                vs.activate_validator_via_boundary_for_test(*validator)
+                    .unwrap();
             }
-            let active: Vec<Address> = validators.iter().map(|(validator, _)| *validator).collect();
-            vs.activate_reshared_set(&active, B256::ZERO).unwrap();
             seed_test_committee_snapshot(storage.clone(), validators);
             // Seed the COEN/840 oracle pair + a 1.0 rate + the ISO 840 settlement
             // mapping, so begin-block NOD/GEM/INTEX floor-price promotion resolves
@@ -4679,15 +4800,15 @@ mod tests {
             seed_compressed_entities_genesis(storage.clone());
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_epoch_length_blocks.write(60).unwrap();
             vs.config_is_initialized.write(true).unwrap();
             vs.register_validator(OWNER, active, &dummy_pubkey(0xA2))
                 .unwrap();
             vs.register_validator(OWNER, candidate, &dummy_pubkey(0xB3))
                 .unwrap();
-            vs.activate_reshared_set(&[active], B256::with_last_byte(0x01))
-                .unwrap();
+            vs.activate_validator_via_boundary_for_test(active).unwrap();
+            vs.admit_validator_for_boundary_for_test(candidate).unwrap();
             seed_test_committee_snapshot(storage.clone(), &[(active, dummy_pubkey(0xA2))]);
             // Seed the COEN/840 oracle pair + a 1.0 rate + the ISO 840 settlement
             // mapping, so begin-block NOD/GEM/INTEX floor-price promotion resolves
@@ -5083,6 +5204,70 @@ mod tests {
         }
         .into_signed(Signature::test_signature())
         .into()
+    }
+
+    fn test_ocomp_submit_result_vote_tx() -> reth_ethereum::TransactionSigned {
+        use outbe_ocomp_protocol::{
+            abi::{METADOSIS_ADDRESS, SUBMIT_LYSIS_RESULT_SELECTOR},
+            encode_envelope,
+            profile::poc_schema_limits,
+            registry::ObjectKind,
+        };
+
+        let mut body = Vec::new();
+        body.extend_from_slice(B256::repeat_byte(0x31).as_slice());
+        body.extend_from_slice(B256::repeat_byte(0x32).as_slice());
+        body.extend_from_slice(&3_u32.to_be_bytes());
+        body.extend_from_slice(&7_u64.to_be_bytes());
+        body.extend_from_slice(B256::repeat_byte(0x33).as_slice());
+        body.extend_from_slice(B256::repeat_byte(0x34).as_slice());
+        body.extend_from_slice(&1_u16.to_be_bytes());
+        body.extend_from_slice(&1_u64.to_be_bytes());
+        body.resize(150, 0);
+        let payload = encode_envelope(ObjectKind::ResultVoteV1, &body, poc_schema_limits().codec)
+            .expect("canonical OCOMP prefix must encode");
+        let padded_len = (payload.len() + 31) & !31;
+        let mut input = vec![0_u8; 68 + padded_len];
+        input[..4].copy_from_slice(&SUBMIT_LYSIS_RESULT_SELECTOR);
+        input[4..36].copy_from_slice(&U256::from(32).to_be_bytes::<32>());
+        input[36..68].copy_from_slice(&U256::from(payload.len()).to_be_bytes::<32>());
+        input[68..68 + payload.len()].copy_from_slice(&payload);
+
+        TxEip1559 {
+            chain_id: CHAIN_ID,
+            nonce: 0,
+            gas_limit: outbe_ocomp_protocol::system_carrier::OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
+            max_fee_per_gas:
+                outbe_ocomp_protocol::system_carrier::MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS,
+            max_priority_fee_per_gas: 0,
+            to: TxKind::Call(METADOSIS_ADDRESS),
+            value: U256::ZERO,
+            input: input.into(),
+            access_list: Default::default(),
+        }
+        .into_signed(Signature::test_signature())
+        .into()
+    }
+
+    #[test]
+    fn executor_adapter_classifies_the_canonical_ocomp_system_carrier_prefix() {
+        let tx = test_ocomp_submit_result_vote_tx();
+        let candidate = outbe_ocomp_protocol::system_carrier::classify_ocomp_system_carrier(
+            outbe_ocomp_protocol::system_carrier::OcompSystemCarrierView {
+                is_eip1559: true,
+                to: tx.to(),
+                value: tx.value(),
+                input: tx.input().as_ref(),
+                gas_limit: tx.gas_limit(),
+                max_fee_per_gas: tx.max_fee_per_gas(),
+                max_priority_fee_per_gas: tx.max_priority_fee_per_gas(),
+            },
+            &outbe_ocomp_protocol::profile::poc_schema_limits(),
+        )
+        .expect("canonical OCOMP envelope must classify")
+        .expect("canonical OCOMP envelope must select the system carrier");
+
+        assert_eq!(candidate.prefix.validator_index, 1);
     }
 
     #[allow(dead_code)] // retained for follow-up tests
@@ -7228,7 +7413,7 @@ mod tests {
     fn system_protocol_precharge_and_ce_gas_are_published_and_block_limited() {
         let signer = test_evm_signer();
         let proposer = signer.address();
-        let mut state = state_with_active_proposer(proposer);
+        let mut state = state_with_active_proposer_without_ocomp(proposer);
         let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer);
         let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
         let mut executor = config.create_executor(evm, execution_ctx(Some(0), Bytes::new()));
@@ -7280,6 +7465,41 @@ mod tests {
         assert_eq!(executor.receipts().len(), receipts_before);
         assert_eq!(executor.inner.cumulative_tx_gas_used, cumulative_before);
         assert_eq!(executor.system_tx_execution_gas, 123);
+    }
+
+    #[test]
+    fn system_internal_work_budget_rejects_before_receipt_or_state_accounting() {
+        let signer = test_evm_signer();
+        let proposer = signer.address();
+        let mut state = state_with_active_proposer_without_ocomp(proposer);
+        let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer);
+        let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
+        let mut executor = config.create_executor(evm, execution_ctx(Some(0), Bytes::new()));
+        executor.system_tx_execution_gas =
+            outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT - 1;
+
+        let receipts_before = executor.receipts().len();
+        let cumulative_before = executor.inner.cumulative_tx_gas_used;
+        let error = executor
+            .push_system_failure_receipt(SystemFailureReceiptInput {
+                tx_type: alloy_consensus::TxType::Eip1559,
+                log_address: outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
+                code: 299,
+                reason: "must not commit past the internal system-work budget".into(),
+                visible_base_gas: 0,
+                compressed_entities_gas: 0,
+                signed_gas_limit: 0,
+                internal_gas_used: 2,
+            })
+            .expect_err("system internal work must be bounded independently from user gas");
+
+        assert!(error.to_string().contains("internal system-work budget"));
+        assert_eq!(executor.receipts().len(), receipts_before);
+        assert_eq!(executor.inner.cumulative_tx_gas_used, cumulative_before);
+        assert_eq!(
+            executor.system_tx_execution_gas,
+            outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT - 1
+        );
     }
 
     #[test]
@@ -7765,8 +7985,8 @@ mod tests {
             // only `settle_voter`). At a single miss this is counter-only (no felony),
             // adding no balance effect — only the parity-checked miss counters.
             let mut seeded: Vec<(Address, [u8; 48])> = vec![(proposer, dummy_pubkey(0xA2))];
-            for (i, a) in addrs.iter().enumerate() {
-                seeded.push((*a, dummy_pubkey(0x50u8 + i as u8)));
+            for member in &snapshot.committee {
+                seeded.push((member.address, member.consensus_pubkey));
             }
             let mut state = state_with_active_validators_seeded(&seeded, move |storage| {
                 // The live credit's escrow binding is written by the N+K CPA
@@ -10590,11 +10810,12 @@ mod tests {
     fn seed_registered_active_validator(storage: StorageHandle, validator: Address, pk: &[u8; 48]) {
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         vs.config_owner.write(OWNER).unwrap();
-        vs.config_max_validators.write(128).unwrap();
+        vs.set_config_max_validators(128).unwrap();
         vs.config_epoch_length_blocks.write(60).unwrap();
         vs.config_is_initialized.write(true).unwrap();
         vs.register_validator(OWNER, validator, pk).unwrap();
-        vs.activate_reshared_set(&[validator], B256::ZERO).unwrap();
+        vs.activate_validator_via_boundary_for_test(validator)
+            .unwrap();
         seed_test_committee_snapshot(storage.clone(), &[(validator, *pk)]);
         // Seed COEN/840 pair + 1.0 rate so begin-block NOD/GEM/INTEX promotion
         // reads a registered pair instead of reverting "pair not registered".
@@ -10681,7 +10902,7 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
             // Register and activate validators A, B, C.
@@ -10699,10 +10920,11 @@ mod tests {
             vs.register_validator(OWNER, val_d, &dummy_pubkey(0xD4))
                 .unwrap();
 
-            // Initial reshare: activate A, B, C (not D).
-            let old_hash = B256::with_last_byte(0x01);
-            vs.activate_reshared_set(&[val_a, val_b, val_c], old_hash)
-                .unwrap();
+            // Initial certified boundary: activate A, B, C (not D).
+            for validator in [val_a, val_b, val_c] {
+                vs.activate_validator_via_boundary_for_test(validator)
+                    .unwrap();
+            }
 
             // Step 1: Read old active set — should be [A, B, C].
             let old_set = vs.get_active_consensus_set().unwrap();
@@ -10717,7 +10939,6 @@ mod tests {
             // (We just verify the set is correct — actual slashing tested in Task 01 code.)
 
             // Step 4: NOW activate new reshare with [A, B, D] (C removed, D added).
-            let new_hash = B256::with_last_byte(0x02);
             // First deactivate C (simulate EXITING).
             vs.deactivate_validator(OWNER, val_c).unwrap();
 
@@ -10732,10 +10953,7 @@ mod tests {
             vs.record_participation(&[val_a, val_b], &[val_c]).unwrap();
 
             // Activate D.
-            vs.activate_validator(val_d).unwrap();
-            // Reshare with new set.
-            vs.activate_reshared_set(&[val_a, val_b, val_d], new_hash)
-                .unwrap();
+            vs.activate_validator_via_boundary_for_test(val_d).unwrap();
 
             // After reshare: active set is [A, B, D].
             let new_set = vs.get_active_consensus_set().unwrap();
@@ -10759,7 +10977,7 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
             let val_a = address!("0x1111111111111111111111111111111111111111");
@@ -10777,8 +10995,10 @@ mod tests {
                 .unwrap();
 
             // Old set: 3 validators [A, B, C].
-            vs.activate_reshared_set(&[val_a, val_b, val_c], B256::with_last_byte(0x01))
-                .unwrap();
+            for validator in [val_a, val_b, val_c] {
+                vs.activate_validator_via_boundary_for_test(validator)
+                    .unwrap();
+            }
             let old_set = vs.get_active_consensus_set().unwrap();
             assert_eq!(old_set.len(), 3, "old set must have 3 validators");
 
@@ -10795,9 +11015,7 @@ mod tests {
             .unwrap();
 
             // Now activate new set with 4 validators.
-            vs.activate_validator(val_d).unwrap();
-            vs.activate_reshared_set(&[val_a, val_b, val_c, val_d], B256::with_last_byte(0x02))
-                .unwrap();
+            vs.activate_validator_via_boundary_for_test(val_d).unwrap();
             let new_set = vs.get_active_consensus_set().unwrap();
             assert_eq!(new_set.len(), 4, "new set must have 4 validators");
 
@@ -10832,7 +11050,7 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
             let val_a = address!("0x1111111111111111111111111111111111111111");
@@ -10843,8 +11061,9 @@ mod tests {
             vs.register_validator(OWNER, val_b, &dummy_pubkey(0xB2))
                 .unwrap();
 
-            let hash = B256::with_last_byte(0x42);
-            vs.activate_reshared_set(&[val_a, val_b], hash).unwrap();
+            vs.activate_validator_via_boundary_for_test(val_a).unwrap();
+            vs.activate_validator_via_boundary_for_test(val_b).unwrap();
+            let hash = vs.active_consensus_set_hash.read().unwrap();
 
             // Read state after first activation.
             let set1 = vs.get_active_consensus_set().unwrap();
@@ -10857,9 +11076,7 @@ mod tests {
             assert_eq!(current_hash, hash, "hash must match after first activation");
 
             // Simulate executor's guard: skip if hash matches.
-            if current_hash != hash {
-                vs.activate_reshared_set(&[val_a, val_b], hash).unwrap();
-            }
+            assert_eq!(current_hash, hash);
             // State unchanged.
             let set2 = vs.get_active_consensus_set().unwrap();
             let hash2 = vs.active_consensus_set_hash.read().unwrap();
@@ -10906,7 +11123,7 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
             let val_a = address!("0x1111111111111111111111111111111111111111");
@@ -10925,8 +11142,10 @@ mod tests {
             }
             // Live active set is [A, B, D]; C is registered but no longer a
             // current consensus participant after a reshare.
-            vs.activate_reshared_set(&[val_a, val_b, val_d], B256::with_last_byte(0x02))
-                .unwrap();
+            for validator in [val_a, val_b, val_d] {
+                vs.activate_validator_via_boundary_for_test(validator)
+                    .unwrap();
+            }
             let live_active = vs.get_active_consensus_set().unwrap();
             let live_addrs: Vec<Address> =
                 live_active.iter().map(|v| v.validator_address).collect();
@@ -10944,7 +11163,7 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
             let val_a = address!("0x1111111111111111111111111111111111111111");
@@ -10953,8 +11172,10 @@ mod tests {
                 .unwrap();
             vs.register_validator(OWNER, val_b, &dummy_pubkey(0xB2))
                 .unwrap();
-            vs.activate_reshared_set(&[val_a, val_b], B256::with_last_byte(0x01))
-                .unwrap();
+            for validator in [val_a, val_b] {
+                vs.activate_validator_via_boundary_for_test(validator)
+                    .unwrap();
+            }
 
             let metadata = metadata_with(vec![val_a, val_b, val_a], vec![1, 1, 1], vec![]);
             let err = super::validate_finalized_metadata(storage.clone(), &metadata).unwrap_err();
@@ -10971,14 +11192,13 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
             let val_a = address!("0x1111111111111111111111111111111111111111");
             vs.register_validator(OWNER, val_a, &dummy_pubkey(0xA1))
                 .unwrap();
-            vs.activate_reshared_set(&[val_a], B256::with_last_byte(0x01))
-                .unwrap();
+            vs.activate_validator_via_boundary_for_test(val_a).unwrap();
 
             let stranger = address!("0x9999999999999999999999999999999999999999");
             let metadata = metadata_with(vec![val_a, stranger], vec![1, 1], vec![]);
@@ -10996,7 +11216,7 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
             let val_a = address!("0x1111111111111111111111111111111111111111");
@@ -11006,8 +11226,10 @@ mod tests {
                 vs.register_validator(OWNER, addr, &dummy_pubkey(seed))
                     .unwrap();
             }
-            vs.activate_reshared_set(&[val_a, val_b, val_c], B256::with_last_byte(0x01))
-                .unwrap();
+            for validator in [val_a, val_b, val_c] {
+                vs.activate_validator_via_boundary_for_test(validator)
+                    .unwrap();
+            }
 
             let metadata = metadata_with(vec![val_a, val_b], vec![1, 1], vec![val_c]);
             let err = super::validate_finalized_metadata(storage.clone(), &metadata).unwrap_err();
@@ -11024,14 +11246,13 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
             let val_a = address!("0x1111111111111111111111111111111111111111");
             vs.register_validator(OWNER, val_a, &dummy_pubkey(0xA1))
                 .unwrap();
-            vs.activate_reshared_set(&[val_a], B256::with_last_byte(0x01))
-                .unwrap();
+            vs.activate_validator_via_boundary_for_test(val_a).unwrap();
 
             let metadata = metadata_with(vec![val_a], vec![1, 0], vec![]);
             let err = super::validate_finalized_metadata(storage.clone(), &metadata).unwrap_err();
@@ -11096,7 +11317,7 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
             let val_a = address!("0x1111111111111111111111111111111111111111");
@@ -11105,9 +11326,10 @@ mod tests {
                 .unwrap();
             vs.register_validator(OWNER, val_b, &dummy_pubkey(0xB2))
                 .unwrap();
-            let current_hash = super::hash_boundary_active_set(&[val_a, val_b]);
-            vs.activate_reshared_set(&[val_a, val_b], current_hash)
-                .unwrap();
+            for validator in [val_a, val_b] {
+                vs.activate_validator_via_boundary_for_test(validator)
+                    .unwrap();
+            }
 
             // Boundary claims membership unchanged but carries a different active set.
             let boundary = boundary_with(false, vec![(val_a, dummy_pubkey(0xA1))]);
@@ -11126,7 +11348,7 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
             let val_a = address!("0x1111111111111111111111111111111111111111");
@@ -11136,9 +11358,11 @@ mod tests {
                 vs.register_validator(OWNER, addr, &dummy_pubkey(seed))
                     .unwrap();
             }
-            let current_hash = super::hash_boundary_active_set(&[val_a, val_b]);
-            vs.activate_reshared_set(&[val_a, val_b], current_hash)
-                .unwrap();
+            for validator in [val_a, val_b] {
+                vs.activate_validator_via_boundary_for_test(validator)
+                    .unwrap();
+            }
+            vs.admit_validator_for_boundary_for_test(val_c).unwrap();
 
             let boundary = boundary_with(
                 true,
@@ -11166,7 +11390,7 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
             let retained = address!("0x1111111111111111111111111111111111111111");
@@ -11175,9 +11399,10 @@ mod tests {
                 .unwrap();
             vs.register_validator(OWNER, expired, &dummy_pubkey(0xB2))
                 .unwrap();
-            let current_hash = super::hash_boundary_active_set(&[retained, expired]);
-            vs.activate_reshared_set(&[retained, expired], current_hash)
-                .unwrap();
+            for validator in [retained, expired] {
+                vs.activate_validator_via_boundary_for_test(validator)
+                    .unwrap();
+            }
 
             let mut boundary = boundary_with(true, vec![(retained, dummy_pubkey(0xA1))]);
             boundary.tee_expired_target_exclusions = vec![expired];
@@ -11208,13 +11433,13 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
             let retained = address!("0x1111111111111111111111111111111111111111");
             vs.register_validator(OWNER, retained, &dummy_pubkey(0xA1))
                 .unwrap();
-            let hash = super::hash_boundary_active_set(&[retained]);
-            vs.activate_reshared_set(&[retained], hash).unwrap();
+            vs.activate_validator_via_boundary_for_test(retained)
+                .unwrap();
 
             let mut boundary = boundary_with(false, vec![(retained, dummy_pubkey(0xA1))]);
             boundary.tee_expired_target_exclusions_hash = B256::with_last_byte(0xFF);
@@ -11231,14 +11456,14 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
             let val_a = address!("0x1111111111111111111111111111111111111111");
             vs.register_validator(OWNER, val_a, &dummy_pubkey(0xA1))
                 .unwrap();
-            let hash = super::hash_boundary_active_set(&[val_a]);
-            vs.activate_reshared_set(&[val_a], hash).unwrap();
+            vs.activate_validator_via_boundary_for_test(val_a).unwrap();
+            let hash = vs.active_consensus_set_hash.read().unwrap();
 
             let boundary = boundary_with(false, vec![(val_a, dummy_pubkey(0xA1))]);
             super::apply_boundary_outcome(storage.clone(), &boundary).unwrap();
@@ -11271,14 +11496,13 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
             let val_a = address!("0x1111111111111111111111111111111111111111");
             vs.register_validator(OWNER, val_a, &dummy_pubkey(0xA1))
                 .unwrap();
-            let hash = super::hash_boundary_active_set(&[val_a]);
-            vs.activate_reshared_set(&[val_a], hash).unwrap();
+            vs.activate_validator_via_boundary_for_test(val_a).unwrap();
 
             let mut boundary = boundary_with(false, vec![(val_a, dummy_pubkey(0xA1))]);
             boundary.committee_set_hash = B256::with_last_byte(0xFE);

@@ -32,7 +32,11 @@ and bonded value becomes claimable only after the correct delay and slash effect
 
 ## Preconditions and canonical inputs
 
-- The validator controls its EOA, BLS key and valid versioned P2P address.
+- The validator controls its EOA, BLS key, OCOMP result-signing key and valid
+  versioned P2P address.
+- `outbe-keygen ocomp` has produced the immutable `ocomp-key-v1.hex` and canonical
+  public `ocomp-registration-v1.ocb1` for the exact chain ID, genesis hash,
+  validator address and 48-byte BLS MinPk public key.
 - ValidatorSet capacity and permissionless registration cap permit admission.
 - Staking/ValidatorSet configuration, DKG schedule and protocol versions agree on
   every node.
@@ -45,9 +49,9 @@ and bonded value becomes claimable only after the correct delay and slash effect
 |---:|---|---|---|
 | 1 | ValidatorSet | self-register with BLS proof and P2P identity | `REGISTERED`, identity indexes |
 | 2 | Staking | receive self-stake and reach minimum | bonded ledger; `PENDING` |
-| 3 | node/operator | sync to finalized head and confirm readiness | readiness flag and set-change signal |
+| 3 | node/operator | sync to finalized head and call `confirmValidatorReady(registration)` with the chain/genesis/validator-identity-bound OCOMP PoP | stored canonical registration, reverse key reservation, readiness flag and set-change signal |
 | 4 | consensus/DKG | freeze canonical reshare target and complete ceremony | validated DKG artifact |
-| 5 | ValidatorSet boundary | atomically snapshot committees and activate share | `ACTIVE`, share, set hash |
+| 5 | ValidatorSet boundary | atomically snapshot the consensus set plus its separate OCOMP key extension and activate the share | `ACTIVE`, share, set hash, historical OCOMP binding |
 | 6 | consensus/Rewards | record verified finalized participation and escrow fees | fingerprint/participation/escrow |
 | 7 | Rewards window close | pay fee shares, burn/dispatch residue once | native deltas and settled guard |
 | 8 | Cycle/Rewards | allocate daily emission top-up as Gems | Gem receipts and day guards |
@@ -104,7 +108,11 @@ distinguish executed, finalized and observed committee/economic state.
 
 ## Replay, retry, restart and partial failure
 
-Registration duplicates reject except explicit inactive re-registration. DKG
+Validator registration duplicates reject except explicit inactive re-registration.
+Byte-identical OCOMP registration replay is accepted; valid replacement releases
+the old key reservation atomically. Re-entry and BLS-identity replacement clear
+readiness, so the operator must submit a registration for the current identity
+before another DKG can include the validator. DKG
 artifact retry either commits the same boundary once or restores all snapshots and
 membership. Metadata replay is fingerprint-idempotent. Fee/day settlement and
 offense processing use intent-bound guards. Restart reconstructs pending set change,

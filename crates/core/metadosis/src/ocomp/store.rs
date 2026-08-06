@@ -18,10 +18,13 @@ use super::{
     codec::{
         decode_live_scheduler_index, decode_scheduler, encode_live_scheduler_index,
         encode_scheduler, encode_scheduler_snapshot, live_snapshot_key, max_canonical_object_bytes,
-        read_canonical_optional, scheduler_snapshot, MAX_LIVE_JOBS,
+        read_canonical_optional, scheduler_snapshot,
     },
     index::ReadyIndexKey,
-    state::{DayPhase, JobFsmLimits, JobFsmState, RetryTerminalOutcome, TerminalAttempt},
+    state::{
+        DayPhase, JobFsmLimits, JobFsmState, RetryTerminalOutcome, TerminalAttempt,
+        OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS,
+    },
 };
 
 impl MetadosisContract<'_> {
@@ -317,7 +320,12 @@ impl MetadosisContract<'_> {
                     .ocomp_job_record(intent_id, limits)?
                     .ok_or_else(|| fatal("OCOMP live scheduler key has no job record"))?;
                 let expected_deadline = match record.status {
-                    OcompJobStatus::AwaitingFinality => None,
+                    OcompJobStatus::AwaitingFinality => Some(
+                        record
+                            .intent_height
+                            .checked_add(OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS)
+                            .ok_or_else(|| fatal("OCOMP awaiting-finality deadline overflow"))?,
+                    ),
                     OcompJobStatus::VotingOpen => Some(
                         record
                             .finalized
@@ -401,9 +409,6 @@ impl MetadosisContract<'_> {
             }
             index[position] = snapshot;
         } else {
-            if index.len() >= MAX_LIVE_JOBS {
-                return Err(fatal("OCOMP live scheduler capacity exhausted"));
-            }
             index.push(snapshot);
         }
         index.sort_by_key(live_snapshot_key);

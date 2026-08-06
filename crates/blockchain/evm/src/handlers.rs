@@ -209,13 +209,15 @@ pub mod vote {
         fn register_active_validator(storage: StorageHandle<'_>, validator: Address, seed: u8) {
             let mut validator_set = ValidatorSet::new(storage);
             validator_set.config_owner.write(VALIDATOR_OWNER).unwrap();
-            validator_set.config_max_validators.write(100).unwrap();
+            validator_set.set_config_max_validators(100).unwrap();
             let mut public_key = [0u8; 48];
             public_key[0] = seed;
             validator_set
                 .register_validator(VALIDATOR_OWNER, validator, &public_key)
                 .unwrap();
-            validator_set.activate_validator(validator).unwrap();
+            validator_set
+                .activate_validator_via_boundary_for_test(validator)
+                .unwrap();
         }
 
         fn setup_active_validators(storage: StorageHandle<'_>) {

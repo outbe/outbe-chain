@@ -26,8 +26,8 @@ use proptest::{
 };
 
 use super::{
-    poc_schema_limits, prepare_request_fixture, prepare_request_fixture_with_day_type,
-    prepare_two_ready_days_fixture, DayPhase, IMetadosis,
+    poc_schema_limits, prepare_ready_days_fixture, prepare_request_fixture,
+    prepare_request_fixture_with_day_type, DayPhase, IMetadosis,
 };
 use crate::{
     api, commands,
@@ -245,6 +245,7 @@ fn submit_vote(
     validator_index: u8,
     activation_entitled: bool,
 ) -> outbe_primitives::error::Result<alloy_primitives::Bytes> {
+    let local_result_authority = fixture.local_result_authority();
     let calldata = encode_submit_lysis_result_calldata(
         &fixture.signed_result_vote(validator_index),
         &fixture.limits,
@@ -260,10 +261,10 @@ fn submit_vote(
         commands::submit_verified_result_vote(
             storage,
             &fixture.scope,
-            ActivationFixture::validator_caller(validator_index),
             &calldata,
             U256::ZERO,
             false,
+            Some(local_result_authority.as_ref()),
         )
     })
 }
@@ -917,10 +918,10 @@ fn submit_invalid_vote(
         commands::submit_verified_result_vote(
             storage,
             &fixture.scope,
-            ActivationFixture::validator_caller(validator_index % 4),
             &calldata,
             U256::ZERO,
             false,
+            None,
         )
     })
 }
@@ -1559,7 +1560,7 @@ fn seed_near_cap_history(
 #[test]
 fn terminal_cap_is_per_worldwide_day_not_global() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
-    let fixture = prepare_two_ready_days_fixture(&mut provider, true);
+    let fixture = prepare_ready_days_fixture(&mut provider, true);
     let limits = poc_schema_limits();
     let fsm_limits = crate::ocomp::state::JobFsmLimits {
         max_terminal_records: 365,
@@ -1661,7 +1662,7 @@ fn terminal_cap_is_per_worldwide_day_not_global() {
 #[test]
 fn two_concurrent_live_days_do_not_share_terminal_budget() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
-    let fixture = prepare_two_ready_days_fixture(&mut provider, true);
+    let fixture = prepare_ready_days_fixture(&mut provider, true);
     let limits = poc_schema_limits();
     let fsm_limits = crate::ocomp::state::JobFsmLimits {
         max_terminal_records: 365,
@@ -1679,7 +1680,7 @@ fn two_concurrent_live_days_do_not_share_terminal_budget() {
         &mut provider,
         &fixture.scope,
         fixture.later_wwd,
-        // Stay well inside the first day's response window (open + 64 blocks):
+        // Stay well inside the first day's exact compute-and-vote response window:
         // the begin-zone enforces exact response-deadline heights.
         fixture.block_number + 5,
         fixture.block_time + 4,

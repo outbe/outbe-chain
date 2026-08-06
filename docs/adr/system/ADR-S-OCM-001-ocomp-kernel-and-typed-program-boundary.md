@@ -1,8 +1,7 @@
 # ADR-S-OCM-001: OCOMP is an operational kernel for closed typed programs
 
-- **Status:** Accepted; full-result quorum apply implemented on
-  `feat/ocomp-poc`; final PoC closure evidence pending
-- **Date:** 2026-07-26
+- **Status:** Accepted; dynamic ACTIVE-ValidatorSet membership implementation in progress
+- **Date:** 2026-08-04
 - **Decision owners:** System Space, consensus execution and Core program maintainers
 - **Scope:** OCOMP lifecycle/process boundary and the contract between shared
   computation infrastructure and a domain program
@@ -48,7 +47,7 @@ The kernel and program own different truths:
 | process/control-plane boundaries | authenticated input schema and completeness |
 | artifact addressing, leases and retry mechanics | planner, units, reducer and semantic ordering |
 | verified-admission journal and bounded catalog cursors | pure typed finalizer and every result-field derivation |
-| committee snapshot, sign-once and evidence envelope | typed result, equations and result verifier |
+| pinned historical ACTIVE ValidatorSet, OCOMP key binding, sign-once and evidence envelope | typed result, equations and result verifier |
 | outer quorum-apply checkpoint and closed dispatch | private effect capability, owner calls and receipts |
 | protocol compatibility and readiness | domain-visible output and recovery contract |
 
@@ -120,8 +119,7 @@ are bounded.
 | Responsibility | Authority |
 |---|---|
 | consensus job state and finality binding | OCOMP kernel inside block execution |
-| finalized job discovery and authenticated input | public node RPC blocks, receipts, calls and proofs |
-| Worker registration, leases, cancellation and reports | Axum registration plus bounded ZeroMQ/TCP messages |
+| local job discovery/lease/attestation control | bounded versioned `OcompControlV1` |
 | bulk input/result bytes | authenticated CAS objects, never control messages |
 | exact admitted artifact/chunk order | plan-derived, durable supervisor catalog cursors |
 | Lysis semantics and result meaning | ADR-C-LYS-001 and the pinned Lysis bundle |
@@ -138,6 +136,13 @@ are bounded.
 ## Invariants
 
 - OCOMP failure cannot stop consensus or mutate domain state.
+- OCOMP voting membership for a new attempt is exactly the ordered ACTIVE
+  ValidatorSet pinned by that attempt. There is no independent OCOMP committee.
+- The attempt stores `N` from that snapshot and the consensus quorum
+  `simplex_n3f1_quorum(N)`; a caller cannot choose membership, `N` or quorum.
+- A membership change affects only later attempts. Live attempts retain their
+  three historical bindings: ValidatorSet epoch, consensus committee-set hash
+  and OCOMP key-binding hash.
 - A supervisor, exporter, worker, CAS or public transaction submitter owns no
   consensus authority; quorum is derived from bounded on-chain vote state.
 - The supervisor may invoke the Lysis finalizer but cannot supply precomputed
@@ -203,13 +208,14 @@ Gem qualification is the preferred future stress test, not a PoC deliverable.
 
 ## Production-interface verification evidence
 
-No complete OCOMP process, control API, job state, attestation gate or
-quorum-apply module
-exists in production code. PFS-002 and `off-chain-poc.md` define the required
-four-validator demonstration. Evidence must use separate released processes,
-real Axum/Salvo/ZeroMQ TCP endpoints, consensus blocks, public RPC and public
-state/proof reads. Direct
-executor calls, shared calculator output or injected state cannot satisfy it.
+The typed protocol uses three explicit historical snapshot bindings, `u16`
+participant indices, dynamically sized vote slots and LSB0 byte-vector bitmaps.
+Its public `submitLysisResult` ingress has one bounded canonical prefix decoder
+shared by full decoding. Stateful admission, historical snapshot storage and
+the reachable FullNode-to-validator membership scenario remain required before
+the dynamic-membership change is complete. Process evidence must use separate
+released processes, real UDS, consensus blocks, public RPC and public
+state/proof reads; direct state injection is not substitute evidence.
 
 ## Consequences
 
@@ -233,12 +239,9 @@ completeness and mutation authority.
 
 ## Open questions and technical debt
 
-1. Choose exact crate/binary ownership and names without weakening the three
-   deep internal boundaries: lifecycle, program semantics and certified apply.
-2. Register every new process/task with ADR-B-SUP-001 and its deployment profile
+1. Register every new process/task with ADR-B-SUP-001 and its deployment profile
    with ADR-B-OPS-001.
-3. Freeze the bounded control protocol and capability handshake before coding.
-4. Prove no existing public/runtime entrypoint bypasses the certified Lysis path
+2. Prove no existing public/runtime entrypoint bypasses the certified Lysis path
    after the PoC fork.
-5. A second program ADR is intentionally absent; do not create placeholder
+3. A second program ADR is intentionally absent; do not create placeholder
    adapters or registry entries to satisfy this decision.

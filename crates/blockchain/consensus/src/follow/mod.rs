@@ -10,9 +10,9 @@
 //! 1. anchors the START epoch's committee on the **genesis validator MinPk
 //!    set**, read from the follower's OWN genesis state — the trust root;
 //!    nothing the operator must provide;
-//! 2. reads each later epoch's committee from the finalized **boundary block**
-//!    that activates it, and trusts it transitively because that boundary block
-//!    was finalized by the already-trusted previous committee.
+//! 2. reads each later epoch's committee from a `CommitteePreAnnounce` in the
+//!    previous epoch's last finalized block, verifies that block with the already
+//!    trusted previous committee, and only then installs the next verifier.
 //!
 //! All inputs are public on-chain data carried in the boundary block
 //! `extra_data` (the full DKG [`Output`] — players + polynomial); the follower
@@ -224,9 +224,12 @@ impl CommitteeChain {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{collections::BTreeMap, sync::Arc};
+
+    use alloy_primitives::Bytes;
     use commonware_codec::Encode as _;
     use commonware_consensus::simplex::types::{Finalization, Proposal, Subject};
-    use commonware_consensus::types::{Round, View};
+    use commonware_consensus::types::{Height, Round, View};
     use commonware_cryptography::certificate::Scheme as _;
     use commonware_cryptography::{Hasher as _, Sha256, Signer as _};
     use commonware_utils::{
@@ -321,6 +324,17 @@ mod tests {
 
         /// A finalization for `epoch` signed by this committee.
         fn finalization(&self, epoch: Epoch) -> Finalization<HybridScheme<MinSig>, Digest> {
+            let digest = Digest::from(alloy_primitives::B256::from_slice(
+                Sha256::hash(format!("blk-{}", epoch.get()).as_bytes()).as_ref(),
+            ));
+            self.finalization_for(epoch, digest)
+        }
+
+        fn finalization_for(
+            &self,
+            epoch: Epoch,
+            digest: Digest,
+        ) -> Finalization<HybridScheme<MinSig>, Digest> {
             let ns = crate::config::outbe_app_namespace();
             let verifier = HybridScheme::<MinSig>::verifier(
                 &ns,
@@ -343,9 +357,6 @@ mod tests {
                     .unwrap()
                 })
                 .collect();
-            let digest = Digest::from(alloy_primitives::B256::from_slice(
-                Sha256::hash(format!("blk-{}", epoch.get()).as_bytes()).as_ref(),
-            ));
             let proposal = Proposal::new(Round::new(epoch, View::new(2)), View::new(1), digest);
             let subject = Subject::Finalize {
                 proposal: &proposal,
@@ -362,6 +373,83 @@ mod tests {
                 certificate,
             }
         }
+    }
+
+    #[derive(Clone, Default)]
+    struct ArchivedFinalizedSource {
+        by_height: Arc<BTreeMap<u64, CertifiedFinalizedBlock>>,
+    }
+
+    impl FinalizedSource for ArchivedFinalizedSource {
+        fn get_finalization(
+            &self,
+            height: Height,
+        ) -> impl std::future::Future<Output = Option<CertifiedFinalizedBlock>> + Send {
+            std::future::ready(self.by_height.get(&height.get()).cloned())
+        }
+    }
+
+    fn certified_block(
+        signer: &Committee,
+        epoch: Epoch,
+        height: u64,
+        extra_data: Vec<u8>,
+    ) -> CertifiedFinalizedBlock {
+        use reth_ethereum::{primitives::SealedBlock, Block};
+
+        let mut block = Block::default();
+        block.header.number = height;
+        block.header.extra_data = Bytes::from(extra_data);
+        let block = crate::block::ConsensusBlock::from_sealed(SealedBlock::seal_slow(
+            block.map_header(outbe_primitives::OutbeHeader::new),
+        ));
+        let finalization = signer.finalization_for(epoch, block.digest());
+        CertifiedFinalizedBlock {
+            finalization,
+            block,
+        }
+    }
+
+    #[test]
+    fn restart_rebuilds_every_committee_from_prior_epoch_finality_before_current_epoch() {
+        let c0 = committee(10);
+        let c1 = committee(30);
+        let c2 = committee(50);
+        let e0 = Epoch::new(0);
+        let e1 = Epoch::new(1);
+        let e2 = Epoch::new(2);
+        let epocher = FollowerEpocher::new(10);
+        let source = ArchivedFinalizedSource {
+            by_height: Arc::new(BTreeMap::from([
+                (
+                    1,
+                    certified_block(&c0, e0, 1, c0.boundary_block_extra_data(e0)),
+                ),
+                (
+                    10,
+                    certified_block(&c0, e0, 10, c1.preannounce_block_extra_data(e1)),
+                ),
+                (
+                    20,
+                    certified_block(&c1, e1, 20, c2.preannounce_block_extra_data(e2)),
+                ),
+            ])),
+        };
+        let chain = Arc::new(std::sync::Mutex::new(CommitteeChain::new(
+            e0,
+            c0.participants.clone(),
+        )));
+
+        futures::executor::block_on(engine::prepare_committee_chain(
+            &chain, &source, &epocher, e0, e2,
+        ))
+        .expect("restart must rebuild the authenticated chain through the recovered epoch");
+
+        let guard = chain.lock().unwrap();
+        assert_eq!(guard.highest_registered(), Some(e2));
+        guard
+            .verify_finalization(e2, &c2.finalization(e2))
+            .expect("current epoch finality must verify after restart reconstruction");
     }
 
     #[test]
