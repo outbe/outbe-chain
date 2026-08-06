@@ -490,13 +490,13 @@ tests:
     status: planned
     layer: PROCESS
     lane: OCM-INT
-    planned_path: bin/outbe-ocomp/tests/finalized_discovery.rs
-    production_entrypoint: finalized cursor over real node-supervisor UDS
+    planned_path: bin/outbe-ocomp/tests/public_rpc_input_path.rs
+    production_entrypoint: finalized cursor over public node RPC
     real_components:
-      - production_node_control_server
-      - production_supervisor_process
-      - real_uds
-      - real_supervisor_journal
+      - public_finalized_blocks_and_receipts
+      - eth_get_logs_call_and_proof
+      - production_snapshot_exporter
+      - real_discovery_and_export_journals
     substitutions: []
     oracles:
       - PROCESS_BOUNDARY
@@ -559,21 +559,23 @@ tests:
     status: planned
     layer: PROCESS
     lane: OCM-INT
-    planned_path: bin/outbe-ocomp/tests/control_protocol.rs
-    production_entrypoint: OcompControlV1 and fixed worker/exporter UDS
+    planned_path: bin/outbe-ocomp/tests/worker_one_unit.rs
+    production_entrypoint: Axum worker registration and ZeroMQ ROUTER/DEALER over TCP
     real_components:
-      - production_control_server_and_clients
-      - real_uds
-      - real_peer_credentials
+      - production_supervisor_and_worker_processes
+      - axum_registration
+      - zeromq_tcp_transport
+      - worker_salvo_observability
     substitutions: []
     oracles:
       - PROCESS_BOUNDARY
       - RESOURCE_COUNTER
     evidence:
-      - frame_and_acl_matrix
-      - incompatible_bundle_readiness
-      - cap_plus_one_rejection
-      - oversized_response_returns_typed_limit_without_session_loss
+      - registration_identity_and_generation_binding
+      - asynchronous_multi_worker_dispatch
+      - lease_ack_heartbeat_cancel_and_completion
+      - stale_completion_rejection_and_redelivery
+      - worker_healthz_and_status
   OCM-DET-001:
     status: planned
     layer: PROCESS
@@ -888,11 +890,12 @@ tests:
     layer: E2E
     lane: OCM-E2E
     planned_path: testing/e2e-harness/features/ocomp_poc.feature
-    production_entrypoint: incompatible supervisor handshake
+    production_entrypoint: incompatible Worker registration
     real_components:
       - four_nodes
       - one_incompatible_supervisor_process
-      - real_uds
+      - real_axum_registration
+      - real_zeromq_tcp
     substitutions: []
     oracles:
       - PROCESS_BOUNDARY

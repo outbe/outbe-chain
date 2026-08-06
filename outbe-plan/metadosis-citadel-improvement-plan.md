@@ -99,8 +99,8 @@ Finding считается закрытым только когда одновр
 - изменение OCOMP test IDs, task ownership, deferrals, retired rows или
   closure semantics при извлечении общего `VerificationLedger`;
 - общепроектный redesign CI, artifact storage или release orchestration;
-- production-поддержка macOS node/OCOMP runtime за пределами узкого
-  local-control peer-credential adapter, нужного для native harness build;
+- production-поддержка macOS node/OCOMP runtime за пределами публичного RPC и
+  loopback TCP транспорта, нужного для native harness build;
 - governance recovery повреждённого consensus state;
 - deployment, fork activation, backfill и миграция реально запущенной сети;
 - поддержка replay/state, созданных до этого изменения: target — только новый
@@ -1066,7 +1066,7 @@ Metadosis packs без смешивания их normative semantics.
 
 **Не делать.**
 Не заполнять ledger для остальных модулей, не менять OCOMP closure contract и
-не превращать узкую harness/local-control portability в production macOS
+не превращать узкую harness/loopback-TCP portability в production macOS
 node/OCOMP support.
 
 ### 9.1. Какие ADR и normative-документы изменять

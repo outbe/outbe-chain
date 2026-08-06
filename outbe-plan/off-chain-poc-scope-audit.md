@@ -53,7 +53,7 @@ and
 | 2.3 | full-result vote transaction, exclusive deadline, q-forming atomic conflict/apply/retirement | 5.4–5.5, 10 | exact |
 | 3 | canonical CE root chain and untrusted body transport | 6.1 | exact |
 | 4 | sibling processes and nonfatal OCOMP failure boundary | 3, 12 | exact PoC subset |
-| 5 | bounded UDS control and local filesystem CAS | 7 | exact PoC adapters |
+| 5 | public node RPC, bounded ZeroMQ/TCP worker control and local filesystem CAS | 7 | exact PoC adapters |
 | 6 | deterministic planner, constant-size `PlanCommitmentV1`, lazily derived `UnitSpecV1`, fixed streaming reducer | 8 | exact PoC subset |
 | 7 | deterministic current-Lysis Map/Reduce semantics | 8 | exact PoC subset |
 | 8.1 | finality-to-body/opening input authenticity and full CE fold | 6 | exact |

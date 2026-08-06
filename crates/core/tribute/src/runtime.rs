@@ -393,6 +393,7 @@ impl TributeContract<'_> {
     fn burn_loaded_inner(&mut self, scope: &ExecutionScope, loaded: LoadedTribute) -> Result<()> {
         let LoadedTribute { body, current } = loaded;
         let tribute = body;
+        self.ensure_day_accepts_tributes(tribute.worldwide_day)?;
         self.bump_day_bucket(tribute.worldwide_day, -1, tribute.nominal_amount_minor)?;
         self.update_pre_admission_for_tribute(&tribute, false)?;
 

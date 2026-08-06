@@ -6,13 +6,7 @@
 
 #[cfg(test)]
 use std::cell::Cell;
-use std::{
-    collections::HashMap,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
-};
+use std::{collections::HashMap, sync::Arc};
 
 use alloy_primitives::{Address, Bytes, Log, B256, U256};
 use k256::ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey};
@@ -23,6 +17,8 @@ use outbe_compressed_entities::{
 };
 #[cfg(test)]
 use outbe_lysis::activation_v1::LysisOwnerReceiptsV1;
+#[cfg(test)]
+use outbe_ocomp_protocol::intent::intent_storage_key;
 #[cfg(test)]
 use outbe_ocomp_protocol::league_snapshot::league_snapshot_key;
 #[cfg(test)]
@@ -35,12 +31,10 @@ use outbe_ocomp_protocol::{
     common::{BoundedBytes, ProofBytes},
     hash::hash_framed,
     intent::{
-        intent_storage_key, ActivationPreconditionsV1, CertifiedParentAccountingMetadataV2,
-        ContributorTargetPreconditionV1, DayType, ExpectedFinalizedIntentBindingV1,
-        FinalizedIntentProofV1, FinalizedIntentVerificationError, FinalizedRequestBindingV1,
-        FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
-        MetadosisExpectedStatus, NodTargetPreconditionV1, ParentProofKind, TributeInputBindingV1,
-        VerifiedFinalizedIntentV1,
+        ActivationPreconditionsV1, CertifiedParentAccountingMetadataV2,
+        ContributorTargetPreconditionV1, DayType, FinalizedIntentProofV1, FrozenMetadosisValuesV1,
+        JobIntentV1, MetadosisAttemptPreconditionV1, MetadosisExpectedStatus,
+        NodTargetPreconditionV1, ParentProofKind, TributeInputBindingV1,
     },
     profile::{CapacityProfileV1, ProtocolBundleV1},
     receipts::{
@@ -74,7 +68,6 @@ use crate::schema::{
 use crate::{
     constants::{FORMING_PERIOD_HOURS, MAX_ACTIVE_WWDS, SECONDS_PER_HOUR, WAITING_PERIOD_HOURS},
     ocomp::{
-        activation::{OcompFinalityAuthorityError, OcompFinalizedIntentAuthority},
         fork::{OcompForkInstallClassification, OcompForkInstallV1},
         schema::{poc_schema_limits, OcompRequestProfile},
         state::JobFsmLimits,
@@ -561,7 +554,13 @@ fn committee(
                     fork_id: hash(21),
                     protocol_bundle_hash: bundle_hash,
                     validator_index: index,
-                    validator_identity_hash: hash(70 + index),
+                    validator_identity_hash:
+                        outbe_ocomp_protocol::committee::validator_identity_hash(
+                            index,
+                            ActivationFixture::validator_caller(index),
+                            &[0_u8; 48],
+                        )
+                        .unwrap(),
                     ocomp_public_key_sec1: key
                         .verifying_key()
                         .to_encoded_point(true)
@@ -965,28 +964,6 @@ fn finality_proof(intent: &JobIntentV1, limits: &SchemaLimits) -> FinalizedInten
     }
 }
 
-#[derive(Clone)]
-pub struct FixedFinality {
-    expected: ExpectedFinalizedIntentBindingV1,
-    verified: VerifiedFinalizedIntentV1,
-    calls: Arc<AtomicUsize>,
-}
-
-impl OcompFinalizedIntentAuthority for FixedFinality {
-    fn verify(
-        &self,
-        _proof: &FinalizedIntentProofV1,
-        expected: ExpectedFinalizedIntentBindingV1,
-        _limits: &SchemaLimits,
-    ) -> Result<VerifiedFinalizedIntentV1, OcompFinalityAuthorityError> {
-        self.calls.fetch_add(1, Ordering::Relaxed);
-        if expected != self.expected {
-            return Err(FinalizedIntentVerificationError::WrongProtocolBundle.into());
-        }
-        Ok(self.verified.clone())
-    }
-}
-
 #[derive(Debug)]
 struct TributePartitionTree {
     parent_root: B256,
@@ -1093,13 +1070,19 @@ pub struct ActivationFixture {
     pub provider: HashMapStorageProvider,
     pub scope: ExecutionScope,
     pub result: LysisResultV1,
-    pub finality: FixedFinality,
     pub intent_id: B256,
     pub limits: SchemaLimits,
     pub request_receipt: RequestBudgetSplitReceiptV1,
 }
 
 impl ActivationFixture {
+    #[must_use]
+    pub fn validator_caller(validator_index: u8) -> Address {
+        let mut bytes = [0_u8; 20];
+        bytes[19] = validator_index.saturating_add(1);
+        Address::from(bytes)
+    }
+
     #[must_use]
     pub fn new(current_height: u64, current_time: u64, seed_targets: bool) -> Self {
         Self::new_with_initial_votes(current_height, current_time, seed_targets, 2)
@@ -1140,33 +1123,33 @@ impl ActivationFixture {
             )
             .unwrap();
         let result = result(bundle_hash, job_id, &limits);
-        let expected = ExpectedFinalizedIntentBindingV1 {
-            chain_id: intent.chain_id,
-            genesis_hash: intent.genesis_hash,
-            fork_id: intent.fork_id,
-            protocol_bundle_hash: intent.protocol_bundle_hash,
-        };
-        let finality = FixedFinality {
-            expected,
-            verified: VerifiedFinalizedIntentV1 {
-                intent: intent.clone(),
-                intent_id,
-                intent_storage_key: intent_storage_key(intent_id).unwrap(),
-                job_id,
-                request: FinalizedRequestBindingV1 {
-                    block_number: 9,
-                    block_hash: hash(46),
-                    state_root: request_state_root,
-                },
-            },
-            calls: Arc::new(AtomicUsize::new(0)),
-        };
-
         let mut provider = HashMapStorageProvider::new(1);
         provider.set_block_number(current_height);
         provider.set_timestamp(U256::from(current_time));
         let scope = begin_activation_scope(&mut provider);
         StorageHandle::enter(&mut provider, |storage| {
+            let validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+            validators.validator_count.write(4).unwrap();
+            for index in 0_u8..4 {
+                let validator = Self::validator_caller(index);
+                let registration_index = u64::from(index) + 1;
+                validators
+                    .address_to_index
+                    .write(&validator, registration_index)
+                    .unwrap();
+                validators
+                    .index_to_address
+                    .write(&registration_index, validator)
+                    .unwrap();
+                validators
+                    .val_status
+                    .write(&validator, outbe_validatorset::logic::status::ACTIVE)
+                    .unwrap();
+                validators
+                    .val_has_bls_share
+                    .write(&validator, true)
+                    .unwrap();
+            }
             if seed_targets {
                 let tribute = TributeContract::new(storage.clone());
                 tribute.ocomp_profile_ready.write(true).unwrap();
@@ -1277,7 +1260,8 @@ impl ActivationFixture {
                 vote.signature_rs = sign(&signing_key(index), signing_digest);
                 contract
                     .record_ocomp_result_vote(
-                        &vote,
+                        &vote.result,
+                        Self::validator_caller(index),
                         finalized.open_height + u64::from(index),
                         &scope,
                         &limits,
@@ -1291,34 +1275,10 @@ impl ActivationFixture {
             provider,
             scope,
             result,
-            finality,
             intent_id,
             limits,
             request_receipt,
         }
-    }
-
-    /// Creates the canonical node-attested vote for one fixture committee
-    /// member. The returned bytes still have to pass the production public
-    /// dispatch and consensus transition.
-    #[must_use]
-    pub fn signed_result_vote(&self, validator_index: u8) -> ResultVoteV1 {
-        let intent = &self.finality.verified.intent;
-        let mut vote = ResultVoteV1 {
-            protocol_bundle_hash: intent.protocol_bundle_hash,
-            job_id: self.result.job_id,
-            attempt: intent.attempt,
-            result_committee_snapshot_hash: intent.result_committee_snapshot_hash,
-            validator_index,
-            key_epoch: 1,
-            result: self.result.clone(),
-            signature_rs: [0; 64],
-        };
-        vote.signature_rs = sign(
-            &signing_key(validator_index),
-            vote.signing_digest(intent, &self.limits).unwrap(),
-        );
-        vote
     }
 
     pub fn apply(&mut self) -> PrecompileResult<Bytes> {
@@ -1346,7 +1306,7 @@ impl ActivationFixture {
     pub fn calldata(&self) -> Bytes {
         Bytes::from(
             outbe_ocomp_protocol::abi::encode_submit_lysis_result_calldata(
-                &self.signed_result_vote(2),
+                &self.result,
                 &self.limits,
             )
             .unwrap(),
@@ -1361,6 +1321,7 @@ impl ActivationFixture {
             crate::commands::submit_verified_result_vote(
                 storage,
                 &self.scope,
+                Self::validator_caller(2),
                 calldata.as_ref(),
                 U256::ZERO,
                 false,

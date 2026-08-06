@@ -3,41 +3,22 @@
 mod support;
 
 use std::env;
-use std::fs::{self, OpenOptions};
-use std::io::Write as _;
-use std::os::fd::OwnedFd;
-use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
-use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::Arc;
-use std::thread;
-use std::time::Duration;
 
 use alloy_primitives::{keccak256, Address, B256, U256};
 use k256::ecdsa::{signature::hazmat::PrehashSigner as _, Signature, SigningKey};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
-use outbe_consensus::block::ConsensusBlock;
 use outbe_e2e_harness::ocomp_finality_fixture::{finalized_intent_proof_fixture, fixture_league};
 use outbe_lysis::program_v1::planner::{
     LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1,
-};
-use outbe_node::ocomp::{
-    control::{OcompControlServer, OcompNodeAttestationConfig},
-    retention::{
-        CandidateFinalityV1, CandidatePinV1, FinalizedInputProofSource, FinalizedJobPinV1,
-        OcompRetentionCoordinator, RetentionError,
-    },
 };
 use outbe_ocomp::{
     admission_catalog::{AdmissionCatalogError, AdmissionOutcome, VerifiedAdmissionCatalog},
     bundle::PinnedProtocolBundle,
     cas::{CasLimits, CasWriterRole, FilesystemCas, FilesystemCasReader},
-    control::{
-        effective_uid, effective_user_name, poc_schema_limits, ClientPolicy, ControlClientSession,
-        EndpointIdentity,
-    },
+    control::{effective_uid, poc_schema_limits, EndpointIdentity},
     inbox::{WorkerInbox, WorkerInboxLimits},
     input_artifacts::{
         poc_input_list_limits, publish_input_artifact_set, InputArtifactContents,
@@ -48,10 +29,9 @@ use outbe_ocomp::{
     lysis_plan_audit::{ExactLysisPlanError, LocalLysisPlanAuditV1, LysisPlanAuditStepV1},
     lysis_result_catalog::{ExactLysisResultCatalogCursorV1, LysisResultCatalogStepV1},
     lysis_scheduler::admit_reported_lysis_unit_v1,
-    supervisor::{
-        DiscoveryRecord, SupervisorDiscovery, SupervisorDiscoveryConfig, SupervisorDiscoveryError,
-    },
-    worker::{run_one_from_inherited_fd, WorkerConfig},
+    supervisor::DiscoveryRecord,
+    worker::{run_worker, WorkerConfig},
+    worker_transport::SupervisorWorkerServerV1,
 };
 use outbe_ocomp_protocol::{
     committee::{
@@ -59,27 +39,23 @@ use outbe_ocomp_protocol::{
         OcompMemberV1, RESULT_SIGNATURE_PURPOSE_BITMAP,
     },
     common::ProofBytes,
-    hash::hash_framed,
     input::{
         materialize_authenticated_openings, CheckpointIdentityV1, InputChunkKind, InputManifestV1,
     },
     intent::{
         ActivationPreconditionsV1, ContributorTargetPreconditionV1, DayType,
-        FinalizedIntentProofV1, FrozenMetadosisValuesV1, JobIntentV1,
-        MetadosisAttemptPreconditionV1, MetadosisExpectedStatus, NodTargetPreconditionV1,
-        TributeInputBindingV1,
+        FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
+        MetadosisExpectedStatus, NodTargetPreconditionV1, TributeInputBindingV1,
     },
     league_snapshot::league_snapshot_slot,
     opening::{
         partition_lysis_opening_subjects, LysisOpeningsProofV1, OpeningSubjectsV1,
         RawContractOpeningProofV1, RawStorageSlotV1,
     },
-    registry::HashDomain,
-    result::{LysisResultV1, ResultChunkV1},
+    result::ResultChunkV1,
     unit::UnitSpecV1,
-    vote::ResultVoteV1,
-    FinalizedJobSpecV1, FinalizedJobSummaryV1, LocalErrorCode, RunUnitV1, SchemaLimits,
-    UnitFinishedStatus, UnitFinishedV1, WorkerMessageKind,
+    FinalizedJobSpecV1, FinalizedJobSummaryV1, RunUnitV1, SchemaLimits, UnitFinishedStatus,
+    UnitFinishedV1,
 };
 use outbe_oracle::oracle_opening_slot_plan_v1;
 use outbe_primitives::addresses::{METADOSIS_ADDRESS, ORACLE_ADDRESS};
@@ -91,14 +67,11 @@ const CHILD_CHAIN_ID: &str = "OUTBE_OCOMP_DET_CHAIN_ID";
 const CHILD_GENESIS: &str = "OUTBE_OCOMP_DET_GENESIS";
 const CHILD_BOOT_NONCE: &str = "OUTBE_OCOMP_DET_BOOT_NONCE";
 const CHILD_BUNDLE: &str = "OUTBE_OCOMP_DET_BUNDLE";
-const CHILD_GENERATION: &str = "OUTBE_OCOMP_DET_GENERATION";
 const CHILD_CAS_ROOT: &str = "OUTBE_OCOMP_DET_CAS_ROOT";
 const CHILD_CAS_OBJECT_CAP: &str = "OUTBE_OCOMP_DET_CAS_OBJECT_CAP";
 const CHILD_CAS_TOTAL_CAP: &str = "OUTBE_OCOMP_DET_CAS_TOTAL_CAP";
 const CHILD_INBOX_ROOT: &str = "OUTBE_OCOMP_DET_INBOX_ROOT";
-const NODE_CHILD_MODE: &str = "OUTBE_OCOMP_SIG_NODE_CHILD";
-const NODE_CHILD_ROOT: &str = "OUTBE_OCOMP_SIG_NODE_ROOT";
-const NODE_CHILD_SOCKET: &str = "OUTBE_OCOMP_SIG_NODE_SOCKET";
+const CHILD_SUPERVISOR_ADDRESS: &str = "OUTBE_OCOMP_DET_SUPERVISOR_ADDRESS";
 
 const TEST_NAME: &str = "ocm_det_001_real_257_tribute_schedules_are_byte_identical";
 const TRIBUTE_COUNT: u32 = 257;
@@ -207,93 +180,8 @@ fn deterministic_committee() -> OcompCommitteeSnapshotV1 {
     }
 }
 
-#[derive(Clone)]
-struct ExportedNodeFixtureSource {
-    candidate: CandidatePinV1,
-    job_id: B256,
-    proof: FinalizedIntentProofV1,
-}
-
-impl FinalizedInputProofSource for ExportedNodeFixtureSource {
-    fn candidate_for_block(
-        &self,
-        block: &ConsensusBlock,
-    ) -> Result<Option<CandidatePinV1>, RetentionError> {
-        Ok((block.block_hash() == self.candidate.block_hash).then_some(self.candidate))
-    }
-
-    fn resolve_finality(
-        &self,
-        candidate: CandidatePinV1,
-    ) -> Result<CandidateFinalityV1, RetentionError> {
-        if candidate != self.candidate {
-            return Err(RetentionError::Source(
-                "attestation fixture received a different candidate".to_owned(),
-            ));
-        }
-        Ok(CandidateFinalityV1::Finalized(FinalizedJobPinV1 {
-            candidate,
-            job_id: self.job_id,
-            finality_recorded_height: candidate.block_number,
-            open_height: candidate.block_number + 4,
-            deadline_height: candidate.block_number + 10,
-        }))
-    }
-
-    fn build_finalized_intent_proof(
-        &self,
-        candidate: CandidatePinV1,
-    ) -> Result<FinalizedIntentProofV1, RetentionError> {
-        if candidate != self.candidate {
-            return Err(RetentionError::Source(
-                "attestation fixture received a different proof candidate".to_owned(),
-            ));
-        }
-        Ok(self.proof.clone())
-    }
-}
-
-fn exported_node_fixture() -> (ConsensusBlock, ExportedNodeFixtureSource, JobIntentV1) {
-    let limits = poc_schema_limits();
-    let bundle_hash = support::protocol_bundle()
-        .protocol_bundle_hash(&limits)
-        .expect("deterministic bundle hash");
-    let day = WorldwideDay::new(20_260_725);
-    let nominal_total = tributes(day)
-        .iter()
-        .try_fold(U256::ZERO, |total, tribute| {
-            total.checked_add(tribute.nominal_amount_minor)
-        })
-        .expect("deterministic nominal total");
-    let intent = job_intent(day, bundle_hash, nominal_total);
-    let proof_fixture = finalized_intent_proof_fixture(intent.clone(), &limits);
-    let candidate = CandidatePinV1 {
-        block_number: proof_fixture.block.number(),
-        block_hash: proof_fixture.header_hash,
-        state_root: proof_fixture.state_root,
-        intent_id: proof_fixture.intent_id,
-        wwd: intent.wwd,
-        ce_sealed_root: intent.ce_sealed_root,
-        protocol_bundle_hash: intent.protocol_bundle_hash,
-        input_lease_id: intent.input_lease_id().expect("input lease id"),
-    };
-    (
-        proof_fixture.block,
-        ExportedNodeFixtureSource {
-            candidate,
-            job_id: proof_fixture.job_id,
-            proof: proof_fixture.proof,
-        },
-        intent,
-    )
-}
-
 #[test]
 fn ocm_det_001_real_257_tribute_schedules_are_byte_identical() {
-    if env::var_os(NODE_CHILD_MODE).is_some() {
-        run_child_node();
-        return;
-    }
     if env::var_os(CHILD_MODE).is_some() {
         run_child_worker();
         return;
@@ -319,187 +207,6 @@ fn ocm_det_001_real_257_tribute_schedules_are_byte_identical() {
     assert!(four.schedule.iter().any(|batch| batch.len() >= 3));
     assert_ne!(one.schedule, two.schedule);
     assert_ne!(two.schedule, four.schedule);
-
-    attest_finalized_schedule_across_node_restart(&one);
-}
-
-fn attest_finalized_schedule_across_node_restart(outcome: &ScheduleOutcome) {
-    let limits = poc_schema_limits();
-    let root = tempdir().expect("attestation process fixture");
-    let (block, source, intent) = exported_node_fixture();
-    let open_height = source
-        .candidate
-        .block_number
-        .checked_add(4)
-        .expect("fixture open height");
-    let deadline_height = source
-        .candidate
-        .block_number
-        .checked_add(10)
-        .expect("fixture deadline height");
-    assert_eq!(source.job_id, outcome.job_id);
-    let result = LysisResultV1::decode_canonical(&outcome.result_bytes, &limits)
-        .expect("final Lysis result");
-    assert_eq!(
-        result.result_digest(&limits).expect("result digest"),
-        outcome.result_digest
-    );
-
-    let retention_root = root.path().join("retention");
-    let coordinator = OcompRetentionCoordinator::open(&retention_root, Arc::new(source.clone()));
-    coordinator
-        .reconcile_finalized(&block)
-        .expect("persist finalized OCOMP authority");
-    coordinator
-        .record_exported(outcome.job_id, 2, 1, result.input_manifest_hash)
-        .expect("persist exact exported manifest authority");
-    drop(coordinator);
-
-    let key_path = root.path().join("ocomp-key-v1.hex");
-    let mut key_file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&key_path)
-        .expect("create node OCOMP key");
-    key_file
-        .write_all(b"0101010101010101010101010101010101010101010101010101010101010101\n")
-        .expect("write node OCOMP key");
-    key_file.sync_all().expect("sync node OCOMP key");
-
-    let first = request_node_attestation(root.path(), "first", &outcome.result_bytes)
-        .expect("first process attestation");
-    first
-        .verify(
-            &intent,
-            outcome.job_id,
-            &deterministic_committee(),
-            open_height,
-            open_height,
-            deadline_height,
-            &limits,
-        )
-        .expect("verify first process result vote");
-    let replay = request_node_attestation(root.path(), "replay", &outcome.result_bytes)
-        .expect("exact replay after node process restart");
-    assert_eq!(replay, first);
-
-    let mut conflicting = result;
-    conflicting.roots.nod_root = B256::repeat_byte(0xe1);
-    conflicting.arithmetic_commitment = hash_framed(
-        HashDomain::LysisArithmetic,
-        &conflicting
-            .arithmetic_summary()
-            .encode_canonical(&limits)
-            .expect("conflicting arithmetic summary"),
-    )
-    .expect("conflicting arithmetic commitment");
-    conflicting
-        .validate_semantics(&limits)
-        .expect("internally valid conflicting result");
-    let error = request_node_attestation(
-        root.path(),
-        "conflict",
-        &conflicting
-            .encode_canonical(&limits)
-            .expect("canonical conflicting result"),
-    )
-    .expect_err("second digest must be refused after node restart");
-    assert!(matches!(
-        error,
-        SupervisorDiscoveryError::RemoteRejected {
-            error_code,
-            retryable: false,
-            ..
-        } if error_code == LocalErrorCode::Conflict as u16
-    ));
-}
-
-fn request_node_attestation(
-    root: &Path,
-    run: &str,
-    canonical_result: &[u8],
-) -> Result<ResultVoteV1, SupervisorDiscoveryError> {
-    let socket = root.join(format!("node-{run}.sock"));
-    let mut child = Command::new(env::current_exe().expect("current deterministic test binary"));
-    child
-        .args(["--exact", TEST_NAME, "--nocapture"])
-        .env(NODE_CHILD_MODE, "1")
-        .env(NODE_CHILD_ROOT, root)
-        .env(NODE_CHILD_SOCKET, &socket)
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped());
-    let mut child = child.spawn().expect("spawn attestation node process");
-    for _ in 0..500 {
-        if socket.exists() {
-            break;
-        }
-        if let Some(status) = child.try_wait().expect("poll attestation node") {
-            panic!("attestation node exited before binding UDS: {status}");
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
-    assert!(socket.exists(), "attestation node did not bind its UDS");
-
-    let supervisor = SupervisorDiscovery::open(SupervisorDiscoveryConfig {
-        node_socket: socket,
-        journal_root: root.join(format!("supervisor-{run}")),
-        expected_node_uid: effective_uid().expect("effective uid"),
-        identity: endpoint_identity(0x92),
-        limits: poc_schema_limits(),
-    })
-    .expect("open supervisor attestation client");
-    let response = supervisor.request_attestation(canonical_result);
-    drop(supervisor);
-    let output = child
-        .wait_with_output()
-        .expect("wait for attestation node process");
-    assert!(
-        output.status.success(),
-        "attestation node failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    response
-}
-
-fn run_child_node() {
-    let root = PathBuf::from(env::var_os(NODE_CHILD_ROOT).expect("node child root"));
-    let socket = PathBuf::from(env::var_os(NODE_CHILD_SOCKET).expect("node child socket"));
-    let (_, source, _) = exported_node_fixture();
-    let initial_height = source
-        .candidate
-        .block_number
-        .checked_add(4)
-        .expect("fixture open height");
-    let coordinator = Arc::new(OcompRetentionCoordinator::open(
-        root.join("retention"),
-        Arc::new(source),
-    ));
-    let uid = fs::metadata(&root).expect("node child root metadata").uid();
-    let server = OcompControlServer::new(
-        coordinator,
-        uid,
-        endpoint_identity(0x91),
-        1,
-        poc_schema_limits(),
-    )
-    .expect("construct node control server")
-    .with_node_attestation(OcompNodeAttestationConfig {
-        key_path: root.join("ocomp-key-v1.hex"),
-        sign_once_root: root.join("sign-once"),
-        expected_owner_uid: uid,
-        validator_index: 0,
-        committee: deterministic_committee(),
-        initial_height,
-    })
-    .expect("configure closed node attestation");
-    let listener = UnixListener::bind(&socket).expect("bind node attestation UDS");
-    let (stream, _) = listener.accept().expect("accept supervisor attestation");
-    server
-        .serve_connection(stream)
-        .expect("serve supervisor attestation");
-    drop(listener);
-    fs::remove_file(&socket).expect("remove node attestation UDS");
 }
 
 fn run_schedule(worker_count: usize, seed: u64) -> ScheduleOutcome {
@@ -698,8 +405,8 @@ fn run_schedule(worker_count: usize, seed: u64) -> ScheduleOutcome {
         WorkerInbox::open(&inbox_root, INBOX_LIMITS).expect("open deterministic worker inbox");
     let replay_inbox = WorkerInbox::open(&replay_inbox_root, INBOX_LIMITS)
         .expect("open deterministic replay inbox");
-    let user = effective_user_name().expect("deterministic worker user");
     let uid = effective_uid().expect("deterministic worker uid");
+    let user = uid.to_string();
 
     let mut completed = vec![false; total_units as usize];
     let mut schedule = Vec::new();
@@ -1136,14 +843,24 @@ fn launch_worker(
     generation: u64,
     boot: u8,
     user: &str,
-    uid: u32,
+    _uid: u32,
     cas_root: &Path,
     inbox_root: &Path,
     limits: SchemaLimits,
-) -> (Child, ControlClientSession) {
-    let (parent_stream, child_stream) = UnixStream::pair().expect("deterministic worker socket");
-    let child_fd: OwnedFd = child_stream.into();
+) -> (Child, SupervisorWorkerServerV1) {
     let worker_identity = endpoint_identity(boot);
+    let server_identity = EndpointIdentity {
+        boot_nonce: B256::repeat_byte(boot.wrapping_add(1)),
+        ..worker_identity
+    };
+    let server = SupervisorWorkerServerV1::start(
+        "127.0.0.1:0".parse().unwrap(),
+        server_identity,
+        generation,
+        limits,
+    )
+    .expect("start deterministic Supervisor worker transport");
+    let supervisor_address = server.address();
     let mut command = Command::new(env::current_exe().expect("current deterministic test binary"));
     command
         .args(["--exact", TEST_NAME, "--nocapture"])
@@ -1162,7 +879,6 @@ fn launch_worker(
             CHILD_BUNDLE,
             format!("{:#x}", worker_identity.protocol_bundle_hash),
         )
-        .env(CHILD_GENERATION, generation.to_string())
         .env(CHILD_CAS_ROOT, cas_root)
         .env(
             CHILD_CAS_OBJECT_CAP,
@@ -1170,23 +886,13 @@ fn launch_worker(
         )
         .env(CHILD_CAS_TOTAL_CAP, CAS_LIMITS.max_total_bytes.to_string())
         .env(CHILD_INBOX_ROOT, inbox_root)
-        .stdin(Stdio::from(child_fd))
+        .env(CHILD_SUPERVISOR_ADDRESS, supervisor_address.to_string())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
     let child = command.spawn().expect("spawn deterministic worker");
     drop(command);
 
-    let client_identity = EndpointIdentity {
-        boot_nonce: B256::repeat_byte(boot.wrapping_add(1)),
-        ..worker_identity
-    };
-    let mut client = ControlClientSession::connect(
-        parent_stream,
-        ClientPolicy::supervisor_to_worker(uid, client_identity, limits),
-    )
-    .expect("connect deterministic worker");
-    client.handshake().expect("handshake deterministic worker");
-    (child, client)
+    (child, server)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1200,29 +906,15 @@ fn execute_worker_request(
     request: &RunUnitV1,
     limits: SchemaLimits,
 ) -> UnitFinishedV1 {
-    let (child, mut client) =
-        launch_worker(generation, boot, user, uid, cas_root, inbox_root, limits);
-    client
-        .send_request(
-            WorkerMessageKind::RunUnit as u16,
-            request
-                .encode_body(&limits)
-                .expect("encode deterministic RunUnit"),
-        )
-        .expect("send deterministic RunUnit");
+    let (child, server) = launch_worker(generation, boot, user, uid, cas_root, inbox_root, limits);
+    let finished = server
+        .dispatch(request)
+        .expect("dispatch deterministic RunUnit over ZeroMQ");
+    let mut child = child;
+    child.kill().expect("stop deterministic worker listener");
     let output = child
         .wait_with_output()
-        .expect("wait for deterministic worker");
-    assert!(
-        output.status.success(),
-        "deterministic worker failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let frame = client
-        .receive_response()
-        .expect("receive deterministic worker response");
-    let finished =
-        UnitFinishedV1::decode_body(&frame.body, &limits).expect("decode deterministic completion");
+        .expect("reap deterministic worker listener");
     if finished.status != UnitFinishedStatus::Success {
         let spec = UnitSpecV1::decode_canonical(&request.canonical_unit_spec.0, &limits)
             .expect("decode failed deterministic UnitSpec");
@@ -1248,16 +940,22 @@ fn interrupt_worker_request(
     request: &RunUnitV1,
     limits: SchemaLimits,
 ) {
-    let (mut child, mut client) =
+    let (mut child, server) =
         launch_worker(generation, boot, user, uid, cas_root, inbox_root, limits);
-    client
-        .send_request(
-            WorkerMessageKind::RunUnit as u16,
-            request
-                .encode_body(&limits)
-                .expect("encode interrupted deterministic RunUnit"),
-        )
-        .expect("send interrupted deterministic RunUnit");
+    let dispatcher = server.dispatcher();
+    let request = request.clone();
+    std::thread::spawn(move || {
+        let _ = dispatcher.dispatch(&request);
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while server
+        .status()
+        .map(|status| status.busy_workers == 0)
+        .unwrap_or(true)
+        && std::time::Instant::now() < deadline
+    {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
     let _ = child.kill();
     let _ = child.wait();
 }
@@ -1275,30 +973,34 @@ fn run_child_worker() {
             .parse::<B256>()
             .unwrap_or_else(|_| panic!("invalid {name}"))
     };
-    let user = env::var(CHILD_USER).expect("deterministic worker child user");
-    let uid = outbe_ocomp::control::uid_for_user(&user).expect("deterministic worker child uid");
+    let uid = env::var(CHILD_USER)
+        .expect("deterministic worker child uid")
+        .parse::<u32>()
+        .expect("valid deterministic worker child uid");
     let limits = poc_schema_limits();
     let expected_bundle_hash = parse_b256(CHILD_BUNDLE);
     let canonical_bundle = support::protocol_bundle()
         .encode_canonical(&limits)
         .expect("canonical deterministic child bundle");
-    run_one_from_inherited_fd(WorkerConfig {
+    run_worker(WorkerConfig {
         expected_effective_uid: uid,
-        expected_supervisor_uid: uid,
         identity: EndpointIdentity {
             chain_id: parse_u64(CHILD_CHAIN_ID),
             genesis_hash: parse_b256(CHILD_GENESIS),
             boot_nonce: parse_b256(CHILD_BOOT_NONCE),
             protocol_bundle_hash: expected_bundle_hash,
         },
-        session_generation: parse_u64(CHILD_GENERATION),
+        supervisor_address: env::var(CHILD_SUPERVISOR_ADDRESS)
+            .expect("deterministic child Supervisor address")
+            .parse()
+            .expect("valid deterministic child Supervisor address"),
+        observability_address: "127.0.0.1:0".parse().unwrap(),
         cas_root: PathBuf::from(env::var_os(CHILD_CAS_ROOT).expect("deterministic child CAS root")),
         cas_limits: CAS_LIMITS,
         inbox_root: PathBuf::from(
             env::var_os(CHILD_INBOX_ROOT).expect("deterministic child inbox root"),
         ),
         inbox_limits: INBOX_LIMITS,
-        connection_fd: 0,
         protocol_bundle: PinnedProtocolBundle::decode(
             &canonical_bundle,
             expected_bundle_hash,

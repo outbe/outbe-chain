@@ -37,8 +37,8 @@ pub use api::{
 };
 
 pub use collection::{
-    collection_key, collection_root, partition_collection_key, sealed_root, CeDomain, CeTopologyV1,
-    CollectionKey, K_PROVISIONAL,
+    collection_key, collection_root, partition_collection_key, sealed_root,
+    tribute_partition_root_from_leaves, CeDomain, CeTopologyV1, CollectionKey, K_PROVISIONAL,
 };
 pub use commitment::{
     body_commitment, derive_poseidon_entity_id, identity_field, pbytes, Commitment,

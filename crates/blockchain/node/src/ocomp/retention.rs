@@ -1260,7 +1260,7 @@ impl OcompRetentionCoordinator {
         )
     }
 
-    pub(crate) fn replay_exported(
+    pub fn replay_exported(
         &self,
         job_id: B256,
         source_generation: u64,

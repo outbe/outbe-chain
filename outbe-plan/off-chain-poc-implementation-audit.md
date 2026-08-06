@@ -66,7 +66,7 @@ No product decision remains open and no grilling is required before `OCM-00`.
 | 6 | finalized-intent proof/history source | [finalized export decision](off-chain-poc-finalized-input-export.md) | `OCM-09` |
 | 7 | Reth/CE checkpoint API | finalized export decision | `OCM-10` |
 | 8 | CAS layout/quota/cleanup | [process/CAS decision](off-chain-poc-process-and-artifact-topology.md) | `OCM-11`, `OCM-13` |
-| 9 | harness-owned process topology, UDS and bounded CAS | process/CAS decision | `OCM-11`, proved by `OCM-24/27` |
+| 9 | harness-owned process topology, public RPC, ZeroMQ/TCP and bounded CAS | process/CAS decision | `OCM-11`, proved by `OCM-24/27` |
 | 10 | key format/sign-once durability | [deterministic/quorum decision](off-chain-poc-deterministic-execution-and-quorum.md) | `OCM-15` |
 | 11 | full-result vote/public transaction bytes and q-forming apply | deterministic/quorum and activation decisions | `OCM-16`, `OCM-23` |
 | 12 | logical retirement/GC boundary | activation decision | `OCM-20`, `OCM-23` |

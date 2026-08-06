@@ -158,6 +158,25 @@ impl Config {
         self.ports.port(Service::Consensus, i)
     }
 
+    /// Loopback HTTP port where validator `i`'s OCOMP Supervisor accepts workers.
+    #[cfg_attr(not(feature = "ocomp-integration"), allow(dead_code))]
+    pub fn ocomp_supervisor_port(&self, i: usize) -> u16 {
+        self.ports.port(Service::OcompSupervisor, i)
+    }
+
+    /// Salvo observability endpoint for one of validator `i`'s OCOMP Workers.
+    #[cfg_attr(not(feature = "ocomp-integration"), allow(dead_code))]
+    pub fn ocomp_worker_port(&self, i: usize, worker_ordinal: u32) -> u16 {
+        let service = match worker_ordinal {
+            0 => Service::OcompWorker0,
+            1 => Service::OcompWorker1,
+            2 => Service::OcompWorker2,
+            3 => Service::OcompWorker3,
+            _ => panic!("OCOMP worker ordinal must be below 4"),
+        };
+        self.ports.port(service, i)
+    }
+
     /// TEE enclave socket port for validator index `i`.
     pub fn tee_port(&self, i: usize) -> u16 {
         self.ports.port(Service::Tee, i)
@@ -188,24 +207,6 @@ impl Config {
             "{}_scenario_{}_validator-{i}",
             self.projection_database_prefix, self.scenario
         )
-    }
-
-    /// Short scenario-owned directory for Unix sockets, independent of the
-    /// potentially long evidence/datadir path.
-    pub fn ocomp_socket_dir(&self, i: usize) -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "outbe-oc-{:016x}-s{}-v{i}",
-            stable_hash(&self.run_tag),
-            self.scenario
-        ))
-    }
-
-    pub fn ocomp_supervisor_socket(&self, i: usize) -> PathBuf {
-        self.ocomp_socket_dir(i).join("supervisor.sock")
-    }
-
-    pub fn ocomp_snapshot_exporter_socket(&self, i: usize) -> PathBuf {
-        self.ocomp_socket_dir(i).join("exporter.sock")
     }
 }
 
@@ -272,9 +273,10 @@ mod tests {
         let joiner = cfg.validators;
 
         assert_eq!(cfg.primary_port(), 18545);
-        assert_eq!(cfg.tee_port(joiner), 18574);
-        assert_eq!(cfg.http_port(14), 18580);
-        assert_eq!(cfg.consensus_port(15), 18593);
+        assert_eq!(cfg.tee_port(joiner), 18578);
+        assert_eq!(cfg.http_port(14), 18585);
+        assert_eq!(cfg.consensus_port(15), 18599);
+        assert_eq!(cfg.ocomp_supervisor_port(15), 18600);
 
         // The committee size never moves, however many nodes are added.
         assert_eq!(cfg.validators, env.validators);

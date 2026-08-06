@@ -626,41 +626,22 @@ The PoC does not import a MapReduce framework.
 
 ## 6. Result reconstruction at the trust boundary
 
-The supervisor cannot choose an arbitrary digest or signing purpose. After its
-compute domain has completed typed finalization over exact durable admission,
-it sends
-`RequestAttestationV1` with constant-size `LysisResultV1`.
+The supervisor cannot choose an arbitrary signing purpose. After its compute
+domain has completed typed finalization over exact durable admission, it
+canonical-decodes and revalidates the fixed result-vote payload, prepares the
+validator-associated transaction, signs it with the dedicated OCOMP EVM key and
+submits it through the node's public RPC.
 
-The node `OcompAttestationGate` independently:
+The node receives an ordinary transaction. Normal transaction execution
+revalidates the sender association, live job/attempt/deadline, bundle, plan and
+result bindings before recording a vote or applying quorum. No private
+attestation request, node-control session or OCOMP socket participates.
 
-1. verifies the UDS peer/capability/session;
-2. rejects frame/result caps before allocation or cryptography;
-3. reloads the canonical `JobIntentV1` and exact attempt;
-4. requires the request block and `JobId` to be finalized and non-orphaned;
-5. requires the job to be live and latest finalized height to be below the
-   exclusive deadline;
-6. checks bundle and job-pinned committee snapshot;
-7. reloads the durable `EXPORTED` binding and requires
-   `input_manifest_hash` equality;
-8. canonical-decodes and re-encodes the constant-size result commitment;
-9. verifies `PlanHash`, non-empty result-chunk count/root, exact summary
-   equations, finalized intent/result bindings, conservation and
-   arithmetic/event commitment rehashing;
-10. reconstructs `ActivationPayloadV1` and `ResultDigest`;
-11. derives the one sign-once key from canonical state;
-12. invokes the closed result signer/store operation.
-
-Steps 8–10 are constant-size typed verification, not Lysis execution. The node
-does not traverse result chunks: doing so would move bulk compute I/O back into
-the consensus failure boundary. Complete chunk/input execution belongs to the
-validator domain's separate compute plane; a compromised compute plane can
-contribute at most that domain's one signature, and `q=3/4` supplies the
-cross-domain correctness threshold. The gate never reads Fidelity/Oracle,
-schedules work or recomputes leagues/prices/allocation.
-
-The request has no arbitrary digest, purpose, domain, key selector, path or
-message bytes. A claimed `ResultDigest`, if present for diagnostics, must equal
-the node-derived value and is never the signer input.
+The node does not traverse local result chunks. Complete chunk/input execution
+belongs to the validator domain's separate compute plane; a compromised compute
+plane can contribute at most that domain's one vote, and `q=3/4` supplies the
+cross-domain correctness threshold. The transaction has no arbitrary signing
+purpose, domain, key selector, path or executable.
 
 ## 7. Static PoC committee and keys
 
@@ -1006,7 +987,7 @@ crates/core/lysis/src/program_v1/
   phase execute/verify functions
   bounded RootReduceSummaryV1
   pure typed result finalization/reconstruction
-  no StorageHandle, node, UDS, CAS or signer
+  no StorageHandle, node, transport, CAS or signer
 
 bin/outbe-ocomp
   CAS adapters

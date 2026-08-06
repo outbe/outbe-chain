@@ -13,6 +13,9 @@ path = "src/main.rs"
 alloy-consensus.workspace = true
 alloy-eips.workspace = true
 alloy-primitives = { workspace = true, features = ["std"] }
+alloy-sol-types.workspace = true
+axum.workspace = true
+bytes.workspace = true
 clap.workspace = true
 hex.workspace = true
 libc.workspace = true
@@ -20,6 +23,7 @@ outbe-common.workspace = true
 outbe-compressed-entities.workspace = true
 outbe-consensus.workspace = true
 outbe-lysis.workspace = true
+outbe-metadosis.workspace = true
 outbe-node.workspace = true
 outbe-ocomp-protocol.workspace = true
 outbe-offchain-data.workspace = true
@@ -29,10 +33,13 @@ outbe-primitives.workspace = true
 outbe-tribute.workspace = true
 outbe-zerofee.workspace = true
 reqwest = { workspace = true, features = ["blocking"] }
+salvo.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha3.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
+zeromq.workspace = true
 
 [dev-dependencies]
 alloy-sol-types.workspace = true
