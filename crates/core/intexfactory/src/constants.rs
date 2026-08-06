@@ -6,9 +6,6 @@
 //! "outbe-intex:<Name>:v2.0.0") — stable across chains and redeploys.
 
 use alloy_primitives::{address, Address};
-use outbe_primitives::time::SECONDS_PER_DAY;
-
-const DAY: u32 = SECONDS_PER_DAY as u32;
 
 /// IntexNFT1155 on Outbe (balance ledger: settle / burnSettled / balanceOf).
 /// CREATE3 proxy, salt "outbe-intex:IntexNFT1155:v2.0.0".
@@ -32,7 +29,7 @@ pub const DIST_CHUNK_LIMIT: u32 = 200;
 pub const PROCEEDS_FANIN_TIMEOUT_SECS: u64 = 24 * 60 * 60;
 
 /// Time a series must age past `issued_at` before it can become Qualified.
-pub const QUALIFICATION_PERIOD: u32 = 21 * DAY;
+pub const QUALIFICATION_PERIOD: u32 = 21 * 24 * 3600;
 
 /// Reference-currency ISO for the qualifier oracle pair (COEN/0xUSD = 840).
 pub const QUALIFIER_REFERENCE_ISO: u16 = 840;
@@ -51,12 +48,12 @@ pub const FLOOR_RATE: u16 = 8;
 pub const CALL_RATE: u16 = 128;
 
 /// Notice a holder gets to settle after a series is Called.
-pub const CALL_NOTICE_PERIOD: u32 = 7 * DAY;
+pub const CALL_NOTICE_PERIOD: u32 = 7 * 24 * 3600;
 
 /// Call-trigger evaluation window: the most recent stretch scanned for breaches.
-pub const CALL_WINDOW: u32 = 28 * DAY;
+pub const CALL_WINDOW: u32 = 28 * 24 * 3600;
 /// Call-trigger threshold: how much of the window must be in breach to force-call.
-pub const CALL_THRESHOLD: u32 = 21 * DAY;
+pub const CALL_THRESHOLD: u32 = 21 * 24 * 3600;
 
 /// Commit-entry bond on the target-chain auction: 100M wCOEN (18-dec minor units).
 pub const COMMIT_BOND_MINOR: u128 = 100_000_000 * 10u128.pow(18);
