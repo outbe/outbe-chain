@@ -577,6 +577,7 @@ fn advance_fresh_metadosis_time(
 ) {
     let before_restart = finalized_points_at_common_height(world, 1);
     let before_height = before_restart[0].block_number;
+    let before_timestamp = before_restart[0].block_timestamp;
     let offset = logical_time_offset(requested_timestamp, unix_time_secs());
     world
         .localnet
@@ -589,7 +590,11 @@ fn advance_fresh_metadosis_time(
     restart_ocomp_roles_after_committee_time_change(world);
 
     let worldwide_day = fresh_metadosis_wwd(world);
-    let deadline = Instant::now() + Duration::from_secs(240);
+    // The chain closes the gap one hour per block, so the wait scales with the
+    // distance jumped rather than a fixed budget.
+    let ratchet_blocks = requested_timestamp.saturating_sub(before_timestamp) / 3_600;
+    let deadline = Instant::now()
+        + Duration::from_secs(120 + 8 * ratchet_blocks.max(1));
     let (after_restart, changes) = loop {
         let points = finalized_points_at_common_height(world, before_height.saturating_add(1));
         let common_height = points[0].block_number;
