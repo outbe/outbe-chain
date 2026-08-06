@@ -1219,7 +1219,6 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use alloy_consensus::TxEip1559;
-    use alloy_eips::eip2718::Encodable2718 as _;
     use alloy_primitives::Bytes;
     use outbe_ocomp_protocol::{
         common::BoundedBytes,
