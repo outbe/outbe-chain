@@ -268,6 +268,10 @@ At the exact deadline a system transition closes them and records every missing
 pinned participant. It jails only a participant whose current ValidatorSet
 status is still `ACTIVE`; every non-ACTIVE status is left byte-identical and
 cannot fail the deadline transition. A timely minority vote counts as present.
+An authentic carrier included after closure resolves its signer from the closed
+accountability binding, receives the canonical deadline-passed revert and
+commits a `status = 0` receipt without changing vote state or aborting the
+block. Every other OCOMP revert or halt remains a hard block failure.
 
 `LysisTerminalV1`, the apply receipt, active-generation hash, applied
 domain state and exact retry identity are immutable and exclude the
@@ -408,11 +412,13 @@ planner, result or apply contract is a new protocol, not operational hardening.
   after quorum or completion.
 - Post-quorum accountability writes never change immutable terminal, apply
   receipt, active generation or exact-retry identity.
-- Missing-response and equivocation evidence are consensus-visible; missing
-  response causes immediate jail, while this design applies no monetary penalty.
+- Missing-response and equivocation evidence are consensus-visible; a missing
+  response causes immediate jail only while that participant is still
+  `ACTIVE`, while this design applies no monetary penalty.
 - Worker-shard completion is never a consensus terminal state and cannot be
   applied independently.
-- A late vote cannot race response-window closure.
+- A late carrier cannot race response-window closure: closure wins, the vote is
+  not recorded, and the transaction deterministically finishes with `status = 0`.
 - Evidence verification does not execute Lysis.
 - Only the private typed capability reaches effect methods.
 - All owner effects and terminal job state commit together or not at all.

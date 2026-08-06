@@ -33,6 +33,7 @@ const REJECT_LIMIT_EXCEEDED: u16 = 2;
 const REJECT_CALL_MODE: u16 = 3;
 const REJECT_PROTOCOL_VOTE: u16 = 4;
 pub(crate) const REJECT_LIFECYCLE_INACTIVE: u16 = 5;
+pub const REJECT_DEADLINE_PASSED: u16 = 6;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RecordedResultVoteV1 {
@@ -98,6 +99,9 @@ fn preflight_result_vote_calldata<'a>(data: &'a [u8], limits: &SchemaLimits) -> 
 }
 
 fn map_vote_transition_error(error: PrecompileError) -> PrecompileError {
+    if is_deadline_passed_result_vote_revert(&error) {
+        return error;
+    }
     match error {
         PrecompileError::Revert(_) | PrecompileError::RevertBytes(_) => {
             vote_reject(REJECT_PROTOCOL_VOTE)
@@ -113,6 +117,24 @@ pub(crate) fn vote_reject(code: u16) -> PrecompileError {
     PrecompileError::RevertBytes(Bytes::from(encoded))
 }
 
+#[must_use]
+pub fn is_deadline_passed_result_vote_revert(error: &PrecompileError) -> bool {
+    matches!(error, PrecompileError::RevertBytes(data) if is_deadline_passed_result_vote_revert_data(data))
+}
+
+#[must_use]
+pub fn is_deadline_passed_result_vote_revert_data(data: &[u8]) -> bool {
+    data == deadline_passed_result_vote_revert_data().as_ref()
+}
+
+#[must_use]
+pub fn deadline_passed_result_vote_revert_data() -> Bytes {
+    let PrecompileError::RevertBytes(expected) = vote_reject(REJECT_DEADLINE_PASSED) else {
+        unreachable!("vote_reject always returns RevertBytes");
+    };
+    expected
+}
+
 /// Resolves the validator represented by one canonical OCOMP vote prefix from
 /// the exact historical ValidatorSet snapshot pinned by its open job.
 ///
@@ -126,33 +148,47 @@ pub fn resolve_historical_result_vote_participant(
     limits: &SchemaLimits,
 ) -> Result<Option<Address>> {
     let contract = MetadosisContract::new(storage.clone());
-    let Some(response) = contract.response_window_for_job(prefix.job_id)? else {
-        return Ok(None);
+    let member_count = if let Some(response) = contract.response_window_for_job(prefix.job_id)? {
+        let Some(record) = contract.ocomp_job_record(response.intent_id, limits)? else {
+            return Err(fatal("OCOMP response index points to a missing job"));
+        };
+        let Some(finalized) = record.finalized.as_ref() else {
+            return Err(fatal("OCOMP response-window job is not finalized"));
+        };
+        if finalized.job_id != response.job_id
+            || finalized.deadline_height != response.deadline_height
+            || !matches!(
+                record.status,
+                OcompJobStatus::VotingOpen | OcompJobStatus::Completed | OcompJobStatus::Conflicted
+            )
+        {
+            return Err(fatal("OCOMP response index/job binding mismatch"));
+        }
+        if prefix.protocol_bundle_hash != record.intent.protocol_bundle_hash
+            || prefix.attempt != record.intent.attempt
+            || prefix.result_validator_set_epoch != record.intent.result_validator_set_epoch
+            || prefix.result_committee_set_hash != record.intent.result_committee_set_hash
+            || prefix.result_ocomp_binding_hash != record.intent.result_ocomp_binding_hash
+            || prefix.validator_index >= record.intent.result_member_count
+        {
+            return Ok(None);
+        }
+        record.intent.result_member_count
+    } else {
+        let Some(accountability) = contract.result_vote_accountability(prefix.job_id, limits)?
+        else {
+            return Ok(None);
+        };
+        if accountability.closed_summary.is_none()
+            || prefix.result_validator_set_epoch != accountability.result_validator_set_epoch
+            || prefix.result_committee_set_hash != accountability.result_committee_set_hash
+            || prefix.result_ocomp_binding_hash != accountability.result_ocomp_binding_hash
+            || prefix.validator_index >= accountability.member_count
+        {
+            return Ok(None);
+        }
+        accountability.member_count
     };
-    let Some(record) = contract.ocomp_job_record(response.intent_id, limits)? else {
-        return Err(fatal("OCOMP response index points to a missing job"));
-    };
-    let Some(finalized) = record.finalized.as_ref() else {
-        return Err(fatal("OCOMP response-window job is not finalized"));
-    };
-    if finalized.job_id != response.job_id
-        || finalized.deadline_height != response.deadline_height
-        || !matches!(
-            record.status,
-            OcompJobStatus::VotingOpen | OcompJobStatus::Completed | OcompJobStatus::Conflicted
-        )
-    {
-        return Err(fatal("OCOMP response index/job binding mismatch"));
-    }
-    if prefix.protocol_bundle_hash != record.intent.protocol_bundle_hash
-        || prefix.attempt != record.intent.attempt
-        || prefix.result_validator_set_epoch != record.intent.result_validator_set_epoch
-        || prefix.result_committee_set_hash != record.intent.result_committee_set_hash
-        || prefix.result_ocomp_binding_hash != record.intent.result_ocomp_binding_hash
-        || prefix.validator_index >= record.intent.result_member_count
-    {
-        return Ok(None);
-    }
     let Some(snapshot) = outbe_validatorset::read_ocomp_snapshot_extension_for_binding(
         storage.clone(),
         prefix.result_validator_set_epoch,
@@ -162,7 +198,7 @@ pub fn resolve_historical_result_vote_participant(
     else {
         return Ok(None);
     };
-    if snapshot.member_count != record.intent.result_member_count {
+    if snapshot.member_count != member_count {
         return Ok(None);
     }
     let snapshot_key = outbe_validatorset::committee_snapshot_key(
@@ -231,9 +267,18 @@ impl MetadosisContract<'_> {
     ) -> Result<RecordedResultVoteV1> {
         let storage = self.storage.clone();
         let outcome = (|| {
-            let response = self
-                .response_window_for_job(vote.job_id)?
-                .ok_or_else(|| reject("OCOMP result vote has no open response window"))?;
+            let response = match self.response_window_for_job(vote.job_id)? {
+                Some(response) => response,
+                None => {
+                    let deadline_closed = self
+                        .result_vote_accountability(vote.job_id, limits)?
+                        .is_some_and(|accountability| accountability.closed_summary.is_some());
+                    if deadline_closed {
+                        return Err(vote_reject(REJECT_DEADLINE_PASSED));
+                    }
+                    return Err(reject("OCOMP result vote has no open response window"));
+                }
+            };
             let record = self
                 .ocomp_job_record(response.intent_id, limits)?
                 .ok_or_else(|| fatal("OCOMP response index points to a missing job"))?;

@@ -417,6 +417,14 @@ equivocation punishment, appeals and operator exceptions remain separate
 policy; relay logs, mempool observations and supervisor journals are never
 authority.
 
+An otherwise authentic carrier that reaches execution at or after the deadline
+is still resolved against the closed job's pinned historical snapshot. It does
+not fill a slot or mutate OCOMP state: `submitLysisResult` returns the canonical
+deadline-passed revert and the carrier is committed as an ordinary failed
+transaction receipt (`status = 0`). The containing block continues normally.
+Only that exact deadline revert has this treatment; malformed, unauthorized or
+otherwise reverting OCOMP carriers remain hard block failures.
+
 ### FullNode independent execution
 
 An OCOMP-enabled FullNode has no voting key, delegate or vote capability, but it
@@ -500,8 +508,9 @@ Three votes over different result bytes do not form quorum evidence.
 - Every remaining pinned slot remains writable until the response deadline even
   after quorum application.
 - The response deadline is exactly 1,800 blocks after the finalized binding.
-- Every pinned participant without a timely valid included vote is jailed
-  exactly once at that deadline.
+- Every pinned participant without a timely valid included vote is recorded as
+  missing; only one whose current ValidatorSet status is still `ACTIVE` is
+  jailed exactly once at that deadline.
 - OCOMP carrier work never reduces the 30,000,000 user-transaction gas budget.
 - A FullNode cannot accept activation without a matching independent local
   Lysis result.

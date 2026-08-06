@@ -1266,6 +1266,14 @@ pub(crate) fn system_tx_failure_code_for_result(result: &ExecutionResult<HaltRea
     }
 }
 
+fn is_ocomp_deadline_passed_revert(result: &ExecutionResult<HaltReason>) -> bool {
+    matches!(
+        result,
+        ExecutionResult::Revert { output, .. }
+            if outbe_metadosis::is_deadline_passed_result_vote_revert_data(output.as_ref())
+    )
+}
+
 #[cfg(test)]
 mod system_tx_failure_code_tests {
     use super::*;
@@ -1290,6 +1298,20 @@ mod system_tx_failure_code_tests {
     #[test]
     fn revert_maps_to_201() {
         assert_eq!(system_tx_failure_code_for_result(&revert_result()), 201);
+    }
+
+    #[test]
+    fn only_the_exact_ocomp_deadline_revert_is_a_failed_carrier_receipt() {
+        let deadline = ExecutionResult::Revert {
+            gas: ResultGas::default(),
+            logs: Vec::new(),
+            output: outbe_metadosis::deadline_passed_result_vote_revert_data(),
+        };
+        assert!(is_ocomp_deadline_passed_revert(&deadline));
+        assert!(!is_ocomp_deadline_passed_revert(&revert_result()));
+        assert!(!is_ocomp_deadline_passed_revert(&halt_result(
+            HaltReason::OutOfGas(OutOfGasError::Precompile)
+        )));
     }
 
     #[test]
@@ -3689,7 +3711,8 @@ where
                 });
                 self.inner.evm.restore_zero_fee_overrides(snapshot);
                 let output = execution?;
-                if !output.result.result.is_success() {
+                let deadline_revert = is_ocomp_deadline_passed_revert(&output.result.result);
+                if !output.result.result.is_success() && !deadline_revert {
                     return Err(BlockExecutionError::msg(format!(
                         "OCOMP system carrier execution did not succeed: {:?}",
                         output.result.result

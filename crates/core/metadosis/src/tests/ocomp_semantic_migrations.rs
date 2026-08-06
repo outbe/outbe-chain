@@ -245,6 +245,50 @@ fn no_quorum_deadline_jails_every_missing_pinned_validator_and_expires_attempt()
 }
 
 #[test]
+fn authentic_carrier_after_deadline_resolves_pinned_signer_and_returns_deadline_revert() {
+    let mut fixture = ActivationFixture::new(20, 1_010, true);
+    assert_eq!(fixture.apply().unwrap(), Bytes::new());
+    let finalized = StorageHandle::enter(&mut fixture.provider, |storage| {
+        MetadosisContract::new(storage)
+            .ocomp_job_record(fixture.intent_id, &fixture.limits)
+            .unwrap()
+            .unwrap()
+            .finalized
+            .unwrap()
+    });
+    let late_vote = fixture.signed_result_vote(3);
+    let prefix = ResultVotePrefixV1 {
+        protocol_bundle_hash: late_vote.protocol_bundle_hash,
+        job_id: late_vote.job_id,
+        attempt: late_vote.attempt,
+        result_validator_set_epoch: late_vote.result_validator_set_epoch,
+        result_committee_set_hash: late_vote.result_committee_set_hash,
+        result_ocomp_binding_hash: late_vote.result_ocomp_binding_hash,
+        validator_index: late_vote.validator_index,
+        key_epoch: late_vote.key_epoch,
+    };
+
+    close_completed_response_window(&mut fixture, finalized.deadline_height).unwrap();
+
+    StorageHandle::enter(&mut fixture.provider, |storage| {
+        assert_eq!(
+            crate::ocomp::vote::resolve_historical_result_vote_participant(
+                storage,
+                &prefix,
+                &fixture.limits,
+            )
+            .unwrap(),
+            Some(Address::repeat_byte(0xB3))
+        );
+    });
+    let error = submit_vote_result(&mut fixture, &late_vote, finalized.deadline_height)
+        .expect_err("late authentic carrier must fail as a transaction");
+    assert!(crate::ocomp::vote::is_deadline_passed_result_vote_revert(
+        &error
+    ));
+}
+
+#[test]
 fn deadline_is_replay_safe_for_missing_validators_already_jailed_or_exiting() {
     let mut fixture = ActivationFixture::new_voting(20, 1_010, true);
     assert_eq!(fixture.apply().unwrap(), Bytes::new());
