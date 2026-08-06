@@ -57,6 +57,8 @@ use std::fs::{self, OpenOptions};
 #[cfg(feature = "ocomp-integration")]
 use std::io::{Read as _, Seek as _, SeekFrom, Write as _};
 #[cfg(feature = "ocomp-integration")]
+use std::net::{SocketAddr, TcpStream};
+#[cfg(feature = "ocomp-integration")]
 use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _};
 #[cfg(feature = "ocomp-integration")]
 use std::process::{Command, Stdio};
@@ -303,6 +305,30 @@ pub struct OcompLaunchIdentityV1 {
     pub classification: OcompForkInstallClassification,
     pub activation_height: u64,
     pub metadosis_storage_layout_hash: B256,
+}
+
+/// Live process and registration counts for the baseline validator OCOMP runtime.
+#[cfg(feature = "ocomp-integration")]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct OcompRuntimeCountsV1 {
+    pub supervisors: usize,
+    pub snapshot_exporters: usize,
+    pub workers: usize,
+    pub registered_workers: usize,
+    pub connected_workers: usize,
+}
+
+#[cfg(feature = "ocomp-integration")]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SupervisorWorkerStatusV1 {
+    registry_generation: u64,
+    registered_workers: usize,
+    connected_workers: usize,
+    busy_workers: usize,
+    accepted_leases: usize,
+    queued_units: usize,
+    max_workers: usize,
 }
 
 /// Exact measurement manifest generated before any node process starts.
@@ -841,6 +867,162 @@ impl OcompTopology {
             )?;
         }
         Ok(())
+    }
+
+    /// Stage the exact random OCOMP result-signing keys and registrations that
+    /// were bound into the bootstrapped genesis. Persistent LocalNet must never
+    /// replace them with the deterministic measurement-fixture keys used by
+    /// isolated scenarios.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn prepare_bootstrapped_runtime(&self) -> Result<OcompLaunchIdentityV1> {
+        let genesis_path = self.cfg.dir.join("genesis.json");
+        let spec = parse_outbe_chain_spec(&genesis_path)?;
+        let install = outbe_node::ocomp::fork::require_genesis_active_ocomp_fork_install(&spec)?;
+        let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
+        let install_hash = install.install_hash(&limits)?;
+        eyre::ensure!(
+            install.founder_registrations.len() == self.domains.len(),
+            "OCOMP founder registration count {} differs from LocalNet validator count {}",
+            install.founder_registrations.len(),
+            self.domains.len()
+        );
+
+        let canonical_bundle = install.protocol_bundle.encode_canonical(&limits)?;
+        let bootstrapped_bundle_path = self.cfg.dir.join("protocol-bundle-v1.ocb1");
+        let bootstrapped_bundle = fs::read(&bootstrapped_bundle_path)?;
+        eyre::ensure!(
+            bootstrapped_bundle == canonical_bundle,
+            "bootstrapped protocol bundle does not match the genesis OCOMP install"
+        );
+
+        for (index, (domain, founder)) in self
+            .domains
+            .iter()
+            .zip(&install.founder_registrations)
+            .enumerate()
+        {
+            let validator_dir = self.cfg.validator_dir(index);
+            let registration_path = validator_dir.join("ocomp-registration-v1.ocb1");
+            let registration =
+                OcompKeyRegistrationV1::decode_canonical(&fs::read(&registration_path)?, &limits)?;
+            eyre::ensure!(
+                &registration == founder,
+                "validator-{index} OCOMP registration differs from the genesis founder registration"
+            );
+            registration.validate_proof_of_possession(&limits)?;
+
+            let key_path = validator_dir.join("ocomp-key-v1.hex");
+            let key_file = fs::read(&key_path)?;
+            let key_hex = std::str::from_utf8(&key_file)?.trim();
+            let key_bytes = hex::decode(key_hex)?;
+            eyre::ensure!(
+                key_bytes.len() == 32,
+                "validator-{index} OCOMP result-signing key is not 32 bytes"
+            );
+            let signing_key = SigningKey::from_slice(&key_bytes)?;
+            eyre::ensure!(
+                signing_key.verifying_key().to_encoded_point(true).as_bytes()
+                    == registration.core.ocomp_public_key_sec1.as_slice(),
+                "validator-{index} OCOMP result-signing key does not match its genesis registration"
+            );
+
+            fs::create_dir_all(&domain.root)?;
+            publish_exact_file(
+                &domain.root.join("protocol-bundle-v1.ocb1"),
+                &bootstrapped_bundle,
+                0o640,
+            )?;
+            publish_exact_file(&domain.root.join("ocomp-key-v1.hex"), &key_file, 0o600)?;
+            let evm_key = ocomp_evm_private_key(u8::try_from(index)?);
+            publish_exact_file(
+                &domain.root.join("ocomp-evm-key.hex"),
+                format!("{evm_key}\n").as_bytes(),
+                0o600,
+            )?;
+        }
+
+        Ok(OcompMeasurementForkV1 {
+            install: install.as_ref().clone(),
+            install_hash,
+        }
+        .launch_identity())
+    }
+
+    /// Launch the complete baseline compute runtime for every genesis ACTIVE
+    /// validator: one Supervisor, one SnapshotExporter, and Worker ordinal 0.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn start_baseline_runtime(&mut self, identity: OcompLaunchIdentityV1) -> Result<()> {
+        self.install_ocomp_delegate_bindings()?;
+        self.start_validator_roles(identity)?;
+        for validator_index in self.validator_indices()? {
+            self.activate_worker(validator_index, 0, identity)?;
+        }
+        Ok(())
+    }
+
+    /// Prove both child-process liveness and mutual Worker/Supervisor
+    /// registration for the complete baseline runtime.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn ensure_baseline_runtime_ready(
+        &mut self,
+        expected_workers_per_supervisor: usize,
+    ) -> Result<OcompRuntimeCountsV1> {
+        self.ensure_baseline_processes_alive(expected_workers_per_supervisor)?;
+        self.observe_baseline_runtime(expected_workers_per_supervisor)
+    }
+
+    /// Fail immediately when a required owned OCOMP role exits. Registration
+    /// convergence is retryable during startup; a dead child is not.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn ensure_baseline_processes_alive(
+        &mut self,
+        expected_workers_per_supervisor: usize,
+    ) -> Result<()> {
+        self.ensure_validator_roles_alive()?;
+        for validator_index in self.validator_indices()? {
+            for worker_ordinal in 0..u32::try_from(expected_workers_per_supervisor)? {
+                self.ensure_worker_alive(validator_index, worker_ordinal)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Probe the public Supervisor status surfaces without relying on retained
+    /// child guards. This is used by the separate `localnet status` process.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn observe_baseline_runtime(
+        &self,
+        expected_workers_per_supervisor: usize,
+    ) -> Result<OcompRuntimeCountsV1> {
+        let mut registered_workers = 0usize;
+        let mut connected_workers = 0usize;
+        for validator_index in self.validator_indices()? {
+            let index = usize::from(validator_index);
+            let address = SocketAddr::from(([127, 0, 0, 1], self.cfg.ocomp_supervisor_port(index)));
+            let status = fetch_supervisor_status(address)?;
+            ensure_supervisor_status_ready(
+                validator_index,
+                &status,
+                expected_workers_per_supervisor,
+            )?;
+            registered_workers = registered_workers
+                .checked_add(status.registered_workers)
+                .ok_or_else(|| eyre::eyre!("OCOMP registered-worker count overflow"))?;
+            connected_workers = connected_workers
+                .checked_add(status.connected_workers)
+                .ok_or_else(|| eyre::eyre!("OCOMP connected-worker count overflow"))?;
+        }
+        let supervisors = self.domains.len();
+        let workers = supervisors
+            .checked_mul(expected_workers_per_supervisor)
+            .ok_or_else(|| eyre::eyre!("OCOMP worker count overflow"))?;
+        Ok(OcompRuntimeCountsV1 {
+            supervisors,
+            snapshot_exporters: supervisors,
+            workers,
+            registered_workers,
+            connected_workers,
+        })
     }
 
     #[cfg(feature = "ocomp-integration")]
@@ -2131,6 +2313,74 @@ impl OcompTopology {
 }
 
 #[cfg(feature = "ocomp-integration")]
+fn fetch_supervisor_status(address: SocketAddr) -> Result<SupervisorWorkerStatusV1> {
+    const MAX_RESPONSE_BYTES: u64 = 64 * 1024;
+    let timeout = Duration::from_secs(2);
+    let mut stream = TcpStream::connect_timeout(&address, timeout)
+        .map_err(|error| eyre::eyre!("connect to OCOMP Supervisor {address}: {error}"))?;
+    stream.set_read_timeout(Some(timeout))?;
+    stream.set_write_timeout(Some(timeout))?;
+    stream.write_all(
+        format!("GET /v1/status HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n")
+            .as_bytes(),
+    )?;
+    let mut response = Vec::new();
+    stream
+        .take(MAX_RESPONSE_BYTES)
+        .read_to_end(&mut response)
+        .map_err(|error| eyre::eyre!("read OCOMP Supervisor {address} status: {error}"))?;
+    let header_end = response
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|offset| offset + 4)
+        .ok_or_else(|| eyre::eyre!("OCOMP Supervisor {address} returned malformed HTTP"))?;
+    let status_line_end = response
+        .iter()
+        .position(|byte| *byte == b'\n')
+        .ok_or_else(|| eyre::eyre!("OCOMP Supervisor {address} returned no HTTP status"))?;
+    let status_line = std::str::from_utf8(&response[..status_line_end])?.trim();
+    eyre::ensure!(
+        status_line.split_whitespace().nth(1) == Some("200"),
+        "OCOMP Supervisor {address} status request failed: {status_line}"
+    );
+    serde_json::from_slice(&response[header_end..])
+        .map_err(|error| eyre::eyre!("decode OCOMP Supervisor {address} status: {error}"))
+}
+
+#[cfg(feature = "ocomp-integration")]
+fn ensure_supervisor_status_ready(
+    validator_index: u8,
+    status: &SupervisorWorkerStatusV1,
+    expected_workers: usize,
+) -> Result<()> {
+    eyre::ensure!(
+        status.registry_generation > 0,
+        "validator-{validator_index} OCOMP Supervisor has no registry generation"
+    );
+    eyre::ensure!(
+        status.max_workers >= expected_workers,
+        "validator-{validator_index} OCOMP Supervisor capacity {} is below expected worker count {expected_workers}",
+        status.max_workers
+    );
+    eyre::ensure!(
+        status.registered_workers == expected_workers,
+        "validator-{validator_index} OCOMP Supervisor reports {} registered workers, expected {expected_workers}",
+        status.registered_workers
+    );
+    eyre::ensure!(
+        status.connected_workers == expected_workers,
+        "validator-{validator_index} OCOMP Supervisor reports {} connected workers, expected {expected_workers}",
+        status.connected_workers
+    );
+    eyre::ensure!(
+        status.busy_workers <= status.connected_workers,
+        "validator-{validator_index} OCOMP Supervisor reports more busy than connected workers"
+    );
+    let _ = (status.accepted_leases, status.queued_units);
+    Ok(())
+}
+
+#[cfg(feature = "ocomp-integration")]
 fn worker_boot_nonce(validator_index: u8, worker_ordinal: u32) -> B256 {
     let mut bytes = [0_u8; 32];
     bytes[0] = validator_index.saturating_add(1);
@@ -3411,6 +3661,130 @@ mod tests {
             topology.prepare_measurement_fork_install().unwrap(),
             prepared
         );
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
+    fn bootstrapped_runtime_preserves_the_exact_genesis_result_signing_keys() {
+        let topology = topology();
+        prepare_measurement_genesis_fixture(&topology);
+        let prepared = topology.prepare_measurement_fork_install().unwrap();
+        let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
+        let canonical_bundle = prepared
+            .install
+            .protocol_bundle
+            .encode_canonical(&limits)
+            .unwrap();
+        fs::write(
+            topology.cfg.dir.join("protocol-bundle-v1.ocb1"),
+            canonical_bundle,
+        )
+        .unwrap();
+
+        let mut expected_keys = Vec::new();
+        for (index, registration) in prepared.install.founder_registrations.iter().enumerate() {
+            let domain_key = fs::read(
+                topology
+                    .domain_root(u8::try_from(index).unwrap())
+                    .unwrap()
+                    .join("ocomp-key-v1.hex"),
+            )
+            .unwrap();
+            expected_keys.push(domain_key.clone());
+            fs::write(
+                topology.cfg.validator_dir(index).join("ocomp-key-v1.hex"),
+                domain_key,
+            )
+            .unwrap();
+            fs::write(
+                topology
+                    .cfg
+                    .validator_dir(index)
+                    .join("ocomp-registration-v1.ocb1"),
+                registration.encode_canonical(&limits).unwrap(),
+            )
+            .unwrap();
+            fs::remove_dir_all(topology.domain_root(u8::try_from(index).unwrap()).unwrap())
+                .unwrap();
+        }
+
+        let identity = topology.prepare_bootstrapped_runtime().unwrap();
+        assert_eq!(identity, prepared.launch_identity());
+        for (index, expected_key) in expected_keys.iter().enumerate() {
+            assert_eq!(
+                fs::read(
+                    topology
+                        .domain_root(u8::try_from(index).unwrap())
+                        .unwrap()
+                        .join("ocomp-key-v1.hex")
+                )
+                .unwrap(),
+                *expected_key
+            );
+        }
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
+    fn bootstrapped_runtime_rejects_a_key_substituted_after_genesis() {
+        let topology = topology();
+        prepare_measurement_genesis_fixture(&topology);
+        let prepared = topology.prepare_measurement_fork_install().unwrap();
+        let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
+        fs::write(
+            topology.cfg.dir.join("protocol-bundle-v1.ocb1"),
+            prepared
+                .install
+                .protocol_bundle
+                .encode_canonical(&limits)
+                .unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            topology
+                .cfg
+                .validator_dir(0)
+                .join("ocomp-registration-v1.ocb1"),
+            prepared.install.founder_registrations[0]
+                .encode_canonical(&limits)
+                .unwrap(),
+        )
+        .unwrap();
+        let substituted = SigningKey::from_bytes((&[99_u8; 32]).into()).unwrap();
+        fs::write(
+            topology.cfg.validator_dir(0).join("ocomp-key-v1.hex"),
+            format!("{}\n", hex::encode(substituted.to_bytes())),
+        )
+        .unwrap();
+        fs::remove_dir_all(topology.domain_root(0).unwrap()).unwrap();
+
+        let error = topology.prepare_bootstrapped_runtime().unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("result-signing key does not match its genesis registration"));
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
+    fn supervisor_readiness_requires_the_expected_registered_connected_workers() {
+        let ready = SupervisorWorkerStatusV1 {
+            registry_generation: 1,
+            registered_workers: 1,
+            connected_workers: 1,
+            busy_workers: 0,
+            accepted_leases: 0,
+            queued_units: 0,
+            max_workers: 4,
+        };
+        ensure_supervisor_status_ready(0, &ready, 1).unwrap();
+
+        let mut missing = ready.clone();
+        missing.registered_workers = 0;
+        assert!(ensure_supervisor_status_ready(0, &missing, 1).is_err());
+
+        let mut disconnected = ready;
+        disconnected.connected_workers = 0;
+        assert!(ensure_supervisor_status_ready(0, &disconnected, 1).is_err());
     }
 
     #[cfg(feature = "ocomp-integration")]

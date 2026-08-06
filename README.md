@@ -439,24 +439,33 @@ use `scripts/release/reproducible-build.sh`; the exact two-build procedure, mani
 and current scope limits are documented in [Reproducible builds](docs/reproducible-builds.md).
 
 ```bash
-# 4-validator localnet
-mise run build-release
-mise run localnet-bootstrap     # BLS keys + genesis.json
-docker run -d --name outbe-local-mongodb -p 27017:27017 mongo:7 --replSet rs0 --bind_ip_all
-docker exec outbe-local-mongodb mongosh --quiet --eval \
-  'rs.initiate({_id:"rs0",members:[{_id:0,host:"localhost:27017"}]})'
-export OUTBE_PROJECTION_MONGODB_URI='mongodb://127.0.0.1:27017/?replicaSet=rs0&directConnection=true'
-mise run localnet-start
-mise run localnet-status        # all 4 nodes should advance past block 0
+# 4-validator dev LocalNet with mock enclaves
+mise run build                  # debug workspace + mock enclave + OCOMP-enabled harness
+mise run localnet-bootstrap     # DKG keys + seed_genesis.py + OCOMP + TEE genesis
+mise run localnet-start         # MongoDB, 4 enclaves/validators, 4 Supervisors and 4 Workers
+mise run localnet-status        # advancing RPCs plus registered/connected OCOMP Workers
+mise run localnet-stop
 
-# Verify via RPC
-curl -s -X POST http://localhost:8545 -H "Content-Type: application/json" \
+# Verify via the validator-0 RPC selected during bootstrap
+RPC_PORT=$(jq -r '.rpc_ports[0]' "${OUT_DIR:-/tmp/outbe-testnet}/localnet-bootstrap-v1.json")
+curl -s -X POST "http://localhost:${RPC_PORT}" -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}'
 
 # Tests
 mise run test                   # cargo nextest run --workspace + doctests
 mise run test-consensus         # consensus crate only
 ```
+
+These four `localnet-*` lifecycle commands are owned by the Rust E2E harness;
+they do not call `prepare_network.py`, `bootstrap-testnet.sh`, or
+`run-testnet.sh`. `prepare_network.py` remains the testnet/production deployment
+tool. The explicit `localnet-sgx-*` command family is currently fail-closed and
+tracked by Beads issue `outbe-chain-8lp`; it never falls back to the mock dev
+enclave. Bootstrap resolves a free complete service-port layout and persists it
+in `<OUT_DIR>/localnet-bootstrap-v1.json`; `start` reuses that exact layout.
+For each genesis validator the persistent owner also starts one OCOMP Supervisor,
+one SnapshotExporter and Worker ordinal 0. `start` and `status` succeed only when
+every Worker is registered and connected to its own Supervisor.
 
 ### Managed localnet stack
 
