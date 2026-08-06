@@ -1191,6 +1191,27 @@ impl Rpc {
         eth::address_of(key).map(|a| format!("{a:#x}"))
     }
 
+    /// Create one Tribute for the currently OFFERING WorldwideDay.
+    pub fn create_tribute(&self, key: &str) -> Option<String> {
+        const OFFERING: u8 = 2;
+
+        let days: Vec<u32> = eth::read_call(
+            &self.cfg.rpc0,
+            addresses::WWD_ADDR,
+            &IWorldwideDay::getWorldwideDaysByStatusCall { status: OFFERING },
+        )?;
+        let worldwide_day = *days.first()?;
+        if days.len() > 1 {
+            eprintln!(
+                "multiple OFFERING WorldwideDays {days:?}; creating Tribute for {worldwide_day}"
+            );
+        }
+
+        let tx_hash = self.tribute_offer(key, &worldwide_day.to_string())?;
+        self.wait_successful_receipt(&tx_hash, 240)
+            .then_some(tx_hash)
+    }
+
     /// Submit a tribute offer for worldwide-day `wwd` from `key`; returns tx hash if any.
     pub fn tribute_offer(&self, key: &str, wwd: &str) -> Option<String> {
         self.tribute_offer_with_params(key, wwd, "100", 840, false)
