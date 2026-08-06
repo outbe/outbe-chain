@@ -10,9 +10,9 @@
 - **Topology/services:** Outbe validators (origin), N registered target chains
   reached through the ERC-7786 hub (the origin itself is a loopback target),
   funded router relay floats
-- **Referenced ADRs:** ADR-S-CYC-001, ADR-C-MET-001, ADR-C-LYS-001,
-  ADR-C-DES-001, ADR-C-INX-001 through ADR-C-INX-007, ADR-C-PRM-003,
-  ADR-B-XCH-001
+- **Referenced ADRs:** ADR-S-CYC-001, ADR-S-OCM-003, ADR-S-OCM-004,
+  ADR-C-MET-001, ADR-C-LYS-001, ADR-C-DES-001, ADR-C-INX-001 through
+  ADR-C-INX-007, ADR-C-PRM-003, ADR-B-XCH-001
 - **Supersedes:** None
 
 ## Outcome
@@ -56,14 +56,16 @@ The day exists in Metadosis with a sealed tribute population; the Oracle holds
 the previous day's finalized VWAP (else the day types RED); OriginRouter's
 target registry is non-empty and each target's stack is wired with relay roles;
 relay floats cover the stage fan-out; the loopback gateway is registered for
-the origin chain.
+the origin chain. The OCOMP request, computation, voting, independent FullNode
+verification and q-forming apply path satisfies PFS-002; this flow consumes its
+certified Nod/contributor state rather than redefining that acceptance contract.
 
 ## Success sequence
 
 | Step | Owner | Command/effect | Durable evidence |
 |---:|---|---|---|
 | 1 | Metadosis | READY processing splits the formed limit; GREEN sends one typed Desis brief, RED routes auction base to carry-over; populated positive-gratis work creates an OCOMP intent without Lysis effects | split/brief receipt, Desis `Briefed` or exact carry-over, `JobIntentV1` |
-| 2 | OCOMP quorum-forming apply | certified Lysis result installs Nod/contributor state and retires the Tribute generation atomically; quorum is derived from the job-pinned ACTIVE ValidatorSet and no synchronous fallback exists | dynamic quorum receipt, contributor list/total, terminal Metadosis receipt |
+| 2 | OCOMP q-forming apply | the PFS-002 consensus path verifies the job-pinned dynamic quorum, then installs certified Nod/contributor state and retires the Tribute generation atomically; an OCOMP-enabled FullNode separately requires its independently computed exact local result before applying this transition; this flow defines no synchronous fallback | immutable quorum evidence, q-forming apply receipt, durable local-result gate outcome, contributor list/total, terminal Metadosis receipt |
 | 3 | Desis | schedule tick at anchor: accepted green starts, red cancels; STAGE_START to every snapshot chain | stage, `AuctionCreated`/`AuctionCancelledRedDay`, sends |
 | 4 | Target stacks | commit window: bond-locked commitments; reveal window: revealed bids, bond release | escrow receipts, auction records |
 | 5 | TargetRouter | relay bid batches + BIDS_DONE after clearing signal | relayed batches, marker |
@@ -77,10 +79,10 @@ the origin chain.
 
 ## Boundaries and conservation
 
-Step 1 commits request-phase split/brief/intent effects. Step 2 is a later
-verified OCOMP q-forming transaction; it is the only producer of certified
-contributor state. Step 3 and each later Desis transition run inside their own
-checkpoints (schedule tick per day, gate per day). Clearing (7–9) commits
+Step 1 commits request-phase split/brief/intent effects. Step 2 is the later
+verified OCOMP q-forming apply transaction; it is the only producer of
+certified contributor state. Step 3 and each later Desis transition run inside
+their own checkpoints (schedule tick per day, gate per day). Clearing (7–9) commits
 terminal stage, PromisLimit return, issuance and per-chain sends in one
 transaction. Cross-module equations: issued × load + unused = accepted brief
 supply; per-bidder paid + refunded = locked; Σ creator payouts = Σ delivered
