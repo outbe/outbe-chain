@@ -762,7 +762,7 @@ fn run_node() -> eyre::Result<()> {
             projection_readiness,
             finalized_ce_committer,
             ce_startup_recovery,
-            compressed_tree_service,
+            _compressed_tree_service,
         ) = match node_rx.blocking_recv() {
             Ok(v) => v,
             Err(_) => return Ok(()),

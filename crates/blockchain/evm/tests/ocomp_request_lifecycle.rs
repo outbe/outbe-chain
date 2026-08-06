@@ -843,7 +843,7 @@ fn real_payload_builder_commits_atomic_request_after_ce_seal_without_lysis_effec
     let vote_transactions = (0_u8..3)
         .map(|validator_index| {
             let vote = voting.signed_vote(validator_index);
-            let calldata = encode_submit_lysis_result_calldata(&vote, &poc_schema_limits())
+            let calldata = encode_submit_lysis_result_calldata(&voting_result, &poc_schema_limits())
                 .expect("canonical q-forming vote calldata");
             pooled_vote_transaction(Bytes::from(calldata), u64::from(validator_index))
         })
