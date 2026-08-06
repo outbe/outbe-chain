@@ -1894,6 +1894,8 @@ fn finalized_discovery_control_pages_multiple_jobs_canonically() {
         finalized_block_hash,
         finalized_state_root,
         protocol_bundle_hash: intent.protocol_bundle_hash,
+        open_height: 100,
+        deadline_height: 200,
     };
     let mut second = summary.clone();
     second.cursor += 1;

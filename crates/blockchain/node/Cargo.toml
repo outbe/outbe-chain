@@ -63,7 +63,6 @@ metrics.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 k256.workspace = true
-zeroize.workspace = true
 
 [dev-dependencies]
 outbe-primitives = { workspace = true, features = ["test-utils"] }

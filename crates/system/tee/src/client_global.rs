@@ -23,6 +23,10 @@ use crate::errors::TransportError;
 use crate::protocol::{EnclaveRequest, EnclaveResponse};
 use outbe_primitives::tee_attestation_v1::RegistrationIntentV1;
 
+// Stored once in a process-global OnceLock<Mutex<_>> — a single instance for the
+// node's lifetime, never passed by value in bulk, so boxing the larger variant
+// would add indirection for no benefit.
+#[allow(clippy::large_enum_variant)]
 pub enum RuntimeEnclaveClient {
     Development(Box<EnclaveClient>),
     Production(AuthorizedEnclaveClient),

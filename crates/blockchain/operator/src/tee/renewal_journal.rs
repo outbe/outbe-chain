@@ -109,6 +109,7 @@ impl PreparedRenewalV1 {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "camelCase", deny_unknown_fields)]
+#[allow(clippy::large_enum_variant)]
 pub enum RenewalJournalStateV1 {
     Prepared {
         attempt: PreparedRenewalV1,

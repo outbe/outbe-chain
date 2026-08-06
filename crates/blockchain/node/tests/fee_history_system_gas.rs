@@ -23,11 +23,15 @@ use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::{
     addresses::REWARDS_ADDRESS,
     chain::DEVNET_CHAIN_ID,
-    consensus::{DkgBoundaryArtifact, ReshareResult},
+    consensus::{ConsensusExecutionBridge, DkgBoundaryArtifact, ReshareResult},
     reshare_artifact::{
         encode_outbe_block_artifacts, ConsensusHeaderArtifact, OutbeBlockArtifacts,
     },
     system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT,
+    tee_test_utils::{
+        gramine_direct_bootstrap_v2, gramine_direct_policy_v1, tee_attestation_v1_extra_field,
+        DevValidatorV1,
+    },
     OutbeHeader, OutbePayloadAttributes,
 };
 use reth_chainspec::{Chain, ChainSpec, ChainSpecBuilder};
@@ -43,6 +47,11 @@ use reth_tasks::Runtime;
 
 const GENESIS_VALIDATOR_PUBKEY: &str =
     "111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111";
+
+/// Block-1 timestamp the reth payload harness generates: it starts at the
+/// genesis timestamp (`0x65f1b057`) and increments by one per block, so the
+/// first post-genesis block is `genesis + 1`. The OST3 lease is anchored to it.
+const BLOCK_ONE_TIMESTAMP_SECS: u64 = 0x65f1_b057 + 1;
 
 fn workspace_root() -> PathBuf {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -207,9 +216,42 @@ async fn gas_14_rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
 
     let signer = Arc::new(OutbeEvmSigner::from_secret_bytes([1u8; 32])?);
     let proposer = signer.address();
-    let chain_spec = chain_spec_with_genesis(seed_single_validator_genesis(&signer)?);
+
+    // Block 1 now mandates the canonical OST3 TEE-bootstrap system tx. The genesis
+    // config must carry the GramineDirectDev `teeAttestationV1` activation manifest
+    // (the ChainSpec authority the executor checks the payload's policy against),
+    // and the proposer must inject the bootstrap payload via the consensus bridge.
+    // Adding the config field does not change the genesis block hash, so the policy
+    // can bind the hash computed from the seeded genesis alloc.
+    let mut genesis = seed_single_validator_genesis(&signer)?;
+    let genesis_hash = chain_spec_with_genesis(genesis.clone()).genesis_hash();
+    let tee_policy = gramine_direct_policy_v1(DEVNET_CHAIN_ID, genesis_hash)
+        .expect("GramineDirectDev devnet TEE policy is canonical");
+    genesis.config.extra_fields.insert(
+        "teeAttestationV1".to_owned(),
+        tee_attestation_v1_extra_field(&tee_policy)
+            .expect("GramineDirectDev TEE activation manifest is canonical"),
+    );
+    let chain_spec = chain_spec_with_genesis(genesis);
     let ce_directory = tempfile::tempdir()?;
-    let genesis_hash = chain_spec.genesis_hash();
+
+    // The OST3 payload binds the epoch-0 committee snapshot that the block-1
+    // BoundaryOutcome writes before TeeBootstrap runs — the same hash the boundary
+    // artifact carries — and is signed by the single genesis validator.
+    let bridge = ConsensusExecutionBridge::new();
+    bridge.set_pending_tee_bootstrap(
+        gramine_direct_bootstrap_v2(
+            tee_policy,
+            boundary_for_single_validator(proposer).committee_set_hash,
+            1,
+            BLOCK_ONE_TIMESTAMP_SECS + 3_600,
+            &[DevValidatorV1 {
+                evm_secret: [1u8; 32],
+                bls_minpk_public: genesis_validator_pubkey(),
+            }],
+        )
+        .expect("GramineDirectDev OST3 bootstrap payload is canonical"),
+    );
     let ocomp_fork_install = Arc::new(
         ForkInstallScenario::measurement_at(1, DEVNET_CHAIN_ID, genesis_hash)
             .expect("fresh-devnet OCOMP install fixture is canonical")
@@ -264,7 +306,7 @@ async fn gas_14_rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
 
     let outbe_node = OutbeNode {
         ocomp_local_result_authority: None,
-        bridge: None,
+        bridge: Some(bridge),
         evm_signer: Some(signer),
         runtime_body_readers: RuntimeBodyReaders::new(Arc::new(MemoryStorage::new())),
         compressed_tree_service,

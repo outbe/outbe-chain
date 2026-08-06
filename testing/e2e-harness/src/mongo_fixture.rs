@@ -37,19 +37,23 @@ impl ManagedMongoReplicaSet {
         let port = free_tcp_port()?;
         docker_rm(name, sudo);
 
+        // Publish the port instead of `--network host`: host networking does not
+        // reach the host loopback on Docker Desktop (Linux VM), so the fixture must
+        // work whether the daemon is native Linux or a VM. `--bind_ip_all` lets the
+        // docker port proxy reach mongod on the container interface.
+        let publish = format!("127.0.0.1:{port}:{port}");
         let output = base_cmd("docker", sudo)
             .args([
                 "run",
                 "-d",
                 "--name",
                 name,
-                "--network",
-                "host",
+                "-p",
+                &publish,
                 MANAGED_MONGO_IMAGE,
                 "--replSet",
                 "rs0",
-                "--bind_ip",
-                "127.0.0.1",
+                "--bind_ip_all",
                 "--port",
                 &port.to_string(),
             ])
@@ -66,8 +70,13 @@ impl ManagedMongoReplicaSet {
             bail!("managed MongoDB did not listen on 127.0.0.1:{port}");
         }
 
-        let init =
-            format!("rs.initiate({{_id:'rs0',members:[{{_id:0,host:'127.0.0.1:{port}'}}]}})");
+        // Initiate the set (ignore "already initialized" on retries) and only
+        // report ready once the node has actually won its election — rs.initiate
+        // returns ok:1 before the member transitions to PRIMARY, so writing early
+        // races into NotWritablePrimary.
+        let init = format!(
+            "try {{ rs.initiate({{_id:'rs0',members:[{{_id:0,host:'127.0.0.1:{port}'}}]}}) }} catch (e) {{}} if (!db.hello().isWritablePrimary) {{ quit(1) }}"
+        );
         let mut ready = false;
         for _ in 0..60 {
             let status = base_cmd("docker", sudo)

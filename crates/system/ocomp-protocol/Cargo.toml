@@ -9,7 +9,6 @@ publish.workspace = true
 alloy-primitives = { workspace = true, features = ["serde", "std"] }
 alloy-eips.workspace = true
 k256.workspace = true
-libc.workspace = true
 rustix.workspace = true
 serde.workspace = true
 thiserror.workspace = true

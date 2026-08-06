@@ -131,7 +131,6 @@ struct ProductionLayout {
     ocomp_evm_key_path: PathBuf,
     ocomp_result_key_path: PathBuf,
     protocol_bundle_path: PathBuf,
-    result_committee_path: PathBuf,
 }
 
 impl ProductionLayout {
@@ -158,7 +157,6 @@ impl ProductionLayout {
             ocomp_evm_key_path: data_root.join("keys").join("ocomp-evm-key.hex"),
             ocomp_result_key_path: data_root.join("keys").join("ocomp-key-v1.hex"),
             protocol_bundle_path: base_path.join("protocol-bundle-v1.ocb1"),
-            result_committee_path: base_path.join("result-committee-v1.ocb1"),
         })
     }
 }
@@ -197,7 +195,6 @@ struct RuntimeProfile {
     ocomp_evm_key_path: PathBuf,
     ocomp_result_key_path: PathBuf,
     protocol_bundle_path: PathBuf,
-    result_committee_path: PathBuf,
 }
 
 impl RuntimeProfile {
@@ -226,7 +223,6 @@ impl RuntimeProfile {
                 ocomp_evm_key_path: layout.ocomp_evm_key_path,
                 ocomp_result_key_path: layout.ocomp_result_key_path,
                 protocol_bundle_path: layout.protocol_bundle_path,
-                result_committee_path: layout.result_committee_path,
             });
         };
 
@@ -257,7 +253,6 @@ impl RuntimeProfile {
             ocomp_evm_key_path: root.join("ocomp-evm-key.hex"),
             ocomp_result_key_path: root.join("ocomp-key-v1.hex"),
             protocol_bundle_path: root.join("protocol-bundle-v1.ocb1"),
-            result_committee_path: root.join("result-committee-v1.ocb1"),
         })
     }
 }
@@ -411,22 +406,16 @@ fn run_supervisor(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> 
         OutbeEvmSigner::from_strict_file(&runtime.ocomp_evm_key_path, runtime.effective_role_uid)?;
     let result_signer =
         OcompSigner::from_file(&runtime.ocomp_result_key_path, runtime.effective_role_uid)?;
-    let result_committee =
-        outbe_ocomp_protocol::committee::OcompCommitteeSnapshotV1::decode_canonical(
-            &std::fs::read(&runtime.result_committee_path)?,
-            &limits,
-        )?;
     let sign_once = SignOnceStore::open(
         runtime.supervisor_sign_once_root,
         runtime.effective_role_uid,
         limits,
     )?;
-    let validator_index: u8 = required_env("OCOMP_VALIDATOR_INDEX")?.parse()?;
+    let validator_index: u16 = required_env("OCOMP_VALIDATOR_INDEX")?.parse()?;
     let attester = LocalResultVoteAttesterV1::new(
         identity,
         fork_id,
         validator_index,
-        result_committee,
         result_signer,
         sign_once,
         limits,
@@ -793,10 +782,6 @@ mod tests {
         assert_eq!(
             layout.protocol_bundle_path,
             PathBuf::from("/srv/outbe/protocol-bundle-v1.ocb1")
-        );
-        assert_eq!(
-            layout.result_committee_path,
-            PathBuf::from("/srv/outbe/result-committee-v1.ocb1")
         );
         assert_eq!(
             layout.ocomp_evm_key_path,

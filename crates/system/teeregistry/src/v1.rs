@@ -1175,6 +1175,7 @@ impl TeeRegistry<'_> {
             })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn apply_verified_claims_mutation_v1(
         &mut self,
         mutation: VerifiedClaimsMutationV1<'_>,
@@ -1625,6 +1626,7 @@ impl TeeRegistry<'_> {
     }
 
     #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
     fn apply_verified_mutation_v1(
         &mut self,
         expected_operation: AttestationOperationV1,

@@ -8066,7 +8066,6 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
- "zeroize",
 ]
 
 [[package]]
@@ -8128,6 +8127,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "zeroize",
  "zeromq",
 ]
 
@@ -8145,7 +8145,6 @@ dependencies = [
  "commonware-cryptography",
  "commonware-utils",
  "k256 0.13.4",
- "libc",
  "outbe-consensus",
  "outbe-metadosis",
  "outbe-node",
