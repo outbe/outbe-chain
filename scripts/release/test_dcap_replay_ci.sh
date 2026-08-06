@@ -11,6 +11,10 @@ if [[ "$(uname -m)" != "x86_64" ]]; then
   exit 1
 fi
 
+# This lane exists to exercise the real pinned QVL: a missing Intel stack must
+# fail the job, not silently downgrade to the fail-closed stub.
+export OUTBE_NATIVE_DCAP=require
+
 python3 scripts/release/tests/test_dcap_native_qvl.py
 python3 scripts/release/verify_dcap_native_qvl.py
 

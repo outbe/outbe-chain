@@ -1,8 +1,8 @@
 //! Restart-safe public submission of one validator-domain OCOMP result vote.
 //!
-//! The node owns only the OCOMP attestation key and returns the canonical
-//! sign-once vote. The Supervisor owns a separate role-delegated EVM key and
-//! locally builds the fixed-shape EIP-1559 transaction. This module durably
+//! The Supervisor owns the validator's role-delegated EVM key, validates the
+//! result binding, and locally builds the fixed-shape EIP-1559 transaction.
+//! This module durably
 //! records every delivery transition and only treats a receipt as final after
 //! checking the canonical block at its height and the public finalized head.
 
@@ -25,14 +25,12 @@ use alloy_consensus::{
 use alloy_eips::eip2718::{Decodable2718 as _, Encodable2718 as _};
 use alloy_primitives::{keccak256, Address, Bytes, TxKind, B256, U256};
 use outbe_ocomp_protocol::{
-    abi::encode_submit_lysis_result_calldata, common::BoundedBytes, vote::ResultVoteV1,
+    abi::encode_submit_lysis_result_calldata, common::BoundedBytes, result::LysisResultV1,
     PreparedVoteTransactionV1, ProtocolError, SchemaLimits,
 };
 use outbe_primitives::addresses::METADOSIS_ADDRESS;
 use outbe_primitives::signer::{OutbeEvmSigner, SignerError};
 use thiserror::Error;
-
-use crate::supervisor::{SupervisorDiscovery, SupervisorDiscoveryError};
 
 const JOURNAL_MAGIC: [u8; 8] = *b"OUTBVOT1";
 const JOURNAL_VERSION: u16 = 1;
@@ -131,30 +129,14 @@ pub trait VoteTransactionPreparerV1 {
     ) -> Result<PreparedVoteTransactionV1, Self::Error>;
 }
 
-pub trait ResultVoteAttesterV1 {
-    type Error: std::error::Error + Send + Sync + 'static;
-
-    fn attest_result_vote(&self, canonical_result: &[u8]) -> Result<ResultVoteV1, Self::Error>;
-}
-
-impl ResultVoteAttesterV1 for SupervisorDiscovery {
-    type Error = SupervisorDiscoveryError;
-
-    fn attest_result_vote(&self, canonical_result: &[u8]) -> Result<ResultVoteV1, Self::Error> {
-        self.request_attestation(canonical_result)
-    }
-}
-
-pub struct LocalVoteTransactionPreparerV1<'a, A> {
-    attester: &'a A,
+pub struct LocalVoteTransactionPreparerV1 {
     signer: OutbeEvmSigner,
     chain_id: u64,
     limits: SchemaLimits,
 }
 
-impl<'a, A> LocalVoteTransactionPreparerV1<'a, A> {
+impl LocalVoteTransactionPreparerV1 {
     pub fn new(
-        attester: &'a A,
         signer: OutbeEvmSigner,
         chain_id: u64,
         limits: SchemaLimits,
@@ -163,7 +145,6 @@ impl<'a, A> LocalVoteTransactionPreparerV1<'a, A> {
             return Err(LocalVotePreparationErrorV1::InvalidChainId);
         }
         Ok(Self {
-            attester,
             signer,
             chain_id,
             limits,
@@ -175,7 +156,7 @@ impl<'a, A> LocalVoteTransactionPreparerV1<'a, A> {
     }
 }
 
-impl<A: ResultVoteAttesterV1> VoteTransactionPreparerV1 for LocalVoteTransactionPreparerV1<'_, A> {
+impl VoteTransactionPreparerV1 for LocalVoteTransactionPreparerV1 {
     type Error = LocalVotePreparationErrorV1;
 
     fn prepare_vote_transaction(
@@ -196,12 +177,11 @@ impl<A: ResultVoteAttesterV1> VoteTransactionPreparerV1 for LocalVoteTransaction
             return Err(LocalVotePreparationErrorV1::InvalidFeeEnvelope);
         }
 
-        let vote = self
-            .attester
-            .attest_result_vote(canonical_result)
-            .map_err(|error| LocalVotePreparationErrorV1::Attestation(error.to_string()))?;
-        let canonical_vote = vote.encode_canonical(&self.limits)?;
-        let calldata = encode_submit_lysis_result_calldata(&vote, &self.limits)?;
+        let result = LysisResultV1::decode_canonical(canonical_result, &self.limits)?;
+        if result.encode_canonical(&self.limits)? != canonical_result {
+            return Err(LocalVotePreparationErrorV1::NonCanonicalResult);
+        }
+        let calldata = encode_submit_lysis_result_calldata(&result, &self.limits)?;
         if calldata.len() > outbe_zerofee::MAX_ZERO_FEE_OCOMP_CALLDATA_BYTES {
             return Err(LocalVotePreparationErrorV1::CalldataTooLarge);
         }
@@ -224,7 +204,7 @@ impl<A: ResultVoteAttesterV1> VoteTransactionPreparerV1 for LocalVoteTransaction
             .map_err(|_| LocalVotePreparationErrorV1::Allocation)?;
         signed.encode_2718(&mut raw_transaction);
         Ok(PreparedVoteTransactionV1 {
-            canonical_vote: BoundedBytes(canonical_vote),
+            canonical_result: BoundedBytes(canonical_result.to_vec()),
             raw_transaction: BoundedBytes(raw_transaction),
             transaction_hash,
         })
@@ -239,8 +219,8 @@ pub enum LocalVotePreparationErrorV1 {
     EmptyCanonicalResult,
     #[error("OCOMP vote transaction fee envelope is invalid")]
     InvalidFeeEnvelope,
-    #[error("OCOMP result attestation failed: {0}")]
-    Attestation(String),
+    #[error("OCOMP result bytes are not canonical")]
+    NonCanonicalResult,
     #[error("OCOMP vote transaction calldata exceeds the protocol cap")]
     CalldataTooLarge,
     #[error("OCOMP vote transaction allocation failed")]
@@ -344,7 +324,7 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
                 max_fee_per_gas,
                 outbe_zerofee::MAX_ZERO_FEE_OCOMP_GAS_LIMIT,
             )
-            .map_err(node_error)?;
+            .map_err(preparer_error)?;
         self.validate_prepared(&prepared, job_id, result_digest, nonce, max_fee_per_gas)?;
         self.journal.persist(VoteSubmissionRecordV1 {
             generation: 1,
@@ -503,11 +483,12 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
         nonce: u64,
         max_fee_per_gas: u128,
     ) -> Result<(), VoteSubmissionErrorV1> {
-        let vote = ResultVoteV1::decode_canonical(&prepared.canonical_vote.0, &self.config.limits)?;
-        if vote.job_id != job_id || vote.result_digest(&self.config.limits)? != result_digest {
-            return Err(VoteSubmissionErrorV1::NodeChangedResult);
+        let result =
+            LysisResultV1::decode_canonical(&prepared.canonical_result.0, &self.config.limits)?;
+        if result.job_id != job_id || result.result_digest(&self.config.limits)? != result_digest {
+            return Err(VoteSubmissionErrorV1::PreparerChangedResult);
         }
-        let expected_calldata = encode_submit_lysis_result_calldata(&vote, &self.config.limits)?;
+        let expected_calldata = encode_submit_lysis_result_calldata(&result, &self.config.limits)?;
         if prepared.raw_transaction.0.len() > MAX_RAW_TRANSACTION_BYTES {
             return Err(VoteSubmissionErrorV1::RawTransactionTooLarge);
         }
@@ -567,8 +548,8 @@ fn rpc_error(error: impl std::error::Error) -> VoteSubmissionErrorV1 {
     VoteSubmissionErrorV1::Rpc(error.to_string())
 }
 
-fn node_error(error: impl std::error::Error) -> VoteSubmissionErrorV1 {
-    VoteSubmissionErrorV1::Node(error.to_string())
+fn preparer_error(error: impl std::error::Error) -> VoteSubmissionErrorV1 {
+    VoteSubmissionErrorV1::Preparer(error.to_string())
 }
 
 pub struct PublicVoteRpcClientV1 {
@@ -1155,17 +1136,17 @@ fn io_error(operation: &'static str, path: &Path, source: std::io::Error) -> Vot
 pub enum VoteSubmissionErrorV1 {
     #[error(transparent)]
     Protocol(#[from] ProtocolError),
-    #[error("vote submission node control failed: {0}")]
-    Node(String),
+    #[error("vote transaction preparation failed: {0}")]
+    Preparer(String),
     #[error("vote submission public RPC failed: {0}")]
     Rpc(String),
     #[error("vote submission RPC is for chain {actual}, expected {expected}")]
     WrongRpcChain { expected: u64, actual: u64 },
-    #[error("node returned a result vote for another job or digest")]
-    NodeChangedResult,
-    #[error("node returned an invalid restricted vote transaction: {0}")]
+    #[error("transaction preparer returned a result for another job or digest")]
+    PreparerChangedResult,
+    #[error("transaction preparer returned an invalid restricted vote transaction: {0}")]
     InvalidPreparedTransaction(String),
-    #[error("node returned an oversized raw vote transaction")]
+    #[error("transaction preparer returned an oversized raw vote transaction")]
     RawTransactionTooLarge,
     #[error("empty canonical result cannot prepare a vote transaction")]
     EmptyCanonicalResult,
@@ -1232,7 +1213,6 @@ mod tests {
             CompletionStatus, ConservationTotalsV1, ExactCountsV1, LysisArithmeticSummaryV1,
             LysisResultV1, MetadosisCompletionSummaryV1, ResultRootsV1,
         },
-        vote::ResultVoteV1,
     };
     use outbe_primitives::signer::OutbeEvmSigner;
 
@@ -1338,39 +1318,12 @@ mod tests {
         test_result(&limits).result_digest(&limits).unwrap()
     }
 
-    struct FakeAttester {
-        vote: ResultVoteV1,
-    }
-
-    impl ResultVoteAttesterV1 for FakeAttester {
-        type Error = std::io::Error;
-
-        fn attest_result_vote(
-            &self,
-            _canonical_result: &[u8],
-        ) -> Result<ResultVoteV1, Self::Error> {
-            Ok(self.vote.clone())
-        }
-    }
-
     #[test]
     fn local_preparer_builds_and_signs_the_restricted_vote_transaction() {
         let limits = poc_schema_limits();
         let signer = OutbeEvmSigner::from_secret_bytes([9; 32]).unwrap();
         let sender = signer.address();
-        let attester = FakeAttester {
-            vote: ResultVoteV1 {
-                protocol_bundle_hash: B256::repeat_byte(0x20),
-                job_id: JOB_ID,
-                attempt: 0,
-                result_committee_snapshot_hash: B256::repeat_byte(0x23),
-                validator_index: 0,
-                key_epoch: 1,
-                result: test_result(&limits),
-                signature_rs: [0x24; 64],
-            },
-        };
-        let preparer = LocalVoteTransactionPreparerV1::new(&attester, signer, 42, limits).unwrap();
+        let preparer = LocalVoteTransactionPreparerV1::new(signer, 42, limits).unwrap();
 
         let prepared = preparer
             .prepare_vote_transaction(
@@ -1429,20 +1382,11 @@ mod tests {
             gas_limit: u64,
         ) -> Result<PreparedVoteTransactionV1, Self::Error> {
             self.calls.fetch_add(1, Ordering::SeqCst);
-            let vote = ResultVoteV1 {
-                protocol_bundle_hash: B256::repeat_byte(0x20),
-                job_id: JOB_ID,
-                attempt: 0,
-                result_committee_snapshot_hash: B256::repeat_byte(0x23),
-                validator_index: 0,
-                key_epoch: 1,
-                result: test_result(&self.limits),
-                signature_rs: [0x24; 64],
-            };
-            let canonical_vote = vote
+            let result = test_result(&self.limits);
+            let canonical_result = result
                 .encode_canonical(&self.limits)
                 .map_err(std::io::Error::other)?;
-            let calldata = encode_submit_lysis_result_calldata(&vote, &self.limits)
+            let calldata = encode_submit_lysis_result_calldata(&result, &self.limits)
                 .map_err(std::io::Error::other)?;
             let signed = self
                 .signer
@@ -1462,7 +1406,7 @@ mod tests {
             let mut raw_transaction = Vec::with_capacity(signed.encode_2718_len());
             signed.encode_2718(&mut raw_transaction);
             Ok(PreparedVoteTransactionV1 {
-                canonical_vote: BoundedBytes(canonical_vote),
+                canonical_result: BoundedBytes(canonical_result),
                 raw_transaction: BoundedBytes(raw_transaction),
                 transaction_hash,
             })

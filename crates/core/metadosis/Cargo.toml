@@ -15,6 +15,7 @@ outbe-desis.workspace = true
 outbe-fidelity.workspace = true
 outbe-intex.workspace = true
 outbe-tribute.workspace = true
+outbe-validatorset.workspace = true
 outbe-nod.workspace = true
 outbe-nodfactory.workspace = true
 outbe-promislimit.workspace = true

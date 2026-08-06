@@ -95,12 +95,7 @@ use outbe_consensus::{
     vrf_safety::VrfSafetyGate,
 };
 
-use outbe_node::ocomp::control::{OcompControlServer, OcompNodeAttestationConfig};
-use outbe_node::ocomp::service::{OcompControlRuntime, OcompControlRuntimeConfig};
-use outbe_node::ocomp::snapshot_control::RethProjectionContainmentAuthority;
-use outbe_node::ocomp::ProviderHeightSource;
 use outbe_node::OutbeFullNode;
-use outbe_ocomp_protocol::local_control::EndpointIdentity;
 use outbe_ocomp_protocol::profile::poc_schema_limits;
 use outbe_primitives::{
     consensus::{ConsensusExecutionBridge, DkgBoundaryArtifact},
@@ -126,7 +121,6 @@ pub struct ConsensusStackServices {
     projection_readiness: ProjectionReadinessHandle,
     finalized_ce_committer: Arc<dyn FinalizedCeCommitter>,
     ce_startup_recovery: Arc<dyn CeStartupRecovery>,
-    compressed_tree_service: Arc<outbe_compressed_entities::CompressedTreeService>,
 }
 
 impl ConsensusStackServices {
@@ -134,13 +128,11 @@ impl ConsensusStackServices {
         projection_readiness: ProjectionReadinessHandle,
         finalized_ce_committer: Arc<dyn FinalizedCeCommitter>,
         ce_startup_recovery: Arc<dyn CeStartupRecovery>,
-        compressed_tree_service: Arc<outbe_compressed_entities::CompressedTreeService>,
     ) -> Self {
         Self {
             projection_readiness,
             finalized_ce_committer,
             ce_startup_recovery,
-            compressed_tree_service,
         }
     }
 }
@@ -2156,7 +2148,6 @@ where
         projection_readiness,
         finalized_ce_committer,
         ce_startup_recovery,
-        compressed_tree_service,
     } = services;
 
     // Validate network-scoped flags before any mode-specific early return. A
@@ -2917,13 +2908,12 @@ where
                             )
                         }
                         outbe_primitives::tee_attestation_v1::AttestationMode::GramineDirectDev => {
-                            let development = outbe_tee::EnclaveClient::connect_endpoint(
-                                &endpoint,
-                                &outbe_tee::QuotePolicy::dev_accept_any(),
-                            )
-                            .map_err(|error| {
-                                eyre::eyre!("GramineDirectDev enclave reconnect failed: {error}")
-                            })?;
+                            let development = outbe_tee::EnclaveClient::connect_endpoint(&endpoint)
+                                .map_err(|error| {
+                                    eyre::eyre!(
+                                        "GramineDirectDev enclave reconnect failed: {error}"
+                                    )
+                                })?;
                             (
                                 outbe_tee::RuntimeEnclaveClient::Development(development),
                                 None,
@@ -3070,11 +3060,7 @@ where
                 }
                 outbe_primitives::tee_attestation_v1::AttestationMode::GramineDirectDev => {
                     outbe_tee::RuntimeEnclaveClient::Development(
-                        outbe_tee::EnclaveClient::connect_endpoint(
-                            endpoint,
-                            &outbe_tee::QuotePolicy::dev_accept_any(),
-                        )
-                        .map_err(|error| {
+                        outbe_tee::EnclaveClient::connect_endpoint(endpoint).map_err(|error| {
                             eyre::eyre!("GramineDirectDev enclave reconnect failed: {error}")
                         })?,
                     )
@@ -3536,75 +3522,8 @@ where
             ocomp_proof_source,
         ),
     );
-    let mut ocomp_snapshot_armer = None;
-    let _ocomp_control_runtime = if let Some(config) = args.ocomp.node_control()? {
-        let install = ocomp_fork_install.as_ref();
-        if config.protocol_bundle_hash != install.request_profile.protocol_bundle_hash {
-            return Err(eyre::eyre!(
-                "OCOMP node-control bundle {} differs from chain manifest {}",
-                config.protocol_bundle_hash,
-                install.request_profile.protocol_bundle_hash
-            ));
-        }
-        let identity = EndpointIdentity {
-            chain_id,
-            genesis_hash,
-            boot_nonce: config.boot_nonce,
-            protocol_bundle_hash: config.protocol_bundle_hash,
-        };
-        let projection_containment = Arc::new(RethProjectionContainmentAuthority::new(
-            node.provider.clone(),
-        ));
-        let snapshot_export_authority = Arc::new(
-            outbe_node::ocomp::snapshot_control::SnapshotExportAuthority::new(
-                ocomp_retention_coordinator.clone(),
-                compressed_tree_service,
-                projection_containment,
-                config.boot_nonce,
-                poc_schema_limits(),
-            ),
-        );
-        let server = OcompControlServer::new(
-            ocomp_retention_coordinator.clone(),
-            config.supervisor_uid,
-            identity,
-            config.session_generation,
-            poc_schema_limits(),
-        )?
-        .with_node_attestation_height_source(
-            OcompNodeAttestationConfig {
-                key_path: config.key_path,
-                sign_once_root: ocomp_storage_root.join("ocomp_sign_once"),
-                expected_owner_uid: outbe_ocomp_protocol::local_control::effective_uid()?,
-                validator_index: config.validator_index,
-                committee: install.result_committee.clone(),
-                initial_height: recovery_anchor_height,
-            },
-            Arc::new(ProviderHeightSource::new(node.provider.clone())),
-        )?
-        .with_snapshot_export_authority(
-            snapshot_export_authority.clone(),
-            config.snapshot_exporter_uid,
-        );
-        ocomp_snapshot_armer = Some(
-            snapshot_export_authority
-                as Arc<dyn outbe_node::ocomp::retention::FinalizedSnapshotArmer>,
-        );
-        contain_ocomp_control_start(OcompControlRuntime::start(
-            Arc::new(server),
-            OcompControlRuntimeConfig {
-                supervisor_socket: config.supervisor_socket,
-                snapshot_exporter_socket: config.snapshot_exporter_socket,
-            },
-        ))
-    } else {
-        None
-    };
     let (ocomp_retention_service, ocomp_retention_handle) =
-        outbe_node::ocomp::retention::OcompRetentionService::new_with_snapshot_armer(
-            ocomp_retention_coordinator,
-            ocomp_snapshot_armer,
-        );
+        outbe_node::ocomp::retention::OcompRetentionService::new(ocomp_retention_coordinator);
     let ocomp_retention: Arc<dyn OcompRetentionHook> = Arc::new(ocomp_retention_handle);
 
     // Resolve consensus-sync block timings from genesis (timing.rs fallbacks,
@@ -5523,21 +5442,6 @@ where
     drop(bridge);
 
     Ok(())
-}
-
-fn contain_ocomp_control_start(
-    result: std::io::Result<OcompControlRuntime>,
-) -> Option<OcompControlRuntime> {
-    match result {
-        Ok(runtime) => Some(runtime),
-        Err(error) => {
-            tracing::error!(
-                %error,
-                "node OCOMP control runtime unavailable; consensus remains active"
-            );
-            None
-        }
-    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

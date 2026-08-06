@@ -1202,7 +1202,7 @@ def seed_tee_policy(genesis: dict, alloc: dict, seed: dict):
          state. The account also gets marker bytecode so the slot survives
          EIP-161 cleanup until block 1.
       2. `config.teePolicy` — read by the node at startup to build the host
-         `QuotePolicy` (defense-in-depth measurement check at enclave connect).
+         structural key/measurement consistency checks at development connect.
 
     No-op when `tee_policy` is absent: genesis is unchanged and the handler skips
     measurement enforcement (slot 2 == ZERO).

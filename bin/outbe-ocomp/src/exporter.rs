@@ -8,8 +8,9 @@ use std::collections::VecDeque;
 
 use alloy_primitives::{B256, U256};
 use outbe_compressed_entities::{
-    decode_tribute_v1, AuthenticatedTributePartition, CanonicalBodyError, EntityId36,
-    IdPageRequest, TributeBodyV1, BODY_SCHEMA_V1,
+    body_commitment, decode_tribute_v1, tribute_partition_root_from_leaves,
+    AuthenticatedTributePartition, CanonicalBodyError, EntityId36, IdPageRequest, TributeBodyV1,
+    ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
 };
 use outbe_offchain_data::{
     read_projection_state, ProjectionConfig, ProjectionError, ProjectionState,
@@ -78,6 +79,184 @@ impl FinalizedTributeSource {
             exhausted: false,
         })
     }
+
+    /// Reconstructs and authenticates one finalized WWD partition from the
+    /// service-owned receipt projection. Bodies remain transport data until
+    /// their canonical commitments close to the independently sealed root in
+    /// the finalized JobIntent.
+    pub fn reconstruct_partition(
+        &self,
+        pin: RetainedTributePin,
+        expected_collection_root: B256,
+        expected_count: u32,
+        expected_nominal_total: U256,
+        max_items: usize,
+    ) -> Result<ReconstructedTributePartition, FinalizedTributeError> {
+        let expected_count_usize = usize::try_from(expected_count).map_err(|_| {
+            FinalizedTributeError::CountOutsideProfile {
+                count: expected_count,
+                limit: max_items,
+            }
+        })?;
+        if expected_count_usize > max_items {
+            return Err(FinalizedTributeError::CountOutsideProfile {
+                count: expected_count,
+                limit: max_items,
+            });
+        }
+        let mut current = CurrentPager::new(&self.current, pin.worldwide_day, self.page_limit)?;
+        let mut retained = RetainedPager::new(&self.retained, pin, self.page_limit);
+        let mut previous_id = None;
+        let mut records = Vec::with_capacity(expected_count_usize);
+        let mut leaves = Vec::with_capacity(expected_count_usize);
+        let mut nominal_total = U256::ZERO;
+        let mut exact_body_bytes = 0_u64;
+
+        loop {
+            let candidate = match (current.peek()?, retained.peek()?) {
+                (None, None) => break,
+                (Some(tribute_id), None) => {
+                    current.pop();
+                    BodyCandidate {
+                        tribute_id,
+                        retained_commitment: None,
+                    }
+                }
+                (None, Some(item)) => {
+                    retained.pop();
+                    BodyCandidate {
+                        tribute_id: item.tribute_id,
+                        retained_commitment: Some(item.body_commitment),
+                    }
+                }
+                (Some(tribute_id), Some(item)) if tribute_id < item.tribute_id => {
+                    current.pop();
+                    BodyCandidate {
+                        tribute_id,
+                        retained_commitment: None,
+                    }
+                }
+                (Some(tribute_id), Some(item)) if tribute_id > item.tribute_id => {
+                    retained.pop();
+                    BodyCandidate {
+                        tribute_id: item.tribute_id,
+                        retained_commitment: Some(item.body_commitment),
+                    }
+                }
+                (Some(tribute_id), Some(item)) => {
+                    current.pop();
+                    retained.pop();
+                    BodyCandidate {
+                        tribute_id,
+                        retained_commitment: Some(item.body_commitment),
+                    }
+                }
+            };
+            if previous_id.is_some_and(|previous| candidate.tribute_id <= previous) {
+                return Err(FinalizedTributeError::NonAscendingUnion);
+            }
+            previous_id = Some(candidate.tribute_id);
+            if records.len() >= expected_count_usize {
+                return Err(FinalizedTributeError::CountMismatch {
+                    expected: expected_count,
+                    actual: u32::try_from(records.len() + 1).unwrap_or(u32::MAX),
+                });
+            }
+            let stored = match candidate.retained_commitment {
+                Some(commitment) => {
+                    self.retained
+                        .get_current_or_retained(pin, candidate.tribute_id, commitment)?
+                }
+                None => self.current.get_stored_body(candidate.tribute_id)?,
+            }
+            .ok_or(FinalizedTributeError::MissingBody(candidate.tribute_id))?;
+            if stored.schema_version() != BODY_SCHEMA_V1 {
+                return Err(FinalizedTributeError::UnsupportedBodySchema {
+                    tribute_id: candidate.tribute_id,
+                    actual: stored.schema_version(),
+                });
+            }
+            let body = decode_tribute_v1(stored.payload())?;
+            if body.tribute_id != candidate.tribute_id || body.worldwide_day != pin.worldwide_day {
+                return Err(FinalizedTributeError::BodyIdentityMismatch(
+                    candidate.tribute_id,
+                ));
+            }
+            let commitment = body_commitment(
+                ACTIVE_COMMITMENT_SCHEME,
+                BODY_SCHEMA_V1,
+                candidate.tribute_id,
+                stored.payload(),
+            )?;
+            let commitment = B256::from(*commitment.as_bytes());
+            if candidate
+                .retained_commitment
+                .is_some_and(|retained| retained != commitment)
+            {
+                return Err(FinalizedTributeError::RetainedIndexCommitmentMismatch(
+                    candidate.tribute_id,
+                ));
+            }
+            nominal_total = nominal_total
+                .checked_add(body.nominal_amount_minor)
+                .ok_or(FinalizedTributeError::NominalOverflow)?;
+            exact_body_bytes = exact_body_bytes
+                .checked_add(
+                    u64::try_from(stored.payload().len())
+                        .map_err(|_| FinalizedTributeError::BodyBytesOverflow)?,
+                )
+                .ok_or(FinalizedTributeError::BodyBytesOverflow)?;
+            let canonical_body = stored.payload().to_vec();
+            leaves.push((
+                candidate.tribute_id,
+                outbe_compressed_entities::Commitment::try_from(commitment.0)?,
+            ));
+            records.push(AuthenticatedTributeRecord {
+                tribute_id: candidate.tribute_id,
+                commitment,
+                canonical_body,
+                body,
+            });
+        }
+        let actual_count =
+            u32::try_from(records.len()).map_err(|_| FinalizedTributeError::CountOverflow)?;
+        if actual_count != expected_count {
+            return Err(FinalizedTributeError::CountMismatch {
+                expected: expected_count,
+                actual: actual_count,
+            });
+        }
+        if nominal_total != expected_nominal_total {
+            return Err(FinalizedTributeError::NominalMismatch {
+                expected: expected_nominal_total,
+                actual: nominal_total,
+            });
+        }
+        let collection_root = tribute_partition_root_from_leaves(pin.worldwide_day, leaves)
+            .map_err(|error| FinalizedTributeError::Ce(error.to_string()))?;
+        if collection_root != expected_collection_root {
+            return Err(FinalizedTributeError::CollectionRootMismatch {
+                expected: expected_collection_root,
+                actual: collection_root,
+            });
+        }
+        Ok(ReconstructedTributePartition {
+            records,
+            summary: TributeStreamSummary {
+                record_count: actual_count,
+                nominal_total,
+                exact_body_bytes,
+            },
+            collection_root,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReconstructedTributePartition {
+    pub records: Vec<AuthenticatedTributeRecord>,
+    pub summary: TributeStreamSummary,
+    pub collection_root: B256,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -393,6 +572,8 @@ pub enum FinalizedTributeError {
     Repository(#[from] TributeRepositoryError),
     #[error(transparent)]
     CanonicalBody(#[from] CanonicalBodyError),
+    #[error(transparent)]
+    Commitment(#[from] outbe_compressed_entities::CommitmentError),
     #[error("export page limit {0} is outside the storage bound")]
     InvalidPageLimit(usize),
     #[error("Tribute source pagination did not advance")]
@@ -413,12 +594,16 @@ pub enum FinalizedTributeError {
     Ce(String),
     #[error("Tribute record count overflow")]
     CountOverflow,
+    #[error("Tribute count {count} exceeds profile limit {limit}")]
+    CountOutsideProfile { count: u32, limit: usize },
     #[error("Tribute nominal total overflow")]
     NominalOverflow,
     #[error("Tribute canonical body byte count overflow")]
     BodyBytesOverflow,
     #[error("Tribute count mismatch: expected {expected}, got {actual}")]
     CountMismatch { expected: u32, actual: u32 },
+    #[error("reconstructed Tribute collection root mismatch: expected {expected}, got {actual}")]
+    CollectionRootMismatch { expected: B256, actual: B256 },
     #[error("Tribute nominal mismatch: expected {expected}, got {actual}")]
     NominalMismatch { expected: U256, actual: U256 },
     #[error("authenticated Tribute stream must be exhausted before closure")]

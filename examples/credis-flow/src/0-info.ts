@@ -270,7 +270,12 @@ async function printCredisInfo(
     const anadosisList = await credis.getPositionAnadosis(p.positionId).catch(() => null);
     if (anadosisList) {
       for (const a of anadosisList) {
-        const status = a.paidAt > 0n ? `paid at ${formatDate(a.paidAt)}` : "unpaid";
+        const status =
+          a.paidAt > 0n
+            ? `paid at ${formatDate(a.paidAt)}`
+            : a.unpaidAmount < a.anadosisAmount
+              ? `partially paid, ${formatTokenMeta(a.unpaidAmount, erc20Meta)} left`
+              : "unpaid";
         console.log(`      anadosis #${a.anadosisNumber}: due ${formatDate(a.dueDate)}, amount: ${formatTokenMeta(a.anadosisAmount, erc20Meta)}, gratis: ${formatToken(a.gratisAmount, 18, "GRATIS")}, ${status}`);
       }
     }

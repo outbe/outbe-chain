@@ -15,15 +15,14 @@ use outbe_ocomp_protocol::{
     },
     common::{BoundedBytes, EntityId36, ProofBytes},
     control::{
-        AttestationResponseV1, BuildFinalizedIntentProofV1, BuildLysisOpeningsV1,
-        CheckProjectionContainmentV1, CommitSnapshotExportV1, ControlFrameV1, ControlMagic,
-        FinalizedIntentProofResponseV1, FinalizedJobSpecV1, FinalizedJobSummaryV1, GetJobSpecV1,
-        GetSnapshotHandoffV1, ListFinalizedJobsResponseV1, ListFinalizedJobsV1,
-        ListSnapshotHandoffsResponseV1, ListSnapshotHandoffsV1, OpenSnapshotLeaseV1,
-        ProjectionCheckpointV1, ProjectionContainedV1, RenewSnapshotLeaseV1, RequestAttestationV1,
+        BuildFinalizedIntentProofV1, BuildLysisOpeningsV1, CheckProjectionContainmentV1,
+        CommitSnapshotExportV1, FinalizedIntentProofResponseV1, FinalizedJobSpecV1,
+        FinalizedJobSummaryV1, GetJobSpecV1, GetSnapshotHandoffV1, ListFinalizedJobsResponseV1,
+        ListFinalizedJobsV1, ListSnapshotHandoffsResponseV1, ListSnapshotHandoffsV1,
+        OpenSnapshotLeaseV1, ProjectionCheckpointV1, ProjectionContainedV1, RenewSnapshotLeaseV1,
         RunUnitV1, SnapshotExportCommittedV1, SnapshotHandoffV1, SnapshotLeaseOpenedV1,
-        CONTROL_FRAME_HEADER_LEN, MAX_FINALIZED_JOBS_PER_RESPONSE,
-        MAX_SNAPSHOT_HANDOFFS_PER_RESPONSE, SNAPSHOT_LEASE_WIRE_BYTES, WORKER_CONTROL_MAGIC,
+        MAX_FINALIZED_JOBS_PER_RESPONSE, MAX_SNAPSHOT_HANDOFFS_PER_RESPONSE,
+        SNAPSHOT_LEASE_WIRE_BYTES,
     },
     hash::hash_framed,
     input::{CheckpointIdentityV1, Compression, InputManifestV1},
@@ -1422,47 +1421,7 @@ fn desis_request_brief_hash_commits_every_frozen_request_field() {
 }
 
 #[test]
-fn local_control_frame_checks_cap_magic_length_and_worker_shape() {
-    let frame = ControlFrameV1 {
-        magic: ControlMagic::Worker,
-        message_kind: 0x0010,
-        session_generation: 7,
-        request_id: 9,
-        body: vec![1, 2, 3],
-    };
-    let encoded = frame.encode(&LIMITS).unwrap();
-    assert_eq!(encoded.len(), CONTROL_FRAME_HEADER_LEN + 3);
-    assert_eq!(&encoded[4..8], &WORKER_CONTROL_MAGIC);
-    assert_eq!(
-        ControlFrameV1::decode(&encoded, ControlMagic::Worker, &LIMITS).unwrap(),
-        frame
-    );
-    assert!(ControlFrameV1::decode(&encoded, ControlMagic::Node, &LIMITS).is_err());
-
-    let mut malformed = encoded.clone();
-    malformed[3] = malformed[3].saturating_add(1);
-    assert!(ControlFrameV1::decode(&malformed, ControlMagic::Worker, &LIMITS).is_err());
-
-    let tiny = SchemaLimits {
-        codec: LIMITS.codec,
-        max_bounded_bytes: 16,
-        max_proof_bytes: 16,
-        max_opening_bytes: 16,
-        max_collection_items: 16,
-        max_action_items: 16,
-        max_chunk_items: 16,
-        max_unit_inputs: 16,
-        max_result_chunk_bytes: 16,
-        max_control_body_bytes: 2,
-    };
-    assert!(matches!(
-        ControlFrameV1::decode(&encoded, ControlMagic::Worker, &tiny),
-        Err(ProtocolError::CapacityExceeded {
-            what: "control frame bytes",
-            ..
-        })
-    ));
-
+fn worker_unit_body_checks_canonical_shape() {
     let request = RunUnitV1 {
         protocol_bundle_hash: hash(1),
         job_id: hash(2),
@@ -1563,41 +1522,6 @@ fn finalized_discovery_control_pages_multiple_jobs_canonically() {
         FinalizedJobSpecV1::decode_body(&spec.encode_body(&LIMITS).unwrap(), &LIMITS).unwrap(),
         spec
     );
-}
-
-#[test]
-fn attestation_control_carries_only_bounded_canonical_artifacts() {
-    let request = RequestAttestationV1 {
-        canonical_result: BoundedBytes(vec![1, 2, 3, 4]),
-    };
-    assert_eq!(
-        RequestAttestationV1::decode_body(&request.encode_body(&LIMITS).unwrap(), &LIMITS).unwrap(),
-        request
-    );
-    let response = AttestationResponseV1 {
-        canonical_vote: BoundedBytes(vec![5, 6, 7]),
-    };
-    assert_eq!(
-        AttestationResponseV1::decode_body(&response.encode_body(&LIMITS).unwrap(), &LIMITS)
-            .unwrap(),
-        response
-    );
-
-    assert!(RequestAttestationV1 {
-        canonical_result: BoundedBytes(Vec::new()),
-    }
-    .encode_body(&LIMITS)
-    .is_err());
-    assert!(AttestationResponseV1 {
-        canonical_vote: BoundedBytes(Vec::new()),
-    }
-    .encode_body(&LIMITS)
-    .is_err());
-
-    let mut tiny_control = LIMITS;
-    tiny_control.max_control_body_bytes = 3;
-    assert!(request.encode_body(&tiny_control).is_err());
-    assert!(response.encode_body(&tiny_control).is_ok());
 }
 
 #[test]

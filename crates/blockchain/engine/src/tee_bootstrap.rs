@@ -56,6 +56,9 @@ const OST3_SCOPE_DOMAIN: &[u8] = b"outbe/tee/bootstrap-v2-gossip/v1";
 const OST3_DEV_NODE_HOST_DOMAIN: &[u8] = b"outbe/tee/dev-node-host/v1";
 const OST3_BINDING_ID_DOMAIN: &[u8] = b"outbe/tee/bootstrap-binding/v1";
 
+// Bootstrap-only gossip message, built and consumed immediately during node
+// join (not a steady-state hot path), so boxing the larger variant buys nothing.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Ost3WireMessage {
     Submission(TeeBootstrapParticipantSubmissionV2),

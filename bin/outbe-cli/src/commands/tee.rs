@@ -37,7 +37,7 @@ use outbe_tee::protocol::{
 };
 use outbe_tee::{
     acquire_dcap_collateral_v1, load_committed_enclave_manifest_v1, EnclaveClient,
-    FullNodeNodeHostIdentityV1, QuotePolicy, ReplacementCandidateEnclaveV1, RuntimeEnclaveClient,
+    FullNodeNodeHostIdentityV1, ReplacementCandidateEnclaveV1, RuntimeEnclaveClient,
     ValidatorNodeHostIdentityV1,
 };
 use zeroize::Zeroizing;
@@ -658,12 +658,11 @@ fn connect_upgrade_candidate_v1(
 /// diff the permanent offer key against the on-chain registry. Before readiness
 /// the recipient is onboarding-only and cannot be compared with chain state.
 async fn pubkey(client: &(impl Rpc + Sync), enclave_socket: &str, diff_chain: bool) -> Result<()> {
-    let mut enclave =
-        EnclaveClient::connect_endpoint(enclave_socket, &QuotePolicy::dev_accept_any())
-            .map_err(|e| eyre::eyre!("connect enclave at {enclave_socket}: {e}"))?;
+    let mut enclave = EnclaveClient::connect_endpoint(enclave_socket)
+        .map_err(|e| eyre::eyre!("connect enclave at {enclave_socket}: {e}"))?;
     let label = enclave.attestation_label().to_string();
     let (mrenclave, mrsigner, isv_svn) = enclave.measurements();
-    let remote_attested = enclave.is_hardware_attested();
+    let hardware_quote_type_reported = enclave.is_hardware_attested();
     let (offer_key_ready, offer_pub, tee_bls_pub) =
         match enclave.request(&EnclaveRequest::GetPublicKeys) {
             Ok(EnclaveResponse::PublicKeys {
@@ -685,7 +684,7 @@ async fn pubkey(client: &(impl Rpc + Sync), enclave_socket: &str, diff_chain: bo
     );
     println!("permanent offer key ready:                 {offer_key_ready}");
     println!("attestation:                             {label}");
-    println!("remote-attested (real quote):            {remote_attested}");
+    println!("hardware quote type reported:           {hardware_quote_type_reported}");
     println!(
         "mrenclave:                               0x{}",
         hex::encode(mrenclave)
@@ -732,6 +731,8 @@ async fn pubkey(client: &(impl Rpc + Sync), enclave_socket: &str, diff_chain: bo
     }
 }
 
+// CLI command handler: args map 1:1 to `tee join` flags.
+#[allow(clippy::too_many_arguments)]
 async fn join(
     client: &(impl Rpc + Sync),
     private_key: Option<&str>,
@@ -936,11 +937,9 @@ async fn join(
                     "GramineDirectDev does not consume production --node-data-dir NodeHost state"
                 ));
             }
-            let development =
-                EnclaveClient::connect_endpoint(enclave_socket, &QuotePolicy::dev_accept_any())
-                    .map_err(|error| {
-                        eyre::eyre!("connect development enclave at {enclave_socket}: {error}")
-                    })?;
+            let development = EnclaveClient::connect_endpoint(enclave_socket).map_err(|error| {
+                eyre::eyre!("connect development enclave at {enclave_socket}: {error}")
+            })?;
             if development.is_hardware_attested() {
                 return Err(eyre::eyre!(
                     "GramineDirectDev policy requires the separate non-SGX development transport"
@@ -1288,7 +1287,7 @@ fn parse_secp256k1_key_bytes(encoded: &[u8]) -> Result<k256::ecdsa::SigningKey> 
         secret.copy_from_slice(encoded);
         secret
     } else {
-        let text = std::str::from_utf8(&encoded)
+        let text = std::str::from_utf8(encoded)
             .wrap_err("Reth P2P secret is neither raw bytes nor UTF-8 hex")?;
         let text = text.trim();
         let text = text.strip_prefix("0x").unwrap_or(text);

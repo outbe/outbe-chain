@@ -55,8 +55,16 @@ description = "Check formatting without writing changes"
 run = "cargo fmt --all --check"
 
 [tasks.lint]
-description = "Run clippy on all crates (-D warnings)"
-run = "cargo clippy --all-targets --all-features -- -D warnings"
+description = "Run clippy on all crates"
+# No --all-features: it would turn on outbe-tee's `native-dcap`, whose build.rs
+# links the pinned Intel SGX/DCAP toolchain (headers + .so) that only exists on
+# the gramine-sgx build. Lint native-dcap only where that toolchain is present.
+run = """
+cargo clippy --all-targets -- -D warnings
+if [ -f /usr/include/sgx_dcap_quoteverify.h ]; then
+  cargo clippy -p outbe-tee --all-targets --features native-dcap -- -D warnings
+fi
+"""
 
 [tasks.check]
 description = "Type-check the workspace"
@@ -107,7 +115,7 @@ run = [
 [tasks.audit-quick]
 description = "Fast cycle: clippy -D warnings + cargo nextest run"
 run = [
-  "cargo clippy --all-targets --all-features -- -D warnings",
+  "cargo clippy --all-targets -- -D warnings",
   "cargo nextest run --workspace",
 ]
 

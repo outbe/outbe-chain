@@ -1,9 +1,0 @@
-[Unit]
-Description=Outbe Off-chain Computation PoC resource boundary
-
-[Slice]
-CPUQuota=300%
-MemoryHigh=10G
-MemoryMax=12G
-TasksMax=128
-IOWeight=100

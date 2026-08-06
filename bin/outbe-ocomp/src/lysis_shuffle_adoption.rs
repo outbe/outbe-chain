@@ -85,6 +85,7 @@ pub fn verify_lysis_shuffle_phase_replay(
             limits,
             reader,
             inbox: replay_inbox,
+            cancelled: None,
         },
     )
     .map_err(|_| LysisShuffleAdoptionError::ReplayExecutionFailed)?;

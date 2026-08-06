@@ -10,7 +10,7 @@ use x25519_dalek::{PublicKey, StaticSecret};
 use outbe_tee::protocol::{
     EnclaveRequest, EnclaveResponse, EncryptedTributeOffer, TributeOfferStatus,
 };
-use outbe_tee::{EnclaveClient, QuotePolicy};
+use outbe_tee::EnclaveClient;
 use outbe_tee_enclave::crypto::{chacha20poly1305_encrypt, hkdf_sha256};
 use outbe_tee_enclave::keys::EnclaveKeys;
 use outbe_tee_enclave::transport::serve_connection;
@@ -74,7 +74,7 @@ fn handshake_and_offer_roundtrip_over_uds() {
     });
 
     // Client: GetQuote -> verify+pin -> Noise-IK handshake.
-    let mut client = EnclaveClient::connect(&sock, &QuotePolicy::dev_accept_any()).unwrap();
+    let mut client = EnclaveClient::connect(&sock).unwrap();
 
     // Encrypted GetPublicKeys returns the offer key matching the enclave.
     match client.request(&EnclaveRequest::GetPublicKeys).unwrap() {
@@ -115,10 +115,9 @@ fn handshake_and_offer_roundtrip_over_uds() {
 
 #[test]
 fn rejects_tampered_report_data_binding() {
-    // A policy that accepts any measurement still enforces the REPORT_DATA key
-    // binding; the mock enclave produces a correct binding, so connect succeeds.
-    // (Negative binding cases are covered by the host unit path; here we assert
-    // the happy binding path works under dev policy.)
+    // The development connection still enforces the REPORT_DATA key binding; the
+    // mock enclave produces a correct binding, so connect succeeds. Negative
+    // binding cases are covered by the host unit path.
     let dir = tempfile::tempdir().unwrap();
     let sock = dir.path().join("enclave.sock");
     let keys = EnclaveKeys::new(OFFER_SECRET, None).unwrap();
@@ -130,7 +129,7 @@ fn rejects_tampered_report_data_binding() {
         let _ = serve_connection(stream, &keys, &offer_key);
     });
 
-    let client = EnclaveClient::connect(&sock, &QuotePolicy::dev_accept_any());
+    let client = EnclaveClient::connect(&sock);
     assert!(client.is_ok(), "valid binding should connect");
     drop(client);
     server.join().unwrap();
@@ -149,7 +148,7 @@ fn development_session_cannot_invoke_production_dcap_verifier() {
         serve_connection(stream, &keys, &offer_key).unwrap();
     });
 
-    let mut client = EnclaveClient::connect(&sock, &QuotePolicy::dev_accept_any()).unwrap();
+    let mut client = EnclaveClient::connect(&sock).unwrap();
     let error = client
         .request(&EnclaveRequest::BeginDcapVerificationV1 {
             request_hash: alloy_primitives::B256::repeat_byte(0xA1),
@@ -211,7 +210,7 @@ fn transport_throughput_offers_per_sec() {
     let mut _server: Option<thread::JoinHandle<()>> = None;
     let _dir; // tempdir guard
     let mut client = match &endpoint {
-        Some(ep) => EnclaveClient::connect_endpoint(ep, &QuotePolicy::dev_accept_any())
+        Some(ep) => EnclaveClient::connect_endpoint(ep)
             .expect("connect to external enclave (OUTBE_TEE_BENCH_ENDPOINT)"),
         None => {
             let dir = tempfile::tempdir().unwrap();
@@ -223,7 +222,7 @@ fn transport_throughput_offers_per_sec() {
                 let offer_key = std::sync::Arc::new(std::sync::OnceLock::new());
                 let _ = serve_connection(stream, &keys, &offer_key);
             }));
-            let c = EnclaveClient::connect(&sock, &QuotePolicy::dev_accept_any()).unwrap();
+            let c = EnclaveClient::connect(&sock).unwrap();
             _dir = dir;
             c
         }

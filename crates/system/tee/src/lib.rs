@@ -31,8 +31,7 @@ pub use client::{
     verify_fidelity_snapshot_attestation, verify_gratis_op_attestation, verify_peer_quote,
     verify_promis_op_attestation, verify_tribute_offer_attestation, AttestedPeerKeys,
     AuthorizedEnclaveClient, EnclaveClient, EnclaveInitializationChallenge, GeneratedDcapQuoteV1,
-    NodeHostNoiseKey, QuotePolicy, RemoteEnclaveClient, RemoteEnclavePublicKeysV1,
-    RemoteSessionTicketV1,
+    NodeHostNoiseKey, RemoteEnclaveClient, RemoteEnclavePublicKeysV1, RemoteSessionTicketV1,
 };
 pub use client_global::{
     generate_dcap_quote_v1, install_authorized_enclave_client, install_enclave_client,

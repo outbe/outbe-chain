@@ -107,7 +107,7 @@ The node performs an O(1) handoff of a bounded opaque read-only checkpoint/lease
 capability to the exporter UID. The handoff names both the exact `JobId` and its
 `InputLeaseId`; resolving a Job never changes either identity. It does not
 expose a live MDBX/Reth writer, accept a caller-selected filesystem path or
-stream bulk bodies through `OcompControlV1`.
+stream bulk bodies through the Worker command channel.
 
 ### Authenticated input bundle
 
@@ -159,9 +159,9 @@ one rather than being rejected.
 
 Fidelity opening transport is also population-independent and deterministic.
 The exporter first partitions the complete sorted owner set into consecutive
-batches of at most 256. If the node's canonical proof for one such batch does
-not fit the fork-pinned local-control body cap, the node returns typed
-`LimitExceeded` without closing the authenticated session. The exporter then
+batches of at most 256. If the public RPC proof response for one such batch does
+not fit the fork-pinned response cap, the exporter rejects it without accepting
+partial authority. The exporter then
 bisects only that batch at `floor(len / 2)`, left half first, and repeats until
 every proof fits. Settlement ISO subjects remain byte-identical in every
 sub-batch. An individual owner whose proof cannot fit is a local abstention;

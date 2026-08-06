@@ -1,4 +1,4 @@
-#![cfg(all(feature = "native-dcap", target_arch = "x86_64", target_os = "linux"))]
+#![cfg(all(native_qvl_linked, target_arch = "x86_64", target_os = "linux"))]
 
 use alloy_primitives::B256;
 use outbe_primitives::tee_attestation_v1::{

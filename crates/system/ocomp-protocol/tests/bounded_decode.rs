@@ -2,7 +2,6 @@
 
 use outbe_ocomp_protocol::{
     codec::{CanonicalReader, CodecLimits},
-    control::{ControlFrameV1, ControlMagic},
     vote::OcompVoteAccountabilityV1,
     SchemaLimits,
 };
@@ -33,21 +32,6 @@ fn collection_cap_plus_one_rejects_before_reserving_items() {
 }
 
 #[test]
-fn control_cap_plus_one_rejects_from_prefix_before_body_decode() {
-    let frame = ControlFrameV1 {
-        magic: ControlMagic::Worker,
-        message_kind: 0x0010,
-        session_generation: 1,
-        request_id: 1,
-        body: vec![0; LIMITS.max_control_body_bytes],
-    };
-    let mut encoded = frame.encode(&LIMITS).unwrap();
-    let claimed = u32::try_from(28 + LIMITS.max_control_body_bytes + 1).unwrap();
-    encoded[..4].copy_from_slice(&claimed.to_be_bytes());
-    assert!(ControlFrameV1::decode(&encoded, ControlMagic::Worker, &LIMITS).is_err());
-}
-
-#[test]
 fn vote_state_rejects_a_fifth_slot_before_any_crypto_work() {
     let mut accountability =
         OcompVoteAccountabilityV1::empty([1; 32].into(), [2; 32].into()).unwrap();
@@ -57,21 +41,4 @@ fn vote_state_rejects_a_fifth_slot_before_any_crypto_work() {
         .unwrap_err()
         .to_string();
     assert_eq!(error, "invalid invariant: accountability slot count");
-}
-
-#[test]
-fn checked_arithmetic_rejects_overflowing_frame_cap() {
-    let oversized = SchemaLimits {
-        max_control_body_bytes: usize::MAX,
-        ..LIMITS
-    };
-    let frame = ControlFrameV1 {
-        magic: ControlMagic::Worker,
-        message_kind: 0x0010,
-        session_generation: 1,
-        request_id: 1,
-        body: Vec::new(),
-    };
-    assert!(frame.encode(&oversized).is_ok());
-    assert!(ControlFrameV1::decode(&[0; 4], ControlMagic::Worker, &oversized).is_err());
 }

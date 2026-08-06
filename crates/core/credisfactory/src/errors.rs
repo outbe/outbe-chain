@@ -10,8 +10,6 @@ pub enum CredisFactoryError {
     InvalidSmartAccount,
     #[error("anadosis amount is zero")]
     InvalidAmount,
-    #[error("caller is not the position smartAccount")]
-    UnauthorizedCaller,
     #[error("position is already fully paid")]
     PositionCompleted,
     #[error("address has overdue anadosis")]

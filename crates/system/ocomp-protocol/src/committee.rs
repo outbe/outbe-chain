@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256};
 use k256::ecdsa::{signature::hazmat::PrehashVerifier, Signature, VerifyingKey};
 
 use crate::{
@@ -14,6 +14,23 @@ pub const POC_COMMITTEE_SIZE: usize = 4;
 pub const POC_COMMITTEE_THRESHOLD: u8 = 3;
 pub const POC_KEY_EPOCH: u64 = 1;
 pub const RESULT_SIGNATURE_PURPOSE_BITMAP: u32 = 1;
+
+/// Commits one ordered OCOMP committee slot to the corresponding consensus
+/// validator identity. The address and BLS consensus key come from
+/// `ValidatorSet`; the positional index prevents the same validator set from
+/// being silently reordered.
+pub fn validator_identity_hash(
+    validator_index: u8,
+    validator_address: Address,
+    consensus_pubkey: &[u8; 48],
+) -> Result<B256, ProtocolError> {
+    let mut payload = Vec::with_capacity(1 + 20 + 4 + consensus_pubkey.len());
+    payload.push(validator_index);
+    payload.extend_from_slice(validator_address.as_slice());
+    payload.extend_from_slice(&(consensus_pubkey.len() as u32).to_be_bytes());
+    payload.extend_from_slice(consensus_pubkey);
+    hash_framed(HashDomain::ValidatorIdentity, &payload)
+}
 
 wire_struct! {
     pub struct OcompMemberV1 {
