@@ -5,8 +5,8 @@
 use outbe_primitives::error::{PrecompileError, Result};
 
 use crate::constants::{
-    CALL_PRICE_NUM, CALL_THRESHOLD_DAYS, CALL_WINDOW_DAYS, COMMIT_BOND_MINOR, FLOOR_PRICE_NUM,
-    INTEX_CALL_PERIOD_SECONDS, QUALIFICATION_PERIOD,
+    CALL_NOTICE_PERIOD, CALL_PRICE_NUM, CALL_THRESHOLD, CALL_WINDOW, COMMIT_BOND_MINOR,
+    FLOOR_PRICE_NUM, QUALIFICATION_PERIOD,
 };
 use crate::schema::IntexFactoryContract;
 
@@ -17,11 +17,10 @@ pub const PROFILE_DEV: u8 = 1;
 /// fixed `*_PRICE_DEN` denominators in [`crate::constants`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IntexParams {
-    /// Seconds a series must age past `issued_at` before it can become Qualified.
     pub qualification_period: u32,
-    pub call_window_days: u16,
-    pub call_threshold_days: u16,
-    pub intex_call_period_secs: u32,
+    pub call_window: u32,
+    pub call_threshold: u32,
+    pub call_notice_period: u32,
     pub call_price_num: u64,
     pub floor_price_num: u64,
     /// Commit-entry bond on the target-chain auction (payment-token 18-dec minor units).
@@ -32,22 +31,22 @@ impl IntexParams {
     /// Real protocol timings; also the default when no profile is selected.
     pub const PROD: Self = Self {
         qualification_period: QUALIFICATION_PERIOD,
-        call_window_days: CALL_WINDOW_DAYS,
-        call_threshold_days: CALL_THRESHOLD_DAYS,
-        intex_call_period_secs: INTEX_CALL_PERIOD_SECONDS,
+        call_window: CALL_WINDOW,
+        call_threshold: CALL_THRESHOLD,
+        call_notice_period: CALL_NOTICE_PERIOD,
         call_price_num: CALL_PRICE_NUM,
         floor_price_num: FLOOR_PRICE_NUM,
         commit_bond_minor: COMMIT_BOND_MINOR,
     };
 
     /// Short timings for dev/test. `called` is day-granular (daily VWAP scan),
-    /// so window/threshold stay in whole days. The bond drops to 100 wCOEN so
-    /// test bidders are not forced to mint 100M per commit.
+    /// so window/threshold stay whole multiples of a day. The bond drops to
+    /// 100 wCOEN so test bidders are not forced to mint 100M per commit.
     pub const DEV: Self = Self {
         qualification_period: 24 * 3600,
-        call_window_days: 3,
-        call_threshold_days: 2,
-        intex_call_period_secs: 3 * 24 * 3600,
+        call_window: 3 * 24 * 3600,
+        call_threshold: 2 * 24 * 3600,
+        call_notice_period: 3 * 24 * 3600,
         call_price_num: 110,
         floor_price_num: 105,
         commit_bond_minor: 100 * 10u128.pow(18),

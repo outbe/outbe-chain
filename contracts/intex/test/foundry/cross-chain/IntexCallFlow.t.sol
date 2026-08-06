@@ -192,7 +192,7 @@ contract IntexCallFlowTest is CrossChainTest {
         IIntexNFT1155.SeriesData memory dataBnb = intexBnb.readData(SERIES_ID);
         assertEq(uint8(dataBnb.state), uint8(IIntexNFT1155.IntexState.Called));
         assertEq(dataBnb.calledAt, calledAt);
-        assertGt(dataBnb.callTrigger.intexCallPeriod, 0);
+        assertGt(dataBnb.callTrigger.callNoticePeriod, 0);
     }
 
     /// @notice Single holder migration.

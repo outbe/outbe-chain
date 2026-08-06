@@ -28,7 +28,7 @@ library IntexMetadata {
 
         bool settled = data.status == IIntexNFT1155.IntexStatus.Settled;
         bool expired = !settled && data.state == IIntexNFT1155.IntexState.Called
-            && timestamp > uint256(data.calledAt) + data.callTrigger.intexCallPeriod;
+            && timestamp > uint256(data.calledAt) + data.callTrigger.callNoticePeriod;
         string memory displayId = _displayId(data);
 
         string memory json = string.concat(
@@ -114,7 +114,7 @@ library IntexMetadata {
                 Strings.toString(data.calledAt),
                 ",\"display_type\":\"date\"},",
                 "{\"trait_type\":\"Call Deadline\",\"value\":",
-                Strings.toString(uint256(data.calledAt) + data.callTrigger.intexCallPeriod),
+                Strings.toString(uint256(data.calledAt) + data.callTrigger.callNoticePeriod),
                 ",\"display_type\":\"date\"}"
             );
         }
@@ -181,7 +181,7 @@ library IntexMetadata {
             _generateField("Promis Load", _formatInteger(data.promisLoadMinor / 1e18), 400)
         );
         if (!settled && data.calledAt != 0) {
-            uint256 deadline = uint256(data.calledAt) + data.callTrigger.intexCallPeriod;
+            uint256 deadline = uint256(data.calledAt) + data.callTrigger.callNoticePeriod;
             rows = string.concat(rows, _generateField("Call Deadline", _formatTimestamp(deadline), 445));
         }
         return rows;

@@ -20,9 +20,9 @@ sol! {
             uint64 entryPrice;
             uint64 floorPriceMinor;
             uint64 callPriceMinor;
-            uint32 intexCallPeriod;
-            uint16 callWindowDays;
-            uint16 callThresholdDays;
+            uint32 callNoticePeriod;
+            uint32 callWindow;
+            uint32 callThreshold;
             uint16 minIntexBidQuantity;
             uint128 commitBondMinor;
             uint8 dayState;

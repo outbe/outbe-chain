@@ -530,9 +530,9 @@ contract OriginRouter is
             p.entryPrice,
             p.floorPriceMinor,
             p.callPriceMinor,
-            p.intexCallPeriod,
-            p.callWindowDays,
-            p.callThresholdDays,
+            p.callNoticePeriod,
+            p.callWindow,
+            p.callThreshold,
             p.minIntexBidQuantity,
             p.commitBondMinor,
             p.dayState
@@ -551,11 +551,11 @@ contract OriginRouter is
         payload.promisLoadMinor = p.promisLoadMinor;
         payload.entryPriceMinor = p.entryPriceMinor;
         payload.floorPriceMinor = p.floorPriceMinor;
-        payload.intexCallPeriod = p.intexCallPeriod;
+        payload.callNoticePeriod = p.callNoticePeriod;
         payload.issuanceCurrency = p.issuanceCurrency;
         payload.referenceCurrency = p.referenceCurrency;
-        payload.callWindowDays = p.callWindowDays;
-        payload.callThresholdDays = p.callThresholdDays;
+        payload.callWindow = p.callWindow;
+        payload.callThreshold = p.callThreshold;
         payload.callPriceMinor = p.callPriceMinor;
         payload.recipients = p.recipients;
         payload.quantities = p.quantities;

@@ -25,7 +25,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
 
     /// @notice Series lifecycle state.
     /// @dev Lifecycle: Issued -> Qualified -> Called. Expiry is not a distinct on-chain
-    ///      state; it is derived from `calledAt + intexCallPeriod` against the clock.
+    ///      state; it is derived from `calledAt + callNoticePeriod` against the clock.
     enum IntexState {
         Issued,
         Qualified,
@@ -49,12 +49,12 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
 
     /// @notice Forced-call trigger parameters (window/threshold/period).
     struct IntexCallTrigger {
-        /// @notice Call-trigger observation window in days.
-        uint16 windowDays;
-        /// @notice Call-trigger threshold in days.
-        uint16 thresholdDays;
+        /// @notice Call-trigger observation window in seconds.
+        uint32 callWindow;
+        /// @notice Call-trigger threshold in seconds.
+        uint32 callThreshold;
         /// @notice Called->deadline window in seconds; stored verbatim, the issuer must supply a non-zero value.
-        uint32 intexCallPeriod;
+        uint32 callNoticePeriod;
     }
 
     /// @notice Series-level data, stored per token id (one entry for the Issued token id
@@ -108,7 +108,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param fromState Lifecycle state before the transition.
     /// @param toState Lifecycle state after the transition.
     /// @param at Timestamp of the state change.
-    /// @param callDeadlineAt Effective settlement deadline (`calledAt + intexCallPeriod`, 0 if not applicable).
+    /// @param callDeadlineAt Effective settlement deadline (`calledAt + callNoticePeriod`, 0 if not applicable).
     event IntexStatusUpdated(
         address indexed operator,
         uint256 indexed tokenId,
@@ -167,10 +167,10 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @notice Bridge crosschainBurn/crosschainMint attempted while the series state disallows it.
     error BridgeStateForbidden(uint256 tokenId, uint8 state);
     /// @notice Bridge crosschainBurn/crosschainMint attempted on a `Called` series after the settlement
-    ///         deadline (`calledAt + intexCallPeriod`) has passed.
+    ///         deadline (`calledAt + callNoticePeriod`) has passed.
     error BridgeAfterDeadline(uint256 tokenId, uint32 deadline);
     /// @notice Settle attempted on a `Called` series after the settlement deadline
-    ///         (`calledAt + intexCallPeriod`) has passed.
+    ///         (`calledAt + callNoticePeriod`) has passed.
     error SettleAfterDeadline(uint256 tokenId, uint32 deadline);
     /// @notice A mint or batch sum would push `totalSupply` past `issuedIntexCount`.
     error SupplyCapExceeded(uint32 seriesId, uint256 attempted, uint256 cap);

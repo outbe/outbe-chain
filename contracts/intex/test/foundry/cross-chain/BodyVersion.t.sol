@@ -26,7 +26,7 @@ contract BodyVersionTest is Test {
         );
         assertEq(uint8(encoded[0]), BridgeMsgCodec.BODY_VERSION_V1, "stageStart.version");
         assertEq(uint8(encoded[1]), BridgeMsgCodec.MSG_AUCTION_STAGE_START, "stageStart.msgType");
-        assertEq(encoded.length, 93, "stageStart.length"); // 2 header + 91 body
+        assertEq(encoded.length, 97, "stageStart.length"); // 2 header + 95 body
 
         encoded = BridgeMsgCodec.encodeAuctionStageClearing(1);
         assertEq(uint8(encoded[0]), BridgeMsgCodec.BODY_VERSION_V1, "stageClearing.version");
@@ -79,9 +79,9 @@ contract BodyVersionTest is Test {
         assertEq(params.entryPriceMinor, 7e6);
         assertEq(params.floorPriceMinor, 11e6);
         assertEq(params.callPriceMinor, 13e6);
-        assertEq(params.callTrigger.intexCallPeriod, 5);
-        assertEq(params.callTrigger.windowDays, 6);
-        assertEq(params.callTrigger.thresholdDays, 7);
+        assertEq(params.callTrigger.callNoticePeriod, 5);
+        assertEq(params.callTrigger.callWindow, 6);
+        assertEq(params.callTrigger.callThreshold, 7);
         assertEq(params.minIntexBidQuantity, 3);
         assertEq(params.commitBondMinor, 17e18);
     }

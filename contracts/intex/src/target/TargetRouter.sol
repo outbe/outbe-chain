@@ -480,9 +480,9 @@ contract TargetRouter is
                     floorPriceMinor: payload.floorPriceMinor,
                     callPriceMinor: payload.callPriceMinor,
                     callTrigger: IIntexNFT1155.IntexCallTrigger({
-                        windowDays: payload.callWindowDays,
-                        thresholdDays: payload.callThresholdDays,
-                        intexCallPeriod: payload.intexCallPeriod
+                        callWindow: payload.callWindow,
+                        callThreshold: payload.callThreshold,
+                        callNoticePeriod: payload.callNoticePeriod
                     })
                 })
             );

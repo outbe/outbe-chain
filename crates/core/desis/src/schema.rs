@@ -42,12 +42,12 @@ impl AuctionStage {
 /// the genesis `IntexParams` at auction start and relayed to the target chain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct IntexCallTrigger {
-    /// Rolling VWAP window length (whole days) evaluated for the call condition.
-    pub window_days: u16,
-    /// Days within the window that must breach for a call to trigger.
-    pub threshold_days: u16,
-    /// Cooldown between successive calls (seconds).
-    pub intex_call_period: u32,
+    /// Rolling VWAP window evaluated for the call condition (seconds).
+    pub call_window: u32,
+    /// Breach time within the window required to trigger a call (seconds).
+    pub call_threshold: u32,
+    /// Notice a holder gets to settle after the series is Called (seconds).
+    pub call_notice_period: u32,
 }
 
 /// Auction configuration (demand side).
@@ -190,13 +190,13 @@ pub struct DesisContract {
     pub config_reference_currency: outbe_primitives::storage::dsl::Map<u32, u32>,
     /// worldwide_day -> call-trigger window (whole days).
     #[attribute(order = 13)]
-    pub config_call_window_days: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub config_call_window: outbe_primitives::storage::dsl::Map<u32, u32>,
     /// worldwide_day -> call-trigger threshold (whole days).
     #[attribute(order = 14)]
-    pub config_call_threshold_days: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub config_call_threshold: outbe_primitives::storage::dsl::Map<u32, u32>,
     /// worldwide_day -> call cooldown (seconds).
     #[attribute(order = 15)]
-    pub config_intex_call_period: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub config_call_notice_period: outbe_primitives::storage::dsl::Map<u32, u32>,
 
     /// worldwide_day -> commit-entry bond (payment-token minor units).
     #[attribute(order = 16)]

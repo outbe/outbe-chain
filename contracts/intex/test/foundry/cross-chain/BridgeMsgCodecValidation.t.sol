@@ -127,7 +127,7 @@ contract BridgeMsgCodecValidationTest is Test {
         bytes memory packet = BridgeMsgCodec.encodeAuctionStageStart(
             1, 100, 200, 300, 840, 840, 1e18, 1e6, 2e6, 3e6, 4e6, 5, 6, 7, 1, 9e18, 1
         );
-        packet[92] = bytes1(state);
+        packet[96] = bytes1(state);
         vm.expectRevert(IIntexAuction.InvalidDayState.selector);
         BridgeMsgCodec.decodeAuctionParams(packet);
     }

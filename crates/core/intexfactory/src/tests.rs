@@ -25,7 +25,7 @@ fn holder() -> Address {
 const CHAIN_ID: u64 = 1;
 const ISSUED_AT: u32 = 1_700_000_000;
 const PROMIS_LOAD_MINOR: u128 = 1_000_000_000_000_000_000; // 1e18
-const CALL_PERIOD: u32 = 7 * 24 * 60 * 60;
+const CALL_NOTICE_PERIOD: u32 = 7 * 24 * 60 * 60;
 
 // COEN clearing price and the floor/trigger derived from it at issuance.
 const ENTRY_PRICE: u64 = 1_000_000;
@@ -78,15 +78,15 @@ fn issue_creates_series_in_registry() {
         // Floor and trigger are derived from the clearing price at issuance.
         assert_eq!(r.floor_price_minor, U256::from(EXPECTED_FLOOR));
         assert_eq!(r.issued_intex_count, 100);
-        assert_eq!(r.intex_call_period, CALL_PERIOD);
+        assert_eq!(r.call_notice_period, CALL_NOTICE_PERIOD);
         // Window/threshold/call-period are IntexFactory protocol constants now.
         assert_eq!(r.call_price_minor, U256::from(EXPECTED_TRIGGER));
         assert_eq!(
             r.call_trigger(),
             outbe_intex::IntexCallTrigger {
-                window_days: 30,
-                threshold_days: 21,
-                intex_call_period: CALL_PERIOD,
+                call_window: 30 * DAY as u32,
+                call_threshold: 21 * DAY as u32,
+                call_notice_period: CALL_NOTICE_PERIOD,
             }
         );
         // Born Issued; issued_at is the block timestamp.
@@ -200,7 +200,7 @@ fn settle_rejects_wrong_state_issued() {
 #[test]
 fn settle_rejects_expired_deadline() {
     // Late block timestamp so the Called deadline is already in the past.
-    let now = (ISSUED_AT as u64) + (CALL_PERIOD as u64) + 1_000;
+    let now = (ISSUED_AT as u64) + (CALL_NOTICE_PERIOD as u64) + 1_000;
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(now));
     storage.stub_sub_call_at(
@@ -214,7 +214,7 @@ fn settle_rejects_expired_deadline() {
     );
     StorageHandle::enter(&mut storage, |s| {
         runtime::issue(&s, sample(7)).unwrap();
-        // deadline = ISSUED_AT + CALL_PERIOD < now
+        // deadline = ISSUED_AT + CALL_NOTICE_PERIOD < now
         outbe_intex::api::mark_called(&s, 7, ISSUED_AT).unwrap();
         let err = runtime::settle(&s, 7, holder(), holder(), U256::from(1)).unwrap_err();
         assert!(err.to_string().to_lowercase().contains("deadline"));
@@ -651,9 +651,9 @@ fn try_call_excludes_pre_issuance_days() {
                 floor_price_minor: U256::from(EXPECTED_FLOOR),
                 call_price_minor: U256::from(EXPECTED_TRIGGER),
                 call_trigger: outbe_intex::IntexCallTrigger {
-                    window_days: 30,
-                    threshold_days: 27,
-                    intex_call_period: CALL_PERIOD,
+                    call_window: 30 * DAY as u32,
+                    call_threshold: 27 * DAY as u32,
+                    call_notice_period: CALL_NOTICE_PERIOD,
                 },
                 issued_at: ISSUED_AT,
                 issuance_currency: 840,
@@ -703,9 +703,9 @@ fn seed_issued(s: &StorageHandle<'_>, id: u32) {
             floor_price_minor: U256::from(EXPECTED_FLOOR),
             call_price_minor: U256::from(EXPECTED_TRIGGER),
             call_trigger: outbe_intex::IntexCallTrigger {
-                window_days: 30,
-                threshold_days: 21,
-                intex_call_period: CALL_PERIOD,
+                call_window: 30 * DAY as u32,
+                call_threshold: 21 * DAY as u32,
+                call_notice_period: CALL_NOTICE_PERIOD,
             },
             issued_at: ISSUED_AT,
             issuance_currency: 840,
@@ -1101,7 +1101,7 @@ fn config_dev_profile_drives_issuance_and_qualification() {
         // Issuance captures the dev call-trigger and dev-derived prices.
         let dev = crate::config::IntexParams::DEV;
         let r = outbe_intex::api::read_series(&s, 7).unwrap();
-        assert_eq!(r.intex_call_period, dev.intex_call_period_secs);
+        assert_eq!(r.call_notice_period, dev.call_notice_period);
         assert_eq!(
             r.floor_price_minor,
             U256::from(ENTRY_PRICE * dev.floor_price_num / 100)
@@ -1113,9 +1113,9 @@ fn config_dev_profile_drives_issuance_and_qualification() {
         assert_eq!(
             r.call_trigger(),
             outbe_intex::IntexCallTrigger {
-                window_days: dev.call_window_days,
-                threshold_days: dev.call_threshold_days,
-                intex_call_period: dev.intex_call_period_secs,
+                call_window: dev.call_window,
+                call_threshold: dev.call_threshold,
+                call_notice_period: dev.call_notice_period,
             }
         );
 

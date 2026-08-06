@@ -27,13 +27,13 @@ interface IIntex {
         uint256 entryPriceMinor;
         uint256 floorPriceMinor;
         uint32 issuedIntexCount;
-        uint16 callWindowDays;
-        uint16 callThresholdDays;
+        uint32 callWindow;
+        uint32 callThreshold;
         uint256 callPriceMinor;
         uint8 state;
         uint32 issuedAt;
         uint32 calledAt;
-        uint32 intexCallPeriod;
+        uint32 callNoticePeriod;
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
     }

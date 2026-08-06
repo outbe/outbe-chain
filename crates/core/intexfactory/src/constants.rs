@@ -8,7 +8,7 @@
 use alloy_primitives::{address, Address};
 use outbe_primitives::time::SECONDS_PER_DAY;
 
-/// Seconds per day, in the `u32` width every protocol period below uses.
+/// Every protocol period below is `u32` seconds.
 const DAY: u32 = SECONDS_PER_DAY as u32;
 
 /// IntexNFT1155 on Outbe (balance ledger: settle / burnSettled / balanceOf).
@@ -52,13 +52,13 @@ pub const FLOOR_PRICE_DEN: u64 = 100;
 pub const CALL_PRICE_NUM: u64 = 228;
 pub const CALL_PRICE_DEN: u64 = 100;
 
-/// Forced-settlement deadline after a series is Called, in seconds.
-pub const INTEX_CALL_PERIOD_SECONDS: u32 = 7 * 24 * 3600;
+/// Notice a holder gets to settle after a series is Called.
+pub const CALL_NOTICE_PERIOD: u32 = 7 * DAY;
 
-/// Call-trigger evaluation window: most recent completed days scanned for breaches.
-pub const CALL_WINDOW_DAYS: u16 = 30;
-/// Call-trigger threshold: breach-days within the window required to force-call.
-pub const CALL_THRESHOLD_DAYS: u16 = 21;
+/// Call-trigger evaluation window: the most recent stretch scanned for breaches.
+pub const CALL_WINDOW: u32 = 30 * DAY;
+/// Call-trigger threshold: how much of the window must be in breach to force-call.
+pub const CALL_THRESHOLD: u32 = 21 * DAY;
 
 /// Commit-entry bond on the target-chain auction: 100M wCOEN (18-dec minor units).
 pub const COMMIT_BOND_MINOR: u128 = 100_000_000 * 10u128.pow(18);

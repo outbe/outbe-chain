@@ -62,9 +62,9 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
         floor_price_minor,
         call_price_minor,
         call_trigger: outbe_intex::IntexCallTrigger {
-            window_days: cfg.call_window_days,
-            threshold_days: cfg.call_threshold_days,
-            intex_call_period: cfg.intex_call_period_secs,
+            call_window: cfg.call_window,
+            call_threshold: cfg.call_threshold,
+            call_notice_period: cfg.call_notice_period,
         },
         issued_at,
         issuance_currency: params.issuance_currency,
@@ -83,11 +83,11 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
             promisLoadMinor: params.promis_load_minor,
             entryPriceMinor: entry_price_minor_u64,
             floorPriceMinor: floor_price_minor_u64,
-            intexCallPeriod: cfg.intex_call_period_secs,
+            callNoticePeriod: cfg.call_notice_period,
             issuanceCurrency: params.issuance_currency,
             referenceCurrency: params.reference_currency,
-            callWindowDays: cfg.call_window_days,
-            callThresholdDays: cfg.call_threshold_days,
+            callWindow: cfg.call_window,
+            callThreshold: cfg.call_threshold,
             callPriceMinor: call_price_minor_u64,
             recipients,
             quantities,
@@ -411,7 +411,7 @@ pub fn settle(
     // The deadline only constrains forced settlement (Called).
     if state == IntexState::Called {
         let now = storage.timestamp()?.to::<u64>();
-        let deadline = u64::from(series.called_at) + u64::from(series.intex_call_period);
+        let deadline = u64::from(series.called_at) + u64::from(series.call_notice_period);
         if now > deadline {
             return Err(IntexFactoryError::DeadlineExpired.into());
         }

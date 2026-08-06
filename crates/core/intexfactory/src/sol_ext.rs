@@ -15,11 +15,11 @@ sol! {
             uint128 promisLoadMinor;
             uint64 entryPriceMinor;
             uint64 floorPriceMinor;
-            uint32 intexCallPeriod;
+            uint32 callNoticePeriod;
             uint16 issuanceCurrency;
             uint16 referenceCurrency;
-            uint16 callWindowDays;
-            uint16 callThresholdDays;
+            uint32 callWindow;
+            uint32 callThreshold;
             uint64 callPriceMinor;
             address[] recipients;
             uint256[] quantities;
@@ -43,9 +43,9 @@ sol! {
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IIntexNFT1155 {
         struct IntexCallTrigger {
-            uint16 windowDays;
-            uint16 thresholdDays;
-            uint32 intexCallPeriod;
+            uint32 callWindow;
+            uint32 callThreshold;
+            uint32 callNoticePeriod;
         }
 
         struct CreateSeriesParams {
