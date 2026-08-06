@@ -28,6 +28,20 @@ fn alice() -> Address {
 fn bundle() -> Address {
     address!("0x2222222222222222222222222222222222222222")
 }
+fn asset() -> Address {
+    address!("0x3333333333333333333333333333333333333333")
+}
+
+/// The oracle-derived loan terms the gratisfactory seals into a pledge ticket.
+/// Stables and gratis are deliberately different numbers so a unit mix-up shows up.
+fn terms(stables: U256, gratis: U256) -> api::PledgeTerms {
+    api::PledgeTerms {
+        stables_amount: stables,
+        gratis_amount: gratis,
+        asset: asset(),
+        entry_rate: U256::from(2u64) * U256::from(10u64).pow(U256::from(18u64)),
+    }
+}
 
 /// Build the modify authorization a client would send for `op`.
 fn auth(op: GratisOp, account: Address, amount: U256, nonce: u64) -> ModifyAuth {
@@ -169,9 +183,11 @@ fn burn_insufficient_balance_reverts() {
 fn pledge_consume_and_pay_anadosis_flow() {
     with_env(|storage| {
         let amount = U256::from(1000u64);
+        let stables = U256::from(500u64);
         let sk = test_enclave::state_key();
-        // Mine + pledge: balance drained, amount parked in the ticket (pledged_ct
-        // still 0), pledged_total counts it.
+        // Mine + pledge: the pledger asks for `stables` of credit, the gratis it costs
+        // is drained from the balance and parked in the ticket (pledged_ct still 0),
+        // and pledged_total — a GRATIS aggregate — counts the gratis, not the stables.
         api::mint(
             storage.clone(),
             alice(),
@@ -182,8 +198,9 @@ fn pledge_consume_and_pay_anadosis_flow() {
         let handle = api::pledge(
             storage.clone(),
             alice(),
-            amount,
-            auth(GratisOp::Pledge, alice(), amount, 1),
+            stables,
+            terms(stables, amount),
+            auth(GratisOp::Pledge, alice(), stables, 1),
         )
         .unwrap();
         assert_eq!(view_balance(storage.clone(), alice()), U256::ZERO);
@@ -196,9 +213,13 @@ fn pledge_consume_and_pay_anadosis_flow() {
         // the ticket is deleted; pledged_total is unchanged.
         let mk = derive_modify_key(&sk, alice()).unwrap();
         let spend = spend_auth_mac(&pledge_secret(&mk, handle), bundle());
-        let (credis_amount, eoa_ct) =
+        let (consumed_terms, eoa_ct) =
             api::consume_pledge(storage.clone(), handle, bundle(), spend).unwrap();
-        assert_eq!(credis_amount, amount);
+        assert_eq!(
+            consumed_terms,
+            terms(stables, amount),
+            "credis reads the pledge-time quote back out of the ticket"
+        );
         assert_eq!(view_pledged(storage.clone(), alice()), amount);
         assert_eq!(api::pledged_total_supply(storage.clone()).unwrap(), amount);
         // The sealed EOA opens back to alice (the plaintext never left the enclave).
@@ -240,11 +261,13 @@ fn burn_pledged_reduces_supply_and_pledged() {
             auth(GratisOp::Mint, alice(), amount, 0),
         )
         .unwrap();
+        let stables = U256::from(500u64);
         let handle = api::pledge(
             storage.clone(),
             alice(),
-            amount,
-            auth(GratisOp::Pledge, alice(), amount, 1),
+            stables,
+            terms(stables, amount),
+            auth(GratisOp::Pledge, alice(), stables, 1),
         )
         .unwrap();
         let mk = derive_modify_key(&sk, alice()).unwrap();
@@ -284,23 +307,27 @@ fn direct_unpledge_returns_collateral_and_blocks_credis() {
             auth(GratisOp::Mint, alice(), amount, 0),
         )
         .unwrap();
+        let stables = U256::from(500u64);
         let handle = api::pledge(
             storage.clone(),
             alice(),
-            amount,
-            auth(GratisOp::Pledge, alice(), amount, 1),
+            stables,
+            terms(stables, amount),
+            auth(GratisOp::Pledge, alice(), stables, 1),
         )
         .unwrap();
 
-        // Credis rejected → direct unpledge returns the whole (pending) collateral.
-        api::unpledge(
+        // Credis rejected → direct unpledge is quoted in the same unit as the pledge
+        // (stables in) and returns the whole gratis collateral.
+        let returned = api::unpledge(
             storage.clone(),
             alice(),
-            amount,
+            stables,
             handle,
-            auth(GratisOp::Unpledge, alice(), amount, 2),
+            auth(GratisOp::Unpledge, alice(), stables, 2),
         )
         .unwrap();
+        assert_eq!(returned, amount);
         assert_eq!(view_balance(storage.clone(), alice()), amount);
         assert_eq!(
             api::pledged_total_supply(storage.clone()).unwrap(),

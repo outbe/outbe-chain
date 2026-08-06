@@ -40,7 +40,6 @@ pub fn dispatch(
                     let (position_id, amount_stables) = runtime::request_credis(
                         storage.clone(),
                         sender,
-                        c.asset,
                         c.smartAccount,
                         c.pledgeHandle,
                         c.spendAuth.0,

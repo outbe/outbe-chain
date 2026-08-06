@@ -105,11 +105,13 @@ async function main() {
   const bundleErc20Before = await token.balanceOf(smartAccount);
   console.log(`\nBundle ERC20 before: ${formatTokenMeta(bundleErc20Before, erc20Meta)}`);
 
-  // The pledger EOA is NOT passed in calldata: the enclave reads it from the
-  // pledge ticket, debits its pledged ledger, and returns it sealed so it is
-  // stored as ciphertext on the position (no EOA↔bundle linkage on-chain).
-  console.log("\nSending requestCredis(asset, smartAccount, pledgeHandle, spendAuth)...");
-  const tx = await credisFactory.requestCredis(erc20Address, smartAccount, ticket.pledgeHandle, spend);
+  // Neither the pledger EOA nor the asset/amount are passed in calldata: the enclave
+  // reads the EOA from the pledge ticket, debits its pledged ledger, and returns it
+  // sealed so it is stored as ciphertext on the position (no EOA↔bundle linkage
+  // on-chain); the asset and the disbursed amount were sealed into the same ticket at
+  // pledge time, so the loan is issued at the price the user accepted.
+  console.log("\nSending requestCredis(smartAccount, pledgeHandle, spendAuth)...");
+  const tx = await credisFactory.requestCredis(smartAccount, ticket.pledgeHandle, spend);
   console.log(`  TX hash: ${tx.hash}`);
   const receipt = await tx.wait();
   if (!receipt) throw new Error("requestCredis tx receipt missing");

@@ -72,7 +72,17 @@
     "name": "pledgeGratis",
     "inputs": [
       {
-        "name": "amount",
+        "name": "amountStables",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "maxGratis",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -120,7 +130,7 @@
     "name": "unpledgeGratis",
     "inputs": [
       {
-        "name": "amount",
+        "name": "amountStables",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -173,7 +183,19 @@
         "internalType": "address"
       },
       {
-        "name": "amount",
+        "name": "amountStables",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "asset",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "gratisAmount",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -198,7 +220,7 @@
         "internalType": "address"
       },
       {
-        "name": "amount",
+        "name": "gratisAmount",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

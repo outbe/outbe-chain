@@ -17,13 +17,23 @@ holder, client-side) can read them.
   byte-for-byte against the enclave (`bin/outbe-tee-enclave/src/gratis.rs`).
 - **Reads** (`balanceOf`/`pledgedOf`) return the account's ciphertext blob; scripts
   decrypt it with the view key. `opNonceOf(account)` returns the write counter.
-- **Writes** carry `(mac, opNonce)`: `pledgeGratis(amount, mac, opNonce)` returns a
-  `pledgeHandle`; `unpledgeGratis(amount, handle, mac, opNonce)`;
+- **Writes** carry `(mac, opNonce)`:
+  `pledgeGratis(amountStables, asset, maxGratis, mac, opNonce)` returns a
+  `pledgeHandle`; `unpledgeGratis(amountStables, handle, mac, opNonce)`;
   `mineCoen(amount, mac, opNonce)`. `mac = HMAC(modifyKey, op ‖ amount ‖ opNonce ‖
   chainId)` and `opNonce` must equal `gratis.opNonceOf(account)`.
-- **Credis.** `requestCredis(asset, smartAccount, pledgeHandle, spendAuth)` — the
-  user hands the CCA a `pledgeSecret` (`HMAC(modifyKey, handle)`); the CCA binds it
-  to the bundle with `spendAuth = HMAC(pledgeSecret, "credis-bind" ‖ bundle)`.
+- **The loan is priced at pledge time.** You name the *credit* you want
+  (`amountStables` of `asset`), not the collateral: the chain converts it to gratis at
+  the COEN/0xUSD oracle rate and seals the stables amount, the asset and the rate into
+  the encrypted pledge ticket. `maxGratis` caps the derived cost (the MAC only covers
+  `amountStables`, so this is the slippage guard — and it is authenticated by your
+  transaction signature). The gratis actually charged comes back on the
+  `GratisPledged` event.
+- **Credis.** `requestCredis(smartAccount, pledgeHandle, spendAuth)` — called by the
+  CCA. The user hands it a `pledgeSecret` (`HMAC(modifyKey, handle)`); the CCA binds
+  it to the bundle with `spendAuth = HMAC(pledgeSecret, "credis-bind" ‖ bundle)`.
+  Neither the asset nor the amount is calldata — both are read back out of the ticket,
+  so the loan is issued at the price the user accepted rather than a fresh quote.
   `anadosis(positionId)` pays one installment and **automatically** releases 1/N of
   the pledged collateral back to the pledger's encrypted balance — no reclaim note,
   no separate unpledge step.
@@ -80,7 +90,7 @@ src/
 ├── 0-setup-erc20.ts            Mint / move ERC20 into user + vault router
 ├── 0-setup-gratis.ts           Mine seeded gem → Promis → confidential Gratis
 ├── confidential.ts             Client-side TEE crypto (key fetch, decrypt, MAC)
-├── 1-pledge-gratis.ts          User pledges Gratis (amount + modify-key MAC) → pledge handle
+├── 1-pledge-gratis.ts          User pledges for N stables of credit → pledge handle
 ├── 1.1-unpledge-gratis.ts      Direct reclaim of an UNSPENT pledge (e.g. credis rejected)
 ├── 2-top-up-bundle-account.ts  Deploy smart account; transfer ERC20 into it
 ├── 3-request-credis.ts         CCA calls requestCredis(handle, spendAuth); vault funds enter bundle balance
@@ -186,15 +196,17 @@ npx tsx src/0-setup-erc20.ts
 # converts that Promis 1:1 into confidential Gratis (IGratisFactory.mineFromPromis).
 npx tsx src/0-setup-gratis.ts                          # converts the whole gem load by default
 
-# User pledges 77 Gratis with a random commitment
-npx tsx src/1-pledge-gratis.ts                          # default amount/commitment
-npx tsx src/1-pledge-gratis.ts outbe-peira 77000000000000000000 0xabc...   # amount + commitment
+# User pledges for a stablecoin credit line; the gratis it costs is derived on-chain
+npx tsx src/1-pledge-gratis.ts                          # default: 1 stablecoin unit
+npx tsx src/1-pledge-gratis.ts 1000 outbe-peira         # $1,000 of credit
 
 # Deploy smart account (if needed) and fund with 1,000 USD
 npx tsx src/2-top-up-smart-account.ts
 
-# CCA requests credis using a prior pledge commitment
-npx tsx src/3-request-credis.ts <commitment>
+# CCA requests credis against a prior pledge (latest ticket, or an explicit path).
+# The disbursed amount and the asset come from the ticket, not from calldata.
+npx tsx src/3-request-credis.ts
+npx tsx src/3-request-credis.ts tickets/pledge-abc123def456.json
 
 # CCA spends from the bundle (within the daily limit policy)
 npx tsx src/4-cca-simulate-purchase.ts
@@ -202,12 +214,7 @@ npx tsx src/4-cca-simulate-purchase.ts
 # Optional: user withdraws their free balance
 npx tsx src/4.1-user-sa-withdraw.ts 5.5
 
-# User pays the next anadosis on a credis position. Each payment also inserts a
-# fresh reclaim note (worth pledge/10) and writes a reclaim ticket.
+# User pays the next anadosis on a credis position. Each payment automatically
+# releases 1/N of the collateral back to the pledger's encrypted balance.
 npx tsx src/5-user-pays-anadosis.ts <positionId>
-
-# Unlock one installment's gratis by unpledging a reclaim ticket (latest by
-# default, or pass an explicit tickets/*.json path). Run once per paid installment.
-npx tsx src/6-user-unpledge-gratis.ts                     # latest reclaim ticket
-npx tsx src/6-user-unpledge-gratis.ts tickets/1-abc123.json
 ```

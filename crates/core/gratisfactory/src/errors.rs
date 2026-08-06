@@ -6,6 +6,16 @@ use thiserror::Error;
 pub enum GratisFactoryError {
     #[error("fidelity index not eligible")]
     FidelityNotEligible,
+    #[error("invalid asset address")]
+    InvalidAsset,
+    #[error("pledge amount is zero")]
+    InvalidAmount,
+    #[error("oracle COEN/USD rate unavailable")]
+    OracleRateUnavailable,
+    #[error("oracle conversion overflow")]
+    OracleConversionOverflow,
+    #[error("pledge cost exceeds maxGratis")]
+    GratisCapExceeded,
 }
 
 impl From<GratisFactoryError> for PrecompileError {

@@ -5,7 +5,7 @@ use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
-pub use outbe_tee::protocol::{FidelityOpOutcome, FidelityOpSection, ModifyAuth};
+pub use outbe_tee::protocol::{FidelityOpOutcome, FidelityOpSection, ModifyAuth, PledgeTerms};
 
 use crate::runtime;
 use crate::schema::Gratis;
@@ -85,15 +85,18 @@ pub fn burn_with_fidelity(
     runtime::burn_with_fidelity(storage, caller, amount, auth, fidelity)
 }
 
-/// Pledge `amount` gratis from `caller` into a new pending `PledgeLockTicket`.
-/// Returns the pledge handle to present at `requestCredis`.
+/// Pledge the gratis that covers `terms.stables_amount` from `caller` into a new
+/// pending `PledgeLockTicket`, sealing `terms` alongside it. `amount_stables` is the
+/// MAC-bound figure and must equal `terms.stables_amount`. Returns the pledge handle
+/// to present at `requestCredis`.
 pub fn pledge(
     storage: StorageHandle<'_>,
     caller: Address,
-    amount: U256,
+    amount_stables: U256,
+    terms: PledgeTerms,
     auth: ModifyAuth,
 ) -> Result<B256> {
-    runtime::pledge(storage, caller, amount, auth)
+    runtime::pledge(storage, caller, amount_stables, terms, auth)
 }
 
 /// Pledge gratis AND carry a co-located fidelity **probe** in ONE round-trip.
@@ -103,22 +106,25 @@ pub fn pledge(
 pub fn pledge_with_fidelity(
     storage: StorageHandle<'_>,
     caller: Address,
-    amount: U256,
+    amount_stables: U256,
+    terms: PledgeTerms,
     auth: ModifyAuth,
     fidelity: FidelityOpSection,
 ) -> Result<(B256, FidelityOpOutcome)> {
-    runtime::pledge_with_fidelity(storage, caller, amount, auth, fidelity)
+    runtime::pledge_with_fidelity(storage, caller, amount_stables, terms, auth, fidelity)
 }
 
 /// Directly unpledge an unspent (pending) pledge (`pledge_handle`) back to `caller`.
+/// `amount_stables` is the stables figure the pledge was quoted for — the enclave
+/// matches it against the ticket. Returns the gratis collateral credited back.
 pub fn unpledge(
     storage: StorageHandle<'_>,
     caller: Address,
-    amount: U256,
+    amount_stables: U256,
     pledge_handle: B256,
     auth: ModifyAuth,
-) -> Result<()> {
-    runtime::unpledge(storage, caller, amount, pledge_handle, auth)
+) -> Result<U256> {
+    runtime::unpledge(storage, caller, amount_stables, pledge_handle, auth)
 }
 
 // --- Credis-driven ---
@@ -126,14 +132,16 @@ pub fn unpledge(
 /// requestCredis: consume `pledge_handle`'s ticket for `bundle` (authorized by
 /// `spend_auth`), crediting the collateral into the pledger's OWN pledged ledger and
 /// deleting the ticket. The pledger EOA is not passed in calldata — the enclave recovers
-/// it from the ticket. Returns `(gratis_amount, eoa_ct)`, where `eoa_ct` is the sealed EOA
-/// the caller stores on the Credis position (later opened via [`reveal_owner`]).
+/// it from the ticket. Returns `(terms, eoa_ct)`: the loan terms quoted when the pledge
+/// was made (stables amount, asset, entry rate and the gratis collateral), plus the
+/// sealed EOA the caller stores on the Credis position (later opened via
+/// [`reveal_owner`]).
 pub fn consume_pledge(
     storage: StorageHandle<'_>,
     pledge_handle: B256,
     bundle: Address,
     spend_auth: [u8; 32],
-) -> Result<(U256, Vec<u8>)> {
+) -> Result<(PledgeTerms, Vec<u8>)> {
     runtime::consume_pledge(storage, pledge_handle, bundle, spend_auth)
 }
 

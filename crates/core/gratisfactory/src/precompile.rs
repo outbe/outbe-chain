@@ -39,8 +39,15 @@ pub fn dispatch(
                         mac: c.mac.0,
                         op_nonce: c.opNonce,
                     };
-                    let handle = runtime::pledge_gratis(storage.clone(), sender, c.amount, auth)?;
-                    emit_pledged(&storage, sender, c.amount, handle)?;
+                    let (handle, gratis_amount) = runtime::pledge_gratis(
+                        storage.clone(),
+                        sender,
+                        c.amountStables,
+                        c.asset,
+                        c.maxGratis,
+                        auth,
+                    )?;
+                    emit_pledged(&storage, sender, &c, gratis_amount, handle)?;
                     Ok(handle)
                 }),
                 unpledgeGratis(c) => mutate_void(c, caller, |sender, c| {
@@ -48,14 +55,14 @@ pub fn dispatch(
                         mac: c.mac.0,
                         op_nonce: c.opNonce,
                     };
-                    runtime::unpledge_gratis(
+                    let gratis_amount = runtime::unpledge_gratis(
                         storage.clone(),
                         sender,
-                        c.amount,
+                        c.amountStables,
                         c.pledgeHandle,
                         auth,
                     )?;
-                    emit_unpledged(&storage, sender, c.amount)
+                    emit_unpledged(&storage, sender, gratis_amount)
                 }),
                 mineCoen(c) => mutate(c, caller, |sender, c| {
                     let auth = ModifyAuth {
@@ -93,22 +100,32 @@ pub fn dispatch(
 fn emit_pledged(
     storage: &StorageHandle<'_>,
     account: Address,
-    amount: U256,
+    call: &IGratisFactory::pledgeGratisCall,
+    gratis_amount: U256,
     pledge_handle: B256,
 ) -> Result<()> {
     storage.emit_event(
         GRATIS_FACTORY_ADDRESS,
         SolEvent::encode_log_data(&IGratisFactory::GratisPledged {
             account,
-            amount,
+            amountStables: call.amountStables,
+            asset: call.asset,
+            gratisAmount: gratis_amount,
             pledgeHandle: pledge_handle,
         }),
     )
 }
 
-fn emit_unpledged(storage: &StorageHandle<'_>, account: Address, amount: U256) -> Result<()> {
+fn emit_unpledged(
+    storage: &StorageHandle<'_>,
+    account: Address,
+    gratis_amount: U256,
+) -> Result<()> {
     storage.emit_event(
         GRATIS_FACTORY_ADDRESS,
-        SolEvent::encode_log_data(&IGratisFactory::GratisUnpledged { account, amount }),
+        SolEvent::encode_log_data(&IGratisFactory::GratisUnpledged {
+            account,
+            gratisAmount: gratis_amount,
+        }),
     )
 }
