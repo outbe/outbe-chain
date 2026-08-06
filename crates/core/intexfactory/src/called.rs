@@ -7,7 +7,7 @@
 
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
-use outbe_oracle::schema::OracleContract;
+use outbe_oracle::{api::pair_id_for, schema::OracleContract};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},
@@ -26,16 +26,10 @@ use crate::state::QualifiedBinTree;
 /// Run the daily Called scan. Returns the number of series force-called.
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     let oracle = OracleContract::new(ctx.storage.clone());
-    let pair_hash = oracle
-        .settlement_iso_to_pair
-        .read(&QUALIFIER_REFERENCE_ISO)?;
-    if pair_hash.is_zero() {
+    // This scan needs the pair id, not the rate: it reads the day's finalized VWAP.
+    let Some(pair_id) = pair_id_for(ctx.storage.clone(), QUALIFIER_REFERENCE_ISO)? else {
         return Ok(0);
-    }
-    let pair_id = oracle.pair_hash_to_id.read(&pair_hash)?;
-    if pair_id == 0 {
-        return Ok(0);
-    }
+    };
 
     // Most recent fully-closed UTC day (finalized VWAP).
     let last_closed_day = previous_date_key(timestamp_to_date_key(ctx.block.timestamp));

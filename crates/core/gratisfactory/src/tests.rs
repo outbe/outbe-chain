@@ -27,6 +27,16 @@ const CREATED_AT: u64 = 1_700_000_000;
 fn alice() -> Address {
     address!("0x1111111111111111111111111111111111111111")
 }
+/// ISO 4217 code the pledged asset reports via `isoCode()`.
+const ASSET_ISO: u16 = 840;
+
+/// ABI-encoded `uint16` return for the asset's `isoCode()` static sub-call.
+fn iso_word(iso: u16) -> Bytes {
+    let mut b = vec![0u8; 32];
+    b[30..32].copy_from_slice(&iso.to_be_bytes());
+    Bytes::from(b)
+}
+
 /// The stablecoin a pledge is quoted in.
 fn asset() -> Address {
     address!("0x0888088808880888088808880888088808880888")
@@ -85,12 +95,20 @@ fn view_pledged(s: &StorageHandle<'_>, a: Address) -> U256 {
     decrypt_pledged(&vk, a, &blob).unwrap()
 }
 
-/// Register the COEN/0xUSD pair the pledge conversion reads.
+/// Register the COEN/0xUSD pair plus the ISO 840 settlement mapping the pledge
+/// conversion resolves through (the asset's `isoCode()` selects the pair).
 fn seed_oracle(storage: StorageHandle<'_>, rate_1e18: U256) {
     let mut oracle = outbe_oracle::schema::OracleContract::new(storage);
     oracle.register_pair("COEN", "0xUSD").unwrap();
     oracle
         .set_exchange_rate(Address::ZERO, "COEN", "0xUSD", rate_1e18, 0, 0)
+        .unwrap();
+    oracle
+        .settlement_iso_to_pair
+        .write(
+            &ASSET_ISO,
+            outbe_oracle::schema::OracleContract::pair_hash("COEN", "0xUSD"),
+        )
         .unwrap();
 }
 
@@ -117,6 +135,9 @@ fn with_env<R>(f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
     fidelity_enclave::install();
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(CREATED_AT));
+    // `pledge_gratis` staticcalls the asset for its ISO 4217 code before pricing.
+    storage.enable_sub_call_stub();
+    storage.stub_sub_call_at(asset(), iso_word(ASSET_ISO));
     let out = StorageHandle::enter(&mut storage, |s| {
         seed_oracle(s.clone(), oracle_rate());
         f(s.clone())

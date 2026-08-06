@@ -26,18 +26,18 @@ use alloy_primitives::U256;
 use outbe_compressed_entities::{
     EntityId36, ExecutionScope, ParentBodySource, ParentBodySourceRef,
 };
-use outbe_oracle::api::get_exchange_rate;
+use outbe_oracle::api::coen_rate_for;
 use outbe_primitives::{
     block::{BlockLifecycle, BlockRuntimeContext},
     error::Result,
     math::{constants::MAX_BIN_ID, tree_math},
 };
 
-use crate::{api, constants::MAX_BUCKET_QUALIFICATIONS_PER_BLOCK, schema::NodContract};
-
-/// Oracle pair that gates bucket qualification: COEN against the stablecoin.
-const QUALIFIER_BASE: &str = "COEN";
-const QUALIFIER_QUOTE: &str = "0xUSD";
+use crate::{
+    api,
+    constants::{MAX_BUCKET_QUALIFICATIONS_PER_BLOCK, QUALIFIER_REFERENCE_ISO},
+    schema::NodContract,
+};
 
 pub struct NodLifecycle;
 
@@ -82,7 +82,10 @@ pub fn qualify_nods(
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
 ) -> Result<()> {
-    let rate = get_exchange_rate(ctx.storage.clone(), QUALIFIER_BASE, QUALIFIER_QUOTE)?;
+    // An unregistered pair or an unpublished rate skips this block's scan
+    // (`qualify_buckets_with_rate` returns early on zero) rather than halting
+    // the block, matching the gem and intexfactory qualifiers.
+    let rate = coen_rate_for(ctx.storage.clone(), QUALIFIER_REFERENCE_ISO)?.unwrap_or(U256::ZERO);
     qualify_buckets_with_rate(ctx, scope, parent, rate)
 }
 

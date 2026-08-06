@@ -382,3 +382,34 @@ fn statistics_track_mint_count() {
         assert_eq!(factory.total_gems_issued.read().unwrap(), U256::from(3u64));
     });
 }
+
+/// `coen_rate_for` collapses "no pair" and "no rate" into one `Option`, so pin
+/// that the two distinct typed errors still reach the caller.
+#[test]
+fn mint_gem_distinguishes_unregistered_currency_from_stale_oracle() {
+    // ISO 999 has no settlement pair at all.
+    with_storage(Some(U256::from(2u64) * one_e18()), |storage| {
+        let err = err_msg(runtime::mint_gem(
+            storage,
+            ALICE,
+            GemTypes::Wallet,
+            one_e18(),
+            999,
+            840,
+        ));
+        assert!(err.contains("999"), "unexpected error: {err}");
+    });
+
+    // ISO 840's pair is registered but carries no published rate.
+    with_storage(Some(U256::ZERO), |storage| {
+        let err = err_msg(runtime::mint_gem(
+            storage,
+            ALICE,
+            GemTypes::Wallet,
+            one_e18(),
+            840,
+            840,
+        ));
+        assert!(err.contains("oracle"), "unexpected error: {err}");
+    });
+}

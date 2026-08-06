@@ -19,6 +19,7 @@ pub mod participation;
 pub mod payload;
 pub mod projection;
 pub mod protocol_schedule;
+pub mod reference_currency_abi;
 pub mod reshare_artifact;
 pub mod signer;
 pub mod slashing_journal;
