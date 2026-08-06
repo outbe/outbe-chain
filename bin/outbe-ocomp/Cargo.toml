@@ -44,7 +44,7 @@ zeromq.workspace = true
 
 [dev-dependencies]
 alloy-sol-types.workspace = true
-outbe-e2e-harness = { path = "../../testing/e2e-harness", features = ["ocomp-integration"] }
+outbe-e2e-harness = { path = "../../testing/e2e-harness", features = ["ocomp-finality-fixture"] }
 outbe-validatorset.workspace = true
 reth-ethereum.workspace = true
 tempfile.workspace = true

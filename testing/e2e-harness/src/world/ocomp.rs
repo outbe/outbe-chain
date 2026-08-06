@@ -257,8 +257,6 @@ pub struct OcompMismatchedForkManifestV1 {
 pub struct OcompScenarioTopologyV1 {
     pub launch_identity: Option<OcompLaunchIdentityEvidenceV1>,
     pub domain_roots: Vec<String>,
-    pub supervisor_sockets: Vec<String>,
-    pub snapshot_exporter_sockets: Vec<String>,
     pub processes: Vec<OcompProcessRecordV1>,
     pub faults: Vec<OcompFaultRecordV1>,
     pub fork_restart: Option<OcompForkRestartEvidenceV1>,
@@ -272,11 +270,6 @@ impl OcompScenarioTopologyV1 {
         eyre::ensure!(
             validator_count > 0,
             "OCOMP topology has no validator domains"
-        );
-        eyre::ensure!(
-            self.supervisor_sockets.len() == validator_count
-                && self.snapshot_exporter_sockets.len() == validator_count,
-            "OCOMP topology endpoint counts differ from its validator domains"
         );
         if let Some(identity) = &self.launch_identity {
             if !matches!(identity.classification.as_str(), "measurement" | "final")
@@ -640,6 +633,7 @@ impl OcompTopology {
         Ok(())
     }
 
+    #[cfg(feature = "ocomp-integration")]
     pub fn node_supervisor_socket(&self, validator_index: u8) -> Result<PathBuf> {
         self.domain(validator_index)?;
         Ok(self
@@ -647,6 +641,7 @@ impl OcompTopology {
             .ocomp_supervisor_socket(usize::from(validator_index)))
     }
 
+    #[cfg(feature = "ocomp-integration")]
     pub fn node_snapshot_exporter_socket(&self, validator_index: u8) -> Result<PathBuf> {
         self.domain(validator_index)?;
         Ok(self
@@ -1959,21 +1954,9 @@ impl OcompTopology {
     /// Bounded, serializable process/correlation snapshot for scenario evidence.
     pub fn evidence_snapshot(&self) -> Result<OcompScenarioTopologyV1> {
         let mut domain_roots = Vec::with_capacity(self.domains.len());
-        let mut supervisor_sockets = Vec::with_capacity(self.domains.len());
-        let mut snapshot_exporter_sockets = Vec::with_capacity(self.domains.len());
         for validator_index in self.validator_indices()? {
             domain_roots.push(
                 self.domain_root(validator_index)?
-                    .to_string_lossy()
-                    .into_owned(),
-            );
-            supervisor_sockets.push(
-                self.node_supervisor_socket(validator_index)?
-                    .to_string_lossy()
-                    .into_owned(),
-            );
-            snapshot_exporter_sockets.push(
-                self.node_snapshot_exporter_socket(validator_index)?
                     .to_string_lossy()
                     .into_owned(),
             );
@@ -1981,8 +1964,6 @@ impl OcompTopology {
         Ok(OcompScenarioTopologyV1 {
             launch_identity: self.launch_identity_evidence.clone(),
             domain_roots,
-            supervisor_sockets,
-            snapshot_exporter_sockets,
             processes: self.records.clone(),
             faults: self.faults.clone(),
             fork_restart: self.fork_restart_evidence.clone(),
@@ -2132,6 +2113,7 @@ impl OcompTopology {
             .ok_or_else(|| eyre::eyre!("validator index is outside the configured topology"))
     }
 
+    #[cfg(feature = "ocomp-integration")]
     fn keyless_full_node_domain(&self, validator_index: u8) -> Result<&OcompDomain> {
         match self.keyless_full_node_domain.as_ref() {
             Some((index, domain)) if *index == validator_index => Ok(domain),
@@ -2141,6 +2123,7 @@ impl OcompTopology {
         }
     }
 
+    #[cfg(feature = "ocomp-integration")]
     fn keyless_full_node_domain_mut(&mut self, validator_index: u8) -> Result<&mut OcompDomain> {
         match self.keyless_full_node_domain.as_mut() {
             Some((index, domain)) if *index == validator_index => Ok(domain),
@@ -3282,8 +3265,6 @@ mod tests {
         let evidence = topology.evidence_snapshot().unwrap();
 
         assert_eq!(evidence.domain_roots.len(), 5);
-        assert_eq!(evidence.supervisor_sockets.len(), 5);
-        assert_eq!(evidence.snapshot_exporter_sockets.len(), 5);
     }
 
     #[test]
@@ -4029,8 +4010,6 @@ mod tests {
         assert_eq!(snapshot.processes, topology.records);
         assert_eq!(snapshot.faults, topology.faults);
         assert_eq!(snapshot.domain_roots.len(), 4);
-        assert_eq!(snapshot.supervisor_sockets.len(), 4);
-        assert_eq!(snapshot.snapshot_exporter_sockets.len(), 4);
         let canonical = serde_json::to_vec(&snapshot).unwrap();
         assert_eq!(
             serde_json::from_slice::<OcompScenarioTopologyV1>(&canonical).unwrap(),

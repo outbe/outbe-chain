@@ -250,6 +250,7 @@ impl Localnet {
 
     /// Node-side OCOMP profile shared by genesis validators and validators
     /// promoted later through the canonical activation boundary.
+    #[cfg(feature = "ocomp-integration")]
     fn ocomp_validator_args(
         &self,
         validator_index: usize,
