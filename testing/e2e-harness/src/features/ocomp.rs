@@ -509,16 +509,14 @@ fn fresh_capacity_day_advances_to_offering(world: &mut World) {
     );
 }
 
-/// First `wwd_advance_noon` Cycle slot strictly after `after`. The status walk
-/// out of OFFERING runs only on that daily trigger, so the processing time
-/// alone (02:00 UTC) never moves the day.
-fn next_wwd_advance_slot(after: u64) -> u64 {
+/// First midnight Cycle slot strictly after `after`. Two daily triggers have to
+/// fire before the day reaches OFFCHAIN_PENDING: `wwd_advance_noon` walks it out
+/// of OFFERING at 12:00 UTC, and `emission_limit_1` settles READY at 00:00 UTC.
+/// The processing time itself (02:00 UTC) fires neither, so the clock targets
+/// the midnight that follows both.
+fn next_wwd_settlement_slot(after: u64) -> u64 {
     const PERIOD: u64 = 86_400;
-    const OFFSET: u64 = 43_200;
-    if after < OFFSET {
-        return OFFSET;
-    }
-    OFFSET + ((after - OFFSET) / PERIOD + 1) * PERIOD
+    after / PERIOD * PERIOD + PERIOD
 }
 
 #[when("the committee logical clock reaches the fresh capacity processing time")]
@@ -529,7 +527,7 @@ fn committee_clock_reaches_fresh_capacity_processing(world: &mut World) {
         .as_ref()
         .expect("fresh Metadosis creation evidence")
         .scheduled_process_time;
-    let target = next_wwd_advance_slot(processing_time);
+    let target = next_wwd_settlement_slot(processing_time);
     advance_fresh_metadosis_time(world, target, &[(0, 1), (1, 2), (2, 3), (3, 4)], 8);
 }
 
@@ -581,28 +579,6 @@ fn fresh_domains_retain_authenticated_workers(world: &mut World) {
     }
 }
 
-/// Largest clock gap crossed in one committee restart. Every restart spends
-/// eight of the scenario's bounded fault records, so the hop stays wide enough
-/// for a two-jump scenario to fit inside that budget.
-const CLOCK_HOP_SECS: u64 = 36 * 3_600;
-
-/// Wait for chain time to reach `target` after a hop, so the next restart finds
-/// a settled committee rather than one still closing the gap.
-fn settle_clock_hop(world: &mut World, target: u64) {
-    let deadline = Instant::now() + Duration::from_secs(300);
-    loop {
-        let points = finalized_points_at_common_height(world, 1);
-        if points.iter().all(|point| point.block_timestamp >= target) {
-            return;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "committee did not reach logical timestamp {target} after a clock hop"
-        );
-        sleep(Duration::from_millis(500));
-    }
-}
-
 fn advance_fresh_metadosis_time(
     world: &mut World,
     requested_timestamp: u64,
@@ -612,27 +588,16 @@ fn advance_fresh_metadosis_time(
     let before_restart = finalized_points_at_common_height(world, 1);
     let before_height = before_restart[0].block_number;
     let before_timestamp = before_restart[0].block_timestamp;
-
-    // Cross the gap in hops the committee can settle between: one long jump
-    // leaves it ratcheting for hundreds of blocks, and finalisation has been
-    // seen to stall before it arrives.
-    let mut hop_from = before_timestamp;
-    let mut offset = 0;
-    while hop_from < requested_timestamp {
-        let hop_to = requested_timestamp.min(hop_from.saturating_add(CLOCK_HOP_SECS));
-        offset = logical_time_offset(hop_to, unix_time_secs());
-        world
-            .localnet
-            .restart_committee_at_unix_time_offset(offset)
-            .unwrap_or_else(|error| {
-                panic!("restart the complete committee at logical timestamp {hop_to}: {error:#}")
-            });
-        restart_ocomp_roles_after_committee_time_change(world);
-        if hop_to < requested_timestamp {
-            settle_clock_hop(world, hop_to);
-        }
-        hop_from = hop_to;
-    }
+    let offset = logical_time_offset(requested_timestamp, unix_time_secs());
+    world
+        .localnet
+        .restart_committee_at_unix_time_offset(offset)
+        .unwrap_or_else(|error| {
+            panic!(
+                "restart the complete committee at logical timestamp {requested_timestamp}: {error:#}"
+            )
+        });
+    restart_ocomp_roles_after_committee_time_change(world);
 
     let worldwide_day = fresh_metadosis_wwd(world);
     // The chain closes the gap one hour per block, so the wait scales with the
@@ -686,7 +651,17 @@ fn advance_fresh_metadosis_time(
         assert!(
             Instant::now() < deadline,
             "fresh Metadosis WWD did not reach status {expected_persisted_status} with edges \
-             {expected_edges:?}; the production one-hour timestamp drift ratchet may be stalled"
+             {expected_edges:?}; observed statuses {observed:?} and edges {seen:?} at logical \
+             timestamp {reached} (requested {requested_timestamp})",
+            observed = states
+                .iter()
+                .map(|state| state.as_ref().map(|state| state.status))
+                .collect::<Vec<_>>(),
+            seen = changes[0].as_ref().map(|edges| edges
+                .iter()
+                .map(|edge| (edge.old_status, edge.new_status))
+                .collect::<Vec<_>>()),
+            reached = points[0].block_timestamp,
         );
         sleep(Duration::from_millis(250));
     };
