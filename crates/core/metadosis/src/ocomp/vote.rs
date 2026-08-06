@@ -445,14 +445,21 @@ impl MetadosisContract<'_> {
                     participant_index,
                 )?
                 .ok_or_else(|| fatal("OCOMP deadline snapshot member is missing"))?;
-                validators
-                    .jail_validator(member.validator_address)
-                    .map_err(|error| match error {
-                        PrecompileError::Revert(_) | PrecompileError::RevertBytes(_) => fatal(
-                            format!("jail missing OCOMP validator {participant_index}: {error}"),
-                        ),
-                        other => other,
-                    })?;
+                let current = validators.get_validator(member.validator_address)?;
+                if current.is_some_and(|record| {
+                    record.status == outbe_validatorset::runtime::status::ACTIVE
+                }) {
+                    validators
+                        .jail_validator(member.validator_address)
+                        .map_err(|error| match error {
+                            PrecompileError::Revert(_) | PrecompileError::RevertBytes(_) => fatal(
+                                format!(
+                                    "jail ACTIVE missing OCOMP validator {participant_index}: {error}"
+                                ),
+                            ),
+                            other => other,
+                        })?;
+                }
             }
             self.write_result_vote_accountability(&accountability, limits)?;
             remove_response_deadline_key(&mut index, key)?;

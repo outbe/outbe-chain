@@ -261,8 +261,10 @@ closed summary live in a separate bounded `OcompVoteAccountabilityV1` keyed by
 `JobId`; they store digests/signatures/heights, not four copies of the result.
 After completion or conflict, missing first-vote slots and first
 bounded conflicting-vote evidence remain writable until the response deadline.
-At the exact deadline a system transition closes them and jails every missing
-pinned participant once; a timely minority vote counts as present.
+At the exact deadline a system transition closes them and records every missing
+pinned participant. It jails only a participant whose current ValidatorSet
+status is still `ACTIVE`; every non-ACTIVE status is left byte-identical and
+cannot fail the deadline transition. A timely minority vote counts as present.
 
 `LysisTerminalV1`, the apply receipt, active-generation hash, applied
 domain state and exact retry identity are immutable and exclude the
@@ -376,7 +378,7 @@ planner, result or apply contract is a new protocol, not operational hardening.
 | vote submission/rebroadcast | validator-domain `OffchainLysis Supervisor` |
 | result-vote carrier | exact `gas_limit = 30_000`, pre-intrinsic system classification |
 | actual result-vote execution | separately bounded system-work lane, zero user gas |
-| deadline consequence | replay-idempotent missing-participant transition to `JAILED` |
+| deadline consequence | replay-idempotent missing evidence; only currently `ACTIVE` missing participants transition to `JAILED` |
 | trigger/day status | ADR-C-MET-001 |
 | finality identity | ADR-B-CNS-001/003 proof contract |
 | evidence validity | ADR-S-OCM-003 |

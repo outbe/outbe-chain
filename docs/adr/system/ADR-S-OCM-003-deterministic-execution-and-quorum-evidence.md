@@ -396,9 +396,13 @@ The finalized binding opens one exact compute-and-vote window of 1,800 blocks.
 It includes both local Lysis execution and canonical vote inclusion; there is
 no separate short vote-only window. At the exclusive deadline consensus closes
 `OcompAccountabilitySummaryV1`, derives `missing_bitmap` from the pinned slots
-and sends every missing participant to `JAILED` exactly once using
-JobId/participant-bound replay-idempotent evidence. A timely valid minority
-vote is present and is not punished as missing. The immutable
+and records every missing pinned participant using JobId/participant-bound
+replay-idempotent evidence. Only a missing participant whose current
+ValidatorSet status is still `ACTIVE` transitions to `JAILED`. A participant
+that is already `PENDING`, `REGISTERED`, `EXITING`, `UNBONDING`, `INACTIVE`,
+removed, or `JAILED` remains missing in the summary but receives no status or
+slash-count mutation; none of those states may make the deadline block fail. A
+timely valid minority vote is present and is not punished as missing. The immutable
 `LysisTerminalV1`, apply receipt, active-generation hash, applied domain state
 and exact-retry identity bind only the already-fixed quorum evidence and never
 change because of later votes or deadline close. Monetary penalties,
@@ -567,7 +571,8 @@ participates automatically in a new attempt. It also includes synthetic
 accountability/capacity vectors at the current consensus validator bound,
 1/2/4-worker equality, randomized order/retry, restart-safe sign-once refusal,
 system-vote inclusion and replay, continued post-quorum participation, exact
-1,800-block deadline jail, duplicate/wrong/late voter rejection,
+1,800-block deadline accountability with ACTIVE-only jail and non-ACTIVE
+non-mutation, duplicate/wrong voter rejection, controlled failed late carriers,
 conflicting-vote evidence, independent FullNode recomputation/fail-closed
 vectors, one-byte/ordering/JobId mutation rejection and comparison with a
 separate reference corpus.
