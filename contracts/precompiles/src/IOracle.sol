@@ -225,18 +225,13 @@ interface IOracle {
         returns (uint256 nominalPrice, uint256 vwap, uint256 maxScurve, string memory source);
 
     /// @notice Returns the settlement currency pair hash for an ISO 4217 code.
-    function getSettlementCurrency(uint16 isoCode) external view returns (bytes32 denomHash, bytes32 pairHash);
+    function getSettlementCurrency(uint16 isoCode) external view returns (bytes32 pairHash);
 
     /// @notice Returns all registered settlement currencies.
     function getSettlementCurrencies()
         external
         view
-        returns (
-            uint16[] memory isoCodes,
-            string[] memory denoms,
-            bytes32[] memory denomHashes,
-            bytes32[] memory pairHashes
-        );
+        returns (uint16[] memory isoCodes, bytes32[] memory pairHashes);
 
     /// @notice Returns the number of registered settlement currencies.
     function getSettlementCount() external view returns (uint32 count);

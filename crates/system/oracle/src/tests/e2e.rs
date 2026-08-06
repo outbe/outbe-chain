@@ -125,8 +125,8 @@ fn test_init_from_genesis_custom_config() {
                 (Address::new([0x22; 20]), Address::new([0xBBu8; 20])),
             ],
             settlement_currencies: vec![
-                (840, "0xUSD".into(), "COEN".into(), "0xUSD".into()),
-                (978, "EURC".into(), "ETH".into(), "0xUSD".into()),
+                (840, "COEN".into(), "0xUSD".into()),
+                (978, "ETH".into(), "0xUSD".into()),
             ],
             reference_currencies: vec![ref_cur(840)],
             penalty_counters: vec![],
@@ -191,18 +191,12 @@ fn test_init_from_genesis_custom_config() {
         assert_eq!(oracle.settlement_index_to_iso.read(&0).unwrap(), 840);
         assert_eq!(oracle.settlement_index_to_iso.read(&1).unwrap(), 978);
         assert_eq!(
-            oracle
-                .settlement_iso_to_denom_string
-                .read_string(&840)
-                .unwrap(),
-            "0xUSD"
+            oracle.settlement_iso_to_pair.read(&840).unwrap(),
+            OracleContract::pair_hash("COEN", "0xUSD")
         );
         assert_eq!(
-            oracle
-                .settlement_iso_to_denom_string
-                .read_string(&978)
-                .unwrap(),
-            "EURC"
+            oracle.settlement_iso_to_pair.read(&978).unwrap(),
+            OracleContract::pair_hash("ETH", "0xUSD")
         );
     });
 }
@@ -313,21 +307,12 @@ fn test_precompile_dispatch_cosmos_query_surface_round_trips() {
 
         crate::scurve::store_scurve_entry(&mut oracle, coen_id, 0, U256::in_units(160u64)).unwrap();
 
-        let denom_hash = alloy_primitives::keccak256("0xUSD".as_bytes());
         let pair_hash = OracleContract::pair_hash("COEN", "0xUSD");
         oracle.settlement_count.write(1).unwrap();
         oracle.settlement_index_to_iso.write(&0, 840).unwrap();
         oracle
-            .settlement_iso_to_denom
-            .write(&840, denom_hash)
-            .unwrap();
-        oracle
             .settlement_iso_to_pair
             .write(&840, pair_hash)
-            .unwrap();
-        oracle
-            .settlement_iso_to_denom_string
-            .write_string(&840, "0xUSD")
             .unwrap();
 
         use crate::precompile::IOracle;
@@ -404,8 +389,6 @@ fn test_precompile_dispatch_cosmos_query_surface_round_trips() {
         )
         .unwrap();
         assert_eq!(decoded.isoCodes, vec![840]);
-        assert_eq!(decoded.denoms, vec!["0xUSD".to_string()]);
-        assert_eq!(decoded.denomHashes, vec![denom_hash]);
         assert_eq!(decoded.pairHashes, vec![pair_hash]);
 
         let nominal_components = IOracle::getNominalPriceComponentsCall {
@@ -642,8 +625,8 @@ fn test_genesis_rejects_duplicate_settlement_iso_code() {
     with_storage(|storage| {
         let config = crate::genesis::OracleGenesisConfig {
             settlement_currencies: vec![
-                (840, "0xUSD".into(), "COEN".into(), "0xUSD".into()),
-                (840, "USDC".into(), "COEN".into(), "0xUSD".into()),
+                (840, "COEN".into(), "0xUSD".into()),
+                (840, "COEN".into(), "0xUSD".into()),
             ],
             ..crate::genesis::OracleGenesisConfig::default_config()
         };
@@ -657,7 +640,7 @@ fn test_genesis_rejects_duplicate_settlement_iso_code() {
 fn test_genesis_rejects_unregistered_settlement_pair() {
     with_storage(|storage| {
         let config = crate::genesis::OracleGenesisConfig {
-            settlement_currencies: vec![(840, "0xUSD".into(), "ETH".into(), "0xUSD".into())],
+            settlement_currencies: vec![(840, "ETH".into(), "0xUSD".into())],
             ..crate::genesis::OracleGenesisConfig::default_config()
         };
 
@@ -695,8 +678,8 @@ fn test_genesis_export_round_trip() {
             },
         ],
         settlement_currencies: vec![
-            (840, "0xUSD".into(), "COEN".into(), "0xUSD".into()),
-            (978, "EURC".into(), "ETH".into(), "0xUSD".into()),
+            (840, "COEN".into(), "0xUSD".into()),
+            (978, "ETH".into(), "0xUSD".into()),
         ],
         reference_currencies: vec![ref_cur(840), ref_cur(978)],
         penalty_counters: vec![(v1, 7, 2, 1), (v2, 3, 0, 4)],
@@ -780,18 +763,12 @@ fn test_genesis_export_round_trip() {
         assert_eq!(oracle.get_aggregate_vote(&v2).unwrap().1, vec![1]);
         assert_eq!(oracle.settlement_count.read().unwrap(), 2);
         assert_eq!(
-            oracle
-                .settlement_iso_to_denom_string
-                .read_string(&840)
-                .unwrap(),
-            "0xUSD"
+            oracle.settlement_iso_to_pair.read(&840).unwrap(),
+            OracleContract::pair_hash("COEN", "0xUSD")
         );
         assert_eq!(
-            oracle
-                .settlement_iso_to_denom_string
-                .read_string(&978)
-                .unwrap(),
-            "EURC"
+            oracle.settlement_iso_to_pair.read(&978).unwrap(),
+            OracleContract::pair_hash("ETH", "0xUSD")
         );
         assert_eq!(oracle.penalty_success_count.read(&v1).unwrap(), 7);
         assert_eq!(oracle.penalty_miss_count.read(&v2).unwrap(), 4);
@@ -815,18 +792,17 @@ fn test_genesis_export_fails_without_pair_string_metadata() {
 }
 
 #[test]
-fn test_genesis_export_fails_without_settlement_denom_metadata() {
+fn test_genesis_export_fails_without_settlement_pair_metadata() {
     with_storage(|storage| {
         let config = crate::genesis::OracleGenesisConfig {
-            settlement_currencies: vec![(840, "0xUSD".into(), "COEN".into(), "0xUSD".into())],
+            settlement_currencies: vec![(840, "COEN".into(), "0xUSD".into())],
             ..crate::genesis::OracleGenesisConfig::default_config()
         };
         let mut oracle = OracleContract::new(storage.clone());
         crate::genesis::init_from_genesis(&mut oracle, &config).unwrap();
         oracle
-            .settlement_iso_to_denom_string
-            .get_bytes(&840)
-            .clear()
+            .settlement_iso_to_pair
+            .write(&840, alloy_primitives::B256::ZERO)
             .unwrap();
 
         assert!(crate::genesis::export_genesis(&oracle, &[]).is_err());

@@ -632,16 +632,6 @@
         "internalType": "uint16[]"
       },
       {
-        "name": "denoms",
-        "type": "string[]",
-        "internalType": "string[]"
-      },
-      {
-        "name": "denomHashes",
-        "type": "bytes32[]",
-        "internalType": "bytes32[]"
-      },
-      {
         "name": "pairHashes",
         "type": "bytes32[]",
         "internalType": "bytes32[]"
@@ -660,11 +650,6 @@
       }
     ],
     "outputs": [
-      {
-        "name": "denomHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
       {
         "name": "pairHash",
         "type": "bytes32",

@@ -799,8 +799,7 @@ async fn settlement(client: &(impl Rpc + Sync), iso_code: u16) -> Result<()> {
     let ret = IOracle::getSettlementCurrencyCall::abi_decode_returns(&result)?;
 
     println!("Settlement currency {iso_code}:");
-    println!("Denom Hash: {:?}", B256::from(ret.denomHash));
-    println!("Pair Hash:  {:?}", B256::from(ret.pairHash));
+    println!("Pair Hash:  {:?}", B256::from(ret));
     Ok(())
 }
 
@@ -809,25 +808,10 @@ async fn settlements(client: &(impl Rpc + Sync)) -> Result<()> {
     let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
     let ret = IOracle::getSettlementCurrenciesCall::abi_decode_returns(&result)?;
 
-    println!(
-        "{:<8} {:<16} {:<66} {:<66}",
-        "ISO", "Denom", "DenomHash", "PairHash"
-    );
-    println!("{}", "-".repeat(160));
-    for (((iso, denom), denom_hash), pair_hash) in ret
-        .isoCodes
-        .iter()
-        .zip(ret.denoms.iter())
-        .zip(ret.denomHashes.iter())
-        .zip(ret.pairHashes.iter())
-    {
-        println!(
-            "{:<8} {:<16} {:?} {:?}",
-            iso,
-            denom,
-            B256::from(*denom_hash),
-            B256::from(*pair_hash)
-        );
+    println!("{:<8} {:<66}", "ISO", "PairHash");
+    println!("{}", "-".repeat(76));
+    for (iso, pair_hash) in ret.isoCodes.iter().zip(ret.pairHashes.iter()) {
+        println!("{:<8} {:?}", iso, B256::from(*pair_hash));
     }
     Ok(())
 }

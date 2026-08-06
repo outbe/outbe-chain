@@ -1230,12 +1230,9 @@ fn prepare_parent(proposer: Address, snapshot: &StoredCommitteeSnapshot) -> Prep
             "0xUSD".to_owned(),
             U256::from(2_000_000_000_000_000_000u128),
         ));
-        oracle_genesis.settlement_currencies.push((
-            840,
-            "0xUSD".to_owned(),
-            "COEN".to_owned(),
-            "0xUSD".to_owned(),
-        ));
+        oracle_genesis
+            .settlement_currencies
+            .push((840, "COEN".to_owned(), "0xUSD".to_owned()));
         outbe_oracle::genesis::init_from_genesis(&mut oracle, &oracle_genesis).unwrap();
         outbe_oracle::api::initialize_fresh_ocomp_profile(storage.clone()).unwrap();
 

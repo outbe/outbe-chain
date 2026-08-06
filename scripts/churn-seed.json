@@ -104,7 +104,6 @@
     "settlement_currencies": [
       {
         "iso_code": 840,
-        "denom": "0xUSD",
         "pair_base": "COEN",
         "pair_quote": "0xUSD"
       }

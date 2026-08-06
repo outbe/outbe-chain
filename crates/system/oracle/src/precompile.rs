@@ -264,18 +264,11 @@ pub fn dispatch(
                     isActive: is_active,
                 })
             }),
-            getSettlementCurrency(c) => view(c, |c| {
-                let denom_hash = oracle.settlement_iso_to_denom.read(&c.isoCode)?;
-                let pair_hash = oracle.settlement_iso_to_pair.read(&c.isoCode)?;
-                Ok((denom_hash, pair_hash).into())
-            }),
+            getSettlementCurrency(c) => view(c, |c| oracle.settlement_iso_to_pair.read(&c.isoCode)),
             getSettlementCurrencies(_) => metadata::<IOracle::getSettlementCurrenciesCall>(|| {
-                let (iso_codes, denoms, denom_hashes, pair_hashes) =
-                    oracle.get_settlement_currencies()?;
+                let (iso_codes, pair_hashes) = oracle.get_settlement_currencies()?;
                 Ok(IOracle::getSettlementCurrenciesReturn {
                     isoCodes: iso_codes,
-                    denoms,
-                    denomHashes: denom_hashes,
                     pairHashes: pair_hashes,
                 })
             }),

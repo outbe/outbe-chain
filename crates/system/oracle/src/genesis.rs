@@ -3,7 +3,7 @@
 //! Owns the `OracleGenesisConfig` shape plus the `init_from_genesis` /
 //! `export_genesis` round-trip used for chain bootstrap and state migration.
 
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::error::{PrecompileError, Result};
 use std::collections::BTreeSet;
 
@@ -74,11 +74,10 @@ pub struct OracleGenesisConfig {
     pub initial_rates: Vec<(String, String, U256)>,
     /// Feeder delegations as `(validator, feeder)`.
     pub feeder_delegations: Vec<(Address, Address)>,
-    /// Settlement currencies as `(iso_code, denom, pair_base, pair_quote)`.
+    /// Settlement currencies as `(iso_code, pair_base, pair_quote)`.
     /// iso_code: ISO 4217 numeric code (e.g., 840 = USD).
-    /// denom: stablecoin denom string (e.g., "0xUSD").
     /// pair_base/pair_quote: trading pair for this settlement currency.
-    pub settlement_currencies: Vec<(u16, String, String, String)>,
+    pub settlement_currencies: Vec<(u16, String, String)>,
     /// Reference currencies with their annualized currency rate (1e18
     /// scaled). These ISO 4217 codes identify currencies valid for off-chain
     /// pricing references; the currency rate is read by the Credis Factory
@@ -179,15 +178,10 @@ pub fn init_from_genesis(oracle: &mut OracleContract, config: &OracleGenesisConf
     }
 
     // Import settlement currencies.
-    for (iso_code, denom, pair_base, pair_quote) in &config.settlement_currencies {
+    for (iso_code, pair_base, pair_quote) in &config.settlement_currencies {
         if *iso_code == 0 {
             return Err(PrecompileError::Revert(
                 "settlement iso_code must be non-zero".into(),
-            ));
-        }
-        if denom.is_empty() {
-            return Err(PrecompileError::Revert(
-                "settlement denom must not be empty".into(),
             ));
         }
 
@@ -199,21 +193,15 @@ pub fn init_from_genesis(oracle: &mut OracleContract, config: &OracleGenesisConf
             ));
         }
 
-        let existing_denom_hash = oracle.settlement_iso_to_denom.read(iso_code)?;
-        if existing_denom_hash != B256::ZERO {
+        if oracle.settlement_iso_to_pair.read(iso_code)? != B256::ZERO {
             return Err(PrecompileError::Revert(
                 "settlement iso_code already registered".into(),
             ));
         }
 
-        let denom_hash = keccak256(denom.as_bytes());
         let count = oracle.settlement_count.read()?;
-        oracle.settlement_iso_to_denom.write(iso_code, denom_hash)?;
         oracle.settlement_iso_to_pair.write(iso_code, pair_hash)?;
         oracle.settlement_index_to_iso.write(&count, *iso_code)?;
-        oracle
-            .settlement_iso_to_denom_string
-            .write_string(iso_code, denom)?;
         oracle.settlement_count.write(count + 1)?;
     }
 
@@ -390,22 +378,6 @@ pub fn export_genesis(
             )));
         }
 
-        let denom = oracle
-            .settlement_iso_to_denom_string
-            .read_string(&iso_code)?;
-        if denom.is_empty() {
-            return Err(PrecompileError::Revert(format!(
-                "missing settlement denom metadata for iso_code {iso_code}"
-            )));
-        }
-
-        let denom_hash = oracle.settlement_iso_to_denom.read(&iso_code)?;
-        if denom_hash != keccak256(denom.as_bytes()) {
-            return Err(PrecompileError::Revert(format!(
-                "settlement denom metadata hash mismatch for iso_code {iso_code}"
-            )));
-        }
-
         let pair_hash = oracle.settlement_iso_to_pair.read(&iso_code)?;
         let pair_id = oracle.pair_hash_to_id.read(&pair_hash)?;
         if pair_id == 0 {
@@ -414,7 +386,7 @@ pub fn export_genesis(
             )));
         }
         let (base, quote, _) = export_pair_metadata(oracle, pair_id)?;
-        settlement_currencies.push((iso_code, denom, base, quote));
+        settlement_currencies.push((iso_code, base, quote));
     }
 
     // Export reference currencies with their currency rates (bounded list;

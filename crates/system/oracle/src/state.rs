@@ -17,8 +17,8 @@ type AggregateVote = (bool, Vec<u32>, Vec<U256>, Vec<U256>);
 /// `(snapshot_ids, timestamps, pair_ids, rates, volumes)` — flattened snapshot history.
 type SnapshotHistory = (Vec<u64>, Vec<u64>, Vec<u32>, Vec<U256>, Vec<U256>);
 
-/// `(iso_codes, denoms, denom_hashes, pair_hashes)` — settlement currency metadata.
-type SettlementCurrencies = (Vec<u16>, Vec<String>, Vec<B256>, Vec<B256>);
+/// `(iso_codes, pair_hashes)` — settlement currency metadata.
+type SettlementCurrencies = (Vec<u16>, Vec<B256>);
 
 /// `(start_time, end_time, pair_ids, vwaps, lookbacks)` — stored worldwide-day VWAP snapshot.
 type WorldwideDayVwapSnapshot = (u64, u64, Vec<u32>, Vec<U256>, Vec<u64>);
@@ -684,18 +684,14 @@ impl OracleContract<'_> {
     pub fn get_settlement_currencies(&self) -> Result<SettlementCurrencies> {
         let count = self.settlement_count.read()?;
         let mut iso_codes = Vec::with_capacity(count as usize);
-        let mut denoms = Vec::with_capacity(count as usize);
-        let mut denom_hashes = Vec::with_capacity(count as usize);
         let mut pair_hashes = Vec::with_capacity(count as usize);
 
         for idx in 0..count {
             let iso_code = self.settlement_index_to_iso.read(&idx)?;
             iso_codes.push(iso_code);
-            denoms.push(self.settlement_iso_to_denom_string.read_string(&iso_code)?);
-            denom_hashes.push(self.settlement_iso_to_denom.read(&iso_code)?);
             pair_hashes.push(self.settlement_iso_to_pair.read(&iso_code)?);
         }
 
-        Ok((iso_codes, denoms, denom_hashes, pair_hashes))
+        Ok((iso_codes, pair_hashes))
     }
 }

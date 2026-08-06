@@ -592,6 +592,152 @@ fn test_reference_currencies_slot_parity() {
     });
 }
 
+/// Pins every base slot the frozen OCOMP V1 opening plan (`openings.rs`) and
+/// `scripts/seed_genesis.py` hardcode. Each field is written through the typed
+/// schema and read back at the raw slot those consumers derive, so any field
+/// reorder or mis-placed `#[slot(N)]` pin fails here rather than silently
+/// corrupting a genesis seed or an opening proof.
+///
+/// Slots 41 and 46 are retired holes: they stay in the V1 plan (whose codec
+/// descriptor is hashed into the protocol bundle) but have no live writer, so
+/// they must read as zero after a full genesis init.
+#[test]
+fn test_ocomp_opening_plan_slot_parity() {
+    use alloy_primitives::B256;
+    use outbe_primitives::addresses::ORACLE_ADDRESS;
+    use outbe_primitives::storage::types::StorageKey;
+    use outbe_primitives::storage::StorageHandle;
+
+    fn assert_mapping_slot<K: StorageKey>(
+        storage: &StorageHandle<'_>,
+        key: K,
+        base: U256,
+        expected: U256,
+        field: &str,
+    ) {
+        assert_eq!(
+            storage
+                .sload(ORACLE_ADDRESS, key.mapping_slot(base))
+                .unwrap(),
+            expected,
+            "{field} is not at base slot {base}; openings.rs and \
+             scripts/seed_genesis.py hardcode it"
+        );
+    }
+
+    with_storage(|storage| {
+        let oracle = OracleContract::new(storage.clone());
+        let wwd = outbe_common::WorldwideDay::from_timestamp(ATOMIC_DAY_START);
+        let pair_hash = B256::repeat_byte(0xAB);
+        let iso: u16 = 840;
+
+        oracle.pair_hash_to_id.write(&pair_hash, 7).unwrap();
+        oracle.scurve_count.write(3).unwrap();
+        oracle.scurve_pair_id.write(&0u32, 7).unwrap();
+        oracle.scurve_peak_day.write(&0u32, 111).unwrap();
+        oracle
+            .scurve_peak_price
+            .write(&0u32, U256::from(222u64))
+            .unwrap();
+        oracle.scurve_oldest_idx.write(1).unwrap();
+        oracle
+            .settlement_iso_to_pair
+            .write(&iso, pair_hash)
+            .unwrap();
+        oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
+        oracle.worldwide_day_vwap_pair_count.write(&wwd, 1).unwrap();
+        oracle
+            .worldwide_day_vwap_pair_id
+            .get_nested(&wwd)
+            .write(&0u32, 7)
+            .unwrap();
+        oracle
+            .worldwide_day_vwap_value
+            .get_nested(&wwd)
+            .write(&0u32, U256::from(333u64))
+            .unwrap();
+
+        // Direct (non-mapping) slots.
+        for (slot, expected, field) in [(34u64, 3u64, "scurve_count"), (38, 1, "scurve_oldest_idx")]
+        {
+            assert_eq!(
+                storage.sload(ORACLE_ADDRESS, U256::from(slot)).unwrap(),
+                U256::from(expected),
+                "{field} is not at slot {slot}"
+            );
+        }
+
+        let base = U256::from;
+        assert_mapping_slot(&storage, pair_hash, base(10), base(7), "pair_hash_to_id");
+        assert_mapping_slot(&storage, 0u32, base(35), base(7), "scurve_pair_id");
+        assert_mapping_slot(&storage, 0u32, base(36), base(111), "scurve_peak_day");
+        assert_mapping_slot(&storage, 0u32, base(37), base(222), "scurve_peak_price");
+        assert_mapping_slot(
+            &storage,
+            iso,
+            base(42),
+            U256::from_be_bytes(pair_hash.0),
+            "settlement_iso_to_pair",
+        );
+        assert_mapping_slot(
+            &storage,
+            wwd,
+            base(47),
+            base(1),
+            "worldwide_day_vwap_exists",
+        );
+        assert_mapping_slot(
+            &storage,
+            wwd,
+            base(50),
+            base(1),
+            "worldwide_day_vwap_pair_count",
+        );
+        // Nested maps: the outer key derives the inner map's base slot.
+        assert_mapping_slot(
+            &storage,
+            0u32,
+            wwd.mapping_slot(base(51)),
+            base(7),
+            "worldwide_day_vwap_pair_id",
+        );
+        assert_mapping_slot(
+            &storage,
+            0u32,
+            wwd.mapping_slot(base(52)),
+            base(333),
+            "worldwide_day_vwap_value",
+        );
+    });
+}
+
+/// The two retired denom slots must stay empty: they remain in the frozen V1
+/// opening plan, so a resurrected writer would change what the plan proves.
+#[test]
+fn test_retired_denom_slots_stay_zero_after_genesis() {
+    use outbe_primitives::addresses::ORACLE_ADDRESS;
+    use outbe_primitives::storage::types::StorageKey;
+
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        let mut config = crate::genesis::OracleGenesisConfig::default_config();
+        config
+            .settlement_currencies
+            .push((840, "COEN".into(), "0xUSD".into()));
+        crate::genesis::init_from_genesis(&mut oracle, &config).unwrap();
+
+        for base in [41u64, 46] {
+            let slot = 840u16.mapping_slot(U256::from(base));
+            assert_eq!(
+                storage.sload(ORACLE_ADDRESS, slot).unwrap(),
+                U256::ZERO,
+                "retired slot {base} was written; it is part of the frozen \
+                 OCOMP V1 opening plan and must have no live writer"
+            );
+        }
+    });
+}
+
 /// Parity guard for the `settlement_iso_to_pair` base slot used by
 /// `scripts/seed_genesis.py` (slot 42). Writes a distinctive marker, then
 /// scans base slots 0..128 to recover the macro-assigned slot via the

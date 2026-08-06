@@ -1323,9 +1323,10 @@ def seed_oracle(storage: StorageBuilder, config: dict):
       slot 11: mapping(pair_hash => is_vote_target)
       slots 12-14: exchange_rate / block / timestamp
       slot 15: feeder delegations
-      slots 33-34: protected validators
-      slots 41-43: settlement currency runtime mappings
-      slots 44-47: reversible pair/settlement metadata
+      slots 32-33: protected validators
+      slot 40: settlement_count
+      slot 42: settlement_iso_to_pair (41 is a retired denom hole)
+      slots 43-45: reversible pair metadata (46 is a retired denom hole)
       slot 55: reference_currencies (StorageVec<u16>)
     """
     cfg = config.get("config", {})
@@ -1406,7 +1407,6 @@ def seed_oracle(storage: StorageBuilder, config: dict):
             raise ValueError(f"duplicate oracle settlement iso_code: {iso_code}")
         seen_iso.add(iso_code)
 
-        denom = settlement["denom"]
         pair_base = settlement["pair_base"]
         pair_quote = settlement["pair_quote"]
         pair = (pair_base, pair_quote)
@@ -1414,12 +1414,11 @@ def seed_oracle(storage: StorageBuilder, config: dict):
         if h is None:
             raise ValueError(f"settlement pair is not registered: {pair_base}/{pair_quote}")
 
-        # settlement_iso_to_denom (41) / settlement_iso_to_pair (42) /
-        # settlement_index_to_iso (45) / settlement_iso_to_denom_string (46).
-        storage.set_mapping_b256(41, u32_bytes(iso_code), keccak256(denom.encode()))
+        # settlement_iso_to_pair (42) / settlement_index_to_iso (45).
+        # Slots 41 and 46 are retired denom holes: still opened by the frozen
+        # OCOMP V1 plan, never written.
         storage.set_mapping_b256(42, u32_bytes(iso_code), h)
         storage.set_mapping(45, u32_bytes(idx), iso_code)
-        write_mapping_string(storage, 46, u32_bytes(iso_code), denom)
 
     # S-curve genesis seeds (macro slots 34-38). `resolve_tribute_price` reads
     # `max(per-day VWAP, S-curve)`; pre-seeded OFFERING days have no runtime-
