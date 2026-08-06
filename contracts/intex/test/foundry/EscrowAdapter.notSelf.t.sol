@@ -6,7 +6,7 @@ import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
-import {MockERC20} from "@test-mocks/MockERC20.sol";
+import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 
 /// @dev Self-call shim guard on EscrowAdapter. `processFinalizationOne` wraps the per-bidder
 ///      `_processFinalizationInstruction` for `finalizeAuction`'s try/catch and must reject
@@ -26,7 +26,7 @@ contract EscrowAdapterNotSelfTest is Test {
     function setUp() public {
         escrow = DeployProxy.escrowAdapter(admin, bridger);
         MockTheCompact compact = new MockTheCompact();
-        MockERC20 paymentToken = new MockERC20("USD Coin", "USDC", 18);
+        MockWCOEN paymentToken = new MockWCOEN();
         vm.prank(admin);
         escrow.wire(auction, address(compact), address(paymentToken));
     }

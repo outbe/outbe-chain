@@ -18,7 +18,7 @@ import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
-import {MockERC20} from "@test-mocks/MockERC20.sol";
+import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 import {RevertingERC1155Receiver} from "@test-mocks/RevertingERC1155Receiver.sol";
 
 /// @dev End-to-end traversal of the five `TargetRouter` inbound handlers that previously only
@@ -45,7 +45,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
     EscrowAdapter internal escrow;
     IntexNFT1155Bridge internal nftBridge;
     MockTheCompact internal compact;
-    MockERC20 internal paymentToken;
+    MockWCOEN internal paymentToken;
 
     address internal admin = address(this);
     address internal bidder = address(0xB1);
@@ -62,7 +62,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
 
         escrow = DeployProxy.escrowAdapter(admin, admin);
         compact = new MockTheCompact();
-        paymentToken = new MockERC20("USD Coin", "USDC", 18);
+        paymentToken = new MockWCOEN();
         escrow.wire(admin, address(compact), address(paymentToken));
         compact.setResetPeriodSeconds(0);
 

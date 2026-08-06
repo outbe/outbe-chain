@@ -6,7 +6,7 @@ import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
-import {MockERC20} from "@test-mocks/MockERC20.sol";
+import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 
 /// @dev Property test for the per-series escrow invariant:
 ///   Σ bidLocks[worldwideDay][bidder].lockedAmount, status == Locked
@@ -15,7 +15,7 @@ import {MockERC20} from "@test-mocks/MockERC20.sol";
 contract EscrowAdapterInvariantsTest is Test {
     EscrowAdapter escrow;
     MockTheCompact compact;
-    MockERC20 paymentToken;
+    MockWCOEN paymentToken;
 
     address admin = address(1);
     address bridger = address(2);
@@ -34,7 +34,7 @@ contract EscrowAdapterInvariantsTest is Test {
     function setUp() public {
         escrow = DeployProxy.escrowAdapter(admin, bridger);
         compact = new MockTheCompact();
-        paymentToken = new MockERC20("USD Coin", "USDC", 18);
+        paymentToken = new MockWCOEN();
 
         vm.prank(admin);
         escrow.wire(auction, address(compact), address(paymentToken));

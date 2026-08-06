@@ -7,7 +7,7 @@ import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
-import {MockERC20} from "@test-mocks/MockERC20.sol";
+import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 
 /// @dev ERC20 that skims a fee on every move: the sender is crosschainBurned the full amount but the
 ///      recipient is crosschainMinted amount minus fee. Breaks the "exactly `amount` lands" assumption.
@@ -69,7 +69,7 @@ contract FeeOnTransferToken is IERC20 {
 contract EscrowAdapterHardeningTest is Test {
     EscrowAdapter internal escrow;
     MockTheCompact internal compact;
-    MockERC20 internal paymentToken;
+    MockWCOEN internal paymentToken;
 
     address internal admin = address(1);
     address internal bridger = address(2);
@@ -82,7 +82,7 @@ contract EscrowAdapterHardeningTest is Test {
     function setUp() public {
         escrow = DeployProxy.escrowAdapter(admin, bridger);
         compact = new MockTheCompact();
-        paymentToken = new MockERC20("USD Coin", "USDC", 18);
+        paymentToken = new MockWCOEN();
 
         vm.prank(admin);
         escrow.wire(auction, address(compact), address(paymentToken));

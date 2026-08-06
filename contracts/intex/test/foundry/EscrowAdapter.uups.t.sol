@@ -9,7 +9,7 @@ import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.s
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
-import {MockERC20} from "@test-mocks/MockERC20.sol";
+import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 
 contract EscrowAdapterUupsTest is Test {
@@ -55,7 +55,7 @@ contract EscrowAdapterUupsTest is Test {
     }
 
     function test_Upgrade_PreservesWiringAndCompactConfig() public {
-        MockERC20 token = new MockERC20("Mock USD", "MUSD", 18);
+        MockWCOEN token = new MockWCOEN();
         MockTheCompact compactMock = new MockTheCompact();
         address auction = makeAddr("auction");
 

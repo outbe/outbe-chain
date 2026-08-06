@@ -7,6 +7,7 @@ import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockERC20} from "@test-mocks/MockERC20.sol";
+import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 
 contract EscrowAdapterDecimalsTest is Test {
     EscrowAdapter internal escrow;
@@ -22,25 +23,25 @@ contract EscrowAdapterDecimalsTest is Test {
     }
 
     function test_wire_acceptsEighteenDecimals() public {
-        MockERC20 token = new MockERC20("Wrapped COEN", "WCOEN", 18);
+        MockWCOEN token = new MockWCOEN();
         vm.prank(admin);
         escrow.wire(auction, address(compact), address(token));
         assertEq(address(escrow.paymentToken()), address(token));
     }
 
     function test_wire_rejectsNonEighteenDecimals() public {
-        MockERC20 token = new MockERC20("Tether", "USDT", 6);
+        MockERC20 token = new MockERC20("Token", "TKN", 6);
         vm.prank(admin);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.PaymentTokenDecimals.selector, uint8(6)));
         escrow.wire(auction, address(compact), address(token));
     }
 
     function test_wire_rejectsNonEighteenDecimalsOnRotation() public {
-        MockERC20 token = new MockERC20("Wrapped COEN", "WCOEN", 18);
+        MockWCOEN token = new MockWCOEN();
         vm.prank(admin);
         escrow.wire(auction, address(compact), address(token));
 
-        MockERC20 rotated = new MockERC20("Tether", "USDT", 6);
+        MockERC20 rotated = new MockERC20("Token", "TKN", 6);
         vm.prank(admin);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.PaymentTokenDecimals.selector, uint8(6)));
         escrow.wire(auction, address(compact), address(rotated));

@@ -7,7 +7,7 @@ import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
-import {MockERC20} from "@test-mocks/MockERC20.sol";
+import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 
 /// @dev Randomized actions against EscrowAdapter across several concurrent series.
 contract EscrowConservationHandler is Test {
@@ -100,7 +100,7 @@ contract EscrowConservationHandler is Test {
 contract EscrowAdapterConservationInvariantTest is StdInvariant, Test {
     EscrowAdapter internal escrow;
     MockTheCompact internal compact;
-    MockERC20 internal paymentToken;
+    MockWCOEN internal paymentToken;
     EscrowConservationHandler internal handler;
 
     address internal admin = address(1);
@@ -113,7 +113,7 @@ contract EscrowAdapterConservationInvariantTest is StdInvariant, Test {
     function setUp() public {
         escrow = DeployProxy.escrowAdapter(admin, bridger);
         compact = new MockTheCompact();
-        paymentToken = new MockERC20("USD Coin", "USDC", 18);
+        paymentToken = new MockWCOEN();
 
         vm.prank(admin);
         escrow.wire(auction, address(compact), address(paymentToken));

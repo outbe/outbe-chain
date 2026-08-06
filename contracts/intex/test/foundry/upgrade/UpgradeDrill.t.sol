@@ -25,7 +25,7 @@ import {
     IntexNFT1155BridgeV2
 } from "./UpgradeStubs.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
-import {MockERC20} from "@test-mocks/MockERC20.sol";
+import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 
 interface IUpgradeProbe {
@@ -147,7 +147,7 @@ contract UpgradeDrillTest is CrossChainTest {
 
     function test_Drill_EscrowAdapter() public {
         EscrowAdapter escrow = DeployProxy.escrowAdapter(admin, admin);
-        MockERC20 token = new MockERC20("Mock USD", "MUSD", 18);
+        MockWCOEN token = new MockWCOEN();
         MockTheCompact compactMock = new MockTheCompact();
         address auction = makeAddr("auction");
 
