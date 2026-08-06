@@ -566,6 +566,19 @@ fn completed_seal_projection_is_unavailable_before_end_and_exact_after_end() {
                 .sealed_collection_root(&seal, PartitionRef::TributeWwd(day))
                 .unwrap()
         );
+        let payload = crate::encode_tribute_v1(&body).unwrap();
+        let commitment = crate::body_commitment(
+            crate::ACTIVE_COMMITMENT_SCHEME,
+            crate::BODY_SCHEMA_V1,
+            body.tribute_id,
+            &payload,
+        )
+        .unwrap();
+        assert_eq!(
+            crate::tribute_partition_root_from_leaves(day, [(body.tribute_id, commitment)],)
+                .unwrap(),
+            collection.root(),
+        );
     });
 }
 

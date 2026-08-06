@@ -67,9 +67,9 @@ Primary evidence:
 | Public transaction path | Normal Reth/Revm transaction execution and `outbe_ctx_dispatch` precompile dispatch | Activation must enter through this normal public transaction path | No OCOMP precompile/API, activation envelope or certificate verifier exists |
 | Typed state access | `StorageHandle` typed subcalls and module APIs | Reuse closed owner APIs; preserve gas accounting and rollback | No generic write set, adapter registry or arbitrary storage mutation may be introduced |
 | Existing Lysis effects | Nodfactory issue, Intex contributor record, Tribute consume/retire, Metadosis completion plus Desis/Promis dispatch | Reuse the actual owner operations behind a private typed apply boundary | Inventory exact preconditions, receipts and idempotence; remove the reachable synchronous fallback at the PoC fork |
-| Local IPC precedent | TEE `EnclaveClient`/server framing over Unix sockets with bounded timeouts | Reuse small framing, timeout and connection-isolation ideas where appropriate | OCOMP needs its own protocol and trust model; it must not inherit TEE/Noise semantics accidentally |
+| Local IPC precedent | TEE transport remains separate from OCOMP | OCOMP uses public node RPC plus Axum registration and ZeroMQ/TCP Worker messaging | OCOMP must not inherit TEE/Noise or Unix-socket semantics accidentally |
 | Key-file safety precedent | signer key loading and file-permission validation | Reuse safe permission checks and lifecycle patterns | Create a separate OCOMP identity/key epoch and durable sign-once journal; never reuse consensus, TEE or EVM keys |
-| Process lifecycle testing | E2E `ChildGuard`, validator/enclave start-stop-restart controls and retained logs | Extend the existing harness to own OCOMP processes and failure injection | No supervisor/exporter/worker/CAS handles, readiness probes or UDS controls exist |
+| Process lifecycle testing | E2E `ChildGuard`, validator/enclave start-stop-restart controls and retained logs | Extend the existing harness to own OCOMP processes and failure injection | Add Supervisor/Exporter/Worker/CAS handles and HTTP status probes |
 | Public verification | `World::rpc`, finalized block/root/hash queries, transaction receipts and `outbe_getCompressedEntity` point proofs | Reuse public RPC observation; acceptance must verify outcomes through public boundaries | Add only the minimum public job/terminal/active-generation views required by the protocol and PFS |
 | Evidence capture | `ScenarioEvidence` records invocation, git state, outcome, duration, environment and log audit | Version and extend this evidence format | It lacks OCOMP binaries/config/profile hashes, process topology, intent/input/result/certificate identities, activation/finality references, public reads and negative-assertion inventory |
 
@@ -211,8 +211,8 @@ Relevant symbols:
 
 What exists:
 
-1. The repository already knows how to run a bounded request/response protocol
-   over a Unix socket, apply timeouts and isolate per-connection failures.
+1. The repository already knows how to run bounded asynchronous TCP services,
+   apply timeouts and isolate per-connection failures.
 2. It validates sensitive key-file permissions.
 3. The E2E harness owns subprocess lifetime, log capture and validator restart.
 

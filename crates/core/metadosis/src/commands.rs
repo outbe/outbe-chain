@@ -153,6 +153,7 @@ pub fn run_ocomp_terminal_request(
 pub fn submit_verified_result_vote(
     storage: StorageHandle<'_>,
     scope: &ExecutionScope,
+    caller: alloy_primitives::Address,
     data: &[u8],
     value: U256,
     is_static: bool,
@@ -160,7 +161,9 @@ pub fn submit_verified_result_vote(
     let binding = metadosis_verified_vote_binding(data);
     with_ce_checkpoint(scope, || {
         commit_transition::<MetadosisVerifiedResultVote, _>(storage.clone(), binding, |_| {
-            crate::ocomp::vote::dispatch_public_result_vote(storage, scope, data, value, is_static)
+            crate::ocomp::vote::dispatch_public_result_vote(
+                storage, scope, caller, data, value, is_static,
+            )
         })
     })
 }

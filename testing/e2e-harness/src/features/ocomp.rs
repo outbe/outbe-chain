@@ -106,7 +106,6 @@ fn fresh_metadosis_capacity_localnet_at_forming(world: &mut World) {
         voting_window: Some(6),
         unix_time_offset_secs: Some(initial_offset),
         genesis_timestamp_pre_shifted: true,
-        ocomp_protocol_bundle_hash: None,
     };
     launch_prepared_ocomp(world, &mut start_opts, &prepared, true);
     wait_for_finalized_ocomp_activation(world);
@@ -145,7 +144,6 @@ fn start_canonical_ocomp_final_devnet(
                 .expect("derive canonical OCOMP logical clock"),
         ),
         genesis_timestamp_pre_shifted: true,
-        ocomp_protocol_bundle_hash: None,
     };
     let prepared = world
         .ocomp
@@ -231,8 +229,6 @@ fn launch_prepared_ocomp(
         "scenario already selected an immutable OCOMP activation height"
     );
     world.state.ocomp_activation_height = Some(prepared.install.activation_height);
-    start_opts.ocomp_protocol_bundle_hash =
-        Some(format!("{:#x}", expected_identity.protocol_bundle_hash));
     start_bootstrapped_localnet(world, start_opts);
 
     let primary = world.validators.primary_port();
@@ -691,15 +687,13 @@ fn restart_ocomp_roles_after_committee_time_change(world: &mut World) {
             .ocomp
             .apply_process_fault(OcompProcessFault::StopSnapshotExporter { validator_index })
             .unwrap_or_else(|error| {
-                panic!(
-                    "stop validator-{validator_index} SnapshotExporter after node restart: {error}"
-                )
+                panic!("stop validator-{validator_index} RPC exporter after node restart: {error}")
             });
         world
             .ocomp
             .restart_snapshot_exporter(validator_index)
             .unwrap_or_else(|error| {
-                panic!("restart validator-{validator_index} SnapshotExporter: {error}")
+                panic!("restart validator-{validator_index} RPC exporter: {error}")
             });
         world
             .ocomp
@@ -711,7 +705,7 @@ fn restart_ocomp_roles_after_committee_time_change(world: &mut World) {
     world
         .ocomp
         .ensure_validator_roles_alive()
-        .expect("all OCOMP node-facing roles reconnect after logical-time restart");
+        .expect("all OCOMP RPC-driven supervisors restart after logical-time change");
 }
 
 fn finalized_points_at_common_height(
@@ -2211,7 +2205,7 @@ fn four_domains_own_authenticated_workers(world: &mut World) {
     assert_eq!(
         records.len(),
         12,
-        "expected two node-facing roles and one worker in each domain"
+        "expected one supervisor, one RPC exporter and one worker in each domain"
     );
     for validator_index in 0..4_u8 {
         let workers = records
@@ -2564,8 +2558,8 @@ fn incompatible_supervisor_isolated_from_consensus(world: &mut World) {
         .supervisor_log_tail(0, 80)
         .expect("read validator-0 Supervisor log");
     assert!(
-        log.contains("local control peer rejected kind 0x0001 with code 1"),
-        "validator-0 Supervisor did not record the typed incompatible-handshake rejection:\n{log}"
+        log.contains("OCOMP worker registration rejected: worker identity does not match the Supervisor domain"),
+        "validator-0 Supervisor did not record the incompatible Worker registration:\n{log}"
     );
     let records = world.ocomp.process_records();
     let validator_zero_supervisors = records
@@ -2686,13 +2680,13 @@ fn restart_completed_network_and_ocomp_processes(world: &mut World) {
             .ocomp
             .apply_process_fault(OcompProcessFault::StopSnapshotExporter { validator_index })
             .unwrap_or_else(|error| {
-                panic!("stop validator-{validator_index} SnapshotExporter for replay: {error}")
+                panic!("stop validator-{validator_index} RPC exporter for replay: {error}")
             });
         world
             .ocomp
             .restart_snapshot_exporter(validator_index)
             .unwrap_or_else(|error| {
-                panic!("restart validator-{validator_index} SnapshotExporter: {error}")
+                panic!("restart validator-{validator_index} RPC exporter: {error}")
             });
         world
             .ocomp
@@ -2704,7 +2698,7 @@ fn restart_completed_network_and_ocomp_processes(world: &mut World) {
     world
         .ocomp
         .ensure_validator_roles_alive()
-        .expect("all restarted OCOMP node-facing roles remain live");
+        .expect("all restarted OCOMP RPC-driven supervisors remain live");
 }
 
 #[then("the completed generation and exact vote replay remain identical")]
