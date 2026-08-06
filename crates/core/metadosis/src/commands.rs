@@ -119,11 +119,13 @@ pub fn install_fork_profile(
     commit_transition::<MetadosisForkProfile, _>(ctx.storage.clone(), binding, |storage| {
         outbe_validatorset::contract::ValidatorSet::new(storage.clone())
             .initialize_founder_ocomp_registrations(&install.founder_registrations)?;
-        MetadosisContract::new(storage).initialize_ocomp_fork_install(
+        MetadosisContract::new(storage.clone()).initialize_ocomp_fork_install(
             install,
             ctx.block.block_number,
             &limits,
-        )
+        )?;
+        outbe_tribute::TributeContract::new(storage.clone()).initialize_fresh_ocomp_profile()?;
+        outbe_oracle::api::initialize_fresh_ocomp_profile(storage)
     })
 }
 
@@ -235,6 +237,14 @@ mod tests {
         });
     }
 
+    fn seed_external_ocomp_prerequisites(provider: &mut HashMapStorageProvider) {
+        StorageHandle::enter(provider, |storage| {
+            outbe_oracle::contract::OracleContract::new(storage)
+                .register_pair("COEN", "0xUSD")
+                .unwrap();
+        });
+    }
+
     #[test]
     fn fork_install_command_atomically_imports_founder_keys_into_active_validators() {
         const CHAIN_ID: u64 = 1;
@@ -249,6 +259,7 @@ mod tests {
         .into_install();
         let mut provider = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, genesis_hash);
         seed_active_founder_without_ocomp(&mut provider, &install);
+        seed_external_ocomp_prerequisites(&mut provider);
         provider.set_block_number(ACTIVATION_HEIGHT);
         provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::ForkProfile);
 
@@ -258,12 +269,28 @@ mod tests {
                 storage.clone(),
             );
             install_fork_profile(&ctx, &install).unwrap();
-            let validators = ValidatorSet::new(storage);
+            let validators = ValidatorSet::new(storage.clone());
             assert_eq!(
                 validators
                     .ocomp_registration(Address::repeat_byte(0xB0))
                     .unwrap(),
                 Some(install.founder_registrations[0].clone())
+            );
+            assert!(
+                outbe_tribute::TributeContract::new(storage.clone())
+                    .pre_admission_projection(WorldwideDay::new(2026_0101))
+                    .unwrap()
+                    .profile_ready
+            );
+            assert!(
+                outbe_oracle::api::ocomp_pre_admission_projection(
+                    storage,
+                    WorldwideDay::new(2026_0101),
+                    U256::ZERO,
+                    0,
+                )
+                .unwrap()
+                .profile_ready
             );
         });
     }
@@ -295,12 +322,13 @@ mod tests {
 
         let mut control = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, genesis_hash);
         seed_active_founder_without_ocomp(&mut control, &install);
+        seed_external_ocomp_prerequisites(&mut control);
         control.fail_after_mutation_at(usize::MAX);
         run(&mut control).unwrap();
         let mutation_count = control.clear_mutation_failure();
         assert!(
-            mutation_count >= 2,
-            "fork install must persist both request and activation authorities"
+            mutation_count >= 4,
+            "fork install must persist every owner profile"
         );
         let clean_storage = control.storage.clone();
         let clean_events = control.get_ordered_events().to_vec();
@@ -309,6 +337,7 @@ mod tests {
             let mut provider =
                 HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, genesis_hash);
             seed_active_founder_without_ocomp(&mut provider, &install);
+            seed_external_ocomp_prerequisites(&mut provider);
             let storage_before = provider.storage.clone();
             let events_before = provider.get_ordered_events().to_vec();
             provider.fail_after_mutation_at(operation);
@@ -336,6 +365,76 @@ mod tests {
                 "fork install retry events diverged at {operation}"
             );
         }
+    }
+
+    #[test]
+    fn fork_install_command_rejects_nonempty_tribute_without_partial_activation() {
+        const CHAIN_ID: u64 = 1;
+        const ACTIVATION_HEIGHT: u64 = crate::config::OCOMP_POC_FINAL_ACTIVATION_HEIGHT;
+        let genesis_hash = B256::repeat_byte(0x91);
+        let install = crate::test_support::ForkInstallScenario::final_at(
+            ACTIVATION_HEIGHT,
+            CHAIN_ID,
+            genesis_hash,
+        )
+        .unwrap()
+        .into_install();
+        let mut provider = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, genesis_hash);
+        seed_active_founder_without_ocomp(&mut provider, &install);
+        seed_external_ocomp_prerequisites(&mut provider);
+        StorageHandle::enter(&mut provider, |storage| {
+            outbe_tribute::TributeContract::new(storage)
+                .total_supply
+                .write(1)
+                .unwrap();
+        });
+        let storage_before = provider.storage.clone();
+        provider.set_block_number(ACTIVATION_HEIGHT);
+        provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::ForkProfile);
+
+        StorageHandle::enter(&mut provider, |storage| {
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(ACTIVATION_HEIGHT, 0, CHAIN_ID),
+                storage,
+            );
+            assert!(install_fork_profile(&ctx, &install).is_err());
+        });
+        assert_eq!(provider.storage, storage_before);
+    }
+
+    #[test]
+    fn fork_install_command_rejects_partial_oracle_without_partial_activation() {
+        const CHAIN_ID: u64 = 1;
+        const ACTIVATION_HEIGHT: u64 = crate::config::OCOMP_POC_FINAL_ACTIVATION_HEIGHT;
+        let genesis_hash = B256::repeat_byte(0x91);
+        let install = crate::test_support::ForkInstallScenario::final_at(
+            ACTIVATION_HEIGHT,
+            CHAIN_ID,
+            genesis_hash,
+        )
+        .unwrap()
+        .into_install();
+        let mut provider = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, genesis_hash);
+        seed_active_founder_without_ocomp(&mut provider, &install);
+        seed_external_ocomp_prerequisites(&mut provider);
+        StorageHandle::enter(&mut provider, |storage| {
+            outbe_oracle::contract::OracleContract::new(storage)
+                .ocomp_day_type_pair_id
+                .write(1)
+                .unwrap();
+        });
+        let storage_before = provider.storage.clone();
+        provider.set_block_number(ACTIVATION_HEIGHT);
+        provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::ForkProfile);
+
+        StorageHandle::enter(&mut provider, |storage| {
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(ACTIVATION_HEIGHT, 0, CHAIN_ID),
+                storage,
+            );
+            assert!(install_fork_profile(&ctx, &install).is_err());
+        });
+        assert_eq!(provider.storage, storage_before);
     }
 
     #[test]
