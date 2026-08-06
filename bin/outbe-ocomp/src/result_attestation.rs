@@ -6,9 +6,7 @@
 
 use alloy_primitives::B256;
 use outbe_ocomp_protocol::{
-    committee::{
-        verify_low_s_prehash, POC_KEY_EPOCH,
-    },
+    committee::{verify_low_s_prehash, POC_KEY_EPOCH},
     control::FinalizedJobSpecV1,
     intent::JobIntentV1,
     local_control::EndpointIdentity,
