@@ -1,8 +1,10 @@
 use alloy_primitives::B256;
 use outbe_common::WorldwideDay;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 
-use crate::{constants::MAX_RECORDS_KEPT, schema::MetadosisContract};
+use crate::{
+    constants::MAX_RECORDS_KEPT, errors::storage_corruption_message, schema::MetadosisContract,
+};
 
 use super::{
     codec::FixedReader,
@@ -38,12 +40,14 @@ impl ReadyIndexKey {
             || projection.live_intent_id.is_some()
             || projection.deadline_height.is_some()
         {
-            return Err(fatal("OCOMP READY index received a non-READY FSM state"));
+            return Err(storage_corruption_message(
+                "OCOMP READY index received a non-READY FSM state",
+            ));
         }
         Ok(Self {
             next_check_height: projection
                 .next_check_height
-                .ok_or_else(|| fatal("OCOMP READY state has no due height"))?,
+                .ok_or_else(|| storage_corruption_message("OCOMP READY state has no due height"))?,
             worldwide_day: projection.worldwide_day,
             pending_nonce: projection.pending_nonce,
         })
@@ -93,10 +97,14 @@ pub(super) fn insert_ready_key(index: &mut Vec<ReadyIndexKey>, key: ReadyIndexKe
         .iter()
         .any(|existing| existing.worldwide_day == key.worldwide_day)
     {
-        return Err(fatal("OCOMP READY index already contains the WWD"));
+        return Err(storage_corruption_message(
+            "OCOMP READY index already contains the WWD",
+        ));
     }
     if index.len() >= MAX_RECORDS_KEPT {
-        return Err(fatal("OCOMP READY index capacity exhausted"));
+        return Err(storage_corruption_message(
+            "OCOMP READY index capacity exhausted",
+        ));
     }
     let position = index
         .binary_search(&key)
@@ -106,25 +114,25 @@ pub(super) fn insert_ready_key(index: &mut Vec<ReadyIndexKey>, key: ReadyIndexKe
 }
 
 pub(super) fn remove_ready_key(index: &mut Vec<ReadyIndexKey>, key: ReadyIndexKey) -> Result<()> {
-    let position = index
-        .binary_search(&key)
-        .map_err(|_| fatal("OCOMP READY index is missing the exact FSM key"))?;
+    let position = index.binary_search(&key).map_err(|_| {
+        storage_corruption_message("OCOMP READY index is missing the exact FSM key")
+    })?;
     index.remove(position);
     validate_ready_index(index)
 }
 
 fn encode_ready_index(index: &[ReadyIndexKey]) -> Result<Vec<u8>> {
     validate_ready_index(index)?;
-    let count =
-        u16::try_from(index.len()).map_err(|_| fatal("OCOMP READY index count exceeds u16"))?;
+    let count = u16::try_from(index.len())
+        .map_err(|_| storage_corruption_message("OCOMP READY index count exceeds u16"))?;
     let capacity = READY_INDEX_KEY_LEN
         .checked_mul(index.len())
         .and_then(|bytes| READY_INDEX_HEADER_LEN.checked_add(bytes))
-        .ok_or_else(|| fatal("OCOMP READY index encoded length overflow"))?;
+        .ok_or_else(|| storage_corruption_message("OCOMP READY index encoded length overflow"))?;
     let mut encoded = Vec::new();
     encoded
         .try_reserve_exact(capacity)
-        .map_err(|_| fatal("allocate bounded OCOMP READY index"))?;
+        .map_err(|_| storage_corruption_message("allocate bounded OCOMP READY index"))?;
     encoded.extend_from_slice(&READY_INDEX_MAGIC);
     encoded.extend_from_slice(&READY_INDEX_VERSION.to_be_bytes());
     encoded.extend_from_slice(&count.to_be_bytes());
@@ -134,7 +142,9 @@ fn encode_ready_index(index: &[ReadyIndexKey]) -> Result<Vec<u8>> {
         encoded.extend_from_slice(&key.pending_nonce.to_be_bytes());
     }
     if encoded.len() != capacity {
-        return Err(fatal("OCOMP READY index encoded length mismatch"));
+        return Err(storage_corruption_message(
+            "OCOMP READY index encoded length mismatch",
+        ));
     }
     Ok(encoded)
 }
@@ -144,29 +154,37 @@ fn decode_ready_index(encoded: &[u8]) -> Result<Vec<ReadyIndexKey>> {
         return Ok(Vec::new());
     }
     if encoded.len() < READY_INDEX_HEADER_LEN {
-        return Err(fatal("OCOMP READY index is shorter than its header"));
+        return Err(storage_corruption_message(
+            "OCOMP READY index is shorter than its header",
+        ));
     }
     let mut reader = FixedReader::new(encoded);
     if reader.take::<4>()? != READY_INDEX_MAGIC
         || u16::from_be_bytes(reader.take::<2>()?) != READY_INDEX_VERSION
     {
-        return Err(fatal("OCOMP READY index magic/version mismatch"));
+        return Err(storage_corruption_message(
+            "OCOMP READY index magic/version mismatch",
+        ));
     }
     let count = usize::from(u16::from_be_bytes(reader.take::<2>()?));
     if count > MAX_RECORDS_KEPT {
-        return Err(fatal("OCOMP READY index exceeds its fixed capacity"));
+        return Err(storage_corruption_message(
+            "OCOMP READY index exceeds its fixed capacity",
+        ));
     }
     let expected_len = READY_INDEX_KEY_LEN
         .checked_mul(count)
         .and_then(|bytes| READY_INDEX_HEADER_LEN.checked_add(bytes))
-        .ok_or_else(|| fatal("OCOMP READY index declared length overflow"))?;
+        .ok_or_else(|| storage_corruption_message("OCOMP READY index declared length overflow"))?;
     if encoded.len() != expected_len {
-        return Err(fatal("OCOMP READY index has non-canonical length"));
+        return Err(storage_corruption_message(
+            "OCOMP READY index has non-canonical length",
+        ));
     }
     let mut index = Vec::new();
     index
         .try_reserve_exact(count)
-        .map_err(|_| fatal("allocate bounded OCOMP READY index"))?;
+        .map_err(|_| storage_corruption_message("allocate bounded OCOMP READY index"))?;
     for _ in 0..count {
         index.push(ReadyIndexKey {
             next_check_height: reader.u64()?,
@@ -181,20 +199,28 @@ fn decode_ready_index(encoded: &[u8]) -> Result<Vec<ReadyIndexKey>> {
 
 fn validate_ready_index(index: &[ReadyIndexKey]) -> Result<()> {
     if index.len() > MAX_RECORDS_KEPT {
-        return Err(fatal("OCOMP READY index exceeds its fixed capacity"));
+        return Err(storage_corruption_message(
+            "OCOMP READY index exceeds its fixed capacity",
+        ));
     }
     if index.iter().any(|key| !key.worldwide_day.is_valid()) {
-        return Err(fatal("OCOMP READY index contains an invalid WorldwideDay"));
+        return Err(storage_corruption_message(
+            "OCOMP READY index contains an invalid WorldwideDay",
+        ));
     }
     if index.windows(2).any(|pair| pair[0] >= pair[1]) {
-        return Err(fatal("OCOMP READY index is not in strict canonical order"));
+        return Err(storage_corruption_message(
+            "OCOMP READY index is not in strict canonical order",
+        ));
     }
     for (position, key) in index.iter().enumerate() {
         if index[..position]
             .iter()
             .any(|existing| existing.worldwide_day == key.worldwide_day)
         {
-            return Err(fatal("OCOMP READY index contains a duplicate WWD"));
+            return Err(storage_corruption_message(
+                "OCOMP READY index contains a duplicate WWD",
+            ));
         }
     }
     Ok(())
@@ -205,13 +231,17 @@ pub(super) fn insert_response_deadline_key(
     key: ResponseDeadlineKey,
 ) -> Result<()> {
     if key.job_id.is_zero() || key.intent_id.is_zero() || key.deadline_height == 0 {
-        return Err(fatal("OCOMP response index contains a reserved zero field"));
+        return Err(storage_corruption_message(
+            "OCOMP response index contains a reserved zero field",
+        ));
     }
     if index
         .iter()
         .any(|existing| existing.job_id == key.job_id || existing.intent_id == key.intent_id)
     {
-        return Err(fatal("OCOMP response index already contains this job"));
+        return Err(storage_corruption_message(
+            "OCOMP response index already contains this job",
+        ));
     }
     let position = index
         .binary_search(&key)
@@ -226,23 +256,25 @@ pub(crate) fn remove_response_deadline_key(
 ) -> Result<()> {
     let position = index
         .binary_search(&key)
-        .map_err(|_| fatal("OCOMP response index is missing the exact job"))?;
+        .map_err(|_| storage_corruption_message("OCOMP response index is missing the exact job"))?;
     index.remove(position);
     validate_response_deadline_index(index)
 }
 
 fn encode_response_deadline_index(index: &[ResponseDeadlineKey]) -> Result<Vec<u8>> {
     validate_response_deadline_index(index)?;
-    let count =
-        u16::try_from(index.len()).map_err(|_| fatal("OCOMP response index count exceeds u16"))?;
+    let count = u16::try_from(index.len())
+        .map_err(|_| storage_corruption_message("OCOMP response index count exceeds u16"))?;
     let capacity = RESPONSE_INDEX_KEY_LEN
         .checked_mul(index.len())
         .and_then(|bytes| RESPONSE_INDEX_HEADER_LEN.checked_add(bytes))
-        .ok_or_else(|| fatal("OCOMP response index encoded length overflow"))?;
+        .ok_or_else(|| {
+            storage_corruption_message("OCOMP response index encoded length overflow")
+        })?;
     let mut encoded = Vec::new();
     encoded
         .try_reserve_exact(capacity)
-        .map_err(|_| fatal("allocate bounded OCOMP response index"))?;
+        .map_err(|_| storage_corruption_message("allocate bounded OCOMP response index"))?;
     encoded.extend_from_slice(&RESPONSE_INDEX_MAGIC);
     encoded.extend_from_slice(&RESPONSE_INDEX_VERSION.to_be_bytes());
     encoded.extend_from_slice(&count.to_be_bytes());
@@ -252,7 +284,9 @@ fn encode_response_deadline_index(index: &[ResponseDeadlineKey]) -> Result<Vec<u
         encoded.extend_from_slice(key.intent_id.as_slice());
     }
     if encoded.len() != capacity {
-        return Err(fatal("OCOMP response index encoded length mismatch"));
+        return Err(storage_corruption_message(
+            "OCOMP response index encoded length mismatch",
+        ));
     }
     Ok(encoded)
 }
@@ -262,31 +296,39 @@ fn decode_response_deadline_index(encoded: &[u8]) -> Result<Vec<ResponseDeadline
         return Ok(Vec::new());
     }
     if encoded.len() < RESPONSE_INDEX_HEADER_LEN {
-        return Err(fatal("OCOMP response index is shorter than its header"));
+        return Err(storage_corruption_message(
+            "OCOMP response index is shorter than its header",
+        ));
     }
     let mut reader = FixedReader::new(encoded);
     if reader.take::<4>()? != RESPONSE_INDEX_MAGIC
         || u16::from_be_bytes(reader.take::<2>()?) != RESPONSE_INDEX_VERSION
     {
-        return Err(fatal("OCOMP response index magic/version mismatch"));
+        return Err(storage_corruption_message(
+            "OCOMP response index magic/version mismatch",
+        ));
     }
     let count = usize::from(u16::from_be_bytes(reader.take::<2>()?));
     if count == 0 {
-        return Err(fatal(
+        return Err(storage_corruption_message(
             "OCOMP response index must use empty bytes for zero windows",
         ));
     }
     let expected_len = RESPONSE_INDEX_KEY_LEN
         .checked_mul(count)
         .and_then(|bytes| RESPONSE_INDEX_HEADER_LEN.checked_add(bytes))
-        .ok_or_else(|| fatal("OCOMP response index declared length overflow"))?;
+        .ok_or_else(|| {
+            storage_corruption_message("OCOMP response index declared length overflow")
+        })?;
     if encoded.len() != expected_len {
-        return Err(fatal("OCOMP response index has non-canonical length"));
+        return Err(storage_corruption_message(
+            "OCOMP response index has non-canonical length",
+        ));
     }
     let mut index = Vec::new();
     index
         .try_reserve_exact(count)
-        .map_err(|_| fatal("allocate bounded OCOMP response index"))?;
+        .map_err(|_| storage_corruption_message("allocate bounded OCOMP response index"))?;
     for _ in 0..count {
         index.push(ResponseDeadlineKey {
             deadline_height: reader.u64()?,
@@ -304,10 +346,12 @@ fn validate_response_deadline_index(index: &[ResponseDeadlineKey]) -> Result<()>
         .iter()
         .any(|key| key.deadline_height == 0 || key.job_id.is_zero() || key.intent_id.is_zero())
     {
-        return Err(fatal("OCOMP response index contains a reserved zero field"));
+        return Err(storage_corruption_message(
+            "OCOMP response index contains a reserved zero field",
+        ));
     }
     if index.windows(2).any(|pair| pair[0] >= pair[1]) {
-        return Err(fatal(
+        return Err(storage_corruption_message(
             "OCOMP response index is not in strict canonical order",
         ));
     }
@@ -316,12 +360,10 @@ fn validate_response_deadline_index(index: &[ResponseDeadlineKey]) -> Result<()>
             .iter()
             .any(|existing| existing.job_id == key.job_id || existing.intent_id == key.intent_id)
         {
-            return Err(fatal("OCOMP response index contains a duplicate job"));
+            return Err(storage_corruption_message(
+                "OCOMP response index contains a duplicate job",
+            ));
         }
     }
     Ok(())
-}
-
-fn fatal(message: impl Into<String>) -> PrecompileError {
-    PrecompileError::Fatal(message.into())
 }

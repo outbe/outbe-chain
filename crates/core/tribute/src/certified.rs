@@ -37,16 +37,30 @@ pub struct CertifiedTributeRetirementV1 {
     pub retired_generation: u64,
 }
 
-/// Consumes one exact sealed Tribute generation and requests its authenticated
-/// CE collection retirement. Physical body retention/release remains node
-/// owned and is deliberately outside this consensus transition.
-pub fn retire_certified_partition(
+/// Fully validated, mutation-free preparation for one certified retirement.
+/// Its fields are private so only this module can authorize the apply step.
+pub struct PreparedCertifiedTributeRetirementV1 {
+    input: CertifiedTributeRetirementV1,
+    receipt: TributeReceiptV1,
+    day: WorldwideDay,
+    state_event_digest: B256,
+}
+
+impl PreparedCertifiedTributeRetirementV1 {
+    #[must_use]
+    pub const fn receipt(&self) -> &TributeReceiptV1 {
+        &self.receipt
+    }
+}
+
+/// Validates the complete certified Tribute input and constructs its receipt
+/// without mutating Tribute or compressed-entity state.
+pub fn prepare_certified_partition_retirement(
     storage: &StorageHandle<'_>,
-    scope: &ExecutionScope,
-    capability: &mut CertifiedLysisActivation<'_>,
+    capability: &CertifiedLysisActivation<'_>,
     input: &CertifiedTributeRetirementV1,
     limits: &SchemaLimits,
-) -> Result<TributeReceiptV1> {
+) -> Result<PreparedCertifiedTributeRetirementV1> {
     validate_input(capability, input)?;
 
     let day = WorldwideDay::new(input.input_binding.wwd);
@@ -57,7 +71,7 @@ pub fn retire_certified_partition(
         return Err(revert("certified Tribute collection key mismatch"));
     }
 
-    let mut tribute = TributeContract::new(storage.clone());
+    let tribute = TributeContract::new(storage.clone());
     let current = tribute.pre_admission_projection(day)?;
     if !current.profile_ready
         || !current.is_sealed
@@ -99,6 +113,44 @@ pub fn retire_certified_partition(
     receipt
         .receipt_hash(limits)
         .map_err(|error| protocol_error(error.to_string()))?;
+
+    Ok(PreparedCertifiedTributeRetirementV1 {
+        input: input.clone(),
+        receipt,
+        day,
+        state_event_digest,
+    })
+}
+
+/// Consumes one exact sealed Tribute generation and requests its authenticated
+/// CE collection retirement. Physical body retention/release remains node
+/// owned and is deliberately outside this consensus transition.
+pub fn retire_certified_partition(
+    storage: &StorageHandle<'_>,
+    scope: &ExecutionScope,
+    capability: &mut CertifiedLysisActivation<'_>,
+    input: &CertifiedTributeRetirementV1,
+    limits: &SchemaLimits,
+) -> Result<TributeReceiptV1> {
+    let prepared = prepare_certified_partition_retirement(storage, capability, input, limits)?;
+    retire_prepared_certified_partition(storage, scope, capability, prepared)
+}
+
+/// Applies a previously validated retirement. Callers prepare and verify every
+/// receipt gate before invoking this final compressed-entity owner mutation.
+pub fn retire_prepared_certified_partition(
+    storage: &StorageHandle<'_>,
+    scope: &ExecutionScope,
+    capability: &mut CertifiedLysisActivation<'_>,
+    prepared: PreparedCertifiedTributeRetirementV1,
+) -> Result<TributeReceiptV1> {
+    let PreparedCertifiedTributeRetirementV1 {
+        input,
+        receipt,
+        day,
+        state_event_digest,
+    } = prepared;
+    let mut tribute = TributeContract::new(storage.clone());
 
     storage.with_checkpoint(|| {
         tribute.consume_lysis_partition_inner(
@@ -472,6 +524,7 @@ mod tests {
                     |capability| {
                         capability.authorize_nod_installation()?;
                         capability.authorize_contributor_installation()?;
+                        capability.authorize_carry_over_credit()?;
                         let receipt = retire_certified_partition(
                             &storage,
                             &self.scope,
@@ -479,7 +532,6 @@ mod tests {
                             input,
                             &poc_schema_limits(),
                         )?;
-                        capability.authorize_carry_over_credit()?;
                         capability.authorize_terminal_receipt()?;
                         Ok(receipt)
                     },
@@ -687,6 +739,7 @@ mod tests {
             storage.with_lysis_activation_frame(input.binding.activation_call_id, |capability| {
                 capability.authorize_nod_installation()?;
                 capability.authorize_contributor_installation()?;
+                capability.authorize_carry_over_credit()?;
                 assert!(retire_certified_partition(
                     &storage,
                     &late_failure.scope,
@@ -702,7 +755,6 @@ mod tests {
                     &input,
                     &poc_schema_limits(),
                 )?;
-                capability.authorize_carry_over_credit()?;
                 capability.authorize_terminal_receipt()?;
                 Ok(receipt)
             })
@@ -724,6 +776,7 @@ mod tests {
                 )
                 .is_err());
                 capability.authorize_contributor_installation()?;
+                capability.authorize_carry_over_credit()?;
                 let receipt = retire_certified_partition(
                     &storage,
                     &wrong_phase.scope,
@@ -731,7 +784,6 @@ mod tests {
                     &input,
                     &poc_schema_limits(),
                 )?;
-                capability.authorize_carry_over_credit()?;
                 capability.authorize_terminal_receipt()?;
                 Ok(receipt)
             })

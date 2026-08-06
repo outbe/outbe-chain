@@ -465,7 +465,7 @@ struct PreparedParent {
 }
 
 #[test]
-fn real_payload_builder_commits_atomic_request_after_ce_seal_without_lysis_effects() {
+fn real_payload_builder_commits_atomic_request_between_ce_preview_and_final_seal() {
     let chain_spec: Arc<ChainSpec<OutbeHeader>> = ChainSpecBuilder::mainnet()
         .reset()
         .paris_activated()

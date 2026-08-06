@@ -5,7 +5,7 @@ use outbe_primitives::error::Result;
 
 use crate::{
     aggregate::{WwdDayType, WwdStatus},
-    schema::{terminal_outcome, terminal_retirement, MetadosisContract},
+    schema::{terminal_outcome, terminal_retirement, MetadosisContract, WorldwideDayEntryExt},
 };
 
 /// Selectors on this precompile that accept native value. The route table binds
@@ -58,11 +58,8 @@ pub fn dispatch(
                 Ok(wwds.into_iter().map(u32::from).collect())
             }),
             getWorldwideDaysByStatus(c) => view(c, |c| {
-                let wanted = WwdStatus::try_from(c.status).map_err(|_| {
-                    outbe_primitives::error::PrecompileError::Revert(
-                        "unknown WorldwideDay status".into(),
-                    )
-                })?;
+                let wanted = WwdStatus::try_from(c.status)
+                    .map_err(|_| crate::errors::caller_rejection("unknown WorldwideDay status"))?;
                 let wwds = metadosis.get_active_wwd_by_status(wanted)?;
                 Ok(wwds.into_iter().map(u32::from).collect())
             }),
@@ -89,8 +86,24 @@ pub fn dispatch(
                     terminal_outcome::CAPACITY_FORFEITURE => {
                         metadosis.read_capacity_forfeiture_receipt(wwd)?;
                     }
+                    terminal_outcome::METADOSIS_FAILURE => {
+                        let expected_value_routed = metadosis
+                            .request_budget_receipt(
+                                wwd,
+                                &crate::ocomp::schema::poc_schema_limits(),
+                            )?
+                            .map_or(
+                                metadosis
+                                    .worldwide_days
+                                    .entry(wwd)
+                                    .metadosis_limit_amount()
+                                    .read()?,
+                                |receipt| receipt.lysis_budget,
+                            );
+                        metadosis.read_metadosis_failure_receipt(wwd, expected_value_routed)?;
+                    }
                     _ => {
-                        return Err(outbe_primitives::error::PrecompileError::Fatal(
+                        return Err(crate::errors::storage_corruption(
                             "Metadosis WWD has an unknown terminal receipt outcome".into(),
                         ));
                     }
@@ -182,8 +195,8 @@ pub fn dispatch(
             // arm is structurally unreachable. Caller-supplied ingress must
             // revert, never `Fatal` — a `Fatal` here aborts the whole payload
             // build for a transaction any external account can submit.
-            submitLysisResult(_) => Err(crate::ocomp::vote::vote_reject(
-                crate::ocomp::vote::REJECT_LIFECYCLE_INACTIVE,
+            submitLysisResult(_) => Err(crate::errors::result_vote_rejection(
+                crate::errors::vote_rejection_code::LIFECYCLE_INACTIVE,
             )),
         }
     })

@@ -1,7 +1,8 @@
+use crate::errors::storage_corruption_message;
 use alloy_primitives::{B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_ocomp_protocol::SchemaLimits;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 
 use super::state::{
     JobFsmSnapshot, JobFsmState, LiveAttemptSnapshot, ReadyAttemptSnapshot,
@@ -31,15 +32,15 @@ impl<'a> FixedReader<'a> {
         let end = self
             .offset
             .checked_add(N)
-            .ok_or_else(|| fatal("OCOMP scheduler offset overflow"))?;
+            .ok_or_else(|| storage_corruption_message("OCOMP scheduler offset overflow"))?;
         let bytes = self
             .encoded
             .get(self.offset..end)
-            .ok_or_else(|| fatal("truncated OCOMP scheduler"))?;
+            .ok_or_else(|| storage_corruption_message("truncated OCOMP scheduler"))?;
         self.offset = end;
         bytes
             .try_into()
-            .map_err(|_| fatal("invalid OCOMP scheduler field width"))
+            .map_err(|_| storage_corruption_message("invalid OCOMP scheduler field width"))
     }
 
     pub(super) fn u8(&mut self) -> Result<u8> {
@@ -58,7 +59,9 @@ impl<'a> FixedReader<'a> {
         if self.offset == self.encoded.len() {
             Ok(())
         } else {
-            Err(fatal("OCOMP scheduler has trailing bytes"))
+            Err(storage_corruption_message(
+                "OCOMP scheduler has trailing bytes",
+            ))
         }
     }
 }
@@ -68,7 +71,7 @@ pub(super) fn max_canonical_object_bytes(limits: &SchemaLimits) -> Result<usize>
         .codec
         .max_body_bytes
         .checked_add(outbe_ocomp_protocol::OCB1_HEADER_LEN)
-        .ok_or_else(|| fatal("OCOMP canonical object byte cap overflow"))
+        .ok_or_else(|| storage_corruption_message("OCOMP canonical object byte cap overflow"))
 }
 
 pub(super) fn read_canonical_optional<T>(
@@ -82,12 +85,14 @@ pub(super) fn read_canonical_optional<T>(
         return Ok(None);
     }
     if len > max_encoded_bytes {
-        return Err(fatal(format!("{label} exceeds canonical byte cap")));
+        return Err(storage_corruption_message(format!(
+            "{label} exceeds canonical byte cap"
+        )));
     }
     let encoded = bytes.read()?;
     decode(&encoded)
         .map(Some)
-        .map_err(|error| fatal(format!("decode {label}: {error}")))
+        .map_err(|error| storage_corruption_message(format!("decode {label}: {error}")))
 }
 
 pub(super) fn encode_scheduler(state: &JobFsmState) -> Result<Vec<u8>> {
@@ -98,7 +103,9 @@ pub(super) fn scheduler_snapshot(state: &JobFsmState) -> Result<JobFsmSnapshot> 
     let mut snapshot = state.snapshot();
     snapshot.terminal.clear();
     if snapshot.live.is_none() && snapshot.ready.is_none() {
-        return Err(fatal("OCOMP scheduler state has no active attempt"));
+        return Err(storage_corruption_message(
+            "OCOMP scheduler state has no active attempt",
+        ));
     }
     Ok(snapshot)
 }
@@ -128,10 +135,16 @@ pub(super) fn encode_scheduler_snapshot(snapshot: &JobFsmSnapshot) -> Result<Vec
             encoded.extend_from_slice(&live.deadline_height.unwrap_or(0).to_be_bytes());
             encode_retained_effect(&mut encoded, Some(live.retained_effect));
         }
-        _ => return Err(fatal("encode invalid OCOMP scheduler phase cardinality")),
+        _ => {
+            return Err(storage_corruption_message(
+                "encode invalid OCOMP scheduler phase cardinality",
+            ))
+        }
     }
     if encoded.len() != SCHEDULER_ENCODED_LEN {
-        return Err(fatal("OCOMP scheduler encoded length mismatch"));
+        return Err(storage_corruption_message(
+            "OCOMP scheduler encoded length mismatch",
+        ));
     }
     Ok(encoded)
 }
@@ -148,16 +161,16 @@ pub(super) fn live_snapshot_key(snapshot: &JobFsmSnapshot) -> (u32, B256) {
 
 pub(super) fn encode_live_scheduler_index(index: &[JobFsmSnapshot]) -> Result<Vec<u8>> {
     validate_live_scheduler_index(index)?;
-    let count =
-        u16::try_from(index.len()).map_err(|_| fatal("OCOMP live index count exceeds u16"))?;
+    let count = u16::try_from(index.len())
+        .map_err(|_| storage_corruption_message("OCOMP live index count exceeds u16"))?;
     let capacity = SCHEDULER_ENCODED_LEN
         .checked_mul(index.len())
         .and_then(|bytes| LIVE_INDEX_HEADER_LEN.checked_add(bytes))
-        .ok_or_else(|| fatal("OCOMP live index encoded length overflow"))?;
+        .ok_or_else(|| storage_corruption_message("OCOMP live index encoded length overflow"))?;
     let mut encoded = Vec::new();
     encoded
         .try_reserve_exact(capacity)
-        .map_err(|_| fatal("allocate bounded OCOMP live index"))?;
+        .map_err(|_| storage_corruption_message("allocate bounded OCOMP live index"))?;
     encoded.extend_from_slice(&LIVE_INDEX_MAGIC);
     encoded.extend_from_slice(&LIVE_INDEX_VERSION.to_be_bytes());
     encoded.extend_from_slice(&count.to_be_bytes());
@@ -165,7 +178,9 @@ pub(super) fn encode_live_scheduler_index(index: &[JobFsmSnapshot]) -> Result<Ve
         encoded.extend_from_slice(&encode_scheduler_snapshot(snapshot)?);
     }
     if encoded.len() != capacity {
-        return Err(fatal("OCOMP live index encoded length mismatch"));
+        return Err(storage_corruption_message(
+            "OCOMP live index encoded length mismatch",
+        ));
     }
     Ok(encoded)
 }
@@ -175,29 +190,37 @@ pub(super) fn decode_live_scheduler_index(encoded: &[u8]) -> Result<Vec<JobFsmSn
         return Ok(Vec::new());
     }
     if encoded.len() < LIVE_INDEX_HEADER_LEN {
-        return Err(fatal("OCOMP live index is shorter than its header"));
+        return Err(storage_corruption_message(
+            "OCOMP live index is shorter than its header",
+        ));
     }
     let mut reader = FixedReader::new(encoded);
     if reader.take::<4>()? != LIVE_INDEX_MAGIC
         || u16::from_be_bytes(reader.take::<2>()?) != LIVE_INDEX_VERSION
     {
-        return Err(fatal("OCOMP live index magic/version mismatch"));
+        return Err(storage_corruption_message(
+            "OCOMP live index magic/version mismatch",
+        ));
     }
     let count = usize::from(u16::from_be_bytes(reader.take::<2>()?));
     if count == 0 {
-        return Err(fatal("OCOMP live index must use empty bytes for zero jobs"));
+        return Err(storage_corruption_message(
+            "OCOMP live index must use empty bytes for zero jobs",
+        ));
     }
     let expected_len = SCHEDULER_ENCODED_LEN
         .checked_mul(count)
         .and_then(|bytes| LIVE_INDEX_HEADER_LEN.checked_add(bytes))
-        .ok_or_else(|| fatal("OCOMP live index declared length overflow"))?;
+        .ok_or_else(|| storage_corruption_message("OCOMP live index declared length overflow"))?;
     if encoded.len() != expected_len {
-        return Err(fatal("OCOMP live index has non-canonical length"));
+        return Err(storage_corruption_message(
+            "OCOMP live index has non-canonical length",
+        ));
     }
     let mut index = Vec::new();
     index
         .try_reserve_exact(count)
-        .map_err(|_| fatal("allocate bounded OCOMP live index"))?;
+        .map_err(|_| storage_corruption_message("allocate bounded OCOMP live index"))?;
     for _ in 0..count {
         index.push(decode_scheduler(&reader.take::<SCHEDULER_ENCODED_LEN>()?)?);
     }
@@ -215,20 +238,26 @@ fn validate_live_scheduler_index(index: &[JobFsmSnapshot]) -> Result<()> {
                 .as_ref()
                 .is_none_or(|live| live.intent_id.is_zero())
         {
-            return Err(fatal("OCOMP live index contains a non-live state"));
+            return Err(storage_corruption_message(
+                "OCOMP live index contains a non-live state",
+            ));
         }
     }
     if index
         .windows(2)
         .any(|pair| live_snapshot_key(&pair[0]) >= live_snapshot_key(&pair[1]))
     {
-        return Err(fatal("OCOMP live index is not in strict canonical order"));
+        return Err(storage_corruption_message(
+            "OCOMP live index is not in strict canonical order",
+        ));
     }
     for (position, snapshot) in index.iter().enumerate() {
         let intent_id = snapshot
             .live
             .as_ref()
-            .ok_or_else(|| fatal("OCOMP live index contains a non-live state"))?
+            .ok_or_else(|| {
+                storage_corruption_message("OCOMP live index contains a non-live state")
+            })?
             .intent_id;
         if index[..position].iter().any(|existing| {
             existing.worldwide_day == snapshot.worldwide_day
@@ -237,7 +266,9 @@ fn validate_live_scheduler_index(index: &[JobFsmSnapshot]) -> Result<()> {
                     .as_ref()
                     .is_some_and(|live| live.intent_id == intent_id)
         }) {
-            return Err(fatal("OCOMP live index contains a duplicate job"));
+            return Err(storage_corruption_message(
+                "OCOMP live index contains a duplicate job",
+            ));
         }
     }
     Ok(())
@@ -262,13 +293,17 @@ fn encode_retained_effect(encoded: &mut Vec<u8>, effect: Option<RetainedRequestE
 
 pub(super) fn decode_scheduler(encoded: &[u8]) -> Result<JobFsmSnapshot> {
     if encoded.len() != SCHEDULER_ENCODED_LEN {
-        return Err(fatal("OCOMP scheduler has non-canonical length"));
+        return Err(storage_corruption_message(
+            "OCOMP scheduler has non-canonical length",
+        ));
     }
     let mut reader = FixedReader::new(encoded);
     if reader.take::<4>()? != SCHEDULER_MAGIC
         || u16::from_be_bytes(reader.take::<2>()?) != SCHEDULER_VERSION
     {
-        return Err(fatal("OCOMP scheduler magic/version mismatch"));
+        return Err(storage_corruption_message(
+            "OCOMP scheduler magic/version mismatch",
+        ));
     }
     let phase = reader.u8()?;
     let worldwide_day = WorldwideDay::new(reader.u32()?);
@@ -303,12 +338,17 @@ pub(super) fn decode_scheduler(encoded: &[u8]) -> Result<JobFsmSnapshot> {
                     pending_nonce,
                     requested_height,
                     deadline_height: (deadline_height != 0).then_some(deadline_height),
-                    retained_effect: retained_effect
-                        .ok_or_else(|| fatal("pending OCOMP scheduler has no retained effect"))?,
+                    retained_effect: retained_effect.ok_or_else(|| {
+                        storage_corruption_message("pending OCOMP scheduler has no retained effect")
+                    })?,
                 }),
             )
         }
-        _ => return Err(fatal("OCOMP scheduler phase/index fields are inconsistent")),
+        _ => {
+            return Err(storage_corruption_message(
+                "OCOMP scheduler phase/index fields are inconsistent",
+            ))
+        }
     };
     Ok(JobFsmSnapshot {
         worldwide_day,
@@ -332,12 +372,8 @@ fn decode_retained_effect(
             lysis_budget,
             receipt_hash,
         })),
-        _ => Err(fatal(
+        _ => Err(storage_corruption_message(
             "OCOMP scheduler retained-effect fields are inconsistent",
         )),
     }
-}
-
-fn fatal(message: impl Into<String>) -> PrecompileError {
-    PrecompileError::Fatal(message.into())
 }

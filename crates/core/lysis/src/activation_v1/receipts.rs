@@ -148,14 +148,21 @@ impl VerifiedLysisReceiptsV1 {
         self.event_summary_hash
     }
 
+    pub fn validate_terminal_capability(
+        &self,
+        capability: &CertifiedLysisActivation<'_>,
+    ) -> Result<(), ProtocolError> {
+        ensure(
+            capability.activation_call_id() == self.binding.activation_call_id,
+            "Lysis terminal activation call",
+        )
+    }
+
     pub fn terminal_permit<'permit, 'frame>(
         &self,
         capability: &'permit mut CertifiedLysisActivation<'frame>,
     ) -> Result<LysisTerminalPermitV1<'permit, 'frame>, ProtocolError> {
-        ensure(
-            capability.activation_call_id() == self.binding.activation_call_id,
-            "Lysis terminal activation call",
-        )?;
+        self.validate_terminal_capability(capability)?;
         Ok(LysisTerminalPermitV1 {
             capability,
             binding: self.binding.clone(),

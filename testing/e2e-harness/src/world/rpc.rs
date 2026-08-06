@@ -32,7 +32,7 @@ use outbe_primitives::reshare_artifact::decode_outbe_block_artifacts;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "ocomp-integration")]
-use crate::internal::eth::{IDesis, IMetadosis};
+use crate::internal::eth::{IDesis, IMetadosis, IPromisLimit};
 use crate::internal::{
     addresses,
     config::Config,
@@ -104,6 +104,16 @@ pub struct MetadosisWorldwideDayStatusChangeV1 {
     pub new_status: u8,
     pub block_number: u64,
     pub block_hash: B256,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct MetadosisWorldwideDayTerminalReceiptV1 {
+    pub outcome: u8,
+    pub value_routed: U256,
+    pub carry_over_before: U256,
+    pub carry_over_after: U256,
+    pub retirement_outcome: u8,
+    pub block_number: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -1012,6 +1022,36 @@ impl Rpc {
             offering_end: r.f5,
             scheduled_process_time: r.f6,
         })
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    pub fn metadosis_terminal_receipt_on(
+        &self,
+        port: u16,
+        day: u32,
+    ) -> Option<MetadosisWorldwideDayTerminalReceiptV1> {
+        let receipt = eth::read_call(
+            &self.url(port),
+            addresses::WWD_ADDR,
+            &IMetadosis::getWorldwideDayTerminalReceiptCall { wwd: day },
+        )?;
+        Some(MetadosisWorldwideDayTerminalReceiptV1 {
+            outcome: receipt.outcome,
+            value_routed: receipt.valueRouted,
+            carry_over_before: receipt.carryOverBefore,
+            carry_over_after: receipt.carryOverAfter,
+            retirement_outcome: receipt.retirementOutcome,
+            block_number: receipt.blockNumber,
+        })
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    pub fn promis_limit_total_unallocated_on(&self, port: u16) -> Option<U256> {
+        eth::read_call(
+            &self.url(port),
+            addresses::PROMIS_LIMIT_ADDR,
+            &IPromisLimit::totalUnallocatedCall {},
+        )
     }
 
     #[cfg(feature = "ocomp-integration")]

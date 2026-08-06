@@ -1490,6 +1490,48 @@ where
         Ok(())
     }
 
+    /// Prepares the exact CE roots consumed by the terminal OCOMP phase while
+    /// leaving the scope active for a possible failure retirement.
+    fn preview_compressed_entities(
+        &mut self,
+    ) -> Result<outbe_compressed_entities::SealOutput, BlockExecutionError> {
+        if !self.compressed_entities_started {
+            return Err(BlockExecutionError::msg(
+                "compressed-entity preview requested outside active lifecycle",
+            ));
+        }
+
+        let block_number = self.inner.evm.block().number().saturating_to::<u64>();
+        let timestamp = self.inner.evm.block().timestamp().saturating_to::<u64>();
+        let chain_id = self.inner.evm.chain_id();
+        let proposer = self.inner.evm.block().beneficiary();
+        let scope = self.compressed_entities_scope.clone();
+        let (changes, events, output) = {
+            let db = self.inner.evm.db_mut();
+            let ctx = build_block_context(
+                db,
+                block_number,
+                timestamp,
+                chain_id,
+                self.genesis_hash,
+                proposer,
+            )?;
+            run_atomic_storage_hook_with_output(db, ctx, |hook_ctx| {
+                let lifecycle = outbe_compressed_entities::CompressedEntitiesLifecycleContext::new(
+                    hook_ctx.clone(),
+                    scope.as_ref(),
+                );
+                outbe_compressed_entities::preview_lifecycle_end_block(&lifecycle)
+            })?
+        };
+        if !changes.is_empty() || !events.is_empty() {
+            return Err(BlockExecutionError::msg(
+                "compressed-entity preview unexpectedly mutated EVM state",
+            ));
+        }
+        Ok(output)
+    }
+
     /// Runs the standard Ethereum post-execution phase before the OCOMP
     /// terminal boundary.
     ///
@@ -1497,7 +1539,7 @@ where
     /// writes. The active OCOMP lifecycle requires a stricter order than the
     /// upstream executor exposes:
     ///
-    /// `Ethereum post-execution -> CE seal -> OSR2 -> read-only finish`.
+    /// `Ethereum post-execution -> CE preview -> OSR2 -> final CE seal`.
     ///
     /// The resulting EIP-7685 requests are retained for [`BlockExecutor::finish`],
     /// which assembles the result without invoking the upstream phase again.
@@ -1658,12 +1700,13 @@ where
                 BlockExecutionError::msg(format!("terminal system tx intrinsic gas: {error}"))
             })?;
 
-        // This is the ordering boundary: all ordinary transactions and
-        // standard Ethereum post-execution changes have finished, the final
-        // CE root is committed, and only then may the terminal request handler
-        // inspect sealed state. No semantic writer may follow OSR2.
+        // All ordinary and Ethereum post-execution changes are complete. The
+        // terminal request consumes exact provisional roots while CE remains
+        // active, so its failure path can retire the WWD Tribute partition as
+        // the last CE mutation. The sole committed seal follows the terminal
+        // decision.
         self.apply_ethereum_post_execution_before_ocomp_terminal()?;
-        self.finalize_compressed_entities()?;
+        self.preview_compressed_entities()?;
 
         let phase_context = PreloadedSystemTxContext {
             proposer,
@@ -1701,6 +1744,7 @@ where
             ));
         }
         let gas = self.commit_system_transaction(output, intrinsic_gas, 0, signed_gas_limit)?;
+        self.finalize_compressed_entities()?;
         self.ocomp_terminal_request_consumed = true;
         let execution_origin = if self.block_hash.is_some() {
             "canonical"
@@ -6035,7 +6079,7 @@ mod tests {
         assert_eq!(end.len(), 1);
         executor
             .execute_transaction(end.into_iter().next().unwrap())
-            .expect("terminal system tx executes after CE seal");
+            .expect("terminal system tx executes before the final CE seal");
 
         let writes_after_terminal = observed_writes.lock().unwrap().clone();
         let ethereum_post_block_index = writes_after_terminal
@@ -6045,15 +6089,15 @@ mod tests {
         let compressed_entities_seal_index = writes_after_terminal
             .iter()
             .position(|write| *write == ObservedWrite::CompressedEntitiesSeal)
-            .expect("compressed entities seal executes before OSR2");
+            .expect("compressed entities seal executes after OSR2");
         let terminal_transaction_index = writes_after_terminal
             .iter()
             .position(|write| *write == ObservedWrite::Transaction(begin.len()))
             .expect("OSR2 commits as the terminal transaction");
         assert!(
-            ethereum_post_block_index < compressed_entities_seal_index
-                && compressed_entities_seal_index < terminal_transaction_index,
-            "semantic write order must be Ethereum post-block -> CE seal -> OSR2; got \
+            ethereum_post_block_index < terminal_transaction_index
+                && terminal_transaction_index < compressed_entities_seal_index,
+            "semantic write order must be Ethereum post-block -> OSR2 -> final CE seal; got \
              {writes_after_terminal:?}"
         );
         assert!(executor.compressed_entities_seal_output().is_some());

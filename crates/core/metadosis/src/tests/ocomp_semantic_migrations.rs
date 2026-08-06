@@ -13,16 +13,58 @@ use outbe_primitives::{
     block::{BlockContext, BlockRuntimeContext},
     storage::{MetadosisMutationPurposeTag, StorageHandle},
 };
+use outbe_promislimit::PromisLimitContract;
+use outbe_tribute::TributeContract;
 use outbe_validatorset::{contract::ValidatorSet, runtime::status as validator_status};
 
 use crate::{
     fixture_kernel::{
-        ActivationFixture, ActivationMetadata, ActivationReceiptFault, TEST_LOGICAL_TIME,
+        ActivationFixture, ActivationMetadata, ActivationReceiptFault, TEST_LOGICAL_TIME, TEST_WWD,
     },
     ocomp::schema::poc_schema_limits,
     precompile::IMetadosis,
     schema::MetadosisContract,
+    WwdStatus,
 };
+
+fn assert_failed_activation_recovery(fixture: &mut ActivationFixture) {
+    StorageHandle::enter(&mut fixture.provider, |storage| {
+        let metadosis = MetadosisContract::new(storage.clone());
+        assert_eq!(
+            metadosis.get_wwd_status(TEST_WWD).unwrap(),
+            WwdStatus::Failed
+        );
+        let job = metadosis
+            .ocomp_job_record(fixture.intent_id, &fixture.limits)
+            .unwrap()
+            .unwrap();
+        assert_eq!(job.status, OcompJobStatus::Canceled);
+        assert!(metadosis
+            .read_metadosis_failure_receipt(TEST_WWD, U256::from(60))
+            .unwrap()
+            .is_some());
+
+        let tribute = TributeContract::new(storage.clone());
+        let totals = tribute.get_day_totals(TEST_WWD).unwrap();
+        assert_eq!(totals.tribute_count, 0);
+        assert_eq!(totals.tribute_nominal_amount, U256::ZERO);
+        assert_eq!(tribute.total_supply().unwrap(), 0);
+        assert_eq!(
+            tribute
+                .pre_admission_projection(TEST_WWD)
+                .unwrap()
+                .source_generation,
+            1
+        );
+        assert_eq!(
+            PromisLimitContract::new(storage)
+                .total_unallocated
+                .read()
+                .unwrap(),
+            U256::from(60)
+        );
+    });
+}
 
 fn close_completed_response_window(
     fixture: &mut ActivationFixture,
@@ -174,7 +216,7 @@ fn q_forming_vote_requires_exact_node_local_result_before_terminal_transition() 
     let error = missing
         .apply_without_local_result_authority()
         .expect_err("q-forming result without node-local computation must fail closed");
-    assert!(matches!(error, PrecompileError::Fatal(_)));
+    assert!(matches!(error, PrecompileError::Storage(_)));
     assert!(
         error.to_string().contains("local Lysis result authority"),
         "unexpected missing-authority error: {error}"
@@ -186,7 +228,7 @@ fn q_forming_vote_requires_exact_node_local_result_before_terminal_transition() 
     let error = mismatch
         .apply_with_mismatched_local_result()
         .expect_err("q-forming result that differs from local computation must fail closed");
-    assert!(matches!(error, PrecompileError::Fatal(_)));
+    assert!(matches!(error, PrecompileError::Storage(_)));
     assert!(
         error.to_string().contains("local Lysis result mismatch"),
         "unexpected mismatch error: {error}"
@@ -538,15 +580,18 @@ fn q_forming_faults_restore_all_state_and_exact_retry_matches_clean_execution() 
         ActivationReceiptFault::RequestSplit,
     ] {
         let mut fixture = ActivationFixture::new(20, 1_010, true);
-        let before = fixture.rollback_snapshot();
-
+        assert_eq!(
+            fixture.apply_with_receipt_fault(fault).unwrap(),
+            Bytes::new()
+        );
+        assert_failed_activation_recovery(&mut fixture);
+        let failed = fixture.rollback_snapshot();
         assert!(matches!(
-            fixture.apply_with_receipt_fault(fault),
-            Err(PrecompileError::RevertBytes(_))
+            fixture.apply(),
+            Err(PrecompileError::Revert(_) | PrecompileError::RevertBytes(_))
         ));
-        assert_eq!(fixture.rollback_snapshot(), before);
-        assert_eq!(fixture.apply().unwrap(), Bytes::new());
-        assert_eq!(fixture.terminal_outcome(), ActivationOutcome::Applied);
+        assert_eq!(fixture.rollback_snapshot(), failed);
+        assert_failed_activation_recovery(&mut fixture);
     }
 
     let mut control = ActivationFixture::new(20, 1_010, true);

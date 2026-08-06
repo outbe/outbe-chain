@@ -92,7 +92,7 @@ pub fn record_certified_parent_finality(
     if certified.chain_id() != ctx.block.chain_id
         || certified.current_block_number() != ctx.block.block_number
     {
-        return Err(outbe_primitives::error::PrecompileError::Fatal(
+        return Err(crate::errors::storage_corruption(
             "certified Metadosis finality binding execution scope mismatch".into(),
         ));
     }
@@ -127,7 +127,24 @@ pub fn install_fork_profile(
     })
 }
 
-pub fn run_ocomp_lifecycle_begin(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
+pub fn run_ocomp_lifecycle_begin_with_scope(
+    ctx: &BlockRuntimeContext<'_>,
+    scope: &ExecutionScope,
+) -> Result<()> {
+    let binding = metadosis_ocomp_lifecycle_begin_binding(
+        ctx.block.chain_id,
+        ctx.block.block_number,
+        ctx.block.timestamp,
+    );
+    with_ce_checkpoint(scope, || {
+        commit_transition::<MetadosisOcompLifecycle, _>(ctx.storage.clone(), binding, |_| {
+            crate::ocomp::expiry::run_lifecycle_begin_with_scope(ctx, scope)
+        })
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn run_ocomp_lifecycle_begin(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
     let binding = metadosis_ocomp_lifecycle_begin_binding(
         ctx.block.chain_id,
         ctx.block.block_number,
@@ -138,17 +155,82 @@ pub fn run_ocomp_lifecycle_begin(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
     })
 }
 
+#[cfg(test)]
+pub(crate) fn fail_worldwide_day_for_test(
+    ctx: &BlockRuntimeContext<'_>,
+    scope: &ExecutionScope,
+    worldwide_day: outbe_common::WorldwideDay,
+) -> Result<()> {
+    let binding = metadosis_ocomp_lifecycle_begin_binding(
+        ctx.block.chain_id,
+        ctx.block.block_number,
+        ctx.block.timestamp,
+    );
+    with_ce_checkpoint(scope, || {
+        commit_transition::<MetadosisOcompLifecycle, _>(ctx.storage.clone(), binding, |_| {
+            crate::terminal::fail_worldwide_day(
+                ctx.storage.clone(),
+                ctx.block.block_number,
+                ctx.block.timestamp,
+                scope,
+                worldwide_day,
+            )
+        })
+    })
+}
+
 pub fn run_ocomp_terminal_request(
     ctx: &BlockRuntimeContext<'_>,
     scope: &ExecutionScope,
+) -> Result<()> {
+    run_ocomp_terminal_request_with(ctx, scope, crate::ocomp::request::run_terminal_request)
+}
+
+#[cfg(test)]
+pub(crate) fn run_ocomp_terminal_request_with_completed_fixture(
+    ctx: &BlockRuntimeContext<'_>,
+    scope: &ExecutionScope,
+) -> Result<()> {
+    run_ocomp_terminal_request_with(
+        ctx,
+        scope,
+        crate::ocomp::request::run_terminal_request_with_completed_fixture,
+    )
+}
+
+fn run_ocomp_terminal_request_with(
+    ctx: &BlockRuntimeContext<'_>,
+    scope: &ExecutionScope,
+    request: impl FnOnce(&BlockRuntimeContext<'_>, &ExecutionScope) -> Result<()>,
 ) -> Result<()> {
     let binding = metadosis_ocomp_terminal_request_binding(
         ctx.block.chain_id,
         ctx.block.block_number,
         ctx.block.timestamp,
     );
-    commit_transition::<MetadosisOcompLifecycle, _>(ctx.storage.clone(), binding, |_| {
-        crate::ocomp::request::run_terminal_request(ctx, scope)
+    let due_worldwide_day = crate::ocomp::request::due_ready_worldwide_day(ctx)?;
+    with_ce_checkpoint(scope, || {
+        commit_transition::<MetadosisOcompLifecycle, _>(ctx.storage.clone(), binding, |_| {
+            let attempted_work = scope.ce_work_checkpoint()?;
+            let attempted = ctx.storage.clone().with_checkpoint(|| request(ctx, scope));
+            match attempted {
+                Ok(()) => Ok(()),
+                Err(error)
+                    if due_worldwide_day.is_some()
+                        && crate::errors::is_business_failure(&error) =>
+                {
+                    scope.restore_ce_work_checkpoint(attempted_work)?;
+                    crate::terminal::fail_worldwide_day(
+                        ctx.storage.clone(),
+                        ctx.block.block_number,
+                        ctx.block.timestamp,
+                        scope,
+                        due_worldwide_day.expect("guarded exact WWD"),
+                    )
+                }
+                Err(error) => Err(error),
+            }
+        })
     })
 }
 
@@ -161,16 +243,44 @@ pub fn submit_verified_result_vote(
     local_result_authority: Option<&dyn crate::api::OcompLocalResultAuthority>,
 ) -> Result<Bytes> {
     let binding = metadosis_verified_vote_binding(data);
+    let exact_worldwide_day = crate::ocomp::vote::result_vote_worldwide_day(storage.clone(), data)?;
     with_ce_checkpoint(scope, || {
         commit_transition::<MetadosisVerifiedResultVote, _>(storage.clone(), binding, |_| {
-            crate::ocomp::vote::dispatch_public_result_vote(
-                storage,
-                scope,
-                data,
-                value,
-                is_static,
-                local_result_authority,
-            )
+            let attempted_work = scope.ce_work_checkpoint()?;
+            let attempted = storage.clone().with_checkpoint(|| {
+                crate::ocomp::vote::dispatch_public_result_vote(
+                    storage.clone(),
+                    scope,
+                    data,
+                    value,
+                    is_static,
+                    local_result_authority,
+                )
+            });
+            match attempted {
+                Ok(output) => Ok(output),
+                Err(error)
+                    if exact_worldwide_day.is_some()
+                        && crate::errors::is_business_failure(&error) =>
+                {
+                    scope.restore_ce_work_checkpoint(attempted_work)?;
+                    let block_number = storage.block_number()?;
+                    let timestamp = u64::try_from(storage.timestamp()?).map_err(|_| {
+                        crate::errors::storage_corruption_message(
+                            "Metadosis block timestamp exceeds u64",
+                        )
+                    })?;
+                    crate::terminal::fail_worldwide_day(
+                        storage.clone(),
+                        block_number,
+                        timestamp,
+                        scope,
+                        exact_worldwide_day.expect("guarded exact WWD"),
+                    )?;
+                    Ok(Bytes::new())
+                }
+                Err(error) => Err(error),
+            }
         })
     })
 }

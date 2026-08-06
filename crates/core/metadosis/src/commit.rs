@@ -1,7 +1,7 @@
 use alloy_primitives::{keccak256, B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_primitives::{
-    error::{PrecompileError, Result},
+    error::Result,
     storage::{MetadosisCycleLifecycle, MetadosisMutationPurpose, StorageHandle},
 };
 use outbe_tribute::TributeContract;
@@ -44,7 +44,7 @@ pub(crate) fn plan_outer_transition(
 ) -> Result<OuterWwdTransition> {
     let aggregate = ValidatedWwdAggregate::load_and_validate(storage)?;
     let current = aggregate.record(worldwide_day).ok_or_else(|| {
-        PrecompileError::Fatal(format!(
+        crate::errors::storage_corruption(format!(
             "Metadosis outer transition has no persisted WWD {worldwide_day}"
         ))
     })?;
@@ -61,7 +61,9 @@ pub(crate) fn plan_outer_transition_for_test_fixture(
         .worldwide_days
         .get(worldwide_day)?
         .ok_or_else(|| {
-            PrecompileError::Fatal(format!("Metadosis test fixture has no WWD {worldwide_day}"))
+            crate::errors::storage_corruption(format!(
+                "Metadosis test fixture has no WWD {worldwide_day}"
+            ))
         })?;
     let projection = WwdProjection::from_record(
         worldwide_day,
@@ -168,12 +170,12 @@ fn commit_new_wwd_inner(
         || transition.membership_after() != WwdMembership::Active
         || transition.kind() != &OuterWwdTransitionKind::Created
     {
-        return Err(PrecompileError::Fatal(
+        return Err(crate::errors::storage_corruption(
             "Metadosis WWD creation requires the exact reducer Created transition".into(),
         ));
     }
     if metadosis.worldwide_days.get(worldwide_day)?.is_some() {
-        return Err(PrecompileError::Fatal(format!(
+        return Err(crate::errors::storage_corruption(format!(
             "Metadosis WWD {worldwide_day} already exists at creation commit"
         )));
     }
@@ -191,7 +193,9 @@ fn commit_new_wwd_inner(
     let record = metadosis
         .worldwide_days
         .get(worldwide_day)?
-        .ok_or_else(|| PrecompileError::Fatal("created WWD record disappeared".into()))?;
+        .ok_or_else(|| {
+            crate::errors::storage_corruption("created WWD record disappeared".into())
+        })?;
     metadosis.emit(IMetadosis::WorldwideDayStarted {
         worldwideDay: worldwide_day.into(),
         formingStart: record.forming_start,
@@ -258,7 +262,7 @@ pub(crate) fn commit_day_limit_formation(
 ) -> Result<DayLimitFormationReceipt> {
     let aggregate = ValidatedWwdAggregate::load_and_validate(metadosis.storage.clone())?;
     let current = aggregate.record(formation.worldwide_day).ok_or_else(|| {
-        PrecompileError::Fatal(format!(
+        crate::errors::storage_corruption(format!(
             "day-limit formation has no persisted WWD {}",
             formation.worldwide_day
         ))
@@ -269,7 +273,7 @@ pub(crate) fn commit_day_limit_formation(
         || transition.target() != current.status
         || transition.membership_after() != current.membership
     {
-        return Err(PrecompileError::Fatal(
+        return Err(crate::errors::storage_corruption(
             "day-limit formation requires an exact reducer no-op outer transition".into(),
         ));
     }
@@ -298,7 +302,7 @@ pub(crate) fn commit_day_limit_formation(
         metadosis
             .day_limit_formation_receipt(formation.worldwide_day)?
             .ok_or_else(|| {
-                PrecompileError::Fatal(
+                crate::errors::storage_corruption(
                     "formed OCOMP day-limit receipt disappeared after commit".into(),
                 )
             })
@@ -337,7 +341,7 @@ fn commit_outer_transition_inner(
                     if edges.contains(&WwdAdvanceEdge::ResolveForming)
             );
             if requires_resolution != rate_resolution.is_some() {
-                return Err(PrecompileError::Fatal(
+                return Err(crate::errors::storage_corruption(
                     "ResolveForming commit requires exactly one typed rate resolution".into(),
                 ));
             }
@@ -354,11 +358,13 @@ fn commit_outer_transition_inner(
         }
     };
     let source = transition.source().ok_or_else(|| {
-        PrecompileError::Fatal("persisted WWD transition is missing a source status".into())
+        crate::errors::storage_corruption(
+            "persisted WWD transition is missing a source status".into(),
+        )
     })?;
     let persisted = metadosis.get_wwd_status(worldwide_day)?;
     if persisted != source {
-        return Err(PrecompileError::Fatal(format!(
+        return Err(crate::errors::storage_corruption(format!(
             "Metadosis WWD {worldwide_day} reducer expected {source:?}, found {persisted:?}"
         )));
     }
@@ -368,7 +374,7 @@ fn commit_outer_transition_inner(
         WwdMembership::Active
     };
     if transition.membership_after() != expected_membership {
-        return Err(PrecompileError::Fatal(
+        return Err(crate::errors::storage_corruption(
             "outer transition target/membership decision is inconsistent".into(),
         ));
     }
@@ -376,13 +382,13 @@ fn commit_outer_transition_inner(
     match transition.kind() {
         OuterWwdTransitionKind::Noop => {
             if transition.target() != source {
-                return Err(PrecompileError::Fatal(
+                return Err(crate::errors::storage_corruption(
                     "outer Noop transition changes status".into(),
                 ));
             }
         }
         OuterWwdTransitionKind::Created => {
-            return Err(PrecompileError::Fatal(
+            return Err(crate::errors::storage_corruption(
                 "Created transition must use commit_new_wwd".into(),
             ));
         }
@@ -396,7 +402,7 @@ fn commit_outer_transition_inner(
                 block_number,
             )?;
             if final_status != transition.target() {
-                return Err(PrecompileError::Fatal(
+                return Err(crate::errors::storage_corruption(
                     "outer advance edges do not reach the reducer target".into(),
                 ));
             }
@@ -435,7 +441,7 @@ fn commit_outer_transition_inner(
                 block_number,
             )?;
             if status != WwdStatus::Waiting {
-                return Err(PrecompileError::Fatal(
+                return Err(crate::errors::storage_corruption(
                     "CapacityForfeiture commit must terminate from WAITING".into(),
                 ));
             }
@@ -485,7 +491,7 @@ fn commit_advance_edges(
     let mut status = source;
     for edge in edges {
         if edge.source() != status {
-            return Err(PrecompileError::Fatal(format!(
+            return Err(crate::errors::storage_corruption(format!(
                 "Metadosis WWD {worldwide_day} has a non-contiguous reducer edge {edge:?}"
             )));
         }
@@ -514,7 +520,7 @@ fn commit_status(
 ) -> Result<()> {
     let persisted = metadosis.get_wwd_status(worldwide_day)?;
     if persisted != source {
-        return Err(PrecompileError::Fatal(format!(
+        return Err(crate::errors::storage_corruption(format!(
             "Metadosis WWD {worldwide_day} commit expected {source:?}, found {persisted:?}"
         )));
     }

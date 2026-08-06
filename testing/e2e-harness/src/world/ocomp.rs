@@ -680,7 +680,7 @@ impl OcompTopology {
     /// does not alter that header hash.
     #[cfg(feature = "ocomp-integration")]
     pub fn prepare_measurement_fork_install(&self) -> Result<OcompMeasurementForkV1> {
-        self.prepare_measurement_fork_install_inner(None, &[], false)
+        self.prepare_measurement_fork_install_inner(None, &[], false, None)
     }
 
     /// Prepare the same immutable measurement fork plus a short, pre-start
@@ -693,6 +693,21 @@ impl OcompTopology {
             Some(OCOMP_PUBLIC_OFFERING_AFTER_GENESIS_SECS),
             &[],
             false,
+            None,
+        )
+    }
+
+    /// Prepare a public measurement chain whose first no-quorum expiry
+    /// deterministically exhausts the attempt budget. This changes only the
+    /// immutable Measurement capacity profile; live Metadosis/OCOMP state is
+    /// still created and advanced exclusively by production block execution.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn prepare_failure_recovery_fork_install(&self) -> Result<OcompMeasurementForkV1> {
+        self.prepare_measurement_fork_install_inner(
+            Some(OCOMP_PUBLIC_OFFERING_AFTER_GENESIS_SECS),
+            &[],
+            false,
+            Some(1),
         )
     }
 
@@ -723,7 +738,7 @@ impl OcompTopology {
         );
         replace_json_atomically(&genesis_path, &genesis)?;
 
-        let fork = self.prepare_measurement_fork_install_inner(None, &[], false)?;
+        let fork = self.prepare_measurement_fork_install_inner(None, &[], false, None)?;
         Ok(OcompDynamicMembershipForkV1 {
             fork,
             first_worldwide_day: schedule.0,
@@ -751,6 +766,7 @@ impl OcompTopology {
             Some(OCOMP_CAPACITY_OFFERING_AFTER_GENESIS_SECS),
             &private_keys,
             false,
+            None,
         )?;
         Ok((prepared, private_keys))
     }
@@ -768,7 +784,8 @@ impl OcompTopology {
             eyre::bail!("fresh Metadosis fixture requires at least one Tribute owner");
         }
         let private_keys = capacity_tribute_private_keys(tribute_count)?;
-        let prepared = self.prepare_measurement_fork_install_inner(None, &private_keys, true)?;
+        let prepared =
+            self.prepare_measurement_fork_install_inner(None, &private_keys, true, None)?;
         Ok((prepared, private_keys))
     }
 
@@ -994,6 +1011,7 @@ impl OcompTopology {
         public_offering_after_genesis_secs: Option<u64>,
         capacity_tribute_private_keys: &[String],
         clear_seeded_metadosis: bool,
+        max_terminal_job_records: Option<u16>,
     ) -> Result<OcompMeasurementForkV1> {
         let genesis_path = self.cfg.dir.join("genesis.json");
         let mut genesis: serde_json::Value = serde_json::from_slice(&fs::read(&genesis_path)?)?;
@@ -1036,6 +1054,7 @@ impl OcompTopology {
             OCOMP_MEASUREMENT_ACTIVATION_HEIGHT,
             &self.cfg.dir.join("validators.json"),
             &limits,
+            max_terminal_job_records,
         )?;
         install.validate_for_chain(chain_id, base_genesis_hash, &limits)?;
         let canonical_install = install.encode_canonical(&limits)?;
@@ -1797,6 +1816,21 @@ impl OcompTopology {
             );
         }
         Ok(())
+    }
+
+    /// Restart both fixed node-facing roles while preserving the domain data.
+    /// A role may already be absent because an earlier scenario fault stopped
+    /// it; restarting the complete domain remains one well-defined operation.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn restart_node_facing_processes(&mut self, validator_index: u8) -> Result<()> {
+        if let Some(process) = self.domain_mut(validator_index)?.supervisor.take() {
+            self.stop_owned(process);
+        }
+        if let Some(process) = self.domain_mut(validator_index)?.snapshot_exporter.take() {
+            self.stop_owned(process);
+        }
+        self.restart_snapshot_exporter(validator_index)?;
+        self.restart_supervisor(validator_index)
     }
 
     /// Replace a stopped Supervisor with a process that has a valid local
@@ -2673,11 +2707,20 @@ fn measurement_fork_install(
     activation_height: u64,
     validators_path: &Path,
     limits: &outbe_ocomp_protocol::SchemaLimits,
+    max_terminal_job_records: Option<u16>,
 ) -> Result<OcompForkInstallV1> {
     let protocol_bundle = provisional_measurement_bundle();
     let protocol_bundle_hash = protocol_bundle.protocol_bundle_hash(limits)?;
     let founder_registrations =
         measurement_founder_registrations(validators_path, chain_id, genesis_hash, limits)?;
+    let mut capacity_profile = provisional_measurement_capacity_profile();
+    if let Some(max_terminal_job_records) = max_terminal_job_records {
+        eyre::ensure!(
+            max_terminal_job_records > 0,
+            "Measurement terminal job record cap must be non-zero"
+        );
+        capacity_profile.max_terminal_job_records = max_terminal_job_records;
+    }
     Ok(OcompForkInstallV1 {
         classification: OcompForkInstallClassification::Measurement,
         activation_height,
@@ -2687,7 +2730,7 @@ fn measurement_fork_install(
             fork_id: protocol_bundle.fork_id,
             protocol_bundle_hash,
             correctness_profile_id: protocol_bundle.correctness_profile_id,
-            capacity_profile: provisional_measurement_capacity_profile(),
+            capacity_profile,
             source_availability_policy_id: B256::repeat_byte(44),
         },
         protocol_bundle,

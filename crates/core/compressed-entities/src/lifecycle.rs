@@ -53,47 +53,58 @@ impl BlockLifecycle for CompressedEntitiesLifecycle {
     }
 
     fn end_block(ctx: &Self::Context<'_, '_>) -> Result<Self::EndBlockResult> {
-        ctx.scope.require_active()?;
+        let output = prepare_seal_output(ctx)?;
         let state = State::new(ctx.runtime.storage.clone());
-        let mutations = state
-            .final_body_mutations()?
-            .into_iter()
-            .map(|(collection, entity_id, final_leaf)| FinalLeafMutation {
-                entity: match collection {
-                    Collection::Tribute => EntityRef::Tribute(entity_id),
-                    Collection::NodItem => EntityRef::NodItem(entity_id),
-                    Collection::NodBucket => EntityRef::NodBucket(entity_id),
-                },
-                final_leaf,
-            })
-            .collect::<Vec<_>>();
-        let retirements = state.retirements()?;
-        let parent_root = state.root()?;
-        let staged_tree_batch = ctx.scope.prepare_tree_seal(
-            ctx.runtime.block.block_number,
-            &mutations,
-            &retirements,
-        )?;
-        if staged_tree_batch.parent_root() != parent_root {
-            return Err(outbe_primitives::error::PrecompileError::Fatal(
-                "prepared compressed-entity tree batch has the wrong parent root".into(),
-            ));
-        }
-        let new_root = staged_tree_batch.new_root();
         ctx.runtime.storage.clone().with_checkpoint(|| {
-            state.write_root(new_root)?;
+            state.write_root(output.new_root)?;
             state.cleanup()
         })?;
-        let output = SealOutput {
-            parent_root,
-            new_root,
-            staged_tree_batch,
-        };
         // Close every precompile capability only after the complete root and
         // overlay cleanup change set succeeds.
         ctx.scope.finish_with_seal(&output)?;
         Ok(output)
     }
+}
+
+/// Prepares the exact CE seal visible to terminal system phases without
+/// writing the root, cleaning the overlay, or closing the execution scope.
+pub fn preview_end_block(ctx: &CompressedEntitiesLifecycleContext<'_, '_>) -> Result<SealOutput> {
+    let output = prepare_seal_output(ctx)?;
+    ctx.scope.record_provisional_seal(&output)?;
+    Ok(output)
+}
+
+fn prepare_seal_output(ctx: &CompressedEntitiesLifecycleContext<'_, '_>) -> Result<SealOutput> {
+    ctx.scope.require_active()?;
+    let state = State::new(ctx.runtime.storage.clone());
+    let mutations = state
+        .final_body_mutations()?
+        .into_iter()
+        .map(|(collection, entity_id, final_leaf)| FinalLeafMutation {
+            entity: match collection {
+                Collection::Tribute => EntityRef::Tribute(entity_id),
+                Collection::NodItem => EntityRef::NodItem(entity_id),
+                Collection::NodBucket => EntityRef::NodBucket(entity_id),
+            },
+            final_leaf,
+        })
+        .collect::<Vec<_>>();
+    let retirements = state.retirements()?;
+    let parent_root = state.root()?;
+    let staged_tree_batch =
+        ctx.scope
+            .prepare_tree_seal(ctx.runtime.block.block_number, &mutations, &retirements)?;
+    if staged_tree_batch.parent_root() != parent_root {
+        return Err(outbe_primitives::error::PrecompileError::Fatal(
+            "prepared compressed-entity tree batch has the wrong parent root".into(),
+        ));
+    }
+    let new_root = staged_tree_batch.new_root();
+    Ok(SealOutput {
+        parent_root,
+        new_root,
+        staged_tree_batch,
+    })
 }
 
 pub(crate) fn begin_block(storage: StorageHandle<'_>, scope: &ExecutionScope) -> Result<()> {
@@ -108,6 +119,16 @@ pub(crate) fn end_block(storage: StorageHandle<'_>, scope: &ExecutionScope) -> R
     let runtime = BlockRuntimeContext::new(block, storage);
     let lifecycle = CompressedEntitiesLifecycleContext::new(runtime, scope);
     <CompressedEntitiesLifecycle as BlockLifecycle>::end_block(&lifecycle)
+}
+
+pub(crate) fn preview_end_block_for_storage(
+    storage: StorageHandle<'_>,
+    scope: &ExecutionScope,
+) -> Result<SealOutput> {
+    let block = BlockContext::empty_for_tests(storage.block_number()?, 0, storage.chain_id()?);
+    let runtime = BlockRuntimeContext::new(block, storage);
+    let lifecycle = CompressedEntitiesLifecycleContext::new(runtime, scope);
+    preview_end_block(&lifecycle)
 }
 
 fn begin_storage(storage: StorageHandle<'_>) -> Result<()> {
