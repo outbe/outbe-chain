@@ -12,8 +12,7 @@ use outbe_primitives::units::SCALE_1E18;
 use outbe_common::pow;
 
 use crate::constants::{
-    FLOOR_MARKUP_PERCENT, GEM_CALL_MARKUP_PERCENT, POSITION_VALIDITY_SECONDS,
-    SRA_COEFFICIENT_PERCENT,
+    CALL_RATE, FLOOR_RATE, POSITION_VALIDITY_SECONDS, SRA_RATE,
 };
 use crate::errors::GemFactoryError;
 use crate::events::{GemBurned, GemIssued, GemSettled};
@@ -43,7 +42,7 @@ pub fn mint_gem(
     let issued_at = storage.timestamp()?.to::<u64>();
     let (cost_amount, floor_price, initial_state) = compute_params(gem_type, gem_load, coen_rate)?;
     let entry_price = coen_rate;
-    let call_price = call_threshold_with_markup(entry_price)?;
+    let call_price = derived_call_price(entry_price)?;
 
     let params = GemAddParams {
         owner,
@@ -53,7 +52,7 @@ pub fn mint_gem(
         cost_amount_minor: cost_amount,
         floor_price_minor: floor_price,
         call_price_minor: call_price,
-        call_rate: GEM_CALL_MARKUP_PERCENT as u16,
+        call_rate: CALL_RATE as u16,
         call_window: outbe_gem::CALL_WINDOW,
         call_threshold: outbe_gem::CALL_THRESHOLD,
         issuance_currency,
@@ -203,8 +202,8 @@ pub fn mint_merchant_gem(
     let coen_rate = read_oracle_rate(storage, record.reference_currency)?;
     let entry_price = coen_rate.max(record.source_entry_price);
     let cost_amount = compute_cost(entry_price, gem_load, 100)?;
-    let floor_price = floor_with_markup(entry_price)?.max(record.source_floor_price);
-    let call_price = call_threshold_with_markup(entry_price)?;
+    let floor_price = derived_floor(entry_price)?.max(record.source_floor_price);
+    let call_price = derived_call_price(entry_price)?;
 
     let gem_id = gem_api::add_gem(
         storage,
@@ -216,7 +215,7 @@ pub fn mint_merchant_gem(
             cost_amount_minor: cost_amount,
             floor_price_minor: floor_price,
             call_price_minor: call_price,
-            call_rate: GEM_CALL_MARKUP_PERCENT as u16,
+            call_rate: CALL_RATE as u16,
             call_window: outbe_gem::CALL_WINDOW,
             call_threshold: outbe_gem::CALL_THRESHOLD,
             issuance_currency: record.issuance_currency,
@@ -433,19 +432,19 @@ fn compute_params(
         // `cost_amount` into the Reserve vault just like Wallet/Cca/Sra.
         GemTypes::Genesis => {
             let cost = compute_cost(coen_rate, gem_load, 100)?;
-            let floor = floor_with_markup(coen_rate)?;
+            let floor = derived_floor(coen_rate)?;
             (cost, floor, GemState::Qualified)
         }
         GemTypes::Sra => {
-            let cost = compute_cost(coen_rate, gem_load, SRA_COEFFICIENT_PERCENT)?;
-            let floor = floor_with_markup(coen_rate)?;
+            let cost = compute_cost(coen_rate, gem_load, SRA_RATE)?;
+            let floor = derived_floor(coen_rate)?;
             (cost, floor, GemState::Issued)
         }
         // Validator (post-genesis), Wallet, Cca — standard agent-class flow:
         // cost = entry × load, floor = rate × 1.08, born Issued.
         GemTypes::Validator | GemTypes::Wallet | GemTypes::Cca => {
             let cost = compute_cost(coen_rate, gem_load, 100)?;
-            let floor = floor_with_markup(coen_rate)?;
+            let floor = derived_floor(coen_rate)?;
             (cost, floor, GemState::Issued)
         }
         // Merchant gems are minted via `mint_merchant_gem` against a GemPosition,
@@ -457,27 +456,28 @@ fn compute_params(
 
 /// `(entry × load × percent / 100) / SCALE_1E18`. Both `entry` and `load` are
 /// 1e18-scaled minor units; result stays in the same scale.
-fn compute_cost(entry: U256, load: U256, percent: u64) -> Result<U256> {
+fn compute_cost(entry: U256, load: U256, cost_num: u64) -> Result<U256> {
     let acc = entry
         .checked_mul(load)
         .ok_or(GemFactoryError::Overflow)?
-        .checked_mul(U256::from(percent))
+        .checked_mul(U256::from(cost_num))
         .ok_or(GemFactoryError::Overflow)?;
     Ok(acc / U256::from(100u64) / SCALE_1E18)
 }
 
-fn floor_with_markup(coen_rate: U256) -> Result<U256> {
-    let acc = coen_rate
-        .checked_mul(U256::from(FLOOR_MARKUP_PERCENT))
+/// Floor price = `entry × (100 + FLOOR_RATE) / 100` (8% markup => 1.08x).
+fn derived_floor(entry_price: U256) -> Result<U256> {
+    let acc = entry_price
+        .checked_mul(U256::from(100 + FLOOR_RATE))
         .ok_or(GemFactoryError::Overflow)?;
     Ok(acc / U256::from(100u64))
 }
 
-/// Call Threshold = `entry × (1 + Call Rate)` = `entry × GEM_CALL_MARKUP_PERCENT
-/// / 100`. Entry equals the issuance-time coen rate in the single-currency case.
-fn call_threshold_with_markup(entry_price: U256) -> Result<U256> {
+/// Call price = `entry × (100 + CALL_RATE) / 100` (128% markup => 2.28x).
+/// Entry equals the issuance-time coen rate in the single-currency case.
+fn derived_call_price(entry_price: U256) -> Result<U256> {
     let acc = entry_price
-        .checked_mul(U256::from(GEM_CALL_MARKUP_PERCENT))
+        .checked_mul(U256::from(100 + CALL_RATE))
         .ok_or(GemFactoryError::Overflow)?;
     Ok(acc / U256::from(100u64))
 }

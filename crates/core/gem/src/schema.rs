@@ -79,8 +79,9 @@ pub struct GemData {
     #[attribute(order = 12, default = 0)]
     pub call_notice_period: u32,
 
-    /// Call rate as a percent (snapshot of `GEM_CALL_MARKUP_PERCENT` at
-    /// issuance); `call_price_minor = entry_price_minor * call_rate / 100`.
+    /// Call-price markup percent (snapshot of `CALL_RATE` at issuance);
+    /// `call_price_minor = entry_price_minor * (100 + call_rate) / 100`
+    /// (128 => 2.28x).
     #[attribute(order = 13, default = 0)]
     pub call_rate: u16,
 
