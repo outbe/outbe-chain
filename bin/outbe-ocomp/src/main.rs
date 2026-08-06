@@ -85,8 +85,8 @@ struct RuntimeArgs {
 const SUPERVISOR_USER: &str = "outbe-ocomp-supervisor";
 const SNAPSHOT_EXPORTER_USER: &str = "outbe-ocomp-export";
 const WORKER_USER: &str = "outbe-ocomp-worker";
-const BASE_PATH: &str = "/opt/outbe-chain";
 const BASE_PATH_ENV: &str = "OUTBE_OCOMP_BASE_PATH";
+const VALIDATOR_INDEX_ENV: &str = "OCOMP_VALIDATOR_INDEX";
 const CAS_MAX_OBJECT_BYTES: u64 = 1_048_576;
 const CAS_MAX_TOTAL_BYTES: u64 = OCOMP_POC_CAS_QUOTA_BYTES;
 const WORKER_INBOX_MAX_ARTIFACT_BYTES: u64 = 1_048_576;
@@ -99,6 +99,7 @@ const PROJECTION_START_BLOCK: u64 = 1;
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ProductionConfig {
     base_path: PathBuf,
+    validator_index: u16,
 }
 
 impl ProductionConfig {
@@ -111,8 +112,17 @@ impl ProductionConfig {
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let base_path = lookup(BASE_PATH_ENV)
             .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(BASE_PATH));
-        Ok(Self { base_path })
+            .ok_or("OUTBE_OCOMP_BASE_PATH is required")?;
+        let validator_index = lookup(VALIDATOR_INDEX_ENV)
+            .ok_or("OCOMP_VALIDATOR_INDEX is required")?
+            .into_string()
+            .map_err(|_| "OCOMP_VALIDATOR_INDEX must be valid UTF-8")?
+            .parse::<u16>()
+            .map_err(|_| "OCOMP_VALIDATOR_INDEX must be an unsigned 16-bit integer")?;
+        Ok(Self {
+            base_path,
+            validator_index,
+        })
     }
 }
 
@@ -134,18 +144,23 @@ struct ProductionLayout {
 }
 
 impl ProductionLayout {
-    fn from_base(base_path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
+    fn from_base(
+        base_path: &Path,
+        validator_index: u16,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         if !base_path.is_absolute() || base_path.parent().is_none() || base_path == Path::new("/") {
             return Err("OCOMP base path must be a non-root absolute path".into());
         }
 
-        let ocomp_root = base_path.join("ocomp");
-        let data_root = ocomp_root.join("data");
-        let supervisor_root = data_root.join("supervisor-v1");
-        let exporter_root = data_root.join("exporter-v1");
+        let domain_root = base_path
+            .join(format!("validator-{validator_index}"))
+            .join("ocomp")
+            .join("domain-v1");
+        let supervisor_root = domain_root.join("supervisor-v1");
+        let exporter_root = domain_root.join("exporter-v1");
         Ok(Self {
-            cas_root: data_root.join("cas-v1"),
-            worker_inbox_root: data_root.join("worker-inbox-v1"),
+            cas_root: domain_root.join("cas-v1"),
+            worker_inbox_root: domain_root.join("worker-inbox-v1"),
             supervisor_journal_root: supervisor_root.join("discovery"),
             snapshot_exporter_journal_root: exporter_root.join("discovery"),
             supervisor_export_binding_root: supervisor_root.join("export-bindings"),
@@ -154,9 +169,9 @@ impl ProductionLayout {
             supervisor_sign_once_root: supervisor_root.join("sign-once"),
             snapshot_exporter_input_ref_root: exporter_root.join("input-refs"),
             snapshot_exporter_receipt_root: exporter_root.join("receipts"),
-            ocomp_evm_key_path: data_root.join("keys").join("ocomp-evm-key.hex"),
-            ocomp_result_key_path: data_root.join("keys").join("ocomp-key-v1.hex"),
-            protocol_bundle_path: base_path.join("protocol-bundle-v1.ocb1"),
+            ocomp_evm_key_path: domain_root.join("ocomp-evm-key.hex"),
+            ocomp_result_key_path: domain_root.join("ocomp-key-v1.hex"),
+            protocol_bundle_path: domain_root.join("protocol-bundle-v1.ocb1"),
         })
     }
 }
@@ -206,7 +221,8 @@ impl RuntimeProfile {
         }
         let Some(root) = args.development_root.as_ref() else {
             let production = ProductionConfig::from_environment()?;
-            let layout = ProductionLayout::from_base(&production.base_path)?;
+            let layout =
+                ProductionLayout::from_base(&production.base_path, production.validator_index)?;
             return Ok(Self {
                 effective_role_uid: uid_for_user(role.production_user())?,
                 supervisor_address: args.supervisor_address,
@@ -766,45 +782,51 @@ mod tests {
     }
 
     #[test]
-    fn production_layout_derives_every_path_from_one_base_path() {
+    fn production_layout_is_isolated_under_the_selected_validator_directory() {
+        let base = tempfile::tempdir().unwrap();
         let config = ProductionConfig::from_lookup(|name| match name {
-            "OUTBE_OCOMP_BASE_PATH" => Some("/srv/outbe".into()),
+            "OUTBE_OCOMP_BASE_PATH" => Some(base.path().as_os_str().to_owned()),
+            "OCOMP_VALIDATOR_INDEX" => Some("7".into()),
             _ => None,
         })
         .unwrap();
-        let layout = ProductionLayout::from_base(&config.base_path).unwrap();
+        let layout =
+            ProductionLayout::from_base(&config.base_path, config.validator_index).unwrap();
+        let domain = base
+            .path()
+            .join("validator-7")
+            .join("ocomp")
+            .join("domain-v1");
 
-        assert_eq!(config.base_path, PathBuf::from("/srv/outbe"));
         assert_eq!(
             layout.supervisor_vote_submission_root,
-            PathBuf::from("/srv/outbe/ocomp/data/supervisor-v1/vote-submissions")
+            domain.join("supervisor-v1").join("vote-submissions")
         );
         assert_eq!(
             layout.protocol_bundle_path,
-            PathBuf::from("/srv/outbe/protocol-bundle-v1.ocb1")
+            domain.join("protocol-bundle-v1.ocb1")
         );
-        assert_eq!(
-            layout.ocomp_evm_key_path,
-            PathBuf::from("/srv/outbe/ocomp/data/keys/ocomp-evm-key.hex")
-        );
+        assert_eq!(layout.ocomp_evm_key_path, domain.join("ocomp-evm-key.hex"));
         assert_eq!(
             layout.ocomp_result_key_path,
-            PathBuf::from("/srv/outbe/ocomp/data/keys/ocomp-key-v1.hex")
+            domain.join("ocomp-key-v1.hex")
         );
         assert_eq!(
             layout.supervisor_sign_once_root,
-            PathBuf::from("/srv/outbe/ocomp/data/supervisor-v1/sign-once")
+            domain.join("supervisor-v1").join("sign-once")
         );
     }
 
     #[test]
-    fn production_config_defaults_base_path_and_rejects_unsafe_base_paths() {
-        assert_eq!(
-            ProductionConfig::from_lookup(|_| None).unwrap().base_path,
-            PathBuf::from(BASE_PATH)
-        );
-        assert!(ProductionLayout::from_base(std::path::Path::new("/")).is_err());
-        assert!(ProductionLayout::from_base(std::path::Path::new("relative")).is_err());
+    fn production_config_requires_explicit_base_path_and_validator_index() {
+        let base = tempfile::tempdir().unwrap();
+        assert!(ProductionConfig::from_lookup(|_| None).is_err());
+        assert!(ProductionConfig::from_lookup(|name| {
+            (name == "OUTBE_OCOMP_BASE_PATH").then(|| base.path().as_os_str().to_owned())
+        })
+        .is_err());
+        assert!(ProductionLayout::from_base(std::path::Path::new("/"), 0).is_err());
+        assert!(ProductionLayout::from_base(std::path::Path::new("relative"), 0).is_err());
     }
 
     #[test]

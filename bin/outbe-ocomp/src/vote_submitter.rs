@@ -25,8 +25,15 @@ use alloy_consensus::{
 use alloy_eips::eip2718::{Decodable2718 as _, Encodable2718 as _};
 use alloy_primitives::{keccak256, Address, Bytes, TxKind, B256, U256};
 use outbe_ocomp_protocol::{
-    abi::encode_submit_lysis_result_calldata, common::BoundedBytes, control::FinalizedJobSpecV1,
-    vote::ResultVoteV1, PreparedVoteTransactionV1, ProtocolError, SchemaLimits,
+    abi::encode_submit_lysis_result_calldata,
+    common::BoundedBytes,
+    control::FinalizedJobSpecV1,
+    system_carrier::{
+        MAX_OCOMP_SYSTEM_CARRIER_CALLDATA_BYTES, MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS,
+        OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
+    },
+    vote::ResultVoteV1,
+    PreparedVoteTransactionV1, ProtocolError, SchemaLimits,
 };
 use outbe_primitives::addresses::METADOSIS_ADDRESS;
 use outbe_primitives::signer::{OutbeEvmSigner, SignerError};
@@ -178,9 +185,8 @@ impl VoteTransactionPreparerV1 for LocalVoteTransactionPreparerV1 {
         if canonical_result.is_empty() {
             return Err(LocalVotePreparationErrorV1::EmptyCanonicalResult);
         }
-        if gas_limit != outbe_zerofee::MAX_ZERO_FEE_OCOMP_GAS_LIMIT
-            || !(outbe_zerofee::MIN_ZERO_FEE_OCOMP_MAX_FEE_PER_GAS
-                ..=MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS)
+        if gas_limit != OCOMP_SYSTEM_CARRIER_GAS_LIMIT
+            || !(MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS..=MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS)
                 .contains(&max_fee_per_gas)
         {
             return Err(LocalVotePreparationErrorV1::InvalidFeeEnvelope);
@@ -191,7 +197,7 @@ impl VoteTransactionPreparerV1 for LocalVoteTransactionPreparerV1 {
             .attest(canonical_result, finalized, canonical_height)?;
         let canonical_vote = vote.encode_canonical(&self.limits)?;
         let calldata = encode_submit_lysis_result_calldata(&vote, &self.limits)?;
-        if calldata.len() > outbe_zerofee::MAX_ZERO_FEE_OCOMP_CALLDATA_BYTES {
+        if calldata.len() > MAX_OCOMP_SYSTEM_CARRIER_CALLDATA_BYTES {
             return Err(LocalVotePreparationErrorV1::CalldataTooLarge);
         }
 
@@ -327,7 +333,7 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
             .rpc
             .gas_price()
             .map_err(rpc_error)?
-            .max(outbe_zerofee::MIN_ZERO_FEE_OCOMP_MAX_FEE_PER_GAS);
+            .max(MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS);
         let canonical_height = self.rpc.finalized_block().map_err(rpc_error)?.number;
         let prepared = preparer
             .prepare_vote_transaction(
@@ -336,7 +342,7 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
                 canonical_height,
                 nonce,
                 max_fee_per_gas,
-                outbe_zerofee::MAX_ZERO_FEE_OCOMP_GAS_LIMIT,
+                OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
             )
             .map_err(preparer_error)?;
         self.validate_prepared(&prepared, job_id, result_digest, nonce, max_fee_per_gas)?;
@@ -521,7 +527,7 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
         if recovered != self.config.sender_address
             || transaction.chain_id() != Some(self.config.expected_chain_id)
             || transaction.nonce() != nonce
-            || transaction.gas_limit() != outbe_zerofee::MAX_ZERO_FEE_OCOMP_GAS_LIMIT
+            || transaction.gas_limit() != OCOMP_SYSTEM_CARRIER_GAS_LIMIT
             || transaction.max_fee_per_gas() != max_fee_per_gas
             || transaction.max_priority_fee_per_gas() != Some(0)
             || transaction.kind() != TxKind::Call(METADOSIS_ADDRESS)
@@ -1464,7 +1470,7 @@ mod tests {
         }
 
         fn gas_price(&self) -> Result<u128, Self::Error> {
-            Ok(outbe_zerofee::MIN_ZERO_FEE_OCOMP_MAX_FEE_PER_GAS)
+            Ok(MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS)
         }
 
         fn send_raw_transaction(

@@ -7,20 +7,27 @@
 # role identities, directories, process groups, status and shutdown directly.
 #
 # Usage:
-#   sudo /opt/outbe-chain/ocomp.sh install
-#   sudo /opt/outbe-chain/ocomp.sh start
-#   sudo /opt/outbe-chain/ocomp.sh status
-#   sudo /opt/outbe-chain/ocomp.sh logs
-#   sudo /opt/outbe-chain/ocomp.sh stop
+#   sudo OUTBE_OCOMP_BASE_PATH=/path/to/network OCOMP_VALIDATOR_INDEX=0 ./ocomp.sh install
+#   sudo OUTBE_OCOMP_BASE_PATH=/path/to/network OCOMP_VALIDATOR_INDEX=0 ./ocomp.sh start
 
 set -euo pipefail
 
-readonly DEPLOY_ROOT="${OUTBE_OCOMP_BASE_PATH:-/opt/outbe-chain}"
-readonly OCOMP_BINARY="$DEPLOY_ROOT/outbe-ocomp"
-readonly OCOMP_ENV_FILE="$DEPLOY_ROOT/ocomp.env"
-readonly OCOMP_EXPORT_ENV_FILE="$DEPLOY_ROOT/ocomp-export.env"
-readonly PROTOCOL_BUNDLE="$DEPLOY_ROOT/protocol-bundle-v1.ocb1"
-readonly RESULT_COMMITTEE="$DEPLOY_ROOT/result-committee-v1.ocb1"
+: "${OUTBE_OCOMP_BASE_PATH:?set OUTBE_OCOMP_BASE_PATH to the network base directory}"
+: "${OCOMP_VALIDATOR_INDEX:?set OCOMP_VALIDATOR_INDEX to this validator index}"
+[[ "$OCOMP_VALIDATOR_INDEX" =~ ^[0-9]+$ ]] || {
+  echo "ocomp: OCOMP_VALIDATOR_INDEX must be an unsigned integer" >&2
+  exit 1
+}
+((OCOMP_VALIDATOR_INDEX <= 65535)) || {
+  echo "ocomp: OCOMP_VALIDATOR_INDEX exceeds u16" >&2
+  exit 1
+}
+
+readonly BASE_DIR="$OUTBE_OCOMP_BASE_PATH"
+readonly VALIDATOR_ROOT="$BASE_DIR/validator-$OCOMP_VALIDATOR_INDEX"
+readonly OCOMP_BINARY="${OUTBE_OCOMP_BINARY:-$BASE_DIR/outbe-ocomp}"
+readonly OCOMP_ENV_FILE="$VALIDATOR_ROOT/ocomp.env"
+readonly OCOMP_EXPORT_ENV_FILE="$VALIDATOR_ROOT/ocomp-export.env"
 
 # Role identities are fixed.
 readonly SUPERVISOR_USER="outbe-ocomp-supervisor"
@@ -28,10 +35,11 @@ readonly EXPORTER_USER="outbe-ocomp-export"
 readonly WORKER_USER="outbe-ocomp-worker"
 readonly ARTIFACT_GROUP="outbe-ocomp-artifacts"
 
-readonly OCOMP_ROOT="$DEPLOY_ROOT/ocomp"
+readonly OCOMP_ROOT="$VALIDATOR_ROOT/ocomp"
 readonly RUNTIME_ROOT="$OCOMP_ROOT/run"
-readonly STATE_ROOT="$OCOMP_ROOT/data"
-readonly KEY_ROOT="$STATE_ROOT/keys"
+readonly STATE_ROOT="$OCOMP_ROOT/domain-v1"
+readonly KEY_ROOT="$STATE_ROOT"
+readonly PROTOCOL_BUNDLE="$STATE_ROOT/protocol-bundle-v1.ocb1"
 readonly OCOMP_EVM_KEY="$KEY_ROOT/ocomp-evm-key.hex"
 readonly OCOMP_RESULT_KEY="$KEY_ROOT/ocomp-key-v1.hex"
 readonly LOG_ROOT="$OCOMP_ROOT/logs"
@@ -117,7 +125,6 @@ prepare_directories() {
     install -d -m 0700 -o root -g root "$PID_ROOT/worker-$ordinal"
   done
   install -d -m 0750 -o "$SUPERVISOR_USER" -g "$ARTIFACT_GROUP" "$STATE_ROOT"
-  install -d -m 0700 -o "$SUPERVISOR_USER" -g "$SUPERVISOR_USER" "$KEY_ROOT"
   install -d -m 0770 -o "$SUPERVISOR_USER" -g "$ARTIFACT_GROUP" \
     "$STATE_ROOT/cas-v1" \
     "$STATE_ROOT/cas-v1/objects" \
@@ -196,6 +203,7 @@ prepare_ocomp_evm_key() {
     runuser --user "$SUPERVISOR_USER" -- \
       env \
         OUTBE_OCOMP_BASE_PATH="${RUNTIME_ENV[OUTBE_OCOMP_BASE_PATH]}" \
+        OCOMP_VALIDATOR_INDEX="${RUNTIME_ENV[OCOMP_VALIDATOR_INDEX]}" \
         "$OCOMP_BINARY" signer-address
   ); then
     if ((created == 1)); then
@@ -287,12 +295,12 @@ load_runtime_environment() {
     require_env "$name"
   done
 
-  [[ "${RUNTIME_ENV[OUTBE_OCOMP_BASE_PATH]}" == "$DEPLOY_ROOT" ]] ||
-    die "OUTBE_OCOMP_BASE_PATH must match launcher deployment root $DEPLOY_ROOT"
+  [[ "${RUNTIME_ENV[OUTBE_OCOMP_BASE_PATH]}" == "$BASE_DIR" ]] ||
+    die "OUTBE_OCOMP_BASE_PATH must match launcher base directory $BASE_DIR"
   [[ "${RUNTIME_ENV[OCOMP_REGISTRY_GENERATION]}" != 0 ]] ||
     die "OCOMP_REGISTRY_GENERATION must be greater than zero"
-  [[ "${RUNTIME_ENV[OCOMP_VALIDATOR_INDEX]}" =~ ^[0-3]$ ]] ||
-    die "OCOMP_VALIDATOR_INDEX must be between 0 and 3"
+  [[ "${RUNTIME_ENV[OCOMP_VALIDATOR_INDEX]}" == "$OCOMP_VALIDATOR_INDEX" ]] ||
+    die "OCOMP_VALIDATOR_INDEX must match launcher validator index $OCOMP_VALIDATOR_INDEX"
   [[ "${RUNTIME_ENV[OCOMP_SUPERVISOR_ADDRESS]}" =~ ^127\.0\.0\.1:([1-9][0-9]*)$ ]] ||
     die "OCOMP_SUPERVISOR_ADDRESS must be an explicit nonzero 127.0.0.1 HTTP address"
   [[ "${RUNTIME_ENV[OCOMP_WORKER_COUNT]}" =~ ^[1-4]$ ]] ||
@@ -394,14 +402,11 @@ start_role() {
 verify_prerequisites() {
   [[ -x "$OCOMP_BINARY" ]] || die "OCOMP binary is missing or not executable: $OCOMP_BINARY"
   [[ -r "$PROTOCOL_BUNDLE" ]] || die "protocol bundle is missing: $PROTOCOL_BUNDLE"
-  [[ -r "$RESULT_COMMITTEE" ]] || die "result committee is missing: $RESULT_COMMITTEE"
   local role_user
   for role_user in "$SUPERVISOR_USER" "$EXPORTER_USER" "$WORKER_USER"; do
     runuser --user "$role_user" -- test -r "$PROTOCOL_BUNDLE" ||
       die "$role_user cannot read protocol bundle $PROTOCOL_BUNDLE"
   done
-  runuser --user "$SUPERVISOR_USER" -- test -r "$RESULT_COMMITTEE" ||
-    die "$SUPERVISOR_USER cannot read result committee $RESULT_COMMITTEE"
   runuser --user "$SUPERVISOR_USER" -- test -r "$OCOMP_EVM_KEY" ||
     die "$SUPERVISOR_USER cannot read OCOMP EVM key $OCOMP_EVM_KEY"
   runuser --user "$SUPERVISOR_USER" -- test -r "$OCOMP_RESULT_KEY" ||
@@ -419,6 +424,7 @@ start_worker() {
     "$OCOMP_BINARY worker" \
     env \
       OUTBE_OCOMP_BASE_PATH="${RUNTIME_ENV[OUTBE_OCOMP_BASE_PATH]}" \
+      OCOMP_VALIDATOR_INDEX="${RUNTIME_ENV[OCOMP_VALIDATOR_INDEX]}" \
       prlimit --nproc=16:16 -- \
       "$OCOMP_BINARY" worker \
         --chain-id "${RUNTIME_ENV[OCOMP_CHAIN_ID]}" \
@@ -468,6 +474,7 @@ start_exporter() {
       OCOMP_BOOT_NONCE="${RUNTIME_ENV[OCOMP_BOOT_NONCE]}" \
       OCOMP_PROTOCOL_BUNDLE_HASH="${RUNTIME_ENV[OCOMP_PROTOCOL_BUNDLE_HASH]}" \
       OCOMP_REGISTRY_GENERATION="${RUNTIME_ENV[OCOMP_REGISTRY_GENERATION]}" \
+      OCOMP_VALIDATOR_INDEX="${RUNTIME_ENV[OCOMP_VALIDATOR_INDEX]}" \
       OUTBE_OCOMP_BASE_PATH="${RUNTIME_ENV[OUTBE_OCOMP_BASE_PATH]}" \
       OUTBE_OCOMP_RPC_URL="${RUNTIME_ENV[OUTBE_OCOMP_RPC_URL]}" \
       OUTBE_OCOMP_PROJECTION_MONGODB_URI="${RUNTIME_ENV[OUTBE_OCOMP_PROJECTION_MONGODB_URI]}" \

@@ -1088,6 +1088,7 @@ impl OcompRetentionCoordinator {
     /// This deliberately consults the durable multi-job registry rather than
     /// [`Self::status`], whose single operational summary may describe a newer
     /// job. Callers must not substitute another live job.
+    #[cfg(test)]
     pub(crate) fn exported_job_record(&self, job_id: B256) -> Result<PinRecordV1, RetentionError> {
         let inner = self.lock()?;
         if let RetentionStatus::Quarantined { ref reason } = inner.status {
