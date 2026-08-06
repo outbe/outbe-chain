@@ -11,9 +11,7 @@ use outbe_primitives::units::SCALE_1E18;
 
 use outbe_common::pow;
 
-use crate::constants::{
-    CALL_RATE, FLOOR_RATE, POSITION_VALIDITY_SECONDS, SRA_RATE,
-};
+use crate::constants::{CALL_RATE, FLOOR_RATE, POSITION_VALIDITY_SECONDS, SRA_RATE};
 use crate::errors::GemFactoryError;
 use crate::precompile::IGemFactory::{GemBurned, GemIssued, GemSettled};
 use crate::schema::{GemFactoryContract, GemPosition, GemTypes};
