@@ -4,28 +4,14 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolCall;
 
 use outbe_credis::CredisContract;
-use outbe_oracle::api::{get_currency_rate, get_exchange_rate};
+use outbe_oracle::api::get_currency_rate;
 use outbe_primitives::addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::units::SCALE_1E18;
 
 use crate::errors::CredisFactoryError;
 use crate::precompile::ICredisFactory;
 use crate::sol_ext::{IReferenceCurrency, IERC20};
-
-/// Native token base symbol used for the COEN/USD oracle pair lookup.
-pub const NATIVE_TOKEN: &str = "COEN";
-
-/// Stable settlement quote symbol. Matches the pair used by tributefactory and
-/// metadosis.
-pub const STABLECOIN: &str = "0xUSD";
-
-/// Decimal-gap factor between COEN (10^18) and stablecoin (10^6). Cosmos:
-/// `decimalsDiff = sdk.NewIntWithDecimal(1, 12)`.
-fn decimals_diff() -> U256 {
-    U256::from(1_000_000_000_000u128)
-}
 
 // ---------------------------------------------------------------------------
 // request_credis
@@ -36,19 +22,25 @@ fn decimals_diff() -> U256 {
 /// the pledger's own confidential pledged ledger, opens a credis position bound to
 /// `smartAccount`, stores the sealed pledger EOA on the position for the later
 /// per-installment release / expiry burn, and delivers the stablecoin loan via the
-/// vault sub-call. The pledger EOA is never in calldata: the enclave recovers it from
-/// the ticket and returns it sealed (`eoa_ct`). Returns `(position_id, amount_stables)`.
+/// vault sub-call.
+///
+/// Nothing is priced here. The disbursed amount, the asset and the entry rate were all
+/// quoted and sealed into the pledge ticket by `pledgeGratis`, so the loan is issued at
+/// the price the pledger accepted rather than whatever the oracle reads now. Only the
+/// debt terms (the ISO currency rate driving the anadosis schedule) are pinned at
+/// issuance, because those belong to the loan and not to the collateral.
+///
+/// The pledger EOA is never in calldata: the enclave recovers it from the ticket and
+/// returns it sealed (`eoa_ct`). Called by the CCA; `_caller` is deliberately unused —
+/// the authorization is `spend_auth`, verified inside the enclave.
+/// Returns `(position_id, amount_stables)`.
 pub fn request_credis(
     storage: StorageHandle<'_>,
     _caller: Address,
-    asset: Address,
     smart_account: Address,
     pledge_handle: B256,
     spend_auth: [u8; 32],
 ) -> Result<(U256, U256)> {
-    if asset.is_zero() {
-        return Err(CredisFactoryError::InvalidAsset.into());
-    }
     if smart_account.is_zero() {
         return Err(CredisFactoryError::InvalidSmartAccount.into());
     }
@@ -70,14 +62,16 @@ pub fn request_credis(
     // moves into the EOA's OWN pledged ledger and the ticket is deleted. The enclave
     // reads the pledger EOA from the ticket and returns it sealed (`eoa_ct`) so it is
     // stored on the position as ciphertext, never plaintext.
-    let (gratis_amount, eoa_ct) = outbe_gratis::api::consume_pledge(
+    let (terms, eoa_ct) = outbe_gratis::api::consume_pledge(
         storage.clone(),
         pledge_handle,
         smart_account,
         spend_auth,
     )?;
-
-    let (amount_stables, rate) = convert_gratis_to_stables(storage.clone(), gratis_amount)?;
+    let asset = terms.asset;
+    if asset.is_zero() {
+        return Err(CredisFactoryError::InvalidAsset.into());
+    }
 
     // Derive the issuance currency from the disbursed asset (it self-reports its
     // ISO 4217 code via `IReferenceCurrency.isoCode()`) and pin the matching
@@ -98,24 +92,24 @@ pub fn request_credis(
         asset,
         issuance_currency,
         currency_rate,
-        amount_stables,
-        rate,
-        gratis_amount,
+        terms.stables_amount,
+        terms.entry_rate,
+        terms.gratis_amount,
         current_time,
     )?;
 
     // Withdraw the matching stablecoin from the vault to the smart account.
-    outbe_vaultrouter::api::withdraw(&storage, asset, amount_stables, smart_account)?;
+    outbe_vaultrouter::api::withdraw(&storage, asset, terms.stables_amount, smart_account)?;
 
     storage.emit_event(
         CREDIS_FACTORY_ADDRESS,
         alloy_sol_types::SolEvent::encode_log_data(&ICredisFactory::CredisRequested {
             smartAccount: smart_account,
-            amount: amount_stables,
+            amount: terms.stables_amount,
         }),
     )?;
 
-    Ok((position_id, amount_stables))
+    Ok((position_id, terms.stables_amount))
 }
 
 // ---------------------------------------------------------------------------
@@ -244,10 +238,6 @@ pub fn expire_position(storage: StorageHandle<'_>, position_id: U256) -> Result<
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Oracle conversion (gratis 10^18 → stablecoin 10^6)
-// ---------------------------------------------------------------------------
-
 /// Reads the disbursed asset's ISO 4217 currency code via a static
 /// `IReferenceCurrency.isoCode()` sub-call. Mirrors the `staticcall` +
 /// `abi_decode_returns` pattern used by intexfactory's ERC20 reads.
@@ -258,24 +248,4 @@ fn read_iso_code(storage: &StorageHandle<'_>, asset: Address) -> Result<u16> {
     )?;
     IReferenceCurrency::isoCodeCall::abi_decode_returns(&ret)
         .map_err(|_| CredisFactoryError::AssetIsoUndecodable.into())
-}
-
-/// Cosmos formula: `amountStables = gratisAmount * rateInt18 / (decimalsDiff * precision)`.
-fn convert_gratis_to_stables(
-    storage: StorageHandle<'_>,
-    gratis_amount: U256,
-) -> Result<(U256, U256)> {
-    let rate = get_exchange_rate(storage, NATIVE_TOKEN, STABLECOIN)?;
-    let numerator = gratis_amount
-        .checked_mul(rate)
-        .ok_or_else(|| -> PrecompileError {
-            CredisFactoryError::OracleConversionOverflow.into()
-        })?;
-    let denominator =
-        decimals_diff()
-            .checked_mul(SCALE_1E18)
-            .ok_or_else(|| -> PrecompileError {
-                CredisFactoryError::OracleConversionOverflow.into()
-            })?;
-    Ok((numerator / denominator, rate))
 }
