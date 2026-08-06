@@ -4,11 +4,12 @@ use alloy_primitives::{Address, U256};
 use outbe_primitives::addresses::UPDATE_ADDRESS;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::{PrecompileError, Result};
+use outbe_teeregistry::TeeRegistry;
 use outbe_vote::handlers::{TargetExecutionOutcome, VoteTarget, VoteTargetContext};
 use serde_json::Value;
 
 use crate::errors::UpdateError;
-use crate::payload::validate_schedule_update_json;
+use crate::payload::{validate_schedule_update_json, ScheduleUpdatePayload};
 use crate::schema::Update;
 
 /// Vote target handler wired to the Update precompile address.
@@ -36,14 +37,37 @@ impl VoteTarget for UpdateVoteTarget {
         let payload: Value = serde_json::from_slice(payload).map_err(|_| {
             PrecompileError::Fatal("stored Update proposal payload is invalid".into())
         })?;
+        let decoded = ScheduleUpdatePayload::from_value(&payload).map_err(|err| {
+            PrecompileError::Fatal(format!("stored Update proposal payload is invalid: {err}"))
+        })?;
         match Update::new(ctx.storage.clone()).schedule_update_from_propose_classified(
             proposal_id,
             &payload,
             ctx.block.block_number,
         )? {
-            Ok(()) => Ok(TargetExecutionOutcome::Applied),
+            Ok(()) => {
+                if let Some(policy) = decoded.tee_policy().map_err(|err| {
+                    PrecompileError::Fatal(format!(
+                        "stored Update successor TEE policy is invalid: {err}"
+                    ))
+                })? {
+                    if let Err(err) = TeeRegistry::new(ctx.storage.clone())
+                        .stage_successor_policy_v1(proposal_id, &policy)
+                    {
+                        return classify_tee_policy_stage_error(err);
+                    }
+                }
+                Ok(TargetExecutionOutcome::Applied)
+            }
             Err(err) => classify_domain_error(err),
         }
+    }
+}
+
+fn classify_tee_policy_stage_error(err: PrecompileError) -> Result<TargetExecutionOutcome> {
+    match err {
+        PrecompileError::Revert(reason) => Ok(TargetExecutionOutcome::Error { reason }),
+        other => Err(other),
     }
 }
 
@@ -59,7 +83,10 @@ fn classify_domain_error(err: UpdateError) -> Result<TargetExecutionOutcome> {
         | UpdateError::ScheduledUpdateAlreadyExists
         | UpdateError::InvalidVersion
         | UpdateError::InvalidPayload
-        | UpdateError::InvalidScheduledUpdateStatus => Err(PrecompileError::Fatal(format!(
+        | UpdateError::InvalidScheduledUpdateStatus
+        | UpdateError::InvalidTeePolicy
+        | UpdateError::TeePolicyChainIdentityMismatch
+        | UpdateError::TeePolicyActivationMismatch => Err(PrecompileError::Fatal(format!(
             "Update Vote target invariant failure: {err}"
         ))),
     }
@@ -92,6 +119,9 @@ mod tests {
             UpdateError::InvalidVersion,
             UpdateError::InvalidPayload,
             UpdateError::InvalidScheduledUpdateStatus,
+            UpdateError::InvalidTeePolicy,
+            UpdateError::TeePolicyChainIdentityMismatch,
+            UpdateError::TeePolicyActivationMismatch,
         ] {
             assert!(matches!(
                 classify_domain_error(err),

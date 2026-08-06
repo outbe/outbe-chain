@@ -6,6 +6,8 @@
 //! Also provides the `dkg` subcommand for bootstrapping BLS threshold key material.
 
 use clap::Parser;
+use commonware_codec::Encode as _;
+use commonware_cryptography::Signer as _;
 use commonware_runtime::Runner as _;
 use eyre::WrapErr as _;
 use outbe_compressed_entities::{
@@ -32,16 +34,400 @@ use outbe_node::{
     },
     OutbeBeaconConsensus, OutbeFullNode, OutbeNode,
 };
+use outbe_operator::{
+    rpc::HttpRenewalRpc,
+    tee::{
+        inspect_upgrade_journal_v1, read_renewal_status_v1, record_upgrade_finalized_v1,
+        record_upgrade_missed_cutoff_v1, record_upgrade_promoted_v1, run_renewal_once_v1,
+        NodeBindingSelectorV1, RenewalAlertLevelV1, RenewalEnclaveV1, RenewalModeV1,
+        RenewalNodeSignerV1, RenewalOutcomeV1, RenewalServiceConfigV1, UpgradeJournalStateV1,
+    },
+    tx::RelaySignerV1,
+};
 use outbe_primitives::projection::ProjectionReadinessHandle;
 use outbe_primitives::OutbeHeader;
 use reth_chainspec::ChainSpec;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_ethereum::cli::interface::Cli;
 use reth_node_builder::NodeHandle;
+use reth_provider::{HeaderProvider, StateProviderFactory};
 use reth_rpc_server_types::{RethRpcModule, RpcModuleSelection, RpcModuleValidator};
-use std::{sync::Arc, thread};
+use std::{path::PathBuf, sync::Arc, thread};
 use tokio::sync::oneshot;
 use tracing::info;
+
+mod ocomp_genesis;
+mod tee_genesis;
+
+enum RenewalNodeAuthorityV1 {
+    Validator(Arc<OutbeEvmSigner>),
+    FullNode(k256::ecdsa::SigningKey),
+}
+
+impl RenewalNodeSignerV1 for RenewalNodeAuthorityV1 {
+    fn sign_node_hash(&self, hash: alloy_primitives::B256) -> eyre::Result<[u8; 65]> {
+        match self {
+            Self::Validator(signer) => signer
+                .sign_hash(&hash)
+                .map_err(|error| eyre::eyre!("validator renewal signing failed: {error}")),
+            Self::FullNode(signer) => {
+                use k256::ecdsa::signature::hazmat::PrehashSigner as _;
+                let (signature, recovery): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) =
+                    signer.sign_prehash(hash.as_slice()).map_err(|error| {
+                        eyre::eyre!("full-node renewal signing failed: {error}")
+                    })?;
+                let mut bytes = [0_u8; 65];
+                bytes[..64].copy_from_slice(&signature.to_bytes());
+                bytes[64] = recovery.to_byte();
+                Ok(bytes)
+            }
+        }
+    }
+}
+
+struct GlobalRenewalEnclaveV1;
+
+impl RenewalEnclaveV1 for GlobalRenewalEnclaveV1 {
+    fn generate_dcap_quote(
+        &mut self,
+        intent: &outbe_primitives::tee_attestation_v1::RegistrationIntentV1,
+    ) -> eyre::Result<outbe_tee::GeneratedDcapQuoteV1> {
+        outbe_tee::generate_dcap_quote_v1(intent)
+            .map_err(|error| eyre::eyre!("generate renewal quote: {error}"))
+    }
+}
+
+struct RenewalWorkerV1 {
+    rpc_url: String,
+    relay: RelaySignerV1,
+    authority: RenewalNodeAuthorityV1,
+    config: RenewalServiceConfigV1,
+    poll_secs: u64,
+    warning_blocks: u64,
+    critical_blocks: u64,
+}
+
+async fn run_renewal_worker_v1(
+    worker: RenewalWorkerV1,
+    shutdown: tokio_util::sync::CancellationToken,
+) {
+    let rpc = HttpRenewalRpc::new(worker.rpc_url);
+    let mut enclave = GlobalRenewalEnclaveV1;
+    loop {
+        let upgrade_blocks_renewal = match inspect_upgrade_journal_v1(&worker.config.node_data_dir)
+        {
+            Ok(Some(snapshot)) => matches!(
+                snapshot.lifecycle,
+                UpgradeJournalStateV1::CandidatePrepared { .. }
+                    | UpgradeJournalStateV1::RootCopied { .. }
+                    | UpgradeJournalStateV1::CandidateKeyReady { .. }
+                    | UpgradeJournalStateV1::SubmissionPrepared { .. }
+                    | UpgradeJournalStateV1::Submitted { .. }
+                    | UpgradeJournalStateV1::Finalized { .. }
+                    | UpgradeJournalStateV1::Promoted { .. }
+                    | UpgradeJournalStateV1::TerminalMissedCutoff { .. }
+            ),
+            Ok(None) => false,
+            Err(error) => {
+                tracing::error!(error = %format!("{error:#}"), "read upgrade checkpoint before renewal failed; renewal paused fail-closed");
+                true
+            }
+        };
+        let renewal = if upgrade_blocks_renewal {
+            None
+        } else {
+            Some(
+                run_renewal_once_v1(
+                    &rpc,
+                    &worker.relay,
+                    &mut enclave,
+                    &worker.authority,
+                    &worker.config,
+                    RenewalModeV1::Automatic,
+                )
+                .await,
+            )
+        };
+        match renewal {
+            None => {}
+            Some(Ok(RenewalOutcomeV1::Submitted {
+                transaction_hash,
+                replayed,
+            })) => info!(%transaction_hash, replayed, "automatic DCAP renewal submitted"),
+            Some(Ok(RenewalOutcomeV1::Finalized {
+                finalized_height,
+                valid_until,
+            })) => info!(
+                finalized_height,
+                valid_until, "automatic DCAP renewal finalized"
+            ),
+            Some(Ok(RenewalOutcomeV1::Abandoned {
+                finalized_height,
+                reason,
+            })) => {
+                tracing::warn!(finalized_height, %reason, "stale DCAP renewal abandoned; next pass will rebuild")
+            }
+            Some(Ok(RenewalOutcomeV1::NotDue { .. })) => {}
+            Some(Err(error)) => {
+                tracing::error!(error = %format!("{error:#}"), "automatic DCAP renewal reconciliation failed")
+            }
+        }
+        match read_renewal_status_v1(
+            &rpc,
+            &worker.config.node_data_dir,
+            &worker.config.selector,
+            worker.warning_blocks,
+            worker.critical_blocks,
+        )
+        .await
+        {
+            Ok(status) if status.alert == RenewalAlertLevelV1::Critical => tracing::error!(
+                finalized_height = status.finalized_height,
+                next_freeze_height = status.next_freeze_height,
+                valid_until = status.valid_until,
+                "DCAP renewal is unsafe at the critical DKG-freeze margin"
+            ),
+            Ok(status) if status.alert == RenewalAlertLevelV1::Warning => tracing::warn!(
+                finalized_height = status.finalized_height,
+                next_freeze_height = status.next_freeze_height,
+                valid_until = status.valid_until,
+                "DCAP renewal is unsafe at the warning DKG-freeze margin"
+            ),
+            Ok(_) => {}
+            Err(error) => {
+                tracing::error!(error = %format!("{error:#}"), "read automatic DCAP renewal status failed")
+            }
+        }
+        tokio::select! {
+            () = shutdown.cancelled() => break,
+            () = tokio::time::sleep(std::time::Duration::from_secs(worker.poll_secs)) => {}
+        }
+    }
+}
+
+async fn run_upgrade_promotion_worker_v1<P>(
+    provider: P,
+    chain_id: u64,
+    genesis_hash: alloy_primitives::B256,
+    node_data_dir: PathBuf,
+    poll_secs: u64,
+    warning_blocks: u64,
+    critical_blocks: u64,
+    promoted: Arc<tokio::sync::Notify>,
+) where
+    P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory + Send + Sync + 'static,
+{
+    loop {
+        let snapshot = match inspect_upgrade_journal_v1(&node_data_dir) {
+            Ok(Some(snapshot)) => snapshot,
+            Ok(None) => {
+                tokio::time::sleep(std::time::Duration::from_secs(poll_secs)).await;
+                continue;
+            }
+            Err(error) => {
+                tracing::error!(error = %format!("{error:#}"), "read enclave-upgrade journal failed");
+                return;
+            }
+        };
+        let context = snapshot.lifecycle.context().clone();
+        match &snapshot.lifecycle {
+            UpgradeJournalStateV1::Promoted { .. } => return,
+            UpgradeJournalStateV1::TerminalMissedCutoff {
+                finalized_height,
+                activation_height,
+                ..
+            } => {
+                tracing::error!(
+                    finalized_height,
+                    activation_height,
+                    "enclave upgrade is terminal after missing successor activation cutoff"
+                );
+                return;
+            }
+            UpgradeJournalStateV1::Finalized {
+                finalized_height,
+                finalized_hash,
+                ..
+            } => {
+                let committed = match outbe_tee::load_committed_enclave_manifest_v1(&node_data_dir)
+                {
+                    Ok(committed) => committed,
+                    Err(error) => {
+                        tracing::error!(error = %error, "load committed manifest during upgrade recovery failed");
+                        return;
+                    }
+                };
+                let committed_hash = match committed.authorization_hash() {
+                    Ok(hash) => hash,
+                    Err(error) => {
+                        tracing::error!(error = %error, "hash committed manifest during upgrade recovery failed");
+                        return;
+                    }
+                };
+                if committed_hash == context.candidate_manifest_hash {
+                    if let Err(error) = record_upgrade_promoted_v1(&node_data_dir) {
+                        tracing::error!(error = %format!("{error:#}"), "record recovered upgrade promotion failed");
+                        return;
+                    }
+                    info!(finalized_height, %finalized_hash, "reconciled already-promoted enclave candidate");
+                    return;
+                }
+                match outbe_node::tee_remote_session::construct_local_finalized_replacement_authorization_with_view_v1(
+                    &provider,
+                    chain_id,
+                    genesis_hash,
+                    &node_data_dir,
+                    &committed.node_id,
+                    committed.enclave_profile,
+                ) {
+                    Ok(authorized) => {
+                        if let Err(error) = outbe_tee::promote_replacement_candidate(
+                            &node_data_dir,
+                            &authorized.authorization,
+                        ) {
+                            tracing::error!(error = %error, "promote finalized enclave candidate failed");
+                            return;
+                        }
+                        if let Err(error) = record_upgrade_promoted_v1(&node_data_dir) {
+                            tracing::error!(error = %format!("{error:#}"), "record finalized enclave promotion failed");
+                            return;
+                        }
+                        info!(finalized_height, %finalized_hash, "finalized enclave candidate promoted; execution restart required");
+                        promoted.notify_one();
+                        return;
+                    }
+                    Err(error) => {
+                        tracing::error!(error = %error, "reconstruct finalized candidate promotion authority failed");
+                        return;
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        let status =
+            match outbe_node::tee_remote_session::inspect_local_finalized_successor_status_v1(
+                &provider,
+                chain_id,
+                genesis_hash,
+            ) {
+                Ok(status) => status,
+                Err(error) => {
+                    tracing::error!(error = %error, "read node-local finalized successor status failed");
+                    tokio::time::sleep(std::time::Duration::from_secs(poll_secs)).await;
+                    continue;
+                }
+            };
+        if let Some(policy) = &status.staged_policy {
+            let policy_hash = match policy.policy_hash() {
+                Ok(hash) => hash,
+                Err(error) => {
+                    tracing::error!(error = %error, "hash node-local staged successor policy failed");
+                    return;
+                }
+            };
+            if policy_hash != context.successor_policy_hash
+                || policy.activation_height != context.activation_height
+            {
+                tracing::error!(
+                    "journaled enclave upgrade no longer matches the finalized staged successor"
+                );
+                return;
+            }
+        }
+        if matches!(snapshot.lifecycle, UpgradeJournalStateV1::Submitted { .. }) {
+            let committed = match outbe_tee::load_committed_enclave_manifest_v1(&node_data_dir) {
+                Ok(committed) => committed,
+                Err(error) => {
+                    tracing::error!(error = %error, "load active manifest for finalized upgrade check failed");
+                    return;
+                }
+            };
+            match outbe_node::tee_remote_session::construct_local_finalized_replacement_authorization_with_view_v1(
+                &provider,
+                chain_id,
+                genesis_hash,
+                &node_data_dir,
+                &committed.node_id,
+                committed.enclave_profile,
+            ) {
+                Ok(authorized) => {
+                    // A matching finalized B proves that transition execution
+                    // happened before the Registry cutoff, even when finality
+                    // advanced across H in one step.
+                    if let Err(error) = record_upgrade_finalized_v1(
+                        &node_data_dir,
+                        authorized.view.block_number,
+                        authorized.view.block_hash,
+                    ) {
+                        tracing::error!(error = %format!("{error:#}"), "record finalized enclave transition failed");
+                        return;
+                    }
+                    if let Err(error) = outbe_tee::promote_replacement_candidate(
+                        &node_data_dir,
+                        &authorized.authorization,
+                    ) {
+                        tracing::error!(error = %error, "promote finalized enclave candidate failed");
+                        return;
+                    }
+                    if let Err(error) = record_upgrade_promoted_v1(&node_data_dir) {
+                        tracing::error!(error = %format!("{error:#}"), "record enclave candidate promotion failed");
+                        return;
+                    }
+                    info!(
+                        finalized_height = authorized.view.block_number,
+                        finalized_hash = %authorized.view.block_hash,
+                        "finalized enclave candidate promoted; execution restart required"
+                    );
+                    promoted.notify_one();
+                    return;
+                }
+                Err(outbe_node::tee_remote_session::LocalRegistryAdmissionError::ReplacementBindingMissing) => {}
+                Err(error) => {
+                    tracing::error!(error = %error, "finalized enclave transition authorization failed");
+                    return;
+                }
+            }
+        }
+        if status.view.block_number >= context.activation_height {
+            match record_upgrade_missed_cutoff_v1(
+                &node_data_dir,
+                status.view.block_number,
+                context.activation_height,
+            ) {
+                Ok(_) => tracing::error!(
+                    finalized_height = status.view.block_number,
+                    activation_height = context.activation_height,
+                    "enclave upgrade missed its finalized successor activation cutoff"
+                ),
+                Err(error) => {
+                    tracing::error!(error = %format!("{error:#}"), "record missed enclave-upgrade cutoff failed")
+                }
+            }
+            return;
+        }
+        let remaining = context
+            .activation_height
+            .saturating_sub(status.view.block_number);
+        if remaining <= critical_blocks {
+            tracing::error!(
+                finalized_height = status.view.block_number,
+                activation_height = context.activation_height,
+                remaining_blocks = remaining,
+                "enclave upgrade is inside its critical finalized activation margin"
+            );
+        } else if remaining <= warning_blocks {
+            tracing::warn!(
+                finalized_height = status.view.block_number,
+                activation_height = context.activation_height,
+                remaining_blocks = remaining,
+                "enclave upgrade is inside its warning finalized activation margin"
+            );
+        }
+
+        tokio::time::sleep(std::time::Duration::from_secs(poll_secs)).await;
+    }
+}
 
 #[derive(Debug, Clone, Default)]
 struct OutbeChainSpecParser;
@@ -83,6 +469,11 @@ impl ChainSpecParser for OutbeChainSpecParser {
                 .clone()
                 .map_header(OutbeHeader::new)
                 .into();
+        outbe_evm::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
+            chain_spec.as_ref(),
+        )
+        .activation()
+        .map_err(|error| eyre::eyre!("invalid mandatory teeAttestationV1 ChainSpec: {error}"))?;
         outbe_node::ocomp::fork::require_startup_ocomp_fork_install(chain_spec.as_ref())?;
         Ok(chain_spec)
     }
@@ -114,6 +505,26 @@ struct DkgCli {
 
 #[derive(clap::Subcommand)]
 enum DkgCommand {
+    /// Generate only the validator identity keys used by a fresh interactive genesis DKG.
+    Identities {
+        /// Output directory for generated identity key material.
+        #[arg(long)]
+        output_dir: std::path::PathBuf,
+
+        /// Number of validator identities to generate.
+        #[arg(long)]
+        validators: u32,
+    },
+    /// Verify that imported founder private keys match their public validator manifest.
+    VerifyIdentities {
+        /// Public validators.json manifest.
+        #[arg(long)]
+        validators: std::path::PathBuf,
+
+        /// Directory containing validator-N/signing-key.hex and evm-key.hex.
+        #[arg(long)]
+        material_dir: std::path::PathBuf,
+    },
     /// Bootstrap DKG material for a validator set.
     Bootstrap {
         /// Output directory for generated key material.
@@ -158,8 +569,9 @@ enum DkgCommand {
         #[arg(long)]
         storage_dir: std::path::PathBuf,
     },
-    /// Force-restart DKG by deleting saved threshold material.
-    /// The node will run a fresh DKG ceremony on next startup.
+    /// Delete only the local consensus threshold material.
+    /// This never modifies or recovers the permanent TEE offer key; normal
+    /// genesis or live-join gates still decide whether startup may proceed.
     ForceRestart {
         /// Storage directory containing DKG material.
         #[arg(long)]
@@ -168,10 +580,16 @@ enum DkgCommand {
 }
 
 fn main() -> eyre::Result<()> {
-    // Intercept `dkg` subcommand before reth CLI parsing.
+    // Intercept Outbe-owned subcommands before reth CLI parsing.
     let args: Vec<String> = std::env::args().collect();
     if args.len() > 1 && args[1] == "dkg" {
         return run_dkg_command(&args);
+    }
+    if args.len() > 1 && args[1] == "tee" {
+        return tee_genesis::run(&args);
+    }
+    if args.len() > 1 && args[1] == "ocomp" {
+        return ocomp_genesis::run(&args);
     }
 
     // Intercept `--version` / `-V` so that the user sees Outbe-side build
@@ -242,6 +660,18 @@ fn run_dkg_command(args: &[String]) -> eyre::Result<()> {
     let backend = parse_dkg_key_backend(&dkg_cli)?;
 
     match dkg_cli.command {
+        DkgCommand::Identities {
+            output_dir,
+            validators,
+        } => outbe_consensus::cli::execute_validator_identities(output_dir, validators, &backend),
+        DkgCommand::VerifyIdentities {
+            validators,
+            material_dir,
+        } => outbe_consensus::cli::execute_validator_identity_verification(
+            &validators,
+            &material_dir,
+            &backend,
+        ),
         DkgCommand::Bootstrap {
             output_dir,
             validators,
@@ -271,11 +701,30 @@ fn run_dkg_command(args: &[String]) -> eyre::Result<()> {
     }
 }
 
+fn load_reth_p2p_node_host_signer(
+    network: &reth_node_core::args::NetworkArgs,
+    default_secret_path: PathBuf,
+) -> eyre::Result<(k256::ecdsa::SigningKey, [u8; 33])> {
+    let reth_p2p_secret = network
+        .secret_key(default_secret_path)
+        .wrap_err("failed to load persistent Reth P2P identity for TEE")?;
+    let signing = k256::ecdsa::SigningKey::from_slice(reth_p2p_secret.secret_bytes().as_slice())
+        .map_err(|error| eyre::eyre!("invalid Reth P2P signing key: {error}"))?;
+    let reth_p2p_public = signing
+        .verifying_key()
+        .to_encoded_point(true)
+        .as_bytes()
+        .try_into()
+        .map_err(|_| eyre::eyre!("Reth P2P public key is not compressed SEC1-33"))?;
+    Ok((signing, reth_p2p_public))
+}
+
 /// Run the main node (Reth execution + Commonware consensus).
 fn run_node() -> eyre::Result<()> {
     // TEE offer decryption routes exclusively through the enclave sidecar
-    // (`--tee-enclave-socket` → `init_enclave_client`); the offer-decryption key
-    // exists only inside the enclave (single path, no in-process key material).
+    // (`--tee-enclave-socket` → persistent production NodeHost authorization);
+    // the offer-decryption key exists only inside the enclave (single path, no
+    // in-process key material).
 
     // Initialize the hash-pinned Barretenberg global CRS before block
     // execution. Tribute admission is consensus-critical, so a node that
@@ -444,6 +893,42 @@ fn run_node() -> eyre::Result<()> {
 
     cli.run_with_components::<OutbeNode>(components, async move |builder, args| {
         args.validate()?;
+        let tee_attestation_v1 =
+            outbe_evm::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
+                builder.config().chain.as_ref(),
+            );
+        let tee_activation = tee_attestation_v1.activation().map_err(|error| {
+            eyre::eyre!("invalid mandatory teeAttestationV1 ChainSpec: {error}")
+        })?;
+        let initial_tee_policy = tee_activation
+            .policy_at(outbe_evm::tee_attestation_activation::TEE_ATTESTATION_V1_ACTIVATION_HEIGHT)
+            .map_err(eyre::Report::msg)?;
+        let dkg_prepare_window_blocks = builder
+            .config()
+            .chain
+            .genesis
+            .config
+            .extra_fields
+            .get_deserialized::<u64>("dkgPrepareWindowBlocks")
+            .transpose()
+            .map_err(|error| eyre::eyre!("invalid dkgPrepareWindowBlocks: {error}"))?
+            .unwrap_or(outbe_consensus::config::DEFAULT_DKG_PREPARE_WINDOW_BLOCKS);
+        let minimum_block_time_millis = builder
+            .config()
+            .chain
+            .genesis
+            .config
+            .extra_fields
+            .get_deserialized::<u64>("minBlockTimeMs")
+            .transpose()
+            .map_err(|error| eyre::eyre!("invalid minBlockTimeMs: {error}"))?
+            .unwrap_or(outbe_consensus::timing::DEFAULT_MIN_BLOCK_TIME_MS);
+        info!(
+            attestation_mode = ?initial_tee_policy.attestation_mode,
+            activation_height = tee_activation.manifest.activation_height,
+            policy_schedule_hash = %tee_activation.manifest.policy_schedule_hash,
+            "validated mandatory TEE attestation ChainSpec authority"
+        );
         let ocomp_fork_install =
             outbe_node::ocomp::fork::require_startup_ocomp_fork_install(
                 builder.config().chain.as_ref(),
@@ -476,33 +961,15 @@ fn run_node() -> eyre::Result<()> {
                 .is_some_and(|config| config.segments.storage_history.is_some()),
         })?;
 
-        // If a TEE enclave sidecar is configured, connect + attest it and install
-        // the global offer-decryption client. Offers route through the enclave on
-        // every node (validators and full nodes execute offer txs), so a node
-        // started with `--tee-enclave-socket` requires a healthy, attested enclave
-        // (fail-fast). When unset, offerTribute() uses the in-process TEE stub.
-        if let Some(socket) = args.tee_enclave_socket.clone() {
-            // Build the host connect policy from the genesis `teePolicy` —
-            // strict (DCAP signature + measurement allowlist) when a policy is
-            // configured (hardware), dev-accept for an unattested gramine-direct
-            // enclave. Same source the consensus DKG/bootstrap connect sites use.
-            let tee_policy =
-                outbe_engine::stack::tee_policy_from_chain_spec(builder.config().chain.as_ref())?;
-            let connect_policy =
-                outbe_engine::tee_bootstrap::quote_policy_from_tee_policy(&tee_policy);
-            outbe_tributefactory::init_enclave_client(&socket, &connect_policy)
-                .wrap_err("TEE enclave connect/attest failed")?;
-            // init_enclave_client logs the REAL attestation status (hardware vs
-            // unattested) derived from the enclave's quote. Under gramine-sgx this
-            // is genuine SGX confidentiality; under gramine-direct/bare it is an
-            // unattested sidecar (process isolation + Noise-IK, not enclave memory
-            // encryption) accepted only by the dev policy.
-            info!(
-                socket = %socket.display(),
-                "TEE enclave sidecar connected — offers decrypt in the enclave process (attestation status logged above)",
-            );
-        }
-
+        let node_data_dir = builder
+            .config()
+            .datadir
+            .clone()
+            .resolve_datadir(reth_ethereum::chainspec::EthChainSpec::chain(
+                builder.config().chain.as_ref(),
+            ))
+            .data_dir()
+            .to_path_buf();
         let evm_signer = if args.is_validator {
             let evm_key_path = args
                 .effective_validator_evm_key()?
@@ -523,6 +990,193 @@ fn run_node() -> eyre::Result<()> {
         } else {
             None
         };
+        let renewal_validator_authority = evm_signer.clone();
+        let mut renewal_full_node_authority = None;
+
+        // Every network declares exactly one TEE mode in genesis and every node
+        // must connect to the corresponding enclave transport before execution
+        // or consensus starts. GramineDirectDev is a separate network mode, not
+        // a fallback when production initialization or DCAP fails.
+        let socket = args.tee_enclave_socket.clone().ok_or_else(|| {
+            eyre::eyre!(
+                "mandatory {:?} ChainSpec requires --tee-enclave-socket before node startup",
+                initial_tee_policy.attestation_mode
+            )
+        })?;
+        let endpoint = socket
+            .to_str()
+            .ok_or_else(|| eyre::eyre!("TEE enclave endpoint is not valid UTF-8"))?;
+        match initial_tee_policy.attestation_mode {
+            outbe_primitives::tee_attestation_v1::AttestationMode::DcapRequired => {
+                if args.is_validator {
+                let signing_key_path = args.signing_key.as_deref().ok_or_else(|| {
+                    eyre::eyre!("validator TEE initialization requires --consensus.signing-key")
+                })?;
+                let bls_key = outbe_engine::validators::load_signing_key(
+                    signing_key_path,
+                    &args.key_backend()?,
+                )?;
+                let consensus_bls_public: [u8; 48] = bls_key
+                    .public_key()
+                    .encode()
+                    .as_ref()
+                    .try_into()
+                    .map_err(|_| eyre::eyre!("validator BLS public key is not 48 bytes"))?;
+                let signer = evm_signer.as_ref().ok_or_else(|| {
+                    eyre::eyre!("validator EVM signer unavailable during TEE initialization")
+                })?;
+                let client = outbe_tee::connect_or_initialize_validator_enclave(
+                    endpoint,
+                    &node_data_dir,
+                    outbe_tee::ValidatorNodeHostIdentityV1 {
+                        chain_id: builder.config().chain.chain().id(),
+                        genesis_hash: builder.config().chain.genesis_hash(),
+                        validator: signer.address(),
+                        consensus_bls_public,
+                    },
+                    |hash| signer.sign_hash(&hash).map_err(|error| error.to_string()),
+                )
+                .wrap_err("validator NodeHost enclave initialization failed")?;
+                outbe_tee::install_authorized_enclave_client(client).map_err(eyre::Report::msg)?;
+                } else {
+                    use k256::ecdsa::signature::hazmat::PrehashSigner as _;
+
+                    // Resolve the identity through the same Reth API and default
+                    // discovery-secret path used later by the network builder.
+                    let (signing, reth_p2p_public) = load_reth_p2p_node_host_signer(
+                        &builder.config().network,
+                        builder.config().datadir().p2p_secret(),
+                    )?;
+                    let client = outbe_tee::connect_or_initialize_full_node_enclave(
+                        endpoint,
+                        &node_data_dir,
+                        outbe_tee::FullNodeNodeHostIdentityV1 {
+                            chain_id: builder.config().chain.chain().id(),
+                            genesis_hash: builder.config().chain.genesis_hash(),
+                            reth_p2p_public,
+                        },
+                        |hash| {
+                            let (signature, recovery): (
+                                k256::ecdsa::Signature,
+                                k256::ecdsa::RecoveryId,
+                            ) = signing
+                                .sign_prehash(hash.as_slice())
+                                .map_err(|error| error.to_string())?;
+                            let mut bytes = [0_u8; 65];
+                            bytes[..64].copy_from_slice(signature.to_bytes().as_slice());
+                            bytes[64] = recovery.to_byte();
+                            Ok(bytes)
+                        },
+                    )
+                    .wrap_err("full-node NodeHost enclave initialization failed")?;
+                    renewal_full_node_authority = Some(signing);
+                    outbe_tee::install_authorized_enclave_client(client)
+                        .map_err(eyre::Report::msg)?;
+                }
+            }
+            outbe_primitives::tee_attestation_v1::AttestationMode::GramineDirectDev => {
+                let client = outbe_tee::EnclaveClient::connect_endpoint(endpoint)
+                .wrap_err(
+                    "GramineDirectDev enclave connection failed; production transport is not a fallback",
+                )?;
+                outbe_tee::install_enclave_client(client).map_err(eyre::Report::msg)?;
+            }
+        }
+        info!(
+            socket = %socket.display(),
+            validator_node_host = args.is_validator,
+            attestation_mode = ?initial_tee_policy.attestation_mode,
+            "mandatory TEE enclave sidecar connected before execution launch",
+        );
+
+        // A follower re-executes every protected transaction and therefore must
+        // already hold the exact permanent offer key committed by the running
+        // chain. Prove that invariant before Reth opens networking, RPC, sync or
+        // execution. Losing the key is terminal for this node identity: startup
+        // never invokes recovery, replacement or another bootstrap path.
+        if !args.is_validator {
+            let upstream = args.upstream.as_deref().ok_or_else(|| {
+                eyre::eyre!(
+                    "full-node startup requires --upstream to authenticate the chain offer key"
+                )
+            })?;
+            let expected_offer = outbe_engine::read_upstream_tribute_offer_public_key(upstream)
+                .await
+                .wrap_err("failed to read mandatory offer key from the selected upstream")?;
+            if expected_offer.is_zero() {
+                return Err(eyre::eyre!(
+                    "selected upstream has no mandatory OST3 offer key; refusing full-node startup"
+                ));
+            }
+            let resident_offer = outbe_tee::resident_offer_public_key_v1()
+                .wrap_err("failed to read the local enclave resident offer key")?;
+            if resident_offer != expected_offer {
+                return Err(eyre::eyre!(
+                    "local enclave does not hold the selected chain's exact offer key; refusing execution startup (no recovery or fallback)"
+                ));
+            }
+            info!(
+                offer_public_key = %resident_offer,
+                %upstream,
+                "full-node resident offer key matched upstream before execution launch"
+            );
+        }
+
+        let renewal_worker = match initial_tee_policy.attestation_mode {
+            outbe_primitives::tee_attestation_v1::AttestationMode::DcapRequired => {
+                let relay_path = args.tee_renewal_relay_key.as_deref().ok_or_else(|| {
+                    eyre::eyre!(
+                        "DcapRequired automatic renewal requires --tee-renewal.relay-key"
+                    )
+                })?;
+                let relay = RelaySignerV1::from_file(relay_path).wrap_err_with(|| {
+                    format!("load funded TEE renewal relay key {}", relay_path.display())
+                })?;
+                let manifest = outbe_tee::load_committed_enclave_manifest_v1(&node_data_dir)
+                    .wrap_err("load committed NodeHost manifest for renewal")?;
+                let (selector, authority) = match &manifest.node_id {
+                    outbe_primitives::tee_attestation_v1::NodeIdV1::Validator {
+                        address,
+                        ..
+                    } if args.is_validator => (
+                        NodeBindingSelectorV1::Validator(alloy_primitives::Address::from(*address)),
+                        RenewalNodeAuthorityV1::Validator(
+                            renewal_validator_authority.clone().ok_or_else(|| {
+                                eyre::eyre!("validator renewal authority is unavailable")
+                            })?,
+                        ),
+                    ),
+                    outbe_primitives::tee_attestation_v1::NodeIdV1::FullNode {
+                        reth_p2p_public,
+                    } if !args.is_validator => (
+                        NodeBindingSelectorV1::FullNode(*reth_p2p_public),
+                        RenewalNodeAuthorityV1::FullNode(
+                            renewal_full_node_authority.take().ok_or_else(|| {
+                                eyre::eyre!("full-node renewal authority is unavailable")
+                            })?,
+                        ),
+                    ),
+                    _ => eyre::bail!(
+                        "committed NodeHost manifest profile does not match the node role"
+                    ),
+                };
+                Some(RenewalWorkerV1 {
+                    rpc_url: args.tee_renewal_rpc_url.clone(),
+                    relay,
+                    authority,
+                    config: RenewalServiceConfigV1 {
+                        node_data_dir: node_data_dir.clone(),
+                        selector,
+                        manifest,
+                    },
+                    poll_secs: args.tee_renewal_poll_secs,
+                    warning_blocks: args.tee_renewal_warning_blocks,
+                    critical_blocks: args.tee_renewal_critical_blocks,
+                })
+            }
+            outbe_primitives::tee_attestation_v1::AttestationMode::GramineDirectDev => None,
+        };
+
         let offchain_data = args.offchain_data()?;
         validate_adr005_node_mode(args.is_validator, args.upstream.is_some())?;
         let projection_config = OffchainDataProjectionConfig {
@@ -532,10 +1186,11 @@ fn run_node() -> eyre::Result<()> {
             mongodb_uri: offchain_data.mongodb_uri,
             mongodb_database: offchain_data.mongodb_database,
         };
-        let prepared_projection =
-            tokio::task::spawn_blocking(move || prepare_offchain_data_projection(projection_config))
-                .await
-                .wrap_err("offchain-data startup validation worker failed")??;
+        let prepared_projection = tokio::task::spawn_blocking(move || {
+            prepare_offchain_data_projection(projection_config)
+        })
+        .await
+        .wrap_err("offchain-data startup validation worker failed")??;
         let runtime_body_readers = prepared_projection.runtime_body_readers();
         let proof_body_readers = runtime_body_readers.clone();
         let proof_chain_id = builder.config().chain.chain().id();
@@ -661,6 +1316,10 @@ fn run_node() -> eyre::Result<()> {
                         compressed_tree_service.clone(),
                         proof_body_readers.clone(),
                         proof_chain_id,
+                    )
+                    .with_tee_renewal_schedule(
+                        dkg_prepare_window_blocks,
+                        minimum_block_time_millis,
                     );
                     ctx.modules.merge_if_module_configured(
                         RethRpcModule::Other("outbe".to_owned()),
@@ -674,19 +1333,44 @@ fn run_node() -> eyre::Result<()> {
             .await
             .wrap_err("failed launching execution node")?;
 
+        let renewal_handle = renewal_worker.map(|worker| {
+            tokio::spawn(run_renewal_worker_v1(worker, shutdown_token.clone()))
+        });
+        let upgrade_promotion = Arc::new(tokio::sync::Notify::new());
+        let upgrade_handle = if initial_tee_policy.attestation_mode
+            == outbe_primitives::tee_attestation_v1::AttestationMode::DcapRequired
+        {
+            let provider = node.provider.clone();
+            let promoted = upgrade_promotion.clone();
+            Some(tokio::spawn(run_upgrade_promotion_worker_v1(
+                provider,
+                proof_chain_id,
+                genesis_hash,
+                node_data_dir.clone(),
+                args.tee_renewal_poll_secs,
+                args.tee_renewal_warning_blocks,
+                args.tee_renewal_critical_blocks,
+                promoted,
+            )))
+        } else {
+            None
+        };
+
         let durable_ce_adapter = Arc::new(RethDurableCeState::new(node.provider.clone()));
         let durable_ce_state: Arc<dyn DurableCeState> = durable_ce_adapter.clone();
         let canonical_ce_replay: Arc<dyn CanonicalCeReplaySource> = durable_ce_adapter;
         let finalized_ce_tree: Arc<dyn FinalizedCeTree> = compressed_tree_service.clone();
-        let finalized_ce_committer: Arc<dyn FinalizedCeCommitter> = Arc::new(
-            RethCeFinalizer::new(durable_ce_state, finalized_ce_tree),
-        );
+        let finalized_ce_committer: Arc<dyn FinalizedCeCommitter> =
+            Arc::new(RethCeFinalizer::new(durable_ce_state, finalized_ce_tree));
         let startup_ce_tree: Arc<dyn StartupCeTree> = compressed_tree_service.clone();
         let ce_startup_recovery: Arc<dyn CeStartupRecovery> = Arc::new(
             CeStartupRecoveryCoordinator::new(canonical_ce_replay, startup_ce_tree),
         );
 
-        outbe_engine::validators::check_binary_version_compatibility(&node.provider, outbe_evm::handlers::update::registry())?;
+        outbe_engine::validators::check_binary_version_compatibility(
+            &node.provider,
+            outbe_evm::handlers::update::registry(),
+        )?;
 
         if args.is_validator || args.upstream.is_some() {
             if args.upstream.is_some() {
@@ -729,6 +1413,12 @@ fn run_node() -> eyre::Result<()> {
                         let _ = done.await;
                     }
                 }
+                () = upgrade_promotion.notified() => {
+                    info!("finalized enclave upgrade requested execution restart");
+                    if let Some(done) = shutdown.shutdown() {
+                        let _ = done.await;
+                    }
+                }
                 _ = tokio::signal::ctrl_c() => {
                     info!("received shutdown signal");
                 }
@@ -759,6 +1449,27 @@ fn run_node() -> eyre::Result<()> {
                     if let Some(done) = shutdown.shutdown() {
                         let _ = done.await;
                     }
+                }
+                () = upgrade_promotion.notified() => {
+                    info!("finalized enclave upgrade requested execution restart");
+                    if let Some(done) = shutdown.shutdown() {
+                        let _ = done.await;
+                    }
+                }
+            }
+        }
+
+        shutdown_token.cancel();
+        if let Some(handle) = renewal_handle {
+            handle.await.wrap_err("automatic DCAP renewal worker panicked")?;
+        }
+        if let Some(handle) = upgrade_handle {
+            handle.abort();
+            match handle.await {
+                Ok(()) => {}
+                Err(error) if error.is_cancelled() => {}
+                Err(error) => {
+                    return Err(eyre::eyre!("enclave-upgrade watcher panicked: {error}"));
                 }
             }
         }
@@ -798,6 +1509,32 @@ mod tests {
         let tree = engine.tree_config();
         assert!(tree.always_process_payload_attributes_on_canonical_head());
         assert!(tree.unwind_canonical_header());
+    }
+
+    #[test]
+    fn full_node_identity_uses_reth_secret_resolver_and_persists_exact_key() {
+        let root = tempfile::tempdir().unwrap();
+        let explicit_secret = root.path().join("operator-p2p.key");
+        let unused_default = root.path().join("default-discovery-secret");
+        let mut network = reth_node_core::args::NetworkArgs::default();
+        network.p2p_secret_key = Some(explicit_secret.clone());
+
+        let (first_signer, first_public) =
+            super::load_reth_p2p_node_host_signer(&network, unused_default.clone()).unwrap();
+        assert!(explicit_secret.is_file());
+        assert!(!unused_default.exists());
+        assert_eq!(
+            first_signer
+                .verifying_key()
+                .to_encoded_point(true)
+                .as_bytes(),
+            first_public
+        );
+
+        drop(first_signer);
+        let (_, restored_public) =
+            super::load_reth_p2p_node_host_signer(&network, unused_default).unwrap();
+        assert_eq!(restored_public, first_public);
     }
 
     #[test]
@@ -1011,6 +1748,31 @@ mod tests {
     }
 
     #[test]
+    fn test_dkg_identities_do_not_precompute_genesis_threshold_material() {
+        let dir = tempfile::tempdir().unwrap();
+        let args = dkg_args(&[
+            "identities",
+            "--output-dir",
+            dir.path().to_str().unwrap(),
+            "--validators",
+            "4",
+        ]);
+        super::run_dkg_command(&args).unwrap();
+
+        assert!(dir.path().join("validators.json").exists());
+        assert!(dir.path().join("reth-bootnodes.txt").exists());
+        assert!(!dir.path().join("polynomial.hex").exists());
+        assert!(!dir.path().join("dkg-output.hex").exists());
+        for index in 0..4 {
+            let validator = dir.path().join(format!("validator-{index}"));
+            assert!(validator.join("signing-key.hex").exists());
+            assert!(validator.join("evm-key.hex").exists());
+            assert!(validator.join("reth-p2p-secret.hex").exists());
+            assert!(!validator.join("signing-share.hex").exists());
+        }
+    }
+
+    #[test]
     fn test_dkg_status_after_bootstrap() {
         let dir = tempfile::tempdir().unwrap();
         let dir_str = dir.path().to_str().unwrap();
@@ -1063,7 +1825,7 @@ mod tests {
     }
 
     #[test]
-    fn test_dkg_force_restart() {
+    fn test_dkg_force_restart_only_removes_consensus_material() {
         let dir = tempfile::tempdir().unwrap();
         let dir_str = dir.path().to_str().unwrap();
         let args = dkg_args(&["bootstrap", "--output-dir", dir_str, "--validators", "3"]);
@@ -1078,6 +1840,17 @@ mod tests {
         )
         .unwrap();
         std::fs::write(v0.join("dkg_output.hex"), "placeholder").unwrap();
+        let tee_sentinels = [
+            ("sealed_root.bin", b"permanent-offer-key".as_slice()),
+            ("sealed_identity.bin", b"enclave-identity".as_slice()),
+            (
+                "sealed_node_authorization_v1.bin",
+                b"node-host-authorization".as_slice(),
+            ),
+        ];
+        for (name, bytes) in tee_sentinels {
+            std::fs::write(v0.join(name), bytes).unwrap();
+        }
         assert!(v0.join("dkg_share.hex").exists());
         assert!(v0.join("dkg_output.hex").exists());
 
@@ -1087,6 +1860,9 @@ mod tests {
         assert!(!v0.join("dkg_share.hex").exists());
         assert!(!v0.join("dkg_polynomial.hex").exists());
         assert!(!v0.join("dkg_output.hex").exists());
+        for (name, bytes) in tee_sentinels {
+            assert_eq!(std::fs::read(v0.join(name)).unwrap(), bytes);
+        }
     }
 
     #[test]

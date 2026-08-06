@@ -1,4 +1,4 @@
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 
 use crate::{
     error::Result,
@@ -14,6 +14,7 @@ pub struct BlockContext {
     pub block_number: u64,
     pub timestamp: u64,
     pub chain_id: u64,
+    pub genesis_hash: B256,
     pub proposer: Address,
     pub validators: Vec<Address>,
 }
@@ -26,10 +27,34 @@ impl BlockContext {
         proposer: Address,
         validators: Vec<Address>,
     ) -> Self {
+        Self::new_with_genesis_hash(
+            block_number,
+            timestamp,
+            chain_id,
+            B256::ZERO,
+            proposer,
+            validators,
+        )
+    }
+
+    /// Creates an execution context bound to the immutable chain identity.
+    ///
+    /// Production execution must source `genesis_hash` from the canonical
+    /// `ChainSpec`; transaction calldata and mutable storage are not
+    /// authorities for this value.
+    pub fn new_with_genesis_hash(
+        block_number: u64,
+        timestamp: u64,
+        chain_id: u64,
+        genesis_hash: B256,
+        proposer: Address,
+        validators: Vec<Address>,
+    ) -> Self {
         Self {
             block_number,
             timestamp,
             chain_id,
+            genesis_hash,
             proposer,
             validators,
         }

@@ -20,11 +20,17 @@ cd /app
 TEE_DIR="${OUTBE_TEE_DIR:-/tee}"
 mkdir -p "${TEE_DIR}"
 
+REMOTE_ATTESTATION=none
+if [[ -e /dev/sgx_enclave || -e /dev/sgx/enclave ]]; then
+  REMOTE_ATTESTATION=dcap
+fi
+
 gramine-manifest \
   -Dlog_level="${GRAMINE_LOG_LEVEL:-error}" \
   -Darch_libdir="${ARCH_LIBDIR}" \
   -Dentrypoint="${ENTRY}" \
   -Dtee_dir="${TEE_DIR}" \
+  -Dremote_attestation="${REMOTE_ATTESTATION}" \
   outbe-tee-enclave.manifest.template \
   outbe-tee-enclave.manifest
 
@@ -36,7 +42,7 @@ echo "test entrypoint: ephemeral test identity:" >&2
 gramine-sgx-sigstruct-view outbe-tee-enclave.sig 2>/dev/null \
   | grep -iE "mr_enclave|mr_signer|isv_prod_id|isv_svn|debug" | sed 's/^/  /' >&2
 
-if [[ -e /dev/sgx_enclave || -e /dev/sgx/enclave ]]; then
+if [[ "${REMOTE_ATTESTATION}" == dcap ]]; then
   echo "test entrypoint: SGX hardware detected -> gramine-sgx" >&2
   exec gramine-sgx outbe-tee-enclave "$@"
 fi

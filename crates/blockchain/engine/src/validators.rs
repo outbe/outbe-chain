@@ -12,10 +12,13 @@ use eyre::{Result, WrapErr};
 use outbe_consensus::bls::{self, KeyBackend};
 use outbe_primitives::consensus_p2p::{decode_versioned, P2pAddress, P2pIngress};
 use outbe_primitives::storage::{
-    readonly::{ReadOnlyStorageProvider, StorageReader},
+    readonly::{ReadOnlyBlockContext, ReadOnlyStorageProvider, StorageReader},
     StorageHandle,
 };
-pub use outbe_primitives::validators::{ValidatorP2pAddress, ValidatorSet};
+use outbe_primitives::tee_attestation_v1::AttestationMode;
+pub use outbe_primitives::validators::{
+    ValidatorP2pAddress, ValidatorSet, MAX_TEE_EXPIRED_TARGET_EXCLUSIONS,
+};
 use reth_ethereum::storage::{StateProvider as _, StateProviderBox, StateProviderFactory};
 use std::path::Path;
 use tracing::debug;
@@ -97,6 +100,101 @@ pub fn read_consensus_validators_from_state(
 /// [`read_validators_from_state`] (ACTIVE-only voting set).
 pub fn read_reshare_target_from_state(state_access: &dyn RethStateAccess) -> Result<ValidatorSet> {
     read_validator_set_from_state(state_access, ValidatorSetKind::ReshareTarget)
+}
+
+/// One exact freeze-height reshare target after applying the DcapRequired lease
+/// gate, together with the canonical ordered addresses removed by that gate.
+#[derive(Clone, Debug)]
+pub struct TeeFilteredReshareTarget {
+    pub validator_set: ValidatorSet,
+    pub tee_expired_target_exclusions: Vec<Address>,
+}
+
+/// Read and filter the ordinary reshare target against TeeRegistry readiness at
+/// one exact canonical freeze-block context.
+///
+/// Ordering is inherited from ValidatorSet storage order. The three parallel
+/// ValidatorSet vectors are filtered by the same indices, and every removed
+/// address is emitted once in that same order. `GramineDirectDev` is a distinct
+/// dev-network policy and deliberately keeps the ordinary target unchanged; it
+/// is never selected as a DcapRequired fallback.
+pub fn read_tee_filtered_reshare_target_from_state(
+    state_access: &dyn RethStateAccess,
+    context: ReadOnlyBlockContext,
+    attestation_mode: AttestationMode,
+) -> Result<TeeFilteredReshareTarget> {
+    if !context.is_complete() {
+        return Err(eyre::eyre!(
+            "TEE expiry filtering requires non-zero chain id, genesis hash, block number and timestamp"
+        ));
+    }
+
+    let target = read_reshare_target_from_state(state_access)?;
+    if attestation_mode == AttestationMode::GramineDirectDev {
+        return Ok(TeeFilteredReshareTarget {
+            validator_set: target,
+            tee_expired_target_exclusions: Vec::new(),
+        });
+    }
+
+    if target.public_keys.len() != target.addresses.len()
+        || target.addresses.len() != target.p2p_addresses.len()
+    {
+        return Err(eyre::eyre!(
+            "reshare target contains misaligned validator vectors"
+        ));
+    }
+
+    let reader = RethStateReader {
+        state: state_access,
+    };
+    let mut provider = ReadOnlyStorageProvider::new_with_block_context(reader, context);
+    let storage = StorageHandle::new(&mut provider);
+    let registry = outbe_teeregistry::TeeRegistry::new(storage);
+
+    let mut filtered_public_keys = Vec::with_capacity(target.public_keys.len());
+    let mut filtered_addresses = Vec::with_capacity(target.addresses.len());
+    let mut filtered_p2p_addresses = Vec::with_capacity(target.p2p_addresses.len());
+    let mut exclusions = Vec::new();
+
+    for ((public_key, address), p2p_address) in target
+        .public_keys
+        .into_iter()
+        .zip(target.addresses)
+        .zip(target.p2p_addresses)
+    {
+        if registry
+            .is_validator_enclave_ready_v1(address)
+            .map_err(|error| {
+                eyre::eyre!(
+                    "failed to evaluate TEE readiness for reshare target validator {address}: {error}"
+                )
+            })?
+        {
+            filtered_public_keys.push(public_key);
+            filtered_addresses.push(address);
+            filtered_p2p_addresses.push(p2p_address);
+        } else {
+            exclusions.push(address);
+        }
+    }
+
+    if exclusions.len() > MAX_TEE_EXPIRED_TARGET_EXCLUSIONS {
+        return Err(eyre::eyre!(
+            "TEE expiry exclusions exceed protocol cap: {} > {}",
+            exclusions.len(),
+            MAX_TEE_EXPIRED_TARGET_EXCLUSIONS
+        ));
+    }
+
+    Ok(TeeFilteredReshareTarget {
+        validator_set: ValidatorSet {
+            public_keys: filtered_public_keys,
+            addresses: filtered_addresses,
+            p2p_addresses: filtered_p2p_addresses,
+        },
+        tee_expired_target_exclusions: exclusions,
+    })
 }
 
 /// Read PENDING validators (`status == PENDING`) from on-chain state — staked
@@ -318,6 +416,33 @@ pub fn read_consensus_validators_at_latest(
     read_consensus_validators_from_state(&state)
 }
 
+/// Read the exact canonical committee snapshot committed for `epoch` from one
+/// state view. The resulting hash is the authority OST3 binds at block 1.
+pub fn read_committee_snapshot_from_state(
+    state_access: &dyn RethStateAccess,
+    epoch: u64,
+) -> Result<Option<outbe_validatorset::state::CommitteeSnapshot>> {
+    let reader = RethStateReader {
+        state: state_access,
+    };
+    let mut provider = ReadOnlyStorageProvider::new(reader);
+    let storage = StorageHandle::new(&mut provider);
+    outbe_validatorset::state::read_committee_snapshot_for_epoch(storage, epoch).map_err(|error| {
+        eyre::eyre!("failed to read committee snapshot for epoch {epoch}: {error}")
+    })
+}
+
+/// Latest-state wrapper for [`read_committee_snapshot_from_state`].
+pub fn read_committee_snapshot_at_latest(
+    provider: &dyn StateProviderFactory,
+    epoch: u64,
+) -> Result<Option<outbe_validatorset::state::CommitteeSnapshot>> {
+    let state = provider
+        .latest()
+        .map_err(|error| eyre::eyre!("failed to get latest state: {error}"))?;
+    read_committee_snapshot_from_state(&state, epoch)
+}
+
 /// Check if there's a pending validator set change in the on-chain state.
 ///
 /// Reads the `pending_set_change` flag from the ValidatorSet contract.
@@ -337,9 +462,9 @@ pub fn has_pending_set_change(state_access: &dyn RethStateAccess) -> Result<bool
 }
 
 /// Read the on-chain registered tribute offer public key (`TeeRegistry` slot 1).
-/// Used at startup to decide whether a joining node needs a key-handoff and as
-/// the `expected_tribute_offer_public` the newcomer's enclave verifies a handoff
-/// against. Returns `B256::ZERO` before the chain has bootstrapped the TEE.
+/// It is the canonical startup comparison for the permanent resident key and the
+/// expected public value verified by one-time registry onboarding. Returns zero
+/// only before block-1 OST3 has bootstrapped the chain.
 pub fn read_tee_offer_public_from_state(state_access: &dyn RethStateAccess) -> Result<B256> {
     let reader = RethStateReader {
         state: state_access,
@@ -363,9 +488,8 @@ pub fn read_tee_offer_public_at_latest(provider: &dyn StateProviderFactory) -> R
 }
 
 /// Read the on-chain tribute-offer epoch (`TeeRegistry` slot 4) from the latest
-/// state — `0` until an offer-key rotation advances it. Passed to the key-handoff
-/// so a newcomer's enclave derives the offer key for the chain's current epoch
-/// instead of a hardcoded `0` (future-proofs the handoff for Stage C).
+/// state. The current permanent genesis offer key uses epoch zero; the field is
+/// decoded explicitly rather than inferred by onboarding code.
 pub fn read_tee_offer_epoch_at_latest(provider: &dyn StateProviderFactory) -> Result<u64> {
     let state = provider
         .latest()
@@ -379,11 +503,8 @@ pub fn read_tee_offer_epoch_at_latest(provider: &dyn StateProviderFactory) -> Re
 }
 
 /// Read a validator's on-chain registered `recipient_x25519` (`TeeRegistry` per-
-/// validator slot). Returns `B256::ZERO` if the validator is not registered. Used
-/// by the handoff registration binding: the responder refuses to seal the resident
-/// group signature to a `recipient_x25519` that does not match this validator's
-/// registered key (an on-chain identity check that substitutes for the not-yet-real
-/// attestation check).
+/// validator slot). Returns zero if the validator is not registered. The one-time
+/// registry artifact must target this exact attested onboarding recipient.
 pub fn read_tee_recipient_x25519_from_state(
     state_access: &dyn RethStateAccess,
     validator: Address,
@@ -469,6 +590,7 @@ mod tests {
     use commonware_math::algebra::Random;
     use outbe_primitives::consensus_p2p::{encode_v1, P2pAddress, P2P_ADDRESS_VERSION_V1};
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+    use outbe_primitives::tee_attestation_v1::{EnclaveProfile, NodeIdV1};
     use std::collections::HashMap;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
@@ -512,6 +634,78 @@ mod tests {
         TestStateAccess {
             data: provider.storage.clone(),
         }
+    }
+
+    fn tee_expiry_state_with_leases(valid_until: [u64; 4]) -> (TestStateAccess, Vec<Address>) {
+        let validators = vec![
+            Address::with_last_byte(0x21),
+            Address::with_last_byte(0x22),
+            Address::with_last_byte(0x23),
+            Address::with_last_byte(0x24),
+        ];
+        let mut provider = HashMapStorageProvider::new(1);
+        StorageHandle::enter(&mut provider, |storage| {
+            let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+            vs.config_owner.write(OWNER).unwrap();
+            vs.config_is_initialized.write(true).unwrap();
+            vs.config_max_validators.write(128).unwrap();
+            let registry = outbe_teeregistry::TeeRegistry::new(storage);
+
+            for (index, (&validator, &lease_end)) in
+                validators.iter().zip(valid_until.iter()).enumerate()
+            {
+                let consensus_pubkey = valid_consensus_pubkey((index + 1) as u8);
+                vs.register_validator(OWNER, validator, &consensus_pubkey)
+                    .unwrap();
+                vs.activate_validator(validator).unwrap();
+
+                let node_hash = NodeIdV1::Validator {
+                    address: validator.into_array(),
+                    bls_minpk_public: consensus_pubkey,
+                }
+                .node_id_hash()
+                .unwrap();
+                registry
+                    .validator_v1_node_hash
+                    .write(&validator, node_hash)
+                    .unwrap();
+                registry
+                    .v1_node_enclave_id
+                    .write(&node_hash, B256::with_last_byte((index + 1) as u8))
+                    .unwrap();
+                registry
+                    .v1_node_binding_id
+                    .write(&node_hash, B256::with_last_byte((index + 11) as u8))
+                    .unwrap();
+                registry
+                    .v1_node_intent_hash
+                    .write(&node_hash, B256::with_last_byte((index + 21) as u8))
+                    .unwrap();
+                registry
+                    .v1_node_profile
+                    .write(&node_hash, EnclaveProfile::Validator as u64)
+                    .unwrap();
+                registry
+                    .v1_node_valid_until
+                    .write(&node_hash, lease_end)
+                    .unwrap();
+            }
+        });
+        (
+            TestStateAccess {
+                data: provider.storage.clone(),
+            },
+            validators,
+        )
+    }
+
+    fn tee_expiry_state(freeze_timestamp: u64) -> (TestStateAccess, Vec<Address>) {
+        tee_expiry_state_with_leases([
+            freeze_timestamp.saturating_sub(1),
+            freeze_timestamp,
+            freeze_timestamp.saturating_add(1),
+            freeze_timestamp.saturating_add(500),
+        ])
     }
 
     #[test]
@@ -561,6 +755,121 @@ mod tests {
 
         let consensus = read_consensus_validators_from_state(&access).unwrap();
         assert_eq!(consensus.addresses, vec![active, exiting]);
+    }
+
+    #[test]
+    fn tee_expiry_filter_uses_exact_freeze_timestamp_boundaries() {
+        let freeze_timestamp = 1_800_000_000;
+        let (access, validators) = tee_expiry_state(freeze_timestamp);
+        let filtered = read_tee_filtered_reshare_target_from_state(
+            &access,
+            ReadOnlyBlockContext {
+                chain_id: 54_322_345,
+                genesis_hash: B256::with_last_byte(0xAA),
+                block_number: 1_200,
+                timestamp: freeze_timestamp,
+            },
+            AttestationMode::DcapRequired,
+        )
+        .unwrap();
+
+        assert_eq!(
+            filtered.validator_set.addresses,
+            vec![validators[2], validators[3]]
+        );
+        assert_eq!(
+            filtered.tee_expired_target_exclusions,
+            vec![validators[0], validators[1]]
+        );
+        assert_eq!(filtered.validator_set.public_keys.len(), 2);
+        assert_eq!(filtered.validator_set.p2p_addresses.len(), 2);
+    }
+
+    #[test]
+    fn renewal_is_decided_by_the_exact_freeze_snapshot() {
+        let freeze_timestamp = 1_800_000_000;
+        let context = ReadOnlyBlockContext {
+            chain_id: 54_322_345,
+            genesis_hash: B256::with_last_byte(0xAA),
+            block_number: 1_200,
+            timestamp: freeze_timestamp,
+        };
+        let (freeze_state, validators) = tee_expiry_state_with_leases([
+            freeze_timestamp.saturating_add(600),
+            freeze_timestamp,
+            freeze_timestamp.saturating_add(600),
+            freeze_timestamp.saturating_add(600),
+        ]);
+
+        let frozen = read_tee_filtered_reshare_target_from_state(
+            &freeze_state,
+            context,
+            AttestationMode::DcapRequired,
+        )
+        .unwrap();
+        assert_eq!(
+            frozen.tee_expired_target_exclusions,
+            vec![validators[1]],
+            "a renewal absent from freeze-height state must wait for the next freeze"
+        );
+
+        let (post_freeze_state, _) = tee_expiry_state_with_leases([
+            freeze_timestamp.saturating_add(600),
+            freeze_timestamp.saturating_add(600),
+            freeze_timestamp.saturating_add(600),
+            freeze_timestamp.saturating_add(600),
+        ]);
+        let refiltered_later_state = read_tee_filtered_reshare_target_from_state(
+            &post_freeze_state,
+            context,
+            AttestationMode::DcapRequired,
+        )
+        .unwrap();
+        assert!(refiltered_later_state
+            .tee_expired_target_exclusions
+            .is_empty());
+
+        assert_eq!(
+            frozen.tee_expired_target_exclusions,
+            vec![validators[1]],
+            "later state must not mutate the already owned frozen target"
+        );
+    }
+
+    #[test]
+    fn tee_expiry_filter_rejects_zero_context() {
+        let (access, _) = tee_expiry_state(1_800_000_000);
+        let error = read_tee_filtered_reshare_target_from_state(
+            &access,
+            ReadOnlyBlockContext {
+                chain_id: 54_322_345,
+                genesis_hash: B256::with_last_byte(0xAA),
+                block_number: 1_200,
+                timestamp: 0,
+            },
+            AttestationMode::DcapRequired,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("non-zero"));
+    }
+
+    #[test]
+    fn gramine_dev_keeps_ordinary_target_without_registry_bindings() {
+        let freeze_timestamp = 1_800_000_000;
+        let (access, validators) = tee_expiry_state(freeze_timestamp);
+        let filtered = read_tee_filtered_reshare_target_from_state(
+            &access,
+            ReadOnlyBlockContext {
+                chain_id: 424_242,
+                genesis_hash: B256::with_last_byte(0xBB),
+                block_number: 1_200,
+                timestamp: freeze_timestamp,
+            },
+            AttestationMode::GramineDirectDev,
+        )
+        .unwrap();
+        assert_eq!(filtered.validator_set.addresses, validators);
+        assert!(filtered.tee_expired_target_exclusions.is_empty());
     }
 
     #[test]

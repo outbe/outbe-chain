@@ -22,11 +22,13 @@
 pub mod compute;
 pub mod confidential;
 pub mod crypto;
+pub mod dcap_verifier;
 pub mod dkg;
 pub mod errors;
 pub mod fidelity;
 pub mod gramine;
 pub mod gratis;
+pub mod initialization;
 pub mod keys;
 pub mod payload;
 pub mod process;

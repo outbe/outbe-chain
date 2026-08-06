@@ -1,8 +1,10 @@
 //! Behavioral registration and enumeration contract for existing exact routes.
 
 use alloy_evm::{eth::EthEvmContext, precompiles::PrecompilesMap, revm::handler::EthPrecompiles};
-use alloy_primitives::Address;
-use outbe_evm::precompiles::{extend_outbe_precompiles, outbe_precompile_addresses};
+use alloy_primitives::{Address, B256};
+use outbe_evm::precompiles::{
+    extend_outbe_precompiles, outbe_precompile_addresses, OutbePrecompileExecutionContext,
+};
 use outbe_primitives::addresses::*;
 use revm::{
     database_interface::EmptyDB, handler::PrecompileProvider, primitives::hardfork::SpecId,
@@ -55,7 +57,7 @@ fn build_extended_precompiles() -> PrecompilesMap {
     let mut precompiles = PrecompilesMap::from_static(EthPrecompiles::new(spec).precompiles);
     extend_outbe_precompiles::<EmptyDB>(
         &mut precompiles,
-        spec,
+        OutbePrecompileExecutionContext::new(spec, B256::ZERO),
         None,
         std::sync::Arc::new(outbe_compressed_entities::ExecutionScope::new()),
         None,

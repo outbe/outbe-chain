@@ -22,8 +22,10 @@ outbe-node.workspace = true
 outbe-ocomp-protocol.workspace = true
 outbe-consensus.workspace = true
 outbe-engine.workspace = true
+outbe-metadosis.workspace = true
 outbe-primitives.workspace = true
-outbe-tributefactory.workspace = true
+outbe-operator.workspace = true
+outbe-tee.workspace = true
 outbe-zkproof.workspace = true
 
 reth-ethereum = { workspace = true, features = ["node", "cli", "exex"] }
@@ -31,12 +33,20 @@ reth-chainspec.workspace = true
 reth-cli.workspace = true
 reth-node-builder.workspace = true
 reth-node-core.workspace = true
+reth-provider.workspace = true
 reth-rpc-server-types.workspace = true
 
+commonware-codec.workspace = true
+commonware-cryptography.workspace = true
 commonware-runtime.workspace = true
 
+alloy-primitives.workspace = true
 clap.workspace = true
 eyre.workspace = true
+hex.workspace = true
+k256.workspace = true
+serde_json.workspace = true
+serde.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
@@ -45,8 +55,8 @@ tracing.workspace = true
 commonware-consensus.workspace = true
 commonware-storage.workspace = true
 commonware-utils.workspace = true
+outbe-metadosis = { workspace = true, features = ["test-utils"] }
 reqwest.workspace = true
-serde_json.workspace = true
 tempfile.workspace = true
 
 [build-dependencies]

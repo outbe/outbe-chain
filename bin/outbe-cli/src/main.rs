@@ -174,8 +174,62 @@ mod tests {
             "join",
             "--enclave-socket",
             "/tmp/enclave.sock",
+            "--profile",
+            "validator",
+            "--binding-id",
+            "0101010101010101010101010101010101010101010101010101010101010101",
+            "--valid-until",
+            "1234567890",
         ]);
         assert!(cli.is_ok());
+    }
+
+    #[test]
+    fn test_cli_parse_same_platform_tee_upgrade_workflow() {
+        assert!(Cli::try_parse_from([
+            "outbe-cli",
+            "tee",
+            "upgrade-prepare",
+            "--candidate-enclave-socket",
+            "/tmp/candidate.sock",
+            "--node-data-dir",
+            "/tmp/node",
+            "--active-tee-dir",
+            "/tmp/tee-a",
+            "--candidate-tee-dir",
+            "/tmp/tee-b",
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "outbe-cli",
+            "tee",
+            "upgrade-copy-root",
+            "--node-data-dir",
+            "/tmp/node",
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "outbe-cli",
+            "tee",
+            "upgrade-submit",
+            "--candidate-enclave-socket",
+            "/tmp/candidate.sock",
+            "--node-data-dir",
+            "/tmp/node",
+            "--binding-id",
+            "0101010101010101010101010101010101010101010101010101010101010101",
+            "--valid-until",
+            "1234567890",
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "outbe-cli",
+            "tee",
+            "upgrade-status",
+            "--node-data-dir",
+            "/tmp/node",
+        ])
+        .is_ok());
     }
 
     #[test]

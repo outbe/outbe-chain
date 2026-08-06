@@ -12,6 +12,7 @@ pub(crate) mod precompile_routes;
 pub mod precompiles;
 pub mod storage;
 pub mod sub_call;
+pub mod tee_attestation_activation;
 /// Re-export of the validator EVM signer, which now lives in
 /// `outbe-primitives::signer`. Wire/data-only type (no EVM runtime), so it
 /// belongs with the other primitives; keeping `outbe_evm::signer` as a path

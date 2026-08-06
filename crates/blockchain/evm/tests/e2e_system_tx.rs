@@ -69,6 +69,8 @@ fn sample_boundary() -> DkgBoundaryArtifact {
         is_full_dkg: false,
         tee_recipient_pubkeys: Vec::new(),
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
+        tee_expired_target_exclusions_hash: B256::ZERO,
         endorsement_signature: alloy_primitives::Bytes::new(),
         reshare: ReshareResult {
             new_active_set: vec![address!("0x3333333333333333333333333333333333333333")],
@@ -102,18 +104,25 @@ fn input_for(kind: SystemTxKind) -> SystemTxInputV2 {
             artifact: sample_boundary(),
         },
         SystemTxKind::TeeBootstrap => SystemTxInputV2::TeeBootstrap {
-            payload: outbe_primitives::tee_bootstrap::TeeBootstrapPayload {
-                policy_hash: B256::ZERO,
-                committee_snapshot_hash: B256::ZERO,
-                committee_snapshot_block: BLOCK_NUMBER,
-                key_epoch: 0,
-                tribute_offer_epoch: 0,
-                dkg_transcript_hash: B256::ZERO,
-                tribute_offer_public_key: B256::ZERO,
-                tribute_offer_group_public_key: alloy_primitives::Bytes::new(),
-                registrations: Vec::new(),
-                policy: outbe_primitives::tee_bootstrap::TeePolicy::default(),
-                validator_signatures: Vec::new(),
+            payload: {
+                use outbe_primitives::tee_test_utils::{
+                    gramine_direct_bootstrap_v2, gramine_direct_policy_v1, DevValidatorV1,
+                };
+                let mut consensus_public = [0_u8; 48];
+                consensus_public[0] = 1;
+                let policy = gramine_direct_policy_v1(CHAIN_ID, B256::repeat_byte(0x11))
+                    .expect("test GramineDirectDev policy is canonical");
+                gramine_direct_bootstrap_v2(
+                    policy,
+                    B256::repeat_byte(0x66),
+                    BLOCK_NUMBER,
+                    1_000_000,
+                    &[DevValidatorV1 {
+                        evm_secret: [1; 32],
+                        bls_minpk_public: consensus_public,
+                    }],
+                )
+                .expect("test GramineDirectDev OST3 payload is canonical")
             },
         },
         SystemTxKind::OracleSlashWindow => SystemTxInputV2::OracleSlashWindow,

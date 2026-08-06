@@ -1230,7 +1230,7 @@ mod tests {
     #[test]
     fn frozen_release_accepts_external_public_registrations_and_rejects_rebinding() {
         let repository_root = repository_root();
-        let fixture = repository_root.join("crates/testing/e2e-harness/fixtures/ocomp-final-v1");
+        let fixture = repository_root.join("testing/e2e-harness/fixtures/ocomp-final-v1");
         let artifacts = fixture.join("artifacts");
         let base_genesis = fixture.join("base/genesis.json");
         let validators = fixture.join("base/validators.json");

@@ -11,6 +11,7 @@ members = [
     "crates/blockchain/txpool",
     "crates/blockchain/node",
     "crates/blockchain/offchain-storage",
+    "crates/blockchain/operator",
     # system
     "crates/system/validatorset",
     "crates/system/slashindicator",
@@ -57,7 +58,7 @@ members = [
     "crates/core/stablecoinpolicy",
     "crates/core/stablecoin",
     "crates/core/stablecoinfactory",
-    "crates/core/e2e",
+    "testing/e2e",
     "crates/core/common",
     # binaries
     "bin/outbe-chain",
@@ -67,8 +68,8 @@ members = [
     "bin/outbe-ocomp",
     "bin/outbe-tee-enclave",
     # testing
-    "crates/testing/e2e-harness",
-    "crates/testing/lysis-v1-reference",
+    "testing/e2e-harness",
+    "testing/lysis-v1-reference",
 ]
 resolver = "2"
 
@@ -103,6 +104,7 @@ outbe-rpc = { path = "crates/blockchain/rpc" }
 outbe-txpool = { path = "crates/blockchain/txpool" }
 outbe-node = { path = "crates/blockchain/node" }
 outbe-offchain-storage = { path = "crates/blockchain/offchain-storage" }
+outbe-operator = { path = "crates/blockchain/operator" }
 # Internal — system
 outbe-validatorset = { path = "crates/system/validatorset" }
 outbe-slashindicator = { path = "crates/system/slashindicator" }
@@ -114,7 +116,7 @@ outbe-emissionlimit = { path = "crates/system/emissionlimit" }
 outbe-cycle = { path = "crates/system/cycle" }
 outbe-accounting = { path = "crates/system/accounting" }
 outbe-zkproof = { path = "crates/system/zkproof" }
-outbe-tee = { path = "crates/system/tee" }
+outbe-tee = { path = "crates/system/tee", default-features = false }
 outbe-tee-enclave = { path = "bin/outbe-tee-enclave" }
 outbe-teeregistry = { path = "crates/system/teeregistry" }
 outbe-l2registry = { path = "crates/system/l2registry" }
@@ -151,7 +153,7 @@ outbe-governance = { path = "crates/core/governance" }
 outbe-stablecoinpolicy = { path = "crates/core/stablecoinpolicy" }
 outbe-stablecoin = { path = "crates/core/stablecoin" }
 outbe-stablecoinfactory = { path = "crates/core/stablecoinfactory" }
-outbe-e2e = { path = "crates/core/e2e" }
+outbe-e2e = { path = "testing/e2e" }
 outbe-common = { path = "crates/core/common" }
 
 # Alloy — core (alloy-rs/core): stays on 1.x

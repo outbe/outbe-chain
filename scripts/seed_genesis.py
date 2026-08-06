@@ -1184,7 +1184,7 @@ def seed_tee_policy(genesis: dict, alloc: dict, seed: dict):
          state. The account also gets marker bytecode so the slot survives
          EIP-161 cleanup until block 1.
       2. `config.teePolicy` — read by the node at startup to build the host
-         `QuotePolicy` (defense-in-depth measurement check at enclave connect).
+         structural key/measurement consistency checks at development connect.
 
     No-op when `tee_policy` is absent: genesis is unchanged and the handler skips
     measurement enforcement (slot 2 == ZERO).
@@ -1444,26 +1444,26 @@ def seed_oracle(storage: StorageBuilder, config: dict):
                 37, u32_bytes(idx), parse_int(sc["peak_price"])
             )  # scurve_peak_price
 
-    # Reference currencies (slot 55) with their annualized refinancing rate
+    # Reference currencies (slot 55) with their annualized currency rate
     # (slot 60, mapping(iso_code => rate) 1e18 scaled). Default: USD (840) at the
-    # current SOFR (~4.30 %). The refinancing rate is read by the Credis Factory
+    # current SOFR (~4.30 %). The currency rate is read by the Credis Factory
     # at issuance; the live data feed is out of scope (governance-updated).
     # Reference-currency codes are stored as a StorageVec<u16>: length at slot 55,
     # data at keccak256(55) + index. Both slots are verified by the
-    # `test_reference_currencies_slot_parity` / `test_reference_refinancing_rate_slot_parity`
+    # `test_reference_currencies_slot_parity` / `test_reference_currency_rate_slot_parity`
     # tests in `crates/system/oracle/src/tests.rs`; keep these constants in sync
     # with the macro-assigned layout if `OracleContract` field order changes.
-    DEFAULT_USD_REFINANCING_RATE = 36_300_000_000_000_000  # 3.63% at 1e18 scale
+    DEFAULT_USD_CURRENCY_RATE = 36_300_000_000_000_000  # 3.63% at 1e18 scale
     reference_currencies = config.get(
         "reference_currencies",
-        [{"iso_code": 840, "refinancing_rate": DEFAULT_USD_REFINANCING_RATE}],
+        [{"iso_code": 840, "currency_rate": DEFAULT_USD_CURRENCY_RATE}],
     )
     storage.set_slot(55, len(reference_currencies))
     for i, entry in enumerate(reference_currencies):
         iso_code = parse_int(entry["iso_code"])
-        rate = parse_int(entry.get("refinancing_rate", DEFAULT_USD_REFINANCING_RATE))
+        rate = parse_int(entry.get("currency_rate", DEFAULT_USD_CURRENCY_RATE))
         storage.set_raw_slot(data_slot(55) + i, iso_code)
-        # reference_refinancing_rate: mapping(iso_code => rate) at slot 60.
+        # reference_currency_rate: mapping(iso_code => rate) at slot 60.
         storage.set_mapping(60, u32_bytes(iso_code), rate)
 
 

@@ -157,13 +157,18 @@ impl UpstreamRpcClient {
             .map_err(|e| eyre::eyre!("upstream eth_call tributeOfferPublicKey failed: {e}"))?;
         let bytes = alloy_primitives::hex::decode(result.trim_start_matches("0x"))
             .map_err(|e| eyre::eyre!("malformed eth_call result from upstream: {e}"))?;
-        // A `uint256` return is a single 32-byte word; anything shorter is treated
-        // as zero (non-TEE chain / method absent).
-        if bytes.len() < 32 {
-            return Ok(alloy_primitives::B256::ZERO);
-        }
-        Ok(alloy_primitives::B256::from_slice(&bytes[..32]))
+        decode_tribute_offer_public_key(&bytes)
     }
+}
+
+fn decode_tribute_offer_public_key(bytes: &[u8]) -> eyre::Result<B256> {
+    if bytes.len() != 32 {
+        return Err(eyre::eyre!(
+            "upstream tributeOfferPublicKey returned {} bytes instead of one ABI word",
+            bytes.len()
+        ));
+    }
+    Ok(B256::from_slice(bytes))
 }
 
 /// Decode an `outbe_getFinalization` proof into a `CertifiedFinalizedBlock`.
@@ -245,6 +250,24 @@ impl TipSource for UpstreamRpcClient {
                     None
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_tribute_offer_public_key;
+    use alloy_primitives::B256;
+
+    #[test]
+    fn offer_key_rpc_word_is_exactly_32_bytes() {
+        let expected = B256::repeat_byte(0x42);
+        assert_eq!(
+            decode_tribute_offer_public_key(expected.as_slice()).unwrap(),
+            expected
+        );
+        for malformed in [vec![], vec![0x42; 31], vec![0x42; 33]] {
+            assert!(decode_tribute_offer_public_key(&malformed).is_err());
         }
     }
 }

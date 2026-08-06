@@ -1,11 +1,8 @@
-//! DCAP (ECDSA) SGX quote parsing — shared by the enclave (to publish its own
-//! real measurements) and the host (to verify a quote instead of trusting the
-//! cleartext fields next to it).
+//! DCAP (ECDSA) SGX quote measurement parsing shared by the enclave and host.
 //!
 //! Only the layout needed to extract MRENCLAVE/MRSIGNER/ISVSVN/report_data is
-//! modelled. This is parsing, not cryptographic verification: a full DCAP
-//! verification of the quote signature + TCB chain requires the Intel DCAP Quote
-//! Verification Library and PCCS collateral (see `verify_dcap_signature`).
+//! modelled. This module parses fields; cryptographic quote verification belongs
+//! to the enclave-resident native QVL path.
 
 /// SGX report body offset inside a DCAP ECDSA quote (after the 48-byte header).
 /// A standalone local SGX report has its body at offset 0, so prepending this many
@@ -56,57 +53,6 @@ pub fn parse_quote_measurements(quote: &[u8]) -> Result<ReportMeasurements, Stri
         isv_svn,
         report_data,
     })
-}
-
-/// Cryptographically verify a DCAP quote's signature + cert chain + TCB status.
-///
-/// Behind the `dcap` cargo feature this uses the pure-Rust Intel QVL
-/// (`dcap-qvl`): it checks the quote's ECDSA signature against Intel's trusted
-/// root, validates the PCK cert chain, and confirms the TCB level. PCCS collateral
-/// (TCB info / QE identity / PCK CRL) is platform-specific and must be pre-fetched
-/// by the operator and supplied as JSON at `OUTBE_DCAP_COLLATERAL` — keeping an
-/// async HTTP client out of the node's sync connect path. The default build does
-/// NOT enable `dcap`, so the dev box pulls no SGX/QVL deps and this returns an
-/// explicit error (a strict policy then cannot pass without the feature, by
-/// design); `dev_accept_any` / `dev_fallback_if_unattested` skip it under
-/// gramine-direct.
-#[cfg(feature = "dcap")]
-pub fn verify_dcap_signature(quote: &[u8]) -> Result<(), String> {
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    let path = std::env::var("OUTBE_DCAP_COLLATERAL").map_err(|_| {
-        "OUTBE_DCAP_COLLATERAL (PCCS collateral JSON path) not set for strict DCAP verification"
-            .to_string()
-    })?;
-    let bytes = std::fs::read(&path).map_err(|e| format!("read DCAP collateral {path}: {e}"))?;
-    let collateral: dcap_qvl::QuoteCollateralV3 =
-        serde_json::from_slice(&bytes).map_err(|e| format!("parse DCAP collateral: {e}"))?;
-
-    // Host-local attestation check at connect time — NOT a consensus-visible path
-    // (it never feeds block execution / determinism), so wall-clock `now` is the
-    // correct freshness input for TCB validity, like a TLS cert-time check.
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|e| format!("system clock before epoch: {e}"))?
-        .as_secs();
-
-    let report = dcap_qvl::verify::verify(quote, &collateral, now)
-        .map_err(|e| format!("DCAP quote verification failed: {e:?}"))?;
-    if report.status != "UpToDate" {
-        return Err(format!(
-            "DCAP TCB status not acceptable for strict policy: {}",
-            report.status
-        ));
-    }
-    Ok(())
-}
-
-/// Stub used when the `dcap` feature is off (the default dev-box build). Strict
-/// policy cannot pass without the feature; only dev/unattested-fallback skip it.
-#[cfg(not(feature = "dcap"))]
-pub fn verify_dcap_signature(_quote: &[u8]) -> Result<(), String> {
-    Err("DCAP quote signature verification requires the `dcap` cargo feature (Intel QVL not linked)"
-        .to_string())
 }
 
 #[cfg(test)]

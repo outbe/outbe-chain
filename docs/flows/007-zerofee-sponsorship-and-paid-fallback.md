@@ -79,6 +79,6 @@ counter. A paid retry follows ordinary nonce and fee rules.
 
 ## Open questions and technical debt
 
-- Port the six implemented shell phases into `crates/testing/e2e-harness` and add committee finality/state parity.
+- Port the six implemented shell phases into `testing/e2e-harness` and add committee finality/state parity.
 - Add a mise task and CI lane; the shell entrypoint is currently orphaned.
 - Add authorization replay and restart persistence scenarios.

@@ -29,7 +29,8 @@ The `outbe-chain` process is the lifecycle owner for:
 - finalized Mongo body projection and its readiness state;
 - compressed-entity MDBX, exact-parent execution reads, finalized commit and
   startup recovery;
-- optional TEE sidecar connection/attestation;
+- mandatory ChainSpec-selected enclave connection, authorization and offer-key
+  readiness for every supported network;
 - binary protocol-version compatibility.
 
 The node starts in exactly one operational mode:
@@ -52,21 +53,24 @@ dormant effective interface, not proof that the mode is supported.
 Parsed
   -> cryptographic globals initialized
   -> CLI/config validated
+  -> mandatory teeAttestationV1 ChainSpec authority validated
   -> required storage/pruning constraints validated
-  -> optional TEE connected and attested
+  -> ChainSpec-selected enclave connected and authorized
+  -> FullNode resident offer key matched before Reth launch (FullNode only)
   -> validator EVM signer loaded (validator only)
   -> Mongo projection topology prepared
   -> CE MDBX identity opened and speculative candidates discarded
   -> Reth node + ExEx + RPC launched
   -> CE durable finalizer/recovery adapters constructed
   -> active protocol version checked against binary
+  -> validator offer-key readiness resolved before threshold work (validator only)
   -> consensus/follower runtime spawned and handed the live node
   -> Running(mode)
 ```
 
 Any synchronous error before `Running` is fatal startup failure. There is no
-degraded startup that silently removes Mongo, CE, required signer, configured
-TEE, or protocol-version checks.
+degraded startup that silently removes Mongo, CE, required signer, the
+genesis-selected enclave, or protocol-version checks.
 
 ### Ordering evidence
 
@@ -138,7 +142,7 @@ policy and durable receipt.
 |---|---|---|---|---|
 | Open/validate Mongo projection | projection preparation | Mongo topology/identity checks | propagated `Result` | startup retry by operator |
 | Open/validate CE MDBX | `CeMdbx::open` | local MDBX environment | propagated `Result` | ADR-B-OCD-014 recovery only |
-| Connect/attest configured TEE | TributeFactory client initialization | external sidecar handshake | propagated `Result` | startup retry; no silent fallback for configured socket |
+| Validate policy, connect and authorize enclave | process lifecycle owner plus `NodeHost` | genesis-fixed enclave session and authorization manifest | propagated `Result` | startup retry only; no tee-less, in-process or production-to-development fallback |
 | Spawn Reth | Reth builder | Reth-owned lifecycle | `NodeHandle` or error | process restart |
 | Spawn consensus/follower | process owner + Commonware runner | separate OS thread/runtime | join result | whole-process restart |
 | Projection fatal notification | projection supervisor | watch status + lifecycle channel | `ProjectionExit` | whole-node shutdown/restart |
@@ -157,7 +161,7 @@ architecture therefore is not globally serialized; each cross-runtime operation
 needs its own linearization/acknowledgement rule in the owning ADR.
 
 Mode selection and startup validation are process-local and deterministic for a
-fixed CLI, chain spec, local durable stores and sidecar responses. Wall-clock
+fixed CLI, chain spec, local durable stores and enclave responses. Wall-clock
 timeouts affect local availability/participation only and must not choose a
 consensus-visible state transition.
 
@@ -213,10 +217,11 @@ require explicit operator intent and successful startup validation.
 
 ## Open questions and technical debt
 
-- **Decision required:** `main.rs:443-447` says that omitting the TEE socket uses
-  an in-process TEE stub, while the root README says offer decryption has no
-  in-process key path. This normative/code-comment conflict must be resolved in
-  ADR-S-TEE-001 and ADR-C-TRB-002 and verified against current TributeFactory construction.
+- The former optional-socket/in-process-stub path is closed. Production
+  `DcapRequired` and the isolated `GramineDirectDev` network both require their
+  genesis-selected enclave from startup; development uses a separate chain ID and
+  genesis and is never a production fallback. Validator and FullNode readiness
+  ordering is normative in ADR-S-TEE-001.
 - The plain full-node branch remains after `validate_adr005_node_mode` makes it
   unreachable. Either define its future activation guard in ADR-B-OCD-007 and ADR-B-OCD-008 or delete
   the dormant behavior to close the effective interface.

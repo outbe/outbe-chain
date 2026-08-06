@@ -12,10 +12,12 @@ use std::{
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use eyre::{bail, eyre, Result, WrapErr};
 use filetime::FileTime;
+use outbe_e2e_harness::release_dcap::RELEASE_DCAP_ARTIFACT_PATHS;
+use outbe_evm::tee_attestation_activation::DcapTestnetChainSpecBindingV1;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
-use time::OffsetDateTime;
+use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use walkdir::WalkDir;
 
 const REQUIRED_BUNDLE_FILES: [&str; 6] = [
@@ -45,6 +47,7 @@ pub struct BundleSpec {
     pub inputs: Vec<String>,
     pub install_root: String,
     pub platform: String,
+    pub project_toolchain: String,
     pub sealed_state_schema: u32,
     pub sgx: SgxPolicy,
     pub spec_version: u32,
@@ -84,14 +87,17 @@ impl BundleSpec {
         if self.platform != "linux/amd64" {
             bail!("testnet SGX bundle supports only linux/amd64");
         }
+        if self.project_toolchain != "release/project-toolchain-v1.json" {
+            bail!("testnet SGX bundle must bind the project toolchain version pin");
+        }
         if self.install_root != "/opt/outbe/sgx" {
             bail!("testnet SGX install root must remain /opt/outbe/sgx");
         }
         if self.sgx.debug {
             bail!("release SGX bundle must use a non-debug enclave");
         }
-        if self.sgx.remote_attestation != "none" {
-            bail!("testnet release currently supports local SGX evidence only");
+        if self.sgx.remote_attestation != "dcap" {
+            bail!("production SGX bundle must enable DCAP remote attestation");
         }
         if self.sgx.sigstruct_date_source != "source-date-epoch-utc" {
             bail!("SIGSTRUCT date must derive from SOURCE_DATE_EPOCH in UTC");
@@ -208,9 +214,12 @@ pub struct VerifiedReleaseInputs {
     pub elf_evidence: PathBuf,
     pub elf_manifest: PathBuf,
     pub hardware_evidence: PathBuf,
+    pub processor_dcap_archive: PathBuf,
+    pub processor_dcap_evidence: PathBuf,
     pub oci_evidence: PathBuf,
     pub sbom: PathBuf,
     pub sgx_evidence: PathBuf,
+    pub testnet_genesis: PathBuf,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -249,6 +258,10 @@ fn build_release_manifest_from_evidence(
     let bundle: BundleManifest = read_canonical_json(&bundle_manifest_path)?;
     let oci: OciBuildEvidence = read_canonical_json(&inputs.oci_evidence)?;
     validate_final_release_identity(&release, &bundle, &oci)?;
+    require_nonempty_regular_file(&inputs.testnet_genesis, "testnet genesis ChainSpec")?;
+    let testnet_binding = DcapTestnetChainSpecBindingV1::from_genesis_path(&inputs.testnet_genesis)
+        .map_err(|error| eyre!("testnet ChainSpec binding is invalid: {error}"))?;
+    require_bundle_measurement_binding(&testnet_binding, &bundle)?;
 
     if !oci.provenance_attestation || !oci.sbom_attestation {
         bail!("OCI image must carry BuildKit provenance and SBOM attestations");
@@ -276,6 +289,20 @@ fn build_release_manifest_from_evidence(
     {
         bail!("hardware SGX evidence does not bind the release image and measurements");
     }
+    let processor_dcap = require_fresh_dcap_hardware_evidence(
+        &inputs.processor_dcap_evidence,
+        "processor",
+        &bundle,
+        &oci,
+        &testnet_binding,
+        &inputs.testnet_genesis,
+    )?;
+    verify_processor_dcap_archive(
+        &inputs.processor_dcap_archive,
+        &inputs.processor_dcap_evidence,
+        &processor_dcap,
+        bundle.source.source_date_epoch,
+    )?;
     require_nonempty_regular_file(&inputs.bundle_archive, "signed SGX bundle archive")?;
     verify_bundle_archive(
         &inputs.bundle,
@@ -406,9 +433,428 @@ fn build_release_manifest_from_evidence(
             ],
         )?,
         passed_gate("hardware-sgx-release-smoke", &inputs.hardware_evidence)?,
+        passed_gate_many(
+            "fresh-accepted-processor-dcap",
+            &[
+                &inputs.processor_dcap_evidence,
+                &inputs.processor_dcap_archive,
+            ],
+        )?,
     ];
     release_object.insert("verification_gates".to_owned(), Value::Array(gates));
     Ok(release)
+}
+
+fn require_fresh_dcap_hardware_evidence(
+    path: &Path,
+    expected_pck_ca: &str,
+    bundle: &BundleManifest,
+    oci: &OciBuildEvidence,
+    testnet_binding: &DcapTestnetChainSpecBindingV1,
+    testnet_genesis: &Path,
+) -> Result<Value> {
+    let evidence = require_evidence_result(path, &["passed"])?;
+    let string_at = |pointer: &str| {
+        evidence
+            .pointer(pointer)
+            .and_then(Value::as_str)
+            .ok_or_else(|| eyre!("{expected_pck_ca} DCAP evidence lacks {pointer}"))
+    };
+    let u64_at = |pointer: &str| {
+        evidence
+            .pointer(pointer)
+            .and_then(Value::as_u64)
+            .ok_or_else(|| eyre!("{expected_pck_ca} DCAP evidence lacks {pointer}"))
+    };
+    if string_at("/environment/architecture")? != "x86_64"
+        || string_at("/environment/backend")? != "gramine-sgx"
+        || evidence
+            .pointer("/environment/hardware_sgx")
+            .and_then(Value::as_bool)
+            != Some(true)
+        || evidence
+            .pointer("/environment/dcap")
+            .and_then(Value::as_bool)
+            != Some(true)
+        || string_at("/attestation/pck_ca")? != expected_pck_ca
+        || string_at("/attestation/public_verifier")? != "enclave-resident-begin-chunk-finish-v1"
+        || evidence.get("measurements") != Some(&serde_json::to_value(&bundle.measurements)?)
+        || string_at("/image/digest/algorithm")? != "sha256"
+        || string_at("/image/digest/value")? != oci.image.digest.value
+        || string_at("/source_commit")? != bundle.source.commit
+    {
+        bail!(
+            "{expected_pck_ca} DCAP evidence does not bind the exact release and public verifier"
+        );
+    }
+    require_testnet_chain_spec_evidence(&evidence, testnet_binding, testnet_genesis)
+        .wrap_err("testnet ChainSpec binding does not match retained DCAP evidence")?;
+    // Guest-visible socket topology is retained as provenance only. The
+    // enclave-verified Intel PCK issuer above is the PCK CA authority.
+    let _ = u64_at("/environment/physical_package_count")?;
+    if evidence
+        .pointer("/freshness/binding_id_nonzero")
+        .and_then(Value::as_bool)
+        != Some(true)
+    {
+        bail!("{expected_pck_ca} DCAP evidence did not use a non-zero one-use binding");
+    }
+    let run_started = u64_at("/freshness/run_started_at")?;
+    let quote_generated = u64_at("/freshness/quote_generated_at")?;
+    let collateral_started = u64_at("/freshness/collateral_started_at")?;
+    let collateral_completed = u64_at("/freshness/collateral_completed_at")?;
+    let consensus_timestamp = u64_at("/freshness/consensus_timestamp")?;
+    let verified = u64_at("/freshness/verified_at")?;
+    if run_started == 0
+        || !(run_started <= quote_generated
+            && quote_generated <= collateral_started
+            && collateral_started <= collateral_completed
+            && collateral_completed <= consensus_timestamp
+            && consensus_timestamp <= verified)
+    {
+        bail!("{expected_pck_ca} DCAP freshness order is invalid");
+    }
+    let platform_status = string_at("/attestation/platform_tcb_status")?;
+    if !matches!(
+        platform_status,
+        "up-to-date" | "sw-hardening-needed" | "configuration-and-sw-hardening-needed"
+    ) || u64_at("/attestation/collateral_valid_until")? <= consensus_timestamp
+    {
+        bail!("{expected_pck_ca} DCAP accepted verdict provenance is invalid");
+    }
+    let consensus_timestamp_i64 = i64::try_from(consensus_timestamp)
+        .map_err(|_| eyre!("{expected_pck_ca} consensus timestamp exceeds i64"))?;
+    if u64_at("/collateral/component_count")? != 8
+        || string_at("/collateral/pck_crl/kind")? != expected_pck_ca
+        || string_at("/collateral/root_crl/kind")? != "root"
+    {
+        bail!("{expected_pck_ca} DCAP evidence lacks the exact collateral matrix");
+    }
+    for (label, pointer) in [
+        ("PCK CRL", "/collateral/pck_crl"),
+        ("root CRL", "/collateral/root_crl"),
+    ] {
+        let issuer = string_at(&format!("{pointer}/issuer"))?;
+        let this_update = string_at(&format!("{pointer}/this_update"))?;
+        let next_update = string_at(&format!("{pointer}/next_update"))?;
+        let size = u64_at(&format!("{pointer}/size"))?;
+        let sha256 = string_at(&format!("{pointer}/sha256"))?;
+        let retained_path = string_at(&format!("{pointer}/path"))?;
+        let expected_path = if pointer.ends_with("pck_crl") {
+            "collateral/pck.crl.der"
+        } else {
+            "collateral/root-ca.crl.der"
+        };
+        if size == 0
+            || !is_lower_hex(sha256, 64)
+            || issuer.is_empty()
+            || !issuer.is_ascii()
+            || !is_utc_second(this_update)
+            || !is_utc_second(next_update)
+            || this_update >= next_update
+        {
+            bail!("{expected_pck_ca} {label} provenance is invalid");
+        }
+        let expected_issuer_marker = if pointer.ends_with("pck_crl") {
+            if expected_pck_ca == "processor" {
+                "Intel SGX PCK Processor CA"
+            } else {
+                "Intel SGX PCK Platform CA"
+            }
+        } else {
+            "Intel SGX Root CA"
+        };
+        if !issuer.contains(expected_issuer_marker) {
+            bail!("{expected_pck_ca} {label} provenance has the wrong issuer");
+        }
+        let this_update_time = OffsetDateTime::parse(this_update, &Rfc3339)
+            .wrap_err_with(|| format!("parse {expected_pck_ca} {label} this_update"))?;
+        let next_update_time = OffsetDateTime::parse(next_update, &Rfc3339)
+            .wrap_err_with(|| format!("parse {expected_pck_ca} {label} next_update"))?;
+        if this_update_time.unix_timestamp() > consensus_timestamp_i64
+            || consensus_timestamp_i64 >= next_update_time.unix_timestamp()
+        {
+            bail!("{expected_pck_ca} {label} was not current at the consensus timestamp");
+        }
+        let artifact = evidence
+            .get("artifacts")
+            .and_then(Value::as_object)
+            .and_then(|artifacts| artifacts.get(expected_path));
+        if retained_path != expected_path
+            || artifact
+                .and_then(|record| record.get("size"))
+                .and_then(Value::as_u64)
+                != Some(size)
+            || artifact
+                .and_then(|record| record.get("sha256"))
+                .and_then(Value::as_str)
+                != Some(sha256)
+        {
+            bail!("{expected_pck_ca} retained {label} does not match its provenance record");
+        }
+    }
+    Ok(evidence)
+}
+
+fn require_bundle_measurement_binding(
+    binding: &DcapTestnetChainSpecBindingV1,
+    bundle: &BundleManifest,
+) -> Result<()> {
+    if bundle.measurements.debug {
+        bail!("testnet ChainSpec binding cannot authorize a debug enclave");
+    }
+    let measurement = |value: &str, label: &str| -> Result<alloy_primitives::B256> {
+        if !is_lower_hex(value, 64) {
+            bail!("signed bundle {label} is not 32 lowercase hexadecimal bytes");
+        }
+        let bytes = hex::decode(value).wrap_err_with(|| format!("decode signed bundle {label}"))?;
+        Ok(alloy_primitives::B256::from_slice(&bytes))
+    };
+    binding
+        .ensure_exact_release_measurements(
+            measurement(&bundle.measurements.mrenclave, "MRENCLAVE")?,
+            measurement(&bundle.measurements.mrsigner, "MRSIGNER")?,
+            bundle.measurements.isv_prod_id,
+            bundle.measurements.isv_svn,
+        )
+        .map_err(|error| eyre!("testnet ChainSpec binding is invalid: {error}"))
+}
+
+fn require_testnet_chain_spec_evidence(
+    evidence: &Value,
+    binding: &DcapTestnetChainSpecBindingV1,
+    testnet_genesis: &Path,
+) -> Result<()> {
+    let string_at = |pointer: &str| {
+        evidence
+            .pointer(pointer)
+            .and_then(Value::as_str)
+            .ok_or_else(|| eyre!("DCAP evidence lacks {pointer}"))
+    };
+    let u64_at = |pointer: &str| {
+        evidence
+            .pointer(pointer)
+            .and_then(Value::as_u64)
+            .ok_or_else(|| eyre!("DCAP evidence lacks {pointer}"))
+    };
+    let policy_sha256 = hex::encode(Sha256::digest(&binding.policy_bytes));
+    let schedule_sha256 = hex::encode(Sha256::digest(&binding.policy_schedule_bytes));
+    if u64_at("/policy/chain_id")? != binding.chain_id
+        || string_at("/policy/genesis_hash")? != hex::encode(binding.genesis_hash)
+        || u64_at("/policy/activation_height")? != binding.activation_height
+        || u64_at("/policy/policy_version")? != binding.policy_version
+        || string_at("/policy/policy_hash")? != hex::encode(binding.policy_hash)
+        || string_at("/policy/sha256")? != policy_sha256
+        || string_at("/policy/policy_schedule_hash")? != hex::encode(binding.policy_schedule_hash)
+        || string_at("/policy/policy_schedule_sha256")? != schedule_sha256
+    {
+        bail!("DCAP evidence policy does not equal the block-1 testnet policy");
+    }
+
+    let genesis_digest = file_digest(testnet_genesis)?;
+    let genesis_size = fs::metadata(testnet_genesis)?.len();
+    require_retained_binding(
+        evidence,
+        "testnet-genesis.json",
+        genesis_size,
+        &genesis_digest.value,
+    )?;
+    require_retained_binding(
+        evidence,
+        "policy-v1.bin",
+        binding.policy_bytes.len() as u64,
+        &policy_sha256,
+    )?;
+    require_retained_binding(
+        evidence,
+        "policy-schedule-v1.bin",
+        binding.policy_schedule_bytes.len() as u64,
+        &schedule_sha256,
+    )
+}
+
+fn require_retained_binding(
+    evidence: &Value,
+    name: &str,
+    expected_size: u64,
+    expected_sha256: &str,
+) -> Result<()> {
+    let pointer = format!("/artifacts/{name}");
+    let artifact = evidence
+        .pointer(&pointer)
+        .ok_or_else(|| eyre!("DCAP evidence lacks retained {name}"))?;
+    if artifact.get("size").and_then(Value::as_u64) != Some(expected_size)
+        || artifact.get("sha256").and_then(Value::as_str) != Some(expected_sha256)
+    {
+        bail!("retained {name} does not match its exact input bytes");
+    }
+    Ok(())
+}
+
+fn verify_processor_dcap_archive(
+    archive_path: &Path,
+    summary_path: &Path,
+    evidence: &Value,
+    source_date_epoch: i64,
+) -> Result<()> {
+    if source_date_epoch < 0 {
+        bail!("Processor DCAP archive SOURCE_DATE_EPOCH must be non-negative");
+    }
+    require_nonempty_regular_file(archive_path, "Processor DCAP evidence archive")?;
+
+    let records = evidence
+        .get("artifacts")
+        .and_then(Value::as_object)
+        .ok_or_else(|| eyre!("Processor DCAP evidence lacks retained artifact records"))?;
+    let required = RELEASE_DCAP_ARTIFACT_PATHS
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    let declared = records.keys().map(String::as_str).collect::<BTreeSet<_>>();
+    if declared != required {
+        bail!("Processor DCAP evidence does not declare the exact canonical artifact set");
+    }
+    let mut expected = BTreeMap::new();
+    for (path, record) in records {
+        validate_archive_member_path(path)?;
+        let size = record
+            .get("size")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| eyre!("Processor DCAP artifact {path} lacks size"))?;
+        let sha256 = record
+            .get("sha256")
+            .and_then(Value::as_str)
+            .ok_or_else(|| eyre!("Processor DCAP artifact {path} lacks sha256"))?;
+        if !is_lower_hex(sha256, 64) {
+            bail!("Processor DCAP artifact {path} has invalid sha256");
+        }
+        if expected
+            .insert(path.clone(), (size, sha256.to_owned()))
+            .is_some()
+        {
+            bail!("Processor DCAP evidence contains duplicate artifact {path}");
+        }
+    }
+    let summary_size = fs::metadata(summary_path)?.len();
+    let summary_digest = file_digest(summary_path)?;
+    if expected
+        .insert(
+            "hardware-dcap-evidence.json".to_owned(),
+            (summary_size, summary_digest.value),
+        )
+        .is_some()
+    {
+        bail!("Processor DCAP artifact records contain the reserved summary path");
+    }
+
+    let input = File::open(archive_path)
+        .wrap_err_with(|| format!("open Processor DCAP archive: {}", archive_path.display()))?;
+    let mut archive = tar::Archive::new(input);
+    let mut observed = BTreeSet::new();
+    let mut previous = None::<String>;
+    for item in archive
+        .entries()
+        .wrap_err("read Processor DCAP evidence archive")?
+    {
+        let mut item = item.wrap_err("read Processor DCAP evidence archive entry")?;
+        let raw_path = item
+            .path()
+            .wrap_err("read Processor DCAP evidence archive path")?
+            .to_string_lossy()
+            .into_owned();
+        let path = if raw_path == "." {
+            if !item.header().entry_type().is_dir() {
+                bail!("Processor DCAP archive root entry is not a directory");
+            }
+            continue;
+        } else {
+            raw_path
+                .strip_prefix("./")
+                .unwrap_or(&raw_path)
+                .trim_end_matches('/')
+                .to_owned()
+        };
+        validate_archive_member_path(&path)?;
+        if previous.as_ref().is_some_and(|value| value >= &path) {
+            bail!("Processor DCAP archive members are not in canonical order");
+        }
+        previous = Some(path.clone());
+        if !observed.insert(path.clone()) {
+            bail!("Processor DCAP archive contains duplicate path: {path}");
+        }
+        let header = item.header();
+        if header.uid()? != 0 || header.gid()? != 0 || header.mtime()? != source_date_epoch as u64 {
+            bail!("Processor DCAP archive has non-deterministic ownership/time: {path}");
+        }
+        if header.entry_type().is_dir() {
+            let prefix = format!("{path}/");
+            if !expected.keys().any(|member| member.starts_with(&prefix)) {
+                bail!("Processor DCAP archive contains unrecorded directory: {path}");
+            }
+            continue;
+        }
+        if !header.entry_type().is_file() {
+            bail!("Processor DCAP archive contains non-file entry: {path}");
+        }
+        let (expected_size, expected_sha256) = expected
+            .remove(&path)
+            .ok_or_else(|| eyre!("Processor DCAP archive contains unrecorded file: {path}"))?;
+        if header.size()? != expected_size {
+            bail!("Processor DCAP archive member size mismatch: {path}");
+        }
+        let mut hasher = Sha256::new();
+        let mut buffer = [0_u8; 64 * 1024];
+        let mut size = 0_u64;
+        loop {
+            let count = item.read(&mut buffer)?;
+            if count == 0 {
+                break;
+            }
+            hasher.update(&buffer[..count]);
+            size += count as u64;
+        }
+        if size != expected_size || hex::encode(hasher.finalize()) != expected_sha256 {
+            bail!("Processor DCAP archive member digest mismatch: {path}");
+        }
+    }
+    if !expected.is_empty() {
+        bail!(
+            "Processor DCAP archive lacks retained files: {}",
+            expected.keys().cloned().collect::<Vec<_>>().join(", ")
+        );
+    }
+    Ok(())
+}
+
+fn validate_archive_member_path(path: &str) -> Result<()> {
+    let path = Path::new(path);
+    if path.as_os_str().is_empty()
+        || path.is_absolute()
+        || path.to_string_lossy().contains('\\')
+        || path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        bail!(
+            "Processor DCAP archive contains unsafe path: {}",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+fn is_utc_second(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 20
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes[10] == b'T'
+        && bytes[13] == b':'
+        && bytes[16] == b':'
+        && bytes[19] == b'Z'
+        && bytes.iter().enumerate().all(|(index, byte)| {
+            matches!(index, 4 | 7 | 10 | 13 | 16 | 19) || byte.is_ascii_digit()
+        })
+        && OffsetDateTime::parse(value, &Rfc3339).is_ok()
 }
 
 fn validate_final_release_identity(
@@ -523,9 +969,14 @@ fn passed_gate_many(name: &str, evidence: &[&Path]) -> Result<Value> {
                 .file_name()
                 .and_then(|value| value.to_str())
                 .ok_or_else(|| eyre!("release evidence needs a UTF-8 file name"))?;
+            let media_type = if path.extension().and_then(|value| value.to_str()) == Some("tar") {
+                "application/x-tar"
+            } else {
+                "application/json"
+            };
             Ok(serde_json::json!({
                 "digest": file_digest(path)?,
-                "media_type": "application/json",
+                "media_type": media_type,
                 "uri": format!("release://evidence/{file_name}")
             }))
         })
@@ -936,6 +1387,7 @@ pub fn prepare(repo_root: &Path, elf_output: &Path, output: &Path) -> Result<()>
     verify_checksums(elf_output, "SHA256SUMS")?;
     let identity = read_elf_identity(elf_output)?;
     require_clean_source(repo_root, &identity.source_commit)?;
+    let toolchain_image = build_project_toolchain_image(repo_root, &spec, &identity.source_commit)?;
     let output = create_empty_output(repo_root, output)?;
     let elf_output = fs::canonicalize(elf_output)
         .wrap_err_with(|| format!("resolve ELF output: {}", elf_output.display()))?;
@@ -947,7 +1399,7 @@ pub fn prepare(repo_root: &Path, elf_output: &Path, output: &Path) -> Result<()>
         .args(["-e", &format!("SGX_ISV_SVN={}", spec.sgx.isv_svn)])
         .args(["-v", &format!("{}:/elf:ro", elf_output.display())])
         .args(["-v", &format!("{}:/out", output.display())])
-        .arg(&spec.gramine.builder_image)
+        .arg(&toolchain_image)
         .args([container_adapter(), "prepare"]);
     run_status(&mut command, "prepare unsigned SGX bundle")?;
 
@@ -989,6 +1441,7 @@ pub fn sign(repo_root: &Path, unsigned: &Path, key_file: &Path, output: &Path) -
         read_canonical_json(&unsigned.join("metadata/source-identity.json"))?;
     validate_source_identity(&identity)?;
     require_clean_source(repo_root, &identity.source_commit)?;
+    let toolchain_image = build_project_toolchain_image(repo_root, &spec, &identity.source_commit)?;
     let output = create_empty_output(repo_root, output)?;
     let date = sigstruct_date(identity.source_date_epoch)?;
 
@@ -1001,7 +1454,7 @@ pub fn sign(repo_root: &Path, unsigned: &Path, key_file: &Path, output: &Path) -
             &format!("{}:/run/secrets/testnet-sgx-key.pem:ro", key_file.display()),
         ])
         .args(["-v", &format!("{}:/out", output.display())])
-        .arg(&spec.gramine.builder_image)
+        .arg(&toolchain_image)
         .args([container_adapter(), "sign"]);
     run_status(&mut command, "sign testnet SGX bundle")?;
 
@@ -1024,11 +1477,13 @@ pub fn verify(repo_root: &Path, bundle: &Path) -> Result<()> {
     verify_checksums(&bundle, "SHA256SUMS")?;
     let manifest_path = bundle.join("metadata/testnet-sgx-bundle.json");
     let manifest: BundleManifest = read_canonical_json(&manifest_path)?;
+    require_clean_source(repo_root, &manifest.source.commit)?;
+    let toolchain_image = build_project_toolchain_image(repo_root, &spec, &manifest.source.commit)?;
 
     let mut command = docker_command(&spec, repo_root)?;
     command
         .args(["-v", &format!("{}:/bundle:ro", bundle.display())])
-        .arg(&spec.gramine.builder_image)
+        .arg(&toolchain_image)
         .args([container_adapter(), "view"]);
     let sigstruct_view = run_output(&mut command, "read signed SGX SIGSTRUCT")?;
     verify_signed_bundle(&bundle, &manifest, &spec, &sigstruct_view)
@@ -1678,6 +2133,26 @@ fn normalize_tree_mtime(root: &Path, source_date_epoch: i64) -> Result<()> {
             .wrap_err_with(|| format!("normalize timestamp: {}", entry.path().display()))?;
     }
     Ok(())
+}
+
+fn build_project_toolchain_image(
+    repo_root: &Path,
+    spec: &BundleSpec,
+    source_commit: &str,
+) -> Result<String> {
+    if !is_lower_hex(source_commit, 40) {
+        bail!("project toolchain image requires an exact source commit");
+    }
+    let image = format!("outbe-project-toolchain:{source_commit}");
+    let dockerfile = repo_root.join("Dockerfile.project-toolchain");
+    let mut command = Command::new("docker");
+    command
+        .args(["build", "--platform", &spec.platform, "--file"])
+        .arg(&dockerfile)
+        .args(["--target", "toolchain", "--tag", &image])
+        .arg(repo_root);
+    run_status(&mut command, "build project toolchain image")?;
+    Ok(image)
 }
 
 fn docker_command(spec: &BundleSpec, repo_root: &Path) -> Result<Command> {

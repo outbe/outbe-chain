@@ -2,6 +2,7 @@
 
 use alloy_primitives::{Address, U256};
 use eyre::{Result, WrapErr};
+use outbe_primitives::tee_operator_v1::TeeRenewalScheduleV1;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -12,6 +13,17 @@ pub trait Rpc {
         to: Address,
         data: &[u8],
     ) -> impl std::future::Future<Output = Result<Vec<u8>>> + Send;
+    fn eth_call_at(
+        &self,
+        to: Address,
+        data: &[u8],
+        block_tag: &str,
+    ) -> impl std::future::Future<Output = Result<Vec<u8>>> + Send {
+        async move {
+            let _ = (to, data, block_tag);
+            Err(eyre::eyre!("eth_call at an explicit block is unsupported"))
+        }
+    }
     fn eth_block_number(&self) -> impl std::future::Future<Output = Result<u64>> + Send;
     fn eth_chain_id(&self) -> impl std::future::Future<Output = Result<u64>> + Send;
     fn eth_gas_price(&self) -> impl std::future::Future<Output = Result<U256>> + Send;
@@ -30,6 +42,10 @@ pub trait Rpc {
         &self,
         raw_tx: &[u8],
     ) -> impl std::future::Future<Output = Result<String>> + Send;
+    fn eth_get_transaction_receipt(
+        &self,
+        transaction_hash: &str,
+    ) -> impl std::future::Future<Output = Result<Option<Value>>> + Send;
     fn eth_get_balance(
         &self,
         address: Address,
@@ -37,11 +53,19 @@ pub trait Rpc {
     fn net_peer_count(&self) -> impl std::future::Future<Output = Result<u64>> + Send;
     fn outbe_consensus_status(&self) -> impl std::future::Future<Output = Result<Value>> + Send;
     fn outbe_get_epoch_info(&self) -> impl std::future::Future<Output = Result<Value>> + Send;
+    fn outbe_tee_renewal_schedule_v1(
+        &self,
+    ) -> impl std::future::Future<Output = Result<TeeRenewalScheduleV1>> + Send {
+        async { Err(eyre::eyre!("TEE renewal schedule RPC is unsupported")) }
+    }
     fn eth_get_block_by_number(
         &self,
         block: u64,
     ) -> impl std::future::Future<Output = Result<Value>> + Send;
     fn eth_get_latest_block(&self) -> impl std::future::Future<Output = Result<Value>> + Send;
+    fn eth_get_finalized_block(&self) -> impl std::future::Future<Output = Result<Value>> + Send {
+        async { Err(eyre::eyre!("finalized block RPC is unsupported")) }
+    }
     fn outbe_get_vrf_seed(&self) -> impl std::future::Future<Output = Result<Value>> + Send;
     fn outbe_get_emission_info(&self) -> impl std::future::Future<Output = Result<Value>> + Send;
     fn outbe_get_slash_config(&self) -> impl std::future::Future<Output = Result<Value>> + Send;
@@ -129,6 +153,41 @@ impl RpcClient {
         resp.result.ok_or_else(|| eyre::eyre!("empty RPC result"))
     }
 
+    /// Call an RPC method whose successful result may canonically be `null`,
+    /// such as `eth_getTransactionReceipt` while a transaction is pending.
+    async fn call_rpc_optional(&self, method: &str, params: Value) -> Result<Option<Value>> {
+        let id = self.id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0",
+            method: method.to_string(),
+            params,
+            id,
+        };
+        let resp: JsonRpcResponse = self
+            .client
+            .post(&self.url)
+            .json(&req)
+            .send()
+            .await
+            .wrap_err("failed to send RPC request")?
+            .error_for_status()
+            .wrap_err("RPC HTTP request failed")?
+            .json()
+            .await
+            .wrap_err("failed to parse RPC response")?;
+        if resp.id.as_ref() != Some(&Value::from(id)) {
+            eyre::bail!(
+                "RPC response id mismatch: expected {}, got {:?}",
+                id,
+                resp.id
+            );
+        }
+        if let Some(err) = resp.error {
+            eyre::bail!("RPC error {}: {}", err.code, err.message);
+        }
+        Ok(resp.result)
+    }
+
     fn parse_hex_u64(val: &Value) -> Result<u64> {
         let hex_str = val
             .as_str()
@@ -172,6 +231,22 @@ impl Rpc for RpcClient {
                         "data": format!("0x{}", hex::encode(data)),
                     },
                     "latest"
+                ]),
+            )
+            .await?;
+        Self::parse_hex_bytes(&result)
+    }
+
+    async fn eth_call_at(&self, to: Address, data: &[u8], block_tag: &str) -> Result<Vec<u8>> {
+        let result = self
+            .call_rpc(
+                "eth_call",
+                serde_json::json!([
+                    {
+                        "to": format!("{to:?}"),
+                        "data": format!("0x{}", hex::encode(data)),
+                    },
+                    block_tag
                 ]),
             )
             .await?;
@@ -243,6 +318,14 @@ impl Rpc for RpcClient {
             .ok_or_else(|| eyre::eyre!("expected tx hash string"))
     }
 
+    async fn eth_get_transaction_receipt(&self, transaction_hash: &str) -> Result<Option<Value>> {
+        self.call_rpc_optional(
+            "eth_getTransactionReceipt",
+            serde_json::json!([transaction_hash]),
+        )
+        .await
+    }
+
     async fn eth_get_balance(&self, address: Address) -> Result<U256> {
         let result = self
             .call_rpc(
@@ -270,6 +353,14 @@ impl Rpc for RpcClient {
             .await
     }
 
+    async fn outbe_tee_renewal_schedule_v1(&self) -> Result<TeeRenewalScheduleV1> {
+        serde_json::from_value(
+            self.call_rpc("outbe_teeRenewalScheduleV1", serde_json::json!([]))
+                .await?,
+        )
+        .wrap_err("decode outbe_teeRenewalScheduleV1")
+    }
+
     async fn eth_get_block_by_number(&self, block: u64) -> Result<Value> {
         let hex_block = format!("0x{block:x}");
         self.call_rpc(
@@ -282,6 +373,14 @@ impl Rpc for RpcClient {
     async fn eth_get_latest_block(&self) -> Result<Value> {
         self.call_rpc("eth_getBlockByNumber", serde_json::json!(["latest", false]))
             .await
+    }
+
+    async fn eth_get_finalized_block(&self) -> Result<Value> {
+        self.call_rpc(
+            "eth_getBlockByNumber",
+            serde_json::json!(["finalized", false]),
+        )
+        .await
     }
 
     async fn outbe_get_vrf_seed(&self) -> Result<Value> {
@@ -404,6 +503,7 @@ pub mod mock {
         pub tx_count: Result<u64>,
         pub estimate_gas: Result<u64>,
         pub send_raw_tx: Result<String>,
+        pub transaction_receipt: Result<Option<Value>>,
         pub eth_call_map: Option<EthCallMap>,
         pub consensus_status: Result<Value>,
         pub epoch_info: Result<Value>,
@@ -426,6 +526,7 @@ pub mod mock {
                 tx_count: Err(eyre::eyre!("not mocked")),
                 estimate_gas: Err(eyre::eyre!("not mocked")),
                 send_raw_tx: Err(eyre::eyre!("not mocked")),
+                transaction_receipt: Err(eyre::eyre!("not mocked")),
                 eth_call_map: None,
                 consensus_status: Err(eyre::eyre!("not mocked")),
                 epoch_info: Err(eyre::eyre!("not mocked")),
@@ -476,6 +577,12 @@ pub mod mock {
         }
         async fn eth_send_raw_transaction(&self, _raw_tx: &[u8]) -> Result<String> {
             clone_result(&self.send_raw_tx)
+        }
+        async fn eth_get_transaction_receipt(
+            &self,
+            _transaction_hash: &str,
+        ) -> Result<Option<Value>> {
+            clone_result(&self.transaction_receipt)
         }
         async fn eth_get_balance(&self, _address: Address) -> Result<U256> {
             clone_result(&self.balance)
@@ -565,6 +672,16 @@ pub mod mock {
                 raw_tx: raw_tx.to_vec(),
             })?
             .into_text("eth_sendRawTransaction")
+        }
+
+        async fn eth_get_transaction_receipt(
+            &self,
+            transaction_hash: &str,
+        ) -> Result<Option<Value>> {
+            self.next_response(RecordedRpcCall::EthGetTransactionReceipt {
+                transaction_hash: transaction_hash.to_string(),
+            })?
+            .into_optional_value("eth_getTransactionReceipt")
         }
 
         async fn eth_get_balance(&self, address: Address) -> Result<U256> {

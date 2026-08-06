@@ -10,7 +10,7 @@
 //!   - a loud "MOCK ENCLAVE — NOT CONFIDENTIAL" startup banner ([`RunOpts::mock`]).
 //!
 //! There is no fabricated SGX quote: it runs unattested (empty quote), accepted
-//! by the host's dev / unattested-fallback `QuotePolicy`. Use for localnet/CI
+//! by the host's development transport. Use for localnet/CI
 //! without SGX hardware; never in production.
 
 use outbe_tee_enclave::run::{run, RunOpts};

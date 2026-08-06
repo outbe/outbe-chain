@@ -1,7 +1,6 @@
 use super::*;
 use alloy_primitives::{Address, Bytes, B256};
 use commonware_actor::Feedback;
-use commonware_codec::Encode as _;
 use commonware_consensus::{
     marshal::{self, core::Buffer, resolver::handler, Start, Update},
     simplex::{
@@ -49,7 +48,7 @@ static STACK_MARSHAL_TEST_ID: AtomicU64 = AtomicU64::new(0);
 #[test]
 fn testnet_clock_offset_is_rejected_for_unregistered_networks() {
     let unknown_production_chain = 1_000_000_001;
-    let error = validate_testnet_only_flags(false, false, Some(1), unknown_production_chain)
+    let error = validate_testnet_only_flags(false, Some(1), unknown_production_chain)
         .unwrap_err()
         .to_string();
     assert!(error.contains("--testnet.unix-time-offset-secs"));
@@ -61,16 +60,15 @@ fn testnet_clock_offset_is_allowed_only_on_explicit_test_networks() {
         outbe_primitives::chain::DEVNET_CHAIN_ID,
         outbe_primitives::chain::TESTNET_CHAIN_ID,
     ] {
-        validate_testnet_only_flags(false, false, Some(-60), chain_id).unwrap();
+        validate_testnet_only_flags(false, Some(-60), chain_id).unwrap();
     }
 }
 
 #[test]
 fn every_testnet_only_flag_is_rejected_for_unregistered_networks() {
     let chain_id = 1_000_000_001;
-    assert!(validate_testnet_only_flags(true, false, None, chain_id).is_err());
-    assert!(validate_testnet_only_flags(false, true, None, chain_id).is_err());
-    assert!(validate_testnet_only_flags(false, false, Some(0), chain_id).is_err());
+    assert!(validate_testnet_only_flags(true, None, chain_id).is_err());
+    assert!(validate_testnet_only_flags(false, Some(0), chain_id).is_err());
 }
 
 #[test]
@@ -419,6 +417,8 @@ fn test_boundary_with_vrf_hash(vrf_group_public_key: B256, dkg_cycle: u64) -> Dk
         is_full_dkg: false,
         tee_recipient_pubkeys: Vec::new(),
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
+        tee_expired_target_exclusions_hash: B256::ZERO,
         endorsement_signature: alloy_primitives::Bytes::new(),
         reshare: outbe_primitives::consensus::ReshareResult {
             new_active_set: Vec::new(),
@@ -438,12 +438,12 @@ fn startup_dkg_round_zero_is_only_for_empty_genesis_formation() {
         genesis_formation_proven: true,
     };
     assert_eq!(
-        startup_dkg_mode(empty_without_boundary, true, false),
+        startup_dkg_mode(empty_without_boundary, true),
         StartupDkgMode::InitialGenesisDkg
     );
 
     assert_eq!(
-        startup_dkg_mode(empty_without_boundary, false, false),
+        startup_dkg_mode(empty_without_boundary, false),
         StartupDkgMode::LiveJoinRequired,
         "a local key outside the current set must not start genesis DKG"
     );
@@ -457,7 +457,7 @@ fn startup_dkg_round_zero_is_only_for_empty_genesis_formation() {
         genesis_formation_proven: true,
     };
     assert_eq!(
-        startup_dkg_mode(nonzero_execution_history, true, false),
+        startup_dkg_mode(nonzero_execution_history, true),
         StartupDkgMode::LiveJoinRequired,
         "non-zero execution history must not start genesis DKG"
     );
@@ -471,7 +471,7 @@ fn startup_dkg_round_zero_is_only_for_empty_genesis_formation() {
         genesis_formation_proven: true,
     };
     assert_eq!(
-        startup_dkg_mode(recovered_boundary, true, false),
+        startup_dkg_mode(recovered_boundary, true),
         StartupDkgMode::LiveJoinRequired,
         "a recovered chain DKG boundary must force live-join semantics"
     );
@@ -488,7 +488,7 @@ fn startup_dkg_round_zero_requires_genesis_formation_proof() {
         genesis_formation_proven: false,
     };
     assert_eq!(
-        startup_dkg_mode(unproven, true, false),
+        startup_dkg_mode(unproven, true),
         StartupDkgMode::LiveJoinRequired,
         "local execution height 0 alone must not start DKG round 0"
     );
@@ -502,87 +502,101 @@ fn startup_dkg_round_zero_requires_genesis_formation_proof() {
         genesis_formation_proven: true,
     };
     assert_eq!(
-        startup_dkg_mode(consensus_already_finalized, true, false),
+        startup_dkg_mode(consensus_already_finalized, true),
         StartupDkgMode::LiveJoinRequired,
         "marshal finalized height > 0 must block genesis DKG"
     );
 }
 
 #[test]
-fn force_dkg_overrides_execution_height_check() {
-    let existing_chain = StartupDkgContext {
-        last_execution_height: 780596,
+fn offer_key_gate_allows_only_proven_founding_identity_to_be_keyless() {
+    let founding = StartupDkgContext {
+        last_execution_height: 0,
         last_consensus_finalized_height: 0,
         recovered_boundary_finalized: false,
-        recovered_vrf_group_public_key: Some(B256::with_last_byte(9)),
-        recovered_dkg_output_hash: Some(B256::with_last_byte(10)),
+        recovered_vrf_group_public_key: None,
+        recovered_dkg_output_hash: None,
+        genesis_formation_proven: true,
+    };
+    validate_offer_key_before_threshold_work(founding, true, false, B256::ZERO, None).unwrap();
+
+    let error = validate_offer_key_before_threshold_work(
+        StartupDkgContext {
+            genesis_formation_proven: false,
+            ..founding
+        },
+        true,
+        false,
+        B256::ZERO,
+        None,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("no permanent resident offer key"), "{error}");
+    assert!(error.contains("no recovery or fallback"), "{error}");
+}
+
+#[test]
+fn offer_key_gate_requires_exact_canonical_key_for_existing_state() {
+    let existing = StartupDkgContext {
+        last_execution_height: 12,
+        last_consensus_finalized_height: 11,
+        recovered_boundary_finalized: true,
+        recovered_vrf_group_public_key: Some(B256::repeat_byte(0x41)),
+        recovered_dkg_output_hash: Some(B256::repeat_byte(0x42)),
         genesis_formation_proven: false,
     };
-    assert_eq!(
-        startup_dkg_mode(existing_chain, true, false),
-        StartupDkgMode::LiveJoinRequired,
-        "without force_dkg, existing chain data must use live-join"
-    );
-    assert_eq!(
-        startup_dkg_mode(existing_chain, true, true),
-        StartupDkgMode::InitialGenesisDkg,
-        "force_dkg must override all checks and force initial DKG"
-    );
-    assert_eq!(
-        startup_dkg_mode(existing_chain, false, true),
-        StartupDkgMode::LiveJoinRequired,
-        "force_dkg must not override local-key-not-in-set check"
-    );
+    let canonical = B256::repeat_byte(0x51);
+    validate_offer_key_before_threshold_work(existing, true, false, canonical, Some(canonical))
+        .unwrap();
+
+    for (resident, expected) in [
+        (None, "no permanent resident offer key"),
+        (Some(B256::ZERO), "zero permanent resident offer key"),
+        (
+            Some(B256::repeat_byte(0x52)),
+            "does not hold the canonical permanent offer key",
+        ),
+    ] {
+        let error =
+            validate_offer_key_before_threshold_work(existing, true, false, canonical, resident)
+                .unwrap_err()
+                .to_string();
+        assert!(error.contains(expected), "{error}");
+        assert!(error.contains("no recovery or fallback"), "{error}");
+    }
+
+    let error = validate_offer_key_before_threshold_work(
+        existing,
+        true,
+        false,
+        B256::ZERO,
+        Some(canonical),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("existing canonical state"), "{error}");
 }
 
 #[test]
-fn force_dkg_recovery_boundary_targets_next_epoch_at_head_plus_one() {
-    let (keys, _participants, output, _share, _polynomial) = run_test_dkg_complete();
-    let validator_set = validators::ValidatorSet {
-        public_keys: keys.iter().map(|key| key.public_key()).collect(),
-        addresses: vec![
-            Address::with_last_byte(1),
-            Address::with_last_byte(2),
-            Address::with_last_byte(3),
-        ],
-        p2p_addresses: vec![validators::ValidatorP2pAddress::Missing; 3],
+fn offer_key_gate_defers_exact_comparison_only_for_ready_empty_db_verifier_join() {
+    let empty_join = StartupDkgContext {
+        last_execution_height: 0,
+        last_consensus_finalized_height: 0,
+        recovered_boundary_finalized: false,
+        recovered_vrf_group_public_key: None,
+        recovered_dkg_output_hash: None,
+        genesis_formation_proven: false,
     };
-    let mut previous = test_boundary_with_vrf_hash(B256::with_last_byte(0x55), 12);
-    previous.epoch = 7;
-    previous.vrf_material_version = 4;
+    let resident = Some(B256::repeat_byte(0x61));
+    validate_offer_key_before_threshold_work(empty_join, false, true, B256::ZERO, resident)
+        .unwrap();
 
-    let (activation_height, boundary) =
-        build_force_dkg_recovery_boundary(&validator_set, &output, &previous, 780_596).unwrap();
-
-    assert_eq!(activation_height, 780_597);
-    assert_eq!(boundary.epoch, 8);
-    assert_eq!(boundary.dkg_cycle, 13);
-    assert_eq!(boundary.freeze_height, 780_596);
-    assert_eq!(boundary.planned_activation_height, 780_597);
-    assert_eq!(boundary.vrf_material_version, 5);
-    assert!(boundary.is_full_dkg);
-    assert!(!boundary.is_validator_set_change);
-    assert_eq!(decode_boundary_output(&boundary).unwrap(), output);
-}
-
-#[test]
-fn force_dkg_recovery_boundary_rejects_empty_chain() {
-    let (keys, _participants, output, _share, _polynomial) = run_test_dkg_complete();
-    let validator_set = validators::ValidatorSet {
-        public_keys: keys.iter().map(|key| key.public_key()).collect(),
-        addresses: vec![
-            Address::with_last_byte(1),
-            Address::with_last_byte(2),
-            Address::with_last_byte(3),
-        ],
-        p2p_addresses: vec![validators::ValidatorP2pAddress::Missing; 3],
-    };
-    let previous = test_boundary_with_vrf_hash(B256::with_last_byte(0x55), 12);
-
-    let error = build_force_dkg_recovery_boundary(&validator_set, &output, &previous, 0)
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("only valid for an existing chain"));
+    let error =
+        validate_offer_key_before_threshold_work(empty_join, false, false, B256::ZERO, resident)
+            .unwrap_err()
+            .to_string();
+    assert!(error.contains("only an empty-DB verifier join"), "{error}");
 }
 
 #[test]
@@ -611,6 +625,45 @@ fn genesis_formation_gate_waits_without_expected_peers() {
         genesis_formation_gate_decision(context, genesis, 3, &evidence),
         GenesisFormationGate::WaitForExecutionSync
     );
+}
+
+#[test]
+fn tee_genesis_bootstrap_is_reserved_for_proven_founding_members() {
+    let fresh = StartupDkgContext {
+        last_execution_height: 0,
+        last_consensus_finalized_height: 0,
+        recovered_boundary_finalized: false,
+        recovered_vrf_group_public_key: None,
+        recovered_dkg_output_hash: None,
+        genesis_formation_proven: true,
+    };
+    assert!(should_coordinate_genesis_tee_bootstrap(fresh, true, false));
+    assert!(
+        !should_coordinate_genesis_tee_bootstrap(fresh, true, true),
+        "a shareless verifier join must not reproduce the block-1 OST3 ceremony"
+    );
+    assert!(
+        !should_coordinate_genesis_tee_bootstrap(fresh, false, false),
+        "a non-member cannot produce the founding OST3 payload"
+    );
+
+    let unsynced_join = StartupDkgContext {
+        genesis_formation_proven: false,
+        ..fresh
+    };
+    assert!(
+        !should_coordinate_genesis_tee_bootstrap(unsynced_join, false, true),
+        "an empty local database joining a running chain is not fresh genesis"
+    );
+
+    let existing = StartupDkgContext {
+        last_execution_height: 12,
+        genesis_formation_proven: false,
+        ..fresh
+    };
+    assert!(!should_coordinate_genesis_tee_bootstrap(
+        existing, true, false
+    ));
 }
 
 #[test]
@@ -1235,6 +1288,7 @@ fn test_build_boundary_artifact_maps_addresses() {
         vrf_material_version: 1,
         is_validator_set_change: true,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
 
@@ -1247,6 +1301,31 @@ fn test_build_boundary_artifact_maps_addresses() {
     // Group public key should be a non-zero hash.
     assert_ne!(result.vrf_group_public_key, B256::ZERO);
     assert_ne!(result.reshare.active_set_hash, B256::ZERO);
+}
+
+#[test]
+fn ost3_genesis_authority_comes_from_current_dkg_boundary_before_state_exists() {
+    let (keys, _participants, output, _polynomial) = run_test_dkg();
+    let addresses = vec![
+        Address::with_last_byte(0x11),
+        Address::with_last_byte(0x22),
+        Address::with_last_byte(0x33),
+    ];
+    let validator_set = validators::ValidatorSet {
+        public_keys: keys.iter().map(|key| key.public_key()).collect(),
+        addresses: addresses.clone(),
+        p2p_addresses: vec![validators::ValidatorP2pAddress::Missing; 3],
+    };
+
+    // Block 1 has not executed yet, so there is deliberately no provider/state
+    // input here. The same DKG boundary that BoundaryOutcome will commit must be
+    // the sole authority for the OST3 committee snapshot hash.
+    let artifact = build_genesis_dkg_boundary_artifact(&validator_set, &output, true).unwrap();
+
+    assert_eq!(artifact.epoch, 0);
+    assert_eq!(artifact.vrf_material_version, 0);
+    assert_ne!(artifact.committee_set_hash, B256::ZERO);
+    assert_eq!(artifact.reshare.new_active_set, addresses);
 }
 
 #[test]
@@ -1275,6 +1354,7 @@ fn test_build_boundary_artifact_deterministic() {
         vrf_material_version: 1,
         is_validator_set_change: true,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
     let r2 = dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
@@ -1288,6 +1368,7 @@ fn test_build_boundary_artifact_deterministic() {
         vrf_material_version: 1,
         is_validator_set_change: true,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
     assert_eq!(r1.vrf_group_public_key, r2.vrf_group_public_key);
@@ -1325,6 +1406,7 @@ fn test_build_boundary_artifact_allows_extra_validator_not_in_threshold_output()
         vrf_material_version: 1,
         is_validator_set_change: true,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
     assert_eq!(result.reshare.new_active_set.len(), 3);
@@ -1350,6 +1432,7 @@ fn test_build_boundary_artifact_rejects_removed_validator_in_output() {
         vrf_material_version: 1,
         is_validator_set_change: true,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap_err()
     .to_string();
@@ -1381,6 +1464,7 @@ fn test_decode_boundary_output_round_trips_full_output() {
         vrf_material_version: 1,
         is_validator_set_change: true,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
 
@@ -1413,6 +1497,7 @@ fn test_decode_boundary_output_rejects_corrupted_outcome() {
         vrf_material_version: 1,
         is_validator_set_change: true,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
 
@@ -1447,6 +1532,7 @@ fn test_pending_dkg_boundary_snapshot_round_trips_and_rejects_corruption() {
         vrf_material_version: 2,
         is_validator_set_change: true,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
     let snapshot = PendingDkgBoundarySnapshot {
@@ -1503,6 +1589,7 @@ fn test_completed_dkg_is_durable_before_activation_boundary() {
         planned_activation_height: 120,
         validator_set,
         participants: participants.clone(),
+        tee_expired_target_exclusions: Vec::new(),
         is_validator_set_change: false,
     };
     let complete = dkg_actor::DkgComplete {
@@ -1584,6 +1671,7 @@ fn test_pending_boundary_snapshot_restores_manager_before_commit() {
         vrf_material_version: 2,
         is_validator_set_change: true,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
     let snapshot = PendingDkgBoundarySnapshot {
@@ -1644,6 +1732,7 @@ fn test_pending_boundary_commit_requires_matching_finalized_artifact_then_clears
         vrf_material_version: 2,
         is_validator_set_change: true,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
     let mut different = artifact.clone();
@@ -1811,6 +1900,7 @@ fn test_startup_live_join_round_follows_chain_dkg_cycle() {
         vrf_material_version: 41,
         is_validator_set_change: true,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
 
@@ -1906,6 +1996,7 @@ fn test_recovered_boundary_addresses_survive_latest_state_removal() {
         vrf_material_version: 2,
         is_validator_set_change: true,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
 
@@ -1964,6 +2055,7 @@ fn test_recovered_boundary_evm_signer_authorization_survives_latest_state_remova
         vrf_material_version: 2,
         is_validator_set_change: true,
         tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
 
@@ -1983,7 +2075,6 @@ fn test_recovered_boundary_evm_signer_authorization_survives_latest_state_remova
         storage_dir: None,
         keys_dir: None,
         trust_el_head: false,
-        force_dkg: false,
         testnet_unix_time_offset_secs: None,
         consensus_peers: Vec::new(),
         use_local_defaults: true,
@@ -1994,6 +2085,11 @@ fn test_recovered_boundary_evm_signer_authorization_survives_latest_state_remova
         bls_passphrase: None,
         tee_enclave_socket: None,
         tee_bootstrap_timeout_secs: 60,
+        tee_renewal_relay_key: None,
+        tee_renewal_rpc_url: "http://127.0.0.1:8545".to_owned(),
+        tee_renewal_poll_secs: 30,
+        tee_renewal_warning_blocks: 600,
+        tee_renewal_critical_blocks: 120,
         upstream: None,
         upstream_nocertify: false,
         projection_mongodb_uri: Some("mongodb://localhost:27017".to_owned()),
@@ -2960,7 +3056,6 @@ fn evm_signer_validation_allows_active_validator_waiting_for_live_join_share() {
         storage_dir: None,
         keys_dir: None,
         trust_el_head: false,
-        force_dkg: false,
         testnet_unix_time_offset_secs: None,
         consensus_peers: Vec::new(),
         use_local_defaults: true,
@@ -2971,6 +3066,11 @@ fn evm_signer_validation_allows_active_validator_waiting_for_live_join_share() {
         bls_passphrase: None,
         tee_enclave_socket: None,
         tee_bootstrap_timeout_secs: 60,
+        tee_renewal_relay_key: None,
+        tee_renewal_rpc_url: "http://127.0.0.1:8545".to_owned(),
+        tee_renewal_poll_secs: 30,
+        tee_renewal_warning_blocks: 600,
+        tee_renewal_critical_blocks: 120,
         upstream: None,
         upstream_nocertify: false,
         projection_mongodb_uri: Some("mongodb://localhost:27017".to_owned()),
@@ -3200,7 +3300,7 @@ fn restarted_finalized_node_does_not_refresh_genesis_dkg() {
     };
     // Genuinely fresh node (local key in set, no force) runs the genesis DKG.
     assert_eq!(
-        startup_dkg_mode(fresh, true, false),
+        startup_dkg_mode(fresh, true),
         StartupDkgMode::InitialGenesisDkg
     );
 
@@ -3211,7 +3311,7 @@ fn restarted_finalized_node_does_not_refresh_genesis_dkg() {
         ..fresh
     };
     assert_eq!(
-        startup_dkg_mode(finalized, true, false),
+        startup_dkg_mode(finalized, true),
         StartupDkgMode::LiveJoinRequired,
         "a node that already finalized blocks must NOT re-run the initial genesis DKG"
     );
@@ -3343,6 +3443,7 @@ mod restart_recovery {
                 vrf_material_version: 2,
                 is_validator_set_change: true,
                 tee_reshare_registrations: Vec::new(),
+                tee_expired_target_exclusions: Vec::new(),
             })
             .unwrap();
         let boundary_participants =
@@ -3393,7 +3494,6 @@ mod restart_recovery {
             storage_dir: None,
             keys_dir: None,
             trust_el_head: false,
-            force_dkg: false,
             testnet_unix_time_offset_secs: None,
             consensus_peers: Vec::new(),
             use_local_defaults: true,
@@ -3404,6 +3504,11 @@ mod restart_recovery {
             bls_passphrase: None,
             tee_enclave_socket: None,
             tee_bootstrap_timeout_secs: 60,
+            tee_renewal_relay_key: None,
+            tee_renewal_rpc_url: "http://127.0.0.1:8545".to_owned(),
+            tee_renewal_poll_secs: 30,
+            tee_renewal_warning_blocks: 600,
+            tee_renewal_critical_blocks: 120,
             upstream: None,
             upstream_nocertify: false,
             projection_mongodb_uri: Some("mongodb://localhost:27017".to_owned()),

@@ -2,12 +2,14 @@
 //!
 //! JSON schema:
 //! ```json
-//! {"version":"1.2", "activationHeight":12345, "info":"notes"}
+//! {"version":"1.2", "activationHeight":12345, "info":"notes", "teePolicy":"<canonical TeePolicyV1 lowercase hex>"}
 //! ```
 //!
 //! `version` is a `"major.minor"` string (no `v` prefix). Raw numeric JSON
-//! values and undotted version strings are rejected.
+//! values and undotted version strings are rejected. `teePolicy` is optional;
+//! unknown fields and non-canonical encodings are rejected.
 
+use outbe_primitives::tee_attestation_v1::{TeePolicyV1, MAX_TEE_POLICY_BYTES};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -19,12 +21,14 @@ use crate::version::{
 
 /// JSON payload for scheduling a protocol update via vote.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ScheduleUpdatePayload {
     pub version: String,
     pub activation_height: u64,
     #[serde(default)]
     pub info: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tee_policy: Option<String>,
 }
 
 impl ScheduleUpdatePayload {
@@ -33,7 +37,28 @@ impl ScheduleUpdatePayload {
             version: Self::format_version(version),
             activation_height,
             info: info.into(),
+            tee_policy: None,
         }
+    }
+
+    /// Builds an Update payload carrying one exact canonical successor TEE
+    /// policy. The JSON uses bounded lowercase hex because Vote payloads are
+    /// UTF-8 strings; callers never provide a policy hash without its rules.
+    pub fn with_tee_policy(
+        version: ProtocolVersion,
+        activation_height: u64,
+        info: impl Into<String>,
+        policy: &TeePolicyV1,
+    ) -> std::result::Result<Self, UpdateError> {
+        let canonical = policy
+            .encode_canonical()
+            .map_err(|_| UpdateError::InvalidTeePolicy)?;
+        Ok(Self {
+            version: Self::format_version(version),
+            activation_height,
+            info: info.into(),
+            tee_policy: Some(hex::encode(canonical)),
+        })
     }
 
     pub fn from_value(payload: &Value) -> std::result::Result<Self, UpdateError> {
@@ -42,6 +67,30 @@ impl ScheduleUpdatePayload {
 
     pub fn protocol_version(&self) -> std::result::Result<ProtocolVersion, UpdateError> {
         Self::parse_version(&self.version)
+    }
+
+    /// Decodes the optional canonical successor policy after enforcing the
+    /// encoded cap before allocation.
+    pub fn tee_policy(&self) -> std::result::Result<Option<TeePolicyV1>, UpdateError> {
+        let Some(encoded) = self.tee_policy.as_deref() else {
+            return Ok(None);
+        };
+        let maximum_hex_len = MAX_TEE_POLICY_BYTES
+            .checked_mul(2)
+            .ok_or(UpdateError::InvalidTeePolicy)?;
+        if encoded.is_empty()
+            || encoded.len() > maximum_hex_len
+            || encoded.len() % 2 != 0
+            || !encoded
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(UpdateError::InvalidTeePolicy);
+        }
+        let canonical = hex::decode(encoded).map_err(|_| UpdateError::InvalidTeePolicy)?;
+        TeePolicyV1::decode_canonical(&canonical)
+            .map(Some)
+            .map_err(|_| UpdateError::InvalidTeePolicy)
     }
 
     pub fn validate(
@@ -56,6 +105,16 @@ impl ScheduleUpdatePayload {
         let min_activation = current_height.saturating_add(min_activation_buffer(chain_id));
         if self.activation_height < min_activation {
             return Err(UpdateError::HeightInPast);
+        }
+        if let Some(policy) = self.tee_policy()? {
+            let mut expected_chain_id = [0u8; 32];
+            expected_chain_id[24..].copy_from_slice(&chain_id.to_be_bytes());
+            if policy.chain_id != expected_chain_id {
+                return Err(UpdateError::TeePolicyChainIdentityMismatch);
+            }
+            if policy.activation_height != self.activation_height {
+                return Err(UpdateError::TeePolicyActivationMismatch);
+            }
         }
         Ok(())
     }
@@ -119,12 +178,147 @@ mod tests {
     use super::*;
     use crate::constants::MIN_ACTIVATION_BUFFER;
     use crate::encode_protocol_version;
+    use alloy_primitives::B256;
+    use outbe_primitives::tee_attestation_v1::{
+        AttestationMode, EnclaveProfile, PlatformTcbStatusSetV1, QvlTcbStatusV1,
+        TeeMeasurementRuleV1, TeePolicyV1,
+    };
 
     const LOCALNET_CHAIN_ID: u64 = 54_322_345;
     const OTHER_CHAIN_ID: u64 = 1;
 
     fn payload(activation_height: u64) -> ScheduleUpdatePayload {
         ScheduleUpdatePayload::new(ProtocolVersion::from(2), activation_height, "notes")
+    }
+
+    fn successor_policy(chain_id: u64, activation_height: u64) -> TeePolicyV1 {
+        let mut chain_id_word = [0u8; 32];
+        chain_id_word[24..].copy_from_slice(&chain_id.to_be_bytes());
+        TeePolicyV1 {
+            policy_version: 2,
+            chain_id: chain_id_word,
+            genesis_hash: B256::repeat_byte(0x11),
+            activation_height,
+            predecessor_policy_hash: B256::repeat_byte(0x22),
+            attestation_mode: AttestationMode::DcapRequired,
+            intel_root_der_hash: B256::repeat_byte(0x33),
+            quote_version: 3,
+            tee_type: 0,
+            attestation_key_type: 2,
+            qe_vendor_id: [
+                0x93, 0x9a, 0x72, 0x33, 0xf7, 0x9c, 0x4c, 0xa9, 0x94, 0x0a, 0x0d, 0xb3, 0x95, 0x7f,
+                0x06, 0x07,
+            ],
+            certification_data_type: 5,
+            tcb_info_schema_version: 3,
+            qe_identity_schema_version: 2,
+            minimum_tcb_evaluation_data_number: 1,
+            accepted_platform_tcb_statuses: PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
+            accepted_qe_tcb_status: QvlTcbStatusV1::UpToDate,
+            minimum_lease: 3_600,
+            maximum_lease: 604_800,
+            collateral_margin: 3_600,
+            resource_schedule_hash: B256::repeat_byte(0x44),
+            measurement_rules: vec![TeeMeasurementRuleV1 {
+                enclave_profile: EnclaveProfile::Validator,
+                mrenclave: B256::repeat_byte(0x55),
+                mrsigner: B256::repeat_byte(0x66),
+                isv_prod_id: 7,
+                minimum_isv_svn: 2,
+                admit_from_height: activation_height,
+                admit_until_height_exclusive: u64::MAX,
+            }],
+        }
+    }
+
+    #[test]
+    fn update_payload_roundtrips_exact_successor_tee_policy() {
+        let version = encode_protocol_version(1, 2);
+        let activation_height = 12_345;
+        let policy = successor_policy(OTHER_CHAIN_ID, activation_height);
+        let payload = ScheduleUpdatePayload::with_tee_policy(
+            version,
+            activation_height,
+            "release notes",
+            &policy,
+        )
+        .unwrap();
+
+        payload.validate(100, OTHER_CHAIN_ID).unwrap();
+        assert_eq!(payload.tee_policy().unwrap(), Some(policy));
+
+        let json = serde_json::to_string(&payload).unwrap();
+        let decoded: ScheduleUpdatePayload = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded, payload);
+        assert_eq!(decoded.tee_policy().unwrap(), payload.tee_policy().unwrap());
+    }
+
+    #[test]
+    fn update_payload_rejects_unknown_policy_authority_fields() {
+        let value: Value = serde_json::from_str(
+            r#"{"version":"1.2","activationHeight":1000,"info":"","policyHash":"0x01"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            ScheduleUpdatePayload::from_value(&value).unwrap_err(),
+            UpdateError::InvalidPayload
+        );
+    }
+
+    #[test]
+    fn tee_policy_hex_is_bounded_and_lowercase() {
+        let activation_height = 12_345;
+        let policy = successor_policy(OTHER_CHAIN_ID, activation_height);
+        let mut payload = ScheduleUpdatePayload::with_tee_policy(
+            encode_protocol_version(1, 2),
+            activation_height,
+            "release",
+            &policy,
+        )
+        .unwrap();
+
+        payload.tee_policy = Some("AA".into());
+        assert_eq!(
+            payload.tee_policy().unwrap_err(),
+            UpdateError::InvalidTeePolicy
+        );
+
+        payload.tee_policy = Some("a".repeat(MAX_TEE_POLICY_BYTES * 2 + 2));
+        assert_eq!(
+            payload.tee_policy().unwrap_err(),
+            UpdateError::InvalidTeePolicy
+        );
+    }
+
+    #[test]
+    fn update_payload_binds_tee_policy_to_chain_and_activation_height() {
+        let version = encode_protocol_version(1, 2);
+        let activation_height = 12_345;
+        let wrong_chain = successor_policy(LOCALNET_CHAIN_ID, activation_height);
+        let payload = ScheduleUpdatePayload::with_tee_policy(
+            version,
+            activation_height,
+            "release",
+            &wrong_chain,
+        )
+        .unwrap();
+        assert_eq!(
+            payload.validate(100, OTHER_CHAIN_ID).unwrap_err(),
+            UpdateError::TeePolicyChainIdentityMismatch
+        );
+
+        let wrong_height = successor_policy(OTHER_CHAIN_ID, activation_height + 1);
+        let payload = ScheduleUpdatePayload::with_tee_policy(
+            version,
+            activation_height,
+            "release",
+            &wrong_height,
+        )
+        .unwrap();
+        assert_eq!(
+            payload.validate(100, OTHER_CHAIN_ID).unwrap_err(),
+            UpdateError::TeePolicyActivationMismatch
+        );
     }
 
     #[test]

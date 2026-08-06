@@ -206,8 +206,8 @@ Relevant symbols:
 - [`EnclaveClient`](../crates/system/tee/src/client.rs)
 - [`serve`](../bin/outbe-tee-enclave/src/transport.rs)
 - [signer key handling](../crates/blockchain/primitives/src/signer.rs)
-- [`ChildGuard`](../crates/testing/e2e-harness/src/internal/proc.rs)
-- [localnet committee process controls](../crates/testing/e2e-harness/src/world/localnet/committee.rs)
+- [`ChildGuard`](../testing/e2e-harness/src/internal/proc.rs)
+- [localnet committee process controls](../testing/e2e-harness/src/world/localnet/committee.rs)
 
 What exists:
 
@@ -233,12 +233,12 @@ processes/modes that still demonstrate failure isolation.
 
 Relevant symbols:
 
-- [`World`](../crates/testing/e2e-harness/src/world/mod.rs)
-- [`World::rpc`](../crates/testing/e2e-harness/src/world/rpc.rs)
-- [`ScenarioEvidence`](../crates/testing/e2e-harness/src/evidence.rs)
-- [committee lifecycle controls](../crates/testing/e2e-harness/src/world/localnet/committee.rs)
-- [historical synchronous Lysis E2E](../crates/core/e2e/tests/wwd_lysis_nod_gratis.rs)
-- [Tribute projection feature](../crates/testing/e2e-harness/features/tribute_projection.feature)
+- [`World`](../testing/e2e-harness/src/world/mod.rs)
+- [`World::rpc`](../testing/e2e-harness/src/world/rpc.rs)
+- [`ScenarioEvidence`](../testing/e2e-harness/src/evidence.rs)
+- [committee lifecycle controls](../testing/e2e-harness/src/world/localnet/committee.rs)
+- [historical synchronous Lysis E2E](../testing/e2e/tests/wwd_lysis_nod_gratis.rs)
+- [Tribute projection feature](../testing/e2e-harness/features/tribute_projection.feature)
 
 What exists:
 

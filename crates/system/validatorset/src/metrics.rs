@@ -62,3 +62,19 @@ pub fn record_aggregate_status_counts(active: usize, exiting: usize, unbonding: 
 pub fn record_pending_set_change(pending: bool) {
     gauge!("outbe_validator_pending_set_change").set(if pending { 1.0 } else { 0.0 });
 }
+
+/// One certified freeze-height TEE expiry transition per affected validator.
+pub fn record_validator_tee_expiry(addr: Address, action: &'static str) {
+    counter!(
+        "outbe_validator_tee_expiry_total",
+        "addr" => addr_label(addr),
+        "action" => action,
+    )
+    .increment(1);
+}
+
+/// Size of the most recently applied narrow TEE-expiry transition.
+pub fn record_tee_expiry_exclusions(active_demoted: usize, pending_cleared: usize) {
+    gauge!("outbe_last_tee_expired_active_demoted").set(active_demoted as f64);
+    gauge!("outbe_last_tee_expired_pending_cleared").set(pending_cleared as f64);
+}

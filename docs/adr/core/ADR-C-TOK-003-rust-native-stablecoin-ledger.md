@@ -281,7 +281,7 @@ ceiling.
 - PFS-010 live evidence enters through the production CLI/RPC/native ABI path and
   covers mint, transfer, permit, memo, pause rejection, freeze, forced transfer and
   exact ledger reads before and after full-committee restart in
-  `crates/testing/e2e-harness/features/stablecoin_factory_v1.feature`.
+  `testing/e2e-harness/features/stablecoin_factory_v1.feature`.
 - PFS-010-07 component scenarios inject policy, role, permit-signature and supply-cap
   failures and assert exact ledger and event rollback through executable contract
   seams.

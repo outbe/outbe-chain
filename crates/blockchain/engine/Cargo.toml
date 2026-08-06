@@ -18,6 +18,7 @@ default = []
 # Internal
 outbe-consensus.workspace = true
 outbe-compressed-entities.workspace = true
+outbe-evm.workspace = true
 outbe-ocomp-protocol.workspace = true
 outbe-node.workspace = true
 outbe-primitives.workspace = true
@@ -46,14 +47,11 @@ reth-node-builder.workspace = true
 reth-provider.workspace = true
 reth-chain-state.workspace = true
 reth-storage-api.workspace = true
-reth-transaction-pool.workspace = true
-reth-primitives-traits.workspace = true
 
 # Alloy
 alloy-primitives.workspace = true
 alloy-eips.workspace = true
 alloy-consensus.workspace = true
-alloy-sol-types.workspace = true
 bytes.workspace = true
 
 # Crypto

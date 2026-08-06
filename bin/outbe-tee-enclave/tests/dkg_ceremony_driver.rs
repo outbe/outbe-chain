@@ -13,7 +13,7 @@ use tokio::sync::mpsc;
 
 use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
 use outbe_tee::tee_dkg::{run_tee_dkg_ceremony, CeremonyError, DkgGossip, DkgWireMessage};
-use outbe_tee::{CeremonyCoordinator, EnclaveClient, QuotePolicy};
+use outbe_tee::{CeremonyCoordinator, EnclaveClient};
 use outbe_tee_enclave::keys::EnclaveKeys;
 use outbe_tee_enclave::transport::serve_connection;
 
@@ -70,7 +70,7 @@ fn ceremony_driver_completes_over_in_memory_gossip() {
                     let _ = serve_connection(stream, &keys, &offer_key);
                 }
             }));
-            clients.push(EnclaveClient::connect(&sock, &QuotePolicy::dev_accept_any()).unwrap());
+            clients.push(EnclaveClient::connect(&sock).unwrap());
         }
 
         // Announce identities (tee_bls_pub, dkg_enc_pub).

@@ -1,12 +1,25 @@
-# Testnet SGX release and rollout
+# Testnet SGX/DCAP release and rollout
 
-This guide releases the same enclave bytes that were independently reproduced, signs the
-Gramine bundle with the protected testnet key, publishes an immutable OCI image, executes
-that exact digest on hardware SGX and emits a signed `ReleaseManifest.json`.
+This guide defines the release mechanics for the same enclave bytes that were
+independently reproduced, signed with the protected testnet key, published as an
+immutable OCI image and executed on Intel SGX x86_64.
 
-It is a testnet process. The current Gramine contract uses local SGX measurements and
-EGETKEY sealing with `sgx.remote_attestation = "none"`; it does not claim DCAP quote or
-Intel collateral verification.
+> **DCAP release gate.** The checked-in B1 candidate selects
+> `sgx.remote_attestation = "dcap"`, exactly `native-dcap`, Intel QVL
+> `1.26.100.1-noble1` and Gramine `1.9`. This source-level activation is not by
+> itself authorization to roll out a production-mode genesis: the B1 checkpoint
+> must bind the reproducible artifact set, and H1, P1 and E1 must prove fresh
+> accepted Processor evidence, same-server exact-release QVL/full-block timing,
+> and reachable real Validator/FullNode E2E. A 32-validator network is not a
+> release gate. Missing Processor hardware or an accepted
+> Processor result blocks release rather than skipping it. A real Platform node
+> is verified fail-closed by the same testnet verifier when it joins; it is
+> not a dedicated row in every release.
+
+The commands below remain the intended protected publication workflow. Until the
+I9 closure checkpoint names the exact signed commit and artifact digests, they are
+release-mechanics documentation only, not authorization to publish a testnet
+DCAP image.
 
 ## One-time repository setup
 
@@ -50,10 +63,12 @@ Release immutability protects the tag and assets after publication. The tag rule
 still required before publication because draft releases are intentionally mutable while
 the workflow uploads and verifies their complete asset matrix.
 
-Register a dedicated ephemeral x86_64 GitHub runner with only the custom label
-`testnet-release-sgx`. Do not give this runner the default `self-hosted`, `Linux`, `X64` or
-generic `sgx` labels: those labels are shared by CI/nightly jobs and do not isolate the
-protected release workload. The release workflow targets the unique label directly.
+Register one dedicated ephemeral x86_64 GitHub runner class. The Processor-CA
+host uses only `testnet-release-sgx`; its one job performs both the existing
+immutable SGX/sealing acceptance and the fresh Processor-CA DCAP run. Do not
+give it the default `self-hosted`, `Linux`, `X64` or generic `sgx` labels: those
+labels are shared by CI/nightly jobs and do not isolate the protected release
+workload.
 
 The runner needs Docker access and these device nodes (legacy `/dev/sgx/...` aliases are
 also accepted):
@@ -75,6 +90,12 @@ from consuming unrelated queued work:
   --labels testnet-release-sgx \
   --work _work
 ```
+
+The host must install `libsgx-dcap-default-qpl` at the exact version in
+`release/project-toolchain-v1.json` and provide working QCNL/PCS configuration.
+The PCS subscription key remains a host-only acquisition secret: never put it in
+workflow arguments, repository files, artifacts or logs. QPL/QCNL is not installed
+in the release build image and never participates in consensus verification.
 
 Start this runner only after the protected workflow is ready to advance to hardware
 acceptance. Confirm GitHub reports exactly the custom routing label before allowing the
@@ -115,9 +136,11 @@ gh run list --repo outbe/outbe-chain --workflow testnet-release.yml --limit 5
 gh run watch --repo outbe/outbe-chain <run-id> --exit-status
 ```
 
-The ordered gates are two independent ELF builds, two unsigned SGX bundle builds,
-protected SIGSTRUCT signing, exact-digest OCI publication and Cosign signing, SPDX SBOM,
-hardware-SGX Rust/Gherkin acceptance, final schema validation and ReleaseManifest signing.
+The final DCAP-capable workflow must order two independent ELF builds, two
+unsigned SGX bundle builds, protected SIGSTRUCT signing, exact-digest OCI
+publication and Cosign signing, SPDX SBOM, fail-not-skip hardware SGX/DCAP
+acceptance, final schema validation and ReleaseManifest signing. The workflow is
+not production-authorized until B1 through E1 are closed.
 The OCI job provisions pinned Buildx v0.35.0 and a digest-pinned BuildKit v0.31.2
 `docker-container` builder because the default Docker driver cannot emit the required
 BuildKit provenance and SBOM attestations.
@@ -128,7 +151,11 @@ matrix, downloads every draft asset and compares it byte-for-byte, then publishe
 only after another tag-object check. Publication fails if a GitHub
 Release or failed draft already exists for the tag: reruns cannot replace assets, and
 changed output requires a new tag.
-There is no successful release asset if the SGX runner does not pass.
+There is no successful release asset if the Processor/SGX job does not pass.
+The final manifest requires canonical `hardware-dcap-processor.json`; its
+complete public evidence directory is published as a deterministic tar asset.
+Platform admission evidence, when a real Platform node joins, belongs to that
+node's admission record and is not substituted into the release manifest.
 
 Besides the SGX evidence, the asset matrix carries the deployable payload:
 `outbe-linux-x86_64.tar` (every artifact of `release/reproducible-elf-build-v1.json` —
@@ -203,19 +230,18 @@ For a normal same-signer upgrade:
 1. Create and pass the complete new release; never sign a locally modified bundle.
 2. Require the same MRSIGNER, a strictly non-decreasing ISVSVN and the reviewed new
    MRENCLAVE.
-3. Before rollout, authorize an overlap containing old and new MRENCLAVE in the network's
-   measurement policy. Current testnet measurement enforcement is incomplete, so operators
-   must also compare the manifest and hardware evidence explicitly; this guide does not
-   turn the existing registration stub into a security claim.
+3. Before rollout, pass the governance proposal whose activation height authorizes
+   an overlap containing old and new MRENCLAVE in the V1 policy schedule. Verify the
+   canonical policy hash and exact release hardware evidence before that height.
 4. Roll the exact image digest through full nodes and validators. Both roles require an
    enclave on an offer-bearing network because both re-execute Tribute transactions.
 5. Verify same-signer sealed-state restoration and normal node readiness after each cohort.
 6. Retire the old MRENCLAVE only after every required node has moved and rollback policy is
    closed.
 
-A different MRSIGNER does not silently inherit old sealed identity. Treat signer rotation
-as a separate governed migration: prepare an authenticated handoff or rebootstrap, approve
-the new authority and release identity, and explicitly coordinate activation. Restarting
+A different MRSIGNER does not inherit the old sealed identity or permanent offer key.
+There is no handoff, rebootstrap or governance replacement for that identity: it must
+onboard as a new identity under an independently approved release policy. Restarting
 containers is not a signer-rotation procedure.
 
 ## Local tooling
@@ -251,3 +277,22 @@ mise run release-sgx-hardware-e2e -- \
   --bundle /tmp/extracted-signed-sgx-bundle \
   --evidence /tmp/hardware-sgx.json
 ```
+
+That command is the SGX/sealing smoke only. For fresh accepted remote-attestation
+evidence, run the public-verifier path after the image has been verified and pulled:
+
+```bash
+cargo run --locked -p outbe-e2e-harness --bin outbe-release-dcap-evidence -- \
+  --image "$IMAGE" \
+  --bundle /tmp/extracted-signed-sgx-bundle \
+  --expected-pck-ca processor \
+  --output-dir /tmp/hardware-dcap-processor
+```
+
+For an on-demand Platform compatibility check, the same command may use
+`--expected-pck-ca platform`. Guest-visible topology is recorded only as
+provenance; the enclave-verified Intel PCK issuer determines the CA. This
+optional diagnostic never substitutes for the real Platform node's admission
+and does not gate releases. For the mandatory Processor run, a missing runner,
+stale collateral, rejected verdict or missing artifact is a release failure,
+never a skip.

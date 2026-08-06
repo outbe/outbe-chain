@@ -236,6 +236,25 @@
   },
   {
     "type": "function",
+    "name": "referenceCurrencyAssets",
+    "inputs": [
+      {
+        "name": "isoCode",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "assets",
+        "type": "address[]",
+        "internalType": "address[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "referenceCurrencyVaultAt",
     "inputs": [
       {

@@ -229,7 +229,7 @@ async function printSmartAccountInfo(
   const code = await provider.getCode(smartAccountAddr);
   const deployed = code !== "0x";
 
-  console.log(`\n=== User's Bundle Account: ${smartAccountAddr} ===`);
+  console.log(`\n=== User's smart account: ${smartAccountAddr} ===`);
   console.log(`  Deployed:        ${deployed}`);
 
   if (!deployed) return;
@@ -258,7 +258,7 @@ async function printCredisInfo(
     credis.hasOverdueAnadosis(smartAccountAddr).catch(() => false),
   ]);
 
-  console.log(`\n=== Credis Positions (Bundle Account: ${smartAccountAddr}) ===`);
+  console.log(`\n=== Credis Positions (smart account: ${smartAccountAddr}) ===`);
   console.log(`  Positions:       ${positions.length} (overdue: ${hasOverdue})`);
 
   for (const p of positions) {

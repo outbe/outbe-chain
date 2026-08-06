@@ -252,6 +252,12 @@ pub trait PrecompileStorageProvider {
     /// Returns the chain ID.
     fn chain_id(&self) -> u64;
 
+    /// Returns the immutable genesis block hash for this execution context.
+    ///
+    /// Production providers source this from the canonical `ChainSpec`; it is
+    /// never accepted from transaction calldata or mutable contract storage.
+    fn genesis_hash(&self) -> B256;
+
     /// Returns the current block timestamp.
     fn timestamp(&self) -> U256;
 

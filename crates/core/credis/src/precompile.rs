@@ -30,7 +30,7 @@ pub fn dispatch(
                 Ok(abi_position(&position))
             }),
             getPositionsByAddress(c) => view(c, |c| {
-                let positions = contract.get_positions_by_address(c.bundleAccount)?;
+                let positions = contract.get_positions_by_address(c.smartAccount)?;
                 Ok(positions.iter().map(abi_position).collect())
             }),
             getAllPositions(c) => view(c, |_| {
@@ -39,7 +39,7 @@ pub fn dispatch(
             }),
             hasOverdueAnadosis(c) => view(c, |c| {
                 let timestamp = contract.storage.timestamp()?.to::<u64>();
-                contract.has_overdue_anadosis(c.bundleAccount, timestamp)
+                contract.has_overdue_anadosis(c.smartAccount, timestamp)
             }),
             getNextAnadosis(c) => view(c, |c| {
                 let anadosis = contract.get_next_anadosis(c.positionId)?.ok_or_else(|| {
@@ -55,7 +55,7 @@ pub fn dispatch(
             }),
             credisOf(c) => view(c, |c| {
                 let mut total = U256::ZERO;
-                for position in contract.get_positions_by_address(c.bundleAccount)? {
+                for position in contract.get_positions_by_address(c.smartAccount)? {
                     total = total
                         .checked_add(position.credis_principal)
                         .ok_or_else(|| {
@@ -67,7 +67,7 @@ pub fn dispatch(
                 Ok(total)
             }),
             outstandingAnadosisOf(c) => {
-                view(c, |c| contract.get_outstanding_amount(c.bundleAccount))
+                view(c, |c| contract.get_outstanding_amount(c.smartAccount))
             }
             supportsInterface(c) => view(c, |c| {
                 let id: [u8; 4] = c.interfaceId.0;
@@ -81,7 +81,7 @@ fn abi_position(p: &crate::schema::Position) -> ICredis::Position {
     ICredis::Position {
         positionId: p.position_id,
         asset: p.asset,
-        bundleAccount: p.bundle_account,
+        smartAccount: p.smart_account,
         totalAnadosisAmount: p.total_anadosis_amount,
         outstandingAnadosisAmount: p.outstanding_anadosis_amount,
         totalGratisAmount: p.total_gratis_amount,
@@ -89,7 +89,8 @@ fn abi_position(p: &crate::schema::Position) -> ICredis::Position {
         nextAnadosisNumber: p.next_anadosis_number,
         createdAt: p.created_at,
         credisPrincipal: p.credis_principal,
-        refinancingRate: p.refinancing_rate,
+        entryPriceMinor: p.entry_price_minor,
+        currencyRate: p.currency_rate,
         issuanceCurrency: p.issuance_currency,
         eoaCiphertext: p.eoa_ct.clone().into(),
     }

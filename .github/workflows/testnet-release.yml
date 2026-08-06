@@ -23,6 +23,7 @@ concurrency:
 env:
   IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/outbe-tee-enclave-testnet
   RELEASE_TAG: ${{ inputs.release_tag }}
+  TESTNET_GENESIS: release/testnet-genesis.json
 
 jobs:
   build-and-compare:
@@ -54,6 +55,7 @@ jobs:
           }
           test "$(git rev-parse "${RELEASE_TAG}^{commit}")" = "${GITHUB_SHA}"
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          git ls-files --error-unmatch "${TESTNET_GENESIS}"
           tag_object="$(gh api \
             -H 'X-GitHub-Api-Version: 2026-03-10' \
             "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" \
@@ -417,6 +419,35 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      - name: Verify the host-only QPL pin
+        run: |
+          set -euo pipefail
+          qpl_package='libsgx-dcap-default-qpl'
+          qpl_version="$(jq -er ".host_only_packages[\"${qpl_package}\"]" \
+            release/project-toolchain-v1.json)"
+          test "$(dpkg-query -W -f='${Version}' "${qpl_package}")" = "${qpl_version}"
+
+      - name: Capture fresh intent-bound Processor-CA evidence
+        env:
+          EXACT_IMAGE: ${{ needs.package-and-sign-image.outputs.exact_image }}
+        run: |
+          set -euo pipefail
+          cargo run --locked -p outbe-e2e-harness --bin outbe-release-dcap-evidence -- \
+            --image "${EXACT_IMAGE}" \
+            --bundle "${RUNNER_TEMP}/signed" \
+            --testnet-genesis "${TESTNET_GENESIS}" \
+            --expected-pck-ca processor \
+            --output-dir "${RUNNER_TEMP}/hardware-dcap-processor"
+
+      - name: Upload fresh Processor-CA evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: hardware-dcap-processor-evidence
+          path: ${{ runner.temp }}/hardware-dcap-processor
+          if-no-files-found: error
+          retention-days: 30
+
   finalize:
     name: publish verified ReleaseManifest and evidence
     needs: [build-and-compare, package-and-sign-image, hardware-smoke]
@@ -459,6 +490,11 @@ jobs:
           name: hardware-sgx-evidence
           path: ${{ runner.temp }}/hardware
 
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: hardware-dcap-processor-evidence
+          path: ${{ runner.temp }}/hardware-dcap-processor
+
       - uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
 
       - name: Authenticate final verifier to GHCR
@@ -475,6 +511,13 @@ jobs:
           mkdir "${RUNNER_TEMP}/signed" "${RUNNER_TEMP}/final"
           tar -xf "${RUNNER_TEMP}/published/outbe-tee-enclave-sgx.tar" \
             -C "${RUNNER_TEMP}/signed"
+          cp -f "${RUNNER_TEMP}/hardware-dcap-processor/hardware-dcap-evidence.json" \
+            "${RUNNER_TEMP}/final/hardware-dcap-processor.json"
+          source_date_epoch="$(jq -er '.build.source_date_epoch' \
+            "${RUNNER_TEMP}/release-inputs/elf-release-manifest.json")"
+          tar --sort=name --mtime="@${source_date_epoch}" --owner=0 --group=0 \
+            --numeric-owner -cf "${RUNNER_TEMP}/final/hardware-dcap-processor.tar" \
+            -C "${RUNNER_TEMP}/hardware-dcap-processor" .
           cargo xtask release sgx manifest \
             --elf-manifest "${RUNNER_TEMP}/release-inputs/elf-release-manifest.json" \
             --bundle "${RUNNER_TEMP}/signed" \
@@ -487,6 +530,9 @@ jobs:
             --elf-evidence "${RUNNER_TEMP}/release-inputs/elf-reproducibility.json" \
             --sgx-evidence "${RUNNER_TEMP}/release-inputs/sgx-reproducibility.json" \
             --hardware-evidence "${RUNNER_TEMP}/hardware/hardware-sgx.json" \
+            --processor-dcap-archive "${RUNNER_TEMP}/final/hardware-dcap-processor.tar" \
+            --processor-dcap-evidence "${RUNNER_TEMP}/final/hardware-dcap-processor.json" \
+            --testnet-genesis "${TESTNET_GENESIS}" \
             --output "${RUNNER_TEMP}/final/ReleaseManifest.json"
           python3 -m venv "${RUNNER_TEMP}/release-verifier"
           "${RUNNER_TEMP}/release-verifier/bin/pip" install \
@@ -540,6 +586,9 @@ jobs:
             "${RUNNER_TEMP}/release-inputs/elf-reproducibility.json"
             "${RUNNER_TEMP}/release-inputs/sgx-reproducibility.json"
             "${RUNNER_TEMP}/hardware/hardware-sgx.json"
+            "${RUNNER_TEMP}/final/hardware-dcap-processor.json"
+            "${RUNNER_TEMP}/final/hardware-dcap-processor.tar"
+            "${TESTNET_GENESIS}"
           )
           test "$(remote_tag_object)" = "${verified_tag_object}"
           gh release create "${RELEASE_TAG}" "${assets[@]}" \

@@ -19,8 +19,9 @@ outbe-metadosis.workspace = true
 outbe-ocomp-protocol.workspace = true
 outbe-oracle.workspace = true
 outbe-tribute.workspace = true
+outbe-tee.workspace = true
+outbe-teeregistry.workspace = true
 outbe-validatorset.workspace = true
-outbe-zerofee.workspace = true
 
 # Reth
 reth-ethereum = { workspace = true, features = ["node", "cli", "exex"] }
@@ -65,9 +66,12 @@ k256.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-metadosis = { workspace = true, features = ["test-utils"] }
+outbe-tee-enclave = { workspace = true, features = ["mock"] }
 alloy-provider.workspace = true
 alloy-trie.workspace = true
+ed25519-dalek.workspace = true
 mongodb.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }
 reth-e2e-test-utils.workspace = true

@@ -244,6 +244,13 @@ enum SgxCommand {
         #[arg(long)]
         hardware_evidence: PathBuf,
         #[arg(long)]
+        processor_dcap_archive: PathBuf,
+        #[arg(long)]
+        processor_dcap_evidence: PathBuf,
+        /// Final testnet genesis whose block-1 policy authorizes this enclave.
+        #[arg(long)]
+        testnet_genesis: PathBuf,
+        #[arg(long)]
         output: PathBuf,
     },
 }
@@ -382,6 +389,9 @@ fn main() -> Result<()> {
                     elf_evidence,
                     sgx_evidence,
                     hardware_evidence,
+                    processor_dcap_archive,
+                    processor_dcap_evidence,
+                    testnet_genesis,
                     output,
                 } => {
                     sgx::finalize_release_manifest(
@@ -395,9 +405,12 @@ fn main() -> Result<()> {
                             elf_evidence,
                             elf_manifest,
                             hardware_evidence,
+                            processor_dcap_archive,
+                            processor_dcap_evidence,
                             oci_evidence,
                             sbom,
                             sgx_evidence,
+                            testnet_genesis,
                         },
                         &output,
                     )?;

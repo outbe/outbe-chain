@@ -68,9 +68,10 @@ hash, status, target and expected event topics/data, then waits for the configur
 finality boundary. Reorged receipts restart tracking. Postconditions use finalized
 state or verified CE proof where applicable.
 
-TEE join accepts only an `OfferKeySealed` log from the submitted successful
-registration receipt, then verifies validator, key epoch, chain id and expected
-on-chain offer public key before enclave ingestion. Tribute offer success verifies
+TEE join accepts only an `OfferKeySealedForRegistryV1` log whose transaction hash
+and canonical node-id topic match the submitted registration, then verifies chain
+id, active policy, lease and expected on-chain offer public key before enclave
+ingestion. Tribute offer success verifies
 receipt, derives the canonical owner/day id and confirms authenticated/finalized
 presence; Mongo projection is a separate optional demonstration check.
 
@@ -94,10 +95,11 @@ offer key/epoch. Its versioned AEAD envelope must bind chain, contract, sender,
 epoch and public flags as specified by ADR-C-TRB-002. Sensitive plaintext is never printed.
 The current empty-AAD format remains compatibility debt, not the desired contract.
 
-Enclave connections use the chain's attestation policy. `dev_accept_any` is allowed
-only when chain configuration explicitly declares a non-confidential development
-mode and output prominently records that fact. A production command cannot
-silently downgrade quote verification.
+Production enclave connections use the committed authorization manifest; DCAP
+admission is decided by the enclave-resident native QVL and TeeRegistry. The
+development connection validates only structural quote/key consistency and is
+allowed only when chain configuration explicitly declares a non-confidential
+development mode. A production command cannot silently select that transport.
 
 ## Compatibility and production evidence
 
@@ -140,9 +142,9 @@ because local secrets and external effects are a separate authority.
 - TEE join polls all matching validator logs from a starting block and takes the
   last one without binding it to the submitted tx/receipt or finality. A stale or
   unrelated handoff can be ingested.
-- TEE `join` and `pubkey` unconditionally use `QuotePolicy::dev_accept_any()`.
-  Load and enforce the chain's production policy; make any dev downgrade explicit
-  and impossible on a production chain.
+- TEE `pubkey` uses the structural inspection client and therefore must not present
+  its output as a host-side DCAP verdict. Production `join` uses the committed
+  authorization manifest and enclave-resident verification path.
 - RPC uses a default `reqwest::Client` with no explicit request deadline or
   response-size policy. A hung `eth_getLogs` call can defeat the outer TEE join
   timeout because elapsed time is checked only after the call returns.

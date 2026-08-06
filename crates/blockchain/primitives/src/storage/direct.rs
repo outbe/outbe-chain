@@ -188,6 +188,10 @@ where
         self.ctx.chain_id
     }
 
+    fn genesis_hash(&self) -> B256 {
+        self.ctx.genesis_hash
+    }
+
     fn timestamp(&self) -> U256 {
         U256::from(self.ctx.timestamp)
     }

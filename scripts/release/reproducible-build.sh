@@ -92,21 +92,18 @@ build_values_output="$(
   python3 scripts/release/reproducible_build_inputs.py "${input_args[@]}"
 )"
 mapfile -t build_values <<<"${build_values_output}"
-if ((${#build_values[@]} != 10)); then
+if ((${#build_values[@]} != 7)); then
   echo "validated build input resolver returned an incomplete contract" >&2
   exit 2
 fi
 
-builder_image="${build_values[0]}"
-debian_snapshot="${build_values[1]}"
-system_packages="${build_values[2]}"
-rustflags="${build_values[3]}"
-cflags="${build_values[4]}"
-cxxflags="${build_values[5]}"
-source_commit="${build_values[6]}"
-source_date_epoch="${build_values[7]}"
-release_tag="${build_values[8]}"
-source_describe="${build_values[9]}"
+rustflags="${build_values[0]}"
+cflags="${build_values[1]}"
+cxxflags="${build_values[2]}"
+source_commit="${build_values[3]}"
+source_date_epoch="${build_values[4]}"
+release_tag="${build_values[5]}"
+source_describe="${build_values[6]}"
 
 printf 'Reproducible ELF build inputs\n'
 printf '  source_commit      = %s\n' "${source_commit}"
@@ -115,8 +112,7 @@ printf '  SOURCE_DATE_EPOCH  = %s\n' "${source_date_epoch}"
 printf '  source_describe    = %s\n' "${source_describe}"
 printf '  target             = x86_64-unknown-linux-gnu\n'
 printf '  profile            = release\n'
-printf '  builder_image      = %s\n' "${builder_image}"
-printf '  debian_snapshot    = %s\n' "${debian_snapshot}"
+printf '  builder_recipe     = Dockerfile.project-toolchain\n'
 printf '  output_dir         = %s\n' "${output_dir}"
 
 build_context="$(mktemp -d -t outbe-reproducible-source.XXXXXXXX)"
@@ -129,11 +125,8 @@ git archive --format=tar HEAD | tar -xf - -C "${build_context}"
 docker_args=(
   build
   --platform linux/amd64
-  --file "${build_context}/Dockerfile.reproducible"
+  --file "${build_context}/Dockerfile.project-toolchain"
   --target artifacts
-  --build-arg "BUILDER_IMAGE=${builder_image}"
-  --build-arg "DEBIAN_SNAPSHOT=${debian_snapshot}"
-  --build-arg "SYSTEM_PACKAGES=${system_packages}"
   --build-arg "SOURCE_COMMIT=${source_commit}"
   --build-arg "SOURCE_DATE_EPOCH=${source_date_epoch}"
   --build-arg "SOURCE_DESCRIBE=${source_describe}"

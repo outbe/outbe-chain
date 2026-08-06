@@ -1,3 +1,5 @@
+use alloy_primitives::B256;
+use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
@@ -240,6 +242,38 @@ fn test_validate_agent_reward_invalid_address() {
     let wallets = vec!["not_a_valid_address".to_string()];
     let sfas = vec!["0x2222222222222222222222222222222222222222".to_string()];
     assert!(validate_agent_reward_addresses(&wallets, &sfas).is_err());
+}
+
+#[test]
+fn su_hash_can_only_be_used_once() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |storage| {
+        let expect_reused = |err: PrecompileError| {
+            assert!(matches!(err, PrecompileError::Revert(ref m)
+                if m.contains("SU hash already used")));
+        };
+
+        // Distinct hashes across the array all succeed.
+        let (a, b) = (B256::repeat_byte(0xAA), B256::repeat_byte(0xBB));
+        TributeFactoryContract::new(storage.clone())
+            .mark_su_hashes_used(&[a, b])
+            .expect("distinct hashes ok");
+
+        // Reuse in a later call is rejected (persistent marker).
+        expect_reused(
+            TributeFactoryContract::new(storage.clone())
+                .mark_su_hashes_used(&[a])
+                .unwrap_err(),
+        );
+
+        // Duplicate within a single array is rejected.
+        let dup = B256::repeat_byte(0xCC);
+        expect_reused(
+            TributeFactoryContract::new(storage.clone())
+                .mark_su_hashes_used(&[dup, dup])
+                .unwrap_err(),
+        );
+    });
 }
 
 #[test]

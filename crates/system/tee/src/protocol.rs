@@ -5,14 +5,26 @@
 //! cryptographic logic — only the shape of requests and responses.
 //!
 //! Transport (later slice): length-prefixed framing over UDS, wrapped in a
-//! Noise-IK transport (payload layer). `GetQuote` is callable before the Noise
-//! handshake; every other command is only valid inside an established session.
+//! Noise-IK transport (payload layer). Production first exposes only an
+//! initialization challenge. A node-signed manifest installs one persistent
+//! `NodeHost` initiator; every later command, including quote generation, is
+//! accepted only after that initiator is authenticated by Noise message 1.
+//! Legacy `GetQuote` exists only for the separate development transport.
 //!
 //! Opaque byte fields (`Vec<u8>`) intentionally hide DKG wire internals: the
 //! host parses only the public envelope and forwards the encrypted
 //! secret-bearing parts to the enclave without decrypting them.
 
 use alloy_primitives::{Address, B256, U256};
+
+/// Hard cap for the deterministic registry onboarding artifact. The current
+/// X25519/nonce/AEAD envelope is substantially smaller; this prevents a
+/// malformed enclave response from creating an unbounded consensus log.
+pub const MAX_SEALED_OFFER_KEY_FOR_REGISTRY_BYTES: usize = 512;
+
+/// Minimum canonical framing: the committed 32-byte offer public key plus the
+/// ephemeral public key, nonce and authenticated ciphertext framing.
+pub const MIN_SEALED_OFFER_KEY_FOR_REGISTRY_BYTES: usize = 60;
 
 /// A single offer handed to the enclave.
 ///
@@ -155,7 +167,7 @@ pub enum GratisOp {
     /// (`pledged_total_supply -= amount`).
     Unpledge,
     /// Consume a `PledgeLockTicket` for a credis request: verify `spend_auth` binds
-    /// it to `bundle_account`, credit the ticket `amount` into the EOA's own pledged
+    /// it to `smart_account`, credit the ticket `amount` into the EOA's own pledged
     /// ledger, and delete the ticket (no aggregate change — it stays pledged). Returns
     /// `gratis_amount` so credis can size the position.
     ConsumePledge,
@@ -221,10 +233,10 @@ pub struct GratisOpRequest {
     pub modify_auth: ModifyAuth,
     /// Pledge handle identifying the ticket (set for `Unpledge`/`ConsumePledge`).
     pub pledge_handle: Option<B256>,
-    /// Destination bundle account (set for `ConsumePledge`).
-    pub bundle_account: Option<Address>,
-    /// Spend authorization binding the pledge to `bundle_account`
-    /// (`spend_auth_mac(pledge_secret, bundle_account)`), set for `ConsumePledge`.
+    /// Destination smart account (set for `ConsumePledge`).
+    pub smart_account: Option<Address>,
+    /// Spend authorization binding the pledge to `smart_account`
+    /// (`spend_auth_mac(pledge_secret, smart_account)`), set for `ConsumePledge`.
     pub spend_auth: Option<[u8; 32]>,
     /// Optional co-located Fidelity cohort update/probe, applied atomically with
     /// the Gratis op in the SAME enclave round-trip (Mint → `In`, Burn/BurnPledged
@@ -508,16 +520,85 @@ pub struct FidelityQueryResult {
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum EnclaveRequest {
-    /// Callable BEFORE the Noise handshake (unauthenticated). `nonce` provides
-    /// freshness against quote replay.
+    /// Development-only legacy pre-handshake quote. The production server
+    /// rejects this variant and never routes it after initialization.
     GetQuote { nonce: [u8; 32] },
+    /// Production pre-handshake discovery for an uninitialized enclave. Returns
+    /// one challenge plus the persistent enclave public keys to be signed by the
+    /// node identity. Rejected once initialization is committed.
+    GetInitializationChallenge,
+    /// Production pre-handshake initialization authorization. `manifest` is the
+    /// canonical `EnclaveInitializationManifestV1`; `node_signature` is a
+    /// recoverable secp256k1 signature (`r || s || v`). The following Noise IK
+    /// message 1 must authenticate the exact NodeHost key in the manifest.
+    Initialize {
+        manifest: Vec<u8>,
+        node_signature: Vec<u8>,
+    },
+    /// Production pre-handshake marker for an already initialized enclave. The
+    /// responder returns nothing until the following Noise IK message 1 proves
+    /// possession of the sealed NodeHost static key.
+    OpenSession,
+    /// Production pre-handshake marker for one previously authorized remote
+    /// source NodeHost. The ticket is consumed before Noise message 1, which
+    /// must prove the exact initiator static stored under this id.
+    OpenRemoteSessionV1 { ticket_id: B256 },
     /// Noise-IK handshake message.
     SessionHandshake { noise_msg: Vec<u8> },
     /// Return the enclave's public keys (recipient X25519, attestation, Noise
     /// static, tribute-BLS).
     GetPublicKeys,
-    /// Load the sealed root seed from disk, or start fresh.
-    Initialize,
+    /// Local-owner command that installs one bounded, one-use remote Noise
+    /// admission previously derived from exact finalized Registry state.
+    AuthorizeRemoteSessionV1 {
+        ticket_id: B256,
+        initiator_static_x25519: [u8; 32],
+        responder_static_x25519: [u8; 32],
+        deadline: u64,
+        finalized_block_hash: B256,
+    },
+    /// Generate a fresh DCAP quote for the exact canonical registration,
+    /// renewal or transition intent. Production accepts this only inside an
+    /// authenticated NodeHost session and only when the intent matches the
+    /// sealed identity. A transition additionally returns a purpose-bound
+    /// proof that this enclave has the permanent offer key resident.
+    GenerateDcapQuote { intent: Vec<u8> },
+    /// Sign one exact GramineDirectDev registration intent inside the enclave.
+    /// This command is accepted only by the separate development transport and
+    /// never returns an SGX quote or hardware-attestation claim.
+    SignRegistrationIntentDevV1 { intent: Vec<u8> },
+
+    /// Start one bounded, request-committed DCAP verification upload. Evidence
+    /// and policy bytes follow in strictly sequential chunks on this same
+    /// authenticated Noise session.
+    BeginDcapVerificationV1 {
+        request_hash: B256,
+        evidence_len: u32,
+        policy_len: u32,
+        block_timestamp: u64,
+    },
+    /// Start the dedicated `RegisterEnclave` verify-and-seal flow. Unlike the
+    /// generic verifier, this request commits both authorization signatures and
+    /// exact Registry offer-key epochs before any evidence bytes are accepted.
+    BeginDcapOnboardingVerificationV1 {
+        request_hash: B256,
+        evidence_len: u32,
+        policy_len: u32,
+        block_timestamp: u64,
+        node_signature: Vec<u8>,
+        enclave_signature: Vec<u8>,
+        expected_tribute_offer_public: [u8; 32],
+        key_epoch: u64,
+        tribute_offer_epoch: u64,
+    },
+    /// Append the next exact byte range to the active verification upload.
+    DcapVerificationChunkV1 {
+        request_hash: B256,
+        offset: u32,
+        bytes: Vec<u8>,
+    },
+    /// Finish the exact upload and run the full enclave-resident verifier.
+    FinishDcapVerificationV1 { request_hash: B256 },
 
     /// Open a TEE DKG ceremony session inside the enclave. Each `participants[i]`
     /// bundles a BLS identity, its announced X25519 share-encryption key, and the
@@ -564,12 +645,12 @@ pub enum EnclaveRequest {
     /// cannot recover the group signature (and hence the offer key) itself.
     /// Requires `DkgPlayerFinalize` first.
     DkgTributeOfferPartial { ceremony_id: B256 },
-    /// Seam F (offer key): recover the group threshold signature from the sealed
-    /// partials addressed to THIS enclave (decrypted in-SGX) and derive the shared
-    /// offer X25519 keypair from it (`HKDF` bound to `chain_id` + `tribute_offer_epoch`).
-    /// The offer secret is stored resident in the enclave; only the public key is
-    /// returned. Releases the ceremony session.
-    DkgRecoverTributeOffer {
+    /// Founding Seam F: finalize the initial group threshold signature from the
+    /// sealed partials addressed to THIS enclave (decrypted in-SGX) and install
+    /// the one permanent offer X25519 keypair. The capability matrix permits
+    /// this request only to a keyless Validator; it is not a lost-key recovery
+    /// or post-genesis replacement surface. Releases the ceremony session.
+    DkgFinalizeTributeOffer {
         ceremony_id: B256,
         /// Sealed partials addressed to this enclave (one `EncryptedShare` blob per
         /// signer); decrypted with the enclave's X25519 share-decryption secret.
@@ -587,37 +668,38 @@ pub enum EnclaveRequest {
     /// computes economics + Poseidon `token_id`, and returns `TributeOfferResult`).
     ProcessTributeOfferBatch { offers: Vec<EncryptedTributeOffer> },
 
-    /// Key-handoff, SERVER side: seal this enclave's resident group threshold
-    /// signature to a newcomer's attested X25519 key. The host has already verified
-    /// the newcomer's quote (so `recipient_x25519` is attested) and that the
-    /// requester is in the active committee. Returns `SealedTributeOfferHandoff`
-    /// (an opaque `EncryptedShare` blob the host relays); the enclave only seals to
-    /// the supplied key — it never exports the group signature in plaintext.
-    SealTributeOfferHandoff { recipient_x25519: [u8; 32] },
-
-    /// Key-handoff, NEWCOMER side: ingest a sealed group signature received
-    /// from a current committee member. The enclave decrypts it with its X25519
-    /// share-decryption secret, derives the offer keypair, and accepts it ONLY if the
-    /// derived public matches `expected_tribute_offer_public` (the on-chain registered
-    /// key) — so a malicious server cannot install a wrong key. On success the group
-    /// signature becomes resident (and seals for restart); returns
-    /// `TributeOfferHandoffIngested`.
-    IngestTributeOfferHandoff {
-        /// Opaque `EncryptedShare` blob (the sealed group signature).
+    /// One-time on-chain onboarding: ingest the deterministic sealed offer-key
+    /// artifact committed by `TeeRegistry`. This is not a peer handoff or a lost-key
+    /// recovery path. The enclave decrypts with its recipient key, derives the offer
+    /// keypair and accepts it only when the public key equals the chain commitment.
+    /// The resident key is write-once and sealed for restart.
+    IngestSealedOfferKeyForRegistry {
+        /// Opaque deterministic `EncryptedShare` from `TeeRegistry`.
         sealed: Vec<u8>,
-        /// The on-chain registered offer public key to verify the handoff against.
+        /// The on-chain offer public key to verify the installed key against.
         expected_tribute_offer_public: [u8; 32],
         chain_id: B256,
         tribute_offer_epoch: u64,
     },
 
+    /// Install one purpose-bound onboarding artifact into an initialized,
+    /// keyless enclave. Finalized Registry values are repeated explicitly so
+    /// the enclave can require exact intent/offer/epoch equality.
+    IngestDcapOnboardingArtifactV1 {
+        artifact: Vec<u8>,
+        expected_intent_hash: B256,
+        expected_tribute_offer_public: [u8; 32],
+        expected_key_epoch: u64,
+        expected_tribute_offer_epoch: u64,
+    },
+
     /// On-chain key delivery, SERVER side: DETERMINISTICALLY
     /// seal this enclave's resident group signature to `recipient_x25519` so the
-    /// sealed blob can be COMMITTED ON-CHAIN. Unlike `SealTributeOfferHandoff` (a
-    /// per-reply P2P seal with a random ephemeral key + nonce), every committee
-    /// enclave returns a BYTE-IDENTICAL blob for the same recipient — the prerequisite
-    /// for storing it in `TeeRegistry` as a consensus-validated artifact. Returns
-    /// `SealedOfferKeyForRegistry`. The newcomer opens it with `IngestTributeOfferHandoff`.
+    /// sealed blob can be committed on-chain. Every committee enclave returns a
+    /// byte-identical blob for the same recipient, which lets `TeeRegistry` retain
+    /// it as a consensus-validated onboarding artifact. Returns
+    /// `SealedOfferKeyForRegistry`; the recipient opens it exactly once with
+    /// `IngestSealedOfferKeyForRegistry`.
     SealOfferKeyForRegistry { recipient_x25519: [u8; 32] },
 
     /// Apply a Gratis write op over encrypted per-account state. The enclave
@@ -804,10 +886,65 @@ pub enum EnclaveResponse {
         /// can log the exact mode instead of guessing direct-vs-bare.
         attestation: String,
     },
+    /// Public first-boot material. This is not attestation and carries no
+    /// authority; the node identity must sign all fields in the canonical
+    /// initialization manifest before the enclave accepts a Noise initiator.
+    InitializationChallenge {
+        challenge: [u8; 32],
+        recipient_x25519_pub: [u8; 32],
+        attestation_pub: [u8; 32],
+        noise_static_pub: [u8; 32],
+    },
+    /// Intent-bound real quote generated only for an authenticated NodeHost.
+    /// The canonical intent is echoed byte-for-byte so callers cannot associate
+    /// the returned quote with another request.
+    DcapQuote {
+        intent: Vec<u8>,
+        quote_body: Vec<u8>,
+        /// Ed25519 proof of possession by the persistent quote-bound
+        /// attestation key over `RegistrationIntentV1::intent_hash()`.
+        enclave_signature: Vec<u8>,
+        /// Canonical `TransitionKeyReadyProofV1` for a transition intent;
+        /// empty for every other operation.
+        transition_key_ready_proof: Vec<u8>,
+    },
+    /// Development-only proof of possession over the exact canonical intent.
+    /// The echoed bytes prevent a host from associating the signature with a
+    /// different registration.
+    RegistrationIntentSignedDevV1 {
+        intent: Vec<u8>,
+        enclave_signature: Vec<u8>,
+    },
+    DcapVerificationStartedV1 {
+        request_hash: B256,
+    },
+    DcapVerificationChunkAcceptedV1 {
+        request_hash: B256,
+        next_offset: u32,
+    },
+    /// Canonical accepted verdict or stable reject code, authenticated by the
+    /// persistent quote-bound Ed25519 key over the exact request commitment.
+    DcapVerificationFinishedV1 {
+        request_hash: B256,
+        outcome: Vec<u8>,
+        attestation_tag: Vec<u8>,
+    },
+    /// Purpose-bound onboarding verdict plus its deterministic Registry
+    /// artifact. Rejected verdicts carry an empty artifact.
+    DcapOnboardingVerificationFinishedV1 {
+        request_hash: B256,
+        outcome: Vec<u8>,
+        onboarding_artifact: Vec<u8>,
+        attestation_tag: Vec<u8>,
+    },
     Handshake {
         noise_msg: Vec<u8>,
     },
     PublicKeys {
+        /// True only after the permanent tribute-offer key has been installed.
+        /// Before that point `recipient_x25519_pub` is the one-time onboarding
+        /// recipient key and must never be treated as permanent chain state.
+        offer_key_ready: bool,
         recipient_x25519_pub: [u8; 32],
         attestation_pub: [u8; 32],
         noise_static_pub: [u8; 32],
@@ -821,7 +958,12 @@ pub enum EnclaveResponse {
         dkg_enc_sig: Vec<u8>,
     },
     Initialized {
+        enclave_id: B256,
+        node_host_authorization_hash: B256,
         sealed_loaded: bool,
+    },
+    RemoteSessionAuthorizedV1 {
+        ticket_id: B256,
     },
     /// Generic acknowledgement (e.g. `DkgOpen` / `DkgDealerReceiveAck`).
     Ack,
@@ -863,20 +1005,15 @@ pub enum EnclaveResponse {
         /// verified on-chain against this committee's key.
         group_public_key: Vec<u8>,
     },
-    /// Key-handoff SERVER result: the resident group signature sealed to the
-    /// newcomer's X25519 key (an opaque `EncryptedShare` blob the host relays).
-    SealedTributeOfferHandoff {
-        sealed: Vec<u8>,
-    },
     /// On-chain key delivery SERVER result: the resident group signature
     /// DETERMINISTICALLY sealed to `recipient_x25519` — byte-identical across all
     /// committee enclaves, for committing to `TeeRegistry`.
     SealedOfferKeyForRegistry {
         sealed: Vec<u8>,
     },
-    /// Key-handoff NEWCOMER result: the offer public derived from the
-    /// ingested group signature (it matched the on-chain expected key).
-    TributeOfferHandoffIngested {
+    /// One-time onboarding result: the installed offer public key matched the
+    /// on-chain commitment.
+    OfferKeyForRegistryIngested {
         tribute_offer_public: [u8; 32],
     },
     TributeOfferBatch {
@@ -954,7 +1091,7 @@ pub fn gratis_op_canonical_hash(req: &GratisOpRequest) -> B256 {
         }
         None => buf.push(0),
     }
-    match req.bundle_account {
+    match req.smart_account {
         Some(a) => {
             buf.push(1);
             buf.extend_from_slice(a.as_slice());

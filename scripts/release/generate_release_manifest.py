@@ -21,6 +21,15 @@ from typing import Any
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 PINNED_IMAGE_RE = re.compile(r"^[^@\s]+@sha256:[0-9a-f]{64}$")
+PRODUCTION_TEE_FORBIDDEN_MARKERS = (
+    b"outbe-tee-enclave-mock: MOCK ENCLAVE",
+    b"outbe-dcap-capture-enclave",
+    b"OUTBE_QVL_TEST_TRACE",
+    b"OUTBE_QVL_BEGIN",
+    b"OUTBE_QVL_END",
+    b"explicit development seed",
+    b"development offer-secret fallback",
+)
 
 
 def canonical_json(value: Any) -> bytes:
@@ -74,6 +83,14 @@ def _artifact_record(spec: dict[str, Any], artifact_dir: Path, target: str) -> d
         and "mock" in features
     ):
         raise ValueError("production enclave must not enable the mock feature")
+    if spec.get("role") == "tee-enclave" and spec.get("classification") == "production":
+        raw = path.read_bytes()
+        for marker in PRODUCTION_TEE_FORBIDDEN_MARKERS:
+            if marker in raw:
+                raise ValueError(
+                    "production enclave contains forbidden test/dev marker: "
+                    + marker.decode("ascii")
+                )
 
     record: dict[str, Any] = {
         "classification": spec["classification"],
@@ -104,13 +121,18 @@ def validate_build_spec(build_spec: dict[str, Any]) -> None:
         raise ValueError("the v1 release recipe must preserve the release profile")
     if build_spec.get("rust_toolchain") != "1.96.0":
         raise ValueError("the v1 release recipe requires Rust 1.96.0")
-    image = build_spec.get("builder", {}).get("image", "")
-    if not PINNED_IMAGE_RE.fullmatch(image):
-        raise ValueError("builder image must be pinned by sha256 digest")
-    snapshot = build_spec.get("builder", {}).get("debian_snapshot", "")
-    if not re.fullmatch(r"[0-9]{8}T[0-9]{6}Z", snapshot):
-        raise ValueError("builder must use an immutable Debian snapshot timestamp")
-    system_packages = build_spec.get("builder", {}).get("system_packages", [])
+    builder = build_spec.get("builder", {})
+    base_images = builder.get("base_images", [])
+    if (
+        not isinstance(base_images, list)
+        or len(base_images) != 2
+        or len(set(base_images)) != 2
+        or any(not PINNED_IMAGE_RE.fullmatch(image) for image in base_images)
+    ):
+        raise ValueError("builder base images must be two unique sha256-pinned images")
+    if builder.get("recipe") != "Dockerfile.project-toolchain":
+        raise ValueError("builder must use the canonical project toolchain recipe")
+    system_packages = builder.get("system_packages", [])
     if not system_packages or any(
         "=" not in package or re.search(r"\s", package) for package in system_packages
     ):
@@ -120,9 +142,41 @@ def validate_build_spec(build_spec: dict[str, Any]) -> None:
     if build_spec.get("cargo", {}).get("auditable") is not False:
         raise ValueError("recipe v1 must explicitly record cargo-auditable as disabled")
 
-    names = [artifact.get("name") for artifact in build_spec.get("artifacts", [])]
+    artifacts = build_spec.get("artifacts", [])
+    names = [artifact.get("name") for artifact in artifacts]
     if not names or len(names) != len(set(names)):
         raise ValueError("release artifacts must have unique non-empty names")
+
+    production_enclaves = [
+        artifact
+        for artifact in artifacts
+        if artifact.get("role") == "tee-enclave"
+        and artifact.get("classification") == "production"
+    ]
+    if len(production_enclaves) != 1:
+        raise ValueError("release artifacts must contain exactly one production enclave")
+    enclave = production_enclaves[0]
+    if (
+        enclave.get("name") != "outbe-tee-enclave"
+        or enclave.get("package") != "outbe-tee-enclave"
+    ):
+        raise ValueError("production enclave package and binary must be outbe-tee-enclave")
+    enclave_features = enclave.get("features")
+    if enclave_features != ["native-dcap"]:
+        feature_list = (
+            ", ".join(str(feature) for feature in enclave_features)
+            if isinstance(enclave_features, list)
+            else "missing"
+        )
+        raise ValueError(
+            "production enclave feature set must be exactly native-dcap "
+            f"(got: {feature_list or 'empty'})"
+        )
+    for artifact in artifacts:
+        if artifact is not enclave and artifact.get("features") != []:
+            raise ValueError(
+                "non-enclave release artifacts must not enable application features"
+            )
 
 
 def build_manifest(
@@ -169,9 +223,9 @@ def build_manifest(
     ]
 
     builder = {
-        "debian_snapshot": build_spec["builder"]["debian_snapshot"],
+        "base_images": build_spec["builder"]["base_images"],
         "id": build_spec["builder"]["id"],
-        "image": build_spec["builder"]["image"],
+        "recipe": build_spec["builder"]["recipe"],
         "system_packages": sorted(build_spec["builder"]["system_packages"]),
     }
     if resolved_system_packages is not None:

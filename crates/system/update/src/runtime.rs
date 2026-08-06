@@ -1,8 +1,8 @@
 use alloy_primitives::U256;
-use serde_json::Value;
-
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::{PrecompileError, Result};
+use outbe_teeregistry::TeeRegistry;
+use serde_json::Value;
 
 use crate::constants::{
     max_activatable_version, min_activation_buffer, MAX_WAITING_FOR_ACTIVATION_UPDATES,
@@ -152,6 +152,8 @@ impl Update<'_> {
                 })?;
             }
 
+            self.reconcile_staged_tee_policy(ctx, &scheduled)?;
+
             self.set_active_version(scheduled.version, scheduled.activation_height)?;
             self.set_scheduled_update_status(proposal_id, ScheduledUpdateStatus::Activated)?;
             self.emit(IUpdate::UpgradeActivated {
@@ -160,6 +162,38 @@ impl Update<'_> {
             })?;
             self.cancel_outdated_waiting_updates(scheduled.version)
         })
+    }
+
+    fn reconcile_staged_tee_policy(
+        &mut self,
+        ctx: &BlockRuntimeContext,
+        activating: &crate::state::ScheduledUpdateInfo,
+    ) -> Result<()> {
+        let mut tee_registry = TeeRegistry::new(self.storage.clone());
+        let Some((staged_proposal_id, _)) = tee_registry.staged_successor_policy_v1()? else {
+            return Ok(());
+        };
+        if staged_proposal_id == activating.proposal_id {
+            return tee_registry
+                .promote_staged_successor_policy_v1(staged_proposal_id, ctx.block.block_number)
+                .map_err(|err| fatal_tee_policy_activation(err, staged_proposal_id));
+        }
+
+        let staged_update = self
+            .read_scheduled_update(staged_proposal_id)?
+            .ok_or_else(|| {
+                PrecompileError::Fatal(format!(
+                    "staged TEE policy references missing Update proposal {staged_proposal_id}"
+                ))
+            })?;
+        if staged_update.status != ScheduledUpdateStatus::Scheduled
+            || staged_update.version <= activating.version
+        {
+            tee_registry
+                .discard_staged_successor_policy_v1(staged_proposal_id)
+                .map_err(|err| fatal_tee_policy_activation(err, staged_proposal_id))?;
+        }
+        Ok(())
     }
 
     fn cancel_scheduled_update(&mut self, proposal_id: U256) -> Result<()> {
@@ -208,5 +242,14 @@ impl Update<'_> {
             }
         }
         Ok(false)
+    }
+}
+
+fn fatal_tee_policy_activation(err: PrecompileError, proposal_id: U256) -> PrecompileError {
+    match err {
+        PrecompileError::Fatal(message) => PrecompileError::Fatal(message),
+        other => PrecompileError::Fatal(format!(
+            "TEE policy activation for Update proposal {proposal_id} failed: {other}"
+        )),
     }
 }
