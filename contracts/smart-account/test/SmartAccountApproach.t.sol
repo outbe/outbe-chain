@@ -191,7 +191,7 @@ contract SmartAccountApproach is BaseAATest {
     ///      whole batch, so splitting a move across sub-calls cannot bypass the reserve, and there
     ///      is no need to reject batches wholesale (the prior over-conservative behavior).
     function test_BundleSpendProtector_AllowsBatchTransferWithinFree() external {
-        address smartAccount = _setupBundledAccountWithFree(); // total=1400, bundle=1200, free=200
+        address smartAccount = _setupSmartAccountWithFree(); // total=1400, bundle=1200, free=200
 
         Execution[] memory execs = new Execution[](1);
         execs[0] = Execution({
@@ -210,7 +210,7 @@ contract SmartAccountApproach is BaseAATest {
 
     /// @dev A batch move exceeding freeBalance breaks the reserve invariant and is rejected.
     function test_BundleSpendProtector_BlocksBatchTransferOverFree() external {
-        address smartAccount = _setupBundledAccountWithFree(); // free = 200
+        address smartAccount = _setupSmartAccountWithFree(); // free = 200
 
         Execution[] memory execs = new Execution[](1);
         execs[0] = Execution({
@@ -232,7 +232,7 @@ contract SmartAccountApproach is BaseAATest {
     ///      stand-in for the factory precompiles (credis/gem/nod/intex) so the hook needs no address
     ///      knowledge. Within free, it passes and leaves no residual allowance.
     function test_BundleSpendProtector_AllowsApproveConsumedWithinFree() external {
-        address smartAccount = _setupBundledAccountWithFree(); // free = 200
+        address smartAccount = _setupSmartAccountWithFree(); // free = 200
         MockPuller puller = new MockPuller();
 
         Execution[] memory execs = new Execution[](2);
@@ -258,7 +258,7 @@ contract SmartAccountApproach is BaseAATest {
 
     /// @dev Same shape but the pulled amount exceeds freeBalance → reserve invariant broken → rejected.
     function test_BundleSpendProtector_BlocksApproveConsumedOverFree() external {
-        address smartAccount = _setupBundledAccountWithFree(); // free = 200
+        address smartAccount = _setupSmartAccountWithFree(); // free = 200
         MockPuller puller = new MockPuller();
 
         Execution[] memory execs = new Execution[](2);
@@ -285,7 +285,7 @@ contract SmartAccountApproach is BaseAATest {
     /// @dev A standalone (unconsumed) approve in a batch leaves a standing allowance a grantee could
     ///      later drain via an unhooked transferFrom → rejected by the no-standing-allowance rule.
     function test_BundleSpendProtector_BlocksUnconsumedBatchApprove() external {
-        address smartAccount = _setupBundledAccountWithFree();
+        address smartAccount = _setupSmartAccountWithFree();
         address spender = makeAddr("spender");
 
         Execution[] memory execs = new Execution[](1);
@@ -303,7 +303,7 @@ contract SmartAccountApproach is BaseAATest {
     /// @dev A batch that touches only non-bundled (free) tokens still executes. Paired with the
     ///      test above, this isolates the block to the bundled-token check (same batch encoding).
     function test_BundleSpendProtector_AllowsBatchOfNonBundledToken() external {
-        address smartAccount = _setupBundledAccountWithFree();
+        address smartAccount = _setupSmartAccountWithFree();
 
         MockUSD freeToken = new MockUSD(); // not part of the bundle
         freeToken.mint(smartAccount, 500e18);
@@ -327,7 +327,7 @@ contract SmartAccountApproach is BaseAATest {
     ///      grantee's later, unhooked transferFrom. Absent the hook the approve would set a 50e18
     ///      allowance, so the allowance staying 0 attributes the block to the hook.
     function test_BundleSpendProtector_BlocksApproveOfBundledToken() external {
-        address smartAccount = _setupBundledAccountWithFree();
+        address smartAccount = _setupSmartAccountWithFree();
         address spender = makeAddr("spender");
 
         bytes memory callData = abi.encodePacked(
@@ -351,7 +351,7 @@ contract SmartAccountApproach is BaseAATest {
     ///      WOULD move funds — the balance staying put attributes the block to the hook, not to a
     ///      missing allowance.
     function test_BundleSpendProtector_BlocksTransferFromOfBundledTokenOverFree() external {
-        address smartAccount = _setupBundledAccountWithFree(); // free = 200
+        address smartAccount = _setupSmartAccountWithFree(); // free = 200
 
         vm.prank(smartAccount);
         token.approve(smartAccount, type(uint256).max);
@@ -380,9 +380,9 @@ contract SmartAccountApproach is BaseAATest {
 
     // --- helpers ---
 
-    /// @dev Deploys a bundled account (bundle token = `token`, sender = `vault`) and funds it so
+    /// @dev Deploys a smart account (bundle token = `token`, sender = `vault`) and funds it so
     ///      that total = 1400e18, bundleBalance = 1200e18, freeBalance = 200e18.
-    function _setupBundledAccountWithFree() private returns (address smartAccount) {
+    function _setupSmartAccountWithFree() private returns (address smartAccount) {
         smartAccount = _deployAccount();
         vm.deal(smartAccount, 0.1 ether);
 
