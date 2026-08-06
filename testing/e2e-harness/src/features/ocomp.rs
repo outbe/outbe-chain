@@ -569,8 +569,10 @@ fn fresh_domains_retain_authenticated_workers(world: &mut World) {
     }
 }
 
-/// Largest clock gap crossed in one committee restart.
-const CLOCK_HOP_SECS: u64 = 24 * 3_600;
+/// Largest clock gap crossed in one committee restart. Every restart spends
+/// eight of the scenario's bounded fault records, so the hop stays wide enough
+/// for a two-jump scenario to fit inside that budget.
+const CLOCK_HOP_SECS: u64 = 36 * 3_600;
 
 /// Wait for chain time to reach `target` after a hop, so the next restart finds
 /// a settled committee rather than one still closing the gap.
