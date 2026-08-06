@@ -226,8 +226,8 @@ The exporter independently derives and checks the complete expected slot set
 from the returned values.
 
 This avoids adding a new public consensus wire type. Ticket #6 will decide
-whether the local adapter shares `OcompControlV1` framing or a narrower
-exporter-only UDS endpoint; that choice cannot change proof bytes or authority.
+how the exporter consumes public RPC; the current implementation uses finalized
+blocks, receipts, exact-block calls and proofs, with no node-private endpoint.
 
 ## 5. One-entry durable pin
 
@@ -370,7 +370,7 @@ Because current CE has no historical-open API, the writer must not pass marker
 `H` before the exporter has either acknowledged or the bounded lease-open budget
 has expired. The request block finality acknowledgement is not held for the
 bulk export. At most the next CE apply observes this small bounded gate. Timeout,
-closed UDS or wrong identity clears the gate, allows CE/finality to proceed and
+closed public-RPC connection or wrong identity clears the gate, allows CE/finality to proceed and
 marks this validator's input unavailable.
 
 The exporter keeps the one MDBX transaction open for an export attempt. A retry
@@ -807,6 +807,6 @@ Ticket #5 is resolved because this asset now fixes:
 - local abstention behavior for every unavailable/ambiguous source;
 - the PoC/MVP boundary and mandatory verification evidence.
 
-Ticket #6 may select process names, UIDs, UDS framing, filesystem layout and
+Ticket #6 may select process names, UIDs, public-RPC limits, filesystem layout and
 cgroup values. It may not replace this authority chain, move bulk bytes through
 the node or weaken any failure to a best-effort live read.

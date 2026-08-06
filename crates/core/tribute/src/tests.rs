@@ -613,17 +613,37 @@ fn test_burn_nonexistent_fails() {
 #[test]
 fn test_seal_day() {
     with_tribute(|tc| {
-        assert!(!tc.is_day_sealed(20241220u32.into()).unwrap());
-
-        tc.seal_day(20241220u32.into()).unwrap();
-        assert!(tc.is_day_sealed(20241220u32.into()).unwrap());
+        let day = 20241220u32.into();
+        open_sample_day(tc);
 
         let tribute = sample_tribute();
-        assert!(tc.issue(&tribute).is_err());
-
-        tc.unseal_day(20241220u32.into()).unwrap();
-        assert!(!tc.is_day_sealed(20241220u32.into()).unwrap());
         tc.issue(&tribute).unwrap();
+        let totals_before_seal = tc.get_day_totals(day).unwrap();
+
+        tc.seal_day(day).unwrap();
+        assert!(tc.is_day_sealed(day).unwrap());
+
+        let mut second_tribute = sample_tribute();
+        set_owner(
+            &mut second_tribute,
+            address!("0x2222222222222222222222222222222222222222"),
+        );
+        assert!(tc.issue(&second_tribute).is_err());
+        assert!(tc.burn(tribute.tribute_id).is_err());
+        assert!(tc.get_tribute(tribute.tribute_id).unwrap().is_some());
+        let totals_after_rejected_mutations = tc.get_day_totals(day).unwrap();
+        assert_eq!(
+            totals_after_rejected_mutations.tribute_count,
+            totals_before_seal.tribute_count
+        );
+        assert_eq!(
+            totals_after_rejected_mutations.tribute_nominal_amount,
+            totals_before_seal.tribute_nominal_amount
+        );
+
+        tc.unseal_day(day).unwrap();
+        assert!(!tc.is_day_sealed(day).unwrap());
+        tc.burn(tribute.tribute_id).unwrap();
     });
 }
 
@@ -827,6 +847,30 @@ fn test_burn_all_by_wwd() {
         let totals = tc.get_day_totals(20241220u32.into()).unwrap();
         assert_eq!(totals.tribute_count, 0);
         assert_eq!(totals.tribute_nominal_amount, U256::ZERO);
+    });
+}
+
+#[test]
+fn sealed_day_rejects_burn_all_by_wwd_without_partial_mutation() {
+    with_tribute(|tc| {
+        let day = 20241220u32.into();
+        let t1 = sample_tribute();
+        let mut t2 = sample_tribute();
+        set_owner(
+            &mut t2,
+            address!("0x2222222222222222222222222222222222222222"),
+        );
+
+        open_sample_day(tc);
+        tc.issue(&t1).unwrap();
+        tc.issue(&t2).unwrap();
+        tc.seal_day(day).unwrap();
+
+        assert!(tc.burn_all_by_wwd(day).is_err());
+        assert_eq!(tc.total_supply().unwrap(), 2);
+        assert!(tc.get_tribute(t1.tribute_id).unwrap().is_some());
+        assert!(tc.get_tribute(t2.tribute_id).unwrap().is_some());
+        assert_eq!(tc.get_day_totals(day).unwrap().tribute_count, 2);
     });
 }
 

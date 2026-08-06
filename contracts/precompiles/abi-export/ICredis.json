@@ -143,6 +143,11 @@
             "name": "gratisAmount",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "unpaidAmount",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       }
@@ -278,6 +283,11 @@
           },
           {
             "name": "gratisAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "unpaidAmount",
             "type": "uint256",
             "internalType": "uint256"
           }

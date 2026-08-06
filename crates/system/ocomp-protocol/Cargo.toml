@@ -8,7 +8,6 @@ publish.workspace = true
 [dependencies]
 alloy-primitives = { workspace = true, features = ["serde", "std"] }
 k256.workspace = true
-libc.workspace = true
 rustix.workspace = true
 serde.workspace = true
 thiserror.workspace = true

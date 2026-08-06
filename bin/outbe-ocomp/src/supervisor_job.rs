@@ -2,21 +2,18 @@
 //!
 //! This module does not introduce another scheduler or computation interface.
 //! It composes the already verified export, planner, one-unit worker boundary,
-//! admission catalog, finalizer and node-owned result-vote attestation gate.
+//! admission catalog, finalizer and locally signed result-vote submitter.
 
-use std::os::unix::net::UnixStream;
+use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use alloy_primitives::B256;
 use outbe_lysis::program_v1::planner::{
-    LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1,
+    LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1, PlannedUnitPositionV1,
 };
 use outbe_ocomp_protocol::{
     input::InputChunkKind, intent::JobIntentV1, UnitFinishedStatus, UnitFinishedV1,
-    WorkerMessageKind,
 };
 use outbe_ocomp_protocol::{RunUnitV1, SchemaLimits};
 use thiserror::Error;
@@ -24,7 +21,7 @@ use thiserror::Error;
 use crate::admission_catalog::{AdmissionCatalogError, VerifiedAdmissionCatalog};
 use crate::bundle::PinnedProtocolBundle;
 use crate::cas::{CasLimits, CasWriterRole, FilesystemCas, FilesystemCasReader};
-use crate::control::{ClientPolicy, ControlClientSession, EndpointIdentity};
+use crate::control::EndpointIdentity;
 use crate::export_binding::VerifiedExportedManifestBinding;
 use crate::inbox::{WorkerInbox, WorkerInboxLimits};
 use crate::input_artifacts::poc_input_list_limits;
@@ -34,8 +31,13 @@ use crate::lysis_plan_audit::LocalLysisPlanAuditV1;
 use crate::lysis_scheduler::admit_reported_lysis_unit_v1;
 use crate::payout_artifact::write_contributor_payout_artifact;
 use crate::supervisor::DiscoveryRecord;
+use crate::worker_transport::{SupervisorWorkerServerV1, MAX_REGISTERED_WORKERS};
 
-const WORKER_IO_TIMEOUT: Duration = Duration::from_secs(600);
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DispatchWaveV1 {
+    Primary(outbe_ocomp_protocol::unit::UnitPhase),
+    Level(outbe_ocomp_protocol::unit::UnitPhase, u16),
+}
 
 #[derive(Clone, Debug)]
 pub struct SupervisorJobRunnerConfigV1 {
@@ -45,18 +47,11 @@ pub struct SupervisorJobRunnerConfigV1 {
     pub job_root: PathBuf,
     pub worker_inbox_root: PathBuf,
     pub worker_inbox_limits: WorkerInboxLimits,
-    pub worker_socket: PathBuf,
-    pub expected_worker_uid: u32,
+    pub supervisor_listen_address: SocketAddr,
+    pub registry_generation: u64,
     pub identity: EndpointIdentity,
     pub protocol_bundle: PinnedProtocolBundle,
     pub limits: SchemaLimits,
-    pub development_worker: Option<DevelopmentWorkerLaunchV1>,
-}
-
-#[derive(Clone, Debug)]
-pub struct DevelopmentWorkerLaunchV1 {
-    pub binary: PathBuf,
-    pub root: PathBuf,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -71,16 +66,32 @@ pub struct SupervisorJobRunnerV1 {
     config: SupervisorJobRunnerConfigV1,
     cas: FilesystemCas,
     reader: FilesystemCasReader,
-    next_worker_generation: AtomicU64,
+    workers: SupervisorWorkerServerV1,
 }
 
 impl SupervisorJobRunnerV1 {
     pub fn open(config: SupervisorJobRunnerConfigV1) -> Result<Self, SupervisorJobRunnerErrorV1> {
-        if config.development_worker.is_some() && !cfg!(debug_assertions) {
+        if !config.supervisor_listen_address.ip().is_loopback()
+            || config.supervisor_listen_address.port() == 0
+        {
             return Err(SupervisorJobRunnerErrorV1::Invariant(
-                "development worker activation is unavailable in release builds",
+                "supervisor worker registration address must be nonzero loopback",
             ));
         }
+        if config.registry_generation == 0 {
+            return Err(SupervisorJobRunnerErrorV1::Invariant(
+                "supervisor worker session generation must be nonzero",
+            ));
+        }
+        let workers = stage(
+            "start Supervisor Axum/ZeroMQ worker transport",
+            SupervisorWorkerServerV1::start(
+                config.supervisor_listen_address,
+                config.identity,
+                config.registry_generation,
+                config.limits,
+            ),
+        )?;
         let cas = stage(
             "open supervisor job CAS writer",
             FilesystemCas::open(
@@ -94,18 +105,27 @@ impl SupervisorJobRunnerV1 {
             FilesystemCasReader::open(&config.cas_root, config.cas_limits),
         )?;
         Ok(Self {
+            workers,
             config,
             cas,
             reader,
-            next_worker_generation: AtomicU64::new(1),
         })
+    }
+
+    pub fn poll_workers(&self) -> Result<usize, SupervisorJobRunnerErrorV1> {
+        stage(
+            "read Supervisor connected worker registry",
+            self.workers.registered_workers(),
+        )
     }
 
     pub fn run_to_result(
         &self,
         record: &DiscoveryRecord,
         binding: &VerifiedExportedManifestBinding,
+        cancelled: &AtomicBool,
     ) -> Result<CompletedSupervisorJobV1, SupervisorJobRunnerErrorV1> {
+        require_not_cancelled(cancelled)?;
         let limits = &self.config.limits;
         let job_id = record.spec.summary.job_id;
         if binding.job_id() != job_id {
@@ -140,6 +160,7 @@ impl SupervisorJobRunnerV1 {
         })
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| stage_error("read exact Tribute input references", error))?;
+        require_not_cancelled(cancelled)?;
 
         let planner = stage(
             "bind Lysis V1 planner",
@@ -184,6 +205,7 @@ impl SupervisorJobRunnerV1 {
             LysisPlanTopologyV1::new(plan.primary_work_unit_count),
         )?;
         let exact_unit_count = topology.total_unit_count();
+        require_not_cancelled(cancelled)?;
 
         let local_job_root = self.config.job_root.join(&job_component);
         let mut admissions = stage(
@@ -211,15 +233,50 @@ impl SupervisorJobRunnerV1 {
             ),
         )?;
 
-        for plan_ordinal in 0..exact_unit_count {
-            match admissions.read(plan_ordinal) {
-                Ok(_) => continue,
-                Err(AdmissionCatalogError::MissingAdmission { .. }) => {}
-                Err(error) => {
-                    return Err(stage_error("inspect exact Lysis admission", error));
+        let mut next_plan_ordinal = 0;
+        while next_plan_ordinal < exact_unit_count {
+            require_not_cancelled(cancelled)?;
+            while next_plan_ordinal < exact_unit_count {
+                match admissions.read(next_plan_ordinal) {
+                    Ok(_) => next_plan_ordinal += 1,
+                    Err(AdmissionCatalogError::MissingAdmission { .. }) => break,
+                    Err(error) => {
+                        return Err(stage_error("inspect exact Lysis admission", error));
+                    }
                 }
             }
-            let request = {
+            if next_plan_ordinal == exact_unit_count {
+                break;
+            }
+
+            let first_wave = dispatch_wave(stage(
+                "locate exact Lysis dispatch wave",
+                topology.plan_position_at(next_plan_ordinal),
+            )?);
+            let mut batch_ordinals = Vec::with_capacity(MAX_REGISTERED_WORKERS);
+            while next_plan_ordinal < exact_unit_count
+                && batch_ordinals.len() < MAX_REGISTERED_WORKERS
+            {
+                let wave = dispatch_wave(stage(
+                    "locate exact Lysis dispatch wave",
+                    topology.plan_position_at(next_plan_ordinal),
+                )?);
+                if wave != first_wave {
+                    break;
+                }
+                match admissions.read(next_plan_ordinal) {
+                    Ok(_) => {}
+                    Err(AdmissionCatalogError::MissingAdmission { .. }) => {
+                        batch_ordinals.push(next_plan_ordinal);
+                    }
+                    Err(error) => {
+                        return Err(stage_error("inspect exact Lysis admission", error));
+                    }
+                }
+                next_plan_ordinal += 1;
+            }
+
+            let requests = {
                 let audit = stage(
                     "open exact Lysis scheduling audit",
                     LocalLysisPlanAuditV1::open(
@@ -230,35 +287,47 @@ impl SupervisorJobRunnerV1 {
                         limits,
                     ),
                 )?;
-                stage(
-                    "derive next exact Lysis worker request",
-                    audit.worker_request_at(plan_ordinal),
-                )?
+                batch_ordinals
+                    .iter()
+                    .copied()
+                    .map(|plan_ordinal| {
+                        stage(
+                            "derive next exact Lysis worker request",
+                            audit.worker_request_at(plan_ordinal),
+                        )
+                        .map(|request| (plan_ordinal, request))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?
             };
-            let finished = self.execute_one_worker(&request)?;
-            if finished.status != UnitFinishedStatus::Success {
-                return Err(SupervisorJobRunnerErrorV1::WorkerFailed {
-                    plan_ordinal,
-                    unit_id: finished.unit_id,
-                });
+            require_not_cancelled(cancelled)?;
+            let finished_batch = self.execute_worker_batch(requests, cancelled)?;
+            for (plan_ordinal, finished) in finished_batch {
+                require_not_cancelled(cancelled)?;
+                if finished.status != UnitFinishedStatus::Success {
+                    return Err(SupervisorJobRunnerErrorV1::WorkerFailed {
+                        plan_ordinal,
+                        unit_id: finished.unit_id,
+                    });
+                }
+                stage(
+                    "admit exact Lysis worker result",
+                    admit_reported_lysis_unit_v1(
+                        plan_ordinal,
+                        &finished,
+                        &mut admissions,
+                        &input_refs,
+                        &self.config.protocol_bundle,
+                        &self.reader,
+                        &worker_inbox,
+                        &replay_inbox,
+                        &self.cas,
+                        limits,
+                    ),
+                )?;
             }
-            stage(
-                "admit exact Lysis worker result",
-                admit_reported_lysis_unit_v1(
-                    plan_ordinal,
-                    &finished,
-                    &mut admissions,
-                    &input_refs,
-                    &self.config.protocol_bundle,
-                    &self.reader,
-                    &worker_inbox,
-                    &replay_inbox,
-                    &self.cas,
-                    limits,
-                ),
-            )?;
         }
 
+        require_not_cancelled(cancelled)?;
         let audit = stage(
             "cold-audit complete Lysis plan",
             LocalLysisPlanAuditV1::open(
@@ -285,115 +354,55 @@ impl SupervisorJobRunnerV1 {
         })
     }
 
-    fn execute_one_worker(
+    fn execute_worker_batch(
         &self,
-        request: &RunUnitV1,
-    ) -> Result<UnitFinishedV1, SupervisorJobRunnerErrorV1> {
-        let (stream, child) = match &self.config.development_worker {
-            Some(development) => self.spawn_development_worker(development)?,
-            None => (
-                UnixStream::connect(&self.config.worker_socket)
-                    .map_err(|error| stage_error("connect worker activation socket", error))?,
-                None,
-            ),
-        };
-        stream
-            .set_read_timeout(Some(WORKER_IO_TIMEOUT))
-            .map_err(|error| stage_error("set worker read timeout", error))?;
-        stream
-            .set_write_timeout(Some(WORKER_IO_TIMEOUT))
-            .map_err(|error| stage_error("set worker write timeout", error))?;
-        let mut session = stage(
-            "authenticate one-unit worker",
-            ControlClientSession::connect(
-                stream,
-                ClientPolicy::supervisor_to_worker(
-                    self.config.expected_worker_uid,
-                    self.config.identity,
-                    self.config.limits,
-                ),
-            ),
-        )?;
-        stage("handshake one-unit worker", session.handshake())?;
-        stage(
-            "send exact Lysis unit",
-            session.send_request(
-                WorkerMessageKind::RunUnit as u16,
-                stage(
-                    "encode exact Lysis unit request",
-                    request.encode_body(&self.config.limits),
-                )?,
-            ),
-        )?;
-        let response = stage("receive one-unit worker result", session.receive_response())?;
-        if response.message_kind != WorkerMessageKind::UnitFinished as u16 {
-            return Err(SupervisorJobRunnerErrorV1::UnexpectedWorkerResponse(
-                response.message_kind,
-            ));
-        }
-        let finished = stage(
-            "decode one-unit worker result",
-            UnitFinishedV1::decode_body(&response.body, &self.config.limits),
-        )?;
-        if let Some(mut child) = child {
-            let status = child
-                .wait()
-                .map_err(|error| stage_error("wait for development worker", error))?;
-            if !status.success() {
-                return Err(SupervisorJobRunnerErrorV1::DevelopmentWorkerExited(
-                    status.code(),
-                ));
-            }
-        }
-        Ok(finished)
+        requests: Vec<(u32, RunUnitV1)>,
+        cancelled: &AtomicBool,
+    ) -> Result<Vec<(u32, UnitFinishedV1)>, SupervisorJobRunnerErrorV1> {
+        let dispatcher = self.workers.dispatcher();
+        std::thread::scope(|scope| {
+            let handles = requests
+                .into_iter()
+                .map(|(plan_ordinal, request)| {
+                    let dispatcher = dispatcher.clone();
+                    scope.spawn(move || {
+                        dispatcher
+                            .dispatch_with_cancel(&request, cancelled)
+                            .map(|finished| (plan_ordinal, finished))
+                    })
+                })
+                .collect::<Vec<_>>();
+            handles
+                .into_iter()
+                .map(|handle| {
+                    let result = handle.join().map_err(|_| {
+                        SupervisorJobRunnerErrorV1::Invariant("worker dispatch thread panicked")
+                    })?;
+                    stage(
+                        "dispatch exact Lysis unit through Supervisor Worker transport",
+                        result,
+                    )
+                })
+                .collect()
+        })
     }
+}
 
-    fn spawn_development_worker(
-        &self,
-        development: &DevelopmentWorkerLaunchV1,
-    ) -> Result<(UnixStream, Option<Child>), SupervisorJobRunnerErrorV1> {
-        use std::fs::OpenOptions;
-        use std::os::fd::OwnedFd;
-
-        let generation = self.next_worker_generation.fetch_add(1, Ordering::Relaxed);
-        if generation == 0 {
-            return Err(SupervisorJobRunnerErrorV1::Invariant(
-                "development worker session generation overflowed",
-            ));
+const fn dispatch_wave(position: PlannedUnitPositionV1) -> DispatchWaveV1 {
+    match position {
+        PlannedUnitPositionV1::Primary { phase, .. } => DispatchWaveV1::Primary(phase),
+        PlannedUnitPositionV1::TreeNode { phase, level, .. }
+        | PlannedUnitPositionV1::RunSpan { phase, level, .. } => {
+            DispatchWaveV1::Level(phase, level)
         }
-        let (supervisor_stream, worker_stream) = UnixStream::pair()
-            .map_err(|error| stage_error("create development worker socket", error))?;
-        let worker_fd: OwnedFd = worker_stream.into();
-        let log = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(development.root.join("worker-runs.log"))
-            .map_err(|error| stage_error("open development worker log", error))?;
-        let stderr = log
-            .try_clone()
-            .map_err(|error| stage_error("clone development worker log", error))?;
-        let mut command = Command::new(&development.binary);
-        command
-            .arg("worker")
-            .arg("--development-root")
-            .arg(&development.root)
-            .arg("--chain-id")
-            .arg(self.config.identity.chain_id.to_string())
-            .arg("--genesis-hash")
-            .arg(format!("{:#x}", self.config.identity.genesis_hash))
-            .arg("--boot-nonce")
-            .arg(format!("{:#x}", self.config.identity.boot_nonce))
-            .arg("--protocol-bundle-hash")
-            .arg(format!("{:#x}", self.config.identity.protocol_bundle_hash))
-            .arg("--session-generation")
-            .arg(generation.to_string())
-            .stdin(Stdio::from(worker_fd))
-            .stdout(Stdio::from(log))
-            .stderr(Stdio::from(stderr));
-        let child = command
-            .spawn()
-            .map_err(|error| stage_error("spawn development worker", error))?;
-        Ok((supervisor_stream, Some(child)))
+    }
+}
+
+fn require_not_cancelled(cancelled: &AtomicBool) -> Result<(), SupervisorJobRunnerErrorV1> {
+    if cancelled.load(Ordering::Acquire) {
+        Err(SupervisorJobRunnerErrorV1::Cancelled)
+    } else {
+        Ok(())
     }
 }
 
@@ -419,8 +428,50 @@ pub enum SupervisorJobRunnerErrorV1 {
     Invariant(&'static str),
     #[error("worker failed plan ordinal {plan_ordinal} ({unit_id})")]
     WorkerFailed { plan_ordinal: u32, unit_id: B256 },
-    #[error("worker returned unexpected control message kind {0:#06x}")]
-    UnexpectedWorkerResponse(u16),
-    #[error("development worker exited unsuccessfully with code {0:?}")]
-    DevelopmentWorkerExited(Option<i32>),
+    #[error("supervisor Lysis job was superseded by a newer finalized job")]
+    Cancelled,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use outbe_ocomp_protocol::unit::UnitPhase;
+
+    #[test]
+    fn dispatch_waves_parallelize_peers_but_separate_dependency_levels() {
+        assert_eq!(
+            dispatch_wave(PlannedUnitPositionV1::Primary {
+                phase: UnitPhase::Enumerate,
+                ordinal: 0,
+            }),
+            dispatch_wave(PlannedUnitPositionV1::Primary {
+                phase: UnitPhase::Enumerate,
+                ordinal: 99,
+            })
+        );
+        assert_eq!(
+            dispatch_wave(PlannedUnitPositionV1::TreeNode {
+                phase: UnitPhase::FixedReduce,
+                level: 2,
+                index: 0,
+            }),
+            dispatch_wave(PlannedUnitPositionV1::TreeNode {
+                phase: UnitPhase::FixedReduce,
+                level: 2,
+                index: 3,
+            })
+        );
+        assert_ne!(
+            dispatch_wave(PlannedUnitPositionV1::TreeNode {
+                phase: UnitPhase::FixedReduce,
+                level: 1,
+                index: 0,
+            }),
+            dispatch_wave(PlannedUnitPositionV1::TreeNode {
+                phase: UnitPhase::FixedReduce,
+                level: 2,
+                index: 0,
+            })
+        );
+    }
 }

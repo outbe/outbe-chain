@@ -46,6 +46,13 @@ fn with_credis<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
     StorageHandle::enter(&mut storage, f)
 }
 
+/// Pays exactly what the next installment still owes — the one-installment-at-a-time
+/// behavior most of these tests were written against.
+fn pay_next(credis: &mut CredisContract<'_>, id: U256, at: u64) -> crate::AnadosisPayment {
+    let owed = credis.get_next_anadosis(id).unwrap().unwrap().unpaid_amount;
+    credis.pay_anadosis(id, owed, at).unwrap()
+}
+
 // ------------------------------------------------------------------
 // Position key derivation matches cosmos exactly
 // ------------------------------------------------------------------
@@ -357,11 +364,11 @@ fn anadosis_amount_remainder_absorbed_in_last_anadosis() {
 }
 
 // ------------------------------------------------------------------
-// make_next_anadosis: sequential, completed
+// pay_anadosis: sequential, completed
 // ------------------------------------------------------------------
 
 #[test]
-fn make_next_anadosis_advances_pointer() {
+fn pay_anadosis_advances_pointer() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage.clone());
         let id = credis
@@ -380,22 +387,26 @@ fn make_next_anadosis_advances_pointer() {
             .unwrap();
 
         for n in 1..=NUMBER_OF_ANADOSIS {
-            let result = credis.make_next_anadosis(id, due_date_for(n)).unwrap();
-            assert_eq!(result.anadosis_number, n);
+            let result = pay_next(&mut credis, id, due_date_for(n));
+            assert_eq!(result.total_paid_amount, U256::from(10_000u64));
             assert_eq!(result.smart_account, alice());
             assert_eq!(result.asset, asset());
-            assert_eq!(result.paid_at, due_date_for(n));
+
+            let anadosis = credis.get_anadosis(id, n).unwrap();
+            assert_eq!(anadosis.unpaid_amount, U256::ZERO);
+            assert_eq!(anadosis.paid_at, due_date_for(n));
+            assert_eq!(credis.get_position(id).unwrap().next_anadosis_number, n + 1);
         }
         // After the 10th anadosis, position is completed.
         let err = credis
-            .make_next_anadosis(id, due_date_for(NUMBER_OF_ANADOSIS) + 1)
+            .pay_anadosis(id, U256::from(1u64), due_date_for(NUMBER_OF_ANADOSIS) + 1)
             .unwrap_err();
         assert!(err.to_string().contains("completed"));
     });
 }
 
 #[test]
-fn make_next_anadosis_decrements_outstanding() {
+fn pay_anadosis_decrements_outstanding() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage.clone());
         let id = credis
@@ -413,7 +424,9 @@ fn make_next_anadosis_decrements_outstanding() {
             )
             .unwrap();
 
-        credis.make_next_anadosis(id, due_date_for(1)).unwrap();
+        let paid = pay_next(&mut credis, id, due_date_for(1));
+        assert_eq!(paid.total_paid_amount, U256::from(10u64));
+        assert_eq!(paid.gratis_released, U256::from(5u64));
         let p = credis.get_position(id).unwrap();
         assert_eq!(p.outstanding_anadosis_amount, U256::from(90u64));
         assert_eq!(p.outstanding_gratis_amount, U256::from(45u64));
@@ -422,7 +435,7 @@ fn make_next_anadosis_decrements_outstanding() {
 }
 
 #[test]
-fn make_next_anadosis_accepted_before_due_date() {
+fn pay_anadosis_accepted_before_due_date() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage.clone());
         let id = credis
@@ -439,7 +452,7 @@ fn make_next_anadosis_accepted_before_due_date() {
                 CREATED_AT,
             )
             .unwrap();
-        credis.make_next_anadosis(id, due_date_for(1) - 1).unwrap();
+        pay_next(&mut credis, id, due_date_for(1) - 1);
 
         // State unchanged.
         let p = credis.get_position(id).unwrap();
@@ -449,7 +462,7 @@ fn make_next_anadosis_accepted_before_due_date() {
 }
 
 #[test]
-fn make_next_anadosis_accepted_at_and_after_due_date() {
+fn pay_anadosis_accepted_at_and_after_due_date() {
     // boundary: == is accepted; > is accepted.
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage.clone());
@@ -467,7 +480,7 @@ fn make_next_anadosis_accepted_at_and_after_due_date() {
                 CREATED_AT,
             )
             .unwrap();
-        credis.make_next_anadosis(id, due_date_for(1)).unwrap();
+        pay_next(&mut credis, id, due_date_for(1));
 
         let id2 = credis
             .create_position(
@@ -483,21 +496,131 @@ fn make_next_anadosis_accepted_at_and_after_due_date() {
                 CREATED_AT,
             )
             .unwrap();
-        credis
-            .make_next_anadosis(id2, due_date_for(1) + 7 * 24 * 3600)
-            .unwrap();
+        pay_next(&mut credis, id2, due_date_for(1) + 7 * 24 * 3600);
     });
 }
 
 #[test]
-fn make_next_anadosis_rejects_missing_position() {
+fn pay_anadosis_rejects_missing_position() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage.clone());
         let unknown = U256::from_be_bytes(keccak256([0xff]).0);
         let err = credis
-            .make_next_anadosis(unknown, due_date_for(1))
+            .pay_anadosis(unknown, U256::from(1u64), due_date_for(1))
             .unwrap_err();
         assert!(err.to_string().contains("position not found"));
+    });
+}
+
+// ------------------------------------------------------------------
+// pay_anadosis: arbitrary amounts (partial and multi-installment)
+// ------------------------------------------------------------------
+
+/// 10 × 10 debt against 10 × 5 collateral, so each installment owes 10 and locks 5.
+fn position_with_schedule(credis: &mut CredisContract<'_>) -> U256 {
+    credis
+        .create_position(
+            test_commitment(),
+            alice(),
+            eoa_ct(),
+            asset(),
+            840,
+            U256::ZERO,
+            U256::from(100u64),
+            U256::ZERO,
+            U256::from(50u64),
+            CREATED_AT,
+        )
+        .unwrap()
+}
+
+#[test]
+fn pay_anadosis_partial_leaves_installment_unsettled() {
+    with_credis(|storage| {
+        let mut credis = CredisContract::new(storage.clone());
+        let id = position_with_schedule(&mut credis);
+
+        // 4 of the 10 owed on installment 1: collateral is released pro rata (4/10 of 5
+        // floors to 2) and the installment stays open.
+        let paid = credis
+            .pay_anadosis(id, U256::from(4u64), due_date_for(1))
+            .unwrap();
+        assert_eq!(paid.total_paid_amount, U256::from(4u64));
+        assert_eq!(paid.gratis_released, U256::from(2u64));
+
+        let a1 = credis.get_anadosis(id, 1).unwrap();
+        assert_eq!(a1.unpaid_amount, U256::from(6u64));
+        assert_eq!(a1.paid_at, 0, "partially paid installment is not settled");
+
+        let p = credis.get_position(id).unwrap();
+        assert_eq!(p.next_anadosis_number, 1, "pointer stays on installment 1");
+        assert_eq!(p.outstanding_anadosis_amount, U256::from(96u64));
+        assert_eq!(p.outstanding_gratis_amount, U256::from(48u64));
+
+        // Settling the rest stamps paid_at, advances the pointer, and releases exactly
+        // the collateral the pro-rata floor withheld — no dust stranded.
+        let rest = credis
+            .pay_anadosis(id, U256::from(6u64), due_date_for(1) + 1)
+            .unwrap();
+        assert_eq!(rest.total_paid_amount, U256::from(6u64));
+        assert_eq!(rest.gratis_released, U256::from(3u64));
+
+        let a1 = credis.get_anadosis(id, 1).unwrap();
+        assert_eq!(a1.unpaid_amount, U256::ZERO);
+        assert_eq!(a1.paid_at, due_date_for(1) + 1);
+        assert_eq!(credis.get_position(id).unwrap().next_anadosis_number, 2);
+    });
+}
+
+#[test]
+fn pay_anadosis_spans_multiple_installments() {
+    with_credis(|storage| {
+        let mut credis = CredisContract::new(storage.clone());
+        let id = position_with_schedule(&mut credis);
+
+        // 25 covers installments 1 and 2 in full plus half of 3.
+        let paid = credis
+            .pay_anadosis(id, U256::from(25u64), due_date_for(1))
+            .unwrap();
+        assert_eq!(paid.total_paid_amount, U256::from(25u64));
+        // 5 + 5 for the settled pair, then 5 - floor(5 × 5/10) = 3 for the half of #3:
+        // what stays locked is floored, so the release is the complement.
+        assert_eq!(paid.gratis_released, U256::from(13u64));
+
+        for n in 1..=2 {
+            let a = credis.get_anadosis(id, n).unwrap();
+            assert_eq!(a.unpaid_amount, U256::ZERO, "installment {n} settled");
+            assert_eq!(a.paid_at, due_date_for(1));
+        }
+        let a3 = credis.get_anadosis(id, 3).unwrap();
+        assert_eq!(a3.unpaid_amount, U256::from(5u64));
+        assert_eq!(a3.paid_at, 0);
+
+        let p = credis.get_position(id).unwrap();
+        assert_eq!(p.next_anadosis_number, 3);
+        assert_eq!(p.outstanding_anadosis_amount, U256::from(75u64));
+    });
+}
+
+#[test]
+fn pay_anadosis_takes_only_what_the_schedule_needs() {
+    with_credis(|storage| {
+        let mut credis = CredisContract::new(storage.clone());
+        let id = position_with_schedule(&mut credis);
+
+        // Overpay wildly: only the 100 outstanding is consumed and the whole pledge is
+        // released, leaving the position completed.
+        let paid = credis
+            .pay_anadosis(id, U256::from(1_000_000u64), due_date_for(1))
+            .unwrap();
+        assert_eq!(paid.total_paid_amount, U256::from(100u64));
+        assert_eq!(paid.gratis_released, U256::from(50u64));
+
+        let p = credis.get_position(id).unwrap();
+        assert_eq!(p.outstanding_anadosis_amount, U256::ZERO);
+        assert_eq!(p.outstanding_gratis_amount, U256::ZERO);
+        assert_eq!(p.next_anadosis_number, NUMBER_OF_ANADOSIS + 1);
+        assert!(credis.get_next_anadosis(id).unwrap().is_none());
     });
 }
 
@@ -589,8 +712,15 @@ fn has_overdue_anadosis_reflects_past_due_unpaid_anadosis() {
         assert!(credis
             .has_overdue_anadosis(alice(), due_date_for(1) + 1)
             .unwrap());
-        // Pay it; now not overdue.
-        credis.make_next_anadosis(id, due_date_for(1) + 1).unwrap();
+        // Partially paying it does NOT clear the overdue flag.
+        credis
+            .pay_anadosis(id, U256::from(4u64), due_date_for(1) + 1)
+            .unwrap();
+        assert!(credis
+            .has_overdue_anadosis(alice(), due_date_for(1) + 1)
+            .unwrap());
+        // Settling it does.
+        pay_next(&mut credis, id, due_date_for(1) + 1);
         assert!(!credis
             .has_overdue_anadosis(alice(), due_date_for(1) + 1)
             .unwrap());

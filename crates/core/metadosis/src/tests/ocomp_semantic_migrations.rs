@@ -254,30 +254,49 @@ fn result_digest(fixture: &ActivationFixture) -> B256 {
 }
 
 fn submit_vote(fixture: &mut ActivationFixture, validator_index: u8, height: u64) {
+    submit_vote_as(
+        fixture,
+        ActivationFixture::validator_caller(validator_index),
+        height,
+    )
+    .unwrap();
+}
+
+fn submit_vote_as(
+    fixture: &mut ActivationFixture,
+    caller: Address,
+    height: u64,
+) -> outbe_primitives::error::Result<Bytes> {
     fixture.provider.set_block_number(height);
     fixture.provider.enable_lysis_activation_frame();
     fixture
         .provider
         .enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::VerifiedResultVote);
-    let vote = fixture.signed_result_vote(validator_index);
-    let vote_bytes = vote.encode_canonical(&fixture.limits).unwrap();
+    let result_bytes = fixture.result.encode_canonical(&fixture.limits).unwrap();
     let calldata = IMetadosis::submitLysisResultCall {
-        resultVoteV1: Bytes::from(vote_bytes),
+        resultVoteV1: Bytes::from(result_bytes),
     }
     .abi_encode();
     StorageHandle::enter(&mut fixture.provider, |storage| {
-        assert_eq!(
-            crate::commands::submit_verified_result_vote(
-                storage,
-                &fixture.scope,
-                &calldata,
-                U256::ZERO,
-                false,
-            )
-            .unwrap(),
-            Bytes::new()
-        );
-    });
+        crate::commands::submit_verified_result_vote(
+            storage,
+            &fixture.scope,
+            caller,
+            &calldata,
+            U256::ZERO,
+            false,
+        )
+    })
+}
+
+#[test]
+fn public_result_vote_uses_the_ocomp_role_caller_as_its_validator_slot() {
+    let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
+
+    assert!(submit_vote_as(&mut fixture, Address::repeat_byte(0xee), 14).is_err());
+    assert!(submit_vote_as(&mut fixture, ActivationFixture::validator_caller(1), 14,).is_ok());
+
+    submit_vote(&mut fixture, 0, 14);
 }
 
 // OCOMP-TEST-ID: OCM-VOT-001

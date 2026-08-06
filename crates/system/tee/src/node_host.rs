@@ -1497,12 +1497,11 @@ fn reconcile_replacement_state(
         validate_replacement_candidate_state(&candidate, &active, node_host)?;
         if let Some(promotion) = durable_promotion {
             let prior_active_receipt = promotion.candidate_manifest_hash == active_hash;
-            if !prior_active_receipt || next_exists {
-                if submission_authorization != Some(promotion) {
-                    return Err(TransportError::Codec(
-                        "replacement promotion receipt conflicts with staged authorization".into(),
-                    ));
-                }
+            if (!prior_active_receipt || next_exists) && submission_authorization != Some(promotion)
+            {
+                return Err(TransportError::Codec(
+                    "replacement promotion receipt conflicts with staged authorization".into(),
+                ));
             }
         }
         if next_exists {
@@ -2085,6 +2084,7 @@ mod tests {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(false)
             .mode(0o600)
             .open(lock_path)
             .unwrap();

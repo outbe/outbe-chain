@@ -56,6 +56,17 @@ fn seed_oracle(storage: StorageHandle<'_>, rate_1e18: U256) {
         .unwrap();
 }
 
+/// Pays exactly what the position's next installment still owes, and returns the
+/// amount actually pulled.
+fn pay_next_installment(storage: &StorageHandle<'_>, caller: Address, position_id: U256) -> U256 {
+    let owed = CredisContract::new(storage.clone())
+        .get_next_anadosis(position_id)
+        .unwrap()
+        .unwrap()
+        .unpaid_amount;
+    runtime::pay_anadosis(storage.clone(), caller, position_id, owed).unwrap()
+}
+
 /// ABI-encoded `uint16` return for the asset's `isoCode()` static sub-call.
 fn iso_word(iso: u16) -> Bytes {
     let mut b = vec![0u8; 32];
@@ -194,7 +205,7 @@ fn full_pledge_request_pay_unlock_flow() {
             storage
                 .set_block_timestamp(U256::from(CREATED_AT + n as u64 * SECONDS_PER_MONTH))
                 .unwrap();
-            runtime::pay_anadosis(storage.clone(), alice(), position_id).unwrap();
+            pay_next_installment(&storage, alice(), position_id);
 
             let unlocked = U256::from(n) * installment;
             assert_eq!(view_balance(&storage, alice()), unlocked, "installment {n}");
@@ -247,10 +258,97 @@ fn pay_anadosis_unlocks_one_installment() {
         storage
             .set_block_timestamp(U256::from(CREATED_AT + SECONDS_PER_MONTH))
             .unwrap();
-        runtime::pay_anadosis(storage.clone(), alice(), position_id).unwrap();
+        pay_next_installment(&storage, alice(), position_id);
 
         assert_eq!(view_balance(&storage, alice()), installment);
         assert_eq!(view_pledged(&storage, alice()), pledge_amount - installment);
+    });
+    fidelity_enclave::uninstall();
+    test_enclave::uninstall();
+}
+
+#[test]
+fn pay_anadosis_spans_installments_and_caps_at_outstanding() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        let pledge_amount = one_e18();
+
+        outbe_gratis::api::mint(
+            storage.clone(),
+            alice(),
+            pledge_amount,
+            auth(GratisOp::Mint, alice(), pledge_amount, 0),
+        )
+        .unwrap();
+        seed_fidelity(storage.clone(), alice());
+        seed_oracle(storage.clone(), U256::from(2u64) * one_e18());
+        let handle = gf::pledge_gratis(
+            storage.clone(),
+            alice(),
+            pledge_amount,
+            auth(GratisOp::Pledge, alice(), pledge_amount, 1),
+        )
+        .unwrap();
+
+        let spend = credis_spend_auth(alice(), handle, alice());
+        let (position_id, _) =
+            runtime::request_credis(storage.clone(), alice(), asset(), alice(), handle, spend)
+                .unwrap();
+
+        let total_debt = CredisContract::new(storage.clone())
+            .get_position(position_id)
+            .unwrap()
+            .total_anadosis_amount;
+        let per_installment = total_debt / U256::from(NUMBER_OF_ANADOSIS);
+
+        storage
+            .set_block_timestamp(U256::from(CREATED_AT + SECONDS_PER_MONTH))
+            .unwrap();
+
+        // 2.5 installments in one call: #1 and #2 settle, #3 keeps half owed.
+        let amount = per_installment * U256::from(2u64) + per_installment / U256::from(2u64);
+        let paid = runtime::pay_anadosis(storage.clone(), alice(), position_id, amount).unwrap();
+        assert_eq!(paid, amount, "whole budget consumed — schedule had room");
+
+        let credis = CredisContract::new(storage.clone());
+        assert_eq!(
+            credis
+                .get_position(position_id)
+                .unwrap()
+                .next_anadosis_number,
+            3
+        );
+        let third = credis.get_anadosis(position_id, 3).unwrap();
+        assert_eq!(
+            third.unpaid_amount,
+            third.anadosis_amount - per_installment / U256::from(2u64)
+        );
+        assert_eq!(third.paid_at, 0, "partially paid installment stays open");
+
+        // Collateral released tracks the debt paid down, and the two ledgers stay
+        // complementary (nothing minted, nothing stranded).
+        let released = view_balance(&storage, alice());
+        assert_eq!(view_pledged(&storage, alice()), pledge_amount - released);
+        assert!(released > U256::ZERO && released < pledge_amount);
+
+        // Overpaying the rest takes only what is outstanding and closes the position,
+        // returning the full pledge to alice's liquid balance.
+        let outstanding = credis
+            .get_position(position_id)
+            .unwrap()
+            .outstanding_anadosis_amount;
+        let rest = runtime::pay_anadosis(
+            storage.clone(),
+            alice(),
+            position_id,
+            outstanding * U256::from(1_000u64),
+        )
+        .unwrap();
+        assert_eq!(rest, outstanding, "only the required amount is used");
+        assert_eq!(paid + rest, total_debt, "never more than the total debt");
+
+        assert_eq!(view_balance(&storage, alice()), pledge_amount);
+        assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
     });
     fidelity_enclave::uninstall();
     test_enclave::uninstall();
@@ -340,15 +438,17 @@ fn request_credis_rejects_zero_smart_account() {
 }
 
 #[test]
-fn pay_anadosis_rejects_non_owner_caller() {
+fn pay_anadosis_accepts_third_party_payer() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
-        let amount = one_e18();
+        let pledge_amount = one_e18();
+        let installment = pledge_amount / U256::from(NUMBER_OF_ANADOSIS);
+
         outbe_gratis::api::mint(
             storage.clone(),
             alice(),
-            amount,
-            auth(GratisOp::Mint, alice(), amount, 0),
+            pledge_amount,
+            auth(GratisOp::Mint, alice(), pledge_amount, 0),
         )
         .unwrap();
         seed_fidelity(storage.clone(), alice());
@@ -356,8 +456,8 @@ fn pay_anadosis_rejects_non_owner_caller() {
         let handle = gf::pledge_gratis(
             storage.clone(),
             alice(),
-            amount,
-            auth(GratisOp::Pledge, alice(), amount, 1),
+            pledge_amount,
+            auth(GratisOp::Pledge, alice(), pledge_amount, 1),
         )
         .unwrap();
         let spend = credis_spend_auth(alice(), handle, alice());
@@ -365,9 +465,29 @@ fn pay_anadosis_rejects_non_owner_caller() {
             runtime::request_credis(storage.clone(), alice(), asset(), alice(), handle, spend)
                 .unwrap();
 
-        // bob is not the position's smart account.
-        let err = runtime::pay_anadosis(storage.clone(), bob(), position_id).unwrap_err();
-        assert!(err.to_string().contains("smartAccount"), "got: {err}");
+        // bob is not the position's smart account, but anyone may pay it down.
+        let owed = CredisContract::new(storage.clone())
+            .get_next_anadosis(position_id)
+            .unwrap()
+            .unwrap()
+            .unpaid_amount;
+        let paid = runtime::pay_anadosis(storage.clone(), bob(), position_id, owed).unwrap();
+        assert_eq!(paid, owed);
+        assert_eq!(
+            CredisContract::new(storage.clone())
+                .get_position(position_id)
+                .unwrap()
+                .next_anadosis_number,
+            2,
+            "third-party payment advances the schedule"
+        );
+
+        // The freed collateral goes to the ORIGINAL pledger, never to the payer — this
+        // is what makes an open payer safe without an access check.
+        assert_eq!(view_balance(&storage, alice()), installment);
+        assert_eq!(view_pledged(&storage, alice()), pledge_amount - installment);
+        assert_eq!(view_balance(&storage, bob()), U256::ZERO);
+        assert_eq!(view_pledged(&storage, bob()), U256::ZERO);
     });
     fidelity_enclave::uninstall();
     test_enclave::uninstall();
@@ -406,7 +526,7 @@ fn expiry_sweep_burns_outstanding_collateral() {
             storage
                 .set_block_timestamp(U256::from(CREATED_AT + n * SECONDS_PER_MONTH))
                 .unwrap();
-            runtime::pay_anadosis(storage.clone(), alice(), position_id).unwrap();
+            pay_next_installment(&storage, alice(), position_id);
         }
         let outstanding_gratis = pledge_amount - U256::from(3u64) * installment;
         assert_eq!(view_pledged(&storage, alice()), outstanding_gratis);

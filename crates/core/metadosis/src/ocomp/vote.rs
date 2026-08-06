@@ -1,14 +1,16 @@
-//! Consensus-state admission for direct validator `ResultVoteV1` records.
+//! Consensus-state admission for validator-authenticated Lysis results.
 //!
-//! The public transaction supplies one canonical signed vote. This module
-//! resolves the finalized job from the bounded response-window index, verifies
-//! the inner OCOMP signature against fork-installed committee state and owns
-//! the atomic four-slot/q=3 transition. It never decodes or executes Lysis.
+//! The public transaction supplies one canonical result. This module resolves
+//! the finalized job from the bounded response-window index, derives the
+//! validator identity from the role-delegated transaction sender, and owns the
+//! atomic four-slot/q=3 transition. It never decodes or executes Lysis.
 
-use alloy_primitives::{Bytes, U256};
+use alloy_primitives::{Address, Bytes, U256};
 use outbe_compressed_entities::ExecutionScope;
 use outbe_ocomp_protocol::{
     abi::{OCOMP_RESULT_VOTE_REJECTED_SELECTOR, SUBMIT_LYSIS_RESULT_SELECTOR},
+    committee::validator_identity_hash,
+    result::LysisResultV1,
     state::OcompJobStatus,
     vote::{OcompQuorumV1, RecordVoteOutcomeV1, ResultVoteV1},
     SchemaLimits,
@@ -45,13 +47,13 @@ pub(crate) enum ResponseWindowCloseV1 {
     QuorumPreserved { intent_id: alloy_primitives::B256 },
 }
 
-/// Dispatches one normal public EVM transaction containing a canonical signed
-/// `ResultVoteV1`. The outer caller is intentionally not protocol authority:
-/// eligibility and fee classification are separate, while this transition is
-/// authorized only by the inner committee signature.
+/// Dispatches one normal public EVM transaction containing a canonical result
+/// vote. The role-delegated transaction caller is the validator authority; the
+/// encoded validator index must name that same validator slot.
 pub fn dispatch_public_result_vote(
     storage: StorageHandle<'_>,
     scope: &ExecutionScope,
+    caller: Address,
     data: &[u8],
     value: U256,
     is_static: bool,
@@ -61,11 +63,11 @@ pub fn dispatch_public_result_vote(
     }
     let limits = super::schema::poc_schema_limits();
     let vote_bytes = preflight_result_vote_calldata(data)?;
-    let vote = ResultVoteV1::decode_canonical(vote_bytes, &limits)
+    let result = LysisResultV1::decode_canonical(vote_bytes, &limits)
         .map_err(|_| vote_reject(REJECT_MALFORMED_ENCODING))?;
     let inclusion_height = storage.block_number()?;
     MetadosisContract::new(storage)
-        .record_ocomp_result_vote(&vote, inclusion_height, scope, &limits)
+        .record_ocomp_result_vote(&result, caller, inclusion_height, scope, &limits)
         .map_err(map_vote_transition_error)?;
     Ok(Bytes::new())
 }
@@ -137,7 +139,8 @@ impl MetadosisContract<'_> {
     /// quorum transition are committed in one storage checkpoint.
     pub fn record_ocomp_result_vote(
         &mut self,
-        vote: &ResultVoteV1,
+        result: &LysisResultV1,
+        caller: Address,
         inclusion_height: u64,
         scope: &ExecutionScope,
         limits: &SchemaLimits,
@@ -145,7 +148,7 @@ impl MetadosisContract<'_> {
         let storage = self.storage.clone();
         let outcome = (|| {
             let response = self
-                .response_window_for_job(vote.job_id)?
+                .response_window_for_job(result.job_id)?
                 .ok_or_else(|| reject("OCOMP result vote has no open response window"))?;
             let record = self
                 .ocomp_job_record(response.intent_id, limits)?
@@ -170,16 +173,80 @@ impl MetadosisContract<'_> {
             let authority = self
                 .read_ocomp_activation_authority(limits)?
                 .ok_or_else(|| fatal("OCOMP result-vote committee is not installed"))?;
-            vote.verify(
-                &record.intent,
-                finalized.job_id,
-                &authority.result_committee,
-                inclusion_height,
-                finalized.open_height,
-                finalized.deadline_height,
-                limits,
+            let validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+            let validator = validators
+                .resolve_validator_for_role(
+                    caller,
+                    outbe_validatorset::delegation::ValidatorDelegateRole::Ocomp,
+                )?
+                .ok_or_else(|| {
+                    reject("OCOMP result vote caller is not an active validator role")
+                })?;
+            let registration_index = validators.address_to_index.read(&validator)?;
+            let validator_index = registration_index
+                .checked_sub(1)
+                .and_then(|index| u8::try_from(index).ok())
+                .ok_or_else(|| {
+                    fatal("resolved OCOMP validator has no canonical committee index")
+                })?;
+            result
+                .validate_semantics(limits)
+                .and_then(|()| result.validate_finalized_intent(&record.intent))
+                .map_err(|error| reject(format!("invalid OCOMP result: {error}")))?;
+            let committee_hash = authority
+                .result_committee
+                .snapshot_hash(limits)
+                .map_err(|error| fatal(format!("invalid installed OCOMP committee: {error}")))?;
+            if result.job_id != finalized.job_id
+                || inclusion_height < finalized.open_height
+                || inclusion_height >= finalized.deadline_height
+                || committee_hash != record.intent.result_committee_snapshot_hash
+            {
+                return Err(reject("OCOMP result does not match the open finalized job"));
+            }
+            let member = authority
+                .result_committee
+                .ordered_members
+                .get(usize::from(validator_index))
+                .ok_or_else(|| reject("OCOMP validator slot is outside the result committee"))?;
+            let validator_record = validators
+                .get_validator(validator)?
+                .ok_or_else(|| fatal("resolved OCOMP validator disappeared from ValidatorSet"))?;
+            let expected_identity = validator_identity_hash(
+                validator_index,
+                validator,
+                &validator_record.consensus_pubkey,
             )
-            .map_err(|error| reject(format!("invalid OCOMP result vote: {error}")))?;
+            .map_err(|error| fatal(format!("derive OCOMP validator identity: {error}")))?;
+            if member.validator_index != validator_index
+                || member.validator_identity_hash != expected_identity
+            {
+                return Err(reject(
+                    "OCOMP transaction caller does not match the installed committee slot",
+                ));
+            }
+            if member.valid_from_height > inclusion_height
+                || inclusion_height >= member.valid_until_height_exclusive
+            {
+                return Err(reject(
+                    "OCOMP validator slot is inactive at inclusion height",
+                ));
+            }
+
+            // Accountability still uses the V1 slot envelope on disk during this
+            // semantic migration. Authority comes exclusively from `caller`; the
+            // legacy inner-signature fields are deterministic placeholders and are
+            // never verified or accepted as authority.
+            let vote = ResultVoteV1 {
+                protocol_bundle_hash: result.protocol_bundle_hash,
+                job_id: result.job_id,
+                attempt: result.attempt,
+                result_committee_snapshot_hash: record.intent.result_committee_snapshot_hash,
+                validator_index,
+                key_epoch: outbe_ocomp_protocol::committee::POC_KEY_EPOCH,
+                result: result.clone(),
+                signature_rs: [0_u8; 64],
+            };
 
             let mut accountability = self
                 .result_vote_accountability(finalized.job_id, limits)?
@@ -189,7 +256,7 @@ impl MetadosisContract<'_> {
             }
             let had_quorum = accountability.quorum.is_some();
             let outcome = accountability
-                .record_verified_vote(vote, inclusion_height, limits)
+                .record_verified_vote(&vote, inclusion_height, limits)
                 .map_err(|error| reject(format!("invalid OCOMP vote transition: {error}")))?;
             let quorum = accountability.quorum.clone();
 
@@ -229,7 +296,7 @@ impl MetadosisContract<'_> {
                         self,
                         response.intent_id,
                         &record,
-                        &vote.result,
+                        result,
                         formed,
                         &authority,
                     )?;
