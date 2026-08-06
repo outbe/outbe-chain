@@ -103,7 +103,7 @@ fn validate_oracle_submit_vote_state(
         )?
         .ok_or(ZeroFeePolicyError::UnauthorizedSigner)?;
 
-    let oracle = outbe_oracle::contract::OracleContract::new(vs.storage.clone());
+    let oracle = outbe_oracle::schema::OracleContract::new(vs.storage.clone());
     if oracle.vote_exists.read(&validator)? {
         return Err(ZeroFeePolicyError::AlreadyVoted);
     }
@@ -214,7 +214,7 @@ mod tests {
             )
             .unwrap();
 
-            let oracle = outbe_oracle::contract::OracleContract::new(storage.clone());
+            let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
             let input = vote_calldata();
             let tx = oracle_vote_tx(MIN_ZERO_FEE_ORACLE_MAX_FEE_PER_GAS, Some(0), input.as_ref());
             let candidate = crate::registry().classify(&tx).unwrap().unwrap();

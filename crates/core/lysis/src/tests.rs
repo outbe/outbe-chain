@@ -10,7 +10,7 @@ use outbe_compressed_entities::{
 };
 use outbe_nod::{from_canonical_item, precompile::INod, NodContract, NodRepositoryReader};
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
-use outbe_oracle::contract::OracleContract;
+use outbe_oracle::schema::OracleContract;
 use outbe_primitives::addresses::{COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS};
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_primitives::units::{Units, SCALE_1E18};
@@ -643,7 +643,7 @@ fn test_negative_beta_branch_produces_bounded_distribution() {
 fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
     use alloy_primitives::{address, U256};
     use outbe_common::WorldwideDay;
-    use outbe_oracle::contract::OracleContract;
+    use outbe_oracle::schema::OracleContract;
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
     use outbe_primitives::storage::StorageHandle;
     use outbe_tribute::TributeData;
@@ -969,7 +969,7 @@ fn test_compute_fi_fraction_map_100_tributes_15_fis_thirtytwo_percent_allocation
 fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
     use alloy_primitives::{address, U256};
     use outbe_common::WorldwideDay;
-    use outbe_oracle::contract::OracleContract;
+    use outbe_oracle::schema::OracleContract;
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
     use outbe_primitives::storage::StorageHandle;
     use outbe_tribute::{TributeContract, TributeData};

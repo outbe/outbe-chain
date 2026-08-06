@@ -3,8 +3,11 @@
 //! Exposes read-only helpers that other modules call to validate
 //! currency support, without going through the precompile dispatch.
 
-use crate::contract::OracleContract;
+use crate::schema::OracleContract;
 use crate::scurve;
+
+pub use crate::constants::DAY_TYPE_PAIR;
+
 use alloy_primitives::U256;
 use outbe_common::WorldwideDay;
 use outbe_primitives::{
@@ -85,9 +88,6 @@ pub fn get_worldwide_day_vwap_for_pair_id(
     let oracle: OracleContract<'_> = OracleContract::new(storage);
     oracle.get_worldwide_day_vwap_for_pair_id(worldwide_day, pair_id)
 }
-
-/// The pair whose WorldwideDay VWAP drives the GREEN/RED day-type decision.
-pub const DAY_TYPE_PAIR: (&str, &str) = ("COEN", "0xUSD");
 
 /// Selects the already-stored auction entry price and returns only O(1)
 /// authenticated collection counts. This path never invokes calculation or

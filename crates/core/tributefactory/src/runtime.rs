@@ -4,7 +4,7 @@ use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     derive_poseidon_entity_id, EntityId36, ExecutionScope, ParentBodySource,
 };
-use outbe_oracle::{contract::OracleContract, scurve};
+use outbe_oracle::{schema::OracleContract, scurve};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_tee::protocol::{EncryptedTributeOffer, TributeOfferStatus, TributeZkContext};
 use outbe_tribute::{TributeContract, TributeData};

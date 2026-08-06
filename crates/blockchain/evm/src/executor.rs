@@ -612,7 +612,7 @@ fn run_outbe_pre_execution_hooks_inner(
     // force-exits run later in the receipt-visible OracleSlashWindow system phase
     // so Phase 3 BoundaryOutcome can activate its target set before Oracle marks
     // underperformers EXITING.
-    <outbe_oracle::hooks::OracleLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
+    <outbe_oracle::lifecycle::OracleLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
 
     // Nod qualification mutates compressed bucket bodies and therefore runs
     // later inside the receipt-visible CycleTick system transaction. Oracle
@@ -4588,7 +4588,7 @@ mod tests {
             // Seed the COEN/0xUSD oracle pair + a 1.0 rate so begin-block NOD/GEM/INTEX
             // floor-price promotion reads a registered pair instead of reverting
             // "pair not registered".
-            let mut oracle = outbe_oracle::contract::OracleContract::new(storage.clone());
+            let mut oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
             oracle.register_pair("COEN", "0xUSD").unwrap();
             oracle
                 .set_exchange_rate(
@@ -4684,7 +4684,7 @@ mod tests {
             // Seed the COEN/0xUSD oracle pair + a 1.0 rate so begin-block NOD/GEM/INTEX
             // floor-price promotion reads a registered pair instead of reverting
             // "pair not registered".
-            let mut oracle = outbe_oracle::contract::OracleContract::new(storage.clone());
+            let mut oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
             oracle.register_pair("COEN", "0xUSD").unwrap();
             oracle
                 .set_exchange_rate(
@@ -9486,7 +9486,7 @@ mod tests {
             .address();
         let mut state =
             state_with_active_and_registered_candidate_seeded(old_active, proposer, |storage| {
-                let oracle = outbe_oracle::contract::OracleContract::new(storage.clone());
+                let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
                 oracle.config_is_initialized.write(true).unwrap();
                 oracle.config_enabled.write(true).unwrap();
                 oracle.config_vote_period.write(0).unwrap();
@@ -9940,7 +9940,7 @@ mod tests {
             assert_eq!(record.status, outbe_validatorset::logic::status::ACTIVE);
             assert!(record.has_bls_share);
 
-            let oracle = outbe_oracle::contract::OracleContract::new(storage.clone());
+            let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
             assert_eq!(oracle.resolve_validator_for_feeder(feeder)?, validator);
             Ok::<_, outbe_primitives::error::PrecompileError>(())
         })
@@ -9980,7 +9980,7 @@ mod tests {
 
         let mut slot_storage = HashMapStorageProvider::new(CHAIN_ID);
         let vote_slot = StorageHandle::enter(&mut slot_storage, |storage| {
-            outbe_oracle::contract::OracleContract::new(storage.clone())
+            outbe_oracle::schema::OracleContract::new(storage.clone())
                 .vote_exists
                 .get(&validator)
                 .slot()
@@ -10582,7 +10582,7 @@ mod tests {
         seed_test_committee_snapshot(storage.clone(), &[(validator, *pk)]);
         // Seed COEN/0xUSD pair + 1.0 rate so begin-block NOD/GEM/INTEX promotion
         // reads a registered pair instead of reverting "pair not registered".
-        let mut oracle = outbe_oracle::contract::OracleContract::new(storage);
+        let mut oracle = outbe_oracle::schema::OracleContract::new(storage);
         oracle.register_pair("COEN", "0xUSD").unwrap();
         oracle
             .set_exchange_rate(

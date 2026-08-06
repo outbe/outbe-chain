@@ -1,4 +1,4 @@
-use crate::contract::OracleContract;
+use crate::schema::OracleContract;
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolEvent, SolInterface};
 use outbe_primitives::addresses::ORACLE_ADDRESS;

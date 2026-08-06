@@ -1,6 +1,6 @@
 use alloy_primitives::{address, Address, B256, U256};
 use outbe_gem::{api as gem_api, GemContract, GemState};
-use outbe_oracle::contract::OracleContract;
+use outbe_oracle::schema::OracleContract;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::SCALE_1E18;

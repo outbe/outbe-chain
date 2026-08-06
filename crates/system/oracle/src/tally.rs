@@ -9,8 +9,8 @@ use outbe_primitives::addresses::ORACLE_ADDRESS;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::units::Units;
 
-use crate::contract::{OracleContract, SCALE_1E18};
 use crate::precompile::IOracle;
+use crate::schema::{OracleContract, SCALE_1E18};
 
 /// Maximum validator records processed by the receipt-visible Oracle slash-window
 /// system transaction. The configured genesis maximum is 128; keeping the cap

@@ -1,6 +1,6 @@
 use alloy_primitives::{address, keccak256, Address, B256, U256};
 use alloy_sol_types::SolCall;
-use outbe_oracle::contract::OracleContract;
+use outbe_oracle::schema::OracleContract;
 use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;

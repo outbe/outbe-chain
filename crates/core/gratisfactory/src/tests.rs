@@ -87,7 +87,7 @@ fn view_pledged(s: &StorageHandle<'_>, a: Address) -> U256 {
 
 /// Register the COEN/0xUSD pair the pledge conversion reads.
 fn seed_oracle(storage: StorageHandle<'_>, rate_1e18: U256) {
-    let mut oracle = outbe_oracle::contract::OracleContract::new(storage);
+    let mut oracle = outbe_oracle::schema::OracleContract::new(storage);
     oracle.register_pair("COEN", "0xUSD").unwrap();
     oracle
         .set_exchange_rate(Address::ZERO, "COEN", "0xUSD", rate_1e18, 0, 0)

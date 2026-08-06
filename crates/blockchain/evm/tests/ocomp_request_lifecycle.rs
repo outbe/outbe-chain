@@ -68,7 +68,7 @@ use outbe_ocomp_protocol::{
 };
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
-use outbe_oracle::contract::OracleContract;
+use outbe_oracle::schema::OracleContract;
 use outbe_primitives::{
     addresses::{
         COMPRESSED_ENTITIES_ADDRESS, METADOSIS_ADDRESS, REWARDS_ADDRESS, TRIBUTE_FACTORY_ADDRESS,
@@ -1224,7 +1224,7 @@ fn prepare_parent(proposer: Address, snapshot: &StoredCommitteeSnapshot) -> Prep
         write_committee_snapshot(storage.clone(), FINALIZED_EPOCH, snapshot).unwrap();
 
         let mut oracle = OracleContract::new(storage.clone());
-        let mut oracle_genesis = outbe_oracle::logic::OracleGenesisConfig::default_config();
+        let mut oracle_genesis = outbe_oracle::genesis::OracleGenesisConfig::default_config();
         oracle_genesis.initial_rates.push((
             "COEN".to_owned(),
             "0xUSD".to_owned(),
@@ -1236,7 +1236,7 @@ fn prepare_parent(proposer: Address, snapshot: &StoredCommitteeSnapshot) -> Prep
             "COEN".to_owned(),
             "0xUSD".to_owned(),
         ));
-        outbe_oracle::logic::init_from_genesis(&mut oracle, &oracle_genesis).unwrap();
+        outbe_oracle::genesis::init_from_genesis(&mut oracle, &oracle_genesis).unwrap();
         outbe_oracle::api::initialize_fresh_ocomp_profile(storage.clone()).unwrap();
 
         let forming_start = wwd.start_timestamp();

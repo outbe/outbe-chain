@@ -937,7 +937,7 @@ mod tests {
                 .activate_reshared_set(&[proposer], B256::ZERO)
                 .expect("active proposer seed succeeds");
 
-            let mut oracle = outbe_oracle::contract::OracleContract::new(storage);
+            let mut oracle = outbe_oracle::schema::OracleContract::new(storage);
             oracle
                 .register_pair("COEN", "0xUSD")
                 .expect("oracle pair seed succeeds");

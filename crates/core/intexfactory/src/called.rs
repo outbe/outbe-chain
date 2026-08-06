@@ -7,7 +7,7 @@
 
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
-use outbe_oracle::contract::OracleContract;
+use outbe_oracle::schema::OracleContract;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},

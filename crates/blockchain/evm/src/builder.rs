@@ -698,7 +698,7 @@ mod tests {
             // Seed the COEN/0xUSD oracle pair + a 1.0 rate so begin-block NOD/GEM/INTEX
             // floor-price promotion reads a registered pair instead of reverting
             // "pair not registered".
-            let mut oracle = outbe_oracle::contract::OracleContract::new(storage.clone());
+            let mut oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
             oracle.register_pair("COEN", "0xUSD").unwrap();
             oracle
                 .set_exchange_rate(

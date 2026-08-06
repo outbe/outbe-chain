@@ -993,7 +993,7 @@ fn record_window_close_absentees(ctx: &BlockRuntimeContext, block_number: u64) -
 /// OracleSlashWindow system tx: run Oracle slash-window penalties after any
 /// same-block boundary activation but before user transactions observe state.
 pub(crate) fn run_oracle_slash_window(ctx: &BlockRuntimeContext) -> Result<()> {
-    outbe_oracle::hooks::run_slash_window(ctx)
+    outbe_oracle::lifecycle::run_slash_window(ctx)
 }
 
 /// HookEvents system tx: no-op marker. Whitelisted pre-exec hook logs are

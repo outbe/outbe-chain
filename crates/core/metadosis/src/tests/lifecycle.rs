@@ -2,7 +2,7 @@ use super::*;
 use crate::{WwdDayType, WwdStatus};
 use alloy_sol_types::SolEvent;
 use outbe_nod::NodContract;
-use outbe_oracle::contract::OracleContract;
+use outbe_oracle::schema::OracleContract;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Debug)]

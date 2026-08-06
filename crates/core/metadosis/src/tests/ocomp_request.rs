@@ -4,7 +4,7 @@ use outbe_compressed_entities::{begin_block, end_block, ExecutionScope};
 use outbe_desis::{AuctionStage, DesisContract};
 use outbe_nod::NodContract;
 use outbe_ocomp_protocol::state::{OcompJobStatus, OcompTerminalOutcome};
-use outbe_oracle::contract::OracleContract;
+use outbe_oracle::schema::OracleContract;
 use outbe_primitives::{
     addresses::{COMPRESSED_ENTITIES_ADDRESS, METADOSIS_ADDRESS},
     block::{BlockContext, BlockRuntimeContext},

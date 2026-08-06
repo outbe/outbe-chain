@@ -222,13 +222,13 @@ mod tests {
     /// `add_topup_for_voters` → `mint_gem` resolves `coen_rate` for floor
     /// price + entry_price at mint time.
     fn seed_oracle(ctx: &BlockRuntimeContext, rate_1e18: U256) {
-        let mut oracle = outbe_oracle::contract::OracleContract::new(ctx.storage.clone());
+        let mut oracle = outbe_oracle::schema::OracleContract::new(ctx.storage.clone());
         oracle.register_pair("COEN", "0xUSD").unwrap();
         oracle
             .set_exchange_rate(Address::ZERO, "COEN", "0xUSD", rate_1e18, 0, 0)
             .unwrap();
         // Register ISO 840 (USD) so mint_gem currency-validation passes.
-        let pair_hash = outbe_oracle::contract::OracleContract::pair_hash("COEN", "0xUSD");
+        let pair_hash = outbe_oracle::schema::OracleContract::pair_hash("COEN", "0xUSD");
         oracle
             .settlement_iso_to_pair
             .write(&840u16, pair_hash)
