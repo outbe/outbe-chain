@@ -164,6 +164,19 @@ impl Config {
         self.ports.port(Service::OcompSupervisor, i)
     }
 
+    /// Salvo observability endpoint for one of validator `i`'s OCOMP Workers.
+    #[cfg_attr(not(feature = "ocomp-integration"), allow(dead_code))]
+    pub fn ocomp_worker_port(&self, i: usize, worker_ordinal: u32) -> u16 {
+        let service = match worker_ordinal {
+            0 => Service::OcompWorker0,
+            1 => Service::OcompWorker1,
+            2 => Service::OcompWorker2,
+            3 => Service::OcompWorker3,
+            _ => panic!("OCOMP worker ordinal must be below 4"),
+        };
+        self.ports.port(service, i)
+    }
+
     /// TEE enclave socket port for validator index `i`.
     pub fn tee_port(&self, i: usize) -> u16 {
         self.ports.port(Service::Tee, i)

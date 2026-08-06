@@ -3,10 +3,8 @@
 //! Every node owns one **contiguous block** of ports, one per service:
 //!
 //! ```text
-//! offset:    0      1      2       3        4        5         6          7
-//!          http    tee    p2p   discv5  authrpc  metrics  consensus  ocomp-supervisor
-//! node 0: 18545  18546  18547   18548    18549    18550     18551       18552
-//! node 1: 18553  18554  18555   18556    18557    18558     18559       18560
+//! OCOMP reserves six consecutive TCP slots at the end of each node block:
+//! Supervisor registration, Supervisor ZeroMQ, and four Worker observability ports.
 //! ```
 //!
 //! Blocks are handed out from a cursor that only ever moves forward, so they are
@@ -63,11 +61,16 @@ pub(crate) enum Service {
     Metrics,
     Consensus,
     OcompSupervisor,
+    OcompMessage,
+    OcompWorker0,
+    OcompWorker1,
+    OcompWorker2,
+    OcompWorker3,
 }
 
 impl Service {
     /// Block order. Adding a service widens [`BLOCK`] and renumbers every node.
-    const ALL: [Service; 8] = [
+    const ALL: [Service; 13] = [
         Self::Http,
         Self::Tee,
         Self::P2p,
@@ -76,6 +79,11 @@ impl Service {
         Self::Metrics,
         Self::Consensus,
         Self::OcompSupervisor,
+        Self::OcompMessage,
+        Self::OcompWorker0,
+        Self::OcompWorker1,
+        Self::OcompWorker2,
+        Self::OcompWorker3,
     ];
 
     /// This service's slot within a node's block.
@@ -89,6 +97,11 @@ impl Service {
             Self::Metrics => 5,
             Self::Consensus => 6,
             Self::OcompSupervisor => 7,
+            Self::OcompMessage => 8,
+            Self::OcompWorker0 => 9,
+            Self::OcompWorker1 => 10,
+            Self::OcompWorker2 => 11,
+            Self::OcompWorker3 => 12,
         }
     }
 

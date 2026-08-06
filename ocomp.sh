@@ -2,12 +2,9 @@
 #
 # Standalone OCOMP lifecycle for a single validator host.
 #
-# This launcher replaces the OCOMP systemd units. The chain process must already
-# expose its standard JSON-RPC endpoint; OCOMP has no private node control port.
-#
-# This is a manual testnet launcher. Unlike the systemd units it does not add
-# automatic restart, boot persistence, cgroup resource limits or per-role mount /
-# network namespaces. Do not use it as a production-equivalent replacement.
+# Direct OCOMP launcher. The chain process must already expose its standard
+# JSON-RPC endpoint; OCOMP has no private node control port. This script owns
+# role identities, directories, process groups, status and shutdown directly.
 #
 # Usage:
 #   sudo /opt/outbe-chain/ocomp.sh install
@@ -40,12 +37,20 @@ readonly LOG_ROOT="$OCOMP_ROOT/logs"
 readonly PID_ROOT="$RUNTIME_ROOT/pids"
 readonly SUPERVISOR_PID="$PID_ROOT/supervisor/pid"
 readonly EXPORTER_PID="$PID_ROOT/snapshot-exporter/pid"
-readonly WORKER_PID="$PID_ROOT/worker/pid"
 readonly LIFECYCLE_LOCK="$RUNTIME_ROOT/lifecycle.lock"
 
 readonly SUPERVISOR_LOG="$LOG_ROOT/supervisor.log"
 readonly EXPORTER_LOG="$LOG_ROOT/snapshot-exporter.log"
-readonly WORKER_LOG="$LOG_ROOT/worker.log"
+
+worker_pid_file() {
+  local ordinal=$1
+  printf '%s/worker-%s/pid\n' "$PID_ROOT" "$ordinal"
+}
+
+worker_log_file() {
+  local ordinal=$1
+  printf '%s/worker-%s.log\n' "$LOG_ROOT" "$ordinal"
+}
 
 die() {
   echo "ocomp: $*" >&2
@@ -105,8 +110,10 @@ prepare_directories() {
     "$PID_ROOT/supervisor"
   install -d -m 0700 -o root -g root \
     "$PID_ROOT/snapshot-exporter"
-  install -d -m 0700 -o root -g root \
-    "$PID_ROOT/worker"
+  local ordinal
+  for ordinal in 0 1 2 3; do
+    install -d -m 0700 -o root -g root "$PID_ROOT/worker-$ordinal"
+  done
   install -d -m 0750 -o "$SUPERVISOR_USER" -g "$ARTIFACT_GROUP" "$STATE_ROOT"
   install -d -m 0700 -o "$SUPERVISOR_USER" -g "$SUPERVISOR_USER" "$KEY_ROOT"
   install -d -m 0770 -o "$SUPERVISOR_USER" -g "$ARTIFACT_GROUP" \
@@ -125,7 +132,13 @@ prepare_directories() {
     "$STATE_ROOT/supervisor-v1"
   install -d -m 0750 -o root -g root "$LOG_ROOT"
   local log_file
-  for log_file in "$SUPERVISOR_LOG" "$EXPORTER_LOG" "$WORKER_LOG"; do
+  for log_file in \
+    "$SUPERVISOR_LOG" \
+    "$EXPORTER_LOG" \
+    "$(worker_log_file 0)" \
+    "$(worker_log_file 1)" \
+    "$(worker_log_file 2)" \
+    "$(worker_log_file 3)"; do
     [[ ! -L "$log_file" ]] || die "refusing symlink log path: $log_file"
     if [[ ! -e "$log_file" ]]; then
       : >"$log_file"
@@ -203,6 +216,7 @@ prepare() {
   require_command prlimit
   require_command flock
   require_command timeout
+  require_command curl
   require_command openssl
   [[ -x "$OCOMP_BINARY" ]] ||
     die "OCOMP binary is missing or not executable: $OCOMP_BINARY"
@@ -249,7 +263,7 @@ load_runtime_environment() {
   RUNTIME_ENV=()
   load_env_file \
     "$OCOMP_ENV_FILE" \
-    "OCOMP_CHAIN_ID,OCOMP_GENESIS_HASH,OCOMP_BOOT_NONCE,OCOMP_PROTOCOL_BUNDLE_HASH,OCOMP_REGISTRY_GENERATION,OCOMP_SUPERVISOR_ADDRESS,OUTBE_OCOMP_BASE_PATH,OUTBE_OCOMP_RPC_URL"
+    "OCOMP_CHAIN_ID,OCOMP_GENESIS_HASH,OCOMP_BOOT_NONCE,OCOMP_PROTOCOL_BUNDLE_HASH,OCOMP_REGISTRY_GENERATION,OCOMP_SUPERVISOR_ADDRESS,OCOMP_WORKER_COUNT,OUTBE_OCOMP_BASE_PATH,OUTBE_OCOMP_RPC_URL"
   load_env_file \
     "$OCOMP_EXPORT_ENV_FILE" \
     "OUTBE_OCOMP_PROJECTION_MONGODB_URI,OUTBE_OCOMP_PROJECTION_MONGODB_DATABASE"
@@ -262,6 +276,7 @@ load_runtime_environment() {
     OCOMP_PROTOCOL_BUNDLE_HASH \
     OCOMP_REGISTRY_GENERATION \
     OCOMP_SUPERVISOR_ADDRESS \
+    OCOMP_WORKER_COUNT \
     OUTBE_OCOMP_BASE_PATH \
     OUTBE_OCOMP_RPC_URL \
     OUTBE_OCOMP_PROJECTION_MONGODB_URI \
@@ -275,6 +290,8 @@ load_runtime_environment() {
     die "OCOMP_REGISTRY_GENERATION must be greater than zero"
   [[ "${RUNTIME_ENV[OCOMP_SUPERVISOR_ADDRESS]}" =~ ^127\.0\.0\.1:([1-9][0-9]*)$ ]] ||
     die "OCOMP_SUPERVISOR_ADDRESS must be an explicit nonzero 127.0.0.1 HTTP address"
+  [[ "${RUNTIME_ENV[OCOMP_WORKER_COUNT]}" =~ ^[1-4]$ ]] ||
+    die "OCOMP_WORKER_COUNT must be between 1 and 4"
 }
 
 proc_start_ticks() {
@@ -300,7 +317,7 @@ pid_is_running() {
 }
 
 START_ROLE_LAUNCHED=0
-STARTED_WORKER_THIS_RUN=0
+declare -a STARTED_WORKER_ORDINALS_THIS_RUN=()
 STARTED_EXPORTER_THIS_RUN=0
 STARTED_SUPERVISOR_THIS_RUN=0
 
@@ -382,12 +399,13 @@ verify_prerequisites() {
 }
 
 start_worker() {
+  local ordinal=$1
   start_role \
-    "worker" \
+    "worker $ordinal" \
     "$WORKER_USER" \
     "$ARTIFACT_GROUP" \
-    "$WORKER_PID" \
-    "$WORKER_LOG" \
+    "$(worker_pid_file "$ordinal")" \
+    "$(worker_log_file "$ordinal")" \
     "$OCOMP_BINARY worker" \
     env \
       OUTBE_OCOMP_BASE_PATH="${RUNTIME_ENV[OUTBE_OCOMP_BASE_PATH]}" \
@@ -396,9 +414,12 @@ start_worker() {
         --chain-id "${RUNTIME_ENV[OCOMP_CHAIN_ID]}" \
         --genesis-hash "${RUNTIME_ENV[OCOMP_GENESIS_HASH]}" \
         --boot-nonce "${RUNTIME_ENV[OCOMP_BOOT_NONCE]}" \
+        --worker-ordinal "$ordinal" \
         --protocol-bundle-hash "${RUNTIME_ENV[OCOMP_PROTOCOL_BUNDLE_HASH]}" \
         --supervisor-address "${RUNTIME_ENV[OCOMP_SUPERVISOR_ADDRESS]}"
-  STARTED_WORKER_THIS_RUN=$START_ROLE_LAUNCHED
+  if ((START_ROLE_LAUNCHED == 1)); then
+    STARTED_WORKER_ORDINALS_THIS_RUN+=("$ordinal")
+  fi
 }
 
 start_supervisor() {
@@ -450,7 +471,7 @@ start() {
   acquire_lifecycle_lock
   verify_prerequisites
 
-  STARTED_WORKER_THIS_RUN=0
+  STARTED_WORKER_ORDINALS_THIS_RUN=()
   STARTED_EXPORTER_THIS_RUN=0
   STARTED_SUPERVISOR_THIS_RUN=0
   rollback_start() {
@@ -462,16 +483,27 @@ start() {
         stop_pid "supervisor" "$SUPERVISOR_USER" "$OCOMP_BINARY supervisor" "$SUPERVISOR_PID"
       ((STARTED_EXPORTER_THIS_RUN == 0)) ||
         stop_pid "snapshot exporter" "$EXPORTER_USER" "$OCOMP_BINARY snapshot-exporter" "$EXPORTER_PID"
-      ((STARTED_WORKER_THIS_RUN == 0)) ||
-        stop_pid "worker" "$WORKER_USER" "$OCOMP_BINARY worker" "$WORKER_PID"
+      local ordinal
+      for ordinal in "${STARTED_WORKER_ORDINALS_THIS_RUN[@]}"; do
+        stop_pid \
+          "worker $ordinal" \
+          "$WORKER_USER" \
+          "$OCOMP_BINARY worker" \
+          "$(worker_pid_file "$ordinal")"
+      done
     fi
     exit "$exit_code"
   }
   trap rollback_start EXIT
 
-  start_worker
-  start_exporter
   start_supervisor
+  start_exporter
+  local ordinal=0
+  local worker_count=${RUNTIME_ENV[OCOMP_WORKER_COUNT]}
+  while ((ordinal < worker_count)); do
+    start_worker "$ordinal"
+    ((ordinal += 1))
+  done
   sleep 1
   status
   trap - EXIT
@@ -522,7 +554,14 @@ stop() {
   acquire_lifecycle_lock
   stop_pid "supervisor" "$SUPERVISOR_USER" "$OCOMP_BINARY supervisor" "$SUPERVISOR_PID"
   stop_pid "snapshot exporter" "$EXPORTER_USER" "$OCOMP_BINARY snapshot-exporter" "$EXPORTER_PID"
-  stop_pid "worker" "$WORKER_USER" "$OCOMP_BINARY worker" "$WORKER_PID"
+  local ordinal
+  for ordinal in 0 1 2 3; do
+    stop_pid \
+      "worker $ordinal" \
+      "$WORKER_USER" \
+      "$OCOMP_BINARY worker" \
+      "$(worker_pid_file "$ordinal")"
+  done
 }
 
 role_status() {
@@ -537,16 +576,40 @@ role_status() {
 }
 
 status() {
+  if [[ ${#RUNTIME_ENV[@]} -eq 0 ]]; then
+    load_runtime_environment
+  fi
   local failed=0
-  role_status "worker" "$WORKER_PID" || failed=1
+  local ordinal=0
+  local worker_count=${RUNTIME_ENV[OCOMP_WORKER_COUNT]}
+  while ((ordinal < worker_count)); do
+    role_status "worker $ordinal" "$(worker_pid_file "$ordinal")" || failed=1
+    ((ordinal += 1))
+  done
   role_status "snapshot exporter" "$EXPORTER_PID" || failed=1
   role_status "supervisor" "$SUPERVISOR_PID" || failed=1
+  local status_json
+  if status_json=$(curl -fsS --max-time 2 "http://${RUNTIME_ENV[OCOMP_SUPERVISOR_ADDRESS]}/v1/status") &&
+    [[ "$status_json" =~ \"connected_workers\":([0-9]+) ]]; then
+    local connected=${BASH_REMATCH[1]}
+    echo "connected $connected/${RUNTIME_ENV[OCOMP_WORKER_COUNT]} workers via TCP ZeroMQ"
+    [[ "$connected" == "${RUNTIME_ENV[OCOMP_WORKER_COUNT]}" ]] || failed=1
+  else
+    echo "unavailable Supervisor registration status"
+    failed=1
+  fi
   return "$failed"
 }
 
 logs() {
   require_root
-  tail -n 100 -F "$SUPERVISOR_LOG" "$EXPORTER_LOG" "$WORKER_LOG"
+  tail -n 100 -F \
+    "$SUPERVISOR_LOG" \
+    "$EXPORTER_LOG" \
+    "$(worker_log_file 0)" \
+    "$(worker_log_file 1)" \
+    "$(worker_log_file 2)" \
+    "$(worker_log_file 3)"
 }
 
 usage() {

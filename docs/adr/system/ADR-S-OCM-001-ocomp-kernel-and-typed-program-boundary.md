@@ -120,7 +120,8 @@ are bounded.
 | Responsibility | Authority |
 |---|---|
 | consensus job state and finality binding | OCOMP kernel inside block execution |
-| local job discovery/lease/attestation control | bounded versioned `OcompControlV1` |
+| finalized job discovery and authenticated input | public node RPC blocks, receipts, calls and proofs |
+| Worker registration, leases, cancellation and reports | Axum registration plus bounded ZeroMQ/TCP messages |
 | bulk input/result bytes | authenticated CAS objects, never control messages |
 | exact admitted artifact/chunk order | plan-derived, durable supervisor catalog cursors |
 | Lysis semantics and result meaning | ADR-C-LYS-001 and the pinned Lysis bundle |
@@ -206,7 +207,8 @@ No complete OCOMP process, control API, job state, attestation gate or
 quorum-apply module
 exists in production code. PFS-002 and `off-chain-poc.md` define the required
 four-validator demonstration. Evidence must use separate released processes,
-real UDS, consensus blocks, public RPC and public state/proof reads. Direct
+real Axum/Salvo/ZeroMQ TCP endpoints, consensus blocks, public RPC and public
+state/proof reads. Direct
 executor calls, shared calculator output or injected state cannot satisfy it.
 
 ## Consequences

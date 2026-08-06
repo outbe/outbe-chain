@@ -388,7 +388,7 @@ impl OcompTopology {
     /// Verify the durable footprint left by one completed production job in
     /// every isolated validator domain.
     ///
-    /// Development workers keep registered loopback sessions with the Supervisor.
+    /// Development workers keep registered loopback ZeroMQ connections with the Supervisor.
     /// Every assignment still executes exactly one unit, so post-activation
     /// assertions inspect admitted outputs rather than process lifetime.
     #[cfg(feature = "ocomp-integration")]
@@ -1046,6 +1046,13 @@ impl OcompTopology {
             self.cfg.ocomp_supervisor_port(usize::from(validator_index)),
         ));
         let worker_boot_nonce = worker_boot_nonce(validator_index, worker_ordinal);
+        let expected_observability_port = self
+            .cfg
+            .ocomp_worker_port(usize::from(validator_index), worker_ordinal);
+        debug_assert_eq!(
+            supervisor_address.port() + 2 + u16::try_from(worker_ordinal).unwrap(),
+            expected_observability_port
+        );
 
         let mut command = Command::new(&self.cfg.bin_ocomp);
         command
@@ -1058,6 +1065,8 @@ impl OcompTopology {
             .arg(format!("{:#x}", identity.genesis_hash))
             .arg("--boot-nonce")
             .arg(format!("{worker_boot_nonce:#x}"))
+            .arg("--worker-ordinal")
+            .arg(worker_ordinal.to_string())
             .arg("--protocol-bundle-hash")
             .arg(format!("{:#x}", identity.protocol_bundle_hash))
             .arg("--supervisor-address")
@@ -1347,7 +1356,7 @@ impl OcompTopology {
 
     /// Replace a stopped Supervisor with a process that has a valid local
     /// protocol bundle but an incompatible endpoint identity. The process must
-    /// remain outside the node-owned authenticated session while the node and
+    /// remain outside the active worker registry while the node and
     /// the other validator domains continue normally.
     #[cfg(feature = "ocomp-integration")]
     pub fn restart_incompatible_supervisor(&mut self, validator_index: u8) -> Result<()> {

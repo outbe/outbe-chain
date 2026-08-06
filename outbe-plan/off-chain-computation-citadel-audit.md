@@ -126,7 +126,7 @@ Proposed seam:
 terminal request command
   -> JobIntent + reservations + OFFCHAIN_PENDING + expiry index
 
-finalized local control plane
+finalized public RPC discovery and export
   -> immutable checkpoint/export
   -> execute_lysis
   -> validator-local sign-once gate
@@ -653,7 +653,7 @@ remain unchecked.
 | CITADEL-007 | frozen receipt schemas, reservation bindings and cross-module conservation equations |
 | CITADEL-008 | purpose-bound HSM signing, sign-once readiness, rotation, compromise revocation and historical as-of verification |
 | CITADEL-009 | pin/export/sign journals, bootstrap roots, evidence retention and bounded recovery contracts |
-| CITADEL-010 | exact Hello/HelloAck versions, capabilities, session generation and N/N+1 skew matrix |
+| CITADEL-010 | exact Axum registration and ZeroMQ message versions, registry generation, capabilities and N/N+1 skew matrix |
 | CITADEL-011 | authority-anchored release gate, monotonic catalog/policy and signed verification-ledger cores |
 | CITADEL-012 | one activation transaction carries, verifies and atomically applies bounded result bytes |
 | CITADEL-013 | request logical time is separate from activation receipt time |

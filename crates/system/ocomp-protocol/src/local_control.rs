@@ -1,8 +1,9 @@
 //! Local OCOMP process identity and service-user checks.
 //!
-//! Worker transport lives in the Supervisor's Salvo HTTP API. This module is
-//! intentionally transport-free: it retains only the fixed chain identity and
-//! local process ownership helpers shared by the OCOMP binaries.
+//! OCOMP runtime transport is public node RPC, Axum registration, Worker Salvo
+//! observability and ZeroMQ over loopback TCP. This module is intentionally
+//! transport-free: it retains only fixed chain identity and local process
+//! ownership helpers shared by the OCOMP binaries.
 
 use std::fs;
 

@@ -30,7 +30,7 @@ use crate::lysis_finalization::finalize_verified_lysis_v1;
 use crate::lysis_plan_audit::LocalLysisPlanAuditV1;
 use crate::lysis_scheduler::admit_reported_lysis_unit_v1;
 use crate::supervisor::DiscoveryRecord;
-use crate::worker_http::{SupervisorWorkerHttpServerV1, MAX_REGISTERED_WORKERS};
+use crate::worker_transport::{SupervisorWorkerServerV1, MAX_REGISTERED_WORKERS};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DispatchWaveV1 {
@@ -65,7 +65,7 @@ pub struct SupervisorJobRunnerV1 {
     config: SupervisorJobRunnerConfigV1,
     cas: FilesystemCas,
     reader: FilesystemCasReader,
-    workers: SupervisorWorkerHttpServerV1,
+    workers: SupervisorWorkerServerV1,
 }
 
 impl SupervisorJobRunnerV1 {
@@ -74,7 +74,7 @@ impl SupervisorJobRunnerV1 {
             || config.supervisor_listen_address.port() == 0
         {
             return Err(SupervisorJobRunnerErrorV1::Invariant(
-                "supervisor worker HTTP address must be nonzero loopback",
+                "supervisor worker registration address must be nonzero loopback",
             ));
         }
         if config.registry_generation == 0 {
@@ -83,8 +83,8 @@ impl SupervisorJobRunnerV1 {
             ));
         }
         let workers = stage(
-            "start Supervisor worker HTTP server",
-            SupervisorWorkerHttpServerV1::start(
+            "start Supervisor Axum/ZeroMQ worker transport",
+            SupervisorWorkerServerV1::start(
                 config.supervisor_listen_address,
                 config.identity,
                 config.registry_generation,
@@ -113,7 +113,7 @@ impl SupervisorJobRunnerV1 {
 
     pub fn poll_workers(&self) -> Result<usize, SupervisorJobRunnerErrorV1> {
         stage(
-            "read Supervisor worker HTTP registry",
+            "read Supervisor connected worker registry",
             self.workers.registered_workers(),
         )
     }
@@ -159,6 +159,7 @@ impl SupervisorJobRunnerV1 {
         })
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| stage_error("read exact Tribute input references", error))?;
+        require_not_cancelled(cancelled)?;
 
         let planner = stage(
             "bind Lysis V1 planner",
@@ -203,6 +204,7 @@ impl SupervisorJobRunnerV1 {
             LysisPlanTopologyV1::new(plan.primary_work_unit_count),
         )?;
         let exact_unit_count = topology.total_unit_count();
+        require_not_cancelled(cancelled)?;
 
         let local_job_root = self.config.job_root.join(&job_component);
         let mut admissions = stage(
@@ -296,8 +298,10 @@ impl SupervisorJobRunnerV1 {
                     })
                     .collect::<Result<Vec<_>, _>>()?
             };
+            require_not_cancelled(cancelled)?;
             let finished_batch = self.execute_worker_batch(requests, cancelled)?;
             for (plan_ordinal, finished) in finished_batch {
+                require_not_cancelled(cancelled)?;
                 if finished.status != UnitFinishedStatus::Success {
                     return Err(SupervisorJobRunnerErrorV1::WorkerFailed {
                         plan_ordinal,
@@ -370,7 +374,7 @@ impl SupervisorJobRunnerV1 {
                         SupervisorJobRunnerErrorV1::Invariant("worker dispatch thread panicked")
                     })?;
                     stage(
-                        "dispatch exact Lysis unit through Supervisor HTTP lease",
+                        "dispatch exact Lysis unit through Supervisor Worker transport",
                         result,
                     )
                 })

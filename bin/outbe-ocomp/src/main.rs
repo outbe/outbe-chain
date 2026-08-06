@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::Duration;
 
-use alloy_primitives::B256;
+use alloy_primitives::{keccak256, B256};
 use clap::{Args, Parser, Subcommand};
 use outbe_consensus::{config::init_consensus_chain_id, proof::constants::consensus_chain_id};
 use outbe_ocomp::bundle::PinnedProtocolBundle;
@@ -30,6 +30,7 @@ use outbe_ocomp::vote_submitter::{
     VoteSubmissionConfigV1, VoteSubmissionOutcomeV1,
 };
 use outbe_ocomp::worker::{run_worker, WorkerConfig};
+use outbe_ocomp::worker_transport::MAX_REGISTERED_WORKERS;
 use outbe_ocomp_protocol::capacity::OCOMP_POC_CAS_QUOTA_BYTES;
 use outbe_offchain_storage::MongoStorageConfig;
 use outbe_primitives::signer::OutbeEvmSigner;
@@ -63,6 +64,9 @@ struct WorkerArgs {
     boot_nonce: B256,
     #[arg(long)]
     protocol_bundle_hash: B256,
+    /// Stable ordinal of this Worker process on the host (0..4 exclusive).
+    #[arg(long, default_value_t = 0)]
+    worker_ordinal: u8,
 }
 
 #[derive(Clone, Debug, Args)]
@@ -187,7 +191,9 @@ struct RuntimeProfile {
 impl RuntimeProfile {
     fn resolve(args: &RuntimeArgs, role: ProcessRole) -> Result<Self, Box<dyn std::error::Error>> {
         if !args.supervisor_address.ip().is_loopback() || args.supervisor_address.port() == 0 {
-            return Err("--supervisor-address must be a nonzero loopback HTTP endpoint".into());
+            return Err(
+                "--supervisor-address must be a nonzero loopback registration endpoint".into(),
+            );
         }
         let Some(root) = args.development_root.as_ref() else {
             let production = ProductionConfig::from_environment()?;
@@ -255,10 +261,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 identity: EndpointIdentity {
                     chain_id: args.chain_id,
                     genesis_hash: args.genesis_hash,
-                    boot_nonce: args.boot_nonce,
+                    boot_nonce: worker_process_nonce(args.boot_nonce, args.worker_ordinal)?,
                     protocol_bundle_hash: args.protocol_bundle_hash,
                 },
                 supervisor_address: runtime.supervisor_address,
+                observability_address: worker_observability_address(
+                    runtime.supervisor_address,
+                    args.worker_ordinal,
+                )?,
                 cas_root: runtime.cas_root,
                 cas_limits: CasLimits {
                     max_object_bytes: CAS_MAX_OBJECT_BYTES,
@@ -277,6 +287,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Role::SnapshotExporter(args) => run_snapshot_exporter(&args),
         Role::SignerAddress(args) => print_signer_address(&args),
     }
+}
+
+fn worker_process_nonce(host_boot_nonce: B256, worker_ordinal: u8) -> Result<B256, &'static str> {
+    if usize::from(worker_ordinal) >= MAX_REGISTERED_WORKERS {
+        return Err("worker ordinal exceeds the supported per-Supervisor worker count");
+    }
+    let mut preimage = Vec::with_capacity(64);
+    preimage.extend_from_slice(b"OCOMP_WORKER_PROCESS_NONCE_V1");
+    preimage.extend_from_slice(host_boot_nonce.as_slice());
+    preimage.push(worker_ordinal);
+    let nonce = keccak256(preimage);
+    if nonce.is_zero() {
+        Err("derived worker process nonce is reserved zero")
+    } else {
+        Ok(nonce)
+    }
+}
+
+fn worker_observability_address(
+    supervisor_address: SocketAddr,
+    worker_ordinal: u8,
+) -> Result<SocketAddr, &'static str> {
+    if usize::from(worker_ordinal) >= MAX_REGISTERED_WORKERS {
+        return Err("worker ordinal exceeds the supported per-Supervisor worker count");
+    }
+    let offset = 2_u16
+        .checked_add(u16::from(worker_ordinal))
+        .ok_or("worker observability port offset overflow")?;
+    let port = supervisor_address
+        .port()
+        .checked_add(offset)
+        .ok_or("worker observability port overflow")?;
+    Ok(SocketAddr::new(supervisor_address.ip(), port))
 }
 
 fn print_signer_address(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> {
@@ -664,6 +707,30 @@ mod tests {
             supervisor_address: "127.0.0.1:9765".parse().unwrap(),
         };
         assert!(RuntimeProfile::resolve(&relative, ProcessRole::Supervisor).is_err());
+    }
+
+    #[test]
+    fn worker_ordinals_derive_four_distinct_process_nonces() {
+        let host_boot_nonce = B256::repeat_byte(0x44);
+        let nonces = (0_u8..4)
+            .map(|ordinal| worker_process_nonce(host_boot_nonce, ordinal).unwrap())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(nonces.len(), 4);
+        assert!(worker_process_nonce(host_boot_nonce, 4).is_err());
+    }
+
+    #[test]
+    fn worker_observability_ports_follow_the_worker_ordinal() {
+        let supervisor = "127.0.0.1:9765".parse().unwrap();
+        assert_eq!(
+            worker_observability_address(supervisor, 0).unwrap(),
+            "127.0.0.1:9767".parse().unwrap()
+        );
+        assert_eq!(
+            worker_observability_address(supervisor, 3).unwrap(),
+            "127.0.0.1:9770".parse().unwrap()
+        );
+        assert!(worker_observability_address(supervisor, 4).is_err());
     }
 
     #[test]

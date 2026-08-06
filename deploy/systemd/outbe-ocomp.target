@@ -1,6 +1,0 @@
-[Unit]
-Description=Outbe Off-chain Computation PoC roles
-Wants=outbe-ocomp-snapshot-exporter.service
-Wants=outbe-ocomp-supervisor.service
-Wants=outbe-ocomp-worker.service
-After=outbe-validator.service

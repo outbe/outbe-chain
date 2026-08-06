@@ -280,7 +280,8 @@ outbe-ocomp supervisor child process
   finalized-block/receipt cursor over public JSON-RPC
   local admission and immutable job binding
   deterministic planner/scheduler/reducer
-  one loopback Salvo HTTP/1 server and registry of up to four workers
+  one loopback Axum registration/status server
+  one ZeroMQ ROUTER over TCP for up to four workers
   local role-delegated EVM key and durable vote-transaction journal
 
 outbe-ocomp snapshot-exporter child process
@@ -289,7 +290,9 @@ outbe-ocomp snapshot-exporter child process
   input-root/count reconstruction
 
 outbe-ocomp worker child process
-  outbound HTTP registration and work polling against the Supervisor
+  one outbound Axum HTTP registration request
+  ZeroMQ DEALER work/ack/heartbeat/cancel/completion channel
+  local Salvo /healthz and /status observability
   one active immutable leased UnitId per worker
   read-only inputs and private scratch
   no node DB, validator key or default network
@@ -321,8 +324,8 @@ its lifecycle.
 - `consensus_ready`, `execution_ready` and `ocomp_ready` are distinct health
   signals.
 
-PoC uses separate process handles/directories plus bounded HTTP bodies, leases,
-concurrency and CAS bounds. Production service identities, cgroup enforcement,
+PoC uses separate process handles/directories plus bounded registration/message
+bodies, leases, concurrency and CAS bounds. Production service identities, cgroup enforcement,
 a launch broker, hardened namespaces, aggregate lease accounting and remote
 compute policy are DEFERRED to MVP.
 
@@ -807,8 +810,8 @@ The exporter:
 
 Opening transport has no total-owner ceiling. Sorted owners are first divided
 into consecutive groups of at most 256. If one canonical proof exceeds the
-bundle-pinned local-control body cap, the node returns typed `LimitExceeded`
-without dropping the session and the exporter deterministically bisects that
+bundle-pinned public RPC response cap, the node returns a bounded RPC error and
+the exporter deterministically bisects that
 group, left half first, until each response fits. The settlement ISO set is
 unchanged in every sub-request. A single owner that still cannot fit causes
 that validator domain to abstain; the limit is not increased or bypassed
@@ -855,16 +858,14 @@ The only dedicated API is between workers and the Supervisor:
 
 ```text
 Worker -> Supervisor: POST /v1/workers/register
-Worker -> Supervisor: POST /v1/workers/claim
-Supervisor -> Worker: WorkLeaseV1 or HTTP 204
-Worker -> Supervisor: POST /v1/workers/accepted
-Worker -> Supervisor: POST /v1/workers/heartbeat
-Worker -> Supervisor: POST /v1/workers/complete
+Supervisor -> Worker: ZeroMQ Work or Cancel
+Worker -> Supervisor: ZeroMQ Ready, Accepted, Heartbeat or Completed
 ```
 
-The Supervisor owns one explicit nonzero loopback Salvo HTTP/1 listener. Up to
-four workers register by distinct process nonce and poll independently. JSON
-envelopes are bounded and carry canonical `RunUnitV1`/`UnitFinishedV1` bodies.
+The Supervisor owns one explicit nonzero loopback Axum HTTP/1 listener and one
+ZeroMQ `ROUTER` TCP endpoint. Up to four workers register by distinct process
+nonce and connect independent `DEALER` channels. JSON envelopes are bounded and
+carry canonical `RunUnitV1`/`UnitFinishedV1` bodies.
 Leases bind worker, unit, attempt and deadline; expiry requeues work and stale
 completion conflicts. Each request runs independently on Tokio, so one stalled
 worker or partial HTTP request cannot block other workers, node RPC discovery or
@@ -1743,7 +1744,7 @@ version matrices remain BoundedMVP work under parent section 15.
 | POC-17 | DEMO | logical time | q-forming vote delay changes only explicit inclusion/apply metadata |
 | POC-18 | CORE | voting window/deadline | voting opens exactly four blocks after finality; a pre-open vote rejects, a vote before the deadline counts, a vote at the deadline is late, no-quorum expires, and timely q=3 applies atomically |
 | POC-19 | DEMO | process isolation | stop the supervisors required by section 13 without stopping block finality |
-| POC-20 | CORE | bounded interfaces | one over-limit worker HTTP body/chunk rejects before unbounded allocation; crossing a work-shard boundary creates another unit rather than rejecting the parent |
+| POC-20 | CORE | bounded interfaces | one over-limit registration/message body or chunk rejects before unbounded allocation; crossing a work-shard boundary creates another unit rather than rejecting the parent |
 | POC-21 | FORK-GATE | public wire path | non-q-forming and q-forming full-result-vote cap-1/cap/cap+1 plus proposer/import/replay parity through RPC/txpool/P2P |
 | POC-22 | DEMO | public output | Nod and all domain effects verified through public read interfaces |
 | POC-23 | CORE | tentative pin | pin is durable before vote/prune; one orphan releases it and cannot be signed |
@@ -1788,7 +1789,7 @@ This is an inventory for the next planning step, not a task breakdown.
 ### 15.3 Compute plane
 
 - public finalized block/receipt projection and local Supervisor cursor;
-- one bounded Supervisor Salvo HTTP server and Worker pull/lease API;
+- one bounded Supervisor Axum registration server, ZeroMQ/TCP Worker lease channel and per-Worker Salvo observability server;
 - immutable checkpoint handoff and exporter;
 - local CAS and bounded artifact codecs;
 - deterministic planner, worker unit runner and fixed reducers;
@@ -1843,8 +1844,8 @@ The source design defines six independently testable slices:
    tampering, worker-count determinism and expiry without fallback.
 
 Each slice is tested at the external seam used by the next. In-memory adapters
-are allowed in module tests; the final slice must use the real Worker HTTP pull
-API, processes, consensus blocks and public node APIs.
+are allowed in module tests; the final slice must use real Axum registration,
+ZeroMQ/TCP Worker transport, processes, consensus blocks and public node APIs.
 
 ## 17. Deliverables and PoC completion checklist
 
@@ -1893,8 +1894,9 @@ mocked validator domain or undocumented manual step.
 ## 18. Current-code baseline and known gaps
 
 The baseline from which the PoC was specified lacked the complete OCOMP path.
-The current implementation now has public-RPC discovery/export, the Salvo
-Supervisor-to-Worker pull API and locally signed result transactions. Remaining
+The current implementation now has public-RPC discovery/export, Axum worker
+registration, ZeroMQ/TCP work transport, Worker Salvo observability and locally
+signed result transactions. Remaining
 PoC gaps are:
 
 - the complete on-chain full-result quorum/accountability and certified apply
@@ -2012,7 +2014,7 @@ Outbe protocol definitions.
 | 2.3 q-forming block | PoC-MUST; pause/upgrade/custody deferred | 5.4–5.5, 10 |
 | 3 Tribute root | PoC-MUST | 6.1 |
 | 4 runtime boundaries | process split PoC-MUST; hardening MVP | 3, 12 |
-| 5 interfaces | public node RPC, loopback Worker HTTP pull API and local CAS PoC-MUST | 7 |
+| 5 interfaces | public node RPC, loopback Axum/ZeroMQ Worker API and local CAS PoC-MUST | 7 |
 | 6 planner/units | bounded rules PoC-MUST; counted ranges deferred | 8 |
 | 7 Lysis Map/Reduce | PoC-MUST | 8 |
 | 8.1 input authenticity | PoC-MUST full fold | 6 |

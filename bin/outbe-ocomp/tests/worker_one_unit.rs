@@ -48,7 +48,7 @@ use outbe_ocomp::lysis_shuffle_adoption::{
     adopt_lysis_shuffle_descendants, verify_lysis_shuffle_phase_replay,
 };
 use outbe_ocomp::worker::{run_worker, WorkerConfig};
-use outbe_ocomp::worker_http::{SupervisorWorkerDispatcherV1, SupervisorWorkerHttpServerV1};
+use outbe_ocomp::worker_transport::{SupervisorWorkerDispatcherV1, SupervisorWorkerServerV1};
 use outbe_ocomp_protocol::common::{BoundedBytes, ProofBytes};
 use outbe_ocomp_protocol::input::{
     materialize_authenticated_openings, CheckpointIdentityV1, Compression, InputChunkKind,
@@ -80,18 +80,13 @@ use tempfile::tempdir;
 
 struct RunningWorker {
     child: Child,
-    client: TestWorkerSession,
+    client: TestWorkerDispatch,
     unit_id: B256,
 }
 
-struct TestWorkerSession {
+struct TestWorkerDispatch {
     dispatcher: SupervisorWorkerDispatcherV1,
     pending: Option<mpsc::Receiver<Result<UnitFinishedV1, String>>>,
-}
-
-struct TestWorkerFrame {
-    message_kind: u16,
-    body: Vec<u8>,
 }
 
 const CHILD_MODE: &str = "OUTBE_OCOMP_TEST_WORKER_CHILD";
@@ -105,36 +100,34 @@ const CHILD_CAS_OBJECT_CAP: &str = "OUTBE_OCOMP_TEST_CAS_OBJECT_CAP";
 const CHILD_CAS_TOTAL_CAP: &str = "OUTBE_OCOMP_TEST_CAS_TOTAL_CAP";
 const CHILD_INBOX_ROOT: &str = "OUTBE_OCOMP_TEST_INBOX_ROOT";
 const CHILD_SUPERVISOR_ADDRESS: &str = "OUTBE_OCOMP_TEST_SUPERVISOR_ADDRESS";
-const TEST_RUN_UNIT_KIND: u16 = 0x0010;
-const TEST_UNIT_FINISHED_KIND: u16 = 0x7ffe;
 
-fn supervisor_listener() -> (SupervisorWorkerHttpServerV1, SocketAddr) {
-    let server = SupervisorWorkerHttpServerV1::start(
+fn supervisor_listener() -> (SupervisorWorkerServerV1, SocketAddr) {
+    let server = SupervisorWorkerServerV1::start(
         "127.0.0.1:0".parse().unwrap(),
         identity(0xB0),
         1,
         poc_schema_limits(),
     )
-    .expect("start test Supervisor HTTP server");
+    .expect("start test Supervisor worker transport");
     let address = server.address();
     (server, address)
 }
 
 fn accept_registered_worker(
-    server: &SupervisorWorkerHttpServerV1,
+    server: &SupervisorWorkerServerV1,
     _supervisor_identity: EndpointIdentity,
     _generation: u64,
     _limits: SchemaLimits,
-) -> TestWorkerSession {
-    TestWorkerSession {
+) -> TestWorkerDispatch {
+    TestWorkerDispatch {
         dispatcher: server.dispatcher(),
         pending: None,
     }
 }
 
-impl TestWorkerSession {
-    fn send_request(&mut self, message_kind: u16, body: Vec<u8>) -> Result<(), String> {
-        if message_kind != TEST_RUN_UNIT_KIND || self.pending.is_some() {
+impl TestWorkerDispatch {
+    fn dispatch_encoded(&mut self, body: Vec<u8>) -> Result<(), String> {
+        if self.pending.is_some() {
             return Err("invalid test worker dispatch".to_owned());
         }
         let limits = poc_schema_limits();
@@ -151,26 +144,17 @@ impl TestWorkerSession {
         Ok(())
     }
 
-    fn receive_response(&mut self) -> Result<TestWorkerFrame, String> {
-        let finished = self
-            .pending
+    fn receive_finished(&mut self) -> Result<UnitFinishedV1, String> {
+        self.pending
             .take()
             .ok_or("missing test worker result")?
             .recv()
-            .map_err(|error| error.to_string())??;
-        Ok(TestWorkerFrame {
-            message_kind: TEST_UNIT_FINISHED_KIND,
-            body: finished
-                .encode_body(&poc_schema_limits())
-                .map_err(|error| error.to_string())?,
-        })
+            .map_err(|error| error.to_string())?
     }
 }
 
-fn receive_finished(session: &mut TestWorkerSession, limits: &SchemaLimits) -> UnitFinishedV1 {
-    let frame = session.receive_response().expect("worker completion");
-    assert_eq!(frame.message_kind, TEST_UNIT_FINISHED_KIND);
-    UnitFinishedV1::decode_body(&frame.body, limits).expect("finished unit body")
+fn receive_finished(dispatch: &mut TestWorkerDispatch, _limits: &SchemaLimits) -> UnitFinishedV1 {
+    dispatch.receive_finished().expect("worker completion")
 }
 
 fn identity(boot: u8) -> EndpointIdentity {
@@ -458,10 +442,7 @@ fn real_worker_processes_execute_through_output_finalize() {
             ordered_input_refs: vec![tribute_ref.clone()],
         };
         client
-            .send_request(
-                TEST_RUN_UNIT_KIND,
-                request.encode_body(&limits).expect("run unit body"),
-            )
+            .dispatch_encoded(request.encode_body(&limits).expect("run unit body"))
             .expect("send exact unit");
         workers.push(RunningWorker {
             child,
@@ -469,6 +450,20 @@ fn real_worker_processes_execute_through_output_finalize() {
             unit_id,
         });
     }
+
+    let registry_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let registry_status = loop {
+        let status = listener.status().expect("read four-worker registry");
+        if status.registered_workers == 4 && status.connected_workers == 4 {
+            break status;
+        }
+        assert!(
+            std::time::Instant::now() < registry_deadline,
+            "four distinct workers did not register: {status:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+    assert_eq!(registry_status.max_workers, 4);
 
     let mut finished_reports = Vec::new();
     for mut worker in workers {
@@ -635,8 +630,7 @@ fn real_worker_processes_execute_through_output_finalize() {
     };
     let mut client = accept_registered_worker(&listener, client_identity, 200, limits);
     client
-        .send_request(
-            TEST_RUN_UNIT_KIND,
+        .dispatch_encoded(
             RunUnitV1 {
                 protocol_bundle_hash,
                 job_id,
@@ -762,8 +756,7 @@ fn real_worker_processes_execute_through_output_finalize() {
     };
     let mut client = accept_registered_worker(&listener, client_identity, 300, limits);
     client
-        .send_request(
-            TEST_RUN_UNIT_KIND,
+        .dispatch_encoded(
             RunUnitV1 {
                 protocol_bundle_hash,
                 job_id,
@@ -896,8 +889,7 @@ fn real_worker_processes_execute_through_output_finalize() {
     };
     let mut client = accept_registered_worker(&listener, client_identity, 400, limits);
     client
-        .send_request(
-            TEST_RUN_UNIT_KIND,
+        .dispatch_encoded(
             RunUnitV1 {
                 protocol_bundle_hash,
                 job_id,
@@ -2556,8 +2548,7 @@ fn execute_real_worker_unit(
     };
     let mut client = accept_registered_worker(&listener, client_identity, generation, limits);
     client
-        .send_request(
-            TEST_RUN_UNIT_KIND,
+        .dispatch_encoded(
             RunUnitV1 {
                 protocol_bundle_hash: spec.protocol_bundle_hash,
                 job_id: spec.job_id,
@@ -2641,6 +2632,7 @@ fn run_child_worker() {
             .expect("worker child Supervisor address")
             .parse()
             .expect("valid worker child Supervisor address"),
+        observability_address: "127.0.0.1:0".parse().unwrap(),
         cas_root: PathBuf::from(env::var_os(CHILD_CAS_ROOT).expect("worker child CAS root")),
         cas_limits: CasLimits {
             max_object_bytes: parse_u64(CHILD_CAS_OBJECT_CAP),

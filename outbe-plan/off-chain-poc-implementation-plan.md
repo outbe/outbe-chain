@@ -962,7 +962,7 @@ caller-selected path/query/writer capability is exposed.
 **Depends on:** `OCM-04`.
 
 **Outcome:** one `outbe-ocomp` package runs only the three fixed roles over
-bounded UDS/CAS contracts. PoC orchestration belongs to the Rust E2E harness;
+public-RPC, bounded ZeroMQ/TCP and CAS contracts. PoC orchestration belongs to the Rust E2E harness;
 production service-manager integration is deferred to MVP hardening.
 
 **Files/symbols:**
@@ -1032,7 +1032,7 @@ work; cursor resumes after restart; incompatible bundle sets local
 process ownership. Do not add public job streaming, database scan, consensus
 `RUNNING` or event authority.
 
-**Test first:** `OCM-DIS-001` real UDS lost-event/restart/duplicate scenarios.
+**Test first:** `OCM-DIS-001` real public-RPC lost-event/restart/duplicate scenarios.
 
 **Evidence/CI:** `OCM-INT`; canonical job read, cursor/journal bytes, process
 restart and exactly-once assertion.
@@ -1802,7 +1802,7 @@ feature is registered once and has no direct job/result/state injection hook.
 `OCM-PUB/E2E/ISO/TRC` IDs.
 
 **Observable acceptance:** an unprivileged development run starts four nodes
-and four OCOMP domains with real UDS/Mongo/CE, records a healthy `4/4` vote
+and four OCOMP domains with real public RPC/ZeroMQ/Mongo/CE, records a healthy `4/4` vote
 window, then stops only a supervisor while finality advances and a fresh job
 reaches `3/4`.
 
@@ -1984,7 +1984,7 @@ admission/export containment and q-forming owner rollback run in `OCM-INT`
 against their production Rust seams. Mongo/CAS mutation, worker schedule,
 logical-time and vote matrices remain in their focused mandatory lanes.
 
-**Invariants/failures:** real four node/OCOMP domains; real UDS/Mongo/CE/
+**Invariants/failures:** real four node/OCOMP domains; real public RPC/ZeroMQ/Mongo/CE/
 checkpoints/public path; no central calculator, direct state/handler injection,
 trusted local outcome or synchronous fallback; `--all` plus exact discovery;
 automatic retries zero. `OCM-E2E-001` cannot advance to `JobIntent` evidence

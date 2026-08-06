@@ -161,6 +161,7 @@ alloy-primitives = { version = "=1.5.7", default-features = false }
 alloy-sol-types = { version = "=1.5.7", default-features = false }
 alloy-rlp = { version = "0.3.13", default-features = false }
 alloy-trie = { version = "0.9.5" }
+axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
 
 # Alloy — high-level (alloy-rs/alloy): 2.0.x, pinned to match reth v2.2.0
 alloy-consensus = { version = "2.0.4", default-features = false }
@@ -318,6 +319,7 @@ sha2 = "0.10"
 sha3 = "0.10"
 walkdir = "2"
 tar = "0.4"
+zeromq = { version = "0.6.0", default-features = false, features = ["tokio-runtime", "tcp-transport"] }
 
 [profile.dev]
 debug = "line-tables-only"

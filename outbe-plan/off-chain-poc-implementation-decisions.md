@@ -199,7 +199,7 @@ Type: Discuss
 
 ### Question
 
-Which binaries or modes, UDS messages, CAS layout, bounded controls and
+Which binaries or modes, public-RPC/worker messages, CAS layout, bounded controls and
 supervision hooks demonstrate separate validator-domain failure boundaries
 without creating unnecessary crates or deployment machinery?
 
@@ -215,9 +215,9 @@ separate bounded filesystem CAS. The Rust E2E harness starts the production
 worker entrypoint as a one-unit child process and enforces the PoC concurrency
 cap of four without introducing a production launch broker.
 
-`SO_PEERCRED` session binding, bounded versioned local frames, digest-only CAS
-paths, atomic publish/same-descriptor verification and the method-capability
-matrix fix the protocol and fault boundaries that PoC claims. Distinct host
+Domain-bound Axum registration, bounded ZeroMQ/TCP messages, digest-only CAS
+paths and atomic publish/same-descriptor verification fix the protocol and
+fault boundaries that PoC claims. Distinct host
 identities, mounts, cgroups, namespaces and service-manager policy are MVP
 deployment hardening and are not PoC closure evidence.
 
@@ -381,7 +381,7 @@ The current per-scenario evidence is insufficient by itself, so a small
 independent verifier in the same test package recomputes artifact/coverage
 closure and fails on missing, skipped, todo, quarantined or retried-away claims.
 
-The final story uses four real node/OCOMP domains, real UDS/Mongo/CE/checkpoints,
+The final story uses four real node/OCOMP domains, real public RPC/ZeroMQ/Mongo/CE/checkpoints,
 the production enclave binary under `gramine-direct` only for the existing
 encrypted Tribute interface, and normal RPC/txpool/P2P/proposal/import/replay.
 Mongo, CAS, supervisor state, direct handlers, a central calculator and

@@ -2558,8 +2558,8 @@ fn incompatible_supervisor_isolated_from_consensus(world: &mut World) {
         .supervisor_log_tail(0, 80)
         .expect("read validator-0 Supervisor log");
     assert!(
-        log.contains("local control peer rejected kind 0x0001 with code 1"),
-        "validator-0 Supervisor did not record the typed incompatible-handshake rejection:\n{log}"
+        log.contains("OCOMP worker registration rejected: worker identity does not match the Supervisor domain"),
+        "validator-0 Supervisor did not record the incompatible Worker registration:\n{log}"
     );
     let records = world.ocomp.process_records();
     let validator_zero_supervisors = records

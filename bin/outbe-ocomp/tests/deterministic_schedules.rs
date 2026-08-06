@@ -31,7 +31,7 @@ use outbe_ocomp::{
     lysis_scheduler::admit_reported_lysis_unit_v1,
     supervisor::DiscoveryRecord,
     worker::{run_worker, WorkerConfig},
-    worker_http::SupervisorWorkerHttpServerV1,
+    worker_transport::SupervisorWorkerServerV1,
 };
 use outbe_ocomp_protocol::{
     committee::{
@@ -847,19 +847,19 @@ fn launch_worker(
     cas_root: &Path,
     inbox_root: &Path,
     limits: SchemaLimits,
-) -> (Child, SupervisorWorkerHttpServerV1) {
+) -> (Child, SupervisorWorkerServerV1) {
     let worker_identity = endpoint_identity(boot);
     let server_identity = EndpointIdentity {
         boot_nonce: B256::repeat_byte(boot.wrapping_add(1)),
         ..worker_identity
     };
-    let server = SupervisorWorkerHttpServerV1::start(
+    let server = SupervisorWorkerServerV1::start(
         "127.0.0.1:0".parse().unwrap(),
         server_identity,
         generation,
         limits,
     )
-    .expect("start deterministic Supervisor HTTP server");
+    .expect("start deterministic Supervisor worker transport");
     let supervisor_address = server.address();
     let mut command = Command::new(env::current_exe().expect("current deterministic test binary"));
     command
@@ -909,7 +909,7 @@ fn execute_worker_request(
     let (child, server) = launch_worker(generation, boot, user, uid, cas_root, inbox_root, limits);
     let finished = server
         .dispatch(request)
-        .expect("dispatch deterministic RunUnit over HTTP");
+        .expect("dispatch deterministic RunUnit over ZeroMQ");
     let mut child = child;
     child.kill().expect("stop deterministic worker listener");
     let output = child
@@ -994,6 +994,7 @@ fn run_child_worker() {
             .expect("deterministic child Supervisor address")
             .parse()
             .expect("valid deterministic child Supervisor address"),
+        observability_address: "127.0.0.1:0".parse().unwrap(),
         cas_root: PathBuf::from(env::var_os(CHILD_CAS_ROOT).expect("deterministic child CAS root")),
         cas_limits: CAS_LIMITS,
         inbox_root: PathBuf::from(

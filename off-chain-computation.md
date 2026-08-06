@@ -118,9 +118,9 @@ The actors are concrete:
   state proofs through public RPC, streams canonical Fidelity/Oracle/CE openings
   into the source CAS under I/O and disk quotas, and proves the rebuilt roots.
 - `outbe-ocomp-worker` is a long-running sandboxed process/container. It
-  registers through the Supervisor's loopback HTTP API, polls for one leased
-  immutable `UnitId` at a time, writes a content-addressed result and can be
-  restarted without changing semantics.
+  registers through the Supervisor's loopback Axum API, receives one leased
+  immutable `UnitId` at a time through ZeroMQ/TCP, exposes Salvo health/status,
+  writes a content-addressed result and can be restarted without changing semantics.
 - in MVP/production, the launch broker is a tiny service-manager-owned policy
   adapter. It is the only process allowed to create/cancel worker units and
   enforces the aggregate slice/namespace quota plus admitted-plan membership.
@@ -673,7 +673,7 @@ The PoC should be built as six independently testable vertical slices:
 
 Each slice is tested at the same external seam used by the next slice. In-memory
 checkpoint/control adapters are allowed in module tests; the final demonstration
-must use the real Supervisor HTTP pull API, separate processes, consensus
+must use real Supervisor Axum registration and ZeroMQ/TCP transport, separate processes, consensus
 blocks and public node RPC/read interfaces.
 
 ## 2. What exactly happens when Metadosis fires
@@ -1111,29 +1111,32 @@ not authority and its page count is not a completeness proof.
 ```text
 validator host / administrative domain
 
-  outbe-chain.service                 protected node slice
+  outbe-chain process                 protected node boundary
     Reth + Commonware consensus
     finalized Job FSM
     public JSON-RPC blocks, receipts, proofs and transaction ingress
     validator association checked by ordinary transaction execution
     no OCOMP control endpoint and no OCOMP signing key
 
-  outbe-ocomp-supervisor.service      separate UID, cgroup and state directory
+  outbe-ocomp supervisor child        separate UID and state directory
     finalized-block/receipt cursor over public JSON-RPC
     local admission and immutable job binding
     deterministic planner
     scheduler/reducer/verifier
-    one loopback Salvo HTTP/1 server and bounded worker registry
+    one loopback Axum registration/status server
+    one ZeroMQ ROUTER TCP endpoint and bounded worker registry
     role-delegated EVM key and durable vote-submission journal
 
-  outbe-ocomp-snapshot-exporter.service  read-only projection UID/cgroup
+  outbe-ocomp snapshot-exporter child read-only projection UID
     public finalized receipt cursor
     public historical state proofs
     canonical witness/source bundle builder
     no live-node DB write and no validator key
 
   outbe-ocomp-worker                   long-running constrained process
-    outbound register/claim/accepted/complete HTTP requests to the Supervisor
+    one outbound Axum registration request
+    ZeroMQ DEALER work/ack/heartbeat/cancel/completion channel
+    local Salvo /healthz and /status observability
     one active leased UnitId per worker
     read-only inputs, private scratch
     no validator key and no node DB
@@ -1148,16 +1151,15 @@ validator host / administrative domain
     independent quota and retention
 ```
 
-The runtime starts `outbe-chain`, the exporter, launch broker, supervisor and
-workers as independent sibling processes; a service manager is only an optional
-deployment wrapper. OCOMP processes may start before or after the node and retry
-public RPC independently. Worker processes reconnect to the Supervisor's single
-explicit loopback address.
+The direct launcher starts the exporter, supervisor and workers as independent
+sibling processes; `outbe-chain` is started separately. OCOMP processes may
+start before or after the node and retry public RPC independently. Worker
+processes reconnect to the Supervisor's single explicit loopback address.
 
 Up to four long-running workers register per validator domain. The Supervisor
-dispatches only to registered idle workers; a worker claims a bounded HTTP lease,
-acknowledges `UnitId` before execution, renews it with heartbeat requests and
-submits a terminal completion request. A Supervisor restart invalidates its
+dispatches only to registered idle workers over ZeroMQ; a worker receives a
+bounded lease, acknowledges `UnitId` before execution, renews it with heartbeat
+events and submits a terminal completion event. A Supervisor restart invalidates its
 registry generation; expired or uncommitted `UnitId`s are retried and already
 completed content-addressed artifacts are adopted after verification.
 
@@ -1181,10 +1183,9 @@ The exporter, launch broker, supervisor and workers require separate:
 reserve capacity for block execution and consensus. A separate process on the
 same unbounded disk is not sufficient isolation.
 
-Per-unit limits sit under a service-manager-owned aggregate boundary. systemd
-places exporter, supervisor and every worker in `outbe-ocomp.slice` with total
-`MemoryMax`, `TasksMax`, `CPUQuota` and device I/O limits; the node is in a
-separate higher-priority slice. Kubernetes uses a dedicated namespace with
+Per-unit limits sit under a launcher-owned aggregate boundary. The direct
+launcher applies fixed process-count limits and `prlimit` task caps; stronger
+host CPU, memory and I/O isolation remains deployment hardening. Kubernetes uses a dedicated namespace with
 `ResourceQuota`, `LimitRange`, pod-count and ephemeral-storage quotas. The launch
 broker enforces `MAX_LIVE_WORKERS_PER_VALIDATOR`, per-job live-unit limits and
 one live lease per admitted `UnitId` before asking either backend to create a
@@ -1275,9 +1276,10 @@ normal client in exactly two ways:
 2. build, sign and submit the result vote as an ordinary transaction through
    public transaction ingress.
 
-The only dedicated transport is the bounded Supervisor↔Worker loopback HTTP
-API. The Supervisor owns one explicit nonzero Salvo HTTP/1 listener. Up to four
-workers independently register, poll and remain available for repeated units.
+The dedicated Supervisor↔Worker transport has two parts: bounded Axum HTTP
+registration/status and a ZeroMQ `ROUTER/DEALER` channel over loopback TCP. Up
+to four workers independently register, connect and remain available for
+repeated units. Every Worker also exposes local Salvo `/healthz` and `/status`.
 
 ### 5.1 Bounded worker control plane
 
@@ -1285,24 +1287,19 @@ The worker API accepts only size-bounded JSON envelopes carrying canonical
 OCOMP bodies:
 
 ```text
-Worker -> Supervisor: POST /v1/workers/register (chain, genesis,
-                     process_nonce, protocol_bundle_hash, limits)
-Worker -> Supervisor: POST /v1/workers/claim (worker_id)
-Supervisor -> Worker: WorkLeaseV1(lease_id, UnitId, attempt, deadline,
-                     canonical RunUnitV1 body), or HTTP 204
-Worker -> Supervisor: POST /v1/workers/accepted (worker_id, lease_id, UnitId)
-Worker -> Supervisor: POST /v1/workers/heartbeat (worker_id, lease_id, UnitId)
-Worker -> Supervisor: POST /v1/workers/complete (worker_id, lease_id, UnitId,
-                     canonical UnitFinishedV1 body)
+Worker -> Supervisor Axum: POST /v1/workers/register
+Supervisor -> Worker ZeroMQ: WorkLeaseV1 or Cancel
+Worker -> Supervisor ZeroMQ: Ready, Accepted, Heartbeat or Completed
+Worker Salvo: GET /healthz, GET /status
 ```
 
-The endpoint is explicit loopback HTTP, not discovery and not a node API.
+The endpoints are explicit loopback TCP, not discovery and not a node API.
 Registration binds chain, genesis, bundle, process nonce and body limits. Every
 lease binds `worker_id`, `lease_id`, `UnitId`, delivery attempt and deadline.
 Expired work is requeued, stale completion returns conflict, repeated exact
 completion is idempotent, and unknown fields or over-limit bodies fail closed.
-Salvo supplies independent Tokio tasks, request IDs, bounded bodies and handler
-timeouts; no network I/O occurs while the worker-registry lock is held.
+Axum and the ZeroMQ router run independently; no network I/O occurs while the
+worker-registry lock is held. Salvo is confined to Worker observability.
 
 The worker API never accepts a private key, arbitrary executable, database path,
 SQL query or unbounded body. The Supervisor never delegates transaction signing:
@@ -1314,7 +1311,7 @@ validator association.
 ### 5.2 Bulk data plane
 
 Source bodies, witnesses, sorted runs, proof segments and output chunks never
-pass through worker HTTP bodies. They use content-addressed object references:
+pass through worker transport bodies. They use content-addressed object references:
 
 ```text
 ArtifactRef {
@@ -2268,8 +2265,8 @@ transaction or per-block lifecycle batch. A population larger than one
 operation is deterministically partitioned into more operations under the same
 `JobId`. If an individual bounded object is malformed, stale or above its
 per-interface limit, the request does not fall back to synchronous Lysis.
-For PoC Fidelity proofs, an over-cap response is a typed local-control
-rejection and the canonical owner batch is bisected left-first until it fits;
+For PoC Fidelity proofs, an over-cap public RPC response is a bounded rejection
+and the canonical owner batch is bisected left-first until it fits;
 the cap is never treated as a total-owner admission limit.
 
 After the deterministic protocol reservation/pin, local admission checks actual
@@ -2911,8 +2908,9 @@ Registration fixes the worker's chain, genesis, protocol bundle, process nonce
 and body limit; readiness remains a separate dynamic status. Every assignment
 rechecks the finalized job's pinned bundle and the registry/lease generation.
 A mismatched bundle means “refuse this worker”, not “reinterpret the job” and
-not “stop consensus”. The current worker adapter is an explicit loopback Salvo
-HTTP pull API.
+not “stop consensus”. The current worker adapter is explicit Axum registration
+plus a ZeroMQ `ROUTER/DEALER` channel over loopback TCP; Salvo serves only the
+Worker health/status surface.
 
 Minimum supported skew:
 
@@ -3384,7 +3382,7 @@ the following additional MVP/Target stories pass end-to-end:
    under concurrent Fidelity/Oracle writes;
 4. 1, 2 and N workers with reordered completion produce identical bytes;
 5. kill every worker phase and supervisor journal write boundary; reconcile
-   launch/cancel/reap after systemd/Kubernetes controller loss; launch
+   launch/cancel/reap after launcher/Kubernetes controller loss; launch
    `MAX_LIVE_WORKERS+1` and a sustained unit storm and prove the aggregate parent
    quota preserves node latency;
 6. OOM/throttle/fill only the OCOMP cgroup and volume; flood IPC and fill the
@@ -3463,10 +3461,10 @@ the following additional MVP/Target stories pass end-to-end:
 24. rotate the validator committee and OCOMP key epoch while an old job runs;
     accept only the job-pinned snapshot, preserve sign-once history across the
     upgrade and keep historical public keys after private-key retirement;
-25. run the full `Hello/HelloAck` matrix: common control with no common bundle,
-    read-only versus attest capability, stale session generation, N/N+1
-    supervisor and independently restarted peers; every mismatch refuses only
-    OCOMP work while consensus remains ready;
+25. run the full Worker-registration compatibility matrix: incompatible bundle,
+    stale registry generation, N/N+1 Supervisor and independently restarted
+    Workers; every mismatch refuses only OCOMP work while consensus remains
+    ready;
 26. pause at READY, OFFCHAIN_PENDING and after a finalized activation; prove
     bounded cancellation/release for pending jobs, no new activation while
     paused and deterministic higher-version forward repair for already active
@@ -3565,7 +3563,7 @@ latency result. "Completed once" is not a scale claim.
 | Who reads the Metadosis event? | The separate supervisor, through a finalized cursor exposed by the node. The event only wakes it; the on-chain job record is authority. |
 | Who reads the huge historical state? | The separate read-only snapshot exporter scans each Job's immutable checkpoint into CAS. The node creates independently addressed O(1) checkpoint handoffs and never streams bulk bytes through its control API. |
 | Does the supervisor live in the node? | No. It is a sibling service/process with a separate UID, cgroup, journal and disk quota. |
-| Who starts it? | systemd/Kubernetes starts it alongside the node. The node never spawns it and does not depend on its lifetime. |
+| Who starts it? | The direct OCOMP launcher, or a future Kubernetes deployment, starts it independently of the node. The node never spawns it and does not depend on its lifetime. |
 | What fixes the input? | The finalized request block/state root, CE sealed root, immutable job spec and snapshot/body retention lease. Live files are not globally locked. |
 | Where does the Tribute root come from? | Normal CE end-block sealing: shard roots -> WWD collection -> catalog -> sealed CE root -> EVM/block state root. |
 | Who divides the work? | The deterministic planner in every supervisor. The scheduler only assigns fixed `UnitId`s. |
@@ -3617,8 +3615,9 @@ These are engineering precedents, not proofs that Outbe is correct.
 ## 18. Current-code facts and implementation gaps
 
 - the baseline from which this design started lacked the complete OCOMP path;
-  current implementation provides public-RPC discovery/export, the Salvo
-  Supervisor-to-Worker pull API and locally signed result transactions, while
+  current implementation provides public-RPC discovery/export, Axum
+  registration, ZeroMQ/TCP Worker transport, Worker Salvo observability and
+  locally signed result transactions, while
   the remaining quorum/apply gaps below still determine PoC completeness;
 - current `process_metadosis` still calls Lysis synchronously and performs
   Nod/contributor/Tribute/Desis/Promis/completion effects in that path

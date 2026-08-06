@@ -110,6 +110,7 @@ pub fn verify_core_phase_replay(
             limits,
             reader,
             inbox,
+            cancelled: None,
         },
     )
     .map_err(|_| LysisPhaseReplayError::ReplayExecutionFailed)?;

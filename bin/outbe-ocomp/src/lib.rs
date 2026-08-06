@@ -28,4 +28,5 @@ pub mod supervisor_export;
 pub mod supervisor_job;
 pub mod vote_submitter;
 pub mod worker;
-pub mod worker_http;
+pub mod worker_observability;
+pub mod worker_transport;

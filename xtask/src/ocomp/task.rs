@@ -1101,17 +1101,6 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "test",
                     "--locked",
                     "-p",
-                    "outbe-ocomp",
-                    "--test",
-                    "systemd_units",
-                ],
-            )?;
-            cargo(
-                repository_root,
-                &[
-                    "test",
-                    "--locked",
-                    "-p",
                     "outbe-metadosis",
                     "--lib",
                     "ocomp_semantic_migrations",
