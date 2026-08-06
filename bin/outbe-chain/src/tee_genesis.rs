@@ -371,7 +371,7 @@ mod tests {
 
         let dev_input = root.path().join("dev-base.json");
         let dev_output = root.path().join("dev-output.json");
-        write_base_genesis(&dev_input, TESTNET_CHAIN_ID);
+        write_base_genesis(&dev_input, TESTNET_CHAIN_ID + 1);
         assert!(generate_genesis(&args(
             dev_input,
             dev_output.clone(),
@@ -379,7 +379,7 @@ mod tests {
         ))
         .unwrap_err()
         .to_string()
-        .contains("requires reserved"));
+        .contains("devnet or testnet chain ID"));
         assert!(!dev_output.exists());
 
         let dcap_input = root.path().join("dcap-base.json");
