@@ -1,6 +1,6 @@
 [Unit]
 Description=Outbe OCOMP deterministic supervisor
-After=outbe-validator.service outbe-ocomp-worker.socket
+After=outbe-validator.service
 StartLimitIntervalSec=60
 StartLimitBurst=3
 
@@ -10,7 +10,7 @@ User=outbe-ocomp-supervisor
 Group=outbe-ocomp-artifacts
 UMask=0027
 EnvironmentFile=/opt/outbe-chain/ocomp.env
-ExecStart=/opt/outbe-chain/outbe-ocomp supervisor
+ExecStart=/opt/outbe-chain/outbe-ocomp supervisor --supervisor-address ${OCOMP_SUPERVISOR_ADDRESS}
 Restart=on-failure
 RestartSec=5
 Slice=outbe-ocomp.slice
@@ -27,7 +27,7 @@ PrivateDevices=yes
 CapabilityBoundingSet=
 RestrictSUIDSGID=yes
 LockPersonality=yes
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictAddressFamilies=AF_INET AF_INET6
 ReadWritePaths=/opt/outbe-chain/ocomp/data/cas-v1/objects
 ReadWritePaths=/opt/outbe-chain/ocomp/data/cas-v1/staging/supervisor
 ReadWritePaths=/opt/outbe-chain/ocomp/data/cas-v1/refs

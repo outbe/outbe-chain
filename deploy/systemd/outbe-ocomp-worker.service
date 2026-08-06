@@ -1,6 +1,6 @@
 [Unit]
-Description=Outbe OCOMP one-unit worker instance
-After=outbe-ocomp-worker.socket
+Description=Outbe OCOMP worker registered with Supervisor
+After=outbe-validator.service outbe-ocomp-supervisor.service
 
 [Service]
 Type=simple
@@ -8,13 +8,10 @@ User=outbe-ocomp-worker
 Group=outbe-ocomp-artifacts
 UMask=0027
 EnvironmentFile=/opt/outbe-chain/ocomp.env
-ExecStart=/opt/outbe-chain/outbe-ocomp worker --chain-id ${OCOMP_CHAIN_ID} --genesis-hash ${OCOMP_GENESIS_HASH} --boot-nonce ${OCOMP_BOOT_NONCE} --protocol-bundle-hash ${OCOMP_PROTOCOL_BUNDLE_HASH} --session-generation ${OCOMP_SESSION_GENERATION}
-StandardInput=socket
-StandardOutput=journal
-StandardError=journal
-Restart=no
+ExecStart=/opt/outbe-chain/outbe-ocomp worker --chain-id ${OCOMP_CHAIN_ID} --genesis-hash ${OCOMP_GENESIS_HASH} --boot-nonce ${OCOMP_BOOT_NONCE} --protocol-bundle-hash ${OCOMP_PROTOCOL_BUNDLE_HASH} --supervisor-address ${OCOMP_SUPERVISOR_ADDRESS}
+Restart=on-failure
+RestartSec=5
 Slice=outbe-ocomp.slice
-RuntimeMaxSec=600
 MemoryHigh=1536M
 MemoryMax=2G
 TasksMax=16
@@ -24,10 +21,12 @@ ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes
-PrivateNetwork=yes
 CapabilityBoundingSet=
 RestrictSUIDSGID=yes
 LockPersonality=yes
-RestrictAddressFamilies=AF_UNIX
+RestrictAddressFamilies=AF_INET
 BindReadOnlyPaths=/opt/outbe-chain/ocomp/data/cas-v1/objects
 ReadWritePaths=/opt/outbe-chain/ocomp/data/worker-inbox-v1
+
+[Install]
+WantedBy=outbe-ocomp.target

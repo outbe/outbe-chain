@@ -15,8 +15,7 @@ fn ocomp_units() -> Vec<PathBuf> {
         "outbe-validator-stack.target",
         "outbe-ocomp-snapshot-exporter.service",
         "outbe-ocomp-supervisor.service",
-        "outbe-ocomp-worker.socket",
-        "outbe-ocomp-worker@.service",
+        "outbe-ocomp-worker.service",
     ]
     .into_iter()
     .map(|name| unit_dir().join(name))
@@ -131,13 +130,13 @@ fn parsed_unit_graph_keeps_node_lifecycle_outside_ocomp() {
         vec![
             "outbe-ocomp-snapshot-exporter.service",
             "outbe-ocomp-supervisor.service",
-            "outbe-ocomp-worker.socket"
+            "outbe-ocomp-worker.service"
         ]
     );
     for name in [
         "outbe-ocomp-snapshot-exporter.service",
         "outbe-ocomp-supervisor.service",
-        "outbe-ocomp-worker@.service",
+        "outbe-ocomp-worker.service",
     ] {
         let unit = parse_unit(&unit_dir().join(name));
         for relation in ["Requires", "BindsTo", "PartOf"] {
@@ -150,22 +149,17 @@ fn parsed_unit_graph_keeps_node_lifecycle_outside_ocomp() {
         }
     }
 
-    let socket = parse_unit(&unit_dir().join("outbe-ocomp-worker.socket"));
-    assert_eq!(values(&socket, "Socket", "Accept"), vec!["yes"]);
-    assert_eq!(values(&socket, "Socket", "MaxConnections"), vec!["4"]);
-    assert_eq!(
-        values(&socket, "Socket", "MaxConnectionsPerSource"),
-        vec!["4"]
-    );
-
-    let worker = parse_unit(&unit_dir().join("outbe-ocomp-worker@.service"));
-    assert_eq!(values(&worker, "Service", "Restart"), vec!["no"]);
-    assert_eq!(values(&worker, "Service", "StandardInput"), vec!["socket"]);
-    assert_eq!(values(&worker, "Service", "PrivateNetwork"), vec!["yes"]);
+    let worker = parse_unit(&unit_dir().join("outbe-ocomp-worker.service"));
+    assert_eq!(values(&worker, "Service", "Restart"), vec!["on-failure"]);
+    assert!(values(&worker, "Service", "StandardInput").is_empty());
+    assert!(values(&worker, "Service", "PrivateNetwork").is_empty());
     assert_eq!(
         values(&worker, "Service", "RestrictAddressFamilies"),
-        vec!["AF_UNIX"]
+        vec!["AF_INET"]
     );
+    assert!(values(&worker, "Service", "ExecStart")
+        .iter()
+        .all(|value| value.contains("--supervisor-address ${OCOMP_SUPERVISOR_ADDRESS}")));
     assert_eq!(
         values(&worker, "Service", "BindReadOnlyPaths"),
         vec!["/opt/outbe-chain/ocomp/data/cas-v1/objects"]
@@ -179,6 +173,9 @@ fn parsed_unit_graph_keeps_node_lifecycle_outside_ocomp() {
     assert!(values(&exporter, "Service", "ReadWritePaths")
         .contains(&"/opt/outbe-chain/ocomp/data/cas-v1/objects"));
     let supervisor = parse_unit(&unit_dir().join("outbe-ocomp-supervisor.service"));
+    assert!(values(&supervisor, "Service", "ExecStart")
+        .iter()
+        .all(|value| value.contains("--supervisor-address ${OCOMP_SUPERVISOR_ADDRESS}")));
     assert!(values(&supervisor, "Service", "ReadWritePaths")
         .contains(&"/opt/outbe-chain/ocomp/data/cas-v1/objects"));
     assert!(values(&supervisor, "Service", "ReadWritePaths")
@@ -227,7 +224,7 @@ fn role_configuration_provisions_narrow_cross_process_artifact_access() {
     for name in [
         "outbe-ocomp-snapshot-exporter.service",
         "outbe-ocomp-supervisor.service",
-        "outbe-ocomp-worker@.service",
+        "outbe-ocomp-worker.service",
     ] {
         let unit = parse_unit(&unit_dir().join(name));
         assert_eq!(
@@ -247,7 +244,7 @@ fn role_configuration_provisions_narrow_cross_process_artifact_access() {
         values(&supervisor, "Service", "EnvironmentFile"),
         vec!["/opt/outbe-chain/ocomp.env"]
     );
-    let worker = parse_unit(&unit_dir().join("outbe-ocomp-worker@.service"));
+    let worker = parse_unit(&unit_dir().join("outbe-ocomp-worker.service"));
     assert_eq!(
         values(&worker, "Service", "EnvironmentFile"),
         vec!["/opt/outbe-chain/ocomp.env"]

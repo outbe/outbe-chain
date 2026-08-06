@@ -3,10 +3,10 @@
 //! Every node owns one **contiguous block** of ports, one per service:
 //!
 //! ```text
-//! offset:    0      1      2       3        4        5         6
-//!          http    tee    p2p   discv5  authrpc  metrics  consensus
-//! node 0: 18545  18546  18547   18548    18549    18550     18551
-//! node 1: 18552  18553  18554   18555    18556    18557     18558
+//! offset:    0      1      2       3        4        5         6          7
+//!          http    tee    p2p   discv5  authrpc  metrics  consensus  ocomp-supervisor
+//! node 0: 18545  18546  18547   18548    18549    18550     18551       18552
+//! node 1: 18553  18554  18555   18556    18557    18558     18559       18560
 //! ```
 //!
 //! Blocks are handed out from a cursor that only ever moves forward, so they are
@@ -62,11 +62,12 @@ pub(crate) enum Service {
     Authrpc,
     Metrics,
     Consensus,
+    OcompSupervisor,
 }
 
 impl Service {
     /// Block order. Adding a service widens [`BLOCK`] and renumbers every node.
-    const ALL: [Service; 7] = [
+    const ALL: [Service; 8] = [
         Self::Http,
         Self::Tee,
         Self::P2p,
@@ -74,6 +75,7 @@ impl Service {
         Self::Authrpc,
         Self::Metrics,
         Self::Consensus,
+        Self::OcompSupervisor,
     ];
 
     /// This service's slot within a node's block.
@@ -86,6 +88,7 @@ impl Service {
             Self::Authrpc => 4,
             Self::Metrics => 5,
             Self::Consensus => 6,
+            Self::OcompSupervisor => 7,
         }
     }
 
@@ -244,8 +247,9 @@ mod tests {
         assert_eq!(p.port(Http, 0), 18545);
         assert_eq!(p.port(Tee, 0), 18546);
         assert_eq!(p.port(Consensus, 0), 18551);
-        assert_eq!(p.port(Http, 1), 18552);
-        assert_eq!(p.port(Tee, 1), 18553);
+        assert_eq!(p.port(OcompSupervisor, 0), 18552);
+        assert_eq!(p.port(Http, 1), 18553);
+        assert_eq!(p.port(Tee, 1), 18554);
     }
 
     /// The reported bug: a node index past the committee used to panic. Blocks
@@ -253,9 +257,9 @@ mod tests {
     #[test]
     fn grown_index_does_not_panic() {
         let p = static_ports(4);
-        assert_eq!(p.port(Http, 4), 18573, "joiner");
-        assert_eq!(p.port(Http, 14), 18580, "follower1");
-        assert_eq!(p.port(Tee, 15), 18588, "follower2");
+        assert_eq!(p.port(Http, 4), 18577, "joiner");
+        assert_eq!(p.port(Http, 14), 18585, "follower1");
+        assert_eq!(p.port(Tee, 15), 18594, "follower2");
     }
 
     /// A scenario never lands on a port the previous one used, however many nodes
@@ -326,7 +330,7 @@ mod tests {
             p.start_scenario(2).expect("scan");
             assert_ne!(p.port(Http, 0), NODE_BASE, "should skip the held port");
             assert!(
-                p.port(Consensus, 0) - p.port(Http, 0) >= BLOCK - 1,
+                p.port(OcompSupervisor, 0) - p.port(Http, 0) >= BLOCK - 1,
                 "block must stay contiguous"
             );
             assert!(

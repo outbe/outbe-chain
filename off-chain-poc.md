@@ -185,7 +185,7 @@ are not PoC deliverables.
 - authenticated input reconstruction from a finalized checkpoint;
 - deterministic parallel execution independent of worker count and order;
 - four independent validator domains, with a `3-of-4` on-chain result threshold;
-- separate OCOMP keys and durable sign-once behavior;
+- validator-associated OCOMP EVM keys and durable exact-transaction retry;
 - consensus-visible response timing, fourth-vote and equivocation evidence;
 - q-forming atomic result apply with no trusted relay or separate activator;
 - result verification through normal transaction and block execution;
@@ -216,7 +216,7 @@ are not PoC deliverables.
 | execution | each of four validator domains executes the complete job through bounded work |
 | parallelism | deterministic units and fixed reduction, exercised with 1, 2 and 4 workers |
 | correctness | exactly three distinct eligible on-chain vote slots over one canonical `ResultDigest` |
-| keys | separate node-owned OCOMP attestation key and supervisor-owned role-delegated OCOMP EVM key per validator domain; neither process receives the other's key |
+| keys | one role-delegated OCOMP EVM key per validator domain is held by its Supervisor; consensus keys remain outside OCOMP |
 | evidence | four bounded vote slots plus consensus-owned finality binding and one canonical full result stored at quorum |
 | vote submission | Supervisor owns prepare/submit/inclusion/finality/reorg workflow; it uses canonical `latest` nonce plus the frozen gas envelope, never `eth_estimateGas`/pending execution, and rebroadcasts exact journaled bytes; exact-selector validator ZeroFee waives fee, while OCOMP alone validates protocol |
 | quorum apply | the third matching public full-result vote applies inside its normal block execution |
@@ -234,7 +234,7 @@ These are PoC-SCAFFOLD, not architectural shortcuts:
   WorldwideDay and independent FSM progress;
 - a static four-member result committee;
 - protected local OCOMP key files;
-- a simple durable local sign-once journal;
+- a simple durable local transaction-submission journal;
 - one local pinned checkpoint whose export may be recomputed after restart;
 - a per-validator filesystem content-addressed store;
 - a fixed Supervisor-owned one-unit worker adapter with a concurrency cap;
@@ -272,23 +272,25 @@ Each of the four validator administrative domains contains:
 outbe-chain child process
   consensus and finality
   JobIntent/FSM/expiry
-  bounded OcompControl UDS endpoint
-  OcompAttestationGate and sign-once journal
-  separate OCOMP private key
+  public JSON-RPC blocks, receipts, state reads and transaction ingress
+  validator association checked from the ordinary transaction sender
+  no OCOMP control endpoint or OCOMP private key
 
 outbe-ocomp supervisor child process
-  finalized-job cursor
+  finalized-block/receipt cursor over public JSON-RPC
   local admission and immutable job binding
   deterministic planner/scheduler/reducer
-  local job journal
+  one loopback Salvo HTTP/1 server and registry of up to four workers
+  local role-delegated EVM key and durable vote-transaction journal
 
 outbe-ocomp snapshot-exporter child process
   read-only immutable checkpoint
   paged root-bound input export
   input-root/count reconstruction
 
-outbe-ocomp one-unit worker child process
-  one immutable UnitId per invocation
+outbe-ocomp worker child process
+  outbound HTTP registration and work polling against the Supervisor
+  one active immutable leased UnitId per worker
   read-only inputs and private scratch
   no node DB, validator key or default network
 
@@ -319,7 +321,7 @@ its lifecycle.
 - `consensus_ready`, `execution_ready` and `ocomp_ready` are distinct health
   signals.
 
-PoC uses separate process handles/directories plus protocol, frame,
+PoC uses separate process handles/directories plus bounded HTTP bodies, leases,
 concurrency and CAS bounds. Production service identities, cgroup enforcement,
 a launch broker, hardened namespaces, aggregate lease accounting and remote
 compute policy are DEFERRED to MVP.
@@ -328,12 +330,12 @@ compute policy are DEFERRED to MVP.
 
 | Component | May read | May write | May sign | Compromise within PoC |
 |---|---|---|---|---|
-| node | canonical chain and verified candidate bytes | chain/node state and own journals | consensus key and separate OCOMP key through separate gates | one Byzantine validator domain |
+| node | canonical chain and verified candidate bytes | chain/node state and own journals | consensus key | one Byzantine validator domain |
 | snapshot exporter | one opaque immutable checkpoint | source CAS and export journal | never | can omit/corrupt bytes; root/count/opening verification rejects |
-| supervisor | finalized specs and CAS artifacts | own journal/artifacts | never | may compute or schedule incorrectly; loses one validator result |
+| supervisor | finalized specs and CAS artifacts through public RPC | own journal/artifacts and ordinary public result transaction | separate OCOMP EVM key associated with its validator | may compute, schedule or vote incorrectly; loses one validator result |
 | worker | exact job-scoped inputs | private scratch and one CAS result | never | produces a rejected artifact or wastes bounded resources |
 | CAS/body transport | opaque chunks | its own stored chunks | never | may omit/corrupt/withhold, but cannot forge authenticated roots |
-| public submitter | canonical signed vote/typed result bytes | ordinary public transaction submission | never | may delay/drop its own delivery, but cannot choose quorum or mutate another validator's slot |
+| public RPC | canonical blocks, receipts and transaction ingress | ordinary public transaction submission | never | may delay/drop delivery, but cannot choose quorum or mutate another validator's slot |
 | E2E process owner | fixed launch configuration | test process lifecycle | never | may stop or replace a local process; evidence binds the exact executable and arguments |
 
 The supervisor has no MDBX/Mongo writer, validator-key directory, arbitrary node
@@ -590,15 +592,16 @@ bitmap, quorum, storage key and intent vectors.
 
 ### 5.3 Discovery
 
-`OffchainJobRequested` is only a wake-up hint. Each supervisor calls:
+`OffchainJobRequested` is only a wake-up hint. Each Supervisor pages:
 
 ```text
-ListFinalizedJobs(after_cursor, limit)
--> GetJobSpec(JobId)
+eth_getBlockByNumber(finalized cursor)
+-> eth_getTransactionReceipt(relevant transactions)
+-> public state reads for the canonical JobId/spec
 ```
 
-It stores a durable finalized cursor and reconciles it after restart. A lost
-event or subscription must not lose a job.
+It stores a durable finalized-block cursor and reconciles it after restart. A
+lost event or subscription must not lose a job.
 
 ### 5.4 Expiry and terminal states
 
@@ -840,33 +843,32 @@ Lease GC is separate: retained source bytes are deleted only after every Job
 referencing the same `InputLeaseId` has released and the maximum retention
 height has finalized.
 
-## 7. Node/supervisor interfaces and artifacts
+## 7. Node/Supervisor and Supervisor/Worker interfaces
 
-### 7.1 `OcompControlV1`
+### 7.1 Public node RPC and bounded worker control
 
-The PoC demonstrates the local UDS adapter:
+There is no private Node↔OCOMP interface. The Supervisor reads finalized blocks,
+receipts and canonical state through public JSON-RPC, then submits its locally
+signed result transaction through public transaction ingress.
+
+The only dedicated API is between workers and the Supervisor:
 
 ```text
-HelloV1(chain/genesis, boot/session, control_versions,
-        protocol_bundle_hashes, capability_bits, limits)
-
-HelloAckV1(selected_control_version, common_bundle_hashes,
-           granted_capabilities, peer_identity, session_generation)
-
-ListFinalizedJobs(cursor, limit)
-GetJobSpec(JobId)
-OpenSnapshotLease(JobId, requested_retention)
-RenewSnapshotLease(LeaseId)
-ListSnapshotHandoffs(cursor, limit)
-GetSnapshotHandoff(JobId)
-RequestAttestation(AttestationCandidateV1)
-GetOcompHealth()
+Worker -> Supervisor: POST /v1/workers/register
+Worker -> Supervisor: POST /v1/workers/claim
+Supervisor -> Worker: WorkLeaseV1 or HTTP 204
+Worker -> Supervisor: POST /v1/workers/accepted
+Worker -> Supervisor: POST /v1/workers/heartbeat
+Worker -> Supervisor: POST /v1/workers/complete
 ```
 
-The UDS is owner/group restricted and checks peer credentials. Requests use
-bounded canonical messages, session generations, counters and nonces.
-No common control version, bundle or required capability refuses only OCOMP
-work and sets `ocomp_ready=false`; it must not affect consensus readiness.
+The Supervisor owns one explicit nonzero loopback Salvo HTTP/1 listener. Up to
+four workers register by distinct process nonce and poll independently. JSON
+envelopes are bounded and carry canonical `RunUnitV1`/`UnitFinishedV1` bodies.
+Leases bind worker, unit, attempt and deadline; expiry requeues work and stale
+completion conflicts. Each request runs independently on Tokio, so one stalled
+worker or partial HTTP request cannot block other workers, node RPC discovery or
+vote submission.
 
 The API never accepts:
 
@@ -876,18 +878,17 @@ The API never accepts:
 - a database/path/query;
 - an unbounded body.
 
-For PoC, `AttestationCandidateV1` includes constant-size `LysisResultV1`. The
-separate compute plane has already validated complete result-chunk coverage.
-The node independently reloads the finalized job, derives the closed signing
-purpose and sign-once key, rehashes the result commitment and validates its
-constant-size structure/equations. It neither reads result chunks nor reruns
-Lysis, so bulk work cannot enter the consensus process failure boundary.
-
-Remote mTLS is DEFERRED to MVP and must implement the same logical interface.
+The separate compute plane validates complete result-chunk coverage. The
+Supervisor reloads the finalized job, derives the closed result call, signs the
+exact EIP-1559 transaction with its role-delegated EVM key and journals the
+canonical transaction bytes before submission. The worker never receives that
+key or a signing request. Consensus validates the transaction sender's
+validator association and the constant-size result/job binding; it never reads
+result chunks or reruns Lysis.
 
 ### 7.2 Bulk plane
 
-Bulk data never crosses `OcompControlV1`:
+Bulk data never crosses worker control frames:
 
 ```text
 ArtifactRef {
@@ -935,8 +936,9 @@ The constant-size `PlanCommitmentV1` additionally fixes `wwd`,
 `lysis_budget`, `logical_evaluation_time`, the authenticated manifest and the
 ordered primary-unit root. These fields are covered by `PlanHash`; a worker
 must decode the exact CAS bytes and match their hash and job/manifest bindings
-before execution. Before signing, the node attestation gate compares the plan
-context to the finalized `JobIntentV1`. For shard `j`, `AMOUNT_MAP(j)` consumes both
+before execution. Before signing, the Supervisor compares the plan context to
+the finalized `JobIntentV1` and derives the closed vote transaction. For shard
+`j`, `AMOUNT_MAP(j)` consumes both
 `FIDELITY_MAP(j)` (the per-Tribute league observations) and the fixed-reduce
 root (the global fraction table). Neither artifact substitutes for the other.
 
@@ -1117,21 +1119,21 @@ LysisResultV1 {
 }
 ```
 
-The canonical signed preimage is:
+The canonical public vote transaction is:
 
 ```text
 ResultChunkHash =
   H("OUTBE_OCOMP_RESULT_CHUNK_V1", canonical(ResultChunkV1))
 
-ResultDigest =
-  H("OUTBE_OCOMP_RESULT_V1", canonical(LysisResultV1))
+SubmitLysisResultCallV1 {
+  result: canonical(LysisResultV1)
+}
 
-ResultVoteV1 {
-  protocol_bundle_hash, JobId, attempt,
-  result_committee_snapshot_hash,
-  validator_index, key_epoch,
-  result: LysisResultV1,
-  signature_over_ResultDigest
+Eip1559VoteTransactionV1 {
+  chain_id, nonce, fixed Metadosis destination,
+  bounded fee/gas envelope, zero value,
+  calldata: SubmitLysisResultCallV1,
+  signature: role-delegated validator-associated EVM account
 }
 ```
 
@@ -1146,24 +1148,24 @@ domain. The values are never compared.
 Every validator domain's separate compute process independently reads every
 authenticated result chunk through that typed finalizer, proves gap-free
 complete catalog coverage, and recomputes roots, counts, totals, arithmetic
-commitment plus the frozen empty pre-result event root before requesting its
-node's attestation. The node
-reloads finalized authority, verifies the constant-size closed signing subject
-and never scans those chunks or reruns Lysis. Every `ResultVoteV1` carries the
-same canonical `LysisResultV1`; result-chunk bodies remain content-addressed artifacts for
-projection, availability and proof serving. No chunk is separately signable or
-applicable.
+commitment plus the frozen empty pre-result event root. The Supervisor reloads
+finalized authority, prepares the fixed Metadosis call, signs the exact EIP-1559
+transaction locally and submits it through public RPC. The node never scans
+those chunks or reruns Lysis. Every q-forming transaction carries the same
+canonical `LysisResultV1`; result-chunk bodies remain content-addressed artifacts
+for projection, availability and proof serving. No chunk is separately signable
+or applicable.
 
 ### 9.1 Committee and threshold
 
 `OcompCommitteeSnapshotV1` is static consensus state for the PoC. It contains
-ordered validator identities/indexes, unique OCOMP public keys, scheme, allowed
-purpose, validity interval, proof of possession and key epoch.
+the ordered validator identities/indexes and the validator-associated EVM
+addresses authorized to submit OCOMP results for its validity interval.
 
-The PoC uses canonical low-`s` `secp256k1` signatures. Every result-vote
-transaction contains the pinned committee snapshot hash, one validator index,
-its key epoch, one `ResultDigest` and one signature. A validator's first valid
-vote contributes at most once.
+Every result-vote transaction is an ordinary canonical low-`s` `secp256k1`
+EIP-1559 transaction. Execution derives the sender, resolves its validator
+association and admits that validator's first valid result at most once. There
+is no inner OCOMP signature or node-local signing RPC.
 
 For `n=4, q=3`, consensus scans exactly four first-vote slots. Once one digest
 first appears in three slots it records an immutable quorum. Because a slot
@@ -1176,29 +1178,22 @@ four validator identities may appear in both on
 the PoC devnet, but the snapshots, keys, signature domains and verified
 statements remain distinct.
 
-### 9.2 Sign-once journal
+### 9.2 Exact-transaction journal
 
-Before releasing a signature, the node durably stores:
+Before broadcasting a vote, the Supervisor durably stores:
 
 ```text
 subject = Result(JobId, attempt)
-purpose = ResultSignature
-
-SingleSignKey =
-  (chain_id, subject, purpose)
-
-value =
-  (protocol_bundle_hash, key_epoch, ResultDigest)
+value = (protocol_bundle_hash, canonical_result,
+         nonce, raw_signed_transaction, transaction_hash)
 ```
 
-The record is fsynced before signature release. Retrying the exact same value is
-idempotent. Any different value for the same key is rejected as equivocation.
-Journal loss or ambiguity disables OCOMP signing; it does not reset the journal
-and does not affect the consensus key.
-
-The key is separate from the consensus private key, never exported to the
-supervisor and only signs the closed `ResultSignature` purpose derived by the
-node from a verified candidate.
+The record is fsynced before broadcast. Retrying the exact same raw transaction
+is idempotent. A different result for the same logical validator slot is retained
+as bounded on-chain equivocation evidence and never replaces the first tally
+vote. Journal loss or nonce ambiguity disables OCOMP submission; it does not
+reset the journal and does not affect the consensus key. The role-delegated EVM
+key stays in the Supervisor and is never exported to a worker.
 
 ### 9.3 On-chain vote slots and accountability
 
@@ -1217,11 +1212,10 @@ state and uses the frozen bounded gas envelope. It does not call
 retains the exact locally signed raw transaction and nonce, so retry/reorg
 rebroadcast does not reconstruct or re-sign the transaction.
 
-The inner OCOMP signature remains node-owned. The Supervisor receives only that
-canonical sign-once attestation, constructs the fixed outer EIP-1559 envelope
-and signs it with its own role-delegated OCOMP EVM key. The node never loads or
-exposes that outer transaction key. The outer transaction is fee-free for the
-represented validator through a dedicated exact-selector, zero-value,
+The Supervisor constructs the fixed EIP-1559 envelope and signs it with its
+role-delegated OCOMP EVM key. The node only exposes its public transaction RPC;
+there is no private OCOMP control or signing endpoint. The outer transaction is
+fee-free for the represented validator through a dedicated exact-selector, zero-value,
 bounded-envelope ZeroFee hook modelled on Oracle. That hook resolves the
 role-scoped sender and decides only the fee waiver. The OCOMP on-chain module
 alone checks `VOTING_OPEN`, JobId, height, committee, key epoch, bounded
@@ -1655,7 +1649,7 @@ and implementation seams, not promoting PoC state into a production network.
 | fourth vote arrives after completion but before deadline | only separate accountability state changes; terminal/receipt/generation/retry identity stays byte-identical |
 | wrong result byte/order/count/root | full-result vote rejects with no state change |
 | wrong JobId/intent/finality binding | full-result vote rejects with no state change |
-| second digest for same sign-once key | local attestation gate refuses |
+| conflicting result from the same validator | first tally slot remains; bounded equivocation evidence is recorded |
 | q-forming owner write failure | q-forming slot, quorum and all effects roll back |
 | vote at deadline or later | late; cannot change the closed accountability summary |
 | cap exceeded | bounded typed rejection; job/state unchanged |
@@ -1696,8 +1690,9 @@ issuance through public Nod reads on a four-validator devnet:
 8. compare the result with an offline reference/golden corpus, never an on-chain
    Lysis execution;
 9. repeat with 1, 2 and 4 workers and randomized completion order;
-10. request a second digest signature for the same job and observe sign-once
-    refusal; test exact vote retry, wrong signer/key epoch, late vote and a
+10. prepare a conflicting vote for the same validator/job and observe that it
+    cannot replace the first tally vote; test exact transaction retry, wrong
+    sender association, late vote and a
     conflicting signed vote; prove only the first counts and equivocation is
     recorded;
 11. include otherwise identical q-forming votes at different valid heights and
@@ -1740,19 +1735,19 @@ version matrices remain BoundedMVP work under parent section 15.
 | POC-09 | DEMO | validator independence | four separate node/supervisor/exporter/CAS domains |
 | POC-10 | DEMO | quorum and fourth-domain evidence | healthy run closes `4/4`; one-domain-unavailable run reaches q=3 and closes exactly one missing bit |
 | POC-11 | DEMO | two domains unavailable | response-deadline no-quorum expiry, release and requeue |
-| POC-12 | DEMO | sign once | fsync-before-sign, exact retry allowed, different digest refused |
-| POC-13 | DEMO | public vote/accountability binding | Supervisor submits the node-signed result through validator-only ZeroFee RPC/txpool/P2P/import/replay; no native fee is debited; OCOMP rejects pre-open/wrong/unknown/late votes; conflicting second signed vote records equivocation and never replaces the first tally vote |
+| POC-12 | DEMO | exact transaction journal | fsync-before-broadcast, byte-identical retry allowed, nonce ambiguity blocks submission |
+| POC-13 | DEMO | public vote/accountability binding | Supervisor submits its locally signed validator-associated result through validator-only ZeroFee RPC/txpool/P2P/import/replay; no native fee is debited; OCOMP rejects pre-open/wrong/unknown/late votes; conflicting second signed vote records equivocation and never replaces the first tally vote |
 | POC-14 | DEMO | result binding | the exact section 13 result-byte, JobId and ordering mutations reject |
 | POC-15 | CORE | atomic apply | one representative injected owner-write failure yields the whole transition or none |
 | POC-16 | CORE | receipt binding | one wrong-job binding and one mutated receipt reject atomically |
 | POC-17 | DEMO | logical time | q-forming vote delay changes only explicit inclusion/apply metadata |
 | POC-18 | CORE | voting window/deadline | voting opens exactly four blocks after finality; a pre-open vote rejects, a vote before the deadline counts, a vote at the deadline is late, no-quorum expires, and timely q=3 applies atomically |
 | POC-19 | DEMO | process isolation | stop the supervisors required by section 13 without stopping block finality |
-| POC-20 | CORE | bounded interfaces | one over-limit UDS message/chunk rejects before unbounded allocation; crossing a work-shard boundary creates another unit rather than rejecting the parent |
+| POC-20 | CORE | bounded interfaces | one over-limit worker HTTP body/chunk rejects before unbounded allocation; crossing a work-shard boundary creates another unit rather than rejecting the parent |
 | POC-21 | FORK-GATE | public wire path | non-q-forming and q-forming full-result-vote cap-1/cap/cap+1 plus proposer/import/replay parity through RPC/txpool/P2P |
 | POC-22 | DEMO | public output | Nod and all domain effects verified through public read interfaces |
 | POC-23 | CORE | tentative pin | pin is durable before vote/prune; one orphan releases it and cannot be signed |
-| POC-24 | CORE | version isolation | one incompatible node/supervisor handshake refuses OCOMP while blocks continue |
+| POC-24 | CORE | version isolation | one incompatible Worker/Supervisor registration refuses OCOMP while blocks continue |
 | POC-25 | DEMO | active generation authority | finalized state and replay select the same `ActiveGenerationV1`, independent of supervisor storage |
 | POC-26 | COMPAT | fork boundary | pre-fork, active-PoC and reachable empty-WWD cases follow their parent-defined paths |
 
@@ -1792,20 +1787,18 @@ This is an inventory for the next planning step, not a task breakdown.
 
 ### 15.3 Compute plane
 
-- UDS `OcompControlV1` client/server;
-- finalized cursor and local supervisor journal;
+- public finalized block/receipt projection and local Supervisor cursor;
+- one bounded Supervisor Salvo HTTP server and Worker pull/lease API;
 - immutable checkpoint handoff and exporter;
 - local CAS and bounded artifact codecs;
 - deterministic planner, worker unit runner and fixed reducers;
 - fixed unprivileged worker service template.
 
-### 15.4 Attestation and on-chain voting
+### 15.4 Signing and on-chain voting
 
-- separate PoC OCOMP keys and proof-of-possession registration;
-- `OcompAttestationGate`;
-- durable sign-once journal;
-- Supervisor-owned `ResultVoteV1` submission/reorg journal, local
-  role-delegated outer EVM signer and exact-selector validator ZeroFee hook;
+- validator-associated role-delegated EVM accounts;
+- Supervisor-owned durable signed-transaction submission/reorg journal and
+  exact-selector validator ZeroFee hook;
 - four fixed consensus slots in separate accountability state;
 - deterministic q=3 tally, fourth-vote window and accountability summary;
 - q-forming full-result application; no separate activator.
@@ -1850,8 +1843,8 @@ The source design defines six independently testable slices:
    tampering, worker-count determinism and expiry without fallback.
 
 Each slice is tested at the external seam used by the next. In-memory adapters
-are allowed in module tests; the final slice must use real UDS, processes,
-consensus blocks and public APIs.
+are allowed in module tests; the final slice must use the real Worker HTTP pull
+API, processes, consensus blocks and public node APIs.
 
 ## 17. Deliverables and PoC completion checklist
 
@@ -1867,7 +1860,7 @@ consensus blocks and public APIs.
 
 ### 17.2 Runtime artifacts
 
-- [ ] node control/attestation endpoint;
+- [ ] finalized block/receipt/event discovery through public RPC;
 - [ ] standalone supervisor;
 - [ ] standalone checkpoint exporter;
 - [ ] standalone deterministic worker;
@@ -1899,12 +1892,13 @@ mocked validator domain or undocumented manual step.
 
 ## 18. Current-code baseline and known gaps
 
-At the source revision:
+The baseline from which the PoC was specified lacked the complete OCOMP path.
+The current implementation now has public-RPC discovery/export, the Salvo
+Supervisor-to-Worker pull API and locally signed result transactions. Remaining
+PoC gaps are:
 
-- no production `JobIntent`, OCOMP state/codec, finality proof,
-  `OcompControl`, supervisor, exporter, worker, attestation gate, complete
-  on-chain full-result vote/quorum/accountability path or certified apply module exists
-  in the baseline from which the PoC was specified;
+- the complete on-chain full-result quorum/accountability and certified apply
+  path is not yet sufficient for a complete PoC claim;
 - current terminal Metadosis still calls Lysis synchronously and performs
   Nod/contributor/Tribute/Desis/Promis/completion effects
   ([runtime.rs](crates/core/metadosis/src/runtime.rs#L378));
@@ -1915,9 +1909,9 @@ At the source revision:
 - one mandatory projection failure currently requests node shutdown
   ([main.rs](bin/outbe-chain/src/main.rs#L681)); OCOMP must not copy this failure
   boundary;
-- an external TEE sidecar shows that external processes and authenticated
-  UDS/TCP are accepted patterns, but its reconnect behavior is not sufficient
-  for OCOMP;
+- an external TEE sidecar shows that authenticated external-process boundaries
+  are accepted patterns, but its reconnect behavior is not sufficient for
+  OCOMP;
 - there is no separate OCOMP key registry or anti-equivocation store;
 - current CE has exact 16-shard CKB roots but no counted range tree; the latter
   is not needed for the PoC full-fold over bounded pages;
@@ -2018,7 +2012,7 @@ Outbe protocol definitions.
 | 2.3 q-forming block | PoC-MUST; pause/upgrade/custody deferred | 5.4–5.5, 10 |
 | 3 Tribute root | PoC-MUST | 6.1 |
 | 4 runtime boundaries | process split PoC-MUST; hardening MVP | 3, 12 |
-| 5 interfaces | UDS/local CAS PoC-MUST; mTLS deferred | 7 |
+| 5 interfaces | public node RPC, loopback Worker HTTP pull API and local CAS PoC-MUST | 7 |
 | 6 planner/units | bounded rules PoC-MUST; counted ranges deferred | 8 |
 | 7 Lysis Map/Reduce | PoC-MUST | 8 |
 | 8.1 input authenticity | PoC-MUST full fold | 6 |

@@ -2,11 +2,8 @@
 #
 # Standalone OCOMP lifecycle for a single validator host.
 #
-# This launcher replaces the OCOMP systemd units, but not the node-side OCOMP
-# configuration. The chain process must already be running as the configured
-# OUTBE_OCOMP_NODE_USER with
-# both --ocomp.* socket arguments and the same identity values found in
-# $OUTBE_OCOMP_BASE_PATH/ocomp.env.
+# This launcher replaces the OCOMP systemd units. The chain process must already
+# expose its standard JSON-RPC endpoint; OCOMP has no private node control port.
 #
 # This is a manual testnet launcher. Unlike the systemd units it does not add
 # automatic restart, boot persistence, cgroup resource limits or per-role mount /
@@ -24,32 +21,26 @@ set -euo pipefail
 readonly DEPLOY_ROOT="${OUTBE_OCOMP_BASE_PATH:-/opt/outbe-chain}"
 readonly OCOMP_BINARY="$DEPLOY_ROOT/outbe-ocomp"
 readonly OCOMP_ENV_FILE="$DEPLOY_ROOT/ocomp.env"
+readonly OCOMP_EXPORT_ENV_FILE="$DEPLOY_ROOT/ocomp-export.env"
 readonly PROTOCOL_BUNDLE="$DEPLOY_ROOT/protocol-bundle-v1.ocb1"
 
-# Role identities are fixed; the node identity is deployment configuration.
-NODE_USER=""
+# Role identities are fixed.
 readonly SUPERVISOR_USER="outbe-ocomp-supervisor"
 readonly EXPORTER_USER="outbe-ocomp-export"
 readonly WORKER_USER="outbe-ocomp-worker"
 readonly ARTIFACT_GROUP="outbe-ocomp-artifacts"
-readonly WORKER_LAUNCH_GROUP="outbe-ocomp-worker-launch"
 
 readonly OCOMP_ROOT="$DEPLOY_ROOT/ocomp"
 readonly RUNTIME_ROOT="$OCOMP_ROOT/run"
 readonly STATE_ROOT="$OCOMP_ROOT/data"
 readonly KEY_ROOT="$STATE_ROOT/keys"
 readonly OCOMP_EVM_KEY="$KEY_ROOT/ocomp-evm-key.hex"
-readonly CE_DATADIR="$OCOMP_ROOT/ce"
 readonly LOG_ROOT="$OCOMP_ROOT/logs"
-
-readonly NODE_SUPERVISOR_SOCKET="$RUNTIME_ROOT/node-supervisor.sock"
-readonly NODE_EXPORTER_SOCKET="$RUNTIME_ROOT/node-snapshot-exporter.sock"
-readonly WORKER_SOCKET="$RUNTIME_ROOT/worker.sock"
 
 readonly PID_ROOT="$RUNTIME_ROOT/pids"
 readonly SUPERVISOR_PID="$PID_ROOT/supervisor/pid"
 readonly EXPORTER_PID="$PID_ROOT/snapshot-exporter/pid"
-readonly WORKER_ACTIVATOR_PID="$PID_ROOT/worker-activator/pid"
+readonly WORKER_PID="$PID_ROOT/worker/pid"
 readonly LIFECYCLE_LOCK="$RUNTIME_ROOT/lifecycle.lock"
 
 readonly SUPERVISOR_LOG="$LOG_ROOT/supervisor.log"
@@ -96,11 +87,7 @@ add_user_to_group() {
 }
 
 prepare_identities() {
-  id -u "$NODE_USER" >/dev/null 2>&1 ||
-    die "node user '$NODE_USER' does not exist; the chain OCOMP endpoint requires this UID"
-
   ensure_group "$ARTIFACT_GROUP"
-  ensure_group "$WORKER_LAUNCH_GROUP"
   ensure_user "$SUPERVISOR_USER"
   ensure_user "$EXPORTER_USER"
   ensure_user "$WORKER_USER"
@@ -108,20 +95,18 @@ prepare_identities() {
   add_user_to_group "$SUPERVISOR_USER" "$ARTIFACT_GROUP"
   add_user_to_group "$EXPORTER_USER" "$ARTIFACT_GROUP"
   add_user_to_group "$WORKER_USER" "$ARTIFACT_GROUP"
-  add_user_to_group "$SUPERVISOR_USER" "$WORKER_LAUNCH_GROUP"
 }
 
 prepare_directories() {
   install -d -m 0755 -o root -g root "$OCOMP_ROOT"
-  # The node may create its two sockets; OCOMP roles may only traverse this path.
-  install -d -m 0771 -o root -g "$(id -gn "$NODE_USER")" "$RUNTIME_ROOT"
+  install -d -m 0755 -o root -g root "$RUNTIME_ROOT"
   install -d -m 0700 -o root -g root "$PID_ROOT"
   install -d -m 0700 -o root -g root \
     "$PID_ROOT/supervisor"
   install -d -m 0700 -o root -g root \
     "$PID_ROOT/snapshot-exporter"
   install -d -m 0700 -o root -g root \
-    "$PID_ROOT/worker-activator"
+    "$PID_ROOT/worker"
   install -d -m 0750 -o "$SUPERVISOR_USER" -g "$ARTIFACT_GROUP" "$STATE_ROOT"
   install -d -m 0700 -o "$SUPERVISOR_USER" -g "$SUPERVISOR_USER" "$KEY_ROOT"
   install -d -m 0770 -o "$SUPERVISOR_USER" -g "$ARTIFACT_GROUP" \
@@ -149,18 +134,6 @@ prepare_directories() {
     chown root:root "$log_file"
     chmod 0640 "$log_file"
   done
-
-  local validator_dir
-  validator_dir=$(detect_validator_dir)
-  local ce_source="$validator_dir/data"
-  if [[ -L "$CE_DATADIR" ]]; then
-    [[ "$(readlink "$CE_DATADIR")" == "$ce_source" ]] ||
-      die "$CE_DATADIR points to the wrong validator datadir"
-  elif [[ -e "$CE_DATADIR" ]]; then
-    die "$CE_DATADIR exists and is not the expected symlink"
-  else
-    ln -s "$ce_source" "$CE_DATADIR"
-  fi
 }
 
 prepare_ocomp_evm_key() {
@@ -208,7 +181,6 @@ prepare_ocomp_evm_key() {
     runuser --user "$SUPERVISOR_USER" -- \
       env \
         OUTBE_OCOMP_BASE_PATH="${RUNTIME_ENV[OUTBE_OCOMP_BASE_PATH]}" \
-        OUTBE_OCOMP_NODE_USER="${RUNTIME_ENV[OUTBE_OCOMP_NODE_USER]}" \
         "$OCOMP_BINARY" signer-address
   ); then
     if ((created == 1)); then
@@ -217,22 +189,6 @@ prepare_ocomp_evm_key() {
     die "OCOMP EVM key is not a valid secp256k1 signer"
   fi
   echo "ocomp: OCOMP delegate signer address $signer_address"
-}
-
-detect_validator_dir() {
-  local -a candidates=()
-  local path
-  for path in "$DEPLOY_ROOT"/validator-[0-3]; do
-    [[ -d "$path" ]] && candidates+=("$path")
-  done
-  [[ ${#candidates[@]} -eq 1 ]] ||
-    die "expected exactly one $DEPLOY_ROOT/validator-[0-3] directory"
-  printf '%s\n' "${candidates[0]}"
-}
-
-restore_runtime_permissions() {
-  chown root:"$(id -gn "$NODE_USER")" "$RUNTIME_ROOT"
-  chmod 0771 "$RUNTIME_ROOT"
 }
 
 prepare() {
@@ -293,7 +249,10 @@ load_runtime_environment() {
   RUNTIME_ENV=()
   load_env_file \
     "$OCOMP_ENV_FILE" \
-    "OCOMP_CHAIN_ID,OCOMP_GENESIS_HASH,OCOMP_BOOT_NONCE,OCOMP_PROTOCOL_BUNDLE_HASH,OCOMP_SESSION_GENERATION,OUTBE_OCOMP_BASE_PATH,OUTBE_OCOMP_NODE_USER,OUTBE_OCOMP_RPC_URL,OUTBE_PROJECTION_MONGODB_URI,OUTBE_PROJECTION_MONGODB_DATABASE"
+    "OCOMP_CHAIN_ID,OCOMP_GENESIS_HASH,OCOMP_BOOT_NONCE,OCOMP_PROTOCOL_BUNDLE_HASH,OCOMP_REGISTRY_GENERATION,OCOMP_SUPERVISOR_ADDRESS,OUTBE_OCOMP_BASE_PATH,OUTBE_OCOMP_RPC_URL"
+  load_env_file \
+    "$OCOMP_EXPORT_ENV_FILE" \
+    "OUTBE_OCOMP_PROJECTION_MONGODB_URI,OUTBE_OCOMP_PROJECTION_MONGODB_DATABASE"
 
   local name
   for name in \
@@ -301,21 +260,21 @@ load_runtime_environment() {
     OCOMP_GENESIS_HASH \
     OCOMP_BOOT_NONCE \
     OCOMP_PROTOCOL_BUNDLE_HASH \
-    OCOMP_SESSION_GENERATION \
+    OCOMP_REGISTRY_GENERATION \
+    OCOMP_SUPERVISOR_ADDRESS \
     OUTBE_OCOMP_BASE_PATH \
-    OUTBE_OCOMP_NODE_USER \
     OUTBE_OCOMP_RPC_URL \
-    OUTBE_PROJECTION_MONGODB_URI \
-    OUTBE_PROJECTION_MONGODB_DATABASE; do
+    OUTBE_OCOMP_PROJECTION_MONGODB_URI \
+    OUTBE_OCOMP_PROJECTION_MONGODB_DATABASE; do
     require_env "$name"
   done
 
   [[ "${RUNTIME_ENV[OUTBE_OCOMP_BASE_PATH]}" == "$DEPLOY_ROOT" ]] ||
     die "OUTBE_OCOMP_BASE_PATH must match launcher deployment root $DEPLOY_ROOT"
-  NODE_USER="${RUNTIME_ENV[OUTBE_OCOMP_NODE_USER]}"
-
-  [[ "${RUNTIME_ENV[OCOMP_SESSION_GENERATION]}" != 0 ]] ||
-    die "OCOMP_SESSION_GENERATION must be greater than zero"
+  [[ "${RUNTIME_ENV[OCOMP_REGISTRY_GENERATION]}" != 0 ]] ||
+    die "OCOMP_REGISTRY_GENERATION must be greater than zero"
+  [[ "${RUNTIME_ENV[OCOMP_SUPERVISOR_ADDRESS]}" =~ ^127\.0\.0\.1:([1-9][0-9]*)$ ]] ||
+    die "OCOMP_SUPERVISOR_ADDRESS must be an explicit nonzero 127.0.0.1 HTTP address"
 }
 
 proc_start_ticks() {
@@ -410,24 +369,9 @@ start_role() {
   die "$name failed to start; inspect $log_file"
 }
 
-verify_node_socket() {
-  local path=$1
-  [[ -S "$path" ]] || die "node socket is missing: $path (start chain with complete --ocomp.* arguments)"
-
-  local expected_uid actual_uid
-  expected_uid=$(id -u "$NODE_USER")
-  actual_uid=$(stat -c '%u' "$path")
-  [[ "$actual_uid" == "$expected_uid" ]] ||
-    die "$path belongs to uid $actual_uid, expected $NODE_USER uid $expected_uid"
-
-  chgrp "$ARTIFACT_GROUP" "$path"
-  chmod 0660 "$path"
-}
-
 verify_prerequisites() {
   [[ -x "$OCOMP_BINARY" ]] || die "OCOMP binary is missing or not executable: $OCOMP_BINARY"
   [[ -r "$PROTOCOL_BUNDLE" ]] || die "protocol bundle is missing: $PROTOCOL_BUNDLE"
-  require_command systemd-socket-activate
   local role_user
   for role_user in "$SUPERVISOR_USER" "$EXPORTER_USER" "$WORKER_USER"; do
     runuser --user "$role_user" -- test -r "$PROTOCOL_BUNDLE" ||
@@ -435,78 +379,26 @@ verify_prerequisites() {
   done
   runuser --user "$SUPERVISOR_USER" -- test -r "$OCOMP_EVM_KEY" ||
     die "$SUPERVISOR_USER cannot read OCOMP EVM key $OCOMP_EVM_KEY"
-  verify_node_socket "$NODE_SUPERVISOR_SOCKET"
-  verify_node_socket "$NODE_EXPORTER_SOCKET"
-
-  runuser --user "$EXPORTER_USER" -- test -r "$CE_DATADIR" ||
-    die "$EXPORTER_USER cannot read CE datadir $CE_DATADIR"
-  runuser --user "$EXPORTER_USER" -- test -x "$CE_DATADIR" ||
-    die "$EXPORTER_USER cannot traverse CE datadir $CE_DATADIR"
-  local unreadable
-  unreadable=$(
-    runuser --user "$EXPORTER_USER" -- \
-      find "$CE_DATADIR" \
-        \( -type d ! -executable -o ! -readable \) \
-        -print -quit
-  )
-  [[ -z "$unreadable" ]] ||
-    die "$EXPORTER_USER cannot read CE entry $unreadable"
 }
 
-start_worker_activator() {
-  if ! pid_is_running "$WORKER_ACTIVATOR_PID"; then
-    rm -f "$WORKER_SOCKET"
-    # Only the worker identity can bind during this short bootstrap window.
-    chown root:"$(id -gn "$WORKER_USER")" "$RUNTIME_ROOT"
-    chmod 0770 "$RUNTIME_ROOT"
-    # One activator plus up to four timeout/worker process pairs.
-    start_role \
-      "worker socket activator" \
-      "$WORKER_USER" \
-      "$(id -gn "$WORKER_USER")" \
-      "$WORKER_ACTIVATOR_PID" \
-      "$WORKER_LOG" \
-      "systemd-socket-activate" \
-      env \
-        OUTBE_OCOMP_BASE_PATH="${RUNTIME_ENV[OUTBE_OCOMP_BASE_PATH]}" \
-        OUTBE_OCOMP_NODE_USER="${RUNTIME_ENV[OUTBE_OCOMP_NODE_USER]}" \
-        prlimit --nproc=9:9 -- \
-        systemd-socket-activate \
-          --listen="$WORKER_SOCKET" \
-          --accept \
-          --inetd \
-          timeout --signal=TERM --kill-after=5s 600 \
-          "$OCOMP_BINARY" worker \
-            --chain-id "${RUNTIME_ENV[OCOMP_CHAIN_ID]}" \
-            --genesis-hash "${RUNTIME_ENV[OCOMP_GENESIS_HASH]}" \
-            --boot-nonce "${RUNTIME_ENV[OCOMP_BOOT_NONCE]}" \
-            --protocol-bundle-hash "${RUNTIME_ENV[OCOMP_PROTOCOL_BUNDLE_HASH]}" \
-            --session-generation "${RUNTIME_ENV[OCOMP_SESSION_GENERATION]}"
-    STARTED_WORKER_THIS_RUN=$START_ROLE_LAUNCHED
-  else
-    START_ROLE_LAUNCHED=0
-    echo "ocomp: worker socket activator already running (pid $(cut -d ' ' -f 1 "$WORKER_ACTIVATOR_PID"))"
-  fi
-
-  local attempt
-  for attempt in {1..50}; do
-    [[ -S "$WORKER_SOCKET" ]] && break
-    sleep 0.1
-  done
-  restore_runtime_permissions
-  [[ -S "$WORKER_SOCKET" ]] ||
-    die "worker activator did not create $WORKER_SOCKET"
-  local expected_socket_uid socket_uid
-  if ((START_ROLE_LAUNCHED == 1)); then
-    expected_socket_uid=$(id -u "$WORKER_USER")
-  else
-    expected_socket_uid=$(id -u "$SUPERVISOR_USER")
-  fi
-  socket_uid=$(stat -c '%u' "$WORKER_SOCKET")
-  [[ "$socket_uid" == "$expected_socket_uid" ]] ||
-    die "worker socket belongs to uid $socket_uid, expected uid $expected_socket_uid"
-  chown "$SUPERVISOR_USER":"$WORKER_LAUNCH_GROUP" "$WORKER_SOCKET"
-  chmod 0660 "$WORKER_SOCKET"
+start_worker() {
+  start_role \
+    "worker" \
+    "$WORKER_USER" \
+    "$ARTIFACT_GROUP" \
+    "$WORKER_PID" \
+    "$WORKER_LOG" \
+    "$OCOMP_BINARY worker" \
+    env \
+      OUTBE_OCOMP_BASE_PATH="${RUNTIME_ENV[OUTBE_OCOMP_BASE_PATH]}" \
+      prlimit --nproc=16:16 -- \
+      "$OCOMP_BINARY" worker \
+        --chain-id "${RUNTIME_ENV[OCOMP_CHAIN_ID]}" \
+        --genesis-hash "${RUNTIME_ENV[OCOMP_GENESIS_HASH]}" \
+        --boot-nonce "${RUNTIME_ENV[OCOMP_BOOT_NONCE]}" \
+        --protocol-bundle-hash "${RUNTIME_ENV[OCOMP_PROTOCOL_BUNDLE_HASH]}" \
+        --supervisor-address "${RUNTIME_ENV[OCOMP_SUPERVISOR_ADDRESS]}"
+  STARTED_WORKER_THIS_RUN=$START_ROLE_LAUNCHED
 }
 
 start_supervisor() {
@@ -522,11 +414,11 @@ start_supervisor() {
       OCOMP_GENESIS_HASH="${RUNTIME_ENV[OCOMP_GENESIS_HASH]}" \
       OCOMP_BOOT_NONCE="${RUNTIME_ENV[OCOMP_BOOT_NONCE]}" \
       OCOMP_PROTOCOL_BUNDLE_HASH="${RUNTIME_ENV[OCOMP_PROTOCOL_BUNDLE_HASH]}" \
-      OCOMP_SESSION_GENERATION="${RUNTIME_ENV[OCOMP_SESSION_GENERATION]}" \
+      OCOMP_REGISTRY_GENERATION="${RUNTIME_ENV[OCOMP_REGISTRY_GENERATION]}" \
       OUTBE_OCOMP_BASE_PATH="${RUNTIME_ENV[OUTBE_OCOMP_BASE_PATH]}" \
-      OUTBE_OCOMP_NODE_USER="${RUNTIME_ENV[OUTBE_OCOMP_NODE_USER]}" \
       OUTBE_OCOMP_RPC_URL="${RUNTIME_ENV[OUTBE_OCOMP_RPC_URL]}" \
-      "$OCOMP_BINARY" supervisor
+      "$OCOMP_BINARY" supervisor \
+        --supervisor-address "${RUNTIME_ENV[OCOMP_SUPERVISOR_ADDRESS]}"
   STARTED_SUPERVISOR_THIS_RUN=$START_ROLE_LAUNCHED
 }
 
@@ -543,11 +435,11 @@ start_exporter() {
       OCOMP_GENESIS_HASH="${RUNTIME_ENV[OCOMP_GENESIS_HASH]}" \
       OCOMP_BOOT_NONCE="${RUNTIME_ENV[OCOMP_BOOT_NONCE]}" \
       OCOMP_PROTOCOL_BUNDLE_HASH="${RUNTIME_ENV[OCOMP_PROTOCOL_BUNDLE_HASH]}" \
-      OCOMP_SESSION_GENERATION="${RUNTIME_ENV[OCOMP_SESSION_GENERATION]}" \
+      OCOMP_REGISTRY_GENERATION="${RUNTIME_ENV[OCOMP_REGISTRY_GENERATION]}" \
       OUTBE_OCOMP_BASE_PATH="${RUNTIME_ENV[OUTBE_OCOMP_BASE_PATH]}" \
-      OUTBE_OCOMP_NODE_USER="${RUNTIME_ENV[OUTBE_OCOMP_NODE_USER]}" \
-      OUTBE_PROJECTION_MONGODB_URI="${RUNTIME_ENV[OUTBE_PROJECTION_MONGODB_URI]}" \
-      OUTBE_PROJECTION_MONGODB_DATABASE="${RUNTIME_ENV[OUTBE_PROJECTION_MONGODB_DATABASE]}" \
+      OUTBE_OCOMP_RPC_URL="${RUNTIME_ENV[OUTBE_OCOMP_RPC_URL]}" \
+      OUTBE_OCOMP_PROJECTION_MONGODB_URI="${RUNTIME_ENV[OUTBE_OCOMP_PROJECTION_MONGODB_URI]}" \
+      OUTBE_OCOMP_PROJECTION_MONGODB_DATABASE="${RUNTIME_ENV[OUTBE_OCOMP_PROJECTION_MONGODB_DATABASE]}" \
       "$OCOMP_BINARY" snapshot-exporter
   STARTED_EXPORTER_THIS_RUN=$START_ROLE_LAUNCHED
 }
@@ -571,15 +463,13 @@ start() {
       ((STARTED_EXPORTER_THIS_RUN == 0)) ||
         stop_pid "snapshot exporter" "$EXPORTER_USER" "$OCOMP_BINARY snapshot-exporter" "$EXPORTER_PID"
       ((STARTED_WORKER_THIS_RUN == 0)) ||
-        stop_pid "worker socket activator" "$WORKER_USER" "systemd-socket-activate" "$WORKER_ACTIVATOR_PID"
-      rm -f "$WORKER_SOCKET"
-      restore_runtime_permissions 2>/dev/null || true
+        stop_pid "worker" "$WORKER_USER" "$OCOMP_BINARY worker" "$WORKER_PID"
     fi
     exit "$exit_code"
   }
   trap rollback_start EXIT
 
-  start_worker_activator
+  start_worker
   start_exporter
   start_supervisor
   sleep 1
@@ -632,12 +522,7 @@ stop() {
   acquire_lifecycle_lock
   stop_pid "supervisor" "$SUPERVISOR_USER" "$OCOMP_BINARY supervisor" "$SUPERVISOR_PID"
   stop_pid "snapshot exporter" "$EXPORTER_USER" "$OCOMP_BINARY snapshot-exporter" "$EXPORTER_PID"
-  stop_pid \
-    "worker socket activator" \
-    "$WORKER_USER" \
-    "systemd-socket-activate" \
-    "$WORKER_ACTIVATOR_PID"
-  rm -f "$WORKER_SOCKET"
+  stop_pid "worker" "$WORKER_USER" "$OCOMP_BINARY worker" "$WORKER_PID"
 }
 
 role_status() {
@@ -653,21 +538,9 @@ role_status() {
 
 status() {
   local failed=0
-  role_status "worker socket activator" "$WORKER_ACTIVATOR_PID" || failed=1
+  role_status "worker" "$WORKER_PID" || failed=1
   role_status "snapshot exporter" "$EXPORTER_PID" || failed=1
   role_status "supervisor" "$SUPERVISOR_PID" || failed=1
-  [[ -S "$WORKER_SOCKET" ]] || {
-    echo "missing  $WORKER_SOCKET"
-    failed=1
-  }
-  [[ -S "$NODE_SUPERVISOR_SOCKET" ]] || {
-    echo "missing  $NODE_SUPERVISOR_SOCKET"
-    failed=1
-  }
-  [[ -S "$NODE_EXPORTER_SOCKET" ]] || {
-    echo "missing  $NODE_EXPORTER_SOCKET"
-    failed=1
-  }
   return "$failed"
 }
 
@@ -682,15 +555,15 @@ Usage: sudo $0 <command>
 
 Commands:
   install   Create the fixed OCOMP users, groups and data directories.
-  start     Start worker activation, snapshot exporter and supervisor.
+  start     Start worker, snapshot exporter and supervisor.
   stop      Stop all standalone OCOMP processes.
   restart   Stop and start all standalone OCOMP processes.
-  status    Show process and socket status.
+  status    Show standalone OCOMP process status.
   logs      Follow supervisor, exporter and worker logs.
 
-This launcher does not start outbe-chain. Start the node first as '$NODE_USER'
-with the complete --ocomp.* configuration and matching values from:
-  $OCOMP_ENV_FILE
+This launcher does not start outbe-chain. Start a node with JSON-RPC enabled and
+configure its URL in $OCOMP_ENV_FILE. Configure the exporter projection in:
+  $OCOMP_EXPORT_ENV_FILE
 EOF
 }
 

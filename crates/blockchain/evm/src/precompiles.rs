@@ -562,6 +562,7 @@ where
         outbe_metadosis::commands::submit_verified_result_vote(
             storage,
             execution_scope.as_ref(),
+            caller,
             data.as_ref(),
             value,
             is_static,

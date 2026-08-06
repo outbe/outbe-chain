@@ -849,7 +849,6 @@ fn run_node() -> eyre::Result<()> {
                         projection_readiness,
                         finalized_ce_committer,
                         ce_startup_recovery,
-                        compressed_tree_service,
                     ),
                 ) => {
                     if let Err(e) = &result {

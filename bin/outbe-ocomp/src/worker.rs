@@ -1,9 +1,11 @@
-//! One socket-activated process handles one immutable work-unit request.
+//! HTTP-polling worker for immutable one-unit requests.
 
 use std::collections::BTreeMap;
-use std::os::fd::{FromRawFd, OwnedFd, RawFd};
-use std::os::unix::net::UnixStream;
+use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 
 use alloy_primitives::{B256, U256};
 use outbe_common::WorldwideDay;
@@ -55,35 +57,40 @@ use outbe_ocomp_protocol::{
 };
 use outbe_ocomp_protocol::{
     verify_ordered_list_membership, ListKind, ObjectKind, RunUnitV1, SchemaLimits,
-    UnitFinishedStatus, UnitFinishedV1, WorkerMessageKind,
+    UnitFinishedStatus, UnitFinishedV1,
 };
 use outbe_oracle::{evaluate_oracle_opening_v1, OracleOpeningEvaluationError};
 use thiserror::Error;
 
 use crate::bundle::PinnedProtocolBundle;
 use crate::cas::{CasError, CasLimits, FilesystemCasReader};
-use crate::control::{
-    poc_schema_limits, require_effective_uid, ControlError, ControlServerSession, EndpointIdentity,
-    ServerPolicy,
-};
+use crate::control::{poc_schema_limits, require_effective_uid, ControlError, EndpointIdentity};
 use crate::inbox::{WorkerInbox, WorkerInboxError, WorkerInboxLimits};
 use crate::input_artifacts::{
     decode_fidelity_subject_key, decode_oracle_subject_key, decode_verified_input_chunk,
     derive_input_chunk_ref, InputArtifactError,
 };
 use crate::lysis_phase_replay::{replay_output_finalize_artifact, LysisPhaseReplayError};
+use crate::worker_http::{
+    WorkLeaseV1, WorkerClaimV1, WorkerCompletionV1, WorkerLeaseRefV1, WorkerRegistrationResponseV1,
+    WorkerRegistrationV1,
+};
+
+const SUPERVISOR_RECONNECT_DELAY: Duration = Duration::from_secs(1);
+const WORKER_CLAIM_POLL_DELAY: Duration = Duration::from_millis(100);
+const WORKER_HTTP_TIMEOUT: Duration = Duration::from_secs(10);
+const WORKER_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
+const WORKER_HEARTBEAT_POLL: Duration = Duration::from_millis(100);
 
 #[derive(Clone, Debug)]
 pub struct WorkerConfig {
     pub expected_effective_uid: u32,
-    pub expected_supervisor_uid: u32,
     pub identity: EndpointIdentity,
-    pub session_generation: u64,
+    pub supervisor_address: SocketAddr,
     pub cas_root: PathBuf,
     pub cas_limits: CasLimits,
     pub inbox_root: PathBuf,
     pub inbox_limits: WorkerInboxLimits,
-    pub connection_fd: RawFd,
     pub protocol_bundle: PinnedProtocolBundle,
 }
 
@@ -125,10 +132,12 @@ pub enum WorkerError {
     Cas(#[from] CasError),
     #[error("worker request is not valid OCOMP protocol: {0}")]
     Protocol(#[from] outbe_ocomp_protocol::ProtocolError),
-    #[error("worker inherited descriptor {0} is not a valid connected socket")]
-    InvalidInheritedDescriptor(RawFd),
-    #[error("worker received message kind {actual:#06x}, expected RunUnitV1")]
-    UnexpectedMessage { actual: u16 },
+    #[error("worker Supervisor address {0} is not a nonzero loopback HTTP endpoint")]
+    InvalidSupervisorAddress(SocketAddr),
+    #[error("worker HTTP request failed: {0}")]
+    Http(#[from] reqwest::Error),
+    #[error("Supervisor worker HTTP endpoint returned {status}: {body}")]
+    SupervisorHttp { status: u16, body: String },
     #[error("worker request binding does not match its canonical UnitSpecV1")]
     UnitBindingMismatch,
     #[error("worker request carries the reserved zero plan hash")]
@@ -153,32 +162,189 @@ pub enum WorkerError {
     UnsupportedPhase(UnitPhase),
 }
 
-pub fn run_one_from_inherited_fd(config: WorkerConfig) -> Result<WorkerOutcome, WorkerError> {
+pub fn run_worker(config: WorkerConfig) -> Result<(), WorkerError> {
     require_effective_uid(config.expected_effective_uid)?;
     if config.protocol_bundle.hash() != config.identity.protocol_bundle_hash {
         return Err(WorkerError::BundleIdentityMismatch);
     }
-    let stream = duplicate_connected_stream(config.connection_fd)?;
+    if !config.supervisor_address.ip().is_loopback() || config.supervisor_address.port() == 0 {
+        return Err(WorkerError::InvalidSupervisorAddress(
+            config.supervisor_address,
+        ));
+    }
+    let client = reqwest::blocking::Client::builder()
+        .timeout(WORKER_HTTP_TIMEOUT)
+        .build()?;
+    loop {
+        if let Err(error) = run_registered_http_loop(&config, &client) {
+            eprintln!("OCOMP worker HTTP session retry: {error}");
+        }
+        std::thread::sleep(SUPERVISOR_RECONNECT_DELAY);
+    }
+}
+
+fn run_registered_http_loop(
+    config: &WorkerConfig,
+    client: &reqwest::blocking::Client,
+) -> Result<(), WorkerError> {
+    let limits = poc_schema_limits();
+    let base_url = format!("http://{}", config.supervisor_address);
+    let registration: WorkerRegistrationResponseV1 = decode_success(
+        client
+            .post(format!("{base_url}/v1/workers/register"))
+            .json(&WorkerRegistrationV1::from_identity(
+                config.identity,
+                limits,
+            ))
+            .send()?,
+    )?;
+    loop {
+        let response = client
+            .post(format!("{base_url}/v1/workers/claim"))
+            .json(&WorkerClaimV1 {
+                worker_id: registration.worker_id.clone(),
+            })
+            .send()?;
+        if response.status() == reqwest::StatusCode::NO_CONTENT {
+            std::thread::sleep(WORKER_CLAIM_POLL_DELAY);
+            continue;
+        }
+        let lease: WorkLeaseV1 = decode_success(response)?;
+        run_one_http_lease(config, client, &base_url, lease, &limits)?;
+    }
+}
+
+fn run_one_http_lease(
+    config: &WorkerConfig,
+    client: &reqwest::blocking::Client,
+    base_url: &str,
+    lease: WorkLeaseV1,
+    limits: &SchemaLimits,
+) -> Result<(), WorkerError> {
+    let lease_ref = WorkerLeaseRefV1 {
+        worker_id: lease.worker_id.clone(),
+        lease_id: lease.lease_id.clone(),
+        unit_id: lease.unit_id.clone(),
+    };
+    let unit_id = lease
+        .unit_id
+        .parse::<B256>()
+        .map_err(|_| WorkerError::UnitBindingMismatch)?;
+    require_success(
+        client
+            .post(format!("{base_url}/v1/workers/accepted"))
+            .json(&lease_ref)
+            .send()?,
+    )?;
+    let stop_heartbeat = Arc::new(AtomicBool::new(false));
+    let heartbeat = spawn_heartbeat(
+        client.clone(),
+        base_url.to_owned(),
+        lease_ref.clone(),
+        Arc::clone(&stop_heartbeat),
+    );
+    let finished = (|| {
+        let body =
+            hex::decode(&lease.run_unit_body_hex).map_err(|_| WorkerError::UnitBindingMismatch)?;
+        let request = RunUnitV1::decode_body(&body, limits)?;
+        execute_claimed_unit(config, &request)
+    })();
+    stop_heartbeat.store(true, Ordering::Release);
+    let _ = heartbeat.join();
+    let finished = terminal_completion(unit_id, &lease.lease_id, finished);
+    let finished_body = finished.encode_body(limits)?;
+    require_success(
+        client
+            .post(format!("{base_url}/v1/workers/complete"))
+            .json(&WorkerCompletionV1 {
+                worker_id: lease.worker_id,
+                lease_id: lease.lease_id,
+                unit_id: lease.unit_id,
+                finished_body_hex: hex::encode(finished_body),
+            })
+            .send()?,
+    )
+}
+
+fn failed_completion(unit_id: B256) -> UnitFinishedV1 {
+    UnitFinishedV1 {
+        unit_id,
+        status: UnitFinishedStatus::Failed,
+        exact_staged_bytes: 0,
+        transport_digest: B256::ZERO,
+    }
+}
+
+fn terminal_completion(
+    unit_id: B256,
+    lease_id: &str,
+    result: Result<UnitFinishedV1, WorkerError>,
+) -> UnitFinishedV1 {
+    match result {
+        Ok(finished) => finished,
+        Err(error) => {
+            eprintln!(
+                "OCOMP worker reports terminal failure for accepted lease {lease_id}: {error}"
+            );
+            failed_completion(unit_id)
+        }
+    }
+}
+
+fn spawn_heartbeat(
+    client: reqwest::blocking::Client,
+    base_url: String,
+    lease: WorkerLeaseRefV1,
+    stop: Arc<AtomicBool>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        let mut elapsed = Duration::ZERO;
+        while !stop.load(Ordering::Acquire) {
+            std::thread::sleep(WORKER_HEARTBEAT_POLL);
+            elapsed += WORKER_HEARTBEAT_POLL;
+            if elapsed < WORKER_HEARTBEAT_INTERVAL || stop.load(Ordering::Acquire) {
+                continue;
+            }
+            elapsed = Duration::ZERO;
+            let _ = client
+                .post(format!("{base_url}/v1/workers/heartbeat"))
+                .json(&lease)
+                .send();
+        }
+    })
+}
+
+fn decode_success<T: serde::de::DeserializeOwned>(
+    response: reqwest::blocking::Response,
+) -> Result<T, WorkerError> {
+    let status = response.status();
+    if status.is_success() {
+        return Ok(response.json()?);
+    }
+    Err(WorkerError::SupervisorHttp {
+        status: status.as_u16(),
+        body: response.text().unwrap_or_default(),
+    })
+}
+
+fn require_success(response: reqwest::blocking::Response) -> Result<(), WorkerError> {
+    let status = response.status();
+    if status.is_success() {
+        return Ok(());
+    }
+    Err(WorkerError::SupervisorHttp {
+        status: status.as_u16(),
+        body: response.text().unwrap_or_default(),
+    })
+}
+
+fn execute_claimed_unit(
+    config: &WorkerConfig,
+    request: &RunUnitV1,
+) -> Result<UnitFinishedV1, WorkerError> {
     let reader = FilesystemCasReader::open(&config.cas_root, config.cas_limits)?;
     let inbox = WorkerInbox::open(&config.inbox_root, config.inbox_limits)?;
     let limits = poc_schema_limits();
-    let mut session = ControlServerSession::accept(
-        stream,
-        ServerPolicy::worker(
-            config.expected_supervisor_uid,
-            config.identity,
-            config.session_generation,
-            limits,
-        ),
-    )?;
-    session.handshake()?;
-    let frame = session.receive_request()?;
-    if frame.message_kind != WorkerMessageKind::RunUnit as u16 {
-        return Err(WorkerError::UnexpectedMessage {
-            actual: frame.message_kind,
-        });
-    }
-    let request = RunUnitV1::decode_body(&frame.body, &limits)?;
     if request.protocol_bundle_hash != config.identity.protocol_bundle_hash {
         return Err(WorkerError::UnitBindingMismatch);
     }
@@ -298,12 +464,7 @@ pub fn run_one_from_inherited_fd(config: WorkerConfig) -> Result<WorkerOutcome, 
             transport_digest: B256::ZERO,
         },
     };
-    session.send_response(
-        frame.request_id,
-        WorkerMessageKind::UnitFinished as u16,
-        finished.encode_body(&limits)?,
-    )?;
-    Ok(WorkerOutcome { unit_id })
+    Ok(finished)
 }
 
 pub(crate) fn execute_unit(
@@ -2492,19 +2653,6 @@ fn require_authenticated_input(
     }
 }
 
-#[allow(unsafe_code)]
-fn duplicate_connected_stream(fd: RawFd) -> Result<UnixStream, WorkerError> {
-    // SAFETY: `fcntl(F_DUPFD_CLOEXEC)` does not take ownership of `fd`; on
-    // success it returns a fresh descriptor which is immediately wrapped.
-    let duplicated = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 3) };
-    if duplicated < 0 {
-        return Err(WorkerError::InvalidInheritedDescriptor(fd));
-    }
-    // SAFETY: `duplicated` is a fresh descriptor owned by this function.
-    let owned = unsafe { OwnedFd::from_raw_fd(duplicated) };
-    Ok(UnixStream::from(owned))
-}
-
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256};
@@ -2518,8 +2666,22 @@ mod tests {
     use super::{
         poc_schema_limits, require_complete_root_values, require_plan_binding,
         require_root_reduce_finalized_binding, require_root_reduce_shuffle_population,
-        ExpectedPlanBindingsV1,
+        terminal_completion, ExpectedPlanBindingsV1, WorkerError,
     };
+
+    #[test]
+    fn accepted_lease_pre_execution_error_becomes_terminal_failure() {
+        let unit_id = B256::repeat_byte(0xA5);
+        let finished =
+            terminal_completion(unit_id, "test-lease", Err(WorkerError::UnitBindingMismatch));
+        assert_eq!(finished.unit_id, unit_id);
+        assert_eq!(
+            finished.status,
+            outbe_ocomp_protocol::UnitFinishedStatus::Failed
+        );
+        assert_eq!(finished.exact_staged_bytes, 0);
+        assert_eq!(finished.transport_digest, B256::ZERO);
+    }
 
     fn plan() -> PlanCommitmentV1 {
         PlanCommitmentV1 {
