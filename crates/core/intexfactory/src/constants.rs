@@ -9,11 +9,22 @@ use alloy_primitives::{address, Address};
 
 /// IntexNFT1155 on Outbe (balance ledger: settle / burnSettled / balanceOf).
 /// CREATE3 proxy, salt "outbe-intex:IntexNFT1155:v2.0.0".
+#[cfg(not(feature = "e2e-test"))]
 pub const INTEX_NFT1155_ADDRESS: Address = address!("0x4Ccbc413a5f159Da316178F8b7576C923b4D1e5d");
+
+/// Same proxy under salt "outbe-intex:IntexNFT1155:e2e-test", deployed by the well-known
+/// anvil account so a throwaway chain needs no production key.
+#[cfg(feature = "e2e-test")]
+pub const INTEX_NFT1155_ADDRESS: Address = address!("0x671cB5f90CA40A601F248615204699A826dbFd0d");
 
 /// OriginRouter on Outbe (outbound ERC-7786 sends).
 /// CREATE3 proxy, salt "outbe-intex:OriginRouter:v2.0.0".
+#[cfg(not(feature = "e2e-test"))]
 pub const ORIGIN_ROUTER_ADDRESS: Address = address!("0x67129C422bDC2c8984DbF381B6ec4515fE2BbD29");
+
+/// Same proxy under salt "outbe-intex:OriginRouter:e2e-test".
+#[cfg(feature = "e2e-test")]
+pub const ORIGIN_ROUTER_ADDRESS: Address = address!("0x6Dda31E7211c31dB8E5AF24c780Cb34526d8411E");
 
 /// minePromis PoW difficulty: required leading zero bytes of the work hash.
 pub const POW_DIFFICULTY: usize = 1;
