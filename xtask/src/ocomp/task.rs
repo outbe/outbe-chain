@@ -2203,7 +2203,9 @@ pub fn run_lane(repository_root: &Path, lane: &str, requested_output: Option<&Pa
             &E2E_SCENARIO_TAGS,
             true,
         )?,
-        _ => bail!("unsupported exact OCOMP execution lane {lane}"),
+        _ => {
+            bail!("unsupported exact OCOMP execution lane {lane}");
+        }
     }
     run_evidence_binary(
         repository_root,
@@ -2599,7 +2601,7 @@ fn run_evidence_binary(
             status
                 .code()
                 .map_or_else(|| "signal".to_owned(), |code| code.to_string())
-        )
+        );
     }
 }
 
@@ -2647,7 +2649,7 @@ fn require_success(status: ExitStatus, arguments: &[&str]) -> Result<()> {
             status
                 .code()
                 .map_or_else(|| "signal".to_owned(), |code| code.to_string())
-        )
+        );
     }
 }
 
