@@ -248,43 +248,6 @@ impl Localnet {
         ]
     }
 
-    /// Node-side OCOMP profile shared by genesis validators and validators
-    /// promoted later through the canonical activation boundary.
-    #[cfg(feature = "ocomp-integration")]
-    fn ocomp_validator_args(
-        &self,
-        validator_index: usize,
-        protocol_bundle_hash: &str,
-        effective_uid: u32,
-    ) -> Result<Vec<String>> {
-        let boot_nonce_byte = u8::try_from(validator_index + 1)?;
-        let domain = self
-            .cfg
-            .validator_dir(validator_index)
-            .join("ocomp")
-            .join("domain-v1");
-        Ok(args![
-            "--ocomp.supervisor-socket",
-            self.cfg.ocomp_supervisor_socket(validator_index).display(),
-            "--ocomp.snapshot-exporter-socket",
-            self.cfg
-                .ocomp_snapshot_exporter_socket(validator_index)
-                .display(),
-            "--ocomp.supervisor-uid",
-            effective_uid,
-            "--ocomp.snapshot-exporter-uid",
-            effective_uid,
-            "--ocomp.protocol-bundle-hash",
-            protocol_bundle_hash,
-            "--ocomp.boot-nonce",
-            format!("0x{}", hex::encode([boot_nonce_byte; 32])),
-            "--ocomp.session-generation",
-            1_u64,
-            "--ocomp.key",
-            domain.join("ocomp-key-v1.hex").display(),
-        ])
-    }
-
     /// Comma-joined reth bootnodes from `reth-bootnodes.txt` (comments stripped).
     fn bootnodes(&self) -> Option<String> {
         let raw = fs::read_to_string(self.cfg.dir.join("reth-bootnodes.txt")).ok()?;
@@ -522,30 +485,6 @@ mod tests {
             .map(|pair| pair[1].as_str());
 
         assert_eq!(cache_size, Some("512"));
-    }
-
-    #[test]
-    fn promoted_joiner_uses_the_same_ocomp_node_profile_as_genesis_validators() {
-        let env = Environment::default();
-        env.ports
-            .start_scenario(env.validators)
-            .expect("allocate deterministic scenario ports");
-        let localnet = Localnet::new(Config::for_scenario(&env, 1));
-
-        let args = localnet.ocomp_validator_args(4, "0xbundle", 1_000).unwrap();
-
-        for required in [
-            "--ocomp.supervisor-socket",
-            "--ocomp.snapshot-exporter-socket",
-            "--ocomp.protocol-bundle-hash",
-            "--ocomp.key",
-        ] {
-            assert!(args.iter().any(|arg| arg == required), "{required}");
-        }
-        assert!(args
-            .windows(2)
-            .any(|pair| pair == ["--ocomp.protocol-bundle-hash", "0xbundle"]));
-        assert!(!args.iter().any(|arg| arg == "--ocomp.validator-index"));
     }
 
     /// Both layouts, and nothing else — in particular not `validator-*/data`.

@@ -3,8 +3,6 @@
 //! `e2e_provision_joiner` / `e2e_launch_joiner`.
 
 use std::fs;
-#[cfg(feature = "ocomp-integration")]
-use std::os::unix::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -412,17 +410,6 @@ impl Localnet {
             dkg_output.display(),
         ]);
         self.extend_real_sgx_startup_timeout(&mut a);
-        #[cfg(feature = "ocomp-integration")]
-        {
-            if let Some(protocol_bundle_hash) =
-                self.start_opts.ocomp_protocol_bundle_hash.as_deref()
-            {
-                fs::create_dir_all(vd.join("ocomp").join("domain-v1"))?;
-                fs::create_dir_all(self.cfg.ocomp_socket_dir(index))?;
-                let effective_uid = fs::metadata("/proc/self")?.uid();
-                a.extend(self.ocomp_validator_args(index, protocol_bundle_hash, effective_uid)?);
-            }
-        }
         a.extend(extra.iter().map(|s| s.to_string()));
 
         let mut cmd = Command::new(&self.cfg.bin_chain);
