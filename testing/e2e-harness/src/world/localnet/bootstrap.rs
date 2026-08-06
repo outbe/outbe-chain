@@ -52,7 +52,7 @@ impl Localnet {
     /// `GramineDirectDev` chains. The product binary constructs and validates the
     /// policy bytes; the harness never reimplements its codec.
     pub(crate) fn bind_tee_genesis(&self) -> Result<()> {
-        self.ensure_real_lane_ocomp_genesis()?;
+        self.ensure_ocomp_genesis()?;
         let genesis = self.cfg.dir.join("genesis.json");
         let value: serde_json::Value = serde_json::from_slice(&fs::read(&genesis)?)?;
         if value
@@ -121,13 +121,10 @@ impl Localnet {
     /// every network. Build that independent prerequisite with the product
     /// tooling before binding the hardware TEE policy; the DCAP harness does
     /// not reproduce either OCOMP's canonical codec or its signatures.
-    fn ensure_real_lane_ocomp_genesis(&self) -> Result<()> {
-        if !matches!(self.cfg.tee_mode, TeeMode::Real) {
-            return Ok(());
-        }
+    fn ensure_ocomp_genesis(&self) -> Result<()> {
         eyre::ensure!(
             self.committee_size() > 0,
-            "real DcapRequired E2E requires validators"
+            "LocalNet OCOMP genesis requires validators"
         );
 
         let genesis = self.cfg.dir.join("genesis.json");
@@ -427,7 +424,10 @@ impl Localnet {
     /// DKG params from `tuning`) plus a pre-funded `alloc` of each validator
     /// address (`bootstrap-testnet.sh:133-203`).
     fn write_genesis(&self, tuning: &[(&str, String)]) -> Result<()> {
-        let epoch = tuned(tuning, "TESTNET_EPOCH_LENGTH_BLOCKS", 120);
+        // OCOMP retains committee snapshots for a bounded number of epochs.
+        // The default must cover one complete result-vote window; 120 blocks
+        // was accepted before OCOMP became mandatory but is now invalid.
+        let epoch = tuned(tuning, "TESTNET_EPOCH_LENGTH_BLOCKS", 300);
         let dkg_prepare = tuned(tuning, "TESTNET_DKG_PREPARE_WINDOW_BLOCKS", 30);
         let dkg_grace = tuned(tuning, "TESTNET_DKG_ACTIVATION_GRACE_BLOCKS", 30);
         let validator_balance = validator_balance_hex(tuning);
@@ -528,7 +528,7 @@ impl Localnet {
     /// Lower the SlashIndicator felony thresholds so downtime slashing triggers
     /// within the short dev epoch (`bootstrap-testnet.sh:228-253`).
     fn patch_felony(&self, tuning: &[(&str, String)]) -> Result<()> {
-        let epoch = tuned(tuning, "TESTNET_EPOCH_LENGTH_BLOCKS", 120);
+        let epoch = tuned(tuning, "TESTNET_EPOCH_LENGTH_BLOCKS", 300);
         let felony_threshold = tuned(tuning, "TESTNET_DEV_FELONY_THRESHOLD", DEV_FELONY_THRESHOLD);
         if felony_threshold >= epoch {
             bail!("dev felony threshold {felony_threshold} must be < epoch length {epoch}");
