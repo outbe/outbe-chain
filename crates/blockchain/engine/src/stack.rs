@@ -3239,13 +3239,12 @@ where
                             )
                         }
                         outbe_primitives::tee_attestation_v1::AttestationMode::GramineDirectDev => {
-                            let development = outbe_tee::EnclaveClient::connect_endpoint(
-                                &endpoint,
-                                &outbe_tee::QuotePolicy::dev_accept_any(),
-                            )
-                            .map_err(|error| {
-                                eyre::eyre!("GramineDirectDev enclave reconnect failed: {error}")
-                            })?;
+                            let development = outbe_tee::EnclaveClient::connect_endpoint(&endpoint)
+                                .map_err(|error| {
+                                    eyre::eyre!(
+                                        "GramineDirectDev enclave reconnect failed: {error}"
+                                    )
+                                })?;
                             (
                                 outbe_tee::RuntimeEnclaveClient::Development(Box::new(development)),
                                 None,
@@ -3392,11 +3391,7 @@ where
                 }
                 outbe_primitives::tee_attestation_v1::AttestationMode::GramineDirectDev => {
                     outbe_tee::RuntimeEnclaveClient::Development(Box::new(
-                        outbe_tee::EnclaveClient::connect_endpoint(
-                            endpoint,
-                            &outbe_tee::QuotePolicy::dev_accept_any(),
-                        )
-                        .map_err(|error| {
+                        outbe_tee::EnclaveClient::connect_endpoint(endpoint).map_err(|error| {
                             eyre::eyre!("GramineDirectDev enclave reconnect failed: {error}")
                         })?,
                     ))

@@ -29,8 +29,8 @@ pub const BOOTSTRAP_DURATION_HOURS: u64 = 504;
 /// Bootstrap lookback delay: 0 hours.
 pub const BOOTSTRAP_LOOKBACK_DELAY_HOURS: u64 = 0;
 
-/// Bootstrap offering period: 48 hours.
-pub const BOOTSTRAP_OFFERING_PERIOD_HOURS: u64 = 48;
+/// Bootstrap offering period: 50 hours.
+pub const BOOTSTRAP_OFFERING_PERIOD_HOURS: u64 = 50;
 
 const NORMAL_PIPELINE_HOURS: u64 =
     FORMING_PERIOD_HOURS + LOOKBACK_DELAY_HOURS + OFFERING_PERIOD_HOURS + WAITING_PERIOD_HOURS;

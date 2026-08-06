@@ -1,8 +1,8 @@
 //! Host-side TEE enclave client for tribute-offer decryption.
 //!
 //! When the node is started with `--tee-enclave-socket`, [`init_enclave_client`]
-//! connects to the enclave sidecar (attesting its quote + pinning its Noise-IK
-//! static key) and installs a process-global client. Every offer decryption then
+//! connects to the enclave sidecar (validating quote/key bindings and pinning its
+//! Noise-IK static key) and installs a process-global client. Every offer decryption then
 //! routes through the enclave via [`process_tribute_offer_batch_via_enclave`] — the offer
 //! key exists only inside the enclave, and there is no in-process key path. The L1↔L2 linkage
 //! (`creator`, `tribute_draft_id`) is parsed
@@ -22,7 +22,7 @@ use alloy_primitives::B256;
 use outbe_tee::protocol::{
     EnclaveRequest, EnclaveResponse, EncryptedTributeOffer, TributeOfferResult,
 };
-use outbe_tee::{verify_tribute_offer_attestation, EnclaveClient, QuotePolicy};
+use outbe_tee::{verify_tribute_offer_attestation, EnclaveClient};
 
 /// True once an enclave client is installed. Offers always route through the
 /// enclave (single path); when no client is configured, `offerTribute` reverts
@@ -32,21 +32,17 @@ pub fn is_enclave_configured() -> bool {
     outbe_tee::is_enclave_configured()
 }
 
-/// Connect to the enclave sidecar at `socket` under the host attestation
-/// `policy`, verify it answers an encrypted request, and install the global
-/// offer-decryption client. Called once at node startup. `policy` is built from
-/// the genesis `teePolicy`: a configured policy strictly verifies the
-/// enclave's DCAP quote (measurement allowlist + signature) on hardware, while an
-/// empty/dev policy accepts an unattested `gramine-direct` enclave (still
-/// enforcing the REPORT_DATA key binding). This brings the offer-decrypt connect
-/// to parity with the consensus DKG/bootstrap connect sites.
-pub fn init_enclave_client(socket: &Path, policy: &QuotePolicy) -> eyre::Result<()> {
+/// Connect to the enclave sidecar at `socket`, validate its structural key
+/// bindings, verify it answers an encrypted request, and install the global
+/// offer-decryption client. Production enclave identity and DCAP admission are
+/// enforced by the authorized manifest and enclave-resident native QVL paths.
+pub fn init_enclave_client(socket: &Path) -> eyre::Result<()> {
     // A `host:port` endpoint connects over TCP (enclave under Gramine); a path
     // connects over the Unix domain socket (native sidecar).
     let endpoint = socket
         .to_str()
         .ok_or_else(|| eyre::eyre!("TEE enclave endpoint is not valid UTF-8"))?;
-    let mut client = EnclaveClient::connect_endpoint(endpoint, policy)
+    let mut client = EnclaveClient::connect_endpoint(endpoint)
         .map_err(|e| eyre::eyre!("TEE enclave connect at {} failed: {e}", socket.display()))?;
     // Verify the encrypted channel works before installing the client.
     match client.request(&EnclaveRequest::GetPublicKeys) {
@@ -58,24 +54,20 @@ pub fn init_enclave_client(socket: &Path, policy: &QuotePolicy) -> eyre::Result<
         }
         Err(e) => return Err(eyre::eyre!("enclave GetPublicKeys failed: {e}")),
     }
-    // Report the real attestation status (derived from the enclave's quote), not
-    // a hardcoded assumption: a real SGX quote yields non-zero measurements;
-    // gramine-direct/bare yields an unattested enclave accepted only by the dev
-    // policy. NOTE: with the dev policy an unattested enclave IS accepted — this
-    // log is the operator's signal that the deployment is not confidential.
+    // Report the enclave's declared attestation mode. This connect-time path does
+    // not verify DCAP; production admission is enforced by native QVL + TeeRegistry.
     let mode = client.attestation_label();
     if client.is_hardware_attested() {
         let (mrenclave, mrsigner, isv_svn) = client.measurements();
         tracing::info!(
             attestation = %mode, %mrenclave, %mrsigner, isv_svn,
-            "TEE enclave is SGX hardware-attested (real DCAP quote)"
+            "TEE enclave reports SGX/DCAP quote metadata; connect-time validation is structural only"
         );
     } else {
         tracing::warn!(
             attestation = %mode,
-            "TEE enclave is UNATTESTED: mode is `{mode}`, so the enclave produced no \
-             SGX quote and attestation CANNOT be verified — accepted under the dev policy. \
-             NOT confidential. Use gramine-sgx + a strict QuotePolicy for production."
+            "TEE enclave is UNATTESTED: mode is `{mode}`; this development connection \
+             provides no SGX confidentiality or DCAP admission"
         );
     }
     outbe_tee::install_enclave_client(client).map_err(|e| eyre::eyre!(e))?;
@@ -91,15 +83,15 @@ pub fn init_enclave_client(socket: &Path, policy: &QuotePolicy) -> eyre::Result<
 /// compares it to the enclave's — a mismatch is enclave non-determinism
 /// (`tee_enclave_nondeterminism`). It then verifies the per-offer `attestation_tag`
 /// (an Ed25519 signature over the inputs hash + results) against the attestation
-/// key pinned from the enclave's quote, proving the results were produced inside
-/// the attested enclave (`tee_offer_attestation_invalid` on failure); the tag is
+/// key pinned for the enclave session, binding the results to that peer
+/// (`tee_offer_attestation_invalid` on failure); the tag is
 /// then discarded (never written to chain state). Both checks live in
 /// [`validate_tribute_offer_batch_response`] so they are unit-testable without a sidecar.
 pub fn process_tribute_offer_batch_via_enclave(
     offers: &[EncryptedTributeOffer],
 ) -> eyre::Result<Vec<TributeOfferResult>> {
     // Route through the process-global enclave client (shared with the TEE registry
-    // seal). Pin the attestation key from this session's verified quote before the
+    // seal). Pin the attestation key from this authorized or structurally bound session before the
     // call. `None` means no client is configured → typed `tee_sidecar_unavailable`.
     let (attestation_pub, response) = outbe_tee::try_with_enclave(|client| {
         let attestation_pub = client.attestation_pub();
