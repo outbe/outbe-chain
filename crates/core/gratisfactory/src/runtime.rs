@@ -78,6 +78,7 @@ pub fn pledge_gratis(
     max_gratis: U256,
     auth: ModifyAuth,
 ) -> Result<(B256, U256)> {
+    // todo add asset validation and check if it is enought liquidity in the vaults
     if asset.is_zero() {
         return Err(GratisFactoryError::InvalidAsset.into());
     }

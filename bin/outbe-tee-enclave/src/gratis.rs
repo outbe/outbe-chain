@@ -178,9 +178,7 @@ pub fn decrypt_pledged(view_key: &[u8; 32], account: Address, blob: &[u8]) -> Re
 
 // --- Pledge record --------------------------------------------------------------
 
-/// The parked pledge: its owner plus the loan terms quoted at pledge time. Sealing the
-/// stables/asset/rate here — rather than re-quoting at `requestCredis` — is what makes
-/// the credis size the price the pledger actually accepted.
+/// The parked pledge: its owner plus the loan terms quoted at pledge time.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct PledgeLockTicket {
     stables_amount: U256,
