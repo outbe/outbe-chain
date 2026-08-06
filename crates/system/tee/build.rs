@@ -7,6 +7,10 @@ const PROJECT_TOOLCHAIN: &str = include_str!("../../../release/project-toolchain
 const NATIVE_QVL_MANIFEST: &str = include_str!("../../../release/dcap-native-qvl-v1.json");
 
 fn main() {
+    // Declared unconditionally so `cfg(native_qvl_linked)` is a known cfg even
+    // in builds that never reach the link path below.
+    println!("cargo::rustc-check-cfg=cfg(native_qvl_linked)");
+    println!("cargo:rerun-if-env-changed=OUTBE_NATIVE_DCAP");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_NATIVE_DCAP");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_NATIVE_DCAP_TEST_TRACE");
     println!("cargo:rerun-if-changed=../../../release/project-toolchain-v1.json");
@@ -31,9 +35,26 @@ fn main() {
     // there is nothing to link, so skip. The real enclave build runs on the
     // pinned target and takes the full verification path below.
     if target != expected_target {
-        println!(
-            "cargo:warning=outbe-tee: skipping native-dcap QVL link (host {target} != pinned {expected_target})"
-        );
+        skip_native_qvl_link(&format!("host {target} != pinned {expected_target}"));
+        return;
+    }
+
+    let build_inputs = qvl_manifest["build_inputs"]
+        .as_array()
+        .expect("native-QVL manifest must declare build_inputs");
+    let artifacts = qvl_manifest["artifacts"]
+        .as_array()
+        .expect("native-QVL manifest must declare artifacts");
+    // The exact-pinned Intel stack only exists on the SGX build image. CI
+    // lint/test runners and dev hosts have nothing to link, so skip; an
+    // installed-but-mismatched stack still fails hard below.
+    if let Some(missing) = build_inputs
+        .iter()
+        .chain(artifacts)
+        .filter_map(|entry| entry["path"].as_str())
+        .find(|path| !Path::new(path).exists())
+    {
+        skip_native_qvl_link(&format!("{missing} is not installed"));
         return;
     }
 
@@ -67,9 +88,6 @@ fn main() {
     std::fs::create_dir_all(&verified_intel_include_dir)
         .expect("create verified Intel QVL include directory");
     let mut verified_include_names = BTreeSet::new();
-    let build_inputs = qvl_manifest["build_inputs"]
-        .as_array()
-        .expect("native-QVL manifest must declare build_inputs");
     for build_input in build_inputs {
         let package = build_input["package"]
             .as_str()
@@ -108,9 +126,6 @@ fn main() {
         println!("cargo:rerun-if-changed={path}");
     }
 
-    let artifacts = qvl_manifest["artifacts"]
-        .as_array()
-        .expect("native-QVL manifest must declare artifacts");
     let mut qvl_library_dir = None;
     for artifact in artifacts {
         let package = artifact["package"]
@@ -162,6 +177,20 @@ fn main() {
         qvl_library_dir.display()
     );
     println!("cargo:rustc-link-lib=dylib=sgx_dcap_quoteverify");
+    println!("cargo:rustc-cfg=native_qvl_linked");
+}
+
+/// Leave `native_qvl_linked` unset: `verify_quote_native` then fails closed on
+/// every call instead of forcing the SGX toolchain onto hosts that never verify
+/// a quote. Builds that must carry the real QVL set `OUTBE_NATIVE_DCAP=require`.
+fn skip_native_qvl_link(reason: &str) {
+    assert!(
+        std::env::var("OUTBE_NATIVE_DCAP").as_deref() != Ok("require"),
+        "OUTBE_NATIVE_DCAP=require, but the pinned Intel native QVL cannot be linked: {reason}"
+    );
+    println!(
+        "cargo:warning=outbe-tee: skipping native-dcap QVL link ({reason}); native quote verification fails closed"
+    );
 }
 
 fn pinned_package_version<'a>(

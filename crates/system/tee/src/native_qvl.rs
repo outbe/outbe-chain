@@ -222,6 +222,7 @@ const _: () = {
     assert!(std::mem::offset_of!(RawResult, qe_status) == 520);
 };
 
+#[cfg(native_qvl_linked)]
 #[allow(unsafe_code)]
 unsafe extern "C" {
     fn outbe_qvl_verify_quote_v1(
@@ -277,6 +278,21 @@ pub fn verify_quote_native(
     }
 }
 
+/// Built without the exact-pinned Intel QVL (see `build.rs`): report the
+/// wrapper's unsupported-ABI status so every verification fails closed instead
+/// of requiring the SGX toolchain on hosts that never verify a quote.
+#[cfg(not(native_qvl_linked))]
+fn call_native(
+    _quote: &[u8],
+    _quote_size: u32,
+    _collateral: &RawCollateral,
+    _block_timestamp: i64,
+    _output: &mut RawResult,
+) -> c_int {
+    2
+}
+
+#[cfg(native_qvl_linked)]
 #[allow(unsafe_code)]
 fn call_native(
     quote: &[u8],

@@ -1,4 +1,4 @@
-#![cfg(all(feature = "native-dcap", target_arch = "x86_64", target_os = "linux"))]
+#![cfg(all(native_qvl_linked, target_arch = "x86_64", target_os = "linux"))]
 
 use outbe_tee::native_qvl::{verify_quote_native, NativeDcapCollateral, NativeQvlStatus};
 use serde::Deserialize;
