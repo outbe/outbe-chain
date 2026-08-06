@@ -1271,7 +1271,9 @@ impl OcompTopology {
         let mut manifest_changed = false;
         match config.get(outbe_node::ocomp::fork::OCOMP_FORK_INSTALL_GENESIS_KEY) {
             Some(existing) if existing == &manifest => {}
-            Some(_) => eyre::bail!("refusing to replace a different OCOMP fork install"),
+            Some(_) => {
+                eyre::bail!("refusing to replace a different OCOMP fork install");
+            }
             None => {
                 config.insert(
                     outbe_node::ocomp::fork::OCOMP_FORK_INSTALL_GENESIS_KEY.to_owned(),
@@ -1285,7 +1287,9 @@ impl OcompTopology {
         });
         match config.get(outbe_node::ocomp::fork::METADOSIS_STORAGE_LAYOUT_GENESIS_KEY) {
             Some(existing) if existing == &layout_manifest => {}
-            Some(_) => eyre::bail!("refusing to replace a different Metadosis storage layout"),
+            Some(_) => {
+                eyre::bail!("refusing to replace a different Metadosis storage layout");
+            }
             None => {
                 config.insert(
                     outbe_node::ocomp::fork::METADOSIS_STORAGE_LAYOUT_GENESIS_KEY.to_owned(),
@@ -1618,7 +1622,9 @@ impl OcompTopology {
         let role_name = match role {
             OcompProcessRole::Supervisor => "supervisor",
             OcompProcessRole::SnapshotExporter => "snapshot-exporter",
-            _ => eyre::bail!("validator service launcher accepts only fixed node-facing roles"),
+            _ => {
+                eyre::bail!("validator service launcher accepts only fixed node-facing roles");
+            }
         };
         let log_path = domain_root.join(format!("{role_name}.log"));
         let log = OpenOptions::new()
@@ -1705,7 +1711,9 @@ impl OcompTopology {
         let role_name = match role {
             OcompProcessRole::Follower => "follower",
             OcompProcessRole::SnapshotExporter => "snapshot-exporter",
-            _ => eyre::bail!("FullNode launcher accepts only follower/exporter roles"),
+            _ => {
+                eyre::bail!("FullNode launcher accepts only follower/exporter roles");
+            }
         };
         let log_path = domain_root.join(format!("{role_name}.log"));
         let log = OpenOptions::new()
@@ -1781,7 +1789,9 @@ impl OcompTopology {
         match role {
             OcompProcessRole::Follower if domain.supervisor.is_none() => {}
             OcompProcessRole::SnapshotExporter if domain.snapshot_exporter.is_none() => {}
-            _ => eyre::bail!("invalid or duplicate keyless FullNode role attachment"),
+            _ => {
+                eyre::bail!("invalid or duplicate keyless FullNode role attachment");
+            }
         }
         let record_index = self.records.len();
         self.records.push(OcompProcessRecordV1 {
@@ -2197,9 +2207,11 @@ impl OcompTopology {
         match self.launch_identity {
             Some(established) if established == identity => Ok(()),
             Some(_) => {
-                eyre::bail!("OCOMP worker launch identity differs from the scenario network")
+                eyre::bail!("OCOMP worker launch identity differs from the scenario network");
             }
-            None => eyre::bail!("OCOMP validator roles must start before workers"),
+            None => {
+                eyre::bail!("OCOMP validator roles must start before workers");
+            }
         }
     }
 
@@ -2303,7 +2315,7 @@ impl OcompTopology {
         }
         match role {
             OcompProcessRole::Follower => {
-                eyre::bail!("keyless FullNode roles use their dedicated attachment path")
+                eyre::bail!("keyless FullNode roles use their dedicated attachment path");
             }
             OcompProcessRole::Supervisor => {
                 let index = validator_index
@@ -2509,7 +2521,9 @@ fn genesis_chain_id(genesis: &serde_json::Value) -> Result<u64> {
             let encoded = encoded.strip_prefix("0x").unwrap_or(encoded);
             u64::from_str_radix(encoded, 16).map_err(Into::into)
         }
-        _ => eyre::bail!("genesis chainId is neither a number nor a hex string"),
+        _ => {
+            eyre::bail!("genesis chainId is neither a number nor a hex string");
+        }
     }
 }
 
@@ -2623,7 +2637,9 @@ fn schedule_dynamic_membership_days(
                 );
                 account_key
             }
-            None => eyre::bail!("generated genesis has no {label} account"),
+            None => {
+                eyre::bail!("generated genesis has no {label} account");
+            }
         };
         let words = alloc
             .get_mut(&account_key)
@@ -3055,10 +3071,12 @@ fn publish_exact_file(path: &Path, bytes: &[u8], mode: u32) -> Result<()> {
             }
             Ok(())
         }
-        Ok(_) => eyre::bail!(
-            "refusing to replace a different OCOMP artifact at {}",
-            path.display()
-        ),
+        Ok(_) => {
+            eyre::bail!(
+                "refusing to replace a different OCOMP artifact at {}",
+                path.display()
+            );
+        }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             let mut file = OpenOptions::new()
                 .write(true)

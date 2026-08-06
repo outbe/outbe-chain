@@ -681,7 +681,7 @@ fn verify_fresh_artifacts(
     _scenario: &serde_json::Value,
     _members: &[MemberDigestV1],
 ) -> Result<()> {
-    eyre::bail!("fresh-devnet artifact verification requires the ocomp-integration feature")
+    eyre::bail!("fresh-devnet artifact verification requires the ocomp-integration feature");
 }
 
 fn digest_like(value: &serde_json::Value) -> bool {

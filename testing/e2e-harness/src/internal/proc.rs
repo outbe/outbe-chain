@@ -536,7 +536,7 @@ fn select_sgx_enclave_device(
     if modern_exists {
         return Ok(Some("/dev/sgx/enclave"));
     }
-    bail!("real SGX mode requires /dev/sgx_enclave or /dev/sgx/enclave")
+    bail!("real SGX mode requires /dev/sgx_enclave or /dev/sgx/enclave");
 }
 
 /// A `Command` for `program`, `sudo`-wrapped when requested.

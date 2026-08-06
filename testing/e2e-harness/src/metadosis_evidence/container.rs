@@ -631,7 +631,7 @@ fn ensure_success(output: &Output, operation: &str) -> Result<()> {
         "{operation} failed with {:?}: {}",
         output.status.code(),
         String::from_utf8_lossy(&output.stderr).trim()
-    )
+    );
 }
 
 fn decode_runner_receipt(bundle_root: &Path) -> Result<MetadosisRunReceiptV1> {

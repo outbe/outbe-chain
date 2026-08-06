@@ -128,7 +128,7 @@ impl Localnet {
     fn retain_enclave_image_id(&mut self, image_id: DockerImageId) -> Result<()> {
         match &self.enclave_image_id {
             Some(established) if established != &image_id => {
-                bail!("Gramine Docker image identity changed during the scenario")
+                bail!("Gramine Docker image identity changed during the scenario");
             }
             Some(_) => Ok(()),
             None => {

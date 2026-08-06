@@ -391,7 +391,7 @@ pub fn verify_retained_semantics(
         EvidenceMode::Lane { .. } => verify_lane_semantics(repo, ledger, manifest_path),
         EvidenceMode::PocClosure => verify_closure_semantics(repo, ledger, manifest_path),
         EvidenceMode::TaskProgress { .. } => {
-            eyre::bail!("task_progress is a report mode, not a retained evidence bundle")
+            eyre::bail!("task_progress is a report mode, not a retained evidence bundle");
         }
     }
 }

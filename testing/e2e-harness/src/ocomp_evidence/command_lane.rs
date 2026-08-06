@@ -439,7 +439,9 @@ fn command_plan(lane: &str) -> Result<&'static [CommandBatchV1]> {
     match lane {
         "OCM-FAST" => Ok(FAST_PLAN),
         "OCM-INT" => Ok(INT_PLAN),
-        _ => bail!("command lane execution is not implemented for {lane}"),
+        _ => {
+            bail!("command lane execution is not implemented for {lane}");
+        }
     }
 }
 
