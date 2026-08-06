@@ -15,9 +15,12 @@ use outbe_ocomp::control::{
     effective_uid, poc_schema_limits, require_effective_uid, uid_for_user, EndpointIdentity,
 };
 use outbe_ocomp::inbox::WorkerInboxLimits;
+use outbe_ocomp::result_attestation::LocalResultVoteAttesterV1;
+use outbe_ocomp::result_signer::OcompSigner;
 use outbe_ocomp::rpc_discovery::{FinalizedRpcDiscoveryConfigV1, FinalizedRpcDiscoveryV1};
 use outbe_ocomp::rpc_input_exporter::{RpcInputExporterConfigV1, RpcInputExporterV1};
 use outbe_ocomp::rpc_projection::RpcProjectionConfigV1;
+use outbe_ocomp::sign_once::SignOnceStore;
 use outbe_ocomp::supervisor_export::{
     SupervisorExportAdoption, SupervisorExportAdoptionConfig, SupervisorExportAdoptionOutcome,
 };
@@ -122,10 +125,13 @@ struct ProductionLayout {
     supervisor_export_binding_root: PathBuf,
     supervisor_job_root: PathBuf,
     supervisor_vote_submission_root: PathBuf,
+    supervisor_sign_once_root: PathBuf,
     snapshot_exporter_input_ref_root: PathBuf,
     snapshot_exporter_receipt_root: PathBuf,
     ocomp_evm_key_path: PathBuf,
+    ocomp_result_key_path: PathBuf,
     protocol_bundle_path: PathBuf,
+    result_committee_path: PathBuf,
 }
 
 impl ProductionLayout {
@@ -146,10 +152,13 @@ impl ProductionLayout {
             supervisor_export_binding_root: supervisor_root.join("export-bindings"),
             supervisor_job_root: supervisor_root.join("jobs"),
             supervisor_vote_submission_root: supervisor_root.join("vote-submissions"),
+            supervisor_sign_once_root: supervisor_root.join("sign-once"),
             snapshot_exporter_input_ref_root: exporter_root.join("input-refs"),
             snapshot_exporter_receipt_root: exporter_root.join("receipts"),
             ocomp_evm_key_path: data_root.join("keys").join("ocomp-evm-key.hex"),
+            ocomp_result_key_path: data_root.join("keys").join("ocomp-key-v1.hex"),
             protocol_bundle_path: base_path.join("protocol-bundle-v1.ocb1"),
+            result_committee_path: base_path.join("result-committee-v1.ocb1"),
         })
     }
 }
@@ -182,10 +191,13 @@ struct RuntimeProfile {
     supervisor_export_binding_root: PathBuf,
     supervisor_job_root: PathBuf,
     supervisor_vote_submission_root: PathBuf,
+    supervisor_sign_once_root: PathBuf,
     snapshot_exporter_input_ref_root: PathBuf,
     snapshot_exporter_receipt_root: PathBuf,
     ocomp_evm_key_path: PathBuf,
+    ocomp_result_key_path: PathBuf,
     protocol_bundle_path: PathBuf,
+    result_committee_path: PathBuf,
 }
 
 impl RuntimeProfile {
@@ -208,10 +220,13 @@ impl RuntimeProfile {
                 supervisor_export_binding_root: layout.supervisor_export_binding_root,
                 supervisor_job_root: layout.supervisor_job_root,
                 supervisor_vote_submission_root: layout.supervisor_vote_submission_root,
+                supervisor_sign_once_root: layout.supervisor_sign_once_root,
                 snapshot_exporter_input_ref_root: layout.snapshot_exporter_input_ref_root,
                 snapshot_exporter_receipt_root: layout.snapshot_exporter_receipt_root,
                 ocomp_evm_key_path: layout.ocomp_evm_key_path,
+                ocomp_result_key_path: layout.ocomp_result_key_path,
                 protocol_bundle_path: layout.protocol_bundle_path,
+                result_committee_path: layout.result_committee_path,
             });
         };
 
@@ -236,10 +251,13 @@ impl RuntimeProfile {
             supervisor_export_binding_root: root.join("supervisor-v1").join("export-bindings"),
             supervisor_job_root: root.join("supervisor-v1").join("jobs"),
             supervisor_vote_submission_root: root.join("supervisor-v1").join("vote-submissions"),
+            supervisor_sign_once_root: root.join("supervisor-v1").join("sign-once"),
             snapshot_exporter_input_ref_root: root.join("exporter-v1").join("input-refs"),
             snapshot_exporter_receipt_root: root.join("exporter-v1").join("receipts"),
             ocomp_evm_key_path: root.join("ocomp-evm-key.hex"),
+            ocomp_result_key_path: root.join("ocomp-key-v1.hex"),
             protocol_bundle_path: root.join("protocol-bundle-v1.ocb1"),
+            result_committee_path: root.join("result-committee-v1.ocb1"),
         })
     }
 }
@@ -347,6 +365,7 @@ fn run_supervisor(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> 
         identity.protocol_bundle_hash,
         &limits,
     )?;
+    let fork_id = protocol_bundle.bundle().fork_id;
     let rpc_url = required_env("OUTBE_OCOMP_RPC_URL")?;
     let mut discovery = FinalizedRpcDiscoveryV1::open(FinalizedRpcDiscoveryConfigV1 {
         rpc_url: rpc_url.clone(),
@@ -390,7 +409,30 @@ fn run_supervisor(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> 
     })?);
     let evm_signer =
         OutbeEvmSigner::from_strict_file(&runtime.ocomp_evm_key_path, runtime.effective_role_uid)?;
-    let vote_preparer = LocalVoteTransactionPreparerV1::new(evm_signer, identity.chain_id, limits)?;
+    let result_signer =
+        OcompSigner::from_file(&runtime.ocomp_result_key_path, runtime.effective_role_uid)?;
+    let result_committee =
+        outbe_ocomp_protocol::committee::OcompCommitteeSnapshotV1::decode_canonical(
+            &std::fs::read(&runtime.result_committee_path)?,
+            &limits,
+        )?;
+    let sign_once = SignOnceStore::open(
+        runtime.supervisor_sign_once_root,
+        runtime.effective_role_uid,
+        limits,
+    )?;
+    let validator_index: u8 = required_env("OCOMP_VALIDATOR_INDEX")?.parse()?;
+    let attester = LocalResultVoteAttesterV1::new(
+        identity,
+        fork_id,
+        validator_index,
+        result_committee,
+        result_signer,
+        sign_once,
+        limits,
+    )?;
+    let vote_preparer =
+        LocalVoteTransactionPreparerV1::new(evm_signer, attester, identity.chain_id, limits)?;
     let sender_address = vote_preparer.sender_address();
     let vote_rpc = PublicVoteRpcClientV1::new(rpc_url, SUPERVISOR_RPC_MAX_RESPONSE_BYTES)?;
     let mut vote_submitter = SupervisorVoteSubmitterV1::open(
@@ -488,6 +530,7 @@ fn run_supervisor(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> 
                                 completed.job_id,
                                 completed.result_digest,
                                 &completed.canonical_result,
+                                &record.spec,
                             ) {
                                 Ok(outcome) => {
                                     if last_submission_outcome != Some(outcome) {
@@ -752,8 +795,20 @@ mod tests {
             PathBuf::from("/srv/outbe/protocol-bundle-v1.ocb1")
         );
         assert_eq!(
+            layout.result_committee_path,
+            PathBuf::from("/srv/outbe/result-committee-v1.ocb1")
+        );
+        assert_eq!(
             layout.ocomp_evm_key_path,
             PathBuf::from("/srv/outbe/ocomp/data/keys/ocomp-evm-key.hex")
+        );
+        assert_eq!(
+            layout.ocomp_result_key_path,
+            PathBuf::from("/srv/outbe/ocomp/data/keys/ocomp-key-v1.hex")
+        );
+        assert_eq!(
+            layout.supervisor_sign_once_root,
+            PathBuf::from("/srv/outbe/ocomp/data/supervisor-v1/sign-once")
         );
     }
 

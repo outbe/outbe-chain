@@ -1082,11 +1082,6 @@ fn validator_two_prepares_held_vote(world: &mut World) {
     };
     let vote = ResultVoteV1::decode_canonical(&vote_bytes, &poc_schema_limits())
         .expect("canonical public ResultVoteV1");
-    let canonical_result = vote
-        .result
-        .encode_canonical(&poc_schema_limits())
-        .expect("canonical result from the public vote");
-
     let validator = world.validators.get(VALIDATOR_INDEX);
     let key = validator
         .evm_key()
@@ -1109,7 +1104,7 @@ fn validator_two_prepares_held_vote(world: &mut World) {
         .ocomp
         .prepare_held_vote_transaction(
             VALIDATOR_INDEX as u8,
-            canonical_result,
+            vote,
             nonce,
             max_fee_per_gas,
             outbe_zerofee::MAX_ZERO_FEE_OCOMP_GAS_LIMIT,

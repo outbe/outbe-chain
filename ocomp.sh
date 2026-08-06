@@ -20,6 +20,7 @@ readonly OCOMP_BINARY="$DEPLOY_ROOT/outbe-ocomp"
 readonly OCOMP_ENV_FILE="$DEPLOY_ROOT/ocomp.env"
 readonly OCOMP_EXPORT_ENV_FILE="$DEPLOY_ROOT/ocomp-export.env"
 readonly PROTOCOL_BUNDLE="$DEPLOY_ROOT/protocol-bundle-v1.ocb1"
+readonly RESULT_COMMITTEE="$DEPLOY_ROOT/result-committee-v1.ocb1"
 
 # Role identities are fixed.
 readonly SUPERVISOR_USER="outbe-ocomp-supervisor"
@@ -32,6 +33,7 @@ readonly RUNTIME_ROOT="$OCOMP_ROOT/run"
 readonly STATE_ROOT="$OCOMP_ROOT/data"
 readonly KEY_ROOT="$STATE_ROOT/keys"
 readonly OCOMP_EVM_KEY="$KEY_ROOT/ocomp-evm-key.hex"
+readonly OCOMP_RESULT_KEY="$KEY_ROOT/ocomp-key-v1.hex"
 readonly LOG_ROOT="$OCOMP_ROOT/logs"
 
 readonly PID_ROOT="$RUNTIME_ROOT/pids"
@@ -263,7 +265,7 @@ load_runtime_environment() {
   RUNTIME_ENV=()
   load_env_file \
     "$OCOMP_ENV_FILE" \
-    "OCOMP_CHAIN_ID,OCOMP_GENESIS_HASH,OCOMP_BOOT_NONCE,OCOMP_PROTOCOL_BUNDLE_HASH,OCOMP_REGISTRY_GENERATION,OCOMP_SUPERVISOR_ADDRESS,OCOMP_WORKER_COUNT,OUTBE_OCOMP_BASE_PATH,OUTBE_OCOMP_RPC_URL"
+    "OCOMP_CHAIN_ID,OCOMP_GENESIS_HASH,OCOMP_BOOT_NONCE,OCOMP_PROTOCOL_BUNDLE_HASH,OCOMP_REGISTRY_GENERATION,OCOMP_VALIDATOR_INDEX,OCOMP_SUPERVISOR_ADDRESS,OCOMP_WORKER_COUNT,OUTBE_OCOMP_BASE_PATH,OUTBE_OCOMP_RPC_URL"
   load_env_file \
     "$OCOMP_EXPORT_ENV_FILE" \
     "OUTBE_OCOMP_PROJECTION_MONGODB_URI,OUTBE_OCOMP_PROJECTION_MONGODB_DATABASE"
@@ -275,6 +277,7 @@ load_runtime_environment() {
     OCOMP_BOOT_NONCE \
     OCOMP_PROTOCOL_BUNDLE_HASH \
     OCOMP_REGISTRY_GENERATION \
+    OCOMP_VALIDATOR_INDEX \
     OCOMP_SUPERVISOR_ADDRESS \
     OCOMP_WORKER_COUNT \
     OUTBE_OCOMP_BASE_PATH \
@@ -288,6 +291,8 @@ load_runtime_environment() {
     die "OUTBE_OCOMP_BASE_PATH must match launcher deployment root $DEPLOY_ROOT"
   [[ "${RUNTIME_ENV[OCOMP_REGISTRY_GENERATION]}" != 0 ]] ||
     die "OCOMP_REGISTRY_GENERATION must be greater than zero"
+  [[ "${RUNTIME_ENV[OCOMP_VALIDATOR_INDEX]}" =~ ^[0-3]$ ]] ||
+    die "OCOMP_VALIDATOR_INDEX must be between 0 and 3"
   [[ "${RUNTIME_ENV[OCOMP_SUPERVISOR_ADDRESS]}" =~ ^127\.0\.0\.1:([1-9][0-9]*)$ ]] ||
     die "OCOMP_SUPERVISOR_ADDRESS must be an explicit nonzero 127.0.0.1 HTTP address"
   [[ "${RUNTIME_ENV[OCOMP_WORKER_COUNT]}" =~ ^[1-4]$ ]] ||
@@ -389,13 +394,18 @@ start_role() {
 verify_prerequisites() {
   [[ -x "$OCOMP_BINARY" ]] || die "OCOMP binary is missing or not executable: $OCOMP_BINARY"
   [[ -r "$PROTOCOL_BUNDLE" ]] || die "protocol bundle is missing: $PROTOCOL_BUNDLE"
+  [[ -r "$RESULT_COMMITTEE" ]] || die "result committee is missing: $RESULT_COMMITTEE"
   local role_user
   for role_user in "$SUPERVISOR_USER" "$EXPORTER_USER" "$WORKER_USER"; do
     runuser --user "$role_user" -- test -r "$PROTOCOL_BUNDLE" ||
       die "$role_user cannot read protocol bundle $PROTOCOL_BUNDLE"
   done
+  runuser --user "$SUPERVISOR_USER" -- test -r "$RESULT_COMMITTEE" ||
+    die "$SUPERVISOR_USER cannot read result committee $RESULT_COMMITTEE"
   runuser --user "$SUPERVISOR_USER" -- test -r "$OCOMP_EVM_KEY" ||
     die "$SUPERVISOR_USER cannot read OCOMP EVM key $OCOMP_EVM_KEY"
+  runuser --user "$SUPERVISOR_USER" -- test -r "$OCOMP_RESULT_KEY" ||
+    die "$SUPERVISOR_USER cannot read pre-provisioned OCOMP result key $OCOMP_RESULT_KEY"
 }
 
 start_worker() {
@@ -436,6 +446,7 @@ start_supervisor() {
       OCOMP_BOOT_NONCE="${RUNTIME_ENV[OCOMP_BOOT_NONCE]}" \
       OCOMP_PROTOCOL_BUNDLE_HASH="${RUNTIME_ENV[OCOMP_PROTOCOL_BUNDLE_HASH]}" \
       OCOMP_REGISTRY_GENERATION="${RUNTIME_ENV[OCOMP_REGISTRY_GENERATION]}" \
+      OCOMP_VALIDATOR_INDEX="${RUNTIME_ENV[OCOMP_VALIDATOR_INDEX]}" \
       OUTBE_OCOMP_BASE_PATH="${RUNTIME_ENV[OUTBE_OCOMP_BASE_PATH]}" \
       OUTBE_OCOMP_RPC_URL="${RUNTIME_ENV[OUTBE_OCOMP_RPC_URL]}" \
       "$OCOMP_BINARY" supervisor \

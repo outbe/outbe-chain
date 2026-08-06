@@ -257,6 +257,7 @@ fn submit_vote(fixture: &mut ActivationFixture, validator_index: u8, height: u64
     submit_vote_as(
         fixture,
         ActivationFixture::validator_caller(validator_index),
+        validator_index,
         height,
     )
     .unwrap();
@@ -265,6 +266,7 @@ fn submit_vote(fixture: &mut ActivationFixture, validator_index: u8, height: u64
 fn submit_vote_as(
     fixture: &mut ActivationFixture,
     caller: Address,
+    validator_index: u8,
     height: u64,
 ) -> outbe_primitives::error::Result<Bytes> {
     fixture.provider.set_block_number(height);
@@ -272,9 +274,12 @@ fn submit_vote_as(
     fixture
         .provider
         .enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::VerifiedResultVote);
-    let result_bytes = fixture.result.encode_canonical(&fixture.limits).unwrap();
+    let vote_bytes = fixture
+        .signed_result_vote(validator_index)
+        .encode_canonical(&fixture.limits)
+        .unwrap();
     let calldata = IMetadosis::submitLysisResultCall {
-        resultVoteV1: Bytes::from(result_bytes),
+        resultVoteV1: Bytes::from(vote_bytes),
     }
     .abi_encode();
     StorageHandle::enter(&mut fixture.provider, |storage| {
@@ -290,13 +295,13 @@ fn submit_vote_as(
 }
 
 #[test]
-fn public_result_vote_uses_the_ocomp_role_caller_as_its_validator_slot() {
+fn public_result_vote_requires_outer_caller_to_match_the_signed_validator_slot() {
     let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
 
-    assert!(submit_vote_as(&mut fixture, Address::repeat_byte(0xee), 14).is_err());
-    assert!(submit_vote_as(&mut fixture, ActivationFixture::validator_caller(1), 14,).is_ok());
+    assert!(submit_vote_as(&mut fixture, Address::repeat_byte(0xee), 1, 14).is_err());
+    assert!(submit_vote_as(&mut fixture, ActivationFixture::validator_caller(0), 1, 14).is_err());
 
-    submit_vote(&mut fixture, 0, 14);
+    submit_vote(&mut fixture, 1, 14);
 }
 
 // OCOMP-TEST-ID: OCM-VOT-001

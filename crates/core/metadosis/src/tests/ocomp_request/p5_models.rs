@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{B256, U256};
 use alloy_sol_types::SolEvent;
 use outbe_ocomp_protocol::{
     abi::encode_submit_lysis_result_calldata,
@@ -245,8 +245,11 @@ fn submit_vote(
     validator_index: u8,
     activation_entitled: bool,
 ) -> outbe_primitives::error::Result<alloy_primitives::Bytes> {
-    let calldata = encode_submit_lysis_result_calldata(&fixture.result, &fixture.limits)
-        .expect("canonical result vote calldata");
+    let calldata = encode_submit_lysis_result_calldata(
+        &fixture.signed_result_vote(validator_index),
+        &fixture.limits,
+    )
+    .expect("canonical result vote calldata");
     fixture
         .provider
         .enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::VerifiedResultVote);
@@ -903,8 +906,10 @@ fn submit_invalid_vote(
     fixture: &mut ActivationFixture,
     validator_index: u8,
 ) -> outbe_primitives::error::Result<alloy_primitives::Bytes> {
-    let calldata = encode_submit_lysis_result_calldata(&fixture.result, &fixture.limits)
-        .expect("rejected calldata");
+    let mut rejected = fixture.signed_result_vote(validator_index % 4);
+    rejected.signature_rs[0] ^= 1;
+    let calldata =
+        encode_submit_lysis_result_calldata(&rejected, &fixture.limits).expect("rejected calldata");
     fixture
         .provider
         .enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::VerifiedResultVote);
@@ -912,7 +917,7 @@ fn submit_invalid_vote(
         commands::submit_verified_result_vote(
             storage,
             &fixture.scope,
-            Address::repeat_byte(validator_index.wrapping_add(0x80)),
+            ActivationFixture::validator_caller(validator_index % 4),
             &calldata,
             U256::ZERO,
             false,
