@@ -509,15 +509,27 @@ fn fresh_capacity_day_advances_to_offering(world: &mut World) {
     );
 }
 
+/// First `wwd_advance_noon` Cycle slot strictly after `after`. The status walk
+/// out of OFFERING runs only on that daily trigger, so the processing time
+/// alone (02:00 UTC) never moves the day.
+fn next_wwd_advance_slot(after: u64) -> u64 {
+    const PERIOD: u64 = 86_400;
+    const OFFSET: u64 = 43_200;
+    if after < OFFSET {
+        return OFFSET;
+    }
+    OFFSET + ((after - OFFSET) / PERIOD + 1) * PERIOD
+}
+
 #[when("the committee logical clock reaches the fresh capacity processing time")]
 fn committee_clock_reaches_fresh_capacity_processing(world: &mut World) {
-    let target = world
+    let processing_time = world
         .state
         .metadosis_fresh_lifecycle_observation
         .as_ref()
         .expect("fresh Metadosis creation evidence")
-        .scheduled_process_time
-        .saturating_add(1);
+        .scheduled_process_time;
+    let target = next_wwd_advance_slot(processing_time);
     advance_fresh_metadosis_time(world, target, &[(0, 1), (1, 2), (2, 3), (3, 4)], 8);
 }
 
