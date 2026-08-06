@@ -6,6 +6,10 @@
 //! "outbe-intex:<Name>:v2.0.0") — stable across chains and redeploys.
 
 use alloy_primitives::{address, Address};
+use outbe_primitives::time::SECONDS_PER_DAY;
+
+/// Seconds per day, in the `u32` width every protocol period below uses.
+const DAY: u32 = SECONDS_PER_DAY as u32;
 
 /// IntexNFT1155 on Outbe (balance ledger: settle / burnSettled / balanceOf).
 /// CREATE3 proxy, salt "outbe-intex:IntexNFT1155:v2.0.0".
@@ -28,10 +32,8 @@ pub const DIST_CHUNK_LIMIT: u32 = 200;
 /// cases, creators receive a single payment.
 pub const PROCEEDS_FANIN_TIMEOUT_SECS: u64 = 24 * 60 * 60;
 
-/// Qualification maturity in days since issuance.
-pub const MATURITY_PERIOD_DAYS: u64 = 21;
-/// Derived seconds, for comparison against block timestamps.
-pub const MATURITY_PERIOD_SECONDS: u64 = MATURITY_PERIOD_DAYS * 24 * 60 * 60;
+/// Time a series must age past `issued_at` before it can become Qualified.
+pub const QUALIFICATION_PERIOD: u32 = 21 * DAY;
 
 /// Reference-currency ISO for the qualifier oracle pair (COEN/0xUSD = 840).
 pub const QUALIFIER_REFERENCE_ISO: u16 = 840;

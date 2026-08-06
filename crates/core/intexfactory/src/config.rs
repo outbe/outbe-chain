@@ -6,7 +6,7 @@ use outbe_primitives::error::{PrecompileError, Result};
 
 use crate::constants::{
     CALL_PRICE_NUM, CALL_THRESHOLD_DAYS, CALL_WINDOW_DAYS, COMMIT_BOND_MINOR, FLOOR_PRICE_NUM,
-    INTEX_CALL_PERIOD_SECONDS, MATURITY_PERIOD_SECONDS,
+    INTEX_CALL_PERIOD_SECONDS, QUALIFICATION_PERIOD,
 };
 use crate::schema::IntexFactoryContract;
 
@@ -17,7 +17,8 @@ pub const PROFILE_DEV: u8 = 1;
 /// fixed `*_PRICE_DEN` denominators in [`crate::constants`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IntexParams {
-    pub maturity_period_secs: u64,
+    /// Seconds a series must age past `issued_at` before it can become Qualified.
+    pub qualification_period: u32,
     pub call_window_days: u16,
     pub call_threshold_days: u16,
     pub intex_call_period_secs: u32,
@@ -30,7 +31,7 @@ pub struct IntexParams {
 impl IntexParams {
     /// Real protocol timings; also the default when no profile is selected.
     pub const PROD: Self = Self {
-        maturity_period_secs: MATURITY_PERIOD_SECONDS,
+        qualification_period: QUALIFICATION_PERIOD,
         call_window_days: CALL_WINDOW_DAYS,
         call_threshold_days: CALL_THRESHOLD_DAYS,
         intex_call_period_secs: INTEX_CALL_PERIOD_SECONDS,
@@ -43,7 +44,7 @@ impl IntexParams {
     /// so window/threshold stay in whole days. The bond drops to 100 wCOEN so
     /// test bidders are not forced to mint 100M per commit.
     pub const DEV: Self = Self {
-        maturity_period_secs: 24 * 3600,
+        qualification_period: 24 * 3600,
         call_window_days: 3,
         call_threshold_days: 2,
         intex_call_period_secs: 3 * 24 * 3600,

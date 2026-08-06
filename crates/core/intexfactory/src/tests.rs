@@ -9,7 +9,7 @@ use outbe_primitives::time::{date_key_to_utc_timestamp, previous_date_key, times
 
 use crate::called;
 use crate::constants::{
-    CALL_PRICE_NUM, FLOOR_PRICE_NUM, MATURITY_PERIOD_SECONDS, QUALIFIER_REFERENCE_ISO,
+    CALL_PRICE_NUM, FLOOR_PRICE_NUM, QUALIFICATION_PERIOD, QUALIFIER_REFERENCE_ISO,
 };
 use crate::precompile::{self, IIntexFactory};
 use crate::qualified;
@@ -373,7 +373,7 @@ fn insert_remove_unqualified_roundtrip() {
 }
 
 #[test]
-fn try_qualify_gates_maturity_floor_and_latches() {
+fn try_qualify_gates_qualification_floor_and_latches() {
     with_factory(|s| {
         runtime::issue(&s, sample(7)).unwrap();
         let mut f = IntexFactoryContract::new(s.clone());
@@ -386,21 +386,21 @@ fn try_qualify_gates_maturity_floor_and_latches() {
             &s,
             &mut f,
             7,
-            MATURITY_PERIOD_SECONDS,
+            QUALIFICATION_PERIOD,
             immature,
             floor + U256::from(1)
         )
         .unwrap());
         // Mature but rate == floor (strict >) -> false.
         assert!(
-            !qualified::try_qualify(&s, &mut f, 7, MATURITY_PERIOD_SECONDS, mature, floor).unwrap()
+            !qualified::try_qualify(&s, &mut f, 7, QUALIFICATION_PERIOD, mature, floor).unwrap()
         );
         // Mature + rate > floor -> qualifies, latched, removed from bin.
         assert!(qualified::try_qualify(
             &s,
             &mut f,
             7,
-            MATURITY_PERIOD_SECONDS,
+            QUALIFICATION_PERIOD,
             mature,
             floor + U256::from(1)
         )
@@ -419,7 +419,7 @@ fn try_qualify_gates_maturity_floor_and_latches() {
             &s,
             &mut f,
             7,
-            MATURITY_PERIOD_SECONDS,
+            QUALIFICATION_PERIOD,
             mature,
             floor + U256::from(1)
         )
@@ -493,7 +493,7 @@ fn qualify_series<'a>(
         s,
         &mut f,
         id,
-        MATURITY_PERIOD_SECONDS,
+        QUALIFICATION_PERIOD,
         mature,
         floor + U256::from(1)
     )
@@ -637,8 +637,8 @@ fn try_call_skips_when_below_threshold() {
 fn try_call_excludes_pre_issuance_days() {
     with_factory(|s| {
         // window 30, threshold 27: only days from issuance onward may count.
-        // Seed the series directly with threshold 27 (above the 21d maturity),
-        // since the protocol default (21) does not exceed maturity and a
+        // Seed the series directly with threshold 27 (above the 21d qualification
+        // period), since the protocol default (21) does not exceed it and a
         // qualified series would always have >= 21 completed post-issuance days.
         outbe_intex::api::create_series(
             &s,
@@ -736,7 +736,7 @@ fn qualify_survives_router_failure() {
             &s,
             &mut f,
             7,
-            MATURITY_PERIOD_SECONDS,
+            QUALIFICATION_PERIOD,
             mature,
             U256::from(EXPECTED_FLOOR) + U256::from(1)
         )
@@ -797,7 +797,7 @@ fn call_survives_router_failure() {
 // ---------------------------------------------------------------------
 
 #[test]
-fn scan_and_qualify_promotes_matured_series() {
+fn scan_and_qualify_promotes_aged_series() {
     with_factory(|s| {
         runtime::issue(&s, sample(7)).unwrap();
         // Qualifier pair live rate above the floor.
@@ -869,7 +869,7 @@ fn scan_and_call_reads_daily_vwap_at_midnight() {
         let _f = qualify_series(&s, 7, sample(7));
         let mut oracle = OracleContract::new(s.clone());
         let pair_id = setup_pair(&oracle);
-        // Exact midnight UTC, well past maturity.
+        // Exact midnight UTC, well past the qualification period.
         let scan_ts = (ISSUED_AT as u64 / DAY + 60) * DAY;
         let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
         let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
@@ -1086,7 +1086,7 @@ fn config_defaults_to_prod_when_unset() {
 }
 
 #[test]
-fn config_dev_profile_drives_issuance_and_maturity() {
+fn config_dev_profile_drives_issuance_and_qualification() {
     with_factory(|s| {
         let mut f = IntexFactoryContract::new(s.clone());
         // Select the dev profile through the single selector byte.
@@ -1119,15 +1119,15 @@ fn config_dev_profile_drives_issuance_and_maturity() {
             }
         );
 
-        // Dev maturity qualifies long before the 21-day prod maturity.
+        // The dev qualification period elapses long before the 21-day prod one.
         let rate = r.floor_price_minor + U256::from(1);
-        let after_maturity = ISSUED_AT as u64 + dev.maturity_period_secs + 1;
+        let after_qualification = ISSUED_AT as u64 + u64::from(dev.qualification_period) + 1;
         assert!(qualified::try_qualify(
             &s,
             &mut f,
             7,
-            dev.maturity_period_secs,
-            after_maturity,
+            dev.qualification_period,
+            after_qualification,
             rate
         )
         .unwrap());
