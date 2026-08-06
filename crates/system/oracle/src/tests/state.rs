@@ -321,6 +321,63 @@ fn test_vote_submission_and_clear() {
         assert_eq!(oracle.voter_list.len().unwrap(), 0);
     });
 }
+
+#[test]
+fn test_vote_rejects_duplicate_pair() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        init_oracle(&mut oracle);
+        oracle.register_pair("COEN", "USDT").unwrap();
+        oracle.register_pair("ETH", "USDT").unwrap();
+
+        let validator = Address::new([0x11; 20]);
+        register_validator(storage.clone(), validator, U256::in_units(100u64));
+
+        let pair_hash = OracleContract::pair_hash("COEN", "USDT");
+        let rate = U256::in_units(50u64);
+        let volume = U256::in_units(1000u64);
+        // Two tuples naming the same pair: within the pair-count bound, so the
+        // dedup scan is what must reject it.
+        let err = oracle
+            .submit_vote(validator, &[(pair_hash, rate, volume); 2])
+            .unwrap_err();
+        assert!(
+            format!("{err:?}").contains("duplicate pair in vote submission"),
+            "unexpected error: {err:?}"
+        );
+        assert!(!oracle.vote_exists.read(&validator).unwrap());
+    });
+}
+
+#[test]
+fn test_vote_duplicate_check_precedes_vote_target_check() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        init_oracle(&mut oracle);
+        oracle.register_pair("COEN", "USDT").unwrap();
+        oracle.register_pair("ETH", "USDT").unwrap();
+        oracle
+            .deactivate_vote_target(Address::ZERO, "ETH", "USDT")
+            .unwrap();
+
+        let validator = Address::new([0x11; 20]);
+        register_validator(storage.clone(), validator, U256::in_units(100u64));
+
+        let untargeted = OracleContract::pair_hash("ETH", "USDT");
+        let rate = U256::in_units(50u64);
+        let volume = U256::in_units(1000u64);
+        // A submission that is both untargeted and duplicated reports the
+        // duplicate first — receipt-visible revert text, so the order is pinned.
+        let err = oracle
+            .submit_vote(validator, &[(untargeted, rate, volume); 2])
+            .unwrap_err();
+        assert!(
+            format!("{err:?}").contains("duplicate pair in vote submission"),
+            "unexpected error: {err:?}"
+        );
+    });
+}
+
 // -----------------------------------------------------------------------
 // View functions
 // -----------------------------------------------------------------------

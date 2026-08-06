@@ -5,7 +5,7 @@
 
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_primitives::error::{PrecompileError, Result};
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 
 use crate::constants::{DEFAULT_USD_CURRENCY_RATE, MAX_SNAPSHOT_RETENTION_SECONDS};
 use crate::schema::OracleContract;
@@ -218,7 +218,7 @@ pub fn init_from_genesis(oracle: &mut OracleContract, config: &OracleGenesisConf
     }
 
     // Import reference currencies and their currency rates.
-    let mut seen_reference_iso: std::collections::BTreeSet<u16> = std::collections::BTreeSet::new();
+    let mut seen_reference_iso: BTreeSet<u16> = BTreeSet::new();
     for reference in &config.reference_currencies {
         let iso_code = reference.iso_code;
         if iso_code == 0 {
@@ -454,7 +454,7 @@ fn import_aggregate_votes(
     aggregate_votes: &[GenesisAggregateVote],
 ) -> Result<()> {
     let pair_count = oracle.pair_count.read()?;
-    let mut seen_validators = HashSet::with_capacity(aggregate_votes.len());
+    let mut seen_validators = BTreeSet::new();
     let mut validated_votes = Vec::with_capacity(aggregate_votes.len());
 
     for vote in aggregate_votes {
@@ -479,7 +479,7 @@ fn import_aggregate_votes(
             ));
         }
 
-        let mut seen_pairs = HashSet::with_capacity(vote.entries.len());
+        let mut seen_pairs = BTreeSet::new();
         for (pair_id, _, _) in &vote.entries {
             if *pair_id == 0 || *pair_id > pair_count {
                 return Err(PrecompileError::Revert(
@@ -533,7 +533,7 @@ fn import_aggregate_votes(
 
 fn export_aggregate_votes(oracle: &OracleContract) -> Result<Vec<GenesisAggregateVote>> {
     let voter_count = oracle.voter_list.len()?;
-    let mut seen_validators = HashSet::with_capacity(voter_count as usize);
+    let mut seen_validators = BTreeSet::new();
     let mut aggregate_votes = Vec::with_capacity(voter_count as usize);
 
     for voter_idx in 0..voter_count {
@@ -563,7 +563,7 @@ fn export_aggregate_votes(oracle: &OracleContract) -> Result<Vec<GenesisAggregat
         let pair_id_map = oracle.vote_pair_id.get_nested(&validator);
         let rate_map = oracle.vote_rate.get_nested(&validator);
         let volume_map = oracle.vote_volume.get_nested(&validator);
-        let mut seen_pairs = HashSet::with_capacity(tuple_count as usize);
+        let mut seen_pairs = BTreeSet::new();
         let mut entries = Vec::with_capacity(tuple_count as usize);
 
         for tuple_idx in 0..tuple_count {

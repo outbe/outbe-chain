@@ -129,6 +129,16 @@ impl OracleContract<'_> {
         self.pair_hash_to_id.read(&hash)
     }
 
+    /// [`Self::get_pair_id`] with the "0 means unregistered" revert that every
+    /// pair-scoped ABI view repeats.
+    pub fn require_pair_id(&self, base: &str, quote: &str) -> Result<u32> {
+        let id = self.get_pair_id(base, quote)?;
+        if id == 0 {
+            return Err(PrecompileError::Revert("pair not registered".into()));
+        }
+        Ok(id)
+    }
+
     /// Returns whether a pair is an active vote target.
     pub fn is_vote_target(&self, base: &str, quote: &str) -> Result<bool> {
         let hash = Self::pair_hash(base, quote);

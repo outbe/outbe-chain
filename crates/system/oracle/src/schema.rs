@@ -12,6 +12,11 @@ pub use outbe_primitives::units::SCALE_1E18;
 ///
 /// All prices and volumes use U256 with 1e18 scale factor.
 /// Pair identification uses `pair_hash = keccak256("BASE/QUOTE")`.
+///
+/// Slot number == field declaration index; `StorageVec` and
+/// `Mapping<_, StorageBytes>` each occupy exactly one slot. `openings.rs` and
+/// `scripts/seed_genesis.py` hardcode these numbers — see the slot-parity tests
+/// in `tests/state.rs` before reordering anything.
 #[contract(addr = ORACLE_ADDRESS)]
 pub struct OracleContract {
     // === Config (slots 0-7) ===
@@ -79,51 +84,51 @@ pub struct OracleContract {
     // slot 24: dynamic array of voter addresses (length at slot 24, data at keccak256(24))
     pub voter_list: StorageVec<Address>,
 
-    // === Price Snapshots — circular buffer (slots 26-31) ===
-    // slot 26: monotonic write index (tail pointer, u64 to avoid wrapping)
+    // === Price Snapshots — circular buffer (slots 25-31) ===
+    // slot 25: monotonic write index (tail pointer, u64 to avoid wrapping)
     pub snapshot_write_idx: Slot<u64>,
-    // slot 27: oldest valid index (head pointer)
+    // slot 26: oldest valid index (head pointer)
     pub snapshot_oldest_idx: Slot<u64>,
-    // slot 28: mapping(snapshot_idx => timestamp)
+    // slot 27: mapping(snapshot_idx => timestamp)
     pub snapshot_timestamp: Mapping<u64, u64>,
-    // slot 29: mapping(snapshot_idx => pair_count in this snapshot)
+    // slot 28: mapping(snapshot_idx => pair_count in this snapshot)
     pub snapshot_pair_count: Mapping<u64, u32>,
-    // slot 30: mapping(snapshot_idx => mapping(pair_index => pair_id))
+    // slot 29: mapping(snapshot_idx => mapping(pair_index => pair_id))
     pub snapshot_pair_id: Mapping<u64, Mapping<u32, u32>>,
-    // slot 31: mapping(snapshot_idx => mapping(pair_index => rate))
+    // slot 30: mapping(snapshot_idx => mapping(pair_index => rate))
     pub snapshot_rate: Mapping<u64, Mapping<u32, U256>>,
-    // slot 32: mapping(snapshot_idx => mapping(pair_index => volume))
+    // slot 31: mapping(snapshot_idx => mapping(pair_index => volume))
     pub snapshot_volume: Mapping<u64, Mapping<u32, U256>>,
 
-    // === Protected Validators (slots 33-34) ===
-    // slot 33: mapping(validator => is_protected)
+    // === Protected Validators (slots 32-33) ===
+    // slot 32: mapping(validator => is_protected)
     pub protected_validator: Mapping<Address, bool>,
-    // slot 34: allow protected validators flag
+    // slot 33: allow protected validators flag
     pub config_allow_protected: Slot<bool>,
 
-    // === S-Curve Active Entries (slots 35-39) ===
-    // slot 35: number of active S-curve entries
+    // === S-Curve Active Entries (slots 34-39) ===
+    // slot 34: number of active S-curve entries
     pub scurve_count: Slot<u32>,
-    // slot 36: mapping(entry_idx => pair_id) for which pair
+    // slot 35: mapping(entry_idx => pair_id) for which pair
     pub scurve_pair_id: Mapping<u32, u32>,
-    // slot 37: mapping(entry_idx => peak_day_timestamp) UTC midnight
+    // slot 36: mapping(entry_idx => peak_day_timestamp) UTC midnight
     pub scurve_peak_day: Mapping<u32, u64>,
-    // slot 38: mapping(entry_idx => peak_price) 1e18 scaled
+    // slot 37: mapping(entry_idx => peak_price) 1e18 scaled
     pub scurve_peak_price: Mapping<u32, U256>,
-    // slot 39: oldest non-evicted entry index (head pointer for cleanup)
+    // slot 38: oldest non-evicted entry index (head pointer for cleanup)
     pub scurve_oldest_idx: Slot<u32>,
-    // slot 40: last UTC day (truncated timestamp) when S-curve processing ran
+    // slot 39: last UTC day (truncated timestamp) when S-curve processing ran
     pub scurve_last_processed_day: Slot<u64>,
 
-    // === Settlement Currencies (slots 41-43) ===
-    // slot 41: number of registered settlement currencies
+    // === Settlement Currencies (slots 40-42) ===
+    // slot 40: number of registered settlement currencies
     pub settlement_count: Slot<u32>,
-    // slot 42: mapping(iso_code => denom_hash) where denom_hash = keccak256(denom_string)
+    // slot 41: mapping(iso_code => denom_hash) where denom_hash = keccak256(denom_string)
     pub settlement_iso_to_denom: Mapping<u16, B256>,
-    // slot 43: mapping(iso_code => pair_hash) linking settlement currency to its trading pair
+    // slot 42: mapping(iso_code => pair_hash) linking settlement currency to its trading pair
     pub settlement_iso_to_pair: Mapping<u16, B256>,
 
-    // === Reversible Genesis Export Metadata ===
+    // === Reversible Genesis Export Metadata (slots 43-46) ===
     // Pair and settlement runtime lookups remain hash-based, but export needs
     // the original strings to produce an importable OracleGenesisConfig.
     pub pair_id_to_base: Mapping<u32, StorageBytes>,
@@ -131,35 +136,35 @@ pub struct OracleContract {
     pub settlement_index_to_iso: Mapping<u32, u16>,
     pub settlement_iso_to_denom_string: Mapping<u16, StorageBytes>,
 
-    // === WorldwideDay VWAP Snapshots (slots 46-51) ===
-    // slot 46: mapping(worldwide_day => exists)
+    // === WorldwideDay VWAP Snapshots (slots 47-52) ===
+    // slot 47: mapping(worldwide_day => exists)
     pub worldwide_day_vwap_exists: Mapping<WorldwideDay, bool>,
-    // slot 47: mapping(worldwide_day => start_time)
+    // slot 48: mapping(worldwide_day => start_time)
     pub worldwide_day_vwap_start: Mapping<WorldwideDay, u64>,
-    // slot 48: mapping(worldwide_day => end_time)
+    // slot 49: mapping(worldwide_day => end_time)
     pub worldwide_day_vwap_end: Mapping<WorldwideDay, u64>,
-    // slot 49: mapping(worldwide_day => pair_count)
+    // slot 50: mapping(worldwide_day => pair_count)
     pub worldwide_day_vwap_pair_count: Mapping<WorldwideDay, u32>,
-    // slot 50: mapping(worldwide_day => mapping(index => pair_id))
+    // slot 51: mapping(worldwide_day => mapping(index => pair_id))
     pub worldwide_day_vwap_pair_id: Mapping<WorldwideDay, Mapping<u32, u32>>,
-    // slot 51: mapping(worldwide_day => mapping(index => vwap))
+    // slot 52: mapping(worldwide_day => mapping(index => vwap))
     pub worldwide_day_vwap_value: Mapping<WorldwideDay, Mapping<u32, U256>>,
 
-    // === Daily Rolling VWAP Aggregates (slots 52-53) ===
+    // === Daily Rolling VWAP Aggregates (slots 53-54) ===
     // Updated on every write_snapshot. Keyed by (pair_id, utc_day_timestamp).
     // utc_day_timestamp = timestamp - (timestamp % 86400).
-    // slot 52: mapping(pair_id => mapping(utc_day_ts => cumulative price*volume sum))
+    // slot 53: mapping(pair_id => mapping(utc_day_ts => cumulative price*volume sum))
     pub daily_pv_sum: Mapping<u32, Mapping<u64, U256>>,
-    // slot 53: mapping(pair_id => mapping(utc_day_ts => cumulative volume sum))
+    // slot 54: mapping(pair_id => mapping(utc_day_ts => cumulative volume sum))
     pub daily_vol_sum: Mapping<u32, Mapping<u64, U256>>,
 
-    // === Reference Currencies ===
+    // === Reference Currencies (slot 55) ===
     // Dynamic list of ISO 4217 numeric codes considered "reference" currencies
     // for off-chain pricing. Length at the base slot, data at keccak256(slot)
     // + index. Pre-filled at genesis with [840] (USD).
     pub reference_currencies: StorageVec<u16>,
 
-    // === Per-UTC-Day VWAP Snapshots ===
+    // === Per-UTC-Day VWAP Snapshots (slots 56-59) ===
     // Finalized VWAP for a full UTC calendar day, keyed by a yyyymmdd UTC date
     // key (e.g. 20260625) — NOT a WorldwideDay (which is UTC+14). Written once
     // per closed day by the begin-block lifecycle from the canonical
@@ -179,10 +184,10 @@ pub struct OracleContract {
     // so every day <= this watermark is considered finalized.
     pub utc_day_vwap_last_finalized: Slot<u32>,
 
-    // Reference-currency currency rates
+    // slot 60: reference-currency currency rates
     pub reference_currency_rate: Mapping<u16, U256>,
 
-    // === OCOMP PoC pre-admission projection ===
+    // === OCOMP PoC pre-admission projection (slots 61-64) ===
     // These trailing fields are inert until the fresh-devnet fork handler sets
     // `ocomp_profile_ready`. Existing pre-fork Oracle writes therefore keep
     // their exact historical state footprint.

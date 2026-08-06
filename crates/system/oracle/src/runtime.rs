@@ -7,6 +7,7 @@ use outbe_common::WorldwideDay;
 use outbe_primitives::addresses::ORACLE_ADDRESS;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::time::{date_key_to_utc_timestamp, SECONDS_PER_DAY};
+use std::collections::BTreeSet;
 
 use crate::constants::DAY_TYPE_PAIR;
 use crate::precompile::IOracle;
@@ -96,14 +97,15 @@ impl OracleContract<'_> {
             ));
         }
 
-        // Check for duplicate pair_hashes in the submission
-        for i in 0..tuples.len() {
-            for j in (i + 1)..tuples.len() {
-                if tuples[i].0 == tuples[j].0 {
-                    return Err(PrecompileError::Revert(
-                        "duplicate pair in vote submission".into(),
-                    ));
-                }
+        // Check for duplicate pair_hashes in the submission. Kept separate from
+        // the vote-target loop below so the revert precedence for a submission
+        // that is both duplicated and untargeted stays unchanged.
+        let mut seen = BTreeSet::new();
+        for (pair_hash, _, _) in tuples {
+            if !seen.insert(*pair_hash) {
+                return Err(PrecompileError::Revert(
+                    "duplicate pair in vote submission".into(),
+                ));
             }
         }
 

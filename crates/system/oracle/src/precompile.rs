@@ -31,12 +31,7 @@ pub fn dispatch(
                 Ok((rate, block, ts).into())
             }),
             getVwap(c) => view(c, |c| {
-                let pair_id = oracle.get_pair_id(&c.base, &c.quote)?;
-                if pair_id == 0 {
-                    return Err(outbe_primitives::error::PrecompileError::Revert(
-                        "pair not registered".into(),
-                    ));
-                }
+                let pair_id = oracle.require_pair_id(&c.base, &c.quote)?;
                 let now = oracle.storage.timestamp()?.to::<u64>();
                 oracle.calculate_vwap_lookback(pair_id, now, c.lookbackSeconds)
             }),
@@ -86,21 +81,11 @@ pub fn dispatch(
                 Ok((success, abstain, miss, slash_window).into())
             }),
             getVwapForTimeRange(c) => view(c, |c| {
-                let pair_id = oracle.get_pair_id(&c.base, &c.quote)?;
-                if pair_id == 0 {
-                    return Err(outbe_primitives::error::PrecompileError::Revert(
-                        "pair not registered".into(),
-                    ));
-                }
+                let pair_id = oracle.require_pair_id(&c.base, &c.quote)?;
                 oracle.calculate_vwap(pair_id, c.startTime, c.endTime)
             }),
             getUtcDayVwap(c) => view(c, |c| {
-                let pair_id = oracle.get_pair_id(&c.base, &c.quote)?;
-                if pair_id == 0 {
-                    return Err(outbe_primitives::error::PrecompileError::Revert(
-                        "pair not registered".into(),
-                    ));
-                }
+                let pair_id = oracle.require_pair_id(&c.base, &c.quote)?;
                 match oracle.get_utc_day_vwap_for_pair_id(c.utcDay, pair_id)? {
                     Some(vwap) => Ok(vwap),
                     None => Err(outbe_primitives::error::PrecompileError::Revert(
@@ -109,12 +94,7 @@ pub fn dispatch(
                 }
             }),
             getScurveValue(c) => view(c, |c| {
-                let pair_id = oracle.get_pair_id(&c.base, &c.quote)?;
-                if pair_id == 0 {
-                    return Err(outbe_primitives::error::PrecompileError::Revert(
-                        "pair not registered".into(),
-                    ));
-                }
+                let pair_id = oracle.require_pair_id(&c.base, &c.quote)?;
                 crate::scurve::get_max_active_scurve_value(&oracle, pair_id, c.timestamp)
             }),
             setExchangeRate(c) => {
@@ -175,12 +155,7 @@ pub fn dispatch(
                 })
             }
             getPriceSnapshotHistory(c) => view(c, |c| {
-                let pair_id = oracle.get_pair_id(&c.base, &c.quote)?;
-                if pair_id == 0 {
-                    return Err(outbe_primitives::error::PrecompileError::Revert(
-                        "pair not registered".into(),
-                    ));
-                }
+                let pair_id = oracle.require_pair_id(&c.base, &c.quote)?;
                 let (timestamps, rates, volumes) =
                     oracle.get_price_snapshot_history(pair_id, c.count)?;
                 Ok(IOracle::getPriceSnapshotHistoryReturn {
@@ -201,12 +176,7 @@ pub fn dispatch(
                 })
             }),
             getTwap(c) => view(c, |c| {
-                let pair_id = oracle.get_pair_id(&c.base, &c.quote)?;
-                if pair_id == 0 {
-                    return Err(outbe_primitives::error::PrecompileError::Revert(
-                        "pair not registered".into(),
-                    ));
-                }
+                let pair_id = oracle.require_pair_id(&c.base, &c.quote)?;
                 let now = oracle.storage.timestamp()?.to::<u64>();
                 oracle.calculate_twap(pair_id, now, c.lookbackSeconds)
             }),
@@ -220,12 +190,7 @@ pub fn dispatch(
                 })
             }),
             getDayVwap(c) => view(c, |c| {
-                let pair_id = oracle.get_pair_id(&c.base, &c.quote)?;
-                if pair_id == 0 {
-                    return Err(outbe_primitives::error::PrecompileError::Revert(
-                        "pair not registered".into(),
-                    ));
-                }
+                let pair_id = oracle.require_pair_id(&c.base, &c.quote)?;
                 let now = oracle.storage.timestamp()?.to::<u64>();
                 oracle.calculate_vwap_lookback(pair_id, now, 86400)
             }),
@@ -250,12 +215,7 @@ pub fn dispatch(
                 })
             }),
             getScurveEntries(c) => view(c, |c| {
-                let pair_id = oracle.get_pair_id(&c.base, &c.quote)?;
-                if pair_id == 0 {
-                    return Err(outbe_primitives::error::PrecompileError::Revert(
-                        "pair not registered".into(),
-                    ));
-                }
+                let pair_id = oracle.require_pair_id(&c.base, &c.quote)?;
                 let now = oracle.storage.timestamp()?.to::<u64>();
                 let (peak_days, peak_prices, current_values) =
                     crate::scurve::get_scurve_entries(&oracle, pair_id, now)?;
@@ -266,12 +226,7 @@ pub fn dispatch(
                 })
             }),
             getScurveValues(c) => view(c, |c| {
-                let pair_id = oracle.get_pair_id(&c.base, &c.quote)?;
-                if pair_id == 0 {
-                    return Err(outbe_primitives::error::PrecompileError::Revert(
-                        "pair not registered".into(),
-                    ));
-                }
+                let pair_id = oracle.require_pair_id(&c.base, &c.quote)?;
                 let target_day = crate::scurve::truncate_to_day(c.timestamp);
                 let (peak_days, peak_prices, values) =
                     crate::scurve::get_scurve_entries(&oracle, pair_id, c.timestamp)?;
@@ -292,12 +247,7 @@ pub fn dispatch(
                 })
             }),
             getAllScurveDataForPair(c) => view(c, |c| {
-                let pair_id = oracle.get_pair_id(&c.base, &c.quote)?;
-                if pair_id == 0 {
-                    return Err(outbe_primitives::error::PrecompileError::Revert(
-                        "pair not registered".into(),
-                    ));
-                }
+                let pair_id = oracle.require_pair_id(&c.base, &c.quote)?;
                 let (peak_days, peak_prices) =
                     crate::scurve::get_all_scurve_data_for_pair(&oracle, pair_id)?;
                 Ok(IOracle::getAllScurveDataForPairReturn {
@@ -337,23 +287,13 @@ pub fn dispatch(
             }),
             getCurrencyRate(c) => view(c, |c| oracle.get_currency_rate(c.isoCode)),
             getNominalPrice(c) => view(c, |c| {
-                let pair_id = oracle.get_pair_id(&c.base, &c.quote)?;
-                if pair_id == 0 {
-                    return Err(outbe_primitives::error::PrecompileError::Revert(
-                        "pair not registered".into(),
-                    ));
-                }
+                let pair_id = oracle.require_pair_id(&c.base, &c.quote)?;
                 let (nominal, _, _, _) =
                     oracle.get_nominal_price_components(pair_id, c.timestamp)?;
                 Ok(nominal)
             }),
             getNominalPriceComponents(c) => view(c, |c| {
-                let pair_id = oracle.get_pair_id(&c.base, &c.quote)?;
-                if pair_id == 0 {
-                    return Err(outbe_primitives::error::PrecompileError::Revert(
-                        "pair not registered".into(),
-                    ));
-                }
+                let pair_id = oracle.require_pair_id(&c.base, &c.quote)?;
                 let (nominal_price, vwap, max_scurve, source) =
                     oracle.get_nominal_price_components(pair_id, c.timestamp)?;
                 Ok(IOracle::getNominalPriceComponentsReturn {
