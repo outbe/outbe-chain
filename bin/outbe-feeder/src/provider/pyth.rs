@@ -14,10 +14,10 @@ const DEFAULT_HERMES_URL: &str = "https://hermes.pyth.network";
 /// See: https://pyth.network/developers/price-feed-ids
 fn pyth_feed_id(base: &str, quote: &str) -> Option<&'static str> {
     match (base, quote) {
-        ("ETH", "USD" | "0xUSD") => {
+        ("ETH", "USD" | "840") => {
             Some("0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace")
         }
-        ("BTC", "USD" | "0xUSD") => {
+        ("BTC", "USD" | "840") => {
             Some("0xe62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43")
         }
         _ => None,

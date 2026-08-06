@@ -46,7 +46,7 @@ fn one_e18() -> U256 {
     U256::from(10u64).pow(U256::from(18u64))
 }
 
-/// COEN/0xUSD rate these tests seed: 2.0, 1e18-scaled.
+/// COEN/840 rate these tests seed: 2.0, 1e18-scaled.
 fn oracle_rate() -> U256 {
     U256::from(2u64) * one_e18()
 }
@@ -95,19 +95,19 @@ fn view_pledged(s: &StorageHandle<'_>, a: Address) -> U256 {
     decrypt_pledged(&vk, a, &blob).unwrap()
 }
 
-/// Register the COEN/0xUSD pair plus the ISO 840 settlement mapping the pledge
+/// Register the COEN/840 pair plus the ISO 840 settlement mapping the pledge
 /// conversion resolves through (the asset's `isoCode()` selects the pair).
 fn seed_oracle(storage: StorageHandle<'_>, rate_1e18: U256) {
     let mut oracle = outbe_oracle::schema::OracleContract::new(storage);
-    oracle.register_pair("COEN", "0xUSD").unwrap();
+    oracle.register_pair("COEN", "840").unwrap();
     oracle
-        .set_exchange_rate(Address::ZERO, "COEN", "0xUSD", rate_1e18, 0, 0)
+        .set_exchange_rate(Address::ZERO, "COEN", "840", rate_1e18, 0, 0)
         .unwrap();
     oracle
         .settlement_iso_to_pair
         .write(
             &ASSET_ISO,
-            outbe_oracle::schema::OracleContract::pair_hash("COEN", "0xUSD"),
+            outbe_oracle::schema::OracleContract::pair_hash("COEN", "840"),
         )
         .unwrap();
 }
@@ -128,7 +128,7 @@ fn seed_fidelity(storage: StorageHandle<'_>, account: Address) {
 /// Run `f` in a fresh storage scope with BOTH the Gratis and Promis in-process
 /// enclaves installed (mineFromPromis burns confidential promis then mints
 /// confidential gratis), the block time set (so Fidelity reads a non-zero `now`), and
-/// the COEN/0xUSD pair seeded (pledges are priced from it).
+/// the COEN/840 pair seeded (pledges are priced from it).
 fn with_env<R>(f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
     test_enclave::install();
     outbe_promis::enclave_client::test_enclave::install();

@@ -21,7 +21,7 @@ Nod is a read-only EVM token surface backed by compressed entities. Item identit
 the 36-byte Poseidon-derived id for `(owner, worldwide_day)`, limiting one live Nod
 per owner/day. Bucket key is `keccak256(day || floor_price)` and its compressed-
 entity id is the day prefix plus that digest. Bucket qualification is a monotonic
-false-to-true latch driven at begin-block by canonical `COEN/0xUSD` Oracle state.
+false-to-true latch driven at begin-block by canonical `COEN/840` Oracle state.
 
 Lysis/NodFactory issue through `add_nod`; NodFactory consumes through verified item
 and bucket capabilities. The block lifecycle is the sole normal qualification

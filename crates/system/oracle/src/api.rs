@@ -171,7 +171,7 @@ pub fn initialize_fresh_ocomp_profile(storage: StorageHandle) -> Result<()> {
     oracle.initialize_fresh_ocomp_profile()
 }
 
-/// Stored WorldwideDay VWAP for the [`DAY_TYPE_PAIR`] (`COEN/0xUSD`), or `None`
+/// Stored WorldwideDay VWAP for the [`DAY_TYPE_PAIR`] (`COEN/840`), or `None`
 /// when the pair is not registered or the day has no snapshot for it.
 ///
 /// This is the single entry point for the day-rate decision: pair resolution and
@@ -212,7 +212,7 @@ pub fn store_worldwide_day_vwap_snapshot(
     }
 }
 
-/// Finalized per-UTC-day VWAP for the [`DAY_TYPE_PAIR`] (`COEN/0xUSD`), or
+/// Finalized per-UTC-day VWAP for the [`DAY_TYPE_PAIR`] (`COEN/840`), or
 /// `None` when the pair is not registered or the day has no finalized value.
 pub fn day_type_pair_utc_vwap(storage: StorageHandle, utc_day: u32) -> Result<Option<U256>> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);

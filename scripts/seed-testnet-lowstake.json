@@ -97,7 +97,7 @@
    },
    {
     "base": "COEN",
-    "quote": "0xUSD",
+    "quote": "840",
     "initial_rate": "1000000000000000000"
    }
   ],
@@ -105,13 +105,13 @@
    {
     "iso_code": 840,
     "pair_base": "COEN",
-    "pair_quote": "0xUSD"
+    "pair_quote": "840"
    }
   ],
   "scurve_seeds": [
    {
     "pair_base": "COEN",
-    "pair_quote": "0xUSD",
+    "pair_quote": "840",
     "peak_day": 20241220,
     "peak_price": "1000000000000000000"
    }

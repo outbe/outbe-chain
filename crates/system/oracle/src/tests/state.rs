@@ -723,7 +723,7 @@ fn test_retired_denom_slots_stay_zero_after_genesis() {
         let mut config = crate::genesis::OracleGenesisConfig::default_config();
         config
             .settlement_currencies
-            .push((840, "COEN".into(), "0xUSD".into()));
+            .push((840, "COEN".into(), "840".into()));
         crate::genesis::init_from_genesis(&mut oracle, &config).unwrap();
 
         for base in [41u64, 46] {

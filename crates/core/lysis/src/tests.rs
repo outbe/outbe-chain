@@ -151,10 +151,10 @@ fn later_nod_failure_rolls_back_the_complete_lysis_attempt() {
         begin_block(storage.clone(), &scope).unwrap();
 
         let mut oracle = OracleContract::new(storage.clone());
-        let pair_id = oracle.register_pair("COEN", "0xUSD").unwrap();
+        let pair_id = oracle.register_pair("COEN", "840").unwrap();
         oracle
             .settlement_iso_to_pair
-            .write(&840_u16, OracleContract::pair_hash("COEN", "0xUSD"))
+            .write(&840_u16, OracleContract::pair_hash("COEN", "840"))
             .unwrap();
         oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
         oracle
@@ -236,10 +236,10 @@ fn gas_08_lysis_dense_day_completes_and_emits_body_mutations() {
         seed_compressed_entities_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
         let mut oracle = OracleContract::new(storage.clone());
-        let pair_id = oracle.register_pair("COEN", "0xUSD").unwrap();
-        // Register ISO 840 (USD) → COEN/0xUSD pair so the runtime's
+        let pair_id = oracle.register_pair("COEN", "840").unwrap();
+        // Register ISO 840 (USD) → COEN/840 pair so the runtime's
         // `outbe_oracle::api::get_pair_id(_, 840)` lookup resolves.
-        let pair_hash = OracleContract::pair_hash("COEN", "0xUSD");
+        let pair_hash = OracleContract::pair_hash("COEN", "840");
         oracle
             .settlement_iso_to_pair
             .write(&840u16, pair_hash)
@@ -665,13 +665,13 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
         let scope = ExecutionScope::new();
         seed_compressed_entities_genesis(&s);
         begin_block(s.clone(), &scope).unwrap();
-        // 1. Register COEN/0xUSD pair and seed its WorldwideDay VWAP. We
+        // 1. Register COEN/840 pair and seed its WorldwideDay VWAP. We
         //    write directly into the oracle schema (no real vote tally),
         //    because lysis only reads `get_worldwide_day_vwap_for_pair_id`.
         let mut oracle = OracleContract::new(s.clone());
-        let pair_id = oracle.register_pair("COEN", "0xUSD").unwrap();
-        // Wire ISO 840 → COEN/0xUSD so the runtime's ISO-keyed pair lookup resolves.
-        let pair_hash = OracleContract::pair_hash("COEN", "0xUSD");
+        let pair_id = oracle.register_pair("COEN", "840").unwrap();
+        // Wire ISO 840 → COEN/840 so the runtime's ISO-keyed pair lookup resolves.
+        let pair_hash = OracleContract::pair_hash("COEN", "840");
         oracle
             .settlement_iso_to_pair
             .write(&840u16, pair_hash)
@@ -995,9 +995,9 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
         seed_compressed_entities_genesis(&s);
         begin_block(s.clone(), &scope).unwrap();
         let mut oracle = OracleContract::new(s.clone());
-        let pair_id = oracle.register_pair("COEN", "0xUSD").unwrap();
-        // Wire ISO 840 → COEN/0xUSD so the runtime's ISO-keyed pair lookup resolves.
-        let pair_hash = OracleContract::pair_hash("COEN", "0xUSD");
+        let pair_id = oracle.register_pair("COEN", "840").unwrap();
+        // Wire ISO 840 → COEN/840 so the runtime's ISO-keyed pair lookup resolves.
+        let pair_hash = OracleContract::pair_hash("COEN", "840");
         oracle
             .settlement_iso_to_pair
             .write(&840u16, pair_hash)
@@ -1084,10 +1084,10 @@ fn lysis_records_contributors_aggregated_by_owner() {
         let scope = ExecutionScope::new();
         seed_compressed_entities_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
-        // Oracle: register ISO 840 -> COEN/0xUSD and seed a day VWAP snapshot.
+        // Oracle: register ISO 840 -> COEN/840 and seed a day VWAP snapshot.
         let mut oracle = OracleContract::new(storage.clone());
-        let pair_id = oracle.register_pair("COEN", "0xUSD").unwrap();
-        let pair_hash = OracleContract::pair_hash("COEN", "0xUSD");
+        let pair_id = oracle.register_pair("COEN", "840").unwrap();
+        let pair_hash = OracleContract::pair_hash("COEN", "840");
         oracle
             .settlement_iso_to_pair
             .write(&840u16, pair_hash)
@@ -1180,8 +1180,8 @@ fn lysis_omits_excluded_owners_from_contributor_map() {
         seed_compressed_entities_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
         let mut oracle = OracleContract::new(storage.clone());
-        let pair_id = oracle.register_pair("COEN", "0xUSD").unwrap();
-        let pair_hash = OracleContract::pair_hash("COEN", "0xUSD");
+        let pair_id = oracle.register_pair("COEN", "840").unwrap();
+        let pair_hash = OracleContract::pair_hash("COEN", "840");
         oracle
             .settlement_iso_to_pair
             .write(&840u16, pair_hash)

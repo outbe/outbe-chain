@@ -16,8 +16,8 @@ pub struct MockProvider {
 impl MockProvider {
     pub fn new() -> Self {
         let mut base_prices = HashMap::new();
-        base_prices.insert("COEN/0xUSD".to_string(), 1.0);
-        base_prices.insert("ETH/0xUSD".to_string(), 2500.0);
+        base_prices.insert("COEN/840".to_string(), 1.0);
+        base_prices.insert("ETH/840".to_string(), 2500.0);
         Self { base_prices }
     }
 }

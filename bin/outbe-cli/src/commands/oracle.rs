@@ -14,7 +14,7 @@ pub enum OracleCmd {
     Rate {
         /// Base currency (e.g., COEN)
         base: String,
-        /// Quote currency (e.g., 0xUSD)
+        /// Quote as an ISO 4217 numeric code (e.g., 840 for USD)
         quote: String,
     },
     /// Show all exchange rates
@@ -906,25 +906,25 @@ mod tests {
         let cli = TestCli::try_parse_from(["test", "params"]);
         assert!(cli.is_ok());
 
-        let cli = TestCli::try_parse_from(["test", "rate", "COEN", "0xUSD"]);
+        let cli = TestCli::try_parse_from(["test", "rate", "COEN", "840"]);
         assert!(cli.is_ok());
 
         let cli = TestCli::try_parse_from(["test", "rates"]);
         assert!(cli.is_ok());
 
-        let cli = TestCli::try_parse_from(["test", "vwap", "COEN", "0xUSD", "3600"]);
+        let cli = TestCli::try_parse_from(["test", "vwap", "COEN", "840", "3600"]);
         assert!(cli.is_ok());
 
-        let cli = TestCli::try_parse_from(["test", "vwap-range", "COEN", "0xUSD", "100", "200"]);
+        let cli = TestCli::try_parse_from(["test", "vwap-range", "COEN", "840", "100", "200"]);
         assert!(cli.is_ok());
 
-        let cli = TestCli::try_parse_from(["test", "twap", "COEN", "0xUSD", "3600"]);
+        let cli = TestCli::try_parse_from(["test", "twap", "COEN", "840", "3600"]);
         assert!(cli.is_ok());
 
         let cli = TestCli::try_parse_from(["test", "twaps", "3600"]);
         assert!(cli.is_ok());
 
-        let cli = TestCli::try_parse_from(["test", "day-vwap", "COEN", "0xUSD"]);
+        let cli = TestCli::try_parse_from(["test", "day-vwap", "COEN", "840"]);
         assert!(cli.is_ok());
 
         let cli = TestCli::try_parse_from(["test", "worldwide-day-vwap", "100", "200"]);
@@ -939,11 +939,11 @@ mod tests {
         let cli = TestCli::try_parse_from(["test", "vote-targets"]);
         assert!(cli.is_ok());
 
-        let cli = TestCli::try_parse_from(["test", "is-vote-target", "COEN", "0xUSD"]);
+        let cli = TestCli::try_parse_from(["test", "is-vote-target", "COEN", "840"]);
         assert!(cli.is_ok());
 
         let cli =
-            TestCli::try_parse_from(["test", "snapshot-history", "COEN", "0xUSD", "--count", "5"]);
+            TestCli::try_parse_from(["test", "snapshot-history", "COEN", "840", "--count", "5"]);
         assert!(cli.is_ok());
 
         let cli = TestCli::try_parse_from(["test", "all-snapshot-history", "--count", "5"]);
@@ -956,33 +956,32 @@ mod tests {
         ]);
         assert!(cli.is_ok());
 
-        let cli = TestCli::try_parse_from(["test", "scurve", "COEN", "0xUSD"]);
+        let cli = TestCli::try_parse_from(["test", "scurve", "COEN", "840"]);
         assert!(cli.is_ok());
 
-        let cli =
-            TestCli::try_parse_from(["test", "scurve", "COEN", "0xUSD", "--timestamp", "123"]);
+        let cli = TestCli::try_parse_from(["test", "scurve", "COEN", "840", "--timestamp", "123"]);
         assert!(cli.is_ok());
 
-        let cli = TestCli::try_parse_from(["test", "scurve-entries", "COEN", "0xUSD"]);
+        let cli = TestCli::try_parse_from(["test", "scurve-entries", "COEN", "840"]);
         assert!(cli.is_ok());
 
-        let cli = TestCli::try_parse_from(["test", "scurve-values", "COEN", "0xUSD", "123"]);
+        let cli = TestCli::try_parse_from(["test", "scurve-values", "COEN", "840", "123"]);
         assert!(cli.is_ok());
 
         let cli = TestCli::try_parse_from(["test", "all-scurve"]);
         assert!(cli.is_ok());
 
-        let cli = TestCli::try_parse_from(["test", "all-scurve-for-pair", "COEN", "0xUSD"]);
+        let cli = TestCli::try_parse_from(["test", "all-scurve-for-pair", "COEN", "840"]);
         assert!(cli.is_ok());
 
-        let cli = TestCli::try_parse_from(["test", "nominal-price", "COEN", "0xUSD"]);
+        let cli = TestCli::try_parse_from(["test", "nominal-price", "COEN", "840"]);
         assert!(cli.is_ok());
 
         let cli = TestCli::try_parse_from([
             "test",
             "nominal-components",
             "COEN",
-            "0xUSD",
+            "840",
             "--timestamp",
             "123",
         ]);

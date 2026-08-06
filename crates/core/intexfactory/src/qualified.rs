@@ -1,4 +1,4 @@
-//! Per-block qualification: drains floor-bins crossed by the live COEN/0xUSD
+//! Per-block qualification: drains floor-bins crossed by the live COEN/840
 //! rate and qualifies matured (21d) Issued series. Runs in `begin_block`.
 
 use alloy_primitives::U256;

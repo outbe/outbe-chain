@@ -124,7 +124,7 @@ mod tests {
         IOracle::submitVoteCall {
             tuples: vec![IOracle::ExchangeRateTuple {
                 base: "COEN".to_string(),
-                quote: "0xUSD".to_string(),
+                quote: "840".to_string(),
                 exchangeRate: U256::from(18_820_648_000_000_000u128),
                 volume: U256::from(1_000_000u64),
             }],

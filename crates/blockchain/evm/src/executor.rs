@@ -624,7 +624,7 @@ fn run_outbe_pre_execution_hooks_inner(
     // surface, so it must run after Oracle.
     <outbe_gem::GemLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
 
-    // INTEX: qualify matured Issued series whose floor < current COEN/0xUSD
+    // INTEX: qualify matured Issued series whose floor < current COEN/840
     // rate. Reads the same Oracle surface, so it runs after Oracle.
     <outbe_intexfactory::IntexLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
 
@@ -4585,19 +4585,27 @@ mod tests {
             let active: Vec<Address> = validators.iter().map(|(validator, _)| *validator).collect();
             vs.activate_reshared_set(&active, B256::ZERO).unwrap();
             seed_test_committee_snapshot(storage.clone(), validators);
-            // Seed the COEN/0xUSD oracle pair + a 1.0 rate so begin-block NOD/GEM/INTEX
-            // floor-price promotion reads a registered pair instead of reverting
-            // "pair not registered".
+            // Seed the COEN/840 oracle pair + a 1.0 rate + the ISO 840 settlement
+            // mapping, so begin-block NOD/GEM/INTEX floor-price promotion resolves
+            // a live rate instead of soft-skipping the scan. The qualifiers read
+            // `settlement_iso_to_pair`, so registering the pair alone is not enough.
             let mut oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-            oracle.register_pair("COEN", "0xUSD").unwrap();
+            oracle.register_pair("COEN", "840").unwrap();
             oracle
                 .set_exchange_rate(
                     Address::ZERO,
                     "COEN",
-                    "0xUSD",
+                    "840",
                     U256::from(1_000_000_000_000_000_000u128),
                     0,
                     0,
+                )
+                .unwrap();
+            oracle
+                .settlement_iso_to_pair
+                .write(
+                    &840u16,
+                    outbe_oracle::schema::OracleContract::pair_hash("COEN", "840"),
                 )
                 .unwrap();
             seed_extra(storage);
@@ -4681,19 +4689,27 @@ mod tests {
             vs.activate_reshared_set(&[active], B256::with_last_byte(0x01))
                 .unwrap();
             seed_test_committee_snapshot(storage.clone(), &[(active, dummy_pubkey(0xA2))]);
-            // Seed the COEN/0xUSD oracle pair + a 1.0 rate so begin-block NOD/GEM/INTEX
-            // floor-price promotion reads a registered pair instead of reverting
-            // "pair not registered".
+            // Seed the COEN/840 oracle pair + a 1.0 rate + the ISO 840 settlement
+            // mapping, so begin-block NOD/GEM/INTEX floor-price promotion resolves
+            // a live rate instead of soft-skipping the scan. The qualifiers read
+            // `settlement_iso_to_pair`, so registering the pair alone is not enough.
             let mut oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-            oracle.register_pair("COEN", "0xUSD").unwrap();
+            oracle.register_pair("COEN", "840").unwrap();
             oracle
                 .set_exchange_rate(
                     Address::ZERO,
                     "COEN",
-                    "0xUSD",
+                    "840",
                     U256::from(1_000_000_000_000_000_000u128),
                     0,
                     0,
+                )
+                .unwrap();
+            oracle
+                .settlement_iso_to_pair
+                .write(
+                    &840u16,
+                    outbe_oracle::schema::OracleContract::pair_hash("COEN", "840"),
                 )
                 .unwrap();
             seed_extra(storage);
@@ -5047,7 +5063,7 @@ mod tests {
         let input = outbe_oracle::precompile::IOracle::submitVoteCall {
             tuples: vec![outbe_oracle::precompile::IOracle::ExchangeRateTuple {
                 base: "COEN".to_string(),
-                quote: "0xUSD".to_string(),
+                quote: "840".to_string(),
                 exchangeRate: U256::from(1_000_000_000_000_000_000u128),
                 volume: U256::from(10_000_000_000_000_000_000_000u128),
             }],
@@ -10580,15 +10596,15 @@ mod tests {
         vs.register_validator(OWNER, validator, pk).unwrap();
         vs.activate_reshared_set(&[validator], B256::ZERO).unwrap();
         seed_test_committee_snapshot(storage.clone(), &[(validator, *pk)]);
-        // Seed COEN/0xUSD pair + 1.0 rate so begin-block NOD/GEM/INTEX promotion
+        // Seed COEN/840 pair + 1.0 rate so begin-block NOD/GEM/INTEX promotion
         // reads a registered pair instead of reverting "pair not registered".
         let mut oracle = outbe_oracle::schema::OracleContract::new(storage);
-        oracle.register_pair("COEN", "0xUSD").unwrap();
+        oracle.register_pair("COEN", "840").unwrap();
         oracle
             .set_exchange_rate(
                 Address::ZERO,
                 "COEN",
-                "0xUSD",
+                "840",
                 U256::from(1_000_000_000_000_000_000u128),
                 0,
                 0,

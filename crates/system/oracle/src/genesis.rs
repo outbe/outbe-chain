@@ -105,7 +105,7 @@ impl OracleGenesisConfig {
             min_valid_per_window: U256::from(50_000_000_000_000_000u128), // 0.05
             slash_fraction: U256::ZERO,
             lookback_duration: 86400,
-            pairs: vec![("COEN".into(), "0xUSD".into())],
+            pairs: vec![("COEN".into(), "840".into())],
             initial_rates: vec![],
             feeder_delegations: vec![],
             settlement_currencies: vec![],

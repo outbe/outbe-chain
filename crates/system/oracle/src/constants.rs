@@ -19,4 +19,4 @@ pub(crate) const MAX_SNAPSHOT_RETENTION_SECONDS: u64 = 365 * 24 * 3600;
 pub const MAX_UTC_DAY_VWAP_BACKFILL_DAYS: u32 = 366;
 
 /// The pair whose WorldwideDay VWAP drives the GREEN/RED day-type decision.
-pub const DAY_TYPE_PAIR: (&str, &str) = ("COEN", "0xUSD");
+pub const DAY_TYPE_PAIR: (&str, &str) = ("COEN", "840");

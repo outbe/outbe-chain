@@ -695,19 +695,27 @@ mod tests {
             }
             vs.activate_reshared_set(validators, B256::repeat_byte(0xBB))
                 .unwrap();
-            // Seed the COEN/0xUSD oracle pair + a 1.0 rate so begin-block NOD/GEM/INTEX
-            // floor-price promotion reads a registered pair instead of reverting
-            // "pair not registered".
+            // Seed the COEN/840 oracle pair + a 1.0 rate + the ISO 840 settlement
+            // mapping, so begin-block NOD/GEM/INTEX floor-price promotion resolves
+            // a live rate instead of soft-skipping the scan. The qualifiers read
+            // `settlement_iso_to_pair`, so registering the pair alone is not enough.
             let mut oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-            oracle.register_pair("COEN", "0xUSD").unwrap();
+            oracle.register_pair("COEN", "840").unwrap();
             oracle
                 .set_exchange_rate(
                     Address::ZERO,
                     "COEN",
-                    "0xUSD",
+                    "840",
                     U256::from(1_000_000_000_000_000_000u128),
                     0,
                     0,
+                )
+                .unwrap();
+            oracle
+                .settlement_iso_to_pair
+                .write(
+                    &840u16,
+                    outbe_oracle::schema::OracleContract::pair_hash("COEN", "840"),
                 )
                 .unwrap();
         });

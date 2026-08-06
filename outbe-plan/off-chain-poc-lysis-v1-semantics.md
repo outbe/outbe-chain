@@ -352,7 +352,7 @@ The request phase applies the part known before Lysis:
 
 - GREEN: dispatch one Desis brief with supply `auction_base`;
 - RED: dispatch no brief and credit `auction_base` to carry-over;
-- entry price is the last closed UTC-day `COEN/0xUSD` VWAP selected at request
+- entry price is the last closed UTC-day `COEN/840` VWAP selected at request
   logical time, falling back to the frozen Metadosis `current_vwap`;
 - anchor/time is request logical time.
 

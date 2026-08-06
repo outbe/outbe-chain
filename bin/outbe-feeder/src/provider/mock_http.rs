@@ -2,8 +2,8 @@
 //!
 //! Ports the Cosmos feeder `mock_http` provider shape. It reads prices from a
 //! configurable REST endpoint:
-//! - `GET /api/tickers?symbols=COEN0XUSD,ETHUSDC`
-//! - `GET /api/candles?symbols=COEN0XUSD,ETHUSDC`
+//! - `GET /api/tickers?symbols=COEN840,ETHUSDC`
+//! - `GET /api/candles?symbols=COEN840,ETHUSDC`
 //!
 //! Responses are expected to use `{ "data": [...] }` with string or numeric
 //! price/volume fields.

@@ -54,7 +54,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
         begin_block(storage.clone(), &scope).unwrap();
 
         let mut oracle = OracleContract::new(storage.clone());
-        oracle.register_pair("COEN", "0xUSD").unwrap();
+        oracle.register_pair("COEN", "840").unwrap();
         outbe_oracle::api::initialize_fresh_ocomp_profile(storage.clone()).unwrap();
 
         let mut metadosis = MetadosisContract::new(storage.clone());
@@ -940,7 +940,7 @@ fn prepare_request_fixture_with_day_type(
         begin_block(storage.clone(), &scope).unwrap();
 
         let mut oracle = OracleContract::new(storage.clone());
-        oracle.register_pair("COEN", "0xUSD").unwrap();
+        oracle.register_pair("COEN", "840").unwrap();
         // `oracle_ready` gates OCOMP admission: when false the Oracle profile is
         // left un-armed so the terminal request defers with OracleProfileNotReady
         // (the deferral path formerly exercised via Fidelity readiness).
@@ -1041,7 +1041,7 @@ fn prepare_two_ready_days_fixture(
         seed_ce_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
         let mut oracle = OracleContract::new(storage.clone());
-        oracle.register_pair("COEN", "0xUSD").unwrap();
+        oracle.register_pair("COEN", "840").unwrap();
         // When false the Oracle profile is left un-armed so the terminal request
         // defers with OracleProfileNotReady (arm it mid-test to make a day eligible).
         if oracle_ready {
