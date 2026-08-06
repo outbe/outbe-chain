@@ -9,8 +9,8 @@ use alloy_sol_types::SolEvent;
 use outbe_primitives::addresses::ORACLE_ADDRESS;
 use outbe_primitives::error::{PrecompileError, Result};
 
-use crate::contract::{OracleContract, SCALE_1E18};
 use crate::precompile::IOracle;
+use crate::schema::{OracleContract, SCALE_1E18};
 
 /// S-curve period in days.
 pub const PERIOD: usize = 128;

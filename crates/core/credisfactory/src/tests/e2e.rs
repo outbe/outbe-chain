@@ -13,7 +13,7 @@ use outbe_credis::{CredisContract, NUMBER_OF_ANADOSIS, SECONDS_PER_MONTH};
 use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_gratisfactory::runtime as gf;
-use outbe_oracle::contract::OracleContract;
+use outbe_oracle::schema::OracleContract;
 use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
@@ -40,7 +40,7 @@ fn one_e18() -> U256 {
     U256::from(10u64).pow(U256::from(18u64))
 }
 
-/// COEN/0xUSD rate these tests seed: 2.0, 1e18-scaled.
+/// COEN/840 rate these tests seed: 2.0, 1e18-scaled.
 fn oracle_rate() -> U256 {
     U256::from(2u64) * one_e18()
 }
@@ -78,9 +78,16 @@ fn chain_b256() -> B256 {
 
 fn seed_oracle(storage: StorageHandle<'_>, rate_1e18: U256) {
     let mut oracle = OracleContract::new(storage);
-    oracle.register_pair("COEN", "0xUSD").unwrap();
+    oracle.register_pair("COEN", "840").unwrap();
     oracle
-        .set_exchange_rate(Address::ZERO, "COEN", "0xUSD", rate_1e18, 0, 0)
+        .set_exchange_rate(Address::ZERO, "COEN", "840", rate_1e18, 0, 0)
+        .unwrap();
+    oracle
+        .settlement_iso_to_pair
+        .write(
+            &ISSUANCE_ISO,
+            outbe_oracle::schema::OracleContract::pair_hash("COEN", "840"),
+        )
         .unwrap();
     oracle
         .reference_currency_rate

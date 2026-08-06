@@ -4,8 +4,8 @@ use outbe_primitives::{
     time::{previous_date_key, timestamp_to_date_key},
 };
 
-use crate::contract::OracleContract;
-use crate::logic::MAX_UTC_DAY_VWAP_BACKFILL_DAYS;
+use crate::constants::MAX_UTC_DAY_VWAP_BACKFILL_DAYS;
+use crate::schema::OracleContract;
 use crate::scurve;
 use crate::tally;
 

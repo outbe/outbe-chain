@@ -10,8 +10,10 @@ pub enum GratisFactoryError {
     InvalidAsset,
     #[error("pledge amount is zero")]
     InvalidAmount,
-    #[error("oracle COEN/USD rate unavailable")]
+    #[error("oracle COEN rate unavailable for the asset's currency")]
     OracleRateUnavailable,
+    #[error("asset does not report a decodable ISO 4217 code")]
+    AssetIsoUndecodable,
     #[error("oracle conversion overflow")]
     OracleConversionOverflow,
     #[error("pledge cost exceeds maxGratis")]

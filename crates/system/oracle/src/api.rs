@@ -3,8 +3,11 @@
 //! Exposes read-only helpers that other modules call to validate
 //! currency support, without going through the precompile dispatch.
 
-use crate::contract::OracleContract;
+use crate::schema::OracleContract;
 use crate::scurve;
+
+pub use crate::constants::DAY_TYPE_PAIR;
+
 use alloy_primitives::U256;
 use outbe_common::WorldwideDay;
 use outbe_primitives::{
@@ -67,14 +70,37 @@ pub fn check_reference_currency_with_storage(storage: StorageHandle, iso_code: u
     )))
 }
 
-pub fn get_pair_id(storage: StorageHandle, iso_code: u16) -> Result<u32> {
+/// Current COEN price in settlement currency `iso_code`, 1e18 scaled.
+///
+/// * `Ok(None)` — `iso_code` has no settlement pair registered.
+/// * `Ok(Some(U256::ZERO))` — the pair exists but no rate has been published.
+/// * `Ok(Some(rate))` — a live rate.
+///
+/// Never reverts on "not ready": begin-block scans must be able to skip a block
+/// rather than halt it. Callers that require a rate map the two not-ready cases
+/// onto their own typed errors. This is the single definition of the
+/// `settlement_iso_to_pair -> exchange_rate` lookup.
+pub fn coen_rate_for(storage: StorageHandle, iso_code: u16) -> Result<Option<U256>> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
-    let pair = oracle.settlement_iso_to_pair.read(&iso_code)?;
-    let id = oracle.pair_hash_to_id.read(&pair)?;
-    if id == 0 {
-        return Err(PrecompileError::Revert("pair not registered".into()));
+    let pair_hash = oracle.settlement_iso_to_pair.read(&iso_code)?;
+    if pair_hash.is_zero() {
+        return Ok(None);
     }
-    Ok(id)
+    oracle.exchange_rate.read(&pair_hash).map(Some)
+}
+
+/// Settlement pair id for `iso_code`, or `None` when the ISO has no registered
+/// pair. For callers that need the id itself rather than the rate.
+pub fn pair_id_for(storage: StorageHandle, iso_code: u16) -> Result<Option<u32>> {
+    let oracle: OracleContract<'_> = OracleContract::new(storage);
+    let pair_hash = oracle.settlement_iso_to_pair.read(&iso_code)?;
+    let id = oracle.pair_hash_to_id.read(&pair_hash)?;
+    Ok((id != 0).then_some(id))
+}
+
+pub fn get_pair_id(storage: StorageHandle, iso_code: u16) -> Result<u32> {
+    pair_id_for(storage, iso_code)?
+        .ok_or_else(|| PrecompileError::Revert("pair not registered".into()))
 }
 
 pub fn get_worldwide_day_vwap_for_pair_id(
@@ -85,9 +111,6 @@ pub fn get_worldwide_day_vwap_for_pair_id(
     let oracle: OracleContract<'_> = OracleContract::new(storage);
     oracle.get_worldwide_day_vwap_for_pair_id(worldwide_day, pair_id)
 }
-
-/// The pair whose WorldwideDay VWAP drives the GREEN/RED day-type decision.
-pub const DAY_TYPE_PAIR: (&str, &str) = ("COEN", "0xUSD");
 
 /// Selects the already-stored auction entry price and returns only O(1)
 /// authenticated collection counts. This path never invokes calculation or
@@ -148,7 +171,7 @@ pub fn initialize_fresh_ocomp_profile(storage: StorageHandle) -> Result<()> {
     oracle.initialize_fresh_ocomp_profile()
 }
 
-/// Stored WorldwideDay VWAP for the [`DAY_TYPE_PAIR`] (`COEN/0xUSD`), or `None`
+/// Stored WorldwideDay VWAP for the [`DAY_TYPE_PAIR`] (`COEN/840`), or `None`
 /// when the pair is not registered or the day has no snapshot for it.
 ///
 /// This is the single entry point for the day-rate decision: pair resolution and
@@ -189,7 +212,7 @@ pub fn store_worldwide_day_vwap_snapshot(
     }
 }
 
-/// Finalized per-UTC-day VWAP for the [`DAY_TYPE_PAIR`] (`COEN/0xUSD`), or
+/// Finalized per-UTC-day VWAP for the [`DAY_TYPE_PAIR`] (`COEN/840`), or
 /// `None` when the pair is not registered or the day has no finalized value.
 pub fn day_type_pair_utc_vwap(storage: StorageHandle, utc_day: u32) -> Result<Option<U256>> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);

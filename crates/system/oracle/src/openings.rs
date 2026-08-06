@@ -15,6 +15,11 @@ const SCURVE_PAIR_ID_BASE_SLOT: u64 = 35;
 const SCURVE_PEAK_DAY_BASE_SLOT: u64 = 36;
 const SCURVE_PEAK_PRICE_BASE_SLOT: u64 = 37;
 const SCURVE_OLDEST_SLOT: u64 = 38;
+// Retired schema field with no live writer: it always opens as zero and
+// `evaluate_oracle_opening_v1` never reads its value. It stays in the plan
+// because the V1 codec descriptor is hashed into the protocol bundle
+// (`outbe-ocomp-protocol::generated_registry`), so dropping it would change the
+// registry hash. Do not remove or reuse slot 41.
 const SETTLEMENT_ISO_TO_DENOM_BASE_SLOT: u64 = 41;
 const SETTLEMENT_ISO_TO_PAIR_BASE_SLOT: u64 = 42;
 const WWD_VWAP_EXISTS_BASE_SLOT: u64 = 47;

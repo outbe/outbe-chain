@@ -1,6 +1,6 @@
 use alloy_primitives::{keccak256, B256, U256};
 use outbe_common::WorldwideDay;
-use outbe_oracle::contract::OracleContract;
+use outbe_oracle::schema::OracleContract;
 use outbe_oracle::{
     evaluate_oracle_opening_v1, oracle_count_slot_plan_v1, oracle_opening_slot_plan_v1,
     OracleOpeningPlanError, MAX_OCOMP_ACTIVE_SCURVE_ENTRIES, MAX_OCOMP_WWD_PAIR_ENTRIES,
@@ -24,18 +24,10 @@ fn oracle_opening_plan_reads_the_exact_raw_slots_used_by_runtime_semantics() {
         let day = WorldwideDay::new(20260715);
         let usd_pair = keccak256("USD/COEN");
         let eur_pair = keccak256("EUR/COEN");
-        let usd_denom = keccak256("USD");
-        let eur_denom = keccak256("EUR");
 
-        oracle
-            .settlement_iso_to_denom
-            .write(&840, usd_denom)
-            .unwrap();
+        // Slot 41 (the retired denom hash) has no writer; the plan still opens
+        // it and tolerates the zero value.
         oracle.settlement_iso_to_pair.write(&840, usd_pair).unwrap();
-        oracle
-            .settlement_iso_to_denom
-            .write(&978, eur_denom)
-            .unwrap();
         oracle.settlement_iso_to_pair.write(&978, eur_pair).unwrap();
         oracle.pair_hash_to_id.write(&usd_pair, 1).unwrap();
         oracle.pair_hash_to_id.write(&eur_pair, 2).unwrap();
@@ -80,9 +72,9 @@ fn oracle_opening_plan_reads_the_exact_raw_slots_used_by_runtime_semantics() {
                 .map(|slot| slot_word(&storage, slot))
                 .collect::<Vec<_>>(),
             vec![
-                U256::from_be_bytes(usd_denom.0),
+                U256::ZERO,
                 U256::from_be_bytes(usd_pair.0),
-                U256::from_be_bytes(eur_denom.0),
+                U256::ZERO,
                 U256::from_be_bytes(eur_pair.0),
                 U256::from(1),
                 U256::from(2),
@@ -105,10 +97,10 @@ fn oracle_opening_plan_reads_the_exact_raw_slots_used_by_runtime_semantics() {
                 .map(|(_, value)| *value)
                 .collect::<Vec<_>>(),
             vec![
-                U256::from_be_bytes(usd_denom.0),
+                U256::ZERO,
                 U256::from_be_bytes(usd_pair.0),
                 U256::from(1),
-                U256::from_be_bytes(eur_denom.0),
+                U256::ZERO,
                 U256::from_be_bytes(eur_pair.0),
                 U256::from(2),
                 U256::from(1),

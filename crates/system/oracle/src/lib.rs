@@ -1,10 +1,13 @@
 pub mod api;
-pub mod contract;
-pub mod hooks;
-pub mod logic;
+pub mod constants;
+pub mod genesis;
+pub mod lifecycle;
 mod openings;
 pub mod precompile;
+pub mod runtime;
+pub mod schema;
 pub mod scurve;
+pub mod state;
 pub mod tally;
 
 pub use openings::{

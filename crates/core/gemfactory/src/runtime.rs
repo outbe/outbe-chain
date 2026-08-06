@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_gem::{api as gem_api, GemAddParams, GemState};
-use outbe_oracle::contract::OracleContract;
+use outbe_oracle::api::coen_rate_for;
 use outbe_primitives::addresses::{GEM_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
@@ -196,19 +196,14 @@ pub fn mine_gem_promis(
 /// `IssuanceCurrencyNotRegistered` if the ISO code has no pair mapping, or
 /// `OracleUnavailable` if the pair exists but no rate has been published.
 fn read_oracle_rate(storage: &StorageHandle<'_>, issuance_currency: u16) -> Result<U256> {
-    let oracle = OracleContract::new(storage.clone());
-    let pair_hash = oracle.settlement_iso_to_pair.read(&issuance_currency)?;
-    if pair_hash.is_zero() {
-        return Err(GemFactoryError::IssuanceCurrencyNotRegistered {
+    match coen_rate_for(storage.clone(), issuance_currency)? {
+        None => Err(GemFactoryError::IssuanceCurrencyNotRegistered {
             iso_code: issuance_currency,
         }
-        .into());
+        .into()),
+        Some(rate) if rate.is_zero() => Err(GemFactoryError::OracleUnavailable.into()),
+        Some(rate) => Ok(rate),
     }
-    let rate = oracle.exchange_rate.read(&pair_hash)?;
-    if rate.is_zero() {
-        return Err(GemFactoryError::OracleUnavailable.into());
-    }
-    Ok(rate)
 }
 
 fn compute_params(

@@ -61,7 +61,7 @@ providers = ["mock_http"]
 
 [[currency_pairs]]
 base = "COEN"
-quote = "0xUSD"
+quote = "840"
 chain_denom = "unit"
 providers = ["mock_http"]
 

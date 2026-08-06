@@ -36,15 +36,15 @@ fn seed_validator_set(storage: StorageHandle, initial_epoch: u64) {
     vs.config_epoch_length_blocks.write(EPOCH_LENGTH).unwrap();
     vs.epoch_start_block.write(0).unwrap();
     vs.epoch_number.write(U256::from(initial_epoch)).unwrap();
-    // Seed COEN/0xUSD pair + 1.0 rate so begin-block NOD/GEM/INTEX promotion
+    // Seed COEN/840 pair + 1.0 rate so begin-block NOD/GEM/INTEX promotion
     // reads a registered pair instead of reverting "pair not registered".
-    let mut oracle = outbe_oracle::contract::OracleContract::new(storage);
-    oracle.register_pair("COEN", "0xUSD").unwrap();
+    let mut oracle = outbe_oracle::schema::OracleContract::new(storage);
+    oracle.register_pair("COEN", "840").unwrap();
     oracle
         .set_exchange_rate(
             Address::ZERO,
             "COEN",
-            "0xUSD",
+            "840",
             U256::from(1_000_000_000_000_000_000u128),
             0,
             0,

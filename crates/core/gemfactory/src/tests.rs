@@ -1,6 +1,6 @@
 use alloy_primitives::{address, Address, B256, U256};
 use outbe_gem::{api as gem_api, GemContract, GemState};
-use outbe_oracle::contract::OracleContract;
+use outbe_oracle::schema::OracleContract;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::SCALE_1E18;
@@ -48,12 +48,12 @@ fn with_storage<R>(rate_1e18: Option<U256>, f: impl FnOnce(&StorageHandle) -> R)
     StorageHandle::enter(&mut storage, |handle| {
         if let Some(rate) = rate_1e18 {
             let mut oracle = OracleContract::new(handle.clone());
-            oracle.register_pair("COEN", "0xUSD").unwrap();
+            oracle.register_pair("COEN", "840").unwrap();
             oracle
-                .set_exchange_rate(Address::ZERO, "COEN", "0xUSD", rate, 0, 0)
+                .set_exchange_rate(Address::ZERO, "COEN", "840", rate, 0, 0)
                 .unwrap();
             // Register ISO 840 (USD) so mint_gem currency-validation passes.
-            let pair_hash = OracleContract::pair_hash("COEN", "0xUSD");
+            let pair_hash = OracleContract::pair_hash("COEN", "840");
             oracle
                 .settlement_iso_to_pair
                 .write(&840u16, pair_hash)
@@ -380,5 +380,36 @@ fn statistics_track_mint_count() {
         }
         let factory = GemFactoryContract::new(storage.clone());
         assert_eq!(factory.total_gems_issued.read().unwrap(), U256::from(3u64));
+    });
+}
+
+/// `coen_rate_for` collapses "no pair" and "no rate" into one `Option`, so pin
+/// that the two distinct typed errors still reach the caller.
+#[test]
+fn mint_gem_distinguishes_unregistered_currency_from_stale_oracle() {
+    // ISO 999 has no settlement pair at all.
+    with_storage(Some(U256::from(2u64) * one_e18()), |storage| {
+        let err = err_msg(runtime::mint_gem(
+            storage,
+            ALICE,
+            GemTypes::Wallet,
+            one_e18(),
+            999,
+            840,
+        ));
+        assert!(err.contains("999"), "unexpected error: {err}");
+    });
+
+    // ISO 840's pair is registered but carries no published rate.
+    with_storage(Some(U256::ZERO), |storage| {
+        let err = err_msg(runtime::mint_gem(
+            storage,
+            ALICE,
+            GemTypes::Wallet,
+            one_e18(),
+            840,
+            840,
+        ));
+        assert!(err.contains("oracle"), "unexpected error: {err}");
     });
 }

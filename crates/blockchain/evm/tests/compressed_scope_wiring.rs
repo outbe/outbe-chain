@@ -55,13 +55,13 @@ fn execution_db(proposer: Address, parent_root: B256) -> CacheDB<EmptyDBTyped<Pr
             .activate_reshared_set(&[proposer], B256::ZERO)
             .unwrap();
 
-        let mut oracle = outbe_oracle::contract::OracleContract::new(storage);
-        oracle.register_pair("COEN", "0xUSD").unwrap();
+        let mut oracle = outbe_oracle::schema::OracleContract::new(storage);
+        oracle.register_pair("COEN", "840").unwrap();
         oracle
             .set_exchange_rate(
                 Address::ZERO,
                 "COEN",
-                "0xUSD",
+                "840",
                 U256::from(1_000_000_000_000_000_000_u128),
                 0,
                 0,

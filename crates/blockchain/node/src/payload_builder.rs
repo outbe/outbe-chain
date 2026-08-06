@@ -944,15 +944,15 @@ mod tests {
             outbe_metadosis::commands::install_fork_profile(&install_ctx, &install)
                 .expect("fresh-devnet OCOMP profile installs through the production command");
 
-            let mut oracle = outbe_oracle::contract::OracleContract::new(storage);
+            let mut oracle = outbe_oracle::schema::OracleContract::new(storage);
             oracle
-                .register_pair("COEN", "0xUSD")
+                .register_pair("COEN", "840")
                 .expect("oracle pair seed succeeds");
             oracle
                 .set_exchange_rate(
                     alloy_primitives::Address::ZERO,
                     "COEN",
-                    "0xUSD",
+                    "840",
                     U256::from(1_000_000_000_000_000_000u128),
                     0,
                     0,

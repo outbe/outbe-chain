@@ -24,7 +24,7 @@ sol! {
 
 /// Decodes ABI-encoded `submitVote` calldata back into a human-readable string.
 ///
-/// Shows exactly what goes on-chain: `COEN/0xUSD:rate,vol | ETH/0xUSD:rate,vol`
+/// Shows exactly what goes on-chain: `COEN/840:rate,vol | ETH/840:rate,vol`
 pub fn decode_vote_log(calldata: &[u8]) -> eyre::Result<String> {
     let call = IOracle::submitVoteCall::abi_decode(calldata)
         .map_err(|e| eyre::eyre!("decode submitVote: {e}"))?;
@@ -64,7 +64,7 @@ mod tests {
     fn test_encode_vote_produces_calldata() {
         let prices = vec![AggregatedPrice {
             base: "COEN".to_string(),
-            quote: "0xUSD".to_string(),
+            quote: "840".to_string(),
             price: SCALE_1E18 + SCALE_1E18 / U256::from(2u64), // 1.5
             volume: U256::in_units(10000u128),
         }];

@@ -1,6 +1,3 @@
-pub const NATIVE_TOKEN: &str = "COEN";
-pub const STABLECOIN: &str = "0xUSD";
-
 /// Floor-price markup over the COEN market price, expressed as a percent.
 /// Agent-flow floor = rate × 108 / 100.
 pub const FLOOR_MARKUP_PERCENT: u64 = 108;

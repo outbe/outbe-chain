@@ -78,14 +78,14 @@ fn proposal_activation(created: u64) -> u64 {
 }
 
 fn seed_oracle_for_pre_exec(storage: StorageHandle) {
-    let mut oracle = outbe_oracle::contract::OracleContract::new(storage);
-    if oracle.register_pair("COEN", "0xUSD").is_err() {
+    let mut oracle = outbe_oracle::schema::OracleContract::new(storage);
+    if oracle.register_pair("COEN", "840").is_err() {
         return;
     }
     let _ = oracle.set_exchange_rate(
         Address::ZERO,
         "COEN",
-        "0xUSD",
+        "840",
         U256::from(1_000_000_000_000_000_000u128),
         0,
         0,

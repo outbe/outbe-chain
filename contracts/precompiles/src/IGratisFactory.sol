@@ -44,6 +44,7 @@ interface IGratisFactory {
     ///         releasing the full collateral back to `msg.sender`. Authorized by
     ///         the caller's modify key. `amountStables` is the figure the pledge was
     ///         quoted for and must match the one sealed in the ticket.
+    // todo remove amountStables
     function unpledgeGratis(uint256 amountStables, bytes32 pledgeHandle, bytes32 mac, uint64 opNonce) external;
 
     /// @notice Convert `amount` gratis to native COEN at 1:1 (burns gratis).

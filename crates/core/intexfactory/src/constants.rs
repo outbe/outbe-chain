@@ -33,7 +33,7 @@ pub const MATURITY_PERIOD_DAYS: u64 = 21;
 /// Derived seconds, for comparison against block timestamps.
 pub const MATURITY_PERIOD_SECONDS: u64 = MATURITY_PERIOD_DAYS * 24 * 60 * 60;
 
-/// Reference-currency ISO for the qualifier oracle pair (COEN/0xUSD = 840).
+/// Reference-currency ISO for the qualifier oracle pair (COEN/840 = 840).
 pub const QUALIFIER_REFERENCE_ISO: u16 = 840;
 
 /// Issuance-currency ISO; fixed to USD (840) until multi-currency lands.
@@ -42,11 +42,11 @@ pub const QUALIFIER_ISSUANCE_ISO: u16 = 840;
 /// Bin step (basis points) for the floor-price bin ladder.
 pub const BIN_STEP_BP: u16 = 25;
 
-/// Floor price = COEN/0xUSD price * 1.08; integer ratio 108/100.
+/// Floor price = COEN/840 price * 1.08; integer ratio 108/100.
 pub const FLOOR_PRICE_NUM: u64 = 108;
 pub const FLOOR_PRICE_DEN: u64 = 100;
 
-/// Call price = COEN/0xUSD price * 2.28; integer ratio 228/100.
+/// Call price = COEN/840 price * 2.28; integer ratio 228/100.
 pub const CALL_PRICE_NUM: u64 = 228;
 pub const CALL_PRICE_DEN: u64 = 100;
 
