@@ -38,9 +38,18 @@ Feature: Off-chain computation process topology
     Given the canonical four-validator OCOMP Final devnet before H
     When validator 0 restarts before, across, and after the OCOMP fork height
     Then the OCOMP evidence records successful H-1, H, and H+1 recovery
+    When an operator submits one encrypted tribute offer
+    Then the tribute transaction succeeds and supply becomes one
+    And every validator projects the same tribute and indexes
+    Then Metadosis creates one finalized JobIntent from that public Tribute
 
   @ocomp-fork-mismatch
   Scenario: A distinct immutable fork install cannot join the canonical committee
     Given the canonical four-validator OCOMP Final devnet before H
     When validator 0 restarts with a different valid immutable OCOMP fork install
     Then the canonical committee finalizes through H while the mismatched validator stays before H
+    When validator 0 returns to the canonical OCOMP fork install
+    And an operator submits one encrypted tribute offer
+    Then the tribute transaction succeeds and supply becomes one
+    And every validator projects the same tribute and indexes
+    Then Metadosis creates one finalized JobIntent from that public Tribute

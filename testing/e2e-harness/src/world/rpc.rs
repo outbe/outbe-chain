@@ -2786,6 +2786,7 @@ mod ocomp_tests {
         assert!(package.evidence_identity().is_err());
     }
 
+    #[cfg(feature = "ocomp-integration")]
     #[test]
     fn job_request_selection_keeps_the_requested_day_visible_after_later_retries() {
         let day = |worldwide_day: u32| {

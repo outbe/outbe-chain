@@ -8,6 +8,43 @@ The harness owns validator processes, docker/Gramine TEE enclaves, and optional
 MongoDB containers. DKG bootstrap and genesis seeding remain one-shot
 subprocesses.
 
+## Persistent dev LocalNet
+
+The same Rust implementation owns the documented operator lifecycle. Unlike a
+Cucumber scenario, the `start` command launches one persistent owner process;
+that process keeps MongoDB, all mock enclaves, all validator guards, and each
+validator's OCOMP Supervisor, SnapshotExporter and Worker-0 alive until `stop`
+signals that exact owner.
+
+```sh
+mise run build
+mise run localnet-bootstrap
+mise run localnet-start
+mise run localnet-status
+mise run localnet-stop
+```
+
+Bootstrap runs `outbe-chain dkg bootstrap`, `scripts/seed_genesis.py`, current
+dynamic OCOMP founder registration for the complete genesis ValidatorSet, and
+`tee genesis --mode gramine-direct-dev`. Start brings every mock enclave to
+socket readiness before launching the validator cohort, then returns only after
+all validator RPC heights have advanced beyond genesis. Runtime ownership is
+not declared ready at that point alone: the harness installs the OCOMP delegate
+bindings, starts one Supervisor and one SnapshotExporter per validator, starts
+Worker-0, and requires every Supervisor to report exactly one registered and
+connected Worker. `status` repeats the RPC and Supervisor probes.
+Runtime ownership is recorded atomically in
+`<OUT_DIR>/localnet-state-v1.json`; stale or PID-reused
+records are never treated as a live network. Bootstrap scans for free complete
+service-port blocks and stores them in `<OUT_DIR>/localnet-bootstrap-v1.json`;
+the persistent owner restores that exact layout, including genesis-baked P2P
+and consensus endpoints.
+
+The `outbe-e2e localnet-sgx` / `mise run localnet-sgx-*` surface is deliberately
+fail-closed pending `outbe-chain-8lp`. A real-SGX network needs its own
+`DcapRequired` genesis and hardware evidence; it must never reuse or fall back to
+this mock `GramineDirectDev` lane.
+
 ## Model: environment (CLI) vs. requirements (tags)
 
 The **CLI defines the environment** — how many validators to bootstrap, the TEE
@@ -70,7 +107,7 @@ the harness reads no configuration from the environment.** Flags:
   evidence.
 - `--no-sudo` — run scripts/docker without `sudo`.
 - `--all` — treat an unsatisfiable scenario as a failure instead of skipping it.
-- `--debug` — stream localnet setup output (bootstrap / run-testnet / docker) live;
+- `--debug` — stream localnet setup output (bootstrap / process / docker) live;
   off by default (that output is captured and shown only if a step fails).
 - `--projection-mongodb-uri <URI>` — optional transaction-capable MongoDB replica set or sharded
   cluster. When omitted, the harness starts and owns a temporary `mongo:7.0`
