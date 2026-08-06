@@ -4,7 +4,7 @@ use outbe_primitives::time::timestamp_to_date_key;
 
 use crate::constants::{CALL_THRESHOLD, QUALIFIER_REFERENCE_ISO};
 use crate::errors::GemError;
-use crate::events::{GemBurned, GemCalled, GemQualified};
+use crate::precompile::IGem::{GemBurned, GemCalled, GemQualified};
 use crate::schema::{GemContract, GemState};
 
 impl GemContract<'_> {

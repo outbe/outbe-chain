@@ -37,4 +37,12 @@ interface IGem {
 
     // outbe-specific views
     function getGemStatus(uint256 gemId) external view returns (GemData memory);
+
+    // --- Events (emitted by the Gem precompile) ---
+    /// @notice Issued gem promoted to Qualified by the begin-block scan.
+    event GemQualified(uint256 indexed gemId, uint64 qualifiedAt);
+    /// @notice Qualified gem force-called by the daily Call scan.
+    event GemCalled(uint256 indexed gemId, uint64 calledAt);
+    /// @notice Called gem forfeit-burned after its notice period lapsed.
+    event GemBurned(uint256 indexed gemId, address owner, uint256 gemLoad);
 }

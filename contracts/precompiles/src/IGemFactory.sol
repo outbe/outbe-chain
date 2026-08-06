@@ -31,4 +31,21 @@ interface IGemFactory {
     function tokenURI(uint256 positionId) external view returns (string memory);
     /// @notice `positionId` at `index` within `owner`'s positions.
     function tokenOfOwnerByIndex(address owner, uint256 index) external view returns (uint256);
+
+    // --- Events (emitted by the GemFactory precompile) ---
+    /// @notice A new gem was minted (agent reward, merchant, or genesis flow).
+    event GemIssued(
+        uint256 indexed gemId,
+        uint8 gemType,
+        address owner,
+        uint256 gemLoad,
+        uint256 entryPrice,
+        uint256 costAmount,
+        uint256 floorPrice,
+        uint64 issuedAt
+    );
+    /// @notice A gem's Cost Amount was settled into the Reserve.
+    event GemSettled(uint256 indexed gemId, address owner, uint256 amountPaid, uint16 issuanceCurrency);
+    /// @notice A settled gem was burned to mine confidential Promis.
+    event GemBurned(uint256 indexed gemId, address owner, uint256 gemLoad);
 }

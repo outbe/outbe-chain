@@ -1,6 +1,5 @@
 pub mod api;
 pub mod errors;
-pub mod events;
 pub mod hooks;
 pub mod precompile;
 pub mod schema;
