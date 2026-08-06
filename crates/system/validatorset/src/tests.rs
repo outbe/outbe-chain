@@ -1425,7 +1425,7 @@ fn confirm_ready_persists_valid_ocomp_registration_before_readiness() {
 }
 
 #[test]
-fn confirm_ready_exact_replay_and_atomic_ocomp_key_replacement() {
+fn confirm_ready_exact_replay_rejects_ocomp_key_replacement_atomically() {
     with_vs_configured(128, |vs| {
         let validator = address!("0x5656565656565656565656565656565656565656");
         let consensus_pubkey = dummy_consensus_pubkey(0x56);
@@ -1441,24 +1441,27 @@ fn confirm_ready_exact_replay_and_atomic_ocomp_key_replacement() {
 
         let (replacement, replacement_encoded) =
             ocomp_registration(validator, &consensus_pubkey, 0x58);
-        vs.confirm_validator_ready(validator, &replacement_encoded)
-            .expect("atomic OCOMP key replacement");
+        let error = vs
+            .confirm_validator_ready(validator, &replacement_encoded)
+            .expect_err("V1 OCOMP key is immutable after first admission");
+        assert!(error.to_string().contains("OCOMP public key is immutable"));
 
         assert_eq!(
             vs.ocomp_registration(validator).unwrap(),
-            Some(replacement.clone())
+            Some(first.clone()),
+            "failed replacement preserves the original registration"
         );
         assert_eq!(
             vs.ocomp_key_hash_to_validator
                 .read(&keccak256(first.core.ocomp_public_key_sec1))
                 .unwrap(),
-            Address::ZERO
+            validator
         );
         assert_eq!(
             vs.ocomp_key_hash_to_validator
                 .read(&keccak256(replacement.core.ocomp_public_key_sec1))
                 .unwrap(),
-            validator
+            Address::ZERO
         );
         assert!(vs.val_join_confirmed.read(&validator).unwrap());
     });
@@ -1487,7 +1490,7 @@ fn reshare_target_requires_registration_even_if_readiness_flag_is_set() {
 }
 
 #[test]
-fn bls_key_change_clears_ocomp_registration_and_reservation() {
+fn bls_key_change_preserves_ocomp_pin_and_requires_same_key_identity_refresh() {
     with_vs_configured(128, |vs| {
         let validator = address!("0x5858585858585858585858585858585858585858");
         let first_consensus_pubkey = dummy_consensus_pubkey(0x58);
@@ -1499,23 +1502,45 @@ fn bls_key_change_clears_ocomp_registration_and_reservation() {
         let old_ocomp_key_hash = keccak256(registration.core.ocomp_public_key_sec1);
 
         vs.val_status.write(&validator, status::INACTIVE).unwrap();
-        vs.register_validator(OWNER, validator, &dummy_consensus_pubkey(0x5A))
+        let replacement_consensus_pubkey = dummy_consensus_pubkey(0x5A);
+        vs.register_validator(OWNER, validator, &replacement_consensus_pubkey)
             .unwrap();
 
-        assert_eq!(vs.ocomp_registration(validator).unwrap(), None);
+        assert_eq!(
+            vs.ocomp_registration(validator).unwrap(),
+            Some(registration.clone())
+        );
         assert_eq!(
             vs.ocomp_key_hash_to_validator
                 .read(&old_ocomp_key_hash)
                 .unwrap(),
-            Address::ZERO
+            validator
         );
         assert!(!vs.val_join_confirmed.read(&validator).unwrap());
         assert_eq!(vs.val_status.read(&validator).unwrap(), status::REGISTERED);
+
+        vs.mark_pending(validator).unwrap();
+        let (refreshed, refreshed_encoded) =
+            ocomp_registration(validator, &replacement_consensus_pubkey, 0x59);
+        vs.confirm_validator_ready(validator, &refreshed_encoded)
+            .expect("new BLS identity may refresh PoP only with the pinned OCOMP key");
+        assert_eq!(
+            refreshed.core.ocomp_public_key_sec1,
+            registration.core.ocomp_public_key_sec1
+        );
+        assert_eq!(vs.ocomp_registration(validator).unwrap(), Some(refreshed));
+        assert_eq!(
+            vs.ocomp_key_hash_to_validator
+                .read(&old_ocomp_key_hash)
+                .unwrap(),
+            validator
+        );
+        assert!(vs.val_join_confirmed.read(&validator).unwrap());
     });
 }
 
 #[test]
-fn full_validator_cleanup_releases_ocomp_registration_and_key() {
+fn full_validator_cleanup_preserves_immutable_ocomp_registration_and_key_pin() {
     with_vs_configured(128, |vs| {
         let validator = address!("0x5959595959595959595959595959595959595959");
         let consensus_pubkey = dummy_consensus_pubkey(0x59);
@@ -1529,14 +1554,37 @@ fn full_validator_cleanup_releases_ocomp_registration_and_key() {
 
         assert_eq!(vs.cleanup_inactive_validators(1).unwrap(), 1);
 
-        assert_eq!(vs.ocomp_registration(validator).unwrap(), None);
+        assert_eq!(
+            vs.ocomp_registration(validator).unwrap(),
+            Some(registration)
+        );
         assert_eq!(
             vs.ocomp_key_hash_to_validator
                 .read(&ocomp_key_hash)
                 .unwrap(),
-            Address::ZERO
+            validator
         );
         assert_eq!(vs.address_to_index.read(&validator).unwrap(), 0);
+
+        let squatter = Address::repeat_byte(0x5A);
+        let squatter_consensus_pubkey = dummy_consensus_pubkey(0x5B);
+        vs.register_validator(OWNER, squatter, &squatter_consensus_pubkey)
+            .unwrap();
+        vs.mark_pending(squatter).unwrap();
+        let (_, squatter_registration) =
+            ocomp_registration(squatter, &squatter_consensus_pubkey, 0x5A);
+        let error = vs
+            .confirm_validator_ready(squatter, &squatter_registration)
+            .expect_err("cleanup must not make the pinned OCOMP key squattable");
+        assert!(error
+            .to_string()
+            .contains("already registered by another validator"));
+        assert_eq!(
+            vs.ocomp_key_hash_to_validator
+                .read(&ocomp_key_hash)
+                .unwrap(),
+            validator
+        );
     });
 }
 
@@ -1820,7 +1868,8 @@ fn test_unjail_to_pending_resets_readiness() {
             .unwrap()
             .iter()
             .any(|r| r.validator_address == v));
-        confirm_ready(vs, v, 0x41);
+        vs.admit_validator_for_boundary_for_test(v)
+            .expect("unjail replays the pinned OCOMP registration");
         assert!(vs
             .get_reshare_target_set()
             .unwrap()

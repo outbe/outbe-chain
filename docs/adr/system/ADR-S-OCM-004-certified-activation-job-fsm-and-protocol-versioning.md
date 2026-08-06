@@ -61,6 +61,13 @@ ordered validator addresses, OCOMP public keys and key epochs without changing
 choose them. A retry is a new attempt and pins the then-current snapshot, while
 the previous terminal record remains bound to its original snapshot.
 
+Validator admission uses one immutable V1 OCOMP key per validator address.
+`confirmValidatorReady` admits the first `key_epoch = 1` registration and keeps
+its reverse key reservation through exit, inactive cleanup and re-entry. Exact
+replay succeeds. A BLS-key change requires a fresh identity-bound PoP but must
+reuse the same OCOMP public key; a different key is rejected before any state
+mutation. Rotation, expiry and recovery are separate future protocol work.
+
 The event is a wake-up hint. The intent record is authority. Its request block
 must finalize before the job can become signable or accept a vote. The existing
 consensus-certified finalization path records the exact finalized block/state

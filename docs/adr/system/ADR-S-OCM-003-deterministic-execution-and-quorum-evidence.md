@@ -251,6 +251,14 @@ checks constant-size caps, bindings, equations and program structure, and
 durably commits the sign-once record. It does not traverse bulk result chunks or
 repeat Lysis finalization.
 
+The V1 admission profile fixes `key_epoch = 1` and permanently pins the first
+admitted OCOMP public key to the validator address. Exit, jail, inactive cleanup,
+re-entry and a BLS consensus-key change reset readiness but do not release the
+OCOMP key reservation. Re-entry must present a valid registration and PoP for
+the current validator identity using that same OCOMP key; a different key is
+rejected atomically. OCOMP key rotation, loss recovery and expiry require a
+future explicit protocol and have no implicit V1 fallback.
+
 The sign-once subject binds at least:
 
 ```text
@@ -499,6 +507,8 @@ Three votes over different result bytes do not form quorum evidence.
 - One validator index contributes at most one first vote to the tally.
 - The OCOMP key is distinct from the consensus key and unavailable to compute
   processes.
+- The V1 OCOMP key remains `key_epoch = 1` and immutable for a validator address
+  across ordinary exit, cleanup, BLS-key change and re-entry.
 - Sign-once history is durable before signature release.
 - A vote binds one exact result digest and one exact job attempt.
 - The job derives `N` and quorum only from its pinned snapshot; callers cannot

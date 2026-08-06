@@ -105,22 +105,6 @@ impl ValidatorSet<'_> {
             })
     }
 
-    fn clear_ocomp_registration(&mut self, addr: Address) -> Result<()> {
-        if let Some(registration) = self.ocomp_registration(addr)? {
-            let key_hash = keccak256(registration.core.ocomp_public_key_sec1);
-            let owner = self.ocomp_key_hash_to_validator.read(&key_hash)?;
-            if owner != addr {
-                return Err(PrecompileError::Fatal(format!(
-                    "OCOMP key reservation for {addr} is inconsistent"
-                )));
-            }
-            self.ocomp_key_hash_to_validator
-                .write(&key_hash, Address::ZERO)?;
-            self.val_ocomp_registration.get_bytes(&addr).clear()?;
-        }
-        self.val_join_confirmed.write(&addr, false)
-    }
-
     fn is_current_consensus_participant_status(validator_status: u8, has_bls_share: bool) -> bool {
         // JAILED is included alongside ACTIVE/EXITING: a just-jailed validator is
         // still cryptographically in the live committee (its share is only cleared
@@ -538,11 +522,7 @@ impl ValidatorSet<'_> {
             // remains the source of truth for stake and mirrors into val_stake.
             let old_pubkey = self.read_consensus_pubkey(&validator_addr)?;
             let old_pk_hash = Self::consensus_pubkey_hash(&old_pubkey);
-            if old_pubkey != *consensus_pubkey {
-                self.clear_ocomp_registration(validator_addr)?;
-            } else {
-                self.val_join_confirmed.write(&validator_addr, false)?;
-            }
+            self.val_join_confirmed.write(&validator_addr, false)?;
             self.consensus_pubkey_hash_to_address
                 .write(&old_pk_hash, Address::ZERO)?;
 
@@ -739,6 +719,20 @@ impl ValidatorSet<'_> {
 
         let existing_registration = self.ocomp_registration(caller)?;
         let key_hash = keccak256(registration.core.ocomp_public_key_sec1);
+        if let Some(existing) = existing_registration.as_ref() {
+            let pinned_key_hash = keccak256(existing.core.ocomp_public_key_sec1);
+            if pinned_key_hash != key_hash {
+                return Err(PrecompileError::Revert(
+                    "OCOMP public key is immutable in key_epoch 1".into(),
+                ));
+            }
+            let pinned_owner = self.ocomp_key_hash_to_validator.read(&pinned_key_hash)?;
+            if pinned_owner != caller {
+                return Err(PrecompileError::Fatal(format!(
+                    "OCOMP key reservation for {caller} is inconsistent"
+                )));
+            }
+        }
         let existing_owner = self.ocomp_key_hash_to_validator.read(&key_hash)?;
         if !existing_owner.is_zero() && existing_owner != caller {
             return Err(PrecompileError::Revert(
@@ -747,13 +741,6 @@ impl ValidatorSet<'_> {
         }
 
         let guard = self.storage.checkpoint_guard();
-        if let Some(existing) = existing_registration {
-            let old_key_hash = keccak256(existing.core.ocomp_public_key_sec1);
-            if old_key_hash != key_hash {
-                self.ocomp_key_hash_to_validator
-                    .write(&old_key_hash, Address::ZERO)?;
-            }
-        }
         self.val_ocomp_registration
             .get_bytes(&caller)
             .write(encoded_registration)?;
@@ -1563,7 +1550,6 @@ impl ValidatorSet<'_> {
 
     /// Clears all per-validator storage fields for an address.
     fn clear_validator_storage(&mut self, addr: &Address) -> Result<()> {
-        self.clear_ocomp_registration(*addr)?;
         let pubkey = self.read_consensus_pubkey(addr)?;
         let pk_hash = Self::consensus_pubkey_hash(&pubkey);
         self.consensus_pubkey_hash_to_address
@@ -1584,7 +1570,9 @@ impl ValidatorSet<'_> {
         self.val_p2p_address_payload.get_bytes(addr).clear()?;
         // Stale-join + jail per-validator state must be cleared too, so a future
         // re-registration at the same address starts clean (a leaked
-        // `val_join_confirmed = true` would bypass the stale-join guard).
+        // `val_join_confirmed = true` would bypass the stale-join guard). The
+        // admitted V1 OCOMP key and reverse reservation deliberately survive:
+        // key_epoch=1 has no rotation, loss, or recovery path.
         self.val_join_confirmed.write(addr, false)?;
         self.val_jailed_at_height.write(addr, 0)?;
         Ok(())

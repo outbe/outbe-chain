@@ -245,7 +245,7 @@ fn committee_snapshot_persists_separate_strict_ocomp_extension() {
 }
 
 #[test]
-fn committee_snapshot_exact_replay_rejects_ocomp_binding_drift() {
+fn committee_snapshot_exact_replay_survives_rejected_ocomp_key_replacement() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut provider, |storage| {
         let validator = Address::repeat_byte(0x63);
@@ -277,20 +277,23 @@ fn committee_snapshot_exact_replay_rejects_ocomp_binding_drift() {
         );
 
         let (_, replacement) = ocomp_registration(validator, &consensus_pubkey, 0x14);
-        vs.confirm_validator_ready(validator, &replacement).unwrap();
+        let error = vs
+            .confirm_validator_ready(validator, &replacement)
+            .expect_err("key_epoch 1 cannot replace the pinned OCOMP key");
+        assert!(error.to_string().contains("OCOMP public key is immutable"));
         drop(vs);
 
-        let error = write_committee_snapshot(storage.clone(), epoch, &snapshot).unwrap_err();
-        assert!(
-            matches!(error, outbe_primitives::error::PrecompileError::Fatal(_)),
-            "binding drift must be a state invariant failure: {error}",
+        assert_eq!(
+            write_committee_snapshot(storage.clone(), epoch, &snapshot).unwrap(),
+            identity,
+            "rejected key replacement cannot introduce snapshot binding drift",
         );
         assert_eq!(
             read_ocomp_snapshot_extension(storage, identity.1)
                 .unwrap()
                 .unwrap(),
             original_extension,
-            "rejected replay must not mutate the committed extension",
+            "rejected key replacement must not mutate the committed extension",
         );
     });
 }

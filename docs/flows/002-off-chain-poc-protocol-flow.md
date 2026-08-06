@@ -111,6 +111,12 @@ high bits in the last byte are zero.
 | result equality | exact canonical `ResultDigest` in the snapshot-sized bounded vote slots | “equivalent” JSON or submitter choice |
 | voting-window authority | `open_height = finality_recorded_height + 4` in consensus state | event, local cursor or vote payload |
 | timely participation | canonical vote inclusion height and closed accountability summary | mempool/supervisor logs |
+
+In V1 the first admitted OCOMP public key is permanently pinned to the validator
+address with `key_epoch = 1`. Re-entry and BLS identity refresh require a new
+readiness confirmation and valid PoP over the same OCOMP key; ordinary cleanup
+does not release its reverse reservation. Key replacement, loss recovery and
+rotation are not implicit lifecycle branches.
 | result-apply authority | q-forming full-result vote plus private `CertifiedLysisActivation` | submitter choice or generic writes |
 | output truth | finalized public state/receipts/proofs | supervisor journal or Mongo alone |
 
