@@ -11,3 +11,5 @@ Feature: Local target chain
     When a local target chain is started
     Then the target chain answers with its own chain id
     And the committee is still producing blocks
+    When the intex venue is deployed on the target chain
+    Then the target chain hosts the intex venue

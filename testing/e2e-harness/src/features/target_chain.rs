@@ -27,6 +27,39 @@ fn target_chain_answers(world: &mut World) {
     );
 }
 
+#[when("the intex venue is deployed on the target chain")]
+fn deploy_intex_venue(world: &mut World) {
+    let origin_chain_id = world
+        .rpc
+        .chain_id(world.validators.primary_port())
+        .expect("committee chain id");
+    let contracts = world
+        .target_chain
+        .deploy(origin_chain_id)
+        .expect("deploy the intex venue on the target chain");
+    world.state.target_contracts = Some(contracts);
+}
+
+#[then("the target chain hosts the intex venue")]
+fn target_chain_hosts_venue(world: &mut World) {
+    let url = world.target_chain.rpc_url().expect("target chain started");
+    let contracts = world
+        .state
+        .target_contracts
+        .clone()
+        .expect("a deploy recorded its addresses");
+    for (name, address) in [
+        ("ERC7786Bridge", contracts.bridge),
+        ("IntexNFT1155", contracts.intex_nft),
+        ("TargetRouter", contracts.target_router),
+    ] {
+        assert!(
+            eth::code(&url, address).is_some_and(|code| !code.is_empty()),
+            "{name} reported at {address} but the target chain holds no code there"
+        );
+    }
+}
+
 #[then("the committee is still producing blocks")]
 fn committee_still_producing(world: &mut World) {
     let port = world.validators.primary_port();
