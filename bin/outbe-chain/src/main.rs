@@ -1159,9 +1159,11 @@ fn run_node() -> eyre::Result<()> {
                             })?,
                         ),
                     ),
-                    _ => eyre::bail!(
-                        "committed NodeHost manifest profile does not match the node role"
-                    ),
+                    _ => {
+                        eyre::bail!(
+                            "committed NodeHost manifest profile does not match the node role"
+                        );
+                    }
                 };
                 Some(RenewalWorkerV1 {
                     rpc_url: args.tee_renewal_rpc_url.clone(),
