@@ -149,16 +149,27 @@ pub fn dispatch_with_tee_attestation(
 
 /// Production dispatch with both finalized body readers and the immutable
 /// chain-manifest fork authority.
-pub fn dispatch_with_readers_and_ocomp_install(
+pub(crate) struct SystemTxRuntime<'a> {
+    pub(crate) scope: &'a outbe_compressed_entities::ExecutionScope,
+    pub(crate) parent: &'a outbe_offchain_data::RuntimeBodyReaders,
+    pub(crate) ocomp_fork_install: Option<&'a outbe_metadosis::config::OcompForkInstallV1>,
+    pub(crate) tee_attestation_v1:
+        &'a crate::tee_attestation_activation::TeeAttestationChainSpecStateV1,
+}
+
+pub(crate) fn dispatch_with_readers_and_ocomp_install(
     storage: StorageHandle,
-    scope: &outbe_compressed_entities::ExecutionScope,
-    parent: &outbe_offchain_data::RuntimeBodyReaders,
-    ocomp_fork_install: Option<&outbe_metadosis::config::OcompForkInstallV1>,
-    tee_attestation_v1: &crate::tee_attestation_activation::TeeAttestationChainSpecStateV1,
+    runtime: SystemTxRuntime<'_>,
     data: &[u8],
     caller: Address,
     value: U256,
 ) -> Result<Bytes> {
+    let SystemTxRuntime {
+        scope,
+        parent,
+        ocomp_fork_install,
+        tee_attestation_v1,
+    } = runtime;
     dispatch_inner(
         storage,
         data,

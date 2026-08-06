@@ -143,6 +143,35 @@ struct CertifiedResultInput<'a> {
     result_evidence_hash: B256,
 }
 
+pub(crate) struct QuorumResultInput<'a> {
+    intent_id: B256,
+    record: &'a OcompJobRecordV1,
+    result: &'a outbe_ocomp_protocol::result::LysisResultV1,
+    quorum: &'a outbe_ocomp_protocol::vote::OcompQuorumV1,
+    authority: &'a OcompActivationAuthorityV1,
+    local_result_authority: Option<&'a dyn OcompLocalResultAuthority>,
+}
+
+impl<'a> QuorumResultInput<'a> {
+    pub(crate) const fn new(
+        intent_id: B256,
+        record: &'a OcompJobRecordV1,
+        result: &'a outbe_ocomp_protocol::result::LysisResultV1,
+        quorum: &'a outbe_ocomp_protocol::vote::OcompQuorumV1,
+        authority: &'a OcompActivationAuthorityV1,
+        local_result_authority: Option<&'a dyn OcompLocalResultAuthority>,
+    ) -> Self {
+        Self {
+            intent_id,
+            record,
+            result,
+            quorum,
+            authority,
+            local_result_authority,
+        }
+    }
+}
+
 /// Verifies and applies the full result carried by the vote that first reaches
 /// the intent's pinned quorum. The caller owns the outer storage checkpoint
 /// that also contains the q-forming vote slot and quorum, so any verifier/owner
@@ -150,13 +179,16 @@ struct CertifiedResultInput<'a> {
 pub(crate) fn apply_quorum_result(
     context: QuorumApplyContext<'_, '_>,
     metadosis: &mut MetadosisContract<'_>,
-    intent_id: B256,
-    record: &OcompJobRecordV1,
-    result: &outbe_ocomp_protocol::result::LysisResultV1,
-    quorum: &outbe_ocomp_protocol::vote::OcompQuorumV1,
-    authority: &OcompActivationAuthorityV1,
-    local_result_authority: Option<&dyn OcompLocalResultAuthority>,
+    input: QuorumResultInput<'_>,
 ) -> PrecompileResult<Bytes> {
+    let QuorumResultInput {
+        intent_id,
+        record,
+        result,
+        quorum,
+        authority,
+        local_result_authority,
+    } = input;
     let current_height = context.current_height;
     let limits = context.limits;
     if record.status != OcompJobStatus::VotingOpen || record.terminal.is_some() {

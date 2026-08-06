@@ -205,8 +205,7 @@ async fn run_renewal_worker_v1(
     }
 }
 
-async fn run_upgrade_promotion_worker_v1<P>(
-    provider: P,
+struct UpgradePromotionWorkerConfigV1 {
     chain_id: u64,
     genesis_hash: alloy_primitives::B256,
     node_data_dir: PathBuf,
@@ -214,9 +213,21 @@ async fn run_upgrade_promotion_worker_v1<P>(
     warning_blocks: u64,
     critical_blocks: u64,
     promoted: Arc<tokio::sync::Notify>,
-) where
+}
+
+async fn run_upgrade_promotion_worker_v1<P>(provider: P, config: UpgradePromotionWorkerConfigV1)
+where
     P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory + Send + Sync + 'static,
 {
+    let UpgradePromotionWorkerConfigV1 {
+        chain_id,
+        genesis_hash,
+        node_data_dir,
+        poll_secs,
+        warning_blocks,
+        critical_blocks,
+        promoted,
+    } = config;
     loop {
         let snapshot = match inspect_upgrade_journal_v1(&node_data_dir) {
             Ok(Some(snapshot)) => snapshot,
@@ -1359,13 +1370,15 @@ fn run_node() -> eyre::Result<()> {
             let promoted = upgrade_promotion.clone();
             Some(tokio::spawn(run_upgrade_promotion_worker_v1(
                 provider,
-                proof_chain_id,
-                genesis_hash,
-                node_data_dir.clone(),
-                args.tee_renewal_poll_secs,
-                args.tee_renewal_warning_blocks,
-                args.tee_renewal_critical_blocks,
-                promoted,
+                UpgradePromotionWorkerConfigV1 {
+                    chain_id: proof_chain_id,
+                    genesis_hash,
+                    node_data_dir: node_data_dir.clone(),
+                    poll_secs: args.tee_renewal_poll_secs,
+                    warning_blocks: args.tee_renewal_warning_blocks,
+                    critical_blocks: args.tee_renewal_critical_blocks,
+                    promoted,
+                },
             )))
         } else {
             None
@@ -1532,8 +1545,10 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let explicit_secret = root.path().join("operator-p2p.key");
         let unused_default = root.path().join("default-discovery-secret");
-        let mut network = reth_node_core::args::NetworkArgs::default();
-        network.p2p_secret_key = Some(explicit_secret.clone());
+        let network = reth_node_core::args::NetworkArgs {
+            p2p_secret_key: Some(explicit_secret.clone()),
+            ..Default::default()
+        };
 
         let (first_signer, first_public) =
             super::load_reth_p2p_node_host_signer(&network, unused_default.clone()).unwrap();

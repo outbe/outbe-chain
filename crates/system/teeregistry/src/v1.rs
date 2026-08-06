@@ -113,6 +113,17 @@ struct VerifiedEnclaveClaimsV1 {
 }
 
 #[cfg(feature = "tee-attestation-v1")]
+struct VerifiedClaimsMutationV1<'a> {
+    expected_operation: AttestationOperationV1,
+    intent: &'a RegistrationIntentV1,
+    node_signature: &'a [u8; 65],
+    enclave_signature: &'a [u8; 64],
+    policy: &'a TeePolicyV1,
+    claims: &'a VerifiedEnclaveClaimsV1,
+    evidence_hash: B256,
+}
+
+#[cfg(feature = "tee-attestation-v1")]
 impl VerifiedEnclaveClaimsV1 {
     fn from_dcap(verdict: &DcapVerdictV1) -> Result<Self> {
         let verdict_bytes = verdict.encode_canonical().map_err(|code| {
@@ -1122,15 +1133,15 @@ impl TeeRegistry<'_> {
                 (dev.intent.clone(), claims, evidence_hash, None)
             }
         };
-        let registration = self.apply_verified_claims_mutation_v1(
+        let registration = self.apply_verified_claims_mutation_v1(VerifiedClaimsMutationV1 {
             expected_operation,
-            &intent,
+            intent: &intent,
             node_signature,
             enclave_signature,
             policy,
-            &claims,
+            claims: &claims,
             evidence_hash,
-        )?;
+        })?;
         Ok(V1OnboardingOutcome {
             registration,
             artifact: onboarding_artifact,
@@ -1166,14 +1177,17 @@ impl TeeRegistry<'_> {
 
     fn apply_verified_claims_mutation_v1(
         &mut self,
-        expected_operation: AttestationOperationV1,
-        intent: &RegistrationIntentV1,
-        node_signature: &[u8; 65],
-        enclave_signature: &[u8; 64],
-        policy: &TeePolicyV1,
-        claims: &VerifiedEnclaveClaimsV1,
-        evidence_hash: B256,
+        mutation: VerifiedClaimsMutationV1<'_>,
     ) -> Result<V1RegistrationOutcome> {
+        let VerifiedClaimsMutationV1 {
+            expected_operation,
+            intent,
+            node_signature,
+            enclave_signature,
+            policy,
+            claims,
+            evidence_hash,
+        } = mutation;
         intent
             .encode_canonical()
             .map_err(|error| revert_codec("registration intent is not canonical", error))?;
@@ -1618,19 +1632,18 @@ impl TeeRegistry<'_> {
         node_signature: &[u8; 65],
         enclave_signature: &[u8; 64],
         policy: &TeePolicyV1,
-        verdict: &DcapVerdictV1,
-        evidence_hash: B256,
+        capability: PostVerifierDcapCapabilityV1,
     ) -> Result<V1RegistrationOutcome> {
-        let claims = VerifiedEnclaveClaimsV1::from_dcap(verdict)?;
-        self.apply_verified_claims_mutation_v1(
+        let claims = VerifiedEnclaveClaimsV1::from_dcap(&capability.verdict)?;
+        self.apply_verified_claims_mutation_v1(VerifiedClaimsMutationV1 {
             expected_operation,
             intent,
             node_signature,
             enclave_signature,
             policy,
-            &claims,
-            evidence_hash,
-        )
+            claims: &claims,
+            evidence_hash: capability.evidence_hash,
+        })
     }
 
     #[cfg(test)]
@@ -1648,8 +1661,7 @@ impl TeeRegistry<'_> {
             node_signature,
             enclave_signature,
             &policy,
-            &capability.verdict,
-            capability.evidence_hash,
+            capability,
         )
     }
 
@@ -1668,8 +1680,7 @@ impl TeeRegistry<'_> {
             node_signature,
             enclave_signature,
             policy,
-            &capability.verdict,
-            capability.evidence_hash,
+            capability,
         )
     }
 
@@ -1688,8 +1699,7 @@ impl TeeRegistry<'_> {
             node_signature,
             enclave_signature,
             &policy,
-            &capability.verdict,
-            capability.evidence_hash,
+            capability,
         )
     }
 
@@ -1708,8 +1718,7 @@ impl TeeRegistry<'_> {
             node_signature,
             enclave_signature,
             policy,
-            &capability.verdict,
-            capability.evidence_hash,
+            capability,
         )
     }
 
@@ -1728,8 +1737,7 @@ impl TeeRegistry<'_> {
             node_signature,
             enclave_signature,
             &policy,
-            &capability.verdict,
-            capability.evidence_hash,
+            capability,
         )
     }
 
@@ -1748,8 +1756,7 @@ impl TeeRegistry<'_> {
             node_signature,
             enclave_signature,
             policy,
-            &capability.verdict,
-            capability.evidence_hash,
+            capability,
         )
     }
 
@@ -1775,8 +1782,7 @@ impl TeeRegistry<'_> {
             node_signature,
             enclave_signature,
             &policy,
-            &capability.verdict,
-            capability.evidence_hash,
+            capability,
         )
     }
 }

@@ -53,7 +53,7 @@ pub(crate) enum DcapVerificationProgressV1 {
         request_hash: B256,
         next_offset: u32,
     },
-    Complete(CompleteDcapVerificationV1),
+    Complete(Box<CompleteDcapVerificationV1>),
 }
 
 /// One bounded upload at a time on one authenticated Noise connection.
@@ -240,7 +240,7 @@ impl DcapVerificationSessionV1 {
         if computed != request_hash {
             return Err("DCAP verification request commitment mismatch");
         }
-        Ok(DcapVerificationProgressV1::Complete(
+        Ok(DcapVerificationProgressV1::Complete(Box::new(
             CompleteDcapVerificationV1 {
                 request_hash,
                 evidence,
@@ -248,7 +248,7 @@ impl DcapVerificationSessionV1 {
                 block_timestamp: upload.block_timestamp,
                 purpose: upload.purpose,
             },
-        ))
+        )))
     }
 }
 

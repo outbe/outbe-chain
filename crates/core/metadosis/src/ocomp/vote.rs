@@ -344,12 +344,14 @@ impl MetadosisContract<'_> {
                     super::activation::apply_quorum_result(
                         apply_context,
                         self,
-                        response.intent_id,
-                        &record,
-                        &vote.result,
-                        formed,
-                        &authority,
-                        local_result_authority,
+                        super::activation::QuorumResultInput::new(
+                            response.intent_id,
+                            &record,
+                            &vote.result,
+                            formed,
+                            &authority,
+                            local_result_authority,
+                        ),
                     )?;
                     let applied = self
                         .ocomp_job_record(response.intent_id, limits)?

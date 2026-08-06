@@ -84,9 +84,11 @@ fn current_finalized_registry_admits_both_profiles_and_rejects_superseded_state(
                 &registry,
                 &source_node,
                 profile,
-                B256::repeat_byte(0x42),
-                B256::repeat_byte(0x43),
-                B256::repeat_byte(0x44),
+                SeedBindingIds {
+                    enclave_id: B256::repeat_byte(0x42),
+                    binding_id: B256::repeat_byte(0x43),
+                    intent_hash: B256::repeat_byte(0x44),
+                },
                 1_700_000_500,
                 [0x45; 32],
                 source_host_hash,
@@ -95,9 +97,11 @@ fn current_finalized_registry_admits_both_profiles_and_rejects_superseded_state(
                 &registry,
                 &target_node,
                 profile,
-                B256::repeat_byte(0x52),
-                B256::repeat_byte(0x53),
-                B256::repeat_byte(0x54),
+                SeedBindingIds {
+                    enclave_id: B256::repeat_byte(0x52),
+                    binding_id: B256::repeat_byte(0x53),
+                    intent_hash: B256::repeat_byte(0x54),
+                },
                 1_700_000_400,
                 [0x55; 32],
                 B256::repeat_byte(0x56),
@@ -328,9 +332,11 @@ fn production_facade_installs_current_finalized_ticket_in_live_enclave() {
             &registry,
             &source_node,
             EnclaveProfile::Validator,
-            B256::repeat_byte(0x95),
-            B256::repeat_byte(0x96),
-            B256::repeat_byte(0x97),
+            SeedBindingIds {
+                enclave_id: B256::repeat_byte(0x95),
+                binding_id: B256::repeat_byte(0x96),
+                intent_hash: B256::repeat_byte(0x97),
+            },
             now + 600,
             [0x98; 32],
             source_witness.authorization_hash().unwrap(),
@@ -339,9 +345,11 @@ fn production_facade_installs_current_finalized_ticket_in_live_enclave() {
             &registry,
             &target_node,
             EnclaveProfile::Validator,
-            target_manifest.enclave_id().unwrap(),
-            B256::repeat_byte(0x99),
-            B256::repeat_byte(0x9A),
+            SeedBindingIds {
+                enclave_id: target_manifest.enclave_id().unwrap(),
+                binding_id: B256::repeat_byte(0x99),
+                intent_hash: B256::repeat_byte(0x9A),
+            },
             now + 500,
             target_manifest.noise_responder_x25519,
             target_manifest.node_host_authorization_hash().unwrap(),
@@ -510,9 +518,11 @@ fn current_finalized_registry_constructs_exact_replacement_authorization() {
             &registry,
             &node_id,
             EnclaveProfile::Validator,
-            intent.enclave_id,
-            intent.binding_id,
-            intent_hash,
+            SeedBindingIds {
+                enclave_id: intent.enclave_id,
+                binding_id: intent.binding_id,
+                intent_hash,
+            },
             intent.requested_valid_until,
             intent.noise_responder_x25519,
             intent.node_host_authorization_hash,
@@ -612,9 +622,11 @@ fn external_light_client_checkpoint_authenticates_the_exact_registry_storage_pro
             &registry,
             &source_node,
             EnclaveProfile::Validator,
-            B256::repeat_byte(0x72),
-            B256::repeat_byte(0x73),
-            B256::repeat_byte(0x74),
+            SeedBindingIds {
+                enclave_id: B256::repeat_byte(0x72),
+                binding_id: B256::repeat_byte(0x73),
+                intent_hash: B256::repeat_byte(0x74),
+            },
             1_700_000_600,
             [0x75; 32],
             source_witness.authorization_hash().unwrap(),
@@ -623,9 +635,11 @@ fn external_light_client_checkpoint_authenticates_the_exact_registry_storage_pro
             &registry,
             &target_node,
             EnclaveProfile::Validator,
-            B256::repeat_byte(0x82),
-            B256::repeat_byte(0x83),
-            B256::repeat_byte(0x84),
+            SeedBindingIds {
+                enclave_id: B256::repeat_byte(0x82),
+                binding_id: B256::repeat_byte(0x83),
+                intent_hash: B256::repeat_byte(0x84),
+            },
             1_700_000_450,
             [0x85; 32],
             B256::repeat_byte(0x86),
@@ -789,17 +803,26 @@ fn full_node(seed: u8) -> NodeIdV1 {
     NodeIdV1::FullNode { reth_p2p_public }
 }
 
+struct SeedBindingIds {
+    enclave_id: B256,
+    binding_id: B256,
+    intent_hash: B256,
+}
+
 fn seed_binding(
     registry: &TeeRegistry<'_>,
     node: &NodeIdV1,
     profile: EnclaveProfile,
-    enclave_id: B256,
-    binding_id: B256,
-    intent_hash: B256,
+    ids: SeedBindingIds,
     valid_until: u64,
     noise_responder_x25519: [u8; 32],
     node_host_authorization_hash: B256,
 ) {
+    let SeedBindingIds {
+        enclave_id,
+        binding_id,
+        intent_hash,
+    } = ids;
     let node_hash = node.node_id_hash().unwrap();
     if let NodeIdV1::Validator { address, .. } = node {
         registry

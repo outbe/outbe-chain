@@ -3247,7 +3247,7 @@ where
                                 eyre::eyre!("GramineDirectDev enclave reconnect failed: {error}")
                             })?;
                             (
-                                outbe_tee::RuntimeEnclaveClient::Development(development),
+                                outbe_tee::RuntimeEnclaveClient::Development(Box::new(development)),
                                 None,
                             )
                         }
@@ -3391,7 +3391,7 @@ where
                     )
                 }
                 outbe_primitives::tee_attestation_v1::AttestationMode::GramineDirectDev => {
-                    outbe_tee::RuntimeEnclaveClient::Development(
+                    outbe_tee::RuntimeEnclaveClient::Development(Box::new(
                         outbe_tee::EnclaveClient::connect_endpoint(
                             endpoint,
                             &outbe_tee::QuotePolicy::dev_accept_any(),
@@ -3399,7 +3399,7 @@ where
                         .map_err(|error| {
                             eyre::eyre!("GramineDirectDev enclave reconnect failed: {error}")
                         })?,
-                    )
+                    ))
                 }
             };
             let enclave_offer = crate::tee_bootstrap::query_enclave_offer_public(&mut enclave)?;

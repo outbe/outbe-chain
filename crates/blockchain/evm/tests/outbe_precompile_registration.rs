@@ -4,6 +4,7 @@ use alloy_evm::{eth::EthEvmContext, precompiles::PrecompilesMap, revm::handler::
 use alloy_primitives::{Address, B256};
 use outbe_evm::precompiles::{
     extend_outbe_precompiles, outbe_precompile_addresses, OutbePrecompileExecutionContext,
+    OutbePrecompileRuntime,
 };
 use outbe_primitives::addresses::*;
 use revm::{
@@ -58,11 +59,13 @@ fn build_extended_precompiles() -> PrecompilesMap {
     extend_outbe_precompiles::<EmptyDB>(
         &mut precompiles,
         OutbePrecompileExecutionContext::new(spec, B256::ZERO),
-        None,
-        std::sync::Arc::new(outbe_compressed_entities::ExecutionScope::new()),
-        None,
-        None,
-        false,
+        OutbePrecompileRuntime::new(
+            None,
+            std::sync::Arc::new(outbe_compressed_entities::ExecutionScope::new()),
+            None,
+            None,
+            false,
+        ),
         None,
     );
     precompiles

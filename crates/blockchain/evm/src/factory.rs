@@ -551,11 +551,13 @@ impl EvmFactory for OutbeEvmFactory {
             &mut precompiles,
             OutbePrecompileExecutionContext::new(spec, self.genesis_hash)
                 .with_tee_attestation_v1(self.tee_attestation_v1.clone()),
-            runtime_body_readers.clone(),
-            execution_scope.clone(),
-            ocomp_finality_authority,
-            ocomp_local_result_authority,
-            ocomp_lifecycle_active,
+            crate::precompiles::OutbePrecompileRuntime::new(
+                runtime_body_readers.clone(),
+                execution_scope.clone(),
+                ocomp_finality_authority,
+                ocomp_local_result_authority,
+                ocomp_lifecycle_active,
+            ),
             ocomp_fork_install,
         );
 

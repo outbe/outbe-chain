@@ -58,7 +58,7 @@ const OST3_BINDING_ID_DOMAIN: &[u8] = b"outbe/tee/bootstrap-binding/v1";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Ost3WireMessage {
-    Submission(TeeBootstrapParticipantSubmissionV2),
+    Submission(Box<TeeBootstrapParticipantSubmissionV2>),
     Signature {
         signing_hash: B256,
         validator: Address,
@@ -123,11 +123,13 @@ impl Ost3WireMessage {
                     .get(evidence_end.checked_add(65)?..)?
                     .try_into()
                     .ok()?;
-                Some(Self::Submission(TeeBootstrapParticipantSubmissionV2 {
-                    evidence,
-                    node_signature,
-                    enclave_signature,
-                }))
+                Some(Self::Submission(Box::new(
+                    TeeBootstrapParticipantSubmissionV2 {
+                        evidence,
+                        node_signature,
+                        enclave_signature,
+                    },
+                )))
             }
             OST3_SIGNATURE if input.len() == OST3_SIGNATURE_BYTES => {
                 let signing_hash = B256::from_slice(input.get(1..33)?);
@@ -435,7 +437,7 @@ pub async fn coordinate_tee_bootstrap_v2<G: BootstrapGossip>(
     }
 
     gossip
-        .broadcast(Ost3WireMessage::Submission(local_submission.clone()).encode()?)
+        .broadcast(Ost3WireMessage::Submission(Box::new(local_submission.clone())).encode()?)
         .await
         .map_err(|error| eyre::eyre!("OST3 submission broadcast failed: {error}"))?;
     let mut submissions = BTreeMap::new();
@@ -454,7 +456,7 @@ pub async fn coordinate_tee_bootstrap_v2<G: BootstrapGossip>(
         match Ost3WireMessage::decode(&bytes) {
             Some(Ost3WireMessage::Submission(submission)) => {
                 if validate_submission(&submission, &authority.policy, committee).is_ok() {
-                    insert_submission(&mut submissions, submission, &authority.policy, committee)?;
+                    insert_submission(&mut submissions, *submission, &authority.policy, committee)?;
                 }
             }
             Some(signature @ Ost3WireMessage::Signature { .. }) => {
