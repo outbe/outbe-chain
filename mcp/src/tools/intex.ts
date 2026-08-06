@@ -200,7 +200,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         args: [series],
       })) as Record<string, bigint | number>;
       const u256 = (v: bigint | number) => v as bigint;
-      const callDeadlineSec = Number(d.calledAt) > 0 ? Number(d.calledAt) + Number(d.intexCallPeriod) : 0;
+      const callDeadlineSec = Number(d.calledAt) > 0 ? Number(d.calledAt) + Number(d.callNoticePeriod) : 0;
       return ok({
         network: n.name,
         seriesId: Number(d.seriesId),
@@ -210,11 +210,13 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         floorPrice: { raw: d.floorPriceMinor.toString(), value: formatUnits(u256(d.floorPriceMinor), 18), scale: "1e18 oracle" },
         callPrice: { raw: d.callPriceMinor.toString(), value: formatUnits(u256(d.callPriceMinor), 18), scale: "1e18 oracle" },
         issuedIntexCount: Number(d.issuedIntexCount),
-        callWindowDays: Number(d.callWindowDays),
-        callThresholdDays: Number(d.callThresholdDays),
-        intexCallPeriod: Number(d.intexCallPeriod),
+        callWindow: Number(d.callWindow),
+        callThreshold: Number(d.callThreshold),
+        callNoticePeriod: Number(d.callNoticePeriod),
+        costAmount: { raw: d.costAmountMinor.toString(), value: formatUnits(u256(d.costAmountMinor), 18) },
         issuanceCurrency: Number(d.issuanceCurrency), // ISO 4217 numeric
         referenceCurrency: Number(d.referenceCurrency),
+        worldwideDay: Number(d.worldwideDay),
         state: intexState(d.state),
         issuedAt: epochIso(d.issuedAt),
         calledAt: epochIso(d.calledAt),
@@ -375,7 +377,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
           issuanceCurrency: number;
           referenceCurrency: number;
           promisLoadMinor: bigint;
-          callTrigger: { windowDays: number; thresholdDays: number; intexCallPeriod: number };
+          callTrigger: { callWindow: number; callThreshold: number; callNoticePeriod: number };
           minIntexBidRate: bigint;
           minIntexBidQuantity: number;
           entryPriceMinor: bigint;
@@ -402,9 +404,9 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
           // strike basis: per-Intex promis_load in the payment token (wCOEN). Escrow lock = qty * this * rate / 1e6.
           promisLoadMinor: { raw: d.params.promisLoadMinor.toString(), value: formatUnits(d.params.promisLoadMinor, dec) },
           callTrigger: {
-            windowDays: d.params.callTrigger.windowDays,
-            thresholdDays: d.params.callTrigger.thresholdDays,
-            intexCallPeriod: d.params.callTrigger.intexCallPeriod,
+            callWindow: d.params.callTrigger.callWindow,
+            callThreshold: d.params.callTrigger.callThreshold,
+            callNoticePeriod: d.params.callTrigger.callNoticePeriod,
           },
           // bid rates are 1e6 fixed-point (fraction of strike).
           minIntexBidRate: { raw: d.params.minIntexBidRate.toString(), value: formatUnits(d.params.minIntexBidRate, 6) },
