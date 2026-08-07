@@ -3249,9 +3249,9 @@ fn auction_brief_dispatched_only_on_the_ready_tick() {
             .unwrap();
         drop(metadosis);
 
-        // k1 FORMING, k2 offering entry, k3 mid-offering, k4 READY.
+        // k1 FORMING, k2 offering entry, k3-k4 offering/waiting, k5 READY.
         let mut stages = Vec::new();
-        for k in 1..5u64 {
+        for k in 1..6u64 {
             run_begin_block(storage.clone(), k + 1, base_ts + k * SECONDS_PER_DAY);
             let desis = storage.contract::<outbe_desis::schema::DesisContract>();
             stages.push(desis.auction_stage.read(&wwd_key).unwrap());
@@ -3260,7 +3260,7 @@ fn auction_brief_dispatched_only_on_the_ready_tick() {
         let briefed = outbe_desis::schema::AuctionStage::Briefed as u8;
         assert_eq!(
             stages,
-            vec![0, 0, 0, briefed],
+            vec![0, 0, 0, 0, briefed],
             "the brief must dispatch on the READY tick only"
         );
     });
