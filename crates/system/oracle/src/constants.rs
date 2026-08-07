@@ -1,6 +1,7 @@
 //! Module-local protocol constants.
 
 use alloy_primitives::U256;
+use outbe_primitives::address_pair::AddressPair;
 
 /// Genesis seed for the USD (ISO 840) currency rate: the current SOFR
 /// (Secured Overnight Financing Rate) at 1e18 scale.
@@ -20,3 +21,31 @@ pub const MAX_UTC_DAY_VWAP_BACKFILL_DAYS: u32 = 366;
 
 /// The pair whose WorldwideDay VWAP drives the GREEN/RED day-type decision.
 pub const DAY_TYPE_PAIR: (&str, &str) = ("COEN", "840");
+
+/// ISO 4217 code the day-type pair is quoted in.
+pub const DAY_TYPE_ISO: u16 = 840;
+
+/// [`DAY_TYPE_PAIR`] as a storage key: COEN (the zero address, which sorts
+/// first) quoted in ISO 840.
+///
+/// Spelled as a literal because `AddressPair::from_addresses` sorts, and
+/// neither `Ord` nor `copy_from_slice` is const. The
+/// `the_day_type_pair_key_is_the_coen_iso_840_pair` test is what keeps it
+/// honest.
+pub const DAY_TYPE_PAIR_KEY: AddressPair = AddressPair::new([
+    // COEN — 20 zero bytes.
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, //
+    // ISO 840 — the marker plus BCD 840.
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x0c, 0xc8, 0x40,
+]);
+
+#[cfg(test)]
+mod tests {
+    use super::{DAY_TYPE_ISO, DAY_TYPE_PAIR_KEY};
+    use outbe_primitives::asset_type::coen_iso_pair;
+
+    #[test]
+    fn the_day_type_pair_key_is_the_coen_iso_840_pair() {
+        assert_eq!(DAY_TYPE_PAIR_KEY, coen_iso_pair(DAY_TYPE_ISO));
+    }
+}

@@ -3,6 +3,7 @@ extern crate alloc;
 pub mod accounting_progress;
 pub mod address_pair;
 pub mod addresses;
+pub mod asset_type;
 pub mod block;
 pub mod chain;
 pub mod consensus;

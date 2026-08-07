@@ -63,36 +63,6 @@
     },
     "pairs": [
       {
-        "base": "XAU",
-        "quote": "USD",
-        "initial_rate": "2400000000000000000000"
-      },
-      {
-        "base": "COEN",
-        "quote": "USDC",
-        "initial_rate": "1000000000000000000"
-      },
-      {
-        "base": "USDC",
-        "quote": "USD",
-        "initial_rate": "1000000000000000000"
-      },
-      {
-        "base": "USDT",
-        "quote": "USD",
-        "initial_rate": "1000000000000000000"
-      },
-      {
-        "base": "BTC",
-        "quote": "USDC",
-        "initial_rate": "65000000000000000000000"
-      },
-      {
-        "base": "ETH",
-        "quote": "USDC",
-        "initial_rate": "2500000000000000000000"
-      },
-      {
         "base": "COEN",
         "quote": "840",
         "initial_rate": "1000000000000000000"

@@ -24,67 +24,12 @@ rest = "https://prc.testnet.outbe.net"
 websocket = "prc.testnet.outbe.net"
 
 [[currency_pairs]]
-base = "XAU"
-quote = "USD"
-chain_denom = "uxau"
-providers = ["mock_http"]
-
-[[currency_pairs]]
-base = "COEN"
-quote = "USDC"
-chain_denom = "unit"
-providers = ["mock_http"]
-
-[[currency_pairs]]
-base = "USDC"
-quote = "USD"
-chain_denom = "uusdc"
-providers = ["mock_http"]
-
-[[currency_pairs]]
-base = "USDT"
-quote = "USD"
-chain_denom = "uusdt"
-providers = ["mock_http"]
-
-[[currency_pairs]]
-base = "BTC"
-quote = "USDC"
-chain_denom = "ubtc"
-providers = ["mock_http"]
-
-[[currency_pairs]]
-base = "ETH"
-quote = "USDC"
-chain_denom = "ueth"
-providers = ["mock_http"]
-
-[[currency_pairs]]
 base = "COEN"
 quote = "840"
 chain_denom = "unit"
 providers = ["mock_http"]
 
 [[deviation_thresholds]]
-base = "XAU"
-threshold = 2.0
-
-[[deviation_thresholds]]
 base = "COEN"
 threshold = 2.0
 
-[[deviation_thresholds]]
-base = "USDC"
-threshold = 2.0
-
-[[deviation_thresholds]]
-base = "USDT"
-threshold = 2.0
-
-[[deviation_thresholds]]
-base = "BTC"
-threshold = 2.0
-
-[[deviation_thresholds]]
-base = "ETH"
-threshold = 2.0

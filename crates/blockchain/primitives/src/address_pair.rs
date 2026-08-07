@@ -1,7 +1,9 @@
-use alloy_primitives::{wrap_fixed_bytes, Address};
+use alloy_primitives::{keccak256, wrap_fixed_bytes, Address, U256};
 // `wrap_fixed_bytes!` expands to `derive_more` derives that emit unqualified
 // paths, so the crate has to be nameable here.
 use alloy_primitives::private::derive_more;
+
+use crate::storage::types::StorageKey;
 
 wrap_fixed_bytes!(
     /// Two Ethereum addresses concatenated, 40 bytes in length.
@@ -46,10 +48,32 @@ impl AddressPair {
     }
 }
 
+/// Usable as a `Mapping` key, but never as a value: [`Storable`] round-trips
+/// through a single 32-byte word and 40 bytes do not fit one.
+///
+/// [`Storable`]: crate::storage::types::Storable
+impl StorageKey for AddressPair {
+    fn key_bytes(&self) -> Vec<u8> {
+        self.as_slice().to_vec()
+    }
+
+    /// Solidity left-pads a mapping key only when it is narrower than a word;
+    /// a wider key is concatenated with the base slot as-is. The provided
+    /// implementation computes `32 - key.len()`, which a 40-byte key underflows,
+    /// so the concatenation is spelled out here against a fixed-size buffer.
+    fn mapping_slot(&self, base_slot: U256) -> U256 {
+        let mut buf = [0u8; 72];
+        buf[..40].copy_from_slice(self.as_slice());
+        buf[40..].copy_from_slice(&base_slot.to_be_bytes::<32>());
+        U256::from_be_bytes(keccak256(buf).0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::AddressPair;
-    use alloy_primitives::{address, Address};
+    use crate::storage::types::StorageKey;
+    use alloy_primitives::{address, b256, keccak256, Address, U256};
 
     const FIRST: Address = address!("0x1111111111111111111111111111111111111111");
     const SECOND: Address = address!("0x2222222222222222222222222222222222222222");
@@ -119,6 +143,62 @@ mod tests {
         assert_eq!(
             AddressPair::from_addresses(Address::ZERO, Address::ZERO),
             AddressPair::ZERO,
+        );
+    }
+
+    #[test]
+    fn the_mapping_slot_concatenates_the_forty_byte_key_with_the_base_slot() {
+        let pair = AddressPair::from_addresses(FIRST, SECOND);
+        let base_slot = U256::from(10u64);
+
+        let mut expected = Vec::with_capacity(72);
+        expected.extend_from_slice(pair.as_slice());
+        expected.extend_from_slice(&base_slot.to_be_bytes::<32>());
+
+        assert_eq!(
+            pair.mapping_slot(base_slot),
+            U256::from_be_bytes(keccak256(&expected).0),
+        );
+    }
+
+    #[test]
+    fn the_mapping_slot_separates_distinct_pairs_and_distinct_base_slots() {
+        let pair = AddressPair::from_addresses(FIRST, SECOND);
+        let other = AddressPair::from_addresses(FIRST, THIRD);
+
+        assert_ne!(
+            pair.mapping_slot(U256::from(10u64)),
+            other.mapping_slot(U256::from(10u64))
+        );
+        assert_ne!(
+            pair.mapping_slot(U256::from(10u64)),
+            pair.mapping_slot(U256::from(11u64))
+        );
+    }
+
+    #[test]
+    fn the_mapping_slot_handles_the_zero_pair_and_the_zero_base_slot() {
+        // The 40-byte key underflows the default 32-byte left-pad, so the
+        // override is the only thing keeping this from panicking.
+        let _ = AddressPair::ZERO.mapping_slot(U256::ZERO);
+    }
+
+    /// Pins the exact slot `scripts/seed_genesis.py` has to reproduce for the
+    /// canonical COEN/840 pair at the pair-registry base slot. Its `mapping_key`
+    /// helper already agrees: `rjust(32)` never truncates, so a 40-byte key
+    /// falls through unpadded. A change here is genesis-breaking, not a refactor.
+    #[test]
+    fn the_coen_iso_840_pair_derives_a_stable_registry_slot() {
+        let coen_usd = AddressPair::from_addresses(
+            Address::ZERO,
+            address!("0x00000000000000000000000000000000000cc840"),
+        );
+
+        assert_eq!(
+            coen_usd.mapping_slot(U256::from(10u64)),
+            U256::from_be_bytes(
+                b256!("0xfa9240513fa8af0cd3aa94db0c237a129a63076f21ab227c30018c124938bc88").0
+            ),
         );
     }
 }
