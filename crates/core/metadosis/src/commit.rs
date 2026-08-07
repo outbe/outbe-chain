@@ -182,15 +182,7 @@ fn commit_new_wwd_inner(
         )));
     }
 
-    metadosis.commit_create_worldwide_day(
-        permit,
-        worldwide_day,
-        schedule.forming_start,
-        schedule.forming_period_seconds,
-        schedule.lookback_delay_seconds,
-        schedule.offering_period_seconds,
-        schedule.waiting_period_seconds,
-    )?;
+    metadosis.commit_create_worldwide_day(permit, worldwide_day, schedule)?;
     metadosis.commit_add_active_wwd(permit, worldwide_day)?;
     TributeContract::new(metadosis.storage.clone()).seal_day(worldwide_day)?;
 

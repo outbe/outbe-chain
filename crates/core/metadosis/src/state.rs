@@ -33,19 +33,15 @@ impl MetadosisContract<'_> {
         &mut self,
         _permit: &crate::commit::CommitPermit<'_>,
         wwd: WorldwideDayKey,
-        forming_start: u64,
-        forming_period_seconds: u64,
-        lookback_delay_seconds: u64,
-        offering_period_seconds: u64,
-        waiting_period_seconds: u64,
+        schedule: crate::commit::NewWwdSchedule,
     ) -> Result<()> {
         self.create_worldwide_day_raw(
             wwd,
-            forming_start,
-            forming_period_seconds,
-            lookback_delay_seconds,
-            offering_period_seconds,
-            waiting_period_seconds,
+            schedule.forming_start,
+            schedule.forming_period_seconds,
+            schedule.lookback_delay_seconds,
+            schedule.offering_period_seconds,
+            schedule.waiting_period_seconds,
         )
     }
 
