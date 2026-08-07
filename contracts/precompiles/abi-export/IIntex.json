@@ -108,6 +108,11 @@
             "name": "worldwideDay",
             "type": "uint32",
             "internalType": "uint32"
+          },
+          {
+            "name": "costAmountMinor",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       }

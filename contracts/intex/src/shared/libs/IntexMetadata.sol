@@ -19,6 +19,12 @@ library IntexMetadata {
     uint8 private constant PRICE_DECIMALS = 18;
     uint8 private constant PRICE_PRECISION = 6;
 
+    /// @dev Cost of one Intex in the reference currency, on the same 1e18 scale as the prices;
+    ///      `promisLoadMinor` carries its own 1e18, hence the divisor.
+    function _costAmountMinor(IIntexNFT1155.SeriesData memory data) private pure returns (uint256) {
+        return (uint256(data.entryPriceMinor) * uint256(data.promisLoadMinor)) / 1e18;
+    }
+
     /// @notice Build the `data:application/json;base64,...` URI for a token.
     /// @param data Series record for the token id (Issued or Settled class).
     /// @param timestamp Current block timestamp.
@@ -104,6 +110,9 @@ library IntexMetadata {
             ",\"display_type\":\"number\"},",
             "{\"trait_type\":\"Promis Load\",\"value\":",
             Strings.toString(data.promisLoadMinor / 1e18),
+            ",\"display_type\":\"number\"},",
+            "{\"trait_type\":\"Cost Amount\",\"value\":",
+            _amountPlain(_costAmountMinor(data), PRICE_DECIMALS, PRICE_PRECISION),
             ",\"display_type\":\"number\"}"
         );
 

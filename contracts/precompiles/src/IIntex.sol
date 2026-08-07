@@ -37,6 +37,7 @@ interface IIntex {
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
         uint32 worldwideDay;
+        uint256 costAmountMinor;
     }
 
     /// @notice Full identity + lifecycle record for a series. Reverts if the

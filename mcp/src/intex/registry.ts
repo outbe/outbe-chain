@@ -146,7 +146,7 @@ export const NFT_ABI: Abi = parseAbi([
 
 /** Intex (outbe precompile): canonical cross-chain series ledger. */
 export const INTEX_ABI: Abi = parseAbi([
-  "function seriesData(uint32 seriesId) view returns ((uint32 seriesId, uint256 promisLoadMinor, uint256 entryPriceMinor, uint256 floorPriceMinor, uint32 issuedIntexCount, uint32 callWindow, uint32 callThreshold, uint256 callPriceMinor, uint8 state, uint32 issuedAt, uint32 calledAt, uint32 callNoticePeriod, uint16 issuanceCurrency, uint16 referenceCurrency, uint32 worldwideDay) data)",
+  "function seriesData(uint32 seriesId) view returns ((uint32 seriesId, uint256 promisLoadMinor, uint256 entryPriceMinor, uint256 floorPriceMinor, uint32 issuedIntexCount, uint32 callWindow, uint32 callThreshold, uint256 callPriceMinor, uint8 state, uint32 issuedAt, uint32 calledAt, uint32 callNoticePeriod, uint16 issuanceCurrency, uint16 referenceCurrency, uint32 worldwideDay, uint256 costAmountMinor) data)",
   "function seriesExists(uint32 seriesId) view returns (bool)",
   "function totalSeries() view returns (uint64)",
   "function seriesAt(uint64 index) view returns (uint32)",

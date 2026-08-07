@@ -121,6 +121,10 @@ impl SeriesRecord {
         IntexState::from_u8(self.state)
     }
 
+    pub fn cost_amount_minor(&self) -> Result<U256, IntexError> {
+        cost_amount_minor(self.entry_price_minor, self.promis_load_minor)
+    }
+
     pub fn call_trigger(&self) -> IntexCallTrigger {
         IntexCallTrigger {
             call_window: self.call_window,
@@ -128,6 +132,20 @@ impl SeriesRecord {
             call_notice_period: self.call_notice_period,
         }
     }
+}
+
+/// Cost of one Intex in the reference currency, on the same 1e18 oracle scale as
+/// entry/floor/call. `promis_load_minor` carries its own 1e18, hence the divisor.
+/// Settling converts this into the chosen token's minor units — see
+/// `intexfactory::runtime::cost_amount`.
+pub fn cost_amount_minor(
+    entry_price_minor: U256,
+    promis_load_minor: U256,
+) -> Result<U256, IntexError> {
+    entry_price_minor
+        .checked_mul(promis_load_minor)
+        .map(|v| v / U256::from(10u64).pow(U256::from(18u64)))
+        .ok_or(IntexError::CostAmountOverflow)
 }
 
 /// Paginated creator-reward distribution progress for a series. Exists while a

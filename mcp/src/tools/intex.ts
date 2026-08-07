@@ -271,6 +271,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         floorPrice: { raw: d.floorPriceMinor.toString(), value: formatUnits(u256(d.floorPriceMinor), 18), scale: "1e18 oracle" },
         callPrice: { raw: d.callPriceMinor.toString(), value: formatUnits(u256(d.callPriceMinor), 18), scale: "1e18 oracle" },
         issuedIntexCount: Number(d.issuedIntexCount),
+        costAmount: { raw: d.costAmountMinor.toString(), value: formatUnits(u256(d.costAmountMinor), 18), scale: "1e18 oracle (reference ccy)" },
         callWindow: Number(d.callWindow),
         callThreshold: Number(d.callThreshold),
         callNoticePeriod: Number(d.callNoticePeriod),
