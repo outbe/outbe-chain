@@ -3,7 +3,7 @@
 use alloy_primitives::U256;
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::ExecutionScope;
-use outbe_primitives::{block::BlockRuntimeContext, error::Result, time::timestamp_to_date_key};
+use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 use outbe_promislimit::PromisLimitContract;
 use outbe_tribute::TributeContract;
 
@@ -156,8 +156,7 @@ fn create_initial_worldwide_day_if_needed(
     if !metadosis.active_wwd.is_empty()? {
         return Ok(());
     }
-    let utc_day = timestamp_to_date_key(timestamp);
-    create_worldwide_day_for_date(metadosis, ctx, utc_day.into())
+    create_worldwide_day_if_needed(metadosis, ctx, timestamp)
 }
 
 pub(crate) fn create_worldwide_day_if_needed(

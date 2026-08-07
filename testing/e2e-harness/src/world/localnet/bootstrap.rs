@@ -462,16 +462,7 @@ impl Localnet {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        // A WorldwideDay starts at its canonical UTC+14 boundary, which can be
-        // many hours before LocalNet bootstrap. Keep the protocol field's
-        // canonical "duration from day start" meaning while placing this fresh
-        // network's forming edge one minute after block 1.
-        let current_utc_day = outbe_primitives::time::timestamp_to_date_key(now);
-        let current_wwd_start = outbe_common::WorldwideDay::new(current_utc_day).start_timestamp();
-        let localnet_forming_period = now
-            .checked_sub(current_wwd_start)
-            .and_then(|elapsed| elapsed.checked_add(LOCALNET_METADOSIS_FORMING_LEAD_SECONDS))
-            .ok_or_else(|| eyre!("cannot derive LocalNet Metadosis forming period"))?;
+        let localnet_forming_period = localnet_forming_period_seconds(now)?;
         // genesisTime is one day in the past so the chain can produce immediately.
         let genesis_time = OffsetDateTime::from_unix_timestamp(now as i64 - 86_400)
             .wrap_err("genesis time")?
@@ -762,6 +753,16 @@ fn address_has_suffix(key: &str, suffix: &str) -> bool {
     format!("{k:0>40}").ends_with(suffix)
 }
 
+fn localnet_forming_period_seconds(now: u64) -> Result<u64> {
+    let current_wwd = outbe_primitives::time::worldwide_day_from_timestamp(now);
+    let current_wwd_start = outbe_primitives::time::date_key_to_utc_timestamp(current_wwd)
+        .checked_sub(outbe_primitives::time::UTC_PLUS_14_OFFSET)
+        .ok_or_else(|| eyre!("cannot derive LocalNet WorldwideDay start"))?;
+    now.checked_sub(current_wwd_start)
+        .and_then(|elapsed| elapsed.checked_add(LOCALNET_METADOSIS_FORMING_LEAD_SECONDS))
+        .ok_or_else(|| eyre!("cannot derive LocalNet Metadosis forming period"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -777,6 +778,25 @@ mod tests {
                 }
             }
         })
+    }
+
+    #[test]
+    fn localnet_forming_edge_tracks_the_canonical_utc_plus_14_day() {
+        let utc_midnight = outbe_primitives::time::date_key_to_utc_timestamp(20260302);
+
+        for now in [
+            utc_midnight + 9 * 3_600 + 59 * 60,
+            utc_midnight + 10 * 3_600,
+        ] {
+            let wwd = outbe_primitives::time::worldwide_day_from_timestamp(now);
+            let wwd_start = outbe_primitives::time::date_key_to_utc_timestamp(wwd)
+                - outbe_primitives::time::UTC_PLUS_14_OFFSET;
+            let period = localnet_forming_period_seconds(now).unwrap();
+            assert_eq!(
+                wwd_start + period,
+                now + LOCALNET_METADOSIS_FORMING_LEAD_SECONDS
+            );
+        }
     }
 
     #[test]

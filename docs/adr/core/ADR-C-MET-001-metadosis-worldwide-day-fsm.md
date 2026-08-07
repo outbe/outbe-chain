@@ -47,7 +47,11 @@ calendar and immutable `GenesisProtocolParametersV1`. Metadosis receives resolve
 seconds from `outbe-chain-constants` and does not branch on chain id or on whether
 a value came from JSON or a default. It persists the resulting absolute
 boundaries, inserts the record in the active set, and seals its Tribute partition.
-Creation is idempotent by day identity.
+Creation is idempotent by day identity. Block 1 uses the same
+`WorldwideDay::from_timestamp(block_timestamp)` conversion as every later WWD;
+there is no raw-UTC genesis-day special case. The daily emission handler may
+separately materialize the explicitly settled previous UTC accounting day when
+forming its immutable day-limit receipt.
 
 Fresh-devnet genesis must contain one canonical OCOMP fork install bound to the
 chain id, genesis hash and exact install hash, with activation height `1`. Node
@@ -324,7 +328,9 @@ caps, CapacityForfeiture aggregate retirement/value routing/replay/rollback,
 OCOMP request admission and FIFO cleanup.
 Fresh-devnet startup tests reject missing, malformed, mismatched and late OCOMP
 installs, and Cycle block 1 fails before WWD effects when the persisted profile
-is absent. Linux E2E evidence remains governed by the Metadosis closure plan.
+is absent. Boundary tests cover block-1 creation on both sides of 10:00 UTC and
+the first UTC-midnight settlement without replacing or duplicating the canonical
+genesis WWD. Linux E2E evidence remains governed by the Metadosis closure plan.
 The only retained Metadosis savepoints outside the command seam are
 `#[cfg(test)]` fixture builders. Lysis activation authority remains a
 capability/order frame, not an independent rollback boundary.

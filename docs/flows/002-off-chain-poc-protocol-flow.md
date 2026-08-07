@@ -63,7 +63,8 @@ high bits in the last byte are zero.
   Metadosis profile uses a chain-bound `Measurement` install at height `1`.
   That profile requires no active Metadosis day before launch (and removes the
   legacy fixture's single seeded OFFERING day when present); production Cycle
-  creates the measured WWD in finalized block 1. Two whole-network
+  creates the measured WWD in finalized block 1 using the same canonical UTC+14
+  conversion as all later WWD creation. Two whole-network
   stop/restart barriers advance the existing testnet
   logical clock past the canonical phase boundaries without shortening the
   production `50h/0h/48h/12h` durations, changing storage after launch, or

@@ -1108,14 +1108,37 @@ fn genesis_midday_first_cycle_at_next_midnight_settles_genesis_day() {
         // Block 1 at 10:00 — genesis anchor records genesis_utc_day = day D.
         let ctx_anchor = BlockRuntimeContext::new(block_ctx(1, DAY_D_10AM), handle.clone());
         anchor_genesis(&ctx_anchor);
-        dispatch_triggers(&ctx_anchor).unwrap();
+        run_cycle_lifecycle(&ctx_anchor).unwrap();
+        let canonical_wwd = outbe_common::WorldwideDay::new(20_240_102);
+        assert_eq!(
+            outbe_metadosis::api::worldwide_days(ctx_anchor.storage.clone())
+                .unwrap()
+                .into_iter()
+                .map(|day| day.worldwide_day)
+                .collect::<Vec<_>>(),
+            vec![canonical_wwd],
+            "block 1 at the UTC+14 boundary must create only the canonical WWD"
+        );
 
         // Block at 00:00:01 UTC day D+1 — CycleTick fires.
         // prev_day = D = genesis_utc_day → day_number_since_genesis = 0.
         let fire_ts = DAY_D_MIDNIGHT + SECONDS_PER_DAY + 1;
         let ctx_fire = BlockRuntimeContext::new(block_ctx(2, fire_ts), handle);
         account_parent(&ctx_fire, 2);
-        dispatch_triggers(&ctx_fire).unwrap();
+        run_cycle_lifecycle(&ctx_fire).unwrap();
+
+        assert_eq!(
+            outbe_metadosis::api::worldwide_days(ctx_fire.storage.clone())
+                .unwrap()
+                .into_iter()
+                .map(|day| day.worldwide_day)
+                .collect::<Vec<_>>(),
+            vec![
+                outbe_common::WorldwideDay::new(20_240_101),
+                canonical_wwd,
+            ],
+            "the first UTC midnight must retain the canonical genesis WWD and add only the explicitly settled previous UTC day"
+        );
 
         let rewards = ctx_fire
             .storage
