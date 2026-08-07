@@ -2,6 +2,46 @@
 
 use std::{fmt, net::SocketAddr, path::PathBuf};
 
+use outbe_primitives::tee_attestation_v1::AttestationMode;
+
+/// Local authorization protocol used between one node and its enclave.
+///
+/// This is deliberately independent from [`AttestationMode`]: a development
+/// network may run a production NodeHost-authorized enclave inside real SGX
+/// while publishing only `GramineDirectDev` evidence.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, clap::ValueEnum)]
+pub enum TeeSessionMode {
+    /// Preserve the historical policy defaults: DCAP uses NodeHost; the
+    /// hardware-free development lane uses its separate development transport.
+    #[default]
+    PolicyDefault,
+    /// Require the authenticated, sealed production NodeHost session.
+    ProductionNodeHost,
+    /// Require the separate development/mock transport.
+    Development,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ResolvedTeeSession {
+    ProductionNodeHost,
+    Development,
+}
+
+impl TeeSessionMode {
+    pub fn resolve(self, policy: AttestationMode) -> Result<ResolvedTeeSession, &'static str> {
+        match (self, policy) {
+            (Self::PolicyDefault, AttestationMode::DcapRequired)
+            | (Self::ProductionNodeHost, _) => Ok(ResolvedTeeSession::ProductionNodeHost),
+            (Self::PolicyDefault | Self::Development, AttestationMode::GramineDirectDev) => {
+                Ok(ResolvedTeeSession::Development)
+            }
+            (Self::Development, AttestationMode::DcapRequired) => {
+                Err("DcapRequired forbids the development enclave session")
+            }
+        }
+    }
+}
+
 /// Complete required configuration for finalized offchain-data projection into MongoDB.
 #[derive(Clone, Eq, PartialEq)]
 pub struct OffchainDataArgs {
@@ -133,12 +173,25 @@ pub struct ConsensusArgs {
     pub bls_passphrase: Option<String>,
 
     /// Path or `host:port` endpoint for the `outbe-tee-enclave` sidecar.
-    /// Every `teeAttestationV1` ChainSpec requires it. `DcapRequired` performs
-    /// NodeHost-authorized SGX initialization; `GramineDirectDev` connects only
-    /// on its separate development chain. Missing or rejected transport stops
-    /// startup and never selects an in-process stub or another attestation mode.
+    /// Every `teeAttestationV1` ChainSpec requires it. The local session is
+    /// selected independently from the genesis-fixed attestation policy:
+    /// `DcapRequired` always needs NodeHost, while `GramineDirectDev` can use
+    /// either the development transport or an explicitly selected production
+    /// NodeHost session. Missing or rejected transport stops startup and never
+    /// selects an in-process stub or another attestation mode.
     #[arg(long = "tee-enclave-socket", value_name = "PATH")]
     pub tee_enclave_socket: Option<PathBuf>,
+
+    /// Local node-to-enclave authorization protocol. This never changes the
+    /// genesis-fixed attestation policy and never provides a fallback. Use
+    /// `production-node-host` with a GramineDirectDev chain to run the
+    /// production enclave under real SGX with remote attestation disabled.
+    #[arg(
+        long = "tee-session-mode",
+        value_enum,
+        default_value_t = TeeSessionMode::PolicyDefault
+    )]
+    pub tee_session_mode: TeeSessionMode,
 
     /// Local liveness deadline (seconds) for the one-time TEE DKG + bootstrap on a
     /// fresh chain (block 0). The whole ceremony must finish before block 1; if it
@@ -232,6 +285,7 @@ impl fmt::Debug for ConsensusArgs {
             .field("bls_key_backend", &self.bls_key_backend)
             .field("bls_passphrase_configured", &self.bls_passphrase.is_some())
             .field("tee_enclave_configured", &self.tee_enclave_socket.is_some())
+            .field("tee_session_mode", &self.tee_session_mode)
             .field(
                 "tee_renewal_relay_configured",
                 &self.tee_renewal_relay_key.is_some(),
@@ -438,6 +492,7 @@ mod tests {
             bls_key_backend: "plaintext".to_string(),
             bls_passphrase: None,
             tee_enclave_socket: None,
+            tee_session_mode: TeeSessionMode::PolicyDefault,
             tee_bootstrap_timeout_secs: 60,
             tee_renewal_relay_key: None,
             tee_renewal_rpc_url: "http://127.0.0.1:8545".to_owned(),
@@ -455,6 +510,39 @@ mod tests {
     #[test]
     fn test_full_node_without_key_ok() {
         assert!(default_args().validate().is_ok());
+    }
+
+    #[test]
+    fn local_tee_session_mode_is_independent_from_attestation_policy() {
+        use outbe_primitives::tee_attestation_v1::AttestationMode;
+
+        assert_eq!(
+            TeeSessionMode::PolicyDefault
+                .resolve(AttestationMode::DcapRequired)
+                .unwrap(),
+            ResolvedTeeSession::ProductionNodeHost
+        );
+        assert_eq!(
+            TeeSessionMode::PolicyDefault
+                .resolve(AttestationMode::GramineDirectDev)
+                .unwrap(),
+            ResolvedTeeSession::Development
+        );
+        assert_eq!(
+            TeeSessionMode::ProductionNodeHost
+                .resolve(AttestationMode::GramineDirectDev)
+                .unwrap(),
+            ResolvedTeeSession::ProductionNodeHost
+        );
+        assert_eq!(
+            TeeSessionMode::Development
+                .resolve(AttestationMode::GramineDirectDev)
+                .unwrap(),
+            ResolvedTeeSession::Development
+        );
+        assert!(TeeSessionMode::Development
+            .resolve(AttestationMode::DcapRequired)
+            .is_err());
     }
 
     #[test]

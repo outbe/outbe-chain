@@ -996,10 +996,10 @@ fn run_node() -> eyre::Result<()> {
         let renewal_validator_authority = evm_signer.clone();
         let mut renewal_full_node_authority = None;
 
-        // Every network declares exactly one TEE mode in genesis and every node
-        // must connect to the corresponding enclave transport before execution
-        // or consensus starts. GramineDirectDev is a separate network mode, not
-        // a fallback when production initialization or DCAP fails.
+        // Every network declares exactly one attestation policy in genesis. The
+        // local session protocol is an independent, explicit operator choice:
+        // GramineDirectDev may use either the development transport or a real
+        // SGX, production NodeHost session. There is no connection fallback.
         let socket = args.tee_enclave_socket.clone().ok_or_else(|| {
             eyre::eyre!(
                 "mandatory {:?} ChainSpec requires --tee-enclave-socket before node startup",
@@ -1009,8 +1009,12 @@ fn run_node() -> eyre::Result<()> {
         let endpoint = socket
             .to_str()
             .ok_or_else(|| eyre::eyre!("TEE enclave endpoint is not valid UTF-8"))?;
-        match initial_tee_policy.attestation_mode {
-            outbe_primitives::tee_attestation_v1::AttestationMode::DcapRequired => {
+        let tee_session = args
+            .tee_session_mode
+            .resolve(initial_tee_policy.attestation_mode)
+            .map_err(eyre::Report::msg)?;
+        match tee_session {
+            outbe_engine::args::ResolvedTeeSession::ProductionNodeHost => {
                 if args.is_validator {
                 let signing_key_path = args.signing_key.as_deref().ok_or_else(|| {
                     eyre::eyre!("validator TEE initialization requires --consensus.signing-key")
@@ -1077,11 +1081,9 @@ fn run_node() -> eyre::Result<()> {
                         .map_err(eyre::Report::msg)?;
                 }
             }
-            outbe_primitives::tee_attestation_v1::AttestationMode::GramineDirectDev => {
+            outbe_engine::args::ResolvedTeeSession::Development => {
                 let client = outbe_tee::EnclaveClient::connect_endpoint(endpoint)
-                .wrap_err(
-                    "GramineDirectDev enclave connection failed; production transport is not a fallback",
-                )?;
+                    .wrap_err("development enclave connection failed")?;
                 outbe_tee::install_enclave_client(client).map_err(eyre::Report::msg)?;
             }
         }
@@ -1089,6 +1091,7 @@ fn run_node() -> eyre::Result<()> {
             socket = %socket.display(),
             validator_node_host = args.is_validator,
             attestation_mode = ?initial_tee_policy.attestation_mode,
+            session_mode = ?tee_session,
             "mandatory TEE enclave sidecar connected before execution launch",
         );
 

@@ -599,8 +599,10 @@ pub enum EnclaveRequest {
     /// proof that this enclave has the permanent offer key resident.
     GenerateDcapQuote { intent: Vec<u8> },
     /// Sign one exact GramineDirectDev registration intent inside the enclave.
-    /// This command is accepted only by the separate development transport and
-    /// never returns an SGX quote or hardware-attestation claim.
+    /// This command is accepted by the development transport, or by an
+    /// authenticated production NodeHost session when the enclave itself
+    /// detects SGX with remote attestation disabled. It never returns an SGX
+    /// quote or hardware-attestation claim.
     SignRegistrationIntentDevV1 { intent: Vec<u8> },
 
     /// Start one bounded, request-committed DCAP verification upload. Evidence

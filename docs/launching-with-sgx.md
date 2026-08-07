@@ -1,15 +1,35 @@
-# Launching TEE networks after the DCAP activation boundary
+# Launching TEE networks
 
-Outbe has two explicit, genesis-fixed TEE modes. They are different networks,
-not runtime alternatives:
+Outbe separates two choices that must not be conflated:
+
+1. The genesis-fixed attestation policy (`DcapRequired` or
+   `GramineDirectDev`).
+2. The local enclave runtime/session (`gramine-sgx` plus production NodeHost,
+   or the development transport).
+
+Supported profiles are:
+
+| Chain policy | Local enclave | Remote attestation | Intended use |
+| --- | --- | --- | --- |
+| `DcapRequired` | production `outbe-tee-enclave`, `gramine-sgx`, NodeHost | DCAP | testnet/production admission |
+| `GramineDirectDev` | production `outbe-tee-enclave`, `gramine-sgx`, NodeHost | none | real SGX development network without Intel collateral |
+| `GramineDirectDev` | production or mock enclave, `gramine-direct`, development session | none | hardware-free development |
+
+The second profile is intentionally supported. It executes inside real SGX,
+uses the SGX local report, EGETKEY-backed sealing and the production NodeHost
+authorization protocol. It does **not** produce a quote, validate Intel TCB
+collateral or claim remote hardware attestation; on chain it remains
+`GramineDirectDev` evidence. There is no automatic fallback between profiles.
+
+The two chain policies remain distinct:
 
 - `DcapRequired` is the testnet Intel SGX x86_64 mode on chain ID `54322345`.
   It requires the V1 manifest from block 1, an authorized SGX enclave, quote
   and canonical collateral. A missing or rejected dependency stops startup;
   it never falls back to development mode.
-- `GramineDirectDev` is the isolated devnet mode on chain ID `424242`, with its
-  own genesis and non-hardware measurements. It runs under
-  `gramine-direct` and cannot be used as SGX, DCAP or release evidence.
+- `GramineDirectDev` accepts development evidence. That policy can be exercised
+  either without hardware or by the production SGX-without-DCAP profile above;
+  neither is DCAP or release-attestation evidence.
 
 Every node role requires `--tee-enclave-socket`. A Validator cannot start
 threshold work or consensus without the permanent resident offer key, except
@@ -98,6 +118,26 @@ Stop the network with:
 ```sh
 ./scripts/run-testnet.sh stop /tmp/outbe-devnet
 ```
+
+## Run production TEE under SGX without DCAP
+
+Use the E2E/localnet harness mode `sgx-no-attest`. It passes the SGX devices,
+renders the Gramine manifest with `sgx.remote_attestation = "none"`, starts the
+production enclave with `gramine-sgx`, and starts every node with the production
+NodeHost session while keeping the chain policy `GramineDirectDev`:
+
+```sh
+cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
+  --tee sgx-no-attest \
+  --validators 4 \
+  --all
+```
+
+This requires `/dev/sgx_enclave` (or `/dev/sgx/enclave`) and an accessible SGX
+provisioning device. Absence of SGX is fatal for this mode; it never falls back
+to `gramine-direct`. The launcher does not mount QVL or require DCAP libraries
+for this mode. Selecting `DcapRequired` still requires DCAP and cannot use this
+path.
 
 ## Construct the testnet ChainSpec
 

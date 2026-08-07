@@ -101,10 +101,13 @@ The entrypoint is the `outbe-e2e` binary. **All configuration is via CLI flags �
 the harness reads no configuration from the environment.** Flags:
 
 - `--validators <N>` — committee size to bootstrap (default 4).
-- `--tee <real|gramine-direct|mock>` — mandatory enclave mode (default `mock`);
-  `gramine-direct` uses the production enclave binary without SGX. Both non-SGX
-  modes run only on the isolated `GramineDirectDev` chain and are not hardware
-  evidence.
+- `--tee <real|sgx-no-attest|gramine-direct|mock>` — mandatory enclave mode
+  (default `mock`). `sgx-no-attest` runs the production enclave under real
+  `gramine-sgx`, uses EGETKEY sealing and the production NodeHost session, but
+  deliberately disables DCAP, does not mount QVL, and submits only
+  `GramineDirectDev` evidence.
+  `gramine-direct` uses the production enclave binary without SGX. `mock` is
+  test-only. None of the development-evidence modes proves remote attestation.
 - `--no-sudo` — run scripts/docker without `sudo`.
 - `--all` — treat an unsatisfiable scenario as a failure instead of skipping it.
 - `--debug` — stream localnet setup output (bootstrap / process / docker) live;

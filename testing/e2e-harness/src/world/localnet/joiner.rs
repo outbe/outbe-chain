@@ -349,6 +349,12 @@ impl Localnet {
                 .ok_or_else(|| eyre!("Gramine Docker image identity was not resolved"))?,
             sudo: self.cfg.sudo,
             pass_sgx_devices: self.cfg.tee_mode.passes_sgx_devices(),
+            remote_attestation: match self.cfg.tee_mode {
+                crate::env::TeeMode::Real => proc::TestRemoteAttestation::Dcap,
+                crate::env::TeeMode::SgxNoAttest
+                | crate::env::TeeMode::GramineDirect
+                | crate::env::TeeMode::Mock => proc::TestRemoteAttestation::None,
+            },
             dkg_seed: self
                 .cfg
                 .tee_mode

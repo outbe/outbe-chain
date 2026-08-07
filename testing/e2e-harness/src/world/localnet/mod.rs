@@ -199,7 +199,7 @@ impl Localnet {
     /// node's production/testnet default remains unchanged and must be chosen
     /// for the deployment topology by its operator.
     fn extend_real_sgx_startup_timeout(&self, args: &mut Vec<String>) {
-        if matches!(self.cfg.tee_mode, crate::env::TeeMode::Real) {
+        if self.cfg.tee_mode.passes_sgx_devices() {
             args.extend(args!["--tee-bootstrap-timeout-secs", "180"]);
         }
     }
@@ -214,7 +214,7 @@ impl Localnet {
             .get(&i)
             .cloned()
             .unwrap_or_else(|| self.cfg.dir.join("genesis.json"));
-        args![
+        let mut args = args![
             "node",
             "--chain",
             chain_manifest.display(),
@@ -245,7 +245,11 @@ impl Localnet {
             CO_LOCATED_DEVNET_CROSS_BLOCK_CACHE_MIB,
             "--log.file.directory",
             node_dir.join("logs").display(),
-        ]
+        ];
+        if matches!(self.cfg.tee_mode, crate::env::TeeMode::SgxNoAttest) {
+            args.extend(args!["--tee-session-mode", "production-node-host"]);
+        }
+        args
     }
 
     /// Comma-joined reth bootnodes from `reth-bootnodes.txt` (comments stripped).
@@ -382,7 +386,7 @@ impl Localnet {
 /// result. Widen only the hardware E2E lane; production/testnet retain their
 /// explicit operator-selected/default deadline.
 fn extend_real_sgx_process_environment(mode: crate::env::TeeMode, cmd: &mut Command) {
-    if matches!(mode, crate::env::TeeMode::Real) {
+    if mode.passes_sgx_devices() {
         cmd.env("OUTBE_TEE_IO_TIMEOUT_SECS", "300");
     }
 }
@@ -467,8 +471,29 @@ mod tests {
         use crate::env::TeeMode;
 
         assert_eq!(configured_timeout(TeeMode::Real).as_deref(), Some("300"));
+        assert_eq!(
+            configured_timeout(TeeMode::SgxNoAttest).as_deref(),
+            Some("300")
+        );
         assert_eq!(configured_timeout(TeeMode::Mock), None);
         assert_eq!(configured_timeout(TeeMode::GramineDirect), None);
+    }
+
+    #[test]
+    fn sgx_no_attest_selects_production_node_host_session() {
+        let env = Environment {
+            tee_mode: crate::env::TeeMode::SgxNoAttest,
+            ..Environment::default()
+        };
+        env.ports
+            .start_scenario(env.validators)
+            .expect("allocate deterministic scenario ports");
+        let localnet = Localnet::new(Config::for_scenario(&env, 1));
+        let args = localnet.reth_base_args(Path::new("/tmp/outbe-e2e-node"), 0);
+
+        assert!(args
+            .windows(2)
+            .any(|pair| { pair[0] == "--tee-session-mode" && pair[1] == "production-node-host" }));
     }
 
     #[test]

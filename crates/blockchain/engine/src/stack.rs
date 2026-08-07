@@ -3024,6 +3024,10 @@ where
         .policy_at(outbe_evm::tee_attestation_activation::TEE_ATTESTATION_V1_ACTIVATION_HEIGHT)
         .map_err(eyre::Report::msg)?
         .clone();
+    let tee_session = args
+        .tee_session_mode
+        .resolve(tee_policy.attestation_mode)
+        .map_err(eyre::Report::msg)?;
     {
         if coordinate_genesis_bootstrap {
             let my_validator = proposer_evm_address.ok_or_else(|| {
@@ -3109,8 +3113,8 @@ where
             let bootstrap_clock = ctx.child("tee_bootstrap_clock");
             let payload = ctx
                 .timeout(deadline, async move {
-                    let (mut enclave, production_manifest) = match tee_policy.attestation_mode {
-                        outbe_primitives::tee_attestation_v1::AttestationMode::DcapRequired => {
+                    let (mut enclave, production_manifest) = match tee_session {
+                        crate::args::ResolvedTeeSession::ProductionNodeHost => {
                             let production = outbe_tee::connect_or_initialize_validator_enclave(
                                 &endpoint,
                                 &node_data_dir,
@@ -3141,7 +3145,7 @@ where
                                 Some(manifest),
                             )
                         }
-                        outbe_primitives::tee_attestation_v1::AttestationMode::GramineDirectDev => {
+                        crate::args::ResolvedTeeSession::Development => {
                             let development = outbe_tee::EnclaveClient::connect_endpoint(&endpoint)
                                 .map_err(|error| {
                                     eyre::eyre!(
@@ -3269,8 +3273,8 @@ where
             let endpoint = socket
                 .to_str()
                 .ok_or_else(|| eyre::eyre!("TEE enclave endpoint is not valid UTF-8"))?;
-            let mut enclave = match tee_policy.attestation_mode {
-                outbe_primitives::tee_attestation_v1::AttestationMode::DcapRequired => {
+            let mut enclave = match tee_session {
+                crate::args::ResolvedTeeSession::ProductionNodeHost => {
                     outbe_tee::RuntimeEnclaveClient::Production(
                         outbe_tee::connect_or_initialize_validator_enclave(
                             endpoint,
@@ -3292,7 +3296,7 @@ where
                         })?,
                     )
                 }
-                outbe_primitives::tee_attestation_v1::AttestationMode::GramineDirectDev => {
+                crate::args::ResolvedTeeSession::Development => {
                     outbe_tee::RuntimeEnclaveClient::Development(Box::new(
                         outbe_tee::EnclaveClient::connect_endpoint(endpoint).map_err(|error| {
                             eyre::eyre!("GramineDirectDev enclave reconnect failed: {error}")

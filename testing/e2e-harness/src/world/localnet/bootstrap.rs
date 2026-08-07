@@ -104,7 +104,7 @@ impl Localnet {
                     .arg("--minimum-tcb-evaluation-data-number")
                     .arg("1");
             }
-            TeeMode::GramineDirect | TeeMode::Mock => {
+            TeeMode::SgxNoAttest | TeeMode::GramineDirect | TeeMode::Mock => {
                 command.arg("gramine-direct-dev");
             }
         }
@@ -609,7 +609,10 @@ fn apply_co_located_sgx_timing(
     genesis: &mut serde_json::Value,
     tee_mode: crate::env::TeeMode,
 ) -> Result<()> {
-    if !matches!(tee_mode, crate::env::TeeMode::Real) {
+    if !matches!(
+        tee_mode,
+        crate::env::TeeMode::Real | crate::env::TeeMode::SgxNoAttest
+    ) {
         return Ok(());
     }
     let config = genesis["config"]
@@ -620,13 +623,13 @@ fn apply_co_located_sgx_timing(
     Ok(())
 }
 
-/// Hardware E2E exercises the same DcapRequired network class as testnet.
-/// Dev-only enclave modes keep the separately identified devnet chain and can
-/// never become a fallback for the hardware lane.
+/// DCAP hardware E2E exercises the same DcapRequired network class as testnet.
+/// SGX-no-attest uses real hardware but deliberately keeps the separately
+/// identified GramineDirectDev chain.
 const fn localnet_chain_id(tee_mode: TeeMode) -> u64 {
     match tee_mode {
         TeeMode::Real => TESTNET_CHAIN_ID,
-        TeeMode::GramineDirect | TeeMode::Mock => DEVNET_CHAIN_ID,
+        TeeMode::SgxNoAttest | TeeMode::GramineDirect | TeeMode::Mock => DEVNET_CHAIN_ID,
     }
 }
 
@@ -792,6 +795,7 @@ mod tests {
     #[test]
     fn hardware_and_dev_tee_lanes_have_distinct_network_identities() {
         assert_eq!(localnet_chain_id(TeeMode::Real), TESTNET_CHAIN_ID);
+        assert_eq!(localnet_chain_id(TeeMode::SgxNoAttest), DEVNET_CHAIN_ID);
         assert_eq!(localnet_chain_id(TeeMode::GramineDirect), DEVNET_CHAIN_ID);
         assert_eq!(localnet_chain_id(TeeMode::Mock), DEVNET_CHAIN_ID);
     }

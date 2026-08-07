@@ -85,6 +85,7 @@ struct StoredInitialization {
 /// rotate the enclave/NodeHost trust boundary.
 pub struct InitializationState {
     mode: InitializationMode,
+    gramine_direct_dev_evidence_allowed: bool,
     challenge: [u8; 32],
     boot: Option<Arc<EnclaveBootConfig>>,
     stored: Mutex<Option<StoredInitialization>>,
@@ -98,13 +99,33 @@ impl InitializationState {
         if crate::transport::sealing_key().is_none() {
             return Err("production initialization requires an SGX sealing key".to_string());
         }
-        Self::production_with_challenge(boot, keys, challenge)
+        Self::production_with_challenge_and_attestation_inner(
+            boot,
+            keys,
+            challenge,
+            crate::gramine::attestation_type(),
+        )
     }
 
+    #[cfg(test)]
     fn production_with_challenge(
         boot: Arc<EnclaveBootConfig>,
         keys: &EnclaveKeys,
         challenge: [u8; 32],
+    ) -> Result<Self, String> {
+        Self::production_with_challenge_and_attestation_inner(
+            boot,
+            keys,
+            challenge,
+            crate::gramine::attestation_type(),
+        )
+    }
+
+    fn production_with_challenge_and_attestation_inner(
+        boot: Arc<EnclaveBootConfig>,
+        keys: &EnclaveKeys,
+        challenge: [u8; 32],
+        attestation: crate::gramine::AttestationType,
     ) -> Result<Self, String> {
         if challenge == [0; 32] {
             return Err("initialization challenge must be nonzero".to_string());
@@ -112,6 +133,10 @@ impl InitializationState {
         let restored = restore_manifest(&boot, keys)?;
         Ok(Self {
             mode: InitializationMode::Production,
+            gramine_direct_dev_evidence_allowed: matches!(
+                attestation,
+                crate::gramine::AttestationType::SgxNoAttest
+            ),
             challenge,
             boot: Some(boot),
             stored: Mutex::new(restored.map(|manifest| StoredInitialization {
@@ -122,11 +147,22 @@ impl InitializationState {
         })
     }
 
+    #[cfg(test)]
+    pub(crate) fn production_with_challenge_and_attestation(
+        boot: Arc<EnclaveBootConfig>,
+        keys: &EnclaveKeys,
+        challenge: [u8; 32],
+        attestation: crate::gramine::AttestationType,
+    ) -> Result<Self, String> {
+        Self::production_with_challenge_and_attestation_inner(boot, keys, challenge, attestation)
+    }
+
     /// Separate dev/mock behavior. It never creates a production authorization
     /// claim and is selected only by the required-feature mock binary or tests.
     pub fn development() -> Self {
         Self {
             mode: InitializationMode::Development,
+            gramine_direct_dev_evidence_allowed: true,
             challenge: [0xDD; 32],
             boot: None,
             stored: Mutex::new(None),
@@ -136,6 +172,10 @@ impl InitializationState {
 
     pub fn mode(&self) -> InitializationMode {
         self.mode
+    }
+
+    pub(crate) fn gramine_direct_dev_evidence_allowed(&self) -> bool {
+        self.gramine_direct_dev_evidence_allowed
     }
 
     pub fn challenge_response(&self, keys: &EnclaveKeys) -> Result<EnclaveResponse, String> {
