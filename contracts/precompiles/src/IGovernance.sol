@@ -69,10 +69,7 @@ interface IGovernance {
         external
         view
         returns (ProposalMeta[] memory);
-    function getOipsByStatus(uint8 status, uint256 offset, uint256 limit)
-        external
-        view
-        returns (ProposalMeta[] memory);
+    function getOipsByStatus(uint8 status, uint256 offset, uint256 limit) external view returns (ProposalMeta[] memory);
     function oipCountByAuthor(address author) external view returns (uint256);
     function oipCountByStatus(uint8 status) external view returns (uint256);
 
@@ -89,10 +86,7 @@ interface IGovernance {
         external
         view
         returns (ProposalMeta[] memory);
-    function getGipsByStatus(uint8 status, uint256 offset, uint256 limit)
-        external
-        view
-        returns (ProposalMeta[] memory);
+    function getGipsByStatus(uint8 status, uint256 offset, uint256 limit) external view returns (ProposalMeta[] memory);
     function gipCountByAuthor(address author) external view returns (uint256);
     function gipCountByStatus(uint8 status) external view returns (uint256);
 

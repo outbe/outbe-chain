@@ -8,8 +8,9 @@
 use alloy_primitives::{address, Address};
 
 /// IntexNFT1155 on Outbe (balance ledger: settle / burnSettled / balanceOf).
-/// CREATE3 proxy, salt "outbe-intex:IntexNFT1155:v2.0.0".
-pub const INTEX_NFT1155_ADDRESS: Address = address!("0x4Ccbc413a5f159Da316178F8b7576C923b4D1e5d");
+/// CREATE3 proxy, salt "outbe-intex:IntexNFT1155:v2.0.0". Canonical definition
+/// lives in `outbe_primitives::addresses`; re-exported here for existing callers.
+pub use outbe_primitives::addresses::INTEX_NFT1155_ADDRESS;
 
 /// OriginRouter on Outbe (outbound ERC-7786 sends).
 /// CREATE3 proxy, salt "outbe-intex:OriginRouter:v2.0.0".

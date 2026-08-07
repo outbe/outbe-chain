@@ -7436,6 +7436,7 @@ dependencies = [
  "outbe-compressed-entities",
  "outbe-desis",
  "outbe-emissionlimit",
+ "outbe-gem",
  "outbe-intexfactory",
  "outbe-macros",
  "outbe-metadosis",
@@ -7767,6 +7768,7 @@ dependencies = [
  "outbe-oracle",
  "outbe-primitives",
  "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
@@ -7775,8 +7777,10 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "base64 0.22.1",
  "outbe-common",
  "outbe-gem",
+ "outbe-intex",
  "outbe-macros",
  "outbe-oracle",
  "outbe-primitives",

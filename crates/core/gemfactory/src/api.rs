@@ -23,8 +23,32 @@ pub fn mint_gem(
     )
 }
 
-pub fn settle_gem(storage: &StorageHandle<'_>, caller: Address, gem_id: U256) -> Result<()> {
-    runtime::settle_gem(storage, caller, gem_id)
+pub fn mint_gem_position(
+    storage: &StorageHandle<'_>,
+    caller: Address,
+    source_intex_id: u32,
+    amount: U256,
+) -> Result<U256> {
+    runtime::mint_gem_position(storage, caller, source_intex_id, amount)
+}
+
+pub fn mint_merchant_gem(
+    storage: &StorageHandle<'_>,
+    caller: Address,
+    position_id: U256,
+    owner: Address,
+    gem_load: U256,
+) -> Result<U256> {
+    runtime::mint_merchant_gem(storage, caller, position_id, owner, gem_load)
+}
+
+pub fn settle_gem(
+    storage: &StorageHandle<'_>,
+    caller: Address,
+    gem_id: U256,
+    asset: Address,
+) -> Result<()> {
+    runtime::settle_gem(storage, caller, gem_id, asset)
 }
 
 pub fn mine_gem_promis(

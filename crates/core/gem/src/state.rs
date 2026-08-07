@@ -65,8 +65,9 @@ impl GemContract<'_> {
     pub fn token_uri(&self, gem_id: U256) -> Result<String> {
         let item = self.gem_items.get(gem_id)?.ok_or(GemError::GemNotFound)?;
         let gem_id_hex = Self::format_gem_id(gem_id);
+        // TODO: replace hand-rolled JSON with type-safe serialization (serde struct).
         let json = format!(
-            "{{\"name\":\"Gem #{}\",\"description\":\"{}\",\"image\":\"{}{}\",\"attributes\":[{{\"trait_type\":\"gem_id\",\"value\":\"{}\"}},{{\"trait_type\":\"gem_type\",\"value\":{}}},{{\"trait_type\":\"state\",\"value\":{}}},{{\"trait_type\":\"gem_load\",\"value\":\"{}\"}},{{\"trait_type\":\"entry_price\",\"value\":\"{}\"}},{{\"trait_type\":\"cost_amount\",\"value\":\"{}\"}},{{\"trait_type\":\"floor_price\",\"value\":\"{}\"}},{{\"trait_type\":\"issuance_currency\",\"value\":{}}},{{\"trait_type\":\"reference_currency\",\"value\":{}}}]}}",
+            "{{\"name\":\"Gem #{}\",\"description\":\"{}\",\"image\":\"{}{}\",\"attributes\":[{{\"trait_type\":\"gem_id\",\"value\":\"{}\"}},{{\"trait_type\":\"gem_type\",\"value\":{}}},{{\"trait_type\":\"state\",\"value\":{}}},{{\"trait_type\":\"gem_load_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"entry_price_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"cost_amount_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"floor_price_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"issuance_currency\",\"value\":{}}},{{\"trait_type\":\"reference_currency\",\"value\":{}}}]}}",
             &gem_id_hex[..8],
             TOKEN_DESCRIPTION,
             TOKEN_IMAGE_BASE,
@@ -74,10 +75,10 @@ impl GemContract<'_> {
             gem_id,
             item.gem_type,
             item.state,
-            item.gem_load,
-            item.entry_price,
-            item.cost_amount,
-            item.floor_price,
+            item.gem_load_minor,
+            item.entry_price_minor,
+            item.cost_amount_minor,
+            item.floor_price_minor,
             item.issuance_currency,
             item.reference_currency,
         );
@@ -113,7 +114,10 @@ impl GemContract<'_> {
         // Park unqualified gems in the bin index so the qualifier hook can
         // skip non-candidates without scanning the full population.
         if item.state == GemState::Issued as u8 {
-            self.insert_unqualified(item.gem_id, item.floor_price)?;
+            self.insert_unqualified(item.gem_id, item.floor_price_minor)?;
+        } else if item.state == GemState::Qualified as u8 {
+            // Genesis gems are born Qualified — index them as callable gems.
+            self.insert_callable(item.gem_id)?;
         }
 
         Ok(())
@@ -121,6 +125,12 @@ impl GemContract<'_> {
 
     pub(crate) fn burn(&mut self, item: &GemData) -> Result<()> {
         self.gem_items.delete(item.gem_id)?;
+
+        // Drop the callable-gem entry when burning a Qualified/Called gem
+        // (forfeit). Settled gems (promis mining) were never listed.
+        if item.state == GemState::Qualified as u8 || item.state == GemState::Called as u8 {
+            self.remove_callable(item.gem_id)?;
+        }
 
         let idx = self.gem_index.read(&item.gem_id)?;
         let last = self
@@ -150,9 +160,70 @@ impl GemContract<'_> {
         // Issued is the only state parked in the bin index; any transition
         // out of Issued must clean it up. Idempotent if the gem isn't there.
         if item.state == GemState::Issued as u8 && new_state != GemState::Issued {
-            self.remove_unqualified(gem_id, item.floor_price)?;
+            self.remove_unqualified(gem_id, item.floor_price_minor)?;
         }
+
+        // Maintain the callable-gem list (membership == Qualified/Called) and
+        // stamp the transition timestamp.
+        match new_state {
+            // Issued -> Qualified enters the list.
+            GemState::Qualified => {
+                self.insert_callable(gem_id)?;
+                item.qualified_at = self.storage.timestamp()?.to::<u64>();
+            }
+            GemState::Settled => {
+                // Qualified|Called -> Settled leaves the list. An Issued ->
+                // Settled jump was never listed, so skip the removal.
+                if item.state != GemState::Issued as u8 {
+                    self.remove_callable(gem_id)?;
+                }
+                item.settled_at = self.storage.timestamp()?.to::<u64>();
+            }
+            _ => {}
+        }
+
         item.state = new_state as u8;
+        self.gem_items.update(&item)?;
+        Ok(())
+    }
+
+    /// Append a gem to the dense callable-gem list.
+    fn insert_callable(&mut self, gem_id: U256) -> Result<()> {
+        let idx = self.callable_gems.len()?;
+        self.callable_gems.push(gem_id)?;
+        self.callable_gem_index.write(&gem_id, idx)?;
+        Ok(())
+    }
+
+    /// Swap-remove a gem from the callable-gem list. Caller guarantees the gem
+    /// is currently listed (state was Qualified or Called).
+    fn remove_callable(&mut self, gem_id: U256) -> Result<()> {
+        let idx = self.callable_gem_index.read(&gem_id)?;
+        let last = self
+            .callable_gems
+            .len()?
+            .checked_sub(1)
+            .ok_or(GemError::GemNotFound)?;
+        if idx != last {
+            let last_id = self.callable_gems.get(last)?.ok_or(GemError::GemNotFound)?;
+            self.callable_gems.set(idx, last_id)?;
+            self.callable_gem_index.write(&last_id, idx)?;
+        }
+        self.callable_gems.pop()?;
+        self.callable_gem_index.clear(&gem_id)?;
+        Ok(())
+    }
+
+    /// `Qualified -> Called`. Records the call timestamp used to enforce the
+    /// notice-period settlement deadline. Qualified gems are not parked in the
+    /// unqualified bin index, so there is nothing to clean up here.
+    pub(crate) fn mark_called(&mut self, gem_id: U256, called_at: u64) -> Result<()> {
+        let mut item = self.gem_items.get(gem_id)?.ok_or(GemError::GemNotFound)?;
+        if item.state != GemState::Qualified as u8 {
+            return Err(GemError::InvalidState.into());
+        }
+        item.state = GemState::Called as u8;
+        item.called_at = called_at;
         self.gem_items.update(&item)?;
         Ok(())
     }
@@ -197,8 +268,12 @@ impl GemContract<'_> {
         keccak256(buf)
     }
 
-    pub(crate) fn insert_unqualified(&mut self, gem_id: U256, floor_price: U256) -> Result<()> {
-        let bin_id = Self::price_to_bin(floor_price)?;
+    pub(crate) fn insert_unqualified(
+        &mut self,
+        gem_id: U256,
+        floor_price_minor: U256,
+    ) -> Result<()> {
+        let bin_id = Self::price_to_bin(floor_price_minor)?;
         debug_assert!(bin_id <= MAX_BIN_ID);
         let count = self.unqualified_bin_count.read(&bin_id)?;
         self.unqualified_bin_gems
@@ -208,10 +283,14 @@ impl GemContract<'_> {
         Ok(())
     }
 
-    /// Remove `gem_id` from the bin at its `floor_price`. Performs swap-and-pop
+    /// Remove `gem_id` from the bin at its `floor_price_minor`. Performs swap-and-pop
     /// to keep the bin's index dense; clears the bin's trie bit when emptied.
-    pub(crate) fn remove_unqualified(&mut self, gem_id: U256, floor_price: U256) -> Result<()> {
-        let bin_id = Self::price_to_bin(floor_price)?;
+    pub(crate) fn remove_unqualified(
+        &mut self,
+        gem_id: U256,
+        floor_price_minor: U256,
+    ) -> Result<()> {
+        let bin_id = Self::price_to_bin(floor_price_minor)?;
         let count = self.unqualified_bin_count.read(&bin_id)?;
         if count == 0 {
             return Ok(());

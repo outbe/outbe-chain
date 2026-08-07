@@ -14,11 +14,38 @@ pub enum GemFactoryError {
     #[error("invalid state for action")]
     InvalidState,
 
-    #[error("merchant flow deferred")]
-    MerchantDeferred,
+    #[error("call notice period expired")]
+    DeadlineExpired,
+
+    #[error("unsupported gem type")]
+    UnsupportedGemType,
+
+    #[error("source intex not found")]
+    SourceIntexNotFound,
+
+    #[error("position not found")]
+    PositionNotFound,
+
+    #[error("only position owner can mint merchant gem")]
+    NotPositionOwner,
+
+    #[error("position already exists")]
+    PositionAlreadyExists,
+
+    #[error("index out of bounds")]
+    IndexOutOfBounds,
+
+    #[error("insufficient factory capacity")]
+    InsufficientCapacity,
+
+    #[error("position expired")]
+    PositionExpired,
 
     #[error("invalid asset")]
     InvalidAsset,
+
+    #[error("settlement asset iso {asset} does not match settlement currency {expected}")]
+    SettlementCurrencyMismatch { asset: u16, expected: u16 },
 
     #[error("insufficient proof of work")]
     InsufficientProofOfWork,
