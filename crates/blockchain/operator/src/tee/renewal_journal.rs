@@ -120,7 +120,7 @@ pub enum RenewalJournalStateV1 {
         transaction_hashes: Vec<B256>,
     },
     Finalized {
-        attempt: PreparedRenewalV1,
+        attempt: Box<PreparedRenewalV1>,
         finalized_binding: RenewalBindingV1,
         finalized_height: u64,
         finalized_hash: B256,
@@ -137,8 +137,8 @@ impl RenewalJournalStateV1 {
         match self {
             Self::Prepared { attempt }
             | Self::Submitted { attempt, .. }
-            | Self::Finalized { attempt, .. }
             | Self::Abandoned { attempt, .. } => attempt,
+            Self::Finalized { attempt, .. } => attempt.as_ref(),
         }
     }
 

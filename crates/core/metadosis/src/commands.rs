@@ -92,7 +92,7 @@ pub fn record_certified_parent_finality(
     if certified.chain_id() != ctx.block.chain_id
         || certified.current_block_number() != ctx.block.block_number
     {
-        return Err(outbe_primitives::error::PrecompileError::Fatal(
+        return Err(crate::errors::storage_corruption(
             "certified Metadosis finality binding execution scope mismatch".into(),
         ));
     }
@@ -117,15 +117,36 @@ pub fn install_fork_profile(
     let limits = crate::config::poc_schema_limits();
     let binding = install.install_hash(&limits)?;
     commit_transition::<MetadosisForkProfile, _>(ctx.storage.clone(), binding, |storage| {
-        MetadosisContract::new(storage).initialize_ocomp_fork_install(
+        outbe_validatorset::contract::ValidatorSet::new(storage.clone())
+            .initialize_founder_ocomp_registrations(&install.founder_registrations)?;
+        MetadosisContract::new(storage.clone()).initialize_ocomp_fork_install(
             install,
             ctx.block.block_number,
             &limits,
-        )
+        )?;
+        outbe_tribute::TributeContract::new(storage.clone()).initialize_fresh_ocomp_profile()?;
+        outbe_oracle::api::initialize_fresh_ocomp_profile(storage)
     })
 }
 
-pub fn run_ocomp_lifecycle_begin(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
+pub fn run_ocomp_lifecycle_begin_with_scope(
+    ctx: &BlockRuntimeContext<'_>,
+    scope: &ExecutionScope,
+) -> Result<()> {
+    let binding = metadosis_ocomp_lifecycle_begin_binding(
+        ctx.block.chain_id,
+        ctx.block.block_number,
+        ctx.block.timestamp,
+    );
+    with_ce_checkpoint(scope, || {
+        commit_transition::<MetadosisOcompLifecycle, _>(ctx.storage.clone(), binding, |_| {
+            crate::ocomp::expiry::run_lifecycle_begin_with_scope(ctx, scope)
+        })
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn run_ocomp_lifecycle_begin(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
     let binding = metadosis_ocomp_lifecycle_begin_binding(
         ctx.block.chain_id,
         ctx.block.block_number,
@@ -136,41 +157,139 @@ pub fn run_ocomp_lifecycle_begin(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
     })
 }
 
+#[cfg(test)]
+pub(crate) fn fail_worldwide_day_for_test(
+    ctx: &BlockRuntimeContext<'_>,
+    scope: &ExecutionScope,
+    worldwide_day: outbe_common::WorldwideDay,
+) -> Result<()> {
+    let binding = metadosis_ocomp_lifecycle_begin_binding(
+        ctx.block.chain_id,
+        ctx.block.block_number,
+        ctx.block.timestamp,
+    );
+    with_ce_checkpoint(scope, || {
+        commit_transition::<MetadosisOcompLifecycle, _>(ctx.storage.clone(), binding, |_| {
+            crate::terminal::fail_worldwide_day(
+                ctx.storage.clone(),
+                ctx.block.block_number,
+                ctx.block.timestamp,
+                scope,
+                worldwide_day,
+            )
+        })
+    })
+}
+
 pub fn run_ocomp_terminal_request(
     ctx: &BlockRuntimeContext<'_>,
     scope: &ExecutionScope,
+) -> Result<()> {
+    run_ocomp_terminal_request_with(ctx, scope, crate::ocomp::request::run_terminal_request)
+}
+
+#[cfg(test)]
+pub(crate) fn run_ocomp_terminal_request_with_completed_fixture(
+    ctx: &BlockRuntimeContext<'_>,
+    scope: &ExecutionScope,
+) -> Result<()> {
+    run_ocomp_terminal_request_with(
+        ctx,
+        scope,
+        crate::ocomp::request::run_terminal_request_with_completed_fixture,
+    )
+}
+
+fn run_ocomp_terminal_request_with(
+    ctx: &BlockRuntimeContext<'_>,
+    scope: &ExecutionScope,
+    request: impl FnOnce(&BlockRuntimeContext<'_>, &ExecutionScope) -> Result<()>,
 ) -> Result<()> {
     let binding = metadosis_ocomp_terminal_request_binding(
         ctx.block.chain_id,
         ctx.block.block_number,
         ctx.block.timestamp,
     );
-    commit_transition::<MetadosisOcompLifecycle, _>(ctx.storage.clone(), binding, |_| {
-        crate::ocomp::request::run_terminal_request(ctx, scope)
+    let due_worldwide_day = crate::ocomp::request::due_ready_worldwide_day(ctx)?;
+    with_ce_checkpoint(scope, || {
+        commit_transition::<MetadosisOcompLifecycle, _>(ctx.storage.clone(), binding, |_| {
+            let attempted_work = scope.ce_work_checkpoint()?;
+            let attempted = ctx.storage.clone().with_checkpoint(|| request(ctx, scope));
+            match attempted {
+                Ok(()) => Ok(()),
+                Err(error)
+                    if due_worldwide_day.is_some()
+                        && crate::errors::is_business_failure(&error) =>
+                {
+                    scope.restore_ce_work_checkpoint(attempted_work)?;
+                    crate::terminal::fail_worldwide_day(
+                        ctx.storage.clone(),
+                        ctx.block.block_number,
+                        ctx.block.timestamp,
+                        scope,
+                        due_worldwide_day.expect("guarded exact WWD"),
+                    )
+                }
+                Err(error) => Err(error),
+            }
+        })
     })
 }
 
 pub fn submit_verified_result_vote(
     storage: StorageHandle<'_>,
     scope: &ExecutionScope,
-    caller: alloy_primitives::Address,
     data: &[u8],
     value: U256,
     is_static: bool,
+    local_result_authority: Option<&dyn crate::api::OcompLocalResultAuthority>,
 ) -> Result<Bytes> {
     let binding = metadosis_verified_vote_binding(data);
+    let exact_worldwide_day = crate::ocomp::vote::result_vote_worldwide_day(storage.clone(), data)?;
     with_ce_checkpoint(scope, || {
         commit_transition::<MetadosisVerifiedResultVote, _>(storage.clone(), binding, |_| {
-            crate::ocomp::vote::dispatch_public_result_vote(
-                storage, scope, caller, data, value, is_static,
-            )
+            let attempted_work = scope.ce_work_checkpoint()?;
+            let attempted = storage.clone().with_checkpoint(|| {
+                crate::ocomp::vote::dispatch_public_result_vote(
+                    storage.clone(),
+                    scope,
+                    data,
+                    value,
+                    is_static,
+                    local_result_authority,
+                )
+            });
+            match attempted {
+                Ok(output) => Ok(output),
+                Err(error)
+                    if exact_worldwide_day.is_some()
+                        && crate::errors::is_business_failure(&error) =>
+                {
+                    scope.restore_ce_work_checkpoint(attempted_work)?;
+                    let block_number = storage.block_number()?;
+                    let timestamp = u64::try_from(storage.timestamp()?).map_err(|_| {
+                        crate::errors::storage_corruption_message(
+                            "Metadosis block timestamp exceeds u64",
+                        )
+                    })?;
+                    crate::terminal::fail_worldwide_day(
+                        storage.clone(),
+                        block_number,
+                        timestamp,
+                        scope,
+                        exact_worldwide_day.expect("guarded exact WWD"),
+                    )?;
+                    Ok(Bytes::new())
+                }
+                Err(error) => Err(error),
+            }
         })
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, B256, U256};
+    use alloy_primitives::{keccak256, Address, B256, U256};
     use outbe_common::WorldwideDay;
     use outbe_compressed_entities::{begin_block, mint, BodyInput, EntityId36, TributeBodyV1};
     use outbe_primitives::{
@@ -181,17 +300,120 @@ mod tests {
             StorageHandle,
         },
     };
+    use outbe_validatorset::contract::ValidatorSet;
 
     use super::*;
+
+    fn seed_active_founder_without_ocomp(
+        provider: &mut HashMapStorageProvider,
+        install: &crate::config::OcompForkInstallV1,
+    ) {
+        let founder = Address::repeat_byte(0xB0);
+        let consensus_key = [0x30; 48];
+        StorageHandle::enter(provider, |storage| {
+            let mut validators = ValidatorSet::new(storage);
+            validators
+                .config_owner
+                .write(Address::repeat_byte(0xA0))
+                .unwrap();
+            validators.set_config_max_validators(1).unwrap();
+            validators
+                .register_validator(Address::repeat_byte(0xA0), founder, &consensus_key)
+                .unwrap();
+            validators.mark_pending(founder).unwrap();
+            let encoded = install.founder_registrations[0]
+                .encode_canonical(&crate::config::poc_schema_limits())
+                .unwrap();
+            validators
+                .confirm_validator_ready(founder, &encoded)
+                .unwrap();
+            validators
+                .activate_validator_via_boundary_for_test(founder)
+                .unwrap();
+            let key_hash = keccak256(install.founder_registrations[0].core.ocomp_public_key_sec1);
+            validators
+                .val_ocomp_registration
+                .get_bytes(&founder)
+                .clear()
+                .unwrap();
+            validators
+                .ocomp_key_hash_to_validator
+                .write(&key_hash, Address::ZERO)
+                .unwrap();
+            validators
+                .val_join_confirmed
+                .write(&founder, false)
+                .unwrap();
+        });
+    }
+
+    fn seed_external_ocomp_prerequisites(provider: &mut HashMapStorageProvider) {
+        StorageHandle::enter(provider, |storage| {
+            outbe_oracle::contract::OracleContract::new(storage)
+                .register_pair("COEN", "0xUSD")
+                .unwrap();
+        });
+    }
+
+    #[test]
+    fn fork_install_command_atomically_imports_founder_keys_into_active_validators() {
+        const CHAIN_ID: u64 = 1;
+        const ACTIVATION_HEIGHT: u64 = crate::config::OCOMP_POC_FINAL_ACTIVATION_HEIGHT;
+        let genesis_hash = B256::repeat_byte(0x91);
+        let install = crate::test_support::ForkInstallScenario::final_at(
+            ACTIVATION_HEIGHT,
+            CHAIN_ID,
+            genesis_hash,
+        )
+        .unwrap()
+        .into_install();
+        let mut provider = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, genesis_hash);
+        seed_active_founder_without_ocomp(&mut provider, &install);
+        seed_external_ocomp_prerequisites(&mut provider);
+        provider.set_block_number(ACTIVATION_HEIGHT);
+        provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::ForkProfile);
+
+        StorageHandle::enter(&mut provider, |storage| {
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(ACTIVATION_HEIGHT, 0, CHAIN_ID),
+                storage.clone(),
+            );
+            install_fork_profile(&ctx, &install).unwrap();
+            let validators = ValidatorSet::new(storage.clone());
+            assert_eq!(
+                validators
+                    .ocomp_registration(Address::repeat_byte(0xB0))
+                    .unwrap(),
+                Some(install.founder_registrations[0].clone())
+            );
+            assert!(
+                outbe_tribute::TributeContract::new(storage.clone())
+                    .pre_admission_projection(WorldwideDay::new(2026_0101))
+                    .unwrap()
+                    .profile_ready
+            );
+            assert!(
+                outbe_oracle::api::ocomp_pre_admission_projection(
+                    storage,
+                    WorldwideDay::new(2026_0101),
+                    U256::ZERO,
+                    0,
+                )
+                .unwrap()
+                .profile_ready
+            );
+        });
+    }
 
     #[test]
     fn fork_install_command_rolls_back_every_mutation_and_retries_exactly() {
         const CHAIN_ID: u64 = 1;
         const ACTIVATION_HEIGHT: u64 = crate::config::OCOMP_POC_FINAL_ACTIVATION_HEIGHT;
+        let genesis_hash = B256::repeat_byte(0x91);
         let install = crate::test_support::ForkInstallScenario::final_at(
             ACTIVATION_HEIGHT,
             CHAIN_ID,
-            B256::repeat_byte(0x91),
+            genesis_hash,
         )
         .unwrap()
         .into_install();
@@ -208,19 +430,24 @@ mod tests {
             })
         };
 
-        let mut control = HashMapStorageProvider::new(CHAIN_ID);
+        let mut control = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, genesis_hash);
+        seed_active_founder_without_ocomp(&mut control, &install);
+        seed_external_ocomp_prerequisites(&mut control);
         control.fail_after_mutation_at(usize::MAX);
         run(&mut control).unwrap();
         let mutation_count = control.clear_mutation_failure();
         assert!(
-            mutation_count >= 2,
-            "fork install must persist both request and activation authorities"
+            mutation_count >= 4,
+            "fork install must persist every owner profile"
         );
         let clean_storage = control.storage.clone();
         let clean_events = control.get_ordered_events().to_vec();
 
         for operation in 0..mutation_count {
-            let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+            let mut provider =
+                HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, genesis_hash);
+            seed_active_founder_without_ocomp(&mut provider, &install);
+            seed_external_ocomp_prerequisites(&mut provider);
             let storage_before = provider.storage.clone();
             let events_before = provider.get_ordered_events().to_vec();
             provider.fail_after_mutation_at(operation);
@@ -248,6 +475,76 @@ mod tests {
                 "fork install retry events diverged at {operation}"
             );
         }
+    }
+
+    #[test]
+    fn fork_install_command_rejects_nonempty_tribute_without_partial_activation() {
+        const CHAIN_ID: u64 = 1;
+        const ACTIVATION_HEIGHT: u64 = crate::config::OCOMP_POC_FINAL_ACTIVATION_HEIGHT;
+        let genesis_hash = B256::repeat_byte(0x91);
+        let install = crate::test_support::ForkInstallScenario::final_at(
+            ACTIVATION_HEIGHT,
+            CHAIN_ID,
+            genesis_hash,
+        )
+        .unwrap()
+        .into_install();
+        let mut provider = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, genesis_hash);
+        seed_active_founder_without_ocomp(&mut provider, &install);
+        seed_external_ocomp_prerequisites(&mut provider);
+        StorageHandle::enter(&mut provider, |storage| {
+            outbe_tribute::TributeContract::new(storage)
+                .total_supply
+                .write(1)
+                .unwrap();
+        });
+        let storage_before = provider.storage.clone();
+        provider.set_block_number(ACTIVATION_HEIGHT);
+        provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::ForkProfile);
+
+        StorageHandle::enter(&mut provider, |storage| {
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(ACTIVATION_HEIGHT, 0, CHAIN_ID),
+                storage,
+            );
+            assert!(install_fork_profile(&ctx, &install).is_err());
+        });
+        assert_eq!(provider.storage, storage_before);
+    }
+
+    #[test]
+    fn fork_install_command_rejects_partial_oracle_without_partial_activation() {
+        const CHAIN_ID: u64 = 1;
+        const ACTIVATION_HEIGHT: u64 = crate::config::OCOMP_POC_FINAL_ACTIVATION_HEIGHT;
+        let genesis_hash = B256::repeat_byte(0x91);
+        let install = crate::test_support::ForkInstallScenario::final_at(
+            ACTIVATION_HEIGHT,
+            CHAIN_ID,
+            genesis_hash,
+        )
+        .unwrap()
+        .into_install();
+        let mut provider = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, genesis_hash);
+        seed_active_founder_without_ocomp(&mut provider, &install);
+        seed_external_ocomp_prerequisites(&mut provider);
+        StorageHandle::enter(&mut provider, |storage| {
+            outbe_oracle::contract::OracleContract::new(storage)
+                .ocomp_day_type_pair_id
+                .write(1)
+                .unwrap();
+        });
+        let storage_before = provider.storage.clone();
+        provider.set_block_number(ACTIVATION_HEIGHT);
+        provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::ForkProfile);
+
+        StorageHandle::enter(&mut provider, |storage| {
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(ACTIVATION_HEIGHT, 0, CHAIN_ID),
+                storage,
+            );
+            assert!(install_fork_profile(&ctx, &install).is_err());
+        });
+        assert_eq!(provider.storage, storage_before);
     }
 
     #[test]

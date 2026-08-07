@@ -178,8 +178,8 @@ interface IMetadosis {
     /// @notice Submit one canonical node-attested ResultVoteV1.
     function submitLysisResult(bytes calldata resultVoteV1) external;
 
-    /// @notice Return the four fixed vote slots, immutable quorum and optional
-    /// closed accountability summary for one finalized JobId.
+    /// @notice Return the pinned ValidatorSet vote slots, immutable quorum and
+    /// optional closed accountability summary for one finalized JobId.
     function getOffchainVoteAccountability(bytes32 jobId) external view returns (bytes memory ocompVoteAccountabilityV1);
 
     /// @notice Return the canonical active generation selected by Metadosis state.

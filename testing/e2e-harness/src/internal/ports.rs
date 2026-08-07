@@ -153,6 +153,37 @@ impl Ports {
         }
     }
 
+    /// Reconstruct a previously resolved validator→service layout.
+    ///
+    /// The order is validator order. Each entry is the first port of that
+    /// validator's complete [`BLOCK`]-wide service block.
+    pub(crate) fn from_block_starts(starts: &[u16]) -> Result<Self> {
+        for (index, &start) in starts.iter().enumerate() {
+            fits(u64::from(start))?;
+            let end = start + BLOCK - 1;
+            for (previous_index, &previous) in starts[..index].iter().enumerate() {
+                let previous_end = previous + BLOCK - 1;
+                if start <= previous_end && previous <= end {
+                    bail!(
+                        "persisted validator-{index} port block {start}..={end} overlaps validator-{previous_index} block {previous}..={previous_end}"
+                    );
+                }
+            }
+        }
+        let cursor = starts
+            .iter()
+            .copied()
+            .max()
+            .map_or(NODE_BASE, |start| start.saturating_add(BLOCK));
+        Ok(Self {
+            inner: Arc::new(Mutex::new(Resolver {
+                blocks: starts.iter().copied().enumerate().collect(),
+                cursor,
+                scan: false,
+            })),
+        })
+    }
+
     /// Begin a scenario: forget the previous one's node→block map, then allocate
     /// the committee's blocks (`0..n`) so their consensus/p2p ports are fixed
     /// before bootstrap bakes them into genesis.
@@ -165,6 +196,15 @@ impl Ports {
         (0..n).try_for_each(|i| r.block_start(i).map(drop))
     }
 
+    /// Return the complete ordered block layout for durable handoff to another
+    /// harness process, allocating any missing committee blocks first.
+    pub(crate) fn block_starts(&self, nodes: usize) -> Result<Vec<u16>> {
+        let mut resolver = lock(&self.inner);
+        (0..nodes)
+            .map(|index| resolver.block_start(index))
+            .collect()
+    }
+
     /// The port node `i` uses for `svc`, allocating its block on first use.
     ///
     /// Panics only when the port space above the cursor is exhausted — an
@@ -174,6 +214,28 @@ impl Ports {
             .block_start(i)
             .unwrap_or_else(|e| panic!("e2e ports: {e}"));
         start + svc.offset()
+    }
+
+    /// Prove that every configured service port for `0..nodes` is still free.
+    ///
+    /// Persistent LocalNet restores bootstrap's resolved layout so genesis and
+    /// the later owner process use identical ports. This preflight prevents an
+    /// old or unrelated process from being mistaken for a newly owned node.
+    #[cfg_attr(not(feature = "ocomp-integration"), allow(dead_code))]
+    pub(crate) fn ensure_available(&self, nodes: usize) -> Result<()> {
+        let mut resolver = lock(&self.inner);
+        for index in 0..nodes {
+            let start = resolver.block_start(index)?;
+            for service in Service::ALL {
+                let port = start + service.offset();
+                if !is_free(port, service.proto()) {
+                    bail!(
+                        "LocalNet port preflight failed: validator-{index} {service:?} port {port} is already in use"
+                    );
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -261,8 +323,8 @@ mod tests {
         assert_eq!(p.port(Tee, 0), 18546);
         assert_eq!(p.port(Consensus, 0), 18551);
         assert_eq!(p.port(OcompSupervisor, 0), 18552);
-        assert_eq!(p.port(Http, 1), 18553);
-        assert_eq!(p.port(Tee, 1), 18554);
+        assert_eq!(p.port(Http, 1), NODE_BASE + BLOCK);
+        assert_eq!(p.port(Tee, 1), NODE_BASE + BLOCK + 1);
     }
 
     /// The reported bug: a node index past the committee used to panic. Blocks
@@ -270,9 +332,9 @@ mod tests {
     #[test]
     fn grown_index_does_not_panic() {
         let p = static_ports(4);
-        assert_eq!(p.port(Http, 4), 18577, "joiner");
-        assert_eq!(p.port(Http, 14), 18585, "follower1");
-        assert_eq!(p.port(Tee, 15), 18594, "follower2");
+        assert_eq!(p.port(Http, 4), NODE_BASE + 4 * BLOCK, "joiner");
+        assert_eq!(p.port(Http, 14), NODE_BASE + 5 * BLOCK, "follower1");
+        assert_eq!(p.port(Tee, 15), NODE_BASE + 6 * BLOCK + 1, "follower2");
     }
 
     /// A scenario never lands on a port the previous one used, however many nodes
@@ -331,6 +393,47 @@ mod tests {
         let p = Ports::new(false);
         p.start_scenario(1).expect("static allocation");
         assert_eq!(p.port(Http, 9), p.port(Http, 9));
+    }
+
+    #[test]
+    fn static_layout_preflight_rejects_an_occupied_service_port() {
+        let Ok(_held) = TcpListener::bind(("127.0.0.1", NODE_BASE)) else {
+            // Some restricted test sandboxes deny loopback bind entirely. The
+            // production command still performs the same OS-level preflight.
+            return;
+        };
+        let p = static_ports(1);
+        let error = p
+            .ensure_available(1)
+            .expect_err("occupied validator-0 HTTP port must fail preflight");
+        let message = error.to_string();
+        assert!(message.contains("validator-0"));
+        assert!(message.contains("Http"));
+        assert!(message.contains(&NODE_BASE.to_string()));
+    }
+
+    #[test]
+    fn persisted_block_layout_round_trips_every_service_port() {
+        let original = static_ports(3);
+        let starts = original.block_starts(3).unwrap();
+        let restored = Ports::from_block_starts(&starts).unwrap();
+
+        for index in 0..3 {
+            for service in Service::ALL {
+                assert_eq!(
+                    restored.port(service, index),
+                    original.port(service, index),
+                    "validator-{index} {service:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn persisted_block_layout_rejects_overlapping_blocks() {
+        let error = Ports::from_block_starts(&[NODE_BASE, NODE_BASE + BLOCK - 1])
+            .expect_err("overlapping blocks must be rejected");
+        assert!(error.to_string().contains("overlap"));
     }
 
     /// A busy port shifts only the block that hits it; later blocks follow the

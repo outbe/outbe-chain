@@ -2,7 +2,6 @@ use alloy_primitives::{Address, U256};
 use outbe_primitives::{error::PrecompileError, storage::StorageHandle};
 
 use crate::intexfactory::IntexFactoryPayContributorBatchHook;
-use crate::ocomp::OcompSubmitResultVoteHook;
 use crate::oracle::OracleSubmitVoteHook;
 
 /// A minimal, execution-layer independent transaction view for zero-fee hooks.
@@ -29,8 +28,6 @@ pub struct ZeroFeeTransaction<'a> {
 pub enum ZeroFeeHookId {
     /// `Oracle.submitVote(ExchangeRateTuple[])`.
     OracleSubmitVote,
-    /// `Metadosis.submitLysisResult(bytes)`.
-    OcompSubmitResultVote,
     /// `IntexFactory.payContributorBatch(uint32,uint32,ContributorLeaf[],bytes32[])`.
     IntexFactoryPayContributorBatch,
 }
@@ -100,7 +97,7 @@ pub enum ZeroFeePolicyError {
     #[error("zero-fee oracle vote calldata is malformed: {0}")]
     MalformedCalldata(String),
     /// The signer is not authorized to use this zero-fee policy.
-    #[error("zero-fee signer is not an active validator or delegated feeder")]
+    #[error("zero-fee signer is not authorized for this transaction hook")]
     UnauthorizedSigner,
     /// The represented validator already submitted an oracle vote this period.
     #[error("zero-fee oracle vote already exists for validator")]
@@ -250,6 +247,29 @@ mod failure_code_tests {
             );
         }
     }
+
+    #[test]
+    fn unauthorized_signer_reason_is_hook_neutral() {
+        assert_eq!(
+            ZeroFeePolicyError::UnauthorizedSigner.to_string(),
+            "zero-fee signer is not authorized for this transaction hook"
+        );
+    }
+
+    #[test]
+    fn ocomp_result_vote_selector_is_not_owned_by_zero_fee_policy() {
+        let tx = ZeroFeeTransaction {
+            signer: Address::repeat_byte(0x11),
+            to: Some(outbe_ocomp_protocol::abi::METADOSIS_ADDRESS),
+            value: U256::ZERO,
+            input: &outbe_ocomp_protocol::abi::SUBMIT_LYSIS_RESULT_SELECTOR,
+            gas_limit: 30_000,
+            max_fee_per_gas: u128::MAX,
+            max_priority_fee_per_gas: Some(0),
+        };
+
+        assert_eq!(registry().classify(&tx).unwrap(), None);
+    }
 }
 
 /// A deterministic hook that can waive native fee debit for a transaction class.
@@ -321,12 +341,10 @@ impl ZeroFeeRegistry {
 }
 
 static ORACLE_SUBMIT_VOTE_HOOK: OracleSubmitVoteHook = OracleSubmitVoteHook;
-static OCOMP_SUBMIT_RESULT_VOTE_HOOK: OcompSubmitResultVoteHook = OcompSubmitResultVoteHook;
 static INTEX_FACTORY_PAY_CONTRIBUTOR_BATCH_HOOK: IntexFactoryPayContributorBatchHook =
     IntexFactoryPayContributorBatchHook;
 static ZERO_FEE_HOOKS: &[&dyn ZeroFeeHook] = &[
     &ORACLE_SUBMIT_VOTE_HOOK,
-    &OCOMP_SUBMIT_RESULT_VOTE_HOOK,
     &INTEX_FACTORY_PAY_CONTRIBUTOR_BATCH_HOOK,
 ];
 

@@ -482,7 +482,7 @@ fn finalize(
 ) -> Result<RenewalOutcomeV1> {
     journal.store(RenewalJournalSnapshotV1::new(
         RenewalJournalStateV1::Finalized {
-            attempt,
+            attempt: Box::new(attempt),
             finalized_binding: view.binding.clone(),
             finalized_height: view.schedule.finalized_height,
             finalized_hash: view.schedule.finalized_hash,

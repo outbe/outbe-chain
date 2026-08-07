@@ -1,24 +1,6 @@
 [
   {
     "type": "function",
-    "name": "activateResharedSet",
-    "inputs": [
-      {
-        "name": "newActiveSet",
-        "type": "address[]",
-        "internalType": "address[]"
-      },
-      {
-        "name": "groupPublicKey",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "activeConsensusCount",
     "inputs": [],
     "outputs": [
@@ -46,7 +28,13 @@
   {
     "type": "function",
     "name": "confirmValidatorReady",
-    "inputs": [],
+    "inputs": [
+      {
+        "name": "registration",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
     "outputs": [],
     "stateMutability": "nonpayable"
   },

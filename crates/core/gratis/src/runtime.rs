@@ -8,11 +8,17 @@
 //! the sole party that sees plaintext balances (Enclave Return Rule).
 //!
 //! Pledge model (two-phase, no escrow account): `pledge` debits `balance` and parks
-//! the amount in an encrypted `PledgeLockTicket`; `consume_pledge` (at requestCredis)
-//! deletes the ticket and credits the EOA's OWN pledged ledger; `release_to_eoa`
+//! the gratis in an encrypted `PledgeLockTicket` alongside the loan terms it was
+//! quoted against; `consume_pledge` (at requestCredis) deletes the ticket, credits the
+//! EOA's OWN pledged ledger and hands those terms to credis; `release_to_eoa`
 //! (per anadosis) and `burn_pledged` (at credis expiry) draw the collateral back down
 //! from that same EOA's pledged ledger. `pledged_total_supply` counts both the
 //! pending (in-ticket) and active (in `pledged_ct`) locked gratis.
+//!
+//! Unit warning: for `pledge`/`unpledge` the MAC-bound `amount` is the STABLECOIN
+//! figure the pledger signed, while every balance, aggregate and event here is in
+//! GRATIS. The gratis figure comes from the terms (on a pledge) or the ticket (on an
+//! unpledge/consume), never from `amount`.
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
@@ -21,7 +27,7 @@ use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 use outbe_tee::protocol::{
     FidelityOpOutcome, FidelityOpSection, GratisOp, GratisOpRequest, GratisOpResult,
-    GratisOpStatus, ModifyAuth,
+    GratisOpStatus, ModifyAuth, PledgeTerms,
 };
 
 use crate::enclave_client::apply_gratis_op;
@@ -68,6 +74,7 @@ fn base_request(op: GratisOp, chain_id: B256, account: Address, amount: U256) ->
         pledge_handle: None,
         smart_account: None,
         spend_auth: None,
+        pledge_terms: None,
         fidelity: None,
     }
 }
@@ -222,22 +229,31 @@ pub(crate) fn burn_with_fidelity(
     require_fidelity_outcome(burn_impl(storage, caller, amount, auth, Some(fidelity))?.1)
 }
 
-/// Lock `amount` of `caller`'s balance into a new pending `PledgeLockTicket`. The
-/// amount leaves the liquid balance but is NOT yet credited to the pledged ledger
-/// (that happens at `consume_pledge`). Returns the pledge handle the CCA later
-/// presents at `requestCredis`.
+/// Lock the gratis that covers `terms.stables_amount` into a new pending
+/// `PledgeLockTicket`, sealing the loan terms alongside it. The gratis leaves the
+/// liquid balance but is NOT yet credited to the pledged ledger (that happens at
+/// `consume_pledge`). `amount_stables` is the MAC-bound figure; the gratis actually
+/// debited comes from `terms`. Returns the pledge handle the CCA later presents at
+/// `requestCredis`.
 fn pledge_impl(
     storage: StorageHandle<'_>,
     caller: Address,
-    amount: U256,
+    amount_stables: U256,
+    terms: PledgeTerms,
     auth: ModifyAuth,
     fidelity: Option<FidelityOpSection>,
 ) -> Result<(B256, Option<FidelityOpOutcome>)> {
     let gratis = Gratis::new(storage.clone());
     check_op_nonce(&gratis, caller, auth.op_nonce)?;
-    let mut req = base_request(GratisOp::Pledge, chain_id_b256(&storage)?, caller, amount);
+    let mut req = base_request(
+        GratisOp::Pledge,
+        chain_id_b256(&storage)?,
+        caller,
+        amount_stables,
+    );
     req.current_balance = gratis.balance_ct_of(caller)?;
     req.modify_auth = auth;
+    req.pledge_terms = Some(terms);
     req.fidelity = fidelity;
     let result = apply_gratis_op(req)?;
     ensure_applied(&result)?;
@@ -263,10 +279,11 @@ fn pledge_impl(
 pub(crate) fn pledge(
     storage: StorageHandle<'_>,
     caller: Address,
-    amount: U256,
+    amount_stables: U256,
+    terms: PledgeTerms,
     auth: ModifyAuth,
 ) -> Result<B256> {
-    Ok(pledge_impl(storage, caller, amount, auth, None)?.0)
+    Ok(pledge_impl(storage, caller, amount_stables, terms, auth, None)?.0)
 }
 
 /// Pledge and carry a co-located fidelity **probe** (read-only league) in the
@@ -275,26 +292,35 @@ pub(crate) fn pledge(
 pub(crate) fn pledge_with_fidelity(
     storage: StorageHandle<'_>,
     caller: Address,
-    amount: U256,
+    amount_stables: U256,
+    terms: PledgeTerms,
     auth: ModifyAuth,
     fidelity: FidelityOpSection,
 ) -> Result<(B256, FidelityOpOutcome)> {
-    let (handle, outcome) = pledge_impl(storage, caller, amount, auth, Some(fidelity))?;
+    let (handle, outcome) =
+        pledge_impl(storage, caller, amount_stables, terms, auth, Some(fidelity))?;
     Ok((handle, require_fidelity_outcome(outcome)?))
 }
 
-/// Return a still-pending pledge (e.g. credis rejected): credit the ticket amount
-/// back to `caller`'s balance and delete the ticket.
+/// Return a still-pending pledge (e.g. credis rejected): credit the ticket's gratis
+/// back to `caller`'s balance and delete the ticket. `amount_stables` is the stables
+/// figure the pledge was quoted for; the enclave cross-checks it against the ticket
+/// and returns the matching gratis.
 pub(crate) fn unpledge(
     storage: StorageHandle<'_>,
     caller: Address,
-    amount: U256,
+    amount_stables: U256,
     pledge_handle: B256,
     auth: ModifyAuth,
-) -> Result<()> {
+) -> Result<U256> {
     let gratis = Gratis::new(storage.clone());
     check_op_nonce(&gratis, caller, auth.op_nonce)?;
-    let mut req = base_request(GratisOp::Unpledge, chain_id_b256(&storage)?, caller, amount);
+    let mut req = base_request(
+        GratisOp::Unpledge,
+        chain_id_b256(&storage)?,
+        caller,
+        amount_stables,
+    );
     req.current_balance = gratis.balance_ct_of(caller)?;
     req.current_pledge_record = gratis.pledge_ticket_ct_of(pledge_handle)?;
     req.modify_auth = auth;
@@ -318,7 +344,7 @@ pub(crate) fn unpledge(
             remainingPledged: total_pledged,
         }),
     )?;
-    Ok(())
+    Ok(result.event_amount)
 }
 
 /// Recover the plaintext EOA behind a sealed owner blob through the enclave, without
@@ -357,13 +383,14 @@ pub(crate) fn reveal_owner(storage: StorageHandle<'_>, eoa_ct: &[u8]) -> Result<
 /// pledged, pending → active). The EOA is not passed in calldata: the enclave carries it
 /// in the ticket, so we first `RevealOwner` it (to key its pledged ledger) and the
 /// consume result seals it into `eoa_ct` for the caller to store on the position. Returns
-/// `(gratis_amount, eoa_ct)`.
+/// `(terms, eoa_ct)` — the loan terms quoted when the pledge was made, so credis never
+/// re-prices the collateral.
 pub(crate) fn consume_pledge(
     storage: StorageHandle<'_>,
     pledge_handle: B256,
     bundle: Address,
     spend_auth: [u8; 32],
-) -> Result<(U256, Vec<u8>)> {
+) -> Result<(PledgeTerms, Vec<u8>)> {
     let gratis = Gratis::new(storage.clone());
     let ticket_ct = gratis.pledge_ticket_ct_of(pledge_handle)?;
     // Recover the pledger EOA from the ticket so we can read/write its own pledged ledger.
@@ -384,7 +411,10 @@ pub(crate) fn consume_pledge(
     // Credit the EOA's own pledged ledger and delete the consumed ticket.
     write_account_blobs(&gratis, eoa, &result)?;
     gratis.write_pledge_ticket_ct(pledge_handle, &result.new_pledge_record)?;
-    Ok((result.gratis_amount, result.eoa_ct))
+    let terms = result.pledge_terms.ok_or_else(|| {
+        PrecompileError::Fatal("enclave dropped the consumed pledge terms".to_string())
+    })?;
+    Ok((terms, result.eoa_ct))
 }
 
 /// payAnadosis: release `amount` of collateral from `eoa`'s own pledged ledger back

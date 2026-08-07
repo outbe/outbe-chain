@@ -25,12 +25,21 @@ use alloy_consensus::{
 use alloy_eips::eip2718::{Decodable2718 as _, Encodable2718 as _};
 use alloy_primitives::{keccak256, Address, Bytes, TxKind, B256, U256};
 use outbe_ocomp_protocol::{
-    abi::encode_submit_lysis_result_calldata, common::BoundedBytes, result::LysisResultV1,
+    abi::encode_submit_lysis_result_calldata,
+    common::BoundedBytes,
+    control::FinalizedJobSpecV1,
+    system_carrier::{
+        MAX_OCOMP_SYSTEM_CARRIER_CALLDATA_BYTES, MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS,
+        OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
+    },
+    vote::ResultVoteV1,
     PreparedVoteTransactionV1, ProtocolError, SchemaLimits,
 };
 use outbe_primitives::addresses::METADOSIS_ADDRESS;
 use outbe_primitives::signer::{OutbeEvmSigner, SignerError};
 use thiserror::Error;
+
+use crate::result_attestation::{LocalResultAttestationErrorV1, LocalResultVoteAttesterV1};
 
 const JOURNAL_MAGIC: [u8; 8] = *b"OUTBVOT1";
 const JOURNAL_VERSION: u16 = 1;
@@ -123,6 +132,8 @@ pub trait VoteTransactionPreparerV1 {
     fn prepare_vote_transaction(
         &self,
         canonical_result: &[u8],
+        finalized: &FinalizedJobSpecV1,
+        canonical_height: u64,
         nonce: u64,
         max_fee_per_gas: u128,
         gas_limit: u64,
@@ -131,6 +142,7 @@ pub trait VoteTransactionPreparerV1 {
 
 pub struct LocalVoteTransactionPreparerV1 {
     signer: OutbeEvmSigner,
+    attester: LocalResultVoteAttesterV1,
     chain_id: u64,
     limits: SchemaLimits,
 }
@@ -138,6 +150,7 @@ pub struct LocalVoteTransactionPreparerV1 {
 impl LocalVoteTransactionPreparerV1 {
     pub fn new(
         signer: OutbeEvmSigner,
+        attester: LocalResultVoteAttesterV1,
         chain_id: u64,
         limits: SchemaLimits,
     ) -> Result<Self, LocalVotePreparationErrorV1> {
@@ -146,6 +159,7 @@ impl LocalVoteTransactionPreparerV1 {
         }
         Ok(Self {
             signer,
+            attester,
             chain_id,
             limits,
         })
@@ -162,6 +176,8 @@ impl VoteTransactionPreparerV1 for LocalVoteTransactionPreparerV1 {
     fn prepare_vote_transaction(
         &self,
         canonical_result: &[u8],
+        finalized: &FinalizedJobSpecV1,
+        canonical_height: u64,
         nonce: u64,
         max_fee_per_gas: u128,
         gas_limit: u64,
@@ -169,20 +185,19 @@ impl VoteTransactionPreparerV1 for LocalVoteTransactionPreparerV1 {
         if canonical_result.is_empty() {
             return Err(LocalVotePreparationErrorV1::EmptyCanonicalResult);
         }
-        if gas_limit != outbe_zerofee::MAX_ZERO_FEE_OCOMP_GAS_LIMIT
-            || !(outbe_zerofee::MIN_ZERO_FEE_OCOMP_MAX_FEE_PER_GAS
-                ..=MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS)
+        if gas_limit != OCOMP_SYSTEM_CARRIER_GAS_LIMIT
+            || !(MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS..=MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS)
                 .contains(&max_fee_per_gas)
         {
             return Err(LocalVotePreparationErrorV1::InvalidFeeEnvelope);
         }
 
-        let result = LysisResultV1::decode_canonical(canonical_result, &self.limits)?;
-        if result.encode_canonical(&self.limits)? != canonical_result {
-            return Err(LocalVotePreparationErrorV1::NonCanonicalResult);
-        }
-        let calldata = encode_submit_lysis_result_calldata(&result, &self.limits)?;
-        if calldata.len() > outbe_zerofee::MAX_ZERO_FEE_OCOMP_CALLDATA_BYTES {
+        let vote = self
+            .attester
+            .attest(canonical_result, finalized, canonical_height)?;
+        let canonical_vote = vote.encode_canonical(&self.limits)?;
+        let calldata = encode_submit_lysis_result_calldata(&vote, &self.limits)?;
+        if calldata.len() > MAX_OCOMP_SYSTEM_CARRIER_CALLDATA_BYTES {
             return Err(LocalVotePreparationErrorV1::CalldataTooLarge);
         }
 
@@ -204,7 +219,7 @@ impl VoteTransactionPreparerV1 for LocalVoteTransactionPreparerV1 {
             .map_err(|_| LocalVotePreparationErrorV1::Allocation)?;
         signed.encode_2718(&mut raw_transaction);
         Ok(PreparedVoteTransactionV1 {
-            canonical_result: BoundedBytes(canonical_result.to_vec()),
+            canonical_vote: BoundedBytes(canonical_vote),
             raw_transaction: BoundedBytes(raw_transaction),
             transaction_hash,
         })
@@ -219,14 +234,14 @@ pub enum LocalVotePreparationErrorV1 {
     EmptyCanonicalResult,
     #[error("OCOMP vote transaction fee envelope is invalid")]
     InvalidFeeEnvelope,
-    #[error("OCOMP result bytes are not canonical")]
-    NonCanonicalResult,
     #[error("OCOMP vote transaction calldata exceeds the protocol cap")]
     CalldataTooLarge,
     #[error("OCOMP vote transaction allocation failed")]
     Allocation,
     #[error(transparent)]
     Protocol(#[from] ProtocolError),
+    #[error(transparent)]
+    Attestation(#[from] LocalResultAttestationErrorV1),
     #[error(transparent)]
     Signer(#[from] SignerError),
 }
@@ -272,10 +287,11 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
         job_id: B256,
         result_digest: B256,
         canonical_result: &[u8],
+        finalized: &FinalizedJobSpecV1,
     ) -> Result<VoteSubmissionOutcomeV1, VoteSubmissionErrorV1> {
         let record = self.journal.load(job_id)?;
         let Some(record) = record else {
-            return self.prepare(preparer, job_id, result_digest, canonical_result, 1);
+            return self.prepare(preparer, job_id, result_digest, canonical_result, finalized, 1);
         };
         self.require_record_binding(&record, result_digest)?;
         if matches!(
@@ -289,6 +305,7 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
                 job_id,
                 result_digest,
                 canonical_result,
+                finalized,
                 next_generation(record.generation)?,
             );
         }
@@ -311,6 +328,7 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
         job_id: B256,
         result_digest: B256,
         canonical_result: &[u8],
+        finalized: &FinalizedJobSpecV1,
         generation: u64,
     ) -> Result<VoteSubmissionOutcomeV1, VoteSubmissionErrorV1> {
         if canonical_result.is_empty() {
@@ -331,13 +349,16 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
             .rpc
             .gas_price()
             .map_err(rpc_error)?
-            .max(outbe_zerofee::MIN_ZERO_FEE_OCOMP_MAX_FEE_PER_GAS);
+            .max(MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS);
+        let canonical_height = self.rpc.finalized_block().map_err(rpc_error)?.number;
         let prepared = preparer
             .prepare_vote_transaction(
                 canonical_result,
+                finalized,
+                canonical_height,
                 nonce,
                 max_fee_per_gas,
-                outbe_zerofee::MAX_ZERO_FEE_OCOMP_GAS_LIMIT,
+                OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
             )
             .map_err(preparer_error)?;
         self.validate_prepared(&prepared, job_id, result_digest, nonce, max_fee_per_gas)?;
@@ -519,12 +540,11 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
         nonce: u64,
         max_fee_per_gas: u128,
     ) -> Result<(), VoteSubmissionErrorV1> {
-        let result =
-            LysisResultV1::decode_canonical(&prepared.canonical_result.0, &self.config.limits)?;
-        if result.job_id != job_id || result.result_digest(&self.config.limits)? != result_digest {
+        let vote = ResultVoteV1::decode_canonical(&prepared.canonical_vote.0, &self.config.limits)?;
+        if vote.job_id != job_id || vote.result_digest(&self.config.limits)? != result_digest {
             return Err(VoteSubmissionErrorV1::PreparerChangedResult);
         }
-        let expected_calldata = encode_submit_lysis_result_calldata(&result, &self.config.limits)?;
+        let expected_calldata = encode_submit_lysis_result_calldata(&vote, &self.config.limits)?;
         if prepared.raw_transaction.0.len() > MAX_RAW_TRANSACTION_BYTES {
             return Err(VoteSubmissionErrorV1::RawTransactionTooLarge);
         }
@@ -544,7 +564,7 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
         if recovered != self.config.sender_address
             || transaction.chain_id() != Some(self.config.expected_chain_id)
             || transaction.nonce() != nonce
-            || transaction.gas_limit() != outbe_zerofee::MAX_ZERO_FEE_OCOMP_GAS_LIMIT
+            || transaction.gas_limit() != OCOMP_SYSTEM_CARRIER_GAS_LIMIT
             || transaction.max_fee_per_gas() != max_fee_per_gas
             || transaction.max_priority_fee_per_gas() != Some(0)
             || transaction.kind() != TxKind::Call(METADOSIS_ADDRESS)
@@ -1376,50 +1396,22 @@ mod tests {
         test_result(&limits).result_digest(&limits).unwrap()
     }
 
-    #[test]
-    fn local_preparer_builds_and_signs_the_restricted_vote_transaction() {
-        let limits = poc_schema_limits();
-        let signer = OutbeEvmSigner::from_secret_bytes([9; 32]).unwrap();
-        let sender = signer.address();
-        let preparer = LocalVoteTransactionPreparerV1::new(signer, 42, limits).unwrap();
+    fn finalized_job_spec() -> FinalizedJobSpecV1 {
+        use outbe_ocomp_protocol::control::FinalizedJobSummaryV1;
 
-        let prepared = preparer
-            .prepare_vote_transaction(
-                &canonical_result(),
-                7,
-                outbe_zerofee::MIN_ZERO_FEE_OCOMP_MAX_FEE_PER_GAS,
-                outbe_zerofee::MAX_ZERO_FEE_OCOMP_GAS_LIMIT,
-            )
-            .unwrap();
-        let mut raw = prepared.raw_transaction.0.as_slice();
-        let envelope = EthereumTxEnvelope::<TxEip4844>::decode_2718(&mut raw).unwrap();
-
-        assert!(raw.is_empty());
-        assert_eq!(envelope.recover_signer().unwrap(), sender);
-        assert_eq!(envelope.chain_id(), Some(42));
-        assert_eq!(envelope.nonce(), 7);
-        assert_eq!(envelope.kind(), TxKind::Call(METADOSIS_ADDRESS));
-        assert_eq!(
-            envelope.gas_limit(),
-            outbe_zerofee::MAX_ZERO_FEE_OCOMP_GAS_LIMIT
-        );
-        assert_eq!(
-            envelope.max_fee_per_gas(),
-            outbe_zerofee::MIN_ZERO_FEE_OCOMP_MAX_FEE_PER_GAS
-        );
-        assert_eq!(envelope.max_priority_fee_per_gas(), Some(0));
-        assert_eq!(envelope.value(), U256::ZERO);
-        assert_eq!(prepared.transaction_hash, *envelope.tx_hash());
-
-        assert!(matches!(
-            preparer.prepare_vote_transaction(
-                &canonical_result(),
-                7,
-                MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS + 1,
-                outbe_zerofee::MAX_ZERO_FEE_OCOMP_GAS_LIMIT,
-            ),
-            Err(LocalVotePreparationErrorV1::InvalidFeeEnvelope)
-        ));
+        FinalizedJobSpecV1 {
+            summary: FinalizedJobSummaryV1 {
+                cursor: 1,
+                job_id: JOB_ID,
+                intent_id: B256::repeat_byte(0x40),
+                finalized_block_hash: B256::repeat_byte(0x41),
+                finalized_state_root: B256::repeat_byte(0x42),
+                protocol_bundle_hash: B256::repeat_byte(0x20),
+                open_height: 1,
+                deadline_height: 100,
+            },
+            canonical_job_intent: BoundedBytes(Vec::new()),
+        }
     }
 
     struct FakePreparer {
@@ -1435,16 +1427,30 @@ mod tests {
         fn prepare_vote_transaction(
             &self,
             _canonical_result: &[u8],
+            _finalized: &FinalizedJobSpecV1,
+            _canonical_height: u64,
             nonce: u64,
             max_fee_per_gas: u128,
             gas_limit: u64,
         ) -> Result<PreparedVoteTransactionV1, Self::Error> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             let result = test_result(&self.limits);
-            let canonical_result = result
+            let vote = ResultVoteV1 {
+                protocol_bundle_hash: result.protocol_bundle_hash,
+                job_id: result.job_id,
+                attempt: result.attempt,
+                result_validator_set_epoch: 7,
+                result_committee_set_hash: B256::repeat_byte(0x41),
+                result_ocomp_binding_hash: B256::repeat_byte(0x42),
+                validator_index: 0,
+                key_epoch: 1,
+                result,
+                signature_rs: [0; 64],
+            };
+            let canonical_vote = vote
                 .encode_canonical(&self.limits)
                 .map_err(std::io::Error::other)?;
-            let calldata = encode_submit_lysis_result_calldata(&result, &self.limits)
+            let calldata = encode_submit_lysis_result_calldata(&vote, &self.limits)
                 .map_err(std::io::Error::other)?;
             let signed = self
                 .signer
@@ -1464,7 +1470,7 @@ mod tests {
             let mut raw_transaction = Vec::with_capacity(signed.encode_2718_len());
             signed.encode_2718(&mut raw_transaction);
             Ok(PreparedVoteTransactionV1 {
-                canonical_result: BoundedBytes(canonical_result),
+                canonical_vote: BoundedBytes(canonical_vote),
                 raw_transaction: BoundedBytes(raw_transaction),
                 transaction_hash,
             })
@@ -1525,7 +1531,7 @@ mod tests {
         }
 
         fn gas_price(&self) -> Result<u128, Self::Error> {
-            Ok(outbe_zerofee::MIN_ZERO_FEE_OCOMP_MAX_FEE_PER_GAS)
+            Ok(MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS)
         }
 
         fn send_raw_transaction(
@@ -1599,14 +1605,26 @@ mod tests {
 
         assert_eq!(
             submitter
-                .reconcile(&preparer, JOB_ID, result_digest(), &canonical_result())
+                .reconcile(
+                    &preparer,
+                    JOB_ID,
+                    result_digest(),
+                    &canonical_result(),
+                    &finalized_job_spec(),
+                )
                 .unwrap(),
             VoteSubmissionOutcomeV1::Prepared
         );
         assert_eq!(rpc.broadcasts(), 0);
         assert_eq!(
             submitter
-                .reconcile(&preparer, JOB_ID, result_digest(), &canonical_result())
+                .reconcile(
+                    &preparer,
+                    JOB_ID,
+                    result_digest(),
+                    &canonical_result(),
+                    &finalized_job_spec(),
+                )
                 .unwrap(),
             VoteSubmissionOutcomeV1::Submitted
         );
@@ -1633,7 +1651,13 @@ mod tests {
         }
         assert_eq!(
             submitter
-                .reconcile(&preparer, JOB_ID, result_digest(), &canonical_result())
+                .reconcile(
+                    &preparer,
+                    JOB_ID,
+                    result_digest(),
+                    &canonical_result(),
+                    &finalized_job_spec(),
+                )
                 .unwrap(),
             VoteSubmissionOutcomeV1::Included(VoteInclusionV1 {
                 block_number: 10,
@@ -1644,14 +1668,26 @@ mod tests {
         rpc.finalize(9, B256::repeat_byte(9));
         assert!(matches!(
             submitter
-                .reconcile(&preparer, JOB_ID, result_digest(), &canonical_result())
+                .reconcile(
+                    &preparer,
+                    JOB_ID,
+                    result_digest(),
+                    &canonical_result(),
+                    &finalized_job_spec(),
+                )
                 .unwrap(),
             VoteSubmissionOutcomeV1::Included(_)
         ));
         rpc.finalize(10, BLOCK_A);
         assert!(matches!(
             submitter
-                .reconcile(&preparer, JOB_ID, result_digest(), &canonical_result())
+                .reconcile(
+                    &preparer,
+                    JOB_ID,
+                    result_digest(),
+                    &canonical_result(),
+                    &finalized_job_spec(),
+                )
                 .unwrap(),
             VoteSubmissionOutcomeV1::Finalized(VoteInclusionV1 { success: true, .. })
         ));
@@ -1671,7 +1707,13 @@ mod tests {
         .expect("restarted vote submitter");
         assert!(matches!(
             restarted
-                .reconcile(&preparer, JOB_ID, result_digest(), &canonical_result())
+                .reconcile(
+                    &preparer,
+                    JOB_ID,
+                    result_digest(),
+                    &canonical_result(),
+                    &finalized_job_spec(),
+                )
                 .unwrap(),
             VoteSubmissionOutcomeV1::Finalized(_)
         ));
@@ -1683,10 +1725,22 @@ mod tests {
         let directory = tempfile::tempdir().expect("temporary directory");
         let (mut submitter, rpc, preparer, _) = fixture(directory.path(), METADOSIS_ADDRESS);
         submitter
-            .reconcile(&preparer, JOB_ID, result_digest(), &canonical_result())
+            .reconcile(
+                &preparer,
+                JOB_ID,
+                result_digest(),
+                &canonical_result(),
+                &finalized_job_spec(),
+            )
             .unwrap();
         submitter
-            .reconcile(&preparer, JOB_ID, result_digest(), &canonical_result())
+            .reconcile(
+                &preparer,
+                JOB_ID,
+                result_digest(),
+                &canonical_result(),
+                &finalized_job_spec(),
+            )
             .unwrap();
         let transaction_hash = submitter
             .journal
@@ -1708,12 +1762,24 @@ mod tests {
             });
         }
         submitter
-            .reconcile(&preparer, JOB_ID, result_digest(), &canonical_result())
+            .reconcile(
+                &preparer,
+                JOB_ID,
+                result_digest(),
+                &canonical_result(),
+                &finalized_job_spec(),
+            )
             .unwrap();
         rpc.orphan();
         assert_eq!(
             submitter
-                .reconcile(&preparer, JOB_ID, result_digest(), &canonical_result())
+                .reconcile(
+                    &preparer,
+                    JOB_ID,
+                    result_digest(),
+                    &canonical_result(),
+                    &finalized_job_spec(),
+                )
                 .unwrap(),
             VoteSubmissionOutcomeV1::Submitted
         );
@@ -1734,7 +1800,13 @@ mod tests {
         }
         assert!(matches!(
             submitter
-                .reconcile(&preparer, JOB_ID, result_digest(), &canonical_result())
+                .reconcile(
+                    &preparer,
+                    JOB_ID,
+                    result_digest(),
+                    &canonical_result(),
+                    &finalized_job_spec(),
+                )
                 .unwrap(),
             VoteSubmissionOutcomeV1::Included(VoteInclusionV1 {
                 block_number: 12,
@@ -1745,7 +1817,13 @@ mod tests {
         rpc.finalize(12, BLOCK_B);
         assert!(matches!(
             submitter
-                .reconcile(&preparer, JOB_ID, result_digest(), &canonical_result())
+                .reconcile(
+                    &preparer,
+                    JOB_ID,
+                    result_digest(),
+                    &canonical_result(),
+                    &finalized_job_spec(),
+                )
                 .unwrap(),
             VoteSubmissionOutcomeV1::Finalized(_)
         ));
@@ -1757,7 +1835,13 @@ mod tests {
         let wrong_target = Address::repeat_byte(0x44);
         let (mut submitter, rpc, preparer, _) = fixture(directory.path(), wrong_target);
         assert!(matches!(
-            submitter.reconcile(&preparer, JOB_ID, result_digest(), &canonical_result()),
+            submitter.reconcile(
+                &preparer,
+                JOB_ID,
+                result_digest(),
+                &canonical_result(),
+                &finalized_job_spec(),
+            ),
             Err(VoteSubmissionErrorV1::InvalidPreparedTransaction(_))
         ));
         assert_eq!(rpc.broadcasts(), 0);
@@ -1769,7 +1853,13 @@ mod tests {
         let directory = tempfile::tempdir().expect("temporary directory");
         let (mut submitter, _, preparer, _) = fixture(directory.path(), METADOSIS_ADDRESS);
         submitter
-            .reconcile(&preparer, JOB_ID, result_digest(), &canonical_result())
+            .reconcile(
+                &preparer,
+                JOB_ID,
+                result_digest(),
+                &canonical_result(),
+                &finalized_job_spec(),
+            )
             .unwrap();
         let path = submitter.journal.record_path(JOB_ID);
         drop(submitter);

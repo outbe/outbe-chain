@@ -2,7 +2,7 @@ use outbe_metadosis::proof_layout::METADOSIS_STORAGE_LAYOUT_V1_HASH;
 use outbe_metadosis::{
     config::{
         poc_schema_limits, OcompForkInstallClassification, OcompForkInstallV1,
-        OCOMP_POC_FINAL_ACTIVATION_HEIGHT,
+        OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS, OCOMP_POC_FINAL_ACTIVATION_HEIGHT,
     },
     test_support::ForkInstallScenario,
 };
@@ -12,9 +12,11 @@ use serde_json::json;
 
 use crate::ocomp::fork::{
     load_ocomp_fork_install, require_genesis_active_ocomp_fork_install,
-    require_startup_ocomp_fork_install, METADOSIS_STORAGE_LAYOUT_GENESIS_KEY,
-    OCOMP_FORK_INSTALL_GENESIS_KEY,
+    require_startup_ocomp_fork_install, EPOCH_LENGTH_BLOCKS_GENESIS_KEY,
+    METADOSIS_STORAGE_LAYOUT_GENESIS_KEY, OCOMP_FORK_INSTALL_GENESIS_KEY,
 };
+
+const VALID_OCOMP_EPOCH_LENGTH_BLOCKS: u64 = 300;
 
 fn fork_install_fixture(
     classification: OcompForkInstallClassification,
@@ -41,6 +43,17 @@ fn insert_metadosis_layout(spec: &mut ChainSpec<OutbeHeader>, layout_hash: alloy
         .insert_value(
             METADOSIS_STORAGE_LAYOUT_GENESIS_KEY.to_owned(),
             json!({ "layoutHash": layout_hash }),
+        )
+        .unwrap();
+}
+
+fn insert_epoch_length(spec: &mut ChainSpec<OutbeHeader>, epoch_length_blocks: u64) {
+    spec.genesis
+        .config
+        .extra_fields
+        .insert_value(
+            EPOCH_LENGTH_BLOCKS_GENESIS_KEY.to_owned(),
+            json!(epoch_length_blocks),
         )
         .unwrap();
 }
@@ -131,6 +144,7 @@ fn fresh_devnet_loader_rejects_missing_or_mismatched_metadosis_layout() {
     assert!(mismatched.to_string().contains("layout hash mismatch"));
 
     insert_metadosis_layout(&mut spec, METADOSIS_STORAGE_LAYOUT_V1_HASH);
+    insert_epoch_length(&mut spec, VALID_OCOMP_EPOCH_LENGTH_BLOCKS);
     assert_eq!(
         require_startup_ocomp_fork_install(&spec).unwrap().as_ref(),
         &install
@@ -221,6 +235,7 @@ fn fresh_devnet_loader_requires_exact_block_one_install() {
         )
         .unwrap();
     insert_metadosis_layout(&mut spec, METADOSIS_STORAGE_LAYOUT_V1_HASH);
+    insert_epoch_length(&mut spec, VALID_OCOMP_EPOCH_LENGTH_BLOCKS);
 
     assert_eq!(
         require_genesis_active_ocomp_fork_install(&spec)
@@ -232,6 +247,49 @@ fn fresh_devnet_loader_requires_exact_block_one_install() {
         require_startup_ocomp_fork_install(&spec).unwrap().as_ref(),
         &install
     );
+}
+
+#[test]
+fn startup_rejects_ocomp_snapshot_retention_horizon_that_is_too_short() {
+    let mut spec = ChainSpec::<OutbeHeader>::default();
+    let install = fork_install_fixture(
+        OcompForkInstallClassification::Measurement,
+        1,
+        spec.chain().id(),
+        spec.genesis_hash(),
+    );
+    let limits = poc_schema_limits();
+    spec.genesis
+        .config
+        .extra_fields
+        .insert_value(
+            OCOMP_FORK_INSTALL_GENESIS_KEY.to_owned(),
+            json!({
+                "canonicalBytes": format!(
+                    "0x{}",
+                    hex::encode(install.encode_canonical(&limits).unwrap())
+                ),
+                "installHash": install.install_hash(&limits).unwrap(),
+            }),
+        )
+        .unwrap();
+    insert_metadosis_layout(&mut spec, METADOSIS_STORAGE_LAYOUT_V1_HASH);
+
+    let required_job_lifetime = OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS
+        + outbe_ocomp_protocol::state::RESULT_VOTE_MIN_FINALITY_DEPTH
+        + install
+            .request_profile
+            .capacity_profile
+            .result_deadline_blocks;
+    let retained_epoch_intervals = outbe_validatorset::COMMITTEE_SNAPSHOT_RETAIN_EPOCHS - 1;
+    let minimum_epoch_length = required_job_lifetime / retained_epoch_intervals + 1;
+
+    insert_epoch_length(&mut spec, minimum_epoch_length - 1);
+    let error = require_startup_ocomp_fork_install(&spec).unwrap_err();
+    assert!(error.to_string().contains("snapshot retention horizon"));
+
+    insert_epoch_length(&mut spec, minimum_epoch_length);
+    assert!(require_startup_ocomp_fork_install(&spec).is_ok());
 }
 
 #[test]
@@ -258,6 +316,7 @@ fn production_loader_preserves_the_existing_final_height_32_profile() {
             }),
         )
         .unwrap();
+    insert_epoch_length(&mut spec, VALID_OCOMP_EPOCH_LENGTH_BLOCKS);
 
     assert_eq!(
         require_startup_ocomp_fork_install(&spec).unwrap().as_ref(),

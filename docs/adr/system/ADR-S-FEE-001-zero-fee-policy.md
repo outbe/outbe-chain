@@ -11,7 +11,7 @@
 ## Context
 
 ZeroFee determines when native fee debit may be waived without weakening the
-underlying command's authorization. It has two distinct policy paths in one module:
+underlying command's authorization. It has two policy paths in one module:
 
 1. a stateless-plus-stateful hook for validator/delegated-feeder Oracle votes; and
 2. a general sponsored free-transaction path with a per-signer UTC-day quota held by
@@ -39,6 +39,15 @@ its delegated feeder and requires no vote already stored for that validator in t
 current Oracle period. Authorization returns the represented validator as subject.
 It grants only fee waiver; Oracle revalidates command authority during execution.
 
+### OCOMP exclusion boundary
+
+OCOMP result votes are not ZeroFee transactions. They use the
+validator-authenticated system carrier defined by ADR-S-OCM-003/004, with
+canonical visible `gas_limit = 30_000`, pre-intrinsic classification and a
+separate deterministic system-work budget. ZeroFee owns neither their signer
+resolution nor their fee/work accounting. Oracle hook semantics and general
+sponsorship remain unchanged by that system path.
+
 ### Daily sponsorship
 
 The sponsored path accepts no contract creation/value, requires zero priority fee,
@@ -65,8 +74,9 @@ being owned by the hook.
 - Hook ids and registry order are unique and static for a protocol version.
 - Classification is deterministic from signed envelope; authorization is
   deterministic from canonical pre-state.
-- Oracle waiver subject is exactly one active validator and has not voted this
-  period.
+- Oracle waiver subject is exactly one current active validator and has not voted
+  this period.
+- No OCOMP system carrier can match a ZeroFee hook or consume sponsorship quota.
 - Sponsored packed day decodes canonically; effective count is zero for any other
   day and at most the daily limit for admitted pre-state.
 - Every executed/admitted sponsored transaction consumes quota exactly once under
@@ -79,7 +89,7 @@ being owned by the hook.
 ## Atomicity, replay and admission consistency
 
 Txpool may precheck policy, but execution reauthorizes against canonical state. Two
-same-signer transactions racing the last quota/vote slot are ordered canonically;
+same-signer transactions racing the last quota slot are ordered canonically;
 only the valid pre-state winner succeeds. Reorg rolls counters/votes back with EVM
 state. Restart reconstructs from state, not txpool caches.
 
@@ -89,9 +99,10 @@ allow infinite free retries unless that is deliberate policy.
 
 ## Security, compatibility and bounds
 
-Limits, whitelist, selector, hook ids, minimum fee semantics, UTC date conversion,
-packed counter encoding and failure codes are consensus/admission formats. Updates
-require activation across txpool and executor simultaneously.
+Limits, whitelist, selectors, hook ids, minimum fee semantics, UTC date conversion,
+packed counter encoding and failure codes are
+consensus/admission formats. Updates require activation across txpool and executor
+simultaneously.
 
 Nonzero balance is only a weak cost signal, not Sybil resistance. Whitelisted
 precompiles must have bounded work under sponsored gas and cannot expose indirect
@@ -100,10 +111,11 @@ explicit signer/authority analysis.
 
 ## Production-interface verification evidence
 
-Inspected hook types/registry, Oracle envelope and state authorization, general
-sponsorship constants/runtime/state/precompile, packed counter/lazy reset and error
-code uniqueness tests. Full txpool-to-executor consistency, concurrency, reorg,
-EIP-7702 and target-call e2e are incomplete.
+Inspected hook types/registry, Oracle envelope and state authorization, txpool
+classification, the structural exclusion of OCOMP system carriers, general
+sponsorship constants/runtime/state/precompile, packed
+counter/lazy reset and error-code uniqueness tests. Full concurrency, reorg,
+EIP-7702 and target-call e2e remain release evidence rather than alternate policy.
 
 ## Consequences
 
@@ -142,14 +154,15 @@ stable failure codes, while canonical execution remains final authority.
    cleanup/rent or accept permanent storage explicitly.
 9. UTC day reset at timestamp boundary permits eight calls immediately before and
    after midnight; confirm intended burst capacity.
-10. Oracle hook scans validator/delegation state through Oracle's unbounded resolver;
-    admission DoS bounds depend on ADR-S-ORC-001 reverse-index work.
+10. Oracle authorization follows current ValidatorSet eligibility. OCOMP
+    authorization belongs to its system-carrier path and must not be merged into
+    ZeroFee or sponsorship policy.
 11. Stable error reasons include internal storage strings. Ensure receipt/log size is
     bounded and does not leak nondeterministic implementation detail.
 12. Define behavior when zero-fee state authorization passes but target Oracle vote
     later rejects due to changed same-block state.
-13. Add concurrent last-quota/last-vote, reorg, restart and duplicate transaction
-    tests at real txpool/executor interfaces.
+13. Add concurrent last-quota, reorg, restart and duplicate transaction tests at
+    real txpool/executor interfaces.
 14. Add EIP-7702/account-abstraction threat tests and document whether sponsor or
     authority address owns quota.
 15. Prove paymaster native balance funding/debit/accounting and exhaustion behavior;

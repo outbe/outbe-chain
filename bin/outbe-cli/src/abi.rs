@@ -62,9 +62,7 @@ sol! {
         function setP2pAddress(address validatorAddress, uint8 version, bytes calldata encoded) external;
         function getP2pAddress(address validatorAddress) external view returns (uint8 version, bytes memory encoded);
         function deactivateValidator(address validatorAddress) external;
-        function confirmValidatorReady() external;
-        function activateResharedSet(address[] calldata newActiveSet, bytes32 groupPublicKey) external;
-
+        function confirmValidatorReady(bytes calldata registration) external;
         event ValidatorRegistered(address indexed validator, uint64 index);
         event ValidatorActivated(address indexed validator);
         event ValidatorDeactivated(address indexed validator, uint64 atHeight);

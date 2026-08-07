@@ -7,7 +7,6 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
 use alloy_primitives::{keccak256, Address, B256, U256};
-use k256::ecdsa::{signature::hazmat::PrehashSigner as _, Signature, SigningKey};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
 use outbe_e2e_harness::ocomp_finality_fixture::{finalized_intent_proof_fixture, fixture_league};
@@ -34,10 +33,6 @@ use outbe_ocomp::{
     worker_transport::SupervisorWorkerServerV1,
 };
 use outbe_ocomp_protocol::{
-    committee::{
-        OcompCommitteeSnapshotV1, OcompKeyRegistrationCoreV1, OcompKeyRegistrationV1,
-        OcompMemberV1, RESULT_SIGNATURE_PURPOSE_BITMAP,
-    },
     common::ProofBytes,
     input::{
         materialize_authenticated_openings, CheckpointIdentityV1, InputChunkKind, InputManifestV1,
@@ -104,79 +99,6 @@ fn endpoint_identity(boot_nonce: u8) -> EndpointIdentity {
         protocol_bundle_hash: support::protocol_bundle()
             .protocol_bundle_hash(&limits)
             .expect("deterministic fixture protocol bundle hash"),
-    }
-}
-
-fn ocomp_signing_key(index: u8) -> SigningKey {
-    SigningKey::from_bytes((&[index.saturating_add(1); 32]).into())
-        .expect("deterministic OCOMP key")
-}
-
-fn ocomp_signature(key: &SigningKey, digest: B256) -> [u8; 64] {
-    let signature: Signature = key
-        .sign_prehash(digest.as_slice())
-        .expect("deterministic OCOMP signature");
-    signature
-        .normalize_s()
-        .unwrap_or(signature)
-        .to_bytes()
-        .into()
-}
-
-fn deterministic_committee() -> OcompCommitteeSnapshotV1 {
-    let limits = poc_schema_limits();
-    let bundle = support::protocol_bundle();
-    let bundle_hash = bundle
-        .protocol_bundle_hash(&limits)
-        .expect("deterministic bundle hash");
-    OcompCommitteeSnapshotV1 {
-        chain_id: 41,
-        genesis_hash: B256::repeat_byte(0x41),
-        fork_id: B256::repeat_byte(0x42),
-        protocol_bundle_hash: bundle_hash,
-        snapshot_epoch: 1,
-        threshold: 3,
-        ordered_members: (0..4)
-            .map(|index| {
-                let key = ocomp_signing_key(index);
-                let public_key: [u8; 33] = key
-                    .verifying_key()
-                    .to_encoded_point(true)
-                    .as_bytes()
-                    .try_into()
-                    .expect("compressed deterministic OCOMP key");
-                let mut registration = OcompKeyRegistrationV1 {
-                    core: OcompKeyRegistrationCoreV1 {
-                        chain_id: 41,
-                        genesis_hash: B256::repeat_byte(0x41),
-                        fork_id: B256::repeat_byte(0x42),
-                        protocol_bundle_hash: bundle_hash,
-                        validator_index: index,
-                        validator_identity_hash: B256::repeat_byte(0x90 + index),
-                        ocomp_public_key_sec1: public_key,
-                        key_epoch: 1,
-                        allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
-                        valid_from_height: 1,
-                        valid_until_height_exclusive: 1_000,
-                    },
-                    proof_of_possession: [0; 64],
-                };
-                let pop_digest = registration
-                    .proof_of_possession_digest(&limits)
-                    .expect("deterministic OCOMP PoP digest");
-                registration.proof_of_possession = ocomp_signature(&key, pop_digest);
-                OcompMemberV1 {
-                    validator_index: index,
-                    validator_identity_hash: registration.core.validator_identity_hash,
-                    ocomp_public_key_sec1: registration.core.ocomp_public_key_sec1,
-                    key_epoch: registration.core.key_epoch,
-                    allowed_purpose_bitmap: registration.core.allowed_purpose_bitmap,
-                    valid_from_height: registration.core.valid_from_height,
-                    valid_until_height_exclusive: registration.core.valid_until_height_exclusive,
-                    proof_of_possession: registration.proof_of_possession,
-                }
-            })
-            .collect(),
     }
 }
 
@@ -384,6 +306,8 @@ fn run_schedule(worker_count: usize, seed: u64) -> ScheduleOutcome {
                 finalized_block_hash: proof_fixture.header_hash,
                 finalized_state_root: proof_fixture.state_root,
                 protocol_bundle_hash: bundle_hash,
+                open_height: 1,
+                deadline_height: 1_000,
             },
             canonical_job_intent: proof_fixture.proof.canonical_job_intent.clone(),
         },
@@ -762,9 +686,6 @@ fn raw_oracle_opening(day: WorldwideDay, finalized_state_root: B256) -> RawContr
 fn job_intent(day: WorldwideDay, protocol_bundle_hash: B256, nominal_total: U256) -> JobIntentV1 {
     let collection_key = B256::repeat_byte(0x51);
     let collection_root = B256::repeat_byte(0x52);
-    let result_committee_snapshot_hash = deterministic_committee()
-        .snapshot_hash(&poc_schema_limits())
-        .expect("deterministic committee snapshot hash");
     JobIntentV1 {
         chain_id: 41,
         genesis_hash: B256::repeat_byte(0x41),
@@ -822,7 +743,11 @@ fn job_intent(day: WorldwideDay, protocol_bundle_hash: B256, nominal_total: U256
                 state_version: 1,
             },
         },
-        result_committee_snapshot_hash,
+        result_validator_set_epoch: 1,
+        result_committee_set_hash: B256::repeat_byte(0x91),
+        result_ocomp_binding_hash: B256::repeat_byte(0x92),
+        result_member_count: 4,
+        result_quorum_threshold: 3,
         custody_committee_epoch_hash: None,
     }
 }

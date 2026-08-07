@@ -619,12 +619,25 @@ impl OffchainDataProjection {
         &mut self,
         prepared: PreparedBlock,
     ) -> Result<ProjectionOutcome, ProjectionError> {
+        self.apply_prepared_with_batch(prepared)
+            .map(|(outcome, _batch)| outcome)
+    }
+
+    /// Applies one prepared block to this projector and returns the exact same
+    /// atomic batch for ordered delivery to a separate durable adapter.
+    pub fn apply_prepared_with_batch(
+        &mut self,
+        prepared: PreparedBlock,
+    ) -> Result<(ProjectionOutcome, AtomicWriteBatch), ProjectionError> {
         match self.validate_next_block(
             prepared.checkpoint.block_number,
             prepared.checkpoint.block_hash,
         )? {
             NextBlock::AlreadyApplied(checkpoint) => {
-                return Ok(ProjectionOutcome::AlreadyApplied(checkpoint));
+                return Ok((
+                    ProjectionOutcome::AlreadyApplied(checkpoint),
+                    AtomicWriteBatch::new(),
+                ));
             }
             NextBlock::Apply => {}
         }
@@ -640,10 +653,13 @@ impl OffchainDataProjection {
         block_batch.validate()?;
         self.writer.apply_atomic(&block_batch)?;
         self.state = next_state;
-        Ok(ProjectionOutcome::Applied {
-            checkpoint: prepared.checkpoint,
-            receipt_batches: prepared.receipts.len(),
-        })
+        Ok((
+            ProjectionOutcome::Applied {
+                checkpoint: prepared.checkpoint,
+                receipt_batches: prepared.receipts.len(),
+            },
+            block_batch,
+        ))
     }
 
     /// Prepares and applies one exact finalized block.

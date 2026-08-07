@@ -8,10 +8,12 @@ publish.workspace = true
 [dependencies]
 outbe-consensus.workspace = true
 outbe-macros.workspace = true
+outbe-ocomp-protocol.workspace = true
 outbe-primitives.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 blst.workspace = true
+k256.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 metrics.workspace = true

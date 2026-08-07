@@ -1,4 +1,4 @@
-//! Crash-conservative bounded multi-job OCOMP retention journal.
+//! Crash-conservative wire-bounded multi-job OCOMP retention journal.
 //!
 //! Candidate discovery uses an event only as a bounded locator. The production
 //! source re-opens the exact execution-valid block state and authenticates the
@@ -45,8 +45,18 @@ const JOURNAL_VERSION: u16 = 5;
 const LEGACY_RECORD_VERSION: u16 = 3;
 const PIN_RECORD_VERSION: u16 = 4;
 const PIN_RECORD_MAX_BYTES: usize = 512;
-const MAX_TRACKED_JOBS: usize = 256;
-const JOURNAL_MAX_BYTES: usize = PIN_RECORD_MAX_BYTES * MAX_TRACKED_JOBS + 64;
+/// The registry has no OCOMP product count limit. Its only cardinality ceiling
+/// is the count width committed by the durable journal wire format.
+const JOURNAL_RECORD_COUNT_MAX: usize = u16::MAX as usize;
+const JOURNAL_MAX_BYTES: usize =
+    (PIN_RECORD_MAX_BYTES + B256::len_bytes() + std::mem::size_of::<u16>())
+        * JOURNAL_RECORD_COUNT_MAX
+        + 8
+        + std::mem::size_of::<u16>()
+        + std::mem::size_of::<u64>()
+        + B256::len_bytes()
+        + std::mem::size_of::<u16>()
+        + B256::len_bytes();
 const JOURNAL_FILENAME: &str = "pin.v1";
 const JOURNAL_TEMP_FILENAME: &str = "pin.v1.tmp";
 const RETAINED_EVIDENCE_WINDOW_BLOCKS: u64 = 64;
@@ -185,7 +195,7 @@ pub enum RetentionError {
     UnsupportedJournalVersion { actual: u16 },
     #[error("pin generation overflow")]
     GenerationOverflow,
-    #[error("OCOMP active-job registry reached its bounded capacity")]
+    #[error("OCOMP journal record count exceeds its u16 wire format")]
     RegistryCapacity,
     #[error("conflicting tentative candidate cannot replace the active pin")]
     ConflictingCandidate,
@@ -554,7 +564,12 @@ where
                         "terminal Job binding differs from retained finalized Job".to_owned(),
                     ));
                 }
-                Ok(Some(terminal.terminal_height))
+                retention_terminal_height_for_status(
+                    record.status,
+                    block.number(),
+                    finalized.deadline_height,
+                    terminal.terminal_height,
+                )
             }
         }
     }
@@ -793,7 +808,7 @@ struct CoordinatorInner {
     registry: Option<JobRegistryV1>,
 }
 
-/// Node-owned bounded multi-job PoC pin coordinator.
+/// Node-owned independently keyed multi-job OCOMP pin coordinator.
 pub struct OcompRetentionCoordinator {
     store: JournalStore,
     inner: Mutex<CoordinatorInner>,
@@ -1068,6 +1083,28 @@ impl OcompRetentionCoordinator {
         }
     }
 
+    /// Returns the exact live `Exported` record addressed by `JobId`.
+    ///
+    /// This deliberately consults the durable multi-job registry rather than
+    /// [`Self::status`], whose single operational summary may describe a newer
+    /// job. Callers must not substitute another live job.
+    #[cfg(test)]
+    pub(crate) fn exported_job_record(&self, job_id: B256) -> Result<PinRecordV1, RetentionError> {
+        let inner = self.lock()?;
+        if let RetentionStatus::Quarantined { ref reason } = inner.status {
+            return Err(RetentionError::Quarantined(reason.clone()));
+        }
+        let (_, record) = record_for_job(&inner, job_id)?;
+        match record.state {
+            PinStateV1::Exported {
+                job_id: current, ..
+            } if current == job_id => Ok(record),
+            _ => Err(RetentionError::InvalidTransition(
+                "attestation requires the exact exported Job",
+            )),
+        }
+    }
+
     pub fn prepare_candidate(&self, block: &ConsensusBlock) -> Result<(), OcompRetentionHookError> {
         let candidate = self.source.candidate_for_block(block).map_err(hook_error)?;
         if let Some(candidate) = candidate {
@@ -1190,7 +1227,7 @@ impl OcompRetentionCoordinator {
                 .values()
                 .filter(|record| !matches!(record.state, PinStateV1::Released { .. }))
                 .count()
-                >= MAX_TRACKED_JOBS
+                >= JOURNAL_RECORD_COUNT_MAX
         }) {
             return Err(RetentionError::RegistryCapacity);
         }
@@ -1641,7 +1678,9 @@ impl OcompRetentionCoordinator {
             last_updated: key,
             records: BTreeMap::new(),
         });
-        if !registry.records.contains_key(&key) && registry.records.len() >= MAX_TRACKED_JOBS {
+        if !registry.records.contains_key(&key)
+            && registry.records.len() >= JOURNAL_RECORD_COUNT_MAX
+        {
             registry
                 .records
                 .retain(|_, existing| !matches!(existing.state, PinStateV1::Released { .. }));
@@ -1861,6 +1900,26 @@ fn candidate_job_id(candidate: CandidatePinV1) -> Result<B256, RetentionError> {
     .map_err(|error| RetentionError::Source(format!("derive tentative JobId: {error}")))
 }
 
+pub(super) fn retention_terminal_height_for_status(
+    status: OcompJobStatus,
+    observed_height: u64,
+    deadline_height: u64,
+    terminal_height: u64,
+) -> Result<Option<u64>, RetentionError> {
+    match status {
+        OcompJobStatus::AwaitingFinality | OcompJobStatus::VotingOpen => Ok(None),
+        OcompJobStatus::Completed | OcompJobStatus::Conflicted => {
+            if terminal_height >= deadline_height {
+                return Err(RetentionError::Source(
+                    "OCOMP quorum terminal height is outside its response window".to_owned(),
+                ));
+            }
+            Ok((observed_height >= deadline_height).then_some(deadline_height))
+        }
+        OcompJobStatus::Expired | OcompJobStatus::Canceled => Ok(Some(terminal_height)),
+    }
+}
+
 fn legacy_candidate_input_lease_id(candidate: CandidatePinV1) -> B256 {
     let mut preimage = Vec::with_capacity(26 + 4 + 32 * 2);
     preimage.extend_from_slice(b"OUTBE_OCOMP_INPUT_LEASE_V1");
@@ -1879,7 +1938,7 @@ fn encode_registry(registry: &JobRegistryV1) -> Vec<u8> {
     encoded.extend_from_slice(registry.last_updated.as_slice());
     encoded.extend_from_slice(
         &u16::try_from(registry.records.len())
-            .expect("bounded registry length fits u16")
+            .expect("journal registry length fits its u16 wire count")
             .to_be_bytes(),
     );
     for (key, record) in &registry.records {
@@ -1942,9 +2001,9 @@ fn decode_registry(encoded: &[u8]) -> Result<JobRegistryV1, RetentionError> {
     }
     let last_updated = B256::new(reader.take::<32>()?);
     let count = usize::from(u16::from_be_bytes(reader.take::<2>()?));
-    if count == 0 || count > MAX_TRACKED_JOBS {
+    if count == 0 {
         return Err(RetentionError::MalformedJournal(
-            "registry count is outside its bound",
+            "registry must use an absent file for zero records",
         ));
     }
     let mut records = BTreeMap::new();

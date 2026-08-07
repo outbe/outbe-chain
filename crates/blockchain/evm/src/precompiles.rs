@@ -15,7 +15,10 @@ use alloy_sol_types::{Revert, SolError};
 use core::fmt::Debug;
 use core::marker::PhantomData;
 use outbe_compressed_entities::ExecutionScope;
-use outbe_metadosis::{api::OcompFinalizedIntentAuthority, config::OcompForkInstallV1};
+use outbe_metadosis::{
+    api::{OcompFinalizedIntentAuthority, OcompLocalResultAuthority},
+    config::OcompForkInstallV1,
+};
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::addresses::{
     FIDELITY_ADDRESS, METADOSIS_ADDRESS, ORACLE_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS, SYSTEM_ADDRESS,
@@ -315,6 +318,33 @@ impl OutbePrecompileExecutionContext {
     }
 }
 
+#[derive(Clone)]
+pub struct OutbePrecompileRuntime {
+    runtime_body_readers: Option<RuntimeBodyReaders>,
+    execution_scope: Arc<ExecutionScope>,
+    ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
+    ocomp_local_result_authority: Option<Arc<dyn OcompLocalResultAuthority>>,
+    ocomp_lifecycle_active: bool,
+}
+
+impl OutbePrecompileRuntime {
+    pub fn new(
+        runtime_body_readers: Option<RuntimeBodyReaders>,
+        execution_scope: Arc<ExecutionScope>,
+        ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
+        ocomp_local_result_authority: Option<Arc<dyn OcompLocalResultAuthority>>,
+        ocomp_lifecycle_active: bool,
+    ) -> Self {
+        Self {
+            runtime_body_readers,
+            execution_scope,
+            ocomp_finality_authority,
+            ocomp_local_result_authority,
+            ocomp_lifecycle_active,
+        }
+    }
+}
+
 /// Register outbe stateful precompile dispatch on the given [`PrecompilesMap`]
 /// via the `set_ctx_dispatch_hook` fork extension.
 ///
@@ -329,10 +359,7 @@ impl OutbePrecompileExecutionContext {
 pub fn extend_outbe_precompiles<DB>(
     precompiles: &mut PrecompilesMap,
     execution_context: OutbePrecompileExecutionContext,
-    runtime_body_readers: Option<RuntimeBodyReaders>,
-    execution_scope: Arc<ExecutionScope>,
-    ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
-    ocomp_lifecycle_active: bool,
+    runtime: OutbePrecompileRuntime,
     ocomp_fork_install: Option<Arc<OcompForkInstallV1>>,
 ) where
     DB: Database + Debug,
@@ -343,6 +370,13 @@ pub fn extend_outbe_precompiles<DB>(
         genesis_hash,
         tee_attestation_v1,
     } = execution_context;
+    let OutbePrecompileRuntime {
+        runtime_body_readers,
+        execution_scope,
+        ocomp_finality_authority,
+        ocomp_local_result_authority,
+        ocomp_lifecycle_active,
+    } = runtime;
     let ocomp_activation_block_meter = Arc::new(OcompActivationBlockMeter);
     precompiles.set_ctx_dispatch_hook(
         // handles: claim every outbe address.
@@ -368,6 +402,7 @@ pub fn extend_outbe_precompiles<DB>(
                     runtime_body_readers: runtime_body_readers.as_ref(),
                     execution_scope: &execution_scope,
                     ocomp_finality_authority: ocomp_finality_authority.clone(),
+                    ocomp_local_result_authority: ocomp_local_result_authority.clone(),
                     ocomp_activation_block_meter: ocomp_activation_block_meter.clone(),
                     ocomp_lifecycle_active,
                     ocomp_fork_install: ocomp_fork_install.clone(),
@@ -385,6 +420,7 @@ struct OutbeDispatchRuntime<'a> {
     runtime_body_readers: Option<&'a RuntimeBodyReaders>,
     execution_scope: &'a Arc<ExecutionScope>,
     ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
+    ocomp_local_result_authority: Option<Arc<dyn OcompLocalResultAuthority>>,
     ocomp_activation_block_meter: Arc<OcompActivationBlockMeter>,
     ocomp_lifecycle_active: bool,
     ocomp_fork_install: Option<Arc<OcompForkInstallV1>>,
@@ -407,6 +443,7 @@ where
         runtime_body_readers,
         execution_scope,
         ocomp_finality_authority,
+        ocomp_local_result_authority,
         ocomp_activation_block_meter,
         ocomp_lifecycle_active,
         ocomp_fork_install,
@@ -531,6 +568,7 @@ where
             runtime_body_readers: runtime_body_readers.cloned(),
             execution_scope: execution_scope.clone(),
             ocomp_finality_authority: ocomp_finality_authority.clone(),
+            ocomp_local_result_authority: ocomp_local_result_authority.clone(),
             ocomp_activation_block_meter: ocomp_activation_block_meter.clone(),
             ocomp_lifecycle_active,
             lysis_activation_entitled: is_lysis_result_vote_call(
@@ -562,19 +600,21 @@ where
         outbe_metadosis::commands::submit_verified_result_vote(
             storage,
             execution_scope.as_ref(),
-            caller,
             data.as_ref(),
             value,
             is_static,
+            ocomp_local_result_authority.as_deref(),
         )
     } else if address == OUTBE_SYSTEM_TX_ADDRESS {
         if let Some(readers) = runtime_body_readers {
             crate::begin_block_precompile::dispatch_with_readers_and_ocomp_install(
                 storage,
-                execution_scope.as_ref(),
-                readers,
-                ocomp_fork_install.as_deref(),
-                tee_attestation_v1,
+                crate::begin_block_precompile::SystemTxRuntime {
+                    scope: execution_scope.as_ref(),
+                    parent: readers,
+                    ocomp_fork_install: ocomp_fork_install.as_deref(),
+                    tee_attestation_v1,
+                },
                 data.as_ref(),
                 caller,
                 value,
@@ -658,6 +698,7 @@ pub(crate) struct OutbeSubCallPrecompiles<DB> {
     runtime_body_readers: Option<RuntimeBodyReaders>,
     execution_scope: Arc<ExecutionScope>,
     ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
+    ocomp_local_result_authority: Option<Arc<dyn OcompLocalResultAuthority>>,
     ocomp_activation_block_meter: Arc<OcompActivationBlockMeter>,
     ocomp_lifecycle_active: bool,
     _db: PhantomData<fn() -> DB>,
@@ -665,22 +706,31 @@ pub(crate) struct OutbeSubCallPrecompiles<DB> {
 
 impl<DB> OutbeSubCallPrecompiles<DB> {
     pub(crate) fn new(
-        spec: SpecId,
-        genesis_hash: B256,
-        runtime_body_readers: Option<RuntimeBodyReaders>,
-        execution_scope: Arc<ExecutionScope>,
-        ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
+        execution_context: OutbePrecompileExecutionContext,
+        runtime: OutbePrecompileRuntime,
         ocomp_activation_block_meter: Arc<OcompActivationBlockMeter>,
-        ocomp_lifecycle_active: bool,
     ) -> Self {
+        let OutbePrecompileExecutionContext {
+            spec,
+            genesis_hash,
+            tee_attestation_v1,
+        } = execution_context;
+        let OutbePrecompileRuntime {
+            runtime_body_readers,
+            execution_scope,
+            ocomp_finality_authority,
+            ocomp_local_result_authority,
+            ocomp_lifecycle_active,
+        } = runtime;
         Self {
             eth: EthPrecompiles::new(spec),
             spec,
             genesis_hash,
-            tee_attestation_v1: TeeAttestationChainSpecStateV1::Unbound,
+            tee_attestation_v1,
             runtime_body_readers,
             execution_scope,
             ocomp_finality_authority,
+            ocomp_local_result_authority,
             ocomp_activation_block_meter,
             ocomp_lifecycle_active,
             _db: PhantomData,
@@ -721,6 +771,7 @@ where
                 runtime_body_readers: self.runtime_body_readers.as_ref(),
                 execution_scope: &self.execution_scope,
                 ocomp_finality_authority: self.ocomp_finality_authority.clone(),
+                ocomp_local_result_authority: self.ocomp_local_result_authority.clone(),
                 ocomp_activation_block_meter: self.ocomp_activation_block_meter.clone(),
                 ocomp_lifecycle_active: self.ocomp_lifecycle_active,
                 ocomp_fork_install: None,

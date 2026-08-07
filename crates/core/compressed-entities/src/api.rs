@@ -577,6 +577,7 @@ pub struct ExecutionScope {
     parent_identity_without_root: Mutex<Option<(u32, u64, B256)>>,
     parent_binding_configured: AtomicBool,
     rpc_read_only: AtomicBool,
+    provisional_seal: Mutex<Option<crate::SealOutput>>,
     completed_seal: Mutex<Option<crate::SealOutput>>,
     ce_work_config: CeWorkConfig,
     ce_work: Mutex<CeWorkState>,
@@ -626,6 +627,7 @@ impl ExecutionScope {
             parent_identity_without_root: Mutex::new(None),
             parent_binding_configured: AtomicBool::new(false),
             rpc_read_only: AtomicBool::new(false),
+            provisional_seal: Mutex::new(None),
             completed_seal: Mutex::new(None),
             ce_work_config: CeWorkConfig::new(0, 0, u64::MAX),
             ce_work: Mutex::new(CeWorkState {
@@ -653,6 +655,7 @@ impl ExecutionScope {
             parent_identity_without_root: Mutex::new(None),
             parent_binding_configured: AtomicBool::new(true),
             rpc_read_only: AtomicBool::new(false),
+            provisional_seal: Mutex::new(None),
             completed_seal: Mutex::new(None),
             ce_work_config,
             ce_work: Mutex::new(CeWorkState {
@@ -687,6 +690,7 @@ impl ExecutionScope {
             ))),
             parent_binding_configured: AtomicBool::new(true),
             rpc_read_only: AtomicBool::new(false),
+            provisional_seal: Mutex::new(None),
             completed_seal: Mutex::new(None),
             ce_work_config,
             ce_work: Mutex::new(CeWorkState {
@@ -840,11 +844,43 @@ impl ExecutionScope {
         self.opened_parent_tree().map(|tree| tree.parent_root())
     }
 
+    /// Returns the exact root prepared from all CE mutations currently staged
+    /// in the active block without closing the execution scope.
+    pub fn provisional_sealed_root(&self) -> Result<B256> {
+        Ok(self.provisional_seal()?.new_root)
+    }
+
+    /// Resolves one partition root from the active block's provisional seal.
+    pub fn provisional_partition_root(
+        &self,
+        partition: PartitionRef,
+    ) -> Result<SealedCollectionRoot> {
+        let output = self.provisional_seal()?;
+        self.collection_root_from_output(&output, partition)
+    }
+
+    fn provisional_seal(&self) -> Result<crate::SealOutput> {
+        self.require_active()?;
+        let output = self
+            .provisional_seal
+            .lock()
+            .map_err(|_| fatal_scope("provisional compressed-entity seal lock poisoned"))?
+            .clone()
+            .ok_or_else(|| fatal_scope("provisional compressed-entity seal is absent"))?;
+        self.validate_seal_output(&output)?;
+        Ok(output)
+    }
+
     /// Returns the exact global CE root recorded by this scope's completed
     /// end-block seal. It is unavailable before the executor closes the CE
     /// lifecycle and does not expose the mutable staging envelope.
     pub fn completed_sealed_root(&self) -> Result<B256> {
         Ok(self.completed_seal()?.new_root)
+    }
+
+    /// Returns the catalog root underlying this scope's completed seal.
+    pub fn completed_catalog_root(&self) -> Result<B256> {
+        Ok(self.completed_seal()?.staged_tree_batch.new_catalog_root)
     }
 
     /// Resolves one partition root from this scope's exact completed seal.
@@ -871,18 +907,7 @@ impl ExecutionScope {
             .map_err(|_| fatal_scope("completed compressed-entity seal lock poisoned"))?
             .clone()
             .ok_or_else(|| fatal_scope("completed compressed-entity seal is absent"))?;
-        if output.parent_root != output.staged_tree_batch.parent_root()
-            || output.new_root != output.staged_tree_batch.new_root()
-        {
-            return Err(fatal_scope(
-                "compressed-entity SealOutput does not match its staged tree batch",
-            ));
-        }
-        if self.opened_parent_tree()?.parent_root() != output.parent_root {
-            return Err(fatal_scope(
-                "compressed-entity SealOutput does not match the authenticated parent",
-            ));
-        }
+        self.validate_seal_output(&output)?;
         Ok(output)
     }
 
@@ -910,6 +935,10 @@ impl ExecutionScope {
                 "SealOutput was not completed by this execution scope",
             ));
         }
+        self.collection_root_from_output(output, partition)
+    }
+
+    fn validate_seal_output(&self, output: &crate::SealOutput) -> Result<()> {
         if output.parent_root != output.staged_tree_batch.parent_root()
             || output.new_root != output.staged_tree_batch.new_root()
         {
@@ -917,13 +946,21 @@ impl ExecutionScope {
                 "compressed-entity SealOutput does not match its staged tree batch",
             ));
         }
-
-        let parent = self.opened_parent_tree()?;
-        if parent.parent_root() != output.parent_root {
+        if self.opened_parent_tree()?.parent_root() != output.parent_root {
             return Err(fatal_scope(
                 "compressed-entity SealOutput does not match the authenticated parent",
             ));
         }
+        Ok(())
+    }
+
+    fn collection_root_from_output(
+        &self,
+        output: &crate::SealOutput,
+        partition: PartitionRef,
+    ) -> Result<SealedCollectionRoot> {
+        self.validate_seal_output(output)?;
+        let parent = self.opened_parent_tree()?;
         let (_, key) = crate::partition_collection_key(partition)
             .map_err(|error| fatal_scope(error.to_string()))?;
         let root = match output.staged_tree_batch.changed_collections.get(&key) {
@@ -935,6 +972,17 @@ impl ExecutionScope {
         .ok_or_else(|| fatal_scope("sealed compressed-entity collection is absent"))?;
 
         Ok(SealedCollectionRoot { partition, root })
+    }
+
+    pub(crate) fn record_provisional_seal(&self, output: &crate::SealOutput) -> Result<()> {
+        self.require_active()?;
+        self.validate_seal_output(output)?;
+        *self
+            .provisional_seal
+            .lock()
+            .map_err(|_| fatal_scope("provisional compressed-entity seal lock poisoned"))? =
+            Some(output.clone());
+        Ok(())
     }
 
     pub(crate) fn prepare_tree_seal(
@@ -1283,6 +1331,13 @@ pub fn begin_block(storage: StorageHandle<'_>, scope: &ExecutionScope) -> Result
 
 pub fn end_block(storage: StorageHandle<'_>, scope: &ExecutionScope) -> Result<crate::SealOutput> {
     lifecycle::end_block(storage, scope)
+}
+
+pub fn preview_end_block(
+    storage: StorageHandle<'_>,
+    scope: &ExecutionScope,
+) -> Result<crate::SealOutput> {
+    lifecycle::preview_end_block_for_storage(storage, scope)
 }
 
 pub fn read(

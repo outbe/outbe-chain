@@ -89,6 +89,7 @@ alloy-sol-types.workspace = true
 alloy-rpc-types-engine.workspace = true
 outbe-offchain-storage.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
+outbe-txpool.workspace = true
 outbe-validatorset.workspace = true
 reth-basic-payload-builder.workspace = true
 reth-chainspec.workspace = true

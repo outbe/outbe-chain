@@ -160,7 +160,11 @@ fn intent(day_type: DayType, request_receipt_hash: B256) -> JobIntentV1 {
                 state_version: 12,
             },
         },
-        result_committee_snapshot_hash: hash(45),
+        result_validator_set_epoch: 2,
+        result_committee_set_hash: hash(45),
+        result_ocomp_binding_hash: hash(46),
+        result_member_count: 4,
+        result_quorum_threshold: 3,
         custody_committee_epoch_hash: None,
     }
 }

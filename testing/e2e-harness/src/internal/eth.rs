@@ -144,6 +144,21 @@ sol! {
             external
             view
             returns (bytes memory activeGenerationV1);
+        function getWorldwideDayTerminalReceipt(uint32 wwd)
+            external
+            view
+            returns (
+                uint8 outcome,
+                uint256 valueRouted,
+                uint256 carryOverBefore,
+                uint256 carryOverAfter,
+                uint8 retirementOutcome,
+                uint64 blockNumber
+            );
+    }
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IPromisLimit {
+        function totalUnallocated() external view returns (uint256);
     }
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IDesis {

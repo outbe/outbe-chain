@@ -19,13 +19,14 @@
 pub mod dcap_lifecycle_sgx;
 pub mod env;
 pub mod features;
+pub mod localnet_driver;
 pub mod metadosis_evidence;
 pub mod metadosis_p0;
 pub mod metadosis_process;
 pub mod mongo_fixture;
 pub mod ocomp_capacity;
 pub mod ocomp_evidence;
-#[cfg(feature = "ocomp-integration")]
+#[cfg(feature = "ocomp-finality-fixture")]
 pub mod ocomp_finality_fixture;
 pub mod release_dcap;
 pub mod release_sgx;

@@ -18,7 +18,6 @@ use outbe_consensus::{
 };
 use outbe_metadosis::proof_layout::OCOMP_JOB_RECORDS_BASE_SLOT;
 use outbe_ocomp_protocol::{
-    committee::POC_COMMITTEE_SIZE,
     common::{BoundedBytes, ProofBytes},
     control::{FinalizedIntentProofResponseV1, SnapshotHandoffV1},
     intent::{
@@ -446,10 +445,16 @@ where
             .source
             .finalization(request_height)
             .map_err(public_source_error)?;
+        let max_committee_len =
+            usize::try_from(outbe_consensus::bls::MAX_VALIDATORS).map_err(|_| {
+                PublicFinalizedIntentProofBuildError::Finalization(
+                    "consensus validator bound exceeds usize".to_owned(),
+                )
+            })?;
         let finalized = decode_public_finalized_block(
             &public_bytes.finalization_bytes,
             &public_bytes.block_bytes,
-            POC_COMMITTEE_SIZE,
+            max_committee_len,
         )
         .map_err(|error| PublicFinalizedIntentProofBuildError::Finalization(error.to_string()))?;
         let block_hash = finalized.block.block_hash();
@@ -474,11 +479,7 @@ where
         }
         let finalized_epoch = finalization.proposal.round.epoch().get();
         let committee_len = finalization.certificate.signers.len();
-        if committee_len != 4 {
-            return Err(PublicFinalizedIntentProofBuildError::CommitteeLength {
-                actual: committee_len,
-            });
-        }
+        validate_public_committee_len(committee_len, max_committee_len)?;
         let request_state_root = header.state_root();
 
         let ring_slot = historical_committee_ring_slot(finalized_epoch);
@@ -665,6 +666,16 @@ where
     }
 }
 
+pub(crate) fn validate_public_committee_len(
+    actual: usize,
+    maximum: usize,
+) -> Result<(), PublicFinalizedIntentProofBuildError> {
+    if actual == 0 || actual > maximum {
+        return Err(PublicFinalizedIntentProofBuildError::CommitteeLength { actual, maximum });
+    }
+    Ok(())
+}
+
 fn public_source_error<E: std::error::Error>(error: E) -> PublicFinalizedIntentProofBuildError {
     PublicFinalizedIntentProofBuildError::Source(error.to_string())
 }
@@ -811,8 +822,10 @@ pub enum PublicFinalizedIntentProofBuildError {
     Finalization(String),
     #[error("public Ethereum block view differs from finalized Commonware block")]
     HeaderMismatch,
-    #[error("PoC historical consensus committee must contain exactly four members, got {actual}")]
-    CommitteeLength { actual: usize },
+    #[error(
+        "historical consensus committee length {actual} is outside the supported range 1..={maximum}"
+    )]
+    CommitteeLength { actual: usize, maximum: usize },
     #[error("historical committee snapshot ring entry is absent")]
     MissingCommitteeSnapshot,
     #[error("public proof omitted storage slot {0}")]
@@ -1275,7 +1288,9 @@ fn protocol_parent_accounting(
         }
     };
     let vrf_material_version = u16::try_from(record.vrf_material_version).map_err(|_| {
-        FinalizedIntentProofBuildError::Finalization("VRF material version exceeds PoC u16 shape")
+        FinalizedIntentProofBuildError::Finalization(
+            "VRF material version exceeds the protocol u16 shape",
+        )
     })?;
     Ok(CertifiedParentAccountingMetadataV2 {
         finalized_block_number,

@@ -133,6 +133,8 @@ impl FinalizedRpcDiscoveryV1 {
                     finalized_block_hash: verified.request.block_hash,
                     finalized_state_root: verified.request.state_root,
                     protocol_bundle_hash: verified.intent.protocol_bundle_hash,
+                    open_height: current_finalized.open_height,
+                    deadline_height: current_finalized.deadline_height,
                 },
                 canonical_job_intent: BoundedBytes(
                     verified.intent.encode_canonical(&self.config.limits)?,

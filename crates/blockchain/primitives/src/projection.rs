@@ -40,7 +40,10 @@ impl ExecutionReadBudget {
     }
 }
 
-/// Exact durable block boundary through which all projection events were applied.
+/// Exact block identity through which one projection view has applied all events.
+///
+/// The owner defines durability: consensus readiness uses the logical overlay boundary, while
+/// MongoDB persists the same identity as its durable replay cursor.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ProjectionCheckpoint {
     pub block_number: u64,
@@ -82,7 +85,7 @@ impl ProjectionFailure {
     }
 }
 
-/// Current local materialization health and exact durable checkpoint.
+/// Current local materialization health and exact logical readiness checkpoint.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProjectionStatus {
     Starting,

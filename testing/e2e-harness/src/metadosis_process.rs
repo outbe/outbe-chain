@@ -158,10 +158,6 @@ fn retain_fresh_genesis_artifacts(genesis_path: &Path, artifacts: &Path) -> Resu
             .capacity_profile
             .encode_canonical(&limits)?,
     )?;
-    fs::write(
-        artifacts.join("result-committee-v1.ocb1"),
-        install.result_committee.encode_canonical(&limits)?,
-    )?;
     Ok(())
 }
 
