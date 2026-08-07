@@ -6,13 +6,11 @@
 
 use alloy_primitives::U256;
 use outbe_common::WorldwideDay;
-use outbe_primitives::{
-    error::{PrecompileError, Result},
-    storage::StorageHandle,
-};
+use outbe_primitives::{error::Result, storage::StorageHandle};
 
 use crate::{
     aggregate::{ValidatedWwdAggregate, WwdDayType, WwdStatus},
+    errors::storage_corruption_message,
     schema::{status, MetadosisContract, WorldwideDay as WorldwideDayRecord},
 };
 
@@ -35,24 +33,28 @@ pub struct GenesisWorldwideDay {
 impl GenesisWorldwideDay {
     fn validate(self) -> Result<Self> {
         if !self.worldwide_day.is_valid() {
-            return Err(fatal(
+            return Err(storage_corruption_message(
                 "fresh-devnet genesis WWD is not a valid calendar day",
             ));
         }
         if !matches!(self.status, WwdStatus::Offering | WwdStatus::Ready) {
-            return Err(fatal(
+            return Err(storage_corruption_message(
                 "fresh-devnet genesis builder only accepts OFFERING or READY predecessors",
             ));
         }
         if self.day_type == WwdDayType::Unknown {
-            return Err(fatal("fresh-devnet genesis WWD requires a known day type"));
+            return Err(storage_corruption_message(
+                "fresh-devnet genesis WWD requires a known day type",
+            ));
         }
         if !(self.forming_start <= self.forming_end
             && self.forming_end <= self.lookback_end
             && self.lookback_end <= self.offering_end
             && self.offering_end <= self.scheduled_process_time)
         {
-            return Err(fatal("fresh-devnet genesis WWD phase order is invalid"));
+            return Err(storage_corruption_message(
+                "fresh-devnet genesis WWD phase order is invalid",
+            ));
         }
         Ok(self)
     }
@@ -111,7 +113,7 @@ impl FreshDevnetGenesisBuilder {
 
     pub fn apply(self, storage: StorageHandle<'_>) -> Result<FreshDevnetGenesisReport> {
         if storage.block_number()? > 1 {
-            return Err(fatal(
+            return Err(storage_corruption_message(
                 "fresh-devnet genesis builder cannot run after the pre-launch boundary",
             ));
         }
@@ -122,7 +124,9 @@ impl FreshDevnetGenesisBuilder {
                 GenesisOperation::SeedActive(day) => {
                     let day = day.validate()?;
                     if contract.worldwide_days.get(day.worldwide_day)?.is_some() {
-                        return Err(fatal("fresh-devnet genesis WWD already exists"));
+                        return Err(storage_corruption_message(
+                            "fresh-devnet genesis WWD already exists",
+                        ));
                     }
                     contract.worldwide_days.create(&WorldwideDayRecord {
                         wwd: day.worldwide_day,
@@ -144,15 +148,16 @@ impl FreshDevnetGenesisBuilder {
                     worldwide_day,
                     offering_end,
                 } => {
-                    let mut day = contract
-                        .worldwide_days
-                        .get(worldwide_day)?
-                        .ok_or_else(|| fatal("fresh-devnet offering WWD is missing"))?;
+                    let mut day = contract.worldwide_days.get(worldwide_day)?.ok_or_else(|| {
+                        storage_corruption_message("fresh-devnet offering WWD is missing")
+                    })?;
                     if WwdStatus::try_from(day.status)? != WwdStatus::Offering {
-                        return Err(fatal("fresh-devnet WWD is not in OFFERING"));
+                        return Err(storage_corruption_message(
+                            "fresh-devnet WWD is not in OFFERING",
+                        ));
                     }
                     if day.forming_end > offering_end || day.lookback_end > offering_end {
-                        return Err(fatal(
+                        return Err(storage_corruption_message(
                             "fresh-devnet WWD phases end after the requested offering deadline",
                         ));
                     }
@@ -172,7 +177,7 @@ impl FreshDevnetGenesisBuilder {
                             .first()
                             .is_some_and(|day| *day != expected_worldwide_day)
                     {
-                        return Err(fatal(
+                        return Err(storage_corruption_message(
                             "fresh-devnet genesis contains an unexpected active WWD",
                         ));
                     }
@@ -180,10 +185,14 @@ impl FreshDevnetGenesisBuilder {
                         if active.is_empty() {
                             continue;
                         }
-                        return Err(fatal("fresh-devnet active WWD record is missing"));
+                        return Err(storage_corruption_message(
+                            "fresh-devnet active WWD record is missing",
+                        ));
                     };
                     if WwdStatus::try_from(day.status)? != WwdStatus::Offering {
-                        return Err(fatal("fresh-devnet seeded WWD is not in OFFERING"));
+                        return Err(storage_corruption_message(
+                            "fresh-devnet seeded WWD is not in OFFERING",
+                        ));
                     }
                     if !active.is_empty() {
                         contract.active_wwd.remove(&expected_worldwide_day)?;
@@ -209,10 +218,6 @@ const fn status_tag(value: WwdStatus) -> u8 {
         WwdStatus::Completed => status::COMPLETED,
         WwdStatus::Failed => status::FAILED,
     }
-}
-
-fn fatal(message: impl Into<String>) -> PrecompileError {
-    PrecompileError::Fatal(message.into())
 }
 
 #[cfg(test)]
@@ -278,7 +283,10 @@ mod tests {
                 .apply(storage)
                 .unwrap_err()
         });
-        assert!(matches!(error, PrecompileError::Fatal(_)));
+        assert!(matches!(
+            error,
+            outbe_primitives::error::PrecompileError::Fatal(_)
+        ));
         assert!(post_launch.storage.is_empty());
 
         let mut invalid = offering_day();
@@ -290,7 +298,10 @@ mod tests {
                 .apply(storage)
                 .unwrap_err()
         });
-        assert!(matches!(error, PrecompileError::Fatal(_)));
+        assert!(matches!(
+            error,
+            outbe_primitives::error::PrecompileError::Fatal(_)
+        ));
         assert!(provider.storage.is_empty());
     }
 
@@ -310,7 +321,10 @@ mod tests {
                 .clear_single_offering_day(DAY)
                 .apply(storage.clone())
                 .unwrap_err();
-            assert!(matches!(error, PrecompileError::Fatal(_)));
+            assert!(matches!(
+                error,
+                outbe_primitives::error::PrecompileError::Fatal(_)
+            ));
             assert_eq!(api::worldwide_days(storage).unwrap().len(), 1);
         });
     }

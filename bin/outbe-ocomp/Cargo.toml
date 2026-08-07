@@ -32,7 +32,6 @@ outbe-offchain-storage.workspace = true
 outbe-oracle.workspace = true
 outbe-primitives.workspace = true
 outbe-tribute.workspace = true
-outbe-zerofee.workspace = true
 reqwest = { workspace = true, features = ["blocking"] }
 salvo.workspace = true
 serde.workspace = true
@@ -45,7 +44,8 @@ zeromq.workspace = true
 
 [dev-dependencies]
 alloy-sol-types.workspace = true
-outbe-e2e-harness = { path = "../../testing/e2e-harness", features = ["ocomp-integration"] }
+outbe-e2e-harness = { path = "../../testing/e2e-harness", features = ["ocomp-finality-fixture"] }
+outbe-validatorset.workspace = true
 reth-ethereum.workspace = true
 tempfile.workspace = true
 

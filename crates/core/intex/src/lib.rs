@@ -16,8 +16,8 @@ pub(crate) mod state;
 pub use certified::{install_certified_contributor_root, CertifiedContributorRootV1};
 pub use errors::IntexError;
 pub use schema::{
-    cost_amount_minor, CertifiedContributorGenerationProjection, CreateSeriesParams, DistProgress,
-    IntexCallTrigger, IntexContract, IntexState, SeriesRecord,
+    CertifiedContributorGenerationProjection, CreateSeriesParams, DistProgress, IntexCallTrigger,
+    IntexContract, IntexState, SeriesRecord,
 };
 
 #[cfg(test)]

@@ -70,10 +70,10 @@ enum OcompCommand {
         /// Fresh base genesis without an OCOMP fork-install extension.
         #[arg(long)]
         base_genesis: PathBuf,
-        /// Exact four-validator public bootstrap manifest.
+        /// Ordered public bootstrap manifest for every genesis validator.
         #[arg(long)]
         validators: PathBuf,
-        /// Directory containing validator-N/ocomp-registration-v1.ocb1 for a real committee.
+        /// Directory containing validator-N/ocomp-registration-v1.ocb1 founder key material.
         #[arg(long)]
         registrations_dir: Option<PathBuf>,
         /// Frozen release artifact directory whose exact protocol semantics are being deployed.
@@ -88,7 +88,7 @@ enum OcompCommand {
     },
     /// Print the chain-bound validator identity hashes used by OCOMP registration.
     ValidatorIdentities {
-        /// Exact four-validator public bootstrap manifest.
+        /// Ordered public bootstrap manifest for every genesis validator.
         #[arg(long)]
         validators: PathBuf,
     },

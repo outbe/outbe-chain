@@ -3,6 +3,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 #[cfg(feature = "ocomp-integration")]
+use outbe_ocomp_protocol::profile::{
+    poc_schema_limits, CapacityProfileV1, OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS,
+};
+#[cfg(feature = "ocomp-integration")]
 use sha2::{Digest as _, Sha256};
 
 const VALIDATOR_COUNT: usize = 4;
@@ -28,8 +32,6 @@ const ARTIFACT_FILES: &[&str] = &[
     "genesis-final.json",
     "network-binding-v1.json",
     "protocol-bundle-v1.ocb1",
-    "result-committee-public-v1.json",
-    "result-committee-v1.ocb1",
     "semantic-artifacts-v1.json",
 ];
 
@@ -106,6 +108,30 @@ fn canonical_final_artifacts_are_complete_hash_bound_and_node_loadable() {
     }
 
     let capacity_bytes = fs::read(root.join("generated-capacity-v1.json")).unwrap();
+    let capacity: serde_json::Value = serde_json::from_slice(&capacity_bytes).unwrap();
+    let capacity_profile_bytes = hex::decode(
+        capacity["capacity_profile_ocb1_hex"]
+            .as_str()
+            .expect("capacity profile canonical hex"),
+    )
+    .unwrap();
+    let mut capacity_profile =
+        CapacityProfileV1::decode_canonical(&capacity_profile_bytes, &poc_schema_limits()).unwrap();
+    if capacity_profile.result_deadline_blocks != OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS {
+        capacity_profile.result_deadline_blocks = OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS;
+        let expected = capacity_profile
+            .encode_canonical(&poc_schema_limits())
+            .unwrap();
+        panic!(
+            "stale capacity response window: expected canonical_hex={} sha256=0x{}",
+            hex::encode(&expected),
+            hex::encode(Sha256::digest(&expected))
+        );
+    }
+    assert_eq!(
+        capacity["capacity_profile"]["result_deadline_blocks"], OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS,
+        "retained capacity JSON must expose the exact protocol response window"
+    );
     let network: serde_json::Value =
         serde_json::from_slice(&fs::read(root.join("network-binding-v1.json")).unwrap()).unwrap();
     assert_eq!(network["classification"], "final");
@@ -132,11 +158,24 @@ fn canonical_final_artifacts_are_complete_hash_bound_and_node_loadable() {
         outbe_metadosis::config::OcompForkInstallClassification::Final
     );
     assert_eq!(install.activation_height, 32);
-    assert_eq!(
-        install.result_committee.ordered_members.len(),
-        VALIDATOR_COUNT
-    );
-    assert_eq!(install.result_committee.threshold, 3);
+    for obsolete in [
+        "result-committee-public-v1.json",
+        "result-committee-v1.ocb1",
+    ] {
+        assert!(
+            !root.join(obsolete).exists(),
+            "canonical install must not retain independent OCOMP membership: {obsolete}"
+        );
+    }
+    for obsolete_binding in [
+        "result_committee_snapshot_hash",
+        "result_committee_ocb1_sha256",
+    ] {
+        assert!(
+            network.get(obsolete_binding).is_none(),
+            "network binding must not retain independent OCOMP membership: {obsolete_binding}"
+        );
+    }
     assert_eq!(
         install
             .request_profile
@@ -144,7 +183,6 @@ fn canonical_final_artifacts_are_complete_hash_bound_and_node_loadable() {
             .max_tributes_per_work_shard,
         256
     );
-    assert_eq!(install.request_profile.capacity_profile.max_pending_jobs, 2);
 }
 
 fn require_regular_file(path: &Path) {

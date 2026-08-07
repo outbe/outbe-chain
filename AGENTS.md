@@ -2,6 +2,58 @@
 
 This project uses **bd** (beads) for issue tracking. Run `bd prime` for full workflow context.
 
+## Architecture Freeze and PR Change Control
+
+For cross-cutting or consensus-sensitive work, do not start production-code edits until the implementation model is frozen. The pre-implementation record must contain:
+
+1. Scope and explicit non-goals.
+2. The complete set of invariants.
+3. A transition matrix covering states, events, relevant actor status, effects, errors, replay, restart, and deadline behavior.
+4. Final canonical wire/state type shapes and compatibility decisions.
+5. One owning module for each invariant.
+6. The expected production paths, hot files, tests, evidence, and ordered PR slices.
+
+Test-first work starts after this architecture freeze. Tests may drive implementation details, but must not be used to discover the public state machine one field at a time.
+
+### PRs are the primary delivery unit
+
+- Split work by architectural seam, not merely by Beads task or commit.
+- Each PR must be independently reviewable, compile, pass its applicable tests, and leave all production paths correct.
+- A PR may introduce isolated, dormant scaffolding for a later slice, but must not route production through an incomplete path or depend on a future PR for correctness.
+- Commits are coherent checkpoints inside a PR; they are not a substitute for PR-level slicing.
+- Prefer stacked PRs when later seams depend on earlier ones. Every PR in the stack must still be green and internally consistent.
+- Before implementation, give each hot file at most two expected semantic passes: the planned implementation pass and an integration-correction pass. Formatting and mechanical constructor updates do not count.
+
+### Stop and re-plan triggers
+
+Stop implementation and update the specification, Beads graph, and PR boundaries before continuing when any of these occurs:
+
+- a new invariant or state transition is discovered;
+- a production path outside the approved ownership/file map becomes necessary;
+- a hot file requires a third semantic pass;
+- a canonical type or consensus-visible behavior must change after its slice started;
+- a review finding invalidates the architecture of the current slice.
+
+Do not wait until the end of a multi-day implementation to surface such a conflict.
+
+### Handling user corrections during implementation
+
+- If the correction changes a core invariant, consensus/security behavior, canonical format, or proves the current direction wrong, stop at the next safe checkpoint immediately. State the impact, record the decision, audit work already done, revise the plan/PR slices, and only then resume.
+- If the correction is local and the current PR remains correct without it, record a separate Beads issue and keep it out of the current PR unless the user explicitly asks to include it now.
+- If classification is uncertain, surface the question immediately with the concrete affected invariant and files. The user must not have to wait for the whole branch to finish before correcting a wrong assumption.
+
+### Scope audit at every slice
+
+At the end of each PR slice compare the actual diff with the approved plan:
+
+- fixed point and PR objective;
+- expected versus touched production paths;
+- hot-file semantic-pass count;
+- invariants and transition-matrix rows covered by tests;
+- newly discovered paths or follow-up issues.
+
+Adjacent cleanup, refactors, or review findings belong in separate Beads issues and PRs unless they are required for the current slice to be correct.
+
 > **Architecture in one line:** Issues live in a local Dolt database
 > (`.beads/dolt/`); cross-machine sync uses `bd dolt push/pull` (a
 > git-compatible protocol), stored under `refs/dolt/data` on your git

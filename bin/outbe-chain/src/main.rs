@@ -205,9 +205,7 @@ async fn run_renewal_worker_v1(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn run_upgrade_promotion_worker_v1<P>(
-    provider: P,
+struct UpgradePromotionWorkerConfigV1 {
     chain_id: u64,
     genesis_hash: alloy_primitives::B256,
     node_data_dir: PathBuf,
@@ -215,9 +213,21 @@ async fn run_upgrade_promotion_worker_v1<P>(
     warning_blocks: u64,
     critical_blocks: u64,
     promoted: Arc<tokio::sync::Notify>,
-) where
+}
+
+async fn run_upgrade_promotion_worker_v1<P>(provider: P, config: UpgradePromotionWorkerConfigV1)
+where
     P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory + Send + Sync + 'static,
 {
+    let UpgradePromotionWorkerConfigV1 {
+        chain_id,
+        genesis_hash,
+        node_data_dir,
+        poll_secs,
+        warning_blocks,
+        critical_blocks,
+        promoted,
+    } = config;
     loop {
         let snapshot = match inspect_upgrade_journal_v1(&node_data_dir) {
             Ok(Some(snapshot)) => snapshot,
@@ -746,7 +756,6 @@ fn run_node() -> eyre::Result<()> {
         ProjectionReadinessHandle,
         Arc<dyn FinalizedCeCommitter>,
         Arc<dyn CeStartupRecovery>,
-        Arc<CompressedTreeService>,
     )>();
     let (consensus_dead_tx, mut consensus_dead_rx) = oneshot::channel::<()>();
     let shutdown_token = tokio_util::sync::CancellationToken::new();
@@ -756,17 +765,11 @@ fn run_node() -> eyre::Result<()> {
     let shutdown_token_clone = shutdown_token.clone();
     let bridge_for_consensus = bridge.clone();
     let consensus_thread_fn = move || -> eyre::Result<()> {
-        let (
-            node,
-            mut args,
-            projection_readiness,
-            finalized_ce_committer,
-            ce_startup_recovery,
-            _compressed_tree_service,
-        ) = match node_rx.blocking_recv() {
-            Ok(v) => v,
-            Err(_) => return Ok(()),
-        };
+        let (node, mut args, projection_readiness, finalized_ce_committer, ce_startup_recovery) =
+            match node_rx.blocking_recv() {
+                Ok(v) => v,
+                Err(_) => return Ok(()),
+            };
 
         args.validate()?;
 
@@ -1205,6 +1208,13 @@ fn run_node() -> eyre::Result<()> {
             .data_dir()
             .to_path_buf();
         let genesis_hash = builder.config().chain.genesis_hash();
+        let local_lysis_results = Arc::new(
+            outbe_node::ocomp::local_result::LocalLysisResultStore::open(
+                ce_data_dir.join("ocomp-local-results-v1"),
+                outbe_ocomp_protocol::profile::poc_schema_limits(),
+            )
+            .wrap_err("failed to open durable node-local Lysis result store")?,
+        );
         let ce_identity = EnvironmentIdentity {
             local_storage_schema_version: LOCAL_STORAGE_SCHEMA_VERSION,
             chain_id: builder.config().chain.chain().id(),
@@ -1247,7 +1257,9 @@ fn run_node() -> eyre::Result<()> {
                 compressed_tree_service.clone(),
             ),
         };
-        let outbe_node = outbe_node.with_ocomp_fork_install(ocomp_fork_install);
+        let outbe_node = outbe_node
+            .with_ocomp_fork_install(ocomp_fork_install)
+            .with_ocomp_local_result_authority(local_lysis_results.clone());
         let (projection_exit_tx, mut projection_exit_rx) =
             tokio::sync::mpsc::unbounded_channel();
         let projection_readiness_for_rpc = projection_readiness.clone();
@@ -1344,13 +1356,15 @@ fn run_node() -> eyre::Result<()> {
             let promoted = upgrade_promotion.clone();
             Some(tokio::spawn(run_upgrade_promotion_worker_v1(
                 provider,
-                proof_chain_id,
-                genesis_hash,
-                node_data_dir.clone(),
-                args.tee_renewal_poll_secs,
-                args.tee_renewal_warning_blocks,
-                args.tee_renewal_critical_blocks,
-                promoted,
+                UpgradePromotionWorkerConfigV1 {
+                    chain_id: proof_chain_id,
+                    genesis_hash,
+                    node_data_dir: node_data_dir.clone(),
+                    poll_secs: args.tee_renewal_poll_secs,
+                    warning_blocks: args.tee_renewal_warning_blocks,
+                    critical_blocks: args.tee_renewal_critical_blocks,
+                    promoted,
+                },
             )))
         } else {
             None
@@ -1391,7 +1405,6 @@ fn run_node() -> eyre::Result<()> {
                 projection_readiness,
                 finalized_ce_committer,
                 ce_startup_recovery,
-                compressed_tree_service,
             ));
 
             tokio::select! {

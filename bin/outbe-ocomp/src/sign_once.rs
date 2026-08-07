@@ -38,8 +38,10 @@ pub struct SignOnceSubjectV1 {
     pub job_id: B256,
     pub attempt: u32,
     pub protocol_bundle_hash: B256,
-    pub committee_snapshot_hash: B256,
-    pub validator_index: u8,
+    pub result_validator_set_epoch: u64,
+    pub result_committee_set_hash: B256,
+    pub result_ocomp_binding_hash: B256,
+    pub validator_index: u16,
     pub key_epoch: u64,
     pub result_digest: B256,
 }
@@ -53,7 +55,9 @@ impl SignOnceSubjectV1 {
             protocol_bundle_hash: self.protocol_bundle_hash,
             job_id: self.job_id,
             attempt: self.attempt,
-            result_committee_snapshot_hash: self.committee_snapshot_hash,
+            result_validator_set_epoch: self.result_validator_set_epoch,
+            result_committee_set_hash: self.result_committee_set_hash,
+            result_ocomp_binding_hash: self.result_ocomp_binding_hash,
             validator_index: self.validator_index,
             key_epoch: self.key_epoch,
             purpose: SignOncePurpose::ResultSignature as u8,
@@ -71,7 +75,9 @@ impl SignOnceSubjectV1 {
             job_id: self.job_id,
             attempt: self.attempt,
             protocol_bundle_hash: self.protocol_bundle_hash,
-            committee_snapshot_hash: self.committee_snapshot_hash,
+            result_validator_set_epoch: self.result_validator_set_epoch,
+            result_committee_set_hash: self.result_committee_set_hash,
+            result_ocomp_binding_hash: self.result_ocomp_binding_hash,
             validator_index: self.validator_index,
             key_epoch: self.key_epoch,
             result_digest: self.result_digest,
@@ -87,7 +93,9 @@ impl SignOnceSubjectV1 {
             && record.job_id == self.job_id
             && record.attempt == self.attempt
             && record.protocol_bundle_hash == self.protocol_bundle_hash
-            && record.committee_snapshot_hash == self.committee_snapshot_hash
+            && record.result_validator_set_epoch == self.result_validator_set_epoch
+            && record.result_committee_set_hash == self.result_committee_set_hash
+            && record.result_ocomp_binding_hash == self.result_ocomp_binding_hash
             && record.validator_index == self.validator_index
             && record.key_epoch == self.key_epoch
             && record.result_digest == self.result_digest
@@ -734,7 +742,9 @@ fn records_share_subject(left: &SignOnceRecordV1, right: &SignOnceRecordV1) -> b
         && left.job_id == right.job_id
         && left.attempt == right.attempt
         && left.protocol_bundle_hash == right.protocol_bundle_hash
-        && left.committee_snapshot_hash == right.committee_snapshot_hash
+        && left.result_validator_set_epoch == right.result_validator_set_epoch
+        && left.result_committee_set_hash == right.result_committee_set_hash
+        && left.result_ocomp_binding_hash == right.result_ocomp_binding_hash
         && left.validator_index == right.validator_index
         && left.key_epoch == right.key_epoch
         && left.result_digest == right.result_digest

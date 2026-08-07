@@ -18,8 +18,6 @@ pub enum IntexError {
     InvalidState { expected: u8, actual: u8 },
     #[error("invalid stored lifecycle state value: {0}")]
     InvalidStateValue(u8),
-    #[error("cost amount overflow")]
-    CostAmountOverflow,
 }
 
 impl From<IntexError> for PrecompileError {

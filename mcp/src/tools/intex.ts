@@ -29,6 +29,7 @@ import {
   NFT_BRIDGE_ABI,
   INTEX_ABI,
   ORIGIN_ROUTER_ABI,
+  VAULT_ROUTER_ABI,
   bridgeDstChainId,
   intexAddress,
 } from "../intex/registry.js";
@@ -164,6 +165,65 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     metaCache.set(n.name, meta);
     return meta;
   }
+  /** Per-token NFT metadata URIs for a series; undefined when the chain has no NFT deployed. */
+  async function seriesMetadata(
+    n: Network,
+    series: number,
+  ): Promise<{ collection: string; issued: string; settled: string } | undefined> {
+    try {
+      const nft = addr(n, "nft");
+      const [issuedId, settledId] = (await n.client.readContract({
+        address: nft,
+        abi: NFT_ABI,
+        functionName: "tokenIds",
+        args: [series],
+      })) as [bigint, bigint];
+      const [collection, issued, settled] = (await Promise.all([
+        n.client.readContract({ address: nft, abi: NFT_ABI, functionName: "contractURI" }),
+        n.client.readContract({ address: nft, abi: NFT_ABI, functionName: "uri", args: [issuedId] }),
+        n.client.readContract({ address: nft, abi: NFT_ABI, functionName: "uri", args: [settledId] }),
+      ])) as [string, string, string];
+      return { collection, issued, settled };
+    } catch {
+      return undefined;
+    }
+  }
+  /** Payment tokens a series accepts: the vault router's assets for its reference currency. */
+  async function settlementTokens(n: Network, series: number): Promise<`0x${string}`[]> {
+    const d = (await n.client.readContract({
+      address: addr(n, "intex"),
+      abi: INTEX_ABI,
+      functionName: "seriesData",
+      args: [series],
+    })) as { referenceCurrency: number };
+    const assets = (await n.client.readContract({
+      address: addr(n, "vaultRouter"),
+      abi: VAULT_ROUTER_ABI,
+      functionName: "referenceCurrencyAssets",
+      args: [d.referenceCurrency],
+    })) as readonly `0x${string}`[];
+    return assets.map((t) => getAddress(t));
+  }
+
+  /** Per-Intex cost of settling `series` in `token`, in that token's minor units. */
+  async function costAmount(n: Network, series: number, token: `0x${string}`): Promise<bigint> {
+    return (await n.client.readContract({
+      address: addr(n, "factory"),
+      abi: FACTORY_ABI,
+      functionName: "costAmount",
+      args: [series, token],
+    })) as bigint;
+  }
+
+  /** ERC-20 decimals + symbol of an arbitrary settlement token. */
+  async function tokenMeta(n: Network, token: `0x${string}`): Promise<{ decimals: number; symbol: string }> {
+    const [decimals, symbol] = (await Promise.all([
+      n.client.readContract({ address: token, abi: ERC20_ABI, functionName: "decimals" }),
+      n.client.readContract({ address: token, abi: ERC20_ABI, functionName: "symbol" }),
+    ])) as [number, string];
+    return { decimals: Number(decimals), symbol };
+  }
+
   /** Bid rate as a fraction of strike ("0.8" = 80%) to the uint32 1e6 fixed-point the contract expects. */
   function toBidRate(rate: string): bigint {
     const raw = parseUnits(rate, 6);
@@ -201,6 +261,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       })) as Record<string, bigint | number>;
       const u256 = (v: bigint | number) => v as bigint;
       const callDeadlineSec = Number(d.calledAt) > 0 ? Number(d.calledAt) + Number(d.callNoticePeriod) : 0;
+      const metadata = await seriesMetadata(n, series);
       return ok({
         network: n.name,
         seriesId: Number(d.seriesId),
@@ -214,7 +275,6 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         callThreshold: Number(d.callThreshold),
         callNoticePeriod: Number(d.callNoticePeriod),
         // 6 dec: implied by the entry(1e18) * load(1e18) / 1e30 derivation.
-        costAmount: { raw: d.costAmountMinor.toString(), value: formatUnits(u256(d.costAmountMinor), 6), scale: "settlement-token minor" },
         issuanceCurrency: Number(d.issuanceCurrency), // ISO 4217 numeric
         referenceCurrency: Number(d.referenceCurrency),
         worldwideDay: Number(d.worldwideDay),
@@ -223,6 +283,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         calledAt: epochIso(d.calledAt),
         callDeadline: epochIso(callDeadlineSec),
         expired: callDeadlineSec > 0 && Math.floor(Date.now() / 1000) > callDeadlineSec,
+        metadata,
       });
     }),
   );
@@ -869,14 +930,98 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       "not to holder; since the MCP signs with one key, to land them on a different wallet that wallet must " +
       "settle/mine itself — Issued is transferable on BSC only while the series is Issued/Qualified (Called " +
       "freezes transfers), so move it before the call. Requires OUTBE_PRIVATE_KEY.",
-    { series: seriesArg, amount: amountArg, holder: accountArg, network: networkArg.optional(), wait: waitArg },
-    handler(async ({ series, amount, holder, network, wait }) => {
+    {
+      series: seriesArg,
+      amount: amountArg,
+      holder: accountArg,
+      payment_token: z.string().optional().describe("0x address of the stable to pay in; defaults to the first accepted token"),
+      network: networkArg.optional(),
+      wait: waitArg,
+    },
+    handler(async ({ series, amount, holder, payment_token, network, wait }) => {
       const n = await resolveNetwork(network ?? "outbe-testnet");
       const account = requireAccount();
       const intexHolder = holder ? getAddress(holder) : account.address;
-      const data = encodeFunctionData({ abi: FACTORY_ABI, functionName: "settle", args: [series, intexHolder, BigInt(amount)] });
-      const receipt = await submit(n, addr(n, "factory"), data, 0n, wait);
-      return ok({ network: n.name, series, intexHolder, amount, self: intexHolder === account.address, ...receipt });
+
+      let token: `0x${string}`;
+      if (payment_token) {
+        token = getAddress(payment_token);
+      } else {
+        const tokens = await settlementTokens(n, series);
+        if (tokens.length === 0) {
+          throw new Error(`no settlement token is registered for series ${series}`);
+        }
+        token = tokens[0];
+      }
+      const [costAmountMinor, { decimals: tokenDec, symbol: tokenSymbol }] = await Promise.all([
+        costAmount(n, series, token),
+        tokenMeta(n, token),
+      ]);
+      const factory = addr(n, "factory");
+      const total = costAmountMinor * BigInt(amount);
+
+      const allowance = (await n.client.readContract({
+        address: token,
+        abi: ERC20_ABI,
+        functionName: "allowance",
+        args: [account.address, factory],
+      })) as bigint;
+      let autoApprove: { txHash: Hex; amount: string } | null = null;
+      if (allowance < total) {
+        const approveData = encodeFunctionData({
+          abi: ERC20_ABI,
+          functionName: "approve",
+          args: [factory, total],
+        });
+        const ar = await submit(n, token, approveData, 0n, true); // must be mined before settle
+        autoApprove = { txHash: ar.txHash, amount: total.toString() };
+      }
+
+      const data = encodeFunctionData({
+        abi: FACTORY_ABI,
+        functionName: "settle",
+        args: [series, intexHolder, BigInt(amount), token],
+      });
+      const receipt = await submit(n, factory, data, 0n, wait);
+      return ok({
+        network: n.name,
+        series,
+        intexHolder,
+        amount,
+        paymentToken: { address: token, symbol: tokenSymbol, decimals: tokenDec },
+        costAmount: { raw: costAmountMinor.toString(), value: formatUnits(costAmountMinor, tokenDec) },
+        total: { raw: total.toString(), value: formatUnits(total, tokenDec) },
+        autoApprove,
+        self: intexHolder === account.address,
+        ...receipt,
+      });
+    }),
+  );
+
+  server.tool(
+    "intex_settlement_tokens",
+    "Tokens you can settle a series with and the per-Intex cost in each. Pass one of these to " +
+      "auction_bid_settle as payment_token; it approves the factory for what it needs.",
+    { series: seriesArg, network: networkArg.optional() },
+    handler(async ({ series, network }) => {
+      const n = await resolveNetwork(network ?? "outbe-testnet");
+      const tokens = await settlementTokens(n, series);
+      const priced = await Promise.all(
+        tokens.map(async (token) => {
+          const [decimals, symbol, cost] = await Promise.all([
+            n.client.readContract({ address: token, abi: ERC20_ABI, functionName: "decimals" }),
+            n.client.readContract({ address: token, abi: ERC20_ABI, functionName: "symbol" }),
+            costAmount(n, series, token),
+          ]);
+          return {
+            token,
+            symbol: symbol as string,
+            decimals: Number(decimals),
+            costAmount: { raw: cost.toString(), value: formatUnits(cost, Number(decimals)) },
+          };
+        }),
+      );
+      return ok({ network: n.name, series, tokens: priced });
     }),
   );
 
@@ -921,16 +1066,15 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       });
       const seq = logs.length;
       const pow = grindNonce(holder, promisAmount, series, seq);
-      const data = encodeFunctionData({ abi: FACTORY_ABI, functionName: "minePromis", args: [series, amt, pow.nonce] });
-      const receipt = await submit(n, addr(n, "factory"), data, 0n, wait);
-      return ok({
-        network: n.name,
-        series,
-        amount: amt.toString(),
-        promisAmount: promisAmount.toString(),
-        pow: { nonce: pow.nonce.toString(), iterations: pow.iterations, hash: pow.hash, difficulty: POW_DIFFICULTY, seq },
-        ...receipt,
-      });
+      throw new Error(
+        "minePromis also requires a Promis modify-auth mac and opNonce, which this server cannot produce: " +
+          "the modify key is sealed to an ephemeral X25519 key by outbe_deriveKeys(Promis, ...) and no unsealing " +
+          "or mac derivation is implemented here. " +
+          `Proof of work is done — nonce ${pow.nonce} (seq ${seq}, difficulty ${POW_DIFFICULTY}, ` +
+          `${pow.iterations} iterations, hash ${pow.hash}) ` +
+          `for ${promisAmount} Promis on series ${series}. Submit minePromis(${series}, ${amt}, ${pow.nonce}, mac, opNonce) ` +
+          "with a client that holds the modify key.",
+      );
     }),
   );
 

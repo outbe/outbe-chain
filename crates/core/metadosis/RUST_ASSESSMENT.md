@@ -122,7 +122,8 @@ The crate correctly follows the repo's `StorageHandle` DI model — no global mu
 - `as` casts: only enum-`#[repr(u8)]` discriminant reads (`activation.rs:498`, `fork.rs:131` — safe) plus `constants.rs:42/:44` narrowing `u64 as usize` on compile-time constants without the justification comment the repo rule requires (values 26 and 5 — safe in fact, non-compliant in letter). Everywhere else the crate correctly uses `try_from` (14+ sites).
 - Asymmetric `PartialEq<u8>` on `WwdStatus`/`WwdDayType` (`aggregate.rs:70–74`, `:99–103`): `status == 5u8` compiles, `5u8 == status` does not — and the impls weaken the type safety the enums exist to provide.
 - **Ambiguous positional `bool`s:** `commit.rs:513 commit_status(..., emit_status_change: bool)` — called with bare `true`/`false` literals at 5 sites; the `false` at `:466` is a semantically significant event-suppression expressed as an unlabelled literal. Also `commands.rs:158 is_static`, `settlement.rs:266 is_green`. The crate already has the right pattern (`reducer.rs:70–74` named struct field).
-- Triplicated capacity constants reconciled only at runtime: `codec.rs:19 MAX_LIVE_JOBS = 2` vs `profile.rs:139 max_pending_jobs != 2` vs `constants.rs:61 MAX_RETAINED_WWDS = 2`, tied together by a runtime equality check at `authority.rs:28` instead of derivation.
+- Live jobs are keyed independently; aggregate scans remain bounded by canonical
+  WWD retention and wire indexes by their encoded length.
 - Overlapping reject-code namespaces: `activation.rs:38–45` and `vote.rs:29–32` both define codes `2` and `3` with different meanings (different selectors, so not a bug — but undocumented, with numeric gaps implying an external registry that is never referenced).
 
 **Clean:** zero `unsafe`, zero `f32`/`f64`, no primitive obsession in economic values (`U256` throughout), `#[repr(u8)]` enums with validated `TryFrom`.
@@ -234,7 +235,8 @@ The net effect: the only hard gates are fmt/clippy/test — and the test gate is
 Consequences, in order of arrival:
 1. At global length 365, `transitions.rs:340/:494/:577` reject any new terminal record for *any* day — a brand-new WWD's first completion is refused.
 2. ~~At 366, `store.rs:158` returns `Fatal` on every FSM read for every day.~~ **Correction: unreachable** — every push site guards `>=` at 365 while the read guards `>`, so the vector saturates at exactly 365 and reads keep working. The real failure is consequence 1: every subsequent terminal transition Fatals inside the mandatory begin-zone, and the `vote.rs:275-277` exact-response-deadline coupling makes the first rolled-back phase a permanent per-block Fatal (hard fork + state surgery to recover). Fuse: `min(~365 days healthy, ~24–26k blocks with one stuck day exhausting its own 365-retry budget)`.
-3. With `MAX_LIVE_JOBS = 2`, two concurrent days share one 365 budget — neither can reach its documented per-day retry allowance (cross-WWD budget theft) long before the cliff.
+3. Multiple concurrent days share the global 365 terminal-record budget, so the
+   terminal history accounting defect applies across WorldwideDays.
 4. Latent adjacent bug: `store.rs:177–189`'s `_ =>` arm fatals on `Completed` entries; masked today only because completion clears the per-day FSM state (`transitions.rs:676`), so a re-enqueued completed day would fatal on first read.
 
 This is not a style finding; it is a liveness bug with a calendar. Fix requires either per-WWD scoping of the vector, pruning on completion, or checking the per-day filtered count — plus a regression test that drives >365 global terminal records across ≥2 days.

@@ -24,8 +24,9 @@ use outbe_offchain_data::{
     TributeRetentionSelector, PROJECTION_STATE_KEY, PROJECTION_STATE_NAMESPACE,
 };
 use outbe_offchain_storage::{
-    AtomicWriteBatch, AtomicWriteOperation, Key, MemoryStorage, Namespace, ScanPage, ScanRequest,
-    StorageError, StorageMetadata, StorageReader, StorageWriter, StoredValue,
+    AtomicWriteBatch, AtomicWriteOperation, Key, MemoryStorage, Namespace, PendingOverlayStorage,
+    ScanPage, ScanRequest, StorageError, StorageMetadata, StorageReader, StorageWriter,
+    StoredValue,
 };
 use outbe_primitives::addresses::{NOD_ADDRESS, TRIBUTE_ADDRESS};
 use outbe_tribute::{
@@ -393,6 +394,147 @@ fn projects_primary_indexes_provenance_and_writes_checkpoint_last() {
     assert!(batches[1].contains(&"tributes_by_owner".to_owned()));
     assert!(batches[1].contains(&"tributes_by_day".to_owned()));
     assert!(batches[1].contains(&PROJECTION_STATE_NAMESPACE.to_owned()));
+}
+
+#[test]
+fn logical_projection_advances_before_the_durable_batch_is_written() {
+    let durable = Arc::new(MemoryStorage::new());
+    let bootstrap =
+        OffchainDataProjection::open(config(10), durable.clone(), durable.clone()).unwrap();
+    assert_eq!(bootstrap.state().checkpoint, None);
+
+    let overlay = Arc::new(PendingOverlayStorage::new(durable.clone()));
+    let mut logical =
+        OffchainDataProjection::open(config(10), overlay.clone(), overlay.clone()).unwrap();
+    let owner = Address::repeat_byte(0xa2);
+    let tribute_id = poseidon_entity(owner, 20260715);
+    let block = FinalizedBlock {
+        number: 10,
+        hash: B256::repeat_byte(0x42),
+        receipts: vec![receipt(
+            0,
+            0x43,
+            vec![log(
+                0,
+                TRIBUTE_ADDRESS,
+                tribute_stored(tribute_id, owner, 20260715),
+            )],
+        )],
+    };
+
+    let prepared = logical.prepare_block(&block).unwrap();
+    let (outcome, durable_batch) = logical.apply_prepared_with_batch(prepared).unwrap();
+
+    assert!(matches!(
+        outcome,
+        ProjectionOutcome::Applied { checkpoint, .. }
+            if checkpoint.block_number == 10 && checkpoint.block_hash == block.hash
+    ));
+    assert_eq!(
+        read_projection_state(config(10), overlay.clone())
+            .unwrap()
+            .unwrap()
+            .checkpoint,
+        Some(outbe_offchain_data::ProjectionCheckpoint {
+            block_number: 10,
+            block_hash: block.hash,
+        })
+    );
+    assert_eq!(
+        read_projection_state(config(10), durable.clone())
+            .unwrap()
+            .unwrap()
+            .checkpoint,
+        None,
+        "Mongo base must remain behind until its writer applies the returned batch"
+    );
+    assert!(TributeRepositoryReader::new(overlay)
+        .get(tribute_id)
+        .unwrap()
+        .is_some());
+
+    durable.apply_atomic(&durable_batch).unwrap();
+    assert_eq!(
+        read_projection_state(config(10), durable)
+            .unwrap()
+            .unwrap()
+            .checkpoint,
+        Some(outbe_offchain_data::ProjectionCheckpoint {
+            block_number: 10,
+            block_hash: block.hash,
+        })
+    );
+}
+
+#[test]
+fn restart_replays_pending_finalized_receipts_from_the_durable_checkpoint() {
+    let durable = Arc::new(MemoryStorage::new());
+    let owner = Address::repeat_byte(0xb2);
+    let durable_id = poseidon_entity(owner, 20260715);
+    let pending_id = poseidon_entity(owner, 20260716);
+    let durable_block = FinalizedBlock {
+        number: 10,
+        hash: B256::repeat_byte(0x51),
+        receipts: vec![receipt(
+            0,
+            0x52,
+            vec![log(
+                0,
+                TRIBUTE_ADDRESS,
+                tribute_stored(durable_id, owner, 20260715),
+            )],
+        )],
+    };
+    let pending_block = FinalizedBlock {
+        number: 11,
+        hash: B256::repeat_byte(0x53),
+        receipts: vec![receipt(
+            0,
+            0x54,
+            vec![log(
+                0,
+                TRIBUTE_ADDRESS,
+                tribute_stored(pending_id, owner, 20260716),
+            )],
+        )],
+    };
+    let mut durable_projection =
+        OffchainDataProjection::open(config(10), durable.clone(), durable.clone()).unwrap();
+    durable_projection.project_block(&durable_block).unwrap();
+
+    let lost_overlay = Arc::new(PendingOverlayStorage::new(durable.clone()));
+    let mut before_kill =
+        OffchainDataProjection::open(config(10), lost_overlay.clone(), lost_overlay.clone())
+            .unwrap();
+    before_kill.project_block(&pending_block).unwrap();
+    assert!(TributeRepositoryReader::new(lost_overlay)
+        .get(pending_id)
+        .unwrap()
+        .is_some());
+    drop(before_kill);
+
+    let rebuilt_overlay = Arc::new(PendingOverlayStorage::new(durable.clone()));
+    let mut after_restart =
+        OffchainDataProjection::open(config(10), rebuilt_overlay.clone(), rebuilt_overlay.clone())
+            .unwrap();
+    assert_eq!(after_restart.state().checkpoint.unwrap().block_number, 10);
+    after_restart.project_block(&pending_block).unwrap();
+
+    assert_eq!(after_restart.state().checkpoint.unwrap().block_number, 11);
+    assert!(TributeRepositoryReader::new(rebuilt_overlay)
+        .get(pending_id)
+        .unwrap()
+        .is_some());
+    assert_eq!(
+        read_projection_state(config(10), durable)
+            .unwrap()
+            .unwrap()
+            .checkpoint
+            .unwrap()
+            .block_number,
+        10,
+        "replay must rebuild RAM state without pretending Mongo already committed it"
+    );
 }
 
 #[test]

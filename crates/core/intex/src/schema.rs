@@ -128,22 +128,6 @@ impl SeriesRecord {
             call_notice_period: self.call_notice_period,
         }
     }
-
-    pub fn cost_amount_minor(&self) -> Result<U256, IntexError> {
-        cost_amount_minor(self.entry_price_minor, self.promis_load_minor)
-    }
-}
-
-/// Per-Intex settlement cost = `entry_price * promis_load / 1e30` (payment-token
-/// minor): entry is 1e18 oracle scale and `promis_load_minor` is PROMIS * 1e18.
-pub fn cost_amount_minor(
-    entry_price_minor: U256,
-    promis_load_minor: U256,
-) -> Result<U256, IntexError> {
-    entry_price_minor
-        .checked_mul(promis_load_minor)
-        .map(|v| v / U256::from(10u64).pow(U256::from(30u64)))
-        .ok_or(IntexError::CostAmountOverflow)
 }
 
 /// Paginated creator-reward distribution progress for a series. Exists while a

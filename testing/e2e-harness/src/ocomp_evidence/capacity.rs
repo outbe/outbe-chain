@@ -10,7 +10,6 @@ use outbe_ocomp_protocol::capacity::{
     CapacityRecoveredGenerationBindingV1, CapacityRunBindingV1, CapacityValidatorBlockProcessingV1,
     CapacityWorkBillV1, ObservedMachineFactsV1, VerifiedCapacityEvidenceV1,
 };
-use outbe_ocomp_protocol::committee::POC_COMMITTEE_SIZE;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -245,7 +244,7 @@ pub fn assemble_capacity_run(ordinal: u8, scenario_path: &Path) -> Result<Capaci
                 .copied()
                 .max()
                 == Some(public.block_processing_micros),
-        "capacity block-processing maximum is not bound to four live validator observations"
+        "capacity block-processing maximum is not bound to live validator observations"
     );
     ensure!(
         historical_replay.recovered_generation.job_id == public.job_id
@@ -257,16 +256,7 @@ pub fn assemble_capacity_run(ordinal: u8, scenario_path: &Path) -> Result<Capaci
             && historical_replay.recovered_generation.block_hash == public.q_forming_block_hash,
         "historical CE replay did not recover the exact certified public generation"
     );
-    let validator_timings: [u64; POC_COMMITTEE_SIZE] = public
-        .block_processing_micros_by_validator
-        .try_into()
-        .map_err(|values: Vec<u64>| {
-            eyre::eyre!(
-                "capacity block-processing observation count is {}, expected {}",
-                values.len(),
-                POC_COMMITTEE_SIZE
-            )
-        })?;
+    let validator_timings = &public.block_processing_micros_by_validator;
 
     Ok(CapacityColdRunV1 {
         ordinal,
@@ -288,17 +278,22 @@ pub fn assemble_capacity_run(ordinal: u8, scenario_path: &Path) -> Result<Capaci
             tribute_count: public.tribute_count,
             nod_count: public.nod_count,
             worker_shard_count: public.worker_shard_count,
-            validator_block_processing: std::array::from_fn(|validator_index| {
-                CapacityValidatorBlockProcessingV1 {
-                    validator_index: u8::try_from(validator_index)
-                        .expect("fixed PoC committee index fits u8"),
-                    block_number: public.q_forming_block_number,
-                    block_hash: public.q_forming_block_hash,
-                    elapsed_micros: validator_timings[validator_index],
-                }
-            }),
+            validator_block_processing: validator_timings
+                .iter()
+                .copied()
+                .enumerate()
+                .map(
+                    |(validator_index, elapsed_micros)| CapacityValidatorBlockProcessingV1 {
+                        validator_index: u16::try_from(validator_index)
+                            .expect("consensus validator index fits u16"),
+                        block_number: public.q_forming_block_number,
+                        block_hash: public.q_forming_block_hash,
+                        elapsed_micros,
+                    },
+                )
+                .collect(),
             historical_replay: CapacityHistoricalReplayBindingV1 {
-                validator_index: historical_replay.recovery.validator_index,
+                validator_index: u16::from(historical_replay.recovery.validator_index),
                 first_missing_block_number: historical_replay.recovery.first_missing_block_number,
                 target_block_number: historical_replay.recovery.target_block_number,
                 target_block_hash: historical_replay.recovery.target_block_hash,

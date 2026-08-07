@@ -56,9 +56,14 @@ pub const MAX_PIPELINE_WWDS: usize = if NORMAL_PIPELINE_WWDS > BOOTSTRAP_PIPELIN
     BOOTSTRAP_PIPELINE_WWDS + 1
 };
 
-/// Retained READY/OFFCHAIN_PENDING work admitted by the genesis-pinned OCOMP
-/// capacity profile (`max_pending_jobs = 2`).
-pub const MAX_RETAINED_WWDS: usize = 2;
+/// Maximum WWD records kept. This is the canonical historical retention bound,
+/// not a concurrent OCOMP job admission limit.
+pub const MAX_RECORDS_KEPT: usize = 365;
+
+/// READY/OFFCHAIN_PENDING work can use the same population already bounded by
+/// the canonical WWD record-retention policy. OCOMP does not impose a smaller
+/// concurrent live-job cap.
+pub const MAX_RETAINED_WWDS: usize = MAX_RECORDS_KEPT;
 
 /// Exact bound for every scan of the active WorldwideDay aggregate.
 pub const MAX_ACTIVE_WWDS: usize = MAX_PIPELINE_WWDS + MAX_RETAINED_WWDS;
@@ -68,9 +73,6 @@ pub const MAX_ACTIVE_WWDS: usize = MAX_PIPELINE_WWDS + MAX_RETAINED_WWDS;
 pub const MAX_ADMISSION_WAIT_TICKS: usize = MAX_PIPELINE_WWDS;
 pub const MAX_ADMISSION_WAIT_HOURS: u64 =
     MAX_ADMISSION_WAIT_TICKS as u64 * WWD_ADVANCE_TICK_CADENCE_HOURS;
-
-/// Maximum wwd records kept.
-pub const MAX_RECORDS_KEPT: usize = 365;
 
 /// UTC+14 offset in seconds (14 * 3600).
 pub const UTC_PLUS_14_OFFSET: u64 = 50_400;

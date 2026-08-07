@@ -93,6 +93,20 @@ Feature: Off-chain computation public path
     And the held validator vote is broadcast at the exclusive deadline
     Then the no-quorum job expires at its exclusive deadline without creating Nod
 
+  @metadosis-failure-recovery
+  Scenario: Exhausted OCOMP attempts fail one WWD without halting the chain
+    Given a fresh four-validator OCOMP failure-recovery localnet
+    When validators 2 and 3 OCOMP supervisors are stopped before the job
+    And an operator submits one encrypted tribute offer
+    Then the tribute transaction succeeds and supply becomes one
+    And every validator projects the same tribute and indexes
+    Then Metadosis creates one finalized JobIntent from that public Tribute
+    When the validator supervisors submit results directly for that finalized JobIntent
+    Then the no-quorum job expires at its exclusive deadline without creating Nod
+    And the exhausted no-quorum OCOMP day fails atomically
+    When all validator nodes and OCOMP node-facing processes restart with preserved data
+    Then the failed WWD and accounting remain identical after restart
+
   @ocomp-public-mutation
   # OCOMP-TEST-ID: OCM-PUB-002
   Scenario: A changed binding cannot mutate a non-quorum job or prevent exact recovery

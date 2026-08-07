@@ -39,11 +39,11 @@ fn register_active_validator(storage: StorageHandle, addr: Address, seed: u8) {
     let mut vs = ValidatorSet::new(storage.clone());
     if vs.config_owner.read().unwrap().is_zero() {
         vs.config_owner.write(VALIDATOR_OWNER).unwrap();
-        vs.config_max_validators.write(100).unwrap();
+        vs.set_config_max_validators(100).unwrap();
     }
     vs.register_validator(VALIDATOR_OWNER, addr, &dummy_pubkey(seed))
         .unwrap();
-    vs.activate_validator(addr).unwrap();
+    vs.activate_validator_via_boundary_for_test(addr).unwrap();
 }
 
 fn setup_four_validators(storage: StorageHandle) {

@@ -56,7 +56,7 @@ fn register_validator(storage: StorageHandle, validator: Address) {
     let owner = address!("0xffffffffffffffffffffffffffffffffffffffff");
     let mut val_set = ValidatorSet::new(storage.clone());
     val_set.config_owner.write(owner).expect("write owner");
-    val_set.config_max_validators.write(100).expect("write max");
+    val_set.set_config_max_validators(100).expect("write max");
     val_set
         .register_validator(owner, validator, &[0u8; 48])
         .expect("register_validator");
@@ -199,7 +199,9 @@ fn test_unstake_below_min_sets_exiting_status() {
             val_set.val_status.read(&validator).unwrap(),
             status::PENDING
         );
-        val_set.activate_validator(validator).unwrap();
+        val_set
+            .activate_validator_via_boundary_for_test(validator)
+            .unwrap();
         assert_eq!(val_set.val_status.read(&validator).unwrap(), status::ACTIVE);
 
         // Unstake to drop below min_stake
@@ -249,7 +251,9 @@ fn test_unstake_from_jailed_goes_exiting() {
         s.stake(validator, validator, U256::from(MIN_STAKE))
             .unwrap();
         let mut val_set = ValidatorSet::new(storage.clone());
-        val_set.activate_validator(validator).unwrap();
+        val_set
+            .activate_validator_via_boundary_for_test(validator)
+            .unwrap();
         val_set.jail_validator(validator).unwrap();
         assert_eq!(val_set.val_status.read(&validator).unwrap(), status::JAILED);
 
@@ -270,7 +274,9 @@ fn test_unjail_requires_min_stake_and_explicit_tx() {
         let validator = address!("0x4D44444444444444444444444444444444444444");
         register_validator(storage.clone(), validator);
         let mut val_set = ValidatorSet::new(storage.clone());
-        val_set.activate_validator(validator).unwrap();
+        val_set
+            .activate_validator_via_boundary_for_test(validator)
+            .unwrap();
         val_set.jail_validator(validator).unwrap();
 
         // No stake yet → unjail rejected (needs >= min_stake).
@@ -379,7 +385,9 @@ fn test_slash_below_min_stake_transitions_to_exiting() {
             val_set.val_status.read(&validator).unwrap(),
             status::PENDING
         );
-        val_set.activate_validator(validator).unwrap();
+        val_set
+            .activate_validator_via_boundary_for_test(validator)
+            .unwrap();
         assert_eq!(val_set.val_status.read(&validator).unwrap(), status::ACTIVE);
 
         // Slash 50% — new stake = 500, below min_stake (1000)

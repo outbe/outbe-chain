@@ -60,6 +60,5 @@ fn to_abi_data(r: &SeriesRecord) -> Result<IIntex::SeriesData> {
         issuanceCurrency: r.issuance_currency,
         referenceCurrency: r.reference_currency,
         worldwideDay: r.worldwide_day,
-        costAmountMinor: r.cost_amount_minor()?,
     })
 }

@@ -1,7 +1,7 @@
 @tee @min-validators-4
 Feature: Validator lifecycle — cold sync, promote, in-flight offer, exit
   # One chain through four lifecycle stages:
-  # S1 a cold full node syncs and matches state/supply through its own enclave;
+  # S1 a cold non-validator FullNode process syncs and matches state/supply;
   # S2 it stakes + confirms and is promoted to ACTIVE via a reshare;
   # S6 a tribute offer submitted during the reshare window lands exactly once;
   # S3 it deactivates, the committee reshares down, and the node demotes to a

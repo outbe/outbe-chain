@@ -2,17 +2,14 @@
 //!
 //! This builder is deliberately observational: it cannot create a JobIntent,
 //! snapshot, manifest, result or state. It only closes a record after the
-//! harness has retained a successful public receipt/finality reference and four
-//! independently observed Mongo/CE source packages.
+//! harness has retained a successful public receipt/finality reference and one
+//! independently observed Mongo/CE source package per pinned validator.
 
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
-
-/// The PoC has four independent validator/OCOMP administrative domains.
-pub const OCOMP_VALIDATOR_DOMAINS: u8 = 4;
 
 /// Public transaction, inclusion and finalized-chain evidence for one Tribute.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -85,6 +82,7 @@ pub enum CorrelationError {
     JobIntentBindingMismatch(&'static str),
     JobIntentMissing,
     EmptyField(&'static str),
+    InvalidValidatorCount(usize),
 }
 
 impl fmt::Display for CorrelationError {
@@ -102,7 +100,7 @@ impl fmt::Display for CorrelationError {
             Self::InvalidValidatorIndex(index) => {
                 write!(
                     formatter,
-                    "validator index {index} is outside the four-domain PoC"
+                    "validator index {index} is outside the pinned snapshot"
                 )
             }
             Self::DuplicateValidator(index) => {
@@ -135,21 +133,42 @@ impl fmt::Display for CorrelationError {
             }
             Self::JobIntentMissing => formatter.write_str("JobIntent evidence is missing"),
             Self::EmptyField(field) => write!(formatter, "evidence field {field} is empty"),
+            Self::InvalidValidatorCount(count) => {
+                write!(
+                    formatter,
+                    "validator source count {count} is outside 1..=256"
+                )
+            }
         }
     }
 }
 
 impl Error for CorrelationError {}
 
-/// Ordered builder enforcing the public ingress → four sources → JobIntent path.
-#[derive(Clone, Debug, Default)]
+/// Ordered builder enforcing the public ingress → pinned sources → JobIntent path.
+#[derive(Clone, Debug)]
 pub struct TributeCorrelationBuilder {
+    expected_validator_count: usize,
     public_tribute: Option<PublicTributeCorrelationV1>,
     validator_sources: BTreeMap<u8, ValidatorSourceCorrelationV1>,
     job_intent: Option<JobIntentCorrelationV1>,
 }
 
 impl TributeCorrelationBuilder {
+    pub fn new(expected_validator_count: usize) -> Result<Self, CorrelationError> {
+        if !(1..=usize::from(u8::MAX) + 1).contains(&expected_validator_count) {
+            return Err(CorrelationError::InvalidValidatorCount(
+                expected_validator_count,
+            ));
+        }
+        Ok(Self {
+            expected_validator_count,
+            public_tribute: None,
+            validator_sources: BTreeMap::new(),
+            job_intent: None,
+        })
+    }
+
     pub fn record_public_tribute(
         &mut self,
         evidence: PublicTributeCorrelationV1,
@@ -166,7 +185,7 @@ impl TributeCorrelationBuilder {
         &mut self,
         evidence: ValidatorSourceCorrelationV1,
     ) -> Result<(), CorrelationError> {
-        if evidence.validator_index >= OCOMP_VALIDATOR_DOMAINS {
+        if usize::from(evidence.validator_index) >= self.expected_validator_count {
             return Err(CorrelationError::InvalidValidatorIndex(
                 evidence.validator_index,
             ));
@@ -267,7 +286,8 @@ impl TributeCorrelationBuilder {
 
     #[must_use]
     pub fn missing_validator_sources(&self) -> Vec<u8> {
-        (0..OCOMP_VALIDATOR_DOMAINS)
+        (0..self.expected_validator_count)
+            .map(|index| u8::try_from(index).expect("validator source index is bounded"))
             .filter(|index| !self.validator_sources.contains_key(index))
             .collect()
     }
@@ -423,35 +443,35 @@ mod tests {
     }
 
     #[test]
-    fn job_intent_cannot_precede_all_four_independent_source_packages() {
-        let mut builder = TributeCorrelationBuilder::default();
+    fn job_intent_cannot_precede_every_pinned_validator_source() {
+        let mut builder = TributeCorrelationBuilder::new(5).unwrap();
         builder.record_public_tribute(public()).unwrap();
-        for index in 0..3 {
+        for index in 0..4 {
             builder.record_validator_source(source(index)).unwrap();
         }
 
         assert_eq!(
             builder.record_job_intent(job()),
-            Err(CorrelationError::MissingValidatorSources(vec![3]))
+            Err(CorrelationError::MissingValidatorSources(vec![4]))
         );
-        builder.record_validator_source(source(3)).unwrap();
+        builder.record_validator_source(source(4)).unwrap();
         builder.record_job_intent(job()).unwrap();
 
         let fixture = builder.finish().unwrap();
-        assert_eq!(fixture.validator_sources.len(), 4);
+        assert_eq!(fixture.validator_sources.len(), 5);
         assert_eq!(
             fixture
                 .validator_sources
                 .iter()
                 .map(|source| source.validator_index)
                 .collect::<Vec<_>>(),
-            vec![0, 1, 2, 3]
+            vec![0, 1, 2, 3, 4]
         );
     }
 
     #[test]
     fn one_domain_source_mismatch_fails_before_job_binding() {
-        let mut builder = TributeCorrelationBuilder::default();
+        let mut builder = TributeCorrelationBuilder::new(4).unwrap();
         builder.record_public_tribute(public()).unwrap();
         builder.record_validator_source(source(0)).unwrap();
         let mut changed = source(1);

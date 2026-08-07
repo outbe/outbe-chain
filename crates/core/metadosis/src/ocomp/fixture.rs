@@ -4,9 +4,9 @@ use outbe_ocomp_protocol::{
     vote::OcompVoteAccountabilityV1,
     SchemaLimits,
 };
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 
-use crate::schema::MetadosisContract;
+use crate::{errors::storage_corruption_message, schema::MetadosisContract};
 
 use super::{
     index::{insert_response_deadline_key, remove_response_deadline_key, ResponseDeadlineKey},
@@ -33,60 +33,76 @@ impl MetadosisContract<'_> {
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
             if terminal_records == 0 || terminal_records >= fsm_limits.max_terminal_records {
-                return Err(fatal("invalid OCOMP terminal-history fixture request"));
+                return Err(storage_corruption_message(
+                    "invalid OCOMP terminal-history fixture request",
+                ));
             }
 
             let state = self
                 .live_ocomp_fsm_state_by_intent(live_intent_id, schema_limits, fsm_limits)?
-                .ok_or_else(|| fatal("terminal-history fixture has no live FSM"))?;
+                .ok_or_else(|| {
+                    storage_corruption_message("terminal-history fixture has no live FSM")
+                })?;
             let projection = state.projection();
             if projection.pending_nonce != 0
                 || projection.terminal_records != 0
                 || projection.deadline_height.is_none()
             {
-                return Err(fatal(
+                return Err(storage_corruption_message(
                     "terminal-history fixture requires the first live voting attempt",
                 ));
             }
             let base_record = self
                 .ocomp_job_record(live_intent_id, schema_limits)?
-                .ok_or_else(|| fatal("terminal-history fixture live job is missing"))?;
+                .ok_or_else(|| {
+                    storage_corruption_message("terminal-history fixture live job is missing")
+                })?;
             if base_record.status != OcompJobStatus::VotingOpen || base_record.terminal.is_some() {
-                return Err(fatal("terminal-history fixture requires a voting-open job"));
+                return Err(storage_corruption_message(
+                    "terminal-history fixture requires a voting-open job",
+                ));
             }
             let wwd = outbe_common::WorldwideDay::new(base_record.intent.wwd);
             if self.terminal_intent_count(wwd)? != 0 {
-                return Err(fatal("invalid OCOMP terminal-history fixture request"));
+                return Err(storage_corruption_message(
+                    "invalid OCOMP terminal-history fixture request",
+                ));
             }
             let base_finalized = base_record
                 .finalized
                 .as_ref()
-                .ok_or_else(|| fatal("terminal-history fixture job is not finalized"))?
+                .ok_or_else(|| {
+                    storage_corruption_message("terminal-history fixture job is not finalized")
+                })?
                 .clone();
             let old_response_key = self
                 .read_response_deadline_index()?
                 .into_iter()
                 .find(|key| key.intent_id == live_intent_id)
-                .ok_or_else(|| fatal("terminal-history fixture response key is missing"))?;
+                .ok_or_else(|| {
+                    storage_corruption_message("terminal-history fixture response key is missing")
+                })?;
             let retained_effect = state
                 .snapshot()
                 .live
-                .ok_or_else(|| fatal("terminal-history fixture live snapshot is missing"))?
+                .ok_or_else(|| {
+                    storage_corruption_message("terminal-history fixture live snapshot is missing")
+                })?
                 .retained_effect;
 
             let mut attempts = Vec::new();
             attempts
                 .try_reserve_exact(usize::from(terminal_records))
-                .map_err(|_| fatal("allocate terminal-history fixture"))?;
+                .map_err(|_| storage_corruption_message("allocate terminal-history fixture"))?;
             for nonce in 0..terminal_records {
                 let pending_nonce = u64::from(nonce);
                 let mut intent = base_record.intent.clone();
                 intent.pending_nonce = pending_nonce;
                 intent.attempt = u32::from(nonce);
                 intent.activation_preconditions.metadosis.pending_nonce = pending_nonce;
-                let intent_id = intent
-                    .intent_id(schema_limits)
-                    .map_err(|error| fatal(format!("derive fixture IntentId: {error}")))?;
+                let intent_id = intent.intent_id(schema_limits).map_err(|error| {
+                    storage_corruption_message(format!("derive fixture IntentId: {error}"))
+                })?;
                 let mut finalized = base_finalized.clone();
                 finalized.job_id = intent
                     .job_id(
@@ -94,16 +110,18 @@ impl MetadosisContract<'_> {
                         finalized.finalized_request_state_root,
                         schema_limits,
                     )
-                    .map_err(|error| fatal(format!("derive fixture JobId: {error}")))?;
+                    .map_err(|error| {
+                        storage_corruption_message(format!("derive fixture JobId: {error}"))
+                    })?;
                 let terminal_height = finalized.deadline_height;
                 let terminal_time = base_record
                     .intent
                     .logical_evaluation_time
                     .checked_add(pending_nonce)
-                    .ok_or_else(|| fatal("fixture terminal time overflow"))?;
+                    .ok_or_else(|| storage_corruption_message("fixture terminal time overflow"))?;
                 let next_pending_nonce = pending_nonce
                     .checked_add(1)
-                    .ok_or_else(|| fatal("fixture pending nonce overflow"))?;
+                    .ok_or_else(|| storage_corruption_message("fixture pending nonce overflow"))?;
                 self.write_ocomp_job_record(
                     intent_id,
                     &OcompJobRecordV1 {
@@ -140,9 +158,9 @@ impl MetadosisContract<'_> {
                 .activation_preconditions
                 .metadosis
                 .pending_nonce = pending_nonce;
-            let current_intent_id = current_intent
-                .intent_id(schema_limits)
-                .map_err(|error| fatal(format!("derive live fixture IntentId: {error}")))?;
+            let current_intent_id = current_intent.intent_id(schema_limits).map_err(|error| {
+                storage_corruption_message(format!("derive live fixture IntentId: {error}"))
+            })?;
             let mut current_finalized = base_finalized;
             current_finalized.job_id = current_intent
                 .job_id(
@@ -150,12 +168,20 @@ impl MetadosisContract<'_> {
                     current_finalized.finalized_request_state_root,
                     schema_limits,
                 )
-                .map_err(|error| fatal(format!("derive live fixture JobId: {error}")))?;
+                .map_err(|error| {
+                    storage_corruption_message(format!("derive live fixture JobId: {error}"))
+                })?;
             let current_accountability = OcompVoteAccountabilityV1::empty(
                 current_finalized.job_id,
-                current_intent.result_committee_snapshot_hash,
+                current_intent.result_validator_set_epoch,
+                current_intent.result_committee_set_hash,
+                current_intent.result_ocomp_binding_hash,
+                current_intent.result_member_count,
+                current_intent.result_quorum_threshold,
             )
-            .map_err(|error| fatal(format!("build live fixture vote slots: {error}")))?;
+            .map_err(|error| {
+                storage_corruption_message(format!("build live fixture vote slots: {error}"))
+            })?;
             self.write_result_vote_accountability(&current_accountability, schema_limits)?;
             self.write_ocomp_job_record(
                 current_intent_id,
@@ -184,7 +210,9 @@ impl MetadosisContract<'_> {
                 },
                 fsm_limits,
             )
-            .map_err(|error| fatal(format!("restore terminal-history fixture: {error}")))?;
+            .map_err(|error| {
+                storage_corruption_message(format!("restore terminal-history fixture: {error}"))
+            })?;
 
             self.remove_live_scheduler(live_intent_id)?;
             self.write_ocomp_state(&seeded)?;
@@ -208,7 +236,7 @@ impl MetadosisContract<'_> {
                 || restored_projection.pending_nonce != pending_nonce
                 || restored_projection.live_intent_id != Some(current_intent_id)
             {
-                return Err(fatal(
+                return Err(storage_corruption_message(
                     "terminal-history fixture failed canonical restore equivalence",
                 ));
             }
@@ -216,8 +244,4 @@ impl MetadosisContract<'_> {
             Ok(current_intent_id)
         })
     }
-}
-
-fn fatal(message: impl Into<String>) -> PrecompileError {
-    PrecompileError::Fatal(message.into())
 }

@@ -32,7 +32,6 @@ const VOTER_FELONY_SLOT: u64 = 12;
 /// untouched. The value is supplied through `TESTNET_UNBONDING_PERIOD_SECS`.
 const STAKING_SUFFIX: &str = "ee02";
 const OCOMP_FINAL_FIXTURE_ROOT: &str = "testing/e2e-harness/fixtures/ocomp-final-v1";
-const OCOMP_FINAL_VALIDATORS: usize = 4;
 const OCOMP_FINAL_ROOT_FILES: &[(&str, u32)] = &[
     ("dkg-output.hex", 0o600),
     ("polynomial.hex", 0o600),
@@ -53,7 +52,7 @@ impl Localnet {
     /// `GramineDirectDev` chains. The product binary constructs and validates the
     /// policy bytes; the harness never reimplements its codec.
     pub(crate) fn bind_tee_genesis(&self) -> Result<()> {
-        self.ensure_real_lane_ocomp_genesis()?;
+        self.ensure_ocomp_genesis()?;
         let genesis = self.cfg.dir.join("genesis.json");
         let value: serde_json::Value = serde_json::from_slice(&fs::read(&genesis)?)?;
         if value
@@ -122,13 +121,11 @@ impl Localnet {
     /// every network. Build that independent prerequisite with the product
     /// tooling before binding the hardware TEE policy; the DCAP harness does
     /// not reproduce either OCOMP's canonical codec or its signatures.
-    fn ensure_real_lane_ocomp_genesis(&self) -> Result<()> {
-        if !matches!(self.cfg.tee_mode, TeeMode::Real) {
-            return Ok(());
-        }
-        if self.committee_size() != OCOMP_FINAL_VALIDATORS {
-            bail!("real DcapRequired E2E requires exactly {OCOMP_FINAL_VALIDATORS} validators");
-        }
+    fn ensure_ocomp_genesis(&self) -> Result<()> {
+        eyre::ensure!(
+            self.committee_size() > 0,
+            "LocalNet OCOMP genesis requires validators"
+        );
 
         let genesis = self.cfg.dir.join("genesis.json");
         let current: serde_json::Value = serde_json::from_slice(&fs::read(&genesis)?)?;
@@ -177,9 +174,26 @@ impl Localnet {
         let identities = bindings
             .get("validatorIdentityHashes")
             .and_then(serde_json::Value::as_array)
-            .filter(|identities| identities.len() == OCOMP_FINAL_VALIDATORS)
-            .ok_or_else(|| eyre!("OCOMP bindings require exactly four validator identities"))?;
-        for (index, identity) in identities.iter().enumerate() {
+            .ok_or_else(|| eyre!("OCOMP bindings missing validator identities"))?;
+        let validator_manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(&validators)?)?;
+        let validator_manifest = validator_manifest
+            .as_array()
+            .ok_or_else(|| eyre!("validators manifest is not an array"))?;
+        eyre::ensure!(
+            identities.len() == self.committee_size()
+                && validator_manifest.len() == self.committee_size(),
+            "OCOMP founder registrations must cover the complete genesis ValidatorSet"
+        );
+        for (index, validator) in validator_manifest.iter().enumerate() {
+            let validator_address = validator
+                .get("address")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| eyre!("validator-{index} manifest address is missing"))?;
+            let consensus_bls = validator
+                .get("public_key")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| eyre!("validator-{index} manifest public key is missing"))?;
             let output_dir = self.cfg.validator_dir(index);
             let mut keygen = Command::new(&self.cfg.bin_keygen);
             keygen
@@ -190,22 +204,10 @@ impl Localnet {
                 .arg(required_u64("chainId")?.to_string())
                 .arg("--genesis-hash")
                 .arg(required_string("genesisHash")?)
-                .arg("--fork-id")
-                .arg(required_string("forkId")?)
-                .arg("--protocol-bundle-hash")
-                .arg(required_string("protocolBundleHash")?)
-                .arg("--validator-index")
-                .arg(index.to_string())
-                .arg("--validator-identity-hash")
-                .arg(
-                    identity
-                        .as_str()
-                        .ok_or_else(|| eyre!("OCOMP validator identity is not a string"))?,
-                )
-                .arg("--valid-from-height")
-                .arg(required_u64("activationHeight")?.to_string())
-                .arg("--valid-until-height-exclusive")
-                .arg(required_u64("validUntilHeightExclusive")?.to_string());
+                .arg("--validator-address")
+                .arg(validator_address)
+                .arg("--consensus-bls-min-pk")
+                .arg(consensus_bls);
             self.run_setup(&mut keygen, "outbe-keygen ocomp")?;
         }
 
@@ -261,15 +263,12 @@ impl Localnet {
         u64::from_str_radix(raw.trim_start_matches("0x"), 16).map_err(Into::into)
     }
 
-    /// Materialize the checked-in, four-validator `Final` OCOMP devnet.
+    /// Materialize the checked-in `Final` OCOMP devnet.
     ///
     /// Committee/DKG identities and the armed chain manifest are immutable
     /// fixture inputs. Only consensus and reth endpoint ports are rewritten for
     /// the scenario's allocated loopback port blocks.
     pub fn bootstrap_ocomp_final(&self) -> Result<()> {
-        if self.committee_size() != OCOMP_FINAL_VALIDATORS {
-            bail!("canonical OCOMP fixture requires exactly {OCOMP_FINAL_VALIDATORS} validators");
-        }
         if self.cfg.dir.exists()
             && fs::read_dir(&self.cfg.dir)
                 .wrap_err_with(|| format!("read scenario root {}", self.cfg.dir.display()))?
@@ -285,11 +284,22 @@ impl Localnet {
         let fixture = self.cfg.repo.join(OCOMP_FINAL_FIXTURE_ROOT);
         let base = fixture.join("base");
         let artifacts = fixture.join("artifacts");
+        let validator_manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(base.join("validators.json"))?)?;
+        let fixture_validators = validator_manifest
+            .as_array()
+            .ok_or_else(|| eyre!("canonical OCOMP validators manifest is not an array"))?
+            .len();
+        eyre::ensure!(
+            fixture_validators == self.committee_size(),
+            "canonical OCOMP fixture contains {fixture_validators} validators, harness requested {}",
+            self.committee_size()
+        );
         fs::create_dir_all(&self.cfg.dir)?;
         for (relative, mode) in OCOMP_FINAL_ROOT_FILES {
             copy_fixture_file(&base.join(relative), &self.cfg.dir.join(relative), *mode)?;
         }
-        for validator_index in 0..OCOMP_FINAL_VALIDATORS {
+        for validator_index in 0..fixture_validators {
             for relative in OCOMP_FINAL_VALIDATOR_FILES {
                 copy_fixture_file(
                     &base
@@ -414,7 +424,10 @@ impl Localnet {
     /// DKG params from `tuning`) plus a pre-funded `alloc` of each validator
     /// address (`bootstrap-testnet.sh:133-203`).
     fn write_genesis(&self, tuning: &[(&str, String)]) -> Result<()> {
-        let epoch = tuned(tuning, "TESTNET_EPOCH_LENGTH_BLOCKS", 120);
+        // OCOMP retains committee snapshots for a bounded number of epochs.
+        // The default must cover one complete result-vote window; 120 blocks
+        // was accepted before OCOMP became mandatory but is now invalid.
+        let epoch = tuned(tuning, "TESTNET_EPOCH_LENGTH_BLOCKS", 300);
         let dkg_prepare = tuned(tuning, "TESTNET_DKG_PREPARE_WINDOW_BLOCKS", 30);
         let dkg_grace = tuned(tuning, "TESTNET_DKG_ACTIVATION_GRACE_BLOCKS", 30);
         let validator_balance = validator_balance_hex(tuning);
@@ -515,7 +528,7 @@ impl Localnet {
     /// Lower the SlashIndicator felony thresholds so downtime slashing triggers
     /// within the short dev epoch (`bootstrap-testnet.sh:228-253`).
     fn patch_felony(&self, tuning: &[(&str, String)]) -> Result<()> {
-        let epoch = tuned(tuning, "TESTNET_EPOCH_LENGTH_BLOCKS", 120);
+        let epoch = tuned(tuning, "TESTNET_EPOCH_LENGTH_BLOCKS", 300);
         let felony_threshold = tuned(tuning, "TESTNET_DEV_FELONY_THRESHOLD", DEV_FELONY_THRESHOLD);
         if felony_threshold >= epoch {
             bail!("dev felony threshold {felony_threshold} must be < epoch length {epoch}");
