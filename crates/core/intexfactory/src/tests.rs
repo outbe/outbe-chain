@@ -22,6 +22,10 @@ fn holder() -> Address {
     address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
 }
 
+fn payment_token() -> Address {
+    address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC")
+}
+
 const CHAIN_ID: u64 = 1;
 const ISSUED_AT: u32 = 1_700_000_000;
 const PROMIS_LOAD_MINOR: u128 = 1_000_000_000_000_000_000; // 1e18
@@ -170,20 +174,152 @@ fn floor_and_call_derivation() {
 }
 
 // ---------------------------------------------------------------------
+// settlement cost scaling
+// ---------------------------------------------------------------------
+
+fn entry_price() -> U256 {
+    U256::from(5u64) * U256::from(10u64).pow(U256::from(17u64))
+}
+
+fn load_minor() -> U256 {
+    U256::from(100_000u64) * U256::from(10u64).pow(U256::from(18u64))
+}
+
+#[test]
+fn cost_amount_six_decimals() {
+    let cost = runtime::derived_cost_amount(entry_price(), load_minor(), 6).unwrap();
+    assert_eq!(cost, U256::from(50_000_000_000u64));
+}
+
+#[test]
+fn cost_amount_eighteen_decimals_is_1e12_larger() {
+    let six = runtime::derived_cost_amount(entry_price(), load_minor(), 6).unwrap();
+    let eighteen = runtime::derived_cost_amount(entry_price(), load_minor(), 18).unwrap();
+    assert_eq!(eighteen, six * U256::from(10u64).pow(U256::from(12u64)));
+}
+
+#[test]
+fn cost_amount_zero_decimals() {
+    let cost = runtime::derived_cost_amount(entry_price(), load_minor(), 0).unwrap();
+    assert_eq!(cost, U256::from(50_000u64));
+}
+
+#[test]
+fn cost_amount_rejects_decimals_above_the_product_scale() {
+    let err = runtime::derived_cost_amount(entry_price(), load_minor(), 37).unwrap_err();
+    assert!(err.to_string().contains("unsupported decimals"), "{err}");
+}
+
+fn word(value: u64) -> alloy_primitives::Bytes {
+    alloy_primitives::Bytes::from(U256::from(value).to_be_bytes::<32>().to_vec())
+}
+
+/// Storage with an issued series 7 and a payment token the router reports
+/// `vaults` vaults for, reporting `iso` and `decimals`.
+fn with_payment_token<R>(
+    vaults: u64,
+    iso: u64,
+    decimals: u64,
+    f: impl FnOnce(StorageHandle) -> R,
+) -> R {
+    use crate::sol_ext::{IReferenceCurrency, IERC20};
+    use outbe_vaultrouter::api::IVaultRouter;
+
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(ISSUED_AT as u64));
+    storage.stub_sub_call_at(crate::constants::INTEX_NFT1155_ADDRESS, word(0));
+    storage.stub_sub_call_at(crate::constants::ORIGIN_ROUTER_ADDRESS, word(0));
+    storage.stub_sub_call_at_selector(
+        outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
+        IVaultRouter::assetVaultsCountCall::SELECTOR,
+        word(vaults),
+    );
+    storage.stub_sub_call_at_selector(
+        payment_token(),
+        IReferenceCurrency::isoCodeCall::SELECTOR,
+        word(iso),
+    );
+    storage.stub_sub_call_at_selector(
+        payment_token(),
+        IERC20::decimalsCall::SELECTOR,
+        word(decimals),
+    );
+
+    StorageHandle::enter(&mut storage, |s| {
+        runtime::issue(&s, sample(7)).unwrap();
+        f(s)
+    })
+}
+
+#[test]
+fn settlement_cost_prices_an_accepted_token() {
+    with_payment_token(1, 840, 18, |s| {
+        let cost = runtime::settlement_cost(&s, 7, payment_token()).unwrap();
+        assert_eq!(cost, U256::from(1_000_000u64));
+    });
+}
+
+#[test]
+fn settlement_cost_rejects_an_unregistered_token() {
+    with_payment_token(0, 840, 18, |s| {
+        let err = runtime::settlement_cost(&s, 7, payment_token()).unwrap_err();
+        assert!(err.to_string().contains("no registered vault"), "{err}");
+    });
+}
+
+#[test]
+fn settlement_cost_rejects_a_foreign_currency() {
+    with_payment_token(1, 978, 18, |s| {
+        let err = runtime::settlement_cost(&s, 7, payment_token()).unwrap_err();
+        assert!(err.to_string().contains("does not match"), "{err}");
+    });
+}
+
+#[test]
+fn settlement_cost_rejects_missing_series() {
+    with_factory(|s| {
+        assert!(runtime::settlement_cost(&s, 7, payment_token()).is_err());
+    });
+}
+
+#[test]
+fn settlement_cost_dispatch() {
+    with_payment_token(1, 840, 18, |s| {
+        let out = precompile::dispatch(
+            s.clone(),
+            &IIntexFactory::settlementCostCall {
+                seriesId: 7,
+                paymentToken: payment_token(),
+            }
+            .abi_encode(),
+            holder(),
+            U256::ZERO,
+        )
+        .unwrap();
+        assert_eq!(
+            IIntexFactory::settlementCostCall::abi_decode_returns(&out).unwrap(),
+            U256::from(1_000_000u64)
+        );
+    });
+}
+
+// ---------------------------------------------------------------------
 // settle gating (value movement is localnet-exercised, not unit tested)
 // ---------------------------------------------------------------------
 
 #[test]
 fn settle_rejects_zero_amount() {
     with_factory(|s| {
-        assert!(runtime::settle(&s, 7, holder(), holder(), U256::ZERO).is_err());
+        assert!(runtime::settle(&s, 7, holder(), holder(), U256::ZERO, payment_token()).is_err());
     });
 }
 
 #[test]
 fn settle_rejects_missing_series() {
     with_factory(|s| {
-        assert!(runtime::settle(&s, 7, holder(), holder(), U256::from(1)).is_err());
+        assert!(
+            runtime::settle(&s, 7, holder(), holder(), U256::from(1), payment_token()).is_err()
+        );
     });
 }
 
@@ -192,7 +328,8 @@ fn settle_rejects_wrong_state_issued() {
     with_factory(|s| {
         // Born Issued; settlement is only valid in Qualified/Called.
         runtime::issue(&s, sample(7)).unwrap();
-        let err = runtime::settle(&s, 7, holder(), holder(), U256::from(1)).unwrap_err();
+        let err =
+            runtime::settle(&s, 7, holder(), holder(), U256::from(1), payment_token()).unwrap_err();
         assert!(err.to_string().to_lowercase().contains("settleable"));
     });
 }
@@ -216,7 +353,8 @@ fn settle_rejects_expired_deadline() {
         runtime::issue(&s, sample(7)).unwrap();
         // deadline = ISSUED_AT + CALL_PERIOD < now
         outbe_intex::api::mark_called(&s, 7, ISSUED_AT).unwrap();
-        let err = runtime::settle(&s, 7, holder(), holder(), U256::from(1)).unwrap_err();
+        let err =
+            runtime::settle(&s, 7, holder(), holder(), U256::from(1), payment_token()).unwrap_err();
         assert!(err.to_string().to_lowercase().contains("deadline"));
     });
 }
@@ -584,9 +722,16 @@ fn try_call_marks_called_when_threshold_met() {
         let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
         fill_days(&oracle, last_closed_day, pair_id, 30, breach);
 
-        assert!(
-            called::try_call(&s, &mut f, &oracle, 7, pair_id, last_closed_day, scan_ts).unwrap()
-        );
+        assert!(called::try_call(
+            &s,
+            &mut f,
+            &oracle,
+            &mut called::DayVwaps::new(pair_id),
+            7,
+            last_closed_day,
+            scan_ts
+        )
+        .unwrap());
         assert_eq!(
             outbe_intex::api::read_series(&s, 7)
                 .unwrap()
@@ -620,9 +765,16 @@ fn try_call_skips_when_below_threshold() {
             d = previous_date_key(d);
         }
 
-        assert!(
-            !called::try_call(&s, &mut f, &oracle, 7, pair_id, last_closed_day, scan_ts).unwrap()
-        );
+        assert!(!called::try_call(
+            &s,
+            &mut f,
+            &oracle,
+            &mut called::DayVwaps::new(pair_id),
+            7,
+            last_closed_day,
+            scan_ts
+        )
+        .unwrap());
         assert_eq!(
             outbe_intex::api::read_series(&s, 7)
                 .unwrap()
@@ -672,9 +824,16 @@ fn try_call_excludes_pre_issuance_days() {
         let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
         fill_days(&oracle, last_closed_day, pair_id, 30, breach);
 
-        assert!(
-            !called::try_call(&s, &mut f, &oracle, 8, pair_id, last_closed_day, scan_ts).unwrap()
-        );
+        assert!(!called::try_call(
+            &s,
+            &mut f,
+            &oracle,
+            &mut called::DayVwaps::new(pair_id),
+            8,
+            last_closed_day,
+            scan_ts
+        )
+        .unwrap());
         assert_eq!(
             outbe_intex::api::read_series(&s, 8)
                 .unwrap()
@@ -779,9 +938,16 @@ fn call_survives_router_failure() {
             U256::from(EXPECTED_TRIGGER) + U256::from(1),
         );
 
-        assert!(
-            called::try_call(&s, &mut f, &oracle, 7, pair_id, last_closed_day, scan_ts).unwrap()
-        );
+        assert!(called::try_call(
+            &s,
+            &mut f,
+            &oracle,
+            &mut called::DayVwaps::new(pair_id),
+            7,
+            last_closed_day,
+            scan_ts
+        )
+        .unwrap());
         assert_eq!(
             outbe_intex::api::read_series(&s, 7)
                 .unwrap()
@@ -1584,6 +1750,7 @@ fn unpublished_selectors_refuse_native_value() {
             seriesId: 0u32,
             intexHolder: Address::ZERO,
             amount: U256::ZERO,
+            paymentToken: Address::ZERO,
         }
         .abi_encode(),
         IIntexFactory::setAuthorizedSettlerCall {

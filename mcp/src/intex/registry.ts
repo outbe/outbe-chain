@@ -37,6 +37,7 @@ export interface IntexAddresses {
   factory?: Address;
   promis?: Address;
   desis?: Address;
+  vaultRouter?: Address;
   originRouter?: Address;
 }
 
@@ -60,6 +61,7 @@ const OUTBE_ONLY = {
   factory: a("0x0000000000000000000000000000000000001015"),
   promis: a("0x0000000000000000000000000000000000001337"),
   desis: a("0x0000000000000000000000000000000000001016"),
+  vaultRouter: a("0x0000000000000000000000000000000000001017"),
   // CREATE3 proxy, salt "outbe-intex:OriginRouter:v2.0.0".
   originRouter: a("0x67129C422bDC2c8984DbF381B6ec4515fE2BbD29"),
 };
@@ -136,6 +138,8 @@ export const NFT_ABI: Abi = parseAbi([
   "function balanceOf(address account, uint256 id) view returns (uint256)",
   "function tokenIds(uint32 seriesId) view returns (uint256 issued, uint256 settled)",
   "function readData(uint32 seriesId) view returns ((uint16 issuanceCurrency, uint16 referenceCurrency, uint32 issuedIntexCount, uint128 promisLoadMinor, uint64 entryPriceMinor, uint64 floorPriceMinor, uint64 callPriceMinor, (uint16 windowDays, uint16 thresholdDays, uint32 intexCallPeriod) callTrigger, uint32 issuedAt, uint32 calledAt, uint32 totalSupply, uint8 status, uint8 state, uint32 worldwideDay) data)",
+  "function uri(uint256 tokenId) view returns (string)",
+  "function contractURI() view returns (string)",
   "function isApprovedForAll(address account, address operator) view returns (bool)",
   "function setApprovalForAll(address operator, bool approved)",
 ]);
@@ -156,8 +160,9 @@ export const NFT_BRIDGE_ABI: Abi = parseAbi([
 
 /** IntexFactory (outbe precompile): holder-facing settlement + Promis mining. */
 export const FACTORY_ABI: Abi = parseAbi([
-  "function settle(uint32 seriesId, address intexHolder, uint256 amount)",
-  "function minePromis(uint32 seriesId, uint256 amount, uint256 nonce) returns (uint256 promisAmount)",
+  "function settle(uint32 seriesId, address intexHolder, uint256 amount, address paymentToken)",
+  "function settlementCost(uint32 seriesId, address paymentToken) view returns (uint256 cost)",
+  "function minePromis(uint32 seriesId, uint256 amount, uint256 nonce, bytes32 mac, uint64 opNonce) returns (uint256 promisAmount)",
   "function setAuthorizedSettler(uint32 seriesId, address settler)",
   "event PromisMined(uint32 indexed seriesId, address indexed holder, uint256 amount, uint256 promisAmount)",
 ]);
@@ -183,6 +188,11 @@ export const ESCROW_ABI: Abi = parseAbi([
   "function auctionEscrowState(uint32 worldwideDay) view returns (uint128 totalLocked, uint32 lockCount, uint32 finalizedAt, bool finalized)",
   "function UNFINALIZED_REFUND_DELAY() view returns (uint32)",
   "function claimRefund(uint32 worldwideDay, address bidder)",
+]);
+
+/** VaultRouter (outbe precompile): the reserve asset registry. */
+export const VAULT_ROUTER_ABI: Abi = parseAbi([
+  "function referenceCurrencyAssets(uint16 isoCode) view returns (address[] assets)",
 ]);
 
 /** Minimal ERC20 (BSC payment token; outbe Promis balance). */

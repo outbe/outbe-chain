@@ -8,7 +8,7 @@ import {ITargetRouter} from "@contracts/target/interfaces/ITargetRouter.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
-import {MockERC20} from "@test-mocks/MockERC20.sol";
+import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /// @dev Minimal EscrowAdapter stand-in: `finalizeAuction` returns a configured totalPaid; exposes `paymentToken`.
@@ -80,7 +80,7 @@ contract TargetRouterProceedsTest is CrossChainTest {
     TargetRouter internal target;
     MockEscrowAdapter internal escrow;
     MockTokenBridge internal tokenBridge;
-    MockERC20 internal wcoen;
+    MockWCOEN internal wcoen;
 
     address internal originSender = makeAddr("originSender"); // inbound message source on Outbe
     address internal originRouter = makeAddr("originRouter"); // proceeds recipient on Outbe
@@ -91,7 +91,7 @@ contract TargetRouterProceedsTest is CrossChainTest {
         target = DeployProxy.targetRouter(address(bridge), address(this), OUTBE_CHAIN_ID);
         vm.deal(address(target), 10 ether); // relay float for bridge fees
 
-        wcoen = new MockERC20("WCOEN", "WCOEN", 18);
+        wcoen = new MockWCOEN();
         escrow = new MockEscrowAdapter(IERC20(address(wcoen)));
         tokenBridge = new MockTokenBridge();
 

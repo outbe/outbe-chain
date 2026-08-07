@@ -9,7 +9,7 @@ import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
-import {MockERC20} from "@test-mocks/MockERC20.sol";
+import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 
 /// @dev Commit-bond lifecycle through the real IntexAuction + EscrowAdapter pair:
 ///      commit takes the bond, reveal/cancel return it, and a no-reveal waits out
@@ -18,7 +18,7 @@ contract IntexAuctionBondTest is Test {
     IntexAuction auction;
     EscrowAdapter escrow;
     MockTheCompact compact;
-    MockERC20 paymentToken;
+    MockWCOEN paymentToken;
 
     address admin = address(1);
     address bridger = address(2);
@@ -51,7 +51,7 @@ contract IntexAuctionBondTest is Test {
         auction = DeployProxy.intexAuction(admin, bridger);
         escrow = DeployProxy.escrowAdapter(admin, bridger);
         compact = new MockTheCompact();
-        paymentToken = new MockERC20("Wrapped COEN", "WCOEN", 18);
+        paymentToken = new MockWCOEN();
 
         vm.startPrank(admin);
         auction.grantRole(auction.RELAYER_ROLE(), bridger);

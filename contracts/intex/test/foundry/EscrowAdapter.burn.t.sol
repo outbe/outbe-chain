@@ -7,7 +7,7 @@ import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
-import {MockERC20} from "@test-mocks/MockERC20.sol";
+import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 
 /// @dev Burn-instead-of-vault recovery paths: an undistributable winning portion (the series was
 ///      already routed on Outbe) is sent to the canonical dead address, terminally and in a
@@ -15,7 +15,7 @@ import {MockERC20} from "@test-mocks/MockERC20.sol";
 contract EscrowAdapterBurnTest is Test {
     EscrowAdapter escrow;
     MockTheCompact compact;
-    MockERC20 paymentToken;
+    MockWCOEN paymentToken;
 
     address admin = address(1);
     address bridger = address(2);
@@ -31,7 +31,7 @@ contract EscrowAdapterBurnTest is Test {
     function setUp() public {
         escrow = DeployProxy.escrowAdapter(admin, bridger);
         compact = new MockTheCompact();
-        paymentToken = new MockERC20("Wrapped COEN", "WCOEN", 18);
+        paymentToken = new MockWCOEN();
 
         vm.prank(admin);
         escrow.wire(auction, address(compact), address(paymentToken));

@@ -18,7 +18,7 @@ use crate::constants::{
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
-use crate::sol_ext::{IIntexNFT1155, IOriginRouter, IERC20};
+use crate::sol_ext::{IIntexNFT1155, IOriginRouter, IReferenceCurrency, IERC20};
 
 /// Emit an IntexFactory event from `INTEX_FACTORY_ADDRESS`.
 pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> Result<()> {
@@ -165,13 +165,19 @@ pub(crate) fn derived_call_price(entry_price: U256, call_price_num: u64) -> Resu
         .ok_or_else(|| PrecompileError::Revert("call price overflow".into()))
 }
 
-/// Per-Intex cost = entry_price * promis_load / 1e30 (payment-token minor).
-/// Mirrors the desis derivation: entry(1e18) * PROMIS_LOAD / 1e12, expressed via
-/// promis_load_minor (= PROMIS_LOAD * 1e18), so the divisor is 1e30.
-pub(crate) fn derived_cost_amount(entry_price: U256, promis_load_minor: U256) -> Result<U256> {
+/// Per-Intex cost in the payment token's minor units. `entry_price` and
+/// `promis_load_minor` are both 1e18-scaled, so their product carries 1e36.
+pub(crate) fn derived_cost_amount(
+    entry_price: U256,
+    promis_load_minor: U256,
+    payment_decimals: u8,
+) -> Result<U256> {
+    let exp = 36u32.checked_sub(u32::from(payment_decimals)).ok_or(
+        IntexFactoryError::UnsupportedPaymentDecimals(payment_decimals),
+    )?;
     entry_price
         .checked_mul(promis_load_minor)
-        .map(|v| v / U256::from(10u64).pow(U256::from(30u64)))
+        .map(|v| v / U256::from(10u64).pow(U256::from(exp)))
         .ok_or_else(|| PrecompileError::Revert("cost amount overflow".into()))
 }
 
@@ -605,8 +611,9 @@ pub fn settle(
     intex_holder: Address,
     settler: Address,
     amount: U256,
+    payment_token: Address,
 ) -> Result<()> {
-    if intex_holder.is_zero() || settler.is_zero() {
+    if intex_holder.is_zero() || settler.is_zero() || payment_token.is_zero() {
         return Err(IntexFactoryError::ZeroAddress.into());
     }
     if amount.is_zero() {
@@ -646,14 +653,18 @@ pub fn settle(
         return Err(IntexFactoryError::NotAuthorized.into());
     }
 
-    // payment = per-Intex cost * amount; cost derives from entry_price * promis_load.
-    let payment = derived_cost_amount(series.entry_price_minor, series.promis_load_minor)?
-        .checked_mul(amount)
-        .ok_or_else(|| PrecompileError::Revert("settlement cost overflow".into()))?;
+    accept_payment_token(storage, payment_token, series.reference_currency)?;
+
+    let payment = derived_cost_amount(
+        series.entry_price_minor,
+        series.promis_load_minor,
+        erc20_decimals(storage, payment_token)?,
+    )?
+    .checked_mul(amount)
+    .ok_or_else(|| PrecompileError::Revert("settlement cost overflow".into()))?;
 
     // Pull payment from the settler, deposit into the reserve vault.
     // Fee-on-transfer safe: measure the received delta.
-    let payment_token = vault_asset(storage)?;
     let before = erc20_balance_of(storage, payment_token, INTEX_FACTORY_ADDRESS)?;
     storage.call(
         payment_token,
@@ -728,26 +739,69 @@ fn nft_balance_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Re
         .map_err(|_| PrecompileError::Revert("NFT balanceOf undecodable".into()))
 }
 
-fn vault_asset(storage: &StorageHandle<'_>) -> Result<Address> {
-    // TODO pick up the asset ERC20 address properly
+/// Per-Intex cost of settling `series_id` in `payment_token`, in that token's
+/// minor units. Rejects a token the series does not accept.
+pub fn settlement_cost(
+    storage: &StorageHandle<'_>,
+    series_id: u32,
+    payment_token: Address,
+) -> Result<U256> {
+    let series = outbe_intex::api::read_series(storage, series_id)?;
+    accept_payment_token(storage, payment_token, series.reference_currency)?;
+    derived_cost_amount(
+        series.entry_price_minor,
+        series.promis_load_minor,
+        erc20_decimals(storage, payment_token)?,
+    )
+}
+
+/// Rejects `token` unless the router holds a vault for it and the token reports
+/// `reference_currency`. Registration is checked first: an unregistered token
+/// need not implement `isoCode()` at all.
+fn accept_payment_token(
+    storage: &StorageHandle<'_>,
+    token: Address,
+    reference_currency: u16,
+) -> Result<()> {
     let ret = storage.staticcall(
         VAULT_ROUTER_ADDRESS,
-        IVaultRouter::assetAtCall { index: U256::ZERO }
+        IVaultRouter::assetVaultsCountCall { asset: token }
             .abi_encode()
             .into(),
     )?;
-    let asset = IVaultRouter::assetAtCall::abi_decode_returns(&ret)
-        .map_err(|_| PrecompileError::Revert("assetAt undecodable".into()))?;
-    if asset.is_zero() {
-        return Err(IntexFactoryError::NotWired.into());
+    let vaults = IVaultRouter::assetVaultsCountCall::abi_decode_returns(&ret)
+        .map_err(|_| PrecompileError::Revert("assetVaultsCount undecodable".into()))?;
+    if vaults.is_zero() {
+        return Err(IntexFactoryError::PaymentTokenNotRegistered(token).into());
     }
-    Ok(asset)
+
+    let iso = asset_iso_code(storage, token)?;
+    // TODO: accept the issuance currency once an FX rule converts the amount.
+    if iso != reference_currency {
+        return Err(IntexFactoryError::SettlementCurrencyMismatch(iso).into());
+    }
+    Ok(())
+}
+
+fn asset_iso_code(storage: &StorageHandle<'_>, token: Address) -> Result<u16> {
+    let ret = storage.staticcall(
+        token,
+        IReferenceCurrency::isoCodeCall {}.abi_encode().into(),
+    )?;
+    IReferenceCurrency::isoCodeCall::abi_decode_returns(&ret)
+        .map_err(|_| PrecompileError::Revert("isoCode undecodable".into()))
 }
 
 fn erc20_balance_of(storage: &StorageHandle<'_>, token: Address, account: Address) -> Result<U256> {
     let ret = storage.staticcall(token, IERC20::balanceOfCall { account }.abi_encode().into())?;
     IERC20::balanceOfCall::abi_decode_returns(&ret)
         .map_err(|_| PrecompileError::Revert("ERC20 balanceOf undecodable".into()))
+}
+
+fn erc20_decimals(storage: &StorageHandle<'_>, token: Address) -> Result<u8> {
+    let ret = storage.staticcall(token, IERC20::decimalsCall {}.abi_encode().into())?;
+    IERC20::decimalsCall::abi_decode_returns(&ret)
+        .map_err(|_| PrecompileError::Revert("ERC20 decimals undecodable".into()))
 }
 
 /// minePromis: PoW-gated burn of Settled then mint of Promis. `holder` is the
