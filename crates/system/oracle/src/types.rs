@@ -1,8 +1,4 @@
-use alloy_primitives::{Address, B512, U256};
-
-/// BCD form of the highest ISO 4217 code; addresses above it are token
-/// addresses.
-const MAX_ISO_CODE_BCD: u16 = 0x0999;
+use alloy_primitives::{Address, U256};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PairType {
@@ -42,39 +38,9 @@ impl From<Address> for PairType {
     }
 }
 
-pub struct PairKey {
-    pub address1: Address,
-    pub address2: Address,
-}
-
-impl PairKey {
-    pub fn new(address1: Address, address2: Address) -> Self {
-        assert_ne!(address1, address2);
-        if address1 > address2 {
-            Self {
-                address1: address2,
-                address2: address1,
-            }
-        } else {
-            Self { address1, address2 }
-        }
-    }
-
-    pub fn pair(self) -> (PairType, PairType) {
-        (PairType::from(self.address1), PairType::from(self.address2))
-    }
-}
-
-impl From<PairKey> for B512 {
-    /// `address1` occupies bytes `0..20` and `address2` bytes `33..53`; the
-    /// remaining bytes stay zero.
-    fn from(value: PairKey) -> Self {
-        let mut bytes = [0u8; 64];
-        bytes[0..20].copy_from_slice(value.address1.as_slice());
-        bytes[33..53].copy_from_slice(value.address2.as_slice());
-        B512::from(bytes)
-    }
-}
+/// BCD form of the highest ISO 4217 code; addresses above it are token
+/// addresses.
+const MAX_ISO_CODE_BCD: u16 = 0x0999;
 
 /// One decimal digit per nibble: `840 -> 0x0840`. Only the four lowest decimal
 /// digits fit, which is exact for every code in `0..=MAX_ISO_CODE`.
@@ -108,8 +74,9 @@ fn bcd_decode(raw: U256) -> Option<u16> {
 
 #[cfg(test)]
 mod tests {
-    use crate::types::{PairKey, PairType};
-    use alloy_primitives::{address, Address, B512};
+    use crate::types::PairType;
+    use alloy_primitives::{address, Address};
+    use outbe_primitives::address_pair::AddressPair;
 
     /// Highest ISO 4217 numeric currency code.
     const MAX_ISO_CODE: u16 = 999;
@@ -158,38 +125,36 @@ mod tests {
     }
 
     #[test]
-    fn pair_key_writes_address1_at_zero_and_address2_at_thirty_three() {
-        let first = address!("0x1111111111111111111111111111111111111111");
-        let second = address!("0x2222222222222222222222222222222222222222");
-
-        let encoded = B512::from(PairKey::new(first, second));
-
-        assert_eq!(&encoded[0..20], first.as_slice());
-        assert_eq!(&encoded[33..53], second.as_slice());
-        assert!(encoded[20..33].iter().all(|byte| *byte == 0));
-        assert!(encoded[53..64].iter().all(|byte| *byte == 0));
-    }
-
-    #[test]
-    fn pair_key_encoding_ignores_the_argument_order() {
-        let coen = Address::from(PairType::Native);
-        let usd = Address::from(PairType::IsoCurrency(840));
+    fn every_variant_converts_through_into() {
+        let token = address!("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
+        let converted: [Address; 3] = [
+            PairType::Native.into(),
+            PairType::IsoCurrency(840).into(),
+            PairType::ERC20(token).into(),
+        ];
 
         assert_eq!(
-            B512::from(PairKey::new(coen, usd)),
-            B512::from(PairKey::new(usd, coen)),
+            converted,
+            [
+                Address::ZERO,
+                address!("0x0000000000000000000000000000000000000840"),
+                token,
+            ],
         );
     }
 
     #[test]
-    fn pair_key_separates_pairs_sharing_a_prefix() {
-        let first = address!("0x1111111111111111111111111111111111111111");
-        let second = address!("0x2222222222222222222222222222222222222222");
-        let third = address!("0x3333333333333333333333333333333333333333");
+    fn a_coen_iso_pair_keys_on_the_zero_address_and_the_currency_code() {
+        let coen: Address = PairType::Native.into();
+        let usd: Address = PairType::IsoCurrency(840).into();
 
-        assert_ne!(
-            B512::from(PairKey::new(first, second)),
-            B512::from(PairKey::new(first, third)),
+        let pair = AddressPair::new(coen, usd);
+
+        assert_eq!(pair, AddressPair::new(usd, coen));
+        assert_eq!(&pair[0..20], Address::ZERO.as_slice());
+        assert_eq!(
+            &pair[20..40],
+            address!("0x0000000000000000000000000000000000000840").as_slice(),
         );
     }
 

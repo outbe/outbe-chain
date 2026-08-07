@@ -1,6 +1,7 @@
 extern crate alloc;
 
 pub mod accounting_progress;
+pub mod address_pair;
 pub mod addresses;
 pub mod block;
 pub mod chain;
