@@ -100,7 +100,7 @@ contract IntexNFT1155Test is Test {
         assertEq(data.totalSupply, 0);
         assertEq(data.issuedIntexCount, ISSUED_INTEX_COUNT);
         // callPeriod is stored verbatim; defaulting/bounding is the caller's (intexfactory) responsibility.
-        assertEq(data.callTrigger.intexCallPeriod, callPeriod);
+        assertEq(data.callTrigger.callNoticePeriod, callPeriod);
     }
 
     function test_OnlyBridgeCanCreateSeries() public {
@@ -228,8 +228,8 @@ contract IntexNFT1155Test is Test {
         IIntexNFT1155.SeriesData memory data = nft.readData(SERIES_ID_1);
         assertEq(uint8(data.state), uint8(IIntexNFT1155.IntexState.Called));
         assertEq(data.calledAt, calledAt);
-        assertEq(data.callTrigger.intexCallPeriod, customCallPeriod);
-        assertEq(data.calledAt + data.callTrigger.intexCallPeriod, calledAt + customCallPeriod);
+        assertEq(data.callTrigger.callNoticePeriod, customCallPeriod);
+        assertEq(data.calledAt + data.callTrigger.callNoticePeriod, calledAt + customCallPeriod);
     }
 
     function test_OnlyBridgeCanMarkCalled() public {

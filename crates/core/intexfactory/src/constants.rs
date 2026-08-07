@@ -29,10 +29,8 @@ pub const DIST_CHUNK_LIMIT: u32 = 200;
 /// cases, creators receive a single payment.
 pub const PROCEEDS_FANIN_TIMEOUT_SECS: u64 = 24 * 60 * 60;
 
-/// Qualification maturity in days since issuance.
-pub const MATURITY_PERIOD_DAYS: u64 = 21;
-/// Derived seconds, for comparison against block timestamps.
-pub const MATURITY_PERIOD_SECONDS: u64 = MATURITY_PERIOD_DAYS * 24 * 60 * 60;
+/// Time a series must age past `issued_at` before it can become Qualified.
+pub const QUALIFICATION_PERIOD: u32 = 21 * 24 * 3600;
 
 /// Reference-currency ISO for the qualifier oracle pair (COEN/0xUSD = 840).
 pub const QUALIFIER_REFERENCE_ISO: u16 = 840;
@@ -43,21 +41,20 @@ pub const QUALIFIER_ISSUANCE_ISO: u16 = 840;
 /// Bin step (basis points) for the floor-price bin ladder.
 pub const BIN_STEP_BP: u16 = 25;
 
-/// Floor price = COEN/0xUSD price * 1.08; integer ratio 108/100.
-pub const FLOOR_PRICE_NUM: u64 = 108;
-pub const FLOOR_PRICE_DEN: u64 = 100;
+/// Markup rates in percentage points: price = entry * (PRICE_RATE_DEN + rate) / PRICE_RATE_DEN.
+pub const PRICE_RATE_DEN: u16 = 100;
+/// Floor price = entry * 1.08.
+pub const FLOOR_RATE: u16 = 8;
+/// Call price = entry * 2.28; its breach arms a Call Event.
+pub const CALL_RATE: u16 = 128;
 
-/// Call price = COEN/0xUSD price * 2.28; integer ratio 228/100.
-pub const CALL_PRICE_NUM: u64 = 228;
-pub const CALL_PRICE_DEN: u64 = 100;
+/// Notice a holder gets to settle after a series is Called.
+pub const CALL_NOTICE_PERIOD: u32 = 7 * 24 * 3600;
 
-/// Forced-settlement deadline after a series is Called, in seconds.
-pub const INTEX_CALL_PERIOD_SECONDS: u32 = 7 * 24 * 3600;
-
-/// Call-trigger evaluation window: most recent completed days scanned for breaches.
-pub const CALL_WINDOW_DAYS: u16 = 30;
-/// Call-trigger threshold: breach-days within the window required to force-call.
-pub const CALL_THRESHOLD_DAYS: u16 = 21;
+/// Call-trigger evaluation window: the most recent stretch scanned for breaches.
+pub const CALL_WINDOW: u32 = 28 * 24 * 3600;
+/// Call-trigger threshold: how much of the window must be in breach to force-call.
+pub const CALL_THRESHOLD: u32 = 21 * 24 * 3600;
 
 /// Commit-entry bond on the target-chain auction: 100M wCOEN (18-dec minor units).
 pub const COMMIT_BOND_MINOR: u128 = 100_000_000 * 10u128.pow(18);

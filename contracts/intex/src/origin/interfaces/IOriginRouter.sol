@@ -149,11 +149,11 @@ interface IOriginRouter {
         /// @notice Call price (payment-token minor units).
         uint64 callPriceMinor;
         /// @notice Called→deadline window in seconds (0 = default).
-        uint32 intexCallPeriod;
-        /// @notice Call-trigger observation window in days.
-        uint16 callWindowDays;
-        /// @notice Call-trigger threshold in days.
-        uint16 callThresholdDays;
+        uint32 callNoticePeriod;
+        /// @notice Call-trigger observation window in seconds.
+        uint32 callWindow;
+        /// @notice Call-trigger threshold in seconds.
+        uint32 callThreshold;
         /// @notice Minimum quantity per bid (Intex units).
         uint16 minIntexBidQuantity;
         /// @notice Commit-entry bond (payment-token minor units); 0 disables the bond.
@@ -176,11 +176,11 @@ interface IOriginRouter {
         uint64 entryPriceMinor;
         uint64 floorPriceMinor;
         /// @notice Duration in seconds for the Called -> deadline window (0 = default).
-        uint32 intexCallPeriod;
+        uint32 callNoticePeriod;
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
-        uint16 callWindowDays;
-        uint16 callThresholdDays;
+        uint32 callWindow;
+        uint32 callThreshold;
         uint64 callPriceMinor;
         address[] recipients;
         uint256[] quantities;
@@ -310,7 +310,7 @@ interface IOriginRouter {
         uint128[] calldata paidAmounts
     ) external payable returns (bytes32 sendId);
     /// @notice Broadcast mark-called over the day's snapshot. Restricted to `INTEX_FACTORY_ROLE`.
-    /// @dev The settlement deadline is derived on the destination chain from `intexCallPeriod`.
+    /// @dev The settlement deadline is derived on the destination chain from `callNoticePeriod`.
     function sendMarkCalled(uint32 seriesId) external payable;
     /// @notice Broadcast mark-qualified over the day's snapshot, flipping the series to Qualified.
     ///         Restricted to `INTEX_FACTORY_ROLE`.

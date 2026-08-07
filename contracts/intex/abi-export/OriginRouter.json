@@ -478,19 +478,19 @@
               "internalType": "uint64"
             },
             {
-              "name": "intexCallPeriod",
+              "name": "callNoticePeriod",
               "type": "uint32",
               "internalType": "uint32"
             },
             {
-              "name": "callWindowDays",
-              "type": "uint16",
-              "internalType": "uint16"
+              "name": "callWindow",
+              "type": "uint32",
+              "internalType": "uint32"
             },
             {
-              "name": "callThresholdDays",
-              "type": "uint16",
-              "internalType": "uint16"
+              "name": "callThreshold",
+              "type": "uint32",
+              "internalType": "uint32"
             },
             {
               "name": "minIntexBidQuantity",
@@ -564,7 +564,7 @@
               "internalType": "uint64"
             },
             {
-              "name": "intexCallPeriod",
+              "name": "callNoticePeriod",
               "type": "uint32",
               "internalType": "uint32"
             },
@@ -579,14 +579,14 @@
               "internalType": "uint16"
             },
             {
-              "name": "callWindowDays",
-              "type": "uint16",
-              "internalType": "uint16"
+              "name": "callWindow",
+              "type": "uint32",
+              "internalType": "uint32"
             },
             {
-              "name": "callThresholdDays",
-              "type": "uint16",
-              "internalType": "uint16"
+              "name": "callThreshold",
+              "type": "uint32",
+              "internalType": "uint32"
             },
             {
               "name": "callPriceMinor",
@@ -919,19 +919,19 @@
               "internalType": "uint64"
             },
             {
-              "name": "intexCallPeriod",
+              "name": "callNoticePeriod",
               "type": "uint32",
               "internalType": "uint32"
             },
             {
-              "name": "callWindowDays",
-              "type": "uint16",
-              "internalType": "uint16"
+              "name": "callWindow",
+              "type": "uint32",
+              "internalType": "uint32"
             },
             {
-              "name": "callThresholdDays",
-              "type": "uint16",
-              "internalType": "uint16"
+              "name": "callThreshold",
+              "type": "uint32",
+              "internalType": "uint32"
             },
             {
               "name": "minIntexBidQuantity",
@@ -999,7 +999,7 @@
               "internalType": "uint64"
             },
             {
-              "name": "intexCallPeriod",
+              "name": "callNoticePeriod",
               "type": "uint32",
               "internalType": "uint32"
             },
@@ -1014,14 +1014,14 @@
               "internalType": "uint16"
             },
             {
-              "name": "callWindowDays",
-              "type": "uint16",
-              "internalType": "uint16"
+              "name": "callWindow",
+              "type": "uint32",
+              "internalType": "uint32"
             },
             {
-              "name": "callThresholdDays",
-              "type": "uint16",
-              "internalType": "uint16"
+              "name": "callThreshold",
+              "type": "uint32",
+              "internalType": "uint32"
             },
             {
               "name": "callPriceMinor",

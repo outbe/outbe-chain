@@ -944,9 +944,9 @@ fn nonzero_owner_projections_are_snapshotted_in_the_created_intent() {
                 floor_price_minor: U256::from(1),
                 call_price_minor: U256::from(1),
                 call_trigger: outbe_intex::IntexCallTrigger {
-                    window_days: 1,
-                    threshold_days: 1,
-                    intex_call_period: 1,
+                    call_window: 24 * 60 * 60,
+                    call_threshold: 24 * 60 * 60,
+                    call_notice_period: 1,
                 },
                 issued_at: 1,
                 issuance_currency: 840,
