@@ -64,7 +64,7 @@ After Phase 1 precommit, the current explicit pre-execution order is:
 6. Staking matured-unbonding processing;
 7. Oracle period/daily processing excluding slash-window exits;
 8. Gem maturity/floor promotion;
-9. Intex maturity/floor qualification and proceeds settlement sweep;
+9. Intex qualification-period/floor qualification and proceeds settlement sweep;
 10. Desis auction clearing fan-in gate.
 
 Cycle owns UTC-midnight/noon economic orchestration and compressed-body mutations

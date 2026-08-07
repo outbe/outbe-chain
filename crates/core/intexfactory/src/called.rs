@@ -1,5 +1,5 @@
 //! Daily Called scan: force-calls a Qualified series once its COEN VWAP exceeded
-//! the call trigger on `threshold_days` of the last `window_days`. Candidates
+//! the call trigger on `call_threshold` of the last `call_window`. Candidates
 //! come from the call-trigger bin index; counts are recomputed each run from the
 //! Oracle's finalized per-UTC-day VWAPs, which the Oracle begin-block hook
 //! closes before the CycleTick that drives this scan. Driven by the Cycle daily
@@ -15,7 +15,7 @@ use outbe_primitives::{
     error::{PrecompileError, Result},
     math::{constants::MAX_BIN_ID, tree_math},
     storage::StorageHandle,
-    time::{previous_date_key, timestamp_to_date_key},
+    time::{previous_date_key, timestamp_to_date_key, SECONDS_PER_DAY},
 };
 
 use outbe_intex::IntexState;
@@ -154,7 +154,7 @@ impl DayVwaps {
 }
 
 /// Force-call one series if Qualified and its VWAP breached the call trigger on
-/// at least `threshold_days` of the last `window_days` completed days.
+/// at least `call_threshold` of the last `call_window` completed days.
 pub(crate) fn try_call(
     storage: &StorageHandle<'_>,
     factory: &mut IntexFactoryContract,
@@ -172,8 +172,10 @@ pub(crate) fn try_call(
         return Ok(false);
     }
     let trigger = series.call_price_minor;
-    let window = u32::from(series.call_window_days);
-    let threshold = u32::from(series.call_threshold_days);
+    // The scan walks finalized daily VWAPs, so both bounds floor to whole days.
+    let secs_per_day = SECONDS_PER_DAY as u32;
+    let window = series.call_window / secs_per_day;
+    let threshold = series.call_threshold / secs_per_day;
     if window == 0 || threshold == 0 {
         return Ok(false);
     }

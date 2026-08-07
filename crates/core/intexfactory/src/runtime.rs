@@ -12,8 +12,8 @@ use outbe_vaultrouter::api::IVaultRouter;
 
 use crate::config;
 use crate::constants::{
-    CALL_PRICE_DEN, DIST_CHUNK_LIMIT, FLOOR_PRICE_DEN, INTEX_NFT1155_ADDRESS,
-    ORIGIN_ROUTER_ADDRESS, POW_DIFFICULTY, PROCEEDS_FANIN_TIMEOUT_SECS,
+    DIST_CHUNK_LIMIT, INTEX_NFT1155_ADDRESS, ORIGIN_ROUTER_ADDRESS, POW_DIFFICULTY, PRICE_RATE_DEN,
+    PROCEEDS_FANIN_TIMEOUT_SECS,
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
@@ -43,8 +43,8 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
     let mut factory = IntexFactoryContract::new(storage.clone());
     let cfg = config::read(&factory)?;
 
-    let floor_price_minor = derived_floor(params.entry_price_minor, cfg.floor_price_num)?;
-    let call_price_minor = derived_call_price(params.entry_price_minor, cfg.call_price_num)?;
+    let floor_price_minor = marked_up(params.entry_price_minor, cfg.floor_rate)?;
+    let call_price_minor = marked_up(params.entry_price_minor, cfg.call_rate)?;
 
     let entry_price_minor_u64 = u64::try_from(params.entry_price_minor)
         .map_err(|_| PrecompileError::Revert("entry price exceeds u64".into()))?;
@@ -62,9 +62,9 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
         floor_price_minor,
         call_price_minor,
         call_trigger: outbe_intex::IntexCallTrigger {
-            window_days: cfg.call_window_days,
-            threshold_days: cfg.call_threshold_days,
-            intex_call_period: cfg.intex_call_period_secs,
+            call_window: cfg.call_window,
+            call_threshold: cfg.call_threshold,
+            call_notice_period: cfg.call_notice_period,
         },
         issued_at,
         issuance_currency: params.issuance_currency,
@@ -83,11 +83,11 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
             promisLoadMinor: params.promis_load_minor,
             entryPriceMinor: entry_price_minor_u64,
             floorPriceMinor: floor_price_minor_u64,
-            intexCallPeriod: cfg.intex_call_period_secs,
+            callNoticePeriod: cfg.call_notice_period,
             issuanceCurrency: params.issuance_currency,
             referenceCurrency: params.reference_currency,
-            callWindowDays: cfg.call_window_days,
-            callThresholdDays: cfg.call_threshold_days,
+            callWindow: cfg.call_window,
+            callThreshold: cfg.call_threshold,
             callPriceMinor: call_price_minor_u64,
             recipients,
             quantities,
@@ -150,18 +150,12 @@ pub(crate) fn issuance_legs(params: &IssuanceParams) -> Vec<(u32, Vec<Address>, 
         .collect()
 }
 
-pub(crate) fn derived_floor(entry_price: U256, floor_price_num: u64) -> Result<U256> {
+/// Applies a markup rate in percentage points: `entry * (100 + rate) / 100`.
+pub fn marked_up(entry_price: U256, rate: u16) -> Result<U256> {
     entry_price
-        .checked_mul(U256::from(floor_price_num))
-        .map(|v| v / U256::from(FLOOR_PRICE_DEN))
-        .ok_or_else(|| PrecompileError::Revert("floor price overflow".into()))
-}
-
-pub(crate) fn derived_call_price(entry_price: U256, call_price_num: u64) -> Result<U256> {
-    entry_price
-        .checked_mul(U256::from(call_price_num))
-        .map(|v| v / U256::from(CALL_PRICE_DEN))
-        .ok_or_else(|| PrecompileError::Revert("call price overflow".into()))
+        .checked_mul(U256::from(PRICE_RATE_DEN + rate))
+        .map(|v| v / U256::from(PRICE_RATE_DEN))
+        .ok_or_else(|| PrecompileError::Revert("marked-up price overflow".into()))
 }
 
 /// Per-Intex cost in the payment token's minor units. `entry_price` and
@@ -418,7 +412,7 @@ pub fn settle(
     // The deadline only constrains forced settlement (Called).
     if state == IntexState::Called {
         let now = storage.timestamp()?.to::<u64>();
-        let deadline = u64::from(series.called_at) + u64::from(series.intex_call_period);
+        let deadline = u64::from(series.called_at) + u64::from(series.call_notice_period);
         if now > deadline {
             return Err(IntexFactoryError::DeadlineExpired.into());
         }
@@ -530,7 +524,7 @@ fn nft_balance_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Re
 
 /// Per-Intex cost of settling `series_id` in `payment_token`, in that token's
 /// minor units. Rejects a token the series does not accept.
-pub fn settlement_cost(
+pub fn quote_cost_amount(
     storage: &StorageHandle<'_>,
     series_id: u32,
     payment_token: Address,

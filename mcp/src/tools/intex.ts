@@ -206,13 +206,22 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   }
 
   /** Per-Intex cost of settling `series` in `token`, in that token's minor units. */
-  async function settlementCost(n: Network, series: number, token: `0x${string}`): Promise<bigint> {
+  async function quoteCostAmount(n: Network, series: number, token: `0x${string}`): Promise<bigint> {
     return (await n.client.readContract({
       address: addr(n, "factory"),
       abi: FACTORY_ABI,
-      functionName: "settlementCost",
+      functionName: "quoteCostAmount",
       args: [series, token],
     })) as bigint;
+  }
+
+  /** ERC-20 decimals + symbol of an arbitrary settlement token. */
+  async function tokenMeta(n: Network, token: `0x${string}`): Promise<{ decimals: number; symbol: string }> {
+    const [decimals, symbol] = (await Promise.all([
+      n.client.readContract({ address: token, abi: ERC20_ABI, functionName: "decimals" }),
+      n.client.readContract({ address: token, abi: ERC20_ABI, functionName: "symbol" }),
+    ])) as [number, string];
+    return { decimals: Number(decimals), symbol };
   }
 
   /** Bid rate as a fraction of strike ("0.8" = 80%) to the uint32 1e6 fixed-point the contract expects. */
@@ -251,7 +260,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         args: [series],
       })) as Record<string, bigint | number>;
       const u256 = (v: bigint | number) => v as bigint;
-      const callDeadlineSec = Number(d.calledAt) > 0 ? Number(d.calledAt) + Number(d.intexCallPeriod) : 0;
+      const callDeadlineSec = Number(d.calledAt) > 0 ? Number(d.calledAt) + Number(d.callNoticePeriod) : 0;
       const metadata = await seriesMetadata(n, series);
       return ok({
         network: n.name,
@@ -262,11 +271,14 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         floorPrice: { raw: d.floorPriceMinor.toString(), value: formatUnits(u256(d.floorPriceMinor), 18), scale: "1e18 oracle" },
         callPrice: { raw: d.callPriceMinor.toString(), value: formatUnits(u256(d.callPriceMinor), 18), scale: "1e18 oracle" },
         issuedIntexCount: Number(d.issuedIntexCount),
-        callWindowDays: Number(d.callWindowDays),
-        callThresholdDays: Number(d.callThresholdDays),
-        intexCallPeriod: Number(d.intexCallPeriod),
+        costAmount: { raw: d.costAmountMinor.toString(), value: formatUnits(u256(d.costAmountMinor), 18), scale: "1e18 oracle (reference ccy)" },
+        callWindow: Number(d.callWindow),
+        callThreshold: Number(d.callThreshold),
+        callNoticePeriod: Number(d.callNoticePeriod),
+        // 6 dec: implied by the entry(1e18) * load(1e18) / 1e30 derivation.
         issuanceCurrency: Number(d.issuanceCurrency), // ISO 4217 numeric
         referenceCurrency: Number(d.referenceCurrency),
+        worldwideDay: Number(d.worldwideDay),
         state: intexState(d.state),
         issuedAt: epochIso(d.issuedAt),
         calledAt: epochIso(d.calledAt),
@@ -428,7 +440,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
           issuanceCurrency: number;
           referenceCurrency: number;
           promisLoadMinor: bigint;
-          callTrigger: { windowDays: number; thresholdDays: number; intexCallPeriod: number };
+          callTrigger: { callWindow: number; callThreshold: number; callNoticePeriod: number };
           minIntexBidRate: bigint;
           minIntexBidQuantity: number;
           entryPriceMinor: bigint;
@@ -455,9 +467,9 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
           // strike basis: per-Intex promis_load in the payment token (wCOEN). Escrow lock = qty * this * rate / 1e6.
           promisLoadMinor: { raw: d.params.promisLoadMinor.toString(), value: formatUnits(d.params.promisLoadMinor, dec) },
           callTrigger: {
-            windowDays: d.params.callTrigger.windowDays,
-            thresholdDays: d.params.callTrigger.thresholdDays,
-            intexCallPeriod: d.params.callTrigger.intexCallPeriod,
+            callWindow: d.params.callTrigger.callWindow,
+            callThreshold: d.params.callTrigger.callThreshold,
+            callNoticePeriod: d.params.callTrigger.callNoticePeriod,
           },
           // bid rates are 1e6 fixed-point (fraction of strike).
           minIntexBidRate: { raw: d.params.minIntexBidRate.toString(), value: formatUnits(d.params.minIntexBidRate, 6) },
@@ -942,9 +954,12 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         }
         token = tokens[0];
       }
-      const costPerIntex = await settlementCost(n, series, token);
+      const [costAmountMinor, { decimals: tokenDec, symbol: tokenSymbol }] = await Promise.all([
+        quoteCostAmount(n, series, token),
+        tokenMeta(n, token),
+      ]);
       const factory = addr(n, "factory");
-      const total = costPerIntex * BigInt(amount);
+      const total = costAmountMinor * BigInt(amount);
 
       const allowance = (await n.client.readContract({
         address: token,
@@ -974,9 +989,9 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         series,
         intexHolder,
         amount,
-        paymentToken: token,
-        costPerIntex: costPerIntex.toString(),
-        total: total.toString(),
+        paymentToken: { address: token, symbol: tokenSymbol, decimals: tokenDec },
+        costAmount: { raw: costAmountMinor.toString(), value: formatUnits(costAmountMinor, tokenDec) },
+        total: { raw: total.toString(), value: formatUnits(total, tokenDec) },
         autoApprove,
         self: intexHolder === account.address,
         ...receipt,
@@ -997,13 +1012,13 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
           const [decimals, symbol, cost] = await Promise.all([
             n.client.readContract({ address: token, abi: ERC20_ABI, functionName: "decimals" }),
             n.client.readContract({ address: token, abi: ERC20_ABI, functionName: "symbol" }),
-            settlementCost(n, series, token),
+            quoteCostAmount(n, series, token),
           ]);
           return {
             token,
             symbol: symbol as string,
             decimals: Number(decimals),
-            costPerIntex: { raw: cost.toString(), value: formatUnits(cost, Number(decimals)) },
+            costAmount: { raw: cost.toString(), value: formatUnits(cost, Number(decimals)) },
           };
         }),
       );

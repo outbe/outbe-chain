@@ -123,7 +123,7 @@ export const AUCTION_ABI: Abi = parseAbi([
   "function cancelCommit(uint32 worldwideDay)",
   "function claimCommitBond(uint32 worldwideDay, address bidder)",
   "function getAuctionStage(uint32 worldwideDay) view returns (uint8)",
-  "function getAuctionInfo(uint32 worldwideDay) view returns ((uint8 worldwideDayState, (uint32 commitEnd, uint32 revealEnd, uint32 issuanceEnd) schedule, (uint16 issuanceCurrency, uint16 referenceCurrency, uint128 promisLoadMinor, (uint16 windowDays, uint16 thresholdDays, uint32 intexCallPeriod) callTrigger, uint32 minIntexBidRate, uint16 minIntexBidQuantity, uint64 entryPriceMinor, uint64 floorPriceMinor, uint64 callPriceMinor, uint128 commitBondMinor) params, (uint64 auctionClearingRate, uint32 wonBidsCount, uint32 issuedIntexCount, uint128 issuedIntexLoadedPromis) result) auctionData)",
+  "function getAuctionInfo(uint32 worldwideDay) view returns ((uint8 worldwideDayState, (uint32 commitEnd, uint32 revealEnd, uint32 issuanceEnd) schedule, (uint16 issuanceCurrency, uint16 referenceCurrency, uint128 promisLoadMinor, (uint32 callWindow, uint32 callThreshold, uint32 callNoticePeriod) callTrigger, uint32 minIntexBidRate, uint16 minIntexBidQuantity, uint64 entryPriceMinor, uint64 floorPriceMinor, uint64 callPriceMinor, uint128 commitBondMinor) params, (uint64 auctionClearingRate, uint32 wonBidsCount, uint32 issuedIntexCount, uint128 issuedIntexLoadedPromis) result) auctionData)",
   "function committedBidsByHash(uint32 worldwideDay, address bidder) view returns (bytes32)",
   "function revealedBidsByBidder(uint32 worldwideDay, address bidder) view returns (bool)",
   "function escrowContract() view returns (address)",
@@ -137,7 +137,7 @@ export const NFT_ABI: Abi = parseAbi([
   "function statusOf(uint256 tokenId) view returns (uint8)",
   "function balanceOf(address account, uint256 id) view returns (uint256)",
   "function tokenIds(uint32 seriesId) view returns (uint256 issued, uint256 settled)",
-  "function readData(uint32 seriesId) view returns ((uint16 issuanceCurrency, uint16 referenceCurrency, uint32 issuedIntexCount, uint128 promisLoadMinor, uint64 entryPriceMinor, uint64 floorPriceMinor, uint64 callPriceMinor, (uint16 windowDays, uint16 thresholdDays, uint32 intexCallPeriod) callTrigger, uint32 issuedAt, uint32 calledAt, uint32 totalSupply, uint8 status, uint8 state, uint32 worldwideDay) data)",
+  "function readData(uint32 seriesId) view returns ((uint16 issuanceCurrency, uint16 referenceCurrency, uint32 issuedIntexCount, uint128 promisLoadMinor, uint64 entryPriceMinor, uint64 floorPriceMinor, uint64 callPriceMinor, (uint32 callWindow, uint32 callThreshold, uint32 callNoticePeriod) callTrigger, uint32 issuedAt, uint32 calledAt, uint32 totalSupply, uint8 status, uint8 state, uint32 worldwideDay) data)",
   "function uri(uint256 tokenId) view returns (string)",
   "function contractURI() view returns (string)",
   "function isApprovedForAll(address account, address operator) view returns (bool)",
@@ -146,7 +146,7 @@ export const NFT_ABI: Abi = parseAbi([
 
 /** Intex (outbe precompile): canonical cross-chain series ledger. */
 export const INTEX_ABI: Abi = parseAbi([
-  "function seriesData(uint32 seriesId) view returns ((uint32 seriesId, uint256 promisLoadMinor, uint256 entryPriceMinor, uint256 floorPriceMinor, uint32 issuedIntexCount, uint16 callWindowDays, uint16 callThresholdDays, uint256 callPriceMinor, uint8 state, uint32 issuedAt, uint32 calledAt, uint32 intexCallPeriod, uint16 issuanceCurrency, uint16 referenceCurrency) data)",
+  "function seriesData(uint32 seriesId) view returns ((uint32 seriesId, uint256 promisLoadMinor, uint256 entryPriceMinor, uint256 floorPriceMinor, uint32 issuedIntexCount, uint32 callWindow, uint32 callThreshold, uint256 callPriceMinor, uint8 state, uint32 issuedAt, uint32 calledAt, uint32 callNoticePeriod, uint16 issuanceCurrency, uint16 referenceCurrency, uint32 worldwideDay, uint256 costAmountMinor) data)",
   "function seriesExists(uint32 seriesId) view returns (bool)",
   "function totalSeries() view returns (uint64)",
   "function seriesAt(uint64 index) view returns (uint32)",
@@ -161,7 +161,7 @@ export const NFT_BRIDGE_ABI: Abi = parseAbi([
 /** IntexFactory (outbe precompile): holder-facing settlement + Promis mining. */
 export const FACTORY_ABI: Abi = parseAbi([
   "function settle(uint32 seriesId, address intexHolder, uint256 amount, address paymentToken)",
-  "function settlementCost(uint32 seriesId, address paymentToken) view returns (uint256 cost)",
+  "function quoteCostAmount(uint32 seriesId, address paymentToken) view returns (uint256 costAmountMinor)",
   "function minePromis(uint32 seriesId, uint256 amount, uint256 nonce, bytes32 mac, uint64 opNonce) returns (uint256 promisAmount)",
   "function setAuthorizedSettler(uint32 seriesId, address settler)",
   "event PromisMined(uint32 indexed seriesId, address indexed holder, uint256 amount, uint256 promisAmount)",

@@ -60,14 +60,14 @@
             "internalType": "uint32"
           },
           {
-            "name": "callWindowDays",
-            "type": "uint16",
-            "internalType": "uint16"
+            "name": "callWindow",
+            "type": "uint32",
+            "internalType": "uint32"
           },
           {
-            "name": "callThresholdDays",
-            "type": "uint16",
-            "internalType": "uint16"
+            "name": "callThreshold",
+            "type": "uint32",
+            "internalType": "uint32"
           },
           {
             "name": "callPriceMinor",
@@ -90,7 +90,7 @@
             "internalType": "uint32"
           },
           {
-            "name": "intexCallPeriod",
+            "name": "callNoticePeriod",
             "type": "uint32",
             "internalType": "uint32"
           },
@@ -103,6 +103,16 @@
             "name": "referenceCurrency",
             "type": "uint16",
             "internalType": "uint16"
+          },
+          {
+            "name": "worldwideDay",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "costAmountMinor",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       }

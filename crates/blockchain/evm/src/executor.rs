@@ -627,7 +627,7 @@ fn run_outbe_pre_execution_hooks_inner(
     // surface, so it must run after Oracle.
     <outbe_gem::GemLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
 
-    // INTEX: qualify matured Issued series whose floor < current COEN/0xUSD
+    // INTEX: qualify aged Issued series whose floor < current COEN/0xUSD
     // rate. Reads the same Oracle surface, so it runs after Oracle.
     <outbe_intexfactory::IntexLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
 

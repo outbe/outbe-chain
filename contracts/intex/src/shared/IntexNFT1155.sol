@@ -18,7 +18,7 @@ import {IntexMetadata} from "./libs/IntexMetadata.sol";
  * @dev One auction produces one series with shared parameters for all winners.
  * @dev State transitions affect the entire series simultaneously (O(1) gas).
  * @dev Series lifecycle: Issued -> Qualified -> Called.
- *      Expiry is not an on-chain state: it is derived from `calledAt + intexCallPeriod`
+ *      Expiry is not an on-chain state: it is derived from `calledAt + callNoticePeriod`
  *      against the clock (settle/bridge gates, metadata rendering).
  * @dev Each series has two token ids: issued = `uint256(seriesId)`,
  *      settled = `keccak256("SETTLED", seriesId)`.
@@ -180,9 +180,9 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             floorPriceMinor: params.floorPriceMinor,
             callPriceMinor: params.callPriceMinor,
             callTrigger: IIntexNFT1155.IntexCallTrigger({
-                windowDays: params.callTrigger.windowDays,
-                thresholdDays: params.callTrigger.thresholdDays,
-                intexCallPeriod: params.callTrigger.intexCallPeriod
+                callWindow: params.callTrigger.callWindow,
+                callThreshold: params.callTrigger.callThreshold,
+                callNoticePeriod: params.callTrigger.callNoticePeriod
             }),
             issuedAt: uint32(block.timestamp),
             calledAt: 0,
@@ -285,7 +285,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         data.state = IIntexNFT1155.IntexState.Called;
         data.calledAt = calledAt;
 
-        uint32 derivedDeadline = calledAt + data.callTrigger.intexCallPeriod;
+        uint32 derivedDeadline = calledAt + data.callTrigger.callNoticePeriod;
 
         emit IntexStatusUpdated(
             msg.sender, tokenId, previousState, IIntexNFT1155.IntexState.Called, calledAt, derivedDeadline
@@ -312,10 +312,10 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             if (!hasRole(SYSTEM_RELAYER_ROLE, msg.sender)) {
                 revert BridgeStateForbidden(tokenId, uint8(data.state));
             }
-            // Bridge moves are confined to the call window: once `calledAt + callTrigger.intexCallPeriod`
+            // Bridge moves are confined to the call window: once `calledAt + callTrigger.callNoticePeriod`
             // passes the series is settlement-complete and balances must stay frozen, otherwise
             // a system relayer could keep moving (and `crosschainMint` could re-inflate) post-lifecycle.
-            uint32 derivedDeadline = data.calledAt + data.callTrigger.intexCallPeriod;
+            uint32 derivedDeadline = data.calledAt + data.callTrigger.callNoticePeriod;
             if (block.timestamp > derivedDeadline) {
                 revert BridgeAfterDeadline(tokenId, derivedDeadline);
             }
@@ -344,7 +344,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
                 revert BridgeStateForbidden(tokenId, uint8(data.state));
             }
             // Mirror of `crosschainBurn`: no bridge-in past the settlement deadline.
-            uint32 derivedDeadline = data.calledAt + data.callTrigger.intexCallPeriod;
+            uint32 derivedDeadline = data.calledAt + data.callTrigger.callNoticePeriod;
             if (block.timestamp > derivedDeadline) {
                 revert BridgeAfterDeadline(tokenId, derivedDeadline);
             }
@@ -388,7 +388,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
 
         if (data.state == IIntexNFT1155.IntexState.Called) {
             // No new Settled tokens past the call window (mirrors the crosschainBurn/crosschainMint freeze).
-            uint32 derivedDeadline = data.calledAt + data.callTrigger.intexCallPeriod;
+            uint32 derivedDeadline = data.calledAt + data.callTrigger.callNoticePeriod;
             if (block.timestamp > derivedDeadline) {
                 revert SettleAfterDeadline(iTok, derivedDeadline);
             }

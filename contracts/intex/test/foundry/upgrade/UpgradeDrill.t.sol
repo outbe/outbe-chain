@@ -121,7 +121,7 @@ contract UpgradeDrillTest is CrossChainTest {
             entryPriceMinor: 1,
             floorPriceMinor: 1,
             callPriceMinor: 1,
-            callTrigger: IIntexAuction.IntexCallTrigger({windowDays: 0, thresholdDays: 0, intexCallPeriod: 0}),
+            callTrigger: IIntexAuction.IntexCallTrigger({callWindow: 0, callThreshold: 0, callNoticePeriod: 0}),
             minIntexBidQuantity: 1,
             commitBondMinor: 0
         });

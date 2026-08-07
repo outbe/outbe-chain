@@ -33,14 +33,14 @@ share one source-chain transaction.
 Begin-block qualification scans only due price bins and transitions eligible Issued
 series to Qualified consistently in both Rust and ERC-1155 representations. The
 scheduled call scan uses canonical WorldwideDay/Oracle history and a per-series
-window/threshold to transition eligible Issued or Qualified series to Called and
-remove/update indexes. Each candidate is checkpoint-isolated, but deterministic
+call_window/call_threshold to transition eligible Issued or Qualified series to
+Called and remove/update indexes. Each candidate is checkpoint-isolated, but deterministic
 errors and retry/skip policy must be explicit.
 
 ### Settlement
 
 Settlement is allowed in Qualified, or in Called no later than
-`called_at + call_period`. Caller is the Intex holder or its nonzero per-series
+`called_at + call_notice_period`. Caller is the Intex holder or its nonzero per-series
 authorized settler. Amount must not exceed holder's Issued ERC-1155 balance.
 
 Factory derives exact payment from immutable entry price and Promis load, pulls the

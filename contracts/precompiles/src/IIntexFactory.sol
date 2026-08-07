@@ -19,7 +19,7 @@ interface IIntexFactory {
 
     /// @notice Per-Intex cost of settling `seriesId` in `paymentToken`, in that
     ///         token's minor units. Reverts if the series does not accept it.
-    function settlementCost(uint32 seriesId, address paymentToken) external view returns (uint256 cost);
+    function quoteCostAmount(uint32 seriesId, address paymentToken) external view returns (uint256 costAmountMinor);
 
     /// @notice Burn settled Intexes and mint confidential Promis, gated by
     ///         off-chain proof of work. Caller is the holder. Authorized by the
