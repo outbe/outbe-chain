@@ -1382,7 +1382,7 @@ mod tests {
                 result_validator_set_epoch: 7,
                 result_committee_set_hash: B256::repeat_byte(0x41),
                 result_ocomp_binding_hash: B256::repeat_byte(0x42),
-                validator_index: 0,
+                ocomp_key_hash: B256::repeat_byte(0x43),
                 key_epoch: 1,
                 result,
                 signature_rs: [0; 64],

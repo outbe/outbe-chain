@@ -69,7 +69,7 @@ fn subject(result_digest: B256) -> SignOnceSubjectV1 {
         result_validator_set_epoch: 7,
         result_committee_set_hash: B256::repeat_byte(0x33),
         result_ocomp_binding_hash: B256::repeat_byte(0x34),
-        validator_index: 2,
+        ocomp_key_hash: B256::repeat_byte(0x35),
         key_epoch: 1,
         result_digest,
     }
@@ -86,7 +86,7 @@ fn expected_signing_digest(subject: SignOnceSubjectV1) -> B256 {
         result_validator_set_epoch: subject.result_validator_set_epoch,
         result_committee_set_hash: subject.result_committee_set_hash,
         result_ocomp_binding_hash: subject.result_ocomp_binding_hash,
-        validator_index: subject.validator_index,
+        ocomp_key_hash: subject.ocomp_key_hash,
         key_epoch: subject.key_epoch,
         purpose: SignOncePurpose::ResultSignature as u8,
         result_digest: subject.result_digest,

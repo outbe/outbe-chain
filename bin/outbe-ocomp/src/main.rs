@@ -427,15 +427,8 @@ fn run_supervisor(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> 
         runtime.effective_role_uid,
         limits,
     )?;
-    let validator_index: u16 = required_env("OCOMP_VALIDATOR_INDEX")?.parse()?;
-    let attester = LocalResultVoteAttesterV1::new(
-        identity,
-        fork_id,
-        validator_index,
-        result_signer,
-        sign_once,
-        limits,
-    )?;
+    let attester =
+        LocalResultVoteAttesterV1::new(identity, fork_id, result_signer, sign_once, limits)?;
     let vote_preparer =
         LocalVoteTransactionPreparerV1::new(evm_signer, attester, identity.chain_id, limits)?;
     let sender_address = vote_preparer.sender_address();

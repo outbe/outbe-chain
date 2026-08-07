@@ -238,9 +238,9 @@ q = simplex_n3f1_quorum(N)
 
 Each domain independently owns its node, supervisor, exporter, CAS and workers.
 Several processes or workers controlled by one validator contribute one
-participant index and one first vote at most. A later ValidatorSet boundary
-affects only new attempts; already-open attempts retain their pinned members,
-keys, `N` and quorum.
+internally derived participant index and one first vote at most. A later
+ValidatorSet boundary affects only new attempts; already-open attempts retain
+their pinned members, keys, `N` and quorum.
 
 The node owns a separate OCOMP signing key/epoch and an
 `OcompAttestationGate`. The supervisor and worker never receive the key or an
@@ -264,7 +264,7 @@ The sign-once subject binds at least:
 ```text
 (chain/genesis/fork, OCOMP key epoch, JobId, attempt,
  result_validator_set_epoch, result_committee_set_hash,
- result_ocomp_binding_hash, participant index, result purpose)
+ result_ocomp_binding_hash, OCOMP key hash, result purpose)
 ```
 
 An exact retry returns the recorded signature. A different digest for the same
@@ -306,7 +306,7 @@ ResultVoteV1 {
   result_validator_set_epoch,
   result_committee_set_hash,
   result_ocomp_binding_hash,
-  participant_index: u16,
+  ocomp_key_hash,
   key_epoch,
   result: LysisResultV1,
   signature
@@ -322,7 +322,11 @@ bodies.
 The executor bounded-decodes and structurally verifies the canonical result,
 then reconstructs `ResultDigest`. The inner OCOMP signature binds the
 chain/genesis/fork, bundle, job, attempt, all three historical snapshot
-bindings, participant index, key epoch, result purpose and that exact digest.
+bindings, OCOMP key hash, key epoch, result purpose and that exact digest.
+Execution resolves that hash through the existing
+`ocomp_key_hash_to_validator`, finds the validator in the pinned snapshot and
+uses the resulting internal index for the vote slot, bitmap and accountability.
+The vote never accepts a caller-selected snapshot index.
 The outer replay-visible carrier uses the Supervisor's
 role-delegated OCOMP EVM key. The node never receives that private key and the
 Supervisor never receives the node's attestation key. Its visible signed
@@ -516,7 +520,8 @@ Three votes over different result bytes do not form quorum evidence.
 - `N` authenticated Tribute produce exactly the canonical shard/range set; a
   shard boundary never drops or rejects a valid next Tribute.
 - Worker/scheduler count cannot change result bytes or evidence weight.
-- One validator index contributes at most one first vote to the tally.
+- One validator resolved from the signed OCOMP key hash contributes at most one
+  first vote to its internally derived snapshot slot.
 - The OCOMP key is distinct from the consensus key and unavailable to compute
   processes.
 - The V1 OCOMP key remains `key_epoch = 1` and immutable for a validator address

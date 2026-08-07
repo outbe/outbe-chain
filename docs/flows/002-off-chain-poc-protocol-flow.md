@@ -107,7 +107,7 @@ high bits in the last byte are zero.
 | raw body bytes | canonical body that verifies against its committed leaf | Mongo/CAS location |
 | Lysis semantics | job-pinned `ProtocolBundleV1` | worker binary label or negotiation |
 | shard/unit membership/order | complete manifest count plus canonical plan and `UnitId` | scheduler/worker completion order |
-| one validator vote | one participant index and OCOMP key epoch from the exact pinned historical ValidatorSet snapshot | process/worker count or current ACTIVE set |
+| one validator vote | signed OCOMP key hash resolved to a validator, then to one internal index and key epoch in the exact pinned historical ValidatorSet snapshot | caller-supplied index, process/worker count or current ACTIVE set |
 | result equality | exact canonical `ResultDigest` in the snapshot-sized bounded vote slots | “equivalent” JSON or submitter choice |
 | voting-window authority | `open_height = finality_recorded_height + 4` in consensus state | event, local cursor or vote payload |
 | timely participation | canonical vote inclusion height and closed accountability summary | mempool/supervisor logs |

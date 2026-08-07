@@ -70,7 +70,8 @@ not merely a boolean.
 Oracle calls ValidatorSet's role resolver and enforces vote-period rules against
 the represented validator during execution. OCOMP uses the role resolver only
 for its exact ZeroFee envelope; its protocol authority is the independently
-verified inner `ResultVoteV1` committee signature, not the outer EVM sender.
+verified inner `ResultVoteV1` signature by the pinned historical OCOMP key, not
+the outer EVM sender.
 
 ZeroFee remains split into:
 

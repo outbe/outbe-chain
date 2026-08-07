@@ -929,16 +929,7 @@ fn real_payload_builder_commits_atomic_request_between_ce_preview_and_final_seal
     voting_open_state.storage = voting_open.storage.clone();
     StorageHandle::enter(&mut voting_open_state, |storage| {
         for (validator_index, vote) in &signed_votes {
-            let prefix = outbe_ocomp_protocol::vote::ResultVotePrefixV1 {
-                protocol_bundle_hash: vote.protocol_bundle_hash,
-                job_id: vote.job_id,
-                attempt: vote.attempt,
-                result_validator_set_epoch: vote.result_validator_set_epoch,
-                result_committee_set_hash: vote.result_committee_set_hash,
-                result_ocomp_binding_hash: vote.result_ocomp_binding_hash,
-                validator_index: vote.validator_index,
-                key_epoch: vote.key_epoch,
-            };
+            let prefix = vote.prefix();
             assert_eq!(
                 outbe_metadosis::resolve_historical_result_vote_participant(
                     storage.clone(),

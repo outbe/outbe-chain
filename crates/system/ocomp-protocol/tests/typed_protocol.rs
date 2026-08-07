@@ -444,7 +444,7 @@ fn validator_identity_hash_is_address_and_bls_bound_without_committee_index() {
 }
 
 #[test]
-fn vote_signing_subject_binds_all_snapshot_coordinates_and_u16_index() {
+fn vote_signing_subject_binds_all_snapshot_coordinates_and_ocomp_key_hash() {
     let subject = ResultVoteSigningSubjectV1 {
         chain_id: 42,
         genesis_hash: hash(40),
@@ -455,7 +455,7 @@ fn vote_signing_subject_binds_all_snapshot_coordinates_and_u16_index() {
         result_validator_set_epoch: 7,
         result_committee_set_hash: hash(45),
         result_ocomp_binding_hash: hash(46),
-        validator_index: 300,
+        ocomp_key_hash: hash(49),
         key_epoch: 1,
         purpose: SignOncePurpose::ResultSignature as u8,
         result_digest: hash(60),
@@ -476,7 +476,7 @@ fn vote_signing_subject_binds_all_snapshot_coordinates_and_u16_index() {
             ..subject
         },
         ResultVoteSigningSubjectV1 {
-            validator_index: 301,
+            ocomp_key_hash: hash(50),
             ..subject
         },
     ] {
@@ -511,7 +511,12 @@ fn dynamic_accountability_uses_supplied_n_quorum_and_lsb0_bitmaps() {
             &snapshot,
         );
         accountability
-            .record_verified_vote(&vote, 106 + u64::from(validator_index), &LIMITS)
+            .record_verified_vote(
+                validator_index,
+                &vote,
+                106 + u64::from(validator_index),
+                &LIMITS,
+            )
             .unwrap();
     }
     assert_eq!(
@@ -521,7 +526,7 @@ fn dynamic_accountability_uses_supplied_n_quorum_and_lsb0_bitmaps() {
 
     let late_vote = signed_vote(8, matching_result, &finalized_intent, job_id, &snapshot);
     accountability
-        .record_verified_vote(&late_vote, 114, &LIMITS)
+        .record_verified_vote(8, &late_vote, 114, &LIMITS)
         .unwrap();
     let summary = accountability.close(120, &LIMITS).unwrap();
     assert_eq!(summary.timely_bitmap, vec![0b0111_1111, 0b0000_0001]);
@@ -563,7 +568,7 @@ fn submit_result_prefix_decoder_is_canonical_bounded_and_panic_free() {
         prefix.result_ocomp_binding_hash,
         vote.result_ocomp_binding_hash
     );
-    assert_eq!(prefix.validator_index, vote.validator_index);
+    assert_eq!(prefix.ocomp_key_hash, vote.ocomp_key_hash);
     assert_eq!(prefix.key_epoch, vote.key_epoch);
 
     for truncated_len in [0, 3, 4, 35, 36, 67, 68, calldata.len() - 1] {
@@ -622,7 +627,7 @@ fn ocomp_system_carrier_classifier_is_exact_and_fail_closed() {
     let candidate = classify_ocomp_system_carrier(canonical, &LIMITS)
         .unwrap()
         .expect("canonical carrier");
-    assert_eq!(candidate.prefix.validator_index, vote.validator_index);
+    assert_eq!(candidate.prefix.ocomp_key_hash, vote.ocomp_key_hash);
     assert_eq!(candidate.prefix.job_id, vote.job_id);
 
     assert!(matches!(
@@ -713,6 +718,8 @@ fn signed_vote(
     job_id: B256,
     snapshot: &TestCommittee,
 ) -> ResultVoteV1 {
+    let key = signing_key(u8::try_from(validator_index).unwrap());
+    let public_key = key.verifying_key().to_encoded_point(true);
     let mut vote = ResultVoteV1 {
         protocol_bundle_hash: finalized_intent.protocol_bundle_hash,
         job_id,
@@ -720,16 +727,13 @@ fn signed_vote(
         result_validator_set_epoch: snapshot.snapshot_epoch,
         result_committee_set_hash: finalized_intent.result_committee_set_hash,
         result_ocomp_binding_hash: snapshot.snapshot_hash(&LIMITS).unwrap(),
-        validator_index,
+        ocomp_key_hash: keccak256(public_key.as_bytes()),
         key_epoch: 1,
         result,
         signature_rs: [0; 64],
     };
     let signing_digest = vote.signing_digest(finalized_intent, &LIMITS).unwrap();
-    vote.signature_rs = sign(
-        &signing_key(u8::try_from(validator_index).unwrap()),
-        signing_digest,
-    );
+    vote.signature_rs = sign(&key, signing_digest);
     vote
 }
 
@@ -747,10 +751,12 @@ fn verify_vote(
             "test historical snapshot binding",
         ));
     }
-    let member = snapshot
+    let (_, member) = snapshot
         .ordered_members
-        .get(usize::from(vote.validator_index))
-        .ok_or(ProtocolError::InvalidInvariant("vote validator index"))?;
+        .iter()
+        .enumerate()
+        .find(|(_, member)| keccak256(member.ocomp_public_key_sec1) == vote.ocomp_key_hash)
+        .ok_or(ProtocolError::InvalidInvariant("vote OCOMP key hash"))?;
     vote.verify_historical_member(
         finalized_intent,
         job_id,
@@ -948,7 +954,7 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         result_validator_set_epoch: snapshot.snapshot_epoch,
         result_committee_set_hash: hash(45),
         result_ocomp_binding_hash: snapshot.snapshot_hash(&LIMITS).unwrap(),
-        validator_index: 0,
+        ocomp_key_hash: keccak256(snapshot.ordered_members[0].ocomp_public_key_sec1),
         key_epoch: 1,
         result_digest,
         signature_rs: [0; 64],
@@ -1261,7 +1267,12 @@ fn direct_result_votes_freeze_supplied_quorum_and_keep_late_accountability_separ
         .unwrap();
         assert_eq!(
             accountability
-                .record_verified_vote(&vote, 106 + u64::from(validator_index), &LIMITS)
+                .record_verified_vote(
+                    validator_index,
+                    &vote,
+                    106 + u64::from(validator_index),
+                    &LIMITS,
+                )
                 .unwrap(),
             RecordVoteOutcomeV1::FirstVote
         );
@@ -1290,7 +1301,7 @@ fn direct_result_votes_freeze_supplied_quorum_and_keep_late_accountability_separ
     )
     .unwrap();
     accountability
-        .record_verified_vote(&minority, 109, &LIMITS)
+        .record_verified_vote(3, &minority, 109, &LIMITS)
         .unwrap();
     assert_eq!(accountability.quorum.as_ref(), Some(&frozen_quorum));
 
@@ -1303,7 +1314,7 @@ fn direct_result_votes_freeze_supplied_quorum_and_keep_late_accountability_separ
     );
     assert_eq!(
         accountability
-            .record_verified_vote(&equivocation, 110, &LIMITS)
+            .record_verified_vote(3, &equivocation, 110, &LIMITS)
             .unwrap(),
         RecordVoteOutcomeV1::EquivocationRecorded
     );

@@ -14,7 +14,7 @@ use std::{
     },
 };
 
-use alloy_primitives::{Address, Bytes, Log, B256, U256};
+use alloy_primitives::{keccak256, Address, Bytes, Log, B256, U256};
 use k256::ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
@@ -540,6 +540,15 @@ fn signing_key(index: u8) -> SigningKey {
     SigningKey::from_bytes((&[index + 1; 32]).into()).unwrap()
 }
 
+fn ocomp_key_hash(index: u8) -> B256 {
+    keccak256(
+        signing_key(index)
+            .verifying_key()
+            .to_encoded_point(true)
+            .as_bytes(),
+    )
+}
+
 fn sign(key: &SigningKey, digest: B256) -> [u8; 64] {
     let signature: Signature = key.sign_prehash(digest.as_slice()).unwrap();
     signature.to_bytes().into()
@@ -1005,7 +1014,7 @@ pub fn signed_result_vote_for_intent(
         result_validator_set_epoch: intent.result_validator_set_epoch,
         result_committee_set_hash: intent.result_committee_set_hash,
         result_ocomp_binding_hash: intent.result_ocomp_binding_hash,
-        validator_index: u16::from(validator_index),
+        ocomp_key_hash: ocomp_key_hash(validator_index),
         key_epoch: 1,
         result: result.clone(),
         signature_rs: [0; 64],
@@ -1487,7 +1496,7 @@ impl ActivationFixture {
                     result_validator_set_epoch: intent.result_validator_set_epoch,
                     result_committee_set_hash: intent.result_committee_set_hash,
                     result_ocomp_binding_hash: intent.result_ocomp_binding_hash,
-                    validator_index: u16::from(index),
+                    ocomp_key_hash: ocomp_key_hash(index),
                     key_epoch: 1,
                     result: result.clone(),
                     signature_rs: [0; 64],
@@ -1532,7 +1541,7 @@ impl ActivationFixture {
             result_validator_set_epoch: intent.result_validator_set_epoch,
             result_committee_set_hash: intent.result_committee_set_hash,
             result_ocomp_binding_hash: intent.result_ocomp_binding_hash,
-            validator_index: u16::from(validator_index),
+            ocomp_key_hash: ocomp_key_hash(validator_index),
             key_epoch: 1,
             result: self.result.clone(),
             signature_rs: [0; 64],

@@ -661,8 +661,6 @@ impl OcompTopology {
             .launch_identity
             .ok_or_else(|| eyre::eyre!("OCOMP launch identity is unavailable"))?;
         let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
-        vote.validator_index = u16::from(validator_index);
-        vote.signature_rs = [0; 64];
         let bundle = ProtocolBundleV1::decode_canonical(
             &fs::read(
                 self.domain_root(validator_index)?
@@ -670,6 +668,11 @@ impl OcompTopology {
             )?,
             &limits,
         )?;
+        let key = fs::read_to_string(self.domain_root(validator_index)?.join("ocomp-key-v1.hex"))?;
+        let signing_key = SigningKey::from_slice(&hex::decode(key.trim())?)?;
+        let public_key = signing_key.verifying_key().to_encoded_point(true);
+        vote.ocomp_key_hash = keccak256(public_key.as_bytes());
+        vote.signature_rs = [0; 64];
         let subject = ResultVoteSigningSubjectV1 {
             chain_id: identity.chain_id,
             genesis_hash: identity.genesis_hash,
@@ -680,13 +683,11 @@ impl OcompTopology {
             result_validator_set_epoch: vote.result_validator_set_epoch,
             result_committee_set_hash: vote.result_committee_set_hash,
             result_ocomp_binding_hash: vote.result_ocomp_binding_hash,
-            validator_index: u16::from(validator_index),
+            ocomp_key_hash: vote.ocomp_key_hash,
             key_epoch: vote.key_epoch,
             purpose: SignOncePurpose::ResultSignature as u8,
             result_digest: vote.result_digest(&limits)?,
         };
-        let key = fs::read_to_string(self.domain_root(validator_index)?.join("ocomp-key-v1.hex"))?;
-        let signing_key = SigningKey::from_slice(&hex::decode(key.trim())?)?;
         let signature: Signature =
             signing_key.sign_prehash(subject.signing_digest()?.as_slice())?;
         vote.signature_rs = signature

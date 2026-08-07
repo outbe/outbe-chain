@@ -1,9 +1,7 @@
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_ocomp_protocol::{
-    receipts::ActivationOutcome,
-    state::OcompJobStatus,
-    vote::{OcompVoteAccountabilityV1, ResultVotePrefixV1},
+    receipts::ActivationOutcome, state::OcompJobStatus, vote::OcompVoteAccountabilityV1,
 };
 use outbe_primitives::{
     addresses::{INTEX_ADDRESS, NOD_ADDRESS, PROMIS_LIMIT_ADDRESS, TRIBUTE_ADDRESS},
@@ -299,16 +297,7 @@ fn authentic_carrier_after_deadline_resolves_pinned_signer_and_returns_deadline_
             .unwrap()
     });
     let late_vote = fixture.signed_result_vote(3);
-    let prefix = ResultVotePrefixV1 {
-        protocol_bundle_hash: late_vote.protocol_bundle_hash,
-        job_id: late_vote.job_id,
-        attempt: late_vote.attempt,
-        result_validator_set_epoch: late_vote.result_validator_set_epoch,
-        result_committee_set_hash: late_vote.result_committee_set_hash,
-        result_ocomp_binding_hash: late_vote.result_ocomp_binding_hash,
-        validator_index: late_vote.validator_index,
-        key_epoch: late_vote.key_epoch,
-    };
+    let prefix = late_vote.prefix();
 
     close_completed_response_window(&mut fixture, finalized.deadline_height).unwrap();
 
@@ -852,16 +841,7 @@ fn public_dispatch_uses_pinned_dynamic_membership_and_quorum() {
 fn historical_vote_participant_resolution_does_not_consult_current_active_status() {
     let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
     let vote = fixture.signed_result_vote(1);
-    let prefix = ResultVotePrefixV1 {
-        protocol_bundle_hash: vote.protocol_bundle_hash,
-        job_id: vote.job_id,
-        attempt: vote.attempt,
-        result_validator_set_epoch: vote.result_validator_set_epoch,
-        result_committee_set_hash: vote.result_committee_set_hash,
-        result_ocomp_binding_hash: vote.result_ocomp_binding_hash,
-        validator_index: vote.validator_index,
-        key_epoch: vote.key_epoch,
-    };
+    let prefix = vote.prefix();
     let historical_validator = Address::repeat_byte(0xB1);
 
     StorageHandle::enter(&mut fixture.provider, |storage| {
@@ -890,16 +870,7 @@ fn historical_vote_participant_resolution_does_not_consult_current_active_status
 fn system_carrier_signer_is_bound_to_the_historical_validator_or_its_delegate() {
     let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
     let vote = fixture.signed_result_vote(1);
-    let prefix = ResultVotePrefixV1 {
-        protocol_bundle_hash: vote.protocol_bundle_hash,
-        job_id: vote.job_id,
-        attempt: vote.attempt,
-        result_validator_set_epoch: vote.result_validator_set_epoch,
-        result_committee_set_hash: vote.result_committee_set_hash,
-        result_ocomp_binding_hash: vote.result_ocomp_binding_hash,
-        validator_index: vote.validator_index,
-        key_epoch: vote.key_epoch,
-    };
+    let prefix = vote.prefix();
     let historical_validator = Address::repeat_byte(0xB1);
     let delegate = Address::repeat_byte(0xD1);
 
@@ -1008,8 +979,8 @@ fn public_vote_rejects_every_pinned_identity_and_signature_mismatch() {
     wrong.result_ocomp_binding_hash = B256::repeat_byte(0xA3);
     cases.push(("OCOMP binding hash", wrong));
     let mut wrong = base.clone();
-    wrong.validator_index = u16::MAX;
-    cases.push(("participant index", wrong));
+    wrong.ocomp_key_hash = B256::repeat_byte(0xA4);
+    cases.push(("OCOMP key hash", wrong));
     let mut wrong = base.clone();
     wrong.key_epoch = wrong.key_epoch.saturating_add(1);
     cases.push(("key epoch", wrong));

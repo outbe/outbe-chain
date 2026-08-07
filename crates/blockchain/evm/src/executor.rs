@@ -5290,9 +5290,9 @@ mod tests {
         body.extend_from_slice(&7_u64.to_be_bytes());
         body.extend_from_slice(B256::repeat_byte(0x33).as_slice());
         body.extend_from_slice(B256::repeat_byte(0x34).as_slice());
-        body.extend_from_slice(&1_u16.to_be_bytes());
+        body.extend_from_slice(B256::repeat_byte(0x35).as_slice());
         body.extend_from_slice(&1_u64.to_be_bytes());
-        body.resize(150, 0);
+        body.resize(180, 0);
         let payload = encode_envelope(ObjectKind::ResultVoteV1, &body, poc_schema_limits().codec)
             .expect("canonical OCOMP prefix must encode");
         let padded_len = (payload.len() + 31) & !31;
@@ -5336,7 +5336,7 @@ mod tests {
         .expect("canonical OCOMP envelope must classify")
         .expect("canonical OCOMP envelope must select the system carrier");
 
-        assert_eq!(candidate.prefix.validator_index, 1);
+        assert_eq!(candidate.prefix.ocomp_key_hash, B256::repeat_byte(0x35));
     }
 
     #[allow(dead_code)] // retained for follow-up tests
