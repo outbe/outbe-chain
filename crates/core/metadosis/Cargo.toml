@@ -6,6 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+outbe-chain-constants.workspace = true
 outbe-macros.workspace = true
 outbe-common.workspace = true
 outbe-compressed-entities.workspace = true

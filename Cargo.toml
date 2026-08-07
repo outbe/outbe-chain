@@ -3,6 +3,7 @@ members = [
     "xtask",
     # blockchain
     "crates/blockchain/macros",
+    "crates/blockchain/constants",
     "crates/blockchain/primitives",
     "crates/blockchain/evm",
     "crates/blockchain/consensus",
@@ -96,6 +97,7 @@ undocumented_unsafe_blocks = "deny"
 [workspace.dependencies]
 # Internal — blockchain
 outbe-macros = { path = "crates/blockchain/macros" }
+outbe-chain-constants = { path = "crates/blockchain/constants" }
 outbe-primitives = { path = "crates/blockchain/primitives" }
 outbe-evm = { path = "crates/blockchain/evm" }
 outbe-consensus = { path = "crates/blockchain/consensus" }

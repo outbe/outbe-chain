@@ -797,11 +797,23 @@ fn noon_trigger_opens_offering_at_noon_not_next_midnight() {
     let devnet_ctx = |n: u64, ts: u64| BlockContext::new(n, ts, DEVNET, Address::ZERO, Vec::new());
 
     let mut storage = cycle_storage_for(DEVNET);
+    let parameters = outbe_chain_constants::GenesisProtocolParametersV1 {
+        // The regression needs a phase edge at Jan 2 12:00. Timing is now
+        // genesis-bound rather than inferred from the chain id.
+        metadosis_lookback_delay_seconds: 0,
+        ..Default::default()
+    };
+    storage.enter(|handle| {
+        for (slot, value) in parameters.genesis_storage_words() {
+            handle
+                .sstore(outbe_chain_constants::CHAIN_CONSTANTS_ADDRESS, slot, value)
+                .unwrap();
+        }
+    });
 
     // Block 1 just past midnight Jan 1: `CycleLifecycle::begin_block`
-    // creates the genesis day 20240101 (forming_start = Dec 31 10:00 UTC,
-    // forming_end = lookback_end = Jan 2 12:00 UTC) and anchors all
-    // triggers without firing.
+    // creates the genesis day 20240101 (forming_end = lookback_end = Jan 2
+    // 12:00 UTC) and anchors all triggers without firing.
     storage.enter(|handle| {
         let ctx1 = BlockRuntimeContext::new(devnet_ctx(1, GENESIS_TS + 60), handle);
         anchor_genesis(&ctx1);

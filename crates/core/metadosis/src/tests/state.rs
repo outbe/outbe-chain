@@ -1,5 +1,5 @@
 use super::*;
-use crate::{runtime::effective_hours, WwdDayType, WwdStatus};
+use crate::{WwdDayType, WwdStatus};
 use outbe_common::WorldwideDay as WwdKey;
 use outbe_primitives::error::PrecompileError;
 
@@ -381,23 +381,16 @@ fn test_calculate_metadosis_unknown_day_type_errors() {
 }
 
 #[test]
-fn test_bootstrap_effective_hours_depend_on_chain_identity() {
-    with_contract(|m| {
-        let bootstrap_end = 100_000u64;
-        m.set_bootstrap_end_time(bootstrap_end).unwrap();
-
-        let (lookback, offering) = effective_hours(outbe_primitives::chain::CHAIN_ID);
-        assert_eq!(lookback, BOOTSTRAP_LOOKBACK_DELAY_HOURS);
-        assert_eq!(offering, BOOTSTRAP_OFFERING_PERIOD_HOURS);
-
-        let (lookback, offering) = effective_hours(outbe_primitives::chain::TESTNET_CHAIN_ID);
-        assert_eq!(lookback, BOOTSTRAP_LOOKBACK_DELAY_HOURS);
-        assert_eq!(offering, BOOTSTRAP_OFFERING_PERIOD_HOURS);
-
-        let (lookback, offering) = effective_hours(CHAIN_ID);
-        assert_eq!(lookback, LOOKBACK_DELAY_HOURS);
-        assert_eq!(offering, OFFERING_PERIOD_HOURS);
-    });
+fn test_default_timing_is_chain_identity_independent() {
+    let defaults = outbe_chain_constants::GenesisProtocolParametersV1::default();
+    assert_eq!(
+        defaults.metadosis_lookback_delay_seconds,
+        LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR
+    );
+    assert_eq!(
+        defaults.metadosis_offering_period_seconds,
+        OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR
+    );
 }
 
 #[test]

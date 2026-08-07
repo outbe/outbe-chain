@@ -7250,6 +7250,7 @@ dependencies = [
  "eyre",
  "hex",
  "k256 0.13.4",
+ "outbe-chain-constants",
  "outbe-compressed-entities",
  "outbe-consensus",
  "outbe-engine",
@@ -7278,6 +7279,17 @@ dependencies = [
  "tracing",
  "vergen",
  "vergen-git2",
+]
+
+[[package]]
+name = "outbe-chain-constants"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "outbe-primitives",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -7432,6 +7444,7 @@ dependencies = [
  "alloy-sol-types",
  "outbe-accounting",
  "outbe-agentreward",
+ "outbe-chain-constants",
  "outbe-common",
  "outbe-compressed-entities",
  "outbe-desis",
@@ -7515,6 +7528,7 @@ dependencies = [
  "k256 0.13.4",
  "libc",
  "mongodb",
+ "outbe-chain-constants",
  "outbe-common",
  "outbe-compressed-entities",
  "outbe-consensus",
@@ -7957,6 +7971,7 @@ dependencies = [
  "alloy-sol-types",
  "k256 0.13.4",
  "num-bigint",
+ "outbe-chain-constants",
  "outbe-common",
  "outbe-compressed-entities",
  "outbe-consensus",
@@ -16264,6 +16279,7 @@ dependencies = [
  "filetime",
  "hex",
  "k256 0.13.4",
+ "outbe-chain-constants",
  "outbe-consensus",
  "outbe-e2e-harness",
  "outbe-evm",

@@ -15,6 +15,7 @@ name = "outbe-chain"
 path = "src/main.rs"
 
 [dependencies]
+outbe-chain-constants.workspace = true
 outbe-evm.workspace = true
 outbe-compressed-entities.workspace = true
 outbe-rpc.workspace = true

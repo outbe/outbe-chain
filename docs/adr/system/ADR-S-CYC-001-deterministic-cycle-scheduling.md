@@ -26,9 +26,11 @@ therefore treats Cycle as a narrow scheduling service.
 ### Cycle owns the trigger registry and cursor
 
 The begin-zone `CycleTick` system transaction invokes `CycleLifecycle`. The
-compile-time `ACTIVE_TRIGGERS` table is fork-governed protocol data. Each entry
-defines a stable id, label, schedule, handler, and whether certified-parent
-accounting must already exist.
+trigger table is fork-governed protocol data. Each entry defines a stable id,
+label, schedule, handler, and whether certified-parent accounting must already
+exist. The WorldwideDay advancement period is the immutable resolved
+`metadosis.advanceIntervalSeconds` from genesis; Cycle does not parse genesis
+JSON or read mutable configuration.
 
 The currently registered schedule is:
 
@@ -36,7 +38,7 @@ The currently registered schedule is:
 |---:|---|---|---|
 | 0 | daily 00:00 UTC | previous UTC-day emission command | required |
 | 1 | daily 00:00 UTC | Intex call scan | not required |
-| 2 | daily 12:00 UTC | WorldwideDay advancement command | not required |
+| 2 | production: daily 12:00 UTC; shortened genesis profile: every `metadosis.advanceIntervalSeconds` | WorldwideDay advancement command | not required |
 | 3 | every 12h | auction schedule advancement | required |
 
 Names and order are normative even if handlers happen to commute today. A handler

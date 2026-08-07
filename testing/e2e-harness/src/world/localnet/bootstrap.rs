@@ -31,6 +31,13 @@ const VOTER_FELONY_SLOT: u64 = 12;
 /// A lifecycle E2E may opt into a short delay; testnet seed defaults remain
 /// untouched. The value is supplied through `TESTNET_UNBONDING_PERIOD_SECS`.
 const STAKING_SUFFIX: &str = "ee02";
+const LOCALNET_METADOSIS_FORMING_LEAD_SECONDS: u64 = 60;
+const LOCALNET_METADOSIS_LOOKBACK_SECONDS: u64 = 0;
+const LOCALNET_METADOSIS_OFFERING_SECONDS: u64 = 120;
+const LOCALNET_METADOSIS_WAITING_SECONDS: u64 = 30;
+const LOCALNET_METADOSIS_BOOTSTRAP_SECONDS: u64 = 300;
+const LOCALNET_METADOSIS_ADVANCE_SECONDS: u64 = 10;
+const LOCALNET_OCOMP_VOTE_WINDOW_BLOCKS: u64 = 120;
 const OCOMP_FINAL_FIXTURE_ROOT: &str = "testing/e2e-harness/fixtures/ocomp-final-v1";
 const OCOMP_FINAL_ROOT_FILES: &[(&str, u32)] = &[
     ("dkg-output.hex", 0o600),
@@ -377,6 +384,9 @@ impl Localnet {
         self.patch_felony(tuning)?;
         // Step 2d: opt-in lifecycle timing for claim/accounting E2E scenarios.
         self.patch_staking_timing(tuning)?;
+        // Step 2e: resolve optional protocol timings into immutable genesis
+        // storage before OCOMP registrations bind the genesis hash.
+        self.materialize_protocol_constants()?;
         Ok(())
     }
 
@@ -452,6 +462,16 @@ impl Localnet {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
+        // A WorldwideDay starts at its canonical UTC+14 boundary, which can be
+        // many hours before LocalNet bootstrap. Keep the protocol field's
+        // canonical "duration from day start" meaning while placing this fresh
+        // network's forming edge one minute after block 1.
+        let current_utc_day = outbe_primitives::time::timestamp_to_date_key(now);
+        let current_wwd_start = outbe_common::WorldwideDay::new(current_utc_day).start_timestamp();
+        let localnet_forming_period = now
+            .checked_sub(current_wwd_start)
+            .and_then(|elapsed| elapsed.checked_add(LOCALNET_METADOSIS_FORMING_LEAD_SECONDS))
+            .ok_or_else(|| eyre!("cannot derive LocalNet Metadosis forming period"))?;
         // genesisTime is one day in the past so the chain can produce immediately.
         let genesis_time = OffsetDateTime::from_unix_timestamp(now as i64 - 86_400)
             .wrap_err("genesis time")?
@@ -482,6 +502,20 @@ impl Localnet {
                 "dkgPrepareWindowBlocks": dkg_prepare,
                 "dkgActivationGraceBlocks": dkg_grace,
                 "genesisTime": genesis_time,
+                "outbeProtocol": {
+                    "schemaVersion": 1,
+                    "metadosis": {
+                        "formingPeriodSeconds": localnet_forming_period,
+                        "lookbackDelaySeconds": LOCALNET_METADOSIS_LOOKBACK_SECONDS,
+                        "offeringPeriodSeconds": LOCALNET_METADOSIS_OFFERING_SECONDS,
+                        "waitingPeriodSeconds": LOCALNET_METADOSIS_WAITING_SECONDS,
+                        "bootstrapDurationSeconds": LOCALNET_METADOSIS_BOOTSTRAP_SECONDS,
+                        "advanceIntervalSeconds": LOCALNET_METADOSIS_ADVANCE_SECONDS,
+                    },
+                    "ocomp": {
+                        "computeVoteWindowBlocks": LOCALNET_OCOMP_VOTE_WINDOW_BLOCKS,
+                    },
+                },
             },
             "nonce": "0x0",
             "timestamp": format!("0x{now:x}"),
@@ -520,9 +554,28 @@ impl Localnet {
             .arg(self.cfg.dir.join("validators.json"))
             .arg("--worldwide-day")
             .arg(worldwide_day)
+            .arg("--fresh-metadosis")
             .arg("--output")
             .arg(&genesis);
         self.run_setup(&mut cmd, "seed_genesis.py")
+    }
+
+    fn materialize_protocol_constants(&self) -> Result<()> {
+        let genesis = self.cfg.dir.join("genesis.json");
+        let generated = self.cfg.dir.join("genesis.constants.json");
+        let original = self.cfg.dir.join("genesis.pre-constants.json");
+        let mut command = Command::new(&self.cfg.bin_chain);
+        command
+            .arg("constants")
+            .arg("genesis")
+            .arg("--input")
+            .arg(&genesis)
+            .arg("--output")
+            .arg(&generated);
+        self.run_setup(&mut command, "outbe-chain constants genesis")?;
+        fs::rename(&genesis, &original)?;
+        fs::rename(&generated, &genesis)?;
+        Ok(())
     }
 
     /// Lower the SlashIndicator felony thresholds so downtime slashing triggers

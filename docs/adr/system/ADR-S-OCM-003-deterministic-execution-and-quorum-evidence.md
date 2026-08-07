@@ -423,7 +423,8 @@ deadline. Only finalized deadline closure moves the node-facing record to
 terminal retention; quorum formation alone must never hide the job from a
 remaining pinned validator.
 
-The finalized binding opens one exact compute-and-vote window of 1,800 blocks.
+The finalized binding opens one exact compute-and-vote window from the immutable
+genesis-installed OCOMP request profile (production default: 1,800 blocks).
 It includes both local Lysis execution and canonical vote inclusion; there is
 no separate short vote-only window. At the exclusive deadline consensus closes
 `OcompAccountabilitySummaryV1`, derives `missing_bitmap` from the pinned slots
@@ -534,7 +535,9 @@ Three votes over different result bytes do not form quorum evidence.
   on-chain vote slots.
 - Every remaining pinned slot remains writable until the response deadline even
   after quorum application.
-- The response deadline is exactly 1,800 blocks after the finalized binding.
+- The response deadline is exactly the job-pinned
+  `capacity_profile.result_deadline_blocks` after the finalized binding; the
+  production genesis default is 1,800 blocks.
 - Every pinned participant without a timely valid included vote is recorded as
   missing; only one whose current ValidatorSet status is still `ACTIVE` is
   jailed exactly once at that deadline.
@@ -614,7 +617,7 @@ participates automatically in a new attempt. It also includes synthetic
 accountability/capacity vectors at the current consensus validator bound,
 1/2/4-worker equality, randomized order/retry, restart-safe sign-once refusal,
 system-vote inclusion and replay, continued post-quorum participation, exact
-1,800-block deadline accountability with ACTIVE-only jail and non-ACTIVE
+job-pinned deadline accountability (production default 1,800 blocks) with ACTIVE-only jail and non-ACTIVE
 non-mutation, duplicate/wrong voter rejection, controlled failed late carriers,
 production-pool priority under a saturated higher-tip user workload,
 conflicting-vote evidence, independent FullNode recomputation/fail-closed
