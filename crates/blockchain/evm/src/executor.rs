@@ -4512,6 +4512,7 @@ mod tests {
 
     fn test_ocomp_fork_install(
         chain_spec: &ChainSpec<OutbeHeader>,
+        founders: &[(Address, [u8; 48])],
     ) -> Arc<outbe_metadosis::config::OcompForkInstallV1> {
         Arc::new(
             outbe_metadosis::test_support::ForkInstallScenario::measurement_at(
@@ -4520,13 +4521,17 @@ mod tests {
                 chain_spec.genesis_hash(),
             )
             .unwrap()
+            .with_founder_validators(founders)
+            .unwrap()
             .into_install(),
         )
     }
 
-    fn seed_test_ocomp_profile(provider: &mut HashMapStorageProvider, restore_block_number: u64) {
-        let chain_spec = test_chain_spec();
-        let install = test_ocomp_fork_install(&chain_spec);
+    fn seed_test_ocomp_profile(
+        provider: &mut HashMapStorageProvider,
+        restore_block_number: u64,
+        install: &outbe_metadosis::config::OcompForkInstallV1,
+    ) {
         provider.set_block_number(1);
         provider.enable_metadosis_mutation_frame(
             outbe_primitives::storage::MetadosisMutationPurposeTag::ForkProfile,
@@ -4536,7 +4541,7 @@ mod tests {
                 BlockContext::empty_for_tests(1, 1_700_000_001, CHAIN_ID),
                 storage,
             );
-            outbe_metadosis::commands::install_fork_profile(&ctx, &install).unwrap();
+            outbe_metadosis::commands::install_fork_profile(&ctx, install).unwrap();
         });
         provider.set_block_number(restore_block_number);
     }
@@ -4577,14 +4582,23 @@ mod tests {
         proposer: Address,
         seed_ocomp: bool,
     ) -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
-        let mut seed_storage = HashMapStorageProvider::new(CHAIN_ID);
-        if seed_ocomp {
-            seed_test_ocomp_profile(&mut seed_storage, 0);
-        }
+        let chain_spec = test_chain_spec();
+        let mut seed_storage =
+            HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, chain_spec.genesis_hash());
+        let proposer_key = dummy_pubkey(0xA2);
+        let install = test_ocomp_fork_install(&chain_spec, &[(proposer, proposer_key)]);
         StorageHandle::enter(&mut seed_storage, |storage| {
             seed_compressed_entities_genesis(storage.clone());
-            seed_registered_active_validator(storage.clone(), proposer, &dummy_pubkey(0xA2));
+            seed_registered_active_validator_with_registration(
+                storage.clone(),
+                proposer,
+                &proposer_key,
+                &install.founder_registrations[0],
+            );
         });
+        if seed_ocomp {
+            seed_test_ocomp_profile(&mut seed_storage, 0, &install);
+        }
 
         let mut db = cache_db_from_storage(seed_storage);
         let marker_code = Bytecode::new_legacy([0xef].into());
@@ -4645,14 +4659,23 @@ mod tests {
         funded: Address,
         seed_ocomp: bool,
     ) -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
-        let mut seed_storage = HashMapStorageProvider::new(CHAIN_ID);
-        if seed_ocomp {
-            seed_test_ocomp_profile(&mut seed_storage, 0);
-        }
+        let chain_spec = test_chain_spec();
+        let mut seed_storage =
+            HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, chain_spec.genesis_hash());
+        let proposer_key = dummy_pubkey(0xA2);
+        let install = test_ocomp_fork_install(&chain_spec, &[(proposer, proposer_key)]);
         StorageHandle::enter(&mut seed_storage, |storage| {
             seed_compressed_entities_genesis(storage.clone());
-            seed_registered_active_validator(storage.clone(), proposer, &dummy_pubkey(0xA2));
+            seed_registered_active_validator_with_registration(
+                storage.clone(),
+                proposer,
+                &proposer_key,
+                &install.founder_registrations[0],
+            );
         });
+        if seed_ocomp {
+            seed_test_ocomp_profile(&mut seed_storage, 0, &install);
+        }
 
         let mut db = cache_db_from_storage(seed_storage);
         let marker_code = Bytecode::new_legacy([0xef].into());
@@ -4728,15 +4751,11 @@ mod tests {
         cycle_frames: u8,
         seed_extra: impl FnOnce(StorageHandle),
     ) -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
-        let mut seed_storage = HashMapStorageProvider::new(CHAIN_ID);
+        let chain_spec = test_chain_spec();
+        let mut seed_storage =
+            HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, chain_spec.genesis_hash());
+        let install = test_ocomp_fork_install(&chain_spec, validators);
         seed_storage.set_block_number(block_number);
-        seed_test_ocomp_profile(&mut seed_storage, block_number);
-        if cycle_frames != 0 {
-            seed_storage.enable_metadosis_mutation_frames(
-                outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
-                cycle_frames,
-            );
-        }
         StorageHandle::enter(&mut seed_storage, |storage| {
             seed_compressed_entities_genesis(storage.clone());
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
@@ -4744,10 +4763,15 @@ mod tests {
             vs.set_config_max_validators(128).unwrap();
             vs.config_epoch_length_blocks.write(60).unwrap();
             vs.config_is_initialized.write(true).unwrap();
-            for (validator, pk) in validators {
-                vs.register_validator(OWNER, *validator, pk).unwrap();
-                vs.activate_validator_via_boundary_for_test(*validator)
-                    .unwrap();
+            for ((validator, pk), registration) in
+                validators.iter().zip(&install.founder_registrations)
+            {
+                register_and_activate_with_ocomp_registration(
+                    &mut vs,
+                    *validator,
+                    pk,
+                    registration,
+                );
             }
             seed_test_committee_snapshot(storage.clone(), validators);
             // Seed the COEN/0xUSD oracle pair + a 1.0 rate so begin-block NOD/GEM/INTEX
@@ -4765,8 +4789,15 @@ mod tests {
                     0,
                 )
                 .unwrap();
-            seed_extra(storage);
         });
+        seed_test_ocomp_profile(&mut seed_storage, block_number, &install);
+        if cycle_frames != 0 {
+            seed_storage.enable_metadosis_mutation_frames(
+                outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
+                cycle_frames,
+            );
+        }
+        StorageHandle::enter(&mut seed_storage, seed_extra);
 
         let marker_addresses = [
             outbe_primitives::addresses::VALIDATOR_SET_ADDRESS,
@@ -4830,8 +4861,11 @@ mod tests {
         candidate: Address,
         seed_extra: impl FnOnce(StorageHandle),
     ) -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
-        let mut seed_storage = HashMapStorageProvider::new(CHAIN_ID);
-        seed_test_ocomp_profile(&mut seed_storage, 0);
+        let chain_spec = test_chain_spec();
+        let mut seed_storage =
+            HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, chain_spec.genesis_hash());
+        let active_key = dummy_pubkey(0xA2);
+        let install = test_ocomp_fork_install(&chain_spec, &[(active, active_key)]);
         StorageHandle::enter(&mut seed_storage, |storage| {
             seed_compressed_entities_genesis(storage.clone());
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
@@ -4839,13 +4873,16 @@ mod tests {
             vs.set_config_max_validators(128).unwrap();
             vs.config_epoch_length_blocks.write(60).unwrap();
             vs.config_is_initialized.write(true).unwrap();
-            vs.register_validator(OWNER, active, &dummy_pubkey(0xA2))
-                .unwrap();
+            register_and_activate_with_ocomp_registration(
+                &mut vs,
+                active,
+                &active_key,
+                &install.founder_registrations[0],
+            );
             vs.register_validator(OWNER, candidate, &dummy_pubkey(0xB3))
                 .unwrap();
-            vs.activate_validator_via_boundary_for_test(active).unwrap();
             vs.admit_validator_for_boundary_for_test(candidate).unwrap();
-            seed_test_committee_snapshot(storage.clone(), &[(active, dummy_pubkey(0xA2))]);
+            seed_test_committee_snapshot(storage.clone(), &[(active, active_key)]);
             // Seed the COEN/0xUSD oracle pair + a 1.0 rate so begin-block NOD/GEM/INTEX
             // floor-price promotion reads a registered pair instead of reverting
             // "pair not registered".
@@ -4863,6 +4900,7 @@ mod tests {
                 .unwrap();
             seed_extra(storage);
         });
+        seed_test_ocomp_profile(&mut seed_storage, 0, &install);
 
         let mut db = cache_db_from_storage(seed_storage);
         let marker_code = Bytecode::new_legacy([0xef].into());
@@ -5995,7 +6033,7 @@ mod tests {
         let proposer = signer.address();
         let mut state = state_with_active_proposer_without_ocomp(proposer);
         let chain_spec = test_chain_spec();
-        let install = test_ocomp_fork_install(&chain_spec);
+        let install = test_ocomp_fork_install(&chain_spec, &[(proposer, dummy_pubkey(0xA2))]);
         let config = OutbeEvmConfig::new_with_runtime_body_readers(
             chain_spec,
             RuntimeBodyReaders::new(Arc::new(MemoryStorage::new())),
@@ -6163,7 +6201,7 @@ mod tests {
             let mut state =
                 state_with_active_proposer_and_funded_account_without_ocomp(proposer, user_sender);
             let chain_spec = test_chain_spec();
-            let install = test_ocomp_fork_install(&chain_spec);
+            let install = test_ocomp_fork_install(&chain_spec, &[(proposer, dummy_pubkey(0xA2))]);
             let config = OutbeEvmConfig::new_with_runtime_body_readers(
                 chain_spec.clone(),
                 RuntimeBodyReaders::new(Arc::new(MemoryStorage::new())),
@@ -6424,7 +6462,7 @@ mod tests {
             let mut state = state_with_active_validators_seeded_at_block_with_cycle_frames(
                 &[(proposer, dummy_pubkey(0xA3))],
                 1,
-                14,
+                4,
                 |storage| {
                     outbe_compressed_entities::begin_block(storage.clone(), &seed_scope)
                         .expect("open CE seed block");
@@ -6435,45 +6473,21 @@ mod tests {
                     outbe_rewards::runtime::ensure_genesis_anchor(&genesis_ctx).unwrap();
                     let mut tribute = TributeContract::new(storage.clone());
                     tribute.initialize_fresh_ocomp_profile().unwrap();
-                    for day in [WorldwideDay::new(2023_0901), WorldwideDay::new(2023_1001)] {
-                        let ctx = BlockRuntimeContext::new(
-                            BlockContext::new(
-                                1,
-                                day.start_timestamp() + 2 * 3_600,
-                                CHAIN_ID,
-                                proposer,
-                                vec![proposer],
-                            ),
-                            storage.clone(),
-                        );
-                        outbe_metadosis::commands::apply_cycle_day_limit(&ctx, day_limit).unwrap();
-                        let projection = outbe_metadosis::api::worldwide_day(storage.clone(), day)
-                            .unwrap()
-                            .unwrap();
-                        for boundary in [
-                            projection.forming_end,
-                            projection.lookback_end,
-                            projection.offering_end,
-                            projection.scheduled_process_time,
-                        ] {
-                            let ctx = BlockRuntimeContext::new(
-                                BlockContext::new(1, boundary, CHAIN_ID, proposer, vec![proposer]),
-                                storage.clone(),
-                            );
-                            outbe_metadosis::commands::advance_active_worldwide_days(
-                                &ctx,
-                                &seed_scope,
+                    let retained = (0..outbe_metadosis::constants::MAX_RETAINED_WWDS)
+                        .map(|offset| {
+                            let days_before =
+                                outbe_metadosis::constants::MAX_RETAINED_WWDS - offset;
+                            WorldwideDay::from_timestamp(
+                                victim.start_timestamp()
+                                    - u64::try_from(days_before).unwrap() * SECONDS_PER_DAY,
                             )
-                            .unwrap();
-                        }
-                        assert_eq!(
-                            outbe_metadosis::api::worldwide_day(storage.clone(), day)
-                                .unwrap()
-                                .unwrap()
-                                .status,
-                            outbe_metadosis::api::WorldwideDayStatus::Ready
-                        );
-                    }
+                        })
+                        .collect::<Vec<_>>();
+                    outbe_metadosis::test_support::seed_ready_worldwide_days_for_capacity(
+                        storage.clone(),
+                        &retained,
+                    )
+                    .unwrap();
                     let victim_ctx = BlockRuntimeContext::new(
                         BlockContext::new(
                             1,
@@ -10847,6 +10861,59 @@ mod tests {
         seed_test_committee_snapshot(storage.clone(), &[(validator, *pk)]);
         // Seed COEN/0xUSD pair + 1.0 rate so begin-block NOD/GEM/INTEX promotion
         // reads a registered pair instead of reverting "pair not registered".
+        let mut oracle = outbe_oracle::contract::OracleContract::new(storage);
+        oracle.register_pair("COEN", "0xUSD").unwrap();
+        oracle
+            .set_exchange_rate(
+                Address::ZERO,
+                "COEN",
+                "0xUSD",
+                U256::from(1_000_000_000_000_000_000u128),
+                0,
+                0,
+            )
+            .unwrap();
+    }
+
+    fn register_and_activate_with_ocomp_registration(
+        validators: &mut outbe_validatorset::contract::ValidatorSet<'_>,
+        validator: Address,
+        consensus_key: &[u8; 48],
+        registration: &outbe_ocomp_protocol::committee::OcompKeyRegistrationV1,
+    ) {
+        validators
+            .register_validator(OWNER, validator, consensus_key)
+            .unwrap();
+        validators.mark_pending(validator).unwrap();
+        let encoded = registration
+            .encode_canonical(&outbe_metadosis::config::poc_schema_limits())
+            .unwrap();
+        validators
+            .confirm_validator_ready(validator, &encoded)
+            .unwrap();
+        validators
+            .activate_validator_via_boundary_for_test(validator)
+            .unwrap();
+    }
+
+    fn seed_registered_active_validator_with_registration(
+        storage: StorageHandle,
+        validator: Address,
+        consensus_key: &[u8; 48],
+        registration: &outbe_ocomp_protocol::committee::OcompKeyRegistrationV1,
+    ) {
+        let mut validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+        validators.config_owner.write(OWNER).unwrap();
+        validators.set_config_max_validators(128).unwrap();
+        validators.config_epoch_length_blocks.write(60).unwrap();
+        validators.config_is_initialized.write(true).unwrap();
+        register_and_activate_with_ocomp_registration(
+            &mut validators,
+            validator,
+            consensus_key,
+            registration,
+        );
+        seed_test_committee_snapshot(storage.clone(), &[(validator, *consensus_key)]);
         let mut oracle = outbe_oracle::contract::OracleContract::new(storage);
         oracle.register_pair("COEN", "0xUSD").unwrap();
         oracle
