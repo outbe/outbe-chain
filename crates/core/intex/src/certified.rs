@@ -210,8 +210,8 @@ mod tests {
                             input,
                             &poc_schema_limits(),
                         )?;
-                        capability.authorize_tribute_retirement()?;
                         capability.authorize_carry_over_credit()?;
+                        capability.authorize_tribute_retirement()?;
                         capability.authorize_terminal_receipt()?;
                         Ok(receipt)
                     },
@@ -709,8 +709,8 @@ mod tests {
                     &value,
                     &poc_schema_limits(),
                 )?;
-                capability.authorize_tribute_retirement()?;
                 capability.authorize_carry_over_credit()?;
+                capability.authorize_tribute_retirement()?;
                 capability.authorize_terminal_receipt()?;
                 Ok(receipt)
             })
