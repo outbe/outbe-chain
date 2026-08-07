@@ -524,7 +524,7 @@ fn nft_balance_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Re
 
 /// Per-Intex cost of settling `series_id` in `payment_token`, in that token's
 /// minor units. Rejects a token the series does not accept.
-pub fn cost_amount(
+pub fn quote_cost_amount(
     storage: &StorageHandle<'_>,
     series_id: u32,
     payment_token: Address,

@@ -206,11 +206,11 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   }
 
   /** Per-Intex cost of settling `series` in `token`, in that token's minor units. */
-  async function costAmount(n: Network, series: number, token: `0x${string}`): Promise<bigint> {
+  async function quoteCostAmount(n: Network, series: number, token: `0x${string}`): Promise<bigint> {
     return (await n.client.readContract({
       address: addr(n, "factory"),
       abi: FACTORY_ABI,
-      functionName: "costAmount",
+      functionName: "quoteCostAmount",
       args: [series, token],
     })) as bigint;
   }
@@ -955,7 +955,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         token = tokens[0];
       }
       const [costAmountMinor, { decimals: tokenDec, symbol: tokenSymbol }] = await Promise.all([
-        costAmount(n, series, token),
+        quoteCostAmount(n, series, token),
         tokenMeta(n, token),
       ]);
       const factory = addr(n, "factory");
@@ -1012,7 +1012,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
           const [decimals, symbol, cost] = await Promise.all([
             n.client.readContract({ address: token, abi: ERC20_ABI, functionName: "decimals" }),
             n.client.readContract({ address: token, abi: ERC20_ABI, functionName: "symbol" }),
-            costAmount(n, series, token),
+            quoteCostAmount(n, series, token),
           ]);
           return {
             token,

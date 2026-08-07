@@ -50,8 +50,8 @@ pub fn dispatch(
                         c.paymentToken,
                     )
                 }),
-                costAmount(c) => view(c, |c| {
-                    runtime::cost_amount(&storage, c.seriesId, c.paymentToken)
+                quoteCostAmount(c) => view(c, |c| {
+                    runtime::quote_cost_amount(&storage, c.seriesId, c.paymentToken)
                 }),
                 // Off-chain the holder brute-forces `nonce` so the work hash
                 // SHA256(hex(holder ++ promisAmount ++ seriesId ++ seq) ++ nonce_be8)

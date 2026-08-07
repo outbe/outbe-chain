@@ -161,7 +161,7 @@ export const NFT_BRIDGE_ABI: Abi = parseAbi([
 /** IntexFactory (outbe precompile): holder-facing settlement + Promis mining. */
 export const FACTORY_ABI: Abi = parseAbi([
   "function settle(uint32 seriesId, address intexHolder, uint256 amount, address paymentToken)",
-  "function costAmount(uint32 seriesId, address paymentToken) view returns (uint256 costAmountMinor)",
+  "function quoteCostAmount(uint32 seriesId, address paymentToken) view returns (uint256 costAmountMinor)",
   "function minePromis(uint32 seriesId, uint256 amount, uint256 nonce, bytes32 mac, uint64 opNonce) returns (uint256 promisAmount)",
   "function setAuthorizedSettler(uint32 seriesId, address settler)",
   "event PromisMined(uint32 indexed seriesId, address indexed holder, uint256 amount, uint256 promisAmount)",

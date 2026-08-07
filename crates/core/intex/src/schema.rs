@@ -137,7 +137,7 @@ impl SeriesRecord {
 /// Cost of one Intex in the reference currency, on the same 1e18 oracle scale as
 /// entry/floor/call. `promis_load_minor` carries its own 1e18, hence the divisor.
 /// Settling converts this into the chosen token's minor units — see
-/// `intexfactory::runtime::cost_amount`.
+/// `intexfactory::runtime::quote_cost_amount`.
 pub fn cost_amount_minor(
     entry_price_minor: U256,
     promis_load_minor: U256,

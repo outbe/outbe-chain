@@ -252,7 +252,7 @@ fn with_payment_token<R>(
 #[test]
 fn cost_amount_prices_an_accepted_token() {
     with_payment_token(1, 840, 18, |s| {
-        let cost = runtime::cost_amount(&s, 7, payment_token()).unwrap();
+        let cost = runtime::quote_cost_amount(&s, 7, payment_token()).unwrap();
         assert_eq!(cost, U256::from(1_000_000u64));
     });
 }
@@ -260,7 +260,7 @@ fn cost_amount_prices_an_accepted_token() {
 #[test]
 fn cost_amount_rejects_an_unregistered_token() {
     with_payment_token(0, 840, 18, |s| {
-        let err = runtime::cost_amount(&s, 7, payment_token()).unwrap_err();
+        let err = runtime::quote_cost_amount(&s, 7, payment_token()).unwrap_err();
         assert!(err.to_string().contains("no registered vault"), "{err}");
     });
 }
@@ -268,7 +268,7 @@ fn cost_amount_rejects_an_unregistered_token() {
 #[test]
 fn cost_amount_rejects_a_foreign_currency() {
     with_payment_token(1, 978, 18, |s| {
-        let err = runtime::cost_amount(&s, 7, payment_token()).unwrap_err();
+        let err = runtime::quote_cost_amount(&s, 7, payment_token()).unwrap_err();
         assert!(err.to_string().contains("does not match"), "{err}");
     });
 }
@@ -276,7 +276,7 @@ fn cost_amount_rejects_a_foreign_currency() {
 #[test]
 fn cost_amount_rejects_missing_series() {
     with_factory(|s| {
-        assert!(runtime::cost_amount(&s, 7, payment_token()).is_err());
+        assert!(runtime::quote_cost_amount(&s, 7, payment_token()).is_err());
     });
 }
 
@@ -285,7 +285,7 @@ fn cost_amount_dispatch() {
     with_payment_token(1, 840, 18, |s| {
         let out = precompile::dispatch(
             s.clone(),
-            &IIntexFactory::costAmountCall {
+            &IIntexFactory::quoteCostAmountCall {
                 seriesId: 7,
                 paymentToken: payment_token(),
             }
@@ -295,7 +295,7 @@ fn cost_amount_dispatch() {
         )
         .unwrap();
         assert_eq!(
-            IIntexFactory::costAmountCall::abi_decode_returns(&out).unwrap(),
+            IIntexFactory::quoteCostAmountCall::abi_decode_returns(&out).unwrap(),
             U256::from(1_000_000u64)
         );
     });
