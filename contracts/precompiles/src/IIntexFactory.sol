@@ -45,6 +45,48 @@ interface IIntexFactory {
     /// @param srcChainId Target chain the proceeds arrived from (for fan-in completeness).
     function distribute(uint32 worldwideDay, uint32 srcChainId) external payable;
 
+    /// @notice One certified contributor record, exactly as Lysis committed it.
+    ///         The canonical 88-byte leaf the chain re-hashes is
+    ///         `owner ++ sourceTributeDigest ++ sourceTributeIndex ++ nominal`.
+    struct ContributorLeaf {
+        address owner;
+        bytes32 sourceTributeDigest;
+        bytes4 sourceTributeIndex;
+        uint256 nominal;
+    }
+
+    /// @notice Pay one chunk-aligned range of certified contributors.
+    /// @dev Permissionless: correctness comes from `proof`, not from the caller.
+    ///      Each leaf receives `roundAmount * nominal / eligibleNominalTotal` and
+    ///      is marked paid, so a replayed batch reverts before any transfer.
+    /// @param worldwideDay Day whose payout round is open.
+    /// @param startIndex Global index of the first leaf; must be a multiple of 256.
+    /// @param leaves Records of one result chunk: a full 256-leaf chunk, or the
+    ///        final partial chunk of the day.
+    /// @param proof Sibling hashes above the chunk subtree, bottom-up.
+    function payContributorBatch(
+        uint32 worldwideDay,
+        uint32 startIndex,
+        ContributorLeaf[] calldata leaves,
+        bytes32[] calldata proof
+    ) external;
+
+    /// @notice Progress of one day's payout round.
+    struct ContributorRound {
+        uint256 amount;
+        uint32 contributorCount;
+        uint256 paidSoFar;
+        uint32 paidLeafCount;
+    }
+
+    /// @notice Read the open payout round for `worldwideDay`. All fields are
+    ///         zero when no round is open.
+    function contributorPayoutRound(uint32 worldwideDay) external view returns (ContributorRound memory);
+
+    /// @notice Read one 256-leaf word of the paid bitmap; bit `b` of word `w`
+    ///         is leaf `256 * w + b`.
+    function contributorPaidWord(uint32 worldwideDay, uint32 wordIndex) external view returns (uint256);
+
     /// @notice A new series was created from a cleared auction.
     event SeriesIssued(uint32 indexed seriesId, uint32 issuedIntexCount, uint256 entryPrice);
 
@@ -67,4 +109,22 @@ interface IIntexFactory {
     /// @notice Ownerless proceeds for `seriesId` (no contributors recorded) were
     ///         burned instead of being distributed.
     event ProceedsBurned(uint32 indexed seriesId, uint256 amount);
+
+    /// @notice Proceeds for `worldwideDay` are collected and its payout round is
+    ///         open: `amount` native COEN is now split across `contributorCount`
+    ///         certified contributors.
+    event ContributorPayoutOpened(uint32 indexed worldwideDay, uint256 amount, uint32 contributorCount);
+
+    /// @notice One verified batch of `leafCount` contributors starting at
+    ///         `startIndex` was paid `paidAmount` native COEN in total.
+    event ContributorBatchPaid(uint32 indexed worldwideDay, uint32 startIndex, uint32 leafCount, uint256 paidAmount);
+
+    /// @notice Every contributor of `worldwideDay` has been paid. `burnedAmount`
+    ///         is what per-leaf floor division left behind and was destroyed;
+    ///         the day accepts no further batches.
+    event ContributorRoundClosed(uint32 indexed worldwideDay, uint256 paidAmount, uint256 burnedAmount);
+
+    /// @notice Proceeds arrived for `worldwideDay` after its payout round had
+    ///         already opened, missing the fan-in window, and were burned.
+    event LateProceedsBurned(uint32 indexed worldwideDay, uint256 amount);
 }

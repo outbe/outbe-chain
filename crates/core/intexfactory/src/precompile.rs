@@ -74,6 +74,23 @@ pub fn dispatch(
                         runtime::distribute(&storage, sender, c.worldwideDay, c.srcChainId, val)
                     })
                 }
+                // Permissionless: the merkle proof is the authorization, so the
+                // sender is irrelevant to the outcome.
+                payContributorBatch(c) => mutate_void(c, caller, |_sender, c| {
+                    runtime::pay_contributor_batch(
+                        &storage,
+                        c.worldwideDay,
+                        c.startIndex,
+                        &c.leaves,
+                        &c.proof,
+                    )
+                }),
+                contributorPayoutRound(c) => view(c, |c| {
+                    runtime::contributor_payout_round(&storage, c.worldwideDay)
+                }),
+                contributorPaidWord(c) => view(c, |c| {
+                    outbe_intex::api::paid_leaves_word(&storage, c.worldwideDay, c.wordIndex)
+                }),
             }
         },
     )

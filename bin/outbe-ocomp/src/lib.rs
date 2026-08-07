@@ -19,6 +19,8 @@ pub mod lysis_result_catalog;
 pub mod lysis_scheduler;
 pub mod lysis_shuffle_adoption;
 pub mod nod_proof;
+pub mod payout_artifact;
+pub mod payout_submitter;
 pub mod public_rpc;
 pub mod result_attestation;
 pub mod result_signer;

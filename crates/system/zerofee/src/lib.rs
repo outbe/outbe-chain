@@ -24,6 +24,7 @@
 
 pub mod constants;
 pub mod hooks;
+mod intexfactory;
 mod oracle;
 pub mod precompile;
 pub mod runtime;
@@ -37,6 +38,10 @@ pub use constants::{
 pub use hooks::{
     registry, ZeroFeeAuthorization, ZeroFeeCandidate, ZeroFeeHook, ZeroFeeHookId,
     ZeroFeePolicyError, ZeroFeeRegistry, ZeroFeeTransaction,
+};
+pub use intexfactory::{
+    MAX_ZERO_FEE_CONTRIBUTOR_BATCH_CALLDATA_BYTES, MAX_ZERO_FEE_CONTRIBUTOR_BATCH_GAS_LIMIT,
+    MIN_ZERO_FEE_CONTRIBUTOR_BATCH_MAX_FEE_PER_GAS,
 };
 pub use outbe_primitives::addresses::ZEROFEE_ADDRESS;
 pub use runtime::{

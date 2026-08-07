@@ -14,6 +14,8 @@ pub mod common;
 pub mod governance;
 pub mod update;
 
+#[cfg(feature = "ocomp-integration")]
+pub mod contributor_payout;
 pub mod dcap_onboarding;
 pub mod dkg;
 pub mod downtime;

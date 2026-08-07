@@ -159,6 +159,37 @@ pub struct DistProgress {
     pub active: u8,
 }
 
+/// Open payout round over a certified contributor root.
+///
+/// `amount` is frozen when the round opens (the proceeds pot at that moment) so
+/// every share derives from the same denominator regardless of when a batch
+/// lands; `active != 0` is the existence sentinel. The record outlives the
+/// payout: once `paid_leaf_count` reaches the certified contributor count the
+/// caller burns what floor rounding left and the paid bitmap refuses further
+/// batches, but the counters stay readable as the day's final accounting.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[storage_record(exists_field = active)]
+pub struct CertifiedPayoutRound {
+    #[key]
+    pub wwd: u32,
+
+    /// Native COEN this round distributes, frozen at open.
+    #[attribute(order = 0)]
+    pub amount: U256,
+
+    /// Σ of the shares paid so far; feeds the round cap and the close remainder.
+    #[attribute(order = 1)]
+    pub paid_so_far: U256,
+
+    /// Number of leaves paid so far; the completion gate for closing the round.
+    #[attribute(order = 2)]
+    pub paid_leaf_count: u32,
+
+    /// Existence sentinel: 1 while the round is open.
+    #[attribute(order = 3)]
+    pub active: u8,
+}
+
 /// Constant-size certified contributor authority for one Intex series.
 ///
 /// Contributor bodies remain in authenticated result chunks; activation stores
@@ -277,6 +308,14 @@ pub struct IntexContract {
     /// Exact eligible nominal total committed by the certified root.
     #[attribute(order = 23)]
     pub ocomp_eligible_nominal_total: outbe_primitives::storage::dsl::Map<u32, U256>,
+
+    /// wwd -> open certified payout round.
+    #[attribute(order = 24)]
+    pub ocomp_payout_round: outbe_primitives::storage::dsl::Map<u32, CertifiedPayoutRound>,
+
+    /// keccak256(wwd_be32 ++ word_index_be32) -> 256 paid flags, one per leaf.
+    #[attribute(order = 25)]
+    pub ocomp_paid_leaves: outbe_primitives::storage::dsl::Map<B256, U256>,
 }
 
 impl IntexContract<'_> {
@@ -286,6 +325,15 @@ impl IntexContract<'_> {
         let mut buf = [0u8; 8];
         buf[0..4].copy_from_slice(&series_id.to_be_bytes());
         buf[4..8].copy_from_slice(&index.to_be_bytes());
+        keccak256(buf)
+    }
+
+    /// Composite key for the paid-leaf bitmap:
+    /// `keccak256(wwd_be32 ++ word_index_be32)`, one word per 256 leaves.
+    pub fn paid_bitmap_key(wwd: u32, word_index: u32) -> B256 {
+        let mut buf = [0u8; 8];
+        buf[0..4].copy_from_slice(&wwd.to_be_bytes());
+        buf[4..8].copy_from_slice(&word_index.to_be_bytes());
         keccak256(buf)
     }
 

@@ -1068,8 +1068,8 @@ fn fresh_capacity_day_is_created_in_forming(world: &mut World) {
     assert_eq!(state.lookback_end, state.forming_end);
     assert_eq!(
         state.offering_end - state.lookback_end,
-        48 * 3_600,
-        "fresh process evidence must retain the canonical 48-hour OFFERING duration"
+        50 * 3_600,
+        "fresh process evidence must retain the canonical 50-hour OFFERING duration"
     );
     assert_eq!(
         state.scheduled_process_time - state.offering_end,
@@ -1201,15 +1201,25 @@ fn fresh_capacity_day_advances_to_offering(world: &mut World) {
     );
 }
 
+/// First midnight Cycle slot strictly after `after`. Two daily triggers have to
+/// fire before the day reaches OFFCHAIN_PENDING: `wwd_advance_noon` walks it out
+/// of OFFERING at 12:00 UTC, and `emission_limit_1` settles READY at 00:00 UTC.
+/// The processing time itself (02:00 UTC) fires neither, so the clock targets
+/// the midnight that follows both.
+fn next_wwd_settlement_slot(after: u64) -> u64 {
+    const PERIOD: u64 = 86_400;
+    after / PERIOD * PERIOD + PERIOD
+}
+
 #[when("the committee logical clock reaches the fresh capacity processing time")]
 fn committee_clock_reaches_fresh_capacity_processing(world: &mut World) {
-    let target = world
+    let processing_time = world
         .state
         .metadosis_fresh_lifecycle_observation
         .as_ref()
         .expect("fresh Metadosis creation evidence")
-        .scheduled_process_time
-        .saturating_add(1);
+        .scheduled_process_time;
+    let target = next_wwd_settlement_slot(processing_time);
     advance_fresh_metadosis_time(world, target, &[(0, 1), (1, 2), (2, 3), (3, 4)], 8);
 }
 
@@ -1261,6 +1271,11 @@ fn fresh_domains_retain_authenticated_workers(world: &mut World) {
     }
 }
 
+/// How long the logical clock may stand still before the ratchet counts as
+/// stalled. Bounding the wait by progress rather than by the distance jumped
+/// keeps a loaded host from expiring a run that is still moving.
+const RATCHET_STALL_TIMEOUT: Duration = Duration::from_secs(180);
+
 fn advance_fresh_metadosis_time(
     world: &mut World,
     requested_timestamp: u64,
@@ -1269,6 +1284,7 @@ fn advance_fresh_metadosis_time(
 ) {
     let before_restart = finalized_points_at_common_height(world, 1);
     let before_height = before_restart[0].block_number;
+    let before_timestamp = before_restart[0].block_timestamp;
     let offset = logical_time_offset(requested_timestamp, unix_time_secs());
     world
         .localnet
@@ -1281,10 +1297,18 @@ fn advance_fresh_metadosis_time(
     restart_ocomp_roles_after_committee_time_change(world);
 
     let worldwide_day = fresh_metadosis_wwd(world);
-    let deadline = Instant::now() + Duration::from_secs(240);
+    // The chain closes the gap one hour per block, so wait on progress rather
+    // than on a budget derived from the distance: a loaded host slows block
+    // production without stalling it.
+    let mut deadline = Instant::now() + RATCHET_STALL_TIMEOUT;
+    let mut last_timestamp = before_timestamp;
     let (after_restart, changes) = loop {
         let points = finalized_points_at_common_height(world, before_height.saturating_add(1));
         let common_height = points[0].block_number;
+        if points[0].block_timestamp > last_timestamp {
+            last_timestamp = points[0].block_timestamp;
+            deadline = Instant::now() + RATCHET_STALL_TIMEOUT;
+        }
         let states = world
             .validators
             .committee_ports()
@@ -1328,7 +1352,19 @@ fn advance_fresh_metadosis_time(
         assert!(
             Instant::now() < deadline,
             "fresh Metadosis WWD did not reach status {expected_persisted_status} with edges \
-             {expected_edges:?}; the production one-hour timestamp drift ratchet may be stalled"
+             {expected_edges:?}; observed statuses {observed:?} and edges {seen:?} at logical \
+             timestamp {reached} (requested {requested_timestamp}); the drift ratchet made no \
+             progress for {stall:?}",
+            observed = states
+                .iter()
+                .map(|state| state.as_ref().map(|state| state.status))
+                .collect::<Vec<_>>(),
+            seen = changes[0].as_ref().map(|edges| edges
+                .iter()
+                .map(|edge| (edge.old_status, edge.new_status))
+                .collect::<Vec<_>>()),
+            reached = points[0].block_timestamp,
+            stall = RATCHET_STALL_TIMEOUT,
         );
         sleep(Duration::from_millis(250));
     };
