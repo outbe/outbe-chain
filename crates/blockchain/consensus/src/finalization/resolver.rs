@@ -310,7 +310,7 @@ impl<T: ParentProofTransport> ParentProofResolver<T> {
 /// finalization plus the finalized epoch's committee scheme + ordered addresses;
 /// `missed_proposers` and `finalize_votes` are empty under the V2 contract.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn build_finalization_record_from_recovered(
+pub fn build_finalization_record_from_recovered(
     finalized_epoch: u64,
     finalized_view: u64,
     parent_view: u64,

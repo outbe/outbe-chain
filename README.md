@@ -55,7 +55,7 @@ permanent degraded mode; degraded fallback is not adversarially reachable.
 **Reshare cadence.** DKG and reshare are height-periodic. Validator-set changes
 (joins, exits) are frozen at an epoch boundary and activated at the next one —
 there is no on-demand reshare request. An `EXITING` validator stays accountable
-in the current consensus set until `activateResharedSet()` completes. A live-chain
+in the current consensus set until the certified boundary activation completes. A live-chain
 reshare completes on threshold participation, so an unreachable validator does not
 block it. The one exception is the **genesis bootstrap DKG**, which requires all
 `n` genesis dealer logs and fail-fast aborts if a genesis validator is unreachable
@@ -319,7 +319,7 @@ The fresh-devnet profile requires a hash-bound, genesis-active
 `metadosisStorageLayoutV1.layoutHash` before Cycle block 1. Both bindings are
 validated before process launch. Its retained Linux scenario starts without a
 pre-seeded active Metadosis day, observes runtime `Create` in finalized block
-1, and then advances the whole four-validator committee's existing testnet
+1, and then advances the whole local test ValidatorSet's existing testnet
 logical clock at two restart barriers. It preserves the canonical
 `50h/0h/48h/12h` phase durations and proves one continuous
 `FORMING → OFFERING → READY → OCOMP → COMPLETED` chain history. READY work is ordered by
@@ -345,6 +345,16 @@ transaction; it never fails block production. With the lifecycle active the
 EVM dispatcher routes the selector to the verified result-vote command path,
 which uses the same rejection ABI (codes 1–4) for call-mode, encoding, size,
 and protocol-vote failures.
+
+OCOMP voting membership is not configured separately. Every attempt pins the
+ordered `ACTIVE ValidatorSet` snapshot that exists when the job is committed,
+derives `N` from that snapshot and derives quorum with
+`simplex_n3f1_quorum(N)`. A validator joins future jobs only after its OCOMP
+registration is accepted by `confirmValidatorReady` and the certified
+DKG/reshare boundary makes it `ACTIVE`; already-open jobs keep their historical
+snapshot. Genesis OCOMP material contains one validated founder key registration
+per genesis validator, but it does not contain a committee, member indices or a
+threshold.
 
 ## RPC
 
@@ -429,24 +439,33 @@ use `scripts/release/reproducible-build.sh`; the exact two-build procedure, mani
 and current scope limits are documented in [Reproducible builds](docs/reproducible-builds.md).
 
 ```bash
-# 4-validator localnet
-mise run build-release
-mise run localnet-bootstrap     # BLS keys + genesis.json
-docker run -d --name outbe-local-mongodb -p 27017:27017 mongo:7 --replSet rs0 --bind_ip_all
-docker exec outbe-local-mongodb mongosh --quiet --eval \
-  'rs.initiate({_id:"rs0",members:[{_id:0,host:"localhost:27017"}]})'
-export OUTBE_PROJECTION_MONGODB_URI='mongodb://127.0.0.1:27017/?replicaSet=rs0&directConnection=true'
-mise run localnet-start
-mise run localnet-status        # all 4 nodes should advance past block 0
+# 4-validator dev LocalNet with mock enclaves
+mise run build                  # debug workspace + mock enclave + OCOMP-enabled harness
+mise run localnet-bootstrap     # DKG keys + seed_genesis.py + OCOMP + TEE genesis
+mise run localnet-start         # MongoDB, 4 enclaves/validators, 4 Supervisors and 4 Workers
+mise run localnet-status        # advancing RPCs plus registered/connected OCOMP Workers
+mise run localnet-stop
 
-# Verify via RPC
-curl -s -X POST http://localhost:8545 -H "Content-Type: application/json" \
+# Verify via the validator-0 RPC selected during bootstrap
+RPC_PORT=$(jq -r '.rpc_ports[0]' "${OUT_DIR:-/tmp/outbe-testnet}/localnet-bootstrap-v1.json")
+curl -s -X POST "http://localhost:${RPC_PORT}" -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}'
 
 # Tests
 mise run test                   # cargo nextest run --workspace + doctests
 mise run test-consensus         # consensus crate only
 ```
+
+These four `localnet-*` lifecycle commands are owned by the Rust E2E harness;
+they do not call `prepare_network.py`, `bootstrap-testnet.sh`, or
+`run-testnet.sh`. `prepare_network.py` remains the testnet/production deployment
+tool. The explicit `localnet-sgx-*` command family is currently fail-closed and
+tracked by Beads issue `outbe-chain-8lp`; it never falls back to the mock dev
+enclave. Bootstrap resolves a free complete service-port layout and persists it
+in `<OUT_DIR>/localnet-bootstrap-v1.json`; `start` reuses that exact layout.
+For each genesis validator the persistent owner also starts one OCOMP Supervisor,
+one SnapshotExporter and Worker ordinal 0. `start` and `status` succeed only when
+every Worker is registered and connected to its own Supervisor.
 
 ### Managed localnet stack
 

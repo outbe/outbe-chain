@@ -1,7 +1,7 @@
 [tools]
 # ── Core ────────────────────────────────────────────────────────────── #
-rust = "1.96"      # build outbe-chain + all crates
-foundry = "latest" # forge, cast, anvil (Solidity + Ethereum CLI)
+rust = "1.96"                      # build outbe-chain + all crates
+foundry = "latest"                 # forge, cast, anvil (Solidity + Ethereum CLI)
 
 # ── System deps ─────────────────────────────────── #
 # These must come from the system package manager:
@@ -14,31 +14,33 @@ foundry = "latest" # forge, cast, anvil (Solidity + Ethereum CLI)
 # Core tools needed by build/test/audit tasks. The heavier audit toolchain
 # (machete, udeps, bloat, llvm-lines, llvm-cov) is installed on
 # demand by `mise run audit-tools-install` to mirror the old Makefile.
-"cargo:cargo-binstall" = "latest"
-"cargo:cargo-nextest" = "latest"
-"cargo:cargo-deny" = "latest"
+"cargo:cargo-binstall"  = "latest"
+"cargo:cargo-nextest"   = "latest"
+"cargo:cargo-deny"      = "latest"
 "cargo:cargo-auditable" = "latest"
-"cargo:cargo-audit" = "latest"
+"cargo:cargo-audit"     = "latest"
 
 # ── Release / versioning ────────────────────────────────────────────── #
-cocogitto = "7"   # `cog` — conventional-commit check + auto-version bump
+cocogitto = "7"                    # `cog` — conventional-commit check + auto-version bump
 duckdb = "latest"
 
 [env]
 # Localnet harness knobs (override per-invocation, e.g. `OUT_DIR=/tmp/x mise run localnet`).
-OUT_DIR = "/tmp/outbe-testnet"
-VALIDATORS = "4"
-OUTBE_CHAIN_BINARY = "./target/release/outbe-chain"
+OUT_DIR            = "/tmp/outbe-testnet"
+VALIDATORS         = "4"
 # SEED_FILE is optional; localnet-bootstrap branches on whether it is set.
-# The projection sink needs a transaction-capable Mongo; localnet-start brings up
-# a one-member rs0 replica set in Docker (scripts/localnet-mongo.sh) at this URI.
-OUTBE_PROJECTION_MONGODB_URI = "mongodb://127.0.0.1:27017/?replicaSet=rs0&directConnection=true"
+# The persistent Rust harness owns the MongoDB replica set, mock enclaves, and
+# validator processes for the complete localnet-start → localnet-stop lifetime.
 
 # ─── Build ──────────────────────────────────────────────────────────── #
 
 [tasks.build]
 description = "Build the workspace (debug, cargo auditable)"
-run = "cargo auditable build"
+run = [
+  "cargo auditable build",
+  "cargo auditable build -p outbe-tee-enclave --features mock --bin outbe-tee-enclave-mock",
+  "cargo auditable build -p outbe-e2e-harness --features ocomp-integration --bin outbe-e2e",
+]
 
 [tasks.build-release]
 description = "Build the workspace (release, cargo auditable)"
@@ -74,7 +76,10 @@ run = "cargo check --workspace"
 
 [tasks.test]
 description = "Run the default test suite (cargo nextest run + cargo test --doc)"
-run = ["cargo nextest run --workspace", "cargo test --doc --workspace"]
+run = [
+  "cargo nextest run --workspace",
+  "cargo test --doc --workspace",
+]
 
 [tasks.test-doc]
 description = "Run workspace doctests only (nextest skips doctests)"
@@ -166,57 +171,38 @@ run = "cargo bench --workspace"
 # ─── Localnet ───────────────────────────────────────────────────────── #
 
 [tasks.localnet-bootstrap]
-description = "Clean OUT_DIR and bootstrap a local validator set"
+description = "Bootstrap a fresh dev/mock LocalNet through the canonical Rust E2E harness"
 run = """
-# Stop any localnet still running from a previous bootstrap FIRST. Bootstrap
-# wipes OUT_DIR (including pids/), so skipping this orphans the old node +
-# enclave processes — they keep holding the RPC/metrics/consensus ports and the
-# next `start` dies with "Address already in use". No-op when nothing is running.
-./scripts/run-testnet.sh stop "$OUT_DIR" 2>/dev/null || true
 if [ -z "${SEED_FILE:-}" ]; then
-  ./scripts/bootstrap-testnet.sh "$VALIDATORS" "$OUT_DIR"
+  ./target/debug/outbe-e2e localnet bootstrap --repo . --data-dir "$OUT_DIR" --validators "$VALIDATORS"
 else
-  ./scripts/bootstrap-testnet.sh "$VALIDATORS" "$OUT_DIR" "$SEED_FILE"
+  ./target/debug/outbe-e2e localnet bootstrap --repo . --data-dir "$OUT_DIR" --validators "$VALIDATORS" --seed "$SEED_FILE"
 fi
 """
 
 [tasks.localnet-start]
-description = "Start a bootstrapped localnet from OUT_DIR (brings up Docker MongoDB first)"
-run = """
-./scripts/localnet-mongo.sh start
-./scripts/run-testnet.sh start "$OUT_DIR"
-./scripts/run-testnet.sh status "$OUT_DIR"
-"""
+description = "Start the persistent dev/mock LocalNet owner and wait for all RPCs to advance"
+run = './target/debug/outbe-e2e localnet start --repo . --data-dir "$OUT_DIR" --validators "$VALIDATORS"'
 
 [tasks.localnet-stop]
-description = "Stop the localnet in OUT_DIR"
-run = './scripts/run-testnet.sh stop "$OUT_DIR"'
+description = "Stop the exact persistent LocalNet owner in OUT_DIR"
+run = './target/debug/outbe-e2e localnet stop --repo . --data-dir "$OUT_DIR" --validators "$VALIDATORS"'
 
 [tasks.localnet-status]
-description = "Show localnet process status for OUT_DIR"
-run = './scripts/run-testnet.sh status "$OUT_DIR"'
+description = "Show the owner and every validator RPC height"
+run = './target/debug/outbe-e2e localnet status --repo . --data-dir "$OUT_DIR" --validators "$VALIDATORS"'
 
 [tasks.localnet]
-description = "Build release + bootstrap + start localnet"
+description = "Build debug binaries, bootstrap, and start the dev/mock LocalNet"
 run = """
-mise run build-release
+mise run build
 mise run localnet-bootstrap
 mise run localnet-start
 """
 
 [tasks.localnet-tee]
-description = "Build + bootstrap + start localnet with a per-validator mock TEE enclave (bare, no SGX/Docker)"
-run = """
-# Local TEE run: mock enclave (no SGX) as a bare host process (no Gramine/Docker).
-# Bare is required on Apple Silicon — the amd64 Gramine image dies under QEMU.
-export OUTBE_TEE_ENCLAVE=1
-export OUTBE_TEE_ENCLAVE_MOCK=1
-export OUTBE_TEE_ENCLAVE_BARE=1
-mise run build-release
-cargo build --release -p outbe-tee-enclave --features mock --bin outbe-tee-enclave-mock
-mise run localnet-bootstrap
-mise run localnet-start
-"""
+description = "Alias for the canonical dev/mock LocalNet (TEE is mandatory)"
+depends = ["localnet"]
 
 [tasks.localnet-restart]
 description = "Stop and start the bootstrapped localnet"
@@ -226,15 +212,20 @@ mise run localnet-start
 """
 
 [tasks.localnet-clean]
-description = "Remove all validator-*/ and pids/ from OUT_DIR, and the Docker MongoDB"
+description = "Stop LocalNet and clear validator runtime data inside dedicated OUT_DIR"
 run = """
+mise run localnet-stop
 ./scripts/clean-testnet-data.sh "$OUT_DIR"
-./scripts/localnet-mongo.sh clean
 """
 
 [tasks.localnet-smoke]
-description = "4-validator multi-node consensus smoke (bootstrap → lockstep height → stop)"
-run = './scripts/localnet-smoke.sh'
+description = "Dev/mock consensus smoke through the canonical harness"
+run = """
+mise run localnet-bootstrap
+mise run localnet-start
+mise run localnet-status
+mise run localnet-stop
+"""
 
 [tasks.localnet-stack-start]
 description = "Start a fresh 4-validator localnet with mock TEE and managed MongoDB"
@@ -247,6 +238,22 @@ run = "bash ./scripts/localnet-stack.sh stop"
 [tasks.localnet-stack-clean]
 description = "Stop the managed localnet and MongoDB, then remove chain data"
 run = "bash ./scripts/localnet-stack.sh clean"
+
+[tasks.localnet-sgx-bootstrap]
+description = "Deferred real-SGX LocalNet bootstrap (tracked by outbe-chain-8lp)"
+run = './target/debug/outbe-e2e localnet-sgx bootstrap --repo . --data-dir "${OUT_DIR}-sgx" --validators "$VALIDATORS"'
+
+[tasks.localnet-sgx-start]
+description = "Deferred real-SGX LocalNet start (tracked by outbe-chain-8lp)"
+run = './target/debug/outbe-e2e localnet-sgx start --repo . --data-dir "${OUT_DIR}-sgx" --validators "$VALIDATORS"'
+
+[tasks.localnet-sgx-status]
+description = "Deferred real-SGX LocalNet status (tracked by outbe-chain-8lp)"
+run = './target/debug/outbe-e2e localnet-sgx status --repo . --data-dir "${OUT_DIR}-sgx" --validators "$VALIDATORS"'
+
+[tasks.localnet-sgx-stop]
+description = "Deferred real-SGX LocalNet stop (tracked by outbe-chain-8lp)"
+run = './target/debug/outbe-e2e localnet-sgx stop --repo . --data-dir "${OUT_DIR}-sgx" --validators "$VALIDATORS"'
 
 [tasks.tribute-offer]
 description = "Create one encrypted Tribute on the running managed localnet"

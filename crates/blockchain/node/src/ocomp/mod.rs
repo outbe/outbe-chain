@@ -6,6 +6,7 @@
 
 pub mod finality;
 pub mod fork;
+pub mod local_result;
 mod openings;
 pub mod retention;
 pub use openings::{build_lysis_openings, build_public_lysis_openings, verify_lysis_openings};

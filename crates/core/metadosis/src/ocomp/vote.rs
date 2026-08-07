@@ -2,15 +2,15 @@
 //!
 //! The public transaction supplies one canonical signed vote. This module
 //! resolves the finalized job from the bounded response-window index, verifies
-//! the inner OCOMP signature against fork-installed committee state and owns
-//! the atomic four-slot/q=3 transition. It never decodes or executes Lysis.
+//! the inner OCOMP signature against the pinned historical ValidatorSet and owns
+//! the atomic pinned-ValidatorSet vote transition. It never executes Lysis.
 
 use alloy_primitives::{Address, Bytes, U256};
 use outbe_compressed_entities::ExecutionScope;
 use outbe_ocomp_protocol::{
-    abi::{OCOMP_RESULT_VOTE_REJECTED_SELECTOR, SUBMIT_LYSIS_RESULT_SELECTOR},
+    error::ProtocolError,
     state::OcompJobStatus,
-    vote::{OcompQuorumV1, RecordVoteOutcomeV1, ResultVoteV1},
+    vote::{OcompQuorumV1, RecordVoteOutcomeV1, ResultVotePrefixV1, ResultVoteV1},
     SchemaLimits,
 };
 use outbe_primitives::{
@@ -20,17 +20,16 @@ use outbe_primitives::{
 
 use crate::{
     aggregate::ValidatedWwdAggregate,
+    errors::{
+        caller_rejection as reject, result_vote_rejection as vote_reject,
+        storage_corruption_message, vote_rejection_code::*,
+    },
     reducer::{reduce_outer_wwd, OcompRetryCause, OuterWwdEvent},
     schema::MetadosisContract,
 };
 
+use super::activation::OcompLocalResultAuthority;
 use super::schema::remove_response_deadline_key;
-
-const REJECT_MALFORMED_ENCODING: u16 = 1;
-const REJECT_LIMIT_EXCEEDED: u16 = 2;
-const REJECT_CALL_MODE: u16 = 3;
-const REJECT_PROTOCOL_VOTE: u16 = 4;
-pub(crate) const REJECT_LIFECYCLE_INACTIVE: u16 = 5;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RecordedResultVoteV1 {
@@ -46,89 +45,234 @@ pub(crate) enum ResponseWindowCloseV1 {
 }
 
 /// Dispatches one normal public EVM transaction containing a canonical signed
-/// `ResultVoteV1`. The inner signature authorizes the result vote while the
-/// outer OCOMP delegate must resolve to the same installed validator slot.
+/// `ResultVoteV1`. The outer caller is intentionally not protocol authority:
+/// eligibility and fee classification are separate, while this transition is
+/// authorized only by the inner committee signature.
 pub fn dispatch_public_result_vote(
     storage: StorageHandle<'_>,
     scope: &ExecutionScope,
-    caller: Address,
     data: &[u8],
     value: U256,
     is_static: bool,
+    local_result_authority: Option<&dyn OcompLocalResultAuthority>,
 ) -> Result<Bytes> {
     if !value.is_zero() || is_static {
-        return Err(vote_reject(REJECT_CALL_MODE));
+        return Err(vote_reject(CALL_MODE));
     }
     let limits = super::schema::poc_schema_limits();
-    let vote_bytes = preflight_result_vote_calldata(data)?;
+    let vote_bytes = preflight_result_vote_calldata(data, &limits)?;
     let vote = ResultVoteV1::decode_canonical(vote_bytes, &limits)
-        .map_err(|_| vote_reject(REJECT_MALFORMED_ENCODING))?;
+        .map_err(|_| vote_reject(MALFORMED_ENCODING))?;
     let inclusion_height = storage.block_number()?;
     MetadosisContract::new(storage)
-        .record_ocomp_result_vote(&vote, caller, inclusion_height, scope, &limits)
+        .record_ocomp_result_vote(
+            &vote,
+            inclusion_height,
+            scope,
+            &limits,
+            local_result_authority,
+        )
         .map_err(map_vote_transition_error)?;
     Ok(Bytes::new())
 }
 
-fn preflight_result_vote_calldata(data: &[u8]) -> Result<&[u8]> {
-    let vote_cap = usize::try_from(
-        outbe_ocomp_protocol::generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1.max_result_vote_bytes,
-    )
-    .map_err(|_| fatal("OCOMP result-vote cap does not fit usize"))?;
-    let padded_cap = vote_cap
-        .checked_add(31)
-        .map(|value| value & !31)
-        .ok_or_else(|| vote_reject(REJECT_LIMIT_EXCEEDED))?;
-    let calldata_cap = 68_usize
-        .checked_add(padded_cap)
-        .ok_or_else(|| vote_reject(REJECT_LIMIT_EXCEEDED))?;
-    if data.len() > calldata_cap {
-        return Err(vote_reject(REJECT_LIMIT_EXCEEDED));
-    }
-    if data.len() < 68
-        || data.get(..4) != Some(SUBMIT_LYSIS_RESULT_SELECTOR.as_slice())
-        || U256::from_be_slice(&data[4..36]) != U256::from(32)
-    {
-        return Err(vote_reject(REJECT_MALFORMED_ENCODING));
-    }
+fn preflight_result_vote_calldata<'a>(data: &'a [u8], limits: &SchemaLimits) -> Result<&'a [u8]> {
+    outbe_ocomp_protocol::vote::decode_submit_lysis_result_prefix(data, limits).map_err(
+        |error| {
+            vote_reject(if matches!(error, ProtocolError::CapacityExceeded { .. }) {
+                LIMIT_EXCEEDED
+            } else {
+                MALFORMED_ENCODING
+            })
+        },
+    )?;
     let payload_len = usize::try_from(U256::from_be_slice(&data[36..68]))
-        .map_err(|_| vote_reject(REJECT_LIMIT_EXCEEDED))?;
-    if payload_len == 0 || payload_len > vote_cap {
-        return Err(vote_reject(REJECT_LIMIT_EXCEEDED));
-    }
+        .map_err(|_| vote_reject(LIMIT_EXCEEDED))?;
     outbe_ocomp_protocol::capacity::result_vote_internal_work(payload_len)
-        .map_err(|_| vote_reject(REJECT_LIMIT_EXCEEDED))?;
-    let padded_len = payload_len
-        .checked_add(31)
-        .map(|value| value & !31)
-        .ok_or_else(|| vote_reject(REJECT_LIMIT_EXCEEDED))?;
-    let expected_len = 68_usize
-        .checked_add(padded_len)
-        .ok_or_else(|| vote_reject(REJECT_LIMIT_EXCEEDED))?;
-    if data.len() != expected_len {
-        return Err(vote_reject(REJECT_MALFORMED_ENCODING));
-    }
+        .map_err(|_| vote_reject(LIMIT_EXCEEDED))?;
     let payload_end = 68 + payload_len;
-    if data[payload_end..].iter().any(|byte| *byte != 0) {
-        return Err(vote_reject(REJECT_MALFORMED_ENCODING));
-    }
     Ok(&data[68..payload_end])
 }
 
 fn map_vote_transition_error(error: PrecompileError) -> PrecompileError {
+    if crate::errors::is_business_failure(&error) {
+        return error;
+    }
+    if is_deadline_passed_result_vote_revert(&error) {
+        return error;
+    }
     match error {
-        PrecompileError::Revert(_) | PrecompileError::RevertBytes(_) => {
-            vote_reject(REJECT_PROTOCOL_VOTE)
-        }
+        PrecompileError::Revert(_) | PrecompileError::RevertBytes(_) => vote_reject(PROTOCOL_VOTE),
         other => other,
     }
 }
 
-pub(crate) fn vote_reject(code: u16) -> PrecompileError {
-    let mut encoded = Vec::with_capacity(36);
-    encoded.extend_from_slice(&OCOMP_RESULT_VOTE_REJECTED_SELECTOR);
-    encoded.extend_from_slice(&U256::from(code).to_be_bytes::<32>());
-    PrecompileError::RevertBytes(Bytes::from(encoded))
+pub(crate) fn result_vote_worldwide_day(
+    storage: StorageHandle<'_>,
+    data: &[u8],
+) -> Result<Option<outbe_common::WorldwideDay>> {
+    let limits = super::schema::poc_schema_limits();
+    let vote_bytes = match preflight_result_vote_calldata(data, &limits) {
+        Ok(bytes) => bytes,
+        Err(PrecompileError::Revert(_) | PrecompileError::RevertBytes(_)) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let vote = match ResultVoteV1::decode_canonical(vote_bytes, &limits) {
+        Ok(vote) => vote,
+        Err(_) => return Ok(None),
+    };
+    let contract = MetadosisContract::new(storage.clone());
+    let Some(window) = contract.response_window_for_job(vote.job_id)? else {
+        return Ok(None);
+    };
+    let Some(record) = contract.ocomp_job_record(window.intent_id, &limits)? else {
+        return Err(storage_corruption_message(
+            "OCOMP response index points to a missing job",
+        ));
+    };
+    Ok(Some(outbe_common::WorldwideDay::new(record.intent.wwd)))
+}
+
+#[must_use]
+pub fn is_deadline_passed_result_vote_revert(error: &PrecompileError) -> bool {
+    matches!(error, PrecompileError::RevertBytes(data) if is_deadline_passed_result_vote_revert_data(data))
+}
+
+#[must_use]
+pub fn is_deadline_passed_result_vote_revert_data(data: &[u8]) -> bool {
+    data == deadline_passed_result_vote_revert_data().as_ref()
+}
+
+#[must_use]
+pub fn deadline_passed_result_vote_revert_data() -> Bytes {
+    let PrecompileError::RevertBytes(expected) = vote_reject(DEADLINE_PASSED) else {
+        unreachable!("vote_reject always returns RevertBytes");
+    };
+    expected
+}
+
+/// Resolves the validator represented by one canonical OCOMP vote prefix from
+/// the exact historical ValidatorSet snapshot pinned by its open job.
+///
+/// Current ValidatorSet status is deliberately not consulted: membership for
+/// an already-open attempt is immutable. Missing, evicted or mismatched
+/// caller-selected state is an ordinary `None`, never a fallback to the current
+/// snapshot.
+pub fn resolve_historical_result_vote_participant(
+    storage: StorageHandle<'_>,
+    prefix: &ResultVotePrefixV1,
+    limits: &SchemaLimits,
+) -> Result<Option<Address>> {
+    let contract = MetadosisContract::new(storage.clone());
+    let member_count = if let Some(response) = contract.response_window_for_job(prefix.job_id)? {
+        let Some(record) = contract.ocomp_job_record(response.intent_id, limits)? else {
+            return Err(storage_corruption_message(
+                "OCOMP response index points to a missing job",
+            ));
+        };
+        let Some(finalized) = record.finalized.as_ref() else {
+            return Err(storage_corruption_message(
+                "OCOMP response-window job is not finalized",
+            ));
+        };
+        if finalized.job_id != response.job_id
+            || finalized.deadline_height != response.deadline_height
+            || !matches!(
+                record.status,
+                OcompJobStatus::VotingOpen | OcompJobStatus::Completed | OcompJobStatus::Conflicted
+            )
+        {
+            return Err(storage_corruption_message(
+                "OCOMP response index/job binding mismatch",
+            ));
+        }
+        if prefix.protocol_bundle_hash != record.intent.protocol_bundle_hash
+            || prefix.attempt != record.intent.attempt
+            || prefix.result_validator_set_epoch != record.intent.result_validator_set_epoch
+            || prefix.result_committee_set_hash != record.intent.result_committee_set_hash
+            || prefix.result_ocomp_binding_hash != record.intent.result_ocomp_binding_hash
+            || prefix.validator_index >= record.intent.result_member_count
+        {
+            return Ok(None);
+        }
+        record.intent.result_member_count
+    } else {
+        let Some(accountability) = contract.result_vote_accountability(prefix.job_id, limits)?
+        else {
+            return Ok(None);
+        };
+        if accountability.closed_summary.is_none()
+            || prefix.result_validator_set_epoch != accountability.result_validator_set_epoch
+            || prefix.result_committee_set_hash != accountability.result_committee_set_hash
+            || prefix.result_ocomp_binding_hash != accountability.result_ocomp_binding_hash
+            || prefix.validator_index >= accountability.member_count
+        {
+            return Ok(None);
+        }
+        accountability.member_count
+    };
+    let Some(snapshot) = outbe_validatorset::read_ocomp_snapshot_extension_for_binding(
+        storage.clone(),
+        prefix.result_validator_set_epoch,
+        prefix.result_committee_set_hash,
+        prefix.result_ocomp_binding_hash,
+    )?
+    else {
+        return Ok(None);
+    };
+    if snapshot.member_count != member_count {
+        return Ok(None);
+    }
+    let snapshot_key = outbe_validatorset::committee_snapshot_key(
+        prefix.result_validator_set_epoch,
+        prefix.result_committee_set_hash,
+    );
+    let Some(member) = outbe_validatorset::read_ocomp_snapshot_member_at(
+        storage,
+        snapshot_key,
+        prefix.validator_index,
+    )?
+    else {
+        return Ok(None);
+    };
+    if member.key_epoch != prefix.key_epoch {
+        return Ok(None);
+    }
+    Ok(Some(member.validator_address))
+}
+
+/// Resolves and authorizes the outer EVM signer of an OCOMP system carrier.
+///
+/// The represented validator comes exclusively from the exact historical
+/// snapshot pinned by the vote. Its own address is accepted only when no OCOMP
+/// delegate is configured; otherwise only the current reverse-verified OCOMP
+/// delegate is accepted. Current ACTIVE status is deliberately irrelevant for
+/// an already-open historical job.
+pub fn resolve_historical_result_vote_carrier_signer(
+    storage: StorageHandle<'_>,
+    prefix: &ResultVotePrefixV1,
+    signer: Address,
+    limits: &SchemaLimits,
+) -> Result<Option<Address>> {
+    let Some(historical_validator) =
+        resolve_historical_result_vote_participant(storage.clone(), prefix, limits)?
+    else {
+        return Ok(None);
+    };
+    let validators = outbe_validatorset::contract::ValidatorSet::new(storage);
+    let role = outbe_validatorset::delegation::ValidatorDelegateRole::Ocomp;
+    let explicit = validators.get_delegate(historical_validator, role)?;
+    if signer == historical_validator {
+        return Ok(explicit.is_zero().then_some(historical_validator));
+    }
+    if explicit != signer {
+        return Ok(None);
+    }
+    let reverse = validators
+        .validator_by_role_delegate
+        .get_nested(&role.id())
+        .read(&signer)?;
+    Ok((reverse == historical_validator).then_some(historical_validator))
 }
 
 impl MetadosisContract<'_> {
@@ -138,27 +282,39 @@ impl MetadosisContract<'_> {
     pub fn record_ocomp_result_vote(
         &mut self,
         vote: &ResultVoteV1,
-        caller: Address,
         inclusion_height: u64,
         scope: &ExecutionScope,
         limits: &SchemaLimits,
+        local_result_authority: Option<&dyn OcompLocalResultAuthority>,
     ) -> Result<RecordedResultVoteV1> {
         let storage = self.storage.clone();
         let outcome = (|| {
-            let response = self
-                .response_window_for_job(vote.job_id)?
-                .ok_or_else(|| reject("OCOMP result vote has no open response window"))?;
+            let response = match self.response_window_for_job(vote.job_id)? {
+                Some(response) => response,
+                None => {
+                    let deadline_closed = self
+                        .result_vote_accountability(vote.job_id, limits)?
+                        .is_some_and(|accountability| accountability.closed_summary.is_some());
+                    if deadline_closed {
+                        return Err(vote_reject(DEADLINE_PASSED));
+                    }
+                    return Err(reject("OCOMP result vote has no open response window"));
+                }
+            };
             let record = self
                 .ocomp_job_record(response.intent_id, limits)?
-                .ok_or_else(|| fatal("OCOMP response index points to a missing job"))?;
-            let finalized = record
-                .finalized
-                .as_ref()
-                .ok_or_else(|| fatal("OCOMP response-window job is not finalized"))?;
+                .ok_or_else(|| {
+                    storage_corruption_message("OCOMP response index points to a missing job")
+                })?;
+            let finalized = record.finalized.as_ref().ok_or_else(|| {
+                storage_corruption_message("OCOMP response-window job is not finalized")
+            })?;
             if finalized.job_id != response.job_id
                 || finalized.deadline_height != response.deadline_height
             {
-                return Err(fatal("OCOMP response index/job binding mismatch"));
+                return Err(storage_corruption_message(
+                    "OCOMP response index/job binding mismatch",
+                ));
             }
             if !matches!(
                 record.status,
@@ -168,41 +324,45 @@ impl MetadosisContract<'_> {
                     "OCOMP result vote requires an open or quorum-certified job",
                 ));
             }
-            let authority = self
-                .read_ocomp_activation_authority(limits)?
-                .ok_or_else(|| fatal("OCOMP result-vote committee is not installed"))?;
-            let validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-            let validator = validators
-                .resolve_validator_for_role(
-                    caller,
-                    outbe_validatorset::delegation::ValidatorDelegateRole::Ocomp,
-                )?
-                .ok_or_else(|| reject("OCOMP result-vote caller is not an active delegate"))?;
-            let validator_record = validators
-                .get_validator(validator)?
-                .ok_or_else(|| fatal("resolved OCOMP validator is missing"))?;
-            let expected_identity = outbe_ocomp_protocol::committee::validator_identity_hash(
-                vote.validator_index,
-                validator,
-                &validator_record.consensus_pubkey,
-            )
-            .map_err(|error| reject(format!("invalid OCOMP validator identity: {error}")))?;
-            let member = authority
-                .result_committee
-                .ordered_members
-                .get(usize::from(vote.validator_index))
-                .ok_or_else(|| reject("OCOMP vote validator slot is out of range"))?;
-            if member.validator_index != vote.validator_index
-                || member.validator_identity_hash != expected_identity
+            if vote.protocol_bundle_hash != record.intent.protocol_bundle_hash
+                || vote.attempt != record.intent.attempt
+                || vote.result_validator_set_epoch != record.intent.result_validator_set_epoch
+                || vote.result_committee_set_hash != record.intent.result_committee_set_hash
+                || vote.result_ocomp_binding_hash != record.intent.result_ocomp_binding_hash
             {
                 return Err(reject(
-                    "OCOMP transaction caller does not match the signed validator slot",
+                    "OCOMP result vote does not match pinned job binding",
                 ));
             }
-            vote.verify(
+            let authority = self
+                .read_ocomp_activation_authority(limits)?
+                .ok_or_else(|| {
+                    storage_corruption_message("OCOMP activation authority is not installed")
+                })?;
+            let snapshot = outbe_validatorset::read_ocomp_snapshot_extension_for_binding(
+                storage.clone(),
+                record.intent.result_validator_set_epoch,
+                record.intent.result_committee_set_hash,
+                record.intent.result_ocomp_binding_hash,
+            )?
+            .filter(|snapshot| snapshot.member_count == record.intent.result_member_count)
+            .ok_or_else(|| reject("OCOMP result vote historical snapshot is missing"))?;
+            let snapshot_key = outbe_validatorset::committee_snapshot_key(
+                record.intent.result_validator_set_epoch,
+                record.intent.result_committee_set_hash,
+            );
+            let member = outbe_validatorset::read_ocomp_snapshot_member_at(
+                storage.clone(),
+                snapshot_key,
+                vote.validator_index,
+            )?
+            .ok_or_else(|| reject("OCOMP result vote member is missing"))?;
+            vote.verify_historical_member(
                 &record.intent,
                 finalized.job_id,
-                &authority.result_committee,
+                snapshot.member_count,
+                member.key_epoch,
+                &member.ocomp_public_key_sec1,
                 inclusion_height,
                 finalized.open_height,
                 finalized.deadline_height,
@@ -212,9 +372,13 @@ impl MetadosisContract<'_> {
 
             let mut accountability = self
                 .result_vote_accountability(finalized.job_id, limits)?
-                .ok_or_else(|| fatal("OCOMP response-window vote slots are missing"))?;
+                .ok_or_else(|| {
+                    storage_corruption_message("OCOMP response-window vote slots are missing")
+                })?;
             if accountability.quorum != finalized.quorum {
-                return Err(fatal("OCOMP job/accountability quorum mismatch"));
+                return Err(storage_corruption_message(
+                    "OCOMP job/accountability quorum mismatch",
+                ));
             }
             let had_quorum = accountability.quorum.is_some();
             let outcome = accountability
@@ -225,18 +389,19 @@ impl MetadosisContract<'_> {
             if !had_quorum {
                 if let Some(formed) = &quorum {
                     if record.status != OcompJobStatus::VotingOpen {
-                        return Err(fatal(
+                        return Err(storage_corruption_message(
                             "OCOMP quorum formed outside the voting-open transition",
                         ));
                     }
-                    let current_time = storage
-                        .timestamp()?
-                        .try_into()
-                        .map_err(|_| fatal("OCOMP block timestamp does not fit u64"))?;
+                    let current_time = storage.timestamp()?.try_into().map_err(|_| {
+                        storage_corruption_message("OCOMP block timestamp does not fit u64")
+                    })?;
                     let worldwide_day = outbe_common::WorldwideDay::new(record.intent.wwd);
                     let aggregate = ValidatedWwdAggregate::load_and_validate(storage.clone())?;
                     let outer = aggregate.record(worldwide_day).ok_or_else(|| {
-                        fatal("OCOMP q-forming vote has no persisted outer WorldwideDay")
+                        storage_corruption_message(
+                            "OCOMP q-forming vote has no persisted outer WorldwideDay",
+                        )
                     })?;
                     let completed_transition =
                         reduce_outer_wwd(Some(outer), OuterWwdEvent::OcompCompleted)?;
@@ -256,15 +421,20 @@ impl MetadosisContract<'_> {
                     super::activation::apply_quorum_result(
                         apply_context,
                         self,
-                        response.intent_id,
-                        &record,
-                        &vote.result,
-                        formed,
-                        &authority,
+                        super::activation::QuorumResultInput::new(
+                            response.intent_id,
+                            &record,
+                            &vote.result,
+                            formed,
+                            &authority,
+                            local_result_authority,
+                        ),
                     )?;
                     let applied = self
                         .ocomp_job_record(response.intent_id, limits)?
-                        .ok_or_else(|| fatal("OCOMP q-forming apply removed the job"))?;
+                        .ok_or_else(|| {
+                            storage_corruption_message("OCOMP q-forming apply removed the job")
+                        })?;
                     if !matches!(
                         applied.status,
                         OcompJobStatus::Completed | OcompJobStatus::Conflicted
@@ -274,13 +444,13 @@ impl MetadosisContract<'_> {
                         .and_then(|finalized| finalized.quorum.as_ref())
                         != Some(formed)
                     {
-                        return Err(fatal(
+                        return Err(storage_corruption_message(
                             "OCOMP q-forming apply did not commit terminal quorum state",
                         ));
                     }
                 }
             } else if finalized.quorum != quorum {
-                return Err(fatal("OCOMP immutable quorum changed"));
+                return Err(storage_corruption_message("OCOMP immutable quorum changed"));
             }
 
             self.write_result_vote_accountability(&accountability, limits)?;
@@ -289,9 +459,9 @@ impl MetadosisContract<'_> {
         outcome
     }
 
-    /// Closes the one due PoC response window and persists the objective
-    /// four-slot accountability summary. A timely quorum is never erased;
-    /// callers expire only the returned `NoQuorum` live attempt.
+    /// Closes the one due response window and persists the objective bounded
+    /// accountability summary for the pinned ValidatorSet. A timely quorum is
+    /// never erased; callers expire only the returned `NoQuorum` live attempt.
     pub(crate) fn close_due_ocomp_response_window(
         &mut self,
         at_height: u64,
@@ -306,28 +476,84 @@ impl MetadosisContract<'_> {
                 return Ok(ResponseWindowCloseV1::NotDue);
             }
             if at_height > key.deadline_height {
-                return Err(fatal("OCOMP lifecycle skipped the exact response deadline"));
+                return Err(storage_corruption_message(
+                    "OCOMP lifecycle skipped the exact response deadline",
+                ));
             }
             let record = self
                 .ocomp_job_record(key.intent_id, limits)?
-                .ok_or_else(|| fatal("OCOMP response index points to a missing job"))?;
-            let finalized = record
-                .finalized
-                .as_ref()
-                .ok_or_else(|| fatal("OCOMP response-window job is not finalized"))?;
+                .ok_or_else(|| {
+                    storage_corruption_message("OCOMP response index points to a missing job")
+                })?;
+            let finalized = record.finalized.as_ref().ok_or_else(|| {
+                storage_corruption_message("OCOMP response-window job is not finalized")
+            })?;
             if finalized.job_id != key.job_id || finalized.deadline_height != key.deadline_height {
-                return Err(fatal("OCOMP response deadline/job binding mismatch"));
+                return Err(storage_corruption_message(
+                    "OCOMP response deadline/job binding mismatch",
+                ));
             }
 
             let mut accountability = self
                 .result_vote_accountability(key.job_id, limits)?
-                .ok_or_else(|| fatal("OCOMP response-window vote slots are missing"))?;
+                .ok_or_else(|| {
+                    storage_corruption_message("OCOMP response-window vote slots are missing")
+                })?;
             if accountability.quorum != finalized.quorum {
-                return Err(fatal("OCOMP job/accountability quorum mismatch at close"));
+                return Err(storage_corruption_message(
+                    "OCOMP job/accountability quorum mismatch at close",
+                ));
             }
-            accountability
-                .close(at_height, limits)
-                .map_err(|error| fatal(format!("close OCOMP vote accountability: {error}")))?;
+            accountability.close(at_height, limits).map_err(|error| {
+                storage_corruption_message(format!("close OCOMP vote accountability: {error}"))
+            })?;
+            let snapshot = outbe_validatorset::read_ocomp_snapshot_extension_for_binding(
+                self.storage.clone(),
+                record.intent.result_validator_set_epoch,
+                record.intent.result_committee_set_hash,
+                record.intent.result_ocomp_binding_hash,
+            )?
+            .filter(|snapshot| snapshot.member_count == accountability.member_count)
+            .ok_or_else(|| {
+                storage_corruption_message("OCOMP deadline historical snapshot is missing")
+            })?;
+            let snapshot_key = outbe_validatorset::committee_snapshot_key(
+                snapshot.epoch,
+                snapshot.committee_set_hash,
+            );
+            let mut validators =
+                outbe_validatorset::contract::ValidatorSet::new(self.storage.clone());
+            for (index, slot) in accountability.slots.iter().enumerate() {
+                if slot.is_some() {
+                    continue;
+                }
+                let participant_index = u16::try_from(index).map_err(|_| {
+                    storage_corruption_message("OCOMP missing participant index exceeds u16")
+                })?;
+                let member = outbe_validatorset::read_ocomp_snapshot_member_at(
+                    self.storage.clone(),
+                    snapshot_key,
+                    participant_index,
+                )?
+                .ok_or_else(|| {
+                    storage_corruption_message("OCOMP deadline snapshot member is missing")
+                })?;
+                let current = validators.get_validator(member.validator_address)?;
+                if current.is_some_and(|record| {
+                    record.status == outbe_validatorset::runtime::status::ACTIVE
+                }) {
+                    validators
+                        .jail_validator(member.validator_address)
+                        .map_err(|error| match error {
+                            PrecompileError::Revert(_) | PrecompileError::RevertBytes(_) => storage_corruption_message(
+                                format!(
+                                    "jail ACTIVE missing OCOMP validator {participant_index}: {error}"
+                                ),
+                            ),
+                            other => other,
+                        })?;
+                }
+            }
             self.write_result_vote_accountability(&accountability, limits)?;
             remove_response_deadline_key(&mut index, key)?;
             self.write_response_deadline_index(&index)?;
@@ -345,30 +571,35 @@ impl MetadosisContract<'_> {
                         intent_id: key.intent_id,
                     })
                 }
-                _ => Err(fatal("OCOMP response close found an invalid job status")),
+                _ => Err(storage_corruption_message(
+                    "OCOMP response close found an invalid job status",
+                )),
             }
         })()
     }
 }
 
-fn reject(message: impl Into<String>) -> PrecompileError {
-    PrecompileError::Revert(message.into())
-}
-
-fn fatal(message: impl Into<String>) -> PrecompileError {
-    PrecompileError::Fatal(message.into())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use outbe_ocomp_protocol::{
+        abi::SUBMIT_LYSIS_RESULT_SELECTOR, encode_envelope, registry::ObjectKind, OCB1_HEADER_LEN,
+    };
 
     fn dynamic_bytes_calldata(payload_len: usize) -> Vec<u8> {
+        assert!(payload_len >= OCB1_HEADER_LEN + 150);
+        let payload = encode_envelope(
+            ObjectKind::ResultVoteV1,
+            &vec![0_u8; payload_len - OCB1_HEADER_LEN],
+            super::super::schema::poc_schema_limits().codec,
+        )
+        .unwrap();
         let padded_len = (payload_len + 31) & !31;
         let mut data = vec![0_u8; 68 + padded_len];
         data[..4].copy_from_slice(&SUBMIT_LYSIS_RESULT_SELECTOR);
         data[4..36].copy_from_slice(&U256::from(32).to_be_bytes::<32>());
         data[36..68].copy_from_slice(&U256::from(payload_len).to_be_bytes::<32>());
+        data[68..68 + payload_len].copy_from_slice(&payload);
         data
     }
 
@@ -379,27 +610,30 @@ mod tests {
                 .max_result_vote_bytes,
         )
         .unwrap();
+        let limits = super::super::schema::poc_schema_limits();
         for accepted in [cap - 1, cap] {
             let data = dynamic_bytes_calldata(accepted);
             assert_eq!(
-                preflight_result_vote_calldata(&data).unwrap().len(),
+                preflight_result_vote_calldata(&data, &limits)
+                    .unwrap()
+                    .len(),
                 accepted
             );
         }
 
         let rejected = dynamic_bytes_calldata(cap + 1);
         assert!(matches!(
-            preflight_result_vote_calldata(&rejected),
+            preflight_result_vote_calldata(&rejected, &limits),
             Err(PrecompileError::RevertBytes(_))
         ));
     }
 
     #[test]
     fn result_vote_preflight_rejects_nonzero_abi_padding() {
-        let mut data = dynamic_bytes_calldata(1);
+        let mut data = dynamic_bytes_calldata(OCB1_HEADER_LEN + 150);
         *data.last_mut().unwrap() = 1;
         assert!(matches!(
-            preflight_result_vote_calldata(&data),
+            preflight_result_vote_calldata(&data, &super::super::schema::poc_schema_limits()),
             Err(PrecompileError::RevertBytes(_))
         ));
     }

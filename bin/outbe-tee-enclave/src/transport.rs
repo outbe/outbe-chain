@@ -598,9 +598,11 @@ fn serve_connection_with_resident_chain<S: EnclaveTransportStream>(
                 &mut dkg,
                 offer_key,
                 chain_id,
-                boot,
-                Some(initialization),
-                quote_generator,
+                DispatchInitializationContext {
+                    boot,
+                    initialization: Some(initialization),
+                    quote_generator,
+                },
             ),
         };
 
@@ -658,25 +660,36 @@ pub fn dispatch(
         dkg,
         offer_key,
         chain_id,
-        None,
-        None,
-        crate::gramine::dcap_quote,
+        DispatchInitializationContext {
+            boot: None,
+            initialization: None,
+            quote_generator: crate::gramine::dcap_quote,
+        },
     )
 }
 
-type DcapQuoteArtifactsV1 = (Vec<u8>, Vec<u8>, Vec<u8>);
+type QuoteGenerator = fn(&[u8; 64]) -> Result<Vec<u8>, String>;
+type GeneratedDcapQuoteResponse = (Vec<u8>, Vec<u8>, Vec<u8>);
 
-#[allow(clippy::too_many_arguments)]
+struct DispatchInitializationContext<'a> {
+    boot: Option<&'a EnclaveBootConfig>,
+    initialization: Option<&'a InitializationState>,
+    quote_generator: QuoteGenerator,
+}
+
 fn dispatch_with_initialization(
     req: EnclaveRequest,
     keys: &EnclaveKeys,
     dkg: &mut DkgSessionStore,
     offer_key: &SharedTributeOfferKey,
     chain_id: alloy_primitives::B256,
-    boot: Option<&EnclaveBootConfig>,
-    initialization: Option<&InitializationState>,
-    quote_generator: fn(&[u8; 64]) -> Result<Vec<u8>, String>,
+    context: DispatchInitializationContext<'_>,
 ) -> EnclaveResponse {
+    let DispatchInitializationContext {
+        boot,
+        initialization,
+        quote_generator,
+    } = context;
     match req {
         EnclaveRequest::GetQuote { .. }
         | EnclaveRequest::GetInitializationChallenge
@@ -739,7 +752,7 @@ fn dispatch_with_initialization(
                         .to_string(),
                 };
             };
-            let result = (|| -> Result<DcapQuoteArtifactsV1, String> {
+            let result = (|| -> Result<GeneratedDcapQuoteResponse, String> {
                 let report_data = initialization.quote_report_data(&intent)?;
                 let decoded_intent = RegistrationIntentV1::decode_canonical(&intent)
                     .map_err(|error| format!("registration intent is not canonical: {error}"))?;
@@ -1666,9 +1679,11 @@ mod tests {
             &mut dkg,
             &offer_key,
             B256::from(manifest.chain_id),
-            Some(&boot),
-            Some(&initialization),
-            quote,
+            DispatchInitializationContext {
+                boot: Some(&boot),
+                initialization: Some(&initialization),
+                quote_generator: quote,
+            },
         );
         assert!(matches!(
             missing,
@@ -1688,9 +1703,11 @@ mod tests {
             &mut dkg,
             &offer_key,
             B256::from(manifest.chain_id),
-            Some(&boot),
-            Some(&initialization),
-            quote,
+            DispatchInitializationContext {
+                boot: Some(&boot),
+                initialization: Some(&initialization),
+                quote_generator: quote,
+            },
         );
         let EnclaveResponse::DcapQuote {
             transition_key_ready_proof,

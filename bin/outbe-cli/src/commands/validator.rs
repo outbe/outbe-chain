@@ -7,7 +7,7 @@ use eyre::{ensure, Result, WrapErr as _};
 use outbe_primitives::consensus_p2p::{
     decode_versioned, encode_v1, P2pAddress, P2pIngress, P2P_ADDRESS_VERSION_V1,
 };
-use std::net::SocketAddr;
+use std::{net::SocketAddr, path::PathBuf};
 
 use crate::abi::{self, IValidatorSet};
 use crate::rpc::Rpc;
@@ -47,7 +47,11 @@ pub enum ValidatorCmd {
     /// Confirm your PENDING validator has caught up to head and is ready to be
     /// included in the next DKG reshare target (stale-join guard). Send only
     /// after `outbe-cli monitor` / `outbe_syncStatus` shows the node at tip.
-    ConfirmReady,
+    ConfirmReady {
+        /// Canonical binary OcompKeyRegistrationV1 produced for this validator.
+        #[arg(long, value_name = "PATH")]
+        registration: PathBuf,
+    },
     /// Assign a role-scoped operational key to this validator.
     Delegate {
         /// Operational role granted to the delegate.
@@ -110,7 +114,9 @@ impl ValidatorCmd {
                 register(client, private_key, pubkey, bls_sig).await
             }
             Self::Deactivate => deactivate(client, private_key).await,
-            Self::ConfirmReady => confirm_ready(client, private_key).await,
+            Self::ConfirmReady { registration } => {
+                confirm_ready(client, private_key, registration).await
+            }
             Self::Delegate {
                 role,
                 delegate: delegate_address,
@@ -331,9 +337,22 @@ async fn deactivate(client: &(impl Rpc + Sync), private_key: Option<&str>) -> Re
     Ok(())
 }
 
-async fn confirm_ready(client: &(impl Rpc + Sync), private_key: Option<&str>) -> Result<()> {
+async fn confirm_ready(
+    client: &(impl Rpc + Sync),
+    private_key: Option<&str>,
+    registration_path: PathBuf,
+) -> Result<()> {
     let signer = super::require_signer(private_key)?;
-    let call = IValidatorSet::confirmValidatorReadyCall {};
+    let registration = std::fs::read(&registration_path).wrap_err_with(|| {
+        format!(
+            "failed to read canonical OCOMP registration {}",
+            registration_path.display()
+        )
+    })?;
+    ensure!(!registration.is_empty(), "OCOMP registration file is empty");
+    let call = IValidatorSet::confirmValidatorReadyCall {
+        registration: registration.into(),
+    };
 
     let tx_hash = signer
         .send_tx(
@@ -829,6 +848,26 @@ mod tests {
             mock.recorded_calls().is_empty(),
             "missing signer must not call RPC"
         );
+    }
+
+    #[tokio::test]
+    async fn test_confirm_ready_sends_exact_registration_file_bytes() {
+        use std::io::Write as _;
+
+        let registration = vec![0x4f, 0x43, 0x4f, 0x4d, 0x50, 0x01, 0xaa, 0xbb];
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(&registration).unwrap();
+        let data = IValidatorSet::confirmValidatorReadyCall {
+            registration: registration.clone().into(),
+        }
+        .abi_encode();
+        let mock =
+            recording_send_tx_rpc(TEST_KEY, abi::VALIDATOR_SET_ADDR, data, U256::ZERO).unwrap();
+
+        confirm_ready(&mock, Some(TEST_KEY), file.path().to_path_buf())
+            .await
+            .unwrap();
+        mock.assert_done();
     }
 
     #[tokio::test]

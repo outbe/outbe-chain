@@ -5,7 +5,7 @@ use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    error::{PrecompileError, Result},
+    error::Result,
     time::{previous_date_key, timestamp_to_date_key},
 };
 use outbe_promislimit::PromisLimitContract;
@@ -53,7 +53,7 @@ impl MetadosisContract<'_> {
                     .and_then(|tail| scaled.checked_add(tail / denominator))
             })
             .ok_or_else(|| {
-                PrecompileError::Fatal("Metadosis full-precision demand overflow".into())
+                crate::errors::storage_corruption("Metadosis full-precision demand overflow".into())
             })?;
         let mut supply = wwd_metadosis_limit;
         match wwd_type {
@@ -68,10 +68,10 @@ impl MetadosisContract<'_> {
         }
         let allocation = demand.min(supply);
         let remainder = wwd_metadosis_limit.checked_sub(allocation).ok_or_else(|| {
-            PrecompileError::Fatal("Metadosis allocation exceeds the day limit".into())
+            crate::errors::storage_corruption("Metadosis allocation exceeds the day limit".into())
         })?;
         if allocation.checked_add(remainder) != Some(wwd_metadosis_limit) {
-            return Err(PrecompileError::Fatal(
+            return Err(crate::errors::storage_corruption(
                 "Metadosis allocation conservation failed".into(),
             ));
         }
@@ -270,7 +270,7 @@ fn dispatch_brief(
     match receipt {
         outbe_desis::api::AuctionBriefReceipt::Accepted => {
             supply.checked_sub(brief_supply).ok_or_else(|| {
-                PrecompileError::Fatal(
+                crate::errors::storage_corruption(
                     "accepted Desis brief exceeds Metadosis routing supply".into(),
                 )
             })
@@ -281,7 +281,7 @@ fn dispatch_brief(
             max_accepted,
         } => {
             if rejected_supply != brief_supply || rejected_supply <= max_accepted {
-                return Err(PrecompileError::Fatal(
+                return Err(crate::errors::storage_corruption(
                     "Desis rejection receipt does not match the dispatched supply".into(),
                 ));
             }

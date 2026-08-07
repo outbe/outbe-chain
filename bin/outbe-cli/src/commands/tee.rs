@@ -258,16 +258,18 @@ impl TeeCmd {
             } => {
                 join(
                     client,
-                    private_key,
-                    &enclave_socket,
-                    profile,
-                    node_data_dir.as_deref(),
-                    node_private_key.as_deref(),
-                    consensus_bls_public.as_deref(),
-                    reth_p2p_secret_key.as_deref(),
-                    &binding_id,
-                    valid_until,
-                    timeout_secs,
+                    TeeJoinArgs {
+                        private_key,
+                        enclave_socket: &enclave_socket,
+                        profile,
+                        node_data_dir: node_data_dir.as_deref(),
+                        node_private_key: node_private_key.as_deref(),
+                        consensus_bls_public: consensus_bls_public.as_deref(),
+                        reth_p2p_secret_key: reth_p2p_secret_key.as_deref(),
+                        binding_id: &binding_id,
+                        valid_until,
+                        timeout_secs,
+                    },
                 )
                 .await
             }
@@ -731,21 +733,32 @@ async fn pubkey(client: &(impl Rpc + Sync), enclave_socket: &str, diff_chain: bo
     }
 }
 
-// CLI command handler: args map 1:1 to `tee join` flags.
-#[allow(clippy::too_many_arguments)]
-async fn join(
-    client: &(impl Rpc + Sync),
-    private_key: Option<&str>,
-    enclave_socket: &str,
+struct TeeJoinArgs<'a> {
+    private_key: Option<&'a str>,
+    enclave_socket: &'a str,
     profile: TeeNodeProfile,
-    node_data_dir: Option<&std::path::Path>,
-    node_private_key: Option<&str>,
-    consensus_bls_public: Option<&str>,
-    reth_p2p_secret_key: Option<&std::path::Path>,
-    binding_id: &str,
+    node_data_dir: Option<&'a std::path::Path>,
+    node_private_key: Option<&'a str>,
+    consensus_bls_public: Option<&'a str>,
+    reth_p2p_secret_key: Option<&'a std::path::Path>,
+    binding_id: &'a str,
     valid_until: u64,
     timeout_secs: u64,
-) -> Result<()> {
+}
+
+async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
+    let TeeJoinArgs {
+        private_key,
+        enclave_socket,
+        profile,
+        node_data_dir,
+        node_private_key,
+        consensus_bls_public,
+        reth_p2p_secret_key,
+        binding_id,
+        valid_until,
+        timeout_secs,
+    } = args;
     let relay = super::require_signer(private_key)?;
     let policy = active_policy_v1(client).await?;
     let rpc_chain_id = client.eth_chain_id().await?;
@@ -957,7 +970,7 @@ async fn join(
             let (enclave_id, authorization) =
                 development_identity_v1(&policy, &node_id, recipient, attestation, noise)?;
             (
-                RuntimeEnclaveClient::Development(development),
+                RuntimeEnclaveClient::Development(Box::new(development)),
                 recipient,
                 attestation,
                 noise,

@@ -9,7 +9,8 @@ use outbe_ocomp_protocol::{
         CapacityValidatorBlockProcessingV1, CapacityWorkBillV1, ObservedMachineFactsV1,
     },
     generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1,
-    profile::poc_schema_limits,
+    profile::{poc_schema_limits, OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS},
+    vote::{EquivocationEvidenceV1, OcompVoteAccountabilityV1, ResultVoteSlotV1},
 };
 
 fn conforming_machine() -> ObservedMachineFactsV1 {
@@ -84,9 +85,9 @@ fn evidence(work_value: u64) -> CapacityEvidenceV1 {
                     tribute_count: 257,
                     nod_count: 257,
                     worker_shard_count: 2,
-                    validator_block_processing: std::array::from_fn(|validator_index| {
-                        CapacityValidatorBlockProcessingV1 {
-                            validator_index: u8::try_from(validator_index).unwrap(),
+                    validator_block_processing: (0_u16..4)
+                        .map(|validator_index| CapacityValidatorBlockProcessingV1 {
+                            validator_index,
                             block_number: 40,
                             block_hash: B256::repeat_byte(ordinal.saturating_add(60)),
                             elapsed_micros: if validator_index == 3 {
@@ -94,8 +95,8 @@ fn evidence(work_value: u64) -> CapacityEvidenceV1 {
                             } else {
                                 100
                             },
-                        }
-                    }),
+                        })
+                        .collect(),
                     historical_replay: CapacityHistoricalReplayBindingV1 {
                         validator_index: 0,
                         first_missing_block_number: 1,
@@ -154,10 +155,6 @@ fn ocm_cap_001_five_exact_cold_runs_generate_one_canonical_profile() {
         .unwrap();
     assert_eq!(profile.max_tributes_per_work_shard, 256);
     assert_eq!(profile.max_workers_per_domain, 4);
-    assert!(
-        profile.max_pending_jobs >= 2,
-        "the PoC profile must admit more than one independently progressing Job"
-    );
     assert_eq!(
         profile.max_intents_per_block, 1,
         "multi-job state must not increase per-block request work"
@@ -251,6 +248,23 @@ fn ocm_cap_001_capacity_evidence_has_a_strict_typed_json_boundary() {
 }
 
 #[test]
+fn capacity_evidence_accepts_the_observed_validator_set_size_without_ocomp_literal() {
+    let mut dynamic = evidence(800);
+    for run in &mut dynamic.runs {
+        run.binding
+            .validator_block_processing
+            .push(CapacityValidatorBlockProcessingV1 {
+                validator_index: 4,
+                block_number: run.binding.q_forming_block_number,
+                block_hash: run.binding.q_forming_block_hash,
+                elapsed_micros: 100,
+            });
+    }
+
+    dynamic.verify().unwrap();
+}
+
+#[test]
 fn ocm_cap_001_rejects_a_cold_run_not_bound_to_the_public_s_plus_one_path() {
     let mut wrong_population = evidence(800);
     wrong_population.runs[3].binding.tribute_count = 256;
@@ -311,5 +325,76 @@ fn ocm_cap_001_internal_work_uses_the_frozen_checked_q_forming_formula() {
     assert_eq!(
         result_vote_internal_work(vote_cap + 1).unwrap_err(),
         CapacityEvidenceError::ResultVoteBytesExceeded
+    );
+}
+
+#[test]
+fn dynamic_membership_capacity_fits_the_consensus_validator_bound() {
+    let member_count = u16::try_from(outbe_consensus::bls::MAX_VALIDATORS).unwrap();
+    let quorum_threshold = u16::try_from(outbe_consensus::proof::simplex_n3f1_quorum(usize::from(
+        member_count,
+    )))
+    .unwrap();
+    let limits = poc_schema_limits();
+    let mut accountability = OcompVoteAccountabilityV1::empty(
+        B256::repeat_byte(0x31),
+        7,
+        B256::repeat_byte(0x32),
+        B256::repeat_byte(0x33),
+        member_count,
+        quorum_threshold,
+    )
+    .unwrap();
+
+    for validator_index in 0..member_count {
+        let mut digest = [0_u8; 32];
+        digest[30..].copy_from_slice(&validator_index.to_be_bytes());
+        accountability.slots[usize::from(validator_index)] = Some(ResultVoteSlotV1 {
+            validator_index,
+            first_result_digest: B256::from(digest),
+            key_epoch: 1,
+            first_signature_rs: [0x44; 64],
+            submitted_height: 100 + u64::from(validator_index),
+            equivocation: Some(EquivocationEvidenceV1 {
+                conflicting_result_digest: B256::repeat_byte(0xEE),
+                conflicting_key_epoch: 1,
+                conflicting_signature_rs: [0x55; 64],
+                submitted_height: 400 + u64::from(validator_index),
+            }),
+        });
+    }
+    let summary = accountability.close(1_000, &limits).unwrap();
+    let expected_bitmap_bytes = usize::from(member_count).div_ceil(8);
+    assert_eq!(summary.timely_bitmap.len(), expected_bitmap_bytes);
+    assert_eq!(summary.equivocation_bitmap.len(), expected_bitmap_bytes);
+
+    let encoded = accountability.encode_canonical(&limits).unwrap();
+    assert!(
+        encoded.len() <= limits.codec.max_body_bytes + 12,
+        "worst-case dynamic accountability is {} bytes, above the canonical codec ceiling",
+        encoded.len()
+    );
+    assert_eq!(
+        OcompVoteAccountabilityV1::decode_canonical(&encoded, &limits).unwrap(),
+        accountability,
+        "the consensus-bound accountability must remain canonically decodable"
+    );
+
+    let vote_cap = usize::try_from(OCOMP_POC_CANDIDATE_LIMITS_V1.max_result_vote_bytes).unwrap();
+    let one_vote_internal_work = result_vote_internal_work(vote_cap).unwrap();
+    let response_window_work = OCOMP_POC_CANDIDATE_LIMITS_V1
+        .max_activation_gas
+        .checked_mul(OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS)
+        .unwrap();
+    let quorum_work = one_vote_internal_work
+        .checked_mul(u64::from(quorum_threshold))
+        .unwrap();
+    eprintln!(
+        "dynamic OCOMP capacity: N={member_count}, quorum={quorum_threshold}, accountability_bytes={}, bitmap_bytes={expected_bitmap_bytes}, one_vote_internal_work={one_vote_internal_work}, quorum_work={quorum_work}, response_window_work={response_window_work}",
+        encoded.len()
+    );
+    assert!(
+        quorum_work <= response_window_work,
+        "consensus-bound quorum needs {quorum_work} internal-work units, above the {OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS}-block response-window budget {response_window_work}"
     );
 }

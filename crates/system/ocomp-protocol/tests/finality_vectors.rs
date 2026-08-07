@@ -167,7 +167,11 @@ fn intent() -> JobIntentV1 {
                 state_version: 1,
             },
         },
-        result_committee_snapshot_hash: hash(11),
+        result_validator_set_epoch: 1,
+        result_committee_set_hash: hash(11),
+        result_ocomp_binding_hash: hash(12),
+        result_member_count: 4,
+        result_quorum_threshold: 3,
         custody_committee_epoch_hash: None,
     }
 }

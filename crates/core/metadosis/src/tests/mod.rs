@@ -55,11 +55,7 @@ fn arm_genesis_ocomp(storage: &StorageHandle, chain_id: u64) {
         .initialize_ocomp_request_profile(&install.request_profile, &limits)
         .unwrap();
     metadosis
-        .initialize_ocomp_activation_authority(
-            &install.protocol_bundle,
-            &install.result_committee,
-            &limits,
-        )
+        .initialize_ocomp_activation_authority(&install.protocol_bundle, &limits)
         .unwrap();
 }
 

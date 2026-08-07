@@ -4,7 +4,7 @@ use alloy_primitives::U256;
 use outbe_common::WorldwideDay;
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    error::{PrecompileError, Result},
+    error::Result,
     storage::{
         metadosis_cycle_allocation_binding, metadosis_late_settlement_binding,
         MetadosisCertifiedFinality, MetadosisCycleLifecycle,
@@ -72,17 +72,17 @@ fn apply_ocomp_day_limit(
 
         if let Some(formed) = metadosis.ocomp_day_limit_formation(wwd)? {
             if formed.base_limit != base_limit {
-                return Err(PrecompileError::Revert(
-                    "formed OCOMP day limit cannot be replaced".into(),
+                return Err(crate::errors::caller_rejection(
+                    "formed OCOMP day limit cannot be replaced",
                 ));
             }
             return Ok(DayLimitFormationReceipt::Formed(formed));
         }
 
         let carry_over = PromisLimitContract::new(ctx.storage.clone()).checked_take_carry_over()?;
-        let day_limit = base_limit
-            .checked_add(carry_over.taken)
-            .ok_or_else(|| PrecompileError::Revert("OCOMP day limit carry-over overflow".into()))?;
+        let day_limit = base_limit.checked_add(carry_over.taken).ok_or_else(|| {
+            crate::errors::caller_rejection("OCOMP day limit carry-over overflow")
+        })?;
         crate::commit::commit_day_limit_formation(
             &mut metadosis,
             OcompDayLimitFormation {

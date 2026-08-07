@@ -13,13 +13,17 @@ import { x25519 } from "@noble/curves/ed25519";
 import { ethers } from "ethers";
 
 // GratisOp discriminants — MUST match `outbe_tee::protocol::GratisOp` order.
+// Only Mint/Burn/Pledge/Unpledge are client-authorized; the rest are chain-driven
+// (credis) and listed so the discriminants stay aligned with the Rust enum.
 export enum GratisOp {
-  Mine = 0,
+  Mint = 0,
   Burn = 1,
   Pledge = 2,
   Unpledge = 3,
-  PledgeToBundle = 4,
-  UnlockToEoa = 5,
+  ConsumePledge = 4,
+  ReleaseToEoa = 5,
+  BurnPledged = 6,
+  RevealOwner = 7,
 }
 
 // PromisOp discriminants — MUST match `outbe_tee::protocol::PromisOp` order.

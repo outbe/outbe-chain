@@ -1,7 +1,9 @@
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_ocomp_protocol::{
-    receipts::ActivationOutcome, state::OcompJobStatus, vote::OcompVoteAccountabilityV1,
+    receipts::ActivationOutcome,
+    state::OcompJobStatus,
+    vote::{OcompVoteAccountabilityV1, ResultVotePrefixV1},
 };
 use outbe_primitives::{
     addresses::{INTEX_ADDRESS, NOD_ADDRESS, PROMIS_LIMIT_ADDRESS, TRIBUTE_ADDRESS},
@@ -11,15 +13,58 @@ use outbe_primitives::{
     block::{BlockContext, BlockRuntimeContext},
     storage::{MetadosisMutationPurposeTag, StorageHandle},
 };
+use outbe_promislimit::PromisLimitContract;
+use outbe_tribute::TributeContract;
+use outbe_validatorset::{contract::ValidatorSet, runtime::status as validator_status};
 
 use crate::{
     fixture_kernel::{
-        ActivationFixture, ActivationMetadata, ActivationReceiptFault, TEST_LOGICAL_TIME,
+        ActivationFixture, ActivationMetadata, ActivationReceiptFault, TEST_LOGICAL_TIME, TEST_WWD,
     },
     ocomp::schema::poc_schema_limits,
     precompile::IMetadosis,
     schema::MetadosisContract,
+    WwdStatus,
 };
+
+fn assert_failed_activation_recovery(fixture: &mut ActivationFixture) {
+    StorageHandle::enter(&mut fixture.provider, |storage| {
+        let metadosis = MetadosisContract::new(storage.clone());
+        assert_eq!(
+            metadosis.get_wwd_status(TEST_WWD).unwrap(),
+            WwdStatus::Failed
+        );
+        let job = metadosis
+            .ocomp_job_record(fixture.intent_id, &fixture.limits)
+            .unwrap()
+            .unwrap();
+        assert_eq!(job.status, OcompJobStatus::Canceled);
+        assert!(metadosis
+            .read_metadosis_failure_receipt(TEST_WWD, U256::from(60))
+            .unwrap()
+            .is_some());
+
+        let tribute = TributeContract::new(storage.clone());
+        let totals = tribute.get_day_totals(TEST_WWD).unwrap();
+        assert_eq!(totals.tribute_count, 0);
+        assert_eq!(totals.tribute_nominal_amount, U256::ZERO);
+        assert_eq!(tribute.total_supply().unwrap(), 0);
+        assert_eq!(
+            tribute
+                .pre_admission_projection(TEST_WWD)
+                .unwrap()
+                .source_generation,
+            1
+        );
+        assert_eq!(
+            PromisLimitContract::new(storage)
+                .total_unallocated
+                .read()
+                .unwrap(),
+            U256::from(60)
+        );
+    });
+}
 
 fn close_completed_response_window(
     fixture: &mut ActivationFixture,
@@ -37,6 +82,461 @@ fn close_completed_response_window(
         );
         crate::commands::run_ocomp_lifecycle_begin(&ctx)
     })
+}
+
+#[test]
+fn finalized_attempt_uses_exact_1800_block_compute_vote_window() {
+    let mut fixture = ActivationFixture::new_voting(20, 1_010, true);
+    let finalized = StorageHandle::enter(&mut fixture.provider, |storage| {
+        MetadosisContract::new(storage)
+            .ocomp_job_record(fixture.intent_id, &fixture.limits)
+            .unwrap()
+            .unwrap()
+            .finalized
+            .unwrap()
+    });
+
+    assert_eq!(finalized.deadline_height - finalized.open_height, 1_800);
+}
+
+#[test]
+fn deadline_jails_only_the_missing_pinned_validator_after_early_quorum() {
+    let mut fixture = ActivationFixture::new(20, 1_010, true);
+    assert_eq!(fixture.apply().unwrap(), Bytes::new());
+    let finalized = StorageHandle::enter(&mut fixture.provider, |storage| {
+        MetadosisContract::new(storage)
+            .ocomp_job_record(fixture.intent_id, &fixture.limits)
+            .unwrap()
+            .unwrap()
+            .finalized
+            .unwrap()
+    });
+
+    close_completed_response_window(&mut fixture, finalized.deadline_height).unwrap();
+
+    StorageHandle::enter(&mut fixture.provider, |storage| {
+        let validators = ValidatorSet::new(storage.clone());
+        for index in 0..3_u8 {
+            let record = validators
+                .get_validator(Address::repeat_byte(0xB0 + index))
+                .unwrap()
+                .unwrap();
+            assert_eq!(record.status, validator_status::ACTIVE);
+            assert_eq!(record.slash_count, 0);
+        }
+        let missing = validators
+            .get_validator(Address::repeat_byte(0xB3))
+            .unwrap()
+            .unwrap();
+        assert_eq!(missing.status, validator_status::JAILED);
+        assert_eq!(missing.slash_count, 1);
+
+        let accountability = MetadosisContract::new(storage)
+            .result_vote_accountability(finalized.job_id, &fixture.limits)
+            .unwrap()
+            .unwrap();
+        let summary = accountability.closed_summary.unwrap();
+        assert_eq!(summary.timely_bitmap, vec![0b0000_0111]);
+        assert_eq!(summary.missing_bitmap, vec![0b0000_1000]);
+    });
+
+    let after_first_close = fixture.rollback_snapshot();
+    close_completed_response_window(&mut fixture, finalized.deadline_height).unwrap();
+    assert_eq!(fixture.rollback_snapshot(), after_first_close);
+}
+
+#[test]
+fn every_pinned_validator_can_vote_after_quorum_until_the_exclusive_deadline() {
+    let mut fixture = ActivationFixture::new(20, 1_010, true);
+    assert_eq!(fixture.apply().unwrap(), Bytes::new());
+    let finalized = StorageHandle::enter(&mut fixture.provider, |storage| {
+        MetadosisContract::new(storage)
+            .ocomp_job_record(fixture.intent_id, &fixture.limits)
+            .unwrap()
+            .unwrap()
+            .finalized
+            .unwrap()
+    });
+    let last_vote = fixture.signed_result_vote(3);
+    fixture
+        .provider
+        .set_block_number(finalized.deadline_height - 1);
+    StorageHandle::enter(&mut fixture.provider, |storage| {
+        MetadosisContract::new(storage)
+            .record_ocomp_result_vote(
+                &last_vote,
+                finalized.deadline_height - 1,
+                &fixture.scope,
+                &fixture.limits,
+                None,
+            )
+            .unwrap();
+    });
+
+    let at_deadline = fixture.signed_result_vote(3);
+    fixture.provider.set_block_number(finalized.deadline_height);
+    StorageHandle::enter(&mut fixture.provider, |storage| {
+        assert!(matches!(
+            MetadosisContract::new(storage).record_ocomp_result_vote(
+                &at_deadline,
+                finalized.deadline_height,
+                &fixture.scope,
+                &fixture.limits,
+                None,
+            ),
+            Err(PrecompileError::Revert(_))
+        ));
+    });
+
+    close_completed_response_window(&mut fixture, finalized.deadline_height).unwrap();
+    StorageHandle::enter(&mut fixture.provider, |storage| {
+        let validators = ValidatorSet::new(storage.clone());
+        for index in 0..4_u8 {
+            let record = validators
+                .get_validator(Address::repeat_byte(0xB0 + index))
+                .unwrap()
+                .unwrap();
+            assert_eq!(record.status, validator_status::ACTIVE);
+            assert_eq!(record.slash_count, 0);
+        }
+        let accountability = MetadosisContract::new(storage)
+            .result_vote_accountability(finalized.job_id, &fixture.limits)
+            .unwrap()
+            .unwrap();
+        let summary = accountability.closed_summary.unwrap();
+        assert_eq!(summary.timely_bitmap, vec![0b0000_1111]);
+        assert_eq!(summary.missing_bitmap, vec![0]);
+    });
+}
+
+#[test]
+fn q_forming_vote_requires_exact_node_local_result_before_terminal_transition() {
+    let mut missing = ActivationFixture::new(20, 1_010, true);
+    let missing_before = missing.rollback_snapshot();
+    let error = missing
+        .apply_without_local_result_authority()
+        .expect_err("q-forming result without node-local computation must fail closed");
+    assert!(matches!(error, PrecompileError::Storage(_)));
+    assert!(
+        error.to_string().contains("local Lysis result authority"),
+        "unexpected missing-authority error: {error}"
+    );
+    assert_eq!(missing.rollback_snapshot(), missing_before);
+
+    let mut mismatch = ActivationFixture::new(20, 1_010, true);
+    let mismatch_before = mismatch.rollback_snapshot();
+    let error = mismatch
+        .apply_with_mismatched_local_result()
+        .expect_err("q-forming result that differs from local computation must fail closed");
+    assert!(matches!(error, PrecompileError::Storage(_)));
+    assert!(
+        error.to_string().contains("local Lysis result mismatch"),
+        "unexpected mismatch error: {error}"
+    );
+    assert_eq!(mismatch.rollback_snapshot(), mismatch_before);
+
+    assert_eq!(mismatch.apply().unwrap(), Bytes::new());
+    assert_eq!(mismatch.terminal_outcome(), ActivationOutcome::Applied);
+}
+
+#[test]
+fn no_quorum_deadline_jails_every_missing_pinned_validator_and_expires_attempt() {
+    let mut fixture = ActivationFixture::new_voting(20, 1_010, true);
+    assert_eq!(fixture.apply().unwrap(), Bytes::new());
+    let finalized = StorageHandle::enter(&mut fixture.provider, |storage| {
+        MetadosisContract::new(storage)
+            .ocomp_job_record(fixture.intent_id, &fixture.limits)
+            .unwrap()
+            .unwrap()
+            .finalized
+            .unwrap()
+    });
+
+    close_completed_response_window(&mut fixture, finalized.deadline_height).unwrap();
+
+    StorageHandle::enter(&mut fixture.provider, |storage| {
+        let validators = ValidatorSet::new(storage.clone());
+        for index in 0..4_u8 {
+            let record = validators
+                .get_validator(Address::repeat_byte(0xB0 + index))
+                .unwrap()
+                .unwrap();
+            if index == 2 {
+                assert_eq!(record.status, validator_status::ACTIVE);
+                assert_eq!(record.slash_count, 0);
+            } else {
+                assert_eq!(record.status, validator_status::JAILED);
+                assert_eq!(record.slash_count, 1);
+            }
+        }
+        let contract = MetadosisContract::new(storage);
+        let record = contract
+            .ocomp_job_record(fixture.intent_id, &fixture.limits)
+            .unwrap()
+            .unwrap();
+        assert_eq!(record.status, OcompJobStatus::Expired);
+        let summary = contract
+            .result_vote_accountability(finalized.job_id, &fixture.limits)
+            .unwrap()
+            .unwrap()
+            .closed_summary
+            .unwrap();
+        assert_eq!(summary.timely_bitmap, vec![0b0000_0100]);
+        assert_eq!(summary.missing_bitmap, vec![0b0000_1011]);
+    });
+}
+
+#[test]
+fn authentic_carrier_after_deadline_resolves_pinned_signer_and_returns_deadline_revert() {
+    let mut fixture = ActivationFixture::new(20, 1_010, true);
+    assert_eq!(fixture.apply().unwrap(), Bytes::new());
+    let finalized = StorageHandle::enter(&mut fixture.provider, |storage| {
+        MetadosisContract::new(storage)
+            .ocomp_job_record(fixture.intent_id, &fixture.limits)
+            .unwrap()
+            .unwrap()
+            .finalized
+            .unwrap()
+    });
+    let late_vote = fixture.signed_result_vote(3);
+    let prefix = ResultVotePrefixV1 {
+        protocol_bundle_hash: late_vote.protocol_bundle_hash,
+        job_id: late_vote.job_id,
+        attempt: late_vote.attempt,
+        result_validator_set_epoch: late_vote.result_validator_set_epoch,
+        result_committee_set_hash: late_vote.result_committee_set_hash,
+        result_ocomp_binding_hash: late_vote.result_ocomp_binding_hash,
+        validator_index: late_vote.validator_index,
+        key_epoch: late_vote.key_epoch,
+    };
+
+    close_completed_response_window(&mut fixture, finalized.deadline_height).unwrap();
+
+    StorageHandle::enter(&mut fixture.provider, |storage| {
+        assert_eq!(
+            crate::ocomp::vote::resolve_historical_result_vote_participant(
+                storage,
+                &prefix,
+                &fixture.limits,
+            )
+            .unwrap(),
+            Some(Address::repeat_byte(0xB3))
+        );
+    });
+    let error = submit_vote_result(&mut fixture, &late_vote, finalized.deadline_height)
+        .expect_err("late authentic carrier must fail as a transaction");
+    assert!(crate::ocomp::vote::is_deadline_passed_result_vote_revert(
+        &error
+    ));
+}
+
+#[test]
+fn deadline_is_replay_safe_for_missing_validators_already_jailed_or_exiting() {
+    let mut fixture = ActivationFixture::new_voting(20, 1_010, true);
+    assert_eq!(fixture.apply().unwrap(), Bytes::new());
+    let finalized = StorageHandle::enter(&mut fixture.provider, |storage| {
+        MetadosisContract::new(storage)
+            .ocomp_job_record(fixture.intent_id, &fixture.limits)
+            .unwrap()
+            .unwrap()
+            .finalized
+            .unwrap()
+    });
+    fixture
+        .provider
+        .set_block_number(finalized.deadline_height - 1);
+    StorageHandle::enter(&mut fixture.provider, |storage| {
+        let mut validators = ValidatorSet::new(storage);
+        validators
+            .jail_validator(Address::repeat_byte(0xB0))
+            .unwrap();
+        validators
+            .deactivate_validator(Address::repeat_byte(0xB1), Address::repeat_byte(0xB1))
+            .unwrap();
+    });
+
+    close_completed_response_window(&mut fixture, finalized.deadline_height).unwrap();
+
+    StorageHandle::enter(&mut fixture.provider, |storage| {
+        let validators = ValidatorSet::new(storage);
+        let already_jailed = validators
+            .get_validator(Address::repeat_byte(0xB0))
+            .unwrap()
+            .unwrap();
+        assert_eq!(already_jailed.status, validator_status::JAILED);
+        assert_eq!(already_jailed.slash_count, 1);
+        let already_exiting = validators
+            .get_validator(Address::repeat_byte(0xB1))
+            .unwrap()
+            .unwrap();
+        assert_eq!(already_exiting.status, validator_status::EXITING);
+        assert_eq!(already_exiting.slash_count, 0);
+        let timely = validators
+            .get_validator(Address::repeat_byte(0xB2))
+            .unwrap()
+            .unwrap();
+        assert_eq!(timely.status, validator_status::ACTIVE);
+        assert_eq!(timely.slash_count, 0);
+        let newly_jailed = validators
+            .get_validator(Address::repeat_byte(0xB3))
+            .unwrap()
+            .unwrap();
+        assert_eq!(newly_jailed.status, validator_status::JAILED);
+        assert_eq!(newly_jailed.slash_count, 1);
+    });
+
+    let after_first_close = fixture.rollback_snapshot();
+    close_completed_response_window(&mut fixture, finalized.deadline_height).unwrap();
+    assert_eq!(fixture.rollback_snapshot(), after_first_close);
+}
+
+#[test]
+fn deadline_records_missing_pending_validator_without_mutating_or_fatal() {
+    let mut fixture = ActivationFixture::new_voting(20, 1_010, true);
+    assert_eq!(fixture.apply().unwrap(), Bytes::new());
+    let finalized = StorageHandle::enter(&mut fixture.provider, |storage| {
+        MetadosisContract::new(storage)
+            .ocomp_job_record(fixture.intent_id, &fixture.limits)
+            .unwrap()
+            .unwrap()
+            .finalized
+            .unwrap()
+    });
+    fixture
+        .provider
+        .set_block_number(finalized.deadline_height - 1);
+    StorageHandle::enter(&mut fixture.provider, |storage| {
+        let mut validators = ValidatorSet::new(storage);
+        validators
+            .activate_reshared_set_with_expiry_exclusions(
+                &[
+                    Address::repeat_byte(0xB1),
+                    Address::repeat_byte(0xB2),
+                    Address::repeat_byte(0xB3),
+                ],
+                B256::repeat_byte(0x51),
+                &[Address::repeat_byte(0xB0)],
+            )
+            .unwrap();
+        let pending = validators
+            .get_validator(Address::repeat_byte(0xB0))
+            .unwrap()
+            .unwrap();
+        assert_eq!(pending.status, validator_status::PENDING);
+        assert_eq!(pending.slash_count, 0);
+    });
+
+    close_completed_response_window(&mut fixture, finalized.deadline_height).unwrap();
+
+    StorageHandle::enter(&mut fixture.provider, |storage| {
+        let validators = ValidatorSet::new(storage.clone());
+        let pending = validators
+            .get_validator(Address::repeat_byte(0xB0))
+            .unwrap()
+            .unwrap();
+        assert_eq!(pending.status, validator_status::PENDING);
+        assert_eq!(pending.slash_count, 0);
+
+        let accountability = MetadosisContract::new(storage)
+            .result_vote_accountability(finalized.job_id, &fixture.limits)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            accountability.closed_summary.unwrap().missing_bitmap,
+            vec![0b0000_1011]
+        );
+    });
+}
+
+#[test]
+fn deadline_keeps_every_non_active_missing_status_unchanged() {
+    for current_status in [
+        validator_status::REGISTERED,
+        validator_status::PENDING,
+        validator_status::EXITING,
+        validator_status::UNBONDING,
+        validator_status::INACTIVE,
+        validator_status::JAILED,
+    ] {
+        let mut fixture = ActivationFixture::new_voting(20, 1_010, true);
+        assert_eq!(fixture.apply().unwrap(), Bytes::new());
+        let finalized = StorageHandle::enter(&mut fixture.provider, |storage| {
+            MetadosisContract::new(storage)
+                .ocomp_job_record(fixture.intent_id, &fixture.limits)
+                .unwrap()
+                .unwrap()
+                .finalized
+                .unwrap()
+        });
+        let missing = Address::repeat_byte(0xB0);
+        fixture
+            .provider
+            .set_block_number(finalized.deadline_height - 1);
+        StorageHandle::enter(&mut fixture.provider, |storage| {
+            let validators = ValidatorSet::new(storage);
+            validators
+                .val_status
+                .write(&missing, current_status)
+                .unwrap();
+            validators.val_slash_count.write(&missing, 7).unwrap();
+        });
+
+        close_completed_response_window(&mut fixture, finalized.deadline_height).unwrap();
+
+        StorageHandle::enter(&mut fixture.provider, |storage| {
+            let validators = ValidatorSet::new(storage.clone());
+            let after = validators.get_validator(missing).unwrap().unwrap();
+            assert_eq!(after.status, current_status);
+            assert_eq!(after.slash_count, 7);
+
+            let summary = MetadosisContract::new(storage)
+                .result_vote_accountability(finalized.job_id, &fixture.limits)
+                .unwrap()
+                .unwrap()
+                .closed_summary
+                .unwrap();
+            assert_eq!(summary.missing_bitmap, vec![0b0000_1011]);
+        });
+    }
+}
+
+#[test]
+fn deadline_records_missing_removed_validator_without_fatal() {
+    let mut fixture = ActivationFixture::new_voting(20, 1_010, true);
+    assert_eq!(fixture.apply().unwrap(), Bytes::new());
+    let finalized = StorageHandle::enter(&mut fixture.provider, |storage| {
+        MetadosisContract::new(storage)
+            .ocomp_job_record(fixture.intent_id, &fixture.limits)
+            .unwrap()
+            .unwrap()
+            .finalized
+            .unwrap()
+    });
+    let removed = Address::repeat_byte(0xB0);
+    fixture
+        .provider
+        .set_block_number(finalized.deadline_height - 1);
+    StorageHandle::enter(&mut fixture.provider, |storage| {
+        let mut validators = ValidatorSet::new(storage);
+        validators
+            .val_status
+            .write(&removed, validator_status::INACTIVE)
+            .unwrap();
+        assert_eq!(validators.cleanup_inactive_validators(1).unwrap(), 1);
+        assert!(validators.get_validator(removed).unwrap().is_none());
+    });
+
+    close_completed_response_window(&mut fixture, finalized.deadline_height).unwrap();
+
+    StorageHandle::enter(&mut fixture.provider, |storage| {
+        let summary = MetadosisContract::new(storage)
+            .result_vote_accountability(finalized.job_id, &fixture.limits)
+            .unwrap()
+            .unwrap()
+            .closed_summary
+            .unwrap();
+        assert_eq!(summary.missing_bitmap, vec![0b0000_1011]);
+    });
 }
 
 // OCOMP-TEST-ID: OCM-APL-002
@@ -80,15 +580,18 @@ fn q_forming_faults_restore_all_state_and_exact_retry_matches_clean_execution() 
         ActivationReceiptFault::RequestSplit,
     ] {
         let mut fixture = ActivationFixture::new(20, 1_010, true);
-        let before = fixture.rollback_snapshot();
-
+        assert_eq!(
+            fixture.apply_with_receipt_fault(fault).unwrap(),
+            Bytes::new()
+        );
+        assert_failed_activation_recovery(&mut fixture);
+        let failed = fixture.rollback_snapshot();
         assert!(matches!(
-            fixture.apply_with_receipt_fault(fault),
-            Err(PrecompileError::RevertBytes(_))
+            fixture.apply(),
+            Err(PrecompileError::Revert(_) | PrecompileError::RevertBytes(_))
         ));
-        assert_eq!(fixture.rollback_snapshot(), before);
-        assert_eq!(fixture.apply().unwrap(), Bytes::new());
-        assert_eq!(fixture.terminal_outcome(), ActivationOutcome::Applied);
+        assert_eq!(fixture.rollback_snapshot(), failed);
+        assert_failed_activation_recovery(&mut fixture);
     }
 
     let mut control = ActivationFixture::new(20, 1_010, true);
@@ -253,31 +756,18 @@ fn result_digest(fixture: &ActivationFixture) -> B256 {
     fixture.result.result_digest(&fixture.limits).unwrap()
 }
 
-fn submit_vote(fixture: &mut ActivationFixture, validator_index: u8, height: u64) {
-    submit_vote_as(
-        fixture,
-        ActivationFixture::validator_caller(validator_index),
-        validator_index,
-        height,
-    )
-    .unwrap();
-}
-
-fn submit_vote_as(
+fn submit_vote_result(
     fixture: &mut ActivationFixture,
-    caller: Address,
-    validator_index: u8,
+    vote: &outbe_ocomp_protocol::vote::ResultVoteV1,
     height: u64,
 ) -> outbe_primitives::error::Result<Bytes> {
+    let local_result_authority = fixture.local_result_authority();
     fixture.provider.set_block_number(height);
     fixture.provider.enable_lysis_activation_frame();
     fixture
         .provider
         .enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::VerifiedResultVote);
-    let vote_bytes = fixture
-        .signed_result_vote(validator_index)
-        .encode_canonical(&fixture.limits)
-        .unwrap();
+    let vote_bytes = vote.encode_canonical(&fixture.limits).unwrap();
     let calldata = IMetadosis::submitLysisResultCall {
         resultVoteV1: Bytes::from(vote_bytes),
     }
@@ -286,33 +776,34 @@ fn submit_vote_as(
         crate::commands::submit_verified_result_vote(
             storage,
             &fixture.scope,
-            caller,
             &calldata,
             U256::ZERO,
             false,
+            Some(local_result_authority.as_ref()),
         )
     })
 }
 
-#[test]
-fn public_result_vote_requires_outer_caller_to_match_the_signed_validator_slot() {
-    let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
-
-    assert!(submit_vote_as(&mut fixture, Address::repeat_byte(0xee), 1, 14).is_err());
-    assert!(submit_vote_as(&mut fixture, ActivationFixture::validator_caller(0), 1, 14).is_err());
-
-    submit_vote(&mut fixture, 1, 14);
+fn submit_vote(fixture: &mut ActivationFixture, validator_index: u8, height: u64) {
+    let vote = fixture.signed_result_vote(validator_index);
+    assert_eq!(
+        submit_vote_result(fixture, &vote, height).unwrap(),
+        Bytes::new()
+    );
 }
 
-// OCOMP-TEST-ID: OCM-VOT-001
-#[test]
-fn public_dispatch_records_four_slots_and_immutable_q3() {
-    let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
+fn assert_public_dispatch_uses_pinned_dynamic_membership(
+    member_count: u8,
+    quorum_threshold: u16,
+    quorum_bitmap: Vec<u8>,
+) {
+    let mut fixture =
+        ActivationFixture::new_voting_with_member_count(14, 1_010, true, member_count);
     let job_id = fixture.result.job_id;
     let intent_id = fixture.intent_id;
     let expected_result_digest = result_digest(&fixture);
 
-    for index in 0..4 {
+    for index in 0..member_count {
         submit_vote(&mut fixture, index, 14 + u64::from(index));
     }
 
@@ -324,9 +815,11 @@ fn public_dispatch_records_four_slots_and_immutable_q3() {
             .unwrap()
             .unwrap();
         assert_eq!(record.status, OcompJobStatus::Completed);
+        assert_eq!(record.intent.result_member_count, u16::from(member_count));
+        assert_eq!(record.intent.result_quorum_threshold, quorum_threshold);
         let quorum = record.finalized.unwrap().quorum.unwrap();
         assert_eq!(quorum.result_digest, expected_result_digest);
-        assert_eq!(quorum.signer_bitmap, 0b0111);
+        assert_eq!(quorum.signer_bitmap, quorum_bitmap);
 
         let encoded = crate::precompile::dispatch(
             storage,
@@ -339,7 +832,253 @@ fn public_dispatch_records_four_slots_and_immutable_q3() {
             IMetadosis::getOffchainVoteAccountabilityCall::abi_decode_returns(&encoded).unwrap();
         let accountability =
             OcompVoteAccountabilityV1::decode_canonical(public.as_ref(), &limits).unwrap();
-        assert_eq!(accountability.slots.iter().flatten().count(), 4);
+        assert_eq!(accountability.slots.len(), usize::from(member_count));
+        assert_eq!(
+            accountability.slots.iter().flatten().count(),
+            usize::from(member_count)
+        );
         assert_eq!(accountability.quorum.unwrap(), quorum);
+    });
+}
+
+// OCOMP-TEST-ID: OCM-VOT-001
+#[test]
+fn public_dispatch_uses_pinned_dynamic_membership_and_quorum() {
+    assert_public_dispatch_uses_pinned_dynamic_membership(4, 3, vec![0b0000_0111]);
+    assert_public_dispatch_uses_pinned_dynamic_membership(5, 4, vec![0b0000_1111]);
+}
+
+#[test]
+fn historical_vote_participant_resolution_does_not_consult_current_active_status() {
+    let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
+    let vote = fixture.signed_result_vote(1);
+    let prefix = ResultVotePrefixV1 {
+        protocol_bundle_hash: vote.protocol_bundle_hash,
+        job_id: vote.job_id,
+        attempt: vote.attempt,
+        result_validator_set_epoch: vote.result_validator_set_epoch,
+        result_committee_set_hash: vote.result_committee_set_hash,
+        result_ocomp_binding_hash: vote.result_ocomp_binding_hash,
+        validator_index: vote.validator_index,
+        key_epoch: vote.key_epoch,
+    };
+    let historical_validator = Address::repeat_byte(0xB1);
+
+    StorageHandle::enter(&mut fixture.provider, |storage| {
+        let validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+        validators
+            .val_status
+            .write(
+                &historical_validator,
+                outbe_validatorset::logic::status::INACTIVE,
+            )
+            .unwrap();
+
+        assert_eq!(
+            crate::ocomp::vote::resolve_historical_result_vote_participant(
+                storage,
+                &prefix,
+                &fixture.limits,
+            )
+            .unwrap(),
+            Some(historical_validator)
+        );
+    });
+}
+
+#[test]
+fn system_carrier_signer_is_bound_to_the_historical_validator_or_its_delegate() {
+    let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
+    let vote = fixture.signed_result_vote(1);
+    let prefix = ResultVotePrefixV1 {
+        protocol_bundle_hash: vote.protocol_bundle_hash,
+        job_id: vote.job_id,
+        attempt: vote.attempt,
+        result_validator_set_epoch: vote.result_validator_set_epoch,
+        result_committee_set_hash: vote.result_committee_set_hash,
+        result_ocomp_binding_hash: vote.result_ocomp_binding_hash,
+        validator_index: vote.validator_index,
+        key_epoch: vote.key_epoch,
+    };
+    let historical_validator = Address::repeat_byte(0xB1);
+    let delegate = Address::repeat_byte(0xD1);
+
+    StorageHandle::enter(&mut fixture.provider, |storage| {
+        assert_eq!(
+            crate::ocomp::vote::resolve_historical_result_vote_carrier_signer(
+                storage.clone(),
+                &prefix,
+                historical_validator,
+                &fixture.limits,
+            )
+            .unwrap(),
+            Some(historical_validator)
+        );
+        assert_eq!(
+            crate::ocomp::vote::resolve_historical_result_vote_carrier_signer(
+                storage.clone(),
+                &prefix,
+                delegate,
+                &fixture.limits,
+            )
+            .unwrap(),
+            None
+        );
+
+        let mut validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+        validators
+            .set_delegate(
+                historical_validator,
+                outbe_validatorset::delegation::ValidatorDelegateRole::Ocomp,
+                delegate,
+            )
+            .unwrap();
+
+        assert_eq!(
+            crate::ocomp::vote::resolve_historical_result_vote_carrier_signer(
+                storage.clone(),
+                &prefix,
+                historical_validator,
+                &fixture.limits,
+            )
+            .unwrap(),
+            None,
+            "an explicit delegate disables direct carrier submission"
+        );
+        assert_eq!(
+            crate::ocomp::vote::resolve_historical_result_vote_carrier_signer(
+                storage,
+                &prefix,
+                delegate,
+                &fixture.limits,
+            )
+            .unwrap(),
+            Some(historical_validator)
+        );
+    });
+}
+
+#[test]
+fn vote_binding_mismatch_is_rejected_before_historical_snapshot_lookup() {
+    let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
+    let mut vote = fixture.signed_result_vote(1);
+    let snapshot_key = outbe_validatorset::committee_snapshot_key(
+        vote.result_validator_set_epoch,
+        vote.result_committee_set_hash,
+    );
+    vote.result_ocomp_binding_hash = B256::repeat_byte(0xEE);
+
+    StorageHandle::enter(&mut fixture.provider, |storage| {
+        let validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+        validators
+            .committee_snapshot_exists
+            .write(&snapshot_key, false)
+            .unwrap();
+
+        let error = MetadosisContract::new(storage)
+            .record_ocomp_result_vote(&vote, 14, &fixture.scope, &fixture.limits, None)
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            PrecompileError::Revert(message)
+                if message == "OCOMP result vote does not match pinned job binding"
+        ));
+    });
+}
+
+#[test]
+fn public_vote_rejects_every_pinned_identity_and_signature_mismatch() {
+    let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
+    let base = fixture.signed_result_vote(1);
+    let mut cases = Vec::new();
+
+    let mut wrong = base.clone();
+    wrong.protocol_bundle_hash = B256::repeat_byte(0xA1);
+    cases.push(("protocol bundle", wrong));
+    let mut wrong = base.clone();
+    wrong.attempt = wrong.attempt.saturating_add(1);
+    cases.push(("attempt", wrong));
+    let mut wrong = base.clone();
+    wrong.result_validator_set_epoch = wrong.result_validator_set_epoch.saturating_add(1);
+    cases.push(("ValidatorSet epoch", wrong));
+    let mut wrong = base.clone();
+    wrong.result_committee_set_hash = B256::repeat_byte(0xA2);
+    cases.push(("consensus snapshot hash", wrong));
+    let mut wrong = base.clone();
+    wrong.result_ocomp_binding_hash = B256::repeat_byte(0xA3);
+    cases.push(("OCOMP binding hash", wrong));
+    let mut wrong = base.clone();
+    wrong.validator_index = u16::MAX;
+    cases.push(("participant index", wrong));
+    let mut wrong = base.clone();
+    wrong.key_epoch = wrong.key_epoch.saturating_add(1);
+    cases.push(("key epoch", wrong));
+    let mut wrong = base;
+    wrong.signature_rs[0] ^= 1;
+    cases.push(("signature", wrong));
+
+    for (label, vote) in cases {
+        assert!(
+            matches!(
+                submit_vote_result(&mut fixture, &vote, 14),
+                Err(PrecompileError::RevertBytes(_))
+            ),
+            "{label} mismatch must be a public vote rejection"
+        );
+    }
+}
+
+#[test]
+fn old_job_keeps_its_four_member_snapshot_across_a_four_to_five_boundary() {
+    let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
+    let next_snapshot = fixture.activate_additional_validator_for_test(4);
+    assert_eq!(next_snapshot.member_count, 5);
+
+    let old_participant_vote = fixture.signed_result_vote(3);
+    assert_eq!(
+        submit_vote_result(&mut fixture, &old_participant_vote, 14).unwrap(),
+        Bytes::new()
+    );
+
+    let new_validator_vote = fixture.signed_result_vote(4);
+    assert!(matches!(
+        submit_vote_result(&mut fixture, &new_validator_vote, 15),
+        Err(PrecompileError::RevertBytes(_))
+    ));
+}
+
+#[test]
+fn missing_pinned_snapshot_reverts_public_vote_without_changing_the_job() {
+    let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
+    let vote = fixture.signed_result_vote(0);
+    let snapshot_key = outbe_validatorset::committee_snapshot_key(
+        vote.result_validator_set_epoch,
+        vote.result_committee_set_hash,
+    );
+    StorageHandle::enter(&mut fixture.provider, |storage| {
+        let validators = outbe_validatorset::contract::ValidatorSet::new(storage);
+        validators
+            .committee_snapshot_exists
+            .write(&snapshot_key, false)
+            .unwrap();
+    });
+
+    assert!(matches!(
+        submit_vote_result(&mut fixture, &vote, 14),
+        Err(PrecompileError::RevertBytes(_))
+    ));
+    StorageHandle::enter(&mut fixture.provider, |storage| {
+        let contract = MetadosisContract::new(storage);
+        let record = contract
+            .ocomp_job_record(fixture.intent_id, &fixture.limits)
+            .unwrap()
+            .unwrap();
+        assert_eq!(record.status, OcompJobStatus::VotingOpen);
+        let accountability = contract
+            .result_vote_accountability(vote.job_id, &fixture.limits)
+            .unwrap()
+            .unwrap();
+        assert!(accountability.slots.iter().all(Option::is_none));
+        assert!(accountability.quorum.is_none());
     });
 }

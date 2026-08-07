@@ -42,6 +42,9 @@ async function main() {
   const gratisFactory = IGratisFactory__factory.connect(gratisFactoryAddress, wallet);
 
   const gratisMeta = await fetchTokenMeta(gratis);
+  // Unpledge is quoted in the same unit the pledge was — the stables figure sealed in
+  // the ticket. `ticket.amount` is the gratis collateral that comes back.
+  const stablesAmount = BigInt(ticket.stablesAmount);
   const amount = BigInt(ticket.amount);
   const { chainId } = await provider.getNetwork();
 
@@ -59,10 +62,10 @@ async function main() {
   console.log(`Active pledged: ${formatToken(pledgedBefore, gratisMeta.decimals, gratisMeta.symbol)} (credited only at requestCredis)`);
   console.log(`Pending pledge: ${formatToken(amount, gratisMeta.decimals, gratisMeta.symbol)} (this ticket, being reclaimed)`);
 
-  const mac = modifyMac(keys.modifyKey, userAddress, GratisOp.Unpledge, amount, opNonce, chainId);
+  const mac = modifyMac(keys.modifyKey, userAddress, GratisOp.Unpledge, stablesAmount, opNonce, chainId);
 
-  console.log("\nSending unpledgeGratis(amount, handle, mac, opNonce)...");
-  const tx = await gratisFactory.unpledgeGratis(amount, ticket.pledgeHandle, mac, opNonce);
+  console.log("\nSending unpledgeGratis(amountStables, handle, mac, opNonce)...");
+  const tx = await gratisFactory.unpledgeGratis(stablesAmount, ticket.pledgeHandle, mac, opNonce);
   console.log(`  TX hash: ${tx.hash}`);
   const receipt = await tx.wait();
   if (!receipt) throw new Error("unpledgeGratis tx receipt missing");

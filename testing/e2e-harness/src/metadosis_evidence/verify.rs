@@ -665,10 +665,6 @@ fn verify_fresh_artifacts(
                 .capacity_profile
                 .encode_canonical(&limits)?,
         ),
-        (
-            "fresh-devnet/artifacts/result-committee-v1.ocb1",
-            install.result_committee.encode_canonical(&limits)?,
-        ),
     ] {
         ensure!(
             members.iter().any(|member| member.path == relative)
@@ -1109,11 +1105,6 @@ mod tests {
                 .capacity_profile
                 .encode_canonical(&limits)
                 .unwrap(),
-        )
-        .unwrap();
-        std::fs::write(
-            artifacts.join("result-committee-v1.ocb1"),
-            install.result_committee.encode_canonical(&limits).unwrap(),
         )
         .unwrap();
         let mut exact_binaries = serde_json::Map::new();

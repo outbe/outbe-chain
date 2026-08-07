@@ -6,7 +6,13 @@
 
 #[cfg(test)]
 use std::cell::Cell;
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+};
 
 use alloy_primitives::{Address, Bytes, Log, B256, U256};
 use k256::ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey};
@@ -18,23 +24,23 @@ use outbe_compressed_entities::{
 #[cfg(test)]
 use outbe_lysis::activation_v1::LysisOwnerReceiptsV1;
 #[cfg(test)]
-use outbe_ocomp_protocol::intent::intent_storage_key;
-#[cfg(test)]
 use outbe_ocomp_protocol::league_snapshot::league_snapshot_key;
 #[cfg(test)]
 use outbe_ocomp_protocol::state::OcompJobStatus;
 use outbe_ocomp_protocol::{
     committee::{
-        OcompCommitteeSnapshotV1, OcompKeyRegistrationCoreV1, OcompKeyRegistrationV1,
-        OcompMemberV1, RESULT_SIGNATURE_PURPOSE_BITMAP,
+        validator_identity_hash_v1, OcompKeyRegistrationCoreV1, OcompKeyRegistrationV1,
+        RESULT_SIGNATURE_PURPOSE_BITMAP,
     },
     common::{BoundedBytes, ProofBytes},
     hash::hash_framed,
     intent::{
-        ActivationPreconditionsV1, CertifiedParentAccountingMetadataV2,
-        ContributorTargetPreconditionV1, DayType, FinalizedIntentProofV1, FrozenMetadosisValuesV1,
-        JobIntentV1, MetadosisAttemptPreconditionV1, MetadosisExpectedStatus,
-        NodTargetPreconditionV1, ParentProofKind, TributeInputBindingV1,
+        intent_storage_key, ActivationPreconditionsV1, CertifiedParentAccountingMetadataV2,
+        ContributorTargetPreconditionV1, DayType, ExpectedFinalizedIntentBindingV1,
+        FinalizedIntentProofV1, FinalizedIntentVerificationError, FinalizedRequestBindingV1,
+        FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
+        MetadosisExpectedStatus, NodTargetPreconditionV1, ParentProofKind, TributeInputBindingV1,
+        VerifiedFinalizedIntentV1,
     },
     profile::{CapacityProfileV1, ProtocolBundleV1},
     receipts::{
@@ -57,6 +63,9 @@ use outbe_primitives::{
     storage::{hashmap::HashMapStorageProvider, MetadosisMutationPurposeTag, StorageHandle},
 };
 use outbe_tribute::{DayPreAdmission, DayTotals, TributeContract};
+use outbe_validatorset::{
+    contract::ValidatorSet, read_ocomp_snapshot_extension, OcompSnapshotExtensionV1,
+};
 
 #[cfg(test)]
 use crate::errors::MetadosisError;
@@ -68,6 +77,7 @@ use crate::schema::{
 use crate::{
     constants::{FORMING_PERIOD_HOURS, MAX_ACTIVE_WWDS, SECONDS_PER_HOUR, WAITING_PERIOD_HOURS},
     ocomp::{
+        activation::{OcompFinalityAuthorityError, OcompFinalizedIntentAuthority},
         fork::{OcompForkInstallClassification, OcompForkInstallV1},
         schema::{poc_schema_limits, OcompRequestProfile},
         state::JobFsmLimits,
@@ -470,7 +480,6 @@ fn capacity_profile() -> CapacityProfileV1 {
         profile_id: hash(13),
         max_tributes_per_work_shard: 256,
         max_workers_per_domain: 4,
-        max_pending_jobs: 2,
         max_intents_per_block: 1,
         max_activations_per_block: 1,
         max_ready_inspections_per_block: 1,
@@ -480,7 +489,7 @@ fn capacity_profile() -> CapacityProfileV1 {
         max_reference_currencies: 256,
         max_oracle_wwd_pair_entries: 256,
         max_active_scurve_entries: 256,
-        result_deadline_blocks: 64,
+        result_deadline_blocks: outbe_ocomp_protocol::profile::OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS,
         source_retention_after_terminal_blocks: 64,
         generated_limits_manifest_hash: hash(23),
     }
@@ -538,68 +547,106 @@ fn sign(key: &SigningKey, digest: B256) -> [u8; 64] {
     signature.to_bytes().into()
 }
 
-fn committee(
+pub(crate) fn founder_registrations_for_validators(
+    validators: &[(Address, [u8; 48])],
     chain_id: u64,
     genesis_hash: B256,
-    bundle_hash: B256,
     limits: &SchemaLimits,
-) -> OcompCommitteeSnapshotV1 {
-    let registrations = (0..4)
-        .map(|index| {
-            let key = signing_key(index);
-            let mut registration = OcompKeyRegistrationV1 {
-                core: OcompKeyRegistrationCoreV1 {
-                    chain_id,
-                    genesis_hash,
-                    fork_id: hash(21),
-                    protocol_bundle_hash: bundle_hash,
-                    validator_index: index,
-                    validator_identity_hash:
-                        outbe_ocomp_protocol::committee::validator_identity_hash(
-                            index,
-                            ActivationFixture::validator_caller(index),
-                            &[0_u8; 48],
-                        )
-                        .unwrap(),
-                    ocomp_public_key_sec1: key
-                        .verifying_key()
-                        .to_encoded_point(true)
-                        .as_bytes()
-                        .try_into()
-                        .unwrap(),
-                    key_epoch: 1,
-                    allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
-                    valid_from_height: 1,
-                    valid_until_height_exclusive: 1_000,
-                },
-                proof_of_possession: [0; 64],
-            };
-            let digest = registration.proof_of_possession_digest(limits).unwrap();
-            registration.proof_of_possession = sign(&key, digest);
+) -> PrecompileResult<Vec<OcompKeyRegistrationV1>> {
+    let mut registrations = Vec::with_capacity(validators.len());
+    for (index, (validator, consensus_pubkey)) in validators.iter().enumerate() {
+        let index = u8::try_from(index).map_err(|_| {
+            PrecompileError::Fatal("test founder validator index exceeds u8".into())
+        })?;
+        let key = signing_key(index);
+        let mut registration = OcompKeyRegistrationV1 {
+            core: OcompKeyRegistrationCoreV1 {
+                chain_id,
+                genesis_hash,
+                validator_identity_hash: validator_identity_hash_v1(*validator, consensus_pubkey)
+                    .map_err(|error| {
+                    PrecompileError::Fatal(format!(
+                        "test founder validator identity failed: {error}"
+                    ))
+                })?,
+                ocomp_public_key_sec1: key
+                    .verifying_key()
+                    .to_encoded_point(true)
+                    .as_bytes()
+                    .try_into()
+                    .map_err(|_| {
+                        PrecompileError::Fatal("test founder OCOMP key is not 33 bytes".into())
+                    })?,
+                key_epoch: 1,
+                allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
+            },
+            proof_of_possession: [0; 64],
+        };
+        registration.proof_of_possession = sign(
+            &key,
             registration
-        })
-        .collect::<Vec<_>>();
-    OcompCommitteeSnapshotV1 {
-        chain_id,
-        genesis_hash,
-        fork_id: hash(21),
-        protocol_bundle_hash: bundle_hash,
-        snapshot_epoch: 1,
-        threshold: 3,
-        ordered_members: registrations
-            .into_iter()
-            .map(|registration| OcompMemberV1 {
-                validator_index: registration.core.validator_index,
-                validator_identity_hash: registration.core.validator_identity_hash,
-                ocomp_public_key_sec1: registration.core.ocomp_public_key_sec1,
-                key_epoch: registration.core.key_epoch,
-                allowed_purpose_bitmap: registration.core.allowed_purpose_bitmap,
-                valid_from_height: registration.core.valid_from_height,
-                valid_until_height_exclusive: registration.core.valid_until_height_exclusive,
-                proof_of_possession: registration.proof_of_possession,
-            })
-            .collect(),
+                .proof_of_possession_digest(limits)
+                .map_err(|error| {
+                    PrecompileError::Fatal(format!("test founder PoP digest failed: {error}"))
+                })?,
+        );
+        registrations.push(registration);
     }
+    Ok(registrations)
+}
+
+pub(crate) fn seed_validator_snapshot(
+    storage: StorageHandle<'_>,
+    limits: &SchemaLimits,
+    member_count: u8,
+) -> OcompSnapshotExtensionV1 {
+    assert!(member_count > 0);
+    let chain_id = storage.chain_id().unwrap();
+    let genesis_hash = storage.genesis_hash().unwrap();
+    let owner = Address::repeat_byte(0xE0);
+    let mut validators = ValidatorSet::new(storage.clone());
+    validators.config_owner.write(owner).unwrap();
+    validators
+        .set_config_max_validators(u32::from(member_count))
+        .unwrap();
+    let mut snapshot_key = B256::ZERO;
+    for index in 0..member_count {
+        let validator = Address::repeat_byte(0xB0 + index);
+        let consensus_pubkey = [0x30 + index; 48];
+        validators
+            .register_validator(owner, validator, &consensus_pubkey)
+            .unwrap();
+        validators.mark_pending(validator).unwrap();
+        let key = signing_key(index);
+        let mut registration = OcompKeyRegistrationV1 {
+            core: OcompKeyRegistrationCoreV1 {
+                chain_id,
+                genesis_hash,
+                validator_identity_hash: validator_identity_hash_v1(validator, &consensus_pubkey)
+                    .unwrap(),
+                ocomp_public_key_sec1: key
+                    .verifying_key()
+                    .to_encoded_point(true)
+                    .as_bytes()
+                    .try_into()
+                    .unwrap(),
+                key_epoch: 1,
+                allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
+            },
+            proof_of_possession: [0; 64],
+        };
+        let digest = registration.proof_of_possession_digest(limits).unwrap();
+        registration.proof_of_possession = sign(&key, digest);
+        validators
+            .confirm_validator_ready(validator, &registration.encode_canonical(limits).unwrap())
+            .unwrap();
+        snapshot_key = validators
+            .activate_validator_via_boundary_for_test(validator)
+            .unwrap();
+    }
+    read_ocomp_snapshot_extension(storage, snapshot_key)
+        .unwrap()
+        .unwrap()
 }
 
 /// Builds a fully valid immutable fork-install artifact for behavioral tests.
@@ -615,8 +662,33 @@ pub fn fork_install_fixture(
     let limits = poc_schema_limits();
     let protocol_bundle = bundle();
     let bundle_hash = protocol_bundle.protocol_bundle_hash(&limits).unwrap();
-    let result_committee = committee(chain_id, genesis_hash, bundle_hash, &limits);
-    let committee_hash = result_committee.snapshot_hash(&limits).unwrap();
+    let founder_key = signing_key(0);
+    let mut founder_registration = OcompKeyRegistrationV1 {
+        core: OcompKeyRegistrationCoreV1 {
+            chain_id,
+            genesis_hash,
+            validator_identity_hash: validator_identity_hash_v1(
+                Address::repeat_byte(0xB0),
+                &[0x30; 48],
+            )
+            .unwrap(),
+            ocomp_public_key_sec1: founder_key
+                .verifying_key()
+                .to_encoded_point(true)
+                .as_bytes()
+                .try_into()
+                .unwrap(),
+            key_epoch: 1,
+            allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
+        },
+        proof_of_possession: [0; 64],
+    };
+    founder_registration.proof_of_possession = sign(
+        &founder_key,
+        founder_registration
+            .proof_of_possession_digest(&limits)
+            .unwrap(),
+    );
     OcompForkInstallV1 {
         classification,
         activation_height,
@@ -628,10 +700,9 @@ pub fn fork_install_fixture(
             correctness_profile_id: hash(12),
             capacity_profile: capacity_profile(),
             source_availability_policy_id: hash(44),
-            result_committee_snapshot_hash: committee_hash,
         },
         protocol_bundle,
-        result_committee,
+        founder_registrations: vec![founder_registration],
     }
 }
 
@@ -661,7 +732,11 @@ fn request_receipt(bundle_hash: B256) -> RequestBudgetSplitReceiptV1 {
     }
 }
 
-fn intent(bundle_hash: B256, committee_hash: B256, request_receipt_hash: B256) -> JobIntentV1 {
+fn intent(
+    bundle_hash: B256,
+    snapshot: &OcompSnapshotExtensionV1,
+    request_receipt_hash: B256,
+) -> JobIntentV1 {
     JobIntentV1 {
         chain_id: 1,
         genesis_hash: hash(17),
@@ -719,7 +794,14 @@ fn intent(bundle_hash: B256, committee_hash: B256, request_receipt_hash: B256) -
                 state_version: 1,
             },
         },
-        result_committee_snapshot_hash: committee_hash,
+        result_validator_set_epoch: snapshot.epoch,
+        result_committee_set_hash: snapshot.committee_set_hash,
+        result_ocomp_binding_hash: snapshot.ocomp_binding_hash,
+        result_member_count: snapshot.member_count,
+        result_quorum_threshold: u16::try_from(outbe_consensus::proof::simplex_n3f1_quorum(
+            usize::from(snapshot.member_count),
+        ))
+        .unwrap(),
         custody_committee_epoch_hash: None,
     }
 }
@@ -922,8 +1004,10 @@ pub fn signed_result_vote_for_intent(
         protocol_bundle_hash: intent.protocol_bundle_hash,
         job_id: result.job_id,
         attempt: intent.attempt,
-        result_committee_snapshot_hash: intent.result_committee_snapshot_hash,
-        validator_index,
+        result_validator_set_epoch: intent.result_validator_set_epoch,
+        result_committee_set_hash: intent.result_committee_set_hash,
+        result_ocomp_binding_hash: intent.result_ocomp_binding_hash,
+        validator_index: u16::from(validator_index),
         key_epoch: 1,
         result: result.clone(),
         signature_rs: [0; 64],
@@ -964,6 +1048,60 @@ fn finality_proof(intent: &JobIntentV1, limits: &SchemaLimits) -> FinalizedInten
     }
 }
 
+#[derive(Clone)]
+pub struct FixedFinality {
+    expected: ExpectedFinalizedIntentBindingV1,
+    verified: VerifiedFinalizedIntentV1,
+    calls: Arc<AtomicUsize>,
+}
+
+impl OcompFinalizedIntentAuthority for FixedFinality {
+    fn verify(
+        &self,
+        _proof: &FinalizedIntentProofV1,
+        expected: ExpectedFinalizedIntentBindingV1,
+        _limits: &SchemaLimits,
+    ) -> Result<VerifiedFinalizedIntentV1, OcompFinalityAuthorityError> {
+        self.calls.fetch_add(1, Ordering::Relaxed);
+        if expected != self.expected {
+            return Err(FinalizedIntentVerificationError::WrongProtocolBundle.into());
+        }
+        Ok(self.verified.clone())
+    }
+}
+
+#[derive(Clone)]
+struct FixedLocalResult {
+    expected: LysisResultV1,
+}
+
+impl crate::ocomp::activation::OcompLocalResultAuthority for FixedLocalResult {
+    fn verify_exact(
+        &self,
+        job_id: B256,
+        result: &LysisResultV1,
+        limits: &SchemaLimits,
+    ) -> Result<(), crate::ocomp::activation::OcompLocalResultAuthorityError> {
+        if self.expected.job_id != job_id {
+            return Err(
+                crate::ocomp::activation::OcompLocalResultAuthorityError::Missing { job_id },
+            );
+        }
+        let expected = self.expected.encode_canonical(limits).map_err(|error| {
+            crate::ocomp::activation::OcompLocalResultAuthorityError::Unavailable(error.to_string())
+        })?;
+        let actual = result.encode_canonical(limits).map_err(|error| {
+            crate::ocomp::activation::OcompLocalResultAuthorityError::Unavailable(error.to_string())
+        })?;
+        if expected != actual {
+            return Err(
+                crate::ocomp::activation::OcompLocalResultAuthorityError::Mismatch { job_id },
+            );
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug)]
 struct TributePartitionTree {
     parent_root: B256,
@@ -999,6 +1137,21 @@ impl AuthenticatedParentTree for TributePartitionTree {
             ));
         }
         Ok(true)
+    }
+
+    fn partition_root_verified(
+        &self,
+        partition: PartitionRef,
+        expected_parent_root: B256,
+    ) -> PrecompileResult<Option<B256>> {
+        if expected_parent_root != self.parent_root
+            || partition != PartitionRef::TributeWwd(TEST_WWD)
+        {
+            return Err(PrecompileError::Fatal(
+                "activation fixture parent partition binding mismatch".into(),
+            ));
+        }
+        Ok(Some(hash(31)))
     }
 
     fn prepare_seal(
@@ -1070,49 +1223,129 @@ pub struct ActivationFixture {
     pub provider: HashMapStorageProvider,
     pub scope: ExecutionScope,
     pub result: LysisResultV1,
-    pub intent: JobIntentV1,
+    pub finality: FixedFinality,
     pub intent_id: B256,
     pub limits: SchemaLimits,
     pub request_receipt: RequestBudgetSplitReceiptV1,
+    local_result_authority: Arc<dyn crate::ocomp::activation::OcompLocalResultAuthority>,
 }
 
 impl ActivationFixture {
     #[must_use]
-    pub fn validator_caller(validator_index: u8) -> Address {
-        let mut bytes = [0_u8; 20];
-        bytes[19] = validator_index.saturating_add(1);
-        Address::from(bytes)
-    }
-
-    #[must_use]
     pub fn new(current_height: u64, current_time: u64, seed_targets: bool) -> Self {
-        Self::new_with_initial_votes(current_height, current_time, seed_targets, 2)
+        Self::new_with_initial_votes(current_height, current_time, seed_targets, 4, 2)
     }
 
-    /// Builds the same production-valid fixture before any validator vote is
-    /// recorded, so public result-vote dispatch tests can exercise all four
-    /// consensus slots instead of injecting quorum state.
+    /// Builds the default production-valid fixture before any validator vote
+    /// is recorded, without injecting quorum state.
     #[cfg(test)]
     #[must_use]
     pub fn new_voting(current_height: u64, current_time: u64, seed_targets: bool) -> Self {
-        Self::new_with_initial_votes(current_height, current_time, seed_targets, 0)
+        Self::new_voting_with_member_count(current_height, current_time, seed_targets, 4)
+    }
+
+    /// Builds a production-valid voting fixture for the requested ValidatorSet
+    /// size without introducing an OCOMP-specific membership authority.
+    #[cfg(test)]
+    #[must_use]
+    pub fn new_voting_with_member_count(
+        current_height: u64,
+        current_time: u64,
+        seed_targets: bool,
+        member_count: u8,
+    ) -> Self {
+        Self::new_with_initial_votes(current_height, current_time, seed_targets, member_count, 0)
+    }
+
+    /// Adds the next validator through registration, OCOMP readiness and the
+    /// certified-boundary test hook, returning the newly persisted snapshot.
+    #[cfg(test)]
+    pub fn activate_additional_validator_for_test(
+        &mut self,
+        index: u8,
+    ) -> OcompSnapshotExtensionV1 {
+        StorageHandle::enter(&mut self.provider, |storage| {
+            let chain_id = storage.chain_id().unwrap();
+            let genesis_hash = storage.genesis_hash().unwrap();
+            let owner = Address::repeat_byte(0xE0);
+            let validator = Address::repeat_byte(0xB0 + index);
+            let consensus_pubkey = [0x30 + index; 48];
+            let mut validators = ValidatorSet::new(storage.clone());
+            assert_eq!(validators.validator_count.read().unwrap(), u32::from(index));
+            validators
+                .set_config_max_validators(u32::from(index) + 1)
+                .unwrap();
+            validators
+                .register_validator(owner, validator, &consensus_pubkey)
+                .unwrap();
+            validators.mark_pending(validator).unwrap();
+
+            let key = signing_key(index);
+            let mut registration = OcompKeyRegistrationV1 {
+                core: OcompKeyRegistrationCoreV1 {
+                    chain_id,
+                    genesis_hash,
+                    validator_identity_hash: validator_identity_hash_v1(
+                        validator,
+                        &consensus_pubkey,
+                    )
+                    .unwrap(),
+                    ocomp_public_key_sec1: key
+                        .verifying_key()
+                        .to_encoded_point(true)
+                        .as_bytes()
+                        .try_into()
+                        .unwrap(),
+                    key_epoch: 1,
+                    allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
+                },
+                proof_of_possession: [0; 64],
+            };
+            let digest = registration
+                .proof_of_possession_digest(&self.limits)
+                .unwrap();
+            registration.proof_of_possession = sign(&key, digest);
+            validators
+                .confirm_validator_ready(
+                    validator,
+                    &registration.encode_canonical(&self.limits).unwrap(),
+                )
+                .unwrap();
+            let timestamp: u64 = storage.timestamp().unwrap().try_into().unwrap();
+            outbe_validatorset::hooks::transition_epoch(
+                storage.clone(),
+                timestamp,
+                storage.block_number().unwrap(),
+            )
+            .unwrap();
+            let snapshot_key = validators
+                .activate_validator_via_boundary_for_test(validator)
+                .unwrap();
+            read_ocomp_snapshot_extension(storage, snapshot_key)
+                .unwrap()
+                .unwrap()
+        })
     }
 
     fn new_with_initial_votes(
         current_height: u64,
         current_time: u64,
         seed_targets: bool,
+        member_count: u8,
         initial_vote_count: u8,
     ) -> Self {
-        assert!(initial_vote_count <= 3);
+        assert!(member_count > 0);
+        assert!(initial_vote_count < member_count);
         let limits = poc_schema_limits();
         let bundle = bundle();
         let bundle_hash = bundle.protocol_bundle_hash(&limits).unwrap();
-        let committee = committee(1, hash(17), bundle_hash, &limits);
-        let committee_hash = committee.snapshot_hash(&limits).unwrap();
+        let mut provider = HashMapStorageProvider::new_with_chain_identity(1, hash(17));
+        let snapshot = StorageHandle::enter(&mut provider, |storage| {
+            seed_validator_snapshot(storage, &limits, member_count)
+        });
         let request_receipt = request_receipt(bundle_hash);
         let request_receipt_hash = request_receipt.receipt_hash(&limits).unwrap();
-        let intent = intent(bundle_hash, committee_hash, request_receipt_hash);
+        let intent = intent(bundle_hash, &snapshot, request_receipt_hash);
         let intent_id = intent.intent_id(&limits).unwrap();
         let proof = finality_proof(&intent, &limits);
         let request_state_root = hash(98);
@@ -1124,33 +1357,36 @@ impl ActivationFixture {
             )
             .unwrap();
         let result = result(bundle_hash, job_id, &limits);
-        let mut provider = HashMapStorageProvider::new(1);
+        let local_result_authority: Arc<dyn crate::ocomp::activation::OcompLocalResultAuthority> =
+            Arc::new(FixedLocalResult {
+                expected: result.clone(),
+            });
+        let expected = ExpectedFinalizedIntentBindingV1 {
+            chain_id: intent.chain_id,
+            genesis_hash: intent.genesis_hash,
+            fork_id: intent.fork_id,
+            protocol_bundle_hash: intent.protocol_bundle_hash,
+        };
+        let finality = FixedFinality {
+            expected,
+            verified: VerifiedFinalizedIntentV1 {
+                intent: intent.clone(),
+                intent_id,
+                intent_storage_key: intent_storage_key(intent_id).unwrap(),
+                job_id,
+                request: FinalizedRequestBindingV1 {
+                    block_number: 9,
+                    block_hash: hash(46),
+                    state_root: request_state_root,
+                },
+            },
+            calls: Arc::new(AtomicUsize::new(0)),
+        };
+
         provider.set_block_number(current_height);
         provider.set_timestamp(U256::from(current_time));
         let scope = begin_activation_scope(&mut provider);
         StorageHandle::enter(&mut provider, |storage| {
-            let validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-            validators.validator_count.write(4).unwrap();
-            for index in 0_u8..4 {
-                let validator = Self::validator_caller(index);
-                let registration_index = u64::from(index) + 1;
-                validators
-                    .address_to_index
-                    .write(&validator, registration_index)
-                    .unwrap();
-                validators
-                    .index_to_address
-                    .write(&registration_index, validator)
-                    .unwrap();
-                validators
-                    .val_status
-                    .write(&validator, outbe_validatorset::logic::status::ACTIVE)
-                    .unwrap();
-                validators
-                    .val_has_bls_share
-                    .write(&validator, true)
-                    .unwrap();
-            }
             if seed_targets {
                 let tribute = TributeContract::new(storage.clone());
                 tribute.ocomp_profile_ready.write(true).unwrap();
@@ -1206,13 +1442,12 @@ impl ActivationFixture {
                 correctness_profile_id: hash(12),
                 capacity_profile: capacity_profile(),
                 source_availability_policy_id: hash(44),
-                result_committee_snapshot_hash: committee_hash,
             };
             contract
                 .initialize_ocomp_request_profile(&profile, &limits)
                 .unwrap();
             contract
-                .initialize_ocomp_activation_authority(&bundle, &committee, &limits)
+                .initialize_ocomp_activation_authority(&bundle, &limits)
                 .unwrap();
             let outer_transition = crate::commit::plan_outer_transition_for_test_fixture(
                 &contract,
@@ -1251,8 +1486,10 @@ impl ActivationFixture {
                     protocol_bundle_hash: bundle_hash,
                     job_id,
                     attempt: intent.attempt,
-                    result_committee_snapshot_hash: committee_hash,
-                    validator_index: index,
+                    result_validator_set_epoch: intent.result_validator_set_epoch,
+                    result_committee_set_hash: intent.result_committee_set_hash,
+                    result_ocomp_binding_hash: intent.result_ocomp_binding_hash,
+                    validator_index: u16::from(index),
                     key_epoch: 1,
                     result: result.clone(),
                     signature_rs: [0; 64],
@@ -1262,10 +1499,10 @@ impl ActivationFixture {
                 contract
                     .record_ocomp_result_vote(
                         &vote,
-                        Self::validator_caller(index),
                         finalized.open_height + u64::from(index),
                         &scope,
                         &limits,
+                        Some(local_result_authority.as_ref()),
                     )
                     .unwrap();
             }
@@ -1276,29 +1513,35 @@ impl ActivationFixture {
             provider,
             scope,
             result,
-            intent,
+            finality,
             intent_id,
             limits,
             request_receipt,
+            local_result_authority,
         }
     }
 
-    /// Creates the canonical signed vote for one fixture committee member.
+    /// Creates the canonical node-attested vote for one fixture committee
+    /// member. The returned bytes still have to pass the production public
+    /// dispatch and consensus transition.
     #[must_use]
     pub fn signed_result_vote(&self, validator_index: u8) -> ResultVoteV1 {
+        let intent = &self.finality.verified.intent;
         let mut vote = ResultVoteV1 {
-            protocol_bundle_hash: self.intent.protocol_bundle_hash,
+            protocol_bundle_hash: intent.protocol_bundle_hash,
             job_id: self.result.job_id,
-            attempt: self.intent.attempt,
-            result_committee_snapshot_hash: self.intent.result_committee_snapshot_hash,
-            validator_index,
+            attempt: intent.attempt,
+            result_validator_set_epoch: intent.result_validator_set_epoch,
+            result_committee_set_hash: intent.result_committee_set_hash,
+            result_ocomp_binding_hash: intent.result_ocomp_binding_hash,
+            validator_index: u16::from(validator_index),
             key_epoch: 1,
             result: self.result.clone(),
             signature_rs: [0; 64],
         };
         vote.signature_rs = sign(
             &signing_key(validator_index),
-            vote.signing_digest(&self.intent, &self.limits).unwrap(),
+            vote.signing_digest(intent, &self.limits).unwrap(),
         );
         vote
     }
@@ -1336,6 +1579,38 @@ impl ActivationFixture {
     }
 
     pub fn dispatch_current(&mut self) -> PrecompileResult<Bytes> {
+        let authority = self.local_result_authority.clone();
+        self.dispatch_current_with(Some(authority.as_ref()))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn apply_without_local_result_authority(&mut self) -> PrecompileResult<Bytes> {
+        self.provider.enable_lysis_activation_frame();
+        self.dispatch_current_with(None)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn apply_with_mismatched_local_result(&mut self) -> PrecompileResult<Bytes> {
+        let mut different = self.result.clone();
+        different.result_chunk_list_root = B256::repeat_byte(0xE1);
+        let authority = FixedLocalResult {
+            expected: different,
+        };
+        self.provider.enable_lysis_activation_frame();
+        self.dispatch_current_with(Some(&authority))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn local_result_authority(
+        &self,
+    ) -> Arc<dyn crate::ocomp::activation::OcompLocalResultAuthority> {
+        self.local_result_authority.clone()
+    }
+
+    fn dispatch_current_with(
+        &mut self,
+        local_result_authority: Option<&dyn crate::ocomp::activation::OcompLocalResultAuthority>,
+    ) -> PrecompileResult<Bytes> {
         let calldata = self.calldata();
         self.provider
             .enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::VerifiedResultVote);
@@ -1343,10 +1618,10 @@ impl ActivationFixture {
             crate::commands::submit_verified_result_vote(
                 storage,
                 &self.scope,
-                Self::validator_caller(2),
                 calldata.as_ref(),
                 U256::ZERO,
                 false,
+                local_result_authority,
             )
         })
     }

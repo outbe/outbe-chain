@@ -148,7 +148,11 @@ wire_struct! {
         pub logical_evaluation_height: u64,
         pub logical_evaluation_time: u64,
         pub activation_preconditions: ActivationPreconditionsV1,
-        pub result_committee_snapshot_hash: B256,
+        pub result_validator_set_epoch: u64,
+        pub result_committee_set_hash: B256,
+        pub result_ocomp_binding_hash: B256,
+        pub result_member_count: u16,
+        pub result_quorum_threshold: u16,
         pub custody_committee_epoch_hash: Option<B256>,
     }
     validate = validate_job_intent;

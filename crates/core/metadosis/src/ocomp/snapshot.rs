@@ -4,7 +4,7 @@ use alloy_primitives::Address;
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_ocomp_protocol::league_snapshot::{fidelity_league_snapshot_root, league_snapshot_key};
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_tribute::TributeContract;
 
 use crate::schema::MetadosisContract;
@@ -39,7 +39,7 @@ impl MetadosisContract<'_> {
         let mut owners: Vec<Address> = tributes.iter().map(|t| t.owner).collect();
         owners.sort_unstable();
         if owners.windows(2).any(|pair| pair[0] >= pair[1]) {
-            return Err(PrecompileError::Fatal(
+            return Err(crate::errors::storage_corruption(
                 "OCOMP day owner set is not strictly ordered and unique".into(),
             ));
         }

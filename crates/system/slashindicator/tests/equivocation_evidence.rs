@@ -121,11 +121,12 @@ fn accused_sk() -> SecretKey {
 fn setup(storage: StorageHandle, sk: &SecretKey) {
     let mut vs = ValidatorSet::new(storage.clone());
     vs.config_owner.write(OWNER).unwrap();
-    vs.config_max_validators.write(100).unwrap();
+    vs.set_config_max_validators(100).unwrap();
     vs.epoch_number.write(U256::from(1u64)).unwrap();
     let pk: [u8; 48] = sk.sk_to_pk().to_bytes();
     vs.register_validator(OWNER, ACCUSED, &pk).unwrap();
-    vs.activate_validator(ACCUSED).unwrap();
+    vs.activate_validator_via_boundary_for_test(ACCUSED)
+        .unwrap();
     vs.val_stake
         .write(&ACCUSED, U256::from(1_000_000u64))
         .unwrap();
@@ -134,12 +135,21 @@ fn setup(storage: StorageHandle, sk: &SecretKey) {
     let mut sub_pk = [0u8; 48];
     sub_pk[0] = 0x77;
     vs.register_validator(OWNER, SUBMITTER, &sub_pk).unwrap();
-    vs.activate_validator(SUBMITTER).unwrap();
+    vs.activate_validator_via_boundary_for_test(SUBMITTER)
+        .unwrap();
 
     // the evidence verifier resolves the committee for the vote's epoch via
     // the snapshot ring. Seed it across the retained ring window so any test
     // epoch resolves to the committee the evidence is signed against.
     let snapshot = committee_snapshot();
+    for member in &snapshot.committee {
+        if !vs.is_validator(member.address).unwrap() {
+            vs.register_validator(OWNER, member.address, &member.consensus_pubkey)
+                .unwrap();
+            vs.activate_validator_via_boundary_for_test(member.address)
+                .unwrap();
+        }
+    }
     for epoch in 0..outbe_validatorset::state::COMMITTEE_SNAPSHOT_RETAIN_EPOCHS {
         write_committee_snapshot(storage.clone(), epoch, &snapshot).unwrap();
     }

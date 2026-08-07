@@ -1718,7 +1718,11 @@ fn real_worker_processes_execute_through_output_finalize() {
                 state_version: 1,
             },
         },
-        result_committee_snapshot_hash: B256::repeat_byte(0x47),
+        result_validator_set_epoch: 7,
+        result_committee_set_hash: B256::repeat_byte(0x47),
+        result_ocomp_binding_hash: B256::repeat_byte(0x48),
+        result_member_count: 4,
+        result_quorum_threshold: 3,
         custody_committee_epoch_hash: None,
     };
     let ordered_artifacts = vec![

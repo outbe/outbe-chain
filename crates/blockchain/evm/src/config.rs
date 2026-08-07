@@ -35,7 +35,9 @@ use reth_rpc_eth_api::helpers::pending_block::BuildPendingEnv;
 use std::{convert::Infallible, sync::Arc};
 
 use outbe_compressed_entities::{CompressedTreeService, ExecutionScope, ACTIVE_COMMITMENT_SCHEME};
-use outbe_metadosis::api::{OcompFinalityAuthorityError, OcompFinalizedIntentAuthority};
+use outbe_metadosis::api::{
+    OcompFinalityAuthorityError, OcompFinalizedIntentAuthority, OcompLocalResultAuthority,
+};
 use outbe_metadosis::config::OcompForkInstallV1;
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::{
@@ -791,6 +793,17 @@ impl OutbeEvmConfig {
             .executor_factory
             .evm_factory()
             .install_ocomp_finality_authority(authority);
+        self
+    }
+
+    pub fn with_ocomp_local_result_authority(
+        self,
+        authority: Arc<dyn OcompLocalResultAuthority>,
+    ) -> Self {
+        self.inner
+            .executor_factory
+            .evm_factory()
+            .install_ocomp_local_result_authority(authority);
         self
     }
 
@@ -1672,6 +1685,8 @@ pub struct OutbeExecutorBuilder {
     pub ocomp_fork_install: Option<Arc<OcompForkInstallV1>>,
     /// Production finalized JobIntent proof authority supplied by the node.
     pub ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
+    /// Node-owned exact Lysis result authority shared by validators and FullNodes.
+    pub ocomp_local_result_authority: Option<Arc<dyn OcompLocalResultAuthority>>,
 }
 
 impl std::fmt::Debug for OutbeExecutorBuilder {
@@ -1696,6 +1711,10 @@ impl std::fmt::Debug for OutbeExecutorBuilder {
                 "ocomp_finality_authority",
                 &self.ocomp_finality_authority.is_some(),
             )
+            .field(
+                "ocomp_local_result_authority",
+                &self.ocomp_local_result_authority.is_some(),
+            )
             .finish()
     }
 }
@@ -1711,6 +1730,7 @@ impl OutbeExecutorBuilder {
             ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
             ocomp_fork_install: None,
             ocomp_finality_authority: None,
+            ocomp_local_result_authority: None,
         }
     }
 
@@ -1745,6 +1765,14 @@ impl OutbeExecutorBuilder {
         authority: Arc<dyn OcompFinalizedIntentAuthority>,
     ) -> Self {
         self.ocomp_finality_authority = Some(authority);
+        self
+    }
+
+    pub fn with_ocomp_local_result_authority(
+        mut self,
+        authority: Arc<dyn OcompLocalResultAuthority>,
+    ) -> Self {
+        self.ocomp_local_result_authority = Some(authority);
         self
     }
 }
@@ -1829,6 +1857,9 @@ where
             config = config.with_ocomp_finality_authority(Arc::new(
                 ProviderAnchoredOcompFinalityAuthority::new(ctx.provider().clone(), authority),
             ));
+        }
+        if let Some(authority) = self.ocomp_local_result_authority {
+            config = config.with_ocomp_local_result_authority(authority);
         }
         Ok(match self.evm_signer {
             Some(signer) => config.with_evm_signer(signer),

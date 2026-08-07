@@ -37,6 +37,7 @@ pub mod terminal_outcome {
     pub const NONE: u8 = 0;
     pub const MISSED_OFFERING: u8 = 1;
     pub const CAPACITY_FORFEITURE: u8 = 2;
+    pub const METADOSIS_FAILURE: u8 = 3;
 }
 
 /// Canonical Tribute partition-retirement result recorded by a terminal receipt.
@@ -247,8 +248,8 @@ pub struct MetadosisContract {
     pub ocomp_pre_admission:
         outbe_primitives::storage::dsl::Map<WorldwideDayKey, OcompPreAdmissionState>,
 
-    /// Fork-profile authority installed by the OCOMP upgrade handler. Empty
-    /// before the disposable-devnet profile is armed.
+    /// Fork-profile authority installed by `OcompLifecycleBegin`. Empty before
+    /// the genesis-bound OCOMP profile is armed.
     #[attribute(order = 6)]
     pub ocomp_request_profile: outbe_primitives::storage::types::StorageBytes,
 
@@ -315,25 +316,26 @@ pub struct MetadosisContract {
     #[attribute(order = 15)]
     pub ocomp_active_lysis_generations: Mapping<WorldwideDayKey, StorageBytes>,
 
-    /// Canonical OCB1 `ProtocolBundleV1` installed by the OCOMP fork handler.
+    /// Canonical OCB1 `ProtocolBundleV1` installed by `OcompLifecycleBegin`.
     /// The request profile stores its hash; activation needs the complete
     /// immutable bundle to select the frozen LYSIS_V1 program semantics.
     #[attribute(order = 16)]
     pub ocomp_active_protocol_bundle: StorageBytes,
 
-    /// Canonical OCB1 `OcompCommitteeSnapshotV1` installed with the bundle.
-    /// Result votes are verified only against this consensus state.
+    /// Reserved zero-valued slot from the removed static OCOMP committee.
+    /// The field name, type and ordinal stay unchanged so the storage layout
+    /// hash and every following field remain byte-identical.
     #[attribute(order = 17)]
     pub ocomp_result_committee_snapshot: StorageBytes,
 
-    /// Four fixed result-vote slots and their independently closing
+    /// Dynamic monolithic result-vote slots and their independently closing
     /// accountability summary, keyed by finalized JobId.
     #[attribute(order = 18)]
     pub ocomp_vote_accountability: Mapping<B256, StorageBytes>,
 
     /// Canonical bounded response-window index ordered by
     /// `(deadline_height, JobId)`. It deliberately survives activation so the
-    /// fourth validator and bounded equivocation evidence remain admissible
+    /// pinned participants and bounded equivocation evidence remain admissible
     /// until the exclusive deadline.
     #[attribute(order = 19)]
     pub ocomp_response_deadline_index: StorageBytes,

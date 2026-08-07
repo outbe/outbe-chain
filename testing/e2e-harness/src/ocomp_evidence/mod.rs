@@ -37,7 +37,6 @@ pub use ledger::{PlanningLedger, LEDGER_KIND};
 pub use runtime::{
     CorrelatedTributeFixtureV1, CorrelationError, JobIntentCorrelationV1,
     PublicTributeCorrelationV1, TributeCorrelationBuilder, ValidatorSourceCorrelationV1,
-    OCOMP_VALIDATOR_DOMAINS,
 };
 pub use schema::{
     AssertionRecordV1, AssertionStatus, ClosureReportV1, EvidenceMode, MemberDigestV1,

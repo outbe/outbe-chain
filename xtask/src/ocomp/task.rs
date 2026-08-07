@@ -2381,8 +2381,6 @@ fn require_matching_final_consensus_artifacts(generated: &Path, checked: &Path) 
         "fork-install-v1.ocb1",
         "genesis-final.json",
         "protocol-bundle-v1.ocb1",
-        "result-committee-public-v1.json",
-        "result-committee-v1.ocb1",
         "semantic-artifacts-v1.json",
     ] {
         let generated_bytes = std::fs::read(generated.join(name))

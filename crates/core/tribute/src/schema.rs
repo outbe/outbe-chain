@@ -108,8 +108,8 @@ pub struct TributeContract {
     #[attribute(order = 5)]
     pub day_reference_currency_refcount: outbe_primitives::storage::dsl::Map<B256, u32>,
 
-    /// Set only by the fresh-devnet OCOMP fork handler. When false, all
-    /// historical Tribute mutations keep their pre-fork storage footprint.
+    /// Set only by the genesis-bound OCOMP lifecycle. When false, all
+    /// historical Tribute mutations keep their pre-activation storage footprint.
     #[attribute(order = 6)]
     pub ocomp_profile_ready: outbe_primitives::storage::dsl::Value<bool>,
 }
