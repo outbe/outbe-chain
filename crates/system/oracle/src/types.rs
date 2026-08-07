@@ -1,7 +1,9 @@
 use alloy_primitives::{Address, U256};
 
+/// Represents an asset type supported by the Oracle.
+/// Such assets can be used for keying pairs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PairType {
+pub enum AssetType {
     /// Native token i.e. COEN
     Native,
     /// Arbitrary ERC20 token address
@@ -10,15 +12,17 @@ pub enum PairType {
     IsoCurrency(u16),
 }
 
-impl From<PairType> for Address {
-    /// A currency code is packed as BCD behind the [`ISO_MARKER`] nibbles, so
-    /// ISO 840 becomes `0x0000…0cc840`. `ERC20` addresses inside that reserved
-    /// range decode back as `IsoCurrency`.
-    fn from(value: PairType) -> Self {
+impl From<AssetType> for Address {
+    /// Encodes an asset type into an address.
+    /// COEN becomes `0x0`.
+    /// A currency code is packed as BCD, so ISO 840 becomes `0x0000…0cc840`.
+    /// Any other address is considered as `ERC20` addresses without any validation that's a real
+    /// ERC20 token address.
+    fn from(value: AssetType) -> Self {
         match value {
-            PairType::Native => Address::ZERO,
-            PairType::ERC20(address) => address,
-            PairType::IsoCurrency(code) => {
+            AssetType::Native => Address::ZERO,
+            AssetType::ERC20(address) => address,
+            AssetType::IsoCurrency(code) => {
                 let marked = ISO_MARKER | u32::from(bcd_encode(code));
                 Address::left_padding_from(&marked.to_be_bytes())
             }
@@ -26,15 +30,15 @@ impl From<PairType> for Address {
     }
 }
 
-impl From<Address> for PairType {
+impl From<Address> for AssetType {
     fn from(value: Address) -> Self {
         let raw = U256::from_be_slice(value.as_slice());
         if raw.is_zero() {
-            PairType::Native
+            AssetType::Native
         } else if let Some(code) = iso_code(raw) {
-            PairType::IsoCurrency(code)
+            AssetType::IsoCurrency(code)
         } else {
-            PairType::ERC20(value)
+            AssetType::ERC20(value)
         }
     }
 }
@@ -60,8 +64,8 @@ fn iso_code(raw: U256) -> Option<u16> {
     bcd_decode(u16::try_from(marked - ISO_MARKER).ok()?)
 }
 
-/// One decimal digit per nibble: `840 -> 0x0840`. Only the four lowest decimal
-/// digits fit, which is exact for every code in `0..=999`.
+/// Binary-Coded Decimal (BCD): One decimal digit per nibble: `840 -> 0x0840`.
+/// Only the four lowest decimal digits fit, which is exact for every code in `0..=999`.
 fn bcd_encode(code: u16) -> u16 {
     let mut rest = code % 10_000;
     let mut packed = 0u16;
@@ -88,7 +92,7 @@ fn bcd_decode(packed: u16) -> Option<u16> {
 
 #[cfg(test)]
 mod tests {
-    use crate::types::PairType;
+    use crate::types::AssetType;
     use alloy_primitives::{address, Address};
     use outbe_primitives::address_pair::AddressPair;
 
@@ -97,22 +101,22 @@ mod tests {
 
     #[test]
     fn native_round_trips_through_the_zero_address() {
-        assert_eq!(Address::from(PairType::Native), Address::ZERO);
-        assert_eq!(PairType::from(Address::ZERO), PairType::Native);
+        assert_eq!(Address::from(AssetType::Native), Address::ZERO);
+        assert_eq!(AssetType::from(Address::ZERO), AssetType::Native);
     }
 
     #[test]
     fn iso_currency_encodes_each_decimal_digit_as_a_nibble_behind_the_marker() {
         assert_eq!(
-            Address::from(PairType::IsoCurrency(840)),
+            Address::from(AssetType::IsoCurrency(840)),
             address!("0x00000000000000000000000000000000000cc840"),
         );
         assert_eq!(
-            Address::from(PairType::IsoCurrency(8)),
+            Address::from(AssetType::IsoCurrency(8)),
             address!("0x00000000000000000000000000000000000cc008"),
         );
         assert_eq!(
-            Address::from(PairType::IsoCurrency(MAX_ISO_CODE)),
+            Address::from(AssetType::IsoCurrency(MAX_ISO_CODE)),
             address!("0x00000000000000000000000000000000000cc999"),
         );
     }
@@ -120,37 +124,41 @@ mod tests {
     #[test]
     fn an_unmarked_currency_code_decodes_as_erc20() {
         let token = address!("0x0000000000000000000000000000000000000840");
-        assert_eq!(PairType::from(token), PairType::ERC20(token));
+        assert_eq!(AssetType::from(token), AssetType::ERC20(token));
     }
 
     #[test]
     fn iso_currency_round_trips_every_code_in_range() {
         for code in 1..=MAX_ISO_CODE {
-            let pair = PairType::IsoCurrency(code);
-            assert_eq!(PairType::from(Address::from(pair)), pair, "iso code {code}");
+            let pair = AssetType::IsoCurrency(code);
+            assert_eq!(
+                AssetType::from(Address::from(pair)),
+                pair,
+                "iso code {code}"
+            );
         }
     }
 
     #[test]
     fn erc20_round_trips_through_its_own_address() {
         let token = address!("0x000000000000000000000000000000000000099a");
-        assert_eq!(Address::from(PairType::ERC20(token)), token);
-        assert_eq!(PairType::from(token), PairType::ERC20(token));
+        assert_eq!(Address::from(AssetType::ERC20(token)), token);
+        assert_eq!(AssetType::from(token), AssetType::ERC20(token));
     }
 
     #[test]
     fn an_address_above_the_iso_range_decodes_as_erc20() {
         let token = address!("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
-        assert_eq!(PairType::from(token), PairType::ERC20(token));
+        assert_eq!(AssetType::from(token), AssetType::ERC20(token));
     }
 
     #[test]
     fn every_variant_converts_through_into() {
         let token = address!("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
         let converted: [Address; 3] = [
-            PairType::Native.into(),
-            PairType::IsoCurrency(840).into(),
-            PairType::ERC20(token).into(),
+            AssetType::Native.into(),
+            AssetType::IsoCurrency(840).into(),
+            AssetType::ERC20(token).into(),
         ];
 
         assert_eq!(
@@ -165,8 +173,8 @@ mod tests {
 
     #[test]
     fn a_coen_iso_pair_keys_on_the_zero_address_and_the_currency_code() {
-        let coen: Address = PairType::Native.into();
-        let usd: Address = PairType::IsoCurrency(840).into();
+        let coen: Address = AssetType::Native.into();
+        let usd: Address = AssetType::IsoCurrency(840).into();
 
         let pair = AddressPair::from_addresses(coen, usd);
 
@@ -193,7 +201,7 @@ mod tests {
             address!("0x00000000000000000000000000000000100cc840"),
             address!("0xa0b86991c6218b36c1d19d4a2e9eb0ce360cc840"),
         ] {
-            assert_eq!(PairType::from(token), PairType::ERC20(token), "{token}");
+            assert_eq!(AssetType::from(token), AssetType::ERC20(token), "{token}");
         }
     }
 }
