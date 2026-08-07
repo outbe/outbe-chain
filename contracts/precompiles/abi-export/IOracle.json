@@ -65,9 +65,14 @@
         "internalType": "bool"
       },
       {
-        "name": "pairIds",
-        "type": "uint32[]",
-        "internalType": "uint32[]"
+        "name": "bases",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "quotes",
+        "type": "address[]",
+        "internalType": "address[]"
       },
       {
         "name": "rates",
@@ -104,9 +109,14 @@
         "internalType": "uint64[]"
       },
       {
-        "name": "pairIds",
-        "type": "uint32[]",
-        "internalType": "uint32[]"
+        "name": "bases",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "quotes",
+        "type": "address[]",
+        "internalType": "address[]"
       },
       {
         "name": "rates",
@@ -127,9 +137,14 @@
     "inputs": [],
     "outputs": [
       {
-        "name": "pairIds",
-        "type": "uint32[]",
-        "internalType": "uint32[]"
+        "name": "bases",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "quotes",
+        "type": "address[]",
+        "internalType": "address[]"
       },
       {
         "name": "peakDays",
@@ -255,6 +270,16 @@
     "name": "getExchangeRates",
     "inputs": [],
     "outputs": [
+      {
+        "name": "bases",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "quotes",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
       {
         "name": "rates",
         "type": "uint256[]",
@@ -383,11 +408,6 @@
     "name": "getPairs",
     "inputs": [],
     "outputs": [
-      {
-        "name": "pairIds",
-        "type": "uint32[]",
-        "internalType": "uint32[]"
-      },
       {
         "name": "bases",
         "type": "address[]",
@@ -683,9 +703,14 @@
     ],
     "outputs": [
       {
-        "name": "pairIds",
-        "type": "uint32[]",
-        "internalType": "uint32[]"
+        "name": "bases",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "quotes",
+        "type": "address[]",
+        "internalType": "address[]"
       },
       {
         "name": "twaps",
@@ -764,9 +789,14 @@
     "inputs": [],
     "outputs": [
       {
-        "name": "pairIds",
-        "type": "uint32[]",
-        "internalType": "uint32[]"
+        "name": "bases",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "quotes",
+        "type": "address[]",
+        "internalType": "address[]"
       }
     ],
     "stateMutability": "view"
@@ -851,9 +881,14 @@
     ],
     "outputs": [
       {
-        "name": "pairIds",
-        "type": "uint32[]",
-        "internalType": "uint32[]"
+        "name": "bases",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "quotes",
+        "type": "address[]",
+        "internalType": "address[]"
       },
       {
         "name": "vwaps",
@@ -890,9 +925,14 @@
         "internalType": "uint64"
       },
       {
-        "name": "pairIds",
-        "type": "uint32[]",
-        "internalType": "uint32[]"
+        "name": "bases",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "quotes",
+        "type": "address[]",
+        "internalType": "address[]"
       },
       {
         "name": "vwaps",

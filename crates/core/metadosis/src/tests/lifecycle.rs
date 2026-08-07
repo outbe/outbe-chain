@@ -2156,13 +2156,17 @@ fn test_offering_entry_captures_vwap_unblocks_and_exit_reblocks() {
         tribute.seal_day(wwd).unwrap();
 
         let mut oracle = OracleContract::new(storage.clone());
-        let pair_id = oracle
+        oracle
             .register_pair(
                 outbe_oracle::api::COEN_ASSET,
                 outbe_oracle::api::iso_asset(840),
             )
             .unwrap();
-        let pair = outbe_oracle::api::coen_iso_pair(840);
+        let pair = (
+            outbe_oracle::api::coen_iso_pair(840),
+            outbe_oracle::api::COEN_ASSET,
+            outbe_oracle::api::iso_asset(840),
+        );
         oracle
             .write_snapshot(
                 previous_forming_start + SECONDS_PER_HOUR,
@@ -2186,8 +2190,9 @@ fn test_offering_entry_captures_vwap_unblocks_and_exit_reblocks() {
         run_begin_block(storage.clone(), 2, forming_end);
 
         let oracle = OracleContract::new(storage.clone());
-        let (_, _, pair_ids, vwaps, _) = oracle.get_worldwide_day_vwap_snapshot(wwd).unwrap();
-        assert_eq!(pair_ids, vec![pair_id]);
+        let (_, _, bases, quotes, vwaps, _) = oracle.get_worldwide_day_vwap_snapshot(wwd).unwrap();
+        assert_eq!(bases, vec![outbe_oracle::api::COEN_ASSET]);
+        assert_eq!(quotes, vec![outbe_oracle::api::iso_asset(840)]);
         assert_eq!(vwaps, vec![U256::from(110u64)]);
 
         let metadosis = MetadosisContract::new(storage.clone());
@@ -2351,7 +2356,11 @@ fn test_missing_previous_vwap_results_in_red_day() {
                 outbe_oracle::api::iso_asset(840),
             )
             .unwrap();
-        let pair = outbe_oracle::api::coen_iso_pair(840);
+        let pair = (
+            outbe_oracle::api::coen_iso_pair(840),
+            outbe_oracle::api::COEN_ASSET,
+            outbe_oracle::api::iso_asset(840),
+        );
         oracle
             .write_snapshot(
                 forming_start + 30 * SECONDS_PER_HOUR,
@@ -2428,7 +2437,11 @@ fn test_equal_vwap_results_in_red_day() {
                 outbe_oracle::api::iso_asset(840),
             )
             .unwrap();
-        let pair = outbe_oracle::api::coen_iso_pair(840);
+        let pair = (
+            outbe_oracle::api::coen_iso_pair(840),
+            outbe_oracle::api::COEN_ASSET,
+            outbe_oracle::api::iso_asset(840),
+        );
         oracle
             .write_snapshot(
                 previous_forming_start + SECONDS_PER_HOUR,
@@ -2503,7 +2516,11 @@ fn test_normal_lifecycle_never_leaves_ready_day_type_unknown() {
                 outbe_oracle::api::iso_asset(840),
             )
             .unwrap();
-        let pair = outbe_oracle::api::coen_iso_pair(840);
+        let pair = (
+            outbe_oracle::api::coen_iso_pair(840),
+            outbe_oracle::api::COEN_ASSET,
+            outbe_oracle::api::iso_asset(840),
+        );
         oracle
             .write_snapshot(
                 previous_forming_start + SECONDS_PER_HOUR,

@@ -419,17 +419,22 @@ async fn twaps(client: &(impl Rpc + Sync), seconds: u64) -> Result<()> {
     let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
     let ret = IOracle::getTwapsCall::abi_decode_returns(&result)?;
 
-    println!("{:<8} {:<20} {:<12}", "PairID", "TWAP", "Lookback");
-    println!("{}", "-".repeat(44));
-    for ((pair_id, twap), lookback) in ret
-        .pairIds
+    println!(
+        "{:<10} {:<10} {:<20} {:<12}",
+        "Base", "Quote", "TWAP", "Lookback"
+    );
+    println!("{}", "-".repeat(56));
+    for (((base, quote), twap), lookback) in ret
+        .bases
         .iter()
+        .zip(ret.quotes.iter())
         .zip(ret.twaps.iter())
         .zip(ret.lookbackSeconds.iter())
     {
         println!(
-            "{:<8} {:<20} {:<12}",
-            pair_id,
+            "{:<10} {:<10} {:<20} {:<12}",
+            show_asset(*base),
+            show_asset(*quote),
             super::format_unit(*twap),
             lookback
         );
@@ -458,17 +463,22 @@ async fn worldwide_day_vwap(
     let ret = IOracle::getWorldwideDayVwapCall::abi_decode_returns(&result)?;
 
     println!("WorldwideDay VWAP window: {start_time}..{end_time}");
-    println!("{:<8} {:<20} {:<12}", "PairID", "VWAP", "Lookback");
-    println!("{}", "-".repeat(44));
-    for ((pair_id, vwap), lookback) in ret
-        .pairIds
+    println!(
+        "{:<10} {:<10} {:<20} {:<12}",
+        "Base", "Quote", "VWAP", "Lookback"
+    );
+    println!("{}", "-".repeat(56));
+    for (((base, quote), vwap), lookback) in ret
+        .bases
         .iter()
+        .zip(ret.quotes.iter())
         .zip(ret.vwaps.iter())
         .zip(ret.lookbackSeconds.iter())
     {
         println!(
-            "{:<8} {:<20} {:<12}",
-            pair_id,
+            "{:<10} {:<10} {:<20} {:<12}",
+            show_asset(*base),
+            show_asset(*quote),
             super::format_unit(*vwap),
             lookback
         );
@@ -503,27 +513,23 @@ async fn pairs(client: &(impl Rpc + Sync)) -> Result<()> {
     let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
     let ret = IOracle::getPairsCall::abi_decode_returns(&result)?;
 
-    if ret.pairIds.is_empty() {
+    if ret.bases.is_empty() {
         println!("No oracle pairs registered.");
         return Ok(());
     }
 
-    println!(
-        "{:<8} {:<10} {:<10} {:<8}",
-        "PairID", "Base", "Quote", "Active"
-    );
-    println!("{}", "-".repeat(40));
-    for (((pair_id, base), quote), active) in ret
-        .pairIds
+    println!("{:<10} {:<10} {:<8}", "Base", "Quote", "Active");
+    println!("{}", "-".repeat(32));
+    for ((base, quote), active) in ret
+        .bases
         .iter()
-        .zip(ret.bases.iter())
         .zip(ret.quotes.iter())
         .zip(ret.isActive.iter())
     {
         // Rendered back into the shorthand the commands accept, so ISO 840
         // prints as `840` rather than its reserved address.
         let (base, quote) = (show_asset(*base), show_asset(*quote));
-        println!("{pair_id:<8} {base:<10} {quote:<10} {active:<8}");
+        println!("{base:<10} {quote:<10} {active:<8}");
     }
     Ok(())
 }
@@ -590,23 +596,25 @@ async fn all_snapshot_history(client: &(impl Rpc + Sync), count: u32) -> Result<
     let ret = IOracle::getAllPriceSnapshotHistoryCall::abi_decode_returns(&result)?;
 
     println!(
-        "{:<10} {:<12} {:<8} {:<20} {:<20}",
-        "Snapshot", "Timestamp", "PairID", "Rate", "Volume"
+        "{:<10} {:<12} {:<10} {:<10} {:<20} {:<20}",
+        "Snapshot", "Timestamp", "Base", "Quote", "Rate", "Volume"
     );
-    println!("{}", "-".repeat(78));
-    for ((((snapshot_id, timestamp), pair_id), rate), volume) in ret
+    println!("{}", "-".repeat(90));
+    for (((((snapshot_id, timestamp), base), quote), rate), volume) in ret
         .snapshotIds
         .iter()
         .zip(ret.timestamps.iter())
-        .zip(ret.pairIds.iter())
+        .zip(ret.bases.iter())
+        .zip(ret.quotes.iter())
         .zip(ret.rates.iter())
         .zip(ret.volumes.iter())
     {
         println!(
-            "{:<10} {:<12} {:<8} {:<20} {:<20}",
+            "{:<10} {:<12} {:<10} {:<10} {:<20} {:<20}",
             snapshot_id,
             timestamp,
-            pair_id,
+            show_asset(*base),
+            show_asset(*quote),
             super::format_unit(*rate),
             super::format_unit(*volume)
         );
@@ -650,17 +658,22 @@ async fn vote(client: &(impl Rpc + Sync), validator: Address) -> Result<()> {
     }
 
     println!("=== Aggregate Vote for {validator} ===");
-    println!("{:<8} {:<20} {:<20}", "PairID", "Rate", "Volume");
-    println!("{}", "-".repeat(48));
-    for ((pid, rate), vol) in ret
-        .pairIds
+    println!(
+        "{:<10} {:<10} {:<20} {:<20}",
+        "Base", "Quote", "Rate", "Volume"
+    );
+    println!("{}", "-".repeat(62));
+    for (((base, quote), rate), vol) in ret
+        .bases
         .iter()
+        .zip(ret.quotes.iter())
         .zip(ret.rates.iter())
         .zip(ret.volumes.iter())
     {
         println!(
-            "{:<8} {:<20} {:<20}",
-            pid,
+            "{:<10} {:<10} {:<20} {:<20}",
+            show_asset(*base),
+            show_asset(*quote),
             super::format_unit(*rate),
             super::format_unit(*vol)
         );
@@ -754,17 +767,22 @@ async fn all_scurve(client: &(impl Rpc + Sync)) -> Result<()> {
     let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
     let ret = IOracle::getAllScurveDataCall::abi_decode_returns(&result)?;
 
-    println!("{:<8} {:<12} {:<20}", "PairID", "PeakDay", "PeakPrice");
-    println!("{}", "-".repeat(44));
-    for ((pair_id, peak_day), peak_price) in ret
-        .pairIds
+    println!(
+        "{:<10} {:<10} {:<12} {:<20}",
+        "Base", "Quote", "PeakDay", "PeakPrice"
+    );
+    println!("{}", "-".repeat(56));
+    for (((base, quote), peak_day), peak_price) in ret
+        .bases
         .iter()
+        .zip(ret.quotes.iter())
         .zip(ret.peakDays.iter())
         .zip(ret.peakPrices.iter())
     {
         println!(
-            "{:<8} {:<12} {:<20}",
-            pair_id,
+            "{:<10} {:<10} {:<12} {:<20}",
+            show_asset(*base),
+            show_asset(*quote),
             peak_day,
             super::format_unit(*peak_price)
         );

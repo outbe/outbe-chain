@@ -658,9 +658,13 @@ fn raw_oracle_opening(day: WorldwideDay, finalized_state_root: B256) -> RawContr
         U256::from(2),   // pair_ordinal[COEN/978]
         U256::from(1),   // wwd_vwap_exists
         U256::from(2),   // wwd_vwap_pair_count
-        U256::from(1),
+        // Each entry is (pair base, pair quote, value). COEN is the zero
+        // address and an ISO encodes as 0x0cc<bcd>, so 840 is 0xcc840.
+        U256::ZERO,
+        U256::from(0xcc840),
         scale,
-        U256::from(2),
+        U256::ZERO,
+        U256::from(0xcc978),
         scale * U256::from(2),
         U256::ZERO, // scurve_count
         U256::ZERO, // scurve_oldest

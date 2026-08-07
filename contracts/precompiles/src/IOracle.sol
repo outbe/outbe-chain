@@ -81,19 +81,33 @@ interface IOracle {
     function getPairCount() external view returns (uint32 count);
 
     /// @notice Returns all pair exchange rates as parallel arrays.
+    /// @dev Self-describing: each row names its own pair, so callers never have
+    ///      to positionally join against `getPairs`.
     function getExchangeRates()
         external
         view
-        returns (uint256[] memory rates, uint64[] memory blocks, uint64[] memory timestamps);
+        returns (
+            address[] memory bases,
+            address[] memory quotes,
+            uint256[] memory rates,
+            uint64[] memory blocks,
+            uint64[] memory timestamps
+        );
 
-    /// @notice Returns all active vote target pair_ids.
-    function getVoteTargets() external view returns (uint32[] memory pairIds);
+    /// @notice Returns all active vote target pairs.
+    function getVoteTargets() external view returns (address[] memory bases, address[] memory quotes);
 
     /// @notice Returns the pending aggregate vote for a validator.
     function getAggregateVote(address validator)
         external
         view
-        returns (bool exists, uint32[] memory pairIds, uint256[] memory rates, uint256[] memory volumes);
+        returns (
+            bool exists,
+            address[] memory bases,
+            address[] memory quotes,
+            uint256[] memory rates,
+            uint256[] memory volumes
+        );
 
     /// @notice Returns slash window progress for a validator.
     function getSlashWindowProgress(address validator)
@@ -131,7 +145,8 @@ interface IOracle {
         returns (
             uint64[] memory snapshotIds,
             uint64[] memory timestamps,
-            uint32[] memory pairIds,
+            address[] memory bases,
+            address[] memory quotes,
             uint256[] memory rates,
             uint256[] memory volumes
         );
@@ -145,7 +160,12 @@ interface IOracle {
     function getTwaps(uint64 lookback)
         external
         view
-        returns (uint32[] memory pairIds, uint256[] memory twaps, uint64[] memory lookbackSeconds);
+        returns (
+            address[] memory bases,
+            address[] memory quotes,
+            uint256[] memory twaps,
+            uint64[] memory lookbackSeconds
+        );
 
     /// @notice Returns VWAP over the last 24 hours for a pair.
     function getDayVwap(address base, address quote) external view returns (uint256 vwap);
@@ -160,7 +180,12 @@ interface IOracle {
     function getWorldwideDayVwap(uint64 startTime, uint64 endTime)
         external
         view
-        returns (uint32[] memory pairIds, uint256[] memory vwaps, uint64[] memory lookbackSeconds);
+        returns (
+            address[] memory bases,
+            address[] memory quotes,
+            uint256[] memory vwaps,
+            uint64[] memory lookbackSeconds
+        );
 
     /// @notice Returns a stored WorldwideDay VWAP snapshot by WWD key.
     function getWorldwideDayVwapSnapshot(uint32 worldwideDay)
@@ -169,7 +194,8 @@ interface IOracle {
         returns (
             uint64 startTime,
             uint64 endTime,
-            uint32[] memory pairIds,
+            address[] memory bases,
+            address[] memory quotes,
             uint256[] memory vwaps,
             uint64[] memory lookbackSeconds
         );
@@ -190,7 +216,7 @@ interface IOracle {
     function getAllScurveData()
         external
         view
-        returns (uint32[] memory pairIds, uint64[] memory peakDays, uint256[] memory peakPrices);
+        returns (address[] memory bases, address[] memory quotes, uint64[] memory peakDays, uint256[] memory peakPrices);
 
     /// @notice Returns all S-curve data for one pair.
     function getAllScurveDataForPair(address base, address quote)
@@ -199,13 +225,10 @@ interface IOracle {
         returns (uint64[] memory peakDays, uint256[] memory peakPrices);
 
     /// @notice Returns all registered pairs as parallel arrays of
-    ///         (pairId, base, quote, isActive).
+    ///         (base, quote, isActive).
     /// @dev `bases` and `quotes` come back in the direction each pair was
     ///      registered in, which is the direction its reads must be quoted in.
-    function getPairs()
-        external
-        view
-        returns (uint32[] memory pairIds, address[] memory bases, address[] memory quotes, bool[] memory isActive);
+    function getPairs() external view returns (address[] memory bases, address[] memory quotes, bool[] memory isActive);
 
     /// @notice Returns the S-curve adjusted nominal price for a pair at a timestamp.
     function getNominalPrice(address base, address quote, uint64 timestamp) external view returns (uint256 price);

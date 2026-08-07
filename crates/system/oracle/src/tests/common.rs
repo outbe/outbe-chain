@@ -40,6 +40,11 @@ pub(super) fn pair_key(base: Address, quote: Address) -> AddressPair {
     AddressPair::from_addresses(base, quote)
 }
 
+/// A pair plus the orientation it is registered in, as the write paths take it.
+pub(super) fn registered(base: Address, quote: Address) -> crate::state::RegisteredPair {
+    (pair_key(base, quote), base, quote)
+}
+
 /// Test currency rate (4.30 %, 1e18 scaled) used when building
 /// `ReferenceCurrency` genesis entries.
 pub(super) const TEST_RATE: U256 = U256::from_limbs([43_000_000_000_000_000u64, 0, 0, 0]);
@@ -71,7 +76,7 @@ pub(super) fn seed_ocomp_oracle_with_snapshot(provider: &mut HashMapStorageProvi
         OracleContract::new(storage)
             .write_snapshot(
                 ATOMIC_DAY_START + 100,
-                &[(pair_key(COEN, usd()), U256::from(125), U256::from(2))],
+                &[(registered(COEN, usd()), U256::from(125), U256::from(2))],
             )
             .unwrap();
     });
@@ -82,7 +87,7 @@ pub(super) fn seed_ocomp_oracle_with_scurve(provider: &mut HashMapStorageProvide
     StorageHandle::enter(provider, |storage| {
         crate::scurve::store_scurve_entry(
             &mut OracleContract::new(storage),
-            1,
+            pair_key(COEN, usd()),
             ATOMIC_DAY_START,
             U256::from(125),
         )
@@ -110,7 +115,7 @@ pub(super) fn seed_oracle_with_peak_history(
             oracle
                 .write_snapshot(
                     day + 100,
-                    &[(pair_key(COEN, usd()), U256::from(price), U256::from(2))],
+                    &[(registered(COEN, usd()), U256::from(price), U256::from(2))],
                 )
                 .unwrap();
         }
@@ -132,7 +137,7 @@ pub(super) fn seed_prefork_oracle_with_snapshot(provider: &mut HashMapStoragePro
         oracle
             .write_snapshot(
                 ATOMIC_DAY_START + 100,
-                &[(pair_key(COEN, usd()), U256::from(125), U256::from(2))],
+                &[(registered(COEN, usd()), U256::from(125), U256::from(2))],
             )
             .unwrap();
     });
@@ -141,7 +146,7 @@ pub(super) fn seed_prefork_oracle_with_snapshot(provider: &mut HashMapStoragePro
 pub(super) fn write_snapshot_mutation(storage: StorageHandle<'_>) -> PrecompileResult<()> {
     OracleContract::new(storage).write_snapshot(
         ATOMIC_DAY_START + 100,
-        &[(pair_key(COEN, usd()), U256::from(125), U256::from(2))],
+        &[(registered(COEN, usd()), U256::from(125), U256::from(2))],
     )
 }
 
@@ -162,7 +167,7 @@ pub(super) fn finalize_utc_day_mutation(storage: StorageHandle<'_>) -> Precompil
 pub(super) fn store_scurve_mutation(storage: StorageHandle<'_>) -> PrecompileResult<()> {
     crate::scurve::store_scurve_entry(
         &mut OracleContract::new(storage),
-        1,
+        pair_key(COEN, usd()),
         ATOMIC_DAY_START,
         U256::from(125),
     )
@@ -177,7 +182,11 @@ pub(super) fn evict_scurve_mutation(storage: StorageHandle<'_>) -> PrecompileRes
 }
 
 pub(super) fn process_scurve_mutation(storage: StorageHandle<'_>) -> PrecompileResult<()> {
-    crate::scurve::process_daily_scurve(&mut OracleContract::new(storage), 1, SCURVE_CURRENT_DAY)
+    crate::scurve::process_daily_scurve(
+        &mut OracleContract::new(storage),
+        pair_key(COEN, usd()),
+        SCURVE_CURRENT_DAY,
+    )
 }
 
 pub(super) fn assert_oracle_mutation_is_atomic(

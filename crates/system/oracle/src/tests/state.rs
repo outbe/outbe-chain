@@ -13,12 +13,10 @@ fn register_pair_assigns_sequential_ids_and_marks_vote_targets() {
         let mut oracle = OracleContract::new(storage.clone());
 
         // Register first pair
-        let id1 = oracle.register_pair(COEN, USDT).unwrap();
-        assert_eq!(id1, 1);
+        assert_eq!(oracle.register_pair(COEN, USDT).unwrap(), 1);
 
         // Register second pair
-        let id2 = oracle.register_pair(ETH, USDT).unwrap();
-        assert_eq!(id2, 2);
+        assert_eq!(oracle.register_pair(ETH, USDT).unwrap(), 2);
 
         // Verify lookup
         assert_eq!(oracle.pair_ordinal_of(pair_key(COEN, USDT)).unwrap(), 1);
@@ -123,10 +121,9 @@ fn get_pairs_returns_ids_symbols_and_active_flags() {
             .deactivate_vote_target(Address::ZERO, ETH, USDC)
             .unwrap();
 
-        let (ids, bases, quotes, active) = oracle.get_pairs().unwrap();
+        let (bases, quotes, active) = oracle.get_pairs().unwrap();
 
         // Parallel arrays are aligned and 1-indexed in registration order.
-        assert_eq!(ids, vec![1, 2, 3]);
         assert_eq!(bases, vec![COEN, ETH, BTC]);
         assert_eq!(quotes, vec![USDT, USDC, USDC]);
         assert_eq!(active, vec![true, false, true]);
@@ -137,8 +134,7 @@ fn get_pairs_returns_ids_symbols_and_active_flags() {
 fn get_pairs_returns_empty_arrays_without_registered_pairs() {
     with_storage(|storage| {
         let oracle = OracleContract::new(storage.clone());
-        let (ids, bases, quotes, active) = oracle.get_pairs().unwrap();
-        assert!(ids.is_empty());
+        let (bases, quotes, active) = oracle.get_pairs().unwrap();
         assert!(bases.is_empty());
         assert!(quotes.is_empty());
         assert!(active.is_empty());
@@ -248,21 +244,21 @@ fn write_snapshot_advances_the_ring_buffer_and_feeds_vwap() {
 
         // Write 3 snapshots
         let entries = vec![(
-            pair_key(COEN, USDT),
+            registered(COEN, USDT),
             U256::in_units(100u64),
             U256::in_units(1000u64),
         )];
         oracle.write_snapshot(1000, &entries).unwrap();
 
         let entries2 = vec![(
-            pair_key(COEN, USDT),
+            registered(COEN, USDT),
             U256::in_units(200u64),
             U256::in_units(2000u64),
         )];
         oracle.write_snapshot(2000, &entries2).unwrap();
 
         let entries3 = vec![(
-            pair_key(COEN, USDT),
+            registered(COEN, USDT),
             U256::in_units(300u64),
             U256::in_units(3000u64),
         )];
@@ -276,7 +272,9 @@ fn write_snapshot_advances_the_ring_buffer_and_feeds_vwap() {
         //      = (100000 + 400000 + 900000) / 6000
         //      = 1400000 / 6000
         //      = 233.333...
-        let vwap = oracle.calculate_vwap(1, 0, 5000).unwrap();
+        let vwap = oracle
+            .calculate_vwap(pair_key(COEN, USDT), 0, 5000)
+            .unwrap();
         // TODO is it correct??
         let expected = U256::in_units(1_400_000u64) * SCALE_1E18 / (U256::in_units(6_000u64));
         assert_eq!(vwap, expected);
@@ -289,21 +287,25 @@ fn calculate_vwap_includes_only_snapshots_inside_the_window() {
         let mut oracle = OracleContract::new(storage.clone());
         oracle.register_pair(COEN, USDT).unwrap();
 
-        let entries1 = vec![(pair_key(COEN, USDT), U256::in_units(100u64), SCALE_1E18)];
+        let entries1 = vec![(registered(COEN, USDT), U256::in_units(100u64), SCALE_1E18)];
         oracle.write_snapshot(1000, &entries1).unwrap();
 
-        let entries2 = vec![(pair_key(COEN, USDT), U256::in_units(200u64), SCALE_1E18)];
+        let entries2 = vec![(registered(COEN, USDT), U256::in_units(200u64), SCALE_1E18)];
         oracle.write_snapshot(2000, &entries2).unwrap();
 
-        let entries3 = vec![(pair_key(COEN, USDT), U256::in_units(300u64), SCALE_1E18)];
+        let entries3 = vec![(registered(COEN, USDT), U256::in_units(300u64), SCALE_1E18)];
         oracle.write_snapshot(3000, &entries3).unwrap();
 
         // VWAP from 1500..2500 should only include snapshot at 2000
-        let vwap = oracle.calculate_vwap(1, 1500, 2500).unwrap();
+        let vwap = oracle
+            .calculate_vwap(pair_key(COEN, USDT), 1500, 2500)
+            .unwrap();
         assert_eq!(vwap, U256::in_units(200u64));
 
         // VWAP from 2500..3500 should only include snapshot at 3000
-        let vwap = oracle.calculate_vwap(1, 2500, 3500).unwrap();
+        let vwap = oracle
+            .calculate_vwap(pair_key(COEN, USDT), 2500, 3500)
+            .unwrap();
         assert_eq!(vwap, U256::in_units(300u64));
     });
 }
@@ -313,7 +315,9 @@ fn calculate_vwap_reverts_for_a_window_without_snapshots() {
     with_storage(|storage| {
         let oracle = OracleContract::new(storage.clone());
         // No snapshots at all
-        assert!(oracle.calculate_vwap(1, 0, 1000).is_err());
+        assert!(oracle
+            .calculate_vwap(pair_key(COEN, USDT), 0, 1000)
+            .is_err());
     });
 }
 
@@ -324,14 +328,16 @@ fn calculate_vwap_treats_zero_volume_as_one_scaled_unit() {
         oracle.register_pair(COEN, USDT).unwrap();
 
         // Zero-volume entries → equal-weight averaging
-        let entries1 = vec![(pair_key(COEN, USDT), U256::in_units(100u64), U256::ZERO)];
+        let entries1 = vec![(registered(COEN, USDT), U256::in_units(100u64), U256::ZERO)];
         oracle.write_snapshot(1000, &entries1).unwrap();
 
-        let entries2 = vec![(pair_key(COEN, USDT), U256::in_units(200u64), U256::ZERO)];
+        let entries2 = vec![(registered(COEN, USDT), U256::in_units(200u64), U256::ZERO)];
         oracle.write_snapshot(2000, &entries2).unwrap();
 
         // Equal-weight: (100 + 200) / 2 = 150
-        let vwap = oracle.calculate_vwap(1, 0, 3000).unwrap();
+        let vwap = oracle
+            .calculate_vwap(pair_key(COEN, USDT), 0, 3000)
+            .unwrap();
         // With zero volumes, each gets SCALE_1E18 weight:
         // sum(rate * 1e18) / sum(1e18) = (100*1e18 + 200*1e18) / (2*1e18) = 150
         let expected = (U256::in_units(100u64) * SCALE_1E18 + U256::in_units(200u64) * SCALE_1E18)
@@ -344,17 +350,17 @@ fn calculate_vwap_treats_zero_volume_as_one_scaled_unit() {
 fn calculate_vwap_isolates_each_pair_within_one_snapshot() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
-        let id1 = oracle.register_pair(COEN, USDT).unwrap();
-        let id2 = oracle.register_pair(ETH, USDT).unwrap();
+        oracle.register_pair(COEN, USDT).unwrap();
+        oracle.register_pair(ETH, USDT).unwrap();
 
         let entries = vec![
             (
-                pair_key(COEN, USDT),
+                registered(COEN, USDT),
                 U256::in_units(1u64),
                 U256::in_units(100u64),
             ),
             (
-                pair_key(ETH, USDT),
+                registered(ETH, USDT),
                 U256::in_units(2000u64),
                 U256::in_units(50u64),
             ),
@@ -362,11 +368,13 @@ fn calculate_vwap_isolates_each_pair_within_one_snapshot() {
         oracle.write_snapshot(1000, &entries).unwrap();
 
         // VWAP for COEN should be 1
-        let vwap_coen = oracle.calculate_vwap(id1, 0, 2000).unwrap();
+        let vwap_coen = oracle
+            .calculate_vwap(pair_key(COEN, USDT), 0, 2000)
+            .unwrap();
         assert_eq!(vwap_coen, SCALE_1E18);
 
         // VWAP for ETH should be 2000
-        let vwap_eth = oracle.calculate_vwap(id2, 0, 2000).unwrap();
+        let vwap_eth = oracle.calculate_vwap(pair_key(ETH, USDT), 0, 2000).unwrap();
         assert_eq!(vwap_eth, U256::in_units(2000u64));
     });
 }
@@ -476,7 +484,7 @@ fn get_exchange_rates_returns_parallel_arrays_in_pair_id_order() {
             .set_exchange_rate(Address::ZERO, ETH, USDT, rate2, 20, 240)
             .unwrap();
 
-        let (rates, blocks, timestamps) = oracle.get_exchange_rates().unwrap();
+        let (_, _, rates, blocks, timestamps) = oracle.get_exchange_rates().unwrap();
         assert_eq!(rates.len(), 2);
         assert_eq!(rates[0], rate1);
         assert_eq!(rates[1], rate2);
@@ -491,7 +499,7 @@ fn get_exchange_rates_returns_parallel_arrays_in_pair_id_order() {
 fn get_exchange_rates_returns_empty_arrays_without_registered_pairs() {
     with_storage(|storage| {
         let oracle = OracleContract::new(storage.clone());
-        let (rates, blocks, timestamps) = oracle.get_exchange_rates().unwrap();
+        let (_, _, rates, blocks, timestamps) = oracle.get_exchange_rates().unwrap();
         assert!(rates.is_empty());
         assert!(blocks.is_empty());
         assert!(timestamps.is_empty());
@@ -511,8 +519,9 @@ fn get_vote_targets_lists_only_active_pairs() {
             .deactivate_vote_target(Address::ZERO, ETH, USDT)
             .unwrap();
 
-        let pair_ids = oracle.get_vote_targets().unwrap();
-        assert_eq!(pair_ids, vec![1, 3]);
+        let (bases, quotes) = oracle.get_vote_targets().unwrap();
+        assert_eq!(bases, vec![COEN, BTC]);
+        assert_eq!(quotes, vec![USDT, USDT]);
     });
 }
 
@@ -520,8 +529,8 @@ fn get_vote_targets_lists_only_active_pairs() {
 fn get_vote_targets_returns_empty_without_registered_pairs() {
     with_storage(|storage| {
         let oracle = OracleContract::new(storage.clone());
-        let pair_ids = oracle.get_vote_targets().unwrap();
-        assert!(pair_ids.is_empty());
+        let (bases, quotes) = oracle.get_vote_targets().unwrap();
+        assert!(bases.is_empty() && quotes.is_empty());
     });
 }
 
@@ -547,11 +556,11 @@ fn get_aggregate_vote_returns_the_stored_tuples() {
             )
             .unwrap();
 
-        let (exists, pair_ids, rates, volumes) = oracle.get_aggregate_vote(&validator).unwrap();
+        let (exists, bases, quotes, rates, volumes) =
+            oracle.get_aggregate_vote(&validator).unwrap();
         assert!(exists);
-        assert_eq!(pair_ids.len(), 2);
-        assert_eq!(pair_ids[0], 1);
-        assert_eq!(pair_ids[1], 2);
+        assert_eq!(bases, vec![COEN, ETH]);
+        assert_eq!(quotes, vec![USDT, USDT]);
         assert_eq!(rates[0], rate1);
         assert_eq!(rates[1], rate2);
         assert_eq!(volumes[0], vol1);
@@ -565,9 +574,10 @@ fn get_aggregate_vote_reports_absent_for_a_non_voter() {
         let oracle = OracleContract::new(storage.clone());
         let validator = Address::new([0x11; 20]);
 
-        let (exists, pair_ids, rates, volumes) = oracle.get_aggregate_vote(&validator).unwrap();
+        let (exists, bases, quotes, rates, volumes) =
+            oracle.get_aggregate_vote(&validator).unwrap();
         assert!(!exists);
-        assert!(pair_ids.is_empty());
+        assert!(bases.is_empty() && quotes.is_empty());
         assert!(rates.is_empty());
         assert!(volumes.is_empty());
     });
@@ -755,7 +765,8 @@ fn ocomp_opening_plan_slots_match_the_schema_layout() {
 
         oracle.pair_ordinal.write(&pair, 7).unwrap();
         oracle.scurve_count.write(3).unwrap();
-        oracle.scurve_pair_id.write(&0u32, 7).unwrap();
+        oracle.scurve_pair_base.write(&0u32, COEN).unwrap();
+        oracle.scurve_pair_quote.write(&0u32, usd()).unwrap();
         oracle.scurve_peak_day.write(&0u32, 111).unwrap();
         oracle
             .scurve_peak_price
@@ -766,9 +777,14 @@ fn ocomp_opening_plan_slots_match_the_schema_layout() {
         oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
         oracle.worldwide_day_vwap_pair_count.write(&wwd, 1).unwrap();
         oracle
-            .worldwide_day_vwap_pair_id
+            .worldwide_day_vwap_pair_base
             .get_nested(&wwd)
-            .write(&0u32, 7)
+            .write(&0u32, COEN)
+            .unwrap();
+        oracle
+            .worldwide_day_vwap_pair_quote
+            .get_nested(&wwd)
+            .write(&0u32, usd())
             .unwrap();
         oracle
             .worldwide_day_vwap_value
@@ -788,7 +804,15 @@ fn ocomp_opening_plan_slots_match_the_schema_layout() {
 
         let base = U256::from;
         assert_mapping_slot(&storage, pair, base(10), base(7), "pair_ordinal");
-        assert_mapping_slot(&storage, 0u32, base(35), base(7), "scurve_pair_id");
+        let as_word = |a: Address| U256::from_be_bytes(a.into_word().0);
+        assert_mapping_slot(&storage, 0u32, base(35), as_word(COEN), "scurve_pair_base");
+        assert_mapping_slot(
+            &storage,
+            0u32,
+            base(67),
+            as_word(usd()),
+            "scurve_pair_quote",
+        );
         assert_mapping_slot(&storage, 0u32, base(36), base(111), "scurve_peak_day");
         assert_mapping_slot(&storage, 0u32, base(37), base(222), "scurve_peak_price");
         // reference_currencies is a StorageVec: length at the base slot,
@@ -824,8 +848,15 @@ fn ocomp_opening_plan_slots_match_the_schema_layout() {
             &storage,
             0u32,
             wwd.mapping_slot(base(51)),
-            base(7),
-            "worldwide_day_vwap_pair_id",
+            as_word(COEN),
+            "worldwide_day_vwap_pair_base",
+        );
+        assert_mapping_slot(
+            &storage,
+            0u32,
+            wwd.mapping_slot(base(68)),
+            as_word(usd()),
+            "worldwide_day_vwap_pair_quote",
         );
         assert_mapping_slot(
             &storage,

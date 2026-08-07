@@ -14,8 +14,7 @@ fn ocomp_pre_admission_selects_stored_price_and_reads_bounded_counts() {
     let timestamp = 1_753_315_200_u64;
     with_storage_at(timestamp, |storage| {
         let mut oracle = OracleContract::new(storage.clone());
-        let pair_id = oracle.register_pair(COEN, usd()).unwrap();
-        let pair = pair_key(COEN, usd());
+        oracle.register_pair(COEN, usd()).unwrap();
         let wwd = outbe_common::WorldwideDay::from_timestamp(timestamp);
         let last_closed = outbe_primitives::time::previous_date_key(
             outbe_primitives::time::timestamp_to_date_key(timestamp),
@@ -37,7 +36,7 @@ fn ocomp_pre_admission_selects_stored_price_and_reads_bounded_counts() {
         oracle
             .write_snapshot(
                 last_closed_start + 100,
-                &[(pair, last_closed_price, U256::from(1))],
+                &[(registered(COEN, usd()), last_closed_price, U256::from(1))],
             )
             .unwrap();
         oracle
@@ -48,8 +47,13 @@ fn ocomp_pre_admission_selects_stored_price_and_reads_bounded_counts() {
             )
             .unwrap();
         oracle.finalize_utc_day_vwap(last_closed).unwrap();
-        crate::scurve::store_scurve_entry(&mut oracle, pair_id, last_closed_start, U256::from(200))
-            .unwrap();
+        crate::scurve::store_scurve_entry(
+            &mut oracle,
+            pair_key(COEN, usd()),
+            last_closed_start,
+            U256::from(200),
+        )
+        .unwrap();
 
         let closed = crate::api::ocomp_pre_admission_projection(
             storage.clone(),
@@ -97,12 +101,11 @@ fn ocomp_oracle_profile_initialization_is_exact_and_idempotent() {
         assert!(crate::api::initialize_fresh_ocomp_profile(storage.clone()).is_err());
 
         let mut oracle = OracleContract::new(storage.clone());
-        let pair_id = oracle.register_pair(COEN, usd()).unwrap();
+        oracle.register_pair(COEN, usd()).unwrap();
         crate::api::initialize_fresh_ocomp_profile(storage.clone()).unwrap();
         crate::api::initialize_fresh_ocomp_profile(storage).unwrap();
 
         assert!(oracle.ocomp_profile_ready.read().unwrap());
-        assert_eq!(oracle.ocomp_day_type_pair_id.read().unwrap(), pair_id);
         assert_eq!(oracle.ocomp_state_version.read().unwrap(), 1);
     });
 }
@@ -112,12 +115,14 @@ fn ocomp_state_version_overflow_rejects_before_oracle_mutation() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         oracle.register_pair(COEN, usd()).unwrap();
-        let pair = pair_key(COEN, usd());
         crate::api::initialize_fresh_ocomp_profile(storage).unwrap();
         oracle.ocomp_state_version.write(u64::MAX).unwrap();
 
         assert!(oracle
-            .write_snapshot(1_000, &[(pair, U256::from(10), U256::from(1))],)
+            .write_snapshot(
+                1_000,
+                &[(registered(COEN, usd()), U256::from(10), U256::from(1))],
+            )
             .is_err());
         assert_eq!(oracle.snapshot_write_idx.read().unwrap(), 0);
         assert_eq!(oracle.snapshot_pair_count.read(&0).unwrap(), 0);
@@ -171,9 +176,9 @@ fn prefork_oracle_event_failures_preserve_historical_best_effort_mutations() {
         let oracle = OracleContract::new(storage);
         assert_eq!(
             oracle
-                .get_utc_day_vwap_for_pair_id(
+                .get_utc_day_vwap_for_pair(
                     outbe_primitives::time::timestamp_to_date_key(ATOMIC_DAY_START),
-                    1,
+                    pair_key(COEN, usd()),
                 )
                 .unwrap(),
             Some(U256::from(125))
@@ -207,13 +212,16 @@ fn scurve_count_overflow_rejects_before_any_owner_write() {
 
         assert!(crate::scurve::store_scurve_entry(
             &mut oracle,
-            1,
+            pair_key(COEN, usd()),
             ATOMIC_DAY_START,
             U256::from(125),
         )
         .is_err());
         assert_eq!(oracle.scurve_count.read().unwrap(), u32::MAX);
-        assert_eq!(oracle.scurve_pair_id.read(&u32::MAX).unwrap(), 0);
+        assert_eq!(
+            oracle.scurve_pair_base.read(&u32::MAX).unwrap(),
+            Address::ZERO
+        );
         assert_eq!(oracle.ocomp_state_version.read().unwrap(), version_before);
     });
 }
@@ -574,8 +582,7 @@ fn begin_block_scurve_hook_records_the_daily_peak() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
-        let pair_id = oracle.register_pair(COEN, usd()).unwrap();
-        let pair = pair_key(COEN, usd());
+        oracle.register_pair(COEN, usd()).unwrap();
 
         let day_1 = crate::scurve::DAY_SECONDS;
         let day_2 = 2 * crate::scurve::DAY_SECONDS;
@@ -583,13 +590,22 @@ fn begin_block_scurve_hook_records_the_daily_peak() {
         let day_4 = 4 * crate::scurve::DAY_SECONDS;
         // Three fully-closed days forming a peak at day_2: 100 < 150 > 120.
         oracle
-            .write_snapshot(day_1 + 60, &[(pair, U256::in_units(100u64), SCALE_1E18)])
+            .write_snapshot(
+                day_1 + 60,
+                &[(registered(COEN, usd()), U256::in_units(100u64), SCALE_1E18)],
+            )
             .unwrap();
         oracle
-            .write_snapshot(day_2 + 60, &[(pair, U256::in_units(150u64), SCALE_1E18)])
+            .write_snapshot(
+                day_2 + 60,
+                &[(registered(COEN, usd()), U256::in_units(150u64), SCALE_1E18)],
+            )
             .unwrap();
         oracle
-            .write_snapshot(day_3 + 60, &[(pair, U256::in_units(120u64), SCALE_1E18)])
+            .write_snapshot(
+                day_3 + 60,
+                &[(registered(COEN, usd()), U256::in_units(120u64), SCALE_1E18)],
+            )
             .unwrap();
 
         // Hook fires on the first block of day_4 — the current day has NO
@@ -601,7 +617,16 @@ fn begin_block_scurve_hook_records_the_daily_peak() {
         <crate::lifecycle::OracleLifecycle as BlockLifecycle>::begin_block(&runtime_ctx).unwrap();
 
         assert_eq!(oracle.scurve_count.read().unwrap(), 1);
-        assert_eq!(oracle.scurve_pair_id.read(&0).unwrap(), pair_id);
+        assert_eq!(
+            crate::state::read_pair_columns(
+                &oracle.scurve_pair_base,
+                &oracle.scurve_pair_quote,
+                &0u32,
+            )
+            .unwrap()
+            .0,
+            pair_key(COEN, usd())
+        );
         assert_eq!(oracle.scurve_peak_day.read(&0).unwrap(), day_2);
         assert_eq!(
             oracle.scurve_peak_price.read(&0).unwrap(),
@@ -610,7 +635,8 @@ fn begin_block_scurve_hook_records_the_daily_peak() {
         assert_eq!(oracle.scurve_last_processed_day.read().unwrap(), day_4);
 
         let active_value =
-            crate::scurve::get_max_active_scurve_value(&oracle, pair_id, day_4).unwrap();
+            crate::scurve::get_max_active_scurve_value(&oracle, pair_key(COEN, usd()), day_4)
+                .unwrap();
         assert!(!active_value.is_zero());
         assert!(active_value < U256::in_units(150u64));
     });
@@ -621,7 +647,7 @@ fn begin_block_finalizes_the_closed_utc_day() {
         let mut oracle = OracleContract::new(storage.clone());
         oracle.config_is_initialized.write(true).unwrap();
         oracle.config_vote_period.write(2).unwrap();
-        let coen_id = oracle.register_pair(COEN, usd()).unwrap();
+        oracle.register_pair(COEN, usd()).unwrap();
         let coen = pair_key(COEN, usd());
 
         let day_d = 20260624u32;
@@ -634,7 +660,11 @@ fn begin_block_finalizes_the_closed_utc_day() {
         oracle
             .write_snapshot(
                 d_start + 1_000,
-                &[(coen, U256::from(170u64), U256::from(1u64))],
+                &[(
+                    registered(COEN, usd()),
+                    U256::from(170u64),
+                    U256::from(1u64),
+                )],
             )
             .unwrap();
 
@@ -648,14 +678,12 @@ fn begin_block_finalizes_the_closed_utc_day() {
 
         assert_eq!(oracle.utc_day_vwap_last_finalized.read().unwrap(), day_d);
         assert_eq!(
-            oracle.get_utc_day_vwap_for_pair_id(day_d, coen_id).unwrap(),
+            oracle.get_utc_day_vwap_for_pair(day_d, coen).unwrap(),
             Some(U256::from(170u64))
         );
         // The in-progress current day is not finalized.
         assert_eq!(
-            oracle
-                .get_utc_day_vwap_for_pair_id(day_d1, coen_id)
-                .unwrap(),
+            oracle.get_utc_day_vwap_for_pair(day_d1, coen).unwrap(),
             None
         );
 
@@ -673,7 +701,11 @@ fn begin_block_finalizes_the_closed_utc_day() {
         oracle
             .write_snapshot(
                 d1_start + 2_000,
-                &[(coen, U256::from(190u64), U256::from(1u64))],
+                &[(
+                    registered(COEN, usd()),
+                    U256::from(190u64),
+                    U256::from(1u64),
+                )],
             )
             .unwrap();
         let ctx3 = BlockRuntimeContext::new(
@@ -683,9 +715,7 @@ fn begin_block_finalizes_the_closed_utc_day() {
         <crate::lifecycle::OracleLifecycle as BlockLifecycle>::begin_block(&ctx3).unwrap();
         assert_eq!(oracle.utc_day_vwap_last_finalized.read().unwrap(), day_d1);
         assert_eq!(
-            oracle
-                .get_utc_day_vwap_for_pair_id(day_d1, coen_id)
-                .unwrap(),
+            oracle.get_utc_day_vwap_for_pair(day_d1, coen).unwrap(),
             Some(U256::from(190u64))
         );
     });

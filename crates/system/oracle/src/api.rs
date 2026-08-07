@@ -98,26 +98,29 @@ pub fn coen_rate_for(storage: StorageHandle, iso_code: u16) -> Result<Option<U25
     oracle.exchange_rate.read(&pair).map(Some)
 }
 
-/// Pair id of `COEN/<iso_code>`, or `None` when that pair is not registered.
-/// For callers that need the id itself rather than the rate.
-pub fn pair_id_for(storage: StorageHandle, iso_code: u16) -> Result<Option<u32>> {
+/// The `COEN/<iso_code>` pair, or `None` when it is not registered.
+///
+/// The key itself is a pure function of the ISO code; the storage read only
+/// answers "is it registered", which is what callers actually branch on.
+pub fn registered_coen_pair(storage: StorageHandle, iso_code: u16) -> Result<Option<AddressPair>> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
-    let id = oracle.pair_ordinal_of(coen_iso_pair(iso_code))?;
-    Ok((id != 0).then_some(id))
+    let pair = coen_iso_pair(iso_code);
+    Ok((oracle.pair_ordinal_of(pair)? != 0).then_some(pair))
 }
 
-pub fn get_pair_id(storage: StorageHandle, iso_code: u16) -> Result<u32> {
-    pair_id_for(storage, iso_code)?
+/// [`registered_coen_pair`] with the "not registered" revert callers repeat.
+pub fn require_coen_pair(storage: StorageHandle, iso_code: u16) -> Result<AddressPair> {
+    registered_coen_pair(storage, iso_code)?
         .ok_or_else(|| PrecompileError::Revert("pair not registered".into()))
 }
 
-pub fn get_worldwide_day_vwap_for_pair_id(
+pub fn get_worldwide_day_vwap_for_pair(
     storage: StorageHandle,
     worldwide_day: WorldwideDay,
-    pair_id: u32,
+    pair: AddressPair,
 ) -> Result<Option<U256>> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
-    oracle.get_worldwide_day_vwap_for_pair_id(worldwide_day, pair_id)
+    oracle.get_worldwide_day_vwap_for_pair(worldwide_day, pair)
 }
 
 /// Selects the already-stored auction entry price and returns only O(1)
@@ -192,11 +195,10 @@ pub fn day_type_pair_vwap(
     worldwide_day: WorldwideDay,
 ) -> Result<Option<U256>> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
-    let pair_id = oracle.pair_ordinal_of(DAY_TYPE_PAIR_KEY)?;
-    if pair_id == 0 {
+    if oracle.pair_ordinal_of(DAY_TYPE_PAIR_KEY)? == 0 {
         return Ok(None);
     }
-    oracle.get_worldwide_day_vwap_for_pair_id(worldwide_day, pair_id)
+    oracle.get_worldwide_day_vwap_for_pair(worldwide_day, DAY_TYPE_PAIR_KEY)
 }
 
 /// Computes and stores the WorldwideDay VWAP snapshot for `[start_time,
@@ -223,14 +225,13 @@ pub fn store_worldwide_day_vwap_snapshot(
 /// `None` when the pair is not registered or the day has no finalized value.
 pub fn day_type_pair_utc_vwap(storage: StorageHandle, utc_day: u32) -> Result<Option<U256>> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
-    let pair_id = oracle.pair_ordinal_of(DAY_TYPE_PAIR_KEY)?;
-    if pair_id == 0 {
+    if oracle.pair_ordinal_of(DAY_TYPE_PAIR_KEY)? == 0 {
         return Ok(None);
     }
-    oracle.get_utc_day_vwap_for_pair_id(utc_day, pair_id)
+    oracle.get_utc_day_vwap_for_pair(utc_day, DAY_TYPE_PAIR_KEY)
 }
 
-/// Returns the finalized VWAP for `pair_id` on the given UTC calendar day
+/// Returns the finalized VWAP for `pair` on the given UTC calendar day
 /// (`utc_day` is a yyyymmdd UTC date key, e.g. `20260625`), or `None` if the
 /// day is not finalized or had no oracle data for that pair. Distinguishing
 /// "not finalized yet" from "finalized, no data" requires comparing `utc_day`
@@ -238,20 +239,20 @@ pub fn day_type_pair_utc_vwap(storage: StorageHandle, utc_day: u32) -> Result<Op
 pub fn get_utc_day_vwap(
     storage: StorageHandle,
     utc_day: u32,
-    pair_id: u32,
+    pair: AddressPair,
 ) -> Result<Option<U256>> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
-    oracle.get_utc_day_vwap_for_pair_id(utc_day, pair_id)
+    oracle.get_utc_day_vwap_for_pair(utc_day, pair)
 }
 
 pub fn get_max_active_scurve_value(
     storage: StorageHandle,
     worldwide_day: WorldwideDay,
-    pair_id: u32,
+    pair: AddressPair,
 ) -> Result<U256> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
     let scurve_timestamp = worldwide_day.to_timestamp_utc();
-    scurve::get_max_active_scurve_value(&oracle, pair_id, scurve_timestamp)
+    scurve::get_max_active_scurve_value(&oracle, pair, scurve_timestamp)
 }
 
 pub fn get_exchange_rate(storage: StorageHandle, base: Address, quote: Address) -> Result<U256> {

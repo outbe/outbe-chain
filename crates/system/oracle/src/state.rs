@@ -8,21 +8,69 @@ use alloy_primitives::{Address, U256};
 use outbe_common::WorldwideDay;
 use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::storage::types::{Mapping, StorageKey};
 
 use crate::constants::MAX_SNAPSHOT_RETENTION_SECONDS;
 use crate::schema::{OracleContract, SCALE_1E18};
 
-/// `(exists, pair_ids, rates, volumes)` — pending aggregate vote for a validator.
-type AggregateVote = (bool, Vec<u32>, Vec<U256>, Vec<U256>);
+/// `(exists, bases, quotes, rates, volumes)` — pending aggregate vote.
+type AggregateVote = (bool, Vec<Address>, Vec<Address>, Vec<U256>, Vec<U256>);
 
-/// `(snapshot_ids, timestamps, pair_ids, rates, volumes)` — flattened snapshot history.
-type SnapshotHistory = (Vec<u64>, Vec<u64>, Vec<u32>, Vec<U256>, Vec<U256>);
+/// `(snapshot_ids, timestamps, bases, quotes, rates, volumes)` — flattened history.
+type SnapshotHistory = (
+    Vec<u64>,
+    Vec<u64>,
+    Vec<Address>,
+    Vec<Address>,
+    Vec<U256>,
+    Vec<U256>,
+);
 
-/// `(start_time, end_time, pair_ids, vwaps, lookbacks)` — stored worldwide-day VWAP snapshot.
-type WorldwideDayVwapSnapshot = (u64, u64, Vec<u32>, Vec<U256>, Vec<u64>);
+/// `(start_time, end_time, bases, quotes, vwaps, lookbacks)` — stored WWD VWAP snapshot.
+type WorldwideDayVwapSnapshot = (u64, u64, Vec<Address>, Vec<Address>, Vec<U256>, Vec<u64>);
 
-/// `(pair_ids, bases, quotes, is_active)` — the registered pair table.
-type PairTable = (Vec<u32>, Vec<Address>, Vec<Address>, Vec<bool>);
+/// `(bases, quotes, is_active)` — the registered pair table.
+type PairTable = (Vec<Address>, Vec<Address>, Vec<bool>);
+
+/// `(bases, quotes, rates, blocks, timestamps)` — every pair's current rate.
+type ExchangeRateTable = (Vec<Address>, Vec<Address>, Vec<U256>, Vec<u64>, Vec<u64>);
+
+/// A registered pair together with the orientation it was registered in.
+///
+/// The storage key sorts its two halves, so `base`/`quote` cannot be recovered
+/// from the key alone — anything that later hands a pair back across the ABI has
+/// to carry this triple, or a caller would be told `USD/ETH` for a pair whose
+/// reads only accept `ETH/USD`.
+pub type RegisteredPair = (AddressPair, Address, Address);
+
+/// Writes both halves of a pair identity column.
+///
+/// A pair is 40 bytes and a storage word is 32, so every list of pairs is two
+/// parallel `Address` columns. Going through this pair of helpers is what keeps
+/// the halves from drifting: a base written without its quote decodes as a
+/// different pair entirely, and the zero address is a legitimate asset so the
+/// mismatch would not read as "missing".
+pub(crate) fn write_pair_columns<K: StorageKey>(
+    base_column: &Mapping<'_, K, Address>,
+    quote_column: &Mapping<'_, K, Address>,
+    key: &K,
+    base: Address,
+    quote: Address,
+) -> Result<()> {
+    base_column.write(key, base)?;
+    quote_column.write(key, quote)
+}
+
+/// Reads both halves back as `(key, base, quote)`.
+pub(crate) fn read_pair_columns<K: StorageKey>(
+    base_column: &Mapping<'_, K, Address>,
+    quote_column: &Mapping<'_, K, Address>,
+    key: &K,
+) -> Result<(AddressPair, Address, Address)> {
+    let base = base_column.read(key)?;
+    let quote = quote_column.read(key)?;
+    Ok((AddressPair::from_addresses(base, quote), base, quote))
+}
 
 impl OracleContract<'_> {
     // -----------------------------------------------------------------------
@@ -52,8 +100,13 @@ impl OracleContract<'_> {
         self.pair_count.write(new_id)?;
         self.pair_ordinal.write(&pair, new_id)?;
         self.vote_target.write(&pair, true)?;
-        self.pair_ordinal_base.write(&new_id, base)?;
-        self.pair_ordinal_quote.write(&new_id, quote)?;
+        write_pair_columns(
+            &self.pair_ordinal_base,
+            &self.pair_ordinal_quote,
+            &new_id,
+            base,
+            quote,
+        )?;
 
         Ok(new_id)
     }
@@ -66,9 +119,7 @@ impl OracleContract<'_> {
     /// is why membership is decided by [`Self::pair_ordinal_of`] and never by a
     /// zero check — the zero address is a legitimate asset (native COEN).
     pub fn pair_entry(&self, ordinal: u32) -> Result<(AddressPair, Address, Address)> {
-        let base = self.pair_ordinal_base.read(&ordinal)?;
-        let quote = self.pair_ordinal_quote.read(&ordinal)?;
-        Ok((AddressPair::from_addresses(base, quote), base, quote))
+        read_pair_columns(&self.pair_ordinal_base, &self.pair_ordinal_quote, &ordinal)
     }
 
     /// [`Self::pair_entry`] when only the storage key is needed.
@@ -280,12 +331,15 @@ impl OracleContract<'_> {
             self.vote_exists.write(&voter, false)?;
 
             let tuple_count = self.vote_tuple_count.read(&voter)?;
-            let pair_id_map = self.vote_pair_id.get_nested(&voter);
+            let base_map = self.vote_pair_base.get_nested(&voter);
+            let quote_map = self.vote_pair_quote.get_nested(&voter);
             let rate_map = self.vote_rate.get_nested(&voter);
             let volume_map = self.vote_volume.get_nested(&voter);
 
             for j in 0..tuple_count {
-                pair_id_map.write(&j, 0)?;
+                // Clears to the zero pair, which is never registered; readers
+                // stay bounded by `vote_tuple_count` rather than probing for it.
+                write_pair_columns(&base_map, &quote_map, &j, Address::ZERO, Address::ZERO)?;
                 rate_map.write(&j, U256::ZERO)?;
                 volume_map.write(&j, U256::ZERO)?;
             }
@@ -332,12 +386,12 @@ impl OracleContract<'_> {
 
     /// Writes a price snapshot with rates/volumes for the given pairs.
     ///
-    /// Each entry is (pair, rate, volume). The snapshot is appended at
+    /// Each entry is (registered pair, rate, volume). The snapshot is appended at
     /// `snapshot_write_idx` and old entries beyond the retention window are evicted.
     pub fn write_snapshot(
         &mut self,
         timestamp: u64,
-        entries: &[(AddressPair, U256, U256)],
+        entries: &[(RegisteredPair, U256, U256)],
     ) -> Result<()> {
         if self.ocomp_profile_ready.read()? {
             let storage = self.storage.clone();
@@ -350,7 +404,7 @@ impl OracleContract<'_> {
     fn write_snapshot_inner(
         &mut self,
         timestamp: u64,
-        entries: &[(AddressPair, U256, U256)],
+        entries: &[(RegisteredPair, U256, U256)],
     ) -> Result<()> {
         let idx = self.snapshot_write_idx.read()?;
         let next_snapshot_idx = idx.checked_add(1).ok_or_else(|| {
@@ -361,15 +415,14 @@ impl OracleContract<'_> {
         self.snapshot_timestamp.write(&idx, timestamp)?;
         self.snapshot_pair_count.write(&idx, entries.len() as u32)?;
 
-        let pair_id_map = self.snapshot_pair_id.get_nested(&idx);
+        let base_map = self.snapshot_pair_base.get_nested(&idx);
+        let quote_map = self.snapshot_pair_quote.get_nested(&idx);
         let rate_map = self.snapshot_rate.get_nested(&idx);
         let volume_map = self.snapshot_volume.get_nested(&idx);
 
-        for (i, (pair, rate, volume)) in entries.iter().enumerate() {
+        for (i, ((_, base, quote), rate, volume)) in entries.iter().enumerate() {
             let pi = i as u32;
-            // The snapshot column still stores the ordinal; PR 2b replaces it
-            // with the two address columns and drops this lookup.
-            pair_id_map.write(&pi, self.pair_ordinal.read(pair)?)?;
+            write_pair_columns(&base_map, &quote_map, &pi, *base, *quote)?;
             rate_map.write(&pi, *rate)?;
             volume_map.write(&pi, *volume)?;
         }
@@ -377,7 +430,7 @@ impl OracleContract<'_> {
         self.snapshot_write_idx.write(next_snapshot_idx)?;
 
         let utc_day_ts = timestamp - (timestamp % 86_400);
-        for (pair, rate, volume) in entries {
+        for ((pair, _, _), rate, volume) in entries {
             let vol = if volume.is_zero() {
                 SCALE_1E18
             } else {
@@ -448,61 +501,72 @@ impl OracleContract<'_> {
     /// Returns all pair exchange rates as parallel arrays.
     ///
     /// Iterates `pair_count` and reads rate / block / timestamp for each pair.
-    pub fn get_exchange_rates(&self) -> Result<(Vec<U256>, Vec<u64>, Vec<u64>)> {
+    pub fn get_exchange_rates(&self) -> Result<ExchangeRateTable> {
         let count = self.pair_count.read()?;
+        let mut bases = Vec::with_capacity(count as usize);
+        let mut quotes = Vec::with_capacity(count as usize);
         let mut rates = Vec::with_capacity(count as usize);
         let mut blocks = Vec::with_capacity(count as usize);
         let mut timestamps = Vec::with_capacity(count as usize);
 
         for pid in 1..=count {
-            let pair = self.pair_at(pid)?;
+            let (pair, base, quote) = self.pair_entry(pid)?;
+            bases.push(base);
+            quotes.push(quote);
             rates.push(self.exchange_rate.read(&pair)?);
             blocks.push(self.exchange_rate_block.read(&pair)?);
             timestamps.push(self.exchange_rate_timestamp.read(&pair)?);
         }
 
-        Ok((rates, blocks, timestamps))
+        Ok((bases, quotes, rates, blocks, timestamps))
     }
 
-    /// Returns pair_ids of all active vote targets.
-    pub fn get_vote_targets(&self) -> Result<Vec<u32>> {
+    /// Returns `(bases, quotes)` of all active vote targets.
+    pub fn get_vote_targets(&self) -> Result<(Vec<Address>, Vec<Address>)> {
         let count = self.pair_count.read()?;
-        let mut pair_ids = Vec::new();
+        let mut bases = Vec::new();
+        let mut quotes = Vec::new();
 
         for pid in 1..=count {
-            if self.vote_target.read(&self.pair_at(pid)?)? {
-                pair_ids.push(pid);
+            let (pair, base, quote) = self.pair_entry(pid)?;
+            if self.vote_target.read(&pair)? {
+                bases.push(base);
+                quotes.push(quote);
             }
         }
 
-        Ok(pair_ids)
+        Ok((bases, quotes))
     }
 
     /// Returns the pending aggregate vote for a validator.
     ///
-    /// Returns `(exists, pair_ids, rates, volumes)`.
+    /// Returns `(exists, bases, quotes, rates, volumes)`.
     pub fn get_aggregate_vote(&self, validator: &Address) -> Result<AggregateVote> {
         let exists = self.vote_exists.read(validator)?;
         if !exists {
-            return Ok((false, vec![], vec![], vec![]));
+            return Ok((false, vec![], vec![], vec![], vec![]));
         }
 
         let tuple_count = self.vote_tuple_count.read(validator)?;
-        let pair_id_map = self.vote_pair_id.get_nested(validator);
+        let base_map = self.vote_pair_base.get_nested(validator);
+        let quote_map = self.vote_pair_quote.get_nested(validator);
         let rate_map = self.vote_rate.get_nested(validator);
         let volume_map = self.vote_volume.get_nested(validator);
 
-        let mut pair_ids = Vec::with_capacity(tuple_count as usize);
+        let mut bases = Vec::with_capacity(tuple_count as usize);
+        let mut quotes = Vec::with_capacity(tuple_count as usize);
         let mut rates = Vec::with_capacity(tuple_count as usize);
         let mut volumes = Vec::with_capacity(tuple_count as usize);
 
         for i in 0..tuple_count {
-            pair_ids.push(pair_id_map.read(&i)?);
+            let (_, base, quote) = read_pair_columns(&base_map, &quote_map, &i)?;
+            bases.push(base);
+            quotes.push(quote);
             rates.push(rate_map.read(&i)?);
             volumes.push(volume_map.read(&i)?);
         }
 
-        Ok((true, pair_ids, rates, volumes))
+        Ok((true, bases, quotes, rates, volumes))
     }
 
     /// Returns slash window progress for a validator.
@@ -522,7 +586,7 @@ impl OracleContract<'_> {
     /// up to `count` entries.
     pub fn get_price_snapshot_history(
         &self,
-        pair_id: u32,
+        pair: AddressPair,
         count: u32,
     ) -> Result<(Vec<u64>, Vec<U256>, Vec<U256>)> {
         let write_idx = self.snapshot_write_idx.read()?;
@@ -537,12 +601,13 @@ impl OracleContract<'_> {
             idx -= 1;
             let ts = self.snapshot_timestamp.read(&idx)?;
             let pc = self.snapshot_pair_count.read(&idx)?;
-            let pair_id_map = self.snapshot_pair_id.get_nested(&idx);
+            let base_map = self.snapshot_pair_base.get_nested(&idx);
+            let quote_map = self.snapshot_pair_quote.get_nested(&idx);
             let rate_map = self.snapshot_rate.get_nested(&idx);
             let volume_map = self.snapshot_volume.get_nested(&idx);
 
             for p in 0..pc {
-                if pair_id_map.read(&p)? == pair_id {
+                if read_pair_columns(&base_map, &quote_map, &p)?.0 == pair {
                     timestamps.push(ts);
                     rates.push(rate_map.read(&p)?);
                     volumes.push(volume_map.read(&p)?);
@@ -564,7 +629,8 @@ impl OracleContract<'_> {
 
         let mut snapshot_ids = Vec::new();
         let mut timestamps = Vec::new();
-        let mut pair_ids = Vec::new();
+        let mut bases = Vec::new();
+        let mut quotes = Vec::new();
         let mut rates = Vec::new();
         let mut volumes = Vec::new();
 
@@ -576,20 +642,23 @@ impl OracleContract<'_> {
 
             let ts = self.snapshot_timestamp.read(&idx)?;
             let pc = self.snapshot_pair_count.read(&idx)?;
-            let pair_id_map = self.snapshot_pair_id.get_nested(&idx);
+            let base_map = self.snapshot_pair_base.get_nested(&idx);
+            let quote_map = self.snapshot_pair_quote.get_nested(&idx);
             let rate_map = self.snapshot_rate.get_nested(&idx);
             let volume_map = self.snapshot_volume.get_nested(&idx);
 
             for p in 0..pc {
+                let (_, base, quote) = read_pair_columns(&base_map, &quote_map, &p)?;
                 snapshot_ids.push(idx);
                 timestamps.push(ts);
-                pair_ids.push(pair_id_map.read(&p)?);
+                bases.push(base);
+                quotes.push(quote);
                 rates.push(rate_map.read(&p)?);
                 volumes.push(volume_map.read(&p)?);
             }
         }
 
-        Ok((snapshot_ids, timestamps, pair_ids, rates, volumes))
+        Ok((snapshot_ids, timestamps, bases, quotes, rates, volumes))
     }
 
     /// Returns a stored WorldwideDay VWAP snapshot.
@@ -608,35 +677,44 @@ impl OracleContract<'_> {
         let pair_count = self.worldwide_day_vwap_pair_count.read(&worldwide_day)?;
         let lookback = end_time.saturating_sub(start_time);
 
-        let pair_id_map = self.worldwide_day_vwap_pair_id.get_nested(&worldwide_day);
+        let base_map = self.worldwide_day_vwap_pair_base.get_nested(&worldwide_day);
+        let quote_map = self
+            .worldwide_day_vwap_pair_quote
+            .get_nested(&worldwide_day);
         let value_map = self.worldwide_day_vwap_value.get_nested(&worldwide_day);
-        let mut pair_ids = Vec::with_capacity(pair_count as usize);
+        let mut bases = Vec::with_capacity(pair_count as usize);
+        let mut quotes = Vec::with_capacity(pair_count as usize);
         let mut vwaps = Vec::with_capacity(pair_count as usize);
         let mut lookbacks = Vec::with_capacity(pair_count as usize);
         for idx in 0..pair_count {
-            pair_ids.push(pair_id_map.read(&idx)?);
+            let (_, base, quote) = read_pair_columns(&base_map, &quote_map, &idx)?;
+            bases.push(base);
+            quotes.push(quote);
             vwaps.push(value_map.read(&idx)?);
             lookbacks.push(lookback);
         }
 
-        Ok((start_time, end_time, pair_ids, vwaps, lookbacks))
+        Ok((start_time, end_time, bases, quotes, vwaps, lookbacks))
     }
 
-    /// Returns a stored WorldwideDay VWAP for a specific pair id, if present.
-    pub fn get_worldwide_day_vwap_for_pair_id(
+    /// Returns a stored WorldwideDay VWAP for a specific pair, if present.
+    pub fn get_worldwide_day_vwap_for_pair(
         &self,
         worldwide_day: WorldwideDay,
-        pair_id: u32,
+        pair: AddressPair,
     ) -> Result<Option<U256>> {
         if !self.worldwide_day_vwap_exists.read(&worldwide_day)? {
             return Ok(None);
         }
 
         let pair_count = self.worldwide_day_vwap_pair_count.read(&worldwide_day)?;
-        let pair_id_map = self.worldwide_day_vwap_pair_id.get_nested(&worldwide_day);
+        let base_map = self.worldwide_day_vwap_pair_base.get_nested(&worldwide_day);
+        let quote_map = self
+            .worldwide_day_vwap_pair_quote
+            .get_nested(&worldwide_day);
         let value_map = self.worldwide_day_vwap_value.get_nested(&worldwide_day);
         for idx in 0..pair_count {
-            if pair_id_map.read(&idx)? == pair_id {
+            if read_pair_columns(&base_map, &quote_map, &idx)?.0 == pair {
                 return Ok(Some(value_map.read(&idx)?));
             }
         }
@@ -644,16 +722,21 @@ impl OracleContract<'_> {
         Ok(None)
     }
 
-    /// Returns the finalized per-UTC-day VWAP for `pair_id` on `utc_day`
+    /// Returns the finalized per-UTC-day VWAP for `pair` on `utc_day`
     /// (yyyymmdd UTC), or `None` if the day is not finalized or had no data for
     /// that pair. To distinguish "not finalized yet" from "finalized, no data",
     /// compare `utc_day` against `utc_day_vwap_last_finalized`.
-    pub fn get_utc_day_vwap_for_pair_id(&self, utc_day: u32, pair_id: u32) -> Result<Option<U256>> {
+    pub fn get_utc_day_vwap_for_pair(
+        &self,
+        utc_day: u32,
+        pair: AddressPair,
+    ) -> Result<Option<U256>> {
         let pair_count = self.utc_day_vwap_pair_count.read(&utc_day)?;
-        let pair_id_map = self.utc_day_vwap_pair_id.get_nested(&utc_day);
+        let base_map = self.utc_day_vwap_pair_base.get_nested(&utc_day);
+        let quote_map = self.utc_day_vwap_pair_quote.get_nested(&utc_day);
         let value_map = self.utc_day_vwap_value.get_nested(&utc_day);
         for idx in 0..pair_count {
-            if pair_id_map.read(&idx)? == pair_id {
+            if read_pair_columns(&base_map, &quote_map, &idx)?.0 == pair {
                 return Ok(Some(value_map.read(&idx)?));
             }
         }
@@ -661,45 +744,46 @@ impl OracleContract<'_> {
     }
 
     /// Returns the full finalized VWAP set for `utc_day` as
-    /// `(pair_ids, vwaps)`. Both vectors are empty when the day is unfinalized
-    /// or had no data.
-    pub fn get_utc_day_vwap_snapshot(&self, utc_day: u32) -> Result<(Vec<u32>, Vec<U256>)> {
+    /// `(bases, quotes, vwaps)`. All vectors are empty when the day is
+    /// unfinalized or had no data.
+    pub fn get_utc_day_vwap_snapshot(
+        &self,
+        utc_day: u32,
+    ) -> Result<(Vec<Address>, Vec<Address>, Vec<U256>)> {
         let pair_count = self.utc_day_vwap_pair_count.read(&utc_day)?;
-        let pair_id_map = self.utc_day_vwap_pair_id.get_nested(&utc_day);
+        let base_map = self.utc_day_vwap_pair_base.get_nested(&utc_day);
+        let quote_map = self.utc_day_vwap_pair_quote.get_nested(&utc_day);
         let value_map = self.utc_day_vwap_value.get_nested(&utc_day);
-        let mut pair_ids = Vec::with_capacity(pair_count as usize);
+        let mut bases = Vec::with_capacity(pair_count as usize);
+        let mut quotes = Vec::with_capacity(pair_count as usize);
         let mut vwaps = Vec::with_capacity(pair_count as usize);
         for idx in 0..pair_count {
-            pair_ids.push(pair_id_map.read(&idx)?);
+            let (_, base, quote) = read_pair_columns(&base_map, &quote_map, &idx)?;
+            bases.push(base);
+            quotes.push(quote);
             vwaps.push(value_map.read(&idx)?);
         }
-        Ok((pair_ids, vwaps))
+        Ok((bases, quotes, vwaps))
     }
 
     /// Returns all registered pairs as parallel arrays of
-    /// (pair_ids, bases, quotes, is_active).
+    /// (bases, quotes, is_active).
     ///
     /// Base and quote come back in the orientation they were registered in, not
     /// the sorted order the storage key uses.
     pub fn get_pairs(&self) -> Result<PairTable> {
         let count = self.pair_count.read()?;
-        let mut pair_ids = Vec::with_capacity(count as usize);
         let mut bases = Vec::with_capacity(count as usize);
         let mut quotes = Vec::with_capacity(count as usize);
         let mut is_active = Vec::with_capacity(count as usize);
 
         for pid in 1..=count {
-            let base = self.pair_ordinal_base.read(&pid)?;
-            let quote = self.pair_ordinal_quote.read(&pid)?;
-            pair_ids.push(pid);
+            let (pair, base, quote) = self.pair_entry(pid)?;
             bases.push(base);
             quotes.push(quote);
-            is_active.push(
-                self.vote_target
-                    .read(&AddressPair::from_addresses(base, quote))?,
-            );
+            is_active.push(self.vote_target.read(&pair)?);
         }
 
-        Ok((pair_ids, bases, quotes, is_active))
+        Ok((bases, quotes, is_active))
     }
 }

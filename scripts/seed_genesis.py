@@ -1363,6 +1363,8 @@ def seed_oracle(storage: StorageBuilder, config: dict):
         settlement holes; the settlement pair is derived as
         address_pair("COEN", "<iso>"))
       slot 55: reference_currencies (StorageVec<u16>)
+      slots 65-69: quote companions for the five pair entry columns
+        (21/29/35/51/57); slot 62 is a retired hole
     """
     cfg = config.get("config", {})
     storage.set_slot(0, parse_int(cfg.get("vote_period", 2)))
@@ -1450,13 +1452,19 @@ def seed_oracle(storage: StorageBuilder, config: dict):
         storage.set_slot(38, 0)  # scurve_oldest_idx
         for idx, sc in enumerate(scurve_seeds):
             pair = (sc["pair_base"], sc["pair_quote"])
-            pid = pair_ids.get(pair)
-            if pid is None:
+            if pair_ids.get(pair) is None:
                 raise ValueError(
                     f"scurve seed pair is not registered: {pair[0]}/{pair[1]}"
                 )
             peak_day_ts = wwd_to_day_timestamp(parse_int(sc["peak_day"]))
-            storage.set_mapping(35, u32_bytes(idx), pid)  # scurve_pair_id
+            # scurve_pair_base (35) / scurve_pair_quote (67): a pair is two
+            # addresses, so each entry column has a quote companion.
+            storage.set_mapping(
+                35, u32_bytes(idx), int.from_bytes(asset_address(pair[0]), "big")
+            )
+            storage.set_mapping(
+                67, u32_bytes(idx), int.from_bytes(asset_address(pair[1]), "big")
+            )
             storage.set_mapping(36, u32_bytes(idx), peak_day_ts)  # scurve_peak_day
             storage.set_mapping(
                 37, u32_bytes(idx), parse_int(sc["peak_price"])

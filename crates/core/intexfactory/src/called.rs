@@ -7,7 +7,7 @@
 
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
-use outbe_oracle::{api::pair_id_for, schema::OracleContract};
+use outbe_oracle::{api::registered_coen_pair, api::AddressPair, schema::OracleContract};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},
@@ -27,7 +27,7 @@ use crate::state::QualifiedBinTree;
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     let oracle = OracleContract::new(ctx.storage.clone());
     // This scan needs the pair id, not the rate: it reads the day's finalized VWAP.
-    let Some(pair_id) = pair_id_for(ctx.storage.clone(), QUALIFIER_REFERENCE_ISO)? else {
+    let Some(pair_id) = registered_coen_pair(ctx.storage.clone(), QUALIFIER_REFERENCE_ISO)? else {
         return Ok(0);
     };
 
@@ -43,7 +43,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
         return Ok(0);
     }
 
-    let last_closed_vwap = match oracle.get_utc_day_vwap_for_pair_id(last_closed_day, pair_id)? {
+    let last_closed_vwap = match oracle.get_utc_day_vwap_for_pair(last_closed_day, pair_id)? {
         Some(v) if !v.is_zero() => v,
         _ => return Ok(0),
     };
@@ -121,7 +121,7 @@ pub(crate) fn try_call(
     factory: &mut IntexFactoryContract,
     oracle: &OracleContract,
     series_id: u32,
-    pair_id: u32,
+    pair: AddressPair,
     last_closed_day: u32,
     now_ts: u64,
 ) -> Result<bool> {
@@ -147,7 +147,7 @@ pub(crate) fn try_call(
         if day < issued_day {
             break;
         }
-        if let Some(v) = oracle.get_utc_day_vwap_for_pair_id(day, pair_id)? {
+        if let Some(v) = oracle.get_utc_day_vwap_for_pair(day, pair)? {
             if v > trigger {
                 breaches += 1;
             }

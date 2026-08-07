@@ -4,6 +4,7 @@
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
 use outbe_common::WorldwideDay;
+use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::addresses::ORACLE_ADDRESS;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::time::{date_key_to_utc_timestamp, SECONDS_PER_DAY};
@@ -13,35 +14,35 @@ use crate::constants::DAY_TYPE_PAIR_KEY;
 use crate::precompile::IOracle;
 use crate::schema::{OracleContract, SCALE_1E18};
 
+/// `(pairs, values, lookbacks)` — one row per active vote-target pair, each
+/// carrying the orientation it was registered in.
+type PairSeries = (Vec<crate::state::RegisteredPair>, Vec<U256>, Vec<u64>);
+
 impl OracleContract<'_> {
     /// Initializes the fixed OCOMP Oracle projection for a fresh devnet.
     pub fn initialize_fresh_ocomp_profile(&mut self) -> Result<()> {
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
-            let expected_pair_id = self.pair_ordinal_of(DAY_TYPE_PAIR_KEY)?;
-            if expected_pair_id == 0 {
+            if self.pair_ordinal_of(DAY_TYPE_PAIR_KEY)? == 0 {
                 return Err(PrecompileError::Fatal(
                     "Oracle OCOMP day-type pair is not registered".into(),
                 ));
             }
 
             if self.ocomp_profile_ready.read()? {
-                if self.ocomp_day_type_pair_id.read()? != expected_pair_id
-                    || self.ocomp_state_version.read()? == 0
-                {
+                if self.ocomp_state_version.read()? == 0 {
                     return Err(PrecompileError::Fatal(
-                        "Oracle OCOMP profile does not match the registered day-type pair".into(),
+                        "Oracle OCOMP profile is ready with zero state version".into(),
                     ));
                 }
                 return Ok(());
             }
-            if self.ocomp_day_type_pair_id.read()? != 0 || self.ocomp_state_version.read()? != 0 {
+            if self.ocomp_state_version.read()? != 0 {
                 return Err(PrecompileError::Fatal(
                     "Oracle OCOMP profile contains partial pre-fork state".into(),
                 ));
             }
 
-            self.ocomp_day_type_pair_id.write(expected_pair_id)?;
             self.ocomp_state_version.write(1)?;
             self.ocomp_profile_ready.write(true)
         })
@@ -103,16 +104,15 @@ impl OracleContract<'_> {
         // uninverted price into the tally median with nothing downstream able to
         // notice.
         let mut resolved = Vec::with_capacity(tuples.len());
-        for (base, quote, rate, volume) in tuples {
-            let (pair, ordinal) = self.require_pair(*base, *quote)?;
-            resolved.push((pair, ordinal, *rate, *volume));
+        for (base, quote, _, _) in tuples {
+            resolved.push(self.require_pair(*base, *quote)?.0);
         }
 
         // Check for duplicate pairs in the submission. Kept separate from the
         // vote-target loop below so the revert precedence for a submission that
         // is both duplicated and untargeted stays unchanged.
         let mut seen = BTreeSet::new();
-        for (pair, _, _, _) in &resolved {
+        for pair in &resolved {
             if !seen.insert(*pair) {
                 return Err(PrecompileError::Revert(
                     "duplicate pair in vote submission".into(),
@@ -121,7 +121,7 @@ impl OracleContract<'_> {
         }
 
         // Verify all pairs are vote targets
-        for (pair, _, _, _) in &resolved {
+        for pair in &resolved {
             let is_target = self.vote_target.read(pair)?;
             if !is_target {
                 return Err(PrecompileError::Revert("pair is not a vote target".into()));
@@ -145,13 +145,14 @@ impl OracleContract<'_> {
         let tuple_count = tuples.len() as u32;
         self.vote_tuple_count.write(&validator, tuple_count)?;
 
-        let pair_id_map = self.vote_pair_id.get_nested(&validator);
+        let base_map = self.vote_pair_base.get_nested(&validator);
+        let quote_map = self.vote_pair_quote.get_nested(&validator);
         let rate_map = self.vote_rate.get_nested(&validator);
         let volume_map = self.vote_volume.get_nested(&validator);
 
-        for (i, (_, ordinal, rate, volume)) in resolved.iter().enumerate() {
+        for (i, (base, quote, rate, volume)) in tuples.iter().enumerate() {
             let idx = i as u32;
-            pair_id_map.write(&idx, *ordinal)?;
+            crate::state::write_pair_columns(&base_map, &quote_map, &idx, *base, *quote)?;
             rate_map.write(&idx, *rate)?;
             volume_map.write(&idx, *volume)?;
         }
@@ -164,7 +165,7 @@ impl OracleContract<'_> {
 
     fn try_daily_aggregate_vwap(
         &self,
-        pair_id: u32,
+        pair: AddressPair,
         start_time: u64,
         end_time: u64,
     ) -> Result<Option<U256>> {
@@ -174,9 +175,6 @@ impl OracleContract<'_> {
 
         let mut pv_total = U256::ZERO;
         let mut vol_total = U256::ZERO;
-        // The daily aggregates key on the pair itself; the snapshot columns this
-        // module scans elsewhere still key on the ordinal, so translate here.
-        let pair = self.pair_at(pair_id)?;
         let day_pv = self.daily_pv_sum.get_nested(&pair);
         let day_vol = self.daily_vol_sum.get_nested(&pair);
 
@@ -202,8 +200,13 @@ impl OracleContract<'_> {
     ///
     /// VWAP = sum(price_i * volume_i) / sum(volume_i)
     /// All values at 1e18 scale.
-    pub fn calculate_vwap(&self, pair_id: u32, start_time: u64, end_time: u64) -> Result<U256> {
-        match self.try_daily_aggregate_vwap(pair_id, start_time, end_time) {
+    pub fn calculate_vwap(
+        &self,
+        pair: AddressPair,
+        start_time: u64,
+        end_time: u64,
+    ) -> Result<U256> {
+        match self.try_daily_aggregate_vwap(pair, start_time, end_time) {
             Ok(Some(vwap)) => return Ok(vwap),
             Ok(None) if end_time.saturating_sub(start_time) >= 86_400 => {
                 return Err(PrecompileError::Revert(
@@ -231,13 +234,13 @@ impl OracleContract<'_> {
 
         for idx in range_start..range_end {
             let pc = self.snapshot_pair_count.read(&idx)?;
-            let pair_id_map = self.snapshot_pair_id.get_nested(&idx);
+            let base_map = self.snapshot_pair_base.get_nested(&idx);
+            let quote_map = self.snapshot_pair_quote.get_nested(&idx);
             let rate_map = self.snapshot_rate.get_nested(&idx);
             let volume_map = self.snapshot_volume.get_nested(&idx);
 
             for p in 0..pc {
-                let snap_pair_id = pair_id_map.read(&p)?;
-                if snap_pair_id != pair_id {
+                if crate::state::read_pair_columns(&base_map, &quote_map, &p)?.0 != pair {
                     continue;
                 }
 
@@ -272,7 +275,12 @@ impl OracleContract<'_> {
     ///
     /// TWAP = sum(price_i * duration_i) / sum(duration_i)
     /// where duration_i is the time between consecutive snapshots.
-    pub fn calculate_twap(&self, pair_id: u32, now: u64, lookback_seconds: u64) -> Result<U256> {
+    pub fn calculate_twap(
+        &self,
+        pair: AddressPair,
+        now: u64,
+        lookback_seconds: u64,
+    ) -> Result<U256> {
         let max_lookback = self.config_lookback_duration.read()?;
         if lookback_seconds == 0 || lookback_seconds > max_lookback {
             return Err(PrecompileError::Revert(
@@ -297,11 +305,12 @@ impl OracleContract<'_> {
             }
 
             let pc = self.snapshot_pair_count.read(&idx)?;
-            let pair_id_map = self.snapshot_pair_id.get_nested(&idx);
+            let base_map = self.snapshot_pair_base.get_nested(&idx);
+            let quote_map = self.snapshot_pair_quote.get_nested(&idx);
             let rate_map = self.snapshot_rate.get_nested(&idx);
 
             for p in 0..pc {
-                if pair_id_map.read(&p)? == pair_id {
+                if crate::state::read_pair_columns(&base_map, &quote_map, &p)?.0 == pair {
                     data.push((ts, rate_map.read(&p)?));
                     break;
                 }
@@ -362,24 +371,21 @@ impl OracleContract<'_> {
     }
 
     /// Calculates TWAPs for all active vote-target pairs.
-    pub fn calculate_twaps(
-        &self,
-        now: u64,
-        lookback_seconds: u64,
-    ) -> Result<(Vec<u32>, Vec<U256>, Vec<u64>)> {
+    pub fn calculate_twaps(&self, now: u64, lookback_seconds: u64) -> Result<PairSeries> {
         let count = self.pair_count.read()?;
-        let mut pair_ids = Vec::new();
+        let mut pairs = Vec::new();
         let mut twaps = Vec::new();
         let mut lookbacks = Vec::new();
 
         for pid in 1..=count {
-            if !self.vote_target.read(&self.pair_at(pid)?)? {
+            let entry = self.pair_entry(pid)?;
+            if !self.vote_target.read(&entry.0)? {
                 continue;
             }
 
-            match self.calculate_twap(pid, now, lookback_seconds) {
+            match self.calculate_twap(entry.0, now, lookback_seconds) {
                 Ok(twap) => {
-                    pair_ids.push(pid);
+                    pairs.push(entry);
                     twaps.push(twap);
                     lookbacks.push(lookback_seconds);
                 }
@@ -389,21 +395,17 @@ impl OracleContract<'_> {
             }
         }
 
-        if pair_ids.is_empty() {
+        if pairs.is_empty() {
             return Err(PrecompileError::Revert(
                 "no TWAP data in the requested time range".into(),
             ));
         }
 
-        Ok((pair_ids, twaps, lookbacks))
+        Ok((pairs, twaps, lookbacks))
     }
 
     /// Calculates VWAPs for all active vote-target pairs over an explicit range.
-    pub fn calculate_vwaps(
-        &self,
-        start_time: u64,
-        end_time: u64,
-    ) -> Result<(Vec<u32>, Vec<U256>, Vec<u64>)> {
+    pub fn calculate_vwaps(&self, start_time: u64, end_time: u64) -> Result<PairSeries> {
         if start_time >= end_time {
             return Err(PrecompileError::Revert(
                 "start_time must be less than end_time".into(),
@@ -412,18 +414,19 @@ impl OracleContract<'_> {
 
         let count = self.pair_count.read()?;
         let lookback = end_time - start_time;
-        let mut pair_ids = Vec::new();
+        let mut pairs = Vec::new();
         let mut vwaps = Vec::new();
         let mut lookbacks = Vec::new();
 
         for pid in 1..=count {
-            if !self.vote_target.read(&self.pair_at(pid)?)? {
+            let entry = self.pair_entry(pid)?;
+            if !self.vote_target.read(&entry.0)? {
                 continue;
             }
 
-            match self.calculate_vwap(pid, start_time, end_time) {
+            match self.calculate_vwap(entry.0, start_time, end_time) {
                 Ok(vwap) => {
-                    pair_ids.push(pid);
+                    pairs.push(entry);
                     vwaps.push(vwap);
                     lookbacks.push(lookback);
                 }
@@ -432,13 +435,13 @@ impl OracleContract<'_> {
             }
         }
 
-        if pair_ids.is_empty() {
+        if pairs.is_empty() {
             return Err(PrecompileError::Revert(
                 "no VWAP data in the requested time range".into(),
             ));
         }
 
-        Ok((pair_ids, vwaps, lookbacks))
+        Ok((pairs, vwaps, lookbacks))
     }
 
     /// Calculates VWAPs for the given WorldwideDay window and stores them in oracle state.
@@ -464,7 +467,7 @@ impl OracleContract<'_> {
         start_time: u64,
         end_time: u64,
     ) -> Result<()> {
-        let (pair_ids, vwaps, _) = self.calculate_vwaps(start_time, end_time)?;
+        let (pairs, vwaps, _) = self.calculate_vwaps(start_time, end_time)?;
         let next_ocomp_version = self.next_ocomp_state_version()?;
 
         self.worldwide_day_vwap_exists.write(&worldwide_day, true)?;
@@ -473,13 +476,16 @@ impl OracleContract<'_> {
         self.worldwide_day_vwap_end
             .write(&worldwide_day, end_time)?;
         self.worldwide_day_vwap_pair_count
-            .write(&worldwide_day, pair_ids.len() as u32)?;
+            .write(&worldwide_day, pairs.len() as u32)?;
 
-        let pair_id_map = self.worldwide_day_vwap_pair_id.get_nested(&worldwide_day);
+        let base_map = self.worldwide_day_vwap_pair_base.get_nested(&worldwide_day);
+        let quote_map = self
+            .worldwide_day_vwap_pair_quote
+            .get_nested(&worldwide_day);
         let value_map = self.worldwide_day_vwap_value.get_nested(&worldwide_day);
-        for (idx, (pair_id, vwap)) in pair_ids.iter().zip(vwaps.iter()).enumerate() {
+        for (idx, ((_, base, quote), vwap)) in pairs.iter().zip(vwaps.iter()).enumerate() {
             let i = idx as u32;
-            pair_id_map.write(&i, *pair_id)?;
+            crate::state::write_pair_columns(&base_map, &quote_map, &i, *base, *quote)?;
             value_map.write(&i, *vwap)?;
         }
 
@@ -494,7 +500,7 @@ impl OracleContract<'_> {
     /// Pairs without data for the day are skipped (mirrors `calculate_vwaps`);
     /// if no pair has data, nothing is written, so the day keeps
     /// `pair_count == 0`. Emits one `VwapCalculated` event per written pair in
-    /// ascending `pair_id` order. The method overwrites unconditionally — the
+    /// registration order. The method overwrites unconditionally — the
     /// caller gates re-finalization via the `utc_day_vwap_last_finalized`
     /// watermark.
     pub fn finalize_utc_day_vwap(&mut self, utc_day: u32) -> Result<()> {
@@ -510,35 +516,31 @@ impl OracleContract<'_> {
         let day_start = date_key_to_utc_timestamp(utc_day);
         let day_end = day_start.saturating_add(SECONDS_PER_DAY);
 
-        let (pair_ids, vwaps) = match self.calculate_vwaps(day_start, day_end) {
-            Ok((pair_ids, vwaps, _)) => (pair_ids, vwaps),
+        let (pairs, vwaps) = match self.calculate_vwaps(day_start, day_end) {
+            Ok((pairs, vwaps, _)) => (pairs, vwaps),
             // No vote-target pair had data for the day — leave it unwritten so
             // `pair_count == 0` reads as finalized-empty against the watermark.
             Err(PrecompileError::Revert(msg)) if msg.contains("no VWAP data") => return Ok(()),
             Err(e) => return Err(e),
         };
         let next_ocomp_version = self.next_ocomp_state_version()?;
-        let ocomp_pair_id = self
-            .ocomp_profile_ready
-            .read()?
-            .then(|| self.ocomp_day_type_pair_id.read())
-            .transpose()?;
+        let profile_ready = self.ocomp_profile_ready.read()?;
 
-        // `pair_ids.len()` is bounded by the registry's u32 `pair_count`, so the
+        // `pairs.len()` is bounded by the registry's u32 `pair_count`, so the
         // conversion is lossless; `unwrap_or` keeps it panic-free per runtime rules.
-        let count = u32::try_from(pair_ids.len()).unwrap_or(u32::MAX);
+        let count = u32::try_from(pairs.len()).unwrap_or(u32::MAX);
         self.utc_day_vwap_pair_count.write(&utc_day, count)?;
-        let pair_id_map = self.utc_day_vwap_pair_id.get_nested(&utc_day);
+        let base_map = self.utc_day_vwap_pair_base.get_nested(&utc_day);
+        let quote_map = self.utc_day_vwap_pair_quote.get_nested(&utc_day);
         let value_map = self.utc_day_vwap_value.get_nested(&utc_day);
         for i in 0..count {
-            let pair_id = pair_ids[i as usize];
+            let (pair, base, quote) = pairs[i as usize];
             let vwap = vwaps[i as usize];
-            pair_id_map.write(&i, pair_id)?;
+            crate::state::write_pair_columns(&base_map, &quote_map, &i, base, quote)?;
             value_map.write(&i, vwap)?;
-            if Some(pair_id) == ocomp_pair_id {
+            if profile_ready && pair == DAY_TYPE_PAIR_KEY {
                 self.ocomp_day_type_vwap_by_utc_day.write(&utc_day, vwap)?;
             }
-            let (_, base, quote) = self.pair_entry(pair_id)?;
             let event = IOracle::VwapCalculated {
                 utcDay: utc_day,
                 base,
@@ -562,17 +564,17 @@ impl OracleContract<'_> {
     /// If no VWAP samples exist for the day, VWAP contributes zero.
     pub fn get_nominal_price_components(
         &self,
-        pair_id: u32,
+        pair: AddressPair,
         timestamp: u64,
     ) -> Result<(U256, U256, U256, String)> {
         let day_start = crate::scurve::truncate_to_day(timestamp);
         let day_end = day_start.saturating_add(crate::scurve::DAY_SECONDS);
-        let vwap = match self.calculate_vwap(pair_id, day_start, day_end) {
+        let vwap = match self.calculate_vwap(pair, day_start, day_end) {
             Ok(vwap) => vwap,
             Err(PrecompileError::Revert(msg)) if msg.contains("no VWAP data") => U256::ZERO,
             Err(err) => return Err(err),
         };
-        let max_scurve = crate::scurve::get_max_active_scurve_value(self, pair_id, timestamp)?;
+        let max_scurve = crate::scurve::get_max_active_scurve_value(self, pair, timestamp)?;
 
         let (nominal, source) = if vwap.is_zero() && max_scurve.is_zero() {
             (U256::ZERO, "none".to_string())
@@ -588,13 +590,13 @@ impl OracleContract<'_> {
     /// Calculates VWAP for a pair using a lookback in seconds from `now`.
     pub fn calculate_vwap_lookback(
         &self,
-        pair_id: u32,
+        pair: AddressPair,
         now: u64,
         lookback_seconds: u64,
     ) -> Result<U256> {
         let max_lookback = self.config_lookback_duration.read()?;
         let effective_lookback = lookback_seconds.min(max_lookback);
         let start_time = now.saturating_sub(effective_lookback);
-        self.calculate_vwap(pair_id, start_time, now)
+        self.calculate_vwap(pair, start_time, now)
     }
 }

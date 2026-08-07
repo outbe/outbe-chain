@@ -1,4 +1,4 @@
-use alloy_primitives::{B256, U256};
+use alloy_primitives::{Address, B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_oracle::api::{coen_iso_pair, AddressPair};
 use outbe_oracle::schema::OracleContract;
@@ -9,13 +9,24 @@ use outbe_oracle::{
 };
 use outbe_primitives::{
     addresses::ORACLE_ADDRESS,
-    storage::{hashmap::HashMapStorageProvider, StorageHandle},
+    storage::{hashmap::HashMapStorageProvider, types::Mapping, StorageHandle},
 };
 
 fn slot_word(storage: &StorageHandle<'_>, slot: B256) -> U256 {
     storage
         .sload(ORACLE_ADDRESS, U256::from_be_bytes(slot.0))
         .unwrap()
+}
+
+/// Writes a pair into one of the two-column entry lists.
+fn write_entry_pair(
+    base_column: &Mapping<'_, u32, Address>,
+    quote_column: &Mapping<'_, u32, Address>,
+    index: u32,
+    pair: AddressPair,
+) {
+    base_column.write(&index, pair.first()).unwrap();
+    quote_column.write(&index, pair.second()).unwrap();
 }
 
 /// Seeds the Oracle state both plan rounds are derived against and returns the
@@ -31,21 +42,23 @@ fn seed_oracle(storage: &StorageHandle<'_>, day: WorldwideDay) -> (AddressPair, 
     oracle.reference_currencies.push(978).unwrap();
     oracle.worldwide_day_vwap_exists.write(&day, true).unwrap();
     oracle.worldwide_day_vwap_pair_count.write(&day, 2).unwrap();
-    oracle
-        .worldwide_day_vwap_pair_id
-        .get_nested(&day)
-        .write(&0, 1)
-        .unwrap();
+    write_entry_pair(
+        &oracle.worldwide_day_vwap_pair_base.get_nested(&day),
+        &oracle.worldwide_day_vwap_pair_quote.get_nested(&day),
+        0,
+        usd_pair,
+    );
     oracle
         .worldwide_day_vwap_value
         .get_nested(&day)
         .write(&0, U256::from(100))
         .unwrap();
-    oracle
-        .worldwide_day_vwap_pair_id
-        .get_nested(&day)
-        .write(&1, 2)
-        .unwrap();
+    write_entry_pair(
+        &oracle.worldwide_day_vwap_pair_base.get_nested(&day),
+        &oracle.worldwide_day_vwap_pair_quote.get_nested(&day),
+        1,
+        eur_pair,
+    );
     oracle
         .worldwide_day_vwap_value
         .get_nested(&day)
@@ -54,10 +67,20 @@ fn seed_oracle(storage: &StorageHandle<'_>, day: WorldwideDay) -> (AddressPair, 
     oracle.scurve_count.write(4).unwrap();
     oracle.scurve_oldest_idx.write(2).unwrap();
     let target_day = outbe_oracle::scurve::truncate_to_day(day.to_timestamp_utc());
-    oracle.scurve_pair_id.write(&2, 1).unwrap();
+    write_entry_pair(
+        &oracle.scurve_pair_base,
+        &oracle.scurve_pair_quote,
+        2,
+        usd_pair,
+    );
     oracle.scurve_peak_day.write(&2, target_day).unwrap();
     oracle.scurve_peak_price.write(&2, U256::from(300)).unwrap();
-    oracle.scurve_pair_id.write(&3, 2).unwrap();
+    write_entry_pair(
+        &oracle.scurve_pair_base,
+        &oracle.scurve_pair_quote,
+        3,
+        eur_pair,
+    );
     oracle.scurve_peak_day.write(&3, target_day).unwrap();
     oracle.scurve_peak_price.write(&3, U256::from(400)).unwrap();
     (usd_pair, eur_pair)
@@ -110,30 +133,39 @@ fn oracle_opening_plan_reads_the_exact_raw_slots_used_by_runtime_semantics() {
                 U256::from(2),   // pair_ordinal[COEN/978]
                 U256::from(1),   // wwd_vwap_exists
                 U256::from(2),   // wwd_vwap_pair_count
-                U256::from(1),
+                // Each entry is (pair base, pair quote, value). COEN is the
+                // zero address; an ISO code encodes as 0x0cc<bcd>, so 840 is
+                // 0xcc840 == 837_696 and 978 is 0xcc978 == 838_008.
+                U256::ZERO,
+                U256::from(0xcc840),
                 U256::from(100),
-                U256::from(2),
+                U256::ZERO,
+                U256::from(0xcc978),
                 U256::from(200),
                 U256::from(4), // scurve_count
                 U256::from(2), // scurve_oldest
-                U256::from(1),
+                // (pair base, pair quote, peak day, peak price) per entry.
+                U256::ZERO,
+                U256::from(0xcc840),
                 U256::from(target_day),
                 U256::from(300),
-                U256::from(2),
+                U256::ZERO,
+                U256::from(0xcc978),
                 U256::from(target_day),
                 U256::from(400),
             ]
         );
 
         let evaluated = evaluate_oracle_opening_v1(day, &[840, 978], &raw_slots).unwrap();
-        for (iso, pair_id) in [(840, 1), (978, 2)] {
+        for iso in [840u16, 978] {
+            let pair = coen_iso_pair(iso);
             let runtime_vwap = oracle
-                .get_worldwide_day_vwap_for_pair_id(day, pair_id)
+                .get_worldwide_day_vwap_for_pair(day, pair)
                 .unwrap()
                 .unwrap_or(U256::ZERO);
             let runtime_scurve = outbe_oracle::scurve::get_max_active_scurve_value(
                 &oracle,
-                pair_id,
+                pair,
                 day.to_timestamp_utc(),
             )
             .unwrap();

@@ -80,8 +80,9 @@ pub struct OracleContract {
     pub vote_exists: Mapping<Address, bool>,
     // slot 20: mapping(validator => number_of_tuples)
     pub vote_tuple_count: Mapping<Address, u32>,
-    // slot 21: mapping(validator => mapping(tuple_idx => pair_id))
-    pub vote_pair_id: Mapping<Address, Mapping<u32, u32>>,
+    // slot 21: mapping(validator => mapping(tuple_idx => pair base))
+    // Paired with `vote_pair_quote` at slot 65 — see the quote-column block.
+    pub vote_pair_base: Mapping<Address, Mapping<u32, Address>>,
     // slot 22: mapping(validator => mapping(tuple_idx => rate))
     pub vote_rate: Mapping<Address, Mapping<u32, U256>>,
     // slot 23: mapping(validator => mapping(tuple_idx => volume))
@@ -100,8 +101,9 @@ pub struct OracleContract {
     pub snapshot_timestamp: Mapping<u64, u64>,
     // slot 28: mapping(snapshot_idx => pair_count in this snapshot)
     pub snapshot_pair_count: Mapping<u64, u32>,
-    // slot 29: mapping(snapshot_idx => mapping(pair_index => pair_id))
-    pub snapshot_pair_id: Mapping<u64, Mapping<u32, u32>>,
+    // slot 29: mapping(snapshot_idx => mapping(pair_index => pair base))
+    // Paired with `snapshot_pair_quote` at slot 66.
+    pub snapshot_pair_base: Mapping<u64, Mapping<u32, Address>>,
     // slot 30: mapping(snapshot_idx => mapping(pair_index => rate))
     pub snapshot_rate: Mapping<u64, Mapping<u32, U256>>,
     // slot 31: mapping(snapshot_idx => mapping(pair_index => volume))
@@ -116,8 +118,9 @@ pub struct OracleContract {
     // === S-Curve Active Entries (slots 34-39) ===
     // slot 34: number of active S-curve entries
     pub scurve_count: Slot<u32>,
-    // slot 35: mapping(entry_idx => pair_id) for which pair
-    pub scurve_pair_id: Mapping<u32, u32>,
+    // slot 35: mapping(entry_idx => pair base) for which pair
+    // Paired with `scurve_pair_quote` at slot 67.
+    pub scurve_pair_base: Mapping<u32, Address>,
     // slot 36: mapping(entry_idx => peak_day_timestamp) UTC midnight
     pub scurve_peak_day: Mapping<u32, u64>,
     // slot 37: mapping(entry_idx => peak_price) 1e18 scaled
@@ -159,8 +162,9 @@ pub struct OracleContract {
     pub worldwide_day_vwap_end: Mapping<WorldwideDay, u64>,
     // slot 50: mapping(worldwide_day => pair_count)
     pub worldwide_day_vwap_pair_count: Mapping<WorldwideDay, u32>,
-    // slot 51: mapping(worldwide_day => mapping(index => pair_id))
-    pub worldwide_day_vwap_pair_id: Mapping<WorldwideDay, Mapping<u32, u32>>,
+    // slot 51: mapping(worldwide_day => mapping(index => pair base))
+    // Paired with `worldwide_day_vwap_pair_quote` at slot 68.
+    pub worldwide_day_vwap_pair_base: Mapping<WorldwideDay, Mapping<u32, Address>>,
     // slot 52: mapping(worldwide_day => mapping(index => vwap))
     pub worldwide_day_vwap_value: Mapping<WorldwideDay, Mapping<u32, U256>>,
 
@@ -187,10 +191,11 @@ pub struct OracleContract {
     // `pair_count == 0` means "not finalized OR finalized-empty"; the three
     // states are disambiguated against `utc_day_vwap_last_finalized`.
     //
-    // mapping(utc_day => number of (pair_id, vwap) entries finalized for the day)
+    // mapping(utc_day => number of (pair, vwap) entries finalized for the day)
     pub utc_day_vwap_pair_count: Mapping<u32, u32>,
-    // mapping(utc_day => mapping(entry_idx => pair_id))
-    pub utc_day_vwap_pair_id: Mapping<u32, Mapping<u32, u32>>,
+    // mapping(utc_day => mapping(entry_idx => pair base))
+    // Paired with `utc_day_vwap_pair_quote` at slot 69.
+    pub utc_day_vwap_pair_base: Mapping<u32, Mapping<u32, Address>>,
     // mapping(utc_day => mapping(entry_idx => vwap)) 1e18 scaled
     pub utc_day_vwap_value: Mapping<u32, Mapping<u32, U256>>,
     // Monotonic watermark: most recent fully-closed UTC day that has been
@@ -201,15 +206,36 @@ pub struct OracleContract {
     // slot 60: reference-currency currency rates
     pub reference_currency_rate: Mapping<u16, U256>,
 
-    // === OCOMP PoC pre-admission projection (slots 61-64) ===
+    // === OCOMP PoC pre-admission projection (slots 61, 63-64) ===
     // These trailing fields are inert until the fresh-devnet fork handler sets
     // `ocomp_profile_ready`. Existing pre-fork Oracle writes therefore keep
     // their exact historical state footprint.
     pub ocomp_profile_ready: Slot<bool>,
-    pub ocomp_day_type_pair_id: Slot<u32>,
-    // Direct O(1) lookup for the single fork-fixed auction-entry pair. The
-    // canonical UTC-day finalizer is its only mutation owner.
+    // Slot 62 (`ocomp_day_type_pair_id`) is a retired hole. The day-type pair is
+    // the compile-time `DAY_TYPE_PAIR_KEY`, so pinning its ordinal in storage
+    // bought nothing once pairs stopped being identified by ordinal.
+    // Do not reuse.
+    // slot 63: direct O(1) lookup for the single fork-fixed auction-entry pair.
+    // The canonical UTC-day finalizer is its only mutation owner.
+    #[slot(63)]
     pub ocomp_day_type_vwap_by_utc_day: Mapping<u32, U256>,
     // Advances for every Oracle mutation visible to OCOMP pre-admission.
     pub ocomp_state_version: Slot<u64>,
+
+    // === Pair Quote Columns (slots 65-69) ===
+    // A pair does not fit in one word, so each identity column above stores the
+    // registered `base` and these store the matching `quote`. Never write one
+    // without the other — everything goes through `write_pair_columns` /
+    // `read_pair_columns`, which also keeps both SSTOREs inside the same
+    // checkpoint so a partial write cannot survive.
+    // slot 65: companion of `vote_pair_base` (21)
+    pub vote_pair_quote: Mapping<Address, Mapping<u32, Address>>,
+    // slot 66: companion of `snapshot_pair_base` (29)
+    pub snapshot_pair_quote: Mapping<u64, Mapping<u32, Address>>,
+    // slot 67: companion of `scurve_pair_base` (35)
+    pub scurve_pair_quote: Mapping<u32, Address>,
+    // slot 68: companion of `worldwide_day_vwap_pair_base` (51)
+    pub worldwide_day_vwap_pair_quote: Mapping<WorldwideDay, Mapping<u32, Address>>,
+    // slot 69: companion of `utc_day_vwap_pair_base` (57)
+    pub utc_day_vwap_pair_quote: Mapping<u32, Mapping<u32, Address>>,
 }

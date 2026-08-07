@@ -17,15 +17,17 @@ use crate::types::AssetType;
 pub struct GenesisSnapshot {
     /// Unix timestamp of the snapshot.
     pub timestamp: u64,
-    /// Entries as `(pair_id, rate_1e18, volume_1e18)`.
-    pub entries: Vec<(u32, U256, U256)>,
+    /// Entries as `(base, quote, rate_1e18, volume_1e18)`.
+    pub entries: Vec<(Address, Address, U256, U256)>,
 }
 
 /// An S-curve entry for genesis import/export.
 #[derive(Clone, Debug)]
 pub struct GenesisScurveEntry {
-    /// Pair identifier (1-indexed).
-    pub pair_id: u32,
+    /// The pair this peak belongs to, quoted as registered.
+    pub base: Address,
+    /// Quote asset of the pair.
+    pub quote: Address,
     /// UTC midnight timestamp of the peak day.
     pub peak_day: u64,
     /// Peak price at 1e18 scale.
@@ -37,8 +39,8 @@ pub struct GenesisScurveEntry {
 pub struct GenesisAggregateVote {
     /// Validator address that owns this pending vote.
     pub validator: Address,
-    /// Entries as `(pair_id, rate_1e18, volume_1e18)`.
-    pub entries: Vec<(u32, U256, U256)>,
+    /// Entries as `(base, quote, rate_1e18, volume_1e18)`.
+    pub entries: Vec<(Address, Address, U256, U256)>,
 }
 
 /// A reference currency for genesis import/export: an ISO 4217 numeric code
@@ -209,18 +211,17 @@ pub fn init_from_genesis(oracle: &mut OracleContract, config: &OracleGenesisConf
     // ordinal, so every one has to resolve against a pair registered above.
     for snapshot in &config.snapshots {
         let mut entries = Vec::with_capacity(snapshot.entries.len());
-        for (pair_id, rate, volume) in &snapshot.entries {
-            let (_, _, pair) = export_pair_metadata(oracle, *pair_id).map_err(|_| {
-                PrecompileError::Revert(format!("snapshot pair_id {pair_id} is not registered"))
-            })?;
-            entries.push((pair, *rate, *volume));
+        for (base, quote, rate, volume) in &snapshot.entries {
+            let (pair, _) = oracle.require_pair(*base, *quote)?;
+            entries.push(((pair, *base, *quote), *rate, *volume));
         }
         oracle.write_snapshot(snapshot.timestamp, &entries)?;
     }
 
     // Import S-curve entries.
     for entry in &config.scurve_entries {
-        crate::scurve::store_scurve_entry(oracle, entry.pair_id, entry.peak_day, entry.peak_price)?;
+        let (pair, _) = oracle.require_pair(entry.base, entry.quote)?;
+        crate::scurve::store_scurve_entry(oracle, pair, entry.peak_day, entry.peak_price)?;
     }
 
     // Import protected validators.
@@ -304,16 +305,17 @@ pub fn export_genesis(
     for idx in oldest_idx..write_idx {
         let timestamp = oracle.snapshot_timestamp.read(&idx)?;
         let pc = oracle.snapshot_pair_count.read(&idx)?;
-        let pair_id_map = oracle.snapshot_pair_id.get_nested(&idx);
+        let base_map = oracle.snapshot_pair_base.get_nested(&idx);
+        let quote_map = oracle.snapshot_pair_quote.get_nested(&idx);
         let rate_map = oracle.snapshot_rate.get_nested(&idx);
         let volume_map = oracle.snapshot_volume.get_nested(&idx);
 
         let mut entries = Vec::with_capacity(pc as usize);
         for p in 0..pc {
-            let pid = pair_id_map.read(&p)?;
+            let (_, base, quote) = crate::state::read_pair_columns(&base_map, &quote_map, &p)?;
             let rate = rate_map.read(&p)?;
             let volume = volume_map.read(&p)?;
-            entries.push((pid, rate, volume));
+            entries.push((base, quote, rate, volume));
         }
         snapshots.push(GenesisSnapshot { timestamp, entries });
     }
@@ -323,11 +325,16 @@ pub fn export_genesis(
     let scurve_oldest = oracle.scurve_oldest_idx.read()?;
     let mut scurve_entries = Vec::new();
     for idx in scurve_oldest..scurve_count {
-        let pair_id = oracle.scurve_pair_id.read(&idx)?;
+        let (_, base, quote) = crate::state::read_pair_columns(
+            &oracle.scurve_pair_base,
+            &oracle.scurve_pair_quote,
+            &idx,
+        )?;
         let peak_day = oracle.scurve_peak_day.read(&idx)?;
         let peak_price = oracle.scurve_peak_price.read(&idx)?;
         scurve_entries.push(GenesisScurveEntry {
-            pair_id,
+            base,
+            quote,
             peak_day,
             peak_price,
         });
@@ -407,21 +414,17 @@ fn import_aggregate_votes(
         }
 
         let mut seen_pairs = BTreeSet::new();
-        for (pair_id, _, _) in &vote.entries {
-            if *pair_id == 0 || *pair_id > pair_count {
-                return Err(PrecompileError::Revert(
-                    "aggregate vote pair_id must be registered".into(),
-                ));
-            }
-            if !seen_pairs.insert(*pair_id) {
+        for (base, quote, _, _) in &vote.entries {
+            // `require_pair` also rejects a pair quoted against its registered
+            // direction, so an imported vote cannot smuggle in an inverted rate.
+            let (pair, _) = oracle.require_pair(*base, *quote).map_err(|_| {
+                PrecompileError::Revert("aggregate vote pair is not registered".into())
+            })?;
+            if !seen_pairs.insert(pair) {
                 return Err(PrecompileError::Revert(
                     "duplicate pair in aggregate vote".into(),
                 ));
             }
-
-            let (_, _, pair) = export_pair_metadata(oracle, *pair_id).map_err(|_| {
-                PrecompileError::Revert("aggregate vote pair metadata missing".into())
-            })?;
             if !oracle.vote_target.read(&pair)? {
                 return Err(PrecompileError::Revert(
                     "aggregate vote pair is not a vote target".into(),
@@ -438,13 +441,14 @@ fn import_aggregate_votes(
             .vote_tuple_count
             .write(&validator, entries.len() as u32)?;
 
-        let pair_id_map = oracle.vote_pair_id.get_nested(&validator);
+        let base_map = oracle.vote_pair_base.get_nested(&validator);
+        let quote_map = oracle.vote_pair_quote.get_nested(&validator);
         let rate_map = oracle.vote_rate.get_nested(&validator);
         let volume_map = oracle.vote_volume.get_nested(&validator);
 
-        for (idx, (pair_id, rate, volume)) in entries.into_iter().enumerate() {
+        for (idx, (base, quote, rate, volume)) in entries.into_iter().enumerate() {
             let idx = idx as u32;
-            pair_id_map.write(&idx, pair_id)?;
+            crate::state::write_pair_columns(&base_map, &quote_map, &idx, base, quote)?;
             rate_map.write(&idx, rate)?;
             volume_map.write(&idx, volume)?;
         }
@@ -484,29 +488,29 @@ fn export_aggregate_votes(oracle: &OracleContract) -> Result<Vec<GenesisAggregat
         }
 
         let tuple_count = oracle.vote_tuple_count.read(&validator)?;
-        let pair_id_map = oracle.vote_pair_id.get_nested(&validator);
+        let base_map = oracle.vote_pair_base.get_nested(&validator);
+        let quote_map = oracle.vote_pair_quote.get_nested(&validator);
         let rate_map = oracle.vote_rate.get_nested(&validator);
         let volume_map = oracle.vote_volume.get_nested(&validator);
         let mut seen_pairs = BTreeSet::new();
         let mut entries = Vec::with_capacity(tuple_count as usize);
 
         for tuple_idx in 0..tuple_count {
-            let pair_id = pair_id_map.read(&tuple_idx)?;
-            if pair_id == 0 {
+            let (pair, base, quote) =
+                crate::state::read_pair_columns(&base_map, &quote_map, &tuple_idx)?;
+            if oracle.pair_ordinal_of(pair)? == 0 {
                 return Err(PrecompileError::Revert(
-                    "aggregate vote pair_id must be registered".into(),
+                    "aggregate vote pair is not registered".into(),
                 ));
             }
-            export_pair_metadata(oracle, pair_id).map_err(|_| {
-                PrecompileError::Revert("aggregate vote pair metadata missing".into())
-            })?;
-            if !seen_pairs.insert(pair_id) {
+            if !seen_pairs.insert(pair) {
                 return Err(PrecompileError::Revert(
                     "duplicate pair in aggregate vote".into(),
                 ));
             }
             entries.push((
-                pair_id,
+                base,
+                quote,
                 rate_map.read(&tuple_idx)?,
                 volume_map.read(&tuple_idx)?,
             ));
