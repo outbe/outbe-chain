@@ -148,9 +148,9 @@ mod tests {
         let coen: Address = PairType::Native.into();
         let usd: Address = PairType::IsoCurrency(840).into();
 
-        let pair = AddressPair::new(coen, usd);
+        let pair = AddressPair::from_addresses(coen, usd);
 
-        assert_eq!(pair, AddressPair::new(usd, coen));
+        assert_eq!(pair, AddressPair::from_addresses(usd, coen));
         assert_eq!(&pair[0..20], Address::ZERO.as_slice());
         assert_eq!(
             &pair[20..40],

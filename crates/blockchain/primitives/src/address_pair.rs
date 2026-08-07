@@ -18,7 +18,7 @@ impl AddressPair {
     ///
     /// `new` is already taken by the raw `[u8; 40]` constructor that
     /// [`wrap_fixed_bytes!`] generates.
-    pub fn new(first: Address, second: Address) -> Self {
+    pub fn from_addresses(first: Address, second: Address) -> Self {
         let (low, high) = if first <= second {
             (first, second)
         } else {
@@ -57,7 +57,7 @@ mod tests {
 
     #[test]
     fn from_addresses_packs_both_addresses_in_ascending_order() {
-        let pair = AddressPair::new(FIRST, SECOND);
+        let pair = AddressPair::from_addresses(FIRST, SECOND);
 
         assert_eq!(AddressPair::len_bytes(), 40);
         assert_eq!(&pair[0..20], FIRST.as_slice());
@@ -66,7 +66,7 @@ mod tests {
 
     #[test]
     fn the_accessors_return_the_packed_addresses_in_ascending_order() {
-        let pair = AddressPair::new(SECOND, FIRST);
+        let pair = AddressPair::from_addresses(SECOND, FIRST);
 
         assert_eq!(pair.first(), FIRST);
         assert_eq!(pair.second(), SECOND);
@@ -75,10 +75,10 @@ mod tests {
 
     #[test]
     fn the_accessors_round_trip_back_into_the_same_pair() {
-        let pair = AddressPair::new(FIRST, SECOND);
+        let pair = AddressPair::from_addresses(FIRST, SECOND);
 
         assert_eq!(
-            AddressPair::new(pair.first(), pair.second()),
+            AddressPair::from_addresses(pair.first(), pair.second()),
             pair
         );
     }
@@ -86,22 +86,22 @@ mod tests {
     #[test]
     fn from_addresses_ignores_the_argument_order() {
         assert_eq!(
-            AddressPair::new(FIRST, SECOND),
-            AddressPair::new(SECOND, FIRST),
+            AddressPair::from_addresses(FIRST, SECOND),
+            AddressPair::from_addresses(SECOND, FIRST),
         );
     }
 
     #[test]
     fn from_addresses_separates_pairs_sharing_an_address() {
         assert_ne!(
-            AddressPair::new(FIRST, SECOND),
-            AddressPair::new(FIRST, THIRD),
+            AddressPair::from_addresses(FIRST, SECOND),
+            AddressPair::from_addresses(FIRST, THIRD),
         );
     }
 
     #[test]
     fn from_addresses_packs_an_address_paired_with_itself() {
-        let pair = AddressPair::new(FIRST, FIRST);
+        let pair = AddressPair::from_addresses(FIRST, FIRST);
 
         assert_eq!(&pair[0..20], FIRST.as_slice());
         assert_eq!(&pair[20..40], FIRST.as_slice());
@@ -109,7 +109,7 @@ mod tests {
 
     #[test]
     fn a_pair_round_trips_through_hex() {
-        let pair = AddressPair::new(FIRST, SECOND);
+        let pair = AddressPair::from_addresses(FIRST, SECOND);
 
         assert_eq!(pair.to_string().parse::<AddressPair>(), Ok(pair));
     }
@@ -117,7 +117,7 @@ mod tests {
     #[test]
     fn the_zero_pair_holds_forty_zero_bytes() {
         assert_eq!(
-            AddressPair::new(Address::ZERO, Address::ZERO),
+            AddressPair::from_addresses(Address::ZERO, Address::ZERO),
             AddressPair::ZERO,
         );
     }
