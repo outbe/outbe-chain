@@ -695,10 +695,10 @@ mod tests {
                 vs.activate_validator_via_boundary_for_test(validator)
                     .unwrap();
             }
-            // Seed the COEN/840 oracle pair + a 1.0 rate + the ISO 840 settlement
-            // mapping, so begin-block NOD/GEM/INTEX floor-price promotion resolves
-            // a live rate instead of soft-skipping the scan. The qualifiers read
-            // `settlement_iso_to_pair`, so registering the pair alone is not enough.
+            // Seed the COEN/840 oracle pair + a 1.0 rate so begin-block
+            // NOD/GEM/INTEX floor-price promotion resolves a live rate instead
+            // of soft-skipping the scan. The qualifiers derive the pair from the
+            // ISO code, so registering the pair is sufficient.
             let mut oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
             oracle.register_pair("COEN", "840").unwrap();
             oracle
@@ -709,13 +709,6 @@ mod tests {
                     U256::from(1_000_000_000_000_000_000u128),
                     0,
                     0,
-                )
-                .unwrap();
-            oracle
-                .settlement_iso_to_pair
-                .write(
-                    &840u16,
-                    outbe_oracle::schema::OracleContract::pair_hash("COEN", "840"),
                 )
                 .unwrap();
         });

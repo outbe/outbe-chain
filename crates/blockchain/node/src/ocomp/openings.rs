@@ -56,7 +56,7 @@ where
     .map_err(|error| RetentionError::Source(error.to_string()))?;
 
     let day = outbe_common::WorldwideDay::new(finalized.intent.wwd);
-    let count_slots = oracle_count_slot_plan_v1(day, &subjects.settlement_isos)
+    let count_slots = oracle_count_slot_plan_v1(day, &subjects.reference_isos)
         .map_err(|error| RetentionError::Source(error.to_string()))?
         .slots;
     let count_proof = source
@@ -247,37 +247,18 @@ fn oracle_slots_from_authenticated_opening(
         .map(|raw| (raw.slot, raw.value))
         .collect::<BTreeMap<_, _>>();
     let day = outbe_common::WorldwideDay::new(wwd);
-    let counts = oracle_count_slot_plan_v1(day, &subjects.settlement_isos)
+    let counts = oracle_count_slot_plan_v1(day, &subjects.reference_isos)
         .map_err(|error| RetentionError::Source(error.to_string()))?;
-    let settlement_pairs = subjects
-        .settlement_isos
-        .iter()
-        .enumerate()
-        .map(|(index, iso)| {
-            let pair_slot = counts.slots[index * 2 + 1];
-            authenticated_word(&values, pair_slot, "Oracle settlement pair")
-                .map(|word| (*iso, B256::new(word.to_be_bytes())))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let count_base = subjects.settlement_isos.len() * 2;
-    let worldwide_day_pair_count = authenticated_u32(
-        &values,
-        counts.slots[count_base + 1],
-        "Oracle WWD VWAP pair count",
-    )?;
-    let scurve_count = authenticated_u32(
-        &values,
-        counts.slots[count_base + 2],
-        "Oracle S-curve count",
-    )?;
-    let scurve_oldest = authenticated_u32(
-        &values,
-        counts.slots[count_base + 3],
-        "Oracle S-curve oldest",
-    )?;
+    let reference_currency_count =
+        authenticated_u32(&values, counts.slots[0], "Oracle reference currency count")?;
+    let worldwide_day_pair_count =
+        authenticated_u32(&values, counts.slots[2], "Oracle WWD VWAP pair count")?;
+    let scurve_count = authenticated_u32(&values, counts.slots[3], "Oracle S-curve count")?;
+    let scurve_oldest = authenticated_u32(&values, counts.slots[4], "Oracle S-curve oldest")?;
     oracle_opening_slot_plan_v1(
         day,
-        &settlement_pairs,
+        &subjects.reference_isos,
+        reference_currency_count,
         worldwide_day_pair_count,
         scurve_count,
         scurve_oldest,
@@ -355,40 +336,36 @@ fn oracle_slots(
     subjects: &OpeningSubjectsV1,
 ) -> Result<Vec<B256>, RetentionError> {
     let day = outbe_common::WorldwideDay::new(candidate.wwd);
-    let counts = oracle_count_slot_plan_v1(day, &subjects.settlement_isos)
+    let counts = oracle_count_slot_plan_v1(day, &subjects.reference_isos)
         .map_err(|error| RetentionError::Source(error.to_string()))?;
-    let settlement_pairs = subjects
-        .settlement_isos
-        .iter()
-        .enumerate()
-        .map(|(index, iso)| {
-            let pair_slot = counts.slots[index * 2 + 1];
-            read_word(state, ORACLE_ADDRESS, pair_slot, "Oracle settlement pair")
-                .map(|word| (*iso, B256::new(word.to_be_bytes())))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let count_base = subjects.settlement_isos.len() * 2;
+    let reference_currency_count = read_u32(
+        state,
+        ORACLE_ADDRESS,
+        counts.slots[0],
+        "Oracle reference currency count",
+    )?;
     let worldwide_day_pair_count = read_u32(
         state,
         ORACLE_ADDRESS,
-        counts.slots[count_base + 1],
+        counts.slots[2],
         "Oracle WWD VWAP pair count",
     )?;
     let scurve_count = read_u32(
         state,
         ORACLE_ADDRESS,
-        counts.slots[count_base + 2],
+        counts.slots[3],
         "Oracle S-curve count",
     )?;
     let scurve_oldest = read_u32(
         state,
         ORACLE_ADDRESS,
-        counts.slots[count_base + 3],
+        counts.slots[4],
         "Oracle S-curve oldest",
     )?;
     oracle_opening_slot_plan_v1(
         day,
-        &settlement_pairs,
+        &subjects.reference_isos,
+        reference_currency_count,
         worldwide_day_pair_count,
         scurve_count,
         scurve_oldest,

@@ -228,11 +228,6 @@ mod tests {
             .set_exchange_rate(Address::ZERO, "COEN", "840", rate_1e18, 0, 0)
             .unwrap();
         // Register ISO 840 (USD) so mint_gem currency-validation passes.
-        let pair_hash = outbe_oracle::schema::OracleContract::pair_hash("COEN", "840");
-        oracle
-            .settlement_iso_to_pair
-            .write(&840u16, pair_hash)
-            .unwrap();
         oracle.reference_currencies.push(840u16).unwrap();
     }
 

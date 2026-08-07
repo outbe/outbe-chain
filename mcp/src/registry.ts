@@ -211,7 +211,6 @@ export const CONTRACTS: Record<string, ContractEntry> = {
       "function isVoteTarget(string base, string quote) view returns (bool)",
       "function getReferenceCurrencies() view returns (uint16[] isoCodes)",
       "function getcurrencyRate(uint16 isoCode) view returns (uint256 rate)",
-      "function getSettlementCount() view returns (uint32 count)",
       "function getFeederDelegation(address validator) view returns (address feeder)",
       "function getVotePenaltyCounter(address validator) view returns (uint64 success, uint64 abstain, uint64 miss)",
       "function getSlashWindowProgress(address validator) view returns (uint64 success, uint64 abstain, uint64 miss, uint64 slashWindow)",

@@ -1,6 +1,6 @@
 //! Oracle commands.
 
-use alloy_primitives::{Address, B256};
+use alloy_primitives::Address;
 use alloy_sol_types::SolCall;
 use clap::Subcommand;
 use eyre::Result;
@@ -167,15 +167,6 @@ pub enum OracleCmd {
         #[arg(long)]
         timestamp: Option<u64>,
     },
-    /// Show settlement currency mapping for an ISO 4217 code
-    Settlement {
-        /// ISO 4217 numeric code
-        iso_code: u16,
-    },
-    /// Show all settlement currencies
-    Settlements,
-    /// Show settlement currency count
-    SettlementCount,
     /// Show vote target pair IDs
     VoteTargets,
     /// Show registered pair count
@@ -254,9 +245,6 @@ impl OracleCmd {
                 quote,
                 timestamp,
             } => nominal_components(client, &base, &quote, timestamp).await,
-            Self::Settlement { iso_code } => settlement(client, iso_code).await,
-            Self::Settlements => settlements(client).await,
-            Self::SettlementCount => settlement_count(client).await,
             Self::VoteTargets => vote_targets(client).await,
             Self::PairCount => pair_count(client).await,
             Self::DelegateFeeder { feeder } => delegate_feeder(client, private_key, feeder).await,
@@ -793,38 +781,6 @@ async fn nominal_components(
     Ok(())
 }
 
-async fn settlement(client: &(impl Rpc + Sync), iso_code: u16) -> Result<()> {
-    let call = IOracle::getSettlementCurrencyCall { isoCode: iso_code };
-    let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
-    let ret = IOracle::getSettlementCurrencyCall::abi_decode_returns(&result)?;
-
-    println!("Settlement currency {iso_code}:");
-    println!("Pair Hash:  {:?}", B256::from(ret));
-    Ok(())
-}
-
-async fn settlements(client: &(impl Rpc + Sync)) -> Result<()> {
-    let call = IOracle::getSettlementCurrenciesCall {};
-    let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
-    let ret = IOracle::getSettlementCurrenciesCall::abi_decode_returns(&result)?;
-
-    println!("{:<8} {:<66}", "ISO", "PairHash");
-    println!("{}", "-".repeat(76));
-    for (iso, pair_hash) in ret.isoCodes.iter().zip(ret.pairHashes.iter()) {
-        println!("{:<8} {:?}", iso, B256::from(*pair_hash));
-    }
-    Ok(())
-}
-
-async fn settlement_count(client: &(impl Rpc + Sync)) -> Result<()> {
-    let call = IOracle::getSettlementCountCall {};
-    let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
-    let count = IOracle::getSettlementCountCall::abi_decode_returns(&result)?;
-
-    println!("Settlement currencies: {count}");
-    Ok(())
-}
-
 async fn delegate_feeder(
     client: &(impl Rpc + Sync),
     private_key: Option<&str>,
@@ -985,15 +941,6 @@ mod tests {
             "--timestamp",
             "123",
         ]);
-        assert!(cli.is_ok());
-
-        let cli = TestCli::try_parse_from(["test", "settlement", "840"]);
-        assert!(cli.is_ok());
-
-        let cli = TestCli::try_parse_from(["test", "settlements"]);
-        assert!(cli.is_ok());
-
-        let cli = TestCli::try_parse_from(["test", "settlement-count"]);
         assert!(cli.is_ok());
 
         let cli = TestCli::try_parse_from([

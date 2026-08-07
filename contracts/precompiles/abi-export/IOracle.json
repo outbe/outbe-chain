@@ -610,56 +610,6 @@
   },
   {
     "type": "function",
-    "name": "getSettlementCount",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "count",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getSettlementCurrencies",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "isoCodes",
-        "type": "uint16[]",
-        "internalType": "uint16[]"
-      },
-      {
-        "name": "pairHashes",
-        "type": "bytes32[]",
-        "internalType": "bytes32[]"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getSettlementCurrency",
-    "inputs": [
-      {
-        "name": "isoCode",
-        "type": "uint16",
-        "internalType": "uint16"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "pairHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "getSlashWindowProgress",
     "inputs": [
       {

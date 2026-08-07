@@ -7,6 +7,7 @@ use crate::schema::OracleContract;
 use crate::scurve;
 
 pub use crate::constants::DAY_TYPE_PAIR;
+pub use crate::state::{pair_hash, pair_hash_coen_iso};
 
 use alloy_primitives::U256;
 use outbe_common::WorldwideDay;
@@ -70,31 +71,30 @@ pub fn check_reference_currency_with_storage(storage: StorageHandle, iso_code: u
     )))
 }
 
-/// Current COEN price in settlement currency `iso_code`, 1e18 scaled.
+/// Current COEN price in currency `iso_code`, 1e18 scaled.
 ///
-/// * `Ok(None)` — `iso_code` has no settlement pair registered.
+/// * `Ok(None)` — `COEN/<iso_code>` is not a registered pair.
 /// * `Ok(Some(U256::ZERO))` — the pair exists but no rate has been published.
 /// * `Ok(Some(rate))` — a live rate.
 ///
 /// Never reverts on "not ready": begin-block scans must be able to skip a block
 /// rather than halt it. Callers that require a rate map the two not-ready cases
 /// onto their own typed errors. This is the single definition of the
-/// `settlement_iso_to_pair -> exchange_rate` lookup.
+/// `iso_code -> exchange_rate` lookup.
 pub fn coen_rate_for(storage: StorageHandle, iso_code: u16) -> Result<Option<U256>> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
-    let pair_hash = oracle.settlement_iso_to_pair.read(&iso_code)?;
-    if pair_hash.is_zero() {
+    let hash = pair_hash_coen_iso(iso_code);
+    if oracle.pair_hash_to_id.read(&hash)? == 0 {
         return Ok(None);
     }
-    oracle.exchange_rate.read(&pair_hash).map(Some)
+    oracle.exchange_rate.read(&hash).map(Some)
 }
 
-/// Settlement pair id for `iso_code`, or `None` when the ISO has no registered
-/// pair. For callers that need the id itself rather than the rate.
+/// Pair id of `COEN/<iso_code>`, or `None` when that pair is not registered.
+/// For callers that need the id itself rather than the rate.
 pub fn pair_id_for(storage: StorageHandle, iso_code: u16) -> Result<Option<u32>> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
-    let pair_hash = oracle.settlement_iso_to_pair.read(&iso_code)?;
-    let id = oracle.pair_hash_to_id.read(&pair_hash)?;
+    let id = oracle.pair_hash_to_id.read(&pair_hash_coen_iso(iso_code))?;
     Ok((id != 0).then_some(id))
 }
 

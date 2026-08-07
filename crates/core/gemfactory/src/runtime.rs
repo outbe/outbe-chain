@@ -191,9 +191,9 @@ pub fn mine_gem_promis(
     Ok(item.gem_load)
 }
 
-/// Looks up the COEN/`issuance_currency` rate via Oracle's
-/// `settlement_iso_to_pair` registry. Reverts with
-/// `IssuanceCurrencyNotRegistered` if the ISO code has no pair mapping, or
+/// Looks up the COEN/`issuance_currency` rate via Oracle's derived pair
+/// lookup. Reverts with
+/// `IssuanceCurrencyNotRegistered` if the pair is not registered, or
 /// `OracleUnavailable` if the pair exists but no rate has been published.
 fn read_oracle_rate(storage: &StorageHandle<'_>, issuance_currency: u16) -> Result<U256> {
     match coen_rate_for(storage.clone(), issuance_currency)? {

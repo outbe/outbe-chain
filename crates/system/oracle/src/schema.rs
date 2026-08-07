@@ -120,27 +120,24 @@ pub struct OracleContract {
     // slot 39: last UTC day (truncated timestamp) when S-curve processing ran
     pub scurve_last_processed_day: Slot<u64>,
 
-    // === Settlement Currencies (slots 40-42) ===
-    // slot 40: number of registered settlement currencies
-    pub settlement_count: Slot<u32>,
-    // Slot 41 is a retired hole (`settlement_iso_to_denom`). It stays in the
-    // frozen OCOMP V1 opening plan — whose codec descriptor is hashed into the
-    // protocol bundle — so it is still opened, always reads zero, and is never
-    // evaluated. Do not reuse it.
-    // slot 42: mapping(iso_code => pair_hash) linking settlement currency to its trading pair
-    #[slot(42)]
-    pub settlement_iso_to_pair: Mapping<u16, B256>,
+    // === Settlement Currencies — retired (slots 40-42) ===
+    // The settlement pair is derived, not stored: `pair_hash_coen_iso(iso)` is
+    // `keccak256("COEN/<iso>")`, and an ISO is usable exactly when that pair is
+    // present in `pair_hash_to_id`. Slots 40 (`settlement_count`), 41
+    // (`settlement_iso_to_denom`) and 42 (`settlement_iso_to_pair`) are retired
+    // holes with no live writer. Do not reuse them.
 
-    // === Reversible Genesis Export Metadata (slots 43-45) ===
+    // === Reversible Genesis Export Metadata (slots 43-44) ===
     // Pair runtime lookups remain hash-based, but export needs the original
     // strings to produce an importable OracleGenesisConfig.
-    // slot 43
+    // slot 43 — pinned: without this anchor the running slot counter would
+    // slide these two down into the retired 40-42 hole.
+    #[slot(43)]
     pub pair_id_to_base: Mapping<u32, StorageBytes>,
     // slot 44
     pub pair_id_to_quote: Mapping<u32, StorageBytes>,
-    // slot 45
-    pub settlement_index_to_iso: Mapping<u32, u16>,
-    // Slot 46 is a retired hole (`settlement_iso_to_denom_string`).
+    // Slots 45 (`settlement_index_to_iso`) and 46
+    // (`settlement_iso_to_denom_string`) are retired holes.
 
     // === WorldwideDay VWAP Snapshots (slots 47-52) ===
     // slot 47: mapping(worldwide_day => exists)

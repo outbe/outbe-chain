@@ -103,13 +103,6 @@ fn seed_oracle(storage: StorageHandle<'_>, rate_1e18: U256) {
     oracle
         .set_exchange_rate(Address::ZERO, "COEN", "840", rate_1e18, 0, 0)
         .unwrap();
-    oracle
-        .settlement_iso_to_pair
-        .write(
-            &ASSET_ISO,
-            outbe_oracle::schema::OracleContract::pair_hash("COEN", "840"),
-        )
-        .unwrap();
 }
 
 /// Give `account` a positive Fidelity index so `pledge_gratis` clears the

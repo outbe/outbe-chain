@@ -256,18 +256,9 @@ fn resolve_tribute_price(
     issuance_currency: u16,
     worldwide_day: WorldwideDay,
 ) -> Result<U256> {
+    let pair_id = outbe_oracle::api::pair_id_for(storage.clone(), issuance_currency)?
+        .ok_or(TributeFactoryError::IssuanceCurrencyNotRegistered { issuance_currency })?;
     let oracle = OracleContract::new(storage);
-    let pair_hash = oracle.settlement_iso_to_pair.read(&issuance_currency)?;
-    if pair_hash.is_zero() {
-        return Err(
-            TributeFactoryError::IssuanceCurrencyNotRegistered { issuance_currency }.into(),
-        );
-    }
-
-    let pair_id = oracle.pair_hash_to_id.read(&pair_hash)?;
-    if pair_id == 0 {
-        return Err(TributeFactoryError::SettlementCurrencyPairNotRegistered.into());
-    }
 
     let vwap = oracle
         .get_worldwide_day_vwap_for_pair_id(worldwide_day, pair_id)?

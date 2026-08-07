@@ -17,22 +17,29 @@ type AggregateVote = (bool, Vec<u32>, Vec<U256>, Vec<U256>);
 /// `(snapshot_ids, timestamps, pair_ids, rates, volumes)` — flattened snapshot history.
 type SnapshotHistory = (Vec<u64>, Vec<u64>, Vec<u32>, Vec<U256>, Vec<U256>);
 
-/// `(iso_codes, pair_hashes)` — settlement currency metadata.
-type SettlementCurrencies = (Vec<u16>, Vec<B256>);
-
 /// `(start_time, end_time, pair_ids, vwaps, lookbacks)` — stored worldwide-day VWAP snapshot.
 type WorldwideDayVwapSnapshot = (u64, u64, Vec<u32>, Vec<U256>, Vec<u64>);
+
+/// Computes pair hash from base/quote strings: `keccak256("BASE/QUOTE")`.
+pub fn pair_hash(base: &str, quote: &str) -> B256 {
+    let key = format!("{base}/{quote}");
+    keccak256(key.as_bytes())
+}
+
+/// Pair hash of the canonical COEN pair quoted in ISO 4217 code `iso_code`.
+///
+/// The quote token is the decimal ISO code, so ISO 840 resolves to
+/// `keccak256("COEN/840")`. This derivation replaces the former
+/// `settlement_iso_to_pair` registry: an ISO is usable exactly when the pair it
+/// names is present in `pair_hash_to_id`.
+pub fn pair_hash_coen_iso(iso_code: u16) -> B256 {
+    pair_hash("COEN", iso_code.to_string().as_str())
+}
 
 impl OracleContract<'_> {
     // -----------------------------------------------------------------------
     // Pair Registry
     // -----------------------------------------------------------------------
-
-    /// Computes pair hash from base/quote strings: `keccak256("BASE/QUOTE")`.
-    pub fn pair_hash(base: &str, quote: &str) -> B256 {
-        let key = format!("{base}/{quote}");
-        keccak256(key.as_bytes())
-    }
 
     /// Registers a new trading pair and marks it as a vote target.
     /// Returns the assigned pair_id (1-indexed).
@@ -50,7 +57,7 @@ impl OracleContract<'_> {
             ));
         }
 
-        let hash = Self::pair_hash(base, quote);
+        let hash = pair_hash(base, quote);
 
         // Check not already registered
         let existing = self.pair_hash_to_id.read(&hash)?;
@@ -83,7 +90,7 @@ impl OracleContract<'_> {
                 "only system can deactivate vote target".into(),
             ));
         }
-        let hash = Self::pair_hash(base, quote);
+        let hash = pair_hash(base, quote);
         let id = self.pair_hash_to_id.read(&hash)?;
         if id == 0 {
             return Err(PrecompileError::Revert("pair not registered".into()));
@@ -99,7 +106,7 @@ impl OracleContract<'_> {
                 "only system can activate vote target".into(),
             ));
         }
-        let hash = Self::pair_hash(base, quote);
+        let hash = pair_hash(base, quote);
         let id = self.pair_hash_to_id.read(&hash)?;
         if id == 0 {
             return Err(PrecompileError::Revert("pair not registered".into()));
@@ -125,7 +132,7 @@ impl OracleContract<'_> {
 
     /// Returns the pair_id for a base/quote pair, or 0 if not registered.
     pub fn get_pair_id(&self, base: &str, quote: &str) -> Result<u32> {
-        let hash = Self::pair_hash(base, quote);
+        let hash = pair_hash(base, quote);
         self.pair_hash_to_id.read(&hash)
     }
 
@@ -141,7 +148,7 @@ impl OracleContract<'_> {
 
     /// Returns whether a pair is an active vote target.
     pub fn is_vote_target(&self, base: &str, quote: &str) -> Result<bool> {
-        let hash = Self::pair_hash(base, quote);
+        let hash = pair_hash(base, quote);
         self.vote_target.read(&hash)
     }
 
@@ -151,7 +158,7 @@ impl OracleContract<'_> {
 
     /// Returns the current exchange rate for a pair (1e18 scaled).
     pub fn get_exchange_rate(&self, base: &str, quote: &str) -> Result<(U256, u64, u64)> {
-        let hash = Self::pair_hash(base, quote);
+        let hash = pair_hash(base, quote);
         let id = self.pair_hash_to_id.read(&hash)?;
         if id == 0 {
             return Err(PrecompileError::Revert("pair not registered".into()));
@@ -192,7 +199,7 @@ impl OracleContract<'_> {
             ));
         }
 
-        let hash = Self::pair_hash(base, quote);
+        let hash = pair_hash(base, quote);
         let id = self.pair_hash_to_id.read(&hash)?;
         if id == 0 {
             return Err(PrecompileError::Revert("pair not registered".into()));
@@ -678,20 +685,5 @@ impl OracleContract<'_> {
         }
 
         Ok((pair_ids, bases, quotes, is_active))
-    }
-
-    /// Returns all settlement currency metadata as parallel arrays.
-    pub fn get_settlement_currencies(&self) -> Result<SettlementCurrencies> {
-        let count = self.settlement_count.read()?;
-        let mut iso_codes = Vec::with_capacity(count as usize);
-        let mut pair_hashes = Vec::with_capacity(count as usize);
-
-        for idx in 0..count {
-            let iso_code = self.settlement_index_to_iso.read(&idx)?;
-            iso_codes.push(iso_code);
-            pair_hashes.push(self.settlement_iso_to_pair.read(&iso_code)?);
-        }
-
-        Ok((iso_codes, pair_hashes))
     }
 }

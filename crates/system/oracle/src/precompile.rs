@@ -264,17 +264,6 @@ pub fn dispatch(
                     isActive: is_active,
                 })
             }),
-            getSettlementCurrency(c) => view(c, |c| oracle.settlement_iso_to_pair.read(&c.isoCode)),
-            getSettlementCurrencies(_) => metadata::<IOracle::getSettlementCurrenciesCall>(|| {
-                let (iso_codes, pair_hashes) = oracle.get_settlement_currencies()?;
-                Ok(IOracle::getSettlementCurrenciesReturn {
-                    isoCodes: iso_codes,
-                    pairHashes: pair_hashes,
-                })
-            }),
-            getSettlementCount(_) => {
-                metadata::<IOracle::getSettlementCountCall>(|| oracle.settlement_count.read())
-            }
             getReferenceCurrencies(_) => metadata::<IOracle::getReferenceCurrenciesCall>(|| {
                 oracle.reference_currencies.read_all()
             }),
@@ -304,7 +293,7 @@ pub fn dispatch(
                         .tuples
                         .iter()
                         .map(|t| {
-                            let hash = OracleContract::pair_hash(&t.base, &t.quote);
+                            let hash = crate::state::pair_hash(&t.base, &t.quote);
                             (hash, t.exchangeRate, t.volume)
                         })
                         .collect();

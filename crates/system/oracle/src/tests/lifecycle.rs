@@ -225,7 +225,7 @@ fn run_tally_accepts_a_single_validator_as_the_weighted_median() {
         let validator = Address::new([0x11; 20]);
         register_validator(storage.clone(), validator, U256::in_units(100u64));
 
-        let pair_hash = OracleContract::pair_hash("COEN", "USDT");
+        let pair_hash = crate::state::pair_hash("COEN", "USDT");
         let rate = U256::in_units(50u64);
         let volume = U256::in_units(1000u64);
 
@@ -270,7 +270,7 @@ fn run_tally_rewards_every_voter_inside_the_reward_band() {
         register_validator(storage.clone(), v2, U256::in_units(200u64));
         register_validator(storage.clone(), v3, U256::in_units(100u64));
 
-        let pair_hash = OracleContract::pair_hash("COEN", "USDT");
+        let pair_hash = crate::state::pair_hash("COEN", "USDT");
 
         // All vote very close: 1000, 1001, 1002 (spread < 0.2% of median)
         // With 2% reward band, all should be within band.
@@ -316,7 +316,7 @@ fn run_tally_penalizes_a_voter_outside_the_reward_band() {
         register_validator(storage.clone(), v2, U256::in_units(200u64));
         register_validator(storage.clone(), v3, U256::in_units(100u64));
 
-        let pair_hash = OracleContract::pair_hash("COEN", "USDT");
+        let pair_hash = crate::state::pair_hash("COEN", "USDT");
 
         // v1 and v2 vote 50, v3 votes 500 (extreme outlier)
         oracle
@@ -370,7 +370,7 @@ fn begin_block_tallies_only_on_a_vote_period_boundary() {
         let v1 = Address::new([0x11; 20]);
         register_validator(storage.clone(), v1, U256::in_units(100u64));
 
-        let pair_hash = OracleContract::pair_hash("COEN", "USDT");
+        let pair_hash = crate::state::pair_hash("COEN", "USDT");
         oracle
             .submit_vote(v1, &[(pair_hash, U256::in_units(42u64), SCALE_1E18)])
             .unwrap();

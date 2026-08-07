@@ -1324,9 +1324,9 @@ def seed_oracle(storage: StorageBuilder, config: dict):
       slots 12-14: exchange_rate / block / timestamp
       slot 15: feeder delegations
       slots 32-33: protected validators
-      slot 40: settlement_count
-      slot 42: settlement_iso_to_pair (41 is a retired denom hole)
-      slots 43-45: reversible pair metadata (46 is a retired denom hole)
+      slots 43-44: reversible pair metadata (40-42, 45 and 46 are retired
+        settlement holes; the settlement pair is derived as
+        keccak256("COEN/<iso>"))
       slot 55: reference_currencies (StorageVec<u16>)
     """
     cfg = config.get("config", {})
@@ -1395,30 +1395,11 @@ def seed_oracle(storage: StorageBuilder, config: dict):
         for validator in protected:
             storage.set_mapping(32, address_bytes(validator), 1)
 
-    settlements = config.get("settlement_currencies", [])
-    seen_iso: set[int] = set()
-    # settlement_count (macro slot 40).
-    storage.set_slot(40, len(settlements))
-    for idx, settlement in enumerate(settlements):
-        iso_code = parse_int(settlement["iso_code"])
-        if iso_code == 0:
-            raise ValueError("oracle settlement iso_code must be non-zero")
-        if iso_code in seen_iso:
-            raise ValueError(f"duplicate oracle settlement iso_code: {iso_code}")
-        seen_iso.add(iso_code)
-
-        pair_base = settlement["pair_base"]
-        pair_quote = settlement["pair_quote"]
-        pair = (pair_base, pair_quote)
-        h = pair_hashes.get(pair)
-        if h is None:
-            raise ValueError(f"settlement pair is not registered: {pair_base}/{pair_quote}")
-
-        # settlement_iso_to_pair (42) / settlement_index_to_iso (45).
-        # Slots 41 and 46 are retired denom holes: still opened by the frozen
-        # OCOMP V1 plan, never written.
-        storage.set_mapping_b256(42, u32_bytes(iso_code), h)
-        storage.set_mapping(45, u32_bytes(idx), iso_code)
+    if config.get("settlement_currencies"):
+        raise ValueError(
+            "oracle.settlement_currencies was removed: register the COEN/<iso> "
+            "pair instead, and list the ISO under oracle.reference_currencies"
+        )
 
     # S-curve genesis seeds (macro slots 34-38). `resolve_tribute_price` reads
     # `max(per-day VWAP, S-curve)`; pre-seeded OFFERING days have no runtime-
@@ -1835,8 +1816,7 @@ def main():
         entry = alloc[ORACLE_ADDRESS]
         entry.setdefault("storage", {}).update(oracle_storage.entries)
         pairs = seed["oracle"].get("pairs", [])
-        settlements = seed["oracle"].get("settlement_currencies", [])
-        print(f"  Oracle: {len(pairs)} pairs, {len(settlements)} settlements, "
+        print(f"  Oracle: {len(pairs)} pairs, "
               f"{len(oracle_storage.entries)} storage entries")
 
     # Seed IntexFactory profile selector (prod seeds nothing).

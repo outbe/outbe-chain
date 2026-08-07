@@ -74,10 +74,6 @@ pub struct OracleGenesisConfig {
     pub initial_rates: Vec<(String, String, U256)>,
     /// Feeder delegations as `(validator, feeder)`.
     pub feeder_delegations: Vec<(Address, Address)>,
-    /// Settlement currencies as `(iso_code, pair_base, pair_quote)`.
-    /// iso_code: ISO 4217 numeric code (e.g., 840 = USD).
-    /// pair_base/pair_quote: trading pair for this settlement currency.
-    pub settlement_currencies: Vec<(u16, String, String)>,
     /// Reference currencies with their annualized currency rate (1e18
     /// scaled). These ISO 4217 codes identify currencies valid for off-chain
     /// pricing references; the currency rate is read by the Credis Factory
@@ -108,7 +104,6 @@ impl OracleGenesisConfig {
             pairs: vec![("COEN".into(), "840".into())],
             initial_rates: vec![],
             feeder_delegations: vec![],
-            settlement_currencies: vec![],
             reference_currencies: vec![ReferenceCurrency {
                 iso_code: 840,
                 currency_rate: DEFAULT_USD_CURRENCY_RATE,
@@ -175,34 +170,6 @@ pub fn init_from_genesis(oracle: &mut OracleContract, config: &OracleGenesisConf
             outbe_validatorset::delegation::ValidatorDelegateRole::Oracle,
             *feeder,
         )?;
-    }
-
-    // Import settlement currencies.
-    for (iso_code, pair_base, pair_quote) in &config.settlement_currencies {
-        if *iso_code == 0 {
-            return Err(PrecompileError::Revert(
-                "settlement iso_code must be non-zero".into(),
-            ));
-        }
-
-        let pair_hash = OracleContract::pair_hash(pair_base, pair_quote);
-        let pair_id = oracle.pair_hash_to_id.read(&pair_hash)?;
-        if pair_id == 0 {
-            return Err(PrecompileError::Revert(
-                "settlement pair must be registered".into(),
-            ));
-        }
-
-        if oracle.settlement_iso_to_pair.read(iso_code)? != B256::ZERO {
-            return Err(PrecompileError::Revert(
-                "settlement iso_code already registered".into(),
-            ));
-        }
-
-        let count = oracle.settlement_count.read()?;
-        oracle.settlement_iso_to_pair.write(iso_code, pair_hash)?;
-        oracle.settlement_index_to_iso.write(&count, *iso_code)?;
-        oracle.settlement_count.write(count + 1)?;
     }
 
     // Import reference currencies and their currency rates.
@@ -367,28 +334,6 @@ pub fn export_genesis(
         }
     }
 
-    // Export settlement currencies.
-    let settlement_count = oracle.settlement_count.read()?;
-    let mut settlement_currencies = Vec::with_capacity(settlement_count as usize);
-    for idx in 0..settlement_count {
-        let iso_code = oracle.settlement_index_to_iso.read(&idx)?;
-        if iso_code == 0 {
-            return Err(PrecompileError::Revert(format!(
-                "missing settlement iso metadata at index {idx}"
-            )));
-        }
-
-        let pair_hash = oracle.settlement_iso_to_pair.read(&iso_code)?;
-        let pair_id = oracle.pair_hash_to_id.read(&pair_hash)?;
-        if pair_id == 0 {
-            return Err(PrecompileError::Revert(format!(
-                "settlement pair metadata missing for iso_code {iso_code}"
-            )));
-        }
-        let (base, quote, _) = export_pair_metadata(oracle, pair_id)?;
-        settlement_currencies.push((iso_code, base, quote));
-    }
-
     // Export reference currencies with their currency rates (bounded list;
     // read_all OK).
     let reference_iso_codes = oracle.reference_currencies.read_all()?;
@@ -411,7 +356,6 @@ pub fn export_genesis(
         pairs,
         initial_rates,
         feeder_delegations,
-        settlement_currencies,
         reference_currencies,
         penalty_counters,
         aggregate_votes,
@@ -585,7 +529,7 @@ fn export_pair_metadata(oracle: &OracleContract, pair_id: u32) -> Result<(String
         )));
     }
 
-    if OracleContract::pair_hash(&base, &quote) != pair_hash {
+    if crate::state::pair_hash(&base, &quote) != pair_hash {
         return Err(PrecompileError::Revert(format!(
             "pair string metadata hash mismatch for pair_id {pair_id}"
         )));

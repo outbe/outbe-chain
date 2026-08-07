@@ -1,4 +1,4 @@
-use alloy_primitives::{address, keccak256, Address, B256, U256};
+use alloy_primitives::{address, keccak256, Address, U256};
 use alloy_sol_types::SolCall;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
@@ -502,12 +502,8 @@ fn qualify_series<'a>(
 }
 
 fn setup_pair(oracle: &OracleContract) -> u32 {
-    let pair_hash = B256::repeat_byte(0x11);
+    let pair_hash = outbe_oracle::api::pair_hash_coen_iso(QUALIFIER_REFERENCE_ISO);
     let pair_id = 1u32;
-    oracle
-        .settlement_iso_to_pair
-        .write(&QUALIFIER_REFERENCE_ISO, pair_hash)
-        .unwrap();
     oracle.pair_hash_to_id.write(&pair_hash, pair_id).unwrap();
     // Full registry entry so the production VWAP paths (calculate_vwaps
     // iterating registered vote-target pairs) see the pair too.
@@ -802,11 +798,9 @@ fn scan_and_qualify_promotes_matured_series() {
         runtime::issue(&s, sample(7)).unwrap();
         // Qualifier pair live rate above the floor.
         let oracle = OracleContract::new(s.clone());
-        let pair_hash = B256::repeat_byte(0x11);
-        oracle
-            .settlement_iso_to_pair
-            .write(&QUALIFIER_REFERENCE_ISO, pair_hash)
-            .unwrap();
+        let pair_hash = outbe_oracle::api::pair_hash_coen_iso(QUALIFIER_REFERENCE_ISO);
+        // The ISO resolves through the pair registry, so the pair must exist.
+        oracle.pair_hash_to_id.write(&pair_hash, 1).unwrap();
         oracle
             .exchange_rate
             .write(&pair_hash, U256::from(EXPECTED_FLOOR) + U256::from(1))
@@ -918,11 +912,7 @@ fn scan_does_not_halt_on_overflow_rate() {
     with_factory(|s| {
         runtime::issue(&s, sample(7)).unwrap();
         let oracle = OracleContract::new(s.clone());
-        let pair_hash = B256::repeat_byte(0x11);
-        oracle
-            .settlement_iso_to_pair
-            .write(&QUALIFIER_REFERENCE_ISO, pair_hash)
-            .unwrap();
+        let pair_hash = outbe_oracle::api::pair_hash_coen_iso(QUALIFIER_REFERENCE_ISO);
         // Out-of-range rate: price_to_bin overflows.
         oracle.exchange_rate.write(&pair_hash, U256::MAX).unwrap();
 
@@ -954,11 +944,9 @@ fn scan_isolates_bad_series() {
             .unwrap();
 
         let oracle = OracleContract::new(s.clone());
-        let pair_hash = B256::repeat_byte(0x11);
-        oracle
-            .settlement_iso_to_pair
-            .write(&QUALIFIER_REFERENCE_ISO, pair_hash)
-            .unwrap();
+        let pair_hash = outbe_oracle::api::pair_hash_coen_iso(QUALIFIER_REFERENCE_ISO);
+        // The ISO resolves through the pair registry, so the pair must exist.
+        oracle.pair_hash_to_id.write(&pair_hash, 1).unwrap();
         oracle
             .exchange_rate
             .write(&pair_hash, U256::from(EXPECTED_FLOOR) + U256::from(1))
@@ -1012,11 +1000,9 @@ fn call_scan_does_not_halt_on_overflow_vwap() {
 fn scan_caps_work_per_block_and_resumes_via_cursor() {
     with_factory(|s| {
         let oracle = OracleContract::new(s.clone());
-        let pair_hash = B256::repeat_byte(0x11);
-        oracle
-            .settlement_iso_to_pair
-            .write(&QUALIFIER_REFERENCE_ISO, pair_hash)
-            .unwrap();
+        let pair_hash = outbe_oracle::api::pair_hash_coen_iso(QUALIFIER_REFERENCE_ISO);
+        // The ISO resolves through the pair registry, so the pair must exist.
+        oracle.pair_hash_to_id.write(&pair_hash, 1).unwrap();
         // Rate well above both floors so both bins are eligible.
         oracle
             .exchange_rate

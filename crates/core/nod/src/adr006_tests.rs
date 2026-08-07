@@ -237,14 +237,6 @@ fn qualify_nods_skips_the_block_when_the_pair_has_no_published_rate() {
     StorageHandle::enter(&mut provider, |storage| {
         seed_compressed_entities_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
-        let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-        oracle
-            .settlement_iso_to_pair
-            .write(
-                &crate::constants::QUALIFIER_REFERENCE_ISO,
-                B256::repeat_byte(0x11),
-            )
-            .unwrap();
 
         let ctx = outbe_primitives::block::BlockRuntimeContext::new(
             outbe_primitives::block::BlockContext::empty_for_tests(1, 1_752_534_000, 1),

@@ -2096,7 +2096,7 @@ fn snapshot_export_control_pages_job_scoped_leases_and_manifests() {
         job_id,
         subjects: OpeningSubjectsV1 {
             owners: vec![Address::repeat_byte(0xa6)],
-            settlement_isos: vec![840],
+            reference_isos: vec![840],
         },
     };
     assert_eq!(

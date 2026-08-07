@@ -241,9 +241,6 @@ sol! {
         function getPairs() external view returns (uint32[] memory pairIds, string[] memory bases, string[] memory quotes, bool[] memory isActive);
         function getNominalPrice(string base, string quote, uint64 timestamp) external view returns (uint256 price);
         function getNominalPriceComponents(string base, string quote, uint64 timestamp) external view returns (uint256 nominalPrice, uint256 vwap, uint256 maxScurve, string memory source);
-        function getSettlementCurrency(uint16 isoCode) external view returns (bytes32 pairHash);
-        function getSettlementCurrencies() external view returns (uint16[] memory isoCodes, bytes32[] memory pairHashes);
-        function getSettlementCount() external view returns (uint32 count);
         function delegateFeederConsent(address feeder) external;
     }
 }

@@ -1300,8 +1300,7 @@ fn execute_amount_map_unit(
         return Err(WorkerError::UnitBindingMismatch);
     }
     opening.validate_against_bundle(bundle, limits)?;
-    let (oracle_wwd, settlement_isos) =
-        decode_oracle_subject_key(&opening.canonical_subject_key.0)?;
+    let (oracle_wwd, reference_isos) = decode_oracle_subject_key(&opening.canonical_subject_key.0)?;
     if oracle_wwd != manifest.wwd {
         return Err(WorkerError::UnitBindingMismatch);
     }
@@ -1312,11 +1311,8 @@ fn execute_amount_map_unit(
         .iter()
         .map(|slot| (slot.slot, slot.value))
         .collect::<Vec<_>>();
-    let oracle = evaluate_oracle_opening_v1(
-        WorldwideDay::new(manifest.wwd),
-        &settlement_isos,
-        &raw_slots,
-    )?;
+    let oracle =
+        evaluate_oracle_opening_v1(WorldwideDay::new(manifest.wwd), &reference_isos, &raw_slots)?;
     let mandatory_entry_price = oracle
         .entry_price(840)
         .ok_or(WorkerError::UnitBindingMismatch)?;

@@ -80,11 +80,11 @@ fn get_pairs_returns_empty_arrays_without_registered_pairs() {
 
 #[test]
 fn pair_hash_is_deterministic_and_distinct_per_pair() {
-    let h1 = OracleContract::pair_hash("COEN", "USDT");
-    let h2 = OracleContract::pair_hash("COEN", "USDT");
+    let h1 = crate::state::pair_hash("COEN", "USDT");
+    let h2 = crate::state::pair_hash("COEN", "USDT");
     assert_eq!(h1, h2);
 
-    let h3 = OracleContract::pair_hash("ETH", "USDT");
+    let h3 = crate::state::pair_hash("ETH", "USDT");
     assert_ne!(h1, h3);
 }
 
@@ -296,7 +296,7 @@ fn submit_vote_stores_tuples_until_clear_votes_drains_them() {
         let validator = Address::new([0x11; 20]);
         register_validator(storage.clone(), validator, U256::in_units(100u64));
 
-        let pair_hash = OracleContract::pair_hash("COEN", "USDT");
+        let pair_hash = crate::state::pair_hash("COEN", "USDT");
         let rate = U256::in_units(50u64);
         let volume = U256::in_units(1000u64);
 
@@ -333,7 +333,7 @@ fn submit_vote_rejects_a_duplicated_pair() {
         let validator = Address::new([0x11; 20]);
         register_validator(storage.clone(), validator, U256::in_units(100u64));
 
-        let pair_hash = OracleContract::pair_hash("COEN", "USDT");
+        let pair_hash = crate::state::pair_hash("COEN", "USDT");
         let rate = U256::in_units(50u64);
         let volume = U256::in_units(1000u64);
         // Two tuples naming the same pair: within the pair-count bound, so the
@@ -363,7 +363,7 @@ fn submit_vote_reports_a_duplicate_before_an_inactive_vote_target() {
         let validator = Address::new([0x11; 20]);
         register_validator(storage.clone(), validator, U256::in_units(100u64));
 
-        let untargeted = OracleContract::pair_hash("ETH", "USDT");
+        let untargeted = crate::state::pair_hash("ETH", "USDT");
         let rate = U256::in_units(50u64);
         let volume = U256::in_units(1000u64);
         // A submission that is both untargeted and duplicated reports the
@@ -458,8 +458,8 @@ fn get_aggregate_vote_returns_the_stored_tuples() {
         let validator = Address::new([0x11; 20]);
         register_validator(storage.clone(), validator, U256::in_units(100u64));
 
-        let hash1 = OracleContract::pair_hash("COEN", "USDT");
-        let hash2 = OracleContract::pair_hash("ETH", "USDT");
+        let hash1 = crate::state::pair_hash("COEN", "USDT");
+        let hash2 = crate::state::pair_hash("ETH", "USDT");
         let rate1 = U256::in_units(50u64);
         let rate2 = U256::in_units(3000u64);
         let vol1 = U256::in_units(100u64);
@@ -534,7 +534,7 @@ fn delegate_feeder_round_trips_and_revokes_on_the_zero_address() {
         assert_eq!(oracle.get_feeder(&validator).unwrap(), feeder);
 
         // Feeder can submit vote on behalf of validator
-        let pair_hash = OracleContract::pair_hash("COEN", "USDT");
+        let pair_hash = crate::state::pair_hash("COEN", "USDT");
         oracle
             .submit_vote(feeder, &[(pair_hash, U256::in_units(50u64), SCALE_1E18)])
             .unwrap();
@@ -592,6 +592,56 @@ fn reference_currencies_occupies_slot_55() {
     });
 }
 
+/// Pins the reversible-export string mappings to slots 43/44.
+///
+/// These sit immediately after the retired settlement hole (40-42), so the
+/// `#[slot(43)]` anchor on `pair_id_to_base` is the only thing keeping them in
+/// place. Without it the macro's running slot counter would slide them down
+/// into the hole and silently repoint `scripts/seed_genesis.py`.
+#[test]
+fn export_metadata_strings_occupy_slots_43_and_44() {
+    use outbe_primitives::addresses::ORACLE_ADDRESS;
+    use outbe_primitives::storage::types::StorageKey;
+
+    with_storage(|storage| {
+        let oracle = OracleContract::new(storage.clone());
+        // Short strings occupy exactly one word at the mapping slot, so each
+        // write lights up a single locatable slot.
+        oracle.pair_id_to_base.write_string(&1u32, "COEN").unwrap();
+        oracle.pair_id_to_quote.write_string(&1u32, "840").unwrap();
+
+        let locate = |expected: &str| {
+            (0u64..128)
+                .find(|base| {
+                    let slot = 1u32.mapping_slot(U256::from(*base));
+                    storage
+                        .sload(ORACLE_ADDRESS, slot)
+                        .map(|word| {
+                            let bytes = word.to_be_bytes::<32>();
+                            // Solidity short-string layout: data, then 2*len.
+                            bytes[31] as usize == expected.len() * 2
+                                && &bytes[..expected.len()] == expected.as_bytes()
+                        })
+                        .unwrap_or(false)
+                })
+                .unwrap_or_else(|| panic!("could not locate the slot holding {expected:?}"))
+        };
+
+        assert_eq!(
+            locate("COEN"),
+            43,
+            "macro-assigned pair_id_to_base slot changed; the #[slot(43)] anchor \
+             after the retired settlement hole did not hold"
+        );
+        assert_eq!(
+            locate("840"),
+            44,
+            "macro-assigned pair_id_to_quote slot changed; update \
+             scripts/seed_genesis.py"
+        );
+    });
+}
+
 /// Pins every base slot the frozen OCOMP V1 opening plan (`openings.rs`) and
 /// `scripts/seed_genesis.py` hardcode. Each field is written through the typed
 /// schema and read back at the raw slot those consumers derive, so any field
@@ -640,10 +690,7 @@ fn ocomp_opening_plan_slots_match_the_schema_layout() {
             .write(&0u32, U256::from(222u64))
             .unwrap();
         oracle.scurve_oldest_idx.write(1).unwrap();
-        oracle
-            .settlement_iso_to_pair
-            .write(&iso, pair_hash)
-            .unwrap();
+        oracle.reference_currencies.push(iso).unwrap();
         oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
         oracle.worldwide_day_vwap_pair_count.write(&wwd, 1).unwrap();
         oracle
@@ -672,12 +719,19 @@ fn ocomp_opening_plan_slots_match_the_schema_layout() {
         assert_mapping_slot(&storage, 0u32, base(35), base(7), "scurve_pair_id");
         assert_mapping_slot(&storage, 0u32, base(36), base(111), "scurve_peak_day");
         assert_mapping_slot(&storage, 0u32, base(37), base(222), "scurve_peak_price");
-        assert_mapping_slot(
-            &storage,
-            iso,
-            base(42),
-            U256::from_be_bytes(pair_hash.0),
-            "settlement_iso_to_pair",
+        // reference_currencies is a StorageVec: length at the base slot,
+        // elements at keccak256(be32(base)) + index.
+        assert_eq!(
+            storage.sload(ORACLE_ADDRESS, base(55)).unwrap(),
+            base(1),
+            "reference_currencies length is not at slot 55"
+        );
+        let reference_data =
+            U256::from_be_bytes(alloy_primitives::keccak256(base(55).to_be_bytes::<32>()).0);
+        assert_eq!(
+            storage.sload(ORACLE_ADDRESS, reference_data).unwrap(),
+            U256::from(iso),
+            "reference_currencies[0] is not at keccak256(be32(55))"
         );
         assert_mapping_slot(
             &storage,
@@ -711,64 +765,43 @@ fn ocomp_opening_plan_slots_match_the_schema_layout() {
     });
 }
 
-/// The two retired denom slots must stay empty: they remain in the frozen V1
-/// opening plan, so a resurrected writer would change what the plan proves.
+/// Every retired slot in the settlement range must stay empty. Slots 41/42 are
+/// still opened by the frozen V1 plan, so a resurrected writer would change
+/// what that plan proves; 40/45/46 must stay clear so the holes remain
+/// reusable-free and the `#[slot(43)]` anchor keeps its meaning.
 #[test]
-fn retired_denom_slots_stay_zero_after_genesis() {
+fn retired_settlement_slots_stay_zero_after_genesis() {
     use outbe_primitives::addresses::ORACLE_ADDRESS;
     use outbe_primitives::storage::types::StorageKey;
 
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
-        let mut config = crate::genesis::OracleGenesisConfig::default_config();
-        config
-            .settlement_currencies
-            .push((840, "COEN".into(), "840".into()));
+        let config = crate::genesis::OracleGenesisConfig::default_config();
         crate::genesis::init_from_genesis(&mut oracle, &config).unwrap();
 
-        for base in [41u64, 46] {
+        // Retired mappings, probed at the key genesis would have used.
+        for base in [41u64, 42, 45, 46] {
             let slot = 840u16.mapping_slot(U256::from(base));
             assert_eq!(
                 storage.sload(ORACLE_ADDRESS, slot).unwrap(),
                 U256::ZERO,
-                "retired slot {base} was written; it is part of the frozen \
-                 OCOMP V1 opening plan and must have no live writer"
+                "retired slot {base} was written; it has no live writer"
+            );
+            // settlement_index_to_iso was keyed by a u32 index, not the ISO.
+            let index_slot = 0u32.mapping_slot(U256::from(base));
+            assert_eq!(
+                storage.sload(ORACLE_ADDRESS, index_slot).unwrap(),
+                U256::ZERO,
+                "retired slot {base} was written at index 0"
             );
         }
-    });
-}
 
-/// Parity guard for the `settlement_iso_to_pair` base slot used by
-/// `scripts/seed_genesis.py` (slot 42). Writes a distinctive marker, then
-/// scans base slots 0..128 to recover the macro-assigned slot via the
-/// known `keccak256(left_pad(key, 32) || be(base, 32))` derivation.
-#[test]
-fn settlement_iso_to_pair_occupies_slot_42() {
-    use alloy_primitives::{keccak256, B256};
-    use outbe_primitives::addresses::ORACLE_ADDRESS;
-
-    with_storage(|storage| {
-        let oracle = OracleContract::new(storage.clone());
-        let iso: u16 = 840;
-        let marker = B256::repeat_byte(0xAB);
-        oracle.settlement_iso_to_pair.write(&iso, marker).unwrap();
-
-        for base in 0u64..128 {
-            let mut buf = [0u8; 64];
-            buf[30..32].copy_from_slice(&iso.to_be_bytes());
-            buf[32..64].copy_from_slice(&U256::from(base).to_be_bytes::<32>());
-            let slot = U256::from_be_bytes(keccak256(buf).0);
-            let word = storage.sload(ORACLE_ADDRESS, slot).unwrap();
-            if word == U256::from_be_bytes(marker.0) {
-                assert_eq!(
-                    base, 42,
-                    "macro-assigned settlement_iso_to_pair slot changed; \
-                     update scripts/seed_genesis.py"
-                );
-                return;
-            }
-        }
-        panic!("could not locate settlement_iso_to_pair base slot in 0..128");
+        // Retired direct slot (former settlement_count).
+        assert_eq!(
+            storage.sload(ORACLE_ADDRESS, U256::from(40u64)).unwrap(),
+            U256::ZERO,
+            "retired slot 40 was written; it has no live writer"
+        );
     });
 }
 

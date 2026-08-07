@@ -53,11 +53,6 @@ fn with_storage<R>(rate_1e18: Option<U256>, f: impl FnOnce(&StorageHandle) -> R)
                 .set_exchange_rate(Address::ZERO, "COEN", "840", rate, 0, 0)
                 .unwrap();
             // Register ISO 840 (USD) so mint_gem currency-validation passes.
-            let pair_hash = OracleContract::pair_hash("COEN", "840");
-            oracle
-                .settlement_iso_to_pair
-                .write(&840u16, pair_hash)
-                .unwrap();
             oracle.reference_currencies.push(840u16).unwrap();
         }
         f(&handle)

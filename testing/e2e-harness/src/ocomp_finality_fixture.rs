@@ -449,11 +449,11 @@ pub fn finalized_lysis_input_fixture(
     bodies: &[TributeBodyV1],
     limits: &SchemaLimits,
 ) -> FinalizedLysisInputFixture {
-    let mut settlement_isos = bodies
+    let mut reference_isos = bodies
         .iter()
         .map(|body| body.reference_currency)
         .collect::<std::collections::BTreeSet<_>>();
-    settlement_isos.insert(840);
+    reference_isos.insert(840);
     let subjects = OpeningSubjectsV1 {
         owners: bodies
             .iter()
@@ -461,7 +461,7 @@ pub fn finalized_lysis_input_fixture(
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .collect(),
-        settlement_isos: settlement_isos.into_iter().collect(),
+        reference_isos: reference_isos.into_iter().collect(),
     };
     let (fidelity_league_slots, oracle_contract) =
         lysis_contracts(WorldwideDay::new(intent.wwd), &subjects);
@@ -790,33 +790,38 @@ fn lysis_contracts(
         })
         .collect();
 
-    let settlement_pairs = subjects
-        .settlement_isos
-        .iter()
-        .map(|iso| (*iso, keccak256(iso.to_be_bytes())))
-        .collect::<Vec<_>>();
-    let oracle_counts = oracle_count_slot_plan_v1(day, &subjects.settlement_isos)
-        .expect("fixture settlement ISO set is canonical");
-    let oracle_plan = oracle_opening_slot_plan_v1(day, &settlement_pairs, 1, 1, 0)
-        .expect("fixture Oracle counts fit the frozen profile");
+    let reference_currency_count = u32::try_from(subjects.reference_isos.len())
+        .expect("fixture reference ISO set fits the frozen profile");
+    let oracle_counts = oracle_count_slot_plan_v1(day, &subjects.reference_isos)
+        .expect("fixture reference ISO set is canonical");
+    let oracle_plan = oracle_opening_slot_plan_v1(
+        day,
+        &subjects.reference_isos,
+        reference_currency_count,
+        1,
+        1,
+        0,
+    )
+    .expect("fixture Oracle counts fit the frozen profile");
+    // Default every slot to a non-zero filler, then pin the words the
+    // evaluator actually interprets. Pair-id slots stay non-zero so each ISO
+    // resolves to a registered pair.
     let mut oracle_values = oracle_plan
         .slots
         .iter()
         .enumerate()
         .map(|(index, slot)| (*slot, U256::from(index + 1)))
         .collect::<BTreeMap<_, _>>();
-    for (index, (iso, pair_hash)) in settlement_pairs.iter().enumerate() {
-        oracle_values.insert(oracle_counts.slots[index * 2], U256::from(*iso));
-        oracle_values.insert(
-            oracle_counts.slots[index * 2 + 1],
-            U256::from_be_bytes(pair_hash.0),
-        );
+    // The on-chain reference-currency list the subject ISOs must be a subset of.
+    // Plan order is: length, then one element slot per registered currency.
+    for (index, iso) in subjects.reference_isos.iter().enumerate() {
+        oracle_values.insert(oracle_plan.slots[index + 1], U256::from(*iso));
     }
-    let count_base = subjects.settlement_isos.len() * 2;
-    oracle_values.insert(oracle_counts.slots[count_base], U256::from(1));
-    oracle_values.insert(oracle_counts.slots[count_base + 1], U256::from(1));
-    oracle_values.insert(oracle_counts.slots[count_base + 2], U256::from(1));
-    oracle_values.insert(oracle_counts.slots[count_base + 3], U256::ZERO);
+    oracle_values.insert(oracle_counts.slots[0], U256::from(reference_currency_count));
+    oracle_values.insert(oracle_counts.slots[1], U256::from(1));
+    oracle_values.insert(oracle_counts.slots[2], U256::from(1));
+    oracle_values.insert(oracle_counts.slots[3], U256::from(1));
+    oracle_values.insert(oracle_counts.slots[4], U256::ZERO);
 
     (
         fidelity_league_slots,

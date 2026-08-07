@@ -5,9 +5,11 @@ use std::{
     fmt::{Display, Formatter},
 };
 
-use alloy_primitives::{B256, U256};
+use alloy_primitives::{keccak256, B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_primitives::storage::types::StorageKey;
+
+use crate::state::pair_hash_coen_iso;
 
 const PAIR_HASH_TO_ID_BASE_SLOT: u64 = 10;
 const SCURVE_COUNT_SLOT: u64 = 34;
@@ -15,34 +17,30 @@ const SCURVE_PAIR_ID_BASE_SLOT: u64 = 35;
 const SCURVE_PEAK_DAY_BASE_SLOT: u64 = 36;
 const SCURVE_PEAK_PRICE_BASE_SLOT: u64 = 37;
 const SCURVE_OLDEST_SLOT: u64 = 38;
-// Retired schema field with no live writer: it always opens as zero and
-// `evaluate_oracle_opening_v1` never reads its value. It stays in the plan
-// because the V1 codec descriptor is hashed into the protocol bundle
-// (`outbe-ocomp-protocol::generated_registry`), so dropping it would change the
-// registry hash. Do not remove or reuse slot 41.
-const SETTLEMENT_ISO_TO_DENOM_BASE_SLOT: u64 = 41;
-const SETTLEMENT_ISO_TO_PAIR_BASE_SLOT: u64 = 42;
 const WWD_VWAP_EXISTS_BASE_SLOT: u64 = 47;
 const WWD_VWAP_PAIR_COUNT_BASE_SLOT: u64 = 50;
 const WWD_VWAP_PAIR_ID_BASE_SLOT: u64 = 51;
 const WWD_VWAP_VALUE_BASE_SLOT: u64 = 52;
+const REFERENCE_CURRENCIES_SLOT: u64 = 55;
 
 pub const MAX_OCOMP_WWD_PAIR_ENTRIES: u32 = 256;
 pub const MAX_OCOMP_ACTIVE_SCURVE_ENTRIES: u32 = 256;
-pub const MAX_OCOMP_SETTLEMENT_CURRENCIES: usize = 256;
+pub const MAX_OCOMP_REFERENCE_ISOS: usize = 256;
+pub const MAX_OCOMP_REFERENCE_CURRENCIES: u32 = 256;
 const MANDATORY_USD_ISO: u16 = 840;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OracleCountSlotPlanV1 {
     pub worldwide_day: WorldwideDay,
-    pub settlement_isos: Vec<u16>,
+    pub reference_isos: Vec<u16>,
     pub slots: Vec<B256>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OracleOpeningSlotPlanV1 {
     pub worldwide_day: WorldwideDay,
-    pub settlement_pairs: Vec<(u16, B256)>,
+    pub reference_isos: Vec<u16>,
+    pub reference_currency_count: u32,
     pub worldwide_day_pair_count: u32,
     pub scurve_count: u32,
     pub scurve_oldest: u32,
@@ -51,9 +49,10 @@ pub struct OracleOpeningSlotPlanV1 {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OracleOpeningPlanError {
-    MissingMandatoryUsdSettlement,
-    NonCanonicalSettlementIsos,
-    SettlementCurrencyCountExceedsCap { actual: usize, cap: usize },
+    MissingMandatoryUsdReference,
+    NonCanonicalReferenceIsos,
+    ReferenceIsoCountExceedsCap { actual: usize, cap: usize },
+    ReferenceCurrencyCountExceedsCap { actual: u32, cap: u32 },
     WorldwideDayPairCountExceedsCap { actual: u32, cap: u32 },
     ScurveOldestExceedsCount { oldest: u32, count: u32 },
     ActiveScurveCountExceedsCap { actual: u32, cap: u32 },
@@ -83,6 +82,7 @@ pub enum OracleOpeningEvaluationError {
     IntegerOverflow(&'static str),
     InvalidWorldwideDayExists(U256),
     MissingPairId { iso: u16 },
+    IsoNotAReferenceCurrency { iso: u16 },
 }
 
 impl Display for OracleOpeningEvaluationError {
@@ -104,9 +104,12 @@ impl Display for OracleOpeningEvaluationError {
                 write!(formatter, "invalid Oracle WorldwideDay exists flag {value}")
             }
             Self::MissingPairId { iso } => {
+                write!(formatter, "Oracle ISO {iso} has no registered pair id")
+            }
+            Self::IsoNotAReferenceCurrency { iso } => {
                 write!(
                     formatter,
-                    "Oracle settlement ISO {iso} has no registered pair id"
+                    "Oracle ISO {iso} is not an on-chain reference currency"
                 )
             }
         }
@@ -124,16 +127,19 @@ impl From<OracleOpeningPlanError> for OracleOpeningEvaluationError {
 impl Display for OracleOpeningPlanError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::MissingMandatoryUsdSettlement => {
-                formatter.write_str("settlement ISO list does not contain mandatory 840")
+            Self::MissingMandatoryUsdReference => {
+                formatter.write_str("reference ISO list does not contain mandatory 840")
             }
-            Self::NonCanonicalSettlementIsos => {
-                formatter.write_str("settlement ISO list is not strictly ascending")
+            Self::NonCanonicalReferenceIsos => {
+                formatter.write_str("reference ISO list is not strictly ascending")
             }
-            Self::SettlementCurrencyCountExceedsCap { actual, cap } => {
+            Self::ReferenceIsoCountExceedsCap { actual, cap } => {
+                write!(formatter, "reference ISO count {actual} exceeds cap {cap}")
+            }
+            Self::ReferenceCurrencyCountExceedsCap { actual, cap } => {
                 write!(
                     formatter,
-                    "settlement currency count {actual} exceeds cap {cap}"
+                    "on-chain reference currency count {actual} exceeds cap {cap}"
                 )
             }
             Self::WorldwideDayPairCountExceedsCap { actual, cap } => {
@@ -154,39 +160,45 @@ impl Display for OracleOpeningPlanError {
 
 impl std::error::Error for OracleOpeningPlanError {}
 
+/// Round one: the fixed-size count probe.
+///
+/// The full plan's length depends on collection sizes that are themselves on
+/// chain, so this opens only the five counter words. It is independent of the
+/// ISO list — the pair hash for an ISO is derived, not stored.
 pub fn oracle_count_slot_plan_v1(
     worldwide_day: WorldwideDay,
-    settlement_isos: &[u16],
+    reference_isos: &[u16],
 ) -> Result<OracleCountSlotPlanV1, OracleOpeningPlanError> {
-    validate_settlement_isos(settlement_isos)?;
-    let mut slots = Vec::with_capacity(settlement_isos.len().saturating_mul(2) + 4);
-    for iso in settlement_isos {
-        slots.push(mapping_slot(*iso, SETTLEMENT_ISO_TO_DENOM_BASE_SLOT));
-        slots.push(mapping_slot(*iso, SETTLEMENT_ISO_TO_PAIR_BASE_SLOT));
-    }
-    slots.push(mapping_slot(worldwide_day, WWD_VWAP_EXISTS_BASE_SLOT));
-    slots.push(mapping_slot(worldwide_day, WWD_VWAP_PAIR_COUNT_BASE_SLOT));
-    slots.push(direct_slot(SCURVE_COUNT_SLOT));
-    slots.push(direct_slot(SCURVE_OLDEST_SLOT));
+    validate_reference_isos(reference_isos)?;
+    let slots = vec![
+        direct_slot(REFERENCE_CURRENCIES_SLOT),
+        mapping_slot(worldwide_day, WWD_VWAP_EXISTS_BASE_SLOT),
+        mapping_slot(worldwide_day, WWD_VWAP_PAIR_COUNT_BASE_SLOT),
+        direct_slot(SCURVE_COUNT_SLOT),
+        direct_slot(SCURVE_OLDEST_SLOT),
+    ];
     Ok(OracleCountSlotPlanV1 {
         worldwide_day,
-        settlement_isos: settlement_isos.to_vec(),
+        reference_isos: reference_isos.to_vec(),
         slots,
     })
 }
 
 pub fn oracle_opening_slot_plan_v1(
     worldwide_day: WorldwideDay,
-    settlement_pairs: &[(u16, B256)],
+    reference_isos: &[u16],
+    reference_currency_count: u32,
     worldwide_day_pair_count: u32,
     scurve_count: u32,
     scurve_oldest: u32,
 ) -> Result<OracleOpeningSlotPlanV1, OracleOpeningPlanError> {
-    let settlement_isos = settlement_pairs
-        .iter()
-        .map(|(iso, _)| *iso)
-        .collect::<Vec<_>>();
-    validate_settlement_isos(&settlement_isos)?;
+    validate_reference_isos(reference_isos)?;
+    if reference_currency_count > MAX_OCOMP_REFERENCE_CURRENCIES {
+        return Err(OracleOpeningPlanError::ReferenceCurrencyCountExceedsCap {
+            actual: reference_currency_count,
+            cap: MAX_OCOMP_REFERENCE_CURRENCIES,
+        });
+    }
     if worldwide_day_pair_count > MAX_OCOMP_WWD_PAIR_ENTRIES {
         return Err(OracleOpeningPlanError::WorldwideDayPairCountExceedsCap {
             actual: worldwide_day_pair_count,
@@ -221,18 +233,22 @@ pub fn oracle_opening_slot_plan_v1(
     })?)
     .saturating_mul(3);
     let mut slots = Vec::with_capacity(
-        settlement_pairs
+        reference_isos
             .len()
-            .saturating_mul(3)
-            .saturating_add(4)
+            .saturating_add(reference_currency_count as usize)
+            .saturating_add(5)
             .saturating_add(wwd_slots)
             .saturating_add(scurve_slots),
     );
+    // The on-chain reference-currency list, so the verifier can prove every
+    // subject ISO is actually registered.
+    slots.push(direct_slot(REFERENCE_CURRENCIES_SLOT));
+    for index in 0..reference_currency_count {
+        slots.push(vec_element_slot(REFERENCE_CURRENCIES_SLOT, index));
+    }
     let mut pair_id_slots = BTreeSet::new();
-    for (iso, pair_hash) in settlement_pairs {
-        slots.push(mapping_slot(*iso, SETTLEMENT_ISO_TO_DENOM_BASE_SLOT));
-        slots.push(mapping_slot(*iso, SETTLEMENT_ISO_TO_PAIR_BASE_SLOT));
-        let pair_id_slot = mapping_slot(*pair_hash, PAIR_HASH_TO_ID_BASE_SLOT);
+    for iso in reference_isos {
+        let pair_id_slot = mapping_slot(pair_hash_coen_iso(*iso), PAIR_HASH_TO_ID_BASE_SLOT);
         if pair_id_slots.insert(pair_id_slot) {
             slots.push(pair_id_slot);
         }
@@ -261,7 +277,8 @@ pub fn oracle_opening_slot_plan_v1(
 
     Ok(OracleOpeningSlotPlanV1 {
         worldwide_day,
-        settlement_pairs: settlement_pairs.to_vec(),
+        reference_isos: reference_isos.to_vec(),
+        reference_currency_count,
         worldwide_day_pair_count,
         scurve_count,
         scurve_oldest,
@@ -271,10 +288,10 @@ pub fn oracle_opening_slot_plan_v1(
 
 pub fn evaluate_oracle_opening_v1(
     worldwide_day: WorldwideDay,
-    settlement_isos: &[u16],
+    reference_isos: &[u16],
     ordered_slots: &[(B256, U256)],
 ) -> Result<OracleOpeningEvaluationV1, OracleOpeningEvaluationError> {
-    let count_plan = oracle_count_slot_plan_v1(worldwide_day, settlement_isos)?;
+    let count_plan = oracle_count_slot_plan_v1(worldwide_day, reference_isos)?;
     let mut values = BTreeMap::new();
     for (slot, value) in ordered_slots {
         if values.insert(*slot, *value).is_some() {
@@ -287,36 +304,22 @@ pub fn evaluate_oracle_opening_v1(
             .copied()
             .ok_or(OracleOpeningEvaluationError::MissingSlot(slot))
     };
-    let mut settlement_pairs = Vec::with_capacity(settlement_isos.len());
-    for (iso, slots) in settlement_isos
-        .iter()
-        .copied()
-        .zip(count_plan.slots.chunks_exact(2))
-    {
-        settlement_pairs.push((iso, B256::new(value_at(slots[1])?.to_be_bytes())));
-    }
-    let count_offset = settlement_isos.len().saturating_mul(2);
-    let worldwide_day_exists = value_at(count_plan.slots[count_offset])?;
+    let reference_currency_count =
+        checked_u32(value_at(count_plan.slots[0])?, "reference currency count")?;
+    let worldwide_day_exists = value_at(count_plan.slots[1])?;
     if worldwide_day_exists > U256::from(1) {
         return Err(OracleOpeningEvaluationError::InvalidWorldwideDayExists(
             worldwide_day_exists,
         ));
     }
-    let worldwide_day_pair_count = checked_u32(
-        value_at(count_plan.slots[count_offset + 1])?,
-        "WorldwideDay pair count",
-    )?;
-    let scurve_count = checked_u32(
-        value_at(count_plan.slots[count_offset + 2])?,
-        "S-curve count",
-    )?;
-    let scurve_oldest = checked_u32(
-        value_at(count_plan.slots[count_offset + 3])?,
-        "S-curve oldest index",
-    )?;
+    let worldwide_day_pair_count =
+        checked_u32(value_at(count_plan.slots[2])?, "WorldwideDay pair count")?;
+    let scurve_count = checked_u32(value_at(count_plan.slots[3])?, "S-curve count")?;
+    let scurve_oldest = checked_u32(value_at(count_plan.slots[4])?, "S-curve oldest index")?;
     let plan = oracle_opening_slot_plan_v1(
         worldwide_day,
-        &settlement_pairs,
+        reference_isos,
+        reference_currency_count,
         worldwide_day_pair_count,
         scurve_count,
         scurve_oldest,
@@ -362,12 +365,25 @@ pub fn evaluate_oracle_opening_v1(
         ));
     }
 
+    // Every subject ISO must be a registered on-chain reference currency.
+    let mut registered = BTreeSet::new();
+    for index in 0..reference_currency_count {
+        let word = value_at(vec_element_slot(REFERENCE_CURRENCIES_SLOT, index))?;
+        registered.insert(checked_u16(word, "reference currency ISO")?);
+    }
+    if let Some(iso) = reference_isos.iter().find(|iso| !registered.contains(iso)) {
+        return Err(OracleOpeningEvaluationError::IsoNotAReferenceCurrency { iso: *iso });
+    }
+
     let target_day = crate::scurve::truncate_to_day(worldwide_day.to_timestamp_utc());
-    let mut ordered_entry_prices = Vec::with_capacity(settlement_pairs.len());
-    for (iso, pair_hash) in settlement_pairs {
+    let mut ordered_entry_prices = Vec::with_capacity(reference_isos.len());
+    for iso in reference_isos.iter().copied() {
         let pair_id = checked_u32(
-            value_at(mapping_slot(pair_hash, PAIR_HASH_TO_ID_BASE_SLOT))?,
-            "settlement pair id",
+            value_at(mapping_slot(
+                pair_hash_coen_iso(iso),
+                PAIR_HASH_TO_ID_BASE_SLOT,
+            ))?,
+            "reference pair id",
         )?;
         if pair_id == 0 {
             return Err(OracleOpeningEvaluationError::MissingPairId { iso });
@@ -407,6 +423,14 @@ fn checked_u32(value: U256, field: &'static str) -> Result<u32, OracleOpeningEva
     }
 }
 
+fn checked_u16(value: U256, field: &'static str) -> Result<u16, OracleOpeningEvaluationError> {
+    if value > U256::from(u16::MAX) {
+        Err(OracleOpeningEvaluationError::IntegerOverflow(field))
+    } else {
+        Ok(value.to::<u16>())
+    }
+}
+
 fn checked_u64(value: U256, field: &'static str) -> Result<u64, OracleOpeningEvaluationError> {
     if value > U256::from(u64::MAX) {
         Err(OracleOpeningEvaluationError::IntegerOverflow(field))
@@ -415,20 +439,27 @@ fn checked_u64(value: U256, field: &'static str) -> Result<u64, OracleOpeningEva
     }
 }
 
-fn validate_settlement_isos(isos: &[u16]) -> Result<(), OracleOpeningPlanError> {
-    if isos.len() > MAX_OCOMP_SETTLEMENT_CURRENCIES {
-        return Err(OracleOpeningPlanError::SettlementCurrencyCountExceedsCap {
+fn validate_reference_isos(isos: &[u16]) -> Result<(), OracleOpeningPlanError> {
+    if isos.len() > MAX_OCOMP_REFERENCE_ISOS {
+        return Err(OracleOpeningPlanError::ReferenceIsoCountExceedsCap {
             actual: isos.len(),
-            cap: MAX_OCOMP_SETTLEMENT_CURRENCIES,
+            cap: MAX_OCOMP_REFERENCE_ISOS,
         });
     }
     if !isos.contains(&MANDATORY_USD_ISO) {
-        return Err(OracleOpeningPlanError::MissingMandatoryUsdSettlement);
+        return Err(OracleOpeningPlanError::MissingMandatoryUsdReference);
     }
     if isos.windows(2).any(|pair| pair[0] >= pair[1]) {
-        return Err(OracleOpeningPlanError::NonCanonicalSettlementIsos);
+        return Err(OracleOpeningPlanError::NonCanonicalReferenceIsos);
     }
     Ok(())
+}
+
+/// `StorageVec` element address: `keccak256(be32(base_slot)) + index`. Every
+/// `Storable` in this repo occupies one whole word, so the stride is 1.
+fn vec_element_slot(base_slot: u64, index: u32) -> B256 {
+    let start = U256::from_be_bytes(keccak256(U256::from(base_slot).to_be_bytes::<32>()).0);
+    raw_slot(start + U256::from(index))
 }
 
 fn nested_mapping_slot(
