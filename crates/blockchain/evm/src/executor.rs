@@ -3608,8 +3608,11 @@ where
                     // emission/reshare, unrecorded parent accounting). The revert is a
                     // deterministic function of committed chain state, so every
                     // validator rejects the same block identically — no state-root
-                    // split. Non-critical phases (OracleSlashWindow, TeeBootstrap)
-                    // keep the soft-receipt skip.
+                    // split. Non-critical phases (OracleSlashWindow, HookEvents)
+                    // keep the soft-receipt skip for failures that fit within the
+                    // aggregate internal-work budget. An OOG consumes the full
+                    // system-call gas limit and therefore remains a hard aggregate
+                    // budget failure once earlier mandatory phases have run.
                     if expected_phase.revert_fails_block() {
                         let reason = format!(
                         "critical system tx {expected_phase:?} did not succeed (revert/halt) at \
@@ -6997,13 +7000,10 @@ mod tests {
     }
 
     #[test]
-    fn gas_09_noncritical_system_oog_failure_is_soft_and_keeps_user_gas_lane_clean() {
+    fn gas_09_noncritical_system_oog_exhausts_aggregate_budget_atomically() {
         let signer = test_evm_signer();
         let proposer = signer.address();
-        let user_tx = test_regular_tx()
-            .try_into_recovered()
-            .expect("regular tx signer should recover");
-        let mut state = state_with_active_proposer_and_funded_account(proposer, user_tx.signer());
+        let mut state = state_with_active_proposer(proposer);
         let chain_spec = test_chain_spec();
         let receipt_builder = reth_ethereum::evm::RethReceiptBuilder::default();
         let config = OutbeEvmConfig::new(chain_spec.clone()).with_evm_signer(signer.clone());
@@ -7045,89 +7045,46 @@ mod tests {
             .next()
             .expect("OracleSlashWindow system tx should be present");
         let cycle_signed_gas_limit = cycle_tx.tx().gas_limit();
-        let oracle_visible_gas = oracle_tx.tx().gas_limit();
-
-        // CycleTick is consensus-critical (a revert/OOG there fails the
-        // block), so the soft-receipt path is exercised against
-        // OracleSlashWindow, a non-critical begin-zone phase whose OOG still
-        // soft-fails and keeps the user gas lane clean. CycleTick executes
-        // successfully first (receipt 0).
+        // A forced OOG does not model Oracle performing ten billion units of
+        // useful work: revm charges the complete system-call gas limit for any
+        // OOG. Because mandatory phases have already consumed internal work,
+        // accepting it as a soft failure would exceed the aggregate block
+        // budget. The failure must therefore be hard and atomic even though an
+        // ordinary OracleSlashWindow revert remains soft.
         let cycle_gas = executor
             .execute_transaction(cycle_tx)
             .expect("CycleTick should execute successfully")
             .tx_gas_used();
         assert!(cycle_gas <= cycle_signed_gas_limit);
-        let tee_bootstrap_gas = executor
+        let _tee_bootstrap_gas = executor
             .execute_transaction(tee_bootstrap_tx)
             .expect("mandatory TeeBootstrap should execute before the non-critical phase")
             .tx_gas_used();
 
-        let failure_gas = crate::factory::with_forced_outbe_system_call_oog_halt(|| {
+        let receipts_before = executor.receipts().len();
+        let cumulative_visible_gas_before = executor.inner.cumulative_tx_gas_used;
+        let internal_work_before = executor.system_tx_execution_gas;
+        let error = crate::factory::with_forced_outbe_system_call_oog_halt(|| {
             executor.execute_transaction(oracle_tx)
         })
-        .expect("forced non-critical system OOG must become a soft-failure receipt")
-        .tx_gas_used();
-        assert_eq!(
-            failure_gas, oracle_visible_gas,
-            "GAS-09: soft-failed OOG system tx should return visible envelope gas"
-        );
+        .expect_err("forced system OOG must exhaust the aggregate internal-work budget");
 
-        let failure_receipt = executor
-            .receipts()
-            .get(2)
-            .expect("soft-failed oracle tx must emit a receipt");
-        assert!(!failure_receipt.success);
-        assert_eq!(
-            failure_receipt.cumulative_gas_used,
-            cycle_gas + tee_bootstrap_gas + oracle_visible_gas
-        );
-        assert_eq!(failure_receipt.logs.len(), 1);
-        assert_eq!(failure_receipt.logs[0].address, OUTBE_SYSTEM_TX_ADDRESS);
-        assert_eq!(
-            failure_receipt.logs[0].data.topics().first(),
-            Some(&crate::failure_receipt::OUTBE_FAILURE_TOPIC0),
-            "GAS-09: system OOG soft-failure receipt must carry OutbeFailure"
-        );
-        let mut expected_code_topic = [0u8; 32];
-        expected_code_topic[31] = 202;
-        assert_eq!(
-            failure_receipt.logs[0].data.topics()[1].as_slice(),
-            expected_code_topic,
-            "GAS-09: system OOG soft-failure receipt must use OutbeFailure code 202"
-        );
-
-        let user_gas = executor
-            .execute_transaction(user_tx)
-            .expect("user tx must execute after OOG soft failure")
-            .tx_gas_used();
-        let expected_system_visible_gas = cycle_gas + tee_bootstrap_gas + oracle_visible_gas;
-        assert_eq!(
-            executor.inner.cumulative_tx_gas_used,
-            expected_system_visible_gas + user_gas,
-            "GAS-09: OOG soft failure must charge only visible system envelope gas"
-        );
-
-        executor
-            .finalize_compressed_entities()
-            .expect("compressed entities should finalize");
-        executor
-            .prepare_final_header_artifacts(0)
-            .expect("final extra_data should encode");
-        let (_evm, result) = executor.finish().expect("finish should succeed");
-        assert_eq!(
-            result.gas_used,
-            expected_system_visible_gas + user_gas,
-            "GAS-09: block/header gas must include only visible system envelope gas plus user gas"
-        );
-        assert_eq!(result.receipts.len(), 4);
-        assert_eq!(result.receipts[0].cumulative_gas_used, cycle_gas);
-        assert_eq!(
-            result.receipts[2].cumulative_gas_used,
-            expected_system_visible_gas
+        assert!(
+            error.to_string().contains("internal system-work budget"),
+            "GAS-09: OOG must fail through the aggregate budget guard: {error}"
         );
         assert_eq!(
-            result.receipts[3].cumulative_gas_used,
-            expected_system_visible_gas + user_gas
+            executor.receipts().len(),
+            receipts_before,
+            "GAS-09: aggregate exhaustion must not append a failure receipt"
+        );
+        assert_eq!(
+            executor.inner.cumulative_tx_gas_used, cumulative_visible_gas_before,
+            "GAS-09: aggregate exhaustion must not change visible gas accounting"
+        );
+        assert_eq!(
+            executor.system_tx_execution_gas, internal_work_before,
+            "GAS-09: aggregate exhaustion must not commit internal-work accounting"
         );
     }
 

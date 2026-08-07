@@ -335,6 +335,11 @@ q-forming apply run under the separate deterministic system-work budget.
 Actual execution gas is accumulated across system transactions and checked
 against `SYSTEM_TX_ARTIFACT_GAS_LIMIT = 10_000_000_000` before state or receipt
 commit; exceeding that ceiling invalidates the carrier atomically.
+The same ceiling bounds the complete block-internal system workload. An EVM
+out-of-gas result consumes the full system-call limit, so it is treated as hard
+aggregate-budget exhaustion and cannot be converted into a soft receipt after
+earlier mandatory phases have consumed work. Soft failure remains available
+for non-critical `Revert`/bounded `Halt` results that fit the aggregate budget.
 Malformed or unauthorized lookalikes fail closed before that authority is
 granted.
 
