@@ -11,15 +11,16 @@ pub enum PairType {
 }
 
 impl From<PairType> for Address {
-    /// A currency code is packed as BCD into the last two bytes, so ISO 840
-    /// becomes `0x0000…0840`. `ERC20` addresses inside that reserved range
-    /// decode back as `IsoCurrency`.
+    /// A currency code is packed as BCD behind the [`ISO_MARKER`] nibbles, so
+    /// ISO 840 becomes `0x0000…0cc840`. `ERC20` addresses inside that reserved
+    /// range decode back as `IsoCurrency`.
     fn from(value: PairType) -> Self {
         match value {
             PairType::Native => Address::ZERO,
             PairType::ERC20(address) => address,
             PairType::IsoCurrency(code) => {
-                Address::left_padding_from(&bcd_encode(code).to_be_bytes())
+                let marked = ISO_MARKER | u32::from(bcd_encode(code));
+                Address::left_padding_from(&marked.to_be_bytes())
             }
         }
     }
@@ -30,7 +31,7 @@ impl From<Address> for PairType {
         let raw = U256::from_be_slice(value.as_slice());
         if raw.is_zero() {
             PairType::Native
-        } else if let Some(code) = bcd_decode(raw) {
+        } else if let Some(code) = iso_code(raw) {
             PairType::IsoCurrency(code)
         } else {
             PairType::ERC20(value)
@@ -38,12 +39,29 @@ impl From<Address> for PairType {
     }
 }
 
-/// BCD form of the highest ISO 4217 code; addresses above it are token
-/// addresses.
-const MAX_ISO_CODE_BCD: u16 = 0x0999;
+/// Marker nibbles every ISO currency address carries, keeping the reserved
+/// range clear of low-numbered token addresses.
+const ISO_MARKER: u32 = 0xcc000;
+
+/// Highest address in the reserved ISO range: the marker plus BCD 999.
+const ISO_MARKER_MAX: u32 = 0xcc999;
+
+/// The ISO code an address encodes, or `None` when it falls outside
+/// `ISO_MARKER..=ISO_MARKER_MAX` or carries a non-decimal nibble.
+///
+/// The range is matched against the whole 20-byte value, so every byte above
+/// the marker has to be zero: a token address that merely ends in `cc840` is
+/// not an ISO code. Anything wider than `u32` saturates past the range.
+fn iso_code(raw: U256) -> Option<u16> {
+    let marked = raw.saturating_to::<u32>();
+    if !(ISO_MARKER..=ISO_MARKER_MAX).contains(&marked) {
+        return None;
+    }
+    bcd_decode(u16::try_from(marked - ISO_MARKER).ok()?)
+}
 
 /// One decimal digit per nibble: `840 -> 0x0840`. Only the four lowest decimal
-/// digits fit, which is exact for every code in `0..=MAX_ISO_CODE`.
+/// digits fit, which is exact for every code in `0..=999`.
 fn bcd_encode(code: u16) -> u16 {
     let mut rest = code % 10_000;
     let mut packed = 0u16;
@@ -54,13 +72,9 @@ fn bcd_encode(code: u16) -> u16 {
     packed
 }
 
-/// Inverse of [`bcd_encode`], or `None` when `raw` is not the BCD form of a
-/// value in `0..=MAX_ISO_CODE`.
-fn bcd_decode(raw: U256) -> Option<u16> {
-    if raw > U256::from(MAX_ISO_CODE_BCD) {
-        return None;
-    }
-    let packed = raw.saturating_to::<u16>();
+/// Inverse of [`bcd_encode`] over the three low nibbles, or `None` when one of
+/// them is not a decimal digit.
+fn bcd_decode(packed: u16) -> Option<u16> {
     let mut code = 0u16;
     for shift in [8u32, 4, 0] {
         let digit = (packed >> shift) & 0xf;
@@ -88,19 +102,25 @@ mod tests {
     }
 
     #[test]
-    fn iso_currency_encodes_each_decimal_digit_as_a_nibble() {
+    fn iso_currency_encodes_each_decimal_digit_as_a_nibble_behind_the_marker() {
         assert_eq!(
             Address::from(PairType::IsoCurrency(840)),
-            address!("0x0000000000000000000000000000000000000840"),
+            address!("0x00000000000000000000000000000000000cc840"),
         );
         assert_eq!(
             Address::from(PairType::IsoCurrency(8)),
-            address!("0x0000000000000000000000000000000000000008"),
+            address!("0x00000000000000000000000000000000000cc008"),
         );
         assert_eq!(
             Address::from(PairType::IsoCurrency(MAX_ISO_CODE)),
-            address!("0x0000000000000000000000000000000000000999"),
+            address!("0x00000000000000000000000000000000000cc999"),
         );
+    }
+
+    #[test]
+    fn an_unmarked_currency_code_decodes_as_erc20() {
+        let token = address!("0x0000000000000000000000000000000000000840");
+        assert_eq!(PairType::from(token), PairType::ERC20(token));
     }
 
     #[test]
@@ -137,7 +157,7 @@ mod tests {
             converted,
             [
                 Address::ZERO,
-                address!("0x0000000000000000000000000000000000000840"),
+                address!("0x00000000000000000000000000000000000cc840"),
                 token,
             ],
         );
@@ -154,17 +174,24 @@ mod tests {
         assert_eq!(&pair[0..20], Address::ZERO.as_slice());
         assert_eq!(
             &pair[20..40],
-            address!("0x0000000000000000000000000000000000000840").as_slice(),
+            address!("0x00000000000000000000000000000000000cc840").as_slice(),
         );
     }
 
     #[test]
-    fn an_address_with_a_non_decimal_nibble_decodes_as_erc20() {
+    fn an_address_outside_the_marked_iso_range_decodes_as_erc20() {
         for token in [
-            address!("0x00000000000000000000000000000000000008a0"),
-            address!("0x000000000000000000000000000000000000084f"),
-            address!("0x0000000000000000000000000000000000001000"),
-            address!("0x0000000000000000000000000000000000010840"),
+            // Marked, but a nibble is not a decimal digit.
+            address!("0x00000000000000000000000000000000000cc8a0"),
+            address!("0x00000000000000000000000000000000000cc84f"),
+            // Just past either end of the reserved range.
+            address!("0x00000000000000000000000000000000000cb999"),
+            address!("0x00000000000000000000000000000000000cd000"),
+            // Marker present but shifted out of place.
+            address!("0x0000000000000000000000000000000000cc8400"),
+            // Correctly placed marker, but a non-zero byte above it.
+            address!("0x00000000000000000000000000000000100cc840"),
+            address!("0xa0b86991c6218b36c1d19d4a2e9eb0ce360cc840"),
         ] {
             assert_eq!(PairType::from(token), PairType::ERC20(token), "{token}");
         }
