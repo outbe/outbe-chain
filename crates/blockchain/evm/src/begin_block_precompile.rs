@@ -1103,6 +1103,7 @@ mod tests {
     use outbe_primitives::{consensus::ReshareResult, storage::hashmap::HashMapStorageProvider};
 
     const CHAIN_ID: u64 = 2026;
+    const GENESIS_HASH: B256 = B256::repeat_byte(0x11);
     const OWNER: Address = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
     const VALIDATOR: Address = address!("0x1111111111111111111111111111111111111111");
 
@@ -1183,15 +1184,18 @@ mod tests {
     }
 
     fn configured_storage(block_number: u64, timestamp: u64) -> HashMapStorageProvider {
-        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        let consensus_key = [7u8; 48];
+        let mut provider = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, GENESIS_HASH);
         provider.set_block_number(block_number);
         provider.set_timestamp(U256::from(timestamp));
         provider.set_beneficiary(VALIDATOR);
         let install = outbe_metadosis::test_support::ForkInstallScenario::measurement_at(
             1,
             CHAIN_ID,
-            B256::repeat_byte(0x11),
+            GENESIS_HASH,
         )
+        .unwrap()
+        .with_founder_validators(&[(VALIDATOR, consensus_key)])
         .unwrap()
         .into_install();
         provider.enter(|storage| {
@@ -1214,12 +1218,19 @@ mod tests {
             vs.config_owner.write(OWNER).unwrap();
             vs.set_config_max_validators(128).unwrap();
             vs.config_epoch_length_blocks.write(10).unwrap();
-            vs.register_validator(OWNER, VALIDATOR, &[7u8; 48]).unwrap();
+            vs.register_validator(OWNER, VALIDATOR, &consensus_key)
+                .unwrap();
+            vs.mark_pending(VALIDATOR).unwrap();
+            let registration = install.founder_registrations[0]
+                .encode_canonical(&outbe_metadosis::config::poc_schema_limits())
+                .unwrap();
+            vs.confirm_validator_ready(VALIDATOR, &registration)
+                .unwrap();
             vs.activate_validator_via_boundary_for_test(VALIDATOR)
                 .unwrap();
-            vs.val_has_bls_share.write(&VALIDATOR, true).unwrap();
-            vs.active_consensus_set_hash
-                .write(active_set_hash(&[VALIDATOR]))
+            let (base, quote) = outbe_oracle::api::DAY_TYPE_PAIR;
+            outbe_oracle::contract::OracleContract::new(storage.clone())
+                .register_pair(base, quote)
                 .unwrap();
         });
         provider.set_block_number(1);
@@ -1242,7 +1253,7 @@ mod tests {
         timestamp: u64,
         storage: std::collections::HashMap<(Address, U256), U256>,
     ) -> HashMapStorageProvider {
-        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        let mut provider = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, GENESIS_HASH);
         provider.set_block_number(block_number);
         provider.set_timestamp(U256::from(timestamp));
         provider.set_beneficiary(VALIDATOR);
