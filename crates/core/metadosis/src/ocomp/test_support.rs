@@ -156,7 +156,6 @@ pub(crate) trait FixtureKernelExt {
         status: crate::WwdStatus,
     ) -> PrecompileResult<()>;
 
-    #[cfg(test)]
     fn fixture_create_ready_day(
         &mut self,
         wwd: WorldwideDay,
@@ -311,7 +310,6 @@ impl FixtureKernelExt for MetadosisContract<'_> {
             .write(status.as_u8())
     }
 
-    #[cfg(test)]
     fn fixture_create_ready_day(
         &mut self,
         wwd: WorldwideDay,

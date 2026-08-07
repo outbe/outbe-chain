@@ -38,6 +38,27 @@ const GENESIS_TS: u64 = 1_704_067_200;
 const SECONDS_PER_DAY: u64 = 86_400;
 const EMISSION_LIMIT_1_ID: u32 = TriggerId::EmissionLimit1.as_u32();
 
+fn retained_days_before(
+    victim: outbe_common::WorldwideDay,
+    count: usize,
+) -> Vec<outbe_common::WorldwideDay> {
+    (0..count)
+        .map(|offset| {
+            let days_before = count - offset;
+            let seconds_before = u64::try_from(days_before)
+                .unwrap()
+                .checked_mul(SECONDS_PER_DAY)
+                .unwrap();
+            outbe_common::WorldwideDay::from_timestamp(
+                victim
+                    .start_timestamp()
+                    .checked_sub(seconds_before)
+                    .unwrap(),
+            )
+        })
+        .collect()
+}
+
 #[test]
 fn cycle_tick_metadosis_authority_budget_matches_all_fixed_handlers() {
     assert_eq!(
@@ -951,8 +972,8 @@ fn noon_dispatcher_applies_exact_capacity_forfeiture_to_the_new_due_candidate() 
     use outbe_common::WorldwideDay;
     use outbe_metadosis::constants::MAX_RETAINED_WWDS;
 
-    let retained = [WorldwideDay::new(20_260_701), WorldwideDay::new(20_260_801)];
     let victim = WorldwideDay::new(20_260_910);
+    let retained = retained_days_before(victim, MAX_RETAINED_WWDS);
     let day_limit = U256::from(100);
     let mut storage = cycle_storage();
     storage.enter(|handle| {
@@ -961,41 +982,12 @@ fn noon_dispatcher_applies_exact_capacity_forfeiture_to_the_new_due_candidate() 
             .unwrap();
     });
 
-    let mut next_block = 2_u64;
-    for day in retained {
-        storage.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
-        let projection = storage.enter(|handle| {
-            let ctx = BlockRuntimeContext::new(
-                block_ctx(next_block, day.start_timestamp() + 2 * 3_600),
-                handle.clone(),
-            );
-            outbe_metadosis::commands::apply_cycle_day_limit(&ctx, day_limit).unwrap();
-            outbe_metadosis::api::worldwide_day(handle, day)
-                .unwrap()
-                .unwrap()
-        });
-        next_block += 1;
-        for boundary in [
-            projection.forming_end,
-            projection.lookback_end,
-            projection.offering_end,
-            projection.scheduled_process_time,
-        ] {
-            advance_metadosis_only(&mut storage, next_block, boundary).unwrap();
-            next_block += 1;
-        }
-        let projection = storage.enter(|handle| {
-            outbe_metadosis::api::worldwide_day(handle, day)
-                .unwrap()
-                .unwrap()
-        });
-        assert_eq!(projection.status, outbe_metadosis::WwdStatus::Ready);
-        assert_eq!(
-            projection.membership,
-            outbe_metadosis::WwdMembership::Active
-        );
-    }
+    storage.enter(|handle| {
+        outbe_metadosis::test_support::seed_ready_worldwide_days_for_capacity(handle, &retained)
+            .unwrap();
+    });
 
+    let mut next_block = 2_u64;
     storage.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
     let victim_projection = storage.enter(|handle| {
         let ctx = BlockRuntimeContext::new(
