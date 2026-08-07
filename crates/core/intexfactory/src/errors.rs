@@ -11,8 +11,6 @@ pub enum IntexFactoryError {
     ZeroAddress,
     #[error("amount must be positive")]
     ZeroAmount,
-    #[error("dependency not wired")]
-    NotWired,
     #[error("series not found")]
     SeriesNotFound,
     #[error("series not settleable in state {0}")]
@@ -31,6 +29,12 @@ pub enum IntexFactoryError {
     InsufficientProofOfWork,
     #[error("zero shares received from vault")]
     ZeroSharesReceived,
+    #[error("payment token has unsupported decimals {0}")]
+    UnsupportedPaymentDecimals(u8),
+    #[error("payment token {0} has no registered vault")]
+    PaymentTokenNotRegistered(alloy_primitives::Address),
+    #[error("payment token currency {0} does not match the series")]
+    SettlementCurrencyMismatch(u16),
     #[error("caller is not the origin router")]
     NotOriginRouter,
     #[error("no contributors recorded for series {0}")]

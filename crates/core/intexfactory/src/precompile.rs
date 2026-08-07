@@ -8,7 +8,7 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolInterface};
 
 use outbe_primitives::dispatch::{
-    dispatch_call, mutate, mutate_void, mutate_void_payable, reject_value_unless_payable,
+    dispatch_call, mutate, mutate_void, mutate_void_payable, reject_value_unless_payable, view,
 };
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
@@ -41,7 +41,17 @@ pub fn dispatch(
             use IIntexFactory::IIntexFactoryCalls::*;
             match call {
                 settle(c) => mutate_void(c, caller, |sender, c| {
-                    runtime::settle(&storage, c.seriesId, c.intexHolder, sender, c.amount)
+                    runtime::settle(
+                        &storage,
+                        c.seriesId,
+                        c.intexHolder,
+                        sender,
+                        c.amount,
+                        c.paymentToken,
+                    )
+                }),
+                settlementCost(c) => view(c, |c| {
+                    runtime::settlement_cost(&storage, c.seriesId, c.paymentToken)
                 }),
                 // Off-chain the holder brute-forces `nonce` so the work hash
                 // SHA256(hex(holder ++ promisAmount ++ seriesId ++ seq) ++ nonce_be8)
