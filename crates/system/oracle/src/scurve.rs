@@ -431,8 +431,10 @@ fn process_daily_scurve_inner(
     // Peak detection: D-3 < D-2 > D-1 (i.e., D-2 is the peak).
     if close_d3 < close_d2 && close_d2 > close_d1 {
         store_scurve_entry(oracle, pair_id, day_minus_2, close_d2)?;
+        let (_, base, quote) = oracle.pair_entry(pair_id)?;
         let event = IOracle::ScurvePeakDetected {
-            pairId: pair_id,
+            base,
+            quote,
             peakPrice: close_d2,
             peakDay: day_minus_2,
         };
@@ -560,7 +562,7 @@ mod tests {
             let mut oracle = OracleContract::new(storage);
 
             // Store an S-curve entry. Use day-aligned timestamps.
-            let pair_id = 1u32;
+            let pair_id = register_test_pair(&mut oracle);
             let peak_day = truncate_to_day(1_000_000);
             let peak_price = U256::in_units(500);
 
@@ -591,7 +593,7 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut storage, |storage| {
             let mut oracle = OracleContract::new(storage);
-            let pair_id = 1u32;
+            let pair_id = register_test_pair(&mut oracle);
 
             // Two peaks for the same pair, day-aligned
             let peak1_day = truncate_to_day(1_000_000);
@@ -623,9 +625,21 @@ mod tests {
 
     /// Writes a single end-of-day snapshot so `get_daily_close` treats `rate`
     /// as that UTC day's close.
-    fn write_daily_close(oracle: &mut OracleContract, pair_id: u32, day_start: u64, rate: U256) {
+    /// Registers the canonical COEN/USD pair so snapshot writes can resolve an
+    /// ordinal for it. Returns ordinal 1 as the first registration.
+    fn register_test_pair(oracle: &mut OracleContract) -> u32 {
         oracle
-            .write_snapshot(day_start + 80_000, &[(pair_id, rate, U256::in_units(1))])
+            .register_pair(
+                alloy_primitives::Address::ZERO,
+                crate::types::AssetType::IsoCurrency(840).into(),
+            )
+            .unwrap()
+    }
+
+    fn write_daily_close(oracle: &mut OracleContract, pair_id: u32, day_start: u64, rate: U256) {
+        let pair = oracle.pair_at(pair_id).unwrap();
+        oracle
+            .write_snapshot(day_start + 80_000, &[(pair, rate, U256::in_units(1))])
             .unwrap();
     }
 
@@ -639,7 +653,7 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut storage, |storage| {
             let mut oracle = OracleContract::new(storage);
-            let pair_id = 1u32;
+            let pair_id = register_test_pair(&mut oracle);
 
             let d0 = truncate_to_day(1_700_000_000); // current day — empty at fire time
             let d1 = d0 - DAY_SECONDS;
@@ -672,7 +686,7 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut storage, |storage| {
             let mut oracle = OracleContract::new(storage);
-            let pair_id = 1u32;
+            let pair_id = register_test_pair(&mut oracle);
 
             let d0 = truncate_to_day(1_700_000_000);
             let d1 = d0 - DAY_SECONDS;
@@ -704,7 +718,7 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut storage, |storage| {
             let mut oracle = OracleContract::new(storage);
-            let pair_id = 1u32;
+            let pair_id = register_test_pair(&mut oracle);
 
             let d0 = truncate_to_day(1_700_000_000);
             let d1 = d0 - DAY_SECONDS;
@@ -731,7 +745,7 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut storage, |storage| {
             let mut oracle = OracleContract::new(storage);
-            let pair_id = 1u32;
+            let pair_id = register_test_pair(&mut oracle);
 
             let d0 = truncate_to_day(1_700_000_000);
             let d1 = d0 - DAY_SECONDS;

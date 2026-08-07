@@ -654,8 +654,8 @@ fn raw_oracle_opening(day: WorldwideDay, finalized_state_root: B256) -> RawContr
         U256::from(2),   // reference_currencies length
         U256::from(840), // reference_currencies[0]
         U256::from(978), // reference_currencies[1]
-        U256::from(1),   // pair_hash_to_id[COEN/840]
-        U256::from(2),   // pair_hash_to_id[COEN/978]
+        U256::from(1),   // pair_ordinal[COEN/840]
+        U256::from(2),   // pair_ordinal[COEN/978]
         U256::from(1),   // wwd_vwap_exists
         U256::from(2),   // wwd_vwap_pair_count
         U256::from(1),

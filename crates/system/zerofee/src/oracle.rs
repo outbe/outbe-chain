@@ -123,8 +123,8 @@ mod tests {
     fn vote_calldata() -> Bytes {
         IOracle::submitVoteCall {
             tuples: vec![IOracle::ExchangeRateTuple {
-                base: "COEN".to_string(),
-                quote: "840".to_string(),
+                base: outbe_oracle::api::COEN_ASSET,
+                quote: outbe_oracle::api::iso_asset(840),
                 exchangeRate: U256::from(18_820_648_000_000_000u128),
                 volume: U256::from(1_000_000u64),
             }],

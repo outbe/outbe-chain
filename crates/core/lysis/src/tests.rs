@@ -151,7 +151,12 @@ fn later_nod_failure_rolls_back_the_complete_lysis_attempt() {
         begin_block(storage.clone(), &scope).unwrap();
 
         let mut oracle = OracleContract::new(storage.clone());
-        let pair_id = oracle.register_pair("COEN", "840").unwrap();
+        let pair_id = oracle
+            .register_pair(
+                outbe_oracle::api::COEN_ASSET,
+                outbe_oracle::api::iso_asset(840),
+            )
+            .unwrap();
         oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
         oracle
             .worldwide_day_vwap_pair_count
@@ -232,7 +237,12 @@ fn gas_08_lysis_dense_day_completes_and_emits_body_mutations() {
         seed_compressed_entities_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
         let mut oracle = OracleContract::new(storage.clone());
-        let pair_id = oracle.register_pair("COEN", "840").unwrap();
+        let pair_id = oracle
+            .register_pair(
+                outbe_oracle::api::COEN_ASSET,
+                outbe_oracle::api::iso_asset(840),
+            )
+            .unwrap();
         oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
         oracle
             .worldwide_day_vwap_pair_count
@@ -658,7 +668,12 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
         //    write directly into the oracle schema (no real vote tally),
         //    because lysis only reads `get_worldwide_day_vwap_for_pair_id`.
         let mut oracle = OracleContract::new(s.clone());
-        let pair_id = oracle.register_pair("COEN", "840").unwrap();
+        let pair_id = oracle
+            .register_pair(
+                outbe_oracle::api::COEN_ASSET,
+                outbe_oracle::api::iso_asset(840),
+            )
+            .unwrap();
         oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
         oracle
             .worldwide_day_vwap_pair_count
@@ -978,7 +993,12 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
         seed_compressed_entities_genesis(&s);
         begin_block(s.clone(), &scope).unwrap();
         let mut oracle = OracleContract::new(s.clone());
-        let pair_id = oracle.register_pair("COEN", "840").unwrap();
+        let pair_id = oracle
+            .register_pair(
+                outbe_oracle::api::COEN_ASSET,
+                outbe_oracle::api::iso_asset(840),
+            )
+            .unwrap();
         oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
         oracle
             .worldwide_day_vwap_pair_count
@@ -1063,7 +1083,12 @@ fn lysis_records_contributors_aggregated_by_owner() {
         begin_block(storage.clone(), &scope).unwrap();
         // Oracle: register ISO 840 -> COEN/840 and seed a day VWAP snapshot.
         let mut oracle = OracleContract::new(storage.clone());
-        let pair_id = oracle.register_pair("COEN", "840").unwrap();
+        let pair_id = oracle
+            .register_pair(
+                outbe_oracle::api::COEN_ASSET,
+                outbe_oracle::api::iso_asset(840),
+            )
+            .unwrap();
         oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
         oracle
             .worldwide_day_vwap_pair_count
@@ -1152,7 +1177,12 @@ fn lysis_omits_excluded_owners_from_contributor_map() {
         seed_compressed_entities_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
         let mut oracle = OracleContract::new(storage.clone());
-        let pair_id = oracle.register_pair("COEN", "840").unwrap();
+        let pair_id = oracle
+            .register_pair(
+                outbe_oracle::api::COEN_ASSET,
+                outbe_oracle::api::iso_asset(840),
+            )
+            .unwrap();
         oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
         oracle
             .worldwide_day_vwap_pair_count

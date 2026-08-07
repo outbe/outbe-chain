@@ -9,9 +9,9 @@ use alloy_primitives::{keccak256, B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_primitives::storage::types::StorageKey;
 
-use crate::state::pair_hash_coen_iso;
+use crate::types::coen_iso_pair;
 
-const PAIR_HASH_TO_ID_BASE_SLOT: u64 = 10;
+const PAIR_ORDINAL_BASE_SLOT: u64 = 10;
 const SCURVE_COUNT_SLOT: u64 = 34;
 const SCURVE_PAIR_ID_BASE_SLOT: u64 = 35;
 const SCURVE_PEAK_DAY_BASE_SLOT: u64 = 36;
@@ -248,7 +248,7 @@ pub fn oracle_opening_slot_plan_v1(
     }
     let mut pair_id_slots = BTreeSet::new();
     for iso in reference_isos {
-        let pair_id_slot = mapping_slot(pair_hash_coen_iso(*iso), PAIR_HASH_TO_ID_BASE_SLOT);
+        let pair_id_slot = mapping_slot(coen_iso_pair(*iso), PAIR_ORDINAL_BASE_SLOT);
         if pair_id_slots.insert(pair_id_slot) {
             slots.push(pair_id_slot);
         }
@@ -379,10 +379,7 @@ pub fn evaluate_oracle_opening_v1(
     let mut ordered_entry_prices = Vec::with_capacity(reference_isos.len());
     for iso in reference_isos.iter().copied() {
         let pair_id = checked_u32(
-            value_at(mapping_slot(
-                pair_hash_coen_iso(iso),
-                PAIR_HASH_TO_ID_BASE_SLOT,
-            ))?,
+            value_at(mapping_slot(coen_iso_pair(iso), PAIR_ORDINAL_BASE_SLOT))?,
             "reference pair id",
         )?;
         if pair_id == 0 {

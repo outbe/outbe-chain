@@ -1,8 +1,9 @@
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, U256};
 use outbe_common::WorldwideDay;
 use outbe_macros::contract;
+use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::addresses::ORACLE_ADDRESS;
-use outbe_primitives::storage::types::{Mapping, Slot, StorageBytes, StorageVec};
+use outbe_primitives::storage::types::{Mapping, Slot, StorageVec};
 pub use outbe_primitives::units::SCALE_1E18;
 
 /// EVM storage layout for the Oracle contract.
@@ -11,7 +12,9 @@ pub use outbe_primitives::units::SCALE_1E18;
 /// calculation for whitelisted trading pairs.
 ///
 /// All prices and volumes use U256 with 1e18 scale factor.
-/// Pair identification uses `pair_hash = keccak256("BASE/QUOTE")`.
+/// A pair is identified by its two asset addresses packed ascending into an
+/// [`AddressPair`]; `pair_ordinal` maps that key onto a dense 1-based index that
+/// exists only so the registry can be enumerated.
 ///
 /// Slot number == field declaration index; `StorageVec` and
 /// `Mapping<_, StorageBytes>` each occupy exactly one slot. `openings.rs` and
@@ -38,22 +41,26 @@ pub struct OracleContract {
     pub config_is_initialized: Slot<bool>,
 
     // === Pair Registry (slots 8-11) ===
-    // slot 8: number of registered pairs (1-indexed: pair_id starts at 1)
+    // slot 8: number of registered pairs. Ordinals are 1-based and never
+    // reused: nothing unregisters, so `1..=pair_count` is dense and every
+    // enumeration relies on that.
     pub pair_count: Slot<u32>,
-    // slot 9: mapping(pair_id => pair_hash) where pair_hash = keccak256("BASE/QUOTE")
-    pub pair_id_to_hash: Mapping<u32, B256>,
-    // slot 10: mapping(pair_hash => pair_id) (0 = not registered)
-    pub pair_hash_to_id: Mapping<B256, u32>,
-    // slot 11: mapping(pair_hash => is_vote_target)
-    pub vote_target: Mapping<B256, bool>,
+    // Slot 9 (`pair_id_to_hash`) is a retired hole. The reverse lookup it served
+    // is now `pair_ordinal_base`/`pair_ordinal_quote` at slots 43-44, which
+    // rebuild the key itself instead of a hash of it. Do not reuse.
+    // slot 10: mapping(pair => ordinal) (0 = not registered)
+    #[slot(10)]
+    pub pair_ordinal: Mapping<AddressPair, u32>,
+    // slot 11: mapping(pair => is_vote_target)
+    pub vote_target: Mapping<AddressPair, bool>,
 
     // === Exchange Rates (slots 12-14) ===
-    // slot 12: mapping(pair_hash => exchange_rate) 1e18 scaled
-    pub exchange_rate: Mapping<B256, U256>,
-    // slot 13: mapping(pair_hash => last_update_block)
-    pub exchange_rate_block: Mapping<B256, u64>,
-    // slot 14: mapping(pair_hash => last_update_timestamp)
-    pub exchange_rate_timestamp: Mapping<B256, u64>,
+    // slot 12: mapping(pair => exchange_rate) 1e18 scaled
+    pub exchange_rate: Mapping<AddressPair, U256>,
+    // slot 13: mapping(pair => last_update_block)
+    pub exchange_rate_block: Mapping<AddressPair, u64>,
+    // slot 14: mapping(pair => last_update_timestamp)
+    pub exchange_rate_timestamp: Mapping<AddressPair, u64>,
 
     // === Feeder Delegation (slot 15) ===
     // slot 15: mapping(validator_address => feeder_address)
@@ -121,21 +128,24 @@ pub struct OracleContract {
     pub scurve_last_processed_day: Slot<u64>,
 
     // === Settlement Currencies — retired (slots 40-42) ===
-    // The settlement pair is derived, not stored: `pair_hash_coen_iso(iso)` is
-    // `keccak256("COEN/<iso>")`, and an ISO is usable exactly when that pair is
-    // present in `pair_hash_to_id`. Slots 40 (`settlement_count`), 41
-    // (`settlement_iso_to_denom`) and 42 (`settlement_iso_to_pair`) are retired
-    // holes with no live writer. Do not reuse them.
+    // The settlement pair is derived, not stored: `coen_iso_pair(iso)` packs the
+    // zero address with the marked ISO address, and an ISO is usable exactly
+    // when that pair is present in `pair_ordinal`. Slots 40
+    // (`settlement_count`), 41 (`settlement_iso_to_denom`) and 42
+    // (`settlement_iso_to_pair`) are retired holes with no live writer. Do not
+    // reuse them.
 
-    // === Reversible Genesis Export Metadata (slots 43-44) ===
-    // Pair runtime lookups remain hash-based, but export needs the original
-    // strings to produce an importable OracleGenesisConfig.
+    // === Ordinal -> Pair Reverse Lookup (slots 43-44) ===
+    // The only way to enumerate the registry: mappings are not iterable, so
+    // `1..=pair_count` walks these two columns to rebuild each `AddressPair`.
+    // Both are written together by `register_pair` and read together by
+    // `pair_at`; a half-written ordinal would decode as a different pair.
     // slot 43 — pinned: without this anchor the running slot counter would
     // slide these two down into the retired 40-42 hole.
     #[slot(43)]
-    pub pair_id_to_base: Mapping<u32, StorageBytes>,
+    pub pair_ordinal_base: Mapping<u32, Address>,
     // slot 44
-    pub pair_id_to_quote: Mapping<u32, StorageBytes>,
+    pub pair_ordinal_quote: Mapping<u32, Address>,
     // Slots 45 (`settlement_index_to_iso`) and 46
     // (`settlement_iso_to_denom_string`) are retired holes.
 
@@ -155,12 +165,12 @@ pub struct OracleContract {
     pub worldwide_day_vwap_value: Mapping<WorldwideDay, Mapping<u32, U256>>,
 
     // === Daily Rolling VWAP Aggregates (slots 53-54) ===
-    // Updated on every write_snapshot. Keyed by (pair_id, utc_day_timestamp).
+    // Updated on every write_snapshot. Keyed by (pair, utc_day_timestamp).
     // utc_day_timestamp = timestamp - (timestamp % 86400).
-    // slot 53: mapping(pair_id => mapping(utc_day_ts => cumulative price*volume sum))
-    pub daily_pv_sum: Mapping<u32, Mapping<u64, U256>>,
-    // slot 54: mapping(pair_id => mapping(utc_day_ts => cumulative volume sum))
-    pub daily_vol_sum: Mapping<u32, Mapping<u64, U256>>,
+    // slot 53: mapping(pair => mapping(utc_day_ts => cumulative price*volume sum))
+    pub daily_pv_sum: Mapping<AddressPair, Mapping<u64, U256>>,
+    // slot 54: mapping(pair => mapping(utc_day_ts => cumulative volume sum))
+    pub daily_vol_sum: Mapping<AddressPair, Mapping<u64, U256>>,
 
     // === Reference Currencies (slot 55) ===
     // Dynamic list of ISO 4217 numeric codes considered "reference" currencies

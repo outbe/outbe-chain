@@ -1415,8 +1415,8 @@ fn prepare_parent(
         let mut oracle = OracleContract::new(storage.clone());
         let mut oracle_genesis = outbe_oracle::genesis::OracleGenesisConfig::default_config();
         oracle_genesis.initial_rates.push((
-            "COEN".to_owned(),
-            "840".to_owned(),
+            outbe_oracle::api::COEN_ASSET,
+            outbe_oracle::api::iso_asset(840),
             U256::from(2_000_000_000_000_000_000u128),
         ));
         outbe_oracle::genesis::init_from_genesis(&mut oracle, &oracle_genesis).unwrap();

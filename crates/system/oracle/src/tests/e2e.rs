@@ -33,7 +33,7 @@ fn init_from_genesis_default_config_matches_the_hardcoded_state() {
         expected.config_lookback_duration.write(86400).unwrap();
         expected.config_enabled.write(true).unwrap();
         expected.config_is_initialized.write(true).unwrap();
-        expected.register_pair("COEN", "840").unwrap();
+        expected.register_pair(COEN, usd()).unwrap();
 
         // Snapshot expected state.
         let exp_vote_period = expected.config_vote_period.read().unwrap();
@@ -45,8 +45,8 @@ fn init_from_genesis_default_config_matches_the_hardcoded_state() {
         let exp_enabled = expected.config_enabled.read().unwrap();
         let exp_initialized = expected.config_is_initialized.read().unwrap();
         let exp_pair_count = expected.pair_count.read().unwrap();
-        let exp_pair_id = expected.get_pair_id("COEN", "840").unwrap();
-        let exp_vote_target = expected.is_vote_target("COEN", "840").unwrap();
+        let exp_pair_id = expected.pair_ordinal_of(pair_key(COEN, usd())).unwrap();
+        let exp_vote_target = expected.is_vote_target(COEN, usd()).unwrap();
 
         // Now init through the genesis config path (uses same storage).
         // Since pairs are already registered we need a fresh storage context.
@@ -82,11 +82,11 @@ fn init_from_genesis_default_config_matches_the_hardcoded_state() {
                 exp_initialized
             );
             assert_eq!(oracle.pair_count.read().unwrap(), exp_pair_count);
-            assert_eq!(oracle.get_pair_id("COEN", "840").unwrap(), exp_pair_id);
             assert_eq!(
-                oracle.is_vote_target("COEN", "840").unwrap(),
-                exp_vote_target
+                oracle.pair_ordinal_of(pair_key(COEN, usd())).unwrap(),
+                exp_pair_id
             );
+            assert_eq!(oracle.is_vote_target(COEN, usd()).unwrap(), exp_vote_target);
         });
     });
 }
@@ -111,14 +111,10 @@ fn init_from_genesis_imports_every_custom_config_collection() {
             min_valid_per_window: U256::from(100_000_000_000_000_000u128), // 0.10
             slash_fraction: U256::from(1_000_000_000_000_000u128),         // 0.001
             lookback_duration: 172_800,                                    // 2 days
-            pairs: vec![
-                ("COEN".into(), "840".into()),
-                ("ETH".into(), "840".into()),
-                ("BTC".into(), "USDT".into()),
-            ],
+            pairs: vec![(COEN, usd()), (ETH, usd()), (BTC, USDT)],
             initial_rates: vec![
-                ("COEN".into(), "840".into(), U256::in_units(1u64)),
-                ("ETH".into(), "840".into(), U256::in_units(2000u64)),
+                (COEN, usd(), U256::in_units(1u64)),
+                (ETH, usd(), U256::in_units(2000u64)),
             ],
             feeder_delegations: vec![
                 (Address::new([0x11; 20]), Address::new([0xAAu8; 20])),
@@ -156,24 +152,24 @@ fn init_from_genesis_imports_every_custom_config_collection() {
 
         // Verify all three pairs registered.
         assert_eq!(oracle.pair_count.read().unwrap(), 3);
-        assert_eq!(oracle.get_pair_id("COEN", "840").unwrap(), 1);
-        assert_eq!(oracle.get_pair_id("ETH", "840").unwrap(), 2);
-        assert_eq!(oracle.get_pair_id("BTC", "USDT").unwrap(), 3);
-        assert!(oracle.is_vote_target("COEN", "840").unwrap());
-        assert!(oracle.is_vote_target("ETH", "840").unwrap());
-        assert!(oracle.is_vote_target("BTC", "USDT").unwrap());
+        assert_eq!(oracle.pair_ordinal_of(pair_key(COEN, usd())).unwrap(), 1);
+        assert_eq!(oracle.pair_ordinal_of(pair_key(ETH, usd())).unwrap(), 2);
+        assert_eq!(oracle.pair_ordinal_of(pair_key(BTC, USDT)).unwrap(), 3);
+        assert!(oracle.is_vote_target(COEN, usd()).unwrap());
+        assert!(oracle.is_vote_target(ETH, usd()).unwrap());
+        assert!(oracle.is_vote_target(BTC, USDT).unwrap());
 
         // Verify initial rates (only first two pairs have rates).
-        let (rate_coen, blk, ts) = oracle.get_exchange_rate("COEN", "840").unwrap();
+        let (rate_coen, blk, ts) = oracle.get_exchange_rate(COEN, usd()).unwrap();
         assert_eq!(rate_coen, U256::in_units(1u64));
         assert_eq!(blk, 0);
         assert_eq!(ts, 0);
 
-        let (rate_eth, _, _) = oracle.get_exchange_rate("ETH", "840").unwrap();
+        let (rate_eth, _, _) = oracle.get_exchange_rate(ETH, usd()).unwrap();
         assert_eq!(rate_eth, U256::in_units(2000u64));
 
         // BTC/USDT has no initial rate set → zero.
-        let (rate_btc, _, _) = oracle.get_exchange_rate("BTC", "USDT").unwrap();
+        let (rate_btc, _, _) = oracle.get_exchange_rate(BTC, USDT).unwrap();
         assert_eq!(rate_btc, U256::ZERO);
 
         // Verify feeder delegations.
@@ -185,7 +181,7 @@ fn init_from_genesis_imports_every_custom_config_collection() {
         // An ISO resolves through the pair registry alone.
         assert_eq!(
             crate::api::pair_id_for(storage.clone(), 840).unwrap(),
-            Some(oracle.get_pair_id("COEN", "840").unwrap())
+            Some(oracle.pair_ordinal_of(pair_key(COEN, usd())).unwrap())
         );
         assert_eq!(crate::api::pair_id_for(storage.clone(), 978).unwrap(), None);
     });
@@ -235,18 +231,18 @@ fn precompile_dispatch_round_trips_an_exchange_rate() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
-        oracle.register_pair("COEN", "840").unwrap();
+        oracle.register_pair(COEN, usd()).unwrap();
         let expected_rate = U256::in_units(123u64);
         oracle
-            .set_exchange_rate(Address::ZERO, "COEN", "840", expected_rate, 42, 86_400)
+            .set_exchange_rate(Address::ZERO, COEN, usd(), expected_rate, 42, 86_400)
             .unwrap();
 
         use crate::precompile::IOracle;
         use alloy_sol_types::SolCall;
 
         let calldata = IOracle::getExchangeRateCall {
-            base: "COEN".into(),
-            quote: "840".into(),
+            base: COEN,
+            quote: usd(),
         }
         .abi_encode();
         let result =
@@ -265,14 +261,15 @@ fn precompile_dispatch_round_trips_the_whole_query_surface() {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
 
-        let coen_id = oracle.register_pair("COEN", "840").unwrap();
-        let eth_id = oracle.register_pair("ETH", "840").unwrap();
+        let coen_id = oracle.register_pair(COEN, usd()).unwrap();
+        let eth_id = oracle.register_pair(ETH, usd()).unwrap();
+        let (coen_pair, eth_pair) = (pair_key(COEN, usd()), pair_key(ETH, usd()));
         oracle
             .write_snapshot(
                 1_000,
                 &[
-                    (coen_id, U256::in_units(100u64), SCALE_1E18),
-                    (eth_id, U256::in_units(2_000u64), SCALE_1E18),
+                    (coen_pair, U256::in_units(100u64), SCALE_1E18),
+                    (eth_pair, U256::in_units(2_000u64), SCALE_1E18),
                 ],
             )
             .unwrap();
@@ -280,8 +277,8 @@ fn precompile_dispatch_round_trips_the_whole_query_surface() {
             .write_snapshot(
                 2_000,
                 &[
-                    (coen_id, U256::in_units(120u64), SCALE_1E18),
-                    (eth_id, U256::in_units(2_200u64), SCALE_1E18),
+                    (coen_pair, U256::in_units(120u64), SCALE_1E18),
+                    (eth_pair, U256::in_units(2_200u64), SCALE_1E18),
                 ],
             )
             .unwrap();
@@ -289,8 +286,8 @@ fn precompile_dispatch_round_trips_the_whole_query_surface() {
             .write_snapshot(
                 3_000,
                 &[
-                    (coen_id, U256::in_units(140u64), SCALE_1E18),
-                    (eth_id, U256::in_units(2_400u64), SCALE_1E18),
+                    (coen_pair, U256::in_units(140u64), SCALE_1E18),
+                    (eth_pair, U256::in_units(2_400u64), SCALE_1E18),
                 ],
             )
             .unwrap();
@@ -332,8 +329,8 @@ fn precompile_dispatch_round_trips_the_whole_query_surface() {
         assert_eq!(decoded.lookbackSeconds, vec![2_000, 2_000]);
 
         let scurve_values = IOracle::getScurveValuesCall {
-            base: "COEN".into(),
-            quote: "840".into(),
+            base: COEN,
+            quote: usd(),
             timestamp: 3_000,
         }
         .abi_encode();
@@ -352,8 +349,8 @@ fn precompile_dispatch_round_trips_the_whole_query_surface() {
         assert_eq!(decoded.values, vec![U256::in_units(160u64)]);
 
         let scurve_data = IOracle::getAllScurveDataForPairCall {
-            base: "COEN".into(),
-            quote: "840".into(),
+            base: COEN,
+            quote: usd(),
         }
         .abi_encode();
         let decoded = IOracle::getAllScurveDataForPairCall::abi_decode_returns(
@@ -365,8 +362,8 @@ fn precompile_dispatch_round_trips_the_whole_query_surface() {
         assert_eq!(decoded.peakPrices, vec![U256::in_units(160u64)]);
 
         let nominal_components = IOracle::getNominalPriceComponentsCall {
-            base: "COEN".into(),
-            quote: "840".into(),
+            base: COEN,
+            quote: usd(),
             timestamp: 3_000,
         }
         .abi_encode();
@@ -385,8 +382,8 @@ fn precompile_dispatch_round_trips_the_whole_query_surface() {
         assert_eq!(decoded.source, "scurve");
 
         let nominal = IOracle::getNominalPriceCall {
-            base: "COEN".into(),
-            quote: "840".into(),
+            base: COEN,
+            quote: usd(),
             timestamp: 3_000,
         }
         .abi_encode();
@@ -542,7 +539,7 @@ fn genesis_imports_pending_aggregate_votes() {
         let volume1 = U256::in_units(100u64);
         let volume2 = U256::in_units(200u64);
         let config = crate::genesis::OracleGenesisConfig {
-            pairs: vec![("COEN".into(), "840".into()), ("ETH".into(), "840".into())],
+            pairs: vec![(COEN, usd()), (ETH, usd())],
             aggregate_votes: vec![crate::genesis::GenesisAggregateVote {
                 validator,
                 entries: vec![(1, rate1, volume1), (2, rate2, volume2)],
@@ -595,14 +592,10 @@ fn export_genesis_round_trips_the_full_oracle_state() {
     let v1 = Address::new([0x11; 20]);
     let v2 = Address::new([0x22; 20]);
     let config = crate::genesis::OracleGenesisConfig {
-        pairs: vec![
-            ("COEN".into(), "840".into()),
-            ("ETH".into(), "840".into()),
-            ("BTC".into(), "USDT".into()),
-        ],
+        pairs: vec![(COEN, usd()), (ETH, usd()), (BTC, USDT)],
         initial_rates: vec![
-            ("COEN".into(), "840".into(), U256::in_units(1u64)),
-            ("ETH".into(), "840".into(), U256::in_units(2000u64)),
+            (COEN, usd(), U256::in_units(1u64)),
+            (ETH, usd(), U256::in_units(2000u64)),
         ],
         feeder_delegations: vec![(v1, Address::new([0xAAu8; 20]))],
         aggregate_votes: vec![
@@ -683,15 +676,15 @@ fn export_genesis_round_trips_the_full_oracle_state() {
         crate::genesis::init_from_genesis(&mut oracle, &exported).unwrap();
 
         assert_eq!(oracle.pair_count.read().unwrap(), 3);
-        assert_eq!(oracle.get_pair_id("COEN", "840").unwrap(), 1);
-        assert_eq!(oracle.get_pair_id("ETH", "840").unwrap(), 2);
-        assert_eq!(oracle.get_pair_id("BTC", "USDT").unwrap(), 3);
+        assert_eq!(oracle.pair_ordinal_of(pair_key(COEN, usd())).unwrap(), 1);
+        assert_eq!(oracle.pair_ordinal_of(pair_key(ETH, usd())).unwrap(), 2);
+        assert_eq!(oracle.pair_ordinal_of(pair_key(BTC, USDT)).unwrap(), 3);
         assert_eq!(
-            oracle.get_exchange_rate("COEN", "840").unwrap().0,
+            oracle.get_exchange_rate(COEN, usd()).unwrap().0,
             U256::in_units(1u64)
         );
         assert_eq!(
-            oracle.get_exchange_rate("ETH", "840").unwrap().0,
+            oracle.get_exchange_rate(ETH, usd()).unwrap().0,
             U256::in_units(2000u64)
         );
         assert_eq!(oracle.get_feeder(&v1).unwrap(), Address::new([0xAAu8; 20]));
@@ -706,13 +699,16 @@ fn export_genesis_round_trips_the_full_oracle_state() {
 }
 
 #[test]
-fn export_genesis_fails_without_pair_string_metadata() {
+fn export_genesis_fails_without_ordinal_reverse_lookup_columns() {
     with_storage(|storage| {
-        let hash = crate::state::pair_hash("COEN", "840");
+        // `pair_count` claims an ordinal whose reverse-lookup columns were
+        // never written, so the rebuilt key does not round-trip back to it.
         let oracle = OracleContract::new(storage.clone());
         oracle.pair_count.write(1).unwrap();
-        oracle.pair_id_to_hash.write(&1, hash).unwrap();
-        oracle.pair_hash_to_id.write(&hash, 1).unwrap();
+        oracle
+            .pair_ordinal
+            .write(&pair_key(COEN, usd()), 1)
+            .unwrap();
 
         assert!(crate::genesis::export_genesis(&oracle, &[]).is_err());
     });
@@ -722,7 +718,7 @@ fn export_genesis_fails_without_pair_string_metadata() {
 fn export_genesis_omits_a_zero_initial_rate() {
     with_storage(|storage| {
         let config = crate::genesis::OracleGenesisConfig {
-            pairs: vec![("COEN".into(), "840".into()), ("BTC".into(), "USDT".into())],
+            pairs: vec![(COEN, usd()), (BTC, USDT)],
             ..crate::genesis::OracleGenesisConfig::default_config()
         };
         let mut oracle = OracleContract::new(storage.clone());
@@ -737,15 +733,16 @@ fn export_genesis_omits_a_zero_initial_rate() {
 fn store_worldwide_day_vwap_snapshot_round_trips_every_pair() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
-        let coen_id = oracle.register_pair("COEN", "840").unwrap();
-        let eth_id = oracle.register_pair("ETH", "840").unwrap();
+        let coen_id = oracle.register_pair(COEN, usd()).unwrap();
+        let eth_id = oracle.register_pair(ETH, usd()).unwrap();
+        let (coen_pair, eth_pair) = (pair_key(COEN, usd()), pair_key(ETH, usd()));
 
         oracle
             .write_snapshot(
                 1_500,
                 &[
-                    (coen_id, U256::from(110u64), U256::from(1u64)),
-                    (eth_id, U256::from(2_200u64), U256::from(1u64)),
+                    (coen_pair, U256::from(110u64), U256::from(1u64)),
+                    (eth_pair, U256::from(2_200u64), U256::from(1u64)),
                 ],
             )
             .unwrap();
@@ -803,9 +800,12 @@ fn day_type_pair_vwap_reports_missing_data_without_reverting() {
         );
 
         let mut oracle = OracleContract::new(storage.clone());
-        oracle.register_pair("COEN", "840").unwrap();
+        oracle.register_pair(COEN, usd()).unwrap();
         oracle
-            .write_snapshot(1_500, &[(1, U256::from(110u64), U256::from(1u64))])
+            .write_snapshot(
+                1_500,
+                &[(pair_key(COEN, usd()), U256::from(110u64), U256::from(1u64))],
+            )
             .unwrap();
 
         // No window data → store is a deterministic no-op returning false,
@@ -835,8 +835,10 @@ fn day_type_pair_vwap_reports_missing_data_without_reverting() {
 fn finalize_utc_day_vwap_persists_every_vote_target_pair() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
-        let coen = oracle.register_pair("COEN", "840").unwrap();
-        let eth = oracle.register_pair("ETH", "840").unwrap();
+        let coen = pair_key(COEN, usd());
+        let eth = pair_key(ETH, usd());
+        let coen_id = oracle.register_pair(COEN, usd()).unwrap();
+        let eth_id = oracle.register_pair(ETH, usd()).unwrap();
 
         let utc_day = 20260624u32;
         let day_start = outbe_primitives::time::date_key_to_utc_timestamp(utc_day);
@@ -867,16 +869,20 @@ fn finalize_utc_day_vwap_persists_every_vote_target_pair() {
 
         assert_eq!(oracle.utc_day_vwap_pair_count.read(&utc_day).unwrap(), 2);
         assert_eq!(
-            oracle.get_utc_day_vwap_for_pair_id(utc_day, coen).unwrap(),
+            oracle
+                .get_utc_day_vwap_for_pair_id(utc_day, coen_id)
+                .unwrap(),
             Some(U256::from(133u64))
         );
         assert_eq!(
-            oracle.get_utc_day_vwap_for_pair_id(utc_day, eth).unwrap(),
+            oracle
+                .get_utc_day_vwap_for_pair_id(utc_day, eth_id)
+                .unwrap(),
             Some(U256::from(2_200u64))
         );
 
         let (pairs, vwaps) = oracle.get_utc_day_vwap_snapshot(utc_day).unwrap();
-        assert_eq!(pairs, vec![coen, eth]);
+        assert_eq!(pairs, vec![coen_id, eth_id]);
         assert_eq!(vwaps, vec![U256::from(133u64), U256::from(2_200u64)]);
 
         // Unknown pair on a finalized day, and an unfinalized day, both read None.
@@ -885,7 +891,9 @@ fn finalize_utc_day_vwap_persists_every_vote_target_pair() {
             None
         );
         assert_eq!(
-            oracle.get_utc_day_vwap_for_pair_id(20260101, coen).unwrap(),
+            oracle
+                .get_utc_day_vwap_for_pair_id(20260101, coen_id)
+                .unwrap(),
             None
         );
     });
@@ -895,7 +903,7 @@ fn finalize_utc_day_vwap_persists_every_vote_target_pair() {
 fn finalize_utc_day_vwap_writes_nothing_for_a_day_without_data() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
-        let coen = oracle.register_pair("COEN", "840").unwrap();
+        let coen_id = oracle.register_pair(COEN, usd()).unwrap();
         let utc_day = 20260624u32;
 
         // No snapshots for the day → finalize is a no-op, nothing written.
@@ -903,7 +911,9 @@ fn finalize_utc_day_vwap_writes_nothing_for_a_day_without_data() {
 
         assert_eq!(oracle.utc_day_vwap_pair_count.read(&utc_day).unwrap(), 0);
         assert_eq!(
-            oracle.get_utc_day_vwap_for_pair_id(utc_day, coen).unwrap(),
+            oracle
+                .get_utc_day_vwap_for_pair_id(utc_day, coen_id)
+                .unwrap(),
             None
         );
         let (pairs, vwaps) = oracle.get_utc_day_vwap_snapshot(utc_day).unwrap();
@@ -915,7 +925,8 @@ fn finalize_utc_day_vwap_writes_nothing_for_a_day_without_data() {
 fn get_utc_day_vwap_precompile_returns_the_finalized_value() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
-        let coen = oracle.register_pair("COEN", "840").unwrap();
+        let coen = pair_key(COEN, usd());
+        oracle.register_pair(COEN, usd()).unwrap();
         let utc_day = 20260624u32;
         let day_start = outbe_primitives::time::date_key_to_utc_timestamp(utc_day);
         oracle
@@ -931,8 +942,8 @@ fn get_utc_day_vwap_precompile_returns_the_finalized_value() {
 
         // Finalized day → returns the stored VWAP.
         let call = IOracle::getUtcDayVwapCall {
-            base: "COEN".into(),
-            quote: "840".into(),
+            base: COEN,
+            quote: usd(),
             utcDay: utc_day,
         }
         .abi_encode();
@@ -945,8 +956,8 @@ fn get_utc_day_vwap_precompile_returns_the_finalized_value() {
 
         // Unfinalized day → revert.
         let unfinalized = IOracle::getUtcDayVwapCall {
-            base: "COEN".into(),
-            quote: "840".into(),
+            base: COEN,
+            quote: usd(),
             utcDay: 20260625u32,
         }
         .abi_encode();
@@ -973,7 +984,7 @@ fn gas_cost_vwap_50h_window_with_varying_snapshot_counts() {
         let mut storage = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut storage, |handle| {
             let mut oracle = OracleContract::new(handle.clone());
-            oracle.register_pair("COEN", "840").unwrap();
+            oracle.register_pair(COEN, usd()).unwrap();
 
             let start_ts: u64 = 1_000_000;
             let interval = window_seconds / n;
@@ -981,7 +992,9 @@ fn gas_cost_vwap_50h_window_with_varying_snapshot_counts() {
                 let ts = start_ts + i * interval;
                 let price = U256::from(100 + (i % 10)) * SCALE_1E18;
                 let volume = U256::from(1000u64) * SCALE_1E18;
-                oracle.write_snapshot(ts, &[(1u32, price, volume)]).unwrap();
+                oracle
+                    .write_snapshot(ts, &[(pair_key(COEN, usd()), price, volume)])
+                    .unwrap();
             }
 
             let _vwap = oracle

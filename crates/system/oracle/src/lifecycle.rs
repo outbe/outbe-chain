@@ -83,9 +83,8 @@ fn run_begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
     if current_day > last_processed && timestamp > 0 {
         let pair_count = oracle.pair_count.read()?;
         for pid in 1..=pair_count {
-            let hash = oracle.pair_id_to_hash.read(&pid)?;
-            let is_target = oracle.vote_target.read(&hash)?;
-            if is_target {
+            let pair = oracle.pair_at(pid)?;
+            if oracle.vote_target.read(&pair)? {
                 scurve::process_daily_scurve(&mut oracle, pid, timestamp)?;
             }
         }

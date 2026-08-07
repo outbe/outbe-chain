@@ -99,9 +99,21 @@ fn view_pledged(s: &StorageHandle<'_>, a: Address) -> U256 {
 /// conversion resolves through (the asset's `isoCode()` selects the pair).
 fn seed_oracle(storage: StorageHandle<'_>, rate_1e18: U256) {
     let mut oracle = outbe_oracle::schema::OracleContract::new(storage);
-    oracle.register_pair("COEN", "840").unwrap();
     oracle
-        .set_exchange_rate(Address::ZERO, "COEN", "840", rate_1e18, 0, 0)
+        .register_pair(
+            outbe_oracle::api::COEN_ASSET,
+            outbe_oracle::api::iso_asset(840),
+        )
+        .unwrap();
+    oracle
+        .set_exchange_rate(
+            Address::ZERO,
+            outbe_oracle::api::COEN_ASSET,
+            outbe_oracle::api::iso_asset(840),
+            rate_1e18,
+            0,
+            0,
+        )
         .unwrap();
 }
 

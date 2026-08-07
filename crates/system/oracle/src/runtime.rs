@@ -1,7 +1,7 @@
 //! Oracle business logic: vote submission, VWAP/TWAP computation, WorldwideDay
 //! and UTC-day finalization, and the OCOMP projection profile.
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
 use outbe_common::WorldwideDay;
 use outbe_primitives::addresses::ORACLE_ADDRESS;
@@ -9,7 +9,7 @@ use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::time::{date_key_to_utc_timestamp, SECONDS_PER_DAY};
 use std::collections::BTreeSet;
 
-use crate::constants::DAY_TYPE_PAIR;
+use crate::constants::DAY_TYPE_PAIR_KEY;
 use crate::precompile::IOracle;
 use crate::schema::{OracleContract, SCALE_1E18};
 
@@ -18,8 +18,7 @@ impl OracleContract<'_> {
     pub fn initialize_fresh_ocomp_profile(&mut self) -> Result<()> {
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
-            let (base, quote) = DAY_TYPE_PAIR;
-            let expected_pair_id = self.get_pair_id(base, quote)?;
+            let expected_pair_id = self.pair_ordinal_of(DAY_TYPE_PAIR_KEY)?;
             if expected_pair_id == 0 {
                 return Err(PrecompileError::Fatal(
                     "Oracle OCOMP day-type pair is not registered".into(),
@@ -81,11 +80,12 @@ impl OracleContract<'_> {
     /// Submits an aggregate oracle vote on behalf of a validator.
     ///
     /// The caller must be the validator itself or a delegated feeder.
-    /// Each tuple contains (pair_hash, rate, volume) for one pair.
+    /// Each tuple contains (base, quote, rate, volume) for one pair, quoted in
+    /// the direction the pair was registered in.
     pub fn submit_vote(
         &mut self,
         caller: Address,
-        tuples: &[(B256, U256, U256)],
+        tuples: &[(Address, Address, U256, U256)],
     ) -> Result<Address> {
         let validator = self.resolve_validator_for_feeder(caller)?;
 
@@ -97,12 +97,23 @@ impl OracleContract<'_> {
             ));
         }
 
-        // Check for duplicate pair_hashes in the submission. Kept separate from
-        // the vote-target loop below so the revert precedence for a submission
-        // that is both duplicated and untargeted stays unchanged.
+        // Resolve every quoted pair up front. `require_pair` rejects an
+        // unregistered pair and one quoted against the registered direction —
+        // the rate is a bare scalar, so a flipped quote would otherwise feed an
+        // uninverted price into the tally median with nothing downstream able to
+        // notice.
+        let mut resolved = Vec::with_capacity(tuples.len());
+        for (base, quote, rate, volume) in tuples {
+            let (pair, ordinal) = self.require_pair(*base, *quote)?;
+            resolved.push((pair, ordinal, *rate, *volume));
+        }
+
+        // Check for duplicate pairs in the submission. Kept separate from the
+        // vote-target loop below so the revert precedence for a submission that
+        // is both duplicated and untargeted stays unchanged.
         let mut seen = BTreeSet::new();
-        for (pair_hash, _, _) in tuples {
-            if !seen.insert(*pair_hash) {
+        for (pair, _, _, _) in &resolved {
+            if !seen.insert(*pair) {
                 return Err(PrecompileError::Revert(
                     "duplicate pair in vote submission".into(),
                 ));
@@ -110,8 +121,8 @@ impl OracleContract<'_> {
         }
 
         // Verify all pairs are vote targets
-        for (pair_hash, _, _) in tuples {
-            let is_target = self.vote_target.read(pair_hash)?;
+        for (pair, _, _, _) in &resolved {
+            let is_target = self.vote_target.read(pair)?;
             if !is_target {
                 return Err(PrecompileError::Revert("pair is not a vote target".into()));
             }
@@ -138,10 +149,9 @@ impl OracleContract<'_> {
         let rate_map = self.vote_rate.get_nested(&validator);
         let volume_map = self.vote_volume.get_nested(&validator);
 
-        for (i, (pair_hash, rate, volume)) in tuples.iter().enumerate() {
+        for (i, (_, ordinal, rate, volume)) in resolved.iter().enumerate() {
             let idx = i as u32;
-            let pair_id = self.pair_hash_to_id.read(pair_hash)?;
-            pair_id_map.write(&idx, pair_id)?;
+            pair_id_map.write(&idx, *ordinal)?;
             rate_map.write(&idx, *rate)?;
             volume_map.write(&idx, *volume)?;
         }
@@ -164,8 +174,11 @@ impl OracleContract<'_> {
 
         let mut pv_total = U256::ZERO;
         let mut vol_total = U256::ZERO;
-        let day_pv = self.daily_pv_sum.get_nested(&pair_id);
-        let day_vol = self.daily_vol_sum.get_nested(&pair_id);
+        // The daily aggregates key on the pair itself; the snapshot columns this
+        // module scans elsewhere still key on the ordinal, so translate here.
+        let pair = self.pair_at(pair_id)?;
+        let day_pv = self.daily_pv_sum.get_nested(&pair);
+        let day_vol = self.daily_vol_sum.get_nested(&pair);
 
         let start_day = start_time - (start_time % 86_400);
         let mut day = start_day;
@@ -360,8 +373,7 @@ impl OracleContract<'_> {
         let mut lookbacks = Vec::new();
 
         for pid in 1..=count {
-            let hash = self.pair_id_to_hash.read(&pid)?;
-            if !self.vote_target.read(&hash)? {
+            if !self.vote_target.read(&self.pair_at(pid)?)? {
                 continue;
             }
 
@@ -405,8 +417,7 @@ impl OracleContract<'_> {
         let mut lookbacks = Vec::new();
 
         for pid in 1..=count {
-            let hash = self.pair_id_to_hash.read(&pid)?;
-            if !self.vote_target.read(&hash)? {
+            if !self.vote_target.read(&self.pair_at(pid)?)? {
                 continue;
             }
 
@@ -527,9 +538,11 @@ impl OracleContract<'_> {
             if Some(pair_id) == ocomp_pair_id {
                 self.ocomp_day_type_vwap_by_utc_day.write(&utc_day, vwap)?;
             }
+            let (_, base, quote) = self.pair_entry(pair_id)?;
             let event = IOracle::VwapCalculated {
                 utcDay: utc_day,
-                pairId: pair_id,
+                base,
+                quote,
                 vwap,
             };
             let event_result = self

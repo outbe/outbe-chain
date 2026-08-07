@@ -223,9 +223,21 @@ mod tests {
     /// price + entry_price at mint time.
     fn seed_oracle(ctx: &BlockRuntimeContext, rate_1e18: U256) {
         let mut oracle = outbe_oracle::schema::OracleContract::new(ctx.storage.clone());
-        oracle.register_pair("COEN", "840").unwrap();
         oracle
-            .set_exchange_rate(Address::ZERO, "COEN", "840", rate_1e18, 0, 0)
+            .register_pair(
+                outbe_oracle::api::COEN_ASSET,
+                outbe_oracle::api::iso_asset(840),
+            )
+            .unwrap();
+        oracle
+            .set_exchange_rate(
+                Address::ZERO,
+                outbe_oracle::api::COEN_ASSET,
+                outbe_oracle::api::iso_asset(840),
+                rate_1e18,
+                0,
+                0,
+            )
             .unwrap();
         // Register ISO 840 (USD) so mint_gem currency-validation passes.
         oracle.reference_currencies.push(840u16).unwrap();

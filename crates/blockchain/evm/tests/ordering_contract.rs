@@ -39,12 +39,17 @@ fn seed_validator_set(storage: StorageHandle, initial_epoch: u64) {
     // Seed COEN/840 pair + 1.0 rate so begin-block NOD/GEM/INTEX promotion
     // reads a registered pair instead of reverting "pair not registered".
     let mut oracle = outbe_oracle::schema::OracleContract::new(storage);
-    oracle.register_pair("COEN", "840").unwrap();
+    oracle
+        .register_pair(
+            outbe_oracle::api::COEN_ASSET,
+            outbe_oracle::api::iso_asset(840),
+        )
+        .unwrap();
     oracle
         .set_exchange_rate(
             Address::ZERO,
-            "COEN",
-            "840",
+            outbe_oracle::api::COEN_ASSET,
+            outbe_oracle::api::iso_asset(840),
             U256::from(1_000_000_000_000_000_000u128),
             0,
             0,

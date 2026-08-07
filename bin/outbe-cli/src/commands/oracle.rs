@@ -7,24 +7,57 @@ use eyre::Result;
 
 use crate::abi::{IOracle, ORACLE_ADDR};
 use crate::rpc::Rpc;
+use outbe_primitives::asset_type::AssetType;
+
+/// Parses an oracle asset from the operator-facing shorthand.
+///
+/// `COEN`/`native` is the native asset, a 1-3 digit number is an ISO 4217
+/// currency code, and anything else must be a 0x address. Keeps runbooks that
+/// say `oracle rate COEN 840` working now that the ABI takes addresses.
+fn parse_asset(spec: &str) -> Result<Address> {
+    let text = spec.trim();
+    if text.eq_ignore_ascii_case("COEN") || text.eq_ignore_ascii_case("native") {
+        return Ok(Address::ZERO);
+    }
+    if let Ok(code) = text.parse::<u16>() {
+        if (1..=999).contains(&code) {
+            return Ok(AssetType::IsoCurrency(code).into());
+        }
+    }
+    text.parse::<Address>()
+        .map_err(|e| eyre::eyre!("{spec:?} is not COEN, an ISO 4217 code or a 0x address: {e}"))
+}
+
+/// Renders an asset address back into the shorthand `parse_asset` accepts.
+fn show_asset(address: Address) -> String {
+    match AssetType::from(address) {
+        AssetType::Native => "COEN".to_string(),
+        AssetType::IsoCurrency(code) => code.to_string(),
+        AssetType::ERC20(token) => token.to_string(),
+    }
+}
 
 #[derive(Subcommand)]
 pub enum OracleCmd {
     /// Show exchange rate for a pair
     Rate {
         /// Base currency (e.g., COEN)
-        base: String,
+        #[arg(value_parser = parse_asset)]
+        base: Address,
         /// Quote as an ISO 4217 numeric code (e.g., 840 for USD)
-        quote: String,
+        #[arg(value_parser = parse_asset)]
+        quote: Address,
     },
     /// Show all exchange rates
     Rates,
     /// Show VWAP for a pair
     Vwap {
         /// Base currency
-        base: String,
+        #[arg(value_parser = parse_asset)]
+        base: Address,
         /// Quote currency
-        quote: String,
+        #[arg(value_parser = parse_asset)]
+        quote: Address,
         /// Lookback period in seconds (default: 86400)
         #[arg(default_value = "86400")]
         seconds: u64,
@@ -32,9 +65,11 @@ pub enum OracleCmd {
     /// Show VWAP for a pair over an explicit time range
     VwapRange {
         /// Base currency
-        base: String,
+        #[arg(value_parser = parse_asset)]
+        base: Address,
         /// Quote currency
-        quote: String,
+        #[arg(value_parser = parse_asset)]
+        quote: Address,
         /// Start timestamp (seconds)
         start_time: u64,
         /// End timestamp (seconds)
@@ -43,9 +78,11 @@ pub enum OracleCmd {
     /// Show TWAP for a pair
     Twap {
         /// Base currency
-        base: String,
+        #[arg(value_parser = parse_asset)]
+        base: Address,
         /// Quote currency
-        quote: String,
+        #[arg(value_parser = parse_asset)]
+        quote: Address,
         /// Lookback period in seconds (default: 86400)
         #[arg(default_value = "86400")]
         seconds: u64,
@@ -59,9 +96,11 @@ pub enum OracleCmd {
     /// Show day VWAP for a pair
     DayVwap {
         /// Base currency
-        base: String,
+        #[arg(value_parser = parse_asset)]
+        base: Address,
         /// Quote currency
-        quote: String,
+        #[arg(value_parser = parse_asset)]
+        quote: Address,
     },
     /// Show WorldwideDay-style VWAPs over an explicit time range
     WorldwideDayVwap {
@@ -77,16 +116,20 @@ pub enum OracleCmd {
     /// Show whether a pair is an active vote target
     IsVoteTarget {
         /// Base currency
-        base: String,
+        #[arg(value_parser = parse_asset)]
+        base: Address,
         /// Quote currency
-        quote: String,
+        #[arg(value_parser = parse_asset)]
+        quote: Address,
     },
     /// Show price snapshot history for a pair
     SnapshotHistory {
         /// Base currency
-        base: String,
+        #[arg(value_parser = parse_asset)]
+        base: Address,
         /// Quote currency
-        quote: String,
+        #[arg(value_parser = parse_asset)]
+        quote: Address,
         /// Maximum rows to return
         #[arg(long, default_value = "20")]
         count: u32,
@@ -115,9 +158,11 @@ pub enum OracleCmd {
     /// Show S-curve value for a pair
     Scurve {
         /// Base currency
-        base: String,
+        #[arg(value_parser = parse_asset)]
+        base: Address,
         /// Quote currency
-        quote: String,
+        #[arg(value_parser = parse_asset)]
+        quote: Address,
         /// Timestamp to evaluate. Defaults to latest block timestamp.
         #[arg(long)]
         timestamp: Option<u64>,
@@ -125,16 +170,20 @@ pub enum OracleCmd {
     /// Show active S-curve entries for a pair
     ScurveEntries {
         /// Base currency
-        base: String,
+        #[arg(value_parser = parse_asset)]
+        base: Address,
         /// Quote currency
-        quote: String,
+        #[arg(value_parser = parse_asset)]
+        quote: Address,
     },
     /// Show S-curve values for a pair at a timestamp
     ScurveValues {
         /// Base currency
-        base: String,
+        #[arg(value_parser = parse_asset)]
+        base: Address,
         /// Quote currency
-        quote: String,
+        #[arg(value_parser = parse_asset)]
+        quote: Address,
         /// Timestamp to evaluate
         timestamp: u64,
     },
@@ -143,16 +192,20 @@ pub enum OracleCmd {
     /// Show all S-curve data for a pair
     AllScurveForPair {
         /// Base currency
-        base: String,
+        #[arg(value_parser = parse_asset)]
+        base: Address,
         /// Quote currency
-        quote: String,
+        #[arg(value_parser = parse_asset)]
+        quote: Address,
     },
     /// Show S-curve adjusted nominal price for a pair
     NominalPrice {
         /// Base currency
-        base: String,
+        #[arg(value_parser = parse_asset)]
+        base: Address,
         /// Quote currency
-        quote: String,
+        #[arg(value_parser = parse_asset)]
+        quote: Address,
         /// Timestamp to evaluate. Defaults to latest block timestamp.
         #[arg(long)]
         timestamp: Option<u64>,
@@ -160,9 +213,11 @@ pub enum OracleCmd {
     /// Show nominal price components for a pair
     NominalComponents {
         /// Base currency
-        base: String,
+        #[arg(value_parser = parse_asset)]
+        base: Address,
         /// Quote currency
-        quote: String,
+        #[arg(value_parser = parse_asset)]
+        quote: Address,
         /// Timestamp to evaluate. Defaults to latest block timestamp.
         #[arg(long)]
         timestamp: Option<u64>,
@@ -186,35 +241,35 @@ pub enum OracleCmd {
 impl OracleCmd {
     pub async fn run(self, client: &(impl Rpc + Sync), private_key: Option<&str>) -> Result<()> {
         match self {
-            Self::Rate { base, quote } => rate(client, &base, &quote).await,
+            Self::Rate { base, quote } => rate(client, base, quote).await,
             Self::Rates => rates(client).await,
             Self::Vwap {
                 base,
                 quote,
                 seconds,
-            } => vwap(client, &base, &quote, seconds).await,
+            } => vwap(client, base, quote, seconds).await,
             Self::VwapRange {
                 base,
                 quote,
                 start_time,
                 end_time,
-            } => vwap_range(client, &base, &quote, start_time, end_time).await,
+            } => vwap_range(client, base, quote, start_time, end_time).await,
             Self::Twap {
                 base,
                 quote,
                 seconds,
-            } => twap(client, &base, &quote, seconds).await,
+            } => twap(client, base, quote, seconds).await,
             Self::Twaps { seconds } => twaps(client, seconds).await,
-            Self::DayVwap { base, quote } => day_vwap(client, &base, &quote).await,
+            Self::DayVwap { base, quote } => day_vwap(client, base, quote).await,
             Self::WorldwideDayVwap {
                 start_time,
                 end_time,
             } => worldwide_day_vwap(client, start_time, end_time).await,
             Self::Params => params(client).await,
             Self::Pairs => pairs(client).await,
-            Self::IsVoteTarget { base, quote } => is_vote_target(client, &base, &quote).await,
+            Self::IsVoteTarget { base, quote } => is_vote_target(client, base, quote).await,
             Self::SnapshotHistory { base, quote, count } => {
-                snapshot_history(client, &base, &quote, count).await
+                snapshot_history(client, base, quote, count).await
             }
             Self::AllSnapshotHistory { count } => all_snapshot_history(client, count).await,
             Self::Penalty { validator } => penalty(client, validator).await,
@@ -224,27 +279,27 @@ impl OracleCmd {
                 base,
                 quote,
                 timestamp,
-            } => scurve(client, &base, &quote, timestamp).await,
-            Self::ScurveEntries { base, quote } => scurve_entries(client, &base, &quote).await,
+            } => scurve(client, base, quote, timestamp).await,
+            Self::ScurveEntries { base, quote } => scurve_entries(client, base, quote).await,
             Self::ScurveValues {
                 base,
                 quote,
                 timestamp,
-            } => scurve_values(client, &base, &quote, timestamp).await,
+            } => scurve_values(client, base, quote, timestamp).await,
             Self::AllScurve => all_scurve(client).await,
             Self::AllScurveForPair { base, quote } => {
-                all_scurve_for_pair(client, &base, &quote).await
+                all_scurve_for_pair(client, base, quote).await
             }
             Self::NominalPrice {
                 base,
                 quote,
                 timestamp,
-            } => nominal_price(client, &base, &quote, timestamp).await,
+            } => nominal_price(client, base, quote, timestamp).await,
             Self::NominalComponents {
                 base,
                 quote,
                 timestamp,
-            } => nominal_components(client, &base, &quote, timestamp).await,
+            } => nominal_components(client, base, quote, timestamp).await,
             Self::VoteTargets => vote_targets(client).await,
             Self::PairCount => pair_count(client).await,
             Self::DelegateFeeder { feeder } => delegate_feeder(client, private_key, feeder).await,
@@ -253,11 +308,8 @@ impl OracleCmd {
     }
 }
 
-async fn rate(client: &(impl Rpc + Sync), base: &str, quote: &str) -> Result<()> {
-    let call = IOracle::getExchangeRateCall {
-        base: base.into(),
-        quote: quote.into(),
-    };
+async fn rate(client: &(impl Rpc + Sync), base: Address, quote: Address) -> Result<()> {
+    let call = IOracle::getExchangeRateCall { base, quote };
     let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
     let ret = IOracle::getExchangeRateCall::abi_decode_returns(&result)?;
 
@@ -296,10 +348,15 @@ async fn rates(client: &(impl Rpc + Sync)) -> Result<()> {
     Ok(())
 }
 
-async fn vwap(client: &(impl Rpc + Sync), base: &str, quote: &str, seconds: u64) -> Result<()> {
+async fn vwap(
+    client: &(impl Rpc + Sync),
+    base: Address,
+    quote: Address,
+    seconds: u64,
+) -> Result<()> {
     let call = IOracle::getVwapCall {
-        base: base.into(),
-        quote: quote.into(),
+        base,
+        quote,
         lookbackSeconds: seconds,
     };
     let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
@@ -314,14 +371,14 @@ async fn vwap(client: &(impl Rpc + Sync), base: &str, quote: &str, seconds: u64)
 
 async fn vwap_range(
     client: &(impl Rpc + Sync),
-    base: &str,
-    quote: &str,
+    base: Address,
+    quote: Address,
     start_time: u64,
     end_time: u64,
 ) -> Result<()> {
     let call = IOracle::getVwapForTimeRangeCall {
-        base: base.into(),
-        quote: quote.into(),
+        base,
+        quote,
         startTime: start_time,
         endTime: end_time,
     };
@@ -334,10 +391,15 @@ async fn vwap_range(
     Ok(())
 }
 
-async fn twap(client: &(impl Rpc + Sync), base: &str, quote: &str, seconds: u64) -> Result<()> {
+async fn twap(
+    client: &(impl Rpc + Sync),
+    base: Address,
+    quote: Address,
+    seconds: u64,
+) -> Result<()> {
     let call = IOracle::getTwapCall {
-        base: base.into(),
-        quote: quote.into(),
+        base,
+        quote,
         lookbackSeconds: seconds,
     };
     let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
@@ -375,11 +437,8 @@ async fn twaps(client: &(impl Rpc + Sync), seconds: u64) -> Result<()> {
     Ok(())
 }
 
-async fn day_vwap(client: &(impl Rpc + Sync), base: &str, quote: &str) -> Result<()> {
-    let call = IOracle::getDayVwapCall {
-        base: base.into(),
-        quote: quote.into(),
-    };
+async fn day_vwap(client: &(impl Rpc + Sync), base: Address, quote: Address) -> Result<()> {
+    let call = IOracle::getDayVwapCall { base, quote };
     let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
     let ret = IOracle::getDayVwapCall::abi_decode_returns(&result)?;
     println!("Day VWAP {base}/{quote}: {}", super::format_unit(ret));
@@ -461,6 +520,9 @@ async fn pairs(client: &(impl Rpc + Sync)) -> Result<()> {
         .zip(ret.quotes.iter())
         .zip(ret.isActive.iter())
     {
+        // Rendered back into the shorthand the commands accept, so ISO 840
+        // prints as `840` rather than its reserved address.
+        let (base, quote) = (show_asset(*base), show_asset(*quote));
         println!("{pair_id:<8} {base:<10} {quote:<10} {active:<8}");
     }
     Ok(())
@@ -484,11 +546,8 @@ async fn vote_targets(client: &(impl Rpc + Sync)) -> Result<()> {
     Ok(())
 }
 
-async fn is_vote_target(client: &(impl Rpc + Sync), base: &str, quote: &str) -> Result<()> {
-    let call = IOracle::isVoteTargetCall {
-        base: base.into(),
-        quote: quote.into(),
-    };
+async fn is_vote_target(client: &(impl Rpc + Sync), base: Address, quote: Address) -> Result<()> {
+    let call = IOracle::isVoteTargetCall { base, quote };
     let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
     let active = IOracle::isVoteTargetCall::abi_decode_returns(&result)?;
 
@@ -498,15 +557,11 @@ async fn is_vote_target(client: &(impl Rpc + Sync), base: &str, quote: &str) -> 
 
 async fn snapshot_history(
     client: &(impl Rpc + Sync),
-    base: &str,
-    quote: &str,
+    base: Address,
+    quote: Address,
     count: u32,
 ) -> Result<()> {
-    let call = IOracle::getPriceSnapshotHistoryCall {
-        base: base.into(),
-        quote: quote.into(),
-        count,
-    };
+    let call = IOracle::getPriceSnapshotHistoryCall { base, quote, count };
     let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
     let ret = IOracle::getPriceSnapshotHistoryCall::abi_decode_returns(&result)?;
 
@@ -615,14 +670,14 @@ async fn vote(client: &(impl Rpc + Sync), validator: Address) -> Result<()> {
 
 async fn scurve(
     client: &(impl Rpc + Sync),
-    base: &str,
-    quote: &str,
+    base: Address,
+    quote: Address,
     timestamp: Option<u64>,
 ) -> Result<()> {
     let timestamp = resolve_timestamp(client, timestamp).await?;
     let call = IOracle::getScurveValueCall {
-        base: base.into(),
-        quote: quote.into(),
+        base,
+        quote,
         timestamp,
     };
     let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
@@ -634,11 +689,8 @@ async fn scurve(
     Ok(())
 }
 
-async fn scurve_entries(client: &(impl Rpc + Sync), base: &str, quote: &str) -> Result<()> {
-    let call = IOracle::getScurveEntriesCall {
-        base: base.into(),
-        quote: quote.into(),
-    };
+async fn scurve_entries(client: &(impl Rpc + Sync), base: Address, quote: Address) -> Result<()> {
+    let call = IOracle::getScurveEntriesCall { base, quote };
     let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
     let ret = IOracle::getScurveEntriesCall::abi_decode_returns(&result)?;
 
@@ -666,13 +718,13 @@ async fn scurve_entries(client: &(impl Rpc + Sync), base: &str, quote: &str) -> 
 
 async fn scurve_values(
     client: &(impl Rpc + Sync),
-    base: &str,
-    quote: &str,
+    base: Address,
+    quote: Address,
     timestamp: u64,
 ) -> Result<()> {
     let call = IOracle::getScurveValuesCall {
-        base: base.into(),
-        quote: quote.into(),
+        base,
+        quote,
         timestamp,
     };
     let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
@@ -720,11 +772,12 @@ async fn all_scurve(client: &(impl Rpc + Sync)) -> Result<()> {
     Ok(())
 }
 
-async fn all_scurve_for_pair(client: &(impl Rpc + Sync), base: &str, quote: &str) -> Result<()> {
-    let call = IOracle::getAllScurveDataForPairCall {
-        base: base.into(),
-        quote: quote.into(),
-    };
+async fn all_scurve_for_pair(
+    client: &(impl Rpc + Sync),
+    base: Address,
+    quote: Address,
+) -> Result<()> {
+    let call = IOracle::getAllScurveDataForPairCall { base, quote };
     let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
     let ret = IOracle::getAllScurveDataForPairCall::abi_decode_returns(&result)?;
 
@@ -739,14 +792,14 @@ async fn all_scurve_for_pair(client: &(impl Rpc + Sync), base: &str, quote: &str
 
 async fn nominal_price(
     client: &(impl Rpc + Sync),
-    base: &str,
-    quote: &str,
+    base: Address,
+    quote: Address,
     timestamp: Option<u64>,
 ) -> Result<()> {
     let timestamp = resolve_timestamp(client, timestamp).await?;
     let call = IOracle::getNominalPriceCall {
-        base: base.into(),
-        quote: quote.into(),
+        base,
+        quote,
         timestamp,
     };
     let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
@@ -760,14 +813,14 @@ async fn nominal_price(
 
 async fn nominal_components(
     client: &(impl Rpc + Sync),
-    base: &str,
-    quote: &str,
+    base: Address,
+    quote: Address,
     timestamp: Option<u64>,
 ) -> Result<()> {
     let timestamp = resolve_timestamp(client, timestamp).await?;
     let call = IOracle::getNominalPriceComponentsCall {
-        base: base.into(),
-        quote: quote.into(),
+        base,
+        quote,
         timestamp,
     };
     let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;

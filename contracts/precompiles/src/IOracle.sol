@@ -7,50 +7,49 @@ interface IOracle {
     // Events — precompile dispatch (appear in transaction receipts)
     event VoteSubmitted(address indexed validator, uint32 tupleCount);
     event FeederDelegated(address indexed validator, address indexed feeder);
-    event VoteTargetDeactivated(string base, string quote);
-    event VoteTargetActivated(string base, string quote);
-    event ExchangeRateSet(string base, string quote, uint256 rate);
+    event VoteTargetDeactivated(address indexed base, address indexed quote);
+    event VoteTargetActivated(address indexed base, address indexed quote);
+    event ExchangeRateSet(address indexed base, address indexed quote, uint256 rate);
 
     // Events — block hooks (emitted during tally/slash/S-curve processing)
-    event ExchangeRateUpdated(uint32 indexed pairId, uint256 rate, uint64 blockNumber);
+    event ExchangeRateUpdated(address indexed base, address indexed quote, uint256 rate, uint64 blockNumber);
     event TallyCompleted(uint64 blockNumber, uint32 pairsUpdated);
     event ValidatorSlashed(address indexed validator, uint64 slashPercent);
     event ValidatorForcedExit(address indexed validator);
-    event ScurvePeakDetected(uint32 indexed pairId, uint256 peakPrice, uint64 peakDay);
+    event ScurvePeakDetected(address indexed base, address indexed quote, uint256 peakPrice, uint64 peakDay);
     /// @notice Emitted once per pair when a closed UTC calendar day's VWAP is
     /// finalized into state. `utcDay` is a yyyymmdd UTC date key (e.g. 20260625).
-    event VwapCalculated(uint32 indexed utcDay, uint32 indexed pairId, uint256 vwap);
+    /// @dev Uses all three indexable topics; no further field can be indexed.
+    event VwapCalculated(uint32 indexed utcDay, address indexed base, address indexed quote, uint256 vwap);
 
+    /// @notice One quoted rate in an aggregate vote.
+    /// @dev `base` and `quote` must match the direction the pair was registered
+    ///      in. The storage key is order-independent, so a flipped quote would
+    ///      otherwise submit an uninverted rate for the same pair; it reverts.
     struct ExchangeRateTuple {
-        string base;
-        string quote;
+        address base;
+        address quote;
         uint256 exchangeRate;
         uint256 volume;
     }
 
     /// @notice Returns the current exchange rate for a pair.
-    function getExchangeRate(string calldata base, string calldata quote)
+    function getExchangeRate(address base, address quote)
         external
         view
         returns (uint256 rate, uint64 lastBlock, uint64 lastTimestamp);
 
     /// @notice Returns VWAP for a pair over a lookback period in seconds from current block timestamp.
-    function getVwap(string calldata base, string calldata quote, uint64 lookbackSeconds)
-        external
-        view
-        returns (uint256 vwap);
+    function getVwap(address base, address quote, uint64 lookbackSeconds) external view returns (uint256 vwap);
 
     /// @notice Returns VWAP for a pair over an explicit time range.
-    function getVwapForTimeRange(string calldata base, string calldata quote, uint64 startTime, uint64 endTime)
+    function getVwapForTimeRange(address base, address quote, uint64 startTime, uint64 endTime)
         external
         view
         returns (uint256 vwap);
 
     /// @notice Returns the maximum active S-curve value for a pair at the given timestamp.
-    function getScurveValue(string calldata base, string calldata quote, uint64 timestamp)
-        external
-        view
-        returns (uint256 value);
+    function getScurveValue(address base, address quote, uint64 timestamp) external view returns (uint256 value);
 
     /// @notice Returns oracle parameters.
     function getParams()
@@ -76,7 +75,7 @@ interface IOracle {
     function getFeederDelegation(address validator) external view returns (address feeder);
 
     /// @notice Returns whether a pair is an active vote target.
-    function isVoteTarget(string calldata base, string calldata quote) external view returns (bool);
+    function isVoteTarget(address base, address quote) external view returns (bool);
 
     /// @notice Returns the number of registered pairs.
     function getPairCount() external view returns (uint32 count);
@@ -103,7 +102,7 @@ interface IOracle {
         returns (uint64 success, uint64 abstain, uint64 miss, uint64 slashWindow);
 
     /// @notice Bootstrap write: set exchange rate (system-only, Address::ZERO caller).
-    function setExchangeRate(string calldata base, string calldata quote, uint256 rate) external;
+    function setExchangeRate(address base, address quote, uint256 rate) external;
 
     /// @notice Delegate feeder consent from validator to feeder address.
     function delegateFeederConsent(address feeder) external;
@@ -112,15 +111,15 @@ interface IOracle {
     function submitVote(ExchangeRateTuple[] calldata tuples) external;
 
     /// @notice Deactivate a pair's vote target status (system-only).
-    function deactivateVoteTarget(string calldata base, string calldata quote) external;
+    function deactivateVoteTarget(address base, address quote) external;
 
     /// @notice Activate a pair's vote target status (system-only).
-    function activateVoteTarget(string calldata base, string calldata quote) external;
+    function activateVoteTarget(address base, address quote) external;
 
     // --- New query functions (ORC-AUD-027) ---
 
     /// @notice Returns price snapshot history for a pair (most recent first).
-    function getPriceSnapshotHistory(string calldata base, string calldata quote, uint32 count)
+    function getPriceSnapshotHistory(address base, address quote, uint32 count)
         external
         view
         returns (uint64[] memory timestamps, uint256[] memory rates, uint256[] memory volumes);
@@ -138,10 +137,7 @@ interface IOracle {
         );
 
     /// @notice Returns TWAP (time-weighted average price) for a pair.
-    function getTwap(string calldata base, string calldata quote, uint64 lookbackSeconds)
-        external
-        view
-        returns (uint256 twap);
+    function getTwap(address base, address quote, uint64 lookbackSeconds) external view returns (uint256 twap);
 
     /// @notice Returns TWAPs for all active vote-target pairs. The input
     /// `lookback` is the requested lookback window in seconds; the returned
@@ -152,16 +148,13 @@ interface IOracle {
         returns (uint32[] memory pairIds, uint256[] memory twaps, uint64[] memory lookbackSeconds);
 
     /// @notice Returns VWAP over the last 24 hours for a pair.
-    function getDayVwap(string calldata base, string calldata quote) external view returns (uint256 vwap);
+    function getDayVwap(address base, address quote) external view returns (uint256 vwap);
 
     /// @notice Returns the finalized VWAP for a full UTC calendar day.
     /// @param utcDay yyyymmdd UTC date key (e.g. 20260625). Reverts if the day
     ///        is not yet finalized or had no oracle data for the pair. For the
     ///        in-progress current day use `getVwapForTimeRange` instead.
-    function getUtcDayVwap(string calldata base, string calldata quote, uint32 utcDay)
-        external
-        view
-        returns (uint256 vwap);
+    function getUtcDayVwap(address base, address quote, uint32 utcDay) external view returns (uint256 vwap);
 
     /// @notice Returns VWAPs for all active vote-target pairs over an explicit WorldwideDay-style window.
     function getWorldwideDayVwap(uint64 startTime, uint64 endTime)
@@ -182,13 +175,13 @@ interface IOracle {
         );
 
     /// @notice Returns all active S-curve entries for a pair.
-    function getScurveEntries(string calldata base, string calldata quote)
+    function getScurveEntries(address base, address quote)
         external
         view
         returns (uint64[] memory peakDays, uint256[] memory peakPrices, uint256[] memory currentValues);
 
     /// @notice Returns S-curve values for a pair at a timestamp.
-    function getScurveValues(string calldata base, string calldata quote, uint64 timestamp)
+    function getScurveValues(address base, address quote, uint64 timestamp)
         external
         view
         returns (uint64 targetDay, uint64[] memory peakDays, uint256[] memory peakPrices, uint256[] memory values);
@@ -200,26 +193,25 @@ interface IOracle {
         returns (uint32[] memory pairIds, uint64[] memory peakDays, uint256[] memory peakPrices);
 
     /// @notice Returns all S-curve data for one pair.
-    function getAllScurveDataForPair(string calldata base, string calldata quote)
+    function getAllScurveDataForPair(address base, address quote)
         external
         view
         returns (uint64[] memory peakDays, uint256[] memory peakPrices);
 
     /// @notice Returns all registered pairs as parallel arrays of
     ///         (pairId, base, quote, isActive).
+    /// @dev `bases` and `quotes` come back in the direction each pair was
+    ///      registered in, which is the direction its reads must be quoted in.
     function getPairs()
         external
         view
-        returns (uint32[] memory pairIds, string[] memory bases, string[] memory quotes, bool[] memory isActive);
+        returns (uint32[] memory pairIds, address[] memory bases, address[] memory quotes, bool[] memory isActive);
 
     /// @notice Returns the S-curve adjusted nominal price for a pair at a timestamp.
-    function getNominalPrice(string calldata base, string calldata quote, uint64 timestamp)
-        external
-        view
-        returns (uint256 price);
+    function getNominalPrice(address base, address quote, uint64 timestamp) external view returns (uint256 price);
 
     /// @notice Returns nominal price components where nominal = max(VWAP, S-curve).
-    function getNominalPriceComponents(string calldata base, string calldata quote, uint64 timestamp)
+    function getNominalPriceComponents(address base, address quote, uint64 timestamp)
         external
         view
         returns (uint256 nominalPrice, uint256 vwap, uint256 maxScurve, string memory source);

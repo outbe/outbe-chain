@@ -6,10 +6,10 @@
 use crate::schema::OracleContract;
 use crate::scurve;
 
-pub use crate::constants::DAY_TYPE_PAIR;
-pub use crate::state::{pair_hash, pair_hash_coen_iso};
+pub use crate::constants::{DAY_TYPE_ISO, DAY_TYPE_PAIR, DAY_TYPE_PAIR_KEY};
+pub use crate::types::{asset_pair, coen_iso_pair, AddressPair, AssetType};
 
-use alloy_primitives::U256;
+use alloy_primitives::{Address, U256};
 use outbe_common::WorldwideDay;
 use outbe_primitives::{
     block::BlockRuntimeContext,
@@ -39,6 +39,14 @@ pub struct OcompOraclePreAdmissionProjection {
     pub oracle_state_version: u64,
     pub wwd_pair_entries: u32,
     pub active_scurve_entries: u32,
+}
+
+/// Native COEN as an asset address — the base of every settlement pair.
+pub const COEN_ASSET: Address = Address::ZERO;
+
+/// ISO 4217 numeric code `iso_code` as an asset address, e.g. 840 for USD.
+pub fn iso_asset(iso_code: u16) -> Address {
+    AssetType::IsoCurrency(iso_code).into()
 }
 
 /// Validates that `iso_code` is registered as a reference currency.
@@ -83,18 +91,18 @@ pub fn check_reference_currency_with_storage(storage: StorageHandle, iso_code: u
 /// `iso_code -> exchange_rate` lookup.
 pub fn coen_rate_for(storage: StorageHandle, iso_code: u16) -> Result<Option<U256>> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
-    let hash = pair_hash_coen_iso(iso_code);
-    if oracle.pair_hash_to_id.read(&hash)? == 0 {
+    let pair = coen_iso_pair(iso_code);
+    if oracle.pair_ordinal_of(pair)? == 0 {
         return Ok(None);
     }
-    oracle.exchange_rate.read(&hash).map(Some)
+    oracle.exchange_rate.read(&pair).map(Some)
 }
 
 /// Pair id of `COEN/<iso_code>`, or `None` when that pair is not registered.
 /// For callers that need the id itself rather than the rate.
 pub fn pair_id_for(storage: StorageHandle, iso_code: u16) -> Result<Option<u32>> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
-    let id = oracle.pair_hash_to_id.read(&pair_hash_coen_iso(iso_code))?;
+    let id = oracle.pair_ordinal_of(coen_iso_pair(iso_code))?;
     Ok((id != 0).then_some(id))
 }
 
@@ -176,7 +184,7 @@ pub fn initialize_fresh_ocomp_profile(storage: StorageHandle) -> Result<()> {
 ///
 /// This is the single entry point for the day-rate decision: pair resolution and
 /// the snapshot lookup live here, behind one typed interface, so callers never
-/// touch the oracle's internal `pair_hash_to_id` map. Genuine storage faults
+/// touch the oracle's internal `pair_ordinal` map. Genuine storage faults
 /// propagate as `Err`, keeping "no data yet" (`Ok(None)` → caller's RED fallback)
 /// distinct from "oracle broken".
 pub fn day_type_pair_vwap(
@@ -184,8 +192,7 @@ pub fn day_type_pair_vwap(
     worldwide_day: WorldwideDay,
 ) -> Result<Option<U256>> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
-    let (base, quote) = DAY_TYPE_PAIR;
-    let pair_id = oracle.get_pair_id(base, quote)?;
+    let pair_id = oracle.pair_ordinal_of(DAY_TYPE_PAIR_KEY)?;
     if pair_id == 0 {
         return Ok(None);
     }
@@ -216,8 +223,7 @@ pub fn store_worldwide_day_vwap_snapshot(
 /// `None` when the pair is not registered or the day has no finalized value.
 pub fn day_type_pair_utc_vwap(storage: StorageHandle, utc_day: u32) -> Result<Option<U256>> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
-    let (base, quote) = DAY_TYPE_PAIR;
-    let pair_id = oracle.get_pair_id(base, quote)?;
+    let pair_id = oracle.pair_ordinal_of(DAY_TYPE_PAIR_KEY)?;
     if pair_id == 0 {
         return Ok(None);
     }
@@ -248,7 +254,7 @@ pub fn get_max_active_scurve_value(
     scurve::get_max_active_scurve_value(&oracle, pair_id, scurve_timestamp)
 }
 
-pub fn get_exchange_rate(storage: StorageHandle, base: &str, quote: &str) -> Result<U256> {
+pub fn get_exchange_rate(storage: StorageHandle, base: Address, quote: Address) -> Result<U256> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
     let (rate, _, _) = oracle.get_exchange_rate(base, quote)?;
     Ok(rate)

@@ -700,12 +700,17 @@ mod tests {
             // of soft-skipping the scan. The qualifiers derive the pair from the
             // ISO code, so registering the pair is sufficient.
             let mut oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-            oracle.register_pair("COEN", "840").unwrap();
+            oracle
+                .register_pair(
+                    outbe_oracle::api::COEN_ASSET,
+                    outbe_oracle::api::iso_asset(840),
+                )
+                .unwrap();
             oracle
                 .set_exchange_rate(
                     Address::ZERO,
-                    "COEN",
-                    "840",
+                    outbe_oracle::api::COEN_ASSET,
+                    outbe_oracle::api::iso_asset(840),
                     U256::from(1_000_000_000_000_000_000u128),
                     0,
                     0,

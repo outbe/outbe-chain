@@ -1,7 +1,8 @@
 //! Shared fixtures and helpers for the Oracle test suite.
 
 use crate::schema::OracleContract;
-use alloy_primitives::{Address, U256};
+use crate::types::{AddressPair, AssetType};
+use alloy_primitives::{address, Address, U256};
 use outbe_primitives::error::Result as PrecompileResult;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
@@ -18,6 +19,25 @@ pub(super) fn with_storage_at<F: FnOnce(StorageHandle)>(timestamp: u64, f: F) {
     let mut storage = HashMapStorageProvider::new(1);
     storage.set_timestamp(U256::from(timestamp));
     StorageHandle::enter(&mut storage, f);
+}
+
+// Assets the suite quotes pairs in. `COEN` is the native asset and `USD`/`EUR`
+// are ISO 4217 codes, so both encode to reserved addresses; the ERC20 stand-ins
+// use their real mainnet addresses, which sit well outside the ISO range.
+pub(super) const COEN: Address = Address::ZERO;
+pub(super) const USDT: Address = address!("0xdac17f958d2ee523a2206206994597c13d831ec7");
+pub(super) const USDC: Address = address!("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
+pub(super) const ETH: Address = address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+pub(super) const BTC: Address = address!("0x2260fac5e5542a773aa44fbcfedf7c193bc2c599");
+
+/// ISO 840 (USD) as an asset address.
+pub(super) fn usd() -> Address {
+    AssetType::IsoCurrency(840).into()
+}
+
+/// The storage key for a pair, in either quoting direction.
+pub(super) fn pair_key(base: Address, quote: Address) -> AddressPair {
+    AddressPair::from_addresses(base, quote)
 }
 
 /// Test currency rate (4.30 %, 1e18 scaled) used when building
@@ -40,7 +60,7 @@ pub(super) type OracleMutation = for<'a> fn(StorageHandle<'a>) -> PrecompileResu
 pub(super) fn seed_ocomp_oracle(provider: &mut HashMapStorageProvider) {
     StorageHandle::enter(provider, |storage| {
         let mut oracle = OracleContract::new(storage.clone());
-        oracle.register_pair("COEN", "840").unwrap();
+        oracle.register_pair(COEN, usd()).unwrap();
         crate::api::initialize_fresh_ocomp_profile(storage).unwrap();
     });
 }
@@ -51,7 +71,7 @@ pub(super) fn seed_ocomp_oracle_with_snapshot(provider: &mut HashMapStorageProvi
         OracleContract::new(storage)
             .write_snapshot(
                 ATOMIC_DAY_START + 100,
-                &[(1, U256::from(125), U256::from(2))],
+                &[(pair_key(COEN, usd()), U256::from(125), U256::from(2))],
             )
             .unwrap();
     });
@@ -78,7 +98,7 @@ pub(super) fn seed_oracle_with_peak_history(
 ) {
     StorageHandle::enter(provider, |storage| {
         let mut oracle = OracleContract::new(storage.clone());
-        oracle.register_pair("COEN", "840").unwrap();
+        oracle.register_pair(COEN, usd()).unwrap();
         if initialize_ocomp {
             crate::api::initialize_fresh_ocomp_profile(storage).unwrap();
         }
@@ -88,7 +108,10 @@ pub(super) fn seed_oracle_with_peak_history(
             (SCURVE_CURRENT_DAY - crate::scurve::DAY_SECONDS, 120_u64),
         ] {
             oracle
-                .write_snapshot(day + 100, &[(1, U256::from(price), U256::from(2))])
+                .write_snapshot(
+                    day + 100,
+                    &[(pair_key(COEN, usd()), U256::from(price), U256::from(2))],
+                )
                 .unwrap();
         }
     });
@@ -105,11 +128,11 @@ pub(super) fn seed_prefork_oracle_with_peak_history(provider: &mut HashMapStorag
 pub(super) fn seed_prefork_oracle_with_snapshot(provider: &mut HashMapStorageProvider) {
     StorageHandle::enter(provider, |storage| {
         let mut oracle = OracleContract::new(storage);
-        oracle.register_pair("COEN", "840").unwrap();
+        oracle.register_pair(COEN, usd()).unwrap();
         oracle
             .write_snapshot(
                 ATOMIC_DAY_START + 100,
-                &[(1, U256::from(125), U256::from(2))],
+                &[(pair_key(COEN, usd()), U256::from(125), U256::from(2))],
             )
             .unwrap();
     });
@@ -118,7 +141,7 @@ pub(super) fn seed_prefork_oracle_with_snapshot(provider: &mut HashMapStoragePro
 pub(super) fn write_snapshot_mutation(storage: StorageHandle<'_>) -> PrecompileResult<()> {
     OracleContract::new(storage).write_snapshot(
         ATOMIC_DAY_START + 100,
-        &[(1, U256::from(125), U256::from(2))],
+        &[(pair_key(COEN, usd()), U256::from(125), U256::from(2))],
     )
 }
 

@@ -4,8 +4,9 @@
 //! price-snapshot ring buffer, and the stored VWAP snapshots. Computation and
 //! orchestration live in `runtime.rs`.
 
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{Address, U256};
 use outbe_common::WorldwideDay;
+use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::error::{PrecompileError, Result};
 
 use crate::constants::MAX_SNAPSHOT_RETENTION_SECONDS;
@@ -20,21 +21,8 @@ type SnapshotHistory = (Vec<u64>, Vec<u64>, Vec<u32>, Vec<U256>, Vec<U256>);
 /// `(start_time, end_time, pair_ids, vwaps, lookbacks)` — stored worldwide-day VWAP snapshot.
 type WorldwideDayVwapSnapshot = (u64, u64, Vec<u32>, Vec<U256>, Vec<u64>);
 
-/// Computes pair hash from base/quote strings: `keccak256("BASE/QUOTE")`.
-pub fn pair_hash(base: &str, quote: &str) -> B256 {
-    let key = format!("{base}/{quote}");
-    keccak256(key.as_bytes())
-}
-
-/// Pair hash of the canonical COEN pair quoted in ISO 4217 code `iso_code`.
-///
-/// The quote token is the decimal ISO code, so ISO 840 resolves to
-/// `keccak256("COEN/840")`. This derivation replaces the former
-/// `settlement_iso_to_pair` registry: an ISO is usable exactly when the pair it
-/// names is present in `pair_hash_to_id`.
-pub fn pair_hash_coen_iso(iso_code: u16) -> B256 {
-    pair_hash("COEN", iso_code.to_string().as_str())
-}
+/// `(pair_ids, bases, quotes, is_active)` — the registered pair table.
+type PairTable = (Vec<u32>, Vec<Address>, Vec<Address>, Vec<bool>);
 
 impl OracleContract<'_> {
     // -----------------------------------------------------------------------
@@ -42,26 +30,19 @@ impl OracleContract<'_> {
     // -----------------------------------------------------------------------
 
     /// Registers a new trading pair and marks it as a vote target.
-    /// Returns the assigned pair_id (1-indexed).
-    pub fn register_pair(&mut self, base: &str, quote: &str) -> Result<u32> {
-        // Validate: base and quote must not contain "/" to prevent hash collision
-        // (e.g., "A/B","C" and "A","B/C" would both hash to "A/B/C").
-        if base.contains('/') || quote.contains('/') {
+    ///
+    /// `base` and `quote` are recorded in the orientation given; the storage key
+    /// itself is order-independent, so registering the inverse of an existing
+    /// pair is rejected as a duplicate. Returns the assigned ordinal (1-indexed).
+    pub fn register_pair(&mut self, base: Address, quote: Address) -> Result<u32> {
+        if base == quote {
             return Err(PrecompileError::Revert(
-                "pair base/quote must not contain '/' separator".into(),
-            ));
-        }
-        if base.is_empty() || quote.is_empty() {
-            return Err(PrecompileError::Revert(
-                "pair base/quote must not be empty".into(),
+                "pair base and quote must differ".into(),
             ));
         }
 
-        let hash = pair_hash(base, quote);
-
-        // Check not already registered
-        let existing = self.pair_hash_to_id.read(&hash)?;
-        if existing != 0 {
+        let pair = AddressPair::from_addresses(base, quote);
+        if self.pair_ordinal.read(&pair)? != 0 {
             return Err(PrecompileError::Revert("pair already registered".into()));
         }
 
@@ -69,49 +50,63 @@ impl OracleContract<'_> {
         let new_id = count + 1;
 
         self.pair_count.write(new_id)?;
-        self.pair_id_to_hash.write(&new_id, hash)?;
-        self.pair_hash_to_id.write(&hash, new_id)?;
-        self.vote_target.write(&hash, true)?;
-        self.pair_id_to_base.write_string(&new_id, base)?;
-        self.pair_id_to_quote.write_string(&new_id, quote)?;
+        self.pair_ordinal.write(&pair, new_id)?;
+        self.vote_target.write(&pair, true)?;
+        self.pair_ordinal_base.write(&new_id, base)?;
+        self.pair_ordinal_quote.write(&new_id, quote)?;
 
         Ok(new_id)
+    }
+
+    /// The pair registered at `ordinal` as `(key, base, quote)`, with base and
+    /// quote in the orientation they were registered in — the storage key alone
+    /// is sorted and cannot tell the two apart.
+    ///
+    /// Reads back as the zero pair for an ordinal that was never written, which
+    /// is why membership is decided by [`Self::pair_ordinal_of`] and never by a
+    /// zero check — the zero address is a legitimate asset (native COEN).
+    pub fn pair_entry(&self, ordinal: u32) -> Result<(AddressPair, Address, Address)> {
+        let base = self.pair_ordinal_base.read(&ordinal)?;
+        let quote = self.pair_ordinal_quote.read(&ordinal)?;
+        Ok((AddressPair::from_addresses(base, quote), base, quote))
+    }
+
+    /// [`Self::pair_entry`] when only the storage key is needed.
+    pub fn pair_at(&self, ordinal: u32) -> Result<AddressPair> {
+        Ok(self.pair_entry(ordinal)?.0)
     }
 
     /// Deactivates a pair's vote target status (system-only).
     pub fn deactivate_vote_target(
         &mut self,
         caller: Address,
-        base: &str,
-        quote: &str,
+        base: Address,
+        quote: Address,
     ) -> Result<()> {
         if caller != Address::ZERO {
             return Err(PrecompileError::Revert(
                 "only system can deactivate vote target".into(),
             ));
         }
-        let hash = pair_hash(base, quote);
-        let id = self.pair_hash_to_id.read(&hash)?;
-        if id == 0 {
-            return Err(PrecompileError::Revert("pair not registered".into()));
-        }
-        self.vote_target.write(&hash, false)?;
+        let (pair, _) = self.require_pair(base, quote)?;
+        self.vote_target.write(&pair, false)?;
         Ok(())
     }
 
     /// Activates a pair's vote target status (system-only).
-    pub fn activate_vote_target(&mut self, caller: Address, base: &str, quote: &str) -> Result<()> {
+    pub fn activate_vote_target(
+        &mut self,
+        caller: Address,
+        base: Address,
+        quote: Address,
+    ) -> Result<()> {
         if caller != Address::ZERO {
             return Err(PrecompileError::Revert(
                 "only system can activate vote target".into(),
             ));
         }
-        let hash = pair_hash(base, quote);
-        let id = self.pair_hash_to_id.read(&hash)?;
-        if id == 0 {
-            return Err(PrecompileError::Revert("pair not registered".into()));
-        }
-        self.vote_target.write(&hash, true)?;
+        let (pair, _) = self.require_pair(base, quote)?;
+        self.vote_target.write(&pair, true)?;
         Ok(())
     }
 
@@ -119,37 +114,60 @@ impl OracleContract<'_> {
     pub fn remove_excess_feeds(&mut self) -> Result<()> {
         let pair_count = self.pair_count.read()?;
         for pid in 1..=pair_count {
-            let hash = self.pair_id_to_hash.read(&pid)?;
-            let is_target = self.vote_target.read(&hash)?;
+            let pair = self.pair_at(pid)?;
+            let is_target = self.vote_target.read(&pair)?;
             if !is_target {
-                self.exchange_rate.write(&hash, U256::ZERO)?;
-                self.exchange_rate_block.write(&hash, 0)?;
-                self.exchange_rate_timestamp.write(&hash, 0)?;
+                self.exchange_rate.write(&pair, U256::ZERO)?;
+                self.exchange_rate_block.write(&pair, 0)?;
+                self.exchange_rate_timestamp.write(&pair, 0)?;
             }
         }
         Ok(())
     }
 
-    /// Returns the pair_id for a base/quote pair, or 0 if not registered.
-    pub fn get_pair_id(&self, base: &str, quote: &str) -> Result<u32> {
-        let hash = pair_hash(base, quote);
-        self.pair_hash_to_id.read(&hash)
+    /// Returns the enumeration ordinal for a pair, or 0 if not registered.
+    pub fn pair_ordinal_of(&self, pair: AddressPair) -> Result<u32> {
+        self.pair_ordinal.read(&pair)
     }
 
-    /// [`Self::get_pair_id`] with the "0 means unregistered" revert that every
-    /// pair-scoped ABI view repeats.
-    pub fn require_pair_id(&self, base: &str, quote: &str) -> Result<u32> {
-        let id = self.get_pair_id(base, quote)?;
-        if id == 0 {
+    /// Resolves an ABI-quoted pair to its storage key and enumeration ordinal.
+    ///
+    /// The key is order-independent, so it alone cannot tell `COEN/USD` from
+    /// `USD/COEN`. Quoting a registered pair backwards would otherwise return
+    /// its rate un-inverted, so the orientation is checked against the columns
+    /// `register_pair` recorded and a flipped quote reverts.
+    pub fn require_pair(&self, base: Address, quote: Address) -> Result<(AddressPair, u32)> {
+        let pair = AddressPair::from_addresses(base, quote);
+        let ordinal = self.pair_ordinal.read(&pair)?;
+        if ordinal == 0 {
             return Err(PrecompileError::Revert("pair not registered".into()));
         }
-        Ok(id)
+        if self.pair_ordinal_base.read(&ordinal)? != base
+            || self.pair_ordinal_quote.read(&ordinal)? != quote
+        {
+            return Err(PrecompileError::Revert(
+                "pair quoted in the wrong direction".into(),
+            ));
+        }
+        Ok((pair, ordinal))
     }
 
     /// Returns whether a pair is an active vote target.
-    pub fn is_vote_target(&self, base: &str, quote: &str) -> Result<bool> {
-        let hash = pair_hash(base, quote);
-        self.vote_target.read(&hash)
+    ///
+    /// Direction-sensitive like every other pair read, so this cannot answer
+    /// `true` for a quote that [`Self::get_exchange_rate`] would reject. Being a
+    /// plain boolean query it returns `false` rather than reverting; genuine
+    /// storage faults still propagate.
+    pub fn is_vote_target(&self, base: Address, quote: Address) -> Result<bool> {
+        let pair = AddressPair::from_addresses(base, quote);
+        let ordinal = self.pair_ordinal.read(&pair)?;
+        if ordinal == 0
+            || self.pair_ordinal_base.read(&ordinal)? != base
+            || self.pair_ordinal_quote.read(&ordinal)? != quote
+        {
+            return Ok(false);
+        }
+        self.vote_target.read(&pair)
     }
 
     // -----------------------------------------------------------------------
@@ -157,15 +175,11 @@ impl OracleContract<'_> {
     // -----------------------------------------------------------------------
 
     /// Returns the current exchange rate for a pair (1e18 scaled).
-    pub fn get_exchange_rate(&self, base: &str, quote: &str) -> Result<(U256, u64, u64)> {
-        let hash = pair_hash(base, quote);
-        let id = self.pair_hash_to_id.read(&hash)?;
-        if id == 0 {
-            return Err(PrecompileError::Revert("pair not registered".into()));
-        }
-        let rate = self.exchange_rate.read(&hash)?;
-        let block = self.exchange_rate_block.read(&hash)?;
-        let ts = self.exchange_rate_timestamp.read(&hash)?;
+    pub fn get_exchange_rate(&self, base: Address, quote: Address) -> Result<(U256, u64, u64)> {
+        let (pair, _) = self.require_pair(base, quote)?;
+        let rate = self.exchange_rate.read(&pair)?;
+        let block = self.exchange_rate_block.read(&pair)?;
+        let ts = self.exchange_rate_timestamp.read(&pair)?;
         Ok((rate, block, ts))
     }
 
@@ -186,8 +200,8 @@ impl OracleContract<'_> {
     pub fn set_exchange_rate(
         &mut self,
         caller: Address,
-        base: &str,
-        quote: &str,
+        base: Address,
+        quote: Address,
         rate: U256,
         block_number: u64,
         timestamp: u64,
@@ -199,30 +213,21 @@ impl OracleContract<'_> {
             ));
         }
 
-        let hash = pair_hash(base, quote);
-        let id = self.pair_hash_to_id.read(&hash)?;
-        if id == 0 {
-            return Err(PrecompileError::Revert("pair not registered".into()));
-        }
-
-        self.exchange_rate.write(&hash, rate)?;
-        self.exchange_rate_block.write(&hash, block_number)?;
-        self.exchange_rate_timestamp.write(&hash, timestamp)?;
-
-        Ok(())
+        let (pair, _) = self.require_pair(base, quote)?;
+        self.update_exchange_rate(pair, rate, block_number, timestamp)
     }
 
     /// Updates the exchange rate from tally results (internal, no caller check).
     pub fn update_exchange_rate(
         &mut self,
-        pair_hash: B256,
+        pair: AddressPair,
         rate: U256,
         block_number: u64,
         timestamp: u64,
     ) -> Result<()> {
-        self.exchange_rate.write(&pair_hash, rate)?;
-        self.exchange_rate_block.write(&pair_hash, block_number)?;
-        self.exchange_rate_timestamp.write(&pair_hash, timestamp)?;
+        self.exchange_rate.write(&pair, rate)?;
+        self.exchange_rate_block.write(&pair, block_number)?;
+        self.exchange_rate_timestamp.write(&pair, timestamp)?;
         Ok(())
     }
 
@@ -327,9 +332,13 @@ impl OracleContract<'_> {
 
     /// Writes a price snapshot with rates/volumes for the given pairs.
     ///
-    /// Each entry is (pair_id, rate, volume). The snapshot is appended at
+    /// Each entry is (pair, rate, volume). The snapshot is appended at
     /// `snapshot_write_idx` and old entries beyond the retention window are evicted.
-    pub fn write_snapshot(&mut self, timestamp: u64, entries: &[(u32, U256, U256)]) -> Result<()> {
+    pub fn write_snapshot(
+        &mut self,
+        timestamp: u64,
+        entries: &[(AddressPair, U256, U256)],
+    ) -> Result<()> {
         if self.ocomp_profile_ready.read()? {
             let storage = self.storage.clone();
             storage.with_checkpoint(|| self.write_snapshot_inner(timestamp, entries))
@@ -341,7 +350,7 @@ impl OracleContract<'_> {
     fn write_snapshot_inner(
         &mut self,
         timestamp: u64,
-        entries: &[(u32, U256, U256)],
+        entries: &[(AddressPair, U256, U256)],
     ) -> Result<()> {
         let idx = self.snapshot_write_idx.read()?;
         let next_snapshot_idx = idx.checked_add(1).ok_or_else(|| {
@@ -356,9 +365,11 @@ impl OracleContract<'_> {
         let rate_map = self.snapshot_rate.get_nested(&idx);
         let volume_map = self.snapshot_volume.get_nested(&idx);
 
-        for (i, (pair_id, rate, volume)) in entries.iter().enumerate() {
+        for (i, (pair, rate, volume)) in entries.iter().enumerate() {
             let pi = i as u32;
-            pair_id_map.write(&pi, *pair_id)?;
+            // The snapshot column still stores the ordinal; PR 2b replaces it
+            // with the two address columns and drops this lookup.
+            pair_id_map.write(&pi, self.pair_ordinal.read(pair)?)?;
             rate_map.write(&pi, *rate)?;
             volume_map.write(&pi, *volume)?;
         }
@@ -366,15 +377,15 @@ impl OracleContract<'_> {
         self.snapshot_write_idx.write(next_snapshot_idx)?;
 
         let utc_day_ts = timestamp - (timestamp % 86_400);
-        for (pair_id, rate, volume) in entries {
+        for (pair, rate, volume) in entries {
             let vol = if volume.is_zero() {
                 SCALE_1E18
             } else {
                 *volume
             };
             let pv = rate.checked_mul(vol).unwrap_or(U256::MAX);
-            let day_pv = self.daily_pv_sum.get_nested(pair_id);
-            let day_vol = self.daily_vol_sum.get_nested(pair_id);
+            let day_pv = self.daily_pv_sum.get_nested(pair);
+            let day_vol = self.daily_vol_sum.get_nested(pair);
             let prev_pv = day_pv.read(&utc_day_ts).unwrap_or(U256::ZERO);
             let prev_vol = day_vol.read(&utc_day_ts).unwrap_or(U256::ZERO);
             day_pv.write(&utc_day_ts, prev_pv.saturating_add(pv))?;
@@ -444,10 +455,10 @@ impl OracleContract<'_> {
         let mut timestamps = Vec::with_capacity(count as usize);
 
         for pid in 1..=count {
-            let hash = self.pair_id_to_hash.read(&pid)?;
-            rates.push(self.exchange_rate.read(&hash)?);
-            blocks.push(self.exchange_rate_block.read(&hash)?);
-            timestamps.push(self.exchange_rate_timestamp.read(&hash)?);
+            let pair = self.pair_at(pid)?;
+            rates.push(self.exchange_rate.read(&pair)?);
+            blocks.push(self.exchange_rate_block.read(&pair)?);
+            timestamps.push(self.exchange_rate_timestamp.read(&pair)?);
         }
 
         Ok((rates, blocks, timestamps))
@@ -459,8 +470,7 @@ impl OracleContract<'_> {
         let mut pair_ids = Vec::new();
 
         for pid in 1..=count {
-            let hash = self.pair_id_to_hash.read(&pid)?;
-            if self.vote_target.read(&hash)? {
+            if self.vote_target.read(&self.pair_at(pid)?)? {
                 pair_ids.push(pid);
             }
         }
@@ -668,8 +678,10 @@ impl OracleContract<'_> {
 
     /// Returns all registered pairs as parallel arrays of
     /// (pair_ids, bases, quotes, is_active).
-    #[allow(clippy::type_complexity)] // parallel-array view getter; the tuple IS the ABI shape
-    pub fn get_pairs(&self) -> Result<(Vec<u32>, Vec<String>, Vec<String>, Vec<bool>)> {
+    ///
+    /// Base and quote come back in the orientation they were registered in, not
+    /// the sorted order the storage key uses.
+    pub fn get_pairs(&self) -> Result<PairTable> {
         let count = self.pair_count.read()?;
         let mut pair_ids = Vec::with_capacity(count as usize);
         let mut bases = Vec::with_capacity(count as usize);
@@ -677,11 +689,15 @@ impl OracleContract<'_> {
         let mut is_active = Vec::with_capacity(count as usize);
 
         for pid in 1..=count {
-            let hash = self.pair_id_to_hash.read(&pid)?;
+            let base = self.pair_ordinal_base.read(&pid)?;
+            let quote = self.pair_ordinal_quote.read(&pid)?;
             pair_ids.push(pid);
-            bases.push(self.pair_id_to_base.read_string(&pid)?);
-            quotes.push(self.pair_id_to_quote.read_string(&pid)?);
-            is_active.push(self.vote_target.read(&hash)?);
+            bases.push(base);
+            quotes.push(quote);
+            is_active.push(
+                self.vote_target
+                    .read(&AddressPair::from_addresses(base, quote))?,
+            );
         }
 
         Ok((pair_ids, bases, quotes, is_active))

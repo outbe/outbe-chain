@@ -3,12 +3,14 @@
 //! Owns the `OracleGenesisConfig` shape plus the `init_from_genesis` /
 //! `export_genesis` round-trip used for chain bootstrap and state migration.
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, U256};
+use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::error::{PrecompileError, Result};
 use std::collections::BTreeSet;
 
-use crate::constants::{DEFAULT_USD_CURRENCY_RATE, MAX_SNAPSHOT_RETENTION_SECONDS};
+use crate::constants::{DAY_TYPE_ISO, DEFAULT_USD_CURRENCY_RATE, MAX_SNAPSHOT_RETENTION_SECONDS};
 use crate::schema::OracleContract;
+use crate::types::AssetType;
 
 /// A price snapshot entry for genesis import/export.
 #[derive(Clone, Debug)]
@@ -68,10 +70,11 @@ pub struct OracleGenesisConfig {
     pub slash_fraction: U256,
     /// Lookback duration in seconds for VWAP (default: 86400).
     pub lookback_duration: u64,
-    /// Trading pairs to register at genesis as `(base, quote)`.
-    pub pairs: Vec<(String, String)>,
+    /// Trading pairs to register at genesis as `(base, quote)` asset addresses.
+    /// The direction given here is the direction reads must be quoted in.
+    pub pairs: Vec<(Address, Address)>,
     /// Initial exchange rates as `(base, quote, rate_1e18)`.
-    pub initial_rates: Vec<(String, String, U256)>,
+    pub initial_rates: Vec<(Address, Address, U256)>,
     /// Feeder delegations as `(validator, feeder)`.
     pub feeder_delegations: Vec<(Address, Address)>,
     /// Reference currencies with their annualized currency rate (1e18
@@ -101,7 +104,7 @@ impl OracleGenesisConfig {
             min_valid_per_window: U256::from(50_000_000_000_000_000u128), // 0.05
             slash_fraction: U256::ZERO,
             lookback_duration: 86400,
-            pairs: vec![("COEN".into(), "840".into())],
+            pairs: vec![(Address::ZERO, AssetType::IsoCurrency(DAY_TYPE_ISO).into())],
             initial_rates: vec![],
             feeder_delegations: vec![],
             reference_currencies: vec![ReferenceCurrency {
@@ -154,12 +157,12 @@ pub fn init_from_genesis(oracle: &mut OracleContract, config: &OracleGenesisConf
 
     // Register trading pairs.
     for (base, quote) in &config.pairs {
-        oracle.register_pair(base, quote)?;
+        oracle.register_pair(*base, *quote)?;
     }
 
     // Set initial exchange rates (system caller = Address::ZERO).
     for (base, quote, rate) in &config.initial_rates {
-        oracle.set_exchange_rate(Address::ZERO, base, quote, *rate, 0, 0)?;
+        oracle.set_exchange_rate(Address::ZERO, *base, *quote, *rate, 0, 0)?;
     }
 
     // Record role-scoped feeder delegations in ValidatorSet.
@@ -202,9 +205,17 @@ pub fn init_from_genesis(oracle: &mut OracleContract, config: &OracleGenesisConf
     // Import pending aggregate votes.
     import_aggregate_votes(oracle, &config.aggregate_votes)?;
 
-    // Import price snapshots into the circular buffer.
+    // Import price snapshots into the circular buffer. Entries name pairs by
+    // ordinal, so every one has to resolve against a pair registered above.
     for snapshot in &config.snapshots {
-        oracle.write_snapshot(snapshot.timestamp, &snapshot.entries)?;
+        let mut entries = Vec::with_capacity(snapshot.entries.len());
+        for (pair_id, rate, volume) in &snapshot.entries {
+            let (_, _, pair) = export_pair_metadata(oracle, *pair_id).map_err(|_| {
+                PrecompileError::Revert(format!("snapshot pair_id {pair_id} is not registered"))
+            })?;
+            entries.push((pair, *rate, *volume));
+        }
+        oracle.write_snapshot(snapshot.timestamp, &entries)?;
     }
 
     // Import S-curve entries.
@@ -251,10 +262,10 @@ pub fn export_genesis(
     let mut initial_rates = Vec::new();
 
     for pair_id in 1..=pair_count {
-        let (base, quote, pair_hash) = export_pair_metadata(oracle, pair_id)?;
-        let rate = oracle.exchange_rate.read(&pair_hash)?;
+        let (base, quote, pair) = export_pair_metadata(oracle, pair_id)?;
+        let rate = oracle.exchange_rate.read(&pair)?;
         if !rate.is_zero() {
-            initial_rates.push((base.clone(), quote.clone(), rate));
+            initial_rates.push((base, quote, rate));
         }
         pairs.push((base, quote));
     }
@@ -408,13 +419,10 @@ fn import_aggregate_votes(
                 ));
             }
 
-            let pair_hash = oracle.pair_id_to_hash.read(pair_id)?;
-            if pair_hash == B256::ZERO {
-                return Err(PrecompileError::Revert(
-                    "aggregate vote pair metadata missing".into(),
-                ));
-            }
-            if !oracle.vote_target.read(&pair_hash)? {
+            let (_, _, pair) = export_pair_metadata(oracle, *pair_id).map_err(|_| {
+                PrecompileError::Revert("aggregate vote pair metadata missing".into())
+            })?;
+            if !oracle.vote_target.read(&pair)? {
                 return Err(PrecompileError::Revert(
                     "aggregate vote pair is not a vote target".into(),
                 ));
@@ -489,12 +497,9 @@ fn export_aggregate_votes(oracle: &OracleContract) -> Result<Vec<GenesisAggregat
                     "aggregate vote pair_id must be registered".into(),
                 ));
             }
-            let pair_hash = oracle.pair_id_to_hash.read(&pair_id)?;
-            if pair_hash == B256::ZERO {
-                return Err(PrecompileError::Revert(
-                    "aggregate vote pair metadata missing".into(),
-                ));
-            }
+            export_pair_metadata(oracle, pair_id).map_err(|_| {
+                PrecompileError::Revert("aggregate vote pair metadata missing".into())
+            })?;
             if !seen_pairs.insert(pair_id) {
                 return Err(PrecompileError::Revert(
                     "duplicate pair in aggregate vote".into(),
@@ -513,27 +518,21 @@ fn export_aggregate_votes(oracle: &OracleContract) -> Result<Vec<GenesisAggregat
     Ok(aggregate_votes)
 }
 
-fn export_pair_metadata(oracle: &OracleContract, pair_id: u32) -> Result<(String, String, B256)> {
-    let pair_hash = oracle.pair_id_to_hash.read(&pair_id)?;
-    if pair_hash == B256::ZERO {
+/// The registered pair at `ordinal` as `(key, base, quote)`.
+///
+/// The old probe was "the stored pair hash is non-zero"; with addresses the zero
+/// address is a legitimate asset (native COEN), so absence is proven by round
+/// tripping the rebuilt key back through `pair_ordinal` instead. That also keeps
+/// the corruption check the hash comparison used to provide.
+fn export_pair_metadata(
+    oracle: &OracleContract,
+    pair_id: u32,
+) -> Result<(Address, Address, AddressPair)> {
+    let (pair, base, quote) = oracle.pair_entry(pair_id)?;
+    if oracle.pair_ordinal_of(pair)? != pair_id {
         return Err(PrecompileError::Revert(format!(
-            "missing pair hash for pair_id {pair_id}"
+            "missing pair metadata for pair_id {pair_id}"
         )));
     }
-
-    let base = oracle.pair_id_to_base.read_string(&pair_id)?;
-    let quote = oracle.pair_id_to_quote.read_string(&pair_id)?;
-    if base.is_empty() || quote.is_empty() {
-        return Err(PrecompileError::Revert(format!(
-            "missing pair string metadata for pair_id {pair_id}"
-        )));
-    }
-
-    if crate::state::pair_hash(&base, &quote) != pair_hash {
-        return Err(PrecompileError::Revert(format!(
-            "pair string metadata hash mismatch for pair_id {pair_id}"
-        )));
-    }
-
-    Ok((base, quote, pair_hash))
+    Ok((base, quote, pair))
 }

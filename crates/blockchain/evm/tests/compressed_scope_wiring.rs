@@ -56,12 +56,17 @@ fn execution_db(proposer: Address, parent_root: B256) -> CacheDB<EmptyDBTyped<Pr
             .unwrap();
 
         let mut oracle = outbe_oracle::schema::OracleContract::new(storage);
-        oracle.register_pair("COEN", "840").unwrap();
+        oracle
+            .register_pair(
+                outbe_oracle::api::COEN_ASSET,
+                outbe_oracle::api::iso_asset(840),
+            )
+            .unwrap();
         oracle
             .set_exchange_rate(
                 Address::ZERO,
-                "COEN",
-                "840",
+                outbe_oracle::api::COEN_ASSET,
+                outbe_oracle::api::iso_asset(840),
                 U256::from(1_000_000_000_000_000_000_u128),
                 0,
                 0,

@@ -5,13 +5,13 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [],
@@ -23,13 +23,13 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [],
@@ -150,13 +150,13 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [
@@ -198,13 +198,13 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [
@@ -222,13 +222,13 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [
@@ -298,13 +298,13 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "timestamp",
@@ -327,13 +327,13 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "timestamp",
@@ -390,13 +390,13 @@
       },
       {
         "name": "bases",
-        "type": "string[]",
-        "internalType": "string[]"
+        "type": "address[]",
+        "internalType": "address[]"
       },
       {
         "name": "quotes",
-        "type": "string[]",
-        "internalType": "string[]"
+        "type": "address[]",
+        "internalType": "address[]"
       },
       {
         "name": "isActive",
@@ -455,13 +455,13 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "count",
@@ -507,13 +507,13 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [
@@ -541,13 +541,13 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "timestamp",
@@ -570,13 +570,13 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "timestamp",
@@ -648,13 +648,13 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "lookbackSeconds",
@@ -706,13 +706,13 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "utcDay",
@@ -777,13 +777,13 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "lookbackSeconds",
@@ -806,13 +806,13 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "startTime",
@@ -913,13 +913,13 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [
@@ -937,13 +937,13 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "rate",
@@ -965,13 +965,13 @@
         "components": [
           {
             "name": "base",
-            "type": "string",
-            "internalType": "string"
+            "type": "address",
+            "internalType": "address"
           },
           {
             "name": "quote",
-            "type": "string",
-            "internalType": "string"
+            "type": "address",
+            "internalType": "address"
           },
           {
             "name": "exchangeRate",
@@ -995,15 +995,15 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "indexed": false,
-        "internalType": "string"
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "indexed": false,
-        "internalType": "string"
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       },
       {
         "name": "rate",
@@ -1019,10 +1019,16 @@
     "name": "ExchangeRateUpdated",
     "inputs": [
       {
-        "name": "pairId",
-        "type": "uint32",
+        "name": "base",
+        "type": "address",
         "indexed": true,
-        "internalType": "uint32"
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       },
       {
         "name": "rate",
@@ -1063,10 +1069,16 @@
     "name": "ScurvePeakDetected",
     "inputs": [
       {
-        "name": "pairId",
-        "type": "uint32",
+        "name": "base",
+        "type": "address",
         "indexed": true,
-        "internalType": "uint32"
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       },
       {
         "name": "peakPrice",
@@ -1159,15 +1171,15 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "indexed": false,
-        "internalType": "string"
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "indexed": false,
-        "internalType": "string"
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       }
     ],
     "anonymous": false
@@ -1178,15 +1190,15 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "indexed": false,
-        "internalType": "string"
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "indexed": false,
-        "internalType": "string"
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       }
     ],
     "anonymous": false
@@ -1202,10 +1214,16 @@
         "internalType": "uint32"
       },
       {
-        "name": "pairId",
-        "type": "uint32",
+        "name": "base",
+        "type": "address",
         "indexed": true,
-        "internalType": "uint32"
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       },
       {
         "name": "vwap",

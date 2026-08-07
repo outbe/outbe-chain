@@ -4711,12 +4711,17 @@ mod tests {
             // of soft-skipping the scan. The qualifiers derive the pair from the
             // ISO code, so registering the pair is sufficient.
             let mut oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-            oracle.register_pair("COEN", "840").unwrap();
+            oracle
+                .register_pair(
+                    outbe_oracle::api::COEN_ASSET,
+                    outbe_oracle::api::iso_asset(840),
+                )
+                .unwrap();
             oracle
                 .set_exchange_rate(
                     Address::ZERO,
-                    "COEN",
-                    "840",
+                    outbe_oracle::api::COEN_ASSET,
+                    outbe_oracle::api::iso_asset(840),
                     U256::from(1_000_000_000_000_000_000u128),
                     0,
                     0,
@@ -4808,12 +4813,17 @@ mod tests {
             // of soft-skipping the scan. The qualifiers derive the pair from the
             // ISO code, so registering the pair is sufficient.
             let mut oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-            oracle.register_pair("COEN", "840").unwrap();
+            oracle
+                .register_pair(
+                    outbe_oracle::api::COEN_ASSET,
+                    outbe_oracle::api::iso_asset(840),
+                )
+                .unwrap();
             oracle
                 .set_exchange_rate(
                     Address::ZERO,
-                    "COEN",
-                    "840",
+                    outbe_oracle::api::COEN_ASSET,
+                    outbe_oracle::api::iso_asset(840),
                     U256::from(1_000_000_000_000_000_000u128),
                     0,
                     0,
@@ -5169,8 +5179,8 @@ mod tests {
     ) -> reth_ethereum::TransactionSigned {
         let input = outbe_oracle::precompile::IOracle::submitVoteCall {
             tuples: vec![outbe_oracle::precompile::IOracle::ExchangeRateTuple {
-                base: "COEN".to_string(),
-                quote: "840".to_string(),
+                base: outbe_oracle::api::COEN_ASSET,
+                quote: outbe_oracle::api::iso_asset(840),
                 exchangeRate: U256::from(1_000_000_000_000_000_000u128),
                 volume: U256::from(10_000_000_000_000_000_000_000u128),
             }],
@@ -10806,12 +10816,17 @@ mod tests {
         // Seed COEN/840 pair + 1.0 rate so begin-block NOD/GEM/INTEX promotion
         // reads a registered pair instead of reverting "pair not registered".
         let mut oracle = outbe_oracle::schema::OracleContract::new(storage);
-        oracle.register_pair("COEN", "840").unwrap();
+        oracle
+            .register_pair(
+                outbe_oracle::api::COEN_ASSET,
+                outbe_oracle::api::iso_asset(840),
+            )
+            .unwrap();
         oracle
             .set_exchange_rate(
                 Address::ZERO,
-                "COEN",
-                "840",
+                outbe_oracle::api::COEN_ASSET,
+                outbe_oracle::api::iso_asset(840),
                 U256::from(1_000_000_000_000_000_000u128),
                 0,
                 0,

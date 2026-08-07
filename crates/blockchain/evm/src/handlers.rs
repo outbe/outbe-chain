@@ -1005,7 +1005,10 @@ pub mod update {
             let mut provider = HashMapStorageProvider::new(1);
             StorageHandle::enter(&mut provider, |storage| {
                 outbe_oracle::schema::OracleContract::new(storage.clone())
-                    .register_pair("COEN", "840")
+                    .register_pair(
+                        outbe_oracle::api::COEN_ASSET,
+                        outbe_oracle::api::iso_asset(840),
+                    )
                     .unwrap();
                 OcompPocFreshDevnetHandler
                     .handle(&context(storage.clone()), &scheduled())

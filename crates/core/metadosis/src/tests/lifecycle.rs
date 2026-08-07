@@ -2156,17 +2156,23 @@ fn test_offering_entry_captures_vwap_unblocks_and_exit_reblocks() {
         tribute.seal_day(wwd).unwrap();
 
         let mut oracle = OracleContract::new(storage.clone());
-        let pair_id = oracle.register_pair("COEN", "840").unwrap();
+        let pair_id = oracle
+            .register_pair(
+                outbe_oracle::api::COEN_ASSET,
+                outbe_oracle::api::iso_asset(840),
+            )
+            .unwrap();
+        let pair = outbe_oracle::api::coen_iso_pair(840);
         oracle
             .write_snapshot(
                 previous_forming_start + SECONDS_PER_HOUR,
-                &[(pair_id, U256::from(100u64), U256::from(1u64))],
+                &[(pair, U256::from(100u64), U256::from(1u64))],
             )
             .unwrap();
         oracle
             .write_snapshot(
                 forming_start + 30 * SECONDS_PER_HOUR,
-                &[(pair_id, U256::from(110u64), U256::from(1u64))],
+                &[(pair, U256::from(110u64), U256::from(1u64))],
             )
             .unwrap();
         oracle
@@ -2339,11 +2345,17 @@ fn test_missing_previous_vwap_results_in_red_day() {
         tribute.seal_day(wwd).unwrap();
 
         let mut oracle = OracleContract::new(storage.clone());
-        let pair_id = oracle.register_pair("COEN", "840").unwrap();
+        oracle
+            .register_pair(
+                outbe_oracle::api::COEN_ASSET,
+                outbe_oracle::api::iso_asset(840),
+            )
+            .unwrap();
+        let pair = outbe_oracle::api::coen_iso_pair(840);
         oracle
             .write_snapshot(
                 forming_start + 30 * SECONDS_PER_HOUR,
-                &[(pair_id, U256::from(110u64), U256::from(1u64))],
+                &[(pair, U256::from(110u64), U256::from(1u64))],
             )
             .unwrap();
 
@@ -2410,17 +2422,23 @@ fn test_equal_vwap_results_in_red_day() {
         tribute.seal_day(wwd).unwrap();
 
         let mut oracle = OracleContract::new(storage.clone());
-        let pair_id = oracle.register_pair("COEN", "840").unwrap();
+        oracle
+            .register_pair(
+                outbe_oracle::api::COEN_ASSET,
+                outbe_oracle::api::iso_asset(840),
+            )
+            .unwrap();
+        let pair = outbe_oracle::api::coen_iso_pair(840);
         oracle
             .write_snapshot(
                 previous_forming_start + SECONDS_PER_HOUR,
-                &[(pair_id, U256::from(100u64), U256::from(1u64))],
+                &[(pair, U256::from(100u64), U256::from(1u64))],
             )
             .unwrap();
         oracle
             .write_snapshot(
                 forming_start + 30 * SECONDS_PER_HOUR,
-                &[(pair_id, U256::from(100u64), U256::from(1u64))],
+                &[(pair, U256::from(100u64), U256::from(1u64))],
             )
             .unwrap();
         oracle
@@ -2479,17 +2497,23 @@ fn test_normal_lifecycle_never_leaves_ready_day_type_unknown() {
         tribute.seal_day(wwd).unwrap();
 
         let mut oracle = OracleContract::new(storage.clone());
-        let pair_id = oracle.register_pair("COEN", "840").unwrap();
+        oracle
+            .register_pair(
+                outbe_oracle::api::COEN_ASSET,
+                outbe_oracle::api::iso_asset(840),
+            )
+            .unwrap();
+        let pair = outbe_oracle::api::coen_iso_pair(840);
         oracle
             .write_snapshot(
                 previous_forming_start + SECONDS_PER_HOUR,
-                &[(pair_id, U256::from(100u64), U256::from(1u64))],
+                &[(pair, U256::from(100u64), U256::from(1u64))],
             )
             .unwrap();
         oracle
             .write_snapshot(
                 forming_start + SECONDS_PER_HOUR,
-                &[(pair_id, U256::from(120u64), U256::from(1u64))],
+                &[(pair, U256::from(120u64), U256::from(1u64))],
             )
             .unwrap();
         oracle

@@ -502,14 +502,22 @@ fn qualify_series<'a>(
 }
 
 fn setup_pair(oracle: &OracleContract) -> u32 {
-    let pair_hash = outbe_oracle::api::pair_hash_coen_iso(QUALIFIER_REFERENCE_ISO);
+    let pair = outbe_oracle::api::coen_iso_pair(QUALIFIER_REFERENCE_ISO);
     let pair_id = 1u32;
-    oracle.pair_hash_to_id.write(&pair_hash, pair_id).unwrap();
+    oracle.pair_ordinal.write(&pair, pair_id).unwrap();
     // Full registry entry so the production VWAP paths (calculate_vwaps
-    // iterating registered vote-target pairs) see the pair too.
+    // iterating registered vote-target pairs) see the pair too. The two
+    // ordinal columns are what `pair_at` rebuilds the key from.
     oracle.pair_count.write(pair_id).unwrap();
-    oracle.pair_id_to_hash.write(&pair_id, pair_hash).unwrap();
-    oracle.vote_target.write(&pair_hash, true).unwrap();
+    oracle
+        .pair_ordinal_base
+        .write(&pair_id, pair.first())
+        .unwrap();
+    oracle
+        .pair_ordinal_quote
+        .write(&pair_id, pair.second())
+        .unwrap();
+    oracle.vote_target.write(&pair, true).unwrap();
     pair_id
 }
 
@@ -798,12 +806,12 @@ fn scan_and_qualify_promotes_matured_series() {
         runtime::issue(&s, sample(7)).unwrap();
         // Qualifier pair live rate above the floor.
         let oracle = OracleContract::new(s.clone());
-        let pair_hash = outbe_oracle::api::pair_hash_coen_iso(QUALIFIER_REFERENCE_ISO);
+        let pair = outbe_oracle::api::coen_iso_pair(QUALIFIER_REFERENCE_ISO);
         // The ISO resolves through the pair registry, so the pair must exist.
-        oracle.pair_hash_to_id.write(&pair_hash, 1).unwrap();
+        oracle.pair_ordinal.write(&pair, 1).unwrap();
         oracle
             .exchange_rate
-            .write(&pair_hash, U256::from(EXPECTED_FLOOR) + U256::from(1))
+            .write(&pair, U256::from(EXPECTED_FLOOR) + U256::from(1))
             .unwrap();
 
         let mature_ts = ISSUED_AT as u64 + 21 * DAY + 1;
@@ -862,7 +870,7 @@ fn scan_and_call_reads_daily_vwap_at_midnight() {
     with_factory(|s| {
         let _f = qualify_series(&s, 7, sample(7));
         let mut oracle = OracleContract::new(s.clone());
-        let pair_id = setup_pair(&oracle);
+        setup_pair(&oracle);
         // Exact midnight UTC, well past maturity.
         let scan_ts = (ISSUED_AT as u64 / DAY + 60) * DAY;
         let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
@@ -878,7 +886,14 @@ fn scan_and_call_reads_daily_vwap_at_midnight() {
         for day in days {
             let noon = date_key_to_utc_timestamp(day) + DAY / 2;
             oracle
-                .write_snapshot(noon, &[(pair_id, breach, U256::from(1))])
+                .write_snapshot(
+                    noon,
+                    &[(
+                        outbe_oracle::api::coen_iso_pair(QUALIFIER_REFERENCE_ISO),
+                        breach,
+                        U256::from(1),
+                    )],
+                )
                 .unwrap();
             oracle.finalize_utc_day_vwap(day).unwrap();
         }
@@ -912,9 +927,9 @@ fn scan_does_not_halt_on_overflow_rate() {
     with_factory(|s| {
         runtime::issue(&s, sample(7)).unwrap();
         let oracle = OracleContract::new(s.clone());
-        let pair_hash = outbe_oracle::api::pair_hash_coen_iso(QUALIFIER_REFERENCE_ISO);
+        let pair = outbe_oracle::api::coen_iso_pair(QUALIFIER_REFERENCE_ISO);
         // Out-of-range rate: price_to_bin overflows.
-        oracle.exchange_rate.write(&pair_hash, U256::MAX).unwrap();
+        oracle.exchange_rate.write(&pair, U256::MAX).unwrap();
 
         let mature_ts = ISSUED_AT as u64 + 21 * DAY + 1;
         let ctx = BlockRuntimeContext::new(
@@ -944,12 +959,12 @@ fn scan_isolates_bad_series() {
             .unwrap();
 
         let oracle = OracleContract::new(s.clone());
-        let pair_hash = outbe_oracle::api::pair_hash_coen_iso(QUALIFIER_REFERENCE_ISO);
+        let pair = outbe_oracle::api::coen_iso_pair(QUALIFIER_REFERENCE_ISO);
         // The ISO resolves through the pair registry, so the pair must exist.
-        oracle.pair_hash_to_id.write(&pair_hash, 1).unwrap();
+        oracle.pair_ordinal.write(&pair, 1).unwrap();
         oracle
             .exchange_rate
-            .write(&pair_hash, U256::from(EXPECTED_FLOOR) + U256::from(1))
+            .write(&pair, U256::from(EXPECTED_FLOOR) + U256::from(1))
             .unwrap();
 
         let mature_ts = ISSUED_AT as u64 + 21 * DAY + 1;
@@ -1000,13 +1015,13 @@ fn call_scan_does_not_halt_on_overflow_vwap() {
 fn scan_caps_work_per_block_and_resumes_via_cursor() {
     with_factory(|s| {
         let oracle = OracleContract::new(s.clone());
-        let pair_hash = outbe_oracle::api::pair_hash_coen_iso(QUALIFIER_REFERENCE_ISO);
+        let pair = outbe_oracle::api::coen_iso_pair(QUALIFIER_REFERENCE_ISO);
         // The ISO resolves through the pair registry, so the pair must exist.
-        oracle.pair_hash_to_id.write(&pair_hash, 1).unwrap();
+        oracle.pair_ordinal.write(&pair, 1).unwrap();
         // Rate well above both floors so both bins are eligible.
         oracle
             .exchange_rate
-            .write(&pair_hash, U256::from(EXPECTED_FLOOR) * U256::from(1000))
+            .write(&pair, U256::from(EXPECTED_FLOOR) * U256::from(1000))
             .unwrap();
 
         // Two distinct bins: the first holds exactly MAX_SERIES_PER_BLOCK entries, the second a few.

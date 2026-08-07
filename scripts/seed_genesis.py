@@ -626,13 +626,47 @@ def encode_p2p_address_payload(value) -> tuple[int, bytes] | None:
     return P2P_ADDRESS_VERSION_V1, payload
 
 
-def pair_hash(base: str, quote: str) -> bytes:
-    """Oracle pair hash: keccak256('BASE/QUOTE')."""
-    if not base or not quote:
-        raise ValueError("oracle pair base/quote must not be empty")
-    if "/" in base or "/" in quote:
-        raise ValueError("oracle pair base/quote must not contain '/'")
-    return keccak256(f"{base}/{quote}".encode())
+# Marker nibbles every ISO currency address carries, keeping the reserved range
+# clear of low-numbered token addresses. Mirrors ISO_MARKER in
+# crates/blockchain/primitives/src/asset_type.rs.
+ISO_MARKER = 0xCC000
+
+
+def asset_address(spec: str) -> bytes:
+    """
+    An oracle asset as its 20-byte address.
+
+    Accepts "COEN"/"native" for the native asset (the zero address), a decimal
+    ISO 4217 numeric code, or an explicit 0x-prefixed ERC20 address. Mirrors
+    `AssetType` in crates/blockchain/primitives/src/asset_type.rs.
+    """
+    text = str(spec).strip()
+    if text.upper() in ("COEN", "NATIVE"):
+        return bytes(20)
+    if text.lower().startswith("0x"):
+        return address_bytes(text)
+    if text.isdigit():
+        code = int(text)
+        if not 1 <= code <= 999:
+            raise ValueError(f"ISO 4217 code out of range: {text}")
+        # One decimal digit per nibble, behind the marker: 840 -> 0x0cc840.
+        return (ISO_MARKER | int(f"{code:04d}", 16)).to_bytes(20, "big")
+    raise ValueError(
+        f"oracle asset must be COEN, an ISO 4217 numeric code or a 0x address: {spec!r}"
+    )
+
+
+def address_pair(base: str, quote: str) -> bytes:
+    """
+    Oracle pair storage key: both asset addresses concatenated ascending.
+
+    Order-independent, so `COEN/840` and `840/COEN` are one key. `mapping_key`
+    needs no special case: it left-pads with `rjust(32)`, which never truncates,
+    so a 40-byte key falls through unpadded and yields the same slot as the Rust
+    `StorageKey for AddressPair` override.
+    """
+    low, high = sorted((asset_address(base), asset_address(quote)))
+    return low + high
 
 
 # --- Seeders ---
@@ -1318,15 +1352,16 @@ def seed_oracle(storage: StorageBuilder, config: dict):
     Oracle storage layout:
       slots 0-7: config
       slot 8: pair_count
-      slot 9: mapping(pair_id => pair_hash)
-      slot 10: mapping(pair_hash => pair_id)
-      slot 11: mapping(pair_hash => is_vote_target)
-      slots 12-14: exchange_rate / block / timestamp
+      slot 9: retired hole (was mapping(pair_id => pair_hash))
+      slot 10: mapping(pair => ordinal)
+      slot 11: mapping(pair => is_vote_target)
+      slots 12-14: exchange_rate / block / timestamp, keyed by pair
       slot 15: feeder delegations
       slots 32-33: protected validators
-      slots 43-44: reversible pair metadata (40-42, 45 and 46 are retired
+      slots 43-44: mapping(ordinal => base) / mapping(ordinal => quote), the
+        only way to enumerate the registry (40-42, 45 and 46 are retired
         settlement holes; the settlement pair is derived as
-        keccak256("COEN/<iso>"))
+        address_pair("COEN", "<iso>"))
       slot 55: reference_currencies (StorageVec<u16>)
     """
     cfg = config.get("config", {})
@@ -1346,7 +1381,7 @@ def seed_oracle(storage: StorageBuilder, config: dict):
     storage.set_slot(6, 1 if cfg.get("enabled", True) else 0)
     storage.set_slot(7, 1 if cfg.get("initialized", True) else 0)
 
-    pair_hashes: dict[tuple[str, str], bytes] = {}
+    pair_keys: dict[tuple[str, str], bytes] = {}
     pair_ids: dict[tuple[str, str], int] = {}
     pairs = config.get("pairs", [])
     storage.set_slot(8, len(pairs))
@@ -1354,19 +1389,22 @@ def seed_oracle(storage: StorageBuilder, config: dict):
     for idx, pair in enumerate(pairs, start=1):
         base = pair["base"]
         quote = pair["quote"]
-        h = pair_hash(base, quote)
+        h = address_pair(base, quote)
         key = (base, quote)
-        if key in pair_hashes:
+        if key in pair_keys:
             raise ValueError(f"duplicate oracle pair: {base}/{quote}")
-        pair_hashes[key] = h
+        # The key is order-independent, so the inverse is the same pair.
+        if h in pair_keys.values():
+            raise ValueError(f"oracle pair already registered inverted: {base}/{quote}")
+        pair_keys[key] = h
         pair_ids[key] = idx
 
-        storage.set_mapping_b256(9, u32_bytes(idx), h)
         storage.set_mapping(10, h, idx)
         storage.set_mapping(11, h, 1 if pair.get("vote_target", True) else 0)
-        # pair_id_to_base / pair_id_to_quote (macro slots 43/44).
-        write_mapping_string(storage, 43, u32_bytes(idx), base)
-        write_mapping_string(storage, 44, u32_bytes(idx), quote)
+        # pair_ordinal_base / pair_ordinal_quote (macro slots 43/44). Stored in
+        # the quoting direction given, which reads must match.
+        storage.set_mapping(43, u32_bytes(idx), int.from_bytes(asset_address(base), "big"))
+        storage.set_mapping(44, u32_bytes(idx), int.from_bytes(asset_address(quote), "big"))
 
         rate = parse_int(pair.get("initial_rate", "0"))
         if rate:
@@ -1376,7 +1414,7 @@ def seed_oracle(storage: StorageBuilder, config: dict):
 
     for rate_entry in config.get("initial_rates", []):
         key = (rate_entry["base"], rate_entry["quote"])
-        h = pair_hashes.get(key)
+        h = pair_keys.get(key)
         if h is None:
             raise ValueError(f"initial rate pair is not registered: {key[0]}/{key[1]}")
         storage.set_mapping(12, h, parse_int(rate_entry["rate"]))
