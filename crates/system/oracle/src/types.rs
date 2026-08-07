@@ -1,6 +1,7 @@
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B512, U256};
 
-/// BCD form of [`MAX_ISO_CODE`]; addresses above it are token addresses.
+/// BCD form of the highest ISO 4217 code; addresses above it are token
+/// addresses.
 const MAX_ISO_CODE_BCD: u16 = 0x0999;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,7 +63,17 @@ impl PairKey {
     pub fn pair(self) -> (PairType, PairType) {
         (PairType::from(self.address1), PairType::from(self.address2))
     }
+}
 
+impl From<PairKey> for B512 {
+    /// `address1` occupies bytes `0..20` and `address2` bytes `33..53`; the
+    /// remaining bytes stay zero.
+    fn from(value: PairKey) -> Self {
+        let mut bytes = [0u8; 64];
+        bytes[0..20].copy_from_slice(value.address1.as_slice());
+        bytes[33..53].copy_from_slice(value.address2.as_slice());
+        B512::from(bytes)
+    }
 }
 
 /// One decimal digit per nibble: `840 -> 0x0840`. Only the four lowest decimal
@@ -97,8 +108,8 @@ fn bcd_decode(raw: U256) -> Option<u16> {
 
 #[cfg(test)]
 mod tests {
-    use crate::types::PairType;
-    use alloy_primitives::{address, Address};
+    use crate::types::{PairKey, PairType};
+    use alloy_primitives::{address, Address, B512};
 
     /// Highest ISO 4217 numeric currency code.
     const MAX_ISO_CODE: u16 = 999;
@@ -144,6 +155,42 @@ mod tests {
     fn an_address_above_the_iso_range_decodes_as_erc20() {
         let token = address!("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
         assert_eq!(PairType::from(token), PairType::ERC20(token));
+    }
+
+    #[test]
+    fn pair_key_writes_address1_at_zero_and_address2_at_thirty_three() {
+        let first = address!("0x1111111111111111111111111111111111111111");
+        let second = address!("0x2222222222222222222222222222222222222222");
+
+        let encoded = B512::from(PairKey::new(first, second));
+
+        assert_eq!(&encoded[0..20], first.as_slice());
+        assert_eq!(&encoded[33..53], second.as_slice());
+        assert!(encoded[20..33].iter().all(|byte| *byte == 0));
+        assert!(encoded[53..64].iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn pair_key_encoding_ignores_the_argument_order() {
+        let coen = Address::from(PairType::Native);
+        let usd = Address::from(PairType::IsoCurrency(840));
+
+        assert_eq!(
+            B512::from(PairKey::new(coen, usd)),
+            B512::from(PairKey::new(usd, coen)),
+        );
+    }
+
+    #[test]
+    fn pair_key_separates_pairs_sharing_a_prefix() {
+        let first = address!("0x1111111111111111111111111111111111111111");
+        let second = address!("0x2222222222222222222222222222222222222222");
+        let third = address!("0x3333333333333333333333333333333333333333");
+
+        assert_ne!(
+            B512::from(PairKey::new(first, second)),
+            B512::from(PairKey::new(first, third)),
+        );
     }
 
     #[test]
