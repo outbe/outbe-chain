@@ -1903,13 +1903,21 @@ mod tests {
         fn prepare_vote_transaction(
             &self,
             canonical_result: &[u8],
+            finalized: &FinalizedJobSpecV1,
+            canonical_height: u64,
             nonce: u64,
             max_fee_per_gas: u128,
             gas_limit: u64,
         ) -> Result<PreparedVoteTransactionV1, Self::Error> {
             self.last_nonce.store(nonce, Ordering::SeqCst);
-            self.inner
-                .prepare_vote_transaction(canonical_result, nonce, max_fee_per_gas, gas_limit)
+            self.inner.prepare_vote_transaction(
+                canonical_result,
+                finalized,
+                canonical_height,
+                nonce,
+                max_fee_per_gas,
+                gas_limit,
+            )
         }
     }
 
@@ -1978,7 +1986,7 @@ mod tests {
         }
 
         fn gas_price(&self) -> Result<u128, Self::Error> {
-            Ok(outbe_zerofee::MIN_ZERO_FEE_OCOMP_MAX_FEE_PER_GAS)
+            Ok(outbe_ocomp_protocol::system_carrier::MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS)
         }
 
         fn send_raw_transaction(
@@ -2047,7 +2055,13 @@ mod tests {
         preparer: &NonceRecordingPreparer,
     ) -> VoteSubmissionOutcomeV1 {
         submitter
-            .reconcile(preparer, JOB_ID, result_digest(), &canonical_result())
+            .reconcile(
+                preparer,
+                JOB_ID,
+                result_digest(),
+                &canonical_result(),
+                &finalized_job_spec(),
+            )
             .expect("reconcile")
     }
 
@@ -2118,9 +2132,11 @@ mod tests {
         let transaction_hash = preparer
             .prepare_vote_transaction(
                 &canonical_result(),
+                &finalized_job_spec(),
+                1,
                 7,
-                outbe_zerofee::MIN_ZERO_FEE_OCOMP_MAX_FEE_PER_GAS,
-                outbe_zerofee::MAX_ZERO_FEE_OCOMP_GAS_LIMIT,
+                outbe_ocomp_protocol::system_carrier::MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS,
+                outbe_ocomp_protocol::system_carrier::OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
             )
             .unwrap()
             .transaction_hash;
