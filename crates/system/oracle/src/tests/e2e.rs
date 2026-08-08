@@ -34,7 +34,7 @@ fn init_from_genesis_default_config_matches_the_hardcoded_state() {
         expected.config_enabled.write(true).unwrap();
         expected.config_is_initialized.write(true).unwrap();
         expected
-            .register_pair(AddressPair::quoted(COEN, usd()))
+            .register_pair(AddressPair::from_addresses(COEN, usd()))
             .unwrap();
 
         // Snapshot expected state.
@@ -237,7 +237,7 @@ fn precompile_dispatch_round_trips_an_exchange_rate() {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
         oracle
-            .register_pair(AddressPair::quoted(COEN, usd()))
+            .register_pair(AddressPair::from_addresses(COEN, usd()))
             .unwrap();
         let expected_rate = U256::in_units(123u64);
         oracle
@@ -269,10 +269,10 @@ fn precompile_dispatch_round_trips_the_whole_query_surface() {
         init_oracle(&mut oracle);
 
         oracle
-            .register_pair(AddressPair::quoted(COEN, usd()))
+            .register_pair(AddressPair::from_addresses(COEN, usd()))
             .unwrap();
         oracle
-            .register_pair(AddressPair::quoted(ETH, usd()))
+            .register_pair(AddressPair::from_addresses(ETH, usd()))
             .unwrap();
         oracle
             .write_snapshot(
@@ -759,10 +759,10 @@ fn store_worldwide_day_vwap_snapshot_round_trips_every_pair() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(AddressPair::quoted(COEN, usd()))
+            .register_pair(AddressPair::from_addresses(COEN, usd()))
             .unwrap();
         oracle
-            .register_pair(AddressPair::quoted(ETH, usd()))
+            .register_pair(AddressPair::from_addresses(ETH, usd()))
             .unwrap();
 
         oracle
@@ -831,7 +831,7 @@ fn day_type_pair_vwap_reports_missing_data_without_reverting() {
 
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(AddressPair::quoted(COEN, usd()))
+            .register_pair(AddressPair::from_addresses(COEN, usd()))
             .unwrap();
         oracle
             .write_snapshot(
@@ -868,10 +868,10 @@ fn finalize_utc_day_vwap_persists_every_vote_target_pair() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(AddressPair::quoted(COEN, usd()))
+            .register_pair(AddressPair::from_addresses(COEN, usd()))
             .unwrap();
         oracle
-            .register_pair(AddressPair::quoted(ETH, usd()))
+            .register_pair(AddressPair::from_addresses(ETH, usd()))
             .unwrap();
 
         let utc_day = 20260624u32;
@@ -941,7 +941,7 @@ fn finalize_utc_day_vwap_writes_nothing_for_a_day_without_data() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(AddressPair::quoted(COEN, usd()))
+            .register_pair(AddressPair::from_addresses(COEN, usd()))
             .unwrap();
         let utc_day = 20260624u32;
 
@@ -965,7 +965,7 @@ fn get_utc_day_vwap_precompile_returns_the_finalized_value() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(AddressPair::quoted(COEN, usd()))
+            .register_pair(AddressPair::from_addresses(COEN, usd()))
             .unwrap();
         let utc_day = 20260624u32;
         let day_start = outbe_primitives::time::date_key_to_utc_timestamp(utc_day);
@@ -1025,7 +1025,7 @@ fn gas_cost_vwap_50h_window_with_varying_snapshot_counts() {
         StorageHandle::enter(&mut storage, |handle| {
             let mut oracle = OracleContract::new(handle.clone());
             oracle
-                .register_pair(AddressPair::quoted(COEN, usd()))
+                .register_pair(AddressPair::from_addresses(COEN, usd()))
                 .unwrap();
 
             let start_ts: u64 = 1_000_000;

@@ -73,7 +73,7 @@ fn with_storage<R>(rate_1e18: Option<U256>, f: impl FnOnce(&StorageHandle) -> R)
         if let Some(rate) = rate_1e18 {
             let mut oracle = OracleContract::new(handle.clone());
             oracle
-                .register_pair(outbe_oracle::api::AddressPair::quoted(
+                .register_pair(outbe_oracle::api::AddressPair::from_addresses(
                     outbe_oracle::api::COEN_ASSET,
                     outbe_oracle::api::iso_asset(840),
                 ))

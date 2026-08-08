@@ -288,8 +288,8 @@ pub fn get_all_scurve_data(oracle: &OracleContract) -> Result<ScurveTable> {
         let peak_day = oracle.scurve_peak_day.read(&idx)?;
         let peak_price = oracle.scurve_peak_price.read(&idx)?;
 
-        bases.push(pair.base());
-        quotes.push(pair.quote());
+        bases.push(pair.address1());
+        quotes.push(pair.address2());
         peak_days.push(peak_day);
         peak_prices.push(peak_price);
     }
@@ -442,8 +442,8 @@ fn process_daily_scurve_inner(
     if close_d3 < close_d2 && close_d2 > close_d1 {
         store_scurve_entry(oracle, pair, day_minus_2, close_d2)?;
         let event = IOracle::ScurvePeakDetected {
-            base: pair.base(),
-            quote: pair.quote(),
+            base: pair.address1(),
+            quote: pair.address2(),
             peakPrice: close_d2,
             peakDay: day_minus_2,
         };
@@ -638,7 +638,7 @@ mod tests {
     /// ordinal for it. Returns ordinal 1 as the first registration.
     fn register_test_pair(oracle: &mut OracleContract) -> AddressPair {
         let quote: Address = crate::types::AssetType::IsoCurrency(840).into();
-        let pair = AddressPair::quoted(Address::ZERO, quote);
+        let pair = AddressPair::from_addresses(Address::ZERO, quote);
         oracle.register_pair(pair).unwrap();
         pair
     }

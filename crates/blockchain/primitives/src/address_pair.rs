@@ -14,56 +14,51 @@ wrap_fixed_bytes!(
 );
 
 impl AddressPair {
-    /// Packs the pair as quoted: `base` in bytes `0..20`, `quote` in `20..40`.
-    ///
-    /// The orientation is kept verbatim, because it is what the ABI reports back
-    /// and what separates a rate from its reciprocal. Storage lookup stays
-    /// order-independent regardless — [`StorageKey::key_bytes`] sorts on the way
-    /// to a slot — so no caller has to canonicalize by hand.
-    ///
-    /// `new` is already taken by the raw `[u8; 40]` constructor that
-    /// [`wrap_fixed_bytes!`] generates.
-    pub fn quoted(base: Address, quote: Address) -> Self {
+    pub fn from_addresses(asset1: Address, asset2: Address) -> Self {
         let mut bytes = [0u8; 40];
-        bytes[0..20].copy_from_slice(base.as_slice());
-        bytes[20..40].copy_from_slice(quote.as_slice());
+        bytes[0..20].copy_from_slice(asset1.as_slice());
+        bytes[20..40].copy_from_slice(asset2.as_slice());
         Self::from(bytes)
     }
 
-    /// [`Self::quoted`] over the asset encoding rather than raw addresses.
-    pub fn quoted_assets(base: AssetType, quote: AssetType) -> Self {
-        Self::quoted(base.into(), quote.into())
+    /// [`Self::from_addresses`] over the asset encoding rather than raw addresses.
+    pub fn from_assets(asset1: AssetType, asset2: AssetType) -> Self {
+        Self::from_addresses(asset1.into(), asset2.into())
     }
 
-    /// The asset being priced.
-    pub fn base(&self) -> Address {
+    pub fn address1(&self) -> Address {
         Address::from_slice(&self[0..20])
     }
 
-    /// The asset it is priced in.
-    pub fn quote(&self) -> Address {
+    pub fn address2(&self) -> Address {
         Address::from_slice(&self[20..40])
+    }
+    pub fn asset1(&self) -> AssetType {
+        AssetType::from(self.address1())
+    }
+
+    pub fn asset2(&self) -> AssetType {
+        AssetType::from(self.address2())
     }
 
     /// The 40 bytes this pair keys on: both addresses ascending, so the two
     /// directions of one market collapse onto a single slot. Idempotent.
-    pub fn sorted(&self) -> Self {
-        let (base, quote) = (self.base(), self.quote());
+    pub fn to_canonical(&self) -> Self {
+        let (base, quote) = (self.address1(), self.address2());
         if base <= quote {
             *self
         } else {
-            Self::quoted(quote, base)
+            Self::from_addresses(quote, base)
         }
     }
 
-    /// Whether both quotes name the same market, in either direction.
-    ///
-    /// `==` is direction-*sensitive* while storage lookup is not. A scan for
-    /// "the entry belonging to this market" wants this; a guard asserting "quoted
-    /// the way it was registered" wants `==`. Choosing wrong fails silently — an
-    /// entry that reads as absent, or a reciprocal rate accepted as genuine.
+    pub fn is_canonical(&self) -> bool {
+        self.address1() <= self.address2()
+    }
+
+    /// Whether both quotes name the same market.
     pub fn same_market(&self, other: &Self) -> bool {
-        self.sorted() == other.sorted()
+        self.to_canonical() == other.to_canonical()
     }
 }
 
@@ -75,7 +70,7 @@ impl AddressPair {
 impl StorageKey for AddressPair {
     /// Sorted, so `quoted(a, b)` and `quoted(b, a)` address the same slot.
     fn key_bytes(&self) -> Vec<u8> {
-        self.sorted().as_slice().to_vec()
+        self.to_canonical().as_slice().to_vec()
     }
 
     /// Solidity left-pads a mapping key only when it is narrower than a word;
@@ -84,7 +79,7 @@ impl StorageKey for AddressPair {
     /// so the concatenation is spelled out here against a fixed-size buffer.
     fn mapping_slot(&self, base_slot: U256) -> U256 {
         let mut buf = [0u8; 72];
-        buf[..40].copy_from_slice(self.sorted().as_slice());
+        buf[..40].copy_from_slice(self.to_canonical().as_slice());
         buf[40..].copy_from_slice(&base_slot.to_be_bytes::<32>());
         U256::from_be_bytes(keccak256(buf).0)
     }
@@ -102,7 +97,7 @@ mod tests {
 
     #[test]
     fn quoted_packs_base_first_and_quote_second() {
-        let pair = AddressPair::quoted(SECOND, FIRST);
+        let pair = AddressPair::from_addresses(SECOND, FIRST);
 
         assert_eq!(AddressPair::len_bytes(), 40);
         assert_eq!(&pair[0..20], SECOND.as_slice());
@@ -111,55 +106,62 @@ mod tests {
 
     #[test]
     fn the_accessors_return_the_quoted_orientation() {
-        let pair = AddressPair::quoted(SECOND, FIRST);
+        let pair = AddressPair::from_addresses(SECOND, FIRST);
 
-        assert_eq!(pair.base(), SECOND);
-        assert_eq!(pair.quote(), FIRST);
+        assert_eq!(pair.address1(), SECOND);
+        assert_eq!(pair.address2(), FIRST);
     }
 
     #[test]
     fn the_accessors_round_trip_back_into_the_same_pair() {
-        let pair = AddressPair::quoted(SECOND, FIRST);
+        let pair = AddressPair::from_addresses(SECOND, FIRST);
 
-        assert_eq!(AddressPair::quoted(pair.base(), pair.quote()), pair);
+        assert_eq!(
+            AddressPair::from_addresses(pair.address1(), pair.address2()),
+            pair
+        );
     }
 
     #[test]
     fn quoted_keeps_the_two_directions_of_one_market_distinct() {
         assert_ne!(
-            AddressPair::quoted(FIRST, SECOND),
-            AddressPair::quoted(SECOND, FIRST),
+            AddressPair::from_addresses(FIRST, SECOND),
+            AddressPair::from_addresses(SECOND, FIRST),
         );
     }
 
     #[test]
     fn sorted_collapses_the_two_directions_of_one_market() {
-        let forward = AddressPair::quoted(FIRST, SECOND);
-        let reverse = AddressPair::quoted(SECOND, FIRST);
+        let forward = AddressPair::from_addresses(FIRST, SECOND);
+        let reverse = AddressPair::from_addresses(SECOND, FIRST);
 
-        assert_eq!(forward.sorted(), reverse.sorted());
+        assert_eq!(forward.to_canonical(), reverse.to_canonical());
         assert!(forward.same_market(&reverse));
         // Idempotent: sorting an already-sorted pair is a no-op.
-        assert_eq!(forward.sorted().sorted(), forward.sorted());
-        assert_eq!(forward.sorted(), forward);
+        assert_eq!(
+            forward.to_canonical().to_canonical(),
+            forward.to_canonical()
+        );
+        assert_eq!(forward.to_canonical(), forward);
     }
 
     #[test]
     fn same_market_separates_markets_sharing_an_asset() {
-        assert!(!AddressPair::quoted(FIRST, SECOND).same_market(&AddressPair::quoted(FIRST, THIRD)));
+        assert!(!AddressPair::from_addresses(FIRST, SECOND)
+            .same_market(&AddressPair::from_addresses(FIRST, THIRD)));
     }
 
     #[test]
     fn quoted_separates_pairs_sharing_an_address() {
         assert_ne!(
-            AddressPair::quoted(FIRST, SECOND),
-            AddressPair::quoted(FIRST, THIRD),
+            AddressPair::from_addresses(FIRST, SECOND),
+            AddressPair::from_addresses(FIRST, THIRD),
         );
     }
 
     #[test]
     fn quoted_packs_an_address_paired_with_itself() {
-        let pair = AddressPair::quoted(FIRST, FIRST);
+        let pair = AddressPair::from_addresses(FIRST, FIRST);
 
         assert_eq!(&pair[0..20], FIRST.as_slice());
         assert_eq!(&pair[20..40], FIRST.as_slice());
@@ -167,7 +169,7 @@ mod tests {
 
     #[test]
     fn a_pair_round_trips_through_hex() {
-        let pair = AddressPair::quoted(FIRST, SECOND);
+        let pair = AddressPair::from_addresses(FIRST, SECOND);
 
         assert_eq!(pair.to_string().parse::<AddressPair>(), Ok(pair));
     }
@@ -175,14 +177,14 @@ mod tests {
     #[test]
     fn the_zero_pair_holds_forty_zero_bytes() {
         assert_eq!(
-            AddressPair::quoted(Address::ZERO, Address::ZERO),
+            AddressPair::from_addresses(Address::ZERO, Address::ZERO),
             AddressPair::ZERO,
         );
     }
 
     #[test]
     fn the_mapping_slot_concatenates_the_forty_byte_key_with_the_base_slot() {
-        let pair = AddressPair::quoted(FIRST, SECOND);
+        let pair = AddressPair::from_addresses(FIRST, SECOND);
         let base_slot = U256::from(10u64);
 
         let mut expected = Vec::with_capacity(72);
@@ -202,15 +204,15 @@ mod tests {
         let base_slot = U256::from(10u64);
 
         assert_eq!(
-            AddressPair::quoted(FIRST, SECOND).mapping_slot(base_slot),
-            AddressPair::quoted(SECOND, FIRST).mapping_slot(base_slot),
+            AddressPair::from_addresses(FIRST, SECOND).mapping_slot(base_slot),
+            AddressPair::from_addresses(SECOND, FIRST).mapping_slot(base_slot),
         );
     }
 
     #[test]
     fn the_mapping_slot_separates_distinct_pairs_and_distinct_base_slots() {
-        let pair = AddressPair::quoted(FIRST, SECOND);
-        let other = AddressPair::quoted(FIRST, THIRD);
+        let pair = AddressPair::from_addresses(FIRST, SECOND);
+        let other = AddressPair::from_addresses(FIRST, THIRD);
 
         assert_ne!(
             pair.mapping_slot(U256::from(10u64)),
@@ -235,7 +237,7 @@ mod tests {
     /// falls through unpadded. A change here is genesis-breaking, not a refactor.
     #[test]
     fn the_coen_iso_840_pair_derives_a_stable_registry_slot() {
-        let coen_usd = AddressPair::quoted(
+        let coen_usd = AddressPair::from_addresses(
             Address::ZERO,
             address!("0x00000000000000000000000000000000000cc840"),
         );

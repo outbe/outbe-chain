@@ -15,7 +15,7 @@ fn ocomp_pre_admission_selects_stored_price_and_reads_bounded_counts() {
     with_storage_at(timestamp, |storage| {
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(AddressPair::quoted(COEN, usd()))
+            .register_pair(AddressPair::from_addresses(COEN, usd()))
             .unwrap();
         let wwd = outbe_common::WorldwideDay::from_timestamp(timestamp);
         let last_closed = outbe_primitives::time::previous_date_key(
@@ -104,7 +104,7 @@ fn ocomp_oracle_profile_initialization_is_exact_and_idempotent() {
 
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(AddressPair::quoted(COEN, usd()))
+            .register_pair(AddressPair::from_addresses(COEN, usd()))
             .unwrap();
         crate::api::initialize_fresh_ocomp_profile(storage.clone()).unwrap();
         crate::api::initialize_fresh_ocomp_profile(storage).unwrap();
@@ -119,7 +119,7 @@ fn ocomp_state_version_overflow_rejects_before_oracle_mutation() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(AddressPair::quoted(COEN, usd()))
+            .register_pair(AddressPair::from_addresses(COEN, usd()))
             .unwrap();
         crate::api::initialize_fresh_ocomp_profile(storage).unwrap();
         oracle.ocomp_state_version.write(u64::MAX).unwrap();
@@ -212,7 +212,7 @@ fn scurve_count_overflow_rejects_before_any_owner_write() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(AddressPair::quoted(COEN, usd()))
+            .register_pair(AddressPair::from_addresses(COEN, usd()))
             .unwrap();
         crate::api::initialize_fresh_ocomp_profile(storage).unwrap();
         oracle.scurve_count.write(u32::MAX).unwrap();
@@ -239,7 +239,7 @@ fn run_tally_accepts_a_single_validator_as_the_weighted_median() {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
         oracle
-            .register_pair(AddressPair::quoted(COEN, USDT))
+            .register_pair(AddressPair::from_addresses(COEN, USDT))
             .unwrap();
 
         let validator = Address::new([0x11; 20]);
@@ -279,7 +279,7 @@ fn run_tally_rewards_every_voter_inside_the_reward_band() {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
         oracle
-            .register_pair(AddressPair::quoted(COEN, USDT))
+            .register_pair(AddressPair::from_addresses(COEN, USDT))
             .unwrap();
 
         let v1 = Address::new([0x11; 20]);
@@ -325,7 +325,7 @@ fn run_tally_penalizes_a_voter_outside_the_reward_band() {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
         oracle
-            .register_pair(AddressPair::quoted(COEN, USDT))
+            .register_pair(AddressPair::from_addresses(COEN, USDT))
             .unwrap();
 
         let v1 = Address::new([0x11; 20]);
@@ -366,7 +366,7 @@ fn run_tally_counts_an_abstain_for_every_silent_validator() {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
         oracle
-            .register_pair(AddressPair::quoted(COEN, USDT))
+            .register_pair(AddressPair::from_addresses(COEN, USDT))
             .unwrap();
 
         let v1 = Address::new([0x11; 20]);
@@ -386,7 +386,7 @@ fn begin_block_tallies_only_on_a_vote_period_boundary() {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
         oracle
-            .register_pair(AddressPair::quoted(COEN, USDT))
+            .register_pair(AddressPair::from_addresses(COEN, USDT))
             .unwrap();
 
         let v1 = Address::new([0x11; 20]);
@@ -601,7 +601,7 @@ fn begin_block_scurve_hook_records_the_daily_peak() {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
         oracle
-            .register_pair(AddressPair::quoted(COEN, usd()))
+            .register_pair(AddressPair::from_addresses(COEN, usd()))
             .unwrap();
 
         let day_1 = crate::scurve::DAY_SECONDS;
@@ -662,7 +662,7 @@ fn begin_block_finalizes_the_closed_utc_day() {
         oracle.config_is_initialized.write(true).unwrap();
         oracle.config_vote_period.write(2).unwrap();
         oracle
-            .register_pair(AddressPair::quoted(COEN, usd()))
+            .register_pair(AddressPair::from_addresses(COEN, usd()))
             .unwrap();
         let coen = pair_key(COEN, usd());
 

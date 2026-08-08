@@ -45,7 +45,7 @@ impl OracleContract<'_> {
     /// registering the inverse of an existing pair is rejected as a duplicate.
     /// Returns the assigned enumeration index (1-based).
     pub fn register_pair(&mut self, pair: AddressPair) -> Result<PairIndex> {
-        if pair.base() == pair.quote() {
+        if pair.address1() == pair.address2() {
             return Err(PrecompileError::Revert(
                 "pair base and quote must differ".into(),
             ));
@@ -139,7 +139,7 @@ impl OracleContract<'_> {
     /// rate un-inverted, so the registered entry is compared for exact equality —
     /// direction included — and a flipped quote reverts.
     pub fn require_pair(&self, base: Address, quote: Address) -> Result<AddressPair> {
-        let pair = AddressPair::quoted(base, quote);
+        let pair = AddressPair::from_addresses(base, quote);
         let index = self.pair_to_index.read(&pair)?;
         if index == 0 {
             return Err(PrecompileError::Revert("pair not registered".into()));
@@ -159,7 +159,7 @@ impl OracleContract<'_> {
     /// plain boolean query it returns `false` rather than reverting; genuine
     /// storage faults still propagate.
     pub fn is_vote_target(&self, base: Address, quote: Address) -> Result<bool> {
-        let pair = AddressPair::quoted(base, quote);
+        let pair = AddressPair::from_addresses(base, quote);
         let index = self.pair_to_index.read(&pair)?;
         if index == 0 || self.pair_by_index.read_pair(&index)? != pair {
             return Ok(false);
@@ -455,7 +455,7 @@ impl OracleContract<'_> {
 
         for pid in 1..=count {
             let pair = self.pair_at(pid)?;
-            let (base, quote) = (pair.base(), pair.quote());
+            let (base, quote) = (pair.address1(), pair.address2());
             bases.push(base);
             quotes.push(quote);
             rates.push(self.exchange_rate.read(&pair)?);
@@ -474,7 +474,7 @@ impl OracleContract<'_> {
 
         for pid in 1..=count {
             let pair = self.pair_at(pid)?;
-            let (base, quote) = (pair.base(), pair.quote());
+            let (base, quote) = (pair.address1(), pair.address2());
             if self.vote_target.read(&pair)? {
                 bases.push(base);
                 quotes.push(quote);
@@ -505,8 +505,8 @@ impl OracleContract<'_> {
 
         for i in 0..tuple_count {
             let pair = pair_map.read_pair(&i)?;
-            bases.push(pair.base());
-            quotes.push(pair.quote());
+            bases.push(pair.address1());
+            quotes.push(pair.address2());
             rates.push(rate_map.read(&i)?);
             volumes.push(volume_map.read(&i)?);
         }
@@ -594,8 +594,8 @@ impl OracleContract<'_> {
                 let entry = pair_map.read_pair(&p)?;
                 snapshot_ids.push(idx);
                 timestamps.push(ts);
-                bases.push(entry.base());
-                quotes.push(entry.quote());
+                bases.push(entry.address1());
+                quotes.push(entry.address2());
                 rates.push(rate_map.read(&p)?);
                 volumes.push(volume_map.read(&p)?);
             }
@@ -628,8 +628,8 @@ impl OracleContract<'_> {
         let mut lookbacks = Vec::with_capacity(pair_count as usize);
         for idx in 0..pair_count {
             let entry = pair_map.read_pair(&idx)?;
-            bases.push(entry.base());
-            quotes.push(entry.quote());
+            bases.push(entry.address1());
+            quotes.push(entry.address2());
             vwaps.push(value_map.read(&idx)?);
             lookbacks.push(lookback);
         }
@@ -694,8 +694,8 @@ impl OracleContract<'_> {
         let mut vwaps = Vec::with_capacity(pair_count as usize);
         for idx in 0..pair_count {
             let entry = pair_map.read_pair(&idx)?;
-            bases.push(entry.base());
-            quotes.push(entry.quote());
+            bases.push(entry.address1());
+            quotes.push(entry.address2());
             vwaps.push(value_map.read(&idx)?);
         }
         Ok((bases, quotes, vwaps))
@@ -714,7 +714,7 @@ impl OracleContract<'_> {
 
         for pid in 1..=count {
             let pair = self.pair_at(pid)?;
-            let (base, quote) = (pair.base(), pair.quote());
+            let (base, quote) = (pair.address1(), pair.address2());
             bases.push(base);
             quotes.push(quote);
             is_active.push(self.vote_target.read(&pair)?);

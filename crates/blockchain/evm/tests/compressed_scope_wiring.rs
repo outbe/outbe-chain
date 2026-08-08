@@ -57,7 +57,7 @@ fn execution_db(proposer: Address, parent_root: B256) -> CacheDB<EmptyDBTyped<Pr
 
         let mut oracle = outbe_oracle::schema::OracleContract::new(storage);
         oracle
-            .register_pair(outbe_oracle::api::AddressPair::quoted(
+            .register_pair(outbe_oracle::api::AddressPair::from_addresses(
                 outbe_oracle::api::COEN_ASSET,
                 outbe_oracle::api::iso_asset(840),
             ))

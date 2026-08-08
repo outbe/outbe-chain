@@ -86,7 +86,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
 
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(outbe_oracle::api::AddressPair::quoted(
+            .register_pair(outbe_oracle::api::AddressPair::from_addresses(
                 outbe_oracle::api::COEN_ASSET,
                 outbe_oracle::api::iso_asset(840),
             ))
@@ -1184,7 +1184,7 @@ fn prepare_request_fixture_with_day_type(
 
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(outbe_oracle::api::AddressPair::quoted(
+            .register_pair(outbe_oracle::api::AddressPair::from_addresses(
                 outbe_oracle::api::COEN_ASSET,
                 outbe_oracle::api::iso_asset(840),
             ))
@@ -1292,7 +1292,7 @@ fn prepare_ready_days_fixture(
         begin_block(storage.clone(), &scope).unwrap();
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(outbe_oracle::api::AddressPair::quoted(
+            .register_pair(outbe_oracle::api::AddressPair::from_addresses(
                 outbe_oracle::api::COEN_ASSET,
                 outbe_oracle::api::iso_asset(840),
             ))

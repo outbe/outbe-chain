@@ -538,8 +538,8 @@ impl OracleContract<'_> {
             }
             let event = IOracle::VwapCalculated {
                 utcDay: utc_day,
-                base: pair.base(),
-                quote: pair.quote(),
+                base: pair.address1(),
+                quote: pair.address2(),
                 vwap,
             };
             let event_result = self

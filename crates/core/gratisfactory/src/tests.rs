@@ -100,7 +100,7 @@ fn view_pledged(s: &StorageHandle<'_>, a: Address) -> U256 {
 fn seed_oracle(storage: StorageHandle<'_>, rate_1e18: U256) {
     let mut oracle = outbe_oracle::schema::OracleContract::new(storage);
     oracle
-        .register_pair(outbe_oracle::api::AddressPair::quoted(
+        .register_pair(outbe_oracle::api::AddressPair::from_addresses(
             outbe_oracle::api::COEN_ASSET,
             outbe_oracle::api::iso_asset(840),
         ))

@@ -20,7 +20,7 @@ sol!(
 /// returns, preserving each pair's registered orientation so a caller can quote
 /// the result straight back into the pair-scoped reads.
 fn split_pairs(pairs: &[AddressPair]) -> (Vec<Address>, Vec<Address>) {
-    pairs.iter().map(|p| (p.base(), p.quote())).unzip()
+    pairs.iter().map(|p| (p.address1(), p.address2())).unzip()
 }
 
 /// Dispatches an ABI-encoded call to the Oracle precompile.

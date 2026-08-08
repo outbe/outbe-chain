@@ -80,7 +80,7 @@ fn proposal_activation(created: u64) -> u64 {
 fn seed_oracle_for_pre_exec(storage: StorageHandle) {
     let mut oracle = outbe_oracle::schema::OracleContract::new(storage);
     if oracle
-        .register_pair(outbe_oracle::api::AddressPair::quoted(
+        .register_pair(outbe_oracle::api::AddressPair::from_addresses(
             outbe_oracle::api::COEN_ASSET,
             outbe_oracle::api::iso_asset(840),
         ))

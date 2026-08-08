@@ -15,7 +15,7 @@ fn register_pair_assigns_sequential_ids_and_marks_vote_targets() {
         // Register first pair
         assert_eq!(
             oracle
-                .register_pair(AddressPair::quoted(COEN, USDT))
+                .register_pair(AddressPair::from_addresses(COEN, USDT))
                 .unwrap(),
             1
         );
@@ -23,7 +23,7 @@ fn register_pair_assigns_sequential_ids_and_marks_vote_targets() {
         // Register second pair
         assert_eq!(
             oracle
-                .register_pair(AddressPair::quoted(ETH, USDT))
+                .register_pair(AddressPair::from_addresses(ETH, USDT))
                 .unwrap(),
             2
         );
@@ -40,7 +40,7 @@ fn register_pair_assigns_sequential_ids_and_marks_vote_targets() {
 
         // Duplicate registration fails
         assert!(oracle
-            .register_pair(AddressPair::quoted(COEN, USDT))
+            .register_pair(AddressPair::from_addresses(COEN, USDT))
             .is_err());
 
         // Pair count
@@ -55,12 +55,12 @@ fn register_pair_rejects_the_inverse_of_a_registered_pair() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(AddressPair::quoted(COEN, USDT))
+            .register_pair(AddressPair::from_addresses(COEN, USDT))
             .unwrap();
 
         // The key is order-independent, so the inverse is the same pair.
         assert!(oracle
-            .register_pair(AddressPair::quoted(USDT, COEN))
+            .register_pair(AddressPair::from_addresses(USDT, COEN))
             .is_err());
     });
 }
@@ -70,10 +70,10 @@ fn register_pair_rejects_an_asset_paired_with_itself() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         assert!(oracle
-            .register_pair(AddressPair::quoted(USDT, USDT))
+            .register_pair(AddressPair::from_addresses(USDT, USDT))
             .is_err());
         assert!(oracle
-            .register_pair(AddressPair::quoted(COEN, COEN))
+            .register_pair(AddressPair::from_addresses(COEN, COEN))
             .is_err());
     });
 }
@@ -83,7 +83,7 @@ fn require_pair_rejects_a_pair_quoted_in_the_wrong_direction() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(AddressPair::quoted(COEN, USDT))
+            .register_pair(AddressPair::from_addresses(COEN, USDT))
             .unwrap();
 
         assert_eq!(
@@ -112,10 +112,10 @@ fn a_pair_lookup_ignores_the_quote_direction_while_the_entry_records_it() {
         let mut oracle = OracleContract::new(storage.clone());
         // Quote ETH in USD; the ISO address sorts below the token, so the
         // registered orientation is the opposite of the sorted key form.
-        let registered = AddressPair::quoted(ETH, usd());
+        let registered = AddressPair::from_addresses(ETH, usd());
         assert_eq!(oracle.register_pair(registered).unwrap(), 1);
         assert_ne!(
-            registered.sorted(),
+            registered.to_canonical(),
             registered,
             "fixture no longer exercises the sort"
         );
@@ -124,7 +124,7 @@ fn a_pair_lookup_ignores_the_quote_direction_while_the_entry_records_it() {
         assert_eq!(oracle.pair_index_of(registered).unwrap(), 1);
         assert_eq!(
             oracle
-                .pair_index_of(AddressPair::quoted(usd(), ETH))
+                .pair_index_of(AddressPair::from_addresses(usd(), ETH))
                 .unwrap(),
             1
         );
@@ -133,7 +133,7 @@ fn a_pair_lookup_ignores_the_quote_direction_while_the_entry_records_it() {
         // so the ABI reports ETH/USD and not USD/ETH.
         let entry = oracle.pair_at(1).unwrap();
         assert_eq!(entry, registered);
-        assert_eq!((entry.base(), entry.quote()), (ETH, usd()));
+        assert_eq!((entry.address1(), entry.address2()), (ETH, usd()));
 
         // Direction-enforcing at every read boundary.
         assert!(oracle.require_pair(ETH, usd()).is_ok());
@@ -148,7 +148,7 @@ fn every_pair_read_agrees_on_the_registered_direction() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(AddressPair::quoted(COEN, USDT))
+            .register_pair(AddressPair::from_addresses(COEN, USDT))
             .unwrap();
         oracle
             .set_exchange_rate(Address::ZERO, COEN, USDT, U256::from(7u64), 1, 1)
@@ -176,13 +176,13 @@ fn get_pairs_returns_ids_symbols_and_active_flags() {
         let mut oracle = OracleContract::new(storage.clone());
 
         oracle
-            .register_pair(AddressPair::quoted(COEN, USDT))
+            .register_pair(AddressPair::from_addresses(COEN, USDT))
             .unwrap();
         oracle
-            .register_pair(AddressPair::quoted(ETH, USDC))
+            .register_pair(AddressPair::from_addresses(ETH, USDC))
             .unwrap();
         oracle
-            .register_pair(AddressPair::quoted(BTC, USDC))
+            .register_pair(AddressPair::from_addresses(BTC, USDC))
             .unwrap();
 
         // Deactivate the middle pair to exercise the isActive flag.
@@ -232,7 +232,7 @@ fn set_exchange_rate_round_trips_rate_block_and_timestamp() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(AddressPair::quoted(COEN, USDT))
+            .register_pair(AddressPair::from_addresses(COEN, USDT))
             .unwrap();
 
         // Set rate (system call)
@@ -254,7 +254,7 @@ fn set_exchange_rate_rejects_a_non_system_caller() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(AddressPair::quoted(COEN, USDT))
+            .register_pair(AddressPair::from_addresses(COEN, USDT))
             .unwrap();
 
         let caller = Address::new([1u8; 20]);
@@ -324,7 +324,7 @@ fn write_snapshot_advances_the_ring_buffer_and_feeds_vwap() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(AddressPair::quoted(COEN, USDT))
+            .register_pair(AddressPair::from_addresses(COEN, USDT))
             .unwrap();
 
         // Write 3 snapshots
@@ -371,7 +371,7 @@ fn calculate_vwap_includes_only_snapshots_inside_the_window() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(AddressPair::quoted(COEN, USDT))
+            .register_pair(AddressPair::from_addresses(COEN, USDT))
             .unwrap();
 
         let entries1 = vec![(pair_key(COEN, USDT), U256::in_units(100u64), SCALE_1E18)];
@@ -413,7 +413,7 @@ fn calculate_vwap_treats_zero_volume_as_one_scaled_unit() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(AddressPair::quoted(COEN, USDT))
+            .register_pair(AddressPair::from_addresses(COEN, USDT))
             .unwrap();
 
         // Zero-volume entries → equal-weight averaging
@@ -440,10 +440,10 @@ fn calculate_vwap_isolates_each_pair_within_one_snapshot() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(AddressPair::quoted(COEN, USDT))
+            .register_pair(AddressPair::from_addresses(COEN, USDT))
             .unwrap();
         oracle
-            .register_pair(AddressPair::quoted(ETH, USDT))
+            .register_pair(AddressPair::from_addresses(ETH, USDT))
             .unwrap();
 
         let entries = vec![
@@ -477,7 +477,7 @@ fn submit_vote_stores_tuples_until_clear_votes_drains_them() {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
         oracle
-            .register_pair(AddressPair::quoted(COEN, USDT))
+            .register_pair(AddressPair::from_addresses(COEN, USDT))
             .unwrap();
 
         let validator = Address::new([0x11; 20]);
@@ -513,10 +513,10 @@ fn submit_vote_rejects_a_duplicated_pair() {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
         oracle
-            .register_pair(AddressPair::quoted(COEN, USDT))
+            .register_pair(AddressPair::from_addresses(COEN, USDT))
             .unwrap();
         oracle
-            .register_pair(AddressPair::quoted(ETH, USDT))
+            .register_pair(AddressPair::from_addresses(ETH, USDT))
             .unwrap();
 
         let validator = Address::new([0x11; 20]);
@@ -542,10 +542,10 @@ fn submit_vote_reports_a_duplicate_before_an_inactive_vote_target() {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
         oracle
-            .register_pair(AddressPair::quoted(COEN, USDT))
+            .register_pair(AddressPair::from_addresses(COEN, USDT))
             .unwrap();
         oracle
-            .register_pair(AddressPair::quoted(ETH, USDT))
+            .register_pair(AddressPair::from_addresses(ETH, USDT))
             .unwrap();
         oracle
             .deactivate_vote_target(Address::ZERO, ETH, USDT)
@@ -576,10 +576,10 @@ fn get_exchange_rates_returns_parallel_arrays_in_pair_id_order() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(AddressPair::quoted(COEN, USDT))
+            .register_pair(AddressPair::from_addresses(COEN, USDT))
             .unwrap();
         oracle
-            .register_pair(AddressPair::quoted(ETH, USDT))
+            .register_pair(AddressPair::from_addresses(ETH, USDT))
             .unwrap();
 
         let rate1 = U256::from(1_500_000_000_000_000_000u128);
@@ -618,13 +618,13 @@ fn get_vote_targets_lists_only_active_pairs() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(AddressPair::quoted(COEN, USDT))
+            .register_pair(AddressPair::from_addresses(COEN, USDT))
             .unwrap();
         oracle
-            .register_pair(AddressPair::quoted(ETH, USDT))
+            .register_pair(AddressPair::from_addresses(ETH, USDT))
             .unwrap();
         oracle
-            .register_pair(AddressPair::quoted(BTC, USDT))
+            .register_pair(AddressPair::from_addresses(BTC, USDT))
             .unwrap();
 
         // Deactivate ETH/USDT (pair_id 2)
@@ -653,10 +653,10 @@ fn get_aggregate_vote_returns_the_stored_tuples() {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
         oracle
-            .register_pair(AddressPair::quoted(COEN, USDT))
+            .register_pair(AddressPair::from_addresses(COEN, USDT))
             .unwrap();
         oracle
-            .register_pair(AddressPair::quoted(ETH, USDT))
+            .register_pair(AddressPair::from_addresses(ETH, USDT))
             .unwrap();
 
         let validator = Address::new([0x11; 20]);
@@ -729,7 +729,7 @@ fn delegate_feeder_round_trips_and_revokes_on_the_zero_address() {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
         oracle
-            .register_pair(AddressPair::quoted(COEN, USDT))
+            .register_pair(AddressPair::from_addresses(COEN, USDT))
             .unwrap();
 
         let validator = Address::new([0x11; 20]);

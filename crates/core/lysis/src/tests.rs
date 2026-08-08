@@ -152,7 +152,7 @@ fn later_nod_failure_rolls_back_the_complete_lysis_attempt() {
 
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(outbe_oracle::api::AddressPair::quoted(
+            .register_pair(outbe_oracle::api::AddressPair::from_addresses(
                 outbe_oracle::api::COEN_ASSET,
                 outbe_oracle::api::iso_asset(840),
             ))
@@ -167,7 +167,7 @@ fn later_nod_failure_rolls_back_the_complete_lysis_attempt() {
             .get_nested(&wwd)
             .write_pair(
                 &0_u32,
-                outbe_oracle::api::AddressPair::quoted(
+                outbe_oracle::api::AddressPair::from_addresses(
                     outbe_oracle::api::COEN_ASSET,
                     outbe_oracle::api::iso_asset(840),
                 ),
@@ -244,7 +244,7 @@ fn gas_08_lysis_dense_day_completes_and_emits_body_mutations() {
         begin_block(storage.clone(), &scope).unwrap();
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(outbe_oracle::api::AddressPair::quoted(
+            .register_pair(outbe_oracle::api::AddressPair::from_addresses(
                 outbe_oracle::api::COEN_ASSET,
                 outbe_oracle::api::iso_asset(840),
             ))
@@ -259,7 +259,7 @@ fn gas_08_lysis_dense_day_completes_and_emits_body_mutations() {
             .get_nested(&wwd)
             .write_pair(
                 &0u32,
-                outbe_oracle::api::AddressPair::quoted(
+                outbe_oracle::api::AddressPair::from_addresses(
                     outbe_oracle::api::COEN_ASSET,
                     outbe_oracle::api::iso_asset(840),
                 ),
@@ -681,7 +681,7 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
         //    because lysis only reads `get_worldwide_day_vwap_for_pair_id`.
         let mut oracle = OracleContract::new(s.clone());
         oracle
-            .register_pair(outbe_oracle::api::AddressPair::quoted(
+            .register_pair(outbe_oracle::api::AddressPair::from_addresses(
                 outbe_oracle::api::COEN_ASSET,
                 outbe_oracle::api::iso_asset(840),
             ))
@@ -696,7 +696,7 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
             .get_nested(&wwd)
             .write_pair(
                 &0u32,
-                outbe_oracle::api::AddressPair::quoted(
+                outbe_oracle::api::AddressPair::from_addresses(
                     outbe_oracle::api::COEN_ASSET,
                     outbe_oracle::api::iso_asset(840),
                 ),
@@ -1012,7 +1012,7 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
         begin_block(s.clone(), &scope).unwrap();
         let mut oracle = OracleContract::new(s.clone());
         oracle
-            .register_pair(outbe_oracle::api::AddressPair::quoted(
+            .register_pair(outbe_oracle::api::AddressPair::from_addresses(
                 outbe_oracle::api::COEN_ASSET,
                 outbe_oracle::api::iso_asset(840),
             ))
@@ -1027,7 +1027,7 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
             .get_nested(&wwd)
             .write_pair(
                 &0u32,
-                outbe_oracle::api::AddressPair::quoted(
+                outbe_oracle::api::AddressPair::from_addresses(
                     outbe_oracle::api::COEN_ASSET,
                     outbe_oracle::api::iso_asset(840),
                 ),
@@ -1108,7 +1108,7 @@ fn lysis_records_contributors_aggregated_by_owner() {
         // Oracle: register ISO 840 -> COEN/840 and seed a day VWAP snapshot.
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(outbe_oracle::api::AddressPair::quoted(
+            .register_pair(outbe_oracle::api::AddressPair::from_addresses(
                 outbe_oracle::api::COEN_ASSET,
                 outbe_oracle::api::iso_asset(840),
             ))
@@ -1123,7 +1123,7 @@ fn lysis_records_contributors_aggregated_by_owner() {
             .get_nested(&wwd)
             .write_pair(
                 &0u32,
-                outbe_oracle::api::AddressPair::quoted(
+                outbe_oracle::api::AddressPair::from_addresses(
                     outbe_oracle::api::COEN_ASSET,
                     outbe_oracle::api::iso_asset(840),
                 ),
@@ -1208,7 +1208,7 @@ fn lysis_omits_excluded_owners_from_contributor_map() {
         begin_block(storage.clone(), &scope).unwrap();
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(outbe_oracle::api::AddressPair::quoted(
+            .register_pair(outbe_oracle::api::AddressPair::from_addresses(
                 outbe_oracle::api::COEN_ASSET,
                 outbe_oracle::api::iso_asset(840),
             ))
@@ -1223,7 +1223,7 @@ fn lysis_omits_excluded_owners_from_contributor_map() {
             .get_nested(&wwd)
             .write_pair(
                 &0u32,
-                outbe_oracle::api::AddressPair::quoted(
+                outbe_oracle::api::AddressPair::from_addresses(
                     outbe_oracle::api::COEN_ASSET,
                     outbe_oracle::api::iso_asset(840),
                 ),

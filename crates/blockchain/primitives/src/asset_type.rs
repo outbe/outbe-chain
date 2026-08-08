@@ -54,7 +54,7 @@ impl From<Address> for AssetType {
 /// COEN base, ISO quote — the orientation these pairs are registered in. COEN is
 /// also the zero address, so this happens to be the sorted key form as well.
 pub fn coen_iso_pair(iso_code: u16) -> AddressPair {
-    AddressPair::quoted_assets(AssetType::Native, AssetType::IsoCurrency(iso_code))
+    AddressPair::from_assets(AssetType::Native, AssetType::IsoCurrency(iso_code))
 }
 
 /// Marker nibbles every ISO currency address carries, keeping the reserved
@@ -217,8 +217,8 @@ mod tests {
     /// The quoted value keeps the order; only the storage key drops it.
     #[test]
     fn quoted_assets_keeps_the_order_the_assets_are_quoted_in() {
-        let forward = AddressPair::quoted_assets(AssetType::Native, AssetType::IsoCurrency(840));
-        let reverse = AddressPair::quoted_assets(AssetType::IsoCurrency(840), AssetType::Native);
+        let forward = AddressPair::from_assets(AssetType::Native, AssetType::IsoCurrency(840));
+        let reverse = AddressPair::from_assets(AssetType::IsoCurrency(840), AssetType::Native);
 
         assert_ne!(forward, reverse);
         assert!(forward.same_market(&reverse));

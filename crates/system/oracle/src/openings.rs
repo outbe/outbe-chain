@@ -188,7 +188,7 @@ pub fn oracle_count_slot_plan_v1(
 /// Rebuilds an entry's pair from the two words its `Mapping<_, AddressPair>`
 /// value occupies.
 fn checked_pair(base_word: U256, quote_word: U256) -> AddressPair {
-    AddressPair::quoted(
+    AddressPair::from_addresses(
         Address::from_word(base_word.into()),
         Address::from_word(quote_word.into()),
     )

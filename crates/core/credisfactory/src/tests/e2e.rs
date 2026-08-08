@@ -79,7 +79,7 @@ fn chain_b256() -> B256 {
 fn seed_oracle(storage: StorageHandle<'_>, rate_1e18: U256) {
     let mut oracle = OracleContract::new(storage);
     oracle
-        .register_pair(outbe_oracle::api::AddressPair::quoted(
+        .register_pair(outbe_oracle::api::AddressPair::from_addresses(
             outbe_oracle::api::COEN_ASSET,
             outbe_oracle::api::iso_asset(840),
         ))

@@ -93,7 +93,7 @@ impl<'storage, K: StorageKey> Mapping<'storage, K, AddressPair> {
         let slot = key.mapping_slot(self.base_slot);
         let base = self.word(slot)?;
         let quote = self.word(slot + U256::ONE)?;
-        Ok(AddressPair::quoted(
+        Ok(AddressPair::from_addresses(
             Address::from_word(base.into()),
             Address::from_word(quote.into()),
         ))
@@ -103,8 +103,8 @@ impl<'storage, K: StorageKey> Mapping<'storage, K, AddressPair> {
     /// half a pair decodes as a different pair, not as a missing one.
     pub fn write_pair(&self, key: &K, pair: AddressPair) -> Result<()> {
         let slot = key.mapping_slot(self.base_slot);
-        self.set_word(slot, pair.base().to_word())?;
-        self.set_word(slot + U256::ONE, pair.quote().to_word())
+        self.set_word(slot, pair.address1().to_word())?;
+        self.set_word(slot + U256::ONE, pair.address2().to_word())
     }
 
     fn word(&self, slot: U256) -> Result<U256> {
@@ -205,13 +205,13 @@ mod tests {
         // address is a legitimate asset, so absence is decided elsewhere.
         assert_eq!(mapping.read_pair(&1).unwrap(), AddressPair::ZERO);
 
-        let pair = AddressPair::quoted(base, quote);
+        let pair = AddressPair::from_addresses(base, quote);
         mapping.write_pair(&1, pair).unwrap();
 
         // The quoted orientation survives the round trip; it is not sorted.
         assert_eq!(mapping.read_pair(&1).unwrap(), pair);
-        assert_eq!(mapping.read_pair(&1).unwrap().base(), base);
-        assert_eq!(mapping.read_pair(&1).unwrap().quote(), quote);
+        assert_eq!(mapping.read_pair(&1).unwrap().address1(), base);
+        assert_eq!(mapping.read_pair(&1).unwrap().address2(), quote);
         assert_eq!(mapping.read_pair(&2).unwrap(), AddressPair::ZERO);
     }
 
@@ -228,7 +228,7 @@ mod tests {
         let storage = StorageHandle::new(&mut provider);
         let mapping: Mapping<u32, AddressPair> = Mapping::new(base_slot, contract, storage.clone());
         mapping
-            .write_pair(&7, AddressPair::quoted(base, quote))
+            .write_pair(&7, AddressPair::from_addresses(base, quote))
             .unwrap();
 
         let mut buf = [0u8; 64];

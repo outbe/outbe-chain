@@ -159,7 +159,7 @@ pub fn init_from_genesis(oracle: &mut OracleContract, config: &OracleGenesisConf
 
     // Register trading pairs.
     for (base, quote) in &config.pairs {
-        oracle.register_pair(AddressPair::quoted(*base, *quote))?;
+        oracle.register_pair(AddressPair::from_addresses(*base, *quote))?;
     }
 
     // Set initial exchange rates (system caller = Address::ZERO).
@@ -266,9 +266,9 @@ pub fn export_genesis(
         let pair = export_pair_metadata(oracle, pair_id)?;
         let rate = oracle.exchange_rate.read(&pair)?;
         if !rate.is_zero() {
-            initial_rates.push((pair.base(), pair.quote(), rate));
+            initial_rates.push((pair.address1(), pair.address2(), rate));
         }
-        pairs.push((pair.base(), pair.quote()));
+        pairs.push((pair.address1(), pair.address2()));
     }
 
     // Export authoritative role-scoped feeder delegations.
@@ -314,7 +314,7 @@ pub fn export_genesis(
             let pair = pair_map.read_pair(&p)?;
             let rate = rate_map.read(&p)?;
             let volume = volume_map.read(&p)?;
-            entries.push((pair.base(), pair.quote(), rate, volume));
+            entries.push((pair.address1(), pair.address2(), rate, volume));
         }
         snapshots.push(GenesisSnapshot { timestamp, entries });
     }
@@ -328,8 +328,8 @@ pub fn export_genesis(
         let peak_day = oracle.scurve_peak_day.read(&idx)?;
         let peak_price = oracle.scurve_peak_price.read(&idx)?;
         scurve_entries.push(GenesisScurveEntry {
-            base: pair.base(),
-            quote: pair.quote(),
+            base: pair.address1(),
+            quote: pair.address2(),
             peak_day,
             peak_price,
         });
@@ -442,7 +442,7 @@ fn import_aggregate_votes(
 
         for (idx, (base, quote, rate, volume)) in entries.into_iter().enumerate() {
             let idx = idx as u32;
-            pair_map.write_pair(&idx, AddressPair::quoted(base, quote))?;
+            pair_map.write_pair(&idx, AddressPair::from_addresses(base, quote))?;
             rate_map.write(&idx, rate)?;
             volume_map.write(&idx, volume)?;
         }
@@ -497,14 +497,14 @@ fn export_aggregate_votes(oracle: &OracleContract) -> Result<Vec<GenesisAggregat
             }
             // Deduplicate on the market, not the quote direction, so the same
             // pair submitted both ways round is still caught.
-            if !seen_pairs.insert(pair.sorted()) {
+            if !seen_pairs.insert(pair.to_canonical()) {
                 return Err(PrecompileError::Revert(
                     "duplicate pair in aggregate vote".into(),
                 ));
             }
             entries.push((
-                pair.base(),
-                pair.quote(),
+                pair.address1(),
+                pair.address2(),
                 rate_map.read(&tuple_idx)?,
                 volume_map.read(&tuple_idx)?,
             ));

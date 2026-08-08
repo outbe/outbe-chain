@@ -4756,7 +4756,7 @@ mod tests {
             // ISO code, so registering the pair is sufficient.
             let mut oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
             oracle
-                .register_pair(outbe_oracle::api::AddressPair::quoted(
+                .register_pair(outbe_oracle::api::AddressPair::from_addresses(
                     outbe_oracle::api::COEN_ASSET,
                     outbe_oracle::api::iso_asset(840),
                 ))
@@ -4858,7 +4858,7 @@ mod tests {
             // ISO code, so registering the pair is sufficient.
             let mut oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
             oracle
-                .register_pair(outbe_oracle::api::AddressPair::quoted(
+                .register_pair(outbe_oracle::api::AddressPair::from_addresses(
                     outbe_oracle::api::COEN_ASSET,
                     outbe_oracle::api::iso_asset(840),
                 ))
@@ -10861,7 +10861,7 @@ mod tests {
         // reads a registered pair instead of reverting "pair not registered".
         let mut oracle = outbe_oracle::schema::OracleContract::new(storage);
         oracle
-            .register_pair(outbe_oracle::api::AddressPair::quoted(
+            .register_pair(outbe_oracle::api::AddressPair::from_addresses(
                 outbe_oracle::api::COEN_ASSET,
                 outbe_oracle::api::iso_asset(840),
             ))

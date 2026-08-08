@@ -2157,7 +2157,7 @@ fn test_offering_entry_captures_vwap_unblocks_and_exit_reblocks() {
 
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(outbe_oracle::api::AddressPair::quoted(
+            .register_pair(outbe_oracle::api::AddressPair::from_addresses(
                 outbe_oracle::api::COEN_ASSET,
                 outbe_oracle::api::iso_asset(840),
             ))
@@ -2347,7 +2347,7 @@ fn test_missing_previous_vwap_results_in_red_day() {
 
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(outbe_oracle::api::AddressPair::quoted(
+            .register_pair(outbe_oracle::api::AddressPair::from_addresses(
                 outbe_oracle::api::COEN_ASSET,
                 outbe_oracle::api::iso_asset(840),
             ))
@@ -2424,7 +2424,7 @@ fn test_equal_vwap_results_in_red_day() {
 
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(outbe_oracle::api::AddressPair::quoted(
+            .register_pair(outbe_oracle::api::AddressPair::from_addresses(
                 outbe_oracle::api::COEN_ASSET,
                 outbe_oracle::api::iso_asset(840),
             ))
@@ -2499,7 +2499,7 @@ fn test_normal_lifecycle_never_leaves_ready_day_type_unknown() {
 
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(outbe_oracle::api::AddressPair::quoted(
+            .register_pair(outbe_oracle::api::AddressPair::from_addresses(
                 outbe_oracle::api::COEN_ASSET,
                 outbe_oracle::api::iso_asset(840),
             ))

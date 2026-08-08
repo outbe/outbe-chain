@@ -367,8 +367,8 @@ pub fn run_tally(oracle: &mut OracleContract, block_number: u64, timestamp: u64)
     if !ref_median.is_zero() {
         oracle.update_exchange_rate(ref_pair, ref_median, block_number, timestamp)?;
         let event = IOracle::ExchangeRateUpdated {
-            base: ref_pair.base(),
-            quote: ref_pair.quote(),
+            base: ref_pair.address1(),
+            quote: ref_pair.address2(),
             rate: ref_median,
             blockNumber: block_number,
         };
@@ -419,8 +419,8 @@ pub fn run_tally(oracle: &mut OracleContract, block_number: u64, timestamp: u64)
             if !actual_rate.is_zero() {
                 oracle.update_exchange_rate(pair, actual_rate, block_number, timestamp)?;
                 let event = IOracle::ExchangeRateUpdated {
-                    base: pair.base(),
-                    quote: pair.quote(),
+                    base: pair.address1(),
+                    quote: pair.address2(),
                     rate: actual_rate,
                     blockNumber: block_number,
                 };
