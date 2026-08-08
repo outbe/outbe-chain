@@ -34,9 +34,14 @@ pub fn dispatch(
         let mut oracle = OracleContract::new(storage);
         use IOracle::IOracleCalls::*;
         match call {
-            getExchangeRate(c) => view(c, |c| {
+            getExchangeRate(c) => view(c, |c| Ok(oracle.get_exchange_rate(c.base, c.quote)?.0)),
+            getExchangeRateData(c) => view(c, |c| {
                 let (rate, block, ts) = oracle.get_exchange_rate(c.base, c.quote)?;
                 Ok((rate, block, ts).into())
+            }),
+            getCoenExchangeRateFor(c) => view(c, |c| {
+                let quote = crate::api::iso_asset(c.isoCode);
+                Ok(oracle.get_exchange_rate(crate::api::COEN_ASSET, quote)?.0)
             }),
             getVwap(c) => view(c, |c| {
                 let pair = oracle.require_pair(c.base, c.quote)?;
@@ -71,9 +76,9 @@ pub fn dispatch(
             getFeederDelegation(c) => view(c, |c| oracle.get_feeder(&c.validator)),
             isVoteTarget(c) => view(c, |c| oracle.is_vote_target(c.base, c.quote)),
             getPairCount(_) => metadata::<IOracle::getPairCountCall>(|| oracle.pair_count.read()),
-            getExchangeRates(_) => metadata::<IOracle::getExchangeRatesCall>(|| {
-                let (bases, quotes, rates, blocks, timestamps) = oracle.get_exchange_rates()?;
-                Ok((bases, quotes, rates, blocks, timestamps).into())
+            getPairByIndex(c) => view(c, |c| {
+                let pair = oracle.require_pair_at(c.index)?;
+                Ok((pair.address1(), pair.address2()).into())
             }),
             getVoteTargets(_) => metadata::<IOracle::getVoteTargetsCall>(|| {
                 let (bases, quotes) = oracle.get_vote_targets()?;
@@ -268,14 +273,6 @@ pub fn dispatch(
                 Ok(IOracle::getAllScurveDataForPairReturn {
                     peakDays: peak_days,
                     peakPrices: peak_prices,
-                })
-            }),
-            getPairs(_) => metadata::<IOracle::getPairsCall>(|| {
-                let (bases, quotes, is_active) = oracle.get_pairs()?;
-                Ok(IOracle::getPairsReturn {
-                    bases,
-                    quotes,
-                    isActive: is_active,
                 })
             }),
             getReferenceCurrencies(_) => metadata::<IOracle::getReferenceCurrenciesCall>(|| {

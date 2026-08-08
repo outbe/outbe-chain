@@ -499,8 +499,7 @@ class StorageBuilder:
         An oracle pair is 40 bytes and a storage word is 32, so the value spans
         the key's mapping slot and the one after it — base then quote, the same
         layout Solidity gives `mapping(K => struct { address; address; })`.
-        Both words are written in the pair's quoted direction, which is what
-        reads compare against.
+        Callers pass the pair already canonical; nothing here sorts it.
         """
         slot = int(mapping_key(key_bytes, base_slot), 16)
         self.set_raw_slot(slot, int.from_bytes(asset_address(base), "big"))
@@ -1390,13 +1389,11 @@ def seed_oracle(storage: StorageBuilder, config: dict):
       slots 12-14: exchange_rate / block / timestamp, keyed by pair
       slot 15: feeder delegations
       slots 32-33: protected validators
-      slots 43-44: mapping(ordinal => base) / mapping(ordinal => quote), the
-        only way to enumerate the registry (40-42, 45 and 46 are retired
+      slot 43: mapping(pair_index => AddressPair), a two-word value and the only
+        way to enumerate the registry (40-42, 44, 45 and 46 are retired
         settlement holes; the settlement pair is derived as
         address_pair("COEN", "<iso>"))
       slot 55: reference_currencies (StorageVec<u16>)
-      slots 65-69: quote companions for the five pair entry columns
-        (21/29/35/51/57); slot 62 is a retired hole
     """
     cfg = config.get("config", {})
     storage.set_slot(0, parse_int(cfg.get("vote_period", 2)))
@@ -1430,13 +1427,19 @@ def seed_oracle(storage: StorageBuilder, config: dict):
         # The key is order-independent, so the inverse is the same pair.
         if h in pair_keys.values():
             raise ValueError(f"oracle pair already registered inverted: {base}/{quote}")
+        # This seeder writes slot 43 directly, bypassing `register_pair`, so it
+        # owes the same invariant: only the canonical orientation is stored, and
+        # `require_pair` relies on that rather than re-reading the entry.
+        if asset_address(base) > asset_address(quote):
+            raise ValueError(
+                f"oracle pair must be canonical (base <= quote): {base}/{quote}"
+            )
         pair_keys[key] = h
         pair_ids[key] = idx
 
         storage.set_mapping(10, h, idx)
         storage.set_mapping(11, h, 1 if pair.get("vote_target", True) else 0)
-        # pair_by_index (macro slot 43), stored in the quoting direction given,
-        # which reads must match.
+        # pair_by_index (macro slot 43), canonical orientation.
         storage.set_mapping_pair(43, u32_bytes(idx), base, quote)
 
         rate = parse_int(pair.get("initial_rate", "0"))

@@ -79,6 +79,31 @@ fn register_pair_rejects_an_asset_paired_with_itself() {
 }
 
 #[test]
+fn register_pair_rejects_a_non_canonical_quote() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        // The ISO address sorts below every token stand-in, so ETH/USD is the
+        // backwards way to name this market.
+        let backwards = AddressPair::from_addresses(ETH, usd());
+        assert!(
+            !backwards.is_canonical(),
+            "fixture is not a backwards quote"
+        );
+
+        let err = oracle.register_pair(backwards).unwrap_err();
+        assert!(
+            format!("{err:?}").contains("canonical"),
+            "expected a canonical-form revert, got {err:?}"
+        );
+        assert_eq!(oracle.pair_count.read().unwrap(), 0);
+
+        oracle
+            .register_pair(backwards.to_canonical())
+            .expect("the canonical orientation registers");
+    });
+}
+
+#[test]
 fn require_pair_rejects_a_pair_quoted_in_the_wrong_direction() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
@@ -91,79 +116,74 @@ fn require_pair_rejects_a_pair_quoted_in_the_wrong_direction() {
             pair_key(COEN, USDT)
         );
 
-        // Reading the inverse must revert rather than return the uninverted
-        // rate, which the lookup alone cannot distinguish.
+        // Reads whose value has no direction of its own — a VWAP, an S-curve
+        // peak — cannot answer a backwards quote, so they refuse it. Only the
+        // spot rate has a reciprocal.
         let err = oracle.require_pair(USDT, COEN).unwrap_err();
         assert!(
-            format!("{err:?}").contains("wrong direction"),
-            "expected a direction revert, got {err:?}"
+            format!("{err:?}").contains("canonical"),
+            "expected a canonical-form revert, got {err:?}"
         );
+        assert!(oracle.require_market(USDT, COEN).is_ok());
     });
 }
 
-/// The load-bearing property of storing a pair as one value: lookup ignores the
-/// quote direction while the stored entry does not. Both halves have to hold at
-/// once — an order-sensitive lookup would let the same market be registered
-/// twice, and a direction-blind entry would hand back a reciprocal rate as if it
-/// were genuine.
+/// The load-bearing property of a canonical-only registry: one market is one
+/// registration, reachable from either quote, and the entry always reads back
+/// canonical so nothing downstream has to remember which way it was written.
 #[test]
-fn a_pair_lookup_ignores_the_quote_direction_while_the_entry_records_it() {
+fn one_market_is_one_registration_reachable_from_either_quote() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
-        // Quote ETH in USD; the ISO address sorts below the token, so the
-        // registered orientation is the opposite of the sorted key form.
-        let registered = AddressPair::from_addresses(ETH, usd());
+        let registered = AddressPair::from_addresses(usd(), ETH);
         assert_eq!(oracle.register_pair(registered).unwrap(), 1);
-        assert_ne!(
-            registered.to_canonical(),
-            registered,
-            "fixture no longer exercises the sort"
-        );
 
         // Order-independent: either direction finds the same registration.
         assert_eq!(oracle.pair_index_of(registered).unwrap(), 1);
         assert_eq!(
             oracle
-                .pair_index_of(AddressPair::from_addresses(usd(), ETH))
+                .pair_index_of(AddressPair::from_addresses(ETH, usd()))
                 .unwrap(),
             1
         );
 
-        // Direction-preserving: the entry reads back as quoted, not as sorted,
-        // so the ABI reports ETH/USD and not USD/ETH.
+        // Registering the market backwards is a duplicate, not a second market.
+        assert!(oracle
+            .register_pair(AddressPair::from_addresses(ETH, usd()))
+            .is_err());
+        assert_eq!(oracle.pair_count.read().unwrap(), 1);
+
         let entry = oracle.pair_at(1).unwrap();
         assert_eq!(entry, registered);
-        assert_eq!((entry.address1(), entry.address2()), (ETH, usd()));
-
-        // Direction-enforcing at every read boundary.
-        assert!(oracle.require_pair(ETH, usd()).is_ok());
-        assert!(oracle.require_pair(usd(), ETH).is_err());
-        assert!(oracle.is_vote_target(ETH, usd()).unwrap());
-        assert!(!oracle.is_vote_target(usd(), ETH).unwrap());
+        assert!(entry.is_canonical());
     });
 }
 
 #[test]
-fn every_pair_read_agrees_on_the_registered_direction() {
+fn every_pair_read_agrees_on_the_market_whichever_way_it_is_quoted() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         oracle
             .register_pair(AddressPair::from_addresses(COEN, USDT))
             .unwrap();
+        let rate = U256::in_units(4u64);
         oracle
-            .set_exchange_rate(Address::ZERO, COEN, USDT, U256::from(7u64), 1, 1)
+            .set_exchange_rate(Address::ZERO, COEN, USDT, rate, 1, 1)
             .unwrap();
 
         assert!(oracle.is_vote_target(COEN, USDT).unwrap());
+        assert_eq!(oracle.get_exchange_rate(COEN, USDT).unwrap().0, rate);
+
+        // Backwards: both answer for the same market, the rate as a reciprocal.
+        // Disagreeing here would let a caller act on a rate it cannot fetch.
+        assert!(oracle.is_vote_target(USDT, COEN).unwrap());
         assert_eq!(
-            oracle.get_exchange_rate(COEN, USDT).unwrap().0,
-            U256::from(7u64)
+            oracle.get_exchange_rate(USDT, COEN).unwrap().0,
+            U256::in_units(1u64) / U256::from(4u64)
         );
 
-        // Backwards: the boolean query answers false and the rate read reverts.
-        // Disagreeing here would let a caller act on a rate it cannot fetch.
-        assert!(!oracle.is_vote_target(USDT, COEN).unwrap());
-        assert!(oracle.get_exchange_rate(USDT, COEN).is_err());
+        // Writes stay canonical-only: a backwards quote has no direction-free
+        // reading on the way in.
         assert!(oracle
             .set_exchange_rate(Address::ZERO, USDT, COEN, U256::from(9u64), 1, 1)
             .is_err());
@@ -171,42 +191,66 @@ fn every_pair_read_agrees_on_the_registered_direction() {
 }
 
 #[test]
-fn get_pairs_returns_ids_symbols_and_active_flags() {
+fn a_backwards_quote_prices_at_the_reciprocal() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
-
         oracle
             .register_pair(AddressPair::from_addresses(COEN, USDT))
             .unwrap();
+        // 2.5 COEN per USDT.
+        let rate = U256::from(2_500_000_000_000_000_000u128);
         oracle
-            .register_pair(AddressPair::from_addresses(ETH, USDC))
-            .unwrap();
-        oracle
-            .register_pair(AddressPair::from_addresses(BTC, USDC))
-            .unwrap();
-
-        // Deactivate the middle pair to exercise the isActive flag.
-        oracle
-            .deactivate_vote_target(Address::ZERO, ETH, USDC)
+            .set_exchange_rate(Address::ZERO, COEN, USDT, rate, 42, 86_400)
             .unwrap();
 
-        let (bases, quotes, active) = oracle.get_pairs().unwrap();
+        let (forward, fwd_block, fwd_ts) = oracle.get_exchange_rate(COEN, USDT).unwrap();
+        let (backward, bwd_block, bwd_ts) = oracle.get_exchange_rate(USDT, COEN).unwrap();
 
-        // Parallel arrays are aligned and 1-indexed in registration order.
-        assert_eq!(bases, vec![COEN, ETH, BTC]);
-        assert_eq!(quotes, vec![USDT, USDC, USDC]);
-        assert_eq!(active, vec![true, false, true]);
+        assert_eq!(forward, rate);
+        assert_eq!(backward, U256::from(400_000_000_000_000_000u128));
+        // The observation is one event; only its quoting differs.
+        assert_eq!((fwd_block, fwd_ts), (42, 86_400));
+        assert_eq!((bwd_block, bwd_ts), (42, 86_400));
     });
 }
 
 #[test]
-fn get_pairs_returns_empty_arrays_without_registered_pairs() {
+fn an_unpublished_rate_reads_as_zero_from_either_side() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        oracle
+            .register_pair(AddressPair::from_addresses(COEN, USDT))
+            .unwrap();
+
+        // No reciprocal exists for zero; inverting must not divide by it.
+        assert_eq!(oracle.get_exchange_rate(COEN, USDT).unwrap().0, U256::ZERO);
+        assert_eq!(oracle.get_exchange_rate(USDT, COEN).unwrap().0, U256::ZERO);
+    });
+}
+
+#[test]
+fn a_rate_read_still_requires_a_registered_market() {
     with_storage(|storage| {
         let oracle = OracleContract::new(storage.clone());
-        let (bases, quotes, active) = oracle.get_pairs().unwrap();
-        assert!(bases.is_empty());
-        assert!(quotes.is_empty());
-        assert!(active.is_empty());
+        assert!(oracle.get_exchange_rate(COEN, USDT).is_err());
+        assert!(oracle.get_exchange_rate(USDT, COEN).is_err());
+        assert!(!oracle.is_vote_target(COEN, USDT).unwrap());
+    });
+}
+
+#[test]
+fn require_pair_at_rejects_an_index_outside_the_registry() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        oracle
+            .register_pair(AddressPair::from_addresses(COEN, USDT))
+            .unwrap();
+
+        assert_eq!(oracle.require_pair_at(1).unwrap(), pair_key(COEN, USDT));
+        // Index 0 and one past the end both read back as the zero pair, which is
+        // a plausible-looking COEN/COEN registration rather than an obvious miss.
+        assert!(oracle.require_pair_at(0).is_err());
+        assert!(oracle.require_pair_at(2).is_err());
     });
 }
 
@@ -571,8 +615,11 @@ fn submit_vote_reports_a_duplicate_before_an_inactive_vote_target() {
 // View functions
 // -----------------------------------------------------------------------
 
+/// The whole-registry rate table is now built by the caller from `pair_count`,
+/// `require_pair_at` and the per-pair rate read, so what has to hold is that
+/// walking the index in registration order lands each pair on its own rate.
 #[test]
-fn get_exchange_rates_returns_parallel_arrays_in_pair_id_order() {
+fn walking_the_registry_by_index_pairs_each_market_with_its_own_rate() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         oracle
@@ -591,25 +638,25 @@ fn get_exchange_rates_returns_parallel_arrays_in_pair_id_order() {
             .set_exchange_rate(Address::ZERO, ETH, USDT, rate2, 20, 240)
             .unwrap();
 
-        let (_, _, rates, blocks, timestamps) = oracle.get_exchange_rates().unwrap();
-        assert_eq!(rates.len(), 2);
-        assert_eq!(rates[0], rate1);
-        assert_eq!(rates[1], rate2);
-        assert_eq!(blocks[0], 10);
-        assert_eq!(blocks[1], 20);
-        assert_eq!(timestamps[0], 120);
-        assert_eq!(timestamps[1], 240);
-    });
-}
+        let count = oracle.pair_count.read().unwrap();
+        assert_eq!(count, 2);
+        let table: Vec<_> = (1..=count)
+            .map(|index| {
+                let pair = oracle.require_pair_at(index).unwrap();
+                let (rate, block, ts) = oracle
+                    .get_exchange_rate(pair.address1(), pair.address2())
+                    .unwrap();
+                (pair, rate, block, ts)
+            })
+            .collect();
 
-#[test]
-fn get_exchange_rates_returns_empty_arrays_without_registered_pairs() {
-    with_storage(|storage| {
-        let oracle = OracleContract::new(storage.clone());
-        let (_, _, rates, blocks, timestamps) = oracle.get_exchange_rates().unwrap();
-        assert!(rates.is_empty());
-        assert!(blocks.is_empty());
-        assert!(timestamps.is_empty());
+        assert_eq!(
+            table,
+            vec![
+                (pair_key(COEN, USDT), rate1, 10, 120),
+                (pair_key(ETH, USDT), rate2, 20, 240),
+            ]
+        );
     });
 }
 

@@ -309,9 +309,9 @@ impl OracleCmd {
 }
 
 async fn rate(client: &(impl Rpc + Sync), base: Address, quote: Address) -> Result<()> {
-    let call = IOracle::getExchangeRateCall { base, quote };
+    let call = IOracle::getExchangeRateDataCall { base, quote };
     let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
-    let ret = IOracle::getExchangeRateCall::abi_decode_returns(&result)?;
+    let ret = IOracle::getExchangeRateDataCall::abi_decode_returns(&result)?;
 
     println!("=== Exchange Rate: {base}/{quote} ===");
     println!("Rate:      {} (1e18)", super::format_unit(ret.rate));
@@ -320,29 +320,36 @@ async fn rate(client: &(impl Rpc + Sync), base: Address, quote: Address) -> Resu
     Ok(())
 }
 
+/// The whole rate table, assembled from the registry rather than fetched in one
+/// call: the oracle enumerates pairs by index and prices them one at a time.
+/// The whole rate table, assembled from the registry rather than fetched in one
+/// call: the oracle enumerates pairs by index and prices them one at a time.
 async fn rates(client: &(impl Rpc + Sync)) -> Result<()> {
-    let call = IOracle::getExchangeRatesCall {};
-    let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
-    let ret = IOracle::getExchangeRatesCall::abi_decode_returns(&result)?;
+    let count = read_pair_count(client).await?;
 
     println!(
-        "{:<6} {:<20} {:<12} {:<12}",
-        "PairID", "Rate", "Block", "Timestamp"
+        "{:<10} {:<10} {:<20} {:<12} {:<12}",
+        "Base", "Quote", "Rate", "Block", "Timestamp"
     );
-    println!("{}", "-".repeat(50));
-    for (i, ((rate, block), ts)) in ret
-        .rates
-        .iter()
-        .zip(ret.blocks.iter())
-        .zip(ret.timestamps.iter())
-        .enumerate()
-    {
+    println!("{}", "-".repeat(66));
+    for index in 1..=count {
+        let pair = read_pair(client, index).await?;
+
+        let call = IOracle::getExchangeRateDataCall {
+            base: pair.base,
+            quote: pair.quote,
+        };
+        let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
+        let ret = IOracle::getExchangeRateDataCall::abi_decode_returns(&result)?;
+
+        let (base, quote) = (show_asset(pair.base), show_asset(pair.quote));
         println!(
-            "{:<6} {:<20} {:<12} {:<12}",
-            i + 1,
-            super::format_unit(*rate),
-            block,
-            ts
+            "{:<10} {:<10} {:<20} {:<12} {:<12}",
+            base,
+            quote,
+            super::format_unit(ret.rate),
+            ret.lastBlock,
+            ret.lastTimestamp
         );
     }
     Ok(())
@@ -509,29 +516,46 @@ async fn params(client: &(impl Rpc + Sync)) -> Result<()> {
 }
 
 async fn pairs(client: &(impl Rpc + Sync)) -> Result<()> {
-    let call = IOracle::getPairsCall {};
-    let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
-    let ret = IOracle::getPairsCall::abi_decode_returns(&result)?;
-
-    if ret.bases.is_empty() {
+    let count = read_pair_count(client).await?;
+    if count == 0 {
         println!("No oracle pairs registered.");
         return Ok(());
     }
 
     println!("{:<10} {:<10} {:<8}", "Base", "Quote", "Active");
     println!("{}", "-".repeat(32));
-    for ((base, quote), active) in ret
-        .bases
-        .iter()
-        .zip(ret.quotes.iter())
-        .zip(ret.isActive.iter())
-    {
+    for index in 1..=count {
+        let pair = read_pair(client, index).await?;
+
+        let call = IOracle::isVoteTargetCall {
+            base: pair.base,
+            quote: pair.quote,
+        };
+        let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
+        let active = IOracle::isVoteTargetCall::abi_decode_returns(&result)?;
+
         // Rendered back into the shorthand the commands accept, so ISO 840
         // prints as `840` rather than its reserved address.
-        let (base, quote) = (show_asset(*base), show_asset(*quote));
+        let (base, quote) = (show_asset(pair.base), show_asset(pair.quote));
         println!("{base:<10} {quote:<10} {active:<8}");
     }
     Ok(())
+}
+
+/// Number of registered pairs — the bound for walking the registry by index.
+async fn read_pair_count(client: &(impl Rpc + Sync)) -> Result<u32> {
+    let call = IOracle::getPairCountCall {};
+    let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
+    Ok(IOracle::getPairCountCall::abi_decode_returns(&result)?)
+}
+
+async fn read_pair(
+    client: &(impl Rpc + Sync),
+    index: u32,
+) -> Result<IOracle::getPairByIndexReturn> {
+    let call = IOracle::getPairByIndexCall { index };
+    let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
+    Ok(IOracle::getPairByIndexCall::abi_decode_returns(&result)?)
 }
 
 async fn pair_count(client: &(impl Rpc + Sync)) -> Result<()> {

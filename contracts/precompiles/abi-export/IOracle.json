@@ -190,6 +190,25 @@
   },
   {
     "type": "function",
+    "name": "getCoenExchangeRateFor",
+    "inputs": [
+      {
+        "name": "isoCode",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "rate",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getCurrencyRate",
     "inputs": [
       {
@@ -251,6 +270,30 @@
         "name": "rate",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getExchangeRateData",
+    "inputs": [
+      {
+        "name": "base",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "rate",
+        "type": "uint256",
+        "internalType": "uint256"
       },
       {
         "name": "lastBlock",
@@ -261,39 +304,6 @@
         "name": "lastTimestamp",
         "type": "uint64",
         "internalType": "uint64"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getExchangeRates",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "bases",
-        "type": "address[]",
-        "internalType": "address[]"
-      },
-      {
-        "name": "quotes",
-        "type": "address[]",
-        "internalType": "address[]"
-      },
-      {
-        "name": "rates",
-        "type": "uint256[]",
-        "internalType": "uint256[]"
-      },
-      {
-        "name": "blocks",
-        "type": "uint64[]",
-        "internalType": "uint64[]"
-      },
-      {
-        "name": "timestamps",
-        "type": "uint64[]",
-        "internalType": "uint64[]"
       }
     ],
     "stateMutability": "view"
@@ -392,6 +402,30 @@
   },
   {
     "type": "function",
+    "name": "getPairByIndex",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "base",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getPairCount",
     "inputs": [],
     "outputs": [
@@ -399,29 +433,6 @@
         "name": "count",
         "type": "uint32",
         "internalType": "uint32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getPairs",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "bases",
-        "type": "address[]",
-        "internalType": "address[]"
-      },
-      {
-        "name": "quotes",
-        "type": "address[]",
-        "internalType": "address[]"
-      },
-      {
-        "name": "isActive",
-        "type": "bool[]",
-        "internalType": "bool[]"
       }
     ],
     "stateMutability": "view"

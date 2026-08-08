@@ -4,7 +4,7 @@ use alloy_primitives::{Address, U256};
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::units::Units;
+use outbe_primitives::units::{Units, ONE_COEN};
 
 use crate::schema::{OracleContract, SCALE_1E18};
 
@@ -113,10 +113,10 @@ fn init_from_genesis_imports_every_custom_config_collection() {
             min_valid_per_window: U256::from(100_000_000_000_000_000u128), // 0.10
             slash_fraction: U256::from(1_000_000_000_000_000u128),         // 0.001
             lookback_duration: 172_800,                                    // 2 days
-            pairs: vec![(COEN, usd()), (ETH, usd()), (BTC, USDT)],
+            pairs: vec![(COEN, usd()), (usd(), ETH), (BTC, USDT)],
             initial_rates: vec![
                 (COEN, usd(), U256::in_units(1u64)),
-                (ETH, usd(), U256::in_units(2000u64)),
+                (usd(), ETH, U256::in_units(2000u64)),
             ],
             feeder_delegations: vec![
                 (Address::new([0x11; 20]), Address::new([0xAAu8; 20])),
@@ -155,10 +155,10 @@ fn init_from_genesis_imports_every_custom_config_collection() {
         // Verify all three pairs registered.
         assert_eq!(oracle.pair_count.read().unwrap(), 3);
         assert_eq!(oracle.pair_index_of(pair_key(COEN, usd())).unwrap(), 1);
-        assert_eq!(oracle.pair_index_of(pair_key(ETH, usd())).unwrap(), 2);
+        assert_eq!(oracle.pair_index_of(pair_key(usd(), ETH)).unwrap(), 2);
         assert_eq!(oracle.pair_index_of(pair_key(BTC, USDT)).unwrap(), 3);
         assert!(oracle.is_vote_target(COEN, usd()).unwrap());
-        assert!(oracle.is_vote_target(ETH, usd()).unwrap());
+        assert!(oracle.is_vote_target(usd(), ETH).unwrap());
         assert!(oracle.is_vote_target(BTC, USDT).unwrap());
 
         // Verify initial rates (only first two pairs have rates).
@@ -167,7 +167,7 @@ fn init_from_genesis_imports_every_custom_config_collection() {
         assert_eq!(blk, 0);
         assert_eq!(ts, 0);
 
-        let (rate_eth, _, _) = oracle.get_exchange_rate(ETH, usd()).unwrap();
+        let (rate_eth, _, _) = oracle.get_exchange_rate(usd(), ETH).unwrap();
         assert_eq!(rate_eth, U256::in_units(2000u64));
 
         // BTC/USDT has no initial rate set → zero.
@@ -255,11 +255,49 @@ fn precompile_dispatch_round_trips_an_exchange_rate() {
         let result =
             crate::precompile::dispatch(storage.clone(), &calldata, Address::ZERO, U256::ZERO)
                 .unwrap();
-        let decoded = IOracle::getExchangeRateCall::abi_decode_returns(&result).unwrap();
+        let rate = IOracle::getExchangeRateCall::abi_decode_returns(&result).unwrap();
+        assert_eq!(rate, expected_rate);
+
+        let calldata = IOracle::getExchangeRateDataCall {
+            base: COEN,
+            quote: usd(),
+        }
+        .abi_encode();
+        let result =
+            crate::precompile::dispatch(storage.clone(), &calldata, Address::ZERO, U256::ZERO)
+                .unwrap();
+        let decoded = IOracle::getExchangeRateDataCall::abi_decode_returns(&result).unwrap();
 
         assert_eq!(decoded.rate, expected_rate);
         assert_eq!(decoded.lastBlock, 42);
         assert_eq!(decoded.lastTimestamp, 86_400);
+
+        // The same market quoted backwards prices at the reciprocal rather than
+        // reverting, and keeps the stored observation's block and timestamp.
+        let calldata = IOracle::getExchangeRateDataCall {
+            base: usd(),
+            quote: COEN,
+        }
+        .abi_encode();
+        let result =
+            crate::precompile::dispatch(storage.clone(), &calldata, Address::ZERO, U256::ZERO)
+                .unwrap();
+        let flipped = IOracle::getExchangeRateDataCall::abi_decode_returns(&result).unwrap();
+
+        assert_eq!(flipped.rate, SCALE_1E18 * ONE_COEN / expected_rate);
+        assert_eq!(flipped.lastBlock, 42);
+        assert_eq!(flipped.lastTimestamp, 86_400);
+
+        // COEN sorts first, so the ISO-code shorthand is always the canonical
+        // direction and agrees with the explicit two-address form.
+        let calldata = IOracle::getCoenExchangeRateForCall { isoCode: 840 }.abi_encode();
+        let result =
+            crate::precompile::dispatch(storage.clone(), &calldata, Address::ZERO, U256::ZERO)
+                .unwrap();
+        assert_eq!(
+            IOracle::getCoenExchangeRateForCall::abi_decode_returns(&result).unwrap(),
+            expected_rate
+        );
     });
 }
 #[test]
@@ -272,14 +310,14 @@ fn precompile_dispatch_round_trips_the_whole_query_surface() {
             .register_pair(AddressPair::from_addresses(COEN, usd()))
             .unwrap();
         oracle
-            .register_pair(AddressPair::from_addresses(ETH, usd()))
+            .register_pair(AddressPair::from_addresses(usd(), ETH))
             .unwrap();
         oracle
             .write_snapshot(
                 1_000,
                 &[
                     (pair_key(COEN, usd()), U256::in_units(100u64), SCALE_1E18),
-                    (pair_key(ETH, usd()), U256::in_units(2_000u64), SCALE_1E18),
+                    (pair_key(usd(), ETH), U256::in_units(2_000u64), SCALE_1E18),
                 ],
             )
             .unwrap();
@@ -288,7 +326,7 @@ fn precompile_dispatch_round_trips_the_whole_query_surface() {
                 2_000,
                 &[
                     (pair_key(COEN, usd()), U256::in_units(120u64), SCALE_1E18),
-                    (pair_key(ETH, usd()), U256::in_units(2_200u64), SCALE_1E18),
+                    (pair_key(usd(), ETH), U256::in_units(2_200u64), SCALE_1E18),
                 ],
             )
             .unwrap();
@@ -297,7 +335,7 @@ fn precompile_dispatch_round_trips_the_whole_query_surface() {
                 3_000,
                 &[
                     (pair_key(COEN, usd()), U256::in_units(140u64), SCALE_1E18),
-                    (pair_key(ETH, usd()), U256::in_units(2_400u64), SCALE_1E18),
+                    (pair_key(usd(), ETH), U256::in_units(2_400u64), SCALE_1E18),
                 ],
             )
             .unwrap();
@@ -320,8 +358,8 @@ fn precompile_dispatch_round_trips_the_whole_query_surface() {
         )
         .unwrap();
         assert_eq!(decoded.snapshotIds, vec![2, 2, 1, 1]);
-        assert_eq!(decoded.bases, vec![COEN, ETH, COEN, ETH]);
-        assert_eq!(decoded.quotes, vec![usd(), usd(), usd(), usd()]);
+        assert_eq!(decoded.bases, vec![COEN, usd(), COEN, usd()]);
+        assert_eq!(decoded.quotes, vec![usd(), ETH, usd(), ETH]);
 
         let twaps = IOracle::getTwapsCall { lookback: 2_500 }.abi_encode();
         let decoded = IOracle::getTwapsCall::abi_decode_returns(
@@ -329,8 +367,8 @@ fn precompile_dispatch_round_trips_the_whole_query_surface() {
                 .unwrap(),
         )
         .unwrap();
-        assert_eq!(decoded.bases, vec![COEN, ETH]);
-        assert_eq!(decoded.quotes, vec![usd(), usd()]);
+        assert_eq!(decoded.bases, vec![COEN, usd()]);
+        assert_eq!(decoded.quotes, vec![usd(), ETH]);
         assert_eq!(decoded.lookbackSeconds, vec![2_500, 2_500]);
         assert_eq!(decoded.twaps.len(), 2);
 
@@ -343,8 +381,8 @@ fn precompile_dispatch_round_trips_the_whole_query_surface() {
             &crate::precompile::dispatch(storage.clone(), &wwd, Address::ZERO, U256::ZERO).unwrap(),
         )
         .unwrap();
-        assert_eq!(decoded.bases, vec![COEN, ETH]);
-        assert_eq!(decoded.quotes, vec![usd(), usd()]);
+        assert_eq!(decoded.bases, vec![COEN, usd()]);
+        assert_eq!(decoded.quotes, vec![usd(), ETH]);
         assert_eq!(decoded.lookbackSeconds, vec![2_000, 2_000]);
 
         let scurve_values = IOracle::getScurveValuesCall {
@@ -421,7 +459,7 @@ fn ioracle_selectors_are_unique() {
     use alloy_sol_types::SolInterface;
     use std::collections::HashSet;
 
-    const EXPECTED_IORACLE_FUNCTIONS: usize = 35;
+    const EXPECTED_IORACLE_FUNCTIONS: usize = 36;
 
     let selectors: Vec<[u8; 4]> = IOracle::IOracleCalls::selectors().collect();
     assert_eq!(
@@ -560,10 +598,10 @@ fn genesis_imports_pending_aggregate_votes() {
         let volume1 = U256::in_units(100u64);
         let volume2 = U256::in_units(200u64);
         let config = crate::genesis::OracleGenesisConfig {
-            pairs: vec![(COEN, usd()), (ETH, usd())],
+            pairs: vec![(COEN, usd()), (usd(), ETH)],
             aggregate_votes: vec![crate::genesis::GenesisAggregateVote {
                 validator,
-                entries: vec![(COEN, usd(), rate1, volume1), (ETH, usd(), rate2, volume2)],
+                entries: vec![(COEN, usd(), rate1, volume1), (usd(), ETH, rate2, volume2)],
             }],
             ..crate::genesis::OracleGenesisConfig::default_config()
         };
@@ -579,8 +617,8 @@ fn genesis_imports_pending_aggregate_votes() {
         let (exists, bases, quotes, rates, volumes) =
             oracle.get_aggregate_vote(&validator).unwrap();
         assert!(exists);
-        assert_eq!(bases, vec![COEN, ETH]);
-        assert_eq!(quotes, vec![usd(), usd()]);
+        assert_eq!(bases, vec![COEN, usd()]);
+        assert_eq!(quotes, vec![usd(), ETH]);
         assert_eq!(rates, vec![rate1, rate2]);
         assert_eq!(volumes, vec![volume1, volume2]);
     });
@@ -615,10 +653,10 @@ fn export_genesis_round_trips_the_full_oracle_state() {
     let v1 = Address::new([0x11; 20]);
     let v2 = Address::new([0x22; 20]);
     let config = crate::genesis::OracleGenesisConfig {
-        pairs: vec![(COEN, usd()), (ETH, usd()), (BTC, USDT)],
+        pairs: vec![(COEN, usd()), (usd(), ETH), (BTC, USDT)],
         initial_rates: vec![
             (COEN, usd(), U256::in_units(1u64)),
-            (ETH, usd(), U256::in_units(2000u64)),
+            (usd(), ETH, U256::in_units(2000u64)),
         ],
         feeder_delegations: vec![(v1, Address::new([0xAAu8; 20]))],
         aggregate_votes: vec![
@@ -626,7 +664,7 @@ fn export_genesis_round_trips_the_full_oracle_state() {
                 validator: v1,
                 entries: vec![
                     (COEN, usd(), U256::in_units(42u64), SCALE_1E18),
-                    (ETH, usd(), U256::in_units(2100u64), SCALE_1E18),
+                    (usd(), ETH, U256::in_units(2100u64), SCALE_1E18),
                 ],
             },
             crate::genesis::GenesisAggregateVote {
@@ -640,7 +678,7 @@ fn export_genesis_round_trips_the_full_oracle_state() {
             timestamp: 5000,
             entries: vec![
                 (COEN, usd(), U256::in_units(42u64), SCALE_1E18),
-                (ETH, usd(), U256::in_units(2100u64), SCALE_1E18),
+                (usd(), ETH, U256::in_units(2100u64), SCALE_1E18),
             ],
         }],
         scurve_entries: vec![crate::genesis::GenesisScurveEntry {
@@ -702,18 +740,18 @@ fn export_genesis_round_trips_the_full_oracle_state() {
 
         assert_eq!(oracle.pair_count.read().unwrap(), 3);
         assert_eq!(oracle.pair_index_of(pair_key(COEN, usd())).unwrap(), 1);
-        assert_eq!(oracle.pair_index_of(pair_key(ETH, usd())).unwrap(), 2);
+        assert_eq!(oracle.pair_index_of(pair_key(usd(), ETH)).unwrap(), 2);
         assert_eq!(oracle.pair_index_of(pair_key(BTC, USDT)).unwrap(), 3);
         assert_eq!(
             oracle.get_exchange_rate(COEN, usd()).unwrap().0,
             U256::in_units(1u64)
         );
         assert_eq!(
-            oracle.get_exchange_rate(ETH, usd()).unwrap().0,
+            oracle.get_exchange_rate(usd(), ETH).unwrap().0,
             U256::in_units(2000u64)
         );
         assert_eq!(oracle.get_feeder(&v1).unwrap(), Address::new([0xAAu8; 20]));
-        assert_eq!(oracle.get_aggregate_vote(&v1).unwrap().1, vec![COEN, ETH]);
+        assert_eq!(oracle.get_aggregate_vote(&v1).unwrap().1, vec![COEN, usd()]);
         assert_eq!(oracle.get_aggregate_vote(&v2).unwrap().1, vec![COEN]);
         assert_eq!(oracle.penalty_success_count.read(&v1).unwrap(), 7);
         assert_eq!(oracle.penalty_miss_count.read(&v2).unwrap(), 4);
@@ -762,7 +800,7 @@ fn store_worldwide_day_vwap_snapshot_round_trips_every_pair() {
             .register_pair(AddressPair::from_addresses(COEN, usd()))
             .unwrap();
         oracle
-            .register_pair(AddressPair::from_addresses(ETH, usd()))
+            .register_pair(AddressPair::from_addresses(usd(), ETH))
             .unwrap();
 
         oracle
@@ -770,7 +808,7 @@ fn store_worldwide_day_vwap_snapshot_round_trips_every_pair() {
                 1_500,
                 &[
                     (pair_key(COEN, usd()), U256::from(110u64), U256::from(1u64)),
-                    (pair_key(ETH, usd()), U256::from(2_200u64), U256::from(1u64)),
+                    (pair_key(usd(), ETH), U256::from(2_200u64), U256::from(1u64)),
                 ],
             )
             .unwrap();
@@ -784,8 +822,8 @@ fn store_worldwide_day_vwap_snapshot_round_trips_every_pair() {
             .unwrap();
         assert_eq!(start_time, 1_000);
         assert_eq!(end_time, 3_000);
-        assert_eq!(bases, vec![COEN, ETH]);
-        assert_eq!(quotes, vec![usd(), usd()]);
+        assert_eq!(bases, vec![COEN, usd()]);
+        assert_eq!(quotes, vec![usd(), ETH]);
         assert_eq!(vwaps, vec![U256::from(110u64), U256::from(2_200u64)]);
         assert_eq!(lookbacks, vec![2_000, 2_000]);
         assert_eq!(
@@ -809,8 +847,8 @@ fn store_worldwide_day_vwap_snapshot_round_trips_every_pair() {
         .unwrap();
         assert_eq!(decoded.startTime, 1_000);
         assert_eq!(decoded.endTime, 3_000);
-        assert_eq!(decoded.bases, vec![COEN, ETH]);
-        assert_eq!(decoded.quotes, vec![usd(), usd()]);
+        assert_eq!(decoded.bases, vec![COEN, usd()]);
+        assert_eq!(decoded.quotes, vec![usd(), ETH]);
         assert_eq!(
             decoded.vwaps,
             vec![U256::from(110u64), U256::from(2_200u64)]
@@ -871,7 +909,7 @@ fn finalize_utc_day_vwap_persists_every_vote_target_pair() {
             .register_pair(AddressPair::from_addresses(COEN, usd()))
             .unwrap();
         oracle
-            .register_pair(AddressPair::from_addresses(ETH, usd()))
+            .register_pair(AddressPair::from_addresses(usd(), ETH))
             .unwrap();
 
         let utc_day = 20260624u32;
@@ -895,7 +933,7 @@ fn finalize_utc_day_vwap_persists_every_vote_target_pair() {
         oracle
             .write_snapshot(
                 day_start + 300,
-                &[(pair_key(ETH, usd()), U256::from(2_200u64), U256::from(1u64))],
+                &[(pair_key(usd(), ETH), U256::from(2_200u64), U256::from(1u64))],
             )
             .unwrap();
 
@@ -910,14 +948,14 @@ fn finalize_utc_day_vwap_persists_every_vote_target_pair() {
         );
         assert_eq!(
             oracle
-                .get_utc_day_vwap_for_pair(utc_day, pair_key(ETH, usd()))
+                .get_utc_day_vwap_for_pair(utc_day, pair_key(usd(), ETH))
                 .unwrap(),
             Some(U256::from(2_200u64))
         );
 
         let (bases, quotes, vwaps) = oracle.get_utc_day_vwap_snapshot(utc_day).unwrap();
-        assert_eq!(bases, vec![COEN, ETH]);
-        assert_eq!(quotes, vec![usd(), usd()]);
+        assert_eq!(bases, vec![COEN, usd()]);
+        assert_eq!(quotes, vec![usd(), ETH]);
         assert_eq!(vwaps, vec![U256::from(133u64), U256::from(2_200u64)]);
 
         // Unknown pair on a finalized day, and an unfinalized day, both read None.

@@ -33,17 +33,29 @@ interface IOracle {
         uint256 volume;
     }
 
-    /// @notice Returns the current exchange rate for a pair.
+    /// @notice Returns the current exchange rate for a market, quoted in the
+    ///         caller's direction.
+    /// @dev Only the canonical orientation (`base < quote` by address) is
+    ///      stored, so quoting the market backwards returns the reciprocal
+    ///      `1e36 / rate`. An unpublished rate is `0` from either side. Reverts
+    ///      if the market is not registered. Unlike the other pair-scoped reads,
+    ///      this one accepts either direction — a spot rate is the only value
+    ///      here that has a well-defined inverse.
     function getExchangeRate(address base, address quote)
         external
         view
         returns (uint256 rate);
 
+    /// @notice `getExchangeRate` for `COEN/<isoCode>`. COEN is the zero address
+    ///         and so always sorts first: this is never the inverted direction.
     function getCoenExchangeRateFor(uint16 isoCode)
         external
         view
         returns (uint256 rate);
 
+    /// @notice `getExchangeRate` plus when the rate was last written. The block
+    ///         and timestamp describe the stored observation and are the same
+    ///         whichever direction the market is quoted in.
     function getExchangeRateData(address base, address quote)
         external
         view
@@ -90,6 +102,9 @@ interface IOracle {
     /// @notice Returns the number of registered pairs.
     function getPairCount() external view returns (uint32 count);
 
+    /// @notice The pair at a 1-based registry index, in canonical orientation.
+    /// @dev Together with `getPairCount` this is how the whole registry is
+    ///      enumerated. Reverts outside `1..getPairCount()`.
     function getPairByIndex(uint32 index) external view returns (address base, address quote);
 
     /// @notice Returns all active vote target pairs.

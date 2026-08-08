@@ -11,6 +11,7 @@ use outbe_primitives::error::{PrecompileError, Result};
 
 use crate::constants::MAX_SNAPSHOT_RETENTION_SECONDS;
 use crate::schema::{OracleContract, PairIndex, SCALE_1E18};
+use outbe_primitives::units::{ONE_COEN};
 
 /// `(exists, bases, quotes, rates, volumes)` — pending aggregate vote.
 type AggregateVote = (bool, Vec<Address>, Vec<Address>, Vec<U256>, Vec<U256>);
@@ -28,11 +29,19 @@ type SnapshotHistory = (
 /// `(start_time, end_time, bases, quotes, vwaps, lookbacks)` — stored WWD VWAP snapshot.
 type WorldwideDayVwapSnapshot = (u64, u64, Vec<Address>, Vec<Address>, Vec<U256>, Vec<u64>);
 
-/// `(bases, quotes, is_active)` — the registered pair table.
-type PairTable = (Vec<Address>, Vec<Address>, Vec<bool>);
-
-/// `(bases, quotes, rates, blocks, timestamps)` — every pair's current rate.
-type ExchangeRateTable = (Vec<Address>, Vec<Address>, Vec<U256>, Vec<u64>, Vec<u64>);
+/// The reciprocal of a 1e18-scaled rate, in the same scale.
+///
+/// Zero has no reciprocal and stays zero, so "no rate published" reads the same
+/// from either side of the market instead of dividing by zero. A rate above
+/// `1e36` floors to zero for the same reason it would in Solidity; nothing that
+/// large is a real price.
+fn invert_rate(rate: U256) -> U256 {
+    if rate.is_zero() {
+        U256::ZERO
+    } else {
+        SCALE_1E18 * ONE_COEN / rate
+    }
+}
 
 impl OracleContract<'_> {
     // -----------------------------------------------------------------------
@@ -41,9 +50,11 @@ impl OracleContract<'_> {
 
     /// Registers a new trading pair and marks it as a vote target.
     ///
-    /// The pair is recorded in the orientation quoted; the storage key sorts, so
-    /// registering the inverse of an existing pair is rejected as a duplicate.
-    /// Returns the assigned enumeration index (1-based).
+    /// Only the canonical orientation is accepted, so every column keyed by a
+    /// pair holds exactly one direction and a backwards quote has a single
+    /// well-defined reading. The storage key sorts regardless, so registering
+    /// the inverse of an existing pair is rejected as a duplicate. Returns the
+    /// assigned enumeration index (1-based).
     pub fn register_pair(&mut self, pair: AddressPair) -> Result<PairIndex> {
         if pair.address1() == pair.address2() {
             return Err(PrecompileError::Revert(
@@ -71,13 +82,27 @@ impl OracleContract<'_> {
         Ok(new_index)
     }
 
-    /// The pair registered at `index`, in the orientation it was registered in.
+    /// The pair registered at `index`, in canonical orientation.
     ///
     /// Reads back as the zero pair for an index that was never written, which is
     /// why membership is decided by [`Self::pair_index_of`] and never by a zero
-    /// check — the zero address is a legitimate asset (native COEN).
+    /// check — the zero address is a legitimate asset (native COEN). Callers
+    /// iterating `1..=pair_count` have already established the bound; anything
+    /// taking an index from outside goes through [`Self::require_pair_at`].
     pub fn pair_at(&self, index: PairIndex) -> Result<AddressPair> {
         self.pair_by_index.read_pair(&index)
+    }
+
+    /// [`Self::pair_at`] for an index that arrived from a caller.
+    ///
+    /// An unwritten index reads back as the zero pair, which is indistinguishable
+    /// from a genuine COEN/COEN registration, so the bound is checked rather than
+    /// the value.
+    pub fn require_pair_at(&self, index: PairIndex) -> Result<AddressPair> {
+        if index == 0 || index > self.pair_count.read()? {
+            return Err(PrecompileError::Revert("pair index out of range".into()));
+        }
+        self.pair_at(index)
     }
 
     /// Deactivates a pair's vote target status (system-only).
@@ -137,36 +162,48 @@ impl OracleContract<'_> {
         self.pair_to_index.read(&pair)
     }
 
-    /// Resolves an ABI-quoted pair against the registry.
+    /// Resolves an ABI-quoted pair that has to be quoted the way it is stored.
     ///
-    /// The lookup is order-independent, so it alone cannot tell `COEN/USD` from
-    /// `USD/COEN`. Quoting a registered pair backwards would otherwise return its
-    /// rate un-inverted, so the registered entry is compared for exact equality —
-    /// direction included — and a flipped quote reverts.
+    /// The registry only ever holds canonical pairs — [`Self::register_pair`]
+    /// rejects anything else — so a non-canonical quote names a direction no
+    /// storage column is keyed for. Every value read through this resolver is a
+    /// bare scalar with no direction of its own (a VWAP, an S-curve peak, a
+    /// median input), and none of them is its own reciprocal, so a flipped quote
+    /// reverts rather than being reinterpreted.
     pub fn require_pair(&self, base: Address, quote: Address) -> Result<AddressPair> {
-        let pair = AddressPair::from_addresses(base, quote);
-        let index = self.pair_to_index.read(&pair)?;
-        if index == 0 {
-            return Err(PrecompileError::Revert("pair not registered".into()));
-        }
-        if self.pair_by_index.read_pair(&index)? != pair {
+        let pair = self.require_market(base, quote)?;
+        if !pair.is_canonical() {
             return Err(PrecompileError::Revert(
-                "pair quoted in the wrong direction".into(),
+                "pair must be quoted in canonical form".into(),
             ));
         }
         Ok(pair)
     }
 
-    /// Returns whether a pair is an active vote target.
+    /// Resolves an ABI-quoted pair as a market, in either direction.
     ///
-    /// Direction-sensitive like every other pair read, so this cannot answer
-    /// `true` for a quote that [`Self::get_exchange_rate`] would reject. Being a
-    /// plain boolean query it returns `false` rather than reverting; genuine
-    /// storage faults still propagate.
+    /// The returned pair keys canonical storage whichever way it was quoted, and
+    /// `is_canonical()` reports whether the caller quoted it as stored. Only the
+    /// spot-rate reads use this — they are the one place a backwards quote has a
+    /// well-defined answer, namely the reciprocal.
+    pub fn require_market(&self, base: Address, quote: Address) -> Result<AddressPair> {
+        let pair = AddressPair::from_addresses(base, quote);
+        if self.pair_to_index.read(&pair)? == 0 {
+            return Err(PrecompileError::Revert("pair not registered".into()));
+        }
+        Ok(pair)
+    }
+
+    /// Returns whether a market is an active vote target.
+    ///
+    /// Direction-insensitive: being a vote target is a property of the market,
+    /// not of how a caller quotes it, and answering `false` for a direction
+    /// [`Self::get_exchange_rate`] happily prices would be an incoherence a
+    /// caller could act on. Being a plain boolean query it returns `false` for an
+    /// unregistered market rather than reverting; storage faults still propagate.
     pub fn is_vote_target(&self, base: Address, quote: Address) -> Result<bool> {
         let pair = AddressPair::from_addresses(base, quote);
-        let index = self.pair_to_index.read(&pair)?;
-        if index == 0 || self.pair_by_index.read_pair(&index)? != pair {
+        if self.pair_to_index.read(&pair)? == 0 {
             return Ok(false);
         }
         self.vote_target.read(&pair)
@@ -176,10 +213,20 @@ impl OracleContract<'_> {
     // Exchange Rate Read/Write
     // -----------------------------------------------------------------------
 
-    /// Returns the current exchange rate for a pair (1e18 scaled).
+    /// Returns the current exchange rate for a market (1e18 scaled), quoted in
+    /// the caller's direction, plus the block and timestamp it was last written.
+    ///
+    /// Only the canonical direction is stored, so quoting the market backwards
+    /// returns the reciprocal. The block and timestamp describe the stored
+    /// observation and are the same either way.
     pub fn get_exchange_rate(&self, base: Address, quote: Address) -> Result<(U256, u64, u64)> {
-        let pair = self.require_pair(base, quote)?;
-        let rate = self.exchange_rate.read(&pair)?;
+        let pair = self.require_market(base, quote)?;
+        let stored = self.exchange_rate.read(&pair)?;
+        let rate = if pair.is_canonical() {
+            stored
+        } else {
+            invert_rate(stored)
+        };
         let block = self.exchange_rate_block.read(&pair)?;
         let ts = self.exchange_rate_timestamp.read(&pair)?;
         Ok((rate, block, ts))
@@ -447,30 +494,6 @@ impl OracleContract<'_> {
     // Bulk Read Views
     // -----------------------------------------------------------------------
 
-    /// Returns all pair exchange rates as parallel arrays.
-    ///
-    /// Iterates `pair_count` and reads rate / block / timestamp for each pair.
-    pub fn get_exchange_rates(&self) -> Result<ExchangeRateTable> {
-        let count = self.pair_count.read()?;
-        let mut bases = Vec::with_capacity(count as usize);
-        let mut quotes = Vec::with_capacity(count as usize);
-        let mut rates = Vec::with_capacity(count as usize);
-        let mut blocks = Vec::with_capacity(count as usize);
-        let mut timestamps = Vec::with_capacity(count as usize);
-
-        for pid in 1..=count {
-            let pair = self.pair_at(pid)?;
-            let (base, quote) = (pair.address1(), pair.address2());
-            bases.push(base);
-            quotes.push(quote);
-            rates.push(self.exchange_rate.read(&pair)?);
-            blocks.push(self.exchange_rate_block.read(&pair)?);
-            timestamps.push(self.exchange_rate_timestamp.read(&pair)?);
-        }
-
-        Ok((bases, quotes, rates, blocks, timestamps))
-    }
-
     /// Returns `(bases, quotes)` of all active vote targets.
     pub fn get_vote_targets(&self) -> Result<(Vec<Address>, Vec<Address>)> {
         let count = self.pair_count.read()?;
@@ -704,27 +727,5 @@ impl OracleContract<'_> {
             vwaps.push(value_map.read(&idx)?);
         }
         Ok((bases, quotes, vwaps))
-    }
-
-    /// Returns all registered pairs as parallel arrays of
-    /// (bases, quotes, is_active).
-    ///
-    /// Base and quote come back in the orientation they were registered in, not
-    /// the sorted order the storage key uses.
-    pub fn get_pairs(&self) -> Result<PairTable> {
-        let count = self.pair_count.read()?;
-        let mut bases = Vec::with_capacity(count as usize);
-        let mut quotes = Vec::with_capacity(count as usize);
-        let mut is_active = Vec::with_capacity(count as usize);
-
-        for pid in 1..=count {
-            let pair = self.pair_at(pid)?;
-            let (base, quote) = (pair.address1(), pair.address2());
-            bases.push(base);
-            quotes.push(quote);
-            is_active.push(self.vote_target.read(&pair)?);
-        }
-
-        Ok((bases, quotes, is_active))
     }
 }

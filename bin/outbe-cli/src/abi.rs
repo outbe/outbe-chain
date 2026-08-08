@@ -213,7 +213,9 @@ sol! {
 
     #[derive(Debug)]
     interface IOracle {
-        function getExchangeRate(address base, address quote) external view returns (uint256 rate, uint64 lastBlock, uint64 lastTimestamp);
+        function getExchangeRate(address base, address quote) external view returns (uint256 rate);
+        function getExchangeRateData(address base, address quote) external view returns (uint256 rate, uint64 lastBlock, uint64 lastTimestamp);
+        function getCoenExchangeRateFor(uint16 isoCode) external view returns (uint256 rate);
         function getVwap(address base, address quote, uint64 lookbackSeconds) external view returns (uint256 vwap);
         function getVwapForTimeRange(address base, address quote, uint64 startTime, uint64 endTime) external view returns (uint256 vwap);
         function getScurveValue(address base, address quote, uint64 timestamp) external view returns (uint256 value);
@@ -222,7 +224,7 @@ sol! {
         function getFeederDelegation(address validator) external view returns (address feeder);
         function isVoteTarget(address base, address quote) external view returns (bool);
         function getPairCount() external view returns (uint32 count);
-        function getExchangeRates() external view returns (address[] memory bases, address[] memory quotes, uint256[] memory rates, uint64[] memory blocks, uint64[] memory timestamps);
+        function getPairByIndex(uint32 index) external view returns (address base, address quote);
         function getVoteTargets() external view returns (address[] memory bases, address[] memory quotes);
         function getAggregateVote(address validator) external view returns (bool exists, address[] memory bases, address[] memory quotes, uint256[] memory rates, uint256[] memory volumes);
         function getSlashWindowProgress(address validator) external view returns (uint64 success, uint64 abstain, uint64 miss, uint64 slashWindow);
@@ -238,7 +240,6 @@ sol! {
         function getScurveValues(address base, address quote, uint64 timestamp) external view returns (uint64 targetDay, uint64[] memory peakDays, uint256[] memory peakPrices, uint256[] memory values);
         function getAllScurveData() external view returns (address[] memory bases, address[] memory quotes, uint64[] memory peakDays, uint256[] memory peakPrices);
         function getAllScurveDataForPair(address base, address quote) external view returns (uint64[] memory peakDays, uint256[] memory peakPrices);
-        function getPairs() external view returns (address[] memory bases, address[] memory quotes, bool[] memory isActive);
         function getNominalPrice(address base, address quote, uint64 timestamp) external view returns (uint256 price);
         function getNominalPriceComponents(address base, address quote, uint64 timestamp) external view returns (uint256 nominalPrice, uint256 vwap, uint256 maxScurve, string memory source);
         function delegateFeederConsent(address feeder) external;
