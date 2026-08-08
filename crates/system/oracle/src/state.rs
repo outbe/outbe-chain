@@ -10,7 +10,7 @@ use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::error::{PrecompileError, Result};
 
 use crate::constants::MAX_SNAPSHOT_RETENTION_SECONDS;
-use crate::schema::{OracleContract, SCALE_1E18};
+use crate::schema::{OracleContract, PairIndex, SCALE_1E18};
 
 /// `(exists, bases, quotes, rates, volumes)` — pending aggregate vote.
 type AggregateVote = (bool, Vec<Address>, Vec<Address>, Vec<U256>, Vec<U256>);
@@ -44,7 +44,7 @@ impl OracleContract<'_> {
     /// The pair is recorded in the orientation quoted; the storage key sorts, so
     /// registering the inverse of an existing pair is rejected as a duplicate.
     /// Returns the assigned enumeration index (1-based).
-    pub fn register_pair(&mut self, pair: AddressPair) -> Result<u32> {
+    pub fn register_pair(&mut self, pair: AddressPair) -> Result<PairIndex> {
         if pair.base() == pair.quote() {
             return Err(PrecompileError::Revert(
                 "pair base and quote must differ".into(),
@@ -71,7 +71,7 @@ impl OracleContract<'_> {
     /// Reads back as the zero pair for an index that was never written, which is
     /// why membership is decided by [`Self::pair_index_of`] and never by a zero
     /// check — the zero address is a legitimate asset (native COEN).
-    pub fn pair_at(&self, index: u32) -> Result<AddressPair> {
+    pub fn pair_at(&self, index: PairIndex) -> Result<AddressPair> {
         self.pair_by_index.read_pair(&index)
     }
 
@@ -128,7 +128,7 @@ impl OracleContract<'_> {
     ///
     /// Order-independent: the lookup key sorts, so this answers the same for
     /// either quote direction.
-    pub fn pair_index_of(&self, pair: AddressPair) -> Result<u32> {
+    pub fn pair_index_of(&self, pair: AddressPair) -> Result<PairIndex> {
         self.pair_to_index.read(&pair)
     }
 

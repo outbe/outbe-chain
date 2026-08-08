@@ -6,6 +6,16 @@ use outbe_primitives::addresses::ORACLE_ADDRESS;
 use outbe_primitives::storage::types::{Mapping, Slot, StorageVec};
 pub use outbe_primitives::units::SCALE_1E18;
 
+/// Which pair a parallel-column group is talking about: the registry's 1-based
+/// enumeration index in `pair_by_index`, and the 0-based entry index in the
+/// per-vote, per-snapshot and per-day columns, where every pair appears once.
+///
+/// An alias, not a newtype — it labels which of this schema's several `u32`s
+/// means "which pair" without pretending to stop a `utc_day` being passed as
+/// one. The S-curve columns are deliberately *not* indexed by this: a pair can
+/// hold several S-curve entries, so their key identifies an entry, not a pair.
+pub type PairIndex = u32;
+
 /// EVM storage layout for the Oracle contract.
 ///
 /// Manages exchange rates, validator voting, price snapshots, and VWAP
@@ -16,8 +26,8 @@ pub use outbe_primitives::units::SCALE_1E18;
 /// A pair is an [`AddressPair`]: its two asset addresses in the orientation they
 /// were quoted. As a *key* it sorts (so both directions of a market share one
 /// slot); as a *value* it spans two consecutive words, base then quote.
-/// `pair_index` maps a pair onto a dense 1-based index, which exists only so the
-/// registry can be enumerated, and `pair_by_index` walks back.
+/// `pair_to_index` maps a pair onto a dense 1-based [`PairIndex`], which exists
+/// only so the registry can be enumerated, and `pair_by_index` walks back.
 ///
 /// Slot number == field declaration index; every field below occupies exactly
 /// one, including `Mapping<_, AddressPair>` — its second word lives at
@@ -49,11 +59,11 @@ pub struct OracleContract {
     // slot 8: number of registered pairs. Ordinals are 1-based and never
     // reused: nothing unregisters, so `1..=pair_count` is dense and every
     // enumeration relies on that.
-    pub pair_count: Slot<u32>,
+    pub pair_count: Slot<PairIndex>,
     // Slot 9 (`pair_id_to_hash`) is a retired hole. Do not reuse.
     // slot 10: mapping(pair => index) (0 = not registered)
     #[slot(10)]
-    pub pair_to_index: Mapping<AddressPair, u32>,
+    pub pair_to_index: Mapping<AddressPair, PairIndex>,
     // slot 11: mapping(pair => is_vote_target)
     pub vote_target: Mapping<AddressPair, bool>,
 
@@ -82,13 +92,13 @@ pub struct OracleContract {
     // slot 19: mapping(validator => has_voted_this_period)
     pub vote_exists: Mapping<Address, bool>,
     // slot 20: mapping(validator => number_of_tuples)
-    pub vote_tuple_count: Mapping<Address, u32>,
+    pub vote_tuple_count: Mapping<Address, PairIndex>,
     // slot 21: mapping(validator => mapping(tuple_idx => pair))
-    pub vote_pair: Mapping<Address, Mapping<u32, AddressPair>>,
+    pub vote_pair: Mapping<Address, Mapping<PairIndex, AddressPair>>,
     // slot 22: mapping(validator => mapping(tuple_idx => rate))
-    pub vote_rate: Mapping<Address, Mapping<u32, U256>>,
+    pub vote_rate: Mapping<Address, Mapping<PairIndex, U256>>,
     // slot 23: mapping(validator => mapping(tuple_idx => volume))
-    pub vote_volume: Mapping<Address, Mapping<u32, U256>>,
+    pub vote_volume: Mapping<Address, Mapping<PairIndex, U256>>,
 
     // === Voter Tracking (slot 24) ===
     // slot 24: dynamic array of voter addresses (length at slot 24, data at keccak256(24))
@@ -102,13 +112,13 @@ pub struct OracleContract {
     // slot 27: mapping(snapshot_idx => timestamp)
     pub snapshot_timestamp: Mapping<u64, u64>,
     // slot 28: mapping(snapshot_idx => pair_count in this snapshot)
-    pub snapshot_pair_count: Mapping<u64, u32>,
-    // slot 29: mapping(snapshot_idx => mapping(entry_idx => pair))
-    pub snapshot_pair: Mapping<u64, Mapping<u32, AddressPair>>,
+    pub snapshot_pair_count: Mapping<u64, PairIndex>,
+    // slot 29: mapping(snapshot_idx => mapping(pair_index => pair))
+    pub snapshot_pair: Mapping<u64, Mapping<PairIndex, AddressPair>>,
     // slot 30: mapping(snapshot_idx => mapping(pair_index => rate))
-    pub snapshot_rate: Mapping<u64, Mapping<u32, U256>>,
+    pub snapshot_rate: Mapping<u64, Mapping<PairIndex, U256>>,
     // slot 31: mapping(snapshot_idx => mapping(pair_index => volume))
-    pub snapshot_volume: Mapping<u64, Mapping<u32, U256>>,
+    pub snapshot_volume: Mapping<u64, Mapping<PairIndex, U256>>,
 
     // === Protected Validators (slots 32-33) ===
     // slot 32: mapping(validator => is_protected)
@@ -145,7 +155,7 @@ pub struct OracleContract {
     // slot 43 — pinned: without this anchor the running slot counter would slide
     // it down into the retired 40-42 hole.
     #[slot(43)]
-    pub pair_by_index: Mapping<u32, AddressPair>,
+    pub pair_by_index: Mapping<PairIndex, AddressPair>,
     // Slots 44 (`pair_ordinal_quote`), 45 (`settlement_index_to_iso`) and 46
     // (`settlement_iso_to_denom_string`) are retired holes. 44 held the second
     // half of the registry entry back when a pair needed two parallel columns.
@@ -159,11 +169,11 @@ pub struct OracleContract {
     // slot 49: mapping(worldwide_day => end_time)
     pub worldwide_day_vwap_end: Mapping<WorldwideDay, u64>,
     // slot 50: mapping(worldwide_day => pair_count)
-    pub worldwide_day_vwap_pair_count: Mapping<WorldwideDay, u32>,
-    // slot 51: mapping(worldwide_day => mapping(entry_idx => pair))
-    pub worldwide_day_vwap_pair: Mapping<WorldwideDay, Mapping<u32, AddressPair>>,
-    // slot 52: mapping(worldwide_day => mapping(index => vwap))
-    pub worldwide_day_vwap_value: Mapping<WorldwideDay, Mapping<u32, U256>>,
+    pub worldwide_day_vwap_pair_count: Mapping<WorldwideDay, PairIndex>,
+    // slot 51: mapping(worldwide_day => mapping(pair_index => pair))
+    pub worldwide_day_vwap_pair: Mapping<WorldwideDay, Mapping<PairIndex, AddressPair>>,
+    // slot 52: mapping(worldwide_day => mapping(pair_index => vwap))
+    pub worldwide_day_vwap_value: Mapping<WorldwideDay, Mapping<PairIndex, U256>>,
 
     // === Daily Rolling VWAP Aggregates (slots 53-54) ===
     // Updated on every write_snapshot. Keyed by (pair, utc_day_timestamp).
@@ -189,11 +199,11 @@ pub struct OracleContract {
     // states are disambiguated against `utc_day_vwap_last_finalized`.
     //
     // mapping(utc_day => number of (pair, vwap) entries finalized for the day)
-    pub utc_day_vwap_pair_count: Mapping<u32, u32>,
-    // mapping(utc_day => mapping(entry_idx => pair))
-    pub utc_day_vwap_pair: Mapping<u32, Mapping<u32, AddressPair>>,
-    // mapping(utc_day => mapping(entry_idx => vwap)) 1e18 scaled
-    pub utc_day_vwap_value: Mapping<u32, Mapping<u32, U256>>,
+    pub utc_day_vwap_pair_count: Mapping<u32, PairIndex>,
+    // mapping(utc_day => mapping(pair_index => pair))
+    pub utc_day_vwap_pair: Mapping<u32, Mapping<PairIndex, AddressPair>>,
+    // mapping(utc_day => mapping(pair_index => vwap)) 1e18 scaled
+    pub utc_day_vwap_value: Mapping<u32, Mapping<PairIndex, U256>>,
     // Monotonic watermark: most recent fully-closed UTC day that has been
     // finalized (yyyymmdd). 0 = nothing finalized yet. Backfill is contiguous,
     // so every day <= this watermark is considered finalized.
