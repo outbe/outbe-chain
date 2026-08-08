@@ -355,7 +355,12 @@ impl AuthenticatedParentTree for MdbxAuthenticatedTree {
                 "compressed-entity seal block is not parent height + 1",
             ));
         }
-        let mut state = self
+        // Seal preparation is a side-effect-free projection and may be
+        // repeated after a provisional terminal decision. Build it from a
+        // fresh mutable session over the same authenticated snapshot instead
+        // of consuming the read/session cache owned by this scope.
+        let preparation = Self::from_view(self.view.clone())?;
+        let mut state = preparation
             .state
             .lock()
             .map_err(|_| tree_corruption("authenticated catalog session lock poisoned"))?;

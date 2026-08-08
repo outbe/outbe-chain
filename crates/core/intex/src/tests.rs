@@ -10,7 +10,7 @@ use crate::schema::{CreateSeriesParams, IntexCallTrigger, IntexState};
 const CHAIN_ID: u64 = 1;
 const ISSUED_AT: u32 = 1_700_000_000;
 const PROMIS_LOAD_MINOR: u128 = 1_000_000_000_000_000_000; // 1e18
-const CALL_PERIOD: u32 = 21 * 24 * 60 * 60; // 21 days
+const CALL_NOTICE_PERIOD: u32 = 21 * 24 * 60 * 60;
 
 fn with_registry<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
@@ -120,9 +120,9 @@ fn sample_params(worldwide_day: u32) -> CreateSeriesParams {
         floor_price_minor: U256::from(1_500u64),
         call_price_minor: U256::from(900u64),
         call_trigger: IntexCallTrigger {
-            window_days: 30,
-            threshold_days: 5,
-            intex_call_period: CALL_PERIOD,
+            call_window: 30 * 24 * 60 * 60,
+            call_threshold: 5 * 24 * 60 * 60,
+            call_notice_period: CALL_NOTICE_PERIOD,
         },
         issued_at: ISSUED_AT,
         issuance_currency: 840,
@@ -151,9 +151,9 @@ fn create_then_read_round_trip() {
         assert_eq!(
             r.call_trigger(),
             IntexCallTrigger {
-                window_days: 30,
-                threshold_days: 5,
-                intex_call_period: CALL_PERIOD,
+                call_window: 30 * 24 * 60 * 60,
+                call_threshold: 5 * 24 * 60 * 60,
+                call_notice_period: CALL_NOTICE_PERIOD,
             }
         );
         assert_eq!(r.lifecycle_state().unwrap(), IntexState::Issued);
@@ -162,7 +162,7 @@ fn create_then_read_round_trip() {
         assert_eq!(r.worldwide_day, 20260101);
         // The ledger stores the call period verbatim; defaulting is the
         // caller's job.
-        assert_eq!(r.intex_call_period, CALL_PERIOD);
+        assert_eq!(r.call_notice_period, CALL_NOTICE_PERIOD);
         assert_eq!(r.issuance_currency, 840);
         assert_eq!(r.reference_currency, 840);
     });
@@ -328,12 +328,12 @@ fn precompile_series_data_round_trip() {
         assert_eq!(data.entryPriceMinor, U256::from(2_000u64));
         assert_eq!(data.floorPriceMinor, U256::from(1_500u64));
         assert_eq!(data.issuedIntexCount, 100);
-        assert_eq!(data.callWindowDays, 30);
-        assert_eq!(data.callThresholdDays, 5);
+        assert_eq!(data.callWindow, 30 * 24 * 60 * 60);
+        assert_eq!(data.callThreshold, 5 * 24 * 60 * 60);
         assert_eq!(data.callPriceMinor, U256::from(900u64));
         assert_eq!(data.state, IntexState::Qualified as u8);
         assert_eq!(data.issuedAt, ISSUED_AT);
-        assert_eq!(data.intexCallPeriod, CALL_PERIOD);
+        assert_eq!(data.callNoticePeriod, CALL_NOTICE_PERIOD);
     });
 }
 

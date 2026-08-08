@@ -5,7 +5,6 @@ use outbe_lysis::activation_v1::{self, LysisApplyPlanV1, LysisOwnerReceiptsV1};
 use outbe_nod::schema::NodContract;
 use outbe_nodfactory::certified::{install_certified_generation, CertifiedNodGenerationV1};
 use outbe_ocomp_protocol::{
-    abi::OCOMP_ACTIVATION_REJECTED_SELECTOR,
     error::ProtocolError,
     hash::hash_framed,
     intent::{
@@ -25,23 +24,23 @@ use outbe_primitives::error::{PrecompileError, Result as PrecompileResult};
 use outbe_primitives::storage::StorageHandle;
 use outbe_promislimit::certified::{credit_certified_carry_over, CertifiedCarryOverCreditV1};
 use outbe_tribute::{
-    certified::{retire_certified_partition, CertifiedTributeRetirementV1},
+    certified::{
+        prepare_certified_partition_retirement, retire_prepared_certified_partition,
+        CertifiedTributeRetirementV1,
+    },
     TributeContract,
 };
 
-use crate::reducer::OuterWwdTransition;
-use crate::{precompile::IMetadosis, schema::MetadosisContract};
+use crate::{
+    errors::{
+        activation_rejection as reject, activation_rejection_code::*, storage_corruption_message,
+    },
+    precompile::IMetadosis,
+    reducer::OuterWwdTransition,
+    schema::MetadosisContract,
+};
 
 use super::{profile::OcompRequestProfile, state::JobFsmLimits};
-
-const REJECT_LIMIT_EXCEEDED: u16 = 2;
-const REJECT_FORK_OR_BUNDLE_MISMATCH: u16 = 3;
-const REJECT_JOB_BINDING_INVALID: u16 = 9;
-const REJECT_COMMITTEE_SNAPSHOT_INVALID: u16 = 10;
-const REJECT_RESULT_DIGEST_MISMATCH: u16 = 12;
-const REJECT_RESULT_STRUCTURE_INVALID: u16 = 13;
-const REJECT_OWNER_APPLY_REJECTED: u16 = 16;
-const REJECT_RECEIPT_MISMATCH: u16 = 17;
 
 /// Complete immutable consensus authority used by public LYSIS_V1 activation.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -192,27 +191,29 @@ pub(crate) fn apply_quorum_result(
     let current_height = context.current_height;
     let limits = context.limits;
     if record.status != OcompJobStatus::VotingOpen || record.terminal.is_some() {
-        return Err(fatal(
+        return Err(storage_corruption_message(
             "OCOMP q-forming result requires a voting-open non-terminal job",
         ));
     }
     let finalized = record
         .finalized
         .as_ref()
-        .ok_or_else(|| fatal("OCOMP q-forming job is not finalized"))?;
+        .ok_or_else(|| storage_corruption_message("OCOMP q-forming job is not finalized"))?;
     if finalized.quorum.is_some() {
-        return Err(fatal("OCOMP q-forming job already has a quorum"));
+        return Err(storage_corruption_message(
+            "OCOMP q-forming job already has a quorum",
+        ));
     }
 
     let profile = metadosis
         .read_ocomp_request_profile(limits)?
-        .ok_or_else(|| fatal("pending OCOMP job has no request profile"))?;
+        .ok_or_else(|| storage_corruption_message("pending OCOMP job has no request profile"))?;
     if record.intent.chain_id != profile.chain_id
         || record.intent.genesis_hash != profile.genesis_hash
         || record.intent.fork_id != profile.fork_id
         || record.intent.protocol_bundle_hash != profile.protocol_bundle_hash
     {
-        return Err(reject(REJECT_FORK_OR_BUNDLE_MISMATCH));
+        return Err(reject(FORK_OR_BUNDLE_MISMATCH));
     }
     let historical_snapshot = outbe_validatorset::read_ocomp_snapshot_extension_for_binding(
         context.storage.clone(),
@@ -222,43 +223,47 @@ pub(crate) fn apply_quorum_result(
     )?
     .filter(|snapshot| snapshot.member_count == record.intent.result_member_count);
     if historical_snapshot.is_none() {
-        return Err(reject(REJECT_COMMITTEE_SNAPSHOT_INVALID));
+        return Err(reject(COMMITTEE_SNAPSHOT_INVALID));
     }
 
     let record_intent_id = record
         .intent
         .intent_id(limits)
-        .map_err(|error| fatal(format!("hash live OCOMP intent: {error}")))?;
+        .map_err(|error| storage_corruption_message(format!("hash live OCOMP intent: {error}")))?;
     if intent_id != record_intent_id
         || result.job_id != finalized.job_id
         || result.attempt != record.intent.attempt
         || result.protocol_bundle_hash != record.intent.protocol_bundle_hash
     {
-        return Err(reject(REJECT_JOB_BINDING_INVALID));
+        return Err(reject(JOB_BINDING_INVALID));
     }
     result
         .validate_finalized_intent(&record.intent)
-        .map_err(|error| protocol_reject(error, REJECT_JOB_BINDING_INVALID))?;
+        .map_err(|error| protocol_reject(error, JOB_BINDING_INVALID))?;
     let result_digest = result
         .result_digest(limits)
-        .map_err(|error| protocol_reject(error, REJECT_RESULT_STRUCTURE_INVALID))?;
+        .map_err(|error| protocol_reject(error, RESULT_STRUCTURE_INVALID))?;
     if quorum.result_digest != result_digest || quorum.quorum_height != current_height {
-        return Err(reject(REJECT_RESULT_DIGEST_MISMATCH));
+        return Err(reject(RESULT_DIGEST_MISMATCH));
     }
     local_result_authority
-        .ok_or_else(|| fatal("node-local Lysis result authority is unavailable"))?
+        .ok_or_else(|| {
+            crate::errors::infrastructure_failure(
+                "node-local Lysis result authority is unavailable",
+            )
+        })?
         .verify_exact(finalized.job_id, result, limits)
         .map_err(|error| {
-            fatal(format!(
+            crate::errors::infrastructure_failure(format!(
                 "node-local Lysis result verification failed: {error}"
             ))
         })?;
     let result_evidence_hash = result
         .result_evidence_hash(limits)
-        .map_err(|error| protocol_reject(error, REJECT_RESULT_STRUCTURE_INVALID))?;
+        .map_err(|error| protocol_reject(error, RESULT_STRUCTURE_INVALID))?;
     let activation_payload = result
         .activation_payload(limits)
-        .map_err(|error| protocol_reject(error, REJECT_RESULT_STRUCTURE_INVALID))?;
+        .map_err(|error| protocol_reject(error, RESULT_STRUCTURE_INVALID))?;
     let plan = activation_v1::verify_result(
         intent_id,
         finalized.job_id,
@@ -267,7 +272,7 @@ pub(crate) fn apply_quorum_result(
         result,
         limits,
     )
-    .map_err(|error| protocol_reject(error, REJECT_RESULT_STRUCTURE_INVALID))?;
+    .map_err(|error| protocol_reject(error, RESULT_STRUCTURE_INVALID))?;
 
     let job_fsm_limits = profile.fsm_limits();
     if target_preconditions_changed(context, metadosis, record, job_fsm_limits)? {
@@ -308,13 +313,12 @@ fn target_preconditions_changed(
         expected.contributors.series_id,
     )?;
     let metadosis_projection = metadosis.ocomp_pre_admission_projection(wwd)?;
-    let intent_id = record
-        .intent
-        .intent_id(limits)
-        .map_err(|error| fatal(format!("hash target OCOMP intent: {error}")))?;
+    let intent_id = record.intent.intent_id(limits).map_err(|error| {
+        storage_corruption_message(format!("hash target OCOMP intent: {error}"))
+    })?;
     let fsm = metadosis
         .live_ocomp_fsm_state_by_intent(intent_id, limits, fsm_limits)?
-        .ok_or_else(|| fatal("pending OCOMP job has no live FSM state"))?
+        .ok_or_else(|| storage_corruption_message("pending OCOMP job has no live FSM state"))?
         .projection();
     let status = metadosis.get_wwd_status(wwd)?;
 
@@ -360,16 +364,18 @@ fn commit_conflict(
         carry_over_receipt_hash: None,
         request_budget_split_receipt_hash: plan.request_budget_split_receipt_hash(),
         active_generation_hash: None,
-        effect_commitment: hash_framed(HashDomain::Effects, &[])
-            .map_err(|error| fatal(format!("hash empty conflict effects: {error}")))?,
-        event_summary_hash: empty_apply_event_summary_hash()
-            .map_err(|error| fatal(format!("hash empty conflict event summary: {error}")))?,
+        effect_commitment: hash_framed(HashDomain::Effects, &[]).map_err(|error| {
+            storage_corruption_message(format!("hash empty conflict effects: {error}"))
+        })?,
+        event_summary_hash: empty_apply_event_summary_hash().map_err(|error| {
+            storage_corruption_message(format!("hash empty conflict event summary: {error}"))
+        })?,
         activated_at_height: current_height,
         activated_at_time: current_time,
     };
     let terminal_receipt_hash = receipt
         .terminal_receipt_hash(limits)
-        .map_err(|error| fatal(format!("hash conflict receipt: {error}")))?;
+        .map_err(|error| storage_corruption_message(format!("hash conflict receipt: {error}")))?;
     let completed_binding = OcompCompletedBindingV1 {
         job_id: binding.job_id,
         activation_call_id: binding.activation_call_id,
@@ -431,7 +437,7 @@ fn apply_certified_result(
             outbe_common::WorldwideDay::new(plan.carry_over().source_wwd()),
             limits,
         )?
-        .ok_or_else(|| fatal("OCOMP request budget receipt is missing"))?;
+        .ok_or_else(|| storage_corruption_message("OCOMP request budget receipt is missing"))?;
     let active_generation = ActiveGenerationV1 {
         job_id: binding.job_id,
         program_semantics_hash: bundle.lysis_program_semantics_hash,
@@ -470,7 +476,7 @@ fn apply_certified_result(
         .nod()
         .nod_gratis_consumed()
         .checked_add(plan.carry_over().credited_unused_lysis())
-        .ok_or_else(|| reject(REJECT_RESULT_STRUCTURE_INVALID))?;
+        .ok_or_else(|| crate::errors::business_failure("Lysis budget overflow"))?;
     let carry_over_input = CertifiedCarryOverCreditV1 {
         binding: binding.clone(),
         source_wwd: plan.carry_over().source_wwd(),
@@ -480,13 +486,13 @@ fn apply_certified_result(
     };
 
     storage.with_lysis_activation_frame(binding.activation_call_id, |capability| {
+        let prepared_tribute =
+            prepare_certified_partition_retirement(storage, capability, &tribute_input, limits)
+                .map_err(owner_apply_error)?;
         let nod = install_certified_generation(storage, capability, &nod_input, limits)
             .map_err(owner_apply_error)?;
         let contributor =
             install_certified_contributor_root(storage, capability, &contributor_input, limits)
-                .map_err(owner_apply_error)?;
-        let tribute =
-            retire_certified_partition(storage, scope, capability, &tribute_input, limits)
                 .map_err(owner_apply_error)?;
         let carry_over =
             credit_certified_carry_over(storage, capability, &carry_over_input, limits)
@@ -494,16 +500,24 @@ fn apply_certified_result(
         let mut receipts = LysisOwnerReceiptsV1 {
             nod,
             contributor,
-            tribute,
+            tribute: prepared_tribute.receipt().clone(),
             carry_over,
         };
         inject_test_receipt_fault(&mut request_receipt, &mut receipts);
         let verified_receipts =
             activation_v1::verify_receipts(plan, &request_receipt, &receipts, limits)
-                .map_err(|_| reject(REJECT_RECEIPT_MISMATCH))?;
+                .map_err(|_| crate::errors::business_failure("Lysis owner receipt mismatch"))?;
+        verified_receipts
+            .validate_terminal_capability(capability)
+            .map_err(|_| crate::errors::business_failure("Lysis terminal permit mismatch"))?;
+        // Tribute retirement is the final compressed-entity mutation. Every
+        // receipt and terminal-capability gate is established before the WWD's
+        // source partition is made terminal.
+        retire_prepared_certified_partition(storage, scope, capability, prepared_tribute)
+            .map_err(owner_apply_error)?;
         let permit = verified_receipts
             .terminal_permit(capability)
-            .map_err(|_| reject(REJECT_RECEIPT_MISMATCH))?;
+            .map_err(|_| crate::errors::business_failure("Lysis terminal permit mismatch"))?;
         let completed = metadosis.commit_ocomp_completed(
             outer_transition,
             binding.intent_id,
@@ -539,7 +553,7 @@ fn inject_test_receipt_fault(
 fn owner_apply_error(error: PrecompileError) -> PrecompileError {
     match error {
         PrecompileError::Revert(_) | PrecompileError::RevertBytes(_) => {
-            reject(REJECT_OWNER_APPLY_REJECTED)
+            crate::errors::business_failure(format!("Lysis owner apply rejected: {error}"))
         }
         other => other,
     }
@@ -548,7 +562,7 @@ fn owner_apply_error(error: PrecompileError) -> PrecompileError {
 fn protocol_reject(error: ProtocolError, fallback: u16) -> PrecompileError {
     match error {
         ProtocolError::CapacityExceeded { .. } | ProtocolError::AllocationFailed { .. } => {
-            reject(REJECT_LIMIT_EXCEEDED)
+            reject(LIMIT_EXCEEDED)
         }
         _ => reject(fallback),
     }
@@ -566,13 +580,6 @@ fn encode_activation_return(
     Bytes::from(encoded)
 }
 
-fn reject(code: u16) -> PrecompileError {
-    let mut encoded = Vec::with_capacity(36);
-    encoded.extend_from_slice(&OCOMP_ACTIVATION_REJECTED_SELECTOR);
-    encoded.extend_from_slice(&U256::from(code).to_be_bytes::<32>());
-    PrecompileError::RevertBytes(Bytes::from(encoded))
-}
-
 impl MetadosisContract<'_> {
     /// Installs the immutable protocol bundle exactly once. Voting membership
     /// comes only from each job's pinned ValidatorSet snapshot. The former
@@ -583,17 +590,21 @@ impl MetadosisContract<'_> {
         limits: &SchemaLimits,
     ) -> PrecompileResult<()> {
         (|| {
-            let profile = self
-                .read_ocomp_request_profile(limits)?
-                .ok_or_else(|| fatal("OCOMP request profile is not initialized"))?;
+            let profile = self.read_ocomp_request_profile(limits)?.ok_or_else(|| {
+                storage_corruption_message("OCOMP request profile is not initialized")
+            })?;
             validate_activation_authority(&profile, bundle, limits)?;
             if !self.ocomp_result_committee_snapshot.is_empty()? {
-                return Err(fatal("reserved OCOMP committee slot is non-zero"));
+                return Err(storage_corruption_message(
+                    "reserved OCOMP committee slot is non-zero",
+                ));
             }
 
             match self.read_ocomp_activation_authority(limits)? {
                 Some(existing) if existing.bundle == *bundle => Ok(()),
-                Some(_) => Err(fatal("OCOMP activation authority is immutable")),
+                Some(_) => Err(storage_corruption_message(
+                    "OCOMP activation authority is immutable",
+                )),
                 None => {
                     self.ocomp_active_protocol_bundle
                         .write(&bundle.encode_canonical(limits).map_err(protocol_error)?)?;
@@ -602,7 +613,9 @@ impl MetadosisContract<'_> {
                             bundle: bundle.clone(),
                         })
                     {
-                        return Err(fatal("OCOMP activation authority write/read mismatch"));
+                        return Err(storage_corruption_message(
+                            "OCOMP activation authority write/read mismatch",
+                        ));
                     }
                     Ok(())
                 }
@@ -616,7 +629,9 @@ impl MetadosisContract<'_> {
     ) -> PrecompileResult<Option<OcompActivationAuthorityV1>> {
         let bundle_len = self.ocomp_active_protocol_bundle.len()?;
         if !self.ocomp_result_committee_snapshot.is_empty()? {
-            return Err(fatal("reserved OCOMP committee slot is non-zero"));
+            return Err(storage_corruption_message(
+                "reserved OCOMP committee slot is non-zero",
+            ));
         }
         if bundle_len == 0 {
             return Ok(None);
@@ -625,16 +640,20 @@ impl MetadosisContract<'_> {
             .codec
             .max_body_bytes
             .checked_add(OCB1_HEADER_LEN)
-            .ok_or_else(|| fatal("OCOMP activation authority byte cap overflow"))?;
+            .ok_or_else(|| {
+                storage_corruption_message("OCOMP activation authority byte cap overflow")
+            })?;
         if bundle_len > max {
-            return Err(fatal("OCOMP activation authority exceeds byte cap"));
+            return Err(storage_corruption_message(
+                "OCOMP activation authority exceeds byte cap",
+            ));
         }
         let bundle =
             ProtocolBundleV1::decode_canonical(&self.ocomp_active_protocol_bundle.read()?, limits)
                 .map_err(protocol_error)?;
-        let profile = self
-            .read_ocomp_request_profile(limits)?
-            .ok_or_else(|| fatal("OCOMP activation authority has no request profile"))?;
+        let profile = self.read_ocomp_request_profile(limits)?.ok_or_else(|| {
+            storage_corruption_message("OCOMP activation authority has no request profile")
+        })?;
         validate_activation_authority(&profile, &bundle, limits)?;
         Ok(Some(OcompActivationAuthorityV1 { bundle }))
     }
@@ -653,7 +672,7 @@ pub(crate) fn validate_activation_authority(
         || bundle.correctness_profile_id != profile.correctness_profile_id
         || bundle.capacity_profile_id != profile.capacity_profile.profile_id
     {
-        return Err(fatal(
+        return Err(storage_corruption_message(
             "OCOMP protocol bundle differs from the request profile",
         ));
     }
@@ -665,9 +684,5 @@ pub(crate) fn validate_activation_authority(
 }
 
 fn protocol_error(error: impl core::fmt::Display) -> PrecompileError {
-    fatal(format!("invalid OCOMP activation authority: {error}"))
-}
-
-fn fatal(message: impl Into<String>) -> PrecompileError {
-    PrecompileError::Fatal(message.into())
+    storage_corruption_message(format!("invalid OCOMP activation authority: {error}"))
 }

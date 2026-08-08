@@ -45,17 +45,17 @@ use outbe_ocomp_protocol::{
 };
 #[cfg(feature = "ocomp-integration")]
 use outbe_primitives::{
-    addresses::{METADOSIS_ADDRESS, TRIBUTE_ADDRESS, UPDATE_ADDRESS, VALIDATOR_SET_ADDRESS},
+    addresses::{METADOSIS_ADDRESS, TRIBUTE_ADDRESS, VALIDATOR_SET_ADDRESS},
     signer::OutbeEvmSigner,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
     OutbeHeader,
 };
 #[cfg(feature = "ocomp-integration")]
-use outbe_update::{schema::Update, ProtocolVersion};
-#[cfg(feature = "ocomp-integration")]
 use std::fs::{self, OpenOptions};
 #[cfg(feature = "ocomp-integration")]
 use std::io::{Read as _, Seek as _, SeekFrom, Write as _};
+#[cfg(feature = "ocomp-integration")]
+use std::net::{SocketAddr, TcpStream};
 #[cfg(feature = "ocomp-integration")]
 use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _};
 #[cfg(feature = "ocomp-integration")]
@@ -164,7 +164,6 @@ pub struct OcompForkRestartEvidenceV1 {
     pub replayed_through_height: u64,
     pub post_fork_restart_from_height: u64,
     pub post_fork_rejoined_height: u64,
-    pub active_protocol_version: u64,
 }
 
 impl OcompForkRestartEvidenceV1 {
@@ -181,9 +180,15 @@ impl OcompForkRestartEvidenceV1 {
             || self.replayed_through_height < self.finalized_while_down_height
             || self.post_fork_restart_from_height < self.activation_height
             || self.post_fork_rejoined_height < self.post_fork_restart_from_height
-            || self.active_protocol_version != 1
         {
             eyre::bail!("OCOMP fork restart evidence does not span H-1/H/H+1 safely");
+        }
+        Ok(())
+    }
+
+    fn validate_launch_identity(&self, identity: &OcompLaunchIdentityEvidenceV1) -> Result<()> {
+        if self.activation_height != identity.activation_height {
+            eyre::bail!("OCOMP fork restart evidence does not match the launch identity");
         }
         Ok(())
     }
@@ -202,8 +207,6 @@ pub struct OcompForkMismatchEvidenceV1 {
     pub canonical_head_before_restart: u64,
     pub mismatched_head_after_fork: u64,
     pub canonical_finalized_after_fork: u64,
-    pub canonical_active_protocol_version: u64,
-    pub mismatched_active_protocol_version: u64,
 }
 
 impl OcompForkMismatchEvidenceV1 {
@@ -224,10 +227,17 @@ impl OcompForkMismatchEvidenceV1 {
             || self.canonical_finalized_after_fork
                 < self.canonical_activation_height.saturating_add(1)
             || self.canonical_finalized_after_fork <= self.mismatched_head_after_fork
-            || self.canonical_active_protocol_version != 1
-            || self.mismatched_active_protocol_version != 0
         {
             eyre::bail!("OCOMP fork mismatch evidence does not prove fail-closed isolation");
+        }
+        Ok(())
+    }
+
+    fn validate_launch_identity(&self, identity: &OcompLaunchIdentityEvidenceV1) -> Result<()> {
+        if self.canonical_activation_height != identity.activation_height
+            || self.canonical_install_hash != identity.fork_install_hash
+        {
+            eyre::bail!("OCOMP fork mismatch evidence does not match the launch identity");
         }
         Ok(())
     }
@@ -272,9 +282,17 @@ impl OcompScenarioTopologyV1 {
         }
         if let Some(restart) = &self.fork_restart {
             restart.validate(validator_count)?;
+            let identity = self.launch_identity.as_ref().ok_or_else(|| {
+                eyre::eyre!("OCOMP fork evidence requires the exact OCOMP launch identity")
+            })?;
+            restart.validate_launch_identity(identity)?;
         }
         if let Some(mismatch) = &self.fork_mismatch {
             mismatch.validate(validator_count)?;
+            let identity = self.launch_identity.as_ref().ok_or_else(|| {
+                eyre::eyre!("OCOMP fork evidence requires the exact OCOMP launch identity")
+            })?;
+            mismatch.validate_launch_identity(identity)?;
         }
         Ok(())
     }
@@ -303,6 +321,30 @@ pub struct OcompLaunchIdentityV1 {
     pub classification: OcompForkInstallClassification,
     pub activation_height: u64,
     pub metadosis_storage_layout_hash: B256,
+}
+
+/// Live process and registration counts for the baseline validator OCOMP runtime.
+#[cfg(feature = "ocomp-integration")]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct OcompRuntimeCountsV1 {
+    pub supervisors: usize,
+    pub snapshot_exporters: usize,
+    pub workers: usize,
+    pub registered_workers: usize,
+    pub connected_workers: usize,
+}
+
+#[cfg(feature = "ocomp-integration")]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SupervisorWorkerStatusV1 {
+    registry_generation: u64,
+    registered_workers: usize,
+    connected_workers: usize,
+    busy_workers: usize,
+    accepted_leases: usize,
+    queued_units: usize,
+    max_workers: usize,
 }
 
 /// Exact measurement manifest generated before any node process starts.
@@ -512,6 +554,14 @@ impl OcompTopology {
         Ok(&self.domain(validator_index)?.root)
     }
 
+    /// Canonical chain manifest selected for this scenario before any
+    /// mismatched-install fault is injected.
+    #[cfg(feature = "ocomp-integration")]
+    #[must_use]
+    pub fn canonical_chain_manifest_path(&self) -> PathBuf {
+        self.cfg.dir.join("genesis.json")
+    }
+
     /// Verify the durable footprint left by one completed production job in
     /// every isolated validator domain.
     ///
@@ -674,13 +724,12 @@ impl OcompTopology {
     /// Generate and publish the complete immutable measurement fork before any
     /// node process starts.
     ///
-    /// The existing Update schema authors the protocol-v1 schedule in genesis.
-    /// The resulting base genesis hash then binds the request profile and
-    /// protocol bundle. Adding the canonical install under `genesis.config`
-    /// does not alter that header hash.
+    /// The resulting base genesis hash binds the request profile and protocol
+    /// bundle without a synthetic generic Update. Adding the canonical install
+    /// under `genesis.config` does not alter that header hash.
     #[cfg(feature = "ocomp-integration")]
     pub fn prepare_measurement_fork_install(&self) -> Result<OcompMeasurementForkV1> {
-        self.prepare_measurement_fork_install_inner(None, &[], false)
+        self.prepare_measurement_fork_install_inner(None, &[], false, None)
     }
 
     /// Prepare the same immutable measurement fork plus a short, pre-start
@@ -693,6 +742,21 @@ impl OcompTopology {
             Some(OCOMP_PUBLIC_OFFERING_AFTER_GENESIS_SECS),
             &[],
             false,
+            None,
+        )
+    }
+
+    /// Prepare a public measurement chain whose first no-quorum expiry
+    /// deterministically exhausts the attempt budget. This changes only the
+    /// immutable Measurement capacity profile; live Metadosis/OCOMP state is
+    /// still created and advanced exclusively by production block execution.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn prepare_failure_recovery_fork_install(&self) -> Result<OcompMeasurementForkV1> {
+        self.prepare_measurement_fork_install_inner(
+            Some(OCOMP_PUBLIC_OFFERING_AFTER_GENESIS_SECS),
+            &[],
+            false,
+            Some(1),
         )
     }
 
@@ -723,7 +787,7 @@ impl OcompTopology {
         );
         replace_json_atomically(&genesis_path, &genesis)?;
 
-        let fork = self.prepare_measurement_fork_install_inner(None, &[], false)?;
+        let fork = self.prepare_measurement_fork_install_inner(None, &[], false, None)?;
         Ok(OcompDynamicMembershipForkV1 {
             fork,
             first_worldwide_day: schedule.0,
@@ -751,6 +815,7 @@ impl OcompTopology {
             Some(OCOMP_CAPACITY_OFFERING_AFTER_GENESIS_SECS),
             &private_keys,
             false,
+            None,
         )?;
         Ok((prepared, private_keys))
     }
@@ -768,7 +833,8 @@ impl OcompTopology {
             eyre::bail!("fresh Metadosis fixture requires at least one Tribute owner");
         }
         let private_keys = capacity_tribute_private_keys(tribute_count)?;
-        let prepared = self.prepare_measurement_fork_install_inner(None, &private_keys, true)?;
+        let prepared =
+            self.prepare_measurement_fork_install_inner(None, &private_keys, true, None)?;
         Ok((prepared, private_keys))
     }
 
@@ -841,6 +907,162 @@ impl OcompTopology {
             )?;
         }
         Ok(())
+    }
+
+    /// Stage the exact random OCOMP result-signing keys and registrations that
+    /// were bound into the bootstrapped genesis. Persistent LocalNet must never
+    /// replace them with the deterministic measurement-fixture keys used by
+    /// isolated scenarios.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn prepare_bootstrapped_runtime(&self) -> Result<OcompLaunchIdentityV1> {
+        let genesis_path = self.cfg.dir.join("genesis.json");
+        let spec = parse_outbe_chain_spec(&genesis_path)?;
+        let install = outbe_node::ocomp::fork::require_genesis_active_ocomp_fork_install(&spec)?;
+        let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
+        let install_hash = install.install_hash(&limits)?;
+        eyre::ensure!(
+            install.founder_registrations.len() == self.domains.len(),
+            "OCOMP founder registration count {} differs from LocalNet validator count {}",
+            install.founder_registrations.len(),
+            self.domains.len()
+        );
+
+        let canonical_bundle = install.protocol_bundle.encode_canonical(&limits)?;
+        let bootstrapped_bundle_path = self.cfg.dir.join("protocol-bundle-v1.ocb1");
+        let bootstrapped_bundle = fs::read(&bootstrapped_bundle_path)?;
+        eyre::ensure!(
+            bootstrapped_bundle == canonical_bundle,
+            "bootstrapped protocol bundle does not match the genesis OCOMP install"
+        );
+
+        for (index, (domain, founder)) in self
+            .domains
+            .iter()
+            .zip(&install.founder_registrations)
+            .enumerate()
+        {
+            let validator_dir = self.cfg.validator_dir(index);
+            let registration_path = validator_dir.join("ocomp-registration-v1.ocb1");
+            let registration =
+                OcompKeyRegistrationV1::decode_canonical(&fs::read(&registration_path)?, &limits)?;
+            eyre::ensure!(
+                &registration == founder,
+                "validator-{index} OCOMP registration differs from the genesis founder registration"
+            );
+            registration.validate_proof_of_possession(&limits)?;
+
+            let key_path = validator_dir.join("ocomp-key-v1.hex");
+            let key_file = fs::read(&key_path)?;
+            let key_hex = std::str::from_utf8(&key_file)?.trim();
+            let key_bytes = hex::decode(key_hex)?;
+            eyre::ensure!(
+                key_bytes.len() == 32,
+                "validator-{index} OCOMP result-signing key is not 32 bytes"
+            );
+            let signing_key = SigningKey::from_slice(&key_bytes)?;
+            eyre::ensure!(
+                signing_key.verifying_key().to_encoded_point(true).as_bytes()
+                    == registration.core.ocomp_public_key_sec1.as_slice(),
+                "validator-{index} OCOMP result-signing key does not match its genesis registration"
+            );
+
+            fs::create_dir_all(&domain.root)?;
+            publish_exact_file(
+                &domain.root.join("protocol-bundle-v1.ocb1"),
+                &bootstrapped_bundle,
+                0o640,
+            )?;
+            publish_exact_file(&domain.root.join("ocomp-key-v1.hex"), &key_file, 0o600)?;
+            let evm_key = ocomp_evm_private_key(u8::try_from(index)?);
+            publish_exact_file(
+                &domain.root.join("ocomp-evm-key.hex"),
+                format!("{evm_key}\n").as_bytes(),
+                0o600,
+            )?;
+        }
+
+        Ok(OcompMeasurementForkV1 {
+            install: install.as_ref().clone(),
+            install_hash,
+        }
+        .launch_identity())
+    }
+
+    /// Launch the complete baseline compute runtime for every genesis ACTIVE
+    /// validator: one Supervisor, one SnapshotExporter, and Worker ordinal 0.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn start_baseline_runtime(&mut self, identity: OcompLaunchIdentityV1) -> Result<()> {
+        self.install_ocomp_delegate_bindings()?;
+        self.start_validator_roles(identity)?;
+        for validator_index in self.validator_indices()? {
+            self.activate_worker(validator_index, 0, identity)?;
+        }
+        Ok(())
+    }
+
+    /// Prove both child-process liveness and mutual Worker/Supervisor
+    /// registration for the complete baseline runtime.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn ensure_baseline_runtime_ready(
+        &mut self,
+        expected_workers_per_supervisor: usize,
+    ) -> Result<OcompRuntimeCountsV1> {
+        self.ensure_baseline_processes_alive(expected_workers_per_supervisor)?;
+        self.observe_baseline_runtime(expected_workers_per_supervisor)
+    }
+
+    /// Fail immediately when a required owned OCOMP role exits. Registration
+    /// convergence is retryable during startup; a dead child is not.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn ensure_baseline_processes_alive(
+        &mut self,
+        expected_workers_per_supervisor: usize,
+    ) -> Result<()> {
+        self.ensure_validator_roles_alive()?;
+        for validator_index in self.validator_indices()? {
+            for worker_ordinal in 0..u32::try_from(expected_workers_per_supervisor)? {
+                self.ensure_worker_alive(validator_index, worker_ordinal)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Probe the public Supervisor status surfaces without relying on retained
+    /// child guards. This is used by the separate `localnet status` process.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn observe_baseline_runtime(
+        &self,
+        expected_workers_per_supervisor: usize,
+    ) -> Result<OcompRuntimeCountsV1> {
+        let mut registered_workers = 0usize;
+        let mut connected_workers = 0usize;
+        for validator_index in self.validator_indices()? {
+            let index = usize::from(validator_index);
+            let address = SocketAddr::from(([127, 0, 0, 1], self.cfg.ocomp_supervisor_port(index)));
+            let status = fetch_supervisor_status(address)?;
+            ensure_supervisor_status_ready(
+                validator_index,
+                &status,
+                expected_workers_per_supervisor,
+            )?;
+            registered_workers = registered_workers
+                .checked_add(status.registered_workers)
+                .ok_or_else(|| eyre::eyre!("OCOMP registered-worker count overflow"))?;
+            connected_workers = connected_workers
+                .checked_add(status.connected_workers)
+                .ok_or_else(|| eyre::eyre!("OCOMP connected-worker count overflow"))?;
+        }
+        let supervisors = self.domains.len();
+        let workers = supervisors
+            .checked_mul(expected_workers_per_supervisor)
+            .ok_or_else(|| eyre::eyre!("OCOMP worker count overflow"))?;
+        Ok(OcompRuntimeCountsV1 {
+            supervisors,
+            snapshot_exporters: supervisors,
+            workers,
+            registered_workers,
+            connected_workers,
+        })
     }
 
     #[cfg(feature = "ocomp-integration")]
@@ -994,6 +1216,7 @@ impl OcompTopology {
         public_offering_after_genesis_secs: Option<u64>,
         capacity_tribute_private_keys: &[String],
         clear_seeded_metadosis: bool,
+        max_terminal_job_records: Option<u16>,
     ) -> Result<OcompMeasurementForkV1> {
         let genesis_path = self.cfg.dir.join("genesis.json");
         let mut genesis: serde_json::Value = serde_json::from_slice(&fs::read(&genesis_path)?)?;
@@ -1012,16 +1235,10 @@ impl OcompTopology {
         } else {
             false
         };
-        let update_changed = schedule_protocol_v1_update(
-            &mut genesis,
-            chain_id,
-            OCOMP_MEASUREMENT_ACTIVATION_HEIGHT,
-        )?;
         let gas_envelope_changed = apply_measurement_gas_envelope(&mut genesis)?;
         if capacity_accounts_changed
             || public_day_changed
             || seeded_metadosis_changed
-            || update_changed
             || gas_envelope_changed
         {
             replace_json_atomically(&genesis_path, &genesis)?;
@@ -1036,6 +1253,7 @@ impl OcompTopology {
             OCOMP_MEASUREMENT_ACTIVATION_HEIGHT,
             &self.cfg.dir.join("validators.json"),
             &limits,
+            max_terminal_job_records,
         )?;
         install.validate_for_chain(chain_id, base_genesis_hash, &limits)?;
         let canonical_install = install.encode_canonical(&limits)?;
@@ -1799,6 +2017,21 @@ impl OcompTopology {
         Ok(())
     }
 
+    /// Restart both fixed node-facing roles while preserving the domain data.
+    /// A role may already be absent because an earlier scenario fault stopped
+    /// it; restarting the complete domain remains one well-defined operation.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn restart_node_facing_processes(&mut self, validator_index: u8) -> Result<()> {
+        if let Some(process) = self.domain_mut(validator_index)?.supervisor.take() {
+            self.stop_owned(process);
+        }
+        if let Some(process) = self.domain_mut(validator_index)?.snapshot_exporter.take() {
+            self.stop_owned(process);
+        }
+        self.restart_snapshot_exporter(validator_index)?;
+        self.restart_supervisor(validator_index)
+    }
+
     /// Replace a stopped Supervisor with a process that has a valid local
     /// protocol bundle but an incompatible endpoint identity. The process must
     /// remain outside the node-owned authenticated session while the node and
@@ -1881,6 +2114,10 @@ impl OcompTopology {
     ) -> Result<()> {
         self.domain(evidence.validator_index)?;
         evidence.validate(self.domains.len())?;
+        let identity = self.launch_identity_evidence.as_ref().ok_or_else(|| {
+            eyre::eyre!("OCOMP fork evidence requires the exact OCOMP launch identity")
+        })?;
+        evidence.validate_launch_identity(identity)?;
         if self.fork_restart_evidence.is_some() {
             eyre::bail!("OCOMP fork restart evidence was already recorded");
         }
@@ -1894,6 +2131,10 @@ impl OcompTopology {
     ) -> Result<()> {
         self.domain(evidence.validator_index)?;
         evidence.validate(self.domains.len())?;
+        let identity = self.launch_identity_evidence.as_ref().ok_or_else(|| {
+            eyre::eyre!("OCOMP fork evidence requires the exact OCOMP launch identity")
+        })?;
+        evidence.validate_launch_identity(identity)?;
         if self.fork_mismatch_evidence.is_some() {
             eyre::bail!("OCOMP fork mismatch evidence was already recorded");
         }
@@ -2128,6 +2369,74 @@ impl OcompTopology {
         }
         Ok(())
     }
+}
+
+#[cfg(feature = "ocomp-integration")]
+fn fetch_supervisor_status(address: SocketAddr) -> Result<SupervisorWorkerStatusV1> {
+    const MAX_RESPONSE_BYTES: u64 = 64 * 1024;
+    let timeout = Duration::from_secs(2);
+    let mut stream = TcpStream::connect_timeout(&address, timeout)
+        .map_err(|error| eyre::eyre!("connect to OCOMP Supervisor {address}: {error}"))?;
+    stream.set_read_timeout(Some(timeout))?;
+    stream.set_write_timeout(Some(timeout))?;
+    stream.write_all(
+        format!("GET /v1/status HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n")
+            .as_bytes(),
+    )?;
+    let mut response = Vec::new();
+    stream
+        .take(MAX_RESPONSE_BYTES)
+        .read_to_end(&mut response)
+        .map_err(|error| eyre::eyre!("read OCOMP Supervisor {address} status: {error}"))?;
+    let header_end = response
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|offset| offset + 4)
+        .ok_or_else(|| eyre::eyre!("OCOMP Supervisor {address} returned malformed HTTP"))?;
+    let status_line_end = response
+        .iter()
+        .position(|byte| *byte == b'\n')
+        .ok_or_else(|| eyre::eyre!("OCOMP Supervisor {address} returned no HTTP status"))?;
+    let status_line = std::str::from_utf8(&response[..status_line_end])?.trim();
+    eyre::ensure!(
+        status_line.split_whitespace().nth(1) == Some("200"),
+        "OCOMP Supervisor {address} status request failed: {status_line}"
+    );
+    serde_json::from_slice(&response[header_end..])
+        .map_err(|error| eyre::eyre!("decode OCOMP Supervisor {address} status: {error}"))
+}
+
+#[cfg(feature = "ocomp-integration")]
+fn ensure_supervisor_status_ready(
+    validator_index: u8,
+    status: &SupervisorWorkerStatusV1,
+    expected_workers: usize,
+) -> Result<()> {
+    eyre::ensure!(
+        status.registry_generation > 0,
+        "validator-{validator_index} OCOMP Supervisor has no registry generation"
+    );
+    eyre::ensure!(
+        status.max_workers >= expected_workers,
+        "validator-{validator_index} OCOMP Supervisor capacity {} is below expected worker count {expected_workers}",
+        status.max_workers
+    );
+    eyre::ensure!(
+        status.registered_workers == expected_workers,
+        "validator-{validator_index} OCOMP Supervisor reports {} registered workers, expected {expected_workers}",
+        status.registered_workers
+    );
+    eyre::ensure!(
+        status.connected_workers == expected_workers,
+        "validator-{validator_index} OCOMP Supervisor reports {} connected workers, expected {expected_workers}",
+        status.connected_workers
+    );
+    eyre::ensure!(
+        status.busy_workers <= status.connected_workers,
+        "validator-{validator_index} OCOMP Supervisor reports more busy than connected workers"
+    );
+    let _ = (status.accepted_leases, status.queued_units);
+    Ok(())
 }
 
 #[cfg(feature = "ocomp-integration")]
@@ -2493,80 +2802,6 @@ fn apply_measurement_gas_envelope(genesis: &mut serde_json::Value) -> Result<boo
 }
 
 #[cfg(feature = "ocomp-integration")]
-fn schedule_protocol_v1_update(
-    genesis: &mut serde_json::Value,
-    chain_id: u64,
-    activation_height: u64,
-) -> Result<bool> {
-    let mut provider = HashMapStorageProvider::new(chain_id);
-    StorageHandle::enter(&mut provider, |storage| {
-        Update::new(storage).write_scheduled_update(
-            measurement_update_proposal_id(),
-            ProtocolVersion::from_raw(1),
-            activation_height,
-            "OCOMP PoC measurement profile",
-        )
-    })?;
-
-    let alloc = genesis
-        .get_mut("alloc")
-        .and_then(serde_json::Value::as_object_mut)
-        .ok_or_else(|| eyre::eyre!("generated genesis has no alloc object"))?;
-    let mut changed = false;
-    let update_key = match find_alloc_address_key(alloc, UPDATE_ADDRESS)? {
-        Some(key) => key,
-        None => {
-            // Native precompiles do not need bytecode accounts. A fresh seeded
-            // genesis may therefore omit Update until its first non-zero
-            // storage word; create only that canonical alloc container.
-            let key = hex::encode(UPDATE_ADDRESS.as_slice());
-            alloc.insert(
-                key.clone(),
-                serde_json::json!({
-                    "balance": "0x0",
-                    "storage": {},
-                }),
-            );
-            changed = true;
-            key
-        }
-    };
-    let update_account = alloc
-        .get_mut(&update_key)
-        .and_then(serde_json::Value::as_object_mut)
-        .ok_or_else(|| eyre::eyre!("Update genesis account is not an object"))?;
-    let storage = update_account
-        .entry("storage")
-        .or_insert_with(|| serde_json::json!({}))
-        .as_object_mut()
-        .ok_or_else(|| eyre::eyre!("Update genesis storage is not an object"))?;
-
-    for ((address, slot), value) in &provider.storage {
-        if *address != UPDATE_ADDRESS || value.is_zero() {
-            continue;
-        }
-        let slot = format!("0x{slot:064x}");
-        let value = format!("0x{value:064x}");
-        match storage.get(&slot) {
-            Some(existing) if parse_storage_word(existing)? == parse_hex_word(&value)? => {}
-            Some(_) => eyre::bail!("Update genesis slot {slot} conflicts with OCOMP schedule"),
-            None => {
-                storage.insert(slot, serde_json::Value::String(value));
-                changed = true;
-            }
-        }
-    }
-    Ok(changed)
-}
-
-#[cfg(feature = "ocomp-integration")]
-fn measurement_update_proposal_id() -> U256 {
-    U256::from_be_bytes(
-        alloy_primitives::keccak256(b"OUTBE_OCOMP_MEASUREMENT_UPDATE_PROPOSAL_V1").0,
-    )
-}
-
-#[cfg(feature = "ocomp-integration")]
 fn find_alloc_address_key(
     alloc: &serde_json::Map<String, serde_json::Value>,
     expected: Address,
@@ -2673,11 +2908,20 @@ fn measurement_fork_install(
     activation_height: u64,
     validators_path: &Path,
     limits: &outbe_ocomp_protocol::SchemaLimits,
+    max_terminal_job_records: Option<u16>,
 ) -> Result<OcompForkInstallV1> {
     let protocol_bundle = provisional_measurement_bundle();
     let protocol_bundle_hash = protocol_bundle.protocol_bundle_hash(limits)?;
     let founder_registrations =
         measurement_founder_registrations(validators_path, chain_id, genesis_hash, limits)?;
+    let mut capacity_profile = provisional_measurement_capacity_profile();
+    if let Some(max_terminal_job_records) = max_terminal_job_records {
+        eyre::ensure!(
+            max_terminal_job_records > 0,
+            "Measurement terminal job record cap must be non-zero"
+        );
+        capacity_profile.max_terminal_job_records = max_terminal_job_records;
+    }
     Ok(OcompForkInstallV1 {
         classification: OcompForkInstallClassification::Measurement,
         activation_height,
@@ -2687,7 +2931,7 @@ fn measurement_fork_install(
             fork_id: protocol_bundle.fork_id,
             protocol_bundle_hash,
             correctness_profile_id: protocol_bundle.correctness_profile_id,
-            capacity_profile: provisional_measurement_capacity_profile(),
+            capacity_profile,
             source_availability_policy_id: B256::repeat_byte(44),
         },
         protocol_bundle,
@@ -3019,6 +3263,21 @@ mod tests {
         ChildGuard::spawn("ocomp topology child", command).unwrap()
     }
 
+    fn launch_identity_evidence(
+        activation_height: u64,
+        fork_install_hash: B256,
+    ) -> OcompLaunchIdentityEvidenceV1 {
+        OcompLaunchIdentityEvidenceV1 {
+            chain_id: 1,
+            genesis_hash: format!("{:#x}", B256::repeat_byte(9)),
+            protocol_bundle_hash: format!("{:#x}", B256::repeat_byte(8)),
+            fork_install_hash: format!("{fork_install_hash:#x}"),
+            classification: "final".to_owned(),
+            activation_height,
+            metadosis_storage_layout_hash: METADOSIS_STORAGE_LAYOUT_V1_HASH_HEX.to_owned(),
+        }
+    }
+
     #[cfg(feature = "ocomp-integration")]
     fn stage_completed_job_footprint(topology: &OcompTopology, job_id: B256) {
         let job_component = hex::encode(job_id);
@@ -3191,6 +3450,8 @@ mod tests {
     #[test]
     fn fork_restart_evidence_requires_recovery_on_each_side_of_h() {
         let mut topology = topology();
+        topology.launch_identity_evidence =
+            Some(launch_identity_evidence(32, B256::repeat_byte(1)));
         topology
             .record_fork_restart_evidence(OcompForkRestartEvidenceV1 {
                 validator_index: 0,
@@ -3202,7 +3463,6 @@ mod tests {
                 replayed_through_height: 34,
                 post_fork_restart_from_height: 35,
                 post_fork_rejoined_height: 36,
-                active_protocol_version: 1,
             })
             .unwrap();
 
@@ -3212,8 +3472,31 @@ mod tests {
     }
 
     #[test]
+    fn fork_restart_evidence_requires_the_exact_launch_identity() {
+        let mut topology = topology();
+        let error = topology
+            .record_fork_restart_evidence(OcompForkRestartEvidenceV1 {
+                validator_index: 0,
+                activation_height: 32,
+                pre_fork_restart_from_height: 2,
+                pre_fork_rejoined_height: 4,
+                down_across_fork_from_height: 30,
+                finalized_while_down_height: 33,
+                replayed_through_height: 34,
+                post_fork_restart_from_height: 35,
+                post_fork_rejoined_height: 36,
+            })
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("requires the exact OCOMP launch identity"));
+    }
+
+    #[test]
     fn fork_restart_evidence_rejects_a_validator_that_did_not_replay_h() {
         let mut topology = topology();
+        topology.launch_identity_evidence =
+            Some(launch_identity_evidence(32, B256::repeat_byte(1)));
         let error = topology
             .record_fork_restart_evidence(OcompForkRestartEvidenceV1 {
                 validator_index: 0,
@@ -3225,7 +3508,6 @@ mod tests {
                 replayed_through_height: 31,
                 post_fork_restart_from_height: 35,
                 post_fork_rejoined_height: 36,
-                active_protocol_version: 1,
             })
             .unwrap_err();
 
@@ -3236,6 +3518,8 @@ mod tests {
     #[test]
     fn fork_mismatch_evidence_requires_canonical_progress_and_isolated_head() {
         let mut topology = topology();
+        topology.launch_identity_evidence =
+            Some(launch_identity_evidence(32, B256::repeat_byte(1)));
         topology
             .record_fork_mismatch_evidence(OcompForkMismatchEvidenceV1 {
                 validator_index: 0,
@@ -3246,8 +3530,6 @@ mod tests {
                 canonical_head_before_restart: 7,
                 mismatched_head_after_fork: 31,
                 canonical_finalized_after_fork: 33,
-                canonical_active_protocol_version: 1,
-                mismatched_active_protocol_version: 0,
             })
             .unwrap();
 
@@ -3263,8 +3545,33 @@ mod tests {
     }
 
     #[test]
+    fn fork_mismatch_evidence_rejects_a_different_canonical_launch_identity() {
+        let mut topology = topology();
+        topology.launch_identity_evidence =
+            Some(launch_identity_evidence(32, B256::repeat_byte(3)));
+        let error = topology
+            .record_fork_mismatch_evidence(OcompForkMismatchEvidenceV1 {
+                validator_index: 0,
+                canonical_install_hash: format!("{:#x}", B256::repeat_byte(1)),
+                mismatched_install_hash: format!("{:#x}", B256::repeat_byte(2)),
+                canonical_activation_height: 32,
+                mismatched_activation_height: 32,
+                canonical_head_before_restart: 7,
+                mismatched_head_after_fork: 31,
+                canonical_finalized_after_fork: 33,
+            })
+            .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("does not match the launch identity"));
+    }
+
+    #[test]
     fn fork_mismatch_evidence_rejects_a_node_that_imported_h() {
         let mut topology = topology();
+        topology.launch_identity_evidence =
+            Some(launch_identity_evidence(32, B256::repeat_byte(1)));
         let error = topology
             .record_fork_mismatch_evidence(OcompForkMismatchEvidenceV1 {
                 validator_index: 0,
@@ -3275,8 +3582,6 @@ mod tests {
                 canonical_head_before_restart: 7,
                 mismatched_head_after_fork: 32,
                 canonical_finalized_after_fork: 33,
-                canonical_active_protocol_version: 1,
-                mismatched_active_protocol_version: 0,
             })
             .unwrap_err();
 
@@ -3292,7 +3597,7 @@ mod tests {
 
     #[cfg(feature = "ocomp-integration")]
     #[test]
-    fn measurement_fork_install_arms_genesis_and_update_before_node_start() {
+    fn measurement_fork_install_arms_genesis_without_a_synthetic_update() {
         let topology = topology();
         prepare_measurement_genesis_fixture(&topology);
         let prepared = topology.prepare_measurement_fork_install().unwrap();
@@ -3345,33 +3650,12 @@ mod tests {
             serde_json::from_slice(&std::fs::read(topology.cfg.dir.join("genesis.json")).unwrap())
                 .unwrap();
         let alloc = genesis["alloc"].as_object().unwrap();
-        let update_key = find_alloc_address_key(alloc, UPDATE_ADDRESS)
-            .unwrap()
-            .expect("measurement generator creates the Update alloc account");
-        let update_storage = alloc[&update_key]["storage"].as_object().unwrap();
-        let mut provider = HashMapStorageProvider::new(chain_spec.chain().id());
-        for (slot, value) in update_storage {
-            provider.storage.insert(
-                (UPDATE_ADDRESS, parse_hex_word(slot).unwrap()),
-                parse_storage_word(value).unwrap(),
-            );
-        }
-        StorageHandle::enter(&mut provider, |storage| {
-            let update = Update::new(storage);
-            let scheduled = update
-                .read_scheduled_update(measurement_update_proposal_id())
+        assert!(
+            find_alloc_address_key(alloc, outbe_primitives::addresses::UPDATE_ADDRESS)
                 .unwrap()
-                .unwrap();
-            assert_eq!(scheduled.version, ProtocolVersion::from_raw(1));
-            assert_eq!(
-                scheduled.activation_height,
-                OCOMP_MEASUREMENT_ACTIVATION_HEIGHT
-            );
-            assert_eq!(
-                scheduled.status,
-                outbe_update::schema::ScheduledUpdateStatus::Scheduled
-            );
-        });
+                .is_none(),
+            "measurement genesis must not schedule a generic Update for OCOMP"
+        );
 
         let bundles = topology
             .validator_indices()
@@ -3411,6 +3695,130 @@ mod tests {
             topology.prepare_measurement_fork_install().unwrap(),
             prepared
         );
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
+    fn bootstrapped_runtime_preserves_the_exact_genesis_result_signing_keys() {
+        let topology = topology();
+        prepare_measurement_genesis_fixture(&topology);
+        let prepared = topology.prepare_measurement_fork_install().unwrap();
+        let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
+        let canonical_bundle = prepared
+            .install
+            .protocol_bundle
+            .encode_canonical(&limits)
+            .unwrap();
+        fs::write(
+            topology.cfg.dir.join("protocol-bundle-v1.ocb1"),
+            canonical_bundle,
+        )
+        .unwrap();
+
+        let mut expected_keys = Vec::new();
+        for (index, registration) in prepared.install.founder_registrations.iter().enumerate() {
+            let domain_key = fs::read(
+                topology
+                    .domain_root(u8::try_from(index).unwrap())
+                    .unwrap()
+                    .join("ocomp-key-v1.hex"),
+            )
+            .unwrap();
+            expected_keys.push(domain_key.clone());
+            fs::write(
+                topology.cfg.validator_dir(index).join("ocomp-key-v1.hex"),
+                domain_key,
+            )
+            .unwrap();
+            fs::write(
+                topology
+                    .cfg
+                    .validator_dir(index)
+                    .join("ocomp-registration-v1.ocb1"),
+                registration.encode_canonical(&limits).unwrap(),
+            )
+            .unwrap();
+            fs::remove_dir_all(topology.domain_root(u8::try_from(index).unwrap()).unwrap())
+                .unwrap();
+        }
+
+        let identity = topology.prepare_bootstrapped_runtime().unwrap();
+        assert_eq!(identity, prepared.launch_identity());
+        for (index, expected_key) in expected_keys.iter().enumerate() {
+            assert_eq!(
+                fs::read(
+                    topology
+                        .domain_root(u8::try_from(index).unwrap())
+                        .unwrap()
+                        .join("ocomp-key-v1.hex")
+                )
+                .unwrap(),
+                *expected_key
+            );
+        }
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
+    fn bootstrapped_runtime_rejects_a_key_substituted_after_genesis() {
+        let topology = topology();
+        prepare_measurement_genesis_fixture(&topology);
+        let prepared = topology.prepare_measurement_fork_install().unwrap();
+        let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
+        fs::write(
+            topology.cfg.dir.join("protocol-bundle-v1.ocb1"),
+            prepared
+                .install
+                .protocol_bundle
+                .encode_canonical(&limits)
+                .unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            topology
+                .cfg
+                .validator_dir(0)
+                .join("ocomp-registration-v1.ocb1"),
+            prepared.install.founder_registrations[0]
+                .encode_canonical(&limits)
+                .unwrap(),
+        )
+        .unwrap();
+        let substituted = SigningKey::from_bytes((&[99_u8; 32]).into()).unwrap();
+        fs::write(
+            topology.cfg.validator_dir(0).join("ocomp-key-v1.hex"),
+            format!("{}\n", hex::encode(substituted.to_bytes())),
+        )
+        .unwrap();
+        fs::remove_dir_all(topology.domain_root(0).unwrap()).unwrap();
+
+        let error = topology.prepare_bootstrapped_runtime().unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("result-signing key does not match its genesis registration"));
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
+    fn supervisor_readiness_requires_the_expected_registered_connected_workers() {
+        let ready = SupervisorWorkerStatusV1 {
+            registry_generation: 1,
+            registered_workers: 1,
+            connected_workers: 1,
+            busy_workers: 0,
+            accepted_leases: 0,
+            queued_units: 0,
+            max_workers: 4,
+        };
+        ensure_supervisor_status_ready(0, &ready, 1).unwrap();
+
+        let mut missing = ready.clone();
+        missing.registered_workers = 0;
+        assert!(ensure_supervisor_status_ready(0, &missing, 1).is_err());
+
+        let mut disconnected = ready;
+        disconnected.connected_workers = 0;
+        assert!(ensure_supervisor_status_ready(0, &disconnected, 1).is_err());
     }
 
     #[cfg(feature = "ocomp-integration")]

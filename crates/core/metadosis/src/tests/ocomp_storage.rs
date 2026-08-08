@@ -30,7 +30,7 @@ use crate::{
     fixture_kernel::FixtureKernelExt,
     ocomp::{
         fork::OcompForkInstallClassification,
-        schema::{poc_schema_limits, OcompRequestProfile},
+        schema::{poc_schema_limits, OcompExpiryDisposition, OcompRequestProfile},
         state::{DayPhase, JobFsmLimits},
     },
     reducer::{OcompRetryCause, OuterWwdEvent, OuterWwdTransition},
@@ -792,7 +792,7 @@ fn duplicate_request_cannot_replace_a_record_at_the_protocol_intent_slot_key() {
 }
 
 #[test]
-fn final_allowed_expiry_credits_full_lysis_budget_once_and_does_not_requeue() {
+fn final_allowed_expiry_prepares_terminal_evidence_for_the_scoped_failure_commit() {
     with_storage(|storage| {
         let limits = poc_schema_limits();
         let fsm_limits = JobFsmLimits {
@@ -829,7 +829,7 @@ fn final_allowed_expiry_credits_full_lysis_budget_once_and_does_not_requeue() {
         open_job(&mut contract, first_intent_id, &limits, fsm_limits);
         let exhausted_transition =
             outer_transition(&contract, OuterWwdEvent::OcompAttemptsExhausted);
-        contract
+        let disposition = contract
             .expire_ocomp_job(
                 &exhausted_transition,
                 first_intent_id,
@@ -840,16 +840,25 @@ fn final_allowed_expiry_credits_full_lysis_budget_once_and_does_not_requeue() {
             )
             .unwrap();
 
-        assert_eq!(contract.get_wwd_status(WWD).unwrap(), status::FAILED);
-        assert!(contract.ocomp_scheduler.is_empty().unwrap());
+        assert_eq!(
+            disposition,
+            OcompExpiryDisposition::TerminalNoRetry {
+                next_pending_nonce: 1,
+                retained_lysis_budget: LYSIS_BUDGET,
+            }
+        );
+        assert_eq!(
+            contract.get_wwd_status(WWD).unwrap(),
+            status::OFFCHAIN_PENDING
+        );
+        assert!(!contract.ocomp_scheduler.is_empty().unwrap());
         assert!(contract
             .next_ocomp_ready(&limits, fsm_limits)
             .unwrap()
             .is_none());
-        assert!(contract.ocomp_fsm_state(WWD, &limits, fsm_limits).is_err());
         assert_eq!(
             promis_limit.get_total_unallocated().unwrap(),
-            existing_carry_over + LYSIS_BUDGET
+            existing_carry_over
         );
 
         let terminal_record = contract
@@ -873,7 +882,7 @@ fn final_allowed_expiry_credits_full_lysis_budget_once_and_does_not_requeue() {
             .is_err());
         assert_eq!(
             promis_limit.get_total_unallocated().unwrap(),
-            existing_carry_over + LYSIS_BUDGET
+            existing_carry_over
         );
     });
 }

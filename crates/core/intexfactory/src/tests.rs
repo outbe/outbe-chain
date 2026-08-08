@@ -9,9 +9,7 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key};
 
 use crate::called;
-use crate::constants::{
-    CALL_PRICE_NUM, FLOOR_PRICE_NUM, MATURITY_PERIOD_SECONDS, QUALIFIER_REFERENCE_ISO,
-};
+use crate::constants::{CALL_RATE, FLOOR_RATE, QUALIFICATION_PERIOD, QUALIFIER_REFERENCE_ISO};
 use crate::precompile::{self, IIntexFactory};
 use crate::qualified;
 use crate::runtime;
@@ -23,10 +21,14 @@ fn holder() -> Address {
     address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
 }
 
+fn payment_token() -> Address {
+    address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC")
+}
+
 const CHAIN_ID: u64 = 1;
 const ISSUED_AT: u32 = 1_700_000_000;
 const PROMIS_LOAD_MINOR: u128 = 1_000_000_000_000_000_000; // 1e18
-const CALL_PERIOD: u32 = 7 * 24 * 60 * 60;
+const CALL_NOTICE_PERIOD: u32 = 7 * 24 * 60 * 60;
 
 // COEN clearing price and the floor/trigger derived from it at issuance.
 const ENTRY_PRICE: u64 = 1_000_000;
@@ -79,15 +81,15 @@ fn issue_creates_series_in_registry() {
         // Floor and trigger are derived from the clearing price at issuance.
         assert_eq!(r.floor_price_minor, U256::from(EXPECTED_FLOOR));
         assert_eq!(r.issued_intex_count, 100);
-        assert_eq!(r.intex_call_period, CALL_PERIOD);
+        assert_eq!(r.call_notice_period, CALL_NOTICE_PERIOD);
         // Window/threshold/call-period are IntexFactory protocol constants now.
         assert_eq!(r.call_price_minor, U256::from(EXPECTED_TRIGGER));
         assert_eq!(
             r.call_trigger(),
             outbe_intex::IntexCallTrigger {
-                window_days: 30,
-                threshold_days: 21,
-                intex_call_period: CALL_PERIOD,
+                call_window: 28 * DAY as u32,
+                call_threshold: 21 * DAY as u32,
+                call_notice_period: CALL_NOTICE_PERIOD,
             }
         );
         // Born Issued; issued_at is the block timestamp.
@@ -154,20 +156,150 @@ fn issue_enrolls_series_in_dense_enumeration() {
 
 #[test]
 fn floor_and_call_derivation() {
-    let floor = runtime::derived_floor(U256::from(ENTRY_PRICE), FLOOR_PRICE_NUM).unwrap();
-    let call = runtime::derived_call_price(U256::from(ENTRY_PRICE), CALL_PRICE_NUM).unwrap();
+    let floor = runtime::marked_up(U256::from(ENTRY_PRICE), FLOOR_RATE).unwrap();
+    let call = runtime::marked_up(U256::from(ENTRY_PRICE), CALL_RATE).unwrap();
     assert_eq!(floor, U256::from(EXPECTED_FLOOR));
     assert_eq!(call, U256::from(EXPECTED_TRIGGER));
 
     let one = U256::from(1_000_000_000_000_000_000u64);
     assert_eq!(
-        runtime::derived_floor(one, FLOOR_PRICE_NUM).unwrap(),
+        runtime::marked_up(one, FLOOR_RATE).unwrap(),
         U256::from(1_080_000_000_000_000_000u64)
     );
     assert_eq!(
-        runtime::derived_call_price(one, CALL_PRICE_NUM).unwrap(),
+        runtime::marked_up(one, CALL_RATE).unwrap(),
         U256::from(2_280_000_000_000_000_000u64)
     );
+}
+
+// ---------------------------------------------------------------------
+// settlement cost scaling
+// ---------------------------------------------------------------------
+
+fn entry_price() -> U256 {
+    U256::from(5u64) * U256::from(10u64).pow(U256::from(17u64))
+}
+
+fn load_minor() -> U256 {
+    U256::from(100_000u64) * U256::from(10u64).pow(U256::from(18u64))
+}
+
+#[test]
+fn cost_amount_six_decimals() {
+    let cost = runtime::derived_cost_amount(entry_price(), load_minor(), 6).unwrap();
+    assert_eq!(cost, U256::from(50_000_000_000u64));
+}
+
+#[test]
+fn cost_amount_eighteen_decimals_is_1e12_larger() {
+    let six = runtime::derived_cost_amount(entry_price(), load_minor(), 6).unwrap();
+    let eighteen = runtime::derived_cost_amount(entry_price(), load_minor(), 18).unwrap();
+    assert_eq!(eighteen, six * U256::from(10u64).pow(U256::from(12u64)));
+}
+
+#[test]
+fn cost_amount_zero_decimals() {
+    let cost = runtime::derived_cost_amount(entry_price(), load_minor(), 0).unwrap();
+    assert_eq!(cost, U256::from(50_000u64));
+}
+
+#[test]
+fn cost_amount_rejects_decimals_above_the_product_scale() {
+    let err = runtime::derived_cost_amount(entry_price(), load_minor(), 37).unwrap_err();
+    assert!(err.to_string().contains("unsupported decimals"), "{err}");
+}
+
+fn word(value: u64) -> alloy_primitives::Bytes {
+    alloy_primitives::Bytes::from(U256::from(value).to_be_bytes::<32>().to_vec())
+}
+
+/// Storage with an issued series 7 and a payment token the router reports
+/// `vaults` vaults for, reporting `iso` and `decimals`.
+fn with_payment_token<R>(
+    vaults: u64,
+    iso: u64,
+    decimals: u64,
+    f: impl FnOnce(StorageHandle) -> R,
+) -> R {
+    use crate::sol_ext::{IReferenceCurrency, IERC20};
+    use outbe_vaultrouter::api::IVaultRouter;
+
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(ISSUED_AT as u64));
+    storage.stub_sub_call_at(crate::constants::INTEX_NFT1155_ADDRESS, word(0));
+    storage.stub_sub_call_at(crate::constants::ORIGIN_ROUTER_ADDRESS, word(0));
+    storage.stub_sub_call_at_selector(
+        outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
+        IVaultRouter::assetVaultsCountCall::SELECTOR,
+        word(vaults),
+    );
+    storage.stub_sub_call_at_selector(
+        payment_token(),
+        IReferenceCurrency::isoCodeCall::SELECTOR,
+        word(iso),
+    );
+    storage.stub_sub_call_at_selector(
+        payment_token(),
+        IERC20::decimalsCall::SELECTOR,
+        word(decimals),
+    );
+
+    StorageHandle::enter(&mut storage, |s| {
+        runtime::issue(&s, sample(7)).unwrap();
+        f(s)
+    })
+}
+
+#[test]
+fn cost_amount_prices_an_accepted_token() {
+    with_payment_token(1, 840, 18, |s| {
+        let cost = runtime::quote_cost_amount(&s, 7, payment_token()).unwrap();
+        assert_eq!(cost, U256::from(1_000_000u64));
+    });
+}
+
+#[test]
+fn cost_amount_rejects_an_unregistered_token() {
+    with_payment_token(0, 840, 18, |s| {
+        let err = runtime::quote_cost_amount(&s, 7, payment_token()).unwrap_err();
+        assert!(err.to_string().contains("no registered vault"), "{err}");
+    });
+}
+
+#[test]
+fn cost_amount_rejects_a_foreign_currency() {
+    with_payment_token(1, 978, 18, |s| {
+        let err = runtime::quote_cost_amount(&s, 7, payment_token()).unwrap_err();
+        assert!(err.to_string().contains("does not match"), "{err}");
+    });
+}
+
+#[test]
+fn cost_amount_rejects_missing_series() {
+    with_factory(|s| {
+        assert!(runtime::quote_cost_amount(&s, 7, payment_token()).is_err());
+    });
+}
+
+#[test]
+fn cost_amount_dispatch() {
+    with_payment_token(1, 840, 18, |s| {
+        let out = precompile::dispatch(
+            s.clone(),
+            &IIntexFactory::quoteCostAmountCall {
+                seriesId: 7,
+                paymentToken: payment_token(),
+            }
+            .abi_encode(),
+            holder(),
+            U256::ZERO,
+        )
+        .unwrap();
+        assert_eq!(
+            IIntexFactory::quoteCostAmountCall::abi_decode_returns(&out).unwrap(),
+            U256::from(1_000_000u64)
+        );
+    });
 }
 
 // ---------------------------------------------------------------------
@@ -177,14 +309,16 @@ fn floor_and_call_derivation() {
 #[test]
 fn settle_rejects_zero_amount() {
     with_factory(|s| {
-        assert!(runtime::settle(&s, 7, holder(), holder(), U256::ZERO).is_err());
+        assert!(runtime::settle(&s, 7, holder(), holder(), U256::ZERO, payment_token()).is_err());
     });
 }
 
 #[test]
 fn settle_rejects_missing_series() {
     with_factory(|s| {
-        assert!(runtime::settle(&s, 7, holder(), holder(), U256::from(1)).is_err());
+        assert!(
+            runtime::settle(&s, 7, holder(), holder(), U256::from(1), payment_token()).is_err()
+        );
     });
 }
 
@@ -193,7 +327,8 @@ fn settle_rejects_wrong_state_issued() {
     with_factory(|s| {
         // Born Issued; settlement is only valid in Qualified/Called.
         runtime::issue(&s, sample(7)).unwrap();
-        let err = runtime::settle(&s, 7, holder(), holder(), U256::from(1)).unwrap_err();
+        let err =
+            runtime::settle(&s, 7, holder(), holder(), U256::from(1), payment_token()).unwrap_err();
         assert!(err.to_string().to_lowercase().contains("settleable"));
     });
 }
@@ -201,7 +336,7 @@ fn settle_rejects_wrong_state_issued() {
 #[test]
 fn settle_rejects_expired_deadline() {
     // Late block timestamp so the Called deadline is already in the past.
-    let now = (ISSUED_AT as u64) + (CALL_PERIOD as u64) + 1_000;
+    let now = (ISSUED_AT as u64) + (CALL_NOTICE_PERIOD as u64) + 1_000;
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(now));
     storage.stub_sub_call_at(
@@ -215,9 +350,10 @@ fn settle_rejects_expired_deadline() {
     );
     StorageHandle::enter(&mut storage, |s| {
         runtime::issue(&s, sample(7)).unwrap();
-        // deadline = ISSUED_AT + CALL_PERIOD < now
+        // deadline = ISSUED_AT + CALL_NOTICE_PERIOD < now
         outbe_intex::api::mark_called(&s, 7, ISSUED_AT).unwrap();
-        let err = runtime::settle(&s, 7, holder(), holder(), U256::from(1)).unwrap_err();
+        let err =
+            runtime::settle(&s, 7, holder(), holder(), U256::from(1), payment_token()).unwrap_err();
         assert!(err.to_string().to_lowercase().contains("deadline"));
     });
 }
@@ -374,7 +510,7 @@ fn insert_remove_unqualified_roundtrip() {
 }
 
 #[test]
-fn try_qualify_gates_maturity_floor_and_latches() {
+fn try_qualify_gates_qualification_floor_and_latches() {
     with_factory(|s| {
         runtime::issue(&s, sample(7)).unwrap();
         let mut f = IntexFactoryContract::new(s.clone());
@@ -387,21 +523,21 @@ fn try_qualify_gates_maturity_floor_and_latches() {
             &s,
             &mut f,
             7,
-            MATURITY_PERIOD_SECONDS,
+            QUALIFICATION_PERIOD,
             immature,
             floor + U256::from(1)
         )
         .unwrap());
         // Mature but rate == floor (strict >) -> false.
         assert!(
-            !qualified::try_qualify(&s, &mut f, 7, MATURITY_PERIOD_SECONDS, mature, floor).unwrap()
+            !qualified::try_qualify(&s, &mut f, 7, QUALIFICATION_PERIOD, mature, floor).unwrap()
         );
         // Mature + rate > floor -> qualifies, latched, removed from bin.
         assert!(qualified::try_qualify(
             &s,
             &mut f,
             7,
-            MATURITY_PERIOD_SECONDS,
+            QUALIFICATION_PERIOD,
             mature,
             floor + U256::from(1)
         )
@@ -420,7 +556,7 @@ fn try_qualify_gates_maturity_floor_and_latches() {
             &s,
             &mut f,
             7,
-            MATURITY_PERIOD_SECONDS,
+            QUALIFICATION_PERIOD,
             mature,
             floor + U256::from(1)
         )
@@ -494,7 +630,7 @@ fn qualify_series<'a>(
         s,
         &mut f,
         id,
-        MATURITY_PERIOD_SECONDS,
+        QUALIFICATION_PERIOD,
         mature,
         floor + U256::from(1)
     )
@@ -582,7 +718,16 @@ fn try_call_marks_called_when_threshold_met() {
         let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
         fill_days(&oracle, last_closed_day, pair, 30, breach);
 
-        assert!(called::try_call(&s, &mut f, &oracle, 7, pair, last_closed_day, scan_ts).unwrap());
+        assert!(called::try_call(
+            &s,
+            &mut f,
+            &oracle,
+            &mut called::DayVwaps::new(pair_id),
+            7,
+            last_closed_day,
+            scan_ts
+        )
+        .unwrap());
         assert_eq!(
             outbe_intex::api::read_series(&s, 7)
                 .unwrap()
@@ -616,7 +761,16 @@ fn try_call_skips_when_below_threshold() {
             d = previous_date_key(d);
         }
 
-        assert!(!called::try_call(&s, &mut f, &oracle, 7, pair, last_closed_day, scan_ts).unwrap());
+        assert!(!called::try_call(
+            &s,
+            &mut f,
+            &oracle,
+            &mut called::DayVwaps::new(pair_id),
+            7,
+            last_closed_day,
+            scan_ts
+        )
+        .unwrap());
         assert_eq!(
             outbe_intex::api::read_series(&s, 7)
                 .unwrap()
@@ -631,8 +785,8 @@ fn try_call_skips_when_below_threshold() {
 fn try_call_excludes_pre_issuance_days() {
     with_factory(|s| {
         // window 30, threshold 27: only days from issuance onward may count.
-        // Seed the series directly with threshold 27 (above the 21d maturity),
-        // since the protocol default (21) does not exceed maturity and a
+        // Seed the series directly with threshold 27 (above the 21d qualification
+        // period), since the protocol default (21) does not exceed it and a
         // qualified series would always have >= 21 completed post-issuance days.
         outbe_intex::api::create_series(
             &s,
@@ -645,9 +799,9 @@ fn try_call_excludes_pre_issuance_days() {
                 floor_price_minor: U256::from(EXPECTED_FLOOR),
                 call_price_minor: U256::from(EXPECTED_TRIGGER),
                 call_trigger: outbe_intex::IntexCallTrigger {
-                    window_days: 30,
-                    threshold_days: 27,
-                    intex_call_period: CALL_PERIOD,
+                    call_window: 30 * DAY as u32,
+                    call_threshold: 27 * DAY as u32,
+                    call_notice_period: CALL_NOTICE_PERIOD,
                 },
                 issued_at: ISSUED_AT,
                 issuance_currency: 840,
@@ -666,7 +820,16 @@ fn try_call_excludes_pre_issuance_days() {
         let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
         fill_days(&oracle, last_closed_day, pair, 30, breach);
 
-        assert!(!called::try_call(&s, &mut f, &oracle, 8, pair, last_closed_day, scan_ts).unwrap());
+        assert!(!called::try_call(
+            &s,
+            &mut f,
+            &oracle,
+            &mut called::DayVwaps::new(pair_id),
+            8,
+            last_closed_day,
+            scan_ts
+        )
+        .unwrap());
         assert_eq!(
             outbe_intex::api::read_series(&s, 8)
                 .unwrap()
@@ -695,9 +858,9 @@ fn seed_issued(s: &StorageHandle<'_>, id: u32) {
             floor_price_minor: U256::from(EXPECTED_FLOOR),
             call_price_minor: U256::from(EXPECTED_TRIGGER),
             call_trigger: outbe_intex::IntexCallTrigger {
-                window_days: 30,
-                threshold_days: 21,
-                intex_call_period: CALL_PERIOD,
+                call_window: 30 * DAY as u32,
+                call_threshold: 21 * DAY as u32,
+                call_notice_period: CALL_NOTICE_PERIOD,
             },
             issued_at: ISSUED_AT,
             issuance_currency: 840,
@@ -728,7 +891,7 @@ fn qualify_survives_router_failure() {
             &s,
             &mut f,
             7,
-            MATURITY_PERIOD_SECONDS,
+            QUALIFICATION_PERIOD,
             mature,
             U256::from(EXPECTED_FLOOR) + U256::from(1)
         )
@@ -771,7 +934,16 @@ fn call_survives_router_failure() {
             U256::from(EXPECTED_TRIGGER) + U256::from(1),
         );
 
-        assert!(called::try_call(&s, &mut f, &oracle, 7, pair, last_closed_day, scan_ts).unwrap());
+        assert!(called::try_call(
+            &s,
+            &mut f,
+            &oracle,
+            &mut called::DayVwaps::new(pair_id),
+            7,
+            last_closed_day,
+            scan_ts
+        )
+        .unwrap());
         assert_eq!(
             outbe_intex::api::read_series(&s, 7)
                 .unwrap()
@@ -787,7 +959,7 @@ fn call_survives_router_failure() {
 // ---------------------------------------------------------------------
 
 #[test]
-fn scan_and_qualify_promotes_matured_series() {
+fn scan_and_qualify_promotes_aged_series() {
     with_factory(|s| {
         runtime::issue(&s, sample(7)).unwrap();
         // Qualifier pair live rate above the floor.
@@ -857,7 +1029,7 @@ fn scan_and_call_reads_daily_vwap_at_midnight() {
         let _f = qualify_series(&s, 7, sample(7));
         let mut oracle = OracleContract::new(s.clone());
         setup_pair(&oracle);
-        // Exact midnight UTC, well past maturity.
+        // Exact midnight UTC, well past the qualification period.
         let scan_ts = (ISSUED_AT as u64 / DAY + 60) * DAY;
         let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
         let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
@@ -1073,7 +1245,7 @@ fn config_defaults_to_prod_when_unset() {
 }
 
 #[test]
-fn config_dev_profile_drives_issuance_and_maturity() {
+fn config_dev_profile_drives_issuance_and_qualification() {
     with_factory(|s| {
         let mut f = IntexFactoryContract::new(s.clone());
         // Select the dev profile through the single selector byte.
@@ -1088,33 +1260,33 @@ fn config_dev_profile_drives_issuance_and_maturity() {
         // Issuance captures the dev call-trigger and dev-derived prices.
         let dev = crate::config::IntexParams::DEV;
         let r = outbe_intex::api::read_series(&s, 7).unwrap();
-        assert_eq!(r.intex_call_period, dev.intex_call_period_secs);
+        assert_eq!(r.call_notice_period, dev.call_notice_period);
         assert_eq!(
             r.floor_price_minor,
-            U256::from(ENTRY_PRICE * dev.floor_price_num / 100)
+            U256::from(ENTRY_PRICE * u64::from(100 + dev.floor_rate) / 100)
         );
         assert_eq!(
             r.call_price_minor,
-            U256::from(ENTRY_PRICE * dev.call_price_num / 100)
+            U256::from(ENTRY_PRICE * u64::from(100 + dev.call_rate) / 100)
         );
         assert_eq!(
             r.call_trigger(),
             outbe_intex::IntexCallTrigger {
-                window_days: dev.call_window_days,
-                threshold_days: dev.call_threshold_days,
-                intex_call_period: dev.intex_call_period_secs,
+                call_window: dev.call_window,
+                call_threshold: dev.call_threshold,
+                call_notice_period: dev.call_notice_period,
             }
         );
 
-        // Dev maturity qualifies long before the 21-day prod maturity.
+        // The dev qualification period elapses long before the 21-day prod one.
         let rate = r.floor_price_minor + U256::from(1);
-        let after_maturity = ISSUED_AT as u64 + dev.maturity_period_secs + 1;
+        let after_qualification = ISSUED_AT as u64 + u64::from(dev.qualification_period) + 1;
         assert!(qualified::try_qualify(
             &s,
             &mut f,
             7,
-            dev.maturity_period_secs,
-            after_maturity,
+            dev.qualification_period,
+            after_qualification,
             rate
         )
         .unwrap());
@@ -1563,6 +1735,7 @@ fn unpublished_selectors_refuse_native_value() {
             seriesId: 0u32,
             intexHolder: Address::ZERO,
             amount: U256::ZERO,
+            paymentToken: Address::ZERO,
         }
         .abi_encode(),
         IIntexFactory::setAuthorizedSettlerCall {

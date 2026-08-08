@@ -125,6 +125,9 @@ pub struct OcompPublicScenarioEvidenceV1 {
     pub non_quorum_changed_binding_reverted: Option<bool>,
     pub non_quorum_state_unchanged: Option<bool>,
     pub expired_without_nod: Option<bool>,
+    pub failed_terminal_receipt: Option<crate::world::rpc::MetadosisWorldwideDayTerminalReceiptV1>,
+    pub failed_promis_limit: Option<alloy_primitives::U256>,
+    pub failed_terminal_commitment: Option<crate::world::rpc::BlockCommitmentV1>,
     pub held_late_vote_hash: Option<alloy_primitives::B256>,
     pub late_vote_reverted: Option<bool>,
     pub late_vote_inclusion_height: Option<u64>,
@@ -236,6 +239,12 @@ pub struct FixtureState {
     pub ocomp_non_quorum_changed_binding_reverted: Option<bool>,
     pub ocomp_non_quorum_state_unchanged: Option<bool>,
     pub ocomp_expired_without_nod: Option<bool>,
+    /// Canonical FAILED outcome captured after the bounded OCOMP attempt budget
+    /// is exhausted. These values are replay assertions, never control input.
+    pub ocomp_failed_terminal_receipt:
+        Option<crate::world::rpc::MetadosisWorldwideDayTerminalReceiptV1>,
+    pub ocomp_failed_promis_limit: Option<alloy_primitives::U256>,
+    pub ocomp_failed_terminal_commitment: Option<crate::world::rpc::BlockCommitmentV1>,
     /// A locally signed OCOMP transaction held by the deadline scenario until the
     /// exclusive boundary. Raw bytes are never published as scenario evidence.
     pub ocomp_held_late_vote_raw: Option<Vec<u8>>,
@@ -367,6 +376,9 @@ impl Default for FixtureState {
             ocomp_non_quorum_changed_binding_reverted: None,
             ocomp_non_quorum_state_unchanged: None,
             ocomp_expired_without_nod: None,
+            ocomp_failed_terminal_receipt: None,
+            ocomp_failed_promis_limit: None,
+            ocomp_failed_terminal_commitment: None,
             ocomp_held_late_vote_raw: None,
             ocomp_held_late_vote_hash: None,
             ocomp_late_vote_reverted: None,
@@ -431,6 +443,9 @@ impl FixtureState {
             non_quorum_changed_binding_reverted: self.ocomp_non_quorum_changed_binding_reverted,
             non_quorum_state_unchanged: self.ocomp_non_quorum_state_unchanged,
             expired_without_nod: self.ocomp_expired_without_nod,
+            failed_terminal_receipt: self.ocomp_failed_terminal_receipt.clone(),
+            failed_promis_limit: self.ocomp_failed_promis_limit,
+            failed_terminal_commitment: self.ocomp_failed_terminal_commitment.clone(),
             held_late_vote_hash: self.ocomp_held_late_vote_hash,
             late_vote_reverted: self.ocomp_late_vote_reverted,
             late_vote_inclusion_height: self.ocomp_late_vote_inclusion_height,

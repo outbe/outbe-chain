@@ -29,7 +29,7 @@ pub fn worldwide_day(
         (true, false) => WwdMembership::Active,
         (false, true) => WwdMembership::Closed,
         _ => {
-            return Err(outbe_primitives::error::PrecompileError::Fatal(
+            return Err(crate::errors::storage_corruption(
                 "Metadosis WWD membership is not exactly one of active/closed".into(),
             ))
         }
@@ -63,7 +63,7 @@ pub fn offering_worldwide_days(storage: StorageHandle<'_>) -> Result<Vec<Worldwi
     let mut result = Vec::new();
     for wwd in contract.active_wwd.read_all()? {
         let record = contract.worldwide_days.get(wwd)?.ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::Fatal(
+            crate::errors::storage_corruption(
                 "Metadosis active index points to a missing WWD".into(),
             )
         })?;

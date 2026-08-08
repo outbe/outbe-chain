@@ -165,5 +165,5 @@ fn expected_receipt(
 }
 
 fn protocol_error_to_revert(error: outbe_ocomp_protocol::ProtocolError) -> PrecompileError {
-    PrecompileError::Revert(format!("invalid OCOMP request budget receipt: {error}"))
+    crate::errors::caller_rejection(format!("invalid OCOMP request budget receipt: {error}"))
 }

@@ -49,12 +49,20 @@ impl Localnet {
                 continue; // already running
             }
             self.validators.remove(&i); // clear a dead handle if present
+            launched.push(i);
+        }
 
+        // Bring the complete enclave cohort up before the first validator can
+        // enter genesis DKG. Starting enclave→validator per index gave the first
+        // nodes several seconds' head start and made them finalize before the
+        // last dealings existed (`MissingPlayerDealing`).
+        for &i in &launched {
             if self.tee_enabled() && !self.enclaves.contains_key(&i) {
                 self.start_enclave(i, chain_id_hex.as_deref().unwrap_or_default())?;
             }
+        }
+        for &i in &launched {
             self.launch_validator(i, opts, bootnodes.as_deref())?;
-            launched.push(i);
         }
 
         // Survival check: a node that dies in the first couple seconds is a
@@ -65,6 +73,24 @@ impl Localnet {
                 let tail = self.tail_log(i, 20);
                 self.validators.remove(&i);
                 bail!("validator-{i} exited during startup:\n{tail}");
+            }
+        }
+        Ok(())
+    }
+
+    /// Require that every process owned as a committee validator is still alive.
+    ///
+    /// RPC reachability alone cannot establish ownership: another local run may
+    /// be listening on the same static port. The persistent LocalNet driver calls
+    /// this throughout readiness and only accepts heights from this live cohort.
+    pub fn ensure_committee_alive(&mut self) -> Result<()> {
+        for index in 0..self.committee_size() {
+            let Some(guard) = self.validators.get_mut(&index) else {
+                bail!("validator-{index} has no owned process");
+            };
+            if guard.exited() {
+                let tail = self.tail_log(index, 20);
+                bail!("validator-{index} exited during readiness:\n{tail}");
             }
         }
         Ok(())
@@ -439,6 +465,41 @@ impl Localnet {
         let s = fs::read_to_string(self.cfg.validator_dir(i).join("node.log")).unwrap_or_default();
         let lines: Vec<&str> = s.lines().collect();
         lines[lines.len().saturating_sub(n)..].join("\n")
+    }
+}
+
+#[cfg(test)]
+mod owned_committee_tests {
+    use std::process::Command;
+    use std::thread::sleep;
+    use std::time::Duration;
+
+    use crate::env::Environment;
+    use crate::internal::config::Config;
+    use crate::internal::proc::ChildGuard;
+
+    use super::Localnet;
+
+    #[test]
+    fn readiness_rejects_an_owned_validator_that_exited() {
+        let env = Environment {
+            validators: 1,
+            data_dir: tempfile::tempdir().unwrap().keep(),
+            ..Environment::default()
+        };
+        env.ports.start_scenario(1).unwrap();
+        let mut localnet = Localnet::new(Config::resolve(&env));
+
+        let mut command = Command::new("sh");
+        command.args(["-c", "exit 23"]);
+        let guard = ChildGuard::spawn("validator-0-test", command).unwrap();
+        localnet.validators.insert(0, guard);
+        sleep(Duration::from_millis(50));
+
+        let error = localnet
+            .ensure_committee_alive()
+            .expect_err("an exited owned validator must fail readiness");
+        assert!(error.to_string().contains("validator-0 exited"));
     }
 }
 

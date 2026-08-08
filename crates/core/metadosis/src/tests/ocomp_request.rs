@@ -26,7 +26,7 @@ use crate::{
     fixture_kernel::FixtureKernelExt,
     ocomp::{
         expiry::run_lifecycle_begin,
-        request::run_terminal_request,
+        request::run_terminal_request_with_completed_fixture as run_terminal_request,
         schema::poc_schema_limits,
         state::{DayPhase, JobFsmLimits},
     },
@@ -35,6 +35,7 @@ use crate::{
     WwdDayType,
 };
 
+mod fatal_recovery;
 mod p5_models;
 
 fn seed_active_ocomp_snapshot(
@@ -948,9 +949,9 @@ fn nonzero_owner_projections_are_snapshotted_in_the_created_intent() {
                 floor_price_minor: U256::from(1),
                 call_price_minor: U256::from(1),
                 call_trigger: outbe_intex::IntexCallTrigger {
-                    window_days: 1,
-                    threshold_days: 1,
-                    intex_call_period: 1,
+                    call_window: 24 * 60 * 60,
+                    call_threshold: 24 * 60 * 60,
+                    call_notice_period: 1,
                 },
                 issued_at: 1,
                 issuance_currency: 840,
@@ -1066,7 +1067,11 @@ fn request_storage_failure_rolls_back_every_observable_effect() {
             ),
             storage,
         );
-        commands::run_ocomp_terminal_request(&ctx, &calibration_fixture.scope).unwrap();
+        commands::run_ocomp_terminal_request_with_completed_fixture(
+            &ctx,
+            &calibration_fixture.scope,
+        )
+        .unwrap();
     });
     let successful_mutations = calibration.clear_mutation_failure();
     assert!(
@@ -1096,7 +1101,8 @@ fn request_storage_failure_rolls_back_every_observable_effect() {
             ),
             storage,
         );
-        commands::run_ocomp_terminal_request(&ctx, &fixture.scope).unwrap_err()
+        commands::run_ocomp_terminal_request_with_completed_fixture(&ctx, &fixture.scope)
+            .unwrap_err()
     });
     assert!(matches!(
         error,

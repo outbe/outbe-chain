@@ -145,17 +145,17 @@
               "internalType": "struct IIntexNFT1155.IntexCallTrigger",
               "components": [
                 {
-                  "name": "windowDays",
-                  "type": "uint16",
-                  "internalType": "uint16"
+                  "name": "callWindow",
+                  "type": "uint32",
+                  "internalType": "uint32"
                 },
                 {
-                  "name": "thresholdDays",
-                  "type": "uint16",
-                  "internalType": "uint16"
+                  "name": "callThreshold",
+                  "type": "uint32",
+                  "internalType": "uint32"
                 },
                 {
-                  "name": "intexCallPeriod",
+                  "name": "callNoticePeriod",
                   "type": "uint32",
                   "internalType": "uint32"
                 }
@@ -704,7 +704,7 @@
     },
     {
       "type": "function",
-      "name": "parkForGems",
+      "name": "parkIntex",
       "inputs": [
         {
           "name": "holder",
@@ -782,17 +782,17 @@
               "internalType": "struct IIntexNFT1155.IntexCallTrigger",
               "components": [
                 {
-                  "name": "windowDays",
-                  "type": "uint16",
-                  "internalType": "uint16"
+                  "name": "callWindow",
+                  "type": "uint32",
+                  "internalType": "uint32"
                 },
                 {
-                  "name": "thresholdDays",
-                  "type": "uint16",
-                  "internalType": "uint16"
+                  "name": "callThreshold",
+                  "type": "uint32",
+                  "internalType": "uint32"
                 },
                 {
-                  "name": "intexCallPeriod",
+                  "name": "callNoticePeriod",
                   "type": "uint32",
                   "internalType": "uint32"
                 }

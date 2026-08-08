@@ -69,6 +69,38 @@ fn fresh_ocomp_public_capacity_localnet(world: &mut World) {
     start_ocomp_measurement_localnet(world, Some(OCOMP_CAPACITY_TRIBUTE_COUNT));
 }
 
+#[given("a fresh four-validator OCOMP failure-recovery localnet")]
+fn fresh_ocomp_failure_recovery_localnet(world: &mut World) {
+    bootstrap_localnet(
+        world,
+        6,
+        &[(
+            "TESTNET_EPOCH_LENGTH_BLOCKS",
+            OCOMP_TEST_EPOCH_LENGTH_BLOCKS.to_string(),
+        )],
+    );
+    let now_secs = unix_time_secs();
+    let mut start_opts = StartOpts::near_next_utc_day_with_lead(6, now_secs, 120);
+    let offset = start_opts
+        .unix_time_offset_secs
+        .expect("failure-recovery logical clock offset");
+    world
+        .localnet
+        .shift_genesis_timestamp(offset)
+        .expect("shift OCOMP failure-recovery genesis before deriving fork identity");
+    start_opts.genesis_timestamp_pre_shifted = true;
+    let prepared = world
+        .ocomp
+        .prepare_failure_recovery_fork_install()
+        .expect("prepare immutable one-attempt OCOMP failure-recovery fork");
+    world
+        .localnet
+        .bind_tee_genesis()
+        .expect("bind canonical TEE genesis after failure-recovery manifest");
+    launch_prepared_ocomp(world, &mut start_opts, &prepared, true);
+    wait_for_finalized_ocomp_activation(world);
+}
+
 #[given("a fresh four-validator OCOMP dynamic-membership localnet with two scheduled jobs")]
 fn fresh_ocomp_dynamic_membership_localnet(world: &mut World) {
     bootstrap_localnet(
@@ -2709,6 +2741,13 @@ fn job_a_opens_on_the_historical_four_validator_snapshot(world: &mut World) {
     assert_ne!(record.intent.result_committee_set_hash, B256::ZERO);
     assert_ne!(record.intent.result_ocomp_binding_hash, B256::ZERO);
     assert!(
+        ports
+            .iter()
+            .copied()
+            .all(|port| world.rpc.active_version_on(port) == Some(0)),
+        "a real post-activation OCOMP job must not depend on a generic Update"
+    );
+    assert!(
         ports.iter().copied().all(|port| world
             .rpc
             .metadosis_wwd_state_on(port, job_b_wwd)
@@ -3010,6 +3049,172 @@ fn no_quorum_job_expires_without_nod(world: &mut World) {
     world.state.ocomp_expired_without_nod = Some(true);
 }
 
+#[then("the exhausted no-quorum OCOMP day fails atomically")]
+fn exhausted_no_quorum_day_fails_atomically(world: &mut World) {
+    const FAILED: u8 = 7;
+    const METADOSIS_FAILURE: u8 = 3;
+    const RETIREMENT_REQUESTED: u8 = 2;
+
+    let request = world
+        .state
+        .ocomp_job_request
+        .clone()
+        .expect("finalized exhausted JobIntent");
+    let ports = world.validators.committee_ports();
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let (receipt, promis_limit, commitment) = loop {
+        let receipts = ports
+            .iter()
+            .map(|port| {
+                world
+                    .rpc
+                    .metadosis_terminal_receipt_on(*port, request.worldwide_day)
+            })
+            .collect::<Vec<_>>();
+        let limits = ports
+            .iter()
+            .map(|port| world.rpc.promis_limit_total_unallocated_on(*port))
+            .collect::<Vec<_>>();
+        let states = ports
+            .iter()
+            .map(|port| {
+                world
+                    .rpc
+                    .metadosis_wwd_state_on(*port, request.worldwide_day)
+            })
+            .collect::<Vec<_>>();
+        if receipts.iter().all(Option::is_some)
+            && limits.iter().all(Option::is_some)
+            && states
+                .iter()
+                .all(|state| state.as_ref().is_some_and(|state| state.status == FAILED))
+        {
+            let receipt = receipts[0].clone().expect("failure receipt");
+            if receipt.outcome == METADOSIS_FAILURE
+                && receipt.retirement_outcome == RETIREMENT_REQUESTED
+                && receipts
+                    .iter()
+                    .all(|candidate| candidate.as_ref() == Some(&receipt))
+                && limits
+                    .iter()
+                    .all(|candidate| *candidate == Some(receipt.carry_over_after))
+                && ports.iter().all(|port| {
+                    world
+                        .rpc
+                        .tributes_by_day(*port, request.worldwide_day)
+                        .is_some_and(|tributes| tributes.is_empty())
+                        && world.rpc.supply(*port).as_deref() == Some("0")
+                })
+            {
+                let commitments = ports
+                    .iter()
+                    .map(|port| world.rpc.block_commitment(*port, receipt.block_number))
+                    .collect::<Vec<_>>();
+                if commitments.iter().all(Option::is_some) {
+                    let commitment = commitments[0].clone().expect("failure commitment");
+                    if commitments
+                        .iter()
+                        .all(|candidate| candidate.as_ref() == Some(&commitment))
+                    {
+                        let promis_limit = receipt.carry_over_after;
+                        break (receipt, promis_limit, commitment);
+                    }
+                }
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "exhausted OCOMP day did not converge on atomic FAILED accounting"
+        );
+        sleep(Duration::from_millis(250));
+    };
+
+    assert!(!receipt.value_routed.is_zero());
+    assert_eq!(
+        receipt.carry_over_before.checked_add(receipt.value_routed),
+        Some(receipt.carry_over_after)
+    );
+    assert!(
+        ports.iter().all(|port| world
+            .rpc
+            .finalized(*port)
+            .is_some_and(|height| height > receipt.block_number)),
+        "FAILED terminalization stopped finality"
+    );
+    world.state.ocomp_failed_terminal_receipt = Some(receipt);
+    world.state.ocomp_failed_promis_limit = Some(promis_limit);
+    world.state.ocomp_failed_terminal_commitment = Some(commitment);
+}
+
+#[then("the failed WWD and accounting remain identical after restart")]
+fn failed_wwd_survives_restart_without_double_effects(world: &mut World) {
+    const FAILED: u8 = 7;
+    let request = world
+        .state
+        .ocomp_job_request
+        .clone()
+        .expect("failed JobIntent before replay assertion");
+    let receipt = world
+        .state
+        .ocomp_failed_terminal_receipt
+        .clone()
+        .expect("pre-restart failure receipt");
+    let promis_limit = world
+        .state
+        .ocomp_failed_promis_limit
+        .expect("pre-restart PromiseLimit");
+    let commitment = world
+        .state
+        .ocomp_failed_terminal_commitment
+        .clone()
+        .expect("pre-restart terminal commitment");
+
+    for port in world.validators.committee_ports() {
+        assert!(
+            world
+                .rpc
+                .wait_finalized_at_least(port, receipt.block_number.saturating_add(1), 60),
+            "validator on port {port} did not resume finality after restart"
+        );
+        assert_eq!(
+            world
+                .rpc
+                .metadosis_wwd_state_on(port, request.worldwide_day)
+                .map(|state| state.status),
+            Some(FAILED)
+        );
+        assert_eq!(
+            world
+                .rpc
+                .metadosis_terminal_receipt_on(port, request.worldwide_day),
+            Some(receipt.clone())
+        );
+        assert_eq!(
+            world.rpc.promis_limit_total_unallocated_on(port),
+            Some(promis_limit),
+            "restart/replay credited PromiseLimit twice on port {port}"
+        );
+        assert!(world
+            .rpc
+            .tributes_by_day(port, request.worldwide_day)
+            .is_some_and(|tributes| tributes.is_empty()));
+        assert_eq!(world.rpc.supply(port).as_deref(), Some("0"));
+        assert_eq!(
+            world.rpc.block_commitment(port, receipt.block_number),
+            Some(commitment.clone())
+        );
+        let record = world
+            .rpc
+            .finalized_ocomp_job_record_on(port, request.intent_id)
+            .expect("expired evidence remains queryable after restart");
+        assert_eq!(record.status, OcompJobStatus::Expired);
+        assert_eq!(
+            record.terminal.as_ref().map(|terminal| terminal.outcome),
+            Some(OcompTerminalOutcome::Expired)
+        );
+    }
+}
+
 #[then("all four OCOMP domains run their node-facing production roles")]
 fn four_domains_run_node_facing_roles(world: &mut World) {
     let records = world.ocomp.process_records();
@@ -3146,7 +3351,7 @@ fn validator_zero_supervisor_restarts(world: &mut World) {
 #[when("validator 0 restarts before, across, and after the OCOMP fork height")]
 fn validator_zero_restarts_across_fork(world: &mut World) {
     const VALIDATOR_INDEX: usize = 0;
-    const ACTIVE_PROTOCOL_VERSION: u64 = 1;
+    const GENERIC_PROTOCOL_BASELINE: u64 = 0;
 
     let activation = world
         .state
@@ -3212,13 +3417,13 @@ fn validator_zero_restarts_across_fork(world: &mut World) {
         .expect("validator-0 replays through the finalized activation block");
     assert_eq!(
         world.rpc.active_version_on(primary),
-        Some(ACTIVE_PROTOCOL_VERSION),
-        "restarted validator did not replay the protocol-v1 activation"
+        Some(GENERIC_PROTOCOL_BASELINE),
+        "OCOMP activation must not change the generic protocol version"
     );
     assert_eq!(
         world.rpc.active_version_on(witness),
-        Some(ACTIVE_PROTOCOL_VERSION),
-        "live committee did not activate protocol v1 at H"
+        Some(GENERIC_PROTOCOL_BASELINE),
+        "live committee changed the generic protocol version at OCOMP activation"
     );
 
     let post_fork_restart_from_height = world.rpc.head(primary).expect("post-H validator-0 head");
@@ -3233,8 +3438,8 @@ fn validator_zero_restarts_across_fork(world: &mut World) {
         .expect("validator-0 rejoins after H");
     assert_eq!(
         world.rpc.active_version_on(primary),
-        Some(ACTIVE_PROTOCOL_VERSION),
-        "post-H restart lost the activated protocol version"
+        Some(GENERIC_PROTOCOL_BASELINE),
+        "post-H restart changed the generic protocol version"
     );
     world
         .ocomp
@@ -3252,7 +3457,6 @@ fn validator_zero_restarts_across_fork(world: &mut World) {
             replayed_through_height,
             post_fork_restart_from_height,
             post_fork_rejoined_height,
-            active_protocol_version: ACTIVE_PROTOCOL_VERSION,
         })
         .expect("retain validated fork restart evidence");
 }
@@ -3275,7 +3479,7 @@ fn fork_restart_evidence_is_closed(world: &mut World) {
 #[when("validator 0 restarts with a different valid immutable OCOMP fork install")]
 fn validator_zero_restarts_with_mismatched_fork_install(world: &mut World) {
     const VALIDATOR_INDEX: usize = 0;
-    const ACTIVE_PROTOCOL_VERSION: u64 = 1;
+    const GENERIC_PROTOCOL_BASELINE: u64 = 0;
 
     let primary = world.validators.http_port(VALIDATOR_INDEX);
     let witness = world.validators.http_port(1);
@@ -3322,12 +3526,12 @@ fn validator_zero_restarts_with_mismatched_fork_install(world: &mut World) {
         .active_version_on(primary)
         .expect("mismatched validator active protocol version");
     assert_eq!(
-        canonical_active_protocol_version, ACTIVE_PROTOCOL_VERSION,
-        "canonical committee did not activate protocol v1"
+        canonical_active_protocol_version, GENERIC_PROTOCOL_BASELINE,
+        "canonical OCOMP activation changed the generic protocol version"
     );
     assert_eq!(
-        mismatched_active_protocol_version, 0,
-        "mismatched validator crossed the canonical Update boundary"
+        mismatched_active_protocol_version, GENERIC_PROTOCOL_BASELINE,
+        "mismatched OCOMP install changed the generic protocol version"
     );
 
     world
@@ -3341,8 +3545,6 @@ fn validator_zero_restarts_with_mismatched_fork_install(world: &mut World) {
             canonical_head_before_restart,
             mismatched_head_after_fork,
             canonical_finalized_after_fork,
-            canonical_active_protocol_version,
-            mismatched_active_protocol_version,
         })
         .expect("retain validated fork mismatch evidence");
 }
@@ -3360,6 +3562,36 @@ fn fork_mismatch_is_fail_closed(world: &mut World) {
         snapshot.fork_mismatch.is_some(),
         "fork mismatch scenario must retain exact install and height observations"
     );
+}
+
+#[when("validator 0 returns to the canonical OCOMP fork install")]
+fn validator_zero_returns_to_canonical_fork_install(world: &mut World) {
+    const VALIDATOR_INDEX: usize = 0;
+
+    let primary = world.validators.http_port(VALIDATOR_INDEX);
+    let witness = world.validators.http_port(1);
+    let target = world
+        .rpc
+        .finalized(witness)
+        .expect("canonical finality before restoring validator-0");
+    let canonical_manifest = world.ocomp.canonical_chain_manifest_path();
+    world
+        .localnet
+        .restart_validator_with_chain_manifest(VALIDATOR_INDEX, canonical_manifest)
+        .expect("restart validator-0 with the canonical immutable OCOMP install");
+    world
+        .rpc
+        .wait_block(primary, target, 60)
+        .expect("restored validator-0 replays the canonical OCOMP activation");
+    assert_eq!(
+        world.rpc.active_version_on(primary),
+        Some(0),
+        "restored OCOMP validator changed the generic protocol version"
+    );
+    world
+        .ocomp
+        .ensure_validator_roles_alive()
+        .expect("canonical OCOMP roles remain available after validator restoration");
 }
 
 #[when("validator 0 OCOMP supervisor is replaced by an incompatible peer")]
@@ -3508,27 +3740,9 @@ fn restart_completed_network_and_ocomp_processes(world: &mut World) {
     for validator_index in 0..4_u8 {
         world
             .ocomp
-            .apply_process_fault(OcompProcessFault::StopSupervisor { validator_index })
+            .restart_node_facing_processes(validator_index)
             .unwrap_or_else(|error| {
-                panic!("stop validator-{validator_index} Supervisor for replay: {error}")
-            });
-        world
-            .ocomp
-            .apply_process_fault(OcompProcessFault::StopSnapshotExporter { validator_index })
-            .unwrap_or_else(|error| {
-                panic!("stop validator-{validator_index} RPC exporter for replay: {error}")
-            });
-        world
-            .ocomp
-            .restart_snapshot_exporter(validator_index)
-            .unwrap_or_else(|error| {
-                panic!("restart validator-{validator_index} RPC exporter: {error}")
-            });
-        world
-            .ocomp
-            .restart_supervisor(validator_index)
-            .unwrap_or_else(|error| {
-                panic!("restart validator-{validator_index} Supervisor: {error}")
+                panic!("restart validator-{validator_index} OCOMP node-facing processes: {error}")
             });
     }
     world

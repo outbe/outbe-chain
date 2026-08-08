@@ -16,7 +16,7 @@ use super::{
     activation::{validate_activation_authority, OcompActivationAuthorityV1},
     schema::{validate_request_profile, OcompRequestProfile},
 };
-use crate::schema::MetadosisContract;
+use crate::{errors::storage_corruption_message, schema::MetadosisContract};
 
 const FORK_INSTALL_MAGIC: [u8; 4] = *b"OFI1";
 const FORK_INSTALL_VERSION: u16 = 1;
@@ -39,7 +39,9 @@ impl OcompForkInstallClassification {
         match value {
             1 => Ok(Self::Measurement),
             2 => Ok(Self::Final),
-            _ => Err(fatal("unknown OCOMP fork-install classification")),
+            _ => Err(storage_corruption_message(
+                "unknown OCOMP fork-install classification",
+            )),
         }
     }
 }
@@ -65,23 +67,33 @@ impl OcompForkInstallV1 {
         limits: &SchemaLimits,
     ) -> Result<()> {
         if self.activation_height == 0 {
-            return Err(fatal("OCOMP fork activation height must be non-zero"));
+            return Err(storage_corruption_message(
+                "OCOMP fork activation height must be non-zero",
+            ));
         }
         if self.classification == OcompForkInstallClassification::Final
             && self.activation_height != OCOMP_POC_FINAL_ACTIVATION_HEIGHT
         {
-            return Err(fatal("final OCOMP PoC fork must activate at height 32"));
+            return Err(storage_corruption_message(
+                "final OCOMP PoC fork must activate at height 32",
+            ));
         }
 
         validate_request_profile(&self.request_profile)?;
         if self.request_profile.chain_id != expected_chain_id {
-            return Err(fatal("OCOMP fork-install chain id mismatch"));
+            return Err(storage_corruption_message(
+                "OCOMP fork-install chain id mismatch",
+            ));
         }
         if self.request_profile.genesis_hash != expected_genesis_hash {
-            return Err(fatal("OCOMP fork-install genesis hash mismatch"));
+            return Err(storage_corruption_message(
+                "OCOMP fork-install genesis hash mismatch",
+            ));
         }
         if self.protocol_bundle.protocol_version != 1 {
-            return Err(fatal("unsupported OCOMP protocol bundle version"));
+            return Err(storage_corruption_message(
+                "unsupported OCOMP protocol bundle version",
+            ));
         }
         validate_activation_authority(&self.request_profile, &self.protocol_bundle, limits)?;
         self.validate_founder_registrations(limits)?;
@@ -90,11 +102,11 @@ impl OcompForkInstallV1 {
 
     fn validate_founder_registrations(&self, limits: &SchemaLimits) -> Result<()> {
         let max_validators = usize::try_from(outbe_consensus::bls::MAX_VALIDATORS)
-            .map_err(|_| fatal("consensus validator bound exceeds usize"))?;
+            .map_err(|_| storage_corruption_message("consensus validator bound exceeds usize"))?;
         if self.founder_registrations.is_empty()
             || self.founder_registrations.len() > max_validators
         {
-            return Err(fatal(format!(
+            return Err(storage_corruption_message(format!(
                 "OCOMP founder registration count must be 1..={max_validators}"
             )));
         }
@@ -104,15 +116,21 @@ impl OcompForkInstallV1 {
             if registration.core.chain_id != self.request_profile.chain_id
                 || registration.core.genesis_hash != self.request_profile.genesis_hash
             {
-                return Err(fatal("OCOMP founder registration chain binding mismatch"));
+                return Err(storage_corruption_message(
+                    "OCOMP founder registration chain binding mismatch",
+                ));
             }
             if registration.core.validator_identity_hash.is_zero()
                 || !identities.insert(registration.core.validator_identity_hash)
             {
-                return Err(fatal("OCOMP founder validator identities must be unique"));
+                return Err(storage_corruption_message(
+                    "OCOMP founder validator identities must be unique",
+                ));
             }
             if !keys.insert(registration.core.ocomp_public_key_sec1) {
-                return Err(fatal("OCOMP founder public keys must be unique"));
+                return Err(storage_corruption_message(
+                    "OCOMP founder public keys must be unique",
+                ));
             }
             registration
                 .validate_proof_of_possession(limits)
@@ -154,12 +172,12 @@ impl OcompForkInstallV1 {
                         total.checked_add(4)?.checked_add(registration.len())
                     })
             })
-            .ok_or_else(|| fatal("OCOMP fork-install length overflow"))?;
+            .ok_or_else(|| storage_corruption_message("OCOMP fork-install length overflow"))?;
         validate_total_length(total, limits)?;
         let mut encoded = Vec::new();
         encoded
             .try_reserve_exact(total)
-            .map_err(|_| fatal("allocate OCOMP fork-install encoding"))?;
+            .map_err(|_| storage_corruption_message("allocate OCOMP fork-install encoding"))?;
         encoded.extend_from_slice(&FORK_INSTALL_MAGIC);
         encoded.extend_from_slice(&FORK_INSTALL_VERSION.to_be_bytes());
         encoded.push(self.classification as u8);
@@ -168,14 +186,18 @@ impl OcompForkInstallV1 {
         append_bounded(&mut encoded, &protocol_bundle)?;
         encoded.extend_from_slice(
             &u32::try_from(founder_registrations.len())
-                .map_err(|_| fatal("OCOMP founder registration count exceeds u32"))?
+                .map_err(|_| {
+                    storage_corruption_message("OCOMP founder registration count exceeds u32")
+                })?
                 .to_be_bytes(),
         );
         for registration in &founder_registrations {
             append_bounded(&mut encoded, registration)?;
         }
         if encoded.len() != total {
-            return Err(fatal("OCOMP fork-install encoded length mismatch"));
+            return Err(storage_corruption_message(
+                "OCOMP fork-install encoded length mismatch",
+            ));
         }
         Ok(encoded)
     }
@@ -188,23 +210,28 @@ impl OcompForkInstallV1 {
         if reader.take::<4>()? != FORK_INSTALL_MAGIC
             || u16::from_be_bytes(reader.take::<2>()?) != FORK_INSTALL_VERSION
         {
-            return Err(fatal("OCOMP fork-install magic/version mismatch"));
+            return Err(storage_corruption_message(
+                "OCOMP fork-install magic/version mismatch",
+            ));
         }
         let classification = OcompForkInstallClassification::decode(reader.u8()?)?;
         let activation_height = reader.u64()?;
         let request_profile_bytes = reader.bounded(limits)?;
         let protocol_bundle_bytes = reader.bounded(limits)?;
-        let founder_count = usize::try_from(reader.u32()?)
-            .map_err(|_| fatal("OCOMP founder registration count exceeds usize"))?;
+        let founder_count = usize::try_from(reader.u32()?).map_err(|_| {
+            storage_corruption_message("OCOMP founder registration count exceeds usize")
+        })?;
         let max_validators = usize::try_from(outbe_consensus::bls::MAX_VALIDATORS)
-            .map_err(|_| fatal("consensus validator bound exceeds usize"))?;
+            .map_err(|_| storage_corruption_message("consensus validator bound exceeds usize"))?;
         if founder_count == 0 || founder_count > max_validators {
-            return Err(fatal("invalid OCOMP founder registration count"));
+            return Err(storage_corruption_message(
+                "invalid OCOMP founder registration count",
+            ));
         }
         let mut founder_registrations = Vec::new();
         founder_registrations
             .try_reserve_exact(founder_count)
-            .map_err(|_| fatal("allocate OCOMP founder registrations"))?;
+            .map_err(|_| storage_corruption_message("allocate OCOMP founder registrations"))?;
         for _ in 0..founder_count {
             founder_registrations.push(
                 OcompKeyRegistrationV1::decode_canonical(reader.bounded(limits)?, limits)
@@ -212,7 +239,9 @@ impl OcompForkInstallV1 {
             );
         }
         if reader.remaining() != 0 {
-            return Err(fatal("trailing OCOMP fork-install bytes"));
+            return Err(storage_corruption_message(
+                "trailing OCOMP fork-install bytes",
+            ));
         }
         let install = Self {
             classification,
@@ -228,7 +257,9 @@ impl OcompForkInstallV1 {
             limits,
         )?;
         if install.encode_canonical(limits)? != encoded {
-            return Err(fatal("non-canonical OCOMP fork-install encoding"));
+            return Err(storage_corruption_message(
+                "non-canonical OCOMP fork-install encoding",
+            ));
         }
         Ok(install)
     }
@@ -239,11 +270,13 @@ impl OcompForkInstallV1 {
         let total = FORK_INSTALL_HASH_DOMAIN
             .len()
             .checked_add(encoded.len())
-            .ok_or_else(|| fatal("OCOMP fork-install hash preimage overflow"))?;
+            .ok_or_else(|| {
+                storage_corruption_message("OCOMP fork-install hash preimage overflow")
+            })?;
         let mut preimage = Vec::new();
         preimage
             .try_reserve_exact(total)
-            .map_err(|_| fatal("allocate OCOMP fork-install hash preimage"))?;
+            .map_err(|_| storage_corruption_message("allocate OCOMP fork-install hash preimage"))?;
         preimage.extend_from_slice(FORK_INSTALL_HASH_DOMAIN);
         preimage.extend_from_slice(&encoded);
         Ok(keccak256(preimage))
@@ -260,7 +293,7 @@ impl MetadosisContract<'_> {
         limits: &SchemaLimits,
     ) -> Result<()> {
         if current_height != install.activation_height {
-            return Err(fatal(
+            return Err(storage_corruption_message(
                 "OCOMP fork install attempted outside its activation height",
             ));
         }
@@ -280,10 +313,14 @@ impl MetadosisContract<'_> {
                 return Ok(());
             }
             (Some(_), Some(_)) => {
-                return Err(fatal("OCOMP fork authority is immutable"));
+                return Err(storage_corruption_message(
+                    "OCOMP fork authority is immutable",
+                ));
             }
             _ => {
-                return Err(fatal("partial OCOMP fork authority is fatal"));
+                return Err(storage_corruption_message(
+                    "partial OCOMP fork authority is fatal",
+                ));
             }
         }
 
@@ -295,8 +332,8 @@ impl MetadosisContract<'_> {
 }
 
 fn append_bounded(target: &mut Vec<u8>, value: &[u8]) -> Result<()> {
-    let length =
-        u32::try_from(value.len()).map_err(|_| fatal("OCOMP fork-install field exceeds u32"))?;
+    let length = u32::try_from(value.len())
+        .map_err(|_| storage_corruption_message("OCOMP fork-install field exceeds u32"))?;
     target.extend_from_slice(&length.to_be_bytes());
     target.extend_from_slice(value);
     Ok(())
@@ -304,14 +341,18 @@ fn append_bounded(target: &mut Vec<u8>, value: &[u8]) -> Result<()> {
 
 fn validate_nested_length(name: &'static str, length: usize, limits: &SchemaLimits) -> Result<()> {
     if length > limits.codec.max_allocation_bytes {
-        return Err(fatal(format!("OCOMP fork-install {name} exceeds byte cap")));
+        return Err(storage_corruption_message(format!(
+            "OCOMP fork-install {name} exceeds byte cap"
+        )));
     }
     Ok(())
 }
 
 fn validate_total_length(length: usize, limits: &SchemaLimits) -> Result<()> {
     if length < FORK_INSTALL_FIXED_LEN || length > limits.codec.max_allocation_bytes {
-        return Err(fatal("OCOMP fork-install exceeds byte cap"));
+        return Err(storage_corruption_message(
+            "OCOMP fork-install exceeds byte cap",
+        ));
     }
     Ok(())
 }
@@ -334,15 +375,15 @@ impl<'a> ForkReader<'a> {
         let end = self
             .offset
             .checked_add(N)
-            .ok_or_else(|| fatal("OCOMP fork-install offset overflow"))?;
+            .ok_or_else(|| storage_corruption_message("OCOMP fork-install offset overflow"))?;
         let bytes = self
             .bytes
             .get(self.offset..end)
-            .ok_or_else(|| fatal("truncated OCOMP fork-install"))?;
+            .ok_or_else(|| storage_corruption_message("truncated OCOMP fork-install"))?;
         self.offset = end;
         bytes
             .try_into()
-            .map_err(|_| fatal("OCOMP fork-install fixed-width decode"))
+            .map_err(|_| storage_corruption_message("OCOMP fork-install fixed-width decode"))
     }
 
     fn u8(&mut self) -> Result<u8> {
@@ -358,26 +399,22 @@ impl<'a> ForkReader<'a> {
     }
 
     fn bounded(&mut self, limits: &SchemaLimits) -> Result<&'a [u8]> {
-        let length = usize::try_from(self.u32()?)
-            .map_err(|_| fatal("OCOMP fork-install field length exceeds usize"))?;
+        let length = usize::try_from(self.u32()?).map_err(|_| {
+            storage_corruption_message("OCOMP fork-install field length exceeds usize")
+        })?;
         validate_nested_length("field", length, limits)?;
-        let end = self
-            .offset
-            .checked_add(length)
-            .ok_or_else(|| fatal("OCOMP fork-install field offset overflow"))?;
+        let end = self.offset.checked_add(length).ok_or_else(|| {
+            storage_corruption_message("OCOMP fork-install field offset overflow")
+        })?;
         let bytes = self
             .bytes
             .get(self.offset..end)
-            .ok_or_else(|| fatal("truncated OCOMP fork-install field"))?;
+            .ok_or_else(|| storage_corruption_message("truncated OCOMP fork-install field"))?;
         self.offset = end;
         Ok(bytes)
     }
 }
 
 fn protocol_error(error: impl core::fmt::Display) -> PrecompileError {
-    fatal(format!("invalid OCOMP fork-install object: {error}"))
-}
-
-fn fatal(message: impl Into<String>) -> PrecompileError {
-    PrecompileError::Fatal(message.into())
+    storage_corruption_message(format!("invalid OCOMP fork-install object: {error}"))
 }

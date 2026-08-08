@@ -6,7 +6,7 @@ import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 /// @dev Builds a `CreateSeriesParams` for a given worldwide day. `seriesId` is derived from the day
 ///      (identity while one series per day). Currencies default to USD (840); prices/promis carry non-zero defaults.
 library CreateSeriesLib {
-    function params(uint32 worldwideDay, uint32 issuedIntexCount, uint32 intexCallPeriod)
+    function params(uint32 worldwideDay, uint32 issuedIntexCount, uint32 callNoticePeriod)
         internal
         pure
         returns (IIntexNFT1155.CreateSeriesParams memory)
@@ -22,7 +22,7 @@ library CreateSeriesLib {
             floorPriceMinor: 100,
             callPriceMinor: 200,
             callTrigger: IIntexNFT1155.IntexCallTrigger({
-                windowDays: 0, thresholdDays: 0, intexCallPeriod: intexCallPeriod
+                callWindow: 0, callThreshold: 0, callNoticePeriod: callNoticePeriod
             })
         });
     }

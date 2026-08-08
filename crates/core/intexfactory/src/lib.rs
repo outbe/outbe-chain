@@ -18,6 +18,7 @@ pub use api::{issue, read_params};
 pub use config::IntexParams;
 pub use errors::IntexFactoryError;
 pub use qualified::IntexLifecycle;
+pub use runtime::marked_up;
 pub use schema::{IntexFactoryContract, IssuanceParams};
 
 #[cfg(test)]

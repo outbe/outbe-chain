@@ -375,7 +375,7 @@ fn test_calculate_metadosis_unknown_day_type_errors() {
 
         assert!(matches!(
             m.calculate_metadosis(wwd, tribute_total, day_limit),
-            Err(outbe_primitives::error::PrecompileError::Fatal(_))
+            Err(outbe_primitives::error::PrecompileError::Revert(_))
         ));
     });
 }

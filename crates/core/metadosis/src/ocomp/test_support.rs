@@ -1139,6 +1139,21 @@ impl AuthenticatedParentTree for TributePartitionTree {
         Ok(true)
     }
 
+    fn partition_root_verified(
+        &self,
+        partition: PartitionRef,
+        expected_parent_root: B256,
+    ) -> PrecompileResult<Option<B256>> {
+        if expected_parent_root != self.parent_root
+            || partition != PartitionRef::TributeWwd(TEST_WWD)
+        {
+            return Err(PrecompileError::Fatal(
+                "activation fixture parent partition binding mismatch".into(),
+            ));
+        }
+        Ok(Some(hash(31)))
+    }
+
     fn prepare_seal(
         &self,
         _block_number: u64,

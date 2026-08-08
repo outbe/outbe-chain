@@ -144,17 +144,17 @@
               "internalType": "struct IIntexAuction.IntexCallTrigger",
               "components": [
                 {
-                  "name": "windowDays",
-                  "type": "uint16",
-                  "internalType": "uint16"
+                  "name": "callWindow",
+                  "type": "uint32",
+                  "internalType": "uint32"
                 },
                 {
-                  "name": "thresholdDays",
-                  "type": "uint16",
-                  "internalType": "uint16"
+                  "name": "callThreshold",
+                  "type": "uint32",
+                  "internalType": "uint32"
                 },
                 {
-                  "name": "intexCallPeriod",
+                  "name": "callNoticePeriod",
                   "type": "uint32",
                   "internalType": "uint32"
                 }
@@ -260,17 +260,17 @@
               "internalType": "struct IIntexAuction.IntexCallTrigger",
               "components": [
                 {
-                  "name": "windowDays",
-                  "type": "uint16",
-                  "internalType": "uint16"
+                  "name": "callWindow",
+                  "type": "uint32",
+                  "internalType": "uint32"
                 },
                 {
-                  "name": "thresholdDays",
-                  "type": "uint16",
-                  "internalType": "uint16"
+                  "name": "callThreshold",
+                  "type": "uint32",
+                  "internalType": "uint32"
                 },
                 {
-                  "name": "intexCallPeriod",
+                  "name": "callNoticePeriod",
                   "type": "uint32",
                   "internalType": "uint32"
                 }
@@ -564,17 +564,17 @@
                   "internalType": "struct IIntexAuction.IntexCallTrigger",
                   "components": [
                     {
-                      "name": "windowDays",
-                      "type": "uint16",
-                      "internalType": "uint16"
+                      "name": "callWindow",
+                      "type": "uint32",
+                      "internalType": "uint32"
                     },
                     {
-                      "name": "thresholdDays",
-                      "type": "uint16",
-                      "internalType": "uint16"
+                      "name": "callThreshold",
+                      "type": "uint32",
+                      "internalType": "uint32"
                     },
                     {
-                      "name": "intexCallPeriod",
+                      "name": "callNoticePeriod",
                       "type": "uint32",
                       "internalType": "uint32"
                     }
@@ -740,17 +740,17 @@
                   "internalType": "struct IIntexAuction.IntexCallTrigger",
                   "components": [
                     {
-                      "name": "windowDays",
-                      "type": "uint16",
-                      "internalType": "uint16"
+                      "name": "callWindow",
+                      "type": "uint32",
+                      "internalType": "uint32"
                     },
                     {
-                      "name": "thresholdDays",
-                      "type": "uint16",
-                      "internalType": "uint16"
+                      "name": "callThreshold",
+                      "type": "uint32",
+                      "internalType": "uint32"
                     },
                     {
-                      "name": "intexCallPeriod",
+                      "name": "callNoticePeriod",
                       "type": "uint32",
                       "internalType": "uint32"
                     }

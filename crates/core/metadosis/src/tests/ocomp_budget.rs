@@ -40,7 +40,7 @@ fn request_budget_split_is_exact_at_zero_max_and_rejects_over_budget() {
     );
     assert!(matches!(
         RequestBudgetSplit::derive(U256::from(9), U256::from(10)),
-        Err(PrecompileError::Fatal(_))
+        Err(PrecompileError::Revert(_))
     ));
 }
 

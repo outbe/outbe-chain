@@ -62,7 +62,6 @@ use outbe_nod::NodContract;
 use outbe_node::{ocomp::local_result::LocalLysisResultStore, OutbePayloadBuilder};
 use outbe_ocomp_protocol::{
     abi::encode_submit_lysis_result_calldata,
-    committee::OcompKeyRegistrationV1,
     receipts::AggregateActivationReceiptV1,
     state::{ActiveGenerationV1, OcompJobRecordV1, OcompJobStatus},
     vote::OcompVoteAccountabilityV1,
@@ -82,15 +81,15 @@ use outbe_primitives::{
         decode_outbe_block_artifacts, encode_outbe_block_artifacts, CompressedEntitiesRootArtifact,
         ExecutionSummaryArtifact, OutbeBlockArtifacts,
     },
-    storage::{direct::DirectStorageProvider, hashmap::HashMapStorageProvider, StorageHandle},
+    storage::{
+        direct::DirectStorageProvider, hashmap::HashMapStorageProvider,
+        MetadosisMutationPurposeTag, StorageHandle,
+    },
     OutbeHeader, OutbePayloadAttributes, OutbePrimitives,
 };
 use outbe_tribute::{TributeContract, TributeData};
 use outbe_txpool::OutbeTransactionOrdering;
-use outbe_update::{
-    schema::{ScheduledUpdateStatus, Update},
-    ProtocolVersion,
-};
+use outbe_update::{schema::Update, ProtocolVersion};
 use outbe_validatorset::{
     committee_snapshot_key, contract::ValidatorSet, read_committee_snapshot,
     write_committee_snapshot, CommitteeSnapshot as StoredCommitteeSnapshot,
@@ -134,8 +133,6 @@ const FINALIZED_VIEW: u64 = 100;
 const PARENT_VIEW: u64 = 99;
 const VRF_MATERIAL_VERSION: u64 = 5;
 const VALIDATOR_OWNER: Address = address!("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
-const OCOMP_UPDATE_PROPOSAL_ID: u64 = 1;
-const OCOMP_PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::from_raw(1);
 const SATURATED_USER_TRANSACTION_COUNT: u64 = 40;
 const SATURATED_USER_TRANSACTION_GAS: u64 = 1_000_000;
 const BURNER_ADDRESS: Address = address!("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
@@ -465,7 +462,7 @@ struct PreparedParent {
 }
 
 #[test]
-fn real_payload_builder_commits_atomic_request_after_ce_seal_without_lysis_effects() {
+fn real_payload_builder_commits_atomic_request_between_ce_preview_and_final_seal() {
     let chain_spec: Arc<ChainSpec<OutbeHeader>> = ChainSpecBuilder::mainnet()
         .reset()
         .paris_activated()
@@ -484,12 +481,12 @@ fn real_payload_builder_commits_atomic_request_after_ce_seal_without_lysis_effec
         .iter()
         .map(|entry| (entry.address, entry.consensus_pubkey))
         .collect::<Vec<_>>();
-    let fork_install = ForkInstallScenario::measurement_at(REQUEST_HEIGHT, CHAIN_ID, genesis_hash)
+    let fork_install = ForkInstallScenario::measurement_at(PARENT_HEIGHT, CHAIN_ID, genesis_hash)
         .unwrap()
         .with_founder_validators(&founder_validators)
         .unwrap()
         .into_install();
-    let prepared = prepare_parent(&snapshot, genesis_hash, &fork_install.founder_registrations);
+    let prepared = prepare_parent(&snapshot, genesis_hash, &fork_install);
     let fork_install = Arc::new(fork_install);
     let metadata =
         finalized_parent_metadata(&dkg, &snapshot, PARENT_HEIGHT, prepared.parent.hash());
@@ -504,7 +501,7 @@ fn real_payload_builder_commits_atomic_request_after_ce_seal_without_lysis_effec
         &snapshot,
         metadata.committee_set_hash,
     );
-    assert_provider_pre_fork_ocomp_inputs(&provider, prepared.wwd, prepared.nominal);
+    assert_provider_activated_ocomp_inputs(&provider, prepared.wwd, prepared.nominal);
     let body_storage: StorageReaderHandle = Arc::new(MemoryStorage::new());
     let runtime_body_readers = RuntimeBodyReaders::new(body_storage);
     let evm_config = OutbeEvmConfig::new_with_provider_and_runtime_body_readers(
@@ -517,7 +514,7 @@ fn real_payload_builder_commits_atomic_request_after_ce_seal_without_lysis_effec
     )
     .with_evm_signer(signer.clone())
     .with_compressed_tree_service(prepared.tree_service.clone())
-    .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(REQUEST_HEIGHT))
+    .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(PARENT_HEIGHT))
     .with_ocomp_fork_install(fork_install.clone());
     let phase1 = evm_config
         .build_signed_phase1_tx(
@@ -666,17 +663,12 @@ fn real_payload_builder_commits_atomic_request_after_ce_seal_without_lysis_effec
     apply_bundle(&mut post_state, executed.execution_output.state.state());
     StorageHandle::enter(&mut post_state, |storage| {
         let update = Update::new(storage.clone());
-        assert_eq!(update.get_active_version().unwrap(), OCOMP_PROTOCOL_VERSION);
-        assert_eq!(update.get_active_version_height().unwrap(), REQUEST_HEIGHT);
+        assert_eq!(update.get_active_version().unwrap(), ProtocolVersion::ZERO);
+        assert_eq!(update.get_active_version_height().unwrap(), 0);
         assert_eq!(
             update.version_at_height(REQUEST_HEIGHT).unwrap(),
-            OCOMP_PROTOCOL_VERSION
+            ProtocolVersion::ZERO
         );
-        let scheduled = update
-            .read_scheduled_update(U256::from(OCOMP_UPDATE_PROPOSAL_ID))
-            .unwrap()
-            .expect("genesis-scheduled OCOMP update remains publicly readable");
-        assert_eq!(scheduled.status, ScheduledUpdateStatus::Activated);
 
         assert!(
             outbe_metadosis::api::is_active_ocomp_fork_install(storage.clone(), &fork_install,)
@@ -1156,7 +1148,7 @@ fn build_canonical_ocomp_successor(
     .with_evm_signer(signer.clone())
     .with_compressed_tree_service(tree_service.clone())
     .with_ocomp_local_result_authority(local_result_authority.clone())
-    .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(REQUEST_HEIGHT))
+    .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(PARENT_HEIGHT))
     .with_ocomp_fork_install(fork_install.clone());
     let metadata = finalized_parent_metadata(dkg, snapshot, height - 1, parent.hash());
     let user_transaction_count = user_transactions.len();
@@ -1331,7 +1323,7 @@ fn build_canonical_ocomp_successor(
 fn prepare_parent(
     snapshot: &StoredCommitteeSnapshot,
     genesis_hash: B256,
-    founder_registrations: &[OcompKeyRegistrationV1],
+    fork_install: &outbe_metadosis::config::OcompForkInstallV1,
 ) -> PreparedParent {
     let directory = tempfile::tempdir().unwrap();
     let db = CeMdbx::open(
@@ -1377,6 +1369,7 @@ fn prepare_parent(
     let scope = ExecutionScope::with_parent_tree(parent_tree, CeWorkConfig::new(0, 0, u64::MAX));
     let mut seed = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, genesis_hash);
     seed.set_block_number(PARENT_HEIGHT);
+    seed.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::ForkProfile);
     let wwd = WorldwideDay::new(2026_0710);
     let parent_time = wwd.start_timestamp();
     let request_time = parent_time
@@ -1395,7 +1388,11 @@ fn prepare_parent(
         validators.set_config_max_validators(128).unwrap();
         validators.config_epoch_length_blocks.write(60).unwrap();
         validators.config_is_initialized.write(true).unwrap();
-        for (entry, registration) in snapshot.committee.iter().zip(founder_registrations) {
+        for (entry, registration) in snapshot
+            .committee
+            .iter()
+            .zip(&fork_install.founder_registrations)
+        {
             validators
                 .register_validator(VALIDATOR_OWNER, entry.address, &entry.consensus_pubkey)
                 .unwrap();
@@ -1420,7 +1417,12 @@ fn prepare_parent(
             U256::from(2_000_000_000_000_000_000u128),
         ));
         outbe_oracle::genesis::init_from_genesis(&mut oracle, &oracle_genesis).unwrap();
-        outbe_oracle::api::initialize_fresh_ocomp_profile(storage.clone()).unwrap();
+
+        let activation_ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(PARENT_HEIGHT, parent_time, CHAIN_ID),
+            storage.clone(),
+        );
+        outbe_metadosis::commands::install_fork_profile(&activation_ctx, fork_install).unwrap();
 
         let forming_start = wwd.start_timestamp();
         let forming_end = forming_start + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR;
@@ -1443,7 +1445,6 @@ fn prepare_parent(
             .apply(storage.clone())
             .unwrap();
         let mut tribute = TributeContract::new(storage.clone());
-        tribute.initialize_fresh_ocomp_profile().unwrap();
         tribute.unseal_day(wwd).unwrap();
         tribute
             .issue(
@@ -1463,15 +1464,6 @@ fn prepare_parent(
             )
             .unwrap();
         tribute.seal_day(wwd).unwrap();
-
-        Update::new(storage.clone())
-            .write_scheduled_update(
-                U256::from(OCOMP_UPDATE_PROPOSAL_ID),
-                OCOMP_PROTOCOL_VERSION,
-                REQUEST_HEIGHT,
-                "OCOMP PoC production-path integration fixture",
-            )
-            .unwrap();
 
         let parent_ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(PARENT_HEIGHT, parent_time, CHAIN_ID),
@@ -1764,7 +1756,7 @@ fn assert_provider_snapshot(
     );
 }
 
-fn assert_provider_pre_fork_ocomp_inputs(
+fn assert_provider_activated_ocomp_inputs(
     provider: &TestProvider,
     wwd: WorldwideDay,
     expected_nominal: U256,
@@ -1779,15 +1771,9 @@ fn assert_provider_pre_fork_ocomp_inputs(
     let storage = StorageHandle::new(&mut direct);
     let update = Update::new(storage.clone());
     assert_eq!(update.get_active_version().unwrap(), ProtocolVersion::ZERO);
-    let scheduled = update
-        .read_scheduled_update(U256::from(OCOMP_UPDATE_PROPOSAL_ID))
-        .unwrap()
-        .expect("parent carries the scheduled OCOMP update");
-    assert_eq!(scheduled.version, OCOMP_PROTOCOL_VERSION);
-    assert_eq!(scheduled.activation_height, REQUEST_HEIGHT);
-    assert_eq!(scheduled.status, ScheduledUpdateStatus::Scheduled);
+    assert_eq!(update.get_active_version_height().unwrap(), 0);
 
-    assert!(!outbe_metadosis::api::has_active_ocomp_profile(storage.clone()).unwrap());
+    assert!(outbe_metadosis::api::has_active_ocomp_profile(storage.clone()).unwrap());
     let days = outbe_metadosis::api::worldwide_days(storage.clone()).unwrap();
     assert_eq!(days.len(), 1);
     let projection = outbe_metadosis::api::worldwide_day(storage.clone(), wwd)

@@ -63,7 +63,27 @@ transient begin-zone failure that rolls the phase back past one of these exact
 heights therefore becomes a permanent deterministic failure on every
 subsequent block — recoverable only by hard fork plus state surgery. This is
 the amplifier that turned the global-cap bug from disruptive into
-catastrophic. Changing it is a consensus-policy decision
-(fail-closed → fail-recover) with its own invariant set (submitted votes,
-quorum threshold, budget return) and is deliberately not part of the cap fix.
-Tracked as a separate task.
+catastrophic.
+
+**Resolved** on `fix/metadosis-fatal-recovery` (Beads `outbe-chain-e7p`):
+begin-zone detects a missed
+voting-open, response-deadline or awaiting-finality boundary before invoking
+the exact-height transition. The affected WorldwideDay is atomically moved to
+`FAILED`; its sealed Tribute partition is forfeited through the partition
+retirement API; the full formed day limit (before request split) or retained
+`lysis_budget` (after split) is credited once to PromiseLimit carry-over; and
+only live OCOMP scheduler/index/FSM state is removed. Immutable request, job
+and vote-accountability evidence remains queryable, with the live job closed
+as `Canceled`. Storage and compressed-entity checkpoints make every mutation
+failure retryable without partial effects. The executor now prepares
+provisional CE roots, runs `OcompTerminalRequest` while the scope remains
+active, and performs the sole committed CE seal after the terminal decision.
+Persisted-state corruption remains fatal. Certified result activation uses the
+same recovery boundary for deterministic owner/receipt failures: attempted
+effects roll back, the exact retained `lysis_budget` is credited once, the live
+job is retained as canceled evidence, and the WWD closes as `FAILED`. On the
+successful path all owner receipts and the terminal capability are validated
+before the final owner mutation, ordered `Nod -> Contributor -> CarryOver ->
+Tribute`; only then is `COMPLETED` committed. Regression coverage is in
+`src/tests/ocomp_request/fatal_recovery.rs`, the activation fault matrix, and
+the production payload-builder OCOMP lifecycle test.

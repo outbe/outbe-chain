@@ -53,12 +53,12 @@ interface IIntexAuction {
 
     /// @notice Call-trigger parameters governing when a series is forced into Called.
     struct IntexCallTrigger {
-        /// @notice Call-trigger observation window in days.
-        uint16 windowDays;
-        /// @notice Call-trigger threshold in days.
-        uint16 thresholdDays;
+        /// @notice Call-trigger observation window in seconds.
+        uint32 callWindow;
+        /// @notice Call-trigger threshold in seconds.
+        uint32 callThreshold;
         /// @notice Called→deadline window in seconds; stored verbatim, the issuer must supply a non-zero value.
-        uint32 intexCallPeriod;
+        uint32 callNoticePeriod;
     }
 
     /// @notice Auction input parameters, stored per auction. Field order mirrors the spec

@@ -218,7 +218,12 @@ fn dispatch_inner(
         }
         SystemTxInputV2::OcompLifecycleBegin => {
             let ctx = block_runtime_context_from_storage(storage, false)?;
-            run_ocomp_lifecycle_begin(&ctx, ocomp_fork_install)?;
+            let (scope, _) = body_readers.ok_or_else(|| {
+                PrecompileError::Fatal(
+                    "OcompLifecycleBegin requires the active compressed-entity scope".into(),
+                )
+            })?;
+            run_ocomp_lifecycle_begin(&ctx, scope, ocomp_fork_install)?;
         }
         SystemTxInputV2::CycleTick => {
             let ctx = block_runtime_context_from_storage(storage, true)?;
@@ -1016,6 +1021,7 @@ pub(crate) fn run_hook_events(_ctx: &BlockRuntimeContext) -> Result<()> {
 /// lifecycle handler into this already receipt-visible phase.
 pub(crate) fn run_ocomp_lifecycle_begin(
     ctx: &BlockRuntimeContext,
+    scope: &outbe_compressed_entities::ExecutionScope,
     fork_install: Option<&outbe_metadosis::config::OcompForkInstallV1>,
 ) -> Result<()> {
     if let Some(install) = fork_install {
@@ -1023,11 +1029,11 @@ pub(crate) fn run_ocomp_lifecycle_begin(
             outbe_metadosis::commands::install_fork_profile(ctx, install)?;
         }
     }
-    outbe_metadosis::commands::run_ocomp_lifecycle_begin(ctx)
+    outbe_metadosis::commands::run_ocomp_lifecycle_begin_with_scope(ctx, scope)
 }
 
-/// Reserved post-CE-seal request slot. OCM-08 wires bounded terminal request
-/// creation here without changing block ordering or the system-tx ABI.
+/// Reserved terminal request slot. It consumes executor-owned provisional CE
+/// roots while the scope remains active for terminal failure retirement.
 pub(crate) fn run_ocomp_terminal_request(
     ctx: &BlockRuntimeContext,
     scope: &outbe_compressed_entities::ExecutionScope,

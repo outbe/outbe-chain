@@ -8,13 +8,14 @@ import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockERC20} from "@test-mocks/MockERC20.sol";
+import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 
 /// @dev Commit-bond custody: lock/release under AUCTION_ROLE, the escrow-local
 ///      abandoned-bond safety valve, and the shared-lockId accounting with bid escrow.
 contract EscrowAdapterBondTest is Test {
     EscrowAdapter escrow;
     MockTheCompact compact;
-    MockERC20 paymentToken;
+    MockWCOEN paymentToken;
 
     address admin = address(1);
     address bridger = address(2);
@@ -34,7 +35,7 @@ contract EscrowAdapterBondTest is Test {
     function setUp() public {
         escrow = DeployProxy.escrowAdapter(admin, bridger);
         compact = new MockTheCompact();
-        paymentToken = new MockERC20("Wrapped COEN", "WCOEN", 18);
+        paymentToken = new MockWCOEN();
 
         vm.prank(admin);
         escrow.wire(auction, address(compact), address(paymentToken));

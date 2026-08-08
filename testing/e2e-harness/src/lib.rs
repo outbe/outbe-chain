@@ -19,6 +19,7 @@
 pub mod dcap_lifecycle_sgx;
 pub mod env;
 pub mod features;
+pub mod localnet_driver;
 pub mod metadosis_evidence;
 pub mod metadosis_p0;
 pub mod metadosis_process;

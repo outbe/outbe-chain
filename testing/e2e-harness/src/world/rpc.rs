@@ -32,7 +32,7 @@ use outbe_primitives::reshare_artifact::decode_outbe_block_artifacts;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "ocomp-integration")]
-use crate::internal::eth::{IDesis, IMetadosis};
+use crate::internal::eth::{IDesis, IMetadosis, IPromisLimit};
 use crate::internal::{
     addresses,
     config::Config,
@@ -104,6 +104,16 @@ pub struct MetadosisWorldwideDayStatusChangeV1 {
     pub new_status: u8,
     pub block_number: u64,
     pub block_hash: B256,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct MetadosisWorldwideDayTerminalReceiptV1 {
+    pub outcome: u8,
+    pub value_routed: U256,
+    pub carry_over_before: U256,
+    pub carry_over_after: U256,
+    pub retirement_outcome: u8,
+    pub block_number: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -1015,6 +1025,36 @@ impl Rpc {
     }
 
     #[cfg(feature = "ocomp-integration")]
+    pub fn metadosis_terminal_receipt_on(
+        &self,
+        port: u16,
+        day: u32,
+    ) -> Option<MetadosisWorldwideDayTerminalReceiptV1> {
+        let receipt = eth::read_call(
+            &self.url(port),
+            addresses::WWD_ADDR,
+            &IMetadosis::getWorldwideDayTerminalReceiptCall { wwd: day },
+        )?;
+        Some(MetadosisWorldwideDayTerminalReceiptV1 {
+            outcome: receipt.outcome,
+            value_routed: receipt.valueRouted,
+            carry_over_before: receipt.carryOverBefore,
+            carry_over_after: receipt.carryOverAfter,
+            retirement_outcome: receipt.retirementOutcome,
+            block_number: receipt.blockNumber,
+        })
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    pub fn promis_limit_total_unallocated_on(&self, port: u16) -> Option<U256> {
+        eth::read_call(
+            &self.url(port),
+            addresses::PROMIS_LIMIT_ADDR,
+            &IPromisLimit::totalUnallocatedCall {},
+        )
+    }
+
+    #[cfg(feature = "ocomp-integration")]
     pub fn metadosis_wwd_state_at(
         &self,
         port: u16,
@@ -1149,6 +1189,27 @@ impl Rpc {
     /// EOA address for a private key (`0x`-hex).
     pub fn address_of(&self, key: &str) -> Option<String> {
         eth::address_of(key).map(|a| format!("{a:#x}"))
+    }
+
+    /// Create one Tribute for the currently OFFERING WorldwideDay.
+    pub fn create_tribute(&self, key: &str) -> Option<String> {
+        const OFFERING: u8 = 2;
+
+        let days: Vec<u32> = eth::read_call(
+            &self.cfg.rpc0,
+            addresses::WWD_ADDR,
+            &IWorldwideDay::getWorldwideDaysByStatusCall { status: OFFERING },
+        )?;
+        let worldwide_day = *days.first()?;
+        if days.len() > 1 {
+            eprintln!(
+                "multiple OFFERING WorldwideDays {days:?}; creating Tribute for {worldwide_day}"
+            );
+        }
+
+        let tx_hash = self.tribute_offer(key, &worldwide_day.to_string())?;
+        self.wait_successful_receipt(&tx_hash, 240)
+            .then_some(tx_hash)
     }
 
     /// Submit a tribute offer for worldwide-day `wwd` from `key`; returns tx hash if any.
@@ -2746,6 +2807,7 @@ mod ocomp_tests {
         assert!(package.evidence_identity().is_err());
     }
 
+    #[cfg(feature = "ocomp-integration")]
     #[test]
     fn job_request_selection_keeps_the_requested_day_visible_after_later_retries() {
         let day = |worldwide_day: u32| {

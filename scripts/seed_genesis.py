@@ -695,7 +695,7 @@ GEM_TYPE_WALLET = 3
 
 
 def gem_id_gen(owner: str, gem_load: int, index: int) -> bytes:
-    """Genesis gem id = keccak256("gem" ++ owner_20B ++ gem_load_be32 ++ index_be8).
+    """Genesis gem id = keccak256("gem" ++ owner_20B ++ promis_load_be32 ++ index_be8).
 
     Mirrors the shape of `GemContract::generate_gem_id` (which uses the issuing
     block number); `index` disambiguates multiple genesis gems for one owner.
@@ -720,18 +720,21 @@ def seed_gems(storage: StorageBuilder, gems: list):
     test in `crates/core/gem/src/tests.rs`:
 
       slot 0:      total_supply (u64)
-      slots 1-10:  gem_items Map<U256, GemData> record fields keyed by gem_id:
-                     1 owner              2 gem_type           3 gem_load
-                     4 entry_price        5 cost_amount        6 floor_price
+      slots 1-18:  gem_items Map<U256, GemData> record fields keyed by gem_id:
+                     1 owner              2 gem_type           3 gem_load_minor
+                     4 entry_price_minor  5 cost_amount_minor  6 floor_price_minor
                      7 issuance_currency  8 reference_currency 9 state
-                     10 issued_at
-      slot 11:     owner_gem_counts Map<Address, u32>
-      slot 12:     owner_gem_ids    Map<B256, U256>  (key = owner_index_key)
-      slot 13:     all_gem_ids      List<U256>  (len @ slot 13, data @ keccak(13)+i)
-      slot 14:     gem_index        Map<U256, u32>
+                     10 issued_at         11 call_price_minor   12 called_at
+                     13 call_notice_period 14 call_rate         15 call_window
+                     16 call_threshold 17 qualified_at     18 settled_at
+      slot 19:     owner_gem_counts Map<Address, u32>
+      slot 20:     owner_gem_ids    Map<B256, U256>  (key = owner_index_key)
+      slot 21:     all_gem_ids      List<U256>  (len @ slot 21, data @ keccak(21)+i)
+      slot 22:     gem_index        Map<U256, u32>
 
-    Settled gems are NOT parked in the unqualified bin-tree index (slots 15+), so
-    those slots are intentionally left empty (add_gem only indexes Issued gems).
+    Settled gems are NOT parked in the unqualified bin-tree index (slots 23+) nor
+    the callable-gem index, so those slots are intentionally left empty (add_gem
+    only indexes Issued gems; the callable index only holds Qualified/Called).
     """
     owner_counts: dict[str, int] = {}
     for i, gem in enumerate(gems):
@@ -745,7 +748,7 @@ def seed_gems(storage: StorageBuilder, gems: list):
             )
         gem_id = gem_id_gen(owner, gem_load, i)
 
-        # gem_items record (slots 1-10, keyed by gem_id).
+        # gem_items record (slots 1-18, keyed by gem_id).
         storage.set_mapping(1, gem_id, address_as_u256(owner))
         storage.set_mapping(2, gem_id, parse_int(gem.get("gem_type", GEM_TYPE_WALLET)))
         storage.set_mapping(3, gem_id, gem_load)
@@ -755,23 +758,38 @@ def seed_gems(storage: StorageBuilder, gems: list):
         storage.set_mapping(7, gem_id, parse_int(gem.get("issuance_currency", 840)))
         storage.set_mapping(8, gem_id, parse_int(gem.get("reference_currency", 840)))
         storage.set_mapping(9, gem_id, state)
-        storage.set_mapping(10, gem_id, parse_int(gem.get("issued_at", 0)))
+        issued_at = parse_int(gem.get("issued_at", 0))
+        storage.set_mapping(10, gem_id, issued_at)
+        storage.set_mapping(11, gem_id, parse_int(gem.get("call_price_minor", "0")))
+        storage.set_mapping(12, gem_id, parse_int(gem.get("called_at", 0)))
+        # call_notice_period: add_gem snapshots CALL_NOTICE_PERIOD (7 days, in seconds).
+        storage.set_mapping(13, gem_id, parse_int(gem.get("call_notice_period", 7 * 24 * 3600)))
+        # call_rate: add_gem snapshots GEM_CALL_MARKUP_PERCENT (228).
+        storage.set_mapping(14, gem_id, parse_int(gem.get("call_rate", 228)))
+        # call_window: add_gem snapshots CALL_WINDOW (28 days, in seconds).
+        storage.set_mapping(15, gem_id, parse_int(gem.get("call_window", 28 * 24 * 3600)))
+        # call_threshold: add_gem snapshots CALL_THRESHOLD (21 days, in seconds).
+        storage.set_mapping(16, gem_id, parse_int(gem.get("call_threshold", 21 * 24 * 3600)))
+        # qualified_at / settled_at: seeded gems are Settled, so both default to
+        # issued_at (the gem reached those states at issuance).
+        storage.set_mapping(17, gem_id, parse_int(gem.get("qualified_at", issued_at)))
+        storage.set_mapping(18, gem_id, parse_int(gem.get("settled_at", issued_at)))
 
-        # owner_gem_ids index (slot 12) + swap-and-pop counter (slot 11 below).
+        # owner_gem_ids index (slot 20) + swap-and-pop counter (slot 19 below).
         oi = owner_counts.get(owner.lower(), 0)
-        storage.set_mapping(12, gem_owner_index_key(owner, oi), int.from_bytes(gem_id, "big"))
+        storage.set_mapping(20, gem_owner_index_key(owner, oi), int.from_bytes(gem_id, "big"))
         owner_counts[owner.lower()] = oi + 1
 
-        # all_gem_ids List element i (slot 13 data region) + gem_index (slot 14).
-        storage.set_raw_slot(data_slot(13) + i, int.from_bytes(gem_id, "big"))
-        storage.set_mapping(14, gem_id, i)
+        # all_gem_ids List element i (slot 21 data region) + gem_index (slot 22).
+        storage.set_raw_slot(data_slot(21) + i, int.from_bytes(gem_id, "big"))
+        storage.set_mapping(22, gem_id, i)
 
     for owner, count in owner_counts.items():
-        storage.set_mapping(11, address_bytes(owner), count)
+        storage.set_mapping(19, address_bytes(owner), count)
 
-    # total_supply (slot 0) and all_gem_ids length (slot 13).
+    # total_supply (slot 0) and all_gem_ids length (slot 21).
     storage.set_slot(0, len(gems))
-    storage.set_slot(13, len(gems))
+    storage.set_slot(21, len(gems))
 
 
 def seed_coen(alloc: dict, balances: dict):

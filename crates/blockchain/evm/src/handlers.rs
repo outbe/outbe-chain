@@ -905,50 +905,14 @@ pub mod vote {
 }
 
 pub mod update {
-    use outbe_primitives::block::BlockRuntimeContext;
-    use outbe_primitives::error::Result;
-    use outbe_update::handlers::{UpgradeHandler, UpgradeHandlerRegistry, UpgradeHandlers};
-    use outbe_update::{ProtocolVersion, ScheduledUpdateInfo};
-
-    /// Frozen protocol version of the bounded Lysis V1 PoC. Registering the
-    /// migration does not arm a network schedule; OCM-26 owns the canonical
-    /// fresh-devnet activation record.
-    const OCOMP_POC_PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::from_raw(1);
-
-    struct OcompPocFreshDevnetHandler;
-
-    impl UpgradeHandler for OcompPocFreshDevnetHandler {
-        fn version(&self) -> ProtocolVersion {
-            OCOMP_POC_PROTOCOL_VERSION
-        }
-
-        fn label(&self) -> &'static str {
-            "ocomp-poc-fresh-devnet-profile"
-        }
-
-        fn handle(
-            &self,
-            ctx: &BlockRuntimeContext,
-            _scheduled: &ScheduledUpdateInfo,
-        ) -> Result<()> {
-            ctx.with_checkpoint(|| {
-                let mut tribute = ctx.contract::<outbe_tribute::TributeContract>();
-                tribute.initialize_fresh_ocomp_profile()?;
-
-                outbe_oracle::api::initialize_fresh_ocomp_profile(ctx.storage.clone())?;
-                Ok(())
-            })
-        }
-    }
-
-    static OCOMP_POC_FRESH_DEVNET_HANDLER: OcompPocFreshDevnetHandler = OcompPocFreshDevnetHandler;
+    use outbe_update::handlers::{UpgradeHandlerRegistry, UpgradeHandlers};
 
     /// Active upgrade handlers for this node binary.
     ///
     /// Append entries when a protocol version requires deterministic storage
     /// migration at activation height. Versions without a handler activate as
     /// version-only switches.
-    static ACTIVE_UPGRADE_HANDLERS: UpgradeHandlers = &[&OCOMP_POC_FRESH_DEVNET_HANDLER];
+    static ACTIVE_UPGRADE_HANDLERS: UpgradeHandlers = &[];
     static REGISTRY: UpgradeHandlerRegistry = UpgradeHandlerRegistry::new(ACTIVE_UPGRADE_HANDLERS);
 
     /// Returns the compile-time upgrade handler registry for executor wiring.
@@ -958,113 +922,14 @@ pub mod update {
 
     #[cfg(test)]
     mod tests {
-        use alloy_primitives::{Address, U256};
-        use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
-        use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-        use outbe_primitives::storage::StorageHandle;
-        use outbe_update::handlers::UpgradeHandler;
-        use outbe_update::schema::ScheduledUpdateStatus;
-        use outbe_update::ScheduledUpdateInfo;
-
-        use super::{registry, OcompPocFreshDevnetHandler, OCOMP_POC_PROTOCOL_VERSION};
-
-        const ACTIVATION_HEIGHT: u64 = 32;
-        const ACTIVATION_TIMESTAMP: u64 = 1_753_315_200;
-
-        fn scheduled() -> ScheduledUpdateInfo {
-            ScheduledUpdateInfo {
-                proposal_id: U256::from(1),
-                version: OCOMP_POC_PROTOCOL_VERSION,
-                activation_height: ACTIVATION_HEIGHT,
-                info: "OCOMP PoC fixture".into(),
-                status: ScheduledUpdateStatus::Scheduled,
-            }
-        }
-
-        fn context(storage: StorageHandle<'_>) -> BlockRuntimeContext<'_> {
-            BlockRuntimeContext::new(
-                BlockContext::new(
-                    ACTIVATION_HEIGHT,
-                    ACTIVATION_TIMESTAMP,
-                    1,
-                    Address::ZERO,
-                    Vec::new(),
-                ),
-                storage,
-            )
-        }
+        use outbe_update::ProtocolVersion;
 
         #[test]
-        fn registered_ocomp_handler_initializes_external_admission_profiles_atomically() {
-            let handlers = registry()
-                .lookup(OCOMP_POC_PROTOCOL_VERSION)
-                .collect::<Vec<_>>();
-            assert_eq!(handlers.len(), 1);
-            assert_eq!(handlers[0].label(), "ocomp-poc-fresh-devnet-profile");
-
-            let mut provider = HashMapStorageProvider::new(1);
-            StorageHandle::enter(&mut provider, |storage| {
-                outbe_oracle::schema::OracleContract::new(storage.clone())
-                    .register_pair(outbe_oracle::api::AddressPair::quoted(
-                        outbe_oracle::api::COEN_ASSET,
-                        outbe_oracle::api::iso_asset(840),
-                    ))
-                    .unwrap();
-                OcompPocFreshDevnetHandler
-                    .handle(&context(storage.clone()), &scheduled())
-                    .unwrap();
-
-                assert!(
-                    outbe_tribute::TributeContract::new(storage.clone())
-                        .pre_admission_projection(outbe_common::WorldwideDay::from_timestamp(
-                            ACTIVATION_TIMESTAMP
-                        ),)
-                        .unwrap()
-                        .profile_ready
-                );
-                assert!(
-                    outbe_oracle::api::ocomp_pre_admission_projection(
-                        storage.clone(),
-                        outbe_common::WorldwideDay::from_timestamp(ACTIVATION_TIMESTAMP),
-                        U256::ZERO,
-                        ACTIVATION_TIMESTAMP,
-                    )
-                    .unwrap()
-                    .profile_ready
-                );
-                assert!(
-                    !outbe_metadosis::api::pre_admission_projection(
-                        storage,
-                        outbe_common::WorldwideDay::from_timestamp(ACTIVATION_TIMESTAMP),
-                    )
-                    .unwrap()
-                    .initialized,
-                    "Metadosis profile is owned by the receipt-visible fork-install system route"
-                );
-            });
-        }
-
-        #[test]
-        fn handler_failure_rolls_back_profiles_initialized_before_oracle_validation() {
-            let mut provider = HashMapStorageProvider::new(1);
-            StorageHandle::enter(&mut provider, |storage| {
-                assert!(OcompPocFreshDevnetHandler
-                    .handle(&context(storage.clone()), &scheduled())
-                    .is_err());
-
-                let wwd = outbe_common::WorldwideDay::from_timestamp(ACTIVATION_TIMESTAMP);
-                assert!(
-                    !outbe_tribute::TributeContract::new(storage.clone())
-                        .pre_admission_projection(wwd)
-                        .unwrap()
-                        .profile_ready
-                );
-                assert!(
-                    !outbe_metadosis::api::pre_admission_projection(storage, wwd)
-                        .unwrap()
-                        .initialized
-                );
-            });
+        fn ocomp_genesis_activation_registers_no_generic_update_handler() {
+            assert!(super::registry()
+                .lookup(ProtocolVersion::from_raw(1))
+                .next()
+                .is_none());
         }
     }
 }

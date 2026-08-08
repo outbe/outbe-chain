@@ -19,6 +19,10 @@ pub(crate) const TRIBUTE_ADDR: Address = address!("0x000000000000000000000000000
 pub(crate) const NOD_ADDR: Address = address!("0x0000000000000000000000000000000000001006");
 /// Metadosis worldwide-day registry (`getWorldwideDay(uint32)`).
 pub(crate) const WWD_ADDR: Address = address!("0x000000000000000000000000000000000000100E");
+/// PromiseLimit carry-over ledger (`totalUnallocated()`).
+#[cfg(feature = "ocomp-integration")]
+pub(crate) const PROMIS_LIMIT_ADDR: Address =
+    address!("0x000000000000000000000000000000000000100F");
 /// Desis auction owner (`getAuctionStage(uint32)`).
 #[cfg(feature = "ocomp-integration")]
 pub(crate) const DESIS_ADDR: Address = address!("0x0000000000000000000000000000000000001016");

@@ -1,19 +1,21 @@
 //! Daily Called scan: force-calls a Qualified series once its COEN VWAP exceeded
-//! the call trigger on `threshold_days` of the last `window_days`. Candidates
+//! the call trigger on `call_threshold` of the last `call_window`. Candidates
 //! come from the call-trigger bin index; counts are recomputed each run from the
 //! Oracle's finalized per-UTC-day VWAPs, which the Oracle begin-block hook
 //! closes before the CycleTick that drives this scan. Driven by the Cycle daily
 //! trigger.
 
+use std::collections::BTreeMap;
+
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
-use outbe_oracle::{api::registered_coen_pair, api::AddressPair, schema::OracleContract};
+use outbe_oracle::contract::OracleContract;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},
     math::{constants::MAX_BIN_ID, tree_math},
     storage::StorageHandle,
-    time::{previous_date_key, timestamp_to_date_key},
+    time::{previous_date_key, timestamp_to_date_key, SECONDS_PER_DAY},
 };
 
 use outbe_intex::IntexState;
@@ -26,10 +28,16 @@ use crate::state::QualifiedBinTree;
 /// Run the daily Called scan. Returns the number of series force-called.
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     let oracle = OracleContract::new(ctx.storage.clone());
-    // This scan needs the pair id, not the rate: it reads the day's finalized VWAP.
-    let Some(pair_id) = registered_coen_pair(ctx.storage.clone(), QUALIFIER_REFERENCE_ISO)? else {
+    let pair_hash = oracle
+        .settlement_iso_to_pair
+        .read(&QUALIFIER_REFERENCE_ISO)?;
+    if pair_hash.is_zero() {
         return Ok(0);
-    };
+    }
+    let pair_id = oracle.pair_hash_to_id.read(&pair_hash)?;
+    if pair_id == 0 {
+        return Ok(0);
+    }
 
     // Most recent fully-closed UTC day (finalized VWAP).
     let last_closed_day = previous_date_key(timestamp_to_date_key(ctx.block.timestamp));
@@ -43,7 +51,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
         return Ok(0);
     }
 
-    let last_closed_vwap = match oracle.get_utc_day_vwap_for_pair(last_closed_day, pair_id)? {
+    let last_closed_vwap = match oracle.get_utc_day_vwap_for_pair_id(last_closed_day, pair_id)? {
         Some(v) if !v.is_zero() => v,
         _ => return Ok(0),
     };
@@ -57,6 +65,9 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
         }
     };
     let mut factory = IntexFactoryContract::new(ctx.storage.clone());
+
+    let mut vwaps = DayVwaps::new(pair_id);
+    vwaps.seed(last_closed_day, Some(last_closed_vwap));
 
     let mut called: u32 = 0;
     let mut cursor: u32 = 0;
@@ -85,8 +96,8 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
                     &ctx.storage,
                     &mut factory,
                     &oracle,
+                    &mut vwaps,
                     series_id,
-                    pair_id,
                     last_closed_day,
                     ctx.block.timestamp,
                 )
@@ -114,14 +125,42 @@ pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
     Ok(())
 }
 
+/// Finalized per-day VWAPs of one oracle pair, read once per scan.
+pub(crate) struct DayVwaps {
+    pair_id: u32,
+    days: BTreeMap<u32, Option<U256>>,
+}
+
+impl DayVwaps {
+    pub(crate) fn new(pair_id: u32) -> Self {
+        Self {
+            pair_id,
+            days: BTreeMap::new(),
+        }
+    }
+
+    pub(crate) fn seed(&mut self, day: u32, vwap: Option<U256>) {
+        self.days.insert(day, vwap);
+    }
+
+    fn get(&mut self, oracle: &OracleContract, day: u32) -> Result<Option<U256>> {
+        if let Some(v) = self.days.get(&day) {
+            return Ok(*v);
+        }
+        let v = oracle.get_utc_day_vwap_for_pair_id(day, self.pair_id)?;
+        self.days.insert(day, v);
+        Ok(v)
+    }
+}
+
 /// Force-call one series if Qualified and its VWAP breached the call trigger on
-/// at least `threshold_days` of the last `window_days` completed days.
+/// at least `call_threshold` of the last `call_window` completed days.
 pub(crate) fn try_call(
     storage: &StorageHandle<'_>,
     factory: &mut IntexFactoryContract,
     oracle: &OracleContract,
+    vwaps: &mut DayVwaps,
     series_id: u32,
-    pair: AddressPair,
     last_closed_day: u32,
     now_ts: u64,
 ) -> Result<bool> {
@@ -133,8 +172,10 @@ pub(crate) fn try_call(
         return Ok(false);
     }
     let trigger = series.call_price_minor;
-    let window = u32::from(series.call_window_days);
-    let threshold = u32::from(series.call_threshold_days);
+    // The scan walks finalized daily VWAPs, so both bounds floor to whole days.
+    let secs_per_day = SECONDS_PER_DAY as u32;
+    let window = series.call_window / secs_per_day;
+    let threshold = series.call_threshold / secs_per_day;
     if window == 0 || threshold == 0 {
         return Ok(false);
     }
@@ -147,7 +188,7 @@ pub(crate) fn try_call(
         if day < issued_day {
             break;
         }
-        if let Some(v) = oracle.get_utc_day_vwap_for_pair(day, pair)? {
+        if let Some(v) = vwaps.get(oracle, day)? {
             if v > trigger {
                 breaches += 1;
             }

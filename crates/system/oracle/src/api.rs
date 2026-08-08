@@ -175,8 +175,9 @@ pub fn ocomp_pre_admission_projection(
 
 /// Initializes the fixed Oracle projection on the fresh-devnet OCOMP fork.
 ///
-/// The fork handler is the sole production caller. The update is idempotent
-/// only when the configured pair and version already match exactly.
+/// The genesis-bound OCOMP lifecycle is the sole production caller. The
+/// initialization is idempotent only when the configured pair and version
+/// already match exactly.
 pub fn initialize_fresh_ocomp_profile(storage: StorageHandle) -> Result<()> {
     let mut oracle = OracleContract::new(storage);
     oracle.initialize_fresh_ocomp_profile()

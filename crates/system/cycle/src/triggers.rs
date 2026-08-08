@@ -21,6 +21,7 @@ pub enum TriggerId {
     IntexCallDaily = 1,
     WwdAdvanceNoon = 2,
     AuctionAdvance = 3,
+    GemCallDaily = 4,
 }
 
 impl TriggerId {
@@ -62,6 +63,7 @@ pub enum TriggerHandler {
     IntexDaily,
     WwdAdvanceNoon,
     AuctionAdvance,
+    GemCallDaily,
 }
 
 impl TriggerHandler {
@@ -72,7 +74,7 @@ impl TriggerHandler {
             // Terminal allocation and the subsequent WWD process command.
             Self::EmissionLimitDaily => 2,
             Self::WwdAdvanceNoon => 1,
-            Self::IntexDaily | Self::AuctionAdvance => 0,
+            Self::IntexDaily | Self::AuctionAdvance | Self::GemCallDaily => 0,
         }
     }
 
@@ -91,6 +93,7 @@ impl TriggerHandler {
                 outbe_metadosis::commands::advance_active_worldwide_days(ctx, scope)
             }
             Self::AuctionAdvance => outbe_desis::tick_schedule(ctx),
+            Self::GemCallDaily => outbe_gem::hooks::run_call_daily(ctx),
         }
     }
 }
@@ -154,6 +157,16 @@ pub const ACTIVE_TRIGGERS: &[TriggerSpec] = &[
         // land in the same slot.
         requires_accounting_window: true,
         handler: TriggerHandler::AuctionAdvance,
+    },
+    TriggerSpec {
+        id: TriggerId::GemCallDaily.as_u32(),
+        label: "gem_call_daily",
+        period_seconds: 86_400,
+        start_offset_seconds: 0,
+        // Reads finalized oracle VWAP history to force-call / forfeit-burn gems;
+        // no dependency on the parent block's settlement accounting.
+        requires_accounting_window: false,
+        handler: TriggerHandler::GemCallDaily,
     },
 ];
 

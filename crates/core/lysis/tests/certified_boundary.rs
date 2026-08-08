@@ -37,8 +37,8 @@ fn entitled_frame_enforces_the_fixed_owner_cursor_and_terminal_completion() {
                 capability.authorize_nod_installation()?;
                 assert!(capability.authorize_nod_installation().is_err());
                 capability.authorize_contributor_installation()?;
-                capability.authorize_tribute_retirement()?;
                 capability.authorize_carry_over_credit()?;
+                capability.authorize_tribute_retirement()?;
                 capability.authorize_terminal_receipt()
             })
             .unwrap();

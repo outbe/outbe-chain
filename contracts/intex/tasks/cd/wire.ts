@@ -577,7 +577,7 @@ const promisWire = task(
 
 // ============================================================================
 // Gem-parking Wire (grant GEM_ROLE on IntexNFT1155 to the GemFactory precompile)
-// GemFactory.setup_factory calls intex.parkForGems, which is gated by GEM_ROLE.
+// GemFactory.setup_factory calls intex.parkIntex, which is gated by GEM_ROLE.
 // ============================================================================
 
 interface GemWireArgs {
@@ -619,7 +619,7 @@ const gemWireAction = async (args: GemWireArgs, hre: unknown) => {
 
 const gemWire = task(
   "gem-wire",
-  "Grant GEM_ROLE on IntexNFT1155 to the GemFactory precompile (enables parkForGems burn path)"
+  "Grant GEM_ROLE on IntexNFT1155 to the GemFactory precompile (enables parkIntex burn path)"
 )
   .addOption({
     name: "gemFactory",

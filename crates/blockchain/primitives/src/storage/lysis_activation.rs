@@ -8,8 +8,8 @@ use crate::error::{PrecompileError, Result};
 enum LysisActivationCursor {
     Nod,
     Contributor,
-    Tribute,
     CarryOver,
+    Tribute,
     Terminal,
     Complete,
 }
@@ -53,7 +53,7 @@ impl<'frame> CertifiedLysisActivation<'frame> {
     pub fn authorize_contributor_installation(&mut self) -> Result<()> {
         self.advance(
             LysisActivationCursor::Contributor,
-            LysisActivationCursor::Tribute,
+            LysisActivationCursor::CarryOver,
             "contributor",
         )
     }
@@ -61,7 +61,7 @@ impl<'frame> CertifiedLysisActivation<'frame> {
     pub fn authorize_tribute_retirement(&mut self) -> Result<()> {
         self.advance(
             LysisActivationCursor::Tribute,
-            LysisActivationCursor::CarryOver,
+            LysisActivationCursor::Terminal,
             "Tribute",
         )
     }
@@ -69,7 +69,7 @@ impl<'frame> CertifiedLysisActivation<'frame> {
     pub fn authorize_carry_over_credit(&mut self) -> Result<()> {
         self.advance(
             LysisActivationCursor::CarryOver,
-            LysisActivationCursor::Terminal,
+            LysisActivationCursor::Tribute,
             "carry-over",
         )
     }
@@ -120,8 +120,8 @@ mod tests {
         capability.authorize_nod_installation().unwrap();
         assert!(capability.authorize_nod_installation().is_err());
         capability.authorize_contributor_installation().unwrap();
-        capability.authorize_tribute_retirement().unwrap();
         capability.authorize_carry_over_credit().unwrap();
+        capability.authorize_tribute_retirement().unwrap();
         capability.authorize_terminal_receipt().unwrap();
         assert!(capability.is_complete());
         assert!(capability.authorize_terminal_receipt().is_err());
