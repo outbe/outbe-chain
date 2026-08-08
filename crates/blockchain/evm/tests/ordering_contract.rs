@@ -42,14 +42,14 @@ fn seed_validator_set(storage: StorageHandle, initial_epoch: u64) {
     oracle
         .register_pair(outbe_oracle::api::AddressPair::from_addresses(
             outbe_oracle::api::COEN_ASSET,
-            outbe_oracle::api::iso_asset(840),
+            outbe_oracle::api::currency_address(840),
         ))
         .unwrap();
     oracle
         .set_exchange_rate(
             Address::ZERO,
             outbe_oracle::api::COEN_ASSET,
-            outbe_oracle::api::iso_asset(840),
+            outbe_oracle::api::currency_address(840),
             U256::from(1_000_000_000_000_000_000u128),
             0,
             0,

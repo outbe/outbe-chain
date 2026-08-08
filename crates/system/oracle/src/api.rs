@@ -7,7 +7,7 @@ use crate::schema::OracleContract;
 use crate::scurve;
 
 pub use crate::constants::{DAY_TYPE_ISO, DAY_TYPE_PAIR, DAY_TYPE_PAIR_KEY};
-pub use crate::types::{coen_iso_pair, AddressPair, AssetType};
+pub use crate::types::{AddressPair, AssetType};
 
 use alloy_primitives::{Address, U256};
 use outbe_common::WorldwideDay;
@@ -39,14 +39,6 @@ pub struct OcompOraclePreAdmissionProjection {
     pub oracle_state_version: u64,
     pub wwd_pair_entries: u32,
     pub active_scurve_entries: u32,
-}
-
-/// Native COEN as an asset address — the base of every settlement pair.
-pub const COEN_ASSET: Address = Address::ZERO;
-
-/// ISO 4217 numeric code `iso_code` as an asset address, e.g. 840 for USD.
-pub fn iso_asset(iso_code: u16) -> Address {
-    AssetType::IsoCurrency(iso_code).into()
 }
 
 /// Validates that `iso_code` is registered as a reference currency.
@@ -91,7 +83,7 @@ pub fn check_reference_currency_with_storage(storage: StorageHandle, iso_code: u
 /// `iso_code -> exchange_rate` lookup.
 pub fn coen_rate_for(storage: StorageHandle, iso_code: u16) -> Result<Option<U256>> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
-    let pair = coen_iso_pair(iso_code);
+    let pair = AddressPair::new_coen_to(iso_code);
 
     if oracle.pair_index_of(pair)? == 0 {
         return Ok(None);
@@ -105,7 +97,7 @@ pub fn coen_rate_for(storage: StorageHandle, iso_code: u16) -> Result<Option<U25
 /// answers "is it registered", which is what callers actually branch on.
 pub fn registered_coen_pair(storage: StorageHandle, iso_code: u16) -> Result<Option<AddressPair>> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
-    let pair = coen_iso_pair(iso_code);
+    let pair = AddressPair::new_coen_to(iso_code);
     Ok((oracle.pair_index_of(pair)? != 0).then_some(pair))
 }
 

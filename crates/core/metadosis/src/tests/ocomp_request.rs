@@ -88,7 +88,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
         oracle
             .register_pair(outbe_oracle::api::AddressPair::from_addresses(
                 outbe_oracle::api::COEN_ASSET,
-                outbe_oracle::api::iso_asset(840),
+                outbe_oracle::api::currency_address(840),
             ))
             .unwrap();
         outbe_oracle::api::initialize_fresh_ocomp_profile(storage.clone()).unwrap();
@@ -1186,7 +1186,7 @@ fn prepare_request_fixture_with_day_type(
         oracle
             .register_pair(outbe_oracle::api::AddressPair::from_addresses(
                 outbe_oracle::api::COEN_ASSET,
-                outbe_oracle::api::iso_asset(840),
+                outbe_oracle::api::currency_address(840),
             ))
             .unwrap();
         // `oracle_ready` gates OCOMP admission: when false the Oracle profile is
@@ -1294,7 +1294,7 @@ fn prepare_ready_days_fixture(
         oracle
             .register_pair(outbe_oracle::api::AddressPair::from_addresses(
                 outbe_oracle::api::COEN_ASSET,
-                outbe_oracle::api::iso_asset(840),
+                outbe_oracle::api::currency_address(840),
             ))
             .unwrap();
         // When false the Oracle profile is left un-armed so the terminal request

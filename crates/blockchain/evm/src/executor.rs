@@ -4758,14 +4758,14 @@ mod tests {
             oracle
                 .register_pair(outbe_oracle::api::AddressPair::from_addresses(
                     outbe_oracle::api::COEN_ASSET,
-                    outbe_oracle::api::iso_asset(840),
+                    outbe_oracle::api::currency_address(840),
                 ))
                 .unwrap();
             oracle
                 .set_exchange_rate(
                     Address::ZERO,
                     outbe_oracle::api::COEN_ASSET,
-                    outbe_oracle::api::iso_asset(840),
+                    outbe_oracle::api::currency_address(840),
                     U256::from(1_000_000_000_000_000_000u128),
                     0,
                     0,
@@ -4860,14 +4860,14 @@ mod tests {
             oracle
                 .register_pair(outbe_oracle::api::AddressPair::from_addresses(
                     outbe_oracle::api::COEN_ASSET,
-                    outbe_oracle::api::iso_asset(840),
+                    outbe_oracle::api::currency_address(840),
                 ))
                 .unwrap();
             oracle
                 .set_exchange_rate(
                     Address::ZERO,
                     outbe_oracle::api::COEN_ASSET,
-                    outbe_oracle::api::iso_asset(840),
+                    outbe_oracle::api::currency_address(840),
                     U256::from(1_000_000_000_000_000_000u128),
                     0,
                     0,
@@ -5224,7 +5224,7 @@ mod tests {
         let input = outbe_oracle::precompile::IOracle::submitVoteCall {
             tuples: vec![outbe_oracle::precompile::IOracle::ExchangeRateTuple {
                 base: outbe_oracle::api::COEN_ASSET,
-                quote: outbe_oracle::api::iso_asset(840),
+                quote: outbe_oracle::api::currency_address(840),
                 exchangeRate: U256::from(1_000_000_000_000_000_000u128),
                 volume: U256::from(10_000_000_000_000_000_000_000u128),
             }],
@@ -10863,14 +10863,14 @@ mod tests {
         oracle
             .register_pair(outbe_oracle::api::AddressPair::from_addresses(
                 outbe_oracle::api::COEN_ASSET,
-                outbe_oracle::api::iso_asset(840),
+                outbe_oracle::api::currency_address(840),
             ))
             .unwrap();
         oracle
             .set_exchange_rate(
                 Address::ZERO,
                 outbe_oracle::api::COEN_ASSET,
-                outbe_oracle::api::iso_asset(840),
+                outbe_oracle::api::currency_address(840),
                 U256::from(1_000_000_000_000_000_000u128),
                 0,
                 0,

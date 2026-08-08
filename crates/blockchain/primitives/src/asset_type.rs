@@ -6,7 +6,8 @@
 
 use alloy_primitives::{Address, U256};
 
-use crate::address_pair::AddressPair;
+/// Native COEN as an asset address — the base of every settlement pair.
+pub const COEN_ASSET: Address = Address::ZERO;
 
 /// Represents an asset type supported by the Oracle.
 /// Such assets can be used for keying pairs.
@@ -26,7 +27,7 @@ impl From<AssetType> for Address {
     /// range decode back as `IsoCurrency`.
     fn from(value: AssetType) -> Self {
         match value {
-            AssetType::Native => Address::ZERO,
+            AssetType::Native => COEN_ASSET,
             AssetType::ERC20(address) => address,
             AssetType::IsoCurrency(code) => {
                 let marked = ISO_MARKER | u32::from(bcd_encode(code));
@@ -49,12 +50,9 @@ impl From<Address> for AssetType {
     }
 }
 
-/// The `COEN/<iso>` settlement pair, e.g. `coen_iso_pair(840)` for COEN/USD.
-///
-/// COEN base, ISO quote — the orientation these pairs are registered in. COEN is
-/// also the zero address, so this happens to be the sorted key form as well.
-pub fn coen_iso_pair(iso_code: u16) -> AddressPair {
-    AddressPair::from_assets(AssetType::Native, AssetType::IsoCurrency(iso_code))
+/// ISO 4217 numeric code `iso_code` as an asset address, e.g. 840 for USD.
+pub fn currency_address(iso_code: u16) -> Address {
+    AssetType::IsoCurrency(iso_code).into()
 }
 
 /// Marker nibbles every ISO currency address carries, keeping the reserved
@@ -106,7 +104,7 @@ fn bcd_decode(packed: u16) -> Option<u16> {
 
 #[cfg(test)]
 mod tests {
-    use super::{coen_iso_pair, AddressPair, AssetType};
+    use super::{AssetType};
     use alloy_primitives::{address, Address};
 
     /// Highest ISO 4217 numeric currency code.
@@ -201,31 +199,5 @@ mod tests {
         ] {
             assert_eq!(AssetType::from(token), AssetType::ERC20(token), "{token}");
         }
-    }
-
-    #[test]
-    fn the_coen_iso_pair_keys_on_the_zero_address_and_the_currency_code() {
-        let pair = coen_iso_pair(840);
-
-        assert_eq!(&pair[0..20], Address::ZERO.as_slice());
-        assert_eq!(
-            &pair[20..40],
-            address!("0x00000000000000000000000000000000000cc840").as_slice(),
-        );
-    }
-
-    /// The quoted value keeps the order; only the storage key drops it.
-    #[test]
-    fn quoted_assets_keeps_the_order_the_assets_are_quoted_in() {
-        let forward = AddressPair::from_assets(AssetType::Native, AssetType::IsoCurrency(840));
-        let reverse = AddressPair::from_assets(AssetType::IsoCurrency(840), AssetType::Native);
-
-        assert_ne!(forward, reverse);
-        assert!(forward.same_market(&reverse));
-    }
-
-    #[test]
-    fn coen_iso_pair_separates_pairs_sharing_an_asset() {
-        assert_ne!(coen_iso_pair(840), coen_iso_pair(978));
     }
 }

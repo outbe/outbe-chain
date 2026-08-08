@@ -26,6 +26,11 @@ impl AddressPair {
         Self::from_addresses(asset1.into(), asset2.into())
     }
 
+    /// The `COEN/<iso>` pair, e.g. `from_coen_to(840)` for COEN/USD.
+    pub fn new_coen_to(iso_code: u16) -> Self {
+        AddressPair::from_assets(AssetType::Native, AssetType::IsoCurrency(iso_code))
+    }
+
     pub fn address1(&self) -> Address {
         Address::from_slice(&self[0..20])
     }
@@ -90,6 +95,7 @@ mod tests {
     use super::AddressPair;
     use crate::storage::types::StorageKey;
     use alloy_primitives::{address, b256, keccak256, Address, U256};
+    use crate::asset_type::AssetType;
 
     const FIRST: Address = address!("0x1111111111111111111111111111111111111111");
     const SECOND: Address = address!("0x2222222222222222222222222222222222222222");
@@ -249,4 +255,31 @@ mod tests {
             ),
         );
     }
+
+    #[test]
+    fn the_coen_iso_pair_keys_on_the_zero_address_and_the_currency_code() {
+        let pair = AddressPair::new_coen_to(840);
+
+        assert_eq!(&pair[0..20], Address::ZERO.as_slice());
+        assert_eq!(
+            &pair[20..40],
+            address!("0x00000000000000000000000000000000000cc840").as_slice(),
+        );
+    }
+
+    /// The quoted value keeps the order; only the storage key drops it.
+    #[test]
+    fn quoted_assets_keeps_the_order_the_assets_are_quoted_in() {
+        let forward = AddressPair::from_assets(AssetType::Native, AssetType::IsoCurrency(840));
+        let reverse = AddressPair::from_assets(AssetType::IsoCurrency(840), AssetType::Native);
+
+        assert_ne!(forward, reverse);
+        assert!(forward.same_market(&reverse));
+    }
+
+    #[test]
+    fn coen_iso_pair_separates_pairs_sharing_an_asset() {
+        assert_ne!(AddressPair::new_coen_to(840), AddressPair::new_coen_to(978));
+    }
+
 }

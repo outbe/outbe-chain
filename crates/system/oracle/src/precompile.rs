@@ -40,7 +40,7 @@ pub fn dispatch(
                 Ok((rate, block, ts).into())
             }),
             getCoenExchangeRateFor(c) => view(c, |c| {
-                let quote = crate::api::iso_asset(c.isoCode);
+                let quote = crate::api::currency_address(c.isoCode);
                 Ok(oracle.get_exchange_rate(crate::api::COEN_ASSET, quote)?.0)
             }),
             getVwap(c) => view(c, |c| {

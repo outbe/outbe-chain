@@ -124,7 +124,7 @@ mod tests {
         IOracle::submitVoteCall {
             tuples: vec![IOracle::ExchangeRateTuple {
                 base: outbe_oracle::api::COEN_ASSET,
-                quote: outbe_oracle::api::iso_asset(840),
+                quote: outbe_oracle::api::currency_address(840),
                 exchangeRate: U256::from(18_820_648_000_000_000u128),
                 volume: U256::from(1_000_000u64),
             }],

@@ -2159,7 +2159,7 @@ fn test_offering_entry_captures_vwap_unblocks_and_exit_reblocks() {
         oracle
             .register_pair(outbe_oracle::api::AddressPair::from_addresses(
                 outbe_oracle::api::COEN_ASSET,
-                outbe_oracle::api::iso_asset(840),
+                outbe_oracle::api::currency_address(840),
             ))
             .unwrap();
         let pair = outbe_oracle::api::coen_iso_pair(840);
@@ -2188,7 +2188,7 @@ fn test_offering_entry_captures_vwap_unblocks_and_exit_reblocks() {
         let oracle = OracleContract::new(storage.clone());
         let (_, _, bases, quotes, vwaps, _) = oracle.get_worldwide_day_vwap_snapshot(wwd).unwrap();
         assert_eq!(bases, vec![outbe_oracle::api::COEN_ASSET]);
-        assert_eq!(quotes, vec![outbe_oracle::api::iso_asset(840)]);
+        assert_eq!(quotes, vec![outbe_oracle::api::currency_address(840)]);
         assert_eq!(vwaps, vec![U256::from(110u64)]);
 
         let metadosis = MetadosisContract::new(storage.clone());
@@ -2349,7 +2349,7 @@ fn test_missing_previous_vwap_results_in_red_day() {
         oracle
             .register_pair(outbe_oracle::api::AddressPair::from_addresses(
                 outbe_oracle::api::COEN_ASSET,
-                outbe_oracle::api::iso_asset(840),
+                outbe_oracle::api::currency_address(840),
             ))
             .unwrap();
         let pair = outbe_oracle::api::coen_iso_pair(840);
@@ -2426,7 +2426,7 @@ fn test_equal_vwap_results_in_red_day() {
         oracle
             .register_pair(outbe_oracle::api::AddressPair::from_addresses(
                 outbe_oracle::api::COEN_ASSET,
-                outbe_oracle::api::iso_asset(840),
+                outbe_oracle::api::currency_address(840),
             ))
             .unwrap();
         let pair = outbe_oracle::api::coen_iso_pair(840);
@@ -2501,7 +2501,7 @@ fn test_normal_lifecycle_never_leaves_ready_day_type_unknown() {
         oracle
             .register_pair(outbe_oracle::api::AddressPair::from_addresses(
                 outbe_oracle::api::COEN_ASSET,
-                outbe_oracle::api::iso_asset(840),
+                outbe_oracle::api::currency_address(840),
             ))
             .unwrap();
         let pair = outbe_oracle::api::coen_iso_pair(840);
