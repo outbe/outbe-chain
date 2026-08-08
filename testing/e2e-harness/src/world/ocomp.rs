@@ -82,6 +82,10 @@ use crate::ocomp_evidence::{
 
 #[cfg(feature = "ocomp-integration")]
 const OCOMP_MAX_WORKERS_PER_DOMAIN: usize = 4;
+#[cfg(feature = "ocomp-integration")]
+const OCOMP_BASE_PATH_ENV: &str = "OUTBE_OCOMP_BASE_PATH";
+#[cfg(feature = "ocomp-integration")]
+const OCOMP_VALIDATOR_INDEX_ENV: &str = "OCOMP_VALIDATOR_INDEX";
 #[cfg(any(feature = "ocomp-integration", test))]
 const OCOMP_MAX_PROCESS_RECORDS: usize = 64;
 const OCOMP_MAX_FAULT_RECORDS: usize = 32;
@@ -1668,11 +1672,9 @@ impl OcompTopology {
             expected_observability_port
         );
 
-        let mut command = Command::new(&self.cfg.bin_ocomp);
+        let mut command = self.release_role_command(validator_index, OcompProcessRole::Worker)?;
         command
             .arg("worker")
-            .arg("--development-root")
-            .arg(&domain_root)
             .arg("--chain-id")
             .arg(identity.chain_id.to_string())
             .arg("--genesis-hash")
@@ -1701,6 +1703,17 @@ impl OcompTopology {
     }
 
     #[cfg(feature = "ocomp-integration")]
+    fn release_role_command(&self, validator_index: u8, role: OcompProcessRole) -> Result<Command> {
+        eyre::ensure!(
+            role != OcompProcessRole::Follower,
+            "the FullNode Supervisor is embedded in outbe-chain; no external follower role exists"
+        );
+        let mut command = Command::new(&self.cfg.bin_ocomp);
+        configure_release_layout(&mut command, &self.cfg.dir, validator_index);
+        Ok(command)
+    }
+
+    #[cfg(feature = "ocomp-integration")]
     fn spawn_validator_role(
         &mut self,
         validator_index: u8,
@@ -1722,11 +1735,9 @@ impl OcompTopology {
             .open(&log_path)?;
         let stderr = log.try_clone()?;
 
-        let mut command = Command::new(&self.cfg.bin_ocomp);
+        let mut command = self.release_role_command(validator_index, role)?;
         command
             .arg(role_name)
-            .arg("--development-root")
-            .arg(&domain_root)
             .current_dir(&self.cfg.repo)
             .env("OCOMP_CHAIN_ID", identity.chain_id.to_string())
             .env(
@@ -1755,7 +1766,7 @@ impl OcompTopology {
                         self.cfg.ocomp_supervisor_port(validator_index)
                     ))
                     .env("OUTBE_OCOMP_RPC_URL", self.cfg.rpc_url(validator_index))
-                    .env("OCOMP_VALIDATOR_INDEX", validator_index.to_string());
+                    .env(OCOMP_VALIDATOR_INDEX_ENV, validator_index.to_string());
             }
             OcompProcessRole::SnapshotExporter => {
                 let validator_index = usize::from(validator_index);
@@ -1811,11 +1822,9 @@ impl OcompTopology {
             .open(&log_path)?;
         let stderr = log.try_clone()?;
         let index = usize::from(validator_index);
-        let mut command = Command::new(&self.cfg.bin_ocomp);
+        let mut command = self.release_role_command(validator_index, role)?;
         command
             .arg(role_name)
-            .arg("--development-root")
-            .arg(&domain_root)
             .current_dir(&self.cfg.repo)
             .env("OCOMP_CHAIN_ID", identity.chain_id.to_string())
             .env(
@@ -2447,6 +2456,13 @@ impl OcompTopology {
         }
         Ok(())
     }
+}
+
+#[cfg(feature = "ocomp-integration")]
+fn configure_release_layout(command: &mut Command, base_path: &Path, validator_index: u8) {
+    command
+        .env(OCOMP_BASE_PATH_ENV, base_path)
+        .env(OCOMP_VALIDATOR_INDEX_ENV, validator_index.to_string());
 }
 
 #[cfg(feature = "ocomp-integration")]
@@ -3425,6 +3441,39 @@ mod tests {
 
     fn topology() -> TestTopology {
         topology_with_validators(Environment::default().validators)
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
+    fn release_ocomp_layout_uses_the_scenario_base_and_never_the_debug_override() {
+        let mut command = Command::new("outbe-ocomp");
+        command.arg("snapshot-exporter");
+        configure_release_layout(&mut command, Path::new("/tmp/release-e2e"), 7);
+
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(args, vec!["snapshot-exporter"]);
+        assert!(!args.iter().any(|arg| arg == "--development-root"));
+
+        let environment = command
+            .get_envs()
+            .map(|(name, value)| {
+                (
+                    name.to_string_lossy().into_owned(),
+                    value.map(|value| value.to_string_lossy().into_owned()),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(
+            environment.get(OCOMP_BASE_PATH_ENV),
+            Some(&Some("/tmp/release-e2e".to_owned()))
+        );
+        assert_eq!(
+            environment.get(OCOMP_VALIDATOR_INDEX_ENV),
+            Some(&Some("7".to_owned()))
+        );
     }
 
     fn child_guard() -> ChildGuard {

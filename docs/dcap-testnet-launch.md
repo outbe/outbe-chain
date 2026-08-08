@@ -218,8 +218,6 @@ Only after `tee join` succeeds, start it:
   --projection.mongodb-database outbe_testnet_fullnode_0 \
   --ocomp.supervisor-socket /opt/outbe-chain/ocomp/run/node-supervisor.sock \
   --ocomp.snapshot-exporter-socket /opt/outbe-chain/ocomp/run/node-snapshot-exporter.sock \
-  --ocomp.supervisor-uid "$(id -u outbe-ocomp-supervisor)" \
-  --ocomp.snapshot-exporter-uid "$(id -u outbe-ocomp-export)" \
   --ocomp.protocol-bundle-hash <0x-protocol-bundle-hash> \
   --ocomp.boot-nonce <nonzero-0x32-byte-boot-nonce> \
   --tee-enclave-socket 127.0.0.1:17000
