@@ -66,9 +66,11 @@ high bits in the last byte are zero.
   creates the measured WWD in finalized block 1 using the same canonical UTC+14
   conversion as all later WWD creation. Two whole-network
   stop/restart barriers advance the existing testnet
-  logical clock past the canonical phase boundaries without shortening the
-  production `50h/0h/48h/12h` durations, changing storage after launch, or
-  mixing validators that use different offsets.
+  logical clock past the phase boundaries recorded in the immutable genesis
+  protocol parameters. The fresh LocalNet profile uses short valid genesis
+  durations, while the verifier reads those values from the retained executed
+  genesis; changing storage after launch, hardcoding production durations in
+  the verifier, or mixing validators that use different offsets is forbidden.
   Startup also requires the canonical `metadosisStorageLayoutV1.layoutHash`
   and rejects a missing, malformed, mismatched or misclassified install/layout
   before process launch; it never reinterprets the existing `Final/32` fixture

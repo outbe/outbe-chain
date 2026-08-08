@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use eyre::{ensure, Result, WrapErr};
+use outbe_chain_constants::GenesisProtocolParametersV1;
 #[cfg(feature = "ocomp-integration")]
 use outbe_metadosis::config::{OcompForkInstallClassification, OcompForkInstallV1};
 #[cfg(all(feature = "ocomp-integration", test))]
@@ -394,7 +395,7 @@ fn verify_fresh_devnet_process(
                 .is_some_and(|hash| hash.len() == 66),
         "fresh-devnet launch identity is not Measurement@1 with the pinned Metadosis layout"
     );
-    verify_fresh_artifacts(bundle_root, &scenario, &members)?;
+    let protocol_parameters = verify_fresh_artifacts(bundle_root, &scenario, &members)?;
     let processes = scenario["ocomp"]["topology"]["processes"]
         .as_array()
         .ok_or_else(|| eyre::eyre!("fresh-devnet scenario has no process topology"))?;
@@ -443,11 +444,15 @@ fn verify_fresh_devnet_process(
         .as_u64()
         .ok_or_else(|| eyre::eyre!("fresh Metadosis lifecycle has no processing time"))?;
     ensure!(
-        forming_end.checked_sub(forming_start) == Some(50 * 3_600)
-            && lookback_end == forming_end
-            && offering_end.checked_sub(lookback_end) == Some(48 * 3_600)
-            && scheduled.checked_sub(offering_end) == Some(12 * 3_600),
-        "fresh Metadosis lifecycle changed canonical WWD phase durations"
+        forming_end.checked_sub(forming_start)
+            == Some(protocol_parameters.metadosis_forming_period_seconds)
+            && lookback_end.checked_sub(forming_end)
+                == Some(protocol_parameters.metadosis_lookback_delay_seconds)
+            && offering_end.checked_sub(lookback_end)
+                == Some(protocol_parameters.metadosis_offering_period_seconds)
+            && scheduled.checked_sub(offering_end)
+                == Some(protocol_parameters.metadosis_waiting_period_seconds),
+        "fresh Metadosis lifecycle differs from immutable genesis phase durations"
     );
     let initial_timestamp = lifecycle["initial_timestamp"]
         .as_u64()
@@ -556,7 +561,7 @@ fn verify_fresh_artifacts(
     bundle_root: &Path,
     scenario: &serde_json::Value,
     members: &[MemberDigestV1],
-) -> Result<()> {
+) -> Result<GenesisProtocolParametersV1> {
     let exact_binaries = scenario["ocomp"]["exact_binaries"]
         .as_object()
         .ok_or_else(|| eyre::eyre!("fresh-devnet scenario has no exact binary digests"))?;
@@ -605,6 +610,8 @@ fn verify_fresh_artifacts(
     let genesis_path = bundle_root.join(genesis_relative);
     let genesis: serde_json::Value = serde_json::from_slice(&std::fs::read(&genesis_path)?)
         .wrap_err("decode retained fresh genesis")?;
+    let protocol_parameters = GenesisProtocolParametersV1::from_materialized_genesis(&genesis)
+        .wrap_err("read immutable protocol parameters from retained fresh genesis")?;
     let chain_spec = reth_ethereum::cli::chainspec::chain_value_parser(
         genesis_path
             .to_str()
@@ -672,7 +679,7 @@ fn verify_fresh_artifacts(
             "fresh-devnet retained profile member {relative} is missing or mismatched"
         );
     }
-    Ok(())
+    Ok(protocol_parameters)
 }
 
 #[cfg(not(feature = "ocomp-integration"))]
@@ -680,7 +687,7 @@ fn verify_fresh_artifacts(
     _bundle_root: &Path,
     _scenario: &serde_json::Value,
     _members: &[MemberDigestV1],
-) -> Result<()> {
+) -> Result<GenesisProtocolParametersV1> {
     eyre::bail!("fresh-devnet artifact verification requires the ocomp-integration feature");
 }
 
@@ -1054,6 +1061,40 @@ mod tests {
                 .unwrap(),
             )
             .unwrap();
+        genesis["config"]["outbeProtocol"] = serde_json::json!({
+            "schemaVersion": 1,
+            "metadosis": {
+                "formingPeriodSeconds": 57600,
+                "lookbackDelaySeconds": 0,
+                "offeringPeriodSeconds": 900,
+                "waitingPeriodSeconds": 30,
+                "bootstrapDurationSeconds": 300,
+                "advanceIntervalSeconds": 10
+            },
+            "ocomp": { "computeVoteWindowBlocks": 120 }
+        });
+        let protocol_parameters = GenesisProtocolParametersV1::resolve(
+            genesis["config"].get(outbe_chain_constants::GENESIS_CONFIG_KEY),
+        )
+        .unwrap();
+        let constants_storage = protocol_parameters
+            .genesis_storage_words()
+            .into_iter()
+            .map(|(slot, value)| {
+                (
+                    format!("{slot:#066x}"),
+                    serde_json::json!(format!("{value:#066x}")),
+                )
+            })
+            .collect::<serde_json::Map<_, _>>();
+        genesis["alloc"].as_object_mut().unwrap().insert(
+            format!("{:#x}", outbe_chain_constants::CHAIN_CONSTANTS_ADDRESS),
+            serde_json::json!({
+                "balance": "0x0",
+                "code": "0xef",
+                "storage": constants_storage
+            }),
+        );
         let genesis_path = artifacts.join("genesis.json");
         std::fs::write(&genesis_path, serde_json::to_vec_pretty(&genesis).unwrap()).unwrap();
         let base_spec =
@@ -1147,9 +1188,9 @@ mod tests {
         };
         let forming_start = 1_785_319_200_u64;
         let initial_timestamp = forming_start + 15 * 3_600;
-        let forming_end = forming_start + 50 * 3_600;
-        let offering_end = forming_end + 48 * 3_600;
-        let scheduled_process_time = offering_end + 12 * 3_600;
+        let forming_end = forming_start + 16 * 3_600;
+        let offering_end = forming_end + 900;
+        let scheduled_process_time = offering_end + 30;
         let first_target = forming_end + 1;
         let second_target = scheduled_process_time + 1;
         let before_first_restart = finalized_points(1, initial_timestamp, 0x44);

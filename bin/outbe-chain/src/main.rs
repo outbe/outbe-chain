@@ -44,7 +44,9 @@ use outbe_operator::{
     },
     tx::RelaySignerV1,
 };
-use outbe_primitives::projection::ProjectionReadinessHandle;
+use outbe_primitives::projection::{
+    projection_readiness, ProjectionCheckpoint, ProjectionReadinessHandle, ProjectionStatus,
+};
 use outbe_primitives::OutbeHeader;
 use reth_chainspec::ChainSpec;
 use reth_cli::chainspec::ChainSpecParser;
@@ -57,6 +59,7 @@ use tokio::sync::oneshot;
 use tracing::info;
 
 mod constants_genesis;
+mod ocomp_exex;
 mod ocomp_genesis;
 mod tee_genesis;
 
@@ -758,6 +761,7 @@ fn run_node() -> eyre::Result<()> {
         OutbeFullNode,
         ConsensusArgs,
         ProjectionReadinessHandle,
+        Option<ProjectionReadinessHandle>,
         Arc<dyn FinalizedCeCommitter>,
         Arc<dyn CeStartupRecovery>,
     )>();
@@ -769,11 +773,17 @@ fn run_node() -> eyre::Result<()> {
     let shutdown_token_clone = shutdown_token.clone();
     let bridge_for_consensus = bridge.clone();
     let consensus_thread_fn = move || -> eyre::Result<()> {
-        let (node, mut args, projection_readiness, finalized_ce_committer, ce_startup_recovery) =
-            match node_rx.blocking_recv() {
-                Ok(v) => v,
-                Err(_) => return Ok(()),
-            };
+        let (
+            node,
+            mut args,
+            projection_readiness,
+            ocomp_readiness,
+            finalized_ce_committer,
+            ce_startup_recovery,
+        ) = match node_rx.blocking_recv() {
+            Ok(v) => v,
+            Err(_) => return Ok(()),
+        };
 
         args.validate()?;
 
@@ -853,11 +863,18 @@ fn run_node() -> eyre::Result<()> {
                     args,
                     node,
                     bridge_for_consensus,
-                    outbe_engine::ConsensusStackServices::new(
+                    match ocomp_readiness {
+                        Some(readiness) => outbe_engine::ConsensusStackServices::new(
+                            projection_readiness,
+                            finalized_ce_committer,
+                            ce_startup_recovery,
+                        ).with_ocomp_readiness(readiness),
+                        None => outbe_engine::ConsensusStackServices::new(
                         projection_readiness,
                         finalized_ce_committer,
                         ce_startup_recovery,
-                    ),
+                        ),
+                    },
                 ) => {
                     if let Err(e) = &result {
                         tracing::error!(%e, "consensus stack failed");
@@ -940,12 +957,12 @@ fn run_node() -> eyre::Result<()> {
             outbe_node::ocomp::fork::require_startup_ocomp_fork_install(
                 builder.config().chain.as_ref(),
             )?;
+        let ocomp_limits = outbe_ocomp_protocol::profile::poc_schema_limits();
+        let ocomp_install_hash = ocomp_fork_install.install_hash(&ocomp_limits)?;
         info!(
             activation_height = ocomp_fork_install.activation_height,
             classification = ?ocomp_fork_install.classification,
-            install_hash = %ocomp_fork_install.install_hash(
-                &outbe_ocomp_protocol::profile::poc_schema_limits()
-            )?,
+            install_hash = %ocomp_install_hash,
             "validated genesis-active immutable OCOMP chain-manifest install"
         );
 
@@ -977,6 +994,71 @@ fn run_node() -> eyre::Result<()> {
             ))
             .data_dir()
             .to_path_buf();
+        let ocomp_domain_root = node_data_dir
+            .parent()
+            .ok_or_else(|| eyre::eyre!("node data directory has no OCOMP domain parent"))?
+            .join("ocomp")
+            .join("domain-v1");
+        let ocomp_bundle_bytes = ocomp_fork_install
+            .protocol_bundle
+            .encode_canonical(&ocomp_limits)?;
+        let ocomp_bundle = outbe_ocomp::bundle::PinnedProtocolBundle::decode(
+            &ocomp_bundle_bytes,
+            ocomp_fork_install.request_profile.protocol_bundle_hash,
+            &ocomp_limits,
+        )?;
+        let ocomp_worker_port = args
+            .listen_address
+            .port()
+            .checked_add(1)
+            .ok_or_else(|| eyre::eyre!("consensus port leaves no OCOMP Worker endpoint port"))?;
+        let ocomp_worker_address = std::net::SocketAddr::new(
+            std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+            ocomp_worker_port,
+        );
+        let ocomp_policy = if args.is_validator {
+            outbe_ocomp::embedded_runtime::EmbeddedNodePolicyV1::Validator
+        } else {
+            outbe_ocomp::embedded_runtime::EmbeddedNodePolicyV1::FullNode
+        };
+        let ocomp_validator_rpc_url = if args.is_validator {
+            if !builder.config().rpc.http {
+                eyre::bail!("validator OCOMP requires the local HTTP RPC server");
+            }
+            Some(format!(
+                "http://127.0.0.1:{}",
+                builder.config().rpc.http_port
+            ))
+        } else {
+            None
+        };
+        let ocomp_exex_config = ocomp_exex::OcompExExConfigV1 {
+            domain_root: ocomp_domain_root,
+            worker_address: ocomp_worker_address,
+            identity: outbe_ocomp_protocol::local_control::EndpointIdentity {
+                chain_id: builder.config().chain.chain().id(),
+                genesis_hash: builder.config().chain.genesis_hash(),
+                boot_nonce: ocomp_install_hash,
+                protocol_bundle_hash: ocomp_fork_install.request_profile.protocol_bundle_hash,
+            },
+            protocol_bundle: ocomp_bundle,
+            policy: ocomp_policy,
+            validator_rpc_url: ocomp_validator_rpc_url,
+            genesis_hash: builder.config().chain.genesis_hash(),
+        };
+        let ocomp_baseline = ProjectionCheckpoint {
+            block_number: 0,
+            block_hash: builder.config().chain.genesis_hash(),
+        };
+        let (ocomp_readiness_publisher, ocomp_readiness) = projection_readiness(
+            ocomp_baseline,
+            ProjectionStatus::Ready {
+                checkpoint: ocomp_baseline,
+            },
+        );
+        let ocomp_readiness_for_consensus =
+            args.upstream.is_some().then(|| ocomp_readiness.clone());
+        let (ocomp_exit_tx, mut ocomp_exit_rx) = tokio::sync::mpsc::unbounded_channel();
         let evm_signer = if args.is_validator {
             let evm_key_path = args
                 .effective_validator_evm_key()?
@@ -1217,13 +1299,6 @@ fn run_node() -> eyre::Result<()> {
             .data_dir()
             .to_path_buf();
         let genesis_hash = builder.config().chain.genesis_hash();
-        let local_lysis_results = Arc::new(
-            outbe_node::ocomp::local_result::LocalLysisResultStore::open(
-                ce_data_dir.join("ocomp-local-results-v1"),
-                outbe_ocomp_protocol::profile::poc_schema_limits(),
-            )
-            .wrap_err("failed to open durable node-local Lysis result store")?,
-        );
         let ce_identity = EnvironmentIdentity {
             local_storage_schema_version: LOCAL_STORAGE_SCHEMA_VERSION,
             chain_id: builder.config().chain.chain().id(),
@@ -1266,9 +1341,7 @@ fn run_node() -> eyre::Result<()> {
                 compressed_tree_service.clone(),
             ),
         };
-        let outbe_node = outbe_node
-            .with_ocomp_fork_install(ocomp_fork_install)
-            .with_ocomp_local_result_authority(local_lysis_results.clone());
+        let outbe_node = outbe_node.with_ocomp_fork_install(ocomp_fork_install);
         let (projection_exit_tx, mut projection_exit_rx) =
             tokio::sync::mpsc::unbounded_channel();
         let projection_readiness_for_rpc = projection_readiness.clone();
@@ -1290,6 +1363,12 @@ fn run_node() -> eyre::Result<()> {
                     ready_projection,
                     projection_exit_tx,
                 ))
+            })
+            .install_exex("outbe-ocomp", move |ctx| {
+                let config = ocomp_exex_config.clone();
+                let readiness = ocomp_readiness_publisher.clone();
+                let exit = ocomp_exit_tx.clone();
+                async move { Ok(ocomp_exex::run_ocomp_exex(ctx, config, readiness, exit)) }
             })
             .apply(|mut builder| {
                 configure_outbe_engine_args(&mut builder.config_mut().engine);
@@ -1412,6 +1491,7 @@ fn run_node() -> eyre::Result<()> {
                 node,
                 args,
                 projection_readiness,
+                ocomp_readiness_for_consensus,
                 finalized_ce_committer,
                 ce_startup_recovery,
             ));
@@ -1429,6 +1509,18 @@ fn run_node() -> eyre::Result<()> {
                             failure_class = ?exit.failure.class,
                             failure = %exit.failure.message,
                             "mandatory offchain-data projection requested node shutdown"
+                        );
+                    }
+                    if let Some(done) = shutdown.shutdown() {
+                        let _ = done.await;
+                    }
+                }
+                exit = ocomp_exit_rx.recv() => {
+                    if let Some(exit) = exit {
+                        tracing::error!(
+                            failure_class = ?exit.failure.class,
+                            failure = %exit.failure.message,
+                            "embedded OCOMP requested node shutdown"
                         );
                     }
                     if let Some(done) = shutdown.shutdown() {
@@ -1466,6 +1558,18 @@ fn run_node() -> eyre::Result<()> {
                             failure_class = ?exit.failure.class,
                             failure = %exit.failure.message,
                             "mandatory offchain-data projection requested node shutdown"
+                        );
+                    }
+                    if let Some(done) = shutdown.shutdown() {
+                        let _ = done.await;
+                    }
+                }
+                exit = ocomp_exit_rx.recv() => {
+                    if let Some(exit) = exit {
+                        tracing::error!(
+                            failure_class = ?exit.failure.class,
+                            failure = %exit.failure.message,
+                            "embedded OCOMP requested node shutdown"
                         );
                     }
                     if let Some(done) = shutdown.shutdown() {

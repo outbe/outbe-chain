@@ -31,7 +31,10 @@ use outbe_consensus::{
     reporter::ReporterContinuity,
 };
 use outbe_primitives::OutbeHeader;
-use reth_ethereum::{primitives::SealedBlock, Block};
+use reth_ethereum::{
+    primitives::{Header, SealedBlock, SealedHeader},
+    Block,
+};
 use reth_provider::ProviderResult;
 use std::{
     collections::BTreeMap,
@@ -266,6 +269,78 @@ fn sample_certificate() -> outbe_consensus::hybrid::HybridCertificate<MinSig> {
 #[derive(Default)]
 struct MockBlockHashProvider {
     hashes: BTreeMap<u64, B256>,
+}
+
+#[derive(Default)]
+struct MockFinalizedHeaderProvider {
+    headers: BTreeMap<u64, SealedHeader<OutbeHeader>>,
+}
+
+impl MockFinalizedHeaderProvider {
+    fn insert(&mut self, number: u64, artifact: Option<ConsensusHeaderArtifact>) {
+        let extra_data = outbe_primitives::reshare_artifact::encode_outbe_block_artifacts(
+            &outbe_primitives::reshare_artifact::OutbeBlockArtifacts {
+                consensus_header_artifact: artifact,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        self.headers.insert(
+            number,
+            SealedHeader::seal_slow(OutbeHeader::new(Header {
+                number,
+                extra_data,
+                ..Default::default()
+            })),
+        );
+    }
+}
+
+impl BlockHashReader for MockFinalizedHeaderProvider {
+    fn block_hash(&self, number: u64) -> ProviderResult<Option<B256>> {
+        Ok(self.headers.get(&number).map(SealedHeader::hash))
+    }
+
+    fn canonical_hashes_range(&self, start: u64, end: u64) -> ProviderResult<Vec<B256>> {
+        Ok((start..end)
+            .filter_map(|height| self.headers.get(&height).map(SealedHeader::hash))
+            .collect())
+    }
+}
+
+impl HeaderProvider for MockFinalizedHeaderProvider {
+    type Header = OutbeHeader;
+
+    fn header(&self, block_hash: B256) -> ProviderResult<Option<Self::Header>> {
+        Ok(self
+            .headers
+            .values()
+            .find(|header| header.hash() == block_hash)
+            .map(|header| header.header().clone()))
+    }
+
+    fn header_by_number(&self, num: u64) -> ProviderResult<Option<Self::Header>> {
+        Ok(self.headers.get(&num).map(|header| header.header().clone()))
+    }
+
+    fn headers_range(
+        &self,
+        _range: impl std::ops::RangeBounds<u64>,
+    ) -> ProviderResult<Vec<Self::Header>> {
+        Ok(Vec::new())
+    }
+
+    fn sealed_header(&self, number: u64) -> ProviderResult<Option<SealedHeader<Self::Header>>> {
+        Ok(self.headers.get(&number).cloned())
+    }
+
+    fn sealed_headers_while(
+        &self,
+        _range: impl std::ops::RangeBounds<u64>,
+        _predicate: impl FnMut(&SealedHeader<Self::Header>) -> bool,
+    ) -> ProviderResult<Vec<SealedHeader<Self::Header>>> {
+        Ok(Vec::new())
+    }
 }
 
 impl BlockHashReader for MockBlockHashProvider {
@@ -1215,6 +1290,13 @@ fn follower_parent_record_requires_exact_finalized_block_and_historical_committe
 }
 
 #[test]
+fn follower_finality_observer_skips_only_the_genesis_ack() {
+    assert!(!follower_height_has_certified_finalization(0));
+    assert!(follower_height_has_certified_finalization(1));
+    assert!(follower_height_has_certified_finalization(u64::MAX));
+}
+
+#[test]
 fn recover_application_finalized_round_returns_none_at_genesis_height() {
     let recovered = commonware_runtime::tokio::Runner::default().start(|context| async move {
         let clock = context.child("recover_clock");
@@ -1601,19 +1683,26 @@ fn test_pending_dkg_boundary_snapshot_round_trips_and_rejects_corruption() {
     .unwrap();
     let snapshot = PendingDkgBoundarySnapshot {
         artifact,
-        activated_at_height: 20,
+        completed_at_height: 17,
     };
 
     let encoded = encode_pending_dkg_boundary_snapshot(&snapshot).unwrap();
     let decoded = decode_pending_dkg_boundary_snapshot(&encoded).unwrap();
     assert_eq!(decoded, snapshot);
 
-    let mut corrupted = encoded;
+    let mut corrupted = encoded.clone();
     corrupted[0] = b'X';
     let error = decode_pending_dkg_boundary_snapshot(&corrupted)
         .unwrap_err()
         .to_string();
     assert!(error.contains("invalid pending DKG boundary snapshot magic"));
+
+    let mut legacy = encoded;
+    legacy[..8].copy_from_slice(b"ODKGPB01");
+    let error = decode_pending_dkg_boundary_snapshot(&legacy)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("unsupported pending DKG boundary snapshot version"));
 }
 
 #[test]
@@ -1621,7 +1710,7 @@ fn test_save_load_and_clear_pending_dkg_boundary_snapshot() {
     let boundary = test_boundary_with_vrf_hash(B256::with_last_byte(0x55), 9);
     let snapshot = PendingDkgBoundarySnapshot {
         artifact: boundary,
-        activated_at_height: 42,
+        completed_at_height: 42,
     };
     let dir = tempfile::tempdir().unwrap();
 
@@ -1664,7 +1753,7 @@ fn test_completed_dkg_is_durable_before_activation_boundary() {
     let dir = tempfile::tempdir().unwrap();
     let backend = bls::KeyBackend::Plaintext;
 
-    persist_completed_dkg_before_activation(
+    let completed_boundary = persist_completed_dkg_before_activation(
         dir.path(),
         &backend,
         Epoch::new(3),
@@ -1683,9 +1772,23 @@ fn test_completed_dkg_is_durable_before_activation_boundary() {
     let snapshot = load_pending_dkg_boundary(dir.path())
         .unwrap()
         .expect("completed DKG boundary must survive a pre-activation crash");
-    assert_eq!(snapshot.activated_at_height, 120);
+    assert_eq!(
+        snapshot.artifact, completed_boundary,
+        "the object published for pre-announcement must be the exact durable boundary"
+    );
+    assert_eq!(snapshot.completed_at_height, 104);
     assert_eq!(snapshot.artifact.epoch, 4);
     assert_eq!(snapshot.artifact.dkg_cycle, 4);
+
+    let manager = DkgManagerMailbox::new();
+    manager.note_ceremony_completed(completed_boundary.clone());
+    let announced = commonware_runtime::tokio::Runner::default()
+        .start(|_| async move { manager.pending_next_epoch_artifact(Epoch::new(3)).await });
+    assert_eq!(
+        announced,
+        Some(completed_boundary),
+        "a durable completed boundary must be publishable before activation"
+    );
 }
 
 #[test]
@@ -1740,7 +1843,7 @@ fn test_pending_boundary_snapshot_restores_manager_before_commit() {
     .unwrap();
     let snapshot = PendingDkgBoundarySnapshot {
         artifact: artifact.clone(),
-        activated_at_height: 20,
+        completed_at_height: 20,
     };
 
     // Crash cut point: pending material + pending boundary snapshot exist, but
@@ -1838,7 +1941,7 @@ fn test_stale_pending_boundary_snapshot_predicate_covers_restart_cleanup() {
     let current = test_boundary_with_vrf_hash(B256::with_last_byte(0x55), 9);
     let snapshot = PendingDkgBoundarySnapshot {
         artifact: current.clone(),
-        activated_at_height: 42,
+        completed_at_height: 42,
     };
     assert!(!pending_boundary_is_finalized(&snapshot, None));
     assert!(pending_boundary_is_finalized(
@@ -1848,6 +1951,13 @@ fn test_stale_pending_boundary_snapshot_predicate_covers_restart_cleanup() {
     assert!(pending_boundary_is_finalized(
         &snapshot,
         Some(&(42, current.clone()))
+    ));
+
+    let mut conflicting_same_cycle = current.clone();
+    conflicting_same_cycle.outcome = Bytes::from_static(b"conflict");
+    assert!(!pending_boundary_is_finalized(
+        &snapshot,
+        Some(&(42, conflicting_same_cycle))
     ));
 
     let mut newer_cycle = current.clone();
@@ -1879,64 +1989,6 @@ fn test_startup_live_join_scan_height_never_uses_unfinalized_execution_head() {
         .to_string();
     assert!(error.contains("refusing to recover DKG artifacts from unfinalized execution head"));
     assert_eq!(startup_live_join_scan_height(5, 0, true).unwrap(), 0);
-}
-
-#[test]
-fn test_verifier_boundary_adoption_rejects_prior_cycle_boundary() {
-    // The trigger fires at exactly the activation height, where the newest
-    // committed BoundaryOutcome is still the PREVIOUS cycle's (the activated
-    // cycle's artifact rides the first new-epoch block, strictly above the
-    // activation height). Adopting it would keep the follower one rotation
-    // stale -> stale reshare prev_output/round -> ACTIVE-but-voteless after a
-    // later stake. Regression for the wrong-boundary adoption bug.
-    let activation_height = 120;
-    // Prior cycle's boundary: committed one epoch earlier, planned for the
-    // previous activation. Must not be adopted.
-    assert!(!verifier_should_adopt_followed_boundary(
-        1,
-        0,
-        activation_height
-    ));
-    assert!(!verifier_should_adopt_followed_boundary(
-        91,
-        activation_height,
-        activation_height
-    ));
-    // A boundary committed AT the activation height is still not the
-    // activated cycle's (the old epoch is fenced at the boundary).
-    assert!(!verifier_should_adopt_followed_boundary(
-        activation_height,
-        activation_height,
-        activation_height
-    ));
-    // The activated cycle's boundary: first new-epoch block, planned for this
-    // activation. Adopt.
-    assert!(verifier_should_adopt_followed_boundary(
-        121,
-        activation_height,
-        activation_height
-    ));
-}
-
-#[test]
-fn test_verifier_boundary_adoption_is_monotone_for_lagging_followers() {
-    // A follower processing rotation R_k's activation while the chain has
-    // already committed R_{k+1}'s boundary adopts the newest one (planned
-    // above this activation): adoption is monotone, and the follow of
-    // R_{k+1} re-adopts idempotently.
-    let activation_height = 120;
-    assert!(verifier_should_adopt_followed_boundary(
-        241,
-        240,
-        activation_height
-    ));
-    // But a boundary planned BELOW this activation is a stale cycle's
-    // artifact regardless of commit height.
-    assert!(!verifier_should_adopt_followed_boundary(
-        241,
-        119,
-        activation_height
-    ));
 }
 
 #[test]
@@ -2360,22 +2412,164 @@ fn test_pending_dkg_activation_blocks_duplicate_rotation_start() {
 }
 
 #[test]
-fn test_pending_dkg_activation_triggers_at_planned_height() {
+fn completed_dkg_waits_for_a_finalized_preannounce_carrier() {
     assert_eq!(
-        pending_dkg_activation_decision(239, 240, 30),
-        PendingDkgActivationDecision::Wait
+        pending_dkg_handoff_decision(250, 240, 30, None),
+        PendingDkgHandoffDecision::Wait
+    );
+}
+
+#[test]
+fn pending_dkg_handoff_decision_covers_planned_height_and_deadline_edges() {
+    assert_eq!(
+        pending_dkg_handoff_decision(239, 240, 30, Some(230)),
+        PendingDkgHandoffDecision::Wait
     );
     assert_eq!(
-        pending_dkg_activation_decision(240, 240, 30),
-        PendingDkgActivationDecision::Activate
+        pending_dkg_handoff_decision(240, 240, 30, Some(230)),
+        PendingDkgHandoffDecision::Activate {
+            activation_anchor: 240
+        }
     );
     assert_eq!(
-        pending_dkg_activation_decision(270, 240, 30),
-        PendingDkgActivationDecision::Activate
+        pending_dkg_handoff_decision(270, 240, 30, Some(270)),
+        PendingDkgHandoffDecision::Activate {
+            activation_anchor: 270
+        }
     );
     assert_eq!(
-        pending_dkg_activation_decision(271, 240, 30),
-        PendingDkgActivationDecision::Expired { deadline: 270 }
+        pending_dkg_handoff_decision(270, 240, 30, None),
+        PendingDkgHandoffDecision::Expired { deadline: 270 }
+    );
+    assert_eq!(
+        pending_dkg_handoff_decision(271, 240, 30, Some(271)),
+        PendingDkgHandoffDecision::Expired { deadline: 270 }
+    );
+}
+
+#[test]
+fn preannounce_carrier_must_match_the_pending_epoch_and_outcome_exactly() {
+    let pending = test_boundary_with_vrf_hash(B256::with_last_byte(0x55), 9);
+    let exact = ConsensusHeaderArtifact::CommitteePreAnnounce {
+        epoch: pending.epoch,
+        outcome: pending.outcome.clone(),
+    };
+    let wrong_epoch = ConsensusHeaderArtifact::CommitteePreAnnounce {
+        epoch: pending.epoch.saturating_add(1),
+        outcome: pending.outcome.clone(),
+    };
+    let wrong_outcome = ConsensusHeaderArtifact::CommitteePreAnnounce {
+        epoch: pending.epoch,
+        outcome: Bytes::from_static(b"wrong"),
+    };
+
+    assert!(preannounce_matches_pending(&exact, &pending));
+    assert!(!preannounce_matches_pending(&wrong_epoch, &pending));
+    assert!(!preannounce_matches_pending(&wrong_outcome, &pending));
+}
+
+#[test]
+fn finalized_preannounce_scan_uses_the_first_exact_canonical_carrier() {
+    let pending = test_boundary_with_vrf_hash(B256::with_last_byte(0x55), 9);
+    let mut wrong = pending.clone();
+    wrong.outcome = Bytes::from_static(b"wrong");
+    let mut provider = MockFinalizedHeaderProvider::default();
+    provider.insert(
+        10,
+        Some(ConsensusHeaderArtifact::CommitteePreAnnounce {
+            epoch: wrong.epoch,
+            outcome: wrong.outcome,
+        }),
+    );
+    provider.insert(
+        11,
+        Some(ConsensusHeaderArtifact::CommitteePreAnnounce {
+            epoch: pending.epoch,
+            outcome: pending.outcome.clone(),
+        }),
+    );
+    provider.insert(
+        12,
+        Some(ConsensusHeaderArtifact::CommitteePreAnnounce {
+            epoch: pending.epoch,
+            outcome: pending.outcome.clone(),
+        }),
+    );
+
+    assert_eq!(
+        find_exact_finalized_preannounce_carrier(&provider, &pending, 10, 30).unwrap(),
+        None
+    );
+    assert_eq!(
+        find_exact_finalized_preannounce_carrier(&provider, &pending, 12, 30).unwrap(),
+        Some(11)
+    );
+}
+
+#[test]
+fn finalized_preannounce_scan_fails_closed_on_a_finalized_provider_gap() {
+    let pending = test_boundary_with_vrf_hash(B256::with_last_byte(0x55), 9);
+    let provider = MockFinalizedHeaderProvider::default();
+
+    let error = find_exact_finalized_preannounce_carrier(&provider, &pending, 10, 30)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("missing block hash at height 10"));
+}
+
+#[test]
+fn dealer_only_handoff_requires_the_same_exact_finalized_carrier() {
+    let boundary = test_boundary_with_vrf_hash(B256::with_last_byte(0x55), 9);
+    let pending = DealerOnlyDkgActivation {
+        target: FrozenDkgTarget {
+            dkg_cycle: boundary.dkg_cycle,
+            freeze_height: boundary.freeze_height,
+            planned_activation_height: boundary.planned_activation_height,
+            validator_set: validators::ValidatorSet {
+                public_keys: Vec::new(),
+                addresses: Vec::new(),
+                p2p_addresses: Vec::new(),
+            },
+            participants: commonware_utils::ordered::Set::from_iter_dedup(
+                Vec::<bls12381::PublicKey>::new(),
+            ),
+            tee_expired_target_exclusions: Vec::new(),
+            is_validator_set_change: true,
+        },
+        boundary_artifact: Some(boundary.clone()),
+    };
+    let mut provider = MockFinalizedHeaderProvider::default();
+    provider.insert(10, None);
+    provider.insert(
+        11,
+        Some(ConsensusHeaderArtifact::CommitteePreAnnounce {
+            epoch: boundary.epoch,
+            outcome: Bytes::from_static(b"wrong"),
+        }),
+    );
+    provider.insert(
+        12,
+        Some(ConsensusHeaderArtifact::CommitteePreAnnounce {
+            epoch: boundary.epoch,
+            outcome: boundary.outcome.clone(),
+        }),
+    );
+
+    let published = pending
+        .boundary_artifact
+        .as_ref()
+        .expect("dealer-only completion must publish the public boundary without a private share");
+    assert_eq!(
+        find_exact_finalized_preannounce_carrier(&provider, published, 11, 30).unwrap(),
+        None
+    );
+    let carrier = find_exact_finalized_preannounce_carrier(&provider, published, 20, 30).unwrap();
+    assert_eq!(carrier, Some(12));
+    assert_eq!(
+        pending_dkg_handoff_decision(20, pending.target.planned_activation_height, 30, carrier,),
+        PendingDkgHandoffDecision::Activate {
+            activation_anchor: 20,
+        }
     );
 }
 
@@ -2439,13 +2633,6 @@ fn test_dkg_activation_always_advances_consensus_epoch() {
         next_consensus_epoch_after_dkg_activation(Epoch::new(41)),
         Epoch::new(42)
     );
-}
-
-#[test]
-fn verifier_rotation_discovered_at_or_after_activation_replays_current_height() {
-    assert!(!verifier_activation_needs_immediate_replay(119, 120));
-    assert!(verifier_activation_needs_immediate_replay(120, 120));
-    assert!(verifier_activation_needs_immediate_replay(121, 120));
 }
 
 #[test]

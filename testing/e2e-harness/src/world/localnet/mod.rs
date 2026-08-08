@@ -227,6 +227,8 @@ impl Localnet {
             self.cfg.http_port(i),
             "--http.api",
             "eth,net,web3,outbe,debug",
+            "--rpc.eth-proof-window",
+            1868,
             "--port",
             self.cfg.p2p_port(i),
             "--discovery.port",
@@ -510,6 +512,22 @@ mod tests {
             .map(|pair| pair[1].as_str());
 
         assert_eq!(cache_size, Some("512"));
+    }
+
+    #[test]
+    fn every_localnet_node_retains_the_ocomp_exact_state_proof_window() {
+        let env = Environment::default();
+        env.ports
+            .start_scenario(env.validators)
+            .expect("allocate deterministic scenario ports");
+        let localnet = Localnet::new(Config::for_scenario(&env, 1));
+        let args = localnet.reth_base_args(Path::new("/tmp/outbe-e2e-node"), 0);
+        let proof_window = args
+            .windows(2)
+            .find(|pair| pair[0] == "--rpc.eth-proof-window")
+            .map(|pair| pair[1].as_str());
+
+        assert_eq!(proof_window, Some("1868"));
     }
 
     /// Both layouts, and nothing else — in particular not `validator-*/data`.

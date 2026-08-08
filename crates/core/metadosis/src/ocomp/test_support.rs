@@ -1077,38 +1077,6 @@ impl OcompFinalizedIntentAuthority for FixedFinality {
     }
 }
 
-#[derive(Clone)]
-struct FixedLocalResult {
-    expected: LysisResultV1,
-}
-
-impl crate::ocomp::activation::OcompLocalResultAuthority for FixedLocalResult {
-    fn verify_exact(
-        &self,
-        job_id: B256,
-        result: &LysisResultV1,
-        limits: &SchemaLimits,
-    ) -> Result<(), crate::ocomp::activation::OcompLocalResultAuthorityError> {
-        if self.expected.job_id != job_id {
-            return Err(
-                crate::ocomp::activation::OcompLocalResultAuthorityError::Missing { job_id },
-            );
-        }
-        let expected = self.expected.encode_canonical(limits).map_err(|error| {
-            crate::ocomp::activation::OcompLocalResultAuthorityError::Unavailable(error.to_string())
-        })?;
-        let actual = result.encode_canonical(limits).map_err(|error| {
-            crate::ocomp::activation::OcompLocalResultAuthorityError::Unavailable(error.to_string())
-        })?;
-        if expected != actual {
-            return Err(
-                crate::ocomp::activation::OcompLocalResultAuthorityError::Mismatch { job_id },
-            );
-        }
-        Ok(())
-    }
-}
-
 #[derive(Debug)]
 struct TributePartitionTree {
     parent_root: B256,
@@ -1234,7 +1202,6 @@ pub struct ActivationFixture {
     pub intent_id: B256,
     pub limits: SchemaLimits,
     pub request_receipt: RequestBudgetSplitReceiptV1,
-    local_result_authority: Arc<dyn crate::ocomp::activation::OcompLocalResultAuthority>,
 }
 
 impl ActivationFixture {
@@ -1364,10 +1331,6 @@ impl ActivationFixture {
             )
             .unwrap();
         let result = result(bundle_hash, job_id, &limits);
-        let local_result_authority: Arc<dyn crate::ocomp::activation::OcompLocalResultAuthority> =
-            Arc::new(FixedLocalResult {
-                expected: result.clone(),
-            });
         let expected = ExpectedFinalizedIntentBindingV1 {
             chain_id: intent.chain_id,
             genesis_hash: intent.genesis_hash,
@@ -1509,7 +1472,6 @@ impl ActivationFixture {
                         finalized.open_height + u64::from(index),
                         &scope,
                         &limits,
-                        Some(local_result_authority.as_ref()),
                     )
                     .unwrap();
             }
@@ -1524,7 +1486,6 @@ impl ActivationFixture {
             intent_id,
             limits,
             request_receipt,
-            local_result_authority,
         }
     }
 
@@ -1586,38 +1547,10 @@ impl ActivationFixture {
     }
 
     pub fn dispatch_current(&mut self) -> PrecompileResult<Bytes> {
-        let authority = self.local_result_authority.clone();
-        self.dispatch_current_with(Some(authority.as_ref()))
+        self.dispatch_current_with()
     }
 
-    #[cfg(test)]
-    pub(crate) fn apply_without_local_result_authority(&mut self) -> PrecompileResult<Bytes> {
-        self.provider.enable_lysis_activation_frame();
-        self.dispatch_current_with(None)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn apply_with_mismatched_local_result(&mut self) -> PrecompileResult<Bytes> {
-        let mut different = self.result.clone();
-        different.result_chunk_list_root = B256::repeat_byte(0xE1);
-        let authority = FixedLocalResult {
-            expected: different,
-        };
-        self.provider.enable_lysis_activation_frame();
-        self.dispatch_current_with(Some(&authority))
-    }
-
-    #[cfg(test)]
-    pub(crate) fn local_result_authority(
-        &self,
-    ) -> Arc<dyn crate::ocomp::activation::OcompLocalResultAuthority> {
-        self.local_result_authority.clone()
-    }
-
-    fn dispatch_current_with(
-        &mut self,
-        local_result_authority: Option<&dyn crate::ocomp::activation::OcompLocalResultAuthority>,
-    ) -> PrecompileResult<Bytes> {
+    fn dispatch_current_with(&mut self) -> PrecompileResult<Bytes> {
         let calldata = self.calldata();
         self.provider
             .enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::VerifiedResultVote);
@@ -1628,7 +1561,6 @@ impl ActivationFixture {
                 calldata.as_ref(),
                 U256::ZERO,
                 false,
-                local_result_authority,
             )
         })
     }

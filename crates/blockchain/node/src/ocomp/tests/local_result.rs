@@ -1,5 +1,4 @@
 use alloy_primitives::{B256, U256};
-use outbe_metadosis::api::OcompLocalResultAuthority;
 use outbe_ocomp_protocol::{
     hash::hash_framed,
     intent::DayType,
@@ -11,7 +10,6 @@ use outbe_ocomp_protocol::{
         LysisResultV1, MetadosisCompletionSummaryV1, ResultRootsV1,
     },
 };
-use std::{sync::Arc, time::Duration};
 
 use crate::ocomp::local_result::{LocalLysisResultError, LocalLysisResultStore};
 
@@ -115,6 +113,7 @@ fn local_result_store_survives_restart_and_accepts_exact_replay() {
     let (job_id, result, encoded) = canonical_result();
 
     let store = LocalLysisResultStore::open(&store_root, limits).unwrap();
+    assert_eq!(store.load(job_id).unwrap(), None);
     let committed = store.commit(job_id, &encoded).unwrap();
     assert_eq!(committed.job_id, job_id);
     assert_eq!(
@@ -125,6 +124,12 @@ fn local_result_store_survives_restart_and_accepts_exact_replay() {
     drop(store);
 
     let reopened = LocalLysisResultStore::open(&store_root, limits).unwrap();
+    let loaded = reopened
+        .load(job_id)
+        .unwrap()
+        .expect("committed local result survives restart");
+    assert_eq!(loaded.committed, committed);
+    assert_eq!(loaded.canonical_result, encoded);
     reopened.verify_exact(job_id, &result).unwrap();
 }
 
@@ -153,23 +158,4 @@ fn local_result_store_fails_closed_for_missing_mismatch_and_conflict() {
         store.verify_exact(job_id, &different),
         Err(LocalLysisResultError::Mismatch { .. })
     ));
-}
-
-#[test]
-fn fullnode_waits_for_exact_local_result_and_wakes_after_durable_commit() {
-    let root = tempfile::tempdir().unwrap();
-    let store_root = root.path().join("local-results");
-    let limits = poc_schema_limits();
-    let (job_id, result, encoded) = canonical_result();
-    let store = Arc::new(LocalLysisResultStore::open(&store_root, limits).unwrap());
-
-    let writer = store.clone();
-    let join = std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(20));
-        writer.commit(job_id, &encoded).unwrap();
-    });
-
-    OcompLocalResultAuthority::verify_exact(store.as_ref(), job_id, &result, &limits)
-        .expect("the production q-forming authority must wait for the exact durable commit");
-    join.join().unwrap();
 }

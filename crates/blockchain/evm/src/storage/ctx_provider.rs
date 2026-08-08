@@ -47,7 +47,7 @@ use revm::{
 use std::{cell::RefCell, sync::Arc};
 
 use crate::{gas::SubcallGasMeter, precompiles::OcompActivationBlockMeter, sub_call};
-use outbe_metadosis::api::{OcompFinalizedIntentAuthority, OcompLocalResultAuthority};
+use outbe_metadosis::api::OcompFinalizedIntentAuthority;
 use outbe_offchain_data::RuntimeBodyReaders;
 
 thread_local! {
@@ -143,8 +143,6 @@ pub struct CtxStorageProvider<'a, DB: Database + Debug> {
     pub execution_scope: Arc<ExecutionScope>,
     /// Production finalized-Intent authority propagated to nested precompile calls.
     pub ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
-    /// Node-owned exact Lysis result authority propagated to nested calls.
-    pub ocomp_local_result_authority: Option<Arc<dyn OcompLocalResultAuthority>>,
     /// The same block-scoped activation meter used by the outer dispatcher.
     pub ocomp_activation_block_meter: Arc<OcompActivationBlockMeter>,
     /// Whether the OCOMP measurement/final profile is active in this block.
@@ -164,7 +162,6 @@ pub(crate) struct CtxStorageProviderConfig {
     pub(crate) runtime_body_readers: Option<RuntimeBodyReaders>,
     pub(crate) execution_scope: Arc<ExecutionScope>,
     pub(crate) ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
-    pub(crate) ocomp_local_result_authority: Option<Arc<dyn OcompLocalResultAuthority>>,
     pub(crate) ocomp_activation_block_meter: Arc<OcompActivationBlockMeter>,
     pub(crate) ocomp_lifecycle_active: bool,
     pub(crate) lysis_activation_entitled: bool,
@@ -283,7 +280,6 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
             runtime_body_readers: config.runtime_body_readers,
             execution_scope: config.execution_scope,
             ocomp_finality_authority: config.ocomp_finality_authority,
-            ocomp_local_result_authority: config.ocomp_local_result_authority,
             ocomp_activation_block_meter: config.ocomp_activation_block_meter,
             ocomp_lifecycle_active: config.ocomp_lifecycle_active,
             lysis_activation_lease: LysisActivationLease::new(config.lysis_activation_entitled),
@@ -522,7 +518,6 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
             self.runtime_body_readers.clone(),
             self.execution_scope.clone(),
             self.ocomp_finality_authority.clone(),
-            self.ocomp_local_result_authority.clone(),
             self.ocomp_activation_block_meter.clone(),
             self.ocomp_lifecycle_active,
             input,

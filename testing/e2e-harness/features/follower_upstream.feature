@@ -39,3 +39,17 @@ Feature: Upstream followers, validator catch-up, and warm promotion
     And readiness is resubmitted before the warm promotion restart
     And the warm-promoted node and an active validator restart around the activation boundary
     Then promotion activates only at its planned boundary with sealed state and exact network parity
+
+  @pfs-008-09 @follower-off-grid-restart @tee
+  Scenario: A FullNode follows and restarts across a delayed off-grid DKG boundary
+    Given a fresh localnet for an off-grid follower boundary
+    When a production FullNode with its own enclave syncs from the committee
+    Then the follower reaches the committee finalized checkpoint with matching hash and state root
+    When a staked joiner freezes a 4-to-5 reshare target
+    And the reshare loses quorum before it can complete
+    Then the old committee crosses the planned activation height without partial activation
+    When the downed validator is restored
+    Then the delayed reshare activates off-grid and the active set reaches 5
+    And the follower reaches the committee finalized checkpoint with matching hash and state root
+    When the follower restarts from its durable datadir against the same upstream
+    Then the follower reaches the committee finalized checkpoint with matching hash and state root

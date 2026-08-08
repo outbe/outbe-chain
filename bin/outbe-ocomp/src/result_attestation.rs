@@ -54,6 +54,11 @@ impl LocalResultVoteAttesterV1 {
         })
     }
 
+    #[must_use]
+    pub const fn ocomp_key_hash(&self) -> B256 {
+        self.ocomp_key_hash
+    }
+
     pub fn attest(
         &self,
         canonical_result: &[u8],

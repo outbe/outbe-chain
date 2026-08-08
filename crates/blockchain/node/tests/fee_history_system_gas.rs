@@ -307,7 +307,6 @@ async fn gas_14_rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
         .set_dev(true);
 
     let outbe_node = OutbeNode {
-        ocomp_local_result_authority: None,
         bridge: Some(bridge),
         evm_signer: Some(signer),
         runtime_body_readers: RuntimeBodyReaders::new(Arc::new(MemoryStorage::new())),

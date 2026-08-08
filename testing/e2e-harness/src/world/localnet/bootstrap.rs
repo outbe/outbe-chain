@@ -440,6 +440,7 @@ impl Localnet {
         let epoch = tuned(tuning, "TESTNET_EPOCH_LENGTH_BLOCKS", 300);
         let dkg_prepare = tuned(tuning, "TESTNET_DKG_PREPARE_WINDOW_BLOCKS", 30);
         let dkg_grace = tuned(tuning, "TESTNET_DKG_ACTIVATION_GRACE_BLOCKS", 30);
+        let ocomp_vote_window = localnet_ocomp_vote_window_blocks(tuning);
         let validator_balance = validator_balance_hex(tuning);
 
         let vjson: serde_json::Value =
@@ -498,13 +499,14 @@ impl Localnet {
                     "metadosis": {
                         "formingPeriodSeconds": localnet_forming_period,
                         "lookbackDelaySeconds": LOCALNET_METADOSIS_LOOKBACK_SECONDS,
-                        "offeringPeriodSeconds": LOCALNET_METADOSIS_OFFERING_SECONDS,
+                        "offeringPeriodSeconds":
+                            localnet_metadosis_offering_period_seconds(tuning),
                         "waitingPeriodSeconds": LOCALNET_METADOSIS_WAITING_SECONDS,
                         "bootstrapDurationSeconds": LOCALNET_METADOSIS_BOOTSTRAP_SECONDS,
                         "advanceIntervalSeconds": LOCALNET_METADOSIS_ADVANCE_SECONDS,
                     },
                     "ocomp": {
-                        "computeVoteWindowBlocks": LOCALNET_OCOMP_VOTE_WINDOW_BLOCKS,
+                        "computeVoteWindowBlocks": ocomp_vote_window,
                     },
                 },
             },
@@ -702,6 +704,22 @@ fn tuned_optional(tuning: &[(&str, String)], key: &str) -> Option<u64> {
         .and_then(|(_, value)| value.parse().ok())
 }
 
+fn localnet_metadosis_offering_period_seconds(tuning: &[(&str, String)]) -> u64 {
+    tuned(
+        tuning,
+        "TESTNET_METADOSIS_OFFERING_SECONDS",
+        LOCALNET_METADOSIS_OFFERING_SECONDS,
+    )
+}
+
+fn localnet_ocomp_vote_window_blocks(tuning: &[(&str, String)]) -> u64 {
+    tuned(
+        tuning,
+        "TESTNET_OCOMP_VOTE_WINDOW_BLOCKS",
+        LOCALNET_OCOMP_VOTE_WINDOW_BLOCKS,
+    )
+}
+
 fn validator_balance_hex(tuning: &[(&str, String)]) -> String {
     tuned_optional(tuning, "TESTNET_VALIDATOR_BALANCE_COEN").map_or_else(
         || VALIDATOR_BALANCE_HEX.to_owned(),
@@ -882,6 +900,36 @@ mod tests {
         assert_eq!(
             u128::from_str_radix(tuned.trim_start_matches("0x"), 16).unwrap(),
             2_100_000u128 * 10u128.pow(18)
+        );
+    }
+
+    #[test]
+    fn metadosis_offering_period_can_be_tuned_only_in_generated_genesis() {
+        assert_eq!(
+            localnet_metadosis_offering_period_seconds(&[]),
+            LOCALNET_METADOSIS_OFFERING_SECONDS
+        );
+        assert_eq!(
+            localnet_metadosis_offering_period_seconds(&[(
+                "TESTNET_METADOSIS_OFFERING_SECONDS",
+                "900".to_owned(),
+            )]),
+            900
+        );
+    }
+
+    #[test]
+    fn ocomp_vote_window_can_be_tuned_only_in_generated_genesis() {
+        assert_eq!(
+            localnet_ocomp_vote_window_blocks(&[]),
+            LOCALNET_OCOMP_VOTE_WINDOW_BLOCKS
+        );
+        assert_eq!(
+            localnet_ocomp_vote_window_blocks(&[(
+                "TESTNET_OCOMP_VOTE_WINDOW_BLOCKS",
+                "450".to_owned(),
+            )]),
+            450
         );
     }
 }

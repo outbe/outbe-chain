@@ -216,6 +216,8 @@ pub struct FixtureState {
     pub ocomp_dynamic_tribute_tx_hashes: Vec<String>,
     /// Public finalized requests for job A and job B, in that order.
     pub ocomp_dynamic_job_requests: Vec<crate::world::rpc::OcompPublicJobRequestV1>,
+    /// Canonical accountability slots populated for job A and job B.
+    pub ocomp_dynamic_vote_slots: Vec<Vec<u16>>,
     /// Public activation event observed identically on all validators.
     pub ocomp_activation: Option<crate::world::rpc::OcompPublicActivationV1>,
     /// Cross-owner proof authority read at the exact finalized activation block.
@@ -363,6 +365,7 @@ impl Default for FixtureState {
             ocomp_dynamic_processing_times: Vec::new(),
             ocomp_dynamic_tribute_tx_hashes: Vec::new(),
             ocomp_dynamic_job_requests: Vec::new(),
+            ocomp_dynamic_vote_slots: Vec::new(),
             ocomp_activation: None,
             ocomp_certified_generation: None,
             ocomp_result_vote_transactions: Vec::new(),

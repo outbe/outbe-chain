@@ -166,7 +166,6 @@ fn every_pinned_validator_can_vote_after_quorum_until_the_exclusive_deadline() {
                 finalized.deadline_height - 1,
                 &fixture.scope,
                 &fixture.limits,
-                None,
             )
             .unwrap();
     });
@@ -180,7 +179,6 @@ fn every_pinned_validator_can_vote_after_quorum_until_the_exclusive_deadline() {
                 finalized.deadline_height,
                 &fixture.scope,
                 &fixture.limits,
-                None,
             ),
             Err(PrecompileError::Revert(_))
         ));
@@ -208,33 +206,11 @@ fn every_pinned_validator_can_vote_after_quorum_until_the_exclusive_deadline() {
 }
 
 #[test]
-fn q_forming_vote_requires_exact_node_local_result_before_terminal_transition() {
-    let mut missing = ActivationFixture::new(20, 1_010, true);
-    let missing_before = missing.rollback_snapshot();
-    let error = missing
-        .apply_without_local_result_authority()
-        .expect_err("q-forming result without node-local computation must fail closed");
-    assert!(matches!(error, PrecompileError::Storage(_)));
-    assert!(
-        error.to_string().contains("local Lysis result authority"),
-        "unexpected missing-authority error: {error}"
-    );
-    assert_eq!(missing.rollback_snapshot(), missing_before);
+fn q_forming_validator_quorum_is_canonical_without_node_local_result() {
+    let mut fixture = ActivationFixture::new(20, 1_010, true);
 
-    let mut mismatch = ActivationFixture::new(20, 1_010, true);
-    let mismatch_before = mismatch.rollback_snapshot();
-    let error = mismatch
-        .apply_with_mismatched_local_result()
-        .expect_err("q-forming result that differs from local computation must fail closed");
-    assert!(matches!(error, PrecompileError::Storage(_)));
-    assert!(
-        error.to_string().contains("local Lysis result mismatch"),
-        "unexpected mismatch error: {error}"
-    );
-    assert_eq!(mismatch.rollback_snapshot(), mismatch_before);
-
-    assert_eq!(mismatch.apply().unwrap(), Bytes::new());
-    assert_eq!(mismatch.terminal_outcome(), ActivationOutcome::Applied);
+    assert_eq!(fixture.apply().unwrap(), Bytes::new());
+    assert_eq!(fixture.terminal_outcome(), ActivationOutcome::Applied);
 }
 
 #[test]
@@ -750,7 +726,6 @@ fn submit_vote_result(
     vote: &outbe_ocomp_protocol::vote::ResultVoteV1,
     height: u64,
 ) -> outbe_primitives::error::Result<Bytes> {
-    let local_result_authority = fixture.local_result_authority();
     fixture.provider.set_block_number(height);
     fixture.provider.enable_lysis_activation_frame();
     fixture
@@ -768,7 +743,6 @@ fn submit_vote_result(
             &calldata,
             U256::ZERO,
             false,
-            Some(local_result_authority.as_ref()),
         )
     })
 }
@@ -947,7 +921,7 @@ fn vote_binding_mismatch_is_rejected_before_historical_snapshot_lookup() {
             .unwrap();
 
         let error = MetadosisContract::new(storage)
-            .record_ocomp_result_vote(&vote, 14, &fixture.scope, &fixture.limits, None)
+            .record_ocomp_result_vote(&vote, 14, &fixture.scope, &fixture.limits)
             .unwrap_err();
         assert!(matches!(
             error,

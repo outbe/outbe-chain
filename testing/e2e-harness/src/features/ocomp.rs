@@ -12,6 +12,7 @@ use std::{
 
 use alloy_primitives::B256;
 use cucumber::{given, then, when};
+use outbe_chain_constants::GenesisProtocolParametersV1;
 use outbe_common::WorldwideDay;
 use outbe_ocomp_protocol::{
     profile::poc_schema_limits,
@@ -32,7 +33,7 @@ use crate::world::ocomp::{
 };
 use crate::world::ocomp::{
     OCOMP_CAPACITY_OFFERING_AFTER_GENESIS_SECS, OCOMP_DYNAMIC_DKG_PREPARE_WINDOW_BLOCKS,
-    OCOMP_TEST_EPOCH_LENGTH_BLOCKS,
+    OCOMP_DYNAMIC_VOTE_WINDOW_BLOCKS, OCOMP_TEST_EPOCH_LENGTH_BLOCKS,
 };
 use crate::world::state::{
     MetadosisFinalizedPointV1, MetadosisFreshLifecycleObservationV1, MetadosisTimeControlEpochV1,
@@ -41,7 +42,17 @@ use crate::world::state::{
 use crate::world::World;
 
 const OCOMP_CAPACITY_TRIBUTE_COUNT: usize = 257;
-const OCOMP_CAPACITY_SUBMISSION_CONCURRENCY: usize = 8;
+// The capacity scenario proves the protocol path and the 256+1 shard boundary,
+// not Tribute burst throughput. Keep at most two offers in flight until
+// outbe-chain-08n.6 gives blocking TEE work a production-safe block budget.
+const OCOMP_CAPACITY_SUBMISSION_CONCURRENCY: usize = 2;
+// The capacity lane proves the second 256-Tribute work shard using 33
+// gas-bounded submission rounds. Keep the logical genesis window short, while
+// leaving enough room for debug-build block production before controlled time
+// advances the same chain to the next phase.
+// Sequential real-SGX offers remain inside the genesis-bound phase window;
+// the controlled-time step advances immediately after all receipts arrive.
+const METADOSIS_CAPACITY_OFFERING_SECONDS: u64 = 3_600;
 const OCOMP_TRACE_FOLLOWER_SLOT: usize = 14;
 // The immutable Final fixture closes its public offering 360 logical seconds
 // after genesis. A one-Tribute scenario reaches this step much sooner than the
@@ -115,6 +126,10 @@ fn fresh_ocomp_dynamic_membership_localnet(world: &mut World) {
                 "TESTNET_DKG_PREPARE_WINDOW_BLOCKS",
                 OCOMP_DYNAMIC_DKG_PREPARE_WINDOW_BLOCKS.to_string(),
             ),
+            (
+                "TESTNET_OCOMP_VOTE_WINDOW_BLOCKS",
+                OCOMP_DYNAMIC_VOTE_WINDOW_BLOCKS.to_string(),
+            ),
             ("TESTNET_DEV_FELONY_THRESHOLD", "10".to_owned()),
         ],
     );
@@ -154,10 +169,16 @@ fn fresh_metadosis_capacity_localnet_at_forming(world: &mut World) {
     bootstrap_localnet(
         world,
         6,
-        &[(
-            "TESTNET_EPOCH_LENGTH_BLOCKS",
-            OCOMP_TEST_EPOCH_LENGTH_BLOCKS.to_string(),
-        )],
+        &[
+            (
+                "TESTNET_EPOCH_LENGTH_BLOCKS",
+                OCOMP_TEST_EPOCH_LENGTH_BLOCKS.to_string(),
+            ),
+            (
+                "TESTNET_METADOSIS_OFFERING_SECONDS",
+                METADOSIS_CAPACITY_OFFERING_SECONDS.to_string(),
+            ),
+        ],
     );
     let wwd = world
         .state
@@ -305,12 +326,7 @@ fn start_ocomp_measurement_localnet(
         .localnet
         .bind_tee_genesis()
         .expect("bind canonical TEE genesis after installing the mandatory OCOMP manifest");
-    launch_prepared_ocomp(
-        world,
-        &mut start_opts,
-        &measurement_fork,
-        !shorten_public_day,
-    );
+    launch_prepared_ocomp(world, &mut start_opts, &measurement_fork, true);
     if shorten_public_day {
         wait_for_finalized_ocomp_activation(world);
     }
@@ -420,7 +436,7 @@ fn fifth_node_syncs_as_full_node(world: &mut World) {
         .expect("stage keyless FullNode OCOMP compute profile outside ACTIVE topology");
     world
         .localnet
-        .launch_joiner_full_node(index, 0, 0, &ocomp_args)
+        .launch_joiner_full_node(index, 0, &ocomp_args)
         .expect("launch the fifth slot without validator credentials");
     world
         .ocomp
@@ -453,7 +469,16 @@ fn fifth_full_node_has_state_but_no_vote_capability(world: &mut World) {
     assert!(!validator_dir.join("signing-key.hex").exists());
     assert!(world.ocomp.process_records().iter().any(|record| {
         record.validator_index == Some(u8::try_from(index).expect("joiner index fits u8"))
-            && record.role == OcompProcessRole::Follower
+            && record.role == OcompProcessRole::Worker
+            && record.worker_ordinal == Some(0)
+            && record.stopped_at_millis.is_none()
+    }));
+    assert!(!world.ocomp.process_records().iter().any(|record| {
+        record.validator_index == Some(u8::try_from(index).expect("joiner index fits u8"))
+            && matches!(
+                record.role,
+                OcompProcessRole::Supervisor | OcompProcessRole::Follower
+            )
             && record.stopped_at_millis.is_none()
     }));
 }
@@ -471,8 +496,8 @@ fn synced_node_completes_ocomp_validator_admission(world: &mut World) {
     // losing an epoch while keygen, enclave startup and `tee join` complete.
     world
         .localnet
-        .provision_joiner(index)
-        .expect("provision BLS and OCOMP registration while FullNode keeps syncing");
+        .provision_joiner_registration(index)
+        .expect("register BLS and OCOMP identity while FullNode keeps syncing");
     world
         .ocomp
         .stage_joiner_domain_material(validator_index)
@@ -497,7 +522,7 @@ fn synced_node_completes_ocomp_validator_admission(world: &mut World) {
         let follower_state_matches = follower_finalized <= primary_finalized
             && world.rpc.state_root(follower, follower_finalized)
                 == world.rpc.state_root(primary, follower_finalized);
-        if joiner_restart_is_safely_after_boundary(
+        if joiner_restart_is_in_safe_early_epoch_window(
             primary_finalized,
             follower_finalized,
             epoch_length,
@@ -507,7 +532,7 @@ fn synced_node_completes_ocomp_validator_admission(world: &mut World) {
         }
         assert!(
             Instant::now() < safe_window_deadline,
-            "FullNode did not reach a safe post-boundary validator admission window"
+            "FullNode did not reach a safe early-epoch validator admission window"
         );
         sleep(Duration::from_millis(250));
     }
@@ -520,6 +545,14 @@ fn synced_node_completes_ocomp_validator_admission(world: &mut World) {
         .stop_keyless_full_node_roles(validator_index)
         .expect("stop keyless FullNode roles before validator-mode restart");
     world.localnet.stop_joiner_full_node(index);
+    world
+        .localnet
+        .archive_full_node_identity_for_validator_promotion(index)
+        .expect("archive immutable FullNode TEE identity before Validator promotion");
+    world
+        .localnet
+        .join_validator_enclave(index)
+        .expect("initialize fresh Validator TEE identity on the synchronized node slot");
     world
         .localnet
         .launch_joiner(index, &[])
@@ -561,15 +594,16 @@ fn synced_node_completes_ocomp_validator_admission(world: &mut World) {
         .expect("activate fifth validator worker");
 }
 
-fn joiner_restart_is_safely_after_boundary(
+fn joiner_restart_is_in_safe_early_epoch_window(
     primary_finalized_height: u64,
     follower_finalized_height: u64,
     epoch_length: u64,
 ) -> bool {
     assert!(epoch_length > 0, "epoch length is a consensus precondition");
+    let last_safe_remainder = epoch_length / 2;
     primary_finalized_height / epoch_length == follower_finalized_height / epoch_length
-        && matches!(primary_finalized_height % epoch_length, 1 | 2)
-        && matches!(follower_finalized_height % epoch_length, 1 | 2)
+        && (1..=last_safe_remainder).contains(&(primary_finalized_height % epoch_length))
+        && (1..=last_safe_remainder).contains(&(follower_finalized_height % epoch_length))
 }
 
 #[then("the certified boundary adds exactly one fifth OCOMP validator domain")]
@@ -578,21 +612,24 @@ fn certified_boundary_adds_fifth_ocomp_domain(world: &mut World) {
     assert_eq!(world.rpc.active_count(primary), Some(5));
     let evidence = world.ocomp.evidence_snapshot().expect("dynamic topology");
     assert_eq!(evidence.domain_roots.len(), 5);
-    for role in [
-        OcompProcessRole::Supervisor,
-        OcompProcessRole::SnapshotExporter,
-        OcompProcessRole::Worker,
-    ] {
+    for role in [OcompProcessRole::SnapshotExporter, OcompProcessRole::Worker] {
         assert!(world.ocomp.process_records().iter().any(|record| {
             record.validator_index == Some(4)
                 && record.role == role
                 && record.stopped_at_millis.is_none()
         }));
     }
+    assert!(!world.ocomp.process_records().iter().any(|record| {
+        record.validator_index == Some(4)
+            && record.role == OcompProcessRole::Supervisor
+            && record.stopped_at_millis.is_none()
+    }));
 }
 
 #[then("job B opens with five members and quorum four while job A remains four of three")]
 fn job_b_uses_the_new_snapshot_while_job_a_keeps_the_old_one(world: &mut World) {
+    advance_dynamic_membership_to_next_daily_cycle(world);
+
     let job_a_request = world
         .state
         .ocomp_dynamic_job_requests
@@ -606,9 +643,18 @@ fn job_b_uses_the_new_snapshot_while_job_a_keeps_the_old_one(world: &mut World) 
         .expect("job B WorldwideDay");
     let mut ports = world.validators.committee_ports();
     ports.push(world.validators.http_port(world.validators.joiner_index()));
+    let primary = world.validators.primary_port();
     let deadline = Instant::now() + Duration::from_secs(OCOMP_FINAL_JOB_REQUEST_TIMEOUT_SECS);
+    let mut last_observation = "no finalized job B request observed".to_owned();
 
-    let (job_b_request, job_a_record, job_b_record, job_a_votes, job_b_votes) = loop {
+    let (
+        job_b_request,
+        job_a_record,
+        job_b_record,
+        job_a_votes,
+        job_b_votes,
+        joiner_participant_index,
+    ) = loop {
         let requests = ports
             .iter()
             .copied()
@@ -647,6 +693,19 @@ fn job_b_uses_the_new_snapshot_while_job_a_keeps_the_old_one(world: &mut World) 
                             .finalized_ocomp_job_record_on(port, request.intent_id)
                     })
                     .collect::<Vec<_>>();
+                let job_a_statuses = job_a_records
+                    .iter()
+                    .map(|record| record.as_ref().map(|record| record.status))
+                    .collect::<Vec<_>>();
+                let job_b_statuses = job_b_records
+                    .iter()
+                    .map(|record| record.as_ref().map(|record| record.status))
+                    .collect::<Vec<_>>();
+                last_observation = format!(
+                    "job_b_request=({:#x}, {}), job_a_statuses={job_a_statuses:?}, \
+                     job_b_statuses={job_b_statuses:?}",
+                    request.intent_id, request.worldwide_day
+                );
                 if job_a_records.iter().all(|record| {
                     record
                         .as_ref()
@@ -702,12 +761,30 @@ fn job_b_uses_the_new_snapshot_while_job_a_keeps_the_old_one(world: &mut World) 
                                 .finalized_ocomp_vote_accountability_on(port, job_b_id)
                         })
                         .collect::<Vec<_>>();
-                    if job_a_accountability.iter().all(Option::is_some)
-                        && job_b_accountability.iter().all(|accountability| {
-                            accountability.as_ref().is_some_and(|accountability| {
-                                accountability.slot_validator_indexes.contains(&4)
-                            })
+                    let job_a_slots = job_a_accountability
+                        .iter()
+                        .map(|accountability| {
+                            accountability
+                                .as_ref()
+                                .map(|accountability| accountability.slot_validator_indexes.clone())
                         })
+                        .collect::<Vec<_>>();
+                    let job_b_slots = job_b_accountability
+                        .iter()
+                        .map(|accountability| {
+                            accountability
+                                .as_ref()
+                                .map(|accountability| accountability.slot_validator_indexes.clone())
+                        })
+                        .collect::<Vec<_>>();
+                    last_observation = format!(
+                        "job_b_request=({:#x}, {}), job_a_statuses={job_a_statuses:?}, \
+                         job_b_statuses={job_b_statuses:?}, job_a_slots={job_a_slots:?}, \
+                         job_b_slots={job_b_slots:?}",
+                        request.intent_id, request.worldwide_day
+                    );
+                    if job_a_accountability.iter().all(Option::is_some)
+                        && job_b_accountability.iter().all(Option::is_some)
                     {
                         let job_a_votes = job_a_accountability[0]
                             .clone()
@@ -727,20 +804,35 @@ fn job_b_uses_the_new_snapshot_while_job_a_keeps_the_old_one(world: &mut World) 
                                 .all(|observed| observed.as_ref() == Some(&job_b_votes)),
                             "validators expose different job B accountability"
                         );
-                        break (
-                            request,
-                            job_a_record,
-                            job_b_record,
-                            job_a_votes,
-                            job_b_votes,
-                        );
+                        let finalized_height = world.rpc.finalized(primary).unwrap_or_default();
+                        if let Some(joiner_vote) = finalized_vote_for_delegate_on_job(
+                            world,
+                            request.request_height,
+                            finalized_height,
+                            world.validators.joiner_index(),
+                            job_b_id,
+                        ) {
+                            if let Some(joiner_participant_index) =
+                                accountability_slot_for_vote(&job_b_votes, &joiner_vote)
+                            {
+                                break (
+                                    request,
+                                    job_a_record,
+                                    job_b_record,
+                                    job_a_votes,
+                                    job_b_votes,
+                                    joiner_participant_index,
+                                );
+                            }
+                        }
                     }
                 }
             }
         }
         assert!(
             Instant::now() < deadline,
-            "job B did not open and accept the fifth validator's vote before timeout"
+            "job B did not open and accept the fifth validator's vote before timeout: \
+             {last_observation}"
         );
         sleep(Duration::from_millis(500));
     };
@@ -749,9 +841,14 @@ fn job_b_uses_the_new_snapshot_while_job_a_keeps_the_old_one(world: &mut World) 
     assert_eq!(job_a_record.intent.result_quorum_threshold, 3);
     assert_eq!(job_a_votes.member_count, 4);
     assert_eq!(job_a_votes.quorum_threshold, 3);
+    let job_a_id = job_a_record
+        .finalized
+        .as_ref()
+        .expect("job A finalized intent")
+        .job_id;
     assert!(
-        !job_a_votes.slot_validator_indexes.contains(&4),
-        "the fifth validator must not vote on job A's historical snapshot"
+        !dynamic_vote_submission_path(world, world.validators.joiner_index(), job_a_id).exists(),
+        "the fifth validator must not create a vote submission for job A's historical snapshot"
     );
 
     assert_eq!(job_b_record.intent.wwd, job_b_wwd);
@@ -760,8 +857,11 @@ fn job_b_uses_the_new_snapshot_while_job_a_keeps_the_old_one(world: &mut World) 
     assert_eq!(job_b_votes.member_count, 5);
     assert_eq!(job_b_votes.quorum_threshold, 4);
     assert!(
-        job_b_votes.slot_validator_indexes.contains(&4),
-        "the fifth validator's public vote must be accepted for job B"
+        job_b_votes
+            .slot_validator_indexes
+            .contains(&joiner_participant_index),
+        "the fifth validator's signed public vote must be accepted at its canonical snapshot \
+         index {joiner_participant_index}"
     );
     assert!(
         job_b_record.intent.result_validator_set_epoch
@@ -778,6 +878,58 @@ fn job_b_uses_the_new_snapshot_while_job_a_keeps_the_old_one(world: &mut World) 
     world.state.ocomp_dynamic_job_requests.push(job_b_request);
 }
 
+fn advance_dynamic_membership_to_next_daily_cycle(world: &mut World) {
+    const SECONDS_PER_DAY: u64 = 86_400;
+
+    let primary = world.validators.primary_port();
+    let before_restart = world
+        .rpc
+        .finalized(primary)
+        .expect("canonical finality before the second dynamic OCOMP day");
+    let current_timestamp = world
+        .rpc
+        .block_timestamp(primary, before_restart)
+        .expect("canonical timestamp before the second dynamic OCOMP day");
+    let next_daily_cycle = current_timestamp
+        .checked_div(SECONDS_PER_DAY)
+        .and_then(|day| day.checked_add(1))
+        .and_then(|day| day.checked_mul(SECONDS_PER_DAY))
+        .and_then(|midnight| midnight.checked_add(1))
+        .expect("next UTC daily Cycle timestamp");
+    let offset = logical_time_offset(next_daily_cycle, unix_time_secs());
+    let joiner_index = world.validators.joiner_index();
+
+    // Job B belongs to the following WorldwideDay. Metadosis deliberately
+    // settles READY days only from its daily Cycle handler, so cross that real
+    // production boundary with the existing test-only clock control. Stop the
+    // fifth validator before the committee-wide stop barrier, then relaunch all
+    // five against the same offset and their unchanged durable datadirs.
+    world
+        .localnet
+        .stop_joiner(joiner_index)
+        .expect("stop the fifth validator before the daily Cycle time change");
+    world
+        .localnet
+        .restart_committee_at_unix_time_offset(offset)
+        .expect("restart the original committee at the next daily Cycle");
+    let offset_arg = format!("--testnet.unix-time-offset-secs={offset}");
+    world
+        .localnet
+        .launch_joiner(joiner_index, &[offset_arg.as_str()])
+        .expect("restart the fifth validator at the same daily Cycle offset");
+
+    let mut ports = world.validators.committee_ports();
+    ports.push(world.validators.http_port(joiner_index));
+    for port in ports {
+        assert!(
+            world
+                .rpc
+                .wait_finalized_at_least(port, before_restart.saturating_add(1), 240),
+            "validator on port {port} did not resume finality across the daily Cycle time change"
+        );
+    }
+}
+
 fn dynamic_job_record(
     world: &World,
     request: &crate::world::rpc::OcompPublicJobRequestV1,
@@ -788,11 +940,83 @@ fn dynamic_job_record(
         .expect("dynamic OCOMP job record")
 }
 
+fn finalized_vote_for_delegate_on_job(
+    world: &World,
+    from_height: u64,
+    to_height: u64,
+    node_index: usize,
+    job_id: B256,
+) -> Option<ResultVoteV1> {
+    let validator_index = u8::try_from(node_index).ok()?;
+    let delegate = world.ocomp.ocomp_delegate_address(validator_index).ok()?;
+    world
+        .rpc
+        .finalized_ocomp_result_vote_transactions_on(
+            world.validators.primary_port(),
+            from_height,
+            to_height,
+        )?
+        .into_iter()
+        .filter(|transaction| transaction.success && transaction.signer == delegate)
+        .find_map(|transaction| {
+            let bytes = world.rpc.ocomp_result_vote_bytes_on(
+                world.validators.primary_port(),
+                transaction.transaction_hash,
+            )?;
+            let vote = ResultVoteV1::decode_canonical(&bytes, &poc_schema_limits()).ok()?;
+            (vote.job_id == job_id).then_some(vote)
+        })
+}
+
+fn accountability_slot_for_vote(
+    accountability: &crate::world::rpc::OcompPublicVoteAccountabilityV1,
+    vote: &ResultVoteV1,
+) -> Option<u16> {
+    let mut matches = accountability
+        .slot_first_signatures
+        .iter()
+        .filter(|(_, signature)| signature.as_slice() == vote.signature_rs)
+        .map(|(validator_index, _)| *validator_index);
+    let participant_index = matches.next()?;
+    matches.next().is_none().then_some(participant_index)
+}
+
+fn singleton_participant_bitmap(member_count: u16, participant_index: u16) -> Vec<u8> {
+    assert!(participant_index < member_count);
+    let mut bitmap = vec![0_u8; usize::from(member_count).div_ceil(8)];
+    bitmap[usize::from(participant_index / 8)] |= 1_u8 << (participant_index % 8);
+    bitmap
+}
+
+fn dynamic_vote_submission_path(
+    world: &World,
+    node_index: usize,
+    job_id: B256,
+) -> std::path::PathBuf {
+    let job_component = hex::encode(job_id.as_slice());
+    world
+        .validators
+        .data_dir(node_index)
+        .parent()
+        .expect("validator data directory has a node-slot parent")
+        .join("ocomp")
+        .join("domain-v1")
+        .join("supervisor-v1")
+        .join("vote-submissions")
+        .join(&job_component)
+        .join(format!("{job_component}.vote.v1"))
+}
+
 fn full_node_local_result_path(world: &World, job_id: B256) -> std::path::PathBuf {
     world
         .validators
         .data_dir(world.validators.joiner_index())
-        .join("ocomp-local-results-v1")
+        .parent()
+        .expect("FullNode data directory has a node-slot parent")
+        .join("ocomp")
+        .join("domain-v1")
+        .join("node-v1")
+        .join("local-results")
         .join(format!(
             "{}.lysis-result-v1.ocb1",
             hex::encode(job_id.as_slice())
@@ -833,56 +1057,119 @@ fn full_node_materializes_job_a_without_voting(world: &mut World) {
         B256::ZERO
     );
 
-    let accountability = world
-        .rpc
-        .finalized_ocomp_vote_accountability_on(world.validators.primary_port(), job_id)
-        .expect("job A accountability while FullNode is non-voting");
     assert!(
-        !accountability.slot_validator_indexes.contains(&4),
-        "keyless FullNode must compute job A without submitting a validator vote"
+        !dynamic_vote_submission_path(world, world.validators.joiner_index(), job_id).exists(),
+        "keyless FullNode must compute job A without creating a validator vote submission"
     );
 }
 
-#[when("validator 2 OCOMP supervisor restarts and completes both pinned quorums")]
-fn validator_two_restarts_and_completes_dynamic_quorums(world: &mut World) {
-    world
-        .ocomp
-        .restart_supervisor(2)
-        .expect("restart validator-2 Supervisor for both pinned jobs");
+#[when("validator 2 OCOMP worker restarts and completes both pinned quorums")]
+fn validator_two_worker_restarts_and_completes_dynamic_quorums(world: &mut World) {
     let requests = world.state.ocomp_dynamic_job_requests.clone();
     assert_eq!(requests.len(), 2, "job A and job B requests");
-    let deadline = Instant::now() + Duration::from_secs(180);
-    loop {
-        let ready = requests.iter().enumerate().all(|(ordinal, request)| {
-            let record = dynamic_job_record(world, request);
-            let Some(finalized) = record.finalized.as_ref() else {
-                return false;
-            };
+    let primary = world.validators.primary_port();
+    let job_ids = requests
+        .iter()
+        .map(|request| {
+            dynamic_job_record(world, request)
+                .finalized
+                .expect("dynamic finalized intent before validator-2 restart")
+                .job_id
+        })
+        .collect::<Vec<_>>();
+    let initial_accountability = job_ids
+        .iter()
+        .copied()
+        .map(|job_id| {
             world
                 .rpc
-                .finalized_ocomp_vote_accountability_on(
-                    world.validators.primary_port(),
-                    finalized.job_id,
-                )
-                .is_some_and(|accountability| {
+                .finalized_ocomp_vote_accountability_on(primary, job_id)
+                .expect("dynamic accountability before validator-2 restart")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(initial_accountability[0].slot_validator_indexes.len(), 2);
+    assert_eq!(initial_accountability[1].slot_validator_indexes.len(), 3);
+    let finalized_before_restart = world
+        .rpc
+        .finalized(primary)
+        .expect("finalized height before validator-2 Worker restart");
+
+    world
+        .ocomp
+        .restart_worker(2, 0)
+        .expect("restart validator-2 Worker for both pinned jobs");
+    let deadline = Instant::now() + Duration::from_secs(180);
+    let completed_accountability = loop {
+        let observed = job_ids
+            .iter()
+            .copied()
+            .map(|job_id| {
+                world
+                    .rpc
+                    .finalized_ocomp_vote_accountability_on(primary, job_id)
+            })
+            .collect::<Vec<_>>();
+        let ready = observed
+            .iter()
+            .enumerate()
+            .all(|(ordinal, accountability)| {
+                accountability.as_ref().is_some_and(|accountability| {
                     accountability.quorum_result_digest.is_some()
-                        && accountability.slot_validator_indexes.contains(&2)
-                        && if ordinal == 0 {
-                            accountability.slot_validator_indexes == [0, 1, 2]
-                        } else {
-                            accountability.slot_validator_indexes == [0, 1, 2, 4]
-                        }
+                        && accountability.slot_validator_indexes.len() == [3, 4][ordinal]
+                        && initial_accountability[ordinal]
+                            .slot_validator_indexes
+                            .iter()
+                            .all(|index| accountability.slot_validator_indexes.contains(index))
                 })
-        });
+            });
         if ready {
-            break;
+            break observed
+                .into_iter()
+                .map(|value| value.expect("checked completed accountability"))
+                .collect::<Vec<_>>();
         }
         assert!(
             Instant::now() < deadline,
             "validator-2 did not complete both historical/current snapshot quorums"
         );
         sleep(Duration::from_millis(250));
+    };
+
+    let finalized_after_votes = world
+        .rpc
+        .finalized(primary)
+        .expect("finalized height after validator-2 votes");
+    for (ordinal, job_id) in job_ids.iter().copied().enumerate() {
+        let vote = finalized_vote_for_delegate_on_job(
+            world,
+            finalized_before_restart.saturating_add(1),
+            finalized_after_votes,
+            2,
+            job_id,
+        )
+        .unwrap_or_else(|| panic!("validator-2 public vote for job {job_id:#x}"));
+        let participant_index = accountability_slot_for_vote(
+            &completed_accountability[ordinal],
+            &vote,
+        )
+        .unwrap_or_else(|| {
+            panic!("validator-2 signature is absent from accountability for job {job_id:#x}")
+        });
+        assert!(
+            !initial_accountability[ordinal]
+                .slot_validator_indexes
+                .contains(&participant_index),
+            "validator-2 must populate a new canonical snapshot slot"
+        );
+        assert!(
+            dynamic_vote_submission_path(world, 2, job_id).is_file(),
+            "validator-2 must retain a durable vote submission for job {job_id:#x}"
+        );
     }
+    world.state.ocomp_dynamic_vote_slots = completed_accountability
+        .iter()
+        .map(|accountability| accountability.slot_validator_indexes.clone())
+        .collect();
 }
 
 #[then("the FullNode result for job A matches the canonical quorum result")]
@@ -915,9 +1202,12 @@ fn full_node_job_a_result_matches_quorum(world: &mut World) {
 #[then("both deadlines record validator 3 missing and keep the chain live after jailing it")]
 fn dynamic_deadlines_jail_only_the_active_missing_validator(world: &mut World) {
     const JAILED: u64 = 6;
+    const JAILED_VALIDATOR_INDEX: usize = 3;
 
     let requests = world.state.ocomp_dynamic_job_requests.clone();
     assert_eq!(requests.len(), 2, "job A and job B requests");
+    let expected_slots = world.state.ocomp_dynamic_vote_slots.clone();
+    assert_eq!(expected_slots.len(), 2, "job A and job B voting slots");
     let last_deadline = requests
         .iter()
         .map(|request| request.deadline_height)
@@ -930,6 +1220,11 @@ fn dynamic_deadlines_jail_only_the_active_missing_validator(world: &mut World) {
             .wait_finalized_at_least(primary, last_deadline.saturating_add(1), 900),
         "chain did not remain live past both dynamic OCOMP deadlines"
     );
+    let live_ports = dynamic_live_ports_after_jail(
+        world.validators.committee_ports(),
+        JAILED_VALIDATOR_INDEX,
+        world.validators.http_port(world.validators.joiner_index()),
+    );
 
     for (ordinal, request) in requests.iter().enumerate() {
         let record = dynamic_job_record(world, request);
@@ -938,13 +1233,9 @@ fn dynamic_deadlines_jail_only_the_active_missing_validator(world: &mut World) {
             .as_ref()
             .expect("dynamic finalized intent")
             .job_id;
-        let observed = world
-            .validators
-            .committee_ports()
-            .into_iter()
-            .chain(std::iter::once(
-                world.validators.http_port(world.validators.joiner_index()),
-            ))
+        let observed = live_ports
+            .iter()
+            .copied()
             .map(|port| {
                 world
                     .rpc
@@ -962,15 +1253,23 @@ fn dynamic_deadlines_jail_only_the_active_missing_validator(world: &mut World) {
             ordinal + 1
         );
         assert_eq!(first.closed_height, Some(request.deadline_height));
-        assert_eq!(first.missing_bitmap, Some(vec![0b0000_1000]));
+        let missing_indexes = (0..first.member_count)
+            .filter(|index| !expected_slots[ordinal].contains(index))
+            .collect::<Vec<_>>();
         assert_eq!(
-            first.slot_validator_indexes,
-            if ordinal == 0 {
-                vec![0, 1, 2]
-            } else {
-                vec![0, 1, 2, 4]
-            }
+            missing_indexes.len(),
+            1,
+            "exactly validator-3 must be absent from job {} accountability",
+            ordinal + 1
         );
+        assert_eq!(
+            first.missing_bitmap,
+            Some(singleton_participant_bitmap(
+                first.member_count,
+                missing_indexes[0],
+            ))
+        );
+        assert_eq!(first.slot_validator_indexes, expected_slots[ordinal]);
     }
 
     let validator_three = world.validators.get(3);
@@ -980,7 +1279,7 @@ fn dynamic_deadlines_jail_only_the_active_missing_validator(world: &mut World) {
     let validator_three_address = eth::address_of(&validator_three_key)
         .expect("derive validator-3 address")
         .to_string();
-    for port in world.validators.committee_ports() {
+    for port in live_ports {
         assert_eq!(
             world.rpc.validator_status(port, &validator_three_address),
             Some(JAILED),
@@ -994,6 +1293,19 @@ fn dynamic_deadlines_jail_only_the_active_missing_validator(world: &mut World) {
             "later deadline stopped finality on port {port}"
         );
     }
+}
+
+fn dynamic_live_ports_after_jail(
+    committee_ports: Vec<u16>,
+    jailed_validator_index: usize,
+    joiner_port: u16,
+) -> Vec<u16> {
+    committee_ports
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, port)| (index != jailed_validator_index).then_some(port))
+        .chain(std::iter::once(joiner_port))
+        .collect()
 }
 
 #[then("the fresh capacity day is created in FORMING by finalized block 1")]
@@ -1060,21 +1372,32 @@ fn fresh_capacity_day_is_created_in_forming(world: &mut World) {
     assert_eq!(started.lookback_end, state.lookback_end);
     assert_eq!(started.offering_end, state.offering_end);
     assert_eq!(started.scheduled_process_time, state.scheduled_process_time);
+    let genesis_path = world.ocomp.canonical_chain_manifest_path();
+    let genesis: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&genesis_path).expect("read fresh Metadosis genesis"),
+    )
+    .expect("decode fresh Metadosis genesis");
+    let protocol_constants = GenesisProtocolParametersV1::from_materialized_genesis(&genesis)
+        .expect("read immutable fresh Metadosis protocol constants");
     assert_eq!(
         state.forming_end - state.forming_start,
-        50 * 3_600,
-        "fresh process evidence must retain the canonical 50-hour FORMING duration"
+        protocol_constants.metadosis_forming_period_seconds,
+        "fresh process evidence must use the immutable genesis FORMING duration"
     );
-    assert_eq!(state.lookback_end, state.forming_end);
+    assert_eq!(
+        state.lookback_end - state.forming_end,
+        protocol_constants.metadosis_lookback_delay_seconds,
+        "fresh process evidence must use the immutable genesis LOOKBACK duration"
+    );
     assert_eq!(
         state.offering_end - state.lookback_end,
-        48 * 3_600,
-        "fresh process evidence must retain the canonical 48-hour OFFERING duration"
+        protocol_constants.metadosis_offering_period_seconds,
+        "fresh process evidence must use the immutable genesis OFFERING duration"
     );
     assert_eq!(
         state.scheduled_process_time - state.offering_end,
-        12 * 3_600,
-        "fresh process evidence must retain the canonical 12-hour WAITING duration"
+        protocol_constants.metadosis_waiting_period_seconds,
+        "fresh process evidence must use the immutable genesis WAITING duration"
     );
     let requested_initial_timestamp = world
         .state
@@ -1270,6 +1593,7 @@ fn advance_fresh_metadosis_time(
     let before_restart = finalized_points_at_common_height(world, 1);
     let before_height = before_restart[0].block_number;
     let offset = logical_time_offset(requested_timestamp, unix_time_secs());
+    stop_ocomp_roles_before_committee_time_change(world);
     world
         .localnet
         .restart_committee_at_unix_time_offset(offset)
@@ -1278,6 +1602,11 @@ fn advance_fresh_metadosis_time(
                 "restart the complete committee at logical timestamp {requested_timestamp}: {error:#}"
             )
         });
+    // The initial production-shaped launch starts external OCOMP roles only
+    // after node RPC/TEE bootstrap. Preserve that ordering on a controlled-time
+    // restart and require every validator, not only the primary, to import one
+    // common finalized block before an exporter opens its projection.
+    let _ = finalized_points_at_common_height(world, before_height.saturating_add(1));
     restart_ocomp_roles_after_committee_time_change(world);
 
     let worldwide_day = fresh_metadosis_wwd(world);
@@ -1367,20 +1696,28 @@ fn advance_fresh_metadosis_time(
     }
 }
 
-fn restart_ocomp_roles_after_committee_time_change(world: &mut World) {
+fn stop_ocomp_roles_before_committee_time_change(world: &mut World) {
     for validator_index in 0..4_u8 {
         world
             .ocomp
-            .apply_process_fault(OcompProcessFault::StopSupervisor { validator_index })
+            .apply_process_fault(OcompProcessFault::StopWorker {
+                validator_index,
+                worker_ordinal: 0,
+            })
             .unwrap_or_else(|error| {
-                panic!("stop validator-{validator_index} Supervisor after node restart: {error}")
+                panic!("stop validator-{validator_index} Worker before node restart: {error}")
             });
         world
             .ocomp
             .apply_process_fault(OcompProcessFault::StopSnapshotExporter { validator_index })
             .unwrap_or_else(|error| {
-                panic!("stop validator-{validator_index} RPC exporter after node restart: {error}")
+                panic!("stop validator-{validator_index} RPC exporter before node restart: {error}")
             });
+    }
+}
+
+fn restart_ocomp_roles_after_committee_time_change(world: &mut World) {
+    for validator_index in 0..4_u8 {
         world
             .ocomp
             .restart_snapshot_exporter(validator_index)
@@ -1389,15 +1726,13 @@ fn restart_ocomp_roles_after_committee_time_change(world: &mut World) {
             });
         world
             .ocomp
-            .restart_supervisor(validator_index)
-            .unwrap_or_else(|error| {
-                panic!("restart validator-{validator_index} Supervisor: {error}")
-            });
+            .restart_worker(validator_index, 0)
+            .unwrap_or_else(|error| panic!("restart validator-{validator_index} Worker: {error}"));
     }
     world
         .ocomp
         .ensure_validator_roles_alive()
-        .expect("all OCOMP RPC-driven supervisors restart after logical-time change");
+        .expect("all OCOMP RPC exporters remain live after logical-time change");
 }
 
 fn finalized_points_at_common_height(
@@ -1757,8 +2092,8 @@ fn metadosis_creates_finalized_job_intent(world: &mut World) {
     world.state.ocomp_job_request = Some(request);
 }
 
-#[when("the validator supervisors submit results directly for that finalized JobIntent")]
-fn validator_supervisors_submit_results_directly(world: &mut World) {
+#[when("the production OCOMP domains process that finalized JobIntent")]
+fn production_ocomp_domains_process_job_intent(world: &mut World) {
     let request = world
         .state
         .ocomp_job_request
@@ -1802,7 +2137,7 @@ fn validator_supervisors_submit_results_directly(world: &mut World) {
     world
         .ocomp
         .ensure_validator_roles_alive()
-        .expect("validator supervisors remain alive for direct ResultVote submission");
+        .expect("production OCOMP domains remain alive while processing the JobIntent");
 }
 
 #[when("validator 2 prepares one valid vote without broadcasting it")]
@@ -2531,9 +2866,14 @@ fn completed_vote_is_retried_and_mutated(world: &mut World) {
         .expect("canonical q-forming ResultVoteV1");
     assert_eq!(vote.job_id, activation.job_id);
 
+    let delegate_key = world
+        .ocomp
+        .ocomp_delegate_private_key_for_vote(&vote)
+        .expect("q-forming vote OCOMP delegate key");
+
     let retry_hash = world
         .rpc
-        .submit_ocomp_result_vote_bytes(primary, &world.validators.get(0), vote_bytes)
+        .submit_ocomp_result_vote_bytes(primary, &delegate_key, vote_bytes)
         .expect("submit exact completed-vote retry through public RPC");
     let retry_receipt = world
         .rpc
@@ -2553,35 +2893,50 @@ fn completed_vote_is_retried_and_mutated(world: &mut World) {
     let mutated_bytes = mutated
         .encode_canonical(&poc_schema_limits())
         .expect("structurally canonical changed-binding vote");
-    let mutation_hash = world
+    let mutation = world
         .rpc
-        .submit_ocomp_result_vote_bytes(primary, &world.validators.get(0), mutated_bytes)
-        .expect("submit changed-binding result vote through public RPC");
-    let mutation_receipt = world
-        .rpc
-        .transaction_receipt(&mutation_hash, primary)
-        .expect("changed-binding receipt");
-    assert_eq!(
-        mutation_receipt
-            .get("status")
-            .and_then(serde_json::Value::as_str),
-        Some("0x0"),
-        "changed-binding completed vote must revert in the OCOMP module"
-    );
+        .submit_ocomp_result_vote_bytes(primary, &delegate_key, mutated_bytes);
+    let mutation_block = match mutation {
+        Ok(mutation_hash) => {
+            let mutation_receipt = world
+                .rpc
+                .transaction_receipt(&mutation_hash, primary)
+                .expect("changed-binding receipt");
+            assert_eq!(
+                mutation_receipt
+                    .get("status")
+                    .and_then(serde_json::Value::as_str),
+                Some("0x0"),
+                "changed-binding completed vote must revert in the OCOMP module"
+            );
+            Some(
+                world
+                    .rpc
+                    .receipt_block_number(&mutation_hash, primary)
+                    .expect("changed-binding block"),
+            )
+        }
+        Err(error) => {
+            assert!(
+                error
+                    .to_string()
+                    .contains("OCOMP carrier signer is not authorized by its pinned snapshot"),
+                "changed-binding vote failed for an unexpected reason: {error:#}"
+            );
+            None
+        }
+    };
     world.state.ocomp_changed_completed_binding_reverted = Some(true);
 
     let retry_block = world
         .rpc
         .receipt_block_number(&retry_hash, primary)
         .expect("exact retry block");
-    let mutation_block = world
-        .rpc
-        .receipt_block_number(&mutation_hash, primary)
-        .expect("changed-binding block");
+    let finality_target = mutation_block.map_or(retry_block, |height| retry_block.max(height));
     assert!(
         world
             .rpc
-            .wait_finalized_at_least(primary, retry_block.max(mutation_block), 60),
+            .wait_finalized_at_least(primary, finality_target, 60),
         "public retry/mutation receipts did not finalize"
     );
 }
@@ -2641,16 +2996,19 @@ fn completed_job_and_generation_are_unchanged(world: &mut World) {
     world.state.ocomp_completed_state_unchanged = Some(true);
 }
 
-#[when("validators 2 and 3 OCOMP supervisors are stopped before the job")]
-fn stop_two_supervisors_before_job(world: &mut World) {
+#[when("validators 2 and 3 OCOMP workers are stopped before the job")]
+fn stop_two_workers_before_job(world: &mut World) {
     let primary = world.validators.primary_port();
     world.state.ocomp_finality_before_fault = world.rpc.finalized(primary);
     for validator_index in [2, 3] {
         world
             .ocomp
-            .apply_process_fault(OcompProcessFault::StopSupervisor { validator_index })
+            .apply_process_fault(OcompProcessFault::StopWorker {
+                validator_index,
+                worker_ordinal: 0,
+            })
             .unwrap_or_else(|error| {
-                panic!("stop validator-{validator_index} Supervisor before the job: {error}")
+                panic!("stop validator-{validator_index} Worker before the job: {error}")
             });
     }
 }
@@ -2774,14 +3132,17 @@ fn job_a_opens_on_the_historical_four_validator_snapshot(world: &mut World) {
     world.state.ocomp_dynamic_job_requests = vec![request];
 }
 
-#[when("validators 1, 2 and 3 OCOMP supervisors are stopped before the job")]
-fn stop_three_supervisors_before_job(world: &mut World) {
+#[when("validators 1, 2 and 3 OCOMP workers are stopped before the job")]
+fn stop_three_workers_before_job(world: &mut World) {
     for validator_index in [1, 2, 3] {
         world
             .ocomp
-            .apply_process_fault(OcompProcessFault::StopSupervisor { validator_index })
+            .apply_process_fault(OcompProcessFault::StopWorker {
+                validator_index,
+                worker_ordinal: 0,
+            })
             .unwrap_or_else(|error| {
-                panic!("stop validator-{validator_index} Supervisor before the job: {error}")
+                panic!("stop validator-{validator_index} Worker before the job: {error}")
             });
     }
 }
@@ -2874,44 +3235,62 @@ fn one_valid_then_changed_binding_vote(world: &mut World) {
     let mut mutated = ResultVoteV1::decode_canonical(&vote_bytes, &poc_schema_limits())
         .expect("canonical sole ResultVoteV1");
     assert_eq!(mutated.job_id, job_id);
+    let delegate_key = world
+        .ocomp
+        .ocomp_delegate_private_key_for_vote(&mutated)
+        .expect("sole vote OCOMP delegate key");
     mutated.job_id = B256::repeat_byte(0x5a);
     eprintln!("OCOMP_PUBLIC_MUTATION stage=submit_changed_binding");
-    let mutation_hash = world
-        .rpc
-        .submit_ocomp_result_vote_bytes(
-            primary,
-            &world.validators.get(1),
-            mutated
-                .encode_canonical(&poc_schema_limits())
-                .expect("canonical changed-binding payload"),
-        )
-        .expect("submit changed-binding public vote");
-    eprintln!("OCOMP_PUBLIC_MUTATION stage=changed_binding_receipt tx={mutation_hash}");
-    let mutation_receipt = world
-        .rpc
-        .transaction_receipt(&mutation_hash, primary)
-        .expect("changed-binding vote receipt");
-    assert_eq!(
-        mutation_receipt
-            .get("status")
-            .and_then(serde_json::Value::as_str),
-        Some("0x0"),
-        "changed-binding vote must revert"
+    let mutation = world.rpc.submit_ocomp_result_vote_bytes(
+        primary,
+        &delegate_key,
+        mutated
+            .encode_canonical(&poc_schema_limits())
+            .expect("canonical changed-binding payload"),
     );
+    let mutation_height = match mutation {
+        Ok(mutation_hash) => {
+            eprintln!("OCOMP_PUBLIC_MUTATION stage=changed_binding_receipt tx={mutation_hash}");
+            let mutation_receipt = world
+                .rpc
+                .transaction_receipt(&mutation_hash, primary)
+                .expect("changed-binding vote receipt");
+            assert_eq!(
+                mutation_receipt
+                    .get("status")
+                    .and_then(serde_json::Value::as_str),
+                Some("0x0"),
+                "changed-binding vote must revert"
+            );
+            Some(
+                world
+                    .rpc
+                    .receipt_block_number(&mutation_hash, primary)
+                    .expect("changed-binding inclusion height"),
+            )
+        }
+        Err(error) => {
+            assert!(
+                error
+                    .to_string()
+                    .contains("OCOMP carrier signer is not authorized by its pinned snapshot"),
+                "changed-binding vote failed for an unexpected reason: {error:#}"
+            );
+            None
+        }
+    };
     world.state.ocomp_non_quorum_changed_binding_reverted = Some(true);
-    let mutation_height = world
-        .rpc
-        .receipt_block_number(&mutation_hash, primary)
-        .expect("changed-binding inclusion height");
-    eprintln!(
-        "OCOMP_PUBLIC_MUTATION stage=wait_changed_binding_finality inclusion_height={mutation_height}"
-    );
-    assert!(
-        world
-            .rpc
-            .wait_finalized_at_least(primary, mutation_height, 60),
-        "changed-binding vote did not finalize"
-    );
+    if let Some(mutation_height) = mutation_height {
+        eprintln!(
+            "OCOMP_PUBLIC_MUTATION stage=wait_changed_binding_finality inclusion_height={mutation_height}"
+        );
+        assert!(
+            world
+                .rpc
+                .wait_finalized_at_least(primary, mutation_height, 60),
+            "changed-binding vote did not finalize"
+        );
+    }
     eprintln!(
         "OCOMP_PUBLIC_MUTATION stage=changed_binding_finalized finalized_height={:?}",
         world.rpc.finalized(primary)
@@ -2943,14 +3322,14 @@ fn one_valid_then_changed_binding_vote(world: &mut World) {
     world.state.ocomp_non_quorum_state_unchanged = Some(true);
 }
 
-#[when("the three stopped supervisors restart and form the remaining quorum")]
-fn restart_three_supervisors_for_quorum(world: &mut World) {
+#[when("the three stopped workers restart and form the remaining quorum")]
+fn restart_three_workers_for_quorum(world: &mut World) {
     for validator_index in [1, 2, 3] {
         world
             .ocomp
-            .restart_supervisor(validator_index)
+            .restart_worker(validator_index, 0)
             .unwrap_or_else(|error| {
-                panic!("restart validator-{validator_index} Supervisor for quorum: {error}")
+                panic!("restart validator-{validator_index} Worker for quorum: {error}")
             });
     }
 }
@@ -3217,12 +3596,15 @@ fn failed_wwd_survives_restart_without_double_effects(world: &mut World) {
 
 #[then("all four OCOMP domains run their node-facing production roles")]
 fn four_domains_run_node_facing_roles(world: &mut World) {
+    let counts = world
+        .ocomp
+        .ensure_baseline_runtime_ready(1)
+        .expect("Node-owned OCOMP endpoints, exporters and workers are ready");
+    assert_eq!(counts.supervisors, 4);
+    assert_eq!(counts.snapshot_exporters, 4);
     let records = world.ocomp.process_records();
     for validator_index in 0..4_u8 {
-        for role in [
-            OcompProcessRole::Supervisor,
-            OcompProcessRole::SnapshotExporter,
-        ] {
+        for role in [OcompProcessRole::SnapshotExporter] {
             let matches = records
                 .iter()
                 .filter(|record| {
@@ -3245,8 +3627,8 @@ fn four_domains_own_authenticated_workers(world: &mut World) {
     let records = world.ocomp.process_records();
     assert_eq!(
         records.len(),
-        12,
-        "expected one supervisor, one RPC exporter and one worker in each domain"
+        8,
+        "expected one external RPC exporter and one worker for each Node-owned Supervisor"
     );
     for validator_index in 0..4_u8 {
         let workers = records
@@ -3278,18 +3660,21 @@ fn four_domains_retain_isolated_worker_artifacts(world: &mut World) {
         .expect("verify every pinned validator's completed production job footprint");
 }
 
-#[when("validator 0 OCOMP supervisor is stopped through the typed fault control")]
-fn stop_validator_zero_supervisor(world: &mut World) {
+#[when("validator 0 OCOMP worker is stopped through the typed fault control")]
+fn stop_validator_zero_worker(world: &mut World) {
     let primary = world.validators.primary_port();
     world.state.ocomp_finality_before_fault = world.rpc.finalized(primary);
     world
         .ocomp
-        .apply_process_fault(OcompProcessFault::StopSupervisor { validator_index: 0 })
-        .expect("stop only validator-0 supervisor");
+        .apply_process_fault(OcompProcessFault::StopWorker {
+            validator_index: 0,
+            worker_ordinal: 0,
+        })
+        .expect("stop only validator-0 worker");
 }
 
-#[then("consensus finality advances while only that supervisor remains stopped")]
-fn finality_advances_after_supervisor_stop(world: &mut World) {
+#[then("consensus finality advances while only that worker remains stopped")]
+fn finality_advances_after_worker_stop(world: &mut World) {
     let before = world
         .state
         .ocomp_finality_before_fault
@@ -3299,7 +3684,7 @@ fn finality_advances_after_supervisor_stop(world: &mut World) {
         world
             .rpc
             .wait_finalized_at_least(primary, before.saturating_add(2), 60),
-        "consensus finality did not advance after stopping an OCOMP supervisor"
+        "consensus finality did not advance after stopping an OCOMP worker"
     );
     let after = world.rpc.finalized(primary).expect("finalized height");
     assert!(after >= before.saturating_add(2));
@@ -3315,36 +3700,37 @@ fn finality_advances_after_supervisor_stop(world: &mut World) {
         "fault must stop exactly one owned process"
     );
     assert_eq!(stopped[0].validator_index, Some(0));
-    assert_eq!(stopped[0].role, OcompProcessRole::Supervisor);
+    assert_eq!(stopped[0].role, OcompProcessRole::Worker);
+    assert_eq!(stopped[0].worker_ordinal, Some(0));
 }
 
-#[then("validator 0 OCOMP supervisor restarts through the typed topology")]
-fn validator_zero_supervisor_restarts(world: &mut World) {
+#[then("validator 0 OCOMP worker restarts through the typed topology")]
+fn validator_zero_worker_restarts(world: &mut World) {
     world
         .ocomp
-        .restart_supervisor(0)
-        .expect("restart only validator-0 OCOMP supervisor");
+        .restart_worker(0, 0)
+        .expect("restart only validator-0 OCOMP worker");
     let records = world.ocomp.process_records();
-    let validator_zero_supervisors = records
+    let validator_zero_workers = records
         .iter()
         .filter(|record| {
             record.validator_index == Some(0)
-                && record.role == OcompProcessRole::Supervisor
-                && record.worker_ordinal.is_none()
+                && record.role == OcompProcessRole::Worker
+                && record.worker_ordinal == Some(0)
         })
         .collect::<Vec<_>>();
     assert_eq!(
-        validator_zero_supervisors.len(),
+        validator_zero_workers.len(),
         2,
         "restart must retain the stopped lifecycle record and add one process"
     );
     assert_eq!(
-        validator_zero_supervisors
+        validator_zero_workers
             .iter()
             .filter(|record| record.stopped_at_millis.is_none())
             .count(),
         1,
-        "exactly one validator-0 supervisor must be live after restart"
+        "exactly one validator-0 worker must be live after restart"
     );
 }
 
@@ -3718,6 +4104,11 @@ fn restart_completed_network_and_ocomp_processes(world: &mut World) {
         .rpc
         .finalized(primary)
         .expect("finality before restart");
+
+    // External clients depend on node RPC and projection storage. Stop the
+    // complete cohort before taking down any validator, exactly as the initial
+    // production-shaped launch starts them only after committee readiness.
+    stop_ocomp_roles_before_committee_time_change(world);
     for validator_index in 0..4 {
         world
             .localnet
@@ -3737,18 +4128,10 @@ fn restart_completed_network_and_ocomp_processes(world: &mut World) {
         );
     }
 
-    for validator_index in 0..4_u8 {
-        world
-            .ocomp
-            .restart_node_facing_processes(validator_index)
-            .unwrap_or_else(|error| {
-                panic!("restart validator-{validator_index} OCOMP node-facing processes: {error}")
-            });
-    }
-    world
-        .ocomp
-        .ensure_validator_roles_alive()
-        .expect("all restarted OCOMP RPC-driven supervisors remain live");
+    // One node becoming reachable is not enough: every exporter must open the
+    // same finalized projection after the whole committee has converged.
+    let _ = finalized_points_at_common_height(world, before.saturating_add(1));
+    restart_ocomp_roles_after_committee_time_change(world);
 }
 
 #[then("the completed generation and exact vote replay remain identical")]
@@ -3806,9 +4189,15 @@ fn completed_generation_survives_restart_and_replay(world: &mut World) {
         .rpc
         .ocomp_result_vote_bytes_on(primary, activation.transaction_hash)
         .expect("decode the original q-forming result vote after restart");
+    let vote = ResultVoteV1::decode_canonical(&vote_bytes, &poc_schema_limits())
+        .expect("canonical q-forming ResultVoteV1 after restart");
+    let delegate_key = world
+        .ocomp
+        .ocomp_delegate_private_key_for_vote(&vote)
+        .expect("q-forming vote OCOMP delegate key after restart");
     let replay_hash = world
         .rpc
-        .submit_ocomp_result_vote_bytes(primary, &world.validators.get(0), vote_bytes)
+        .submit_ocomp_result_vote_bytes(primary, &delegate_key, vote_bytes)
         .expect("submit exact full-result replay after restart");
     let replay_receipt = world
         .rpc
@@ -3988,9 +4377,14 @@ fn runtime_traces_cover_ocomp_execution_paths(world: &mut World) {
 #[when("an operator submits a Lysis result vote before OCOMP activation")]
 fn operator_submits_lysis_vote_before_activation(world: &mut World) {
     let primary = world.validators.primary_port();
+    let validator_key = world
+        .validators
+        .get(0)
+        .evm_key()
+        .expect("read validator-0 EVM key");
     let tx_hash = world
         .rpc
-        .submit_ocomp_result_vote_bytes(primary, &world.validators.get(0), vec![0_u8; 8])
+        .submit_ocomp_result_vote_bytes(primary, &validator_key, vec![0_u8; 8])
         .expect("a pre-activation Lysis vote must be includable, not stall the proposer");
     let receipt = world
         .rpc
@@ -4057,27 +4451,42 @@ fn lysis_vote_reverts_with_lifecycle_inactive_code(world: &mut World) {
 
 #[cfg(test)]
 mod tests {
-    use super::joiner_restart_is_safely_after_boundary;
+    use super::{dynamic_live_ports_after_jail, joiner_restart_is_in_safe_early_epoch_window};
+
+    #[test]
+    fn dynamic_deadline_checks_only_nodes_that_can_advance_after_jail() {
+        assert_eq!(
+            dynamic_live_ports_after_jail(vec![10, 11, 12, 13], 3, 14),
+            vec![10, 11, 12, 14]
+        );
+    }
 
     #[test]
     fn joiner_restart_waits_out_an_imminent_dkg_activation() {
-        assert!(!joiner_restart_is_safely_after_boundary(78, 78, 20));
-        assert!(!joiner_restart_is_safely_after_boundary(80, 80, 20));
-        assert!(joiner_restart_is_safely_after_boundary(81, 81, 20));
-        assert!(joiner_restart_is_safely_after_boundary(82, 82, 20));
-        assert!(!joiner_restart_is_safely_after_boundary(83, 83, 20));
+        assert!(!joiner_restart_is_in_safe_early_epoch_window(78, 78, 20));
+        assert!(!joiner_restart_is_in_safe_early_epoch_window(80, 80, 20));
+        assert!(joiner_restart_is_in_safe_early_epoch_window(81, 81, 20));
+        assert!(joiner_restart_is_in_safe_early_epoch_window(83, 83, 20));
+        assert!(joiner_restart_is_in_safe_early_epoch_window(90, 90, 20));
+        assert!(!joiner_restart_is_in_safe_early_epoch_window(91, 91, 20));
     }
 
     #[test]
     fn joiner_restart_window_derives_from_the_chain_epoch() {
-        assert!(!joiner_restart_is_safely_after_boundary(118, 118, 120));
-        assert!(joiner_restart_is_safely_after_boundary(121, 121, 120));
-        assert!(joiner_restart_is_safely_after_boundary(122, 122, 120));
+        assert!(!joiner_restart_is_in_safe_early_epoch_window(118, 118, 120));
+        assert!(joiner_restart_is_in_safe_early_epoch_window(121, 121, 120));
+        assert!(joiner_restart_is_in_safe_early_epoch_window(122, 122, 120));
+    }
+
+    #[test]
+    fn joiner_restart_accepts_an_early_pre_freeze_handover_window() {
+        assert!(joiner_restart_is_in_safe_early_epoch_window(83, 83, 300));
+        assert!(!joiner_restart_is_in_safe_early_epoch_window(151, 151, 300));
     }
 
     #[test]
     fn joiner_restart_requires_the_full_node_to_finalize_the_boundary_block() {
-        assert!(!joiner_restart_is_safely_after_boundary(101, 100, 20));
-        assert!(joiner_restart_is_safely_after_boundary(101, 101, 20));
+        assert!(!joiner_restart_is_in_safe_early_epoch_window(101, 100, 20));
+        assert!(joiner_restart_is_in_safe_early_epoch_window(101, 101, 20));
     }
 }

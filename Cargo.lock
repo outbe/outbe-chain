@@ -7239,7 +7239,9 @@ dependencies = [
 name = "outbe-chain"
 version = "0.1.0"
 dependencies = [
+ "alloy-consensus",
  "alloy-primitives",
+ "alloy-sol-types",
  "clap",
  "commonware-codec",
  "commonware-consensus",
@@ -7248,6 +7250,7 @@ dependencies = [
  "commonware-storage",
  "commonware-utils",
  "eyre",
+ "futures",
  "hex",
  "k256 0.13.4",
  "outbe-chain-constants",
@@ -7257,6 +7260,7 @@ dependencies = [
  "outbe-evm",
  "outbe-metadosis",
  "outbe-node",
+ "outbe-ocomp",
  "outbe-ocomp-protocol",
  "outbe-operator",
  "outbe-primitives",
@@ -7269,6 +7273,7 @@ dependencies = [
  "reth-ethereum",
  "reth-node-builder",
  "reth-node-core",
+ "reth-primitives-traits",
  "reth-provider",
  "reth-rpc-server-types",
  "serde",

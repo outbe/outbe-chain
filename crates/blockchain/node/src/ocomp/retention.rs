@@ -33,10 +33,17 @@ use outbe_ocomp_protocol::{
 };
 use outbe_offchain_data::TributeRetentionSelector;
 use outbe_primitives::{
-    addresses::METADOSIS_ADDRESS, storage::types::StorageKey as _, OutbeHeader, OutbeReceipt,
+    addresses::METADOSIS_ADDRESS,
+    storage::{
+        readonly::{ReadOnlyStorageProvider, StorageReader},
+        types::StorageKey as _,
+        StorageHandle,
+    },
+    OutbeHeader, OutbeReceipt,
 };
 use outbe_tribute::{RetainedTributePin, RetainedTributeWriter};
 use reth_provider::{HeaderProvider, ReceiptProvider, StateProviderFactory};
+use reth_storage_api::StateProvider;
 
 use super::finality::RethFinalizedIntentProofBuilder;
 
@@ -308,26 +315,7 @@ where
         block: &ConsensusBlock,
         intent_id: B256,
     ) -> Result<OcompJobRecordV1, RetentionError> {
-        let state = self
-            .provider
-            .state_by_block_hash(block.block_hash())
-            .map_err(|error| RetentionError::Source(format!("open exact block state: {error}")))?;
-        let logical_key = intent_storage_key(intent_id)
-            .map_err(|error| RetentionError::Source(format!("derive intent slot: {error}")))?;
-        let base = logical_key.mapping_slot(U256::from(OCOMP_JOB_RECORDS_BASE_SLOT));
-        let encoded = read_storage_bytes(state.as_ref(), base, self.limits.max_bounded_bytes)?;
-        let record = OcompJobRecordV1::decode_canonical(&encoded, &self.limits)
-            .map_err(|error| RetentionError::Source(format!("decode typed job record: {error}")))?;
-        let decoded_id = record
-            .intent
-            .intent_id(&self.limits)
-            .map_err(|error| RetentionError::Source(format!("hash typed job record: {error}")))?;
-        if decoded_id != intent_id {
-            return Err(RetentionError::Source(
-                "storage key does not open the exact typed JobIntent".to_owned(),
-            ));
-        }
-        Ok(record)
+        read_ocomp_job_record_at(&self.provider, block.block_hash(), intent_id, &self.limits)
     }
 
     fn pending_record(
@@ -342,6 +330,121 @@ where
             ));
         }
         Ok(record)
+    }
+}
+
+/// Read one exact typed OCOMP job record from canonical state at `block_hash`.
+///
+/// Events are locators only. Embedded Supervisor and retention both use this
+/// single state decoder so neither can accidentally trust event payloads as the
+/// job authority.
+pub fn read_ocomp_job_record_at<P>(
+    provider: &P,
+    block_hash: B256,
+    intent_id: B256,
+    limits: &SchemaLimits,
+) -> Result<OcompJobRecordV1, RetentionError>
+where
+    P: StateProviderFactory,
+{
+    let state = provider
+        .state_by_block_hash(block_hash)
+        .map_err(|error| RetentionError::Source(format!("open exact block state: {error}")))?;
+    let logical_key = intent_storage_key(intent_id)
+        .map_err(|error| RetentionError::Source(format!("derive intent slot: {error}")))?;
+    let base = logical_key.mapping_slot(U256::from(OCOMP_JOB_RECORDS_BASE_SLOT));
+    let encoded = read_storage_bytes(state.as_ref(), base, limits.max_bounded_bytes)?;
+    let record = OcompJobRecordV1::decode_canonical(&encoded, limits)
+        .map_err(|error| RetentionError::Source(format!("decode typed job record: {error}")))?;
+    let decoded_id = record
+        .intent
+        .intent_id(limits)
+        .map_err(|error| RetentionError::Source(format!("hash typed job record: {error}")))?;
+    if decoded_id != intent_id {
+        return Err(RetentionError::Source(
+            "storage key does not open the exact typed JobIntent".to_owned(),
+        ));
+    }
+    Ok(record)
+}
+
+/// Resolve whether one local OCOMP key belongs to the job's exact historical
+/// ValidatorSet snapshot at the request block. A promoted or re-entered
+/// Validator must not submit a vote for a job whose pinned snapshot predates
+/// that membership.
+pub fn ocomp_snapshot_contains_key_at<P>(
+    provider: &P,
+    block_hash: B256,
+    intent: &JobIntentV1,
+    ocomp_key_hash: B256,
+) -> Result<bool, RetentionError>
+where
+    P: StateProviderFactory,
+{
+    if ocomp_key_hash.is_zero() {
+        return Err(RetentionError::Source(
+            "local OCOMP key hash is zero".to_owned(),
+        ));
+    }
+    let state = provider
+        .state_by_block_hash(block_hash)
+        .map_err(|error| RetentionError::Source(format!("open exact snapshot state: {error}")))?;
+    let reader = OcompSnapshotStateReader {
+        state: state.as_ref(),
+    };
+    let mut readonly = ReadOnlyStorageProvider::new(reader);
+    let storage = StorageHandle::new(&mut readonly);
+    let extension = outbe_validatorset::read_ocomp_snapshot_extension_for_binding(
+        storage.clone(),
+        intent.result_validator_set_epoch,
+        intent.result_committee_set_hash,
+        intent.result_ocomp_binding_hash,
+    )
+    .map_err(|error| RetentionError::Source(format!("read pinned OCOMP snapshot: {error}")))?
+    .ok_or_else(|| RetentionError::Source("pinned OCOMP snapshot is missing".to_owned()))?;
+    if extension.member_count != intent.result_member_count {
+        return Err(RetentionError::Source(
+            "pinned OCOMP snapshot member count disagrees with JobIntent".to_owned(),
+        ));
+    }
+    let snapshot_key = outbe_validatorset::committee_snapshot_key(
+        intent.result_validator_set_epoch,
+        intent.result_committee_set_hash,
+    );
+    for index in 0..extension.member_count {
+        let member =
+            outbe_validatorset::read_ocomp_snapshot_member_at(storage.clone(), snapshot_key, index)
+                .map_err(|error| {
+                    RetentionError::Source(format!("read pinned OCOMP member: {error}"))
+                })?
+                .ok_or_else(|| {
+                    RetentionError::Source("pinned OCOMP member is missing".to_owned())
+                })?;
+        if keccak256(member.ocomp_public_key_sec1) == ocomp_key_hash {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+struct OcompSnapshotStateReader<'a> {
+    state: &'a dyn StateProvider,
+}
+
+impl StorageReader for OcompSnapshotStateReader<'_> {
+    fn read_storage(
+        &self,
+        address: alloy_primitives::Address,
+        key: B256,
+    ) -> outbe_primitives::error::Result<U256> {
+        self.state
+            .storage(address, key)
+            .map(|value| value.unwrap_or_default())
+            .map_err(|error| {
+                outbe_primitives::error::PrecompileError::Storage(format!(
+                    "pinned OCOMP snapshot state read failed: {error}"
+                ))
+            })
     }
 }
 

@@ -75,32 +75,6 @@ pub enum OcompFinalityAuthorityError {
     LocalAuthority(String),
 }
 
-/// Node-local authority proving that this process independently computed the
-/// exact canonical Lysis result carried by the q-forming vote.
-///
-/// This is deliberately not consensus state: every validator and FullNode must
-/// reach the same result independently before it accepts the terminal state
-/// transition. An unavailable or disagreeing authority therefore stops local
-/// block execution instead of turning into a public transaction rejection.
-pub trait OcompLocalResultAuthority: Send + Sync {
-    fn verify_exact(
-        &self,
-        job_id: B256,
-        result: &outbe_ocomp_protocol::result::LysisResultV1,
-        limits: &SchemaLimits,
-    ) -> std::result::Result<(), OcompLocalResultAuthorityError>;
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum OcompLocalResultAuthorityError {
-    #[error("local Lysis result is missing for job {job_id}")]
-    Missing { job_id: B256 },
-    #[error("local Lysis result mismatch for job {job_id}")]
-    Mismatch { job_id: B256 },
-    #[error("node-local Lysis result authority unavailable: {0}")]
-    Unavailable(String),
-}
-
 #[derive(Clone, Copy)]
 pub(crate) struct QuorumApplyContext<'a, 'storage> {
     storage: &'a StorageHandle<'storage>,
@@ -148,7 +122,6 @@ pub(crate) struct QuorumResultInput<'a> {
     result: &'a outbe_ocomp_protocol::result::LysisResultV1,
     quorum: &'a outbe_ocomp_protocol::vote::OcompQuorumV1,
     authority: &'a OcompActivationAuthorityV1,
-    local_result_authority: Option<&'a dyn OcompLocalResultAuthority>,
 }
 
 impl<'a> QuorumResultInput<'a> {
@@ -158,7 +131,6 @@ impl<'a> QuorumResultInput<'a> {
         result: &'a outbe_ocomp_protocol::result::LysisResultV1,
         quorum: &'a outbe_ocomp_protocol::vote::OcompQuorumV1,
         authority: &'a OcompActivationAuthorityV1,
-        local_result_authority: Option<&'a dyn OcompLocalResultAuthority>,
     ) -> Self {
         Self {
             intent_id,
@@ -166,7 +138,6 @@ impl<'a> QuorumResultInput<'a> {
             result,
             quorum,
             authority,
-            local_result_authority,
         }
     }
 }
@@ -186,7 +157,6 @@ pub(crate) fn apply_quorum_result(
         result,
         quorum,
         authority,
-        local_result_authority,
     } = input;
     let current_height = context.current_height;
     let limits = context.limits;
@@ -246,18 +216,6 @@ pub(crate) fn apply_quorum_result(
     if quorum.result_digest != result_digest || quorum.quorum_height != current_height {
         return Err(reject(RESULT_DIGEST_MISMATCH));
     }
-    local_result_authority
-        .ok_or_else(|| {
-            crate::errors::infrastructure_failure(
-                "node-local Lysis result authority is unavailable",
-            )
-        })?
-        .verify_exact(finalized.job_id, result, limits)
-        .map_err(|error| {
-            crate::errors::infrastructure_failure(format!(
-                "node-local Lysis result verification failed: {error}"
-            ))
-        })?;
     let result_evidence_hash = result
         .result_evidence_hash(limits)
         .map_err(|error| protocol_reject(error, RESULT_STRUCTURE_INVALID))?;

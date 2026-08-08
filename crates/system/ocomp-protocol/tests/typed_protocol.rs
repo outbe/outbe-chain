@@ -62,9 +62,9 @@ use outbe_ocomp_protocol::{
         UnitPhase, UnitSpecV1, WorkOutputHeaderV1,
     },
     vote::{
-        decode_submit_lysis_result_prefix, EquivocationEvidenceV1, OcompAccountabilitySummaryV1,
-        OcompQuorumV1, OcompVoteAccountabilityV1, RecordVoteOutcomeV1, ResultVoteSigningSubjectV1,
-        ResultVoteSlotV1, ResultVoteV1,
+        decode_submit_lysis_result, decode_submit_lysis_result_prefix, EquivocationEvidenceV1,
+        OcompAccountabilitySummaryV1, OcompQuorumV1, OcompVoteAccountabilityV1,
+        RecordVoteOutcomeV1, ResultVoteSigningSubjectV1, ResultVoteSlotV1, ResultVoteV1,
     },
     ProtocolError, SchemaLimits,
 };
@@ -553,6 +553,10 @@ fn submit_result_prefix_decoder_is_canonical_bounded_and_panic_free() {
     let calldata =
         outbe_ocomp_protocol::abi::encode_submit_lysis_result_calldata(&vote, &LIMITS).unwrap();
     let prefix = decode_submit_lysis_result_prefix(&calldata, &LIMITS).unwrap();
+    assert_eq!(
+        decode_submit_lysis_result(&calldata, &LIMITS).unwrap(),
+        vote
+    );
     assert_eq!(prefix.protocol_bundle_hash, vote.protocol_bundle_hash);
     assert_eq!(prefix.job_id, vote.job_id);
     assert_eq!(prefix.attempt, vote.attempt);

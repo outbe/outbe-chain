@@ -7,11 +7,10 @@ use std::{
         DirBuilderExt as _, MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _,
     },
     path::{Path, PathBuf},
-    sync::{Condvar, Mutex, MutexGuard},
+    sync::{Mutex, MutexGuard},
 };
 
 use alloy_primitives::B256;
-use outbe_metadosis::api::{OcompLocalResultAuthority, OcompLocalResultAuthorityError};
 use outbe_ocomp_protocol::{result::LysisResultV1, ProtocolError, SchemaLimits, OCB1_HEADER_LEN};
 
 const DIRECTORY_MODE: u32 = 0o700;
@@ -26,6 +25,12 @@ pub struct CommittedLocalLysisResultV1 {
     pub result_digest: B256,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LoadedLocalLysisResultV1 {
+    pub committed: CommittedLocalLysisResultV1,
+    pub canonical_result: Vec<u8>,
+}
+
 /// Immutable node-local results keyed by the consensus `JobId`.
 ///
 /// The store owns the publication boundary. Callers can commit one canonical
@@ -37,7 +42,6 @@ pub struct LocalLysisResultStore {
     limits: SchemaLimits,
     max_record_bytes: u64,
     lock: Mutex<()>,
-    ready: Condvar,
 }
 
 impl LocalLysisResultStore {
@@ -60,7 +64,6 @@ impl LocalLysisResultStore {
             limits,
             max_record_bytes,
             lock: Mutex::new(()),
-            ready: Condvar::new(),
         };
         store.reconcile_startup()?;
         Ok(store)
@@ -88,11 +91,27 @@ impl LocalLysisResultStore {
 
         let pending_path = self.pending_path(job_id);
         self.install(&pending_path, &final_path, canonical_result)?;
-        self.ready.notify_all();
         // Keep the typed decode above deliberately alive through publication:
         // the bytes were checked against this exact semantic result.
         debug_assert_eq!(result.job_id, job_id);
         Ok(committed)
+    }
+
+    pub fn load(
+        &self,
+        job_id: B256,
+    ) -> Result<Option<LoadedLocalLysisResultV1>, LocalLysisResultError> {
+        let _guard = self.lock()?;
+        let path = self.record_path(job_id);
+        if !path_exists(&path)? {
+            return Ok(None);
+        }
+        let canonical_result = self.read_record(&path)?;
+        let (_, committed) = self.require_canonical_result(job_id, &canonical_result)?;
+        Ok(Some(LoadedLocalLysisResultV1 {
+            committed,
+            canonical_result,
+        }))
     }
 
     pub fn verify_exact(
@@ -133,56 +152,6 @@ impl LocalLysisResultStore {
             job_id,
             result_digest: expected_digest,
         })
-    }
-
-    /// Wait until the independently computed exact result is durably published.
-    ///
-    /// `Missing` is a readiness condition during historical follower catch-up,
-    /// not evidence that the finalized block is invalid. Every other error is
-    /// returned immediately: a conflicting result, corrupt record or unsafe
-    /// store must never be converted into a retry.
-    fn wait_for_exact(
-        &self,
-        job_id: B256,
-        expected: &LysisResultV1,
-    ) -> Result<CommittedLocalLysisResultV1, LocalLysisResultError> {
-        let mut guard = self.lock()?;
-        loop {
-            match self.verify_exact_locked(job_id, expected) {
-                Ok(committed) => return Ok(committed),
-                Err(LocalLysisResultError::Missing { .. }) => {
-                    guard = self
-                        .ready
-                        .wait(guard)
-                        .map_err(|_| LocalLysisResultError::Poisoned)?;
-                }
-                Err(error) => return Err(error),
-            }
-        }
-    }
-
-    /// Verify the exact result at the q-forming execution boundary, waiting only
-    /// while the independent compute process has not published it yet.
-    fn wait_for_exact_authority(
-        &self,
-        job_id: B256,
-        expected: &LysisResultV1,
-    ) -> Result<(), OcompLocalResultAuthorityError> {
-        self.wait_for_exact(job_id, expected)
-            .map(|_| ())
-            .map_err(|error| match error {
-                LocalLysisResultError::Mismatch { job_id, .. }
-                | LocalLysisResultError::JobIdMismatch {
-                    expected: job_id, ..
-                } => OcompLocalResultAuthorityError::Mismatch { job_id },
-                LocalLysisResultError::Missing { job_id } => {
-                    // `wait_for_exact` consumes Missing as a readiness state. Keep
-                    // the exhaustive arm so a future refactor cannot silently
-                    // turn it into a generic unavailable error.
-                    OcompLocalResultAuthorityError::Missing { job_id }
-                }
-                other => OcompLocalResultAuthorityError::Unavailable(other.to_string()),
-            })
     }
 
     fn require_canonical_result(
@@ -436,17 +405,6 @@ impl LocalLysisResultStore {
             path: path.to_path_buf(),
             source,
         }
-    }
-}
-
-impl OcompLocalResultAuthority for LocalLysisResultStore {
-    fn verify_exact(
-        &self,
-        job_id: B256,
-        result: &LysisResultV1,
-        _limits: &SchemaLimits,
-    ) -> Result<(), OcompLocalResultAuthorityError> {
-        self.wait_for_exact_authority(job_id, result)
     }
 }
 

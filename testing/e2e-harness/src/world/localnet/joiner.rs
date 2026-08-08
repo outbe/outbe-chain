@@ -35,6 +35,7 @@ fn full_node_joiner_role_args(
     p2p_secret: &str,
     tee_enclave_socket: &str,
     upstream: &str,
+    consensus_listen_address: &str,
 ) -> Vec<String> {
     args![
         "--p2p-secret-key-hex",
@@ -43,34 +44,34 @@ fn full_node_joiner_role_args(
         tee_enclave_socket,
         "--upstream",
         upstream,
+        "--consensus.listen-addr",
+        consensus_listen_address,
     ]
 }
 
 impl Localnet {
     /// Launch the future joiner as a non-voting full-execution follower while
     /// preserving the validator slot's durable Reth datadir for promotion.
-    /// The dev harness shares an already-running enclave socket; the process
-    /// receives no validator BLS key and no OCOMP voting credentials.
+    /// The FullNode owns an enclave and NodeHost identity in its own slot. The
+    /// process receives no validator BLS key and no OCOMP voting credentials.
     pub fn launch_joiner_full_node(
         &mut self,
         index: usize,
         upstream_slot: usize,
-        tee_slot: usize,
         ocomp_args: &[String],
     ) -> Result<()> {
         let vd = self.cfg.validator_dir(index);
         fs::create_dir_all(vd.join("data"))?;
         fs::create_dir_all(vd.join("logs"))?;
         let secret_path = vd.join("reth-p2p-secret.hex");
-        if !secret_path.is_file() {
-            fs::write(&secret_path, random_hex_32()?)?;
-        }
+        self.provision_full_node_node_host(index)?;
         let secret = read_trimmed(&secret_path)?;
         let mut process_args = self.reth_base_args(&vd, index);
         process_args.extend(full_node_joiner_role_args(
             &secret,
-            &format!("127.0.0.1:{}", self.cfg.tee_port(tee_slot)),
+            &format!("127.0.0.1:{}", self.cfg.tee_port(index)),
             &format!("http://localhost:{}", self.cfg.http_port(upstream_slot)),
+            &format!("127.0.0.1:{}", self.cfg.consensus_port(index)),
         ));
         process_args.extend_from_slice(ocomp_args);
         self.extend_real_sgx_startup_timeout(&mut process_args);
@@ -95,6 +96,13 @@ impl Localnet {
     /// Provision a joiner: keygen, fund, register, p2p, enclave, `tee join`
     /// (port of `e2e_provision_joiner`). Leaves keys under `validator-<index>/`.
     pub fn provision_joiner(&mut self, index: usize) -> Result<()> {
+        self.provision_joiner_registration(index)?;
+        self.join_validator_enclave(index)
+    }
+
+    /// Generate and register Validator/OCOMP identity without changing the
+    /// currently running node or enclave profile.
+    pub fn provision_joiner_registration(&mut self, index: usize) -> Result<()> {
         let vd = self.cfg.validator_dir(index);
         fs::create_dir_all(&vd)?;
         let signing_key = vd.join("signing-key.hex").display().to_string();
@@ -204,8 +212,16 @@ impl Localnet {
             return Err(eyre!("joiner P2P registration failed: {p2p_tx}"));
         }
 
-        // Enclave container (owned foreground, no `-d`), then `tee join` once its
-        // socket is up.
+        Ok(())
+    }
+
+    /// Start a fresh Validator-profile enclave and complete its on-chain TEE join.
+    pub fn join_validator_enclave(&mut self, index: usize) -> Result<()> {
+        let vd = self.cfg.validator_dir(index);
+        let signing_key = vd.join("signing-key.hex").display().to_string();
+        let bls = first_hex(&self.keygen(&["show-pubkey", "--key", &signing_key])?, 96)
+            .ok_or_else(|| eyre!("no BLS pubkey from keygen"))?;
+        let key = read_evm_key(&vd)?;
         self.start_node_enclave(index)?;
         let port = self.cfg.tee_port(index);
         let sock = format!("127.0.0.1:{port}");
@@ -239,7 +255,10 @@ impl Localnet {
                 "60"
             },
         ];
-        if matches!(self.cfg.tee_mode, crate::env::TeeMode::Real) {
+        if matches!(
+            self.cfg.tee_mode,
+            crate::env::TeeMode::Real | crate::env::TeeMode::SgxNoAttest
+        ) {
             join.extend(args!["--node-data-dir", vd.join("data").display()]);
         }
         Sh::new(&self.cfg).cli_required(join)?;
@@ -256,6 +275,45 @@ impl Localnet {
 
     pub fn stop_node_enclave(&mut self, index: usize) {
         self.enclaves.remove(&index);
+    }
+
+    /// Preserve the stopped FullNode's immutable local TEE identity before the
+    /// same synchronized node slot is promoted to a Validator. Chain data and
+    /// OCOMP results remain in place; only profile-bound identity is moved.
+    pub fn archive_full_node_identity_for_validator_promotion(
+        &mut self,
+        index: usize,
+    ) -> Result<()> {
+        self.stop_node_enclave(index);
+
+        let validator_dir = self.cfg.validator_dir(index);
+        let archive_dir = validator_dir.join("full-node-identity-v1");
+        let tee_dir = validator_dir.join("tee");
+        let node_host_dir = validator_dir
+            .join("data")
+            .join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1);
+        let archived_tee_dir = archive_dir.join("tee");
+        let archived_node_host_dir = archive_dir.join("tee-node-host-v1");
+
+        if archive_dir.exists() {
+            return Err(eyre!(
+                "FullNode identity archive already exists: {}",
+                archive_dir.display()
+            ));
+        }
+        for path in [&tee_dir, &node_host_dir] {
+            if !path.exists() {
+                return Err(eyre!(
+                    "cannot promote FullNode without its committed identity: {}",
+                    path.display()
+                ));
+            }
+        }
+
+        fs::create_dir(&archive_dir)?;
+        fs::rename(&tee_dir, &archived_tee_dir)?;
+        fs::rename(&node_host_dir, &archived_node_host_dir)?;
+        Ok(())
     }
 
     pub fn restart_full_node_enclave(&mut self, index: usize) -> Result<()> {
@@ -463,8 +521,12 @@ mod tests {
 
     #[test]
     fn full_node_joiner_role_has_no_validator_or_ocomp_vote_credentials() {
-        let args =
-            full_node_joiner_role_args("p2p-secret", "127.0.0.1:34000", "http://127.0.0.1:35000");
+        let args = full_node_joiner_role_args(
+            "p2p-secret",
+            "127.0.0.1:34000",
+            "http://127.0.0.1:35000",
+            "127.0.0.1:36000",
+        );
 
         for forbidden in [
             "--validator",
@@ -481,6 +543,9 @@ mod tests {
         assert!(args
             .windows(2)
             .any(|pair| pair == ["--tee-enclave-socket", "127.0.0.1:34000"]));
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["--consensus.listen-addr", "127.0.0.1:36000"]));
     }
 
     #[test]

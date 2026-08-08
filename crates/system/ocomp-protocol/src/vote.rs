@@ -94,6 +94,24 @@ pub fn decode_submit_lysis_result_prefix(
     calldata: &[u8],
     limits: &SchemaLimits,
 ) -> Result<ResultVotePrefixV1, ProtocolError> {
+    let payload = decode_submit_lysis_result_payload(calldata)?;
+    ResultVoteV1::decode_canonical_prefix(payload, limits)
+}
+
+/// Decode the complete canonical vote carried by `submitLysisResult(bytes)`.
+///
+/// This shares the exact ABI length, padding and schema bounds used by the
+/// hot-path prefix decoder so a finalized-block observer cannot accept a
+/// different envelope from txpool or execution.
+pub fn decode_submit_lysis_result(
+    calldata: &[u8],
+    limits: &SchemaLimits,
+) -> Result<ResultVoteV1, ProtocolError> {
+    let payload = decode_submit_lysis_result_payload(calldata)?;
+    ResultVoteV1::decode_canonical(payload, limits)
+}
+
+fn decode_submit_lysis_result_payload(calldata: &[u8]) -> Result<&[u8], ProtocolError> {
     const ABI_HEAD_LEN: usize = 68;
     if calldata.len() < ABI_HEAD_LEN {
         return Err(ProtocolError::UnexpectedEof {
@@ -149,7 +167,7 @@ pub fn decode_submit_lysis_result_prefix(
         calldata[payload_end..].iter().all(|byte| *byte == 0),
         "submitLysisResult ABI padding",
     )?;
-    ResultVoteV1::decode_canonical_prefix(&calldata[ABI_HEAD_LEN..payload_end], limits)
+    Ok(&calldata[ABI_HEAD_LEN..payload_end])
 }
 
 fn abi_word_to_usize(word: &[u8]) -> Result<usize, ProtocolError> {

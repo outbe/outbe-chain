@@ -33,7 +33,7 @@ use outbe_ocomp::vote_submitter::{
     VoteSubmissionConfigV1, VoteSubmissionOutcomeV1,
 };
 use outbe_ocomp::worker::{run_worker, WorkerConfig};
-use outbe_ocomp::worker_transport::MAX_REGISTERED_WORKERS;
+use outbe_ocomp::worker_transport::{SupervisorWorkerServerV1, MAX_REGISTERED_WORKERS};
 use outbe_ocomp_protocol::capacity::OCOMP_POC_CAS_QUOTA_BYTES;
 use outbe_offchain_storage::MongoStorageConfig;
 use outbe_primitives::signer::OutbeEvmSigner;
@@ -399,25 +399,31 @@ fn run_supervisor(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> 
         protocol_bundle: protocol_bundle.clone(),
         limits,
     })?;
-    let runner = Arc::new(SupervisorJobRunnerV1::open(SupervisorJobRunnerConfigV1 {
-        cas_root: runtime.cas_root,
-        cas_limits: CasLimits {
-            max_object_bytes: CAS_MAX_OBJECT_BYTES,
-            max_total_bytes: CAS_MAX_TOTAL_BYTES,
-        },
-        input_ref_root: runtime.snapshot_exporter_input_ref_root,
-        job_root: runtime.supervisor_job_root,
-        worker_inbox_root: runtime.worker_inbox_root,
-        worker_inbox_limits: WorkerInboxLimits {
-            max_artifact_bytes: WORKER_INBOX_MAX_ARTIFACT_BYTES,
-            max_total_bytes: WORKER_INBOX_MAX_TOTAL_BYTES,
-        },
-        supervisor_listen_address: runtime.supervisor_address,
-        registry_generation: required_env("OCOMP_REGISTRY_GENERATION")?.parse()?,
+    let worker_server = SupervisorWorkerServerV1::start(
+        runtime.supervisor_address,
         identity,
-        protocol_bundle,
+        required_env("OCOMP_REGISTRY_GENERATION")?.parse()?,
         limits,
-    })?);
+    )?;
+    let runner = Arc::new(SupervisorJobRunnerV1::open(
+        SupervisorJobRunnerConfigV1 {
+            cas_root: runtime.cas_root,
+            cas_limits: CasLimits {
+                max_object_bytes: CAS_MAX_OBJECT_BYTES,
+                max_total_bytes: CAS_MAX_TOTAL_BYTES,
+            },
+            input_ref_root: runtime.snapshot_exporter_input_ref_root,
+            job_root: runtime.supervisor_job_root,
+            worker_inbox_root: runtime.worker_inbox_root,
+            worker_inbox_limits: WorkerInboxLimits {
+                max_artifact_bytes: WORKER_INBOX_MAX_ARTIFACT_BYTES,
+                max_total_bytes: WORKER_INBOX_MAX_TOTAL_BYTES,
+            },
+            protocol_bundle,
+            limits,
+        },
+        worker_server.dispatcher(),
+    )?);
     let evm_signer =
         OutbeEvmSigner::from_strict_file(&runtime.ocomp_evm_key_path, runtime.effective_role_uid)?;
     let result_signer =

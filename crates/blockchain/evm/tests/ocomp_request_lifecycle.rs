@@ -59,7 +59,7 @@ use outbe_metadosis::{
     WwdDayType,
 };
 use outbe_nod::NodContract;
-use outbe_node::{ocomp::local_result::LocalLysisResultStore, OutbePayloadBuilder};
+use outbe_node::OutbePayloadBuilder;
 use outbe_ocomp_protocol::{
     abi::encode_submit_lysis_result_calldata,
     receipts::AggregateActivationReceiptV1,
@@ -838,23 +838,6 @@ fn real_payload_builder_commits_atomic_request_between_ce_preview_and_final_seal
     let finalized = finalized_record.finalized.as_ref().unwrap();
     let open_height = finalized.open_height;
     let voting = ResultVotingScenario::for_intent(&finalized_record.intent, finalized.job_id);
-    let voting_result = voting.result().clone();
-    let local_result_directory = tempfile::tempdir().unwrap();
-    let local_result_authority = Arc::new(
-        LocalLysisResultStore::open(
-            local_result_directory.path().join("local-results"),
-            poc_schema_limits(),
-        )
-        .unwrap(),
-    );
-    local_result_authority
-        .commit(
-            finalized.job_id,
-            &voting_result
-                .encode_canonical(&poc_schema_limits())
-                .unwrap(),
-        )
-        .unwrap();
 
     let successor_artifacts =
         decode_outbe_block_artifacts(successor.block().header().extra_data().as_ref()).unwrap();
@@ -881,7 +864,6 @@ fn real_payload_builder_commits_atomic_request_between_ce_preview_and_final_seal
             &prepared.tree_service,
             &signer,
             &runtime_body_readers,
-            &local_result_authority,
             &fork_install,
             &dkg,
             &snapshot,
@@ -908,7 +890,6 @@ fn real_payload_builder_commits_atomic_request_between_ce_preview_and_final_seal
         &prepared.tree_service,
         &signer,
         &runtime_body_readers,
-        &local_result_authority,
         &fork_install,
         &dkg,
         &snapshot,
@@ -965,7 +946,6 @@ fn real_payload_builder_commits_atomic_request_between_ce_preview_and_final_seal
         &prepared.tree_service,
         &signer,
         &runtime_body_readers,
-        &local_result_authority,
         &fork_install,
         &dkg,
         &snapshot,
@@ -1110,7 +1090,6 @@ fn build_canonical_ocomp_successor(
     tree_service: &Arc<CompressedTreeService>,
     signer: &Arc<OutbeEvmSigner>,
     runtime_body_readers: &RuntimeBodyReaders,
-    local_result_authority: &Arc<LocalLysisResultStore>,
     fork_install: &Arc<outbe_metadosis::config::OcompForkInstallV1>,
     dkg: &Dkg,
     snapshot: &CommitteeSnapshot,
@@ -1138,7 +1117,6 @@ fn build_canonical_ocomp_successor(
     )
     .with_evm_signer(signer.clone())
     .with_compressed_tree_service(tree_service.clone())
-    .with_ocomp_local_result_authority(local_result_authority.clone())
     .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(PARENT_HEIGHT))
     .with_ocomp_fork_install(fork_install.clone());
     let metadata = finalized_parent_metadata(dkg, snapshot, height - 1, parent.hash());

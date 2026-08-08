@@ -57,6 +57,13 @@ fn freeze_target(world: &mut World) {
         .localnet
         .provision_joiner(idx)
         .expect("provision joiner");
+    #[cfg(feature = "ocomp-integration")]
+    world
+        .ocomp
+        .stage_joiner_domain_material(
+            u8::try_from(idx).expect("joiner index fits OCOMP harness wire"),
+        )
+        .expect("stage joiner OCOMP domain before validator-mode start");
     world
         .localnet
         .launch_joiner(idx, &[])
@@ -200,6 +207,32 @@ fn old_committee_keeps_finalizing(world: &mut World) {
     );
 }
 
+/// Keep the failed target frozen until the chain has certified blocks after
+/// the originally planned activation height. This proves the later boundary
+/// cannot be mistaken for the regular epoch grid by a FullNode follower.
+#[then("the old committee crosses the planned activation height without partial activation")]
+fn old_committee_crosses_planned_activation(world: &mut World) {
+    let primary = world.validators.primary_port();
+    let planned = world
+        .rpc
+        .consensus_status_field(primary, "nextPlannedActivationHeight")
+        .and_then(|value| value.trim_matches('"').parse::<u64>().ok())
+        .expect("planned DKG activation height");
+    assert!(
+        world
+            .rpc
+            .wait_block(primary, planned.saturating_add(2), 90)
+            .is_some(),
+        "old committee did not finalize beyond planned activation {planned}"
+    );
+    assert_eq!(
+        world.rpc.active_count(primary),
+        Some(4),
+        "frozen 4-to-5 target partially activated at the planned boundary"
+    );
+    world.state.activation_height = Some(planned);
+}
+
 /// Relaunch the downed validator (`localnet.restart` re-launches dead nodes),
 /// leaving the joiner down (s5:65-71).
 #[when("the downed validator is restored")]
@@ -224,5 +257,23 @@ fn reshare_completes(world: &mut World) {
     assert!(
         world.localnet.log_has(0, revealed),
         "reshare completed without recording the expected offline participant reveal"
+    );
+}
+
+#[then("the delayed reshare activates off-grid and the active set reaches 5")]
+fn delayed_reshare_activates_off_grid(world: &mut World) {
+    let primary = world.validators.primary_port();
+    let planned = world
+        .state
+        .activation_height
+        .expect("captured planned activation height");
+    assert!(
+        world.rpc.wait_active_count(primary, 5, 60),
+        "delayed reshare did not activate after its participant returned"
+    );
+    let observed = world.rpc.head(primary).expect("post-activation head");
+    assert!(
+        observed > planned,
+        "delayed reshare was not observed beyond its planned boundary: {observed} <= {planned}"
     );
 }

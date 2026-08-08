@@ -490,7 +490,8 @@ fn ensure_ocomp_process_inventory(
         }
     }
     ensure!(
-        supervisors == counts.supervisors
+        supervisors == 0
+            && counts.supervisors == counts.snapshot_exporters
             && snapshot_exporters == counts.snapshot_exporters
             && workers == counts.workers,
         "exact OCOMP process inventory differs from readiness counts"
