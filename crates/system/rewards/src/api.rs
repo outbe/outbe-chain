@@ -224,10 +224,10 @@ mod tests {
     fn seed_oracle(ctx: &BlockRuntimeContext, rate_1e18: U256) {
         let mut oracle = outbe_oracle::schema::OracleContract::new(ctx.storage.clone());
         oracle
-            .register_pair(
+            .register_pair(outbe_oracle::api::AddressPair::quoted(
                 outbe_oracle::api::COEN_ASSET,
                 outbe_oracle::api::iso_asset(840),
-            )
+            ))
             .unwrap();
         oracle
             .set_exchange_rate(

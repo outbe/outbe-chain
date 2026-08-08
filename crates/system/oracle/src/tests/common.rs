@@ -1,7 +1,7 @@
 //! Shared fixtures and helpers for the Oracle test suite.
 
 use crate::schema::OracleContract;
-use crate::types::{AddressPair, AssetType};
+pub(super) use crate::types::{AddressPair, AssetType};
 use alloy_primitives::{address, Address, U256};
 use outbe_primitives::error::Result as PrecompileResult;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
@@ -35,14 +35,10 @@ pub(super) fn usd() -> Address {
     AssetType::IsoCurrency(840).into()
 }
 
-/// The storage key for a pair, in either quoting direction.
+/// A pair in the given quoting direction. Storage lookup sorts, so this doubles
+/// as the key for either direction.
 pub(super) fn pair_key(base: Address, quote: Address) -> AddressPair {
-    AddressPair::from_addresses(base, quote)
-}
-
-/// A pair plus the orientation it is registered in, as the write paths take it.
-pub(super) fn registered(base: Address, quote: Address) -> crate::state::RegisteredPair {
-    (pair_key(base, quote), base, quote)
+    AddressPair::quoted(base, quote)
 }
 
 /// Test currency rate (4.30 %, 1e18 scaled) used when building
@@ -65,7 +61,9 @@ pub(super) type OracleMutation = for<'a> fn(StorageHandle<'a>) -> PrecompileResu
 pub(super) fn seed_ocomp_oracle(provider: &mut HashMapStorageProvider) {
     StorageHandle::enter(provider, |storage| {
         let mut oracle = OracleContract::new(storage.clone());
-        oracle.register_pair(COEN, usd()).unwrap();
+        oracle
+            .register_pair(AddressPair::quoted(COEN, usd()))
+            .unwrap();
         crate::api::initialize_fresh_ocomp_profile(storage).unwrap();
     });
 }
@@ -76,7 +74,7 @@ pub(super) fn seed_ocomp_oracle_with_snapshot(provider: &mut HashMapStorageProvi
         OracleContract::new(storage)
             .write_snapshot(
                 ATOMIC_DAY_START + 100,
-                &[(registered(COEN, usd()), U256::from(125), U256::from(2))],
+                &[(pair_key(COEN, usd()), U256::from(125), U256::from(2))],
             )
             .unwrap();
     });
@@ -103,7 +101,9 @@ pub(super) fn seed_oracle_with_peak_history(
 ) {
     StorageHandle::enter(provider, |storage| {
         let mut oracle = OracleContract::new(storage.clone());
-        oracle.register_pair(COEN, usd()).unwrap();
+        oracle
+            .register_pair(AddressPair::quoted(COEN, usd()))
+            .unwrap();
         if initialize_ocomp {
             crate::api::initialize_fresh_ocomp_profile(storage).unwrap();
         }
@@ -115,7 +115,7 @@ pub(super) fn seed_oracle_with_peak_history(
             oracle
                 .write_snapshot(
                     day + 100,
-                    &[(registered(COEN, usd()), U256::from(price), U256::from(2))],
+                    &[(pair_key(COEN, usd()), U256::from(price), U256::from(2))],
                 )
                 .unwrap();
         }
@@ -133,11 +133,13 @@ pub(super) fn seed_prefork_oracle_with_peak_history(provider: &mut HashMapStorag
 pub(super) fn seed_prefork_oracle_with_snapshot(provider: &mut HashMapStorageProvider) {
     StorageHandle::enter(provider, |storage| {
         let mut oracle = OracleContract::new(storage);
-        oracle.register_pair(COEN, usd()).unwrap();
+        oracle
+            .register_pair(AddressPair::quoted(COEN, usd()))
+            .unwrap();
         oracle
             .write_snapshot(
                 ATOMIC_DAY_START + 100,
-                &[(registered(COEN, usd()), U256::from(125), U256::from(2))],
+                &[(pair_key(COEN, usd()), U256::from(125), U256::from(2))],
             )
             .unwrap();
     });
@@ -146,7 +148,7 @@ pub(super) fn seed_prefork_oracle_with_snapshot(provider: &mut HashMapStoragePro
 pub(super) fn write_snapshot_mutation(storage: StorageHandle<'_>) -> PrecompileResult<()> {
     OracleContract::new(storage).write_snapshot(
         ATOMIC_DAY_START + 100,
-        &[(registered(COEN, usd()), U256::from(125), U256::from(2))],
+        &[(pair_key(COEN, usd()), U256::from(125), U256::from(2))],
     )
 }
 

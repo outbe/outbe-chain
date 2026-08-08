@@ -12,7 +12,7 @@ use outbe_primitives::storage::types::StorageKey;
 
 use crate::types::coen_iso_pair;
 
-const PAIR_ORDINAL_BASE_SLOT: u64 = 10;
+const PAIR_INDEX_BASE_SLOT: u64 = 10;
 const SCURVE_COUNT_SLOT: u64 = 34;
 const SCURVE_PAIR_BASE_SLOT: u64 = 35;
 const SCURVE_PEAK_DAY_BASE_SLOT: u64 = 36;
@@ -23,9 +23,6 @@ const WWD_VWAP_PAIR_COUNT_BASE_SLOT: u64 = 50;
 const WWD_VWAP_PAIR_BASE_SLOT: u64 = 51;
 const WWD_VWAP_VALUE_BASE_SLOT: u64 = 52;
 const REFERENCE_CURRENCIES_SLOT: u64 = 55;
-// A pair is two addresses, so each entry column above has a quote companion.
-const SCURVE_PAIR_QUOTE_SLOT: u64 = 67;
-const WWD_VWAP_PAIR_QUOTE_SLOT: u64 = 68;
 
 pub const MAX_OCOMP_WWD_PAIR_ENTRIES: u32 = 256;
 pub const MAX_OCOMP_ACTIVE_SCURVE_ENTRIES: u32 = 256;
@@ -188,9 +185,10 @@ pub fn oracle_count_slot_plan_v1(
     })
 }
 
-/// Rebuilds an entry's pair from its two proven storage words.
+/// Rebuilds an entry's pair from the two words its `Mapping<_, AddressPair>`
+/// value occupies.
 fn checked_pair(base_word: U256, quote_word: U256) -> AddressPair {
-    AddressPair::from_addresses(
+    AddressPair::quoted(
         Address::from_word(base_word.into()),
         Address::from_word(quote_word.into()),
     )
@@ -258,26 +256,19 @@ pub fn oracle_opening_slot_plan_v1(
     for index in 0..reference_currency_count {
         slots.push(vec_element_slot(REFERENCE_CURRENCIES_SLOT, index));
     }
-    let mut pair_id_slots = BTreeSet::new();
+    let mut pair_index_slots = BTreeSet::new();
     for iso in reference_isos {
-        let pair_id_slot = mapping_slot(coen_iso_pair(*iso), PAIR_ORDINAL_BASE_SLOT);
-        if pair_id_slots.insert(pair_id_slot) {
-            slots.push(pair_id_slot);
+        let pair_index_slot = mapping_slot(coen_iso_pair(*iso), PAIR_INDEX_BASE_SLOT);
+        if pair_index_slots.insert(pair_index_slot) {
+            slots.push(pair_index_slot);
         }
     }
     slots.push(mapping_slot(worldwide_day, WWD_VWAP_EXISTS_BASE_SLOT));
     slots.push(mapping_slot(worldwide_day, WWD_VWAP_PAIR_COUNT_BASE_SLOT));
     for index in 0..worldwide_day_pair_count {
-        slots.push(nested_mapping_slot(
-            worldwide_day,
-            WWD_VWAP_PAIR_BASE_SLOT,
-            index,
-        ));
-        slots.push(nested_mapping_slot(
-            worldwide_day,
-            WWD_VWAP_PAIR_QUOTE_SLOT,
-            index,
-        ));
+        let pair_slot = nested_mapping_slot(worldwide_day, WWD_VWAP_PAIR_BASE_SLOT, index);
+        slots.push(pair_slot);
+        slots.push(next_slot(pair_slot));
         slots.push(nested_mapping_slot(
             worldwide_day,
             WWD_VWAP_VALUE_BASE_SLOT,
@@ -287,8 +278,9 @@ pub fn oracle_opening_slot_plan_v1(
     slots.push(direct_slot(SCURVE_COUNT_SLOT));
     slots.push(direct_slot(SCURVE_OLDEST_SLOT));
     for index in scurve_oldest..scurve_count {
-        slots.push(mapping_slot(index, SCURVE_PAIR_BASE_SLOT));
-        slots.push(mapping_slot(index, SCURVE_PAIR_QUOTE_SLOT));
+        let pair_slot = mapping_slot(index, SCURVE_PAIR_BASE_SLOT);
+        slots.push(pair_slot);
+        slots.push(next_slot(pair_slot));
         slots.push(mapping_slot(index, SCURVE_PEAK_DAY_BASE_SLOT));
         slots.push(mapping_slot(index, SCURVE_PEAK_PRICE_BASE_SLOT));
     }
@@ -352,19 +344,9 @@ pub fn evaluate_oracle_opening_v1(
 
     let mut worldwide_day_vwaps = Vec::with_capacity(worldwide_day_pair_count as usize);
     for index in 0..worldwide_day_pair_count {
+        let pair_slot = nested_mapping_slot(worldwide_day, WWD_VWAP_PAIR_BASE_SLOT, index);
         worldwide_day_vwaps.push((
-            checked_pair(
-                value_at(nested_mapping_slot(
-                    worldwide_day,
-                    WWD_VWAP_PAIR_BASE_SLOT,
-                    index,
-                ))?,
-                value_at(nested_mapping_slot(
-                    worldwide_day,
-                    WWD_VWAP_PAIR_QUOTE_SLOT,
-                    index,
-                ))?,
-            ),
+            checked_pair(value_at(pair_slot)?, value_at(next_slot(pair_slot))?),
             value_at(nested_mapping_slot(
                 worldwide_day,
                 WWD_VWAP_VALUE_BASE_SLOT,
@@ -374,11 +356,9 @@ pub fn evaluate_oracle_opening_v1(
     }
     let mut scurves = Vec::with_capacity((scurve_count - scurve_oldest) as usize);
     for index in scurve_oldest..scurve_count {
+        let pair_slot = mapping_slot(index, SCURVE_PAIR_BASE_SLOT);
         scurves.push((
-            checked_pair(
-                value_at(mapping_slot(index, SCURVE_PAIR_BASE_SLOT))?,
-                value_at(mapping_slot(index, SCURVE_PAIR_QUOTE_SLOT))?,
-            ),
+            checked_pair(value_at(pair_slot)?, value_at(next_slot(pair_slot))?),
             checked_u64(
                 value_at(mapping_slot(index, SCURVE_PEAK_DAY_BASE_SLOT))?,
                 "S-curve peak day",
@@ -401,26 +381,29 @@ pub fn evaluate_oracle_opening_v1(
     let mut ordered_entry_prices = Vec::with_capacity(reference_isos.len());
     for iso in reference_isos.iter().copied() {
         let pair = coen_iso_pair(iso);
-        // The ordinal is still proven, purely as the registration witness: a
-        // zero here means the verifier is pricing an unregistered pair.
-        let ordinal = checked_u32(
-            value_at(mapping_slot(pair, PAIR_ORDINAL_BASE_SLOT))?,
-            "reference pair ordinal",
+        // The index is still proven, purely as the registration witness: a zero
+        // here means the verifier is pricing an unregistered pair.
+        let index = checked_u32(
+            value_at(mapping_slot(pair, PAIR_INDEX_BASE_SLOT))?,
+            "reference pair index",
         )?;
-        if ordinal == 0 {
+        if index == 0 {
             return Err(OracleOpeningEvaluationError::PairNotRegistered { iso });
         }
+        // Entries are matched on the market, not the quote direction: a pair
+        // registered as `<iso>/COEN` still prices, exactly as it did when both
+        // sides of this comparison were sorted keys.
         let vwap = if worldwide_day_exists.is_zero() {
             U256::ZERO
         } else {
             worldwide_day_vwaps
                 .iter()
-                .find_map(|(candidate, value)| (*candidate == pair).then_some(*value))
+                .find_map(|(candidate, value)| candidate.same_market(&pair).then_some(*value))
                 .unwrap_or(U256::ZERO)
         };
         let mut max_scurve = U256::ZERO;
         for (entry_pair, peak_day, peak_price) in &scurves {
-            if *entry_pair != pair || target_day < *peak_day {
+            if !entry_pair.same_market(&pair) || target_day < *peak_day {
                 continue;
             }
             let days_since = ((target_day - *peak_day) / crate::scurve::DAY_SECONDS) as usize;
@@ -499,6 +482,12 @@ fn mapping_slot(key: impl StorageKey, base_slot: u64) -> B256 {
 
 fn direct_slot(slot: u64) -> B256 {
     raw_slot(U256::from(slot))
+}
+
+/// The second word of a two-word `AddressPair` mapping value: the quote sits
+/// immediately after the base, in the key's own hashed namespace.
+fn next_slot(slot: B256) -> B256 {
+    raw_slot(U256::from_be_bytes(slot.0) + U256::ONE)
 }
 
 fn raw_slot(slot: U256) -> B256 {

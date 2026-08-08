@@ -8,7 +8,6 @@ use alloy_primitives::{Address, U256};
 use outbe_common::WorldwideDay;
 use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::error::{PrecompileError, Result};
-use outbe_primitives::storage::types::{Mapping, StorageKey};
 
 use crate::constants::MAX_SNAPSHOT_RETENTION_SECONDS;
 use crate::schema::{OracleContract, SCALE_1E18};
@@ -35,43 +34,6 @@ type PairTable = (Vec<Address>, Vec<Address>, Vec<bool>);
 /// `(bases, quotes, rates, blocks, timestamps)` — every pair's current rate.
 type ExchangeRateTable = (Vec<Address>, Vec<Address>, Vec<U256>, Vec<u64>, Vec<u64>);
 
-/// A registered pair together with the orientation it was registered in.
-///
-/// The storage key sorts its two halves, so `base`/`quote` cannot be recovered
-/// from the key alone — anything that later hands a pair back across the ABI has
-/// to carry this triple, or a caller would be told `USD/ETH` for a pair whose
-/// reads only accept `ETH/USD`.
-pub type RegisteredPair = (AddressPair, Address, Address);
-
-/// Writes both halves of a pair identity column.
-///
-/// A pair is 40 bytes and a storage word is 32, so every list of pairs is two
-/// parallel `Address` columns. Going through this pair of helpers is what keeps
-/// the halves from drifting: a base written without its quote decodes as a
-/// different pair entirely, and the zero address is a legitimate asset so the
-/// mismatch would not read as "missing".
-pub(crate) fn write_pair_columns<K: StorageKey>(
-    base_column: &Mapping<'_, K, Address>,
-    quote_column: &Mapping<'_, K, Address>,
-    key: &K,
-    base: Address,
-    quote: Address,
-) -> Result<()> {
-    base_column.write(key, base)?;
-    quote_column.write(key, quote)
-}
-
-/// Reads both halves back as `(key, base, quote)`.
-pub(crate) fn read_pair_columns<K: StorageKey>(
-    base_column: &Mapping<'_, K, Address>,
-    quote_column: &Mapping<'_, K, Address>,
-    key: &K,
-) -> Result<(AddressPair, Address, Address)> {
-    let base = base_column.read(key)?;
-    let quote = quote_column.read(key)?;
-    Ok((AddressPair::from_addresses(base, quote), base, quote))
-}
-
 impl OracleContract<'_> {
     // -----------------------------------------------------------------------
     // Pair Registry
@@ -79,52 +41,38 @@ impl OracleContract<'_> {
 
     /// Registers a new trading pair and marks it as a vote target.
     ///
-    /// `base` and `quote` are recorded in the orientation given; the storage key
-    /// itself is order-independent, so registering the inverse of an existing
-    /// pair is rejected as a duplicate. Returns the assigned ordinal (1-indexed).
-    pub fn register_pair(&mut self, base: Address, quote: Address) -> Result<u32> {
-        if base == quote {
+    /// The pair is recorded in the orientation quoted; the storage key sorts, so
+    /// registering the inverse of an existing pair is rejected as a duplicate.
+    /// Returns the assigned enumeration index (1-based).
+    pub fn register_pair(&mut self, pair: AddressPair) -> Result<u32> {
+        if pair.base() == pair.quote() {
             return Err(PrecompileError::Revert(
                 "pair base and quote must differ".into(),
             ));
         }
 
-        let pair = AddressPair::from_addresses(base, quote);
-        if self.pair_ordinal.read(&pair)? != 0 {
+        if self.pair_index.read(&pair)? != 0 {
             return Err(PrecompileError::Revert("pair already registered".into()));
         }
 
         let count = self.pair_count.read()?;
-        let new_id = count + 1;
+        let new_index = count + 1;
 
-        self.pair_count.write(new_id)?;
-        self.pair_ordinal.write(&pair, new_id)?;
+        self.pair_count.write(new_index)?;
+        self.pair_index.write(&pair, new_index)?;
         self.vote_target.write(&pair, true)?;
-        write_pair_columns(
-            &self.pair_ordinal_base,
-            &self.pair_ordinal_quote,
-            &new_id,
-            base,
-            quote,
-        )?;
+        self.pair_by_index.write_pair(&new_index, pair)?;
 
-        Ok(new_id)
+        Ok(new_index)
     }
 
-    /// The pair registered at `ordinal` as `(key, base, quote)`, with base and
-    /// quote in the orientation they were registered in — the storage key alone
-    /// is sorted and cannot tell the two apart.
+    /// The pair registered at `index`, in the orientation it was registered in.
     ///
-    /// Reads back as the zero pair for an ordinal that was never written, which
-    /// is why membership is decided by [`Self::pair_ordinal_of`] and never by a
-    /// zero check — the zero address is a legitimate asset (native COEN).
-    pub fn pair_entry(&self, ordinal: u32) -> Result<(AddressPair, Address, Address)> {
-        read_pair_columns(&self.pair_ordinal_base, &self.pair_ordinal_quote, &ordinal)
-    }
-
-    /// [`Self::pair_entry`] when only the storage key is needed.
-    pub fn pair_at(&self, ordinal: u32) -> Result<AddressPair> {
-        Ok(self.pair_entry(ordinal)?.0)
+    /// Reads back as the zero pair for an index that was never written, which is
+    /// why membership is decided by [`Self::pair_index_of`] and never by a zero
+    /// check — the zero address is a legitimate asset (native COEN).
+    pub fn pair_at(&self, index: u32) -> Result<AddressPair> {
+        self.pair_by_index.read_pair(&index)
     }
 
     /// Deactivates a pair's vote target status (system-only).
@@ -139,7 +87,7 @@ impl OracleContract<'_> {
                 "only system can deactivate vote target".into(),
             ));
         }
-        let (pair, _) = self.require_pair(base, quote)?;
+        let pair = self.require_pair(base, quote)?;
         self.vote_target.write(&pair, false)?;
         Ok(())
     }
@@ -156,7 +104,7 @@ impl OracleContract<'_> {
                 "only system can activate vote target".into(),
             ));
         }
-        let (pair, _) = self.require_pair(base, quote)?;
+        let pair = self.require_pair(base, quote)?;
         self.vote_target.write(&pair, true)?;
         Ok(())
     }
@@ -176,31 +124,32 @@ impl OracleContract<'_> {
         Ok(())
     }
 
-    /// Returns the enumeration ordinal for a pair, or 0 if not registered.
-    pub fn pair_ordinal_of(&self, pair: AddressPair) -> Result<u32> {
-        self.pair_ordinal.read(&pair)
+    /// Returns the enumeration index for a pair, or 0 if not registered.
+    ///
+    /// Order-independent: the lookup key sorts, so this answers the same for
+    /// either quote direction.
+    pub fn pair_index_of(&self, pair: AddressPair) -> Result<u32> {
+        self.pair_index.read(&pair)
     }
 
-    /// Resolves an ABI-quoted pair to its storage key and enumeration ordinal.
+    /// Resolves an ABI-quoted pair against the registry.
     ///
-    /// The key is order-independent, so it alone cannot tell `COEN/USD` from
-    /// `USD/COEN`. Quoting a registered pair backwards would otherwise return
-    /// its rate un-inverted, so the orientation is checked against the columns
-    /// `register_pair` recorded and a flipped quote reverts.
-    pub fn require_pair(&self, base: Address, quote: Address) -> Result<(AddressPair, u32)> {
-        let pair = AddressPair::from_addresses(base, quote);
-        let ordinal = self.pair_ordinal.read(&pair)?;
-        if ordinal == 0 {
+    /// The lookup is order-independent, so it alone cannot tell `COEN/USD` from
+    /// `USD/COEN`. Quoting a registered pair backwards would otherwise return its
+    /// rate un-inverted, so the registered entry is compared for exact equality —
+    /// direction included — and a flipped quote reverts.
+    pub fn require_pair(&self, base: Address, quote: Address) -> Result<AddressPair> {
+        let pair = AddressPair::quoted(base, quote);
+        let index = self.pair_index.read(&pair)?;
+        if index == 0 {
             return Err(PrecompileError::Revert("pair not registered".into()));
         }
-        if self.pair_ordinal_base.read(&ordinal)? != base
-            || self.pair_ordinal_quote.read(&ordinal)? != quote
-        {
+        if self.pair_by_index.read_pair(&index)? != pair {
             return Err(PrecompileError::Revert(
                 "pair quoted in the wrong direction".into(),
             ));
         }
-        Ok((pair, ordinal))
+        Ok(pair)
     }
 
     /// Returns whether a pair is an active vote target.
@@ -210,12 +159,9 @@ impl OracleContract<'_> {
     /// plain boolean query it returns `false` rather than reverting; genuine
     /// storage faults still propagate.
     pub fn is_vote_target(&self, base: Address, quote: Address) -> Result<bool> {
-        let pair = AddressPair::from_addresses(base, quote);
-        let ordinal = self.pair_ordinal.read(&pair)?;
-        if ordinal == 0
-            || self.pair_ordinal_base.read(&ordinal)? != base
-            || self.pair_ordinal_quote.read(&ordinal)? != quote
-        {
+        let pair = AddressPair::quoted(base, quote);
+        let index = self.pair_index.read(&pair)?;
+        if index == 0 || self.pair_by_index.read_pair(&index)? != pair {
             return Ok(false);
         }
         self.vote_target.read(&pair)
@@ -227,7 +173,7 @@ impl OracleContract<'_> {
 
     /// Returns the current exchange rate for a pair (1e18 scaled).
     pub fn get_exchange_rate(&self, base: Address, quote: Address) -> Result<(U256, u64, u64)> {
-        let (pair, _) = self.require_pair(base, quote)?;
+        let pair = self.require_pair(base, quote)?;
         let rate = self.exchange_rate.read(&pair)?;
         let block = self.exchange_rate_block.read(&pair)?;
         let ts = self.exchange_rate_timestamp.read(&pair)?;
@@ -264,7 +210,7 @@ impl OracleContract<'_> {
             ));
         }
 
-        let (pair, _) = self.require_pair(base, quote)?;
+        let pair = self.require_pair(base, quote)?;
         self.update_exchange_rate(pair, rate, block_number, timestamp)
     }
 
@@ -331,15 +277,14 @@ impl OracleContract<'_> {
             self.vote_exists.write(&voter, false)?;
 
             let tuple_count = self.vote_tuple_count.read(&voter)?;
-            let base_map = self.vote_pair_base.get_nested(&voter);
-            let quote_map = self.vote_pair_quote.get_nested(&voter);
+            let pair_map = self.vote_pair.get_nested(&voter);
             let rate_map = self.vote_rate.get_nested(&voter);
             let volume_map = self.vote_volume.get_nested(&voter);
 
             for j in 0..tuple_count {
                 // Clears to the zero pair, which is never registered; readers
                 // stay bounded by `vote_tuple_count` rather than probing for it.
-                write_pair_columns(&base_map, &quote_map, &j, Address::ZERO, Address::ZERO)?;
+                pair_map.write_pair(&j, AddressPair::ZERO)?;
                 rate_map.write(&j, U256::ZERO)?;
                 volume_map.write(&j, U256::ZERO)?;
             }
@@ -391,7 +336,7 @@ impl OracleContract<'_> {
     pub fn write_snapshot(
         &mut self,
         timestamp: u64,
-        entries: &[(RegisteredPair, U256, U256)],
+        entries: &[(AddressPair, U256, U256)],
     ) -> Result<()> {
         if self.ocomp_profile_ready.read()? {
             let storage = self.storage.clone();
@@ -404,7 +349,7 @@ impl OracleContract<'_> {
     fn write_snapshot_inner(
         &mut self,
         timestamp: u64,
-        entries: &[(RegisteredPair, U256, U256)],
+        entries: &[(AddressPair, U256, U256)],
     ) -> Result<()> {
         let idx = self.snapshot_write_idx.read()?;
         let next_snapshot_idx = idx.checked_add(1).ok_or_else(|| {
@@ -415,14 +360,13 @@ impl OracleContract<'_> {
         self.snapshot_timestamp.write(&idx, timestamp)?;
         self.snapshot_pair_count.write(&idx, entries.len() as u32)?;
 
-        let base_map = self.snapshot_pair_base.get_nested(&idx);
-        let quote_map = self.snapshot_pair_quote.get_nested(&idx);
+        let pair_map = self.snapshot_pair.get_nested(&idx);
         let rate_map = self.snapshot_rate.get_nested(&idx);
         let volume_map = self.snapshot_volume.get_nested(&idx);
 
-        for (i, ((_, base, quote), rate, volume)) in entries.iter().enumerate() {
+        for (i, (pair, rate, volume)) in entries.iter().enumerate() {
             let pi = i as u32;
-            write_pair_columns(&base_map, &quote_map, &pi, *base, *quote)?;
+            pair_map.write_pair(&pi, *pair)?;
             rate_map.write(&pi, *rate)?;
             volume_map.write(&pi, *volume)?;
         }
@@ -430,7 +374,7 @@ impl OracleContract<'_> {
         self.snapshot_write_idx.write(next_snapshot_idx)?;
 
         let utc_day_ts = timestamp - (timestamp % 86_400);
-        for ((pair, _, _), rate, volume) in entries {
+        for (pair, rate, volume) in entries {
             let vol = if volume.is_zero() {
                 SCALE_1E18
             } else {
@@ -510,7 +454,8 @@ impl OracleContract<'_> {
         let mut timestamps = Vec::with_capacity(count as usize);
 
         for pid in 1..=count {
-            let (pair, base, quote) = self.pair_entry(pid)?;
+            let pair = self.pair_at(pid)?;
+            let (base, quote) = (pair.base(), pair.quote());
             bases.push(base);
             quotes.push(quote);
             rates.push(self.exchange_rate.read(&pair)?);
@@ -528,7 +473,8 @@ impl OracleContract<'_> {
         let mut quotes = Vec::new();
 
         for pid in 1..=count {
-            let (pair, base, quote) = self.pair_entry(pid)?;
+            let pair = self.pair_at(pid)?;
+            let (base, quote) = (pair.base(), pair.quote());
             if self.vote_target.read(&pair)? {
                 bases.push(base);
                 quotes.push(quote);
@@ -548,8 +494,7 @@ impl OracleContract<'_> {
         }
 
         let tuple_count = self.vote_tuple_count.read(validator)?;
-        let base_map = self.vote_pair_base.get_nested(validator);
-        let quote_map = self.vote_pair_quote.get_nested(validator);
+        let pair_map = self.vote_pair.get_nested(validator);
         let rate_map = self.vote_rate.get_nested(validator);
         let volume_map = self.vote_volume.get_nested(validator);
 
@@ -559,9 +504,9 @@ impl OracleContract<'_> {
         let mut volumes = Vec::with_capacity(tuple_count as usize);
 
         for i in 0..tuple_count {
-            let (_, base, quote) = read_pair_columns(&base_map, &quote_map, &i)?;
-            bases.push(base);
-            quotes.push(quote);
+            let pair = pair_map.read_pair(&i)?;
+            bases.push(pair.base());
+            quotes.push(pair.quote());
             rates.push(rate_map.read(&i)?);
             volumes.push(volume_map.read(&i)?);
         }
@@ -601,13 +546,12 @@ impl OracleContract<'_> {
             idx -= 1;
             let ts = self.snapshot_timestamp.read(&idx)?;
             let pc = self.snapshot_pair_count.read(&idx)?;
-            let base_map = self.snapshot_pair_base.get_nested(&idx);
-            let quote_map = self.snapshot_pair_quote.get_nested(&idx);
+            let pair_map = self.snapshot_pair.get_nested(&idx);
             let rate_map = self.snapshot_rate.get_nested(&idx);
             let volume_map = self.snapshot_volume.get_nested(&idx);
 
             for p in 0..pc {
-                if read_pair_columns(&base_map, &quote_map, &p)?.0 == pair {
+                if pair_map.read_pair(&p)?.same_market(&pair) {
                     timestamps.push(ts);
                     rates.push(rate_map.read(&p)?);
                     volumes.push(volume_map.read(&p)?);
@@ -642,17 +586,16 @@ impl OracleContract<'_> {
 
             let ts = self.snapshot_timestamp.read(&idx)?;
             let pc = self.snapshot_pair_count.read(&idx)?;
-            let base_map = self.snapshot_pair_base.get_nested(&idx);
-            let quote_map = self.snapshot_pair_quote.get_nested(&idx);
+            let pair_map = self.snapshot_pair.get_nested(&idx);
             let rate_map = self.snapshot_rate.get_nested(&idx);
             let volume_map = self.snapshot_volume.get_nested(&idx);
 
             for p in 0..pc {
-                let (_, base, quote) = read_pair_columns(&base_map, &quote_map, &p)?;
+                let entry = pair_map.read_pair(&p)?;
                 snapshot_ids.push(idx);
                 timestamps.push(ts);
-                bases.push(base);
-                quotes.push(quote);
+                bases.push(entry.base());
+                quotes.push(entry.quote());
                 rates.push(rate_map.read(&p)?);
                 volumes.push(volume_map.read(&p)?);
             }
@@ -677,19 +620,16 @@ impl OracleContract<'_> {
         let pair_count = self.worldwide_day_vwap_pair_count.read(&worldwide_day)?;
         let lookback = end_time.saturating_sub(start_time);
 
-        let base_map = self.worldwide_day_vwap_pair_base.get_nested(&worldwide_day);
-        let quote_map = self
-            .worldwide_day_vwap_pair_quote
-            .get_nested(&worldwide_day);
+        let pair_map = self.worldwide_day_vwap_pair.get_nested(&worldwide_day);
         let value_map = self.worldwide_day_vwap_value.get_nested(&worldwide_day);
         let mut bases = Vec::with_capacity(pair_count as usize);
         let mut quotes = Vec::with_capacity(pair_count as usize);
         let mut vwaps = Vec::with_capacity(pair_count as usize);
         let mut lookbacks = Vec::with_capacity(pair_count as usize);
         for idx in 0..pair_count {
-            let (_, base, quote) = read_pair_columns(&base_map, &quote_map, &idx)?;
-            bases.push(base);
-            quotes.push(quote);
+            let entry = pair_map.read_pair(&idx)?;
+            bases.push(entry.base());
+            quotes.push(entry.quote());
             vwaps.push(value_map.read(&idx)?);
             lookbacks.push(lookback);
         }
@@ -708,13 +648,10 @@ impl OracleContract<'_> {
         }
 
         let pair_count = self.worldwide_day_vwap_pair_count.read(&worldwide_day)?;
-        let base_map = self.worldwide_day_vwap_pair_base.get_nested(&worldwide_day);
-        let quote_map = self
-            .worldwide_day_vwap_pair_quote
-            .get_nested(&worldwide_day);
+        let pair_map = self.worldwide_day_vwap_pair.get_nested(&worldwide_day);
         let value_map = self.worldwide_day_vwap_value.get_nested(&worldwide_day);
         for idx in 0..pair_count {
-            if read_pair_columns(&base_map, &quote_map, &idx)?.0 == pair {
+            if pair_map.read_pair(&idx)?.same_market(&pair) {
                 return Ok(Some(value_map.read(&idx)?));
             }
         }
@@ -732,11 +669,10 @@ impl OracleContract<'_> {
         pair: AddressPair,
     ) -> Result<Option<U256>> {
         let pair_count = self.utc_day_vwap_pair_count.read(&utc_day)?;
-        let base_map = self.utc_day_vwap_pair_base.get_nested(&utc_day);
-        let quote_map = self.utc_day_vwap_pair_quote.get_nested(&utc_day);
+        let pair_map = self.utc_day_vwap_pair.get_nested(&utc_day);
         let value_map = self.utc_day_vwap_value.get_nested(&utc_day);
         for idx in 0..pair_count {
-            if read_pair_columns(&base_map, &quote_map, &idx)?.0 == pair {
+            if pair_map.read_pair(&idx)?.same_market(&pair) {
                 return Ok(Some(value_map.read(&idx)?));
             }
         }
@@ -751,16 +687,15 @@ impl OracleContract<'_> {
         utc_day: u32,
     ) -> Result<(Vec<Address>, Vec<Address>, Vec<U256>)> {
         let pair_count = self.utc_day_vwap_pair_count.read(&utc_day)?;
-        let base_map = self.utc_day_vwap_pair_base.get_nested(&utc_day);
-        let quote_map = self.utc_day_vwap_pair_quote.get_nested(&utc_day);
+        let pair_map = self.utc_day_vwap_pair.get_nested(&utc_day);
         let value_map = self.utc_day_vwap_value.get_nested(&utc_day);
         let mut bases = Vec::with_capacity(pair_count as usize);
         let mut quotes = Vec::with_capacity(pair_count as usize);
         let mut vwaps = Vec::with_capacity(pair_count as usize);
         for idx in 0..pair_count {
-            let (_, base, quote) = read_pair_columns(&base_map, &quote_map, &idx)?;
-            bases.push(base);
-            quotes.push(quote);
+            let entry = pair_map.read_pair(&idx)?;
+            bases.push(entry.base());
+            quotes.push(entry.quote());
             vwaps.push(value_map.read(&idx)?);
         }
         Ok((bases, quotes, vwaps))
@@ -778,7 +713,8 @@ impl OracleContract<'_> {
         let mut is_active = Vec::with_capacity(count as usize);
 
         for pid in 1..=count {
-            let (pair, base, quote) = self.pair_entry(pid)?;
+            let pair = self.pair_at(pid)?;
+            let (base, quote) = (pair.base(), pair.quote());
             bases.push(base);
             quotes.push(quote);
             is_active.push(self.vote_target.read(&pair)?);

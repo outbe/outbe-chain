@@ -49,21 +49,12 @@ impl From<Address> for AssetType {
     }
 }
 
-/// Canonical storage key for a pair of assets.
-///
-/// Order-independent: the same two assets yield one key whichever side the
-/// caller quotes first. Callers that care about quote direction compare against
-/// the registered orientation separately — the key alone does not carry it.
-pub fn asset_pair(base: AssetType, quote: AssetType) -> AddressPair {
-    AddressPair::from_addresses(base.into(), quote.into())
-}
-
 /// The `COEN/<iso>` settlement pair, e.g. `coen_iso_pair(840)` for COEN/USD.
 ///
-/// COEN is the zero address, which sorts first, so the pair is 20 zero bytes
-/// followed by the marked ISO address.
+/// COEN base, ISO quote — the orientation these pairs are registered in. COEN is
+/// also the zero address, so this happens to be the sorted key form as well.
 pub fn coen_iso_pair(iso_code: u16) -> AddressPair {
-    asset_pair(AssetType::Native, AssetType::IsoCurrency(iso_code))
+    AddressPair::quoted_assets(AssetType::Native, AssetType::IsoCurrency(iso_code))
 }
 
 /// Marker nibbles every ISO currency address carries, keeping the reserved
@@ -115,7 +106,7 @@ fn bcd_decode(packed: u16) -> Option<u16> {
 
 #[cfg(test)]
 mod tests {
-    use super::{asset_pair, coen_iso_pair, AssetType};
+    use super::{coen_iso_pair, AddressPair, AssetType};
     use alloy_primitives::{address, Address};
 
     /// Highest ISO 4217 numeric currency code.
@@ -223,16 +214,18 @@ mod tests {
         );
     }
 
+    /// The quoted value keeps the order; only the storage key drops it.
     #[test]
-    fn asset_pair_ignores_the_order_the_assets_are_quoted_in() {
-        assert_eq!(
-            asset_pair(AssetType::Native, AssetType::IsoCurrency(840)),
-            asset_pair(AssetType::IsoCurrency(840), AssetType::Native),
-        );
+    fn quoted_assets_keeps_the_order_the_assets_are_quoted_in() {
+        let forward = AddressPair::quoted_assets(AssetType::Native, AssetType::IsoCurrency(840));
+        let reverse = AddressPair::quoted_assets(AssetType::IsoCurrency(840), AssetType::Native);
+
+        assert_ne!(forward, reverse);
+        assert!(forward.same_market(&reverse));
     }
 
     #[test]
-    fn asset_pair_separates_pairs_sharing_an_asset() {
+    fn coen_iso_pair_separates_pairs_sharing_an_asset() {
         assert_ne!(coen_iso_pair(840), coen_iso_pair(978));
     }
 }

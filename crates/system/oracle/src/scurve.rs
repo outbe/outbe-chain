@@ -17,12 +17,9 @@ use crate::schema::{OracleContract, SCALE_1E18};
 /// `(bases, quotes, peak_days, peak_prices)` — every active S-curve entry.
 type ScurveTable = (Vec<Address>, Vec<Address>, Vec<u64>, Vec<U256>);
 
-/// The pair an S-curve entry belongs to, rebuilt from its two columns.
+/// The pair an S-curve entry belongs to.
 fn entry_pair(oracle: &OracleContract, idx: u32) -> Result<AddressPair> {
-    Ok(
-        crate::state::read_pair_columns(&oracle.scurve_pair_base, &oracle.scurve_pair_quote, &idx)?
-            .0,
-    )
+    oracle.scurve_pair.read_pair(&idx)
 }
 
 /// S-curve period in days.
@@ -287,16 +284,12 @@ pub fn get_all_scurve_data(oracle: &OracleContract) -> Result<ScurveTable> {
     let mut peak_prices = Vec::new();
 
     for idx in oldest..count {
-        let (_, base, quote) = crate::state::read_pair_columns(
-            &oracle.scurve_pair_base,
-            &oracle.scurve_pair_quote,
-            &idx,
-        )?;
+        let pair = entry_pair(oracle, idx)?;
         let peak_day = oracle.scurve_peak_day.read(&idx)?;
         let peak_price = oracle.scurve_peak_price.read(&idx)?;
 
-        bases.push(base);
-        quotes.push(quote);
+        bases.push(pair.base());
+        quotes.push(pair.quote());
         peak_days.push(peak_day);
         peak_prices.push(peak_price);
     }
@@ -320,7 +313,7 @@ pub fn get_all_scurve_data_for_pair(
     let mut peak_prices = Vec::new();
 
     for idx in oldest..count {
-        if entry_pair(oracle, idx)? != pair {
+        if !entry_pair(oracle, idx)?.same_market(&pair) {
             continue;
         }
         peak_days.push(oracle.scurve_peak_day.read(&idx)?);
@@ -356,13 +349,7 @@ fn store_scurve_entry_inner(
         PrecompileError::BodyReadCorruption("Oracle S-curve write index overflow".into())
     })?;
     let next_ocomp_version = oracle.next_ocomp_state_version()?;
-    crate::state::write_pair_columns(
-        &oracle.scurve_pair_base,
-        &oracle.scurve_pair_quote,
-        &idx,
-        pair.first(),
-        pair.second(),
-    )?;
+    oracle.scurve_pair.write_pair(&idx, pair)?;
     oracle.scurve_peak_day.write(&idx, peak_day)?;
     oracle.scurve_peak_price.write(&idx, peak_price)?;
     oracle.scurve_count.write(next_idx)?;
@@ -454,10 +441,9 @@ fn process_daily_scurve_inner(
     // Peak detection: D-3 < D-2 > D-1 (i.e., D-2 is the peak).
     if close_d3 < close_d2 && close_d2 > close_d1 {
         store_scurve_entry(oracle, pair, day_minus_2, close_d2)?;
-        let (base, quote) = pair.pair();
         let event = IOracle::ScurvePeakDetected {
-            base,
-            quote,
+            base: pair.base(),
+            quote: pair.quote(),
             peakPrice: close_d2,
             peakDay: day_minus_2,
         };
@@ -496,12 +482,11 @@ fn get_daily_close(oracle: &OracleContract, pair: AddressPair, day_start: u64) -
 
         // Found a snapshot in this day — look for our pair
         let pc = oracle.snapshot_pair_count.read(&idx)?;
-        let base_map = oracle.snapshot_pair_base.get_nested(&idx);
-        let quote_map = oracle.snapshot_pair_quote.get_nested(&idx);
+        let pair_map = oracle.snapshot_pair.get_nested(&idx);
         let rate_map = oracle.snapshot_rate.get_nested(&idx);
 
         for p in 0..pc {
-            if crate::state::read_pair_columns(&base_map, &quote_map, &p)?.0 == pair {
+            if pair_map.read_pair(&p)?.same_market(&pair) {
                 return rate_map.read(&p);
             }
         }
@@ -653,8 +638,9 @@ mod tests {
     /// ordinal for it. Returns ordinal 1 as the first registration.
     fn register_test_pair(oracle: &mut OracleContract) -> AddressPair {
         let quote: Address = crate::types::AssetType::IsoCurrency(840).into();
-        oracle.register_pair(Address::ZERO, quote).unwrap();
-        AddressPair::from_addresses(Address::ZERO, quote)
+        let pair = AddressPair::quoted(Address::ZERO, quote);
+        oracle.register_pair(pair).unwrap();
+        pair
     }
 
     fn write_daily_close(
@@ -664,10 +650,7 @@ mod tests {
         rate: U256,
     ) {
         oracle
-            .write_snapshot(
-                day_start + 80_000,
-                &[((pair, pair.first(), pair.second()), rate, U256::in_units(1))],
-            )
+            .write_snapshot(day_start + 80_000, &[(pair, rate, U256::in_units(1))])
             .unwrap();
     }
 

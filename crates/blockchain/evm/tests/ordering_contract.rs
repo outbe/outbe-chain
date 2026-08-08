@@ -40,10 +40,10 @@ fn seed_validator_set(storage: StorageHandle, initial_epoch: u64) {
     // reads a registered pair instead of reverting "pair not registered".
     let mut oracle = outbe_oracle::schema::OracleContract::new(storage);
     oracle
-        .register_pair(
+        .register_pair(outbe_oracle::api::AddressPair::quoted(
             outbe_oracle::api::COEN_ASSET,
             outbe_oracle::api::iso_asset(840),
-        )
+        ))
         .unwrap();
     oracle
         .set_exchange_rate(

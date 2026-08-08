@@ -5,4 +5,4 @@
 //! crate. Re-exported here so oracle code can keep saying `crate::types`.
 
 pub use outbe_primitives::address_pair::AddressPair;
-pub use outbe_primitives::asset_type::{asset_pair, coen_iso_pair, AssetType};
+pub use outbe_primitives::asset_type::{coen_iso_pair, AssetType};

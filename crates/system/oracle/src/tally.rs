@@ -282,11 +282,11 @@ pub fn run_tally(oracle: &mut OracleContract, block_number: u64, timestamp: u64)
 
     // Collect vote targets (active pairs)
     let pair_count = oracle.pair_count.read()?;
-    let mut active_pairs: Vec<(u32, AddressPair)> = Vec::new();
+    let mut active_pairs: Vec<AddressPair> = Vec::new();
     for pid in 1..=pair_count {
         let pair = oracle.pair_at(pid)?;
         if oracle.vote_target.read(&pair)? {
-            active_pairs.push((pid, pair));
+            active_pairs.push(pair);
         }
     }
     let total_targets = active_pairs.len() as u32;
@@ -297,18 +297,16 @@ pub fn run_tally(oracle: &mut OracleContract, block_number: u64, timestamp: u64)
     }
 
     // Organize votes into per-pair ballots
-    // ballot_map: (ordinal, pair) => Vec<VoteForTally>
-    let mut ballot_map: Vec<(u32, AddressPair, Vec<VoteForTally>)> = active_pairs
+    let mut ballot_map: Vec<(AddressPair, Vec<VoteForTally>)> = active_pairs
         .iter()
-        .map(|(pid, pair)| (*pid, *pair, Vec::new()))
+        .map(|pair| (*pair, Vec::new()))
         .collect();
 
     for vi in 0..voter_count {
         let voter = oracle.voter_list.get(vi)?.unwrap_or(Address::ZERO);
         let tuple_count = oracle.vote_tuple_count.read(&voter)?;
 
-        let base_map = oracle.vote_pair_base.get_nested(&voter);
-        let quote_map = oracle.vote_pair_quote.get_nested(&voter);
+        let pair_map = oracle.vote_pair.get_nested(&voter);
         let rate_map = oracle.vote_rate.get_nested(&voter);
         let volume_map = oracle.vote_volume.get_nested(&voter);
 
@@ -324,14 +322,14 @@ pub fn run_tally(oracle: &mut OracleContract, block_number: u64, timestamp: u64)
             .unwrap_or(0);
 
         for ti in 0..tuple_count {
-            let voted_pair = crate::state::read_pair_columns(&base_map, &quote_map, &ti)?.0;
+            let voted_pair = pair_map.read_pair(&ti)?;
             let rate = rate_map.read(&ti)?;
             let volume = volume_map.read(&ti)?;
 
             // Find the ballot for this pair
-            if let Some((_, _, ballot)) = ballot_map
+            if let Some((_, ballot)) = ballot_map
                 .iter_mut()
-                .find(|(_, pair, _)| *pair == voted_pair)
+                .find(|(pair, _)| pair.same_market(&voted_pair))
             {
                 ballot.push(VoteForTally {
                     exchange_rate: rate,
@@ -347,35 +345,30 @@ pub fn run_tally(oracle: &mut OracleContract, block_number: u64, timestamp: u64)
     let ref_pair_idx = ballot_map
         .iter()
         .enumerate()
-        .max_by_key(|(_, (_, _, ballot))| ballot.iter().map(|v| v.power).sum::<u64>())
+        .max_by_key(|(_, (_, ballot))| ballot.iter().map(|v| v.power).sum::<u64>())
         .map(|(idx, _)| idx)
         .unwrap_or(0);
 
     // Tally reference pair directly
-    let ref_pair_id = ballot_map[ref_pair_idx].0;
-    let ref_pair = ballot_map[ref_pair_idx].1;
+    let ref_pair = ballot_map[ref_pair_idx].0;
     let ref_median = {
-        let ballot = &mut ballot_map[ref_pair_idx].2;
+        let ballot = &mut ballot_map[ref_pair_idx].1;
         tally_pair(ballot, reward_band, &mut claims)
     };
 
     // Collect reference votes for cross-rate (voter => reference rate)
     let reference_votes: Vec<(Address, U256)> = ballot_map[ref_pair_idx]
-        .2
+        .1
         .iter()
         .map(|v| (v.voter, v.exchange_rate))
         .collect();
 
     // Update reference pair exchange rate
     if !ref_median.is_zero() {
-        // The event reports the registered orientation, which the sorted
-        // storage key cannot recover on its own.
-        let ref_entry = oracle.pair_entry(ref_pair_id)?;
-        let (_, base, quote) = ref_entry;
         oracle.update_exchange_rate(ref_pair, ref_median, block_number, timestamp)?;
         let event = IOracle::ExchangeRateUpdated {
-            base,
-            quote,
+            base: ref_pair.base(),
+            quote: ref_pair.quote(),
             rate: ref_median,
             blockNumber: block_number,
         };
@@ -385,14 +378,14 @@ pub fn run_tally(oracle: &mut OracleContract, block_number: u64, timestamp: u64)
     }
 
     // Snapshot entries to collect
-    let mut snapshot_entries: Vec<(crate::state::RegisteredPair, U256, U256)> = Vec::new();
+    let mut snapshot_entries: Vec<(AddressPair, U256, U256)> = Vec::new();
     if !ref_median.is_zero() {
         let total_volume: U256 = ballot_map[ref_pair_idx]
-            .2
+            .1
             .iter()
             .map(|v| v.volume)
             .fold(U256::ZERO, |acc, v| acc.saturating_add(v));
-        snapshot_entries.push((oracle.pair_entry(ref_pair_id)?, ref_median, total_volume));
+        snapshot_entries.push((ref_pair, ref_median, total_volume));
     }
 
     // Tally other pairs via cross-rate
@@ -401,9 +394,8 @@ pub fn run_tally(oracle: &mut OracleContract, block_number: u64, timestamp: u64)
             continue;
         }
 
-        let pair_id = entry.0;
-        let pair = entry.1;
-        let ballot = &entry.2;
+        let pair = entry.0;
+        let ballot = &entry.1;
 
         if ballot.is_empty() {
             continue;
@@ -425,12 +417,10 @@ pub fn run_tally(oracle: &mut OracleContract, block_number: u64, timestamp: u64)
                 .unwrap_or(U256::ZERO);
 
             if !actual_rate.is_zero() {
-                let entry = oracle.pair_entry(pair_id)?;
-                let (_, base, quote) = entry;
                 oracle.update_exchange_rate(pair, actual_rate, block_number, timestamp)?;
                 let event = IOracle::ExchangeRateUpdated {
-                    base,
-                    quote,
+                    base: pair.base(),
+                    quote: pair.quote(),
                     rate: actual_rate,
                     blockNumber: block_number,
                 };
@@ -442,7 +432,7 @@ pub fn run_tally(oracle: &mut OracleContract, block_number: u64, timestamp: u64)
                     .iter()
                     .map(|v| v.volume)
                     .fold(U256::ZERO, |acc, v| acc.saturating_add(v));
-                snapshot_entries.push((entry, actual_rate, total_volume));
+                snapshot_entries.push((pair, actual_rate, total_volume));
             }
         }
     }

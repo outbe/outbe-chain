@@ -12,12 +12,17 @@ pub use outbe_primitives::units::SCALE_1E18;
 /// calculation for whitelisted trading pairs.
 ///
 /// All prices and volumes use U256 with 1e18 scale factor.
-/// A pair is identified by its two asset addresses packed ascending into an
-/// [`AddressPair`]; `pair_ordinal` maps that key onto a dense 1-based index that
-/// exists only so the registry can be enumerated.
 ///
-/// Slot number == field declaration index; `StorageVec` and
-/// `Mapping<_, StorageBytes>` each occupy exactly one slot. `openings.rs` and
+/// A pair is an [`AddressPair`]: its two asset addresses in the orientation they
+/// were quoted. As a *key* it sorts (so both directions of a market share one
+/// slot); as a *value* it spans two consecutive words, base then quote.
+/// `pair_index` maps a pair onto a dense 1-based index, which exists only so the
+/// registry can be enumerated, and `pair_by_index` walks back.
+///
+/// Slot number == field declaration index; every field below occupies exactly
+/// one, including `Mapping<_, AddressPair>` — its second word lives at
+/// `keccak256(key ‖ slot) + 1`, inside the key's own hashed namespace rather
+/// than in the next declaration slot. `openings.rs` and
 /// `scripts/seed_genesis.py` hardcode these numbers — see the slot-parity tests
 /// in `tests/state.rs` before reordering anything.
 #[contract(addr = ORACLE_ADDRESS)]
@@ -46,11 +51,11 @@ pub struct OracleContract {
     // enumeration relies on that.
     pub pair_count: Slot<u32>,
     // Slot 9 (`pair_id_to_hash`) is a retired hole. The reverse lookup it served
-    // is now `pair_ordinal_base`/`pair_ordinal_quote` at slots 43-44, which
-    // rebuild the key itself instead of a hash of it. Do not reuse.
-    // slot 10: mapping(pair => ordinal) (0 = not registered)
+    // is now `pair_by_index` at slot 43, which stores the pair itself instead of
+    // a hash of it. Do not reuse.
+    // slot 10: mapping(pair => index) (0 = not registered)
     #[slot(10)]
-    pub pair_ordinal: Mapping<AddressPair, u32>,
+    pub pair_index: Mapping<AddressPair, u32>,
     // slot 11: mapping(pair => is_vote_target)
     pub vote_target: Mapping<AddressPair, bool>,
 
@@ -80,9 +85,8 @@ pub struct OracleContract {
     pub vote_exists: Mapping<Address, bool>,
     // slot 20: mapping(validator => number_of_tuples)
     pub vote_tuple_count: Mapping<Address, u32>,
-    // slot 21: mapping(validator => mapping(tuple_idx => pair base))
-    // Paired with `vote_pair_quote` at slot 65 — see the quote-column block.
-    pub vote_pair_base: Mapping<Address, Mapping<u32, Address>>,
+    // slot 21: mapping(validator => mapping(tuple_idx => pair))
+    pub vote_pair: Mapping<Address, Mapping<u32, AddressPair>>,
     // slot 22: mapping(validator => mapping(tuple_idx => rate))
     pub vote_rate: Mapping<Address, Mapping<u32, U256>>,
     // slot 23: mapping(validator => mapping(tuple_idx => volume))
@@ -101,9 +105,8 @@ pub struct OracleContract {
     pub snapshot_timestamp: Mapping<u64, u64>,
     // slot 28: mapping(snapshot_idx => pair_count in this snapshot)
     pub snapshot_pair_count: Mapping<u64, u32>,
-    // slot 29: mapping(snapshot_idx => mapping(pair_index => pair base))
-    // Paired with `snapshot_pair_quote` at slot 66.
-    pub snapshot_pair_base: Mapping<u64, Mapping<u32, Address>>,
+    // slot 29: mapping(snapshot_idx => mapping(entry_idx => pair))
+    pub snapshot_pair: Mapping<u64, Mapping<u32, AddressPair>>,
     // slot 30: mapping(snapshot_idx => mapping(pair_index => rate))
     pub snapshot_rate: Mapping<u64, Mapping<u32, U256>>,
     // slot 31: mapping(snapshot_idx => mapping(pair_index => volume))
@@ -118,9 +121,8 @@ pub struct OracleContract {
     // === S-Curve Active Entries (slots 34-39) ===
     // slot 34: number of active S-curve entries
     pub scurve_count: Slot<u32>,
-    // slot 35: mapping(entry_idx => pair base) for which pair
-    // Paired with `scurve_pair_quote` at slot 67.
-    pub scurve_pair_base: Mapping<u32, Address>,
+    // slot 35: mapping(entry_idx => pair) for which pair
+    pub scurve_pair: Mapping<u32, AddressPair>,
     // slot 36: mapping(entry_idx => peak_day_timestamp) UTC midnight
     pub scurve_peak_day: Mapping<u32, u64>,
     // slot 37: mapping(entry_idx => peak_price) 1e18 scaled
@@ -133,24 +135,22 @@ pub struct OracleContract {
     // === Settlement Currencies — retired (slots 40-42) ===
     // The settlement pair is derived, not stored: `coen_iso_pair(iso)` packs the
     // zero address with the marked ISO address, and an ISO is usable exactly
-    // when that pair is present in `pair_ordinal`. Slots 40
+    // when that pair is present in `pair_index`. Slots 40
     // (`settlement_count`), 41 (`settlement_iso_to_denom`) and 42
     // (`settlement_iso_to_pair`) are retired holes with no live writer. Do not
     // reuse them.
 
-    // === Ordinal -> Pair Reverse Lookup (slots 43-44) ===
+    // === Index -> Pair Reverse Lookup (slot 43) ===
     // The only way to enumerate the registry: mappings are not iterable, so
-    // `1..=pair_count` walks these two columns to rebuild each `AddressPair`.
-    // Both are written together by `register_pair` and read together by
-    // `pair_at`; a half-written ordinal would decode as a different pair.
-    // slot 43 — pinned: without this anchor the running slot counter would
-    // slide these two down into the retired 40-42 hole.
+    // `1..=pair_count` walks this column. It holds the orientation the pair was
+    // registered in, which the sorted storage key cannot recover on its own.
+    // slot 43 — pinned: without this anchor the running slot counter would slide
+    // it down into the retired 40-42 hole.
     #[slot(43)]
-    pub pair_ordinal_base: Mapping<u32, Address>,
-    // slot 44
-    pub pair_ordinal_quote: Mapping<u32, Address>,
-    // Slots 45 (`settlement_index_to_iso`) and 46
-    // (`settlement_iso_to_denom_string`) are retired holes.
+    pub pair_by_index: Mapping<u32, AddressPair>,
+    // Slots 44 (`pair_ordinal_quote`), 45 (`settlement_index_to_iso`) and 46
+    // (`settlement_iso_to_denom_string`) are retired holes. 44 held the second
+    // half of the registry entry back when a pair needed two parallel columns.
 
     // === WorldwideDay VWAP Snapshots (slots 47-52) ===
     // slot 47: mapping(worldwide_day => exists)
@@ -162,9 +162,8 @@ pub struct OracleContract {
     pub worldwide_day_vwap_end: Mapping<WorldwideDay, u64>,
     // slot 50: mapping(worldwide_day => pair_count)
     pub worldwide_day_vwap_pair_count: Mapping<WorldwideDay, u32>,
-    // slot 51: mapping(worldwide_day => mapping(index => pair base))
-    // Paired with `worldwide_day_vwap_pair_quote` at slot 68.
-    pub worldwide_day_vwap_pair_base: Mapping<WorldwideDay, Mapping<u32, Address>>,
+    // slot 51: mapping(worldwide_day => mapping(entry_idx => pair))
+    pub worldwide_day_vwap_pair: Mapping<WorldwideDay, Mapping<u32, AddressPair>>,
     // slot 52: mapping(worldwide_day => mapping(index => vwap))
     pub worldwide_day_vwap_value: Mapping<WorldwideDay, Mapping<u32, U256>>,
 
@@ -193,9 +192,8 @@ pub struct OracleContract {
     //
     // mapping(utc_day => number of (pair, vwap) entries finalized for the day)
     pub utc_day_vwap_pair_count: Mapping<u32, u32>,
-    // mapping(utc_day => mapping(entry_idx => pair base))
-    // Paired with `utc_day_vwap_pair_quote` at slot 69.
-    pub utc_day_vwap_pair_base: Mapping<u32, Mapping<u32, Address>>,
+    // mapping(utc_day => mapping(entry_idx => pair))
+    pub utc_day_vwap_pair: Mapping<u32, Mapping<u32, AddressPair>>,
     // mapping(utc_day => mapping(entry_idx => vwap)) 1e18 scaled
     pub utc_day_vwap_value: Mapping<u32, Mapping<u32, U256>>,
     // Monotonic watermark: most recent fully-closed UTC day that has been
@@ -221,21 +219,7 @@ pub struct OracleContract {
     pub ocomp_day_type_vwap_by_utc_day: Mapping<u32, U256>,
     // Advances for every Oracle mutation visible to OCOMP pre-admission.
     pub ocomp_state_version: Slot<u64>,
-
-    // === Pair Quote Columns (slots 65-69) ===
-    // A pair does not fit in one word, so each identity column above stores the
-    // registered `base` and these store the matching `quote`. Never write one
-    // without the other — everything goes through `write_pair_columns` /
-    // `read_pair_columns`, which also keeps both SSTOREs inside the same
-    // checkpoint so a partial write cannot survive.
-    // slot 65: companion of `vote_pair_base` (21)
-    pub vote_pair_quote: Mapping<Address, Mapping<u32, Address>>,
-    // slot 66: companion of `snapshot_pair_base` (29)
-    pub snapshot_pair_quote: Mapping<u64, Mapping<u32, Address>>,
-    // slot 67: companion of `scurve_pair_base` (35)
-    pub scurve_pair_quote: Mapping<u32, Address>,
-    // slot 68: companion of `worldwide_day_vwap_pair_base` (51)
-    pub worldwide_day_vwap_pair_quote: Mapping<WorldwideDay, Mapping<u32, Address>>,
-    // slot 69: companion of `utc_day_vwap_pair_base` (57)
-    pub utc_day_vwap_pair_quote: Mapping<u32, Mapping<u32, Address>>,
+    // Slots 65-69 held the `quote` half of the five pair columns above, back
+    // when a pair needed two parallel `Address` mappings. They are trailing
+    // retired holes: nothing follows, so nothing shifted when they went.
 }

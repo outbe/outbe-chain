@@ -159,7 +159,7 @@ pub fn init_from_genesis(oracle: &mut OracleContract, config: &OracleGenesisConf
 
     // Register trading pairs.
     for (base, quote) in &config.pairs {
-        oracle.register_pair(*base, *quote)?;
+        oracle.register_pair(AddressPair::quoted(*base, *quote))?;
     }
 
     // Set initial exchange rates (system caller = Address::ZERO).
@@ -212,15 +212,15 @@ pub fn init_from_genesis(oracle: &mut OracleContract, config: &OracleGenesisConf
     for snapshot in &config.snapshots {
         let mut entries = Vec::with_capacity(snapshot.entries.len());
         for (base, quote, rate, volume) in &snapshot.entries {
-            let (pair, _) = oracle.require_pair(*base, *quote)?;
-            entries.push(((pair, *base, *quote), *rate, *volume));
+            let pair = oracle.require_pair(*base, *quote)?;
+            entries.push((pair, *rate, *volume));
         }
         oracle.write_snapshot(snapshot.timestamp, &entries)?;
     }
 
     // Import S-curve entries.
     for entry in &config.scurve_entries {
-        let (pair, _) = oracle.require_pair(entry.base, entry.quote)?;
+        let pair = oracle.require_pair(entry.base, entry.quote)?;
         crate::scurve::store_scurve_entry(oracle, pair, entry.peak_day, entry.peak_price)?;
     }
 
@@ -263,12 +263,12 @@ pub fn export_genesis(
     let mut initial_rates = Vec::new();
 
     for pair_id in 1..=pair_count {
-        let (base, quote, pair) = export_pair_metadata(oracle, pair_id)?;
+        let pair = export_pair_metadata(oracle, pair_id)?;
         let rate = oracle.exchange_rate.read(&pair)?;
         if !rate.is_zero() {
-            initial_rates.push((base, quote, rate));
+            initial_rates.push((pair.base(), pair.quote(), rate));
         }
-        pairs.push((base, quote));
+        pairs.push((pair.base(), pair.quote()));
     }
 
     // Export authoritative role-scoped feeder delegations.
@@ -305,17 +305,16 @@ pub fn export_genesis(
     for idx in oldest_idx..write_idx {
         let timestamp = oracle.snapshot_timestamp.read(&idx)?;
         let pc = oracle.snapshot_pair_count.read(&idx)?;
-        let base_map = oracle.snapshot_pair_base.get_nested(&idx);
-        let quote_map = oracle.snapshot_pair_quote.get_nested(&idx);
+        let pair_map = oracle.snapshot_pair.get_nested(&idx);
         let rate_map = oracle.snapshot_rate.get_nested(&idx);
         let volume_map = oracle.snapshot_volume.get_nested(&idx);
 
         let mut entries = Vec::with_capacity(pc as usize);
         for p in 0..pc {
-            let (_, base, quote) = crate::state::read_pair_columns(&base_map, &quote_map, &p)?;
+            let pair = pair_map.read_pair(&p)?;
             let rate = rate_map.read(&p)?;
             let volume = volume_map.read(&p)?;
-            entries.push((base, quote, rate, volume));
+            entries.push((pair.base(), pair.quote(), rate, volume));
         }
         snapshots.push(GenesisSnapshot { timestamp, entries });
     }
@@ -325,16 +324,12 @@ pub fn export_genesis(
     let scurve_oldest = oracle.scurve_oldest_idx.read()?;
     let mut scurve_entries = Vec::new();
     for idx in scurve_oldest..scurve_count {
-        let (_, base, quote) = crate::state::read_pair_columns(
-            &oracle.scurve_pair_base,
-            &oracle.scurve_pair_quote,
-            &idx,
-        )?;
+        let pair = oracle.scurve_pair.read_pair(&idx)?;
         let peak_day = oracle.scurve_peak_day.read(&idx)?;
         let peak_price = oracle.scurve_peak_price.read(&idx)?;
         scurve_entries.push(GenesisScurveEntry {
-            base,
-            quote,
+            base: pair.base(),
+            quote: pair.quote(),
             peak_day,
             peak_price,
         });
@@ -417,7 +412,7 @@ fn import_aggregate_votes(
         for (base, quote, _, _) in &vote.entries {
             // `require_pair` also rejects a pair quoted against its registered
             // direction, so an imported vote cannot smuggle in an inverted rate.
-            let (pair, _) = oracle.require_pair(*base, *quote).map_err(|_| {
+            let pair = oracle.require_pair(*base, *quote).map_err(|_| {
                 PrecompileError::Revert("aggregate vote pair is not registered".into())
             })?;
             if !seen_pairs.insert(pair) {
@@ -441,14 +436,13 @@ fn import_aggregate_votes(
             .vote_tuple_count
             .write(&validator, entries.len() as u32)?;
 
-        let base_map = oracle.vote_pair_base.get_nested(&validator);
-        let quote_map = oracle.vote_pair_quote.get_nested(&validator);
+        let pair_map = oracle.vote_pair.get_nested(&validator);
         let rate_map = oracle.vote_rate.get_nested(&validator);
         let volume_map = oracle.vote_volume.get_nested(&validator);
 
         for (idx, (base, quote, rate, volume)) in entries.into_iter().enumerate() {
             let idx = idx as u32;
-            crate::state::write_pair_columns(&base_map, &quote_map, &idx, base, quote)?;
+            pair_map.write_pair(&idx, AddressPair::quoted(base, quote))?;
             rate_map.write(&idx, rate)?;
             volume_map.write(&idx, volume)?;
         }
@@ -488,29 +482,29 @@ fn export_aggregate_votes(oracle: &OracleContract) -> Result<Vec<GenesisAggregat
         }
 
         let tuple_count = oracle.vote_tuple_count.read(&validator)?;
-        let base_map = oracle.vote_pair_base.get_nested(&validator);
-        let quote_map = oracle.vote_pair_quote.get_nested(&validator);
+        let pair_map = oracle.vote_pair.get_nested(&validator);
         let rate_map = oracle.vote_rate.get_nested(&validator);
         let volume_map = oracle.vote_volume.get_nested(&validator);
         let mut seen_pairs = BTreeSet::new();
         let mut entries = Vec::with_capacity(tuple_count as usize);
 
         for tuple_idx in 0..tuple_count {
-            let (pair, base, quote) =
-                crate::state::read_pair_columns(&base_map, &quote_map, &tuple_idx)?;
-            if oracle.pair_ordinal_of(pair)? == 0 {
+            let pair = pair_map.read_pair(&tuple_idx)?;
+            if oracle.pair_index_of(pair)? == 0 {
                 return Err(PrecompileError::Revert(
                     "aggregate vote pair is not registered".into(),
                 ));
             }
-            if !seen_pairs.insert(pair) {
+            // Deduplicate on the market, not the quote direction, so the same
+            // pair submitted both ways round is still caught.
+            if !seen_pairs.insert(pair.sorted()) {
                 return Err(PrecompileError::Revert(
                     "duplicate pair in aggregate vote".into(),
                 ));
             }
             entries.push((
-                base,
-                quote,
+                pair.base(),
+                pair.quote(),
                 rate_map.read(&tuple_idx)?,
                 volume_map.read(&tuple_idx)?,
             ));
@@ -522,21 +516,18 @@ fn export_aggregate_votes(oracle: &OracleContract) -> Result<Vec<GenesisAggregat
     Ok(aggregate_votes)
 }
 
-/// The registered pair at `ordinal` as `(key, base, quote)`.
+/// The registered pair at `index`, checked against the forward map.
 ///
-/// The old probe was "the stored pair hash is non-zero"; with addresses the zero
-/// address is a legitimate asset (native COEN), so absence is proven by round
-/// tripping the rebuilt key back through `pair_ordinal` instead. That also keeps
-/// the corruption check the hash comparison used to provide.
-fn export_pair_metadata(
-    oracle: &OracleContract,
-    pair_id: u32,
-) -> Result<(Address, Address, AddressPair)> {
-    let (pair, base, quote) = oracle.pair_entry(pair_id)?;
-    if oracle.pair_ordinal_of(pair)? != pair_id {
+/// The zero address is a legitimate asset (native COEN), so an unwritten entry
+/// cannot be spotted by a zero check. Round-tripping the pair back through
+/// `pair_index` proves it is really there and doubles as the corruption check
+/// the old pair-hash comparison used to provide.
+fn export_pair_metadata(oracle: &OracleContract, pair_id: u32) -> Result<AddressPair> {
+    let pair = oracle.pair_at(pair_id)?;
+    if oracle.pair_index_of(pair)? != pair_id {
         return Err(PrecompileError::Revert(format!(
             "missing pair metadata for pair_id {pair_id}"
         )));
     }
-    Ok((base, quote, pair))
+    Ok(pair)
 }

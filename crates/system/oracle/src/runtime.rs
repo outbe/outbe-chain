@@ -16,14 +16,14 @@ use crate::schema::{OracleContract, SCALE_1E18};
 
 /// `(pairs, values, lookbacks)` — one row per active vote-target pair, each
 /// carrying the orientation it was registered in.
-type PairSeries = (Vec<crate::state::RegisteredPair>, Vec<U256>, Vec<u64>);
+type PairSeries = (Vec<AddressPair>, Vec<U256>, Vec<u64>);
 
 impl OracleContract<'_> {
     /// Initializes the fixed OCOMP Oracle projection for a fresh devnet.
     pub fn initialize_fresh_ocomp_profile(&mut self) -> Result<()> {
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
-            if self.pair_ordinal_of(DAY_TYPE_PAIR_KEY)? == 0 {
+            if self.pair_index_of(DAY_TYPE_PAIR_KEY)? == 0 {
                 return Err(PrecompileError::Fatal(
                     "Oracle OCOMP day-type pair is not registered".into(),
                 ));
@@ -105,7 +105,7 @@ impl OracleContract<'_> {
         // notice.
         let mut resolved = Vec::with_capacity(tuples.len());
         for (base, quote, _, _) in tuples {
-            resolved.push(self.require_pair(*base, *quote)?.0);
+            resolved.push(self.require_pair(*base, *quote)?);
         }
 
         // Check for duplicate pairs in the submission. Kept separate from the
@@ -145,14 +145,15 @@ impl OracleContract<'_> {
         let tuple_count = tuples.len() as u32;
         self.vote_tuple_count.write(&validator, tuple_count)?;
 
-        let base_map = self.vote_pair_base.get_nested(&validator);
-        let quote_map = self.vote_pair_quote.get_nested(&validator);
+        let pair_map = self.vote_pair.get_nested(&validator);
         let rate_map = self.vote_rate.get_nested(&validator);
         let volume_map = self.vote_volume.get_nested(&validator);
 
-        for (i, (base, quote, rate, volume)) in tuples.iter().enumerate() {
+        // Store the pairs `require_pair` already resolved rather than re-packing
+        // the raw tuples, so what lands in storage is exactly what was validated.
+        for (i, (pair, (_, _, rate, volume))) in resolved.iter().zip(tuples).enumerate() {
             let idx = i as u32;
-            crate::state::write_pair_columns(&base_map, &quote_map, &idx, *base, *quote)?;
+            pair_map.write_pair(&idx, *pair)?;
             rate_map.write(&idx, *rate)?;
             volume_map.write(&idx, *volume)?;
         }
@@ -234,13 +235,12 @@ impl OracleContract<'_> {
 
         for idx in range_start..range_end {
             let pc = self.snapshot_pair_count.read(&idx)?;
-            let base_map = self.snapshot_pair_base.get_nested(&idx);
-            let quote_map = self.snapshot_pair_quote.get_nested(&idx);
+            let pair_map = self.snapshot_pair.get_nested(&idx);
             let rate_map = self.snapshot_rate.get_nested(&idx);
             let volume_map = self.snapshot_volume.get_nested(&idx);
 
             for p in 0..pc {
-                if crate::state::read_pair_columns(&base_map, &quote_map, &p)?.0 != pair {
+                if !pair_map.read_pair(&p)?.same_market(&pair) {
                     continue;
                 }
 
@@ -305,12 +305,11 @@ impl OracleContract<'_> {
             }
 
             let pc = self.snapshot_pair_count.read(&idx)?;
-            let base_map = self.snapshot_pair_base.get_nested(&idx);
-            let quote_map = self.snapshot_pair_quote.get_nested(&idx);
+            let pair_map = self.snapshot_pair.get_nested(&idx);
             let rate_map = self.snapshot_rate.get_nested(&idx);
 
             for p in 0..pc {
-                if crate::state::read_pair_columns(&base_map, &quote_map, &p)?.0 == pair {
+                if pair_map.read_pair(&p)?.same_market(&pair) {
                     data.push((ts, rate_map.read(&p)?));
                     break;
                 }
@@ -378,12 +377,12 @@ impl OracleContract<'_> {
         let mut lookbacks = Vec::new();
 
         for pid in 1..=count {
-            let entry = self.pair_entry(pid)?;
-            if !self.vote_target.read(&entry.0)? {
+            let entry = self.pair_at(pid)?;
+            if !self.vote_target.read(&entry)? {
                 continue;
             }
 
-            match self.calculate_twap(entry.0, now, lookback_seconds) {
+            match self.calculate_twap(entry, now, lookback_seconds) {
                 Ok(twap) => {
                     pairs.push(entry);
                     twaps.push(twap);
@@ -419,12 +418,12 @@ impl OracleContract<'_> {
         let mut lookbacks = Vec::new();
 
         for pid in 1..=count {
-            let entry = self.pair_entry(pid)?;
-            if !self.vote_target.read(&entry.0)? {
+            let entry = self.pair_at(pid)?;
+            if !self.vote_target.read(&entry)? {
                 continue;
             }
 
-            match self.calculate_vwap(entry.0, start_time, end_time) {
+            match self.calculate_vwap(entry, start_time, end_time) {
                 Ok(vwap) => {
                     pairs.push(entry);
                     vwaps.push(vwap);
@@ -478,14 +477,11 @@ impl OracleContract<'_> {
         self.worldwide_day_vwap_pair_count
             .write(&worldwide_day, pairs.len() as u32)?;
 
-        let base_map = self.worldwide_day_vwap_pair_base.get_nested(&worldwide_day);
-        let quote_map = self
-            .worldwide_day_vwap_pair_quote
-            .get_nested(&worldwide_day);
+        let pair_map = self.worldwide_day_vwap_pair.get_nested(&worldwide_day);
         let value_map = self.worldwide_day_vwap_value.get_nested(&worldwide_day);
-        for (idx, ((_, base, quote), vwap)) in pairs.iter().zip(vwaps.iter()).enumerate() {
+        for (idx, (pair, vwap)) in pairs.iter().zip(vwaps.iter()).enumerate() {
             let i = idx as u32;
-            crate::state::write_pair_columns(&base_map, &quote_map, &i, *base, *quote)?;
+            pair_map.write_pair(&i, *pair)?;
             value_map.write(&i, *vwap)?;
         }
 
@@ -530,21 +526,20 @@ impl OracleContract<'_> {
         // conversion is lossless; `unwrap_or` keeps it panic-free per runtime rules.
         let count = u32::try_from(pairs.len()).unwrap_or(u32::MAX);
         self.utc_day_vwap_pair_count.write(&utc_day, count)?;
-        let base_map = self.utc_day_vwap_pair_base.get_nested(&utc_day);
-        let quote_map = self.utc_day_vwap_pair_quote.get_nested(&utc_day);
+        let pair_map = self.utc_day_vwap_pair.get_nested(&utc_day);
         let value_map = self.utc_day_vwap_value.get_nested(&utc_day);
         for i in 0..count {
-            let (pair, base, quote) = pairs[i as usize];
+            let pair = pairs[i as usize];
             let vwap = vwaps[i as usize];
-            crate::state::write_pair_columns(&base_map, &quote_map, &i, base, quote)?;
+            pair_map.write_pair(&i, pair)?;
             value_map.write(&i, vwap)?;
-            if profile_ready && pair == DAY_TYPE_PAIR_KEY {
+            if profile_ready && pair.same_market(&DAY_TYPE_PAIR_KEY) {
                 self.ocomp_day_type_vwap_by_utc_day.write(&utc_day, vwap)?;
             }
             let event = IOracle::VwapCalculated {
                 utcDay: utc_day,
-                base,
-                quote,
+                base: pair.base(),
+                quote: pair.quote(),
                 vwap,
             };
             let event_result = self

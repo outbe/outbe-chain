@@ -85,10 +85,10 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
 
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(
+            .register_pair(outbe_oracle::api::AddressPair::quoted(
                 outbe_oracle::api::COEN_ASSET,
                 outbe_oracle::api::iso_asset(840),
-            )
+            ))
             .unwrap();
         outbe_oracle::api::initialize_fresh_ocomp_profile(storage.clone()).unwrap();
 
@@ -1178,10 +1178,10 @@ fn prepare_request_fixture_with_day_type(
 
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(
+            .register_pair(outbe_oracle::api::AddressPair::quoted(
                 outbe_oracle::api::COEN_ASSET,
                 outbe_oracle::api::iso_asset(840),
-            )
+            ))
             .unwrap();
         // `oracle_ready` gates OCOMP admission: when false the Oracle profile is
         // left un-armed so the terminal request defers with OracleProfileNotReady
@@ -1286,10 +1286,10 @@ fn prepare_ready_days_fixture(
         begin_block(storage.clone(), &scope).unwrap();
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(
+            .register_pair(outbe_oracle::api::AddressPair::quoted(
                 outbe_oracle::api::COEN_ASSET,
                 outbe_oracle::api::iso_asset(840),
-            )
+            ))
             .unwrap();
         // When false the Oracle profile is left un-armed so the terminal request
         // defers with OracleProfileNotReady (arm it mid-test to make a day eligible).

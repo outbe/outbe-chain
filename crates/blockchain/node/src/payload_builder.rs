@@ -946,10 +946,10 @@ mod tests {
 
             let mut oracle = outbe_oracle::schema::OracleContract::new(storage);
             oracle
-                .register_pair(
+                .register_pair(outbe_oracle::api::AddressPair::quoted(
                     outbe_oracle::api::COEN_ASSET,
                     outbe_oracle::api::iso_asset(840),
-                )
+                ))
                 .expect("oracle pair seed succeeds");
             oracle
                 .set_exchange_rate(

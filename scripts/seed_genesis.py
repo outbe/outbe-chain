@@ -492,6 +492,20 @@ class StorageBuilder:
         k = mapping_key(key_bytes, base_slot)
         self.entries[k] = "0x" + value_bytes.hex()
 
+    def set_mapping_pair(self, base_slot: int, key_bytes: bytes, base: str, quote: str):
+        """
+        Set a two-word `Mapping<K, AddressPair>` entry.
+
+        An oracle pair is 40 bytes and a storage word is 32, so the value spans
+        the key's mapping slot and the one after it — base then quote, the same
+        layout Solidity gives `mapping(K => struct { address; address; })`.
+        Both words are written in the pair's quoted direction, which is what
+        reads compare against.
+        """
+        slot = int(mapping_key(key_bytes, base_slot), 16)
+        self.set_raw_slot(slot, int.from_bytes(asset_address(base), "big"))
+        self.set_raw_slot(slot + 1, int.from_bytes(asset_address(quote), "big"))
+
 
 def data_slot(base_slot: int) -> int:
     """Solidity dynamic bytes/string data slot: keccak256(base_slot)."""
@@ -1403,10 +1417,9 @@ def seed_oracle(storage: StorageBuilder, config: dict):
 
         storage.set_mapping(10, h, idx)
         storage.set_mapping(11, h, 1 if pair.get("vote_target", True) else 0)
-        # pair_ordinal_base / pair_ordinal_quote (macro slots 43/44). Stored in
-        # the quoting direction given, which reads must match.
-        storage.set_mapping(43, u32_bytes(idx), int.from_bytes(asset_address(base), "big"))
-        storage.set_mapping(44, u32_bytes(idx), int.from_bytes(asset_address(quote), "big"))
+        # pair_by_index (macro slot 43), stored in the quoting direction given,
+        # which reads must match.
+        storage.set_mapping_pair(43, u32_bytes(idx), base, quote)
 
         rate = parse_int(pair.get("initial_rate", "0"))
         if rate:
@@ -1457,14 +1470,8 @@ def seed_oracle(storage: StorageBuilder, config: dict):
                     f"scurve seed pair is not registered: {pair[0]}/{pair[1]}"
                 )
             peak_day_ts = wwd_to_day_timestamp(parse_int(sc["peak_day"]))
-            # scurve_pair_base (35) / scurve_pair_quote (67): a pair is two
-            # addresses, so each entry column has a quote companion.
-            storage.set_mapping(
-                35, u32_bytes(idx), int.from_bytes(asset_address(pair[0]), "big")
-            )
-            storage.set_mapping(
-                67, u32_bytes(idx), int.from_bytes(asset_address(pair[1]), "big")
-            )
+            # scurve_pair (35): a two-word pair value, base then base+1.
+            storage.set_mapping_pair(35, u32_bytes(idx), pair[0], pair[1])
             storage.set_mapping(36, u32_bytes(idx), peak_day_ts)  # scurve_peak_day
             storage.set_mapping(
                 37, u32_bytes(idx), parse_int(sc["peak_price"])

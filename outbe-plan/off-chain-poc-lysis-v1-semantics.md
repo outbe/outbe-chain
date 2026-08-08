@@ -303,7 +303,7 @@ and independent implementations.
 
 For every logical price observation:
 
-1. map ISO code through `coen_iso_pair` and `pair_ordinal`;
+1. map ISO code through `coen_iso_pair` and `pair_index`;
 2. reject an unregistered/zero pair ID;
 3. read the WWD VWAP if present, otherwise use zero;
 4. evaluate every applicable S-curve record for that pair at WWD UTC day;

@@ -25,11 +25,11 @@ pub const DAY_TYPE_PAIR: (&str, &str) = ("COEN", "840");
 /// ISO 4217 code the day-type pair is quoted in.
 pub const DAY_TYPE_ISO: u16 = 840;
 
-/// [`DAY_TYPE_PAIR`] as a storage key: COEN (the zero address, which sorts
-/// first) quoted in ISO 840.
+/// The day-type pair: COEN quoted in ISO 840. COEN is the zero address, so this
+/// is also its sorted storage-key form.
 ///
-/// Spelled as a literal because `AddressPair::from_addresses` sorts, and
-/// neither `Ord` nor `copy_from_slice` is const. The
+/// Spelled as a literal because `AddressPair::quoted` is not const —
+/// `copy_from_slice` is not. The
 /// `the_day_type_pair_key_is_the_coen_iso_840_pair` test is what keeps it
 /// honest.
 pub const DAY_TYPE_PAIR_KEY: AddressPair = AddressPair::new([

@@ -505,19 +505,12 @@ fn qualify_series<'a>(
 fn setup_pair(oracle: &OracleContract) -> AddressPair {
     let pair = outbe_oracle::api::coen_iso_pair(QUALIFIER_REFERENCE_ISO);
     let pair_id = 1u32;
-    oracle.pair_ordinal.write(&pair, pair_id).unwrap();
+    oracle.pair_index.write(&pair, pair_id).unwrap();
     // Full registry entry so the production VWAP paths (calculate_vwaps
-    // iterating registered vote-target pairs) see the pair too. The two
-    // ordinal columns are what `pair_at` rebuilds the key from.
+    // iterating registered vote-target pairs) see the pair too. `pair_at` reads
+    // the reverse column.
     oracle.pair_count.write(pair_id).unwrap();
-    oracle
-        .pair_ordinal_base
-        .write(&pair_id, pair.first())
-        .unwrap();
-    oracle
-        .pair_ordinal_quote
-        .write(&pair_id, pair.second())
-        .unwrap();
+    oracle.pair_by_index.write_pair(&pair_id, pair).unwrap();
     oracle.vote_target.write(&pair, true).unwrap();
     pair
 }
@@ -525,14 +518,9 @@ fn setup_pair(oracle: &OracleContract) -> AddressPair {
 fn set_vwap(oracle: &OracleContract, utc_day: u32, pair: AddressPair, value: U256) {
     oracle.utc_day_vwap_pair_count.write(&utc_day, 1).unwrap();
     oracle
-        .utc_day_vwap_pair_base
+        .utc_day_vwap_pair
         .get_nested(&utc_day)
-        .write(&0, pair.first())
-        .unwrap();
-    oracle
-        .utc_day_vwap_pair_quote
-        .get_nested(&utc_day)
-        .write(&0, pair.second())
+        .write_pair(&0, pair)
         .unwrap();
     oracle
         .utc_day_vwap_value
@@ -806,7 +794,7 @@ fn scan_and_qualify_promotes_matured_series() {
         let oracle = OracleContract::new(s.clone());
         let pair = outbe_oracle::api::coen_iso_pair(QUALIFIER_REFERENCE_ISO);
         // The ISO resolves through the pair registry, so the pair must exist.
-        oracle.pair_ordinal.write(&pair, 1).unwrap();
+        oracle.pair_index.write(&pair, 1).unwrap();
         oracle
             .exchange_rate
             .write(&pair, U256::from(EXPECTED_FLOOR) + U256::from(1))
@@ -887,11 +875,7 @@ fn scan_and_call_reads_daily_vwap_at_midnight() {
                 .write_snapshot(
                     noon,
                     &[(
-                        (
-                            outbe_oracle::api::coen_iso_pair(QUALIFIER_REFERENCE_ISO),
-                            outbe_oracle::api::COEN_ASSET,
-                            outbe_oracle::api::iso_asset(QUALIFIER_REFERENCE_ISO),
-                        ),
+                        outbe_oracle::api::coen_iso_pair(QUALIFIER_REFERENCE_ISO),
                         breach,
                         U256::from(1),
                     )],
@@ -963,7 +947,7 @@ fn scan_isolates_bad_series() {
         let oracle = OracleContract::new(s.clone());
         let pair = outbe_oracle::api::coen_iso_pair(QUALIFIER_REFERENCE_ISO);
         // The ISO resolves through the pair registry, so the pair must exist.
-        oracle.pair_ordinal.write(&pair, 1).unwrap();
+        oracle.pair_index.write(&pair, 1).unwrap();
         oracle
             .exchange_rate
             .write(&pair, U256::from(EXPECTED_FLOOR) + U256::from(1))
@@ -1019,7 +1003,7 @@ fn scan_caps_work_per_block_and_resumes_via_cursor() {
         let oracle = OracleContract::new(s.clone());
         let pair = outbe_oracle::api::coen_iso_pair(QUALIFIER_REFERENCE_ISO);
         // The ISO resolves through the pair registry, so the pair must exist.
-        oracle.pair_ordinal.write(&pair, 1).unwrap();
+        oracle.pair_index.write(&pair, 1).unwrap();
         // Rate well above both floors so both bins are eligible.
         oracle
             .exchange_rate

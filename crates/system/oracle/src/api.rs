@@ -7,7 +7,7 @@ use crate::schema::OracleContract;
 use crate::scurve;
 
 pub use crate::constants::{DAY_TYPE_ISO, DAY_TYPE_PAIR, DAY_TYPE_PAIR_KEY};
-pub use crate::types::{asset_pair, coen_iso_pair, AddressPair, AssetType};
+pub use crate::types::{coen_iso_pair, AddressPair, AssetType};
 
 use alloy_primitives::{Address, U256};
 use outbe_common::WorldwideDay;
@@ -92,7 +92,7 @@ pub fn check_reference_currency_with_storage(storage: StorageHandle, iso_code: u
 pub fn coen_rate_for(storage: StorageHandle, iso_code: u16) -> Result<Option<U256>> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
     let pair = coen_iso_pair(iso_code);
-    if oracle.pair_ordinal_of(pair)? == 0 {
+    if oracle.pair_index_of(pair)? == 0 {
         return Ok(None);
     }
     oracle.exchange_rate.read(&pair).map(Some)
@@ -105,7 +105,7 @@ pub fn coen_rate_for(storage: StorageHandle, iso_code: u16) -> Result<Option<U25
 pub fn registered_coen_pair(storage: StorageHandle, iso_code: u16) -> Result<Option<AddressPair>> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
     let pair = coen_iso_pair(iso_code);
-    Ok((oracle.pair_ordinal_of(pair)? != 0).then_some(pair))
+    Ok((oracle.pair_index_of(pair)? != 0).then_some(pair))
 }
 
 /// [`registered_coen_pair`] with the "not registered" revert callers repeat.
@@ -187,7 +187,7 @@ pub fn initialize_fresh_ocomp_profile(storage: StorageHandle) -> Result<()> {
 ///
 /// This is the single entry point for the day-rate decision: pair resolution and
 /// the snapshot lookup live here, behind one typed interface, so callers never
-/// touch the oracle's internal `pair_ordinal` map. Genuine storage faults
+/// touch the oracle's internal `pair_index` map. Genuine storage faults
 /// propagate as `Err`, keeping "no data yet" (`Ok(None)` → caller's RED fallback)
 /// distinct from "oracle broken".
 pub fn day_type_pair_vwap(
@@ -195,7 +195,7 @@ pub fn day_type_pair_vwap(
     worldwide_day: WorldwideDay,
 ) -> Result<Option<U256>> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
-    if oracle.pair_ordinal_of(DAY_TYPE_PAIR_KEY)? == 0 {
+    if oracle.pair_index_of(DAY_TYPE_PAIR_KEY)? == 0 {
         return Ok(None);
     }
     oracle.get_worldwide_day_vwap_for_pair(worldwide_day, DAY_TYPE_PAIR_KEY)
@@ -225,7 +225,7 @@ pub fn store_worldwide_day_vwap_snapshot(
 /// `None` when the pair is not registered or the day has no finalized value.
 pub fn day_type_pair_utc_vwap(storage: StorageHandle, utc_day: u32) -> Result<Option<U256>> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
-    if oracle.pair_ordinal_of(DAY_TYPE_PAIR_KEY)? == 0 {
+    if oracle.pair_index_of(DAY_TYPE_PAIR_KEY)? == 0 {
         return Ok(None);
     }
     oracle.get_utc_day_vwap_for_pair(utc_day, DAY_TYPE_PAIR_KEY)
