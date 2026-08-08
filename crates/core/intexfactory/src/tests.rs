@@ -722,7 +722,7 @@ fn try_call_marks_called_when_threshold_met() {
             &s,
             &mut f,
             &oracle,
-            &mut called::DayVwaps::new(pair_id),
+            &mut called::DayVwaps::new(pair),
             7,
             last_closed_day,
             scan_ts
@@ -765,7 +765,7 @@ fn try_call_skips_when_below_threshold() {
             &s,
             &mut f,
             &oracle,
-            &mut called::DayVwaps::new(pair_id),
+            &mut called::DayVwaps::new(pair),
             7,
             last_closed_day,
             scan_ts
@@ -824,7 +824,7 @@ fn try_call_excludes_pre_issuance_days() {
             &s,
             &mut f,
             &oracle,
-            &mut called::DayVwaps::new(pair_id),
+            &mut called::DayVwaps::new(pair),
             8,
             last_closed_day,
             scan_ts
@@ -938,7 +938,7 @@ fn call_survives_router_failure() {
             &s,
             &mut f,
             &oracle,
-            &mut called::DayVwaps::new(pair_id),
+            &mut called::DayVwaps::new(pair),
             7,
             last_closed_day,
             scan_ts

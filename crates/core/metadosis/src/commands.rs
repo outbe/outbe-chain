@@ -349,8 +349,8 @@ mod tests {
 
     fn seed_external_ocomp_prerequisites(provider: &mut HashMapStorageProvider) {
         StorageHandle::enter(provider, |storage| {
-            outbe_oracle::contract::OracleContract::new(storage)
-                .register_pair("COEN", "0xUSD")
+            outbe_oracle::schema::OracleContract::new(storage)
+                .register_pair(outbe_oracle::api::DAY_TYPE_PAIR_KEY)
                 .unwrap();
         });
     }
@@ -528,8 +528,10 @@ mod tests {
         seed_active_founder_without_ocomp(&mut provider, &install);
         seed_external_ocomp_prerequisites(&mut provider);
         StorageHandle::enter(&mut provider, |storage| {
-            outbe_oracle::contract::OracleContract::new(storage)
-                .ocomp_day_type_pair_id
+            // Partial pre-fork state: a version was reserved without the
+            // profile ever being marked ready.
+            outbe_oracle::schema::OracleContract::new(storage)
+                .ocomp_state_version
                 .write(1)
                 .unwrap();
         });

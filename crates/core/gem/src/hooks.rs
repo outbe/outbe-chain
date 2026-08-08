@@ -1,5 +1,8 @@
 use alloy_primitives::U256;
-use outbe_oracle::api::coen_rate_for;
+use outbe_oracle::{
+    api::{coen_rate_for, registered_coen_pair},
+    schema::OracleContract,
+};
 use outbe_primitives::{
     block::{BlockLifecycle, BlockRuntimeContext},
     error::Result,
@@ -87,16 +90,10 @@ pub fn run_call_daily(ctx: &BlockRuntimeContext) -> Result<()> {
 /// the number of gems mutated (called or burned).
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     let oracle = OracleContract::new(ctx.storage.clone());
-    let pair_hash = oracle
-        .settlement_iso_to_pair
-        .read(&QUALIFIER_REFERENCE_ISO)?;
-    if pair_hash.is_zero() {
+    // This scan needs the pair itself, not the rate: it reads finalized daily VWAPs.
+    let Some(pair) = registered_coen_pair(ctx.storage.clone(), QUALIFIER_REFERENCE_ISO)? else {
         return Ok(0);
-    }
-    let pair_id = oracle.pair_hash_to_id.read(&pair_hash)?;
-    if pair_id == 0 {
-        return Ok(0);
-    }
+    };
 
     // Most recent fully-closed UTC day (finalized VWAP).
     let last_closed_day = previous_date_key(timestamp_to_date_key(ctx.block.timestamp));
@@ -117,7 +114,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     let mut window: Vec<(u32, Option<U256>)> = Vec::with_capacity(window_days as usize);
     let mut day = last_closed_day;
     for _ in 0..window_days {
-        window.push((day, oracle.get_utc_day_vwap_for_pair_id(day, pair_id)?));
+        window.push((day, oracle.get_utc_day_vwap_for_pair(day, pair)?));
         day = previous_date_key(day);
     }
 

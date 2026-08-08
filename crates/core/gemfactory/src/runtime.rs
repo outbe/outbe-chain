@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_gem::{api as gem_api, GemAddParams, GemState};
-use outbe_oracle::api::coen_rate_for;
+use outbe_oracle::api::{coen_rate_for, registered_coen_pair};
 use outbe_primitives::addresses::{
     GEM_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS, VAULT_ROUTER_ADDRESS,
 };
@@ -341,13 +341,12 @@ fn settlement_currency_iso(
     issuance_currency: u16,
     reference_currency: u16,
 ) -> Result<u16> {
-    let oracle = OracleContract::new(storage.clone());
-    let pair_hash = oracle.settlement_iso_to_pair.read(&issuance_currency)?;
-    Ok(if pair_hash.is_zero() {
-        reference_currency
-    } else {
-        issuance_currency
-    })
+    Ok(
+        match registered_coen_pair(storage.clone(), issuance_currency)? {
+            Some(_) => issuance_currency,
+            None => reference_currency,
+        },
+    )
 }
 
 /// Reads the settlement asset's ISO 4217 code via a static

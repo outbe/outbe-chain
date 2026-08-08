@@ -9,7 +9,10 @@ use std::collections::BTreeMap;
 
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
-use outbe_oracle::contract::OracleContract;
+use outbe_oracle::{
+    api::{registered_coen_pair, AddressPair},
+    schema::OracleContract,
+};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},
@@ -28,16 +31,10 @@ use crate::state::QualifiedBinTree;
 /// Run the daily Called scan. Returns the number of series force-called.
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     let oracle = OracleContract::new(ctx.storage.clone());
-    let pair_hash = oracle
-        .settlement_iso_to_pair
-        .read(&QUALIFIER_REFERENCE_ISO)?;
-    if pair_hash.is_zero() {
+    // This scan needs the pair itself, not the rate: it reads the day's finalized VWAP.
+    let Some(pair) = registered_coen_pair(ctx.storage.clone(), QUALIFIER_REFERENCE_ISO)? else {
         return Ok(0);
-    }
-    let pair_id = oracle.pair_hash_to_id.read(&pair_hash)?;
-    if pair_id == 0 {
-        return Ok(0);
-    }
+    };
 
     // Most recent fully-closed UTC day (finalized VWAP).
     let last_closed_day = previous_date_key(timestamp_to_date_key(ctx.block.timestamp));
@@ -51,7 +48,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
         return Ok(0);
     }
 
-    let last_closed_vwap = match oracle.get_utc_day_vwap_for_pair_id(last_closed_day, pair_id)? {
+    let last_closed_vwap = match oracle.get_utc_day_vwap_for_pair(last_closed_day, pair)? {
         Some(v) if !v.is_zero() => v,
         _ => return Ok(0),
     };
@@ -66,7 +63,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     };
     let mut factory = IntexFactoryContract::new(ctx.storage.clone());
 
-    let mut vwaps = DayVwaps::new(pair_id);
+    let mut vwaps = DayVwaps::new(pair);
     vwaps.seed(last_closed_day, Some(last_closed_vwap));
 
     let mut called: u32 = 0;
@@ -127,14 +124,14 @@ pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
 
 /// Finalized per-day VWAPs of one oracle pair, read once per scan.
 pub(crate) struct DayVwaps {
-    pair_id: u32,
+    pair: AddressPair,
     days: BTreeMap<u32, Option<U256>>,
 }
 
 impl DayVwaps {
-    pub(crate) fn new(pair_id: u32) -> Self {
+    pub(crate) fn new(pair: AddressPair) -> Self {
         Self {
-            pair_id,
+            pair,
             days: BTreeMap::new(),
         }
     }
@@ -147,7 +144,7 @@ impl DayVwaps {
         if let Some(v) = self.days.get(&day) {
             return Ok(*v);
         }
-        let v = oracle.get_utc_day_vwap_for_pair_id(day, self.pair_id)?;
+        let v = oracle.get_utc_day_vwap_for_pair(day, self.pair)?;
         self.days.insert(day, v);
         Ok(v)
     }
