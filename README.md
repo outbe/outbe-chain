@@ -594,6 +594,8 @@ durable canonical receipts after the same DB-only hash/root barrier.
 
 ## Documentation
 
+- `docs/chain-activation-actions.md` — what must be registered, bootstrapped and
+  kept running before each economic path stops reverting.
 - `docs/becoming-a-validator.md` — validator lifecycle and operator flow.
 - `docs/dcap-testnet-launch.md` — exact checklist for creating and launching the
   four-founder DCAP testnet, then adding a FullNode.
