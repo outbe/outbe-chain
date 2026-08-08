@@ -194,6 +194,14 @@ impl OracleContract<'_> {
         Ok(pair)
     }
 
+    pub fn require_pair_index(&self, pair: AddressPair) -> Result<PairIndex> {
+        let index = self.pair_to_index.read(&pair)?;
+        if index == 0 {
+            return Err(PrecompileError::Revert("pair not registered".into()));
+        }
+        Ok(index)
+    }
+
     /// Returns whether a market is an active vote target.
     ///
     /// Direction-insensitive: being a vote target is a property of the market,
