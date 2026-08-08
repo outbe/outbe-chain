@@ -50,6 +50,11 @@ impl OracleContract<'_> {
                 "pair base and quote must differ".into(),
             ));
         }
+        if !pair.is_canonical() {
+            return Err(PrecompileError::Revert(
+                "pair should be in the canonical form".into(),
+            ));
+        }
 
         if self.pair_to_index.read(&pair)? != 0 {
             return Err(PrecompileError::Revert("pair already registered".into()));
@@ -60,8 +65,8 @@ impl OracleContract<'_> {
 
         self.pair_count.write(new_index)?;
         self.pair_to_index.write(&pair, new_index)?;
-        self.vote_target.write(&pair, true)?;
         self.pair_by_index.write_pair(&new_index, pair)?;
+        self.vote_target.write(&pair, true)?;
 
         Ok(new_index)
     }

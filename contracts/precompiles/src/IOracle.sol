@@ -37,6 +37,16 @@ interface IOracle {
     function getExchangeRate(address base, address quote)
         external
         view
+        returns (uint256 rate);
+
+    function getCoenExchangeRateFor(uint16 isoCode)
+        external
+        view
+        returns (uint256 rate);
+
+    function getExchangeRateData(address base, address quote)
+        external
+        view
         returns (uint256 rate, uint64 lastBlock, uint64 lastTimestamp);
 
     /// @notice Returns VWAP for a pair over a lookback period in seconds from current block timestamp.
@@ -80,19 +90,7 @@ interface IOracle {
     /// @notice Returns the number of registered pairs.
     function getPairCount() external view returns (uint32 count);
 
-    /// @notice Returns all pair exchange rates as parallel arrays.
-    /// @dev Self-describing: each row names its own pair, so callers never have
-    ///      to positionally join against `getPairs`.
-    function getExchangeRates()
-        external
-        view
-        returns (
-            address[] memory bases,
-            address[] memory quotes,
-            uint256[] memory rates,
-            uint64[] memory blocks,
-            uint64[] memory timestamps
-        );
+    function getPairByIndex(uint32 index) external view returns (address base, address quote);
 
     /// @notice Returns all active vote target pairs.
     function getVoteTargets() external view returns (address[] memory bases, address[] memory quotes);
@@ -115,6 +113,7 @@ interface IOracle {
         view
         returns (uint64 success, uint64 abstain, uint64 miss, uint64 slashWindow);
 
+    // todo delete?
     /// @notice Bootstrap write: set exchange rate (system-only, Address::ZERO caller).
     function setExchangeRate(address base, address quote, uint256 rate) external;
 
@@ -223,12 +222,6 @@ interface IOracle {
         external
         view
         returns (uint64[] memory peakDays, uint256[] memory peakPrices);
-
-    /// @notice Returns all registered pairs as parallel arrays of
-    ///         (base, quote, isActive).
-    /// @dev `bases` and `quotes` come back in the direction each pair was
-    ///      registered in, which is the direction its reads must be quoted in.
-    function getPairs() external view returns (address[] memory bases, address[] memory quotes, bool[] memory isActive);
 
     /// @notice Returns the S-curve adjusted nominal price for a pair at a timestamp.
     function getNominalPrice(address base, address quote, uint64 timestamp) external view returns (uint256 price);
