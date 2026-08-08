@@ -641,7 +641,7 @@ fn qualify_series<'a>(
 fn setup_pair(oracle: &OracleContract) -> AddressPair {
     let pair = outbe_oracle::api::coen_iso_pair(QUALIFIER_REFERENCE_ISO);
     let pair_id = 1u32;
-    oracle.pair_index.write(&pair, pair_id).unwrap();
+    oracle.pair_to_index.write(&pair, pair_id).unwrap();
     // Full registry entry so the production VWAP paths (calculate_vwaps
     // iterating registered vote-target pairs) see the pair too. `pair_at` reads
     // the reverse column.
@@ -966,7 +966,7 @@ fn scan_and_qualify_promotes_aged_series() {
         let oracle = OracleContract::new(s.clone());
         let pair = outbe_oracle::api::coen_iso_pair(QUALIFIER_REFERENCE_ISO);
         // The ISO resolves through the pair registry, so the pair must exist.
-        oracle.pair_index.write(&pair, 1).unwrap();
+        oracle.pair_to_index.write(&pair, 1).unwrap();
         oracle
             .exchange_rate
             .write(&pair, U256::from(EXPECTED_FLOOR) + U256::from(1))
@@ -1119,7 +1119,7 @@ fn scan_isolates_bad_series() {
         let oracle = OracleContract::new(s.clone());
         let pair = outbe_oracle::api::coen_iso_pair(QUALIFIER_REFERENCE_ISO);
         // The ISO resolves through the pair registry, so the pair must exist.
-        oracle.pair_index.write(&pair, 1).unwrap();
+        oracle.pair_to_index.write(&pair, 1).unwrap();
         oracle
             .exchange_rate
             .write(&pair, U256::from(EXPECTED_FLOOR) + U256::from(1))
@@ -1175,7 +1175,7 @@ fn scan_caps_work_per_block_and_resumes_via_cursor() {
         let oracle = OracleContract::new(s.clone());
         let pair = outbe_oracle::api::coen_iso_pair(QUALIFIER_REFERENCE_ISO);
         // The ISO resolves through the pair registry, so the pair must exist.
-        oracle.pair_index.write(&pair, 1).unwrap();
+        oracle.pair_to_index.write(&pair, 1).unwrap();
         // Rate well above both floors so both bins are eligible.
         oracle
             .exchange_rate

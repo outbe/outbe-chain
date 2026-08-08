@@ -730,7 +730,7 @@ fn export_genesis_fails_without_ordinal_reverse_lookup_columns() {
         // never written, so the rebuilt key does not round-trip back to it.
         let oracle = OracleContract::new(storage.clone());
         oracle.pair_count.write(1).unwrap();
-        oracle.pair_index.write(&pair_key(COEN, usd()), 1).unwrap();
+        oracle.pair_to_index.write(&pair_key(COEN, usd()), 1).unwrap();
 
         assert!(crate::genesis::export_genesis(&oracle, &[]).is_err());
     });

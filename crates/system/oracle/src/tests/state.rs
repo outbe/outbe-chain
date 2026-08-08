@@ -878,7 +878,7 @@ fn ocomp_opening_plan_slots_match_the_schema_layout() {
         // 40-byte `mapping_slot` derivation as well as the slot number.
         let pair = crate::types::coen_iso_pair(iso);
 
-        oracle.pair_index.write(&pair, 7).unwrap();
+        oracle.pair_to_index.write(&pair, 7).unwrap();
         oracle.scurve_count.write(3).unwrap();
         oracle
             .scurve_pair

@@ -51,7 +51,7 @@ impl OracleContract<'_> {
             ));
         }
 
-        if self.pair_index.read(&pair)? != 0 {
+        if self.pair_to_index.read(&pair)? != 0 {
             return Err(PrecompileError::Revert("pair already registered".into()));
         }
 
@@ -59,7 +59,7 @@ impl OracleContract<'_> {
         let new_index = count + 1;
 
         self.pair_count.write(new_index)?;
-        self.pair_index.write(&pair, new_index)?;
+        self.pair_to_index.write(&pair, new_index)?;
         self.vote_target.write(&pair, true)?;
         self.pair_by_index.write_pair(&new_index, pair)?;
 
@@ -129,7 +129,7 @@ impl OracleContract<'_> {
     /// Order-independent: the lookup key sorts, so this answers the same for
     /// either quote direction.
     pub fn pair_index_of(&self, pair: AddressPair) -> Result<u32> {
-        self.pair_index.read(&pair)
+        self.pair_to_index.read(&pair)
     }
 
     /// Resolves an ABI-quoted pair against the registry.
@@ -140,7 +140,7 @@ impl OracleContract<'_> {
     /// direction included — and a flipped quote reverts.
     pub fn require_pair(&self, base: Address, quote: Address) -> Result<AddressPair> {
         let pair = AddressPair::quoted(base, quote);
-        let index = self.pair_index.read(&pair)?;
+        let index = self.pair_to_index.read(&pair)?;
         if index == 0 {
             return Err(PrecompileError::Revert("pair not registered".into()));
         }
@@ -160,7 +160,7 @@ impl OracleContract<'_> {
     /// storage faults still propagate.
     pub fn is_vote_target(&self, base: Address, quote: Address) -> Result<bool> {
         let pair = AddressPair::quoted(base, quote);
-        let index = self.pair_index.read(&pair)?;
+        let index = self.pair_to_index.read(&pair)?;
         if index == 0 || self.pair_by_index.read_pair(&index)? != pair {
             return Ok(false);
         }

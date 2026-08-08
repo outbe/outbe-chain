@@ -50,12 +50,10 @@ pub struct OracleContract {
     // reused: nothing unregisters, so `1..=pair_count` is dense and every
     // enumeration relies on that.
     pub pair_count: Slot<u32>,
-    // Slot 9 (`pair_id_to_hash`) is a retired hole. The reverse lookup it served
-    // is now `pair_by_index` at slot 43, which stores the pair itself instead of
-    // a hash of it. Do not reuse.
+    // Slot 9 (`pair_id_to_hash`) is a retired hole. Do not reuse.
     // slot 10: mapping(pair => index) (0 = not registered)
     #[slot(10)]
-    pub pair_index: Mapping<AddressPair, u32>,
+    pub pair_to_index: Mapping<AddressPair, u32>,
     // slot 11: mapping(pair => is_vote_target)
     pub vote_target: Mapping<AddressPair, bool>,
 
