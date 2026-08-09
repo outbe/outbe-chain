@@ -12,7 +12,8 @@ use outbe_offchain_data::{
     OffchainDataProjection, ProjectionConfig, ProjectionOutcome, TributeRetentionSelector,
 };
 use outbe_offchain_storage::{
-    MongoStorage, MongoStorageConfig, MongoWriterLease, StorageReaderHandle, StorageWriterHandle,
+    MongoStorage, MongoStorageConfig, MongoWriterLease, StorageError, StorageErrorKind,
+    StorageReaderHandle, StorageWriterHandle,
 };
 use outbe_tribute::RetainedTributePin;
 use thiserror::Error;
@@ -152,8 +153,12 @@ impl RpcFinalizedProjectionV1 {
     }
 }
 
-fn storage_error(error: impl std::fmt::Display) -> RpcProjectionErrorV1 {
-    RpcProjectionErrorV1::Storage(error.to_string())
+fn storage_error(error: StorageError) -> RpcProjectionErrorV1 {
+    if error.kind() == StorageErrorKind::Unavailable {
+        RpcProjectionErrorV1::StorageUnavailable
+    } else {
+        RpcProjectionErrorV1::Storage(error.to_string())
+    }
 }
 
 fn projection_error(error: impl std::fmt::Display) -> RpcProjectionErrorV1 {
@@ -166,6 +171,8 @@ pub enum RpcProjectionErrorV1 {
     Rpc(#[from] PublicRpcError),
     #[error("OCOMP RPC projection configuration is invalid")]
     InvalidConfig,
+    #[error("OCOMP projection storage is unavailable")]
+    StorageUnavailable,
     #[error("OCOMP projection storage failed: {0}")]
     Storage(String),
     #[error("OCOMP finalized receipt projection failed: {0}")]

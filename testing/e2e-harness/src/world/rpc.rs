@@ -208,6 +208,23 @@ pub struct OcompCertifiedGenerationV1 {
     pub block_hash: B256,
 }
 
+/// One Nod body read through a node's exact-block execution/body-proof path.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct NodBodyProjectionV1 {
+    pub nod_id: Bytes,
+    pub owner: Address,
+    pub worldwide_day: u32,
+    pub league_id: u16,
+    pub floor_price_minor: U256,
+    pub gratis_load_minor: U256,
+    pub cost_of_gratis_minor: U256,
+    pub cost_amount_minor: U256,
+    pub is_qualified: bool,
+    pub issuance_currency: u16,
+    pub reference_currency: u16,
+    pub issued_at: u64,
+}
+
 impl CompressedEntityAtHeader {
     /// Hash the exact JSON transport package and extract its authenticated CE root.
     pub fn evidence_identity(&self) -> Result<(String, String)> {
@@ -970,6 +987,52 @@ impl Rpc {
             &INod::totalSupplyCall {},
         )
         .and_then(|value| u64::try_from(value).ok())
+    }
+
+    /// Read one canonical Nod body at an exact block. The precompile can return
+    /// it only after the node-local body source verifies the corresponding CE
+    /// membership proof against that block's authenticated parent view.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn nod_body_at(
+        &self,
+        port: u16,
+        block_number: u64,
+        ordinal: u64,
+    ) -> Option<NodBodyProjectionV1> {
+        let rpc_url = self.url(port);
+        let nod_id = eth::read_call_at(
+            &rpc_url,
+            addresses::NOD_ADDR,
+            &INod::tokenByIndexCall {
+                index: U256::from(ordinal),
+            },
+            block_number,
+        )?;
+        let body = eth::read_call_at(
+            &rpc_url,
+            addresses::NOD_ADDR,
+            &INod::nodDataCall {
+                nodId: nod_id.clone(),
+            },
+            block_number,
+        )?;
+        if body.nodId != nod_id {
+            return None;
+        }
+        Some(NodBodyProjectionV1 {
+            nod_id,
+            owner: body.owner,
+            worldwide_day: body.worldwideDay,
+            league_id: body.leagueId,
+            floor_price_minor: body.floorPriceMinor,
+            gratis_load_minor: body.gratisLoadMinor,
+            cost_of_gratis_minor: body.costOfGratisMinor,
+            cost_amount_minor: body.costAmountMinor,
+            is_qualified: body.isQualified,
+            issuance_currency: body.issuanceCurrency,
+            reference_currency: body.referenceCurrency,
+            issued_at: body.issuedAt,
+        })
     }
 
     /// Canonical Tribute identities indexed by one owner.

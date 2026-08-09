@@ -2729,6 +2729,77 @@ fn quorum_applies_lysis_and_creates_nod_with_vote_count(
     }
 }
 
+#[then("the keyless FullNode verifies the same finalized Nod body through its local proof path")]
+fn keyless_full_node_verifies_finalized_nod_body(world: &mut World) {
+    let activation = world
+        .state
+        .ocomp_activation
+        .as_ref()
+        .expect("finalized OCOMP activation before FullNode Nod proof read");
+    let generation = world
+        .state
+        .ocomp_certified_generation
+        .as_ref()
+        .expect("certified Nod generation before FullNode proof read");
+    assert_eq!(generation.nod_count, 1, "single-Tribute proof scenario");
+
+    let primary = world.validators.primary_port();
+    let full_node = world.validators.http_port(world.validators.joiner_index());
+    assert!(
+        world
+            .rpc
+            .wait_finalized_at_least(full_node, activation.block_number, 60),
+        "keyless FullNode did not finalize the canonical Nod activation block"
+    );
+    assert_eq!(
+        world.rpc.state_root(full_node, activation.block_number),
+        world.rpc.state_root(primary, activation.block_number),
+        "FullNode EVM state root differs at Nod activation"
+    );
+    assert_eq!(
+        world
+            .rpc
+            .finalized_ocomp_certified_generation_on(full_node, activation),
+        Some(generation.clone()),
+        "FullNode exposes a different certified Nod generation"
+    );
+
+    let validator_body = world
+        .rpc
+        .nod_body_at(primary, activation.block_number, 0)
+        .expect("validator exact-block Nod body/proof read");
+    let full_node_body = world
+        .rpc
+        .nod_body_at(full_node, activation.block_number, 0)
+        .expect("FullNode exact-block Nod body/proof read");
+    assert_eq!(full_node_body, validator_body);
+    assert_eq!(full_node_body.worldwide_day, activation.worldwide_day);
+
+    let request = world
+        .state
+        .ocomp_job_request
+        .as_ref()
+        .expect("public JobIntent before FullNode local-result comparison");
+    let local_result = std::fs::read(full_node_local_result_path(world, generation.job_id))
+        .expect("read keyless FullNode canonical Lysis result");
+    let local_result = LysisResultV1::decode_canonical(&local_result, &poc_schema_limits())
+        .expect("decode keyless FullNode canonical Lysis result");
+    assert_eq!(local_result.job_id, generation.job_id);
+    assert_eq!(request.intent_id, activation.intent_id);
+    assert_eq!(
+        local_result
+            .result_digest(&poc_schema_limits())
+            .expect("validate keyless FullNode canonical Lysis result"),
+        activation.result_digest,
+        "FullNode computed result differs from the canonical quorum result"
+    );
+    assert!(
+        !dynamic_vote_submission_path(world, world.validators.joiner_index(), generation.job_id,)
+            .exists(),
+        "keyless FullNode must not publish an OCOMP vote"
+    );
+}
+
 #[then("the certified generation contains exactly 257 Tribute and Nod records")]
 fn certified_generation_contains_257_records(world: &mut World) {
     let generation = world
@@ -3649,6 +3720,72 @@ fn four_domains_run_node_facing_roles(world: &mut World) {
             "validator-{validator_index} must own one live {role:?}"
         );
     }
+}
+
+#[then("all four OCOMP domains use the production basedir contract")]
+fn four_domains_use_production_basedir(world: &mut World) {
+    world
+        .ocomp
+        .verify_release_basedir_contract()
+        .expect("all release OCOMP roles use the scenario basedir contract");
+}
+
+#[when("validator 0 SnapshotExporter restarts from a prepared-only crash state")]
+fn snapshot_exporter_recovers_prepared_only_crash(world: &mut World) {
+    let job_id = world
+        .state
+        .ocomp_activation
+        .as_ref()
+        .expect("completed activation before prepared-only restart")
+        .job_id;
+    world
+        .ocomp
+        .verify_prepared_only_exporter_restart(0, job_id)
+        .expect("SnapshotExporter exact-replays a prepared-only export");
+}
+
+#[when("the managed projection MongoDB is paused")]
+fn pause_projection_mongodb(world: &mut World) {
+    let primary = world.validators.primary_port();
+    world.state.projection_outage_finalized_before = Some(
+        world
+            .rpc
+            .finalized(primary)
+            .expect("finalized height before projection outage"),
+    );
+    world
+        .mongodb
+        .pause_managed()
+        .expect("pause scenario-owned projection MongoDB");
+}
+
+#[then("consensus finality advances before and after projection MongoDB resumes")]
+fn finality_survives_projection_mongodb_outage(world: &mut World) {
+    let primary = world.validators.primary_port();
+    let before = world
+        .state
+        .projection_outage_finalized_before
+        .expect("finalized height captured before projection outage");
+    assert!(
+        world
+            .rpc
+            .wait_finalized_at_least(primary, before.saturating_add(2), 60),
+        "consensus finality did not advance while projection MongoDB was paused"
+    );
+    let during = world
+        .rpc
+        .finalized(primary)
+        .expect("finality during outage");
+    world
+        .mongodb
+        .resume_managed()
+        .expect("resume scenario-owned projection MongoDB");
+    assert!(
+        world
+            .rpc
+            .wait_finalized_at_least(primary, during.saturating_add(2), 60),
+        "consensus finality did not continue after projection MongoDB resumed"
+    );
 }
 
 #[then("each OCOMP domain owns one authenticated production worker")]

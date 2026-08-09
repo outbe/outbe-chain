@@ -14,12 +14,15 @@ Feature: Off-chain computation public path
   # OCOMP-TEST-ID: OCM-PUB-004
   Scenario: Four independent domains certify and atomically apply one public Lysis result
     Given a fresh four-validator OCOMP public measurement localnet
+    When a fifth node syncs as a non-voting FullNode
+    Then the fifth node has canonical state parity without OCOMP vote capability
     When an operator submits one encrypted tribute offer
     Then the tribute transaction succeeds and supply becomes one
     And every validator projects the same tribute and indexes
     Then Metadosis creates one finalized JobIntent from that public Tribute
     When the production OCOMP domains process that finalized JobIntent
     Then three matching validator domains atomically apply Lysis and create the Nod
+    And the keyless FullNode verifies the same finalized Nod body through its local proof path
     And all four OCOMP domains run their node-facing production roles
     When the completed full-result vote is retried and then mutated through public RPC
     Then the completed job and Nod generation are unchanged by both transactions
@@ -34,6 +37,10 @@ Feature: Off-chain computation public path
     Then Metadosis creates one finalized JobIntent from that public Tribute
     When the production OCOMP domains process that finalized JobIntent
     Then three matching validator domains atomically apply Lysis and create the Nod
+    And all four OCOMP domains use the production basedir contract
+    When validator 0 SnapshotExporter restarts from a prepared-only crash state
+    And the managed projection MongoDB is paused
+    Then consensus finality advances before and after projection MongoDB resumes
     When all validator nodes and OCOMP node-facing processes restart with preserved data
     Then the completed generation and exact vote replay remain identical
 

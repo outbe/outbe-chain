@@ -55,6 +55,8 @@ const PIN_RECORD_MAX_BYTES: usize = 512;
 /// The registry has no OCOMP product count limit. Its only cardinality ceiling
 /// is the count width committed by the durable journal wire format.
 const JOURNAL_RECORD_COUNT_MAX: usize = u16::MAX as usize;
+const JOURNAL_RECORD_PRESSURE_WATERMARK: usize =
+    JOURNAL_RECORD_COUNT_MAX - JOURNAL_RECORD_COUNT_MAX / 4;
 const JOURNAL_MAX_BYTES: usize =
     (PIN_RECORD_MAX_BYTES + B256::len_bytes() + std::mem::size_of::<u16>())
         * JOURNAL_RECORD_COUNT_MAX
@@ -1287,13 +1289,11 @@ impl OcompRetentionCoordinator {
                     .map_err(hook_error)?;
             }
         }
-        if self.retained_tributes.is_some() {
-            while self
-                .release_due(block.number())
-                .map_err(hook_error)?
-                .is_some()
-            {}
-        }
+        while self
+            .release_due(block.number())
+            .map_err(hook_error)?
+            .is_some()
+        {}
         Ok(())
     }
 
@@ -1577,12 +1577,12 @@ impl OcompRetentionCoordinator {
         }
         let complete = if lease_has_other_references(&inner, key, candidate.input_lease_id) {
             true
-        } else {
-            self.retained_tributes
-                .as_ref()
-                .ok_or(RetentionError::RetainedTributeStorageUnavailable)?
+        } else if let Some(retained_tributes) = self.retained_tributes.as_ref() {
+            retained_tributes
                 .release_input_lease_page(candidate.input_lease_id)
                 .map_err(|error| RetentionError::RetainedTributeGc(error.to_string()))?
+        } else {
+            true
         };
         if !complete {
             return Ok(None);
@@ -1782,7 +1782,7 @@ impl OcompRetentionCoordinator {
             records: BTreeMap::new(),
         });
         if !registry.records.contains_key(&key)
-            && registry.records.len() >= JOURNAL_RECORD_COUNT_MAX
+            && registry.records.len() >= JOURNAL_RECORD_PRESSURE_WATERMARK
         {
             registry
                 .records
@@ -2188,6 +2188,48 @@ pub fn inspect_retention_journal(
         last_updated: registry.last_updated,
         records: registry.records.into_iter().collect(),
     })
+}
+
+#[cfg(test)]
+pub(crate) const fn retention_pressure_watermark_for_test() -> usize {
+    JOURNAL_RECORD_PRESSURE_WATERMARK
+}
+
+#[cfg(test)]
+pub(crate) fn seed_retention_journal_for_test(
+    root: impl AsRef<Path>,
+    generation: u64,
+    last_updated: B256,
+    records: Vec<(B256, PinRecordV1)>,
+) -> Result<(), RetentionError> {
+    let record_count = records.len();
+    let records = records.into_iter().collect::<BTreeMap<_, _>>();
+    if records.is_empty()
+        || records.len() != record_count
+        || records.len() > JOURNAL_RECORD_COUNT_MAX
+        || !records.contains_key(&last_updated)
+        || records.values().map(|record| record.generation).max() != Some(generation)
+    {
+        return Err(RetentionError::MalformedJournal(
+            "invalid canonical test seed registry",
+        ));
+    }
+    let changed = *records
+        .get(&last_updated)
+        .expect("validated last-updated test record");
+    let registry = JobRegistryV1 {
+        generation,
+        last_updated,
+        records,
+    };
+    let store = JournalStore::new(root.as_ref().to_path_buf(), Arc::new(OsJournalDurability));
+    if store.initialize()?.is_some() {
+        return Err(RetentionError::InvalidTransition(
+            "test seed journal already exists",
+        ));
+    }
+    store.persist(&registry, changed)?;
+    Ok(())
 }
 
 fn encode_record(record: PinRecordV1) -> Vec<u8> {

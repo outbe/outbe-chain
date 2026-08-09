@@ -52,7 +52,7 @@ use reth_chainspec::ChainSpec;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_ethereum::cli::interface::Cli;
 use reth_node_builder::NodeHandle;
-use reth_provider::{HeaderProvider, StateProviderFactory};
+use reth_provider::{BlockIdReader, HeaderProvider, StateProviderFactory};
 use reth_rpc_server_types::{RethRpcModule, RpcModuleSelection, RpcModuleValidator};
 use std::{path::PathBuf, sync::Arc, thread};
 use tokio::sync::oneshot;
@@ -1399,18 +1399,21 @@ fn run_node() -> eyre::Result<()> {
                     // that exposes only the finalization-serving capability.
                     let outbe_api = (if is_validator {
                         outbe_rpc::OutbeApiHandler::with_bridge(
-                            provider,
+                            Arc::clone(&provider),
                             bridge,
                             projection_readiness.clone(),
                         )
                     } else if is_follower {
                         outbe_rpc::OutbeApiHandler::with_follower_bridge(
-                            provider,
+                            Arc::clone(&provider),
                             bridge,
                             projection_readiness.clone(),
                         )
                     } else {
-                        outbe_rpc::OutbeApiHandler::new(provider, projection_readiness.clone())
+                        outbe_rpc::OutbeApiHandler::new(
+                            Arc::clone(&provider),
+                            projection_readiness.clone(),
+                        )
                     })
                     .with_point_reads(
                         compressed_tree_service.clone(),
@@ -1420,7 +1423,69 @@ fn run_node() -> eyre::Result<()> {
                     .with_tee_renewal_schedule(
                         dkg_prepare_window_blocks,
                         minimum_block_time_millis,
-                    );
+                    )
+                    .with_ocomp_lysis_openings(outbe_rpc::OcompLysisOpeningsRuntimeV1::new({
+                        let provider = Arc::clone(&provider);
+                        move |intent_id, canonical_request| {
+                            let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
+                            let request = outbe_ocomp_protocol::control::BuildLysisOpeningsV1::decode_body(
+                                canonical_request.as_ref(),
+                                &limits,
+                            )
+                            .map_err(|error| format!("decode OCOMP openings request: {error}"))?;
+                            let finalized_head = provider
+                                .finalized_block_num_hash()
+                                .map_err(|error| format!("read finalized head: {error}"))?
+                                .ok_or_else(|| "finalized head is unavailable".to_owned())?;
+                            let record = outbe_node::ocomp::retention::read_ocomp_job_record_at(
+                                provider.as_ref(),
+                                finalized_head.hash,
+                                intent_id,
+                                &limits,
+                            )
+                            .map_err(|error| format!("read finalized OCOMP job: {error}"))?;
+                            let finalized = record
+                                .finalized
+                                .as_ref()
+                                .ok_or_else(|| "OCOMP job is not finalized".to_owned())?;
+                            if !ocomp_job_available_for_calculation(record.status) {
+                                return Err(
+                                    "OCOMP job is not available for calculation or replay"
+                                        .to_owned(),
+                                );
+                            }
+                            if request.job_id != finalized.job_id {
+                                return Err("OCOMP openings request JobId mismatch".to_owned());
+                            }
+                            let candidate = outbe_node::ocomp::retention::CandidatePinV1 {
+                                block_number: record.intent_height,
+                                block_hash: finalized.finalized_request_block_hash,
+                                state_root: finalized.finalized_request_state_root,
+                                intent_id,
+                                wwd: record.intent.wwd,
+                                ce_sealed_root: record.intent.ce_sealed_root,
+                                protocol_bundle_hash: record.intent.protocol_bundle_hash,
+                                input_lease_id: record
+                                    .intent
+                                    .input_lease_id()
+                                    .map_err(|error| format!("derive input lease: {error}"))?,
+                            };
+                            let openings = outbe_node::ocomp::build_lysis_openings(
+                                provider.as_ref(),
+                                &limits,
+                                candidate,
+                                request.subjects,
+                            )
+                            .map_err(|error| format!("build exact OCOMP openings: {error}"))?;
+                            if openings.job_id != finalized.job_id {
+                                return Err("OCOMP openings JobId mismatch".to_owned());
+                            }
+                            openings
+                                .encode_body(&limits)
+                                .map(alloy_primitives::Bytes::from)
+                                .map_err(|error| format!("encode OCOMP openings: {error}"))
+                        }
+                    }));
                     ctx.modules.merge_if_module_configured(
                         RethRpcModule::Other("outbe".to_owned()),
                         outbe_api.into_rpc(),
@@ -1607,6 +1672,16 @@ fn run_node() -> eyre::Result<()> {
     Ok(())
 }
 
+fn ocomp_job_available_for_calculation(
+    status: outbe_ocomp_protocol::state::OcompJobStatus,
+) -> bool {
+    matches!(
+        status,
+        outbe_ocomp_protocol::state::OcompJobStatus::VotingOpen
+            | outbe_ocomp_protocol::state::OcompJobStatus::Completed
+    )
+}
+
 /// Configure Reth's engine tree for Outbe's pre-finalization parent switches.
 ///
 /// Ethereum's Engine API permits an execution client to skip payload building when
@@ -1622,6 +1697,26 @@ fn configure_outbe_engine_args(engine: &mut reth_node_core::args::EngineArgs) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ocomp_openings_remain_available_for_completed_full_node_replay() {
+        use outbe_ocomp_protocol::state::OcompJobStatus;
+
+        assert!(super::ocomp_job_available_for_calculation(
+            OcompJobStatus::VotingOpen
+        ));
+        assert!(super::ocomp_job_available_for_calculation(
+            OcompJobStatus::Completed
+        ));
+        for unavailable in [
+            OcompJobStatus::AwaitingFinality,
+            OcompJobStatus::Expired,
+            OcompJobStatus::Conflicted,
+            OcompJobStatus::Canceled,
+        ] {
+            assert!(!super::ocomp_job_available_for_calculation(unavailable));
+        }
+    }
+
     #[test]
     fn engine_builds_payloads_after_prefinalization_parent_switches() {
         let mut engine = reth_node_core::args::EngineArgs::default();

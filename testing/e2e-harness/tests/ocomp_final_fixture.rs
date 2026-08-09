@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 #[cfg(feature = "ocomp-integration")]
 use outbe_chain_constants::DEFAULT_OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS;
+#[cfg(feature = "ocomp-integration")]
 use outbe_ocomp_protocol::profile::{poc_schema_limits, CapacityProfileV1};
 #[cfg(feature = "ocomp-integration")]
 use sha2::{Digest as _, Sha256};

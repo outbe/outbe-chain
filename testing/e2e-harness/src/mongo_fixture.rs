@@ -12,6 +12,9 @@ const MANAGED_MONGO_IMAGE: &str = "mongo:7.0";
 #[derive(Debug)]
 pub struct ManagedMongoReplicaSet {
     uri: String,
+    name: String,
+    port: u16,
+    sudo: bool,
     #[allow(dead_code)]
     guard: DockerGuard,
 }
@@ -105,6 +108,9 @@ impl ManagedMongoReplicaSet {
 
         Ok(Self {
             uri: format!("mongodb://127.0.0.1:{port}/?replicaSet=rs0&directConnection=true"),
+            name: name.to_owned(),
+            port,
+            sudo,
             guard,
         })
     }
@@ -113,6 +119,62 @@ impl ManagedMongoReplicaSet {
     #[must_use]
     pub fn uri(&self) -> &str {
         &self.uri
+    }
+
+    /// Pause the managed replica set without changing its identity or data.
+    pub fn pause(&self) -> Result<()> {
+        self.docker_control("pause")
+    }
+
+    /// Resume the same replica set and wait until it is writable again.
+    pub fn resume(&self) -> Result<()> {
+        self.docker_control("unpause")?;
+        if !wait_tcp(self.port, 200) {
+            bail!(
+                "resumed managed MongoDB did not listen on 127.0.0.1:{}",
+                self.port
+            );
+        }
+        let mut ready = false;
+        for _ in 0..60 {
+            let status = base_cmd("docker", self.sudo)
+                .args([
+                    "exec",
+                    self.name.as_str(),
+                    "mongosh",
+                    "--quiet",
+                    "--port",
+                    &self.port.to_string(),
+                    "--eval",
+                    "if (!db.hello().isWritablePrimary) { quit(1) }",
+                ])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+            if status.is_ok_and(|status| status.success()) {
+                ready = true;
+                break;
+            }
+            sleep(Duration::from_millis(250));
+        }
+        if !ready {
+            bail!("resumed managed MongoDB replica set did not become writable");
+        }
+        Ok(())
+    }
+
+    fn docker_control(&self, operation: &str) -> Result<()> {
+        let output = base_cmd("docker", self.sudo)
+            .args([operation, self.name.as_str()])
+            .output()
+            .wrap_err_with(|| format!("{operation} managed MongoDB container"))?;
+        if !output.status.success() {
+            bail!(
+                "{operation} managed MongoDB container: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
+        Ok(())
     }
 }
 

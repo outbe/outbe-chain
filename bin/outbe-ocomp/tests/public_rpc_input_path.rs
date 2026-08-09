@@ -11,7 +11,9 @@ use outbe_ocomp::{
     cas::{CasLimits, FilesystemCasReader},
     control::{poc_schema_limits, EndpointIdentity},
     export_receipt::ExportReceiptReader,
-    rpc_discovery::{FinalizedRpcDiscoveryConfigV1, FinalizedRpcDiscoveryV1},
+    rpc_discovery::{
+        FinalizedRpcDiscoveryConfigV1, FinalizedRpcDiscoveryPurposeV1, FinalizedRpcDiscoveryV1,
+    },
     rpc_input_exporter::{RpcInputExporterConfigV1, RpcInputExporterV1},
     rpc_projection::RpcProjectionConfigV1,
 };
@@ -67,6 +69,7 @@ fn finalized_public_rpc_path_exports_restart_safe_inputs_and_rejects_identity_mi
         identity,
         fork_id,
         limits,
+        purpose: FinalizedRpcDiscoveryPurposeV1::InputReplay,
     })
     .unwrap();
     discovery.reconcile_once().unwrap();
@@ -110,6 +113,32 @@ fn finalized_public_rpc_path_exports_restart_safe_inputs_and_rejects_identity_mi
         .unwrap()
         .load_exact(&cas_reader)
         .unwrap();
+
+    let receipt_job_root = receipt_root.join(hex::encode(record.spec.summary.job_id.as_slice()));
+    fs::remove_file(receipt_job_root.join("prepared.ref")).unwrap();
+    fs::remove_file(receipt_job_root.join("receipt.ref")).unwrap();
+    let mut empty_directory_restart = RpcInputExporterV1::open(exporter_config.clone()).unwrap();
+    empty_directory_restart.export(&record).unwrap();
+    drop(empty_directory_restart);
+    let after_empty_directory =
+        ExportReceiptReader::open(&receipt_root, record.spec.summary.job_id, limits)
+            .unwrap()
+            .load_exact(&cas_reader)
+            .unwrap();
+    assert_eq!(first.receipt_ref(), after_empty_directory.receipt_ref());
+    assert_eq!(first.manifest(), after_empty_directory.manifest());
+
+    fs::remove_file(receipt_job_root.join("receipt.ref")).unwrap();
+    let mut prepared_only_restart = RpcInputExporterV1::open(exporter_config.clone()).unwrap();
+    prepared_only_restart.export(&record).unwrap();
+    drop(prepared_only_restart);
+    let after_prepared_only =
+        ExportReceiptReader::open(&receipt_root, record.spec.summary.job_id, limits)
+            .unwrap()
+            .load_exact(&cas_reader)
+            .unwrap();
+    assert_eq!(first.receipt_ref(), after_prepared_only.receipt_ref());
+    assert_eq!(first.manifest(), after_prepared_only.manifest());
 
     let mut restarted = RpcInputExporterV1::open(exporter_config.clone()).unwrap();
     restarted.export(&record).unwrap();

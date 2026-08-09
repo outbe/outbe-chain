@@ -6,16 +6,15 @@ use std::{
 };
 
 use alloy_primitives::{keccak256, B256};
-use outbe_node::ocomp::{
-    build_public_lysis_openings, finality::PublicFinalizedIntentProofBuilderV1,
-    retention::RetentionError,
-};
+use outbe_node::ocomp::verify_lysis_openings;
 use outbe_ocomp_protocol::{
     common::BoundedBytes,
-    control::SNAPSHOT_LEASE_WIRE_BYTES,
+    control::{BuildLysisOpeningsV1, SNAPSHOT_LEASE_WIRE_BYTES},
     input::{materialize_authenticated_openings, CheckpointIdentityV1},
-    intent::ExpectedFinalizedIntentBindingV1,
-    opening::{partition_lysis_opening_subjects, OpeningSubjectsV1},
+    intent::{
+        intent_storage_key, FinalizedRequestBindingV1, JobIntentV1, VerifiedFinalizedIntentV1,
+    },
+    opening::{partition_lysis_opening_subjects, LysisOpeningsProofV1, OpeningSubjectsV1},
     SchemaLimits, SnapshotExportCommittedV1, SnapshotHandoffV1,
 };
 use thiserror::Error;
@@ -23,13 +22,15 @@ use thiserror::Error;
 use crate::{
     bundle::PinnedProtocolBundle,
     cas::{CasLimits, CasWriterRole, FilesystemCas, FilesystemCasReader},
-    export_receipt::{ExportReceiptPreparation, ExportReceiptReader, ExportReceiptStore},
+    export_receipt::{
+        ExportReceiptError, ExportReceiptPreparation, ExportReceiptReader, ExportReceiptStore,
+    },
     input_artifacts::{
         poc_input_list_limits, publish_input_artifact_set, InputArtifactContents,
         InputArtifactIdentity,
     },
     public_rpc::PublicOcompRpcClientV1,
-    rpc_projection::{RpcFinalizedProjectionV1, RpcProjectionConfigV1},
+    rpc_projection::{RpcFinalizedProjectionV1, RpcProjectionConfigV1, RpcProjectionErrorV1},
     supervisor::DiscoveryRecord,
 };
 
@@ -63,7 +64,7 @@ impl RpcInputExporterV1 {
         let rpc =
             PublicOcompRpcClientV1::new(config.rpc_url.clone(), config.rpc_max_response_bytes)?;
         let projection = RpcFinalizedProjectionV1::open(config.projection.clone())
-            .map_err(|error| stage("open finalized receipt projection", error))?;
+            .map_err(projection_open_error)?;
         let cas = FilesystemCas::open(
             &config.cas_root,
             CasWriterRole::SnapshotExporter,
@@ -86,29 +87,23 @@ impl RpcInputExporterV1 {
     /// normal manifest validation succeeds.
     pub fn export(&mut self, discovery: &DiscoveryRecord) -> Result<(), RpcInputExporterErrorV1> {
         let job_id = discovery.spec.summary.job_id;
+        // Revalidate the durable discovery binding before accepting even an
+        // exact local export replay. A valid old receipt must not make a stale
+        // or substituted discovery journal authoritative after restart.
+        let finalized = verified_discovery_intent(discovery, &self.config)?;
         if let Some(reader) =
             ExportReceiptReader::try_open(&self.config.receipt_root, job_id, self.config.limits)
                 .map_err(|error| stage("inspect input receipt", error))?
         {
-            reader
-                .load_exact(&self.reader)
-                .map_err(|error| stage("reload input receipt", error))?;
-            return Ok(());
+            match reader.load_exact(&self.reader) {
+                Ok(_) => return Ok(()),
+                Err(
+                    ExportReceiptError::MissingPreparation | ExportReceiptError::MissingReceipt,
+                ) => {}
+                Err(error) => return Err(stage("reload input receipt", error)),
+            }
         }
 
-        let (_, finalized) =
-            PublicFinalizedIntentProofBuilderV1::new(&self.rpc, self.config.limits)
-                .build_and_verify(
-                    discovery.cursor,
-                    discovery.spec.summary.intent_id,
-                    ExpectedFinalizedIntentBindingV1 {
-                        chain_id: self.config.chain_id,
-                        genesis_hash: self.config.genesis_hash,
-                        fork_id: self.config.fork_id,
-                        protocol_bundle_hash: self.config.protocol_bundle_hash,
-                    },
-                )
-                .map_err(|error| stage("verify finalized input authority", error))?;
         if finalized.job_id != job_id {
             return Err(RpcInputExporterErrorV1::Authority("discovery JobId"));
         }
@@ -156,13 +151,33 @@ impl RpcInputExporterV1 {
         let mut oracle_opening = None;
         let mut pending_subjects = VecDeque::from(subjects);
         while let Some(subject_batch) = pending_subjects.pop_front() {
-            let openings = match build_public_lysis_openings(
-                &self.rpc,
-                &finalized,
-                subject_batch.clone(),
-                &self.config.limits,
-            ) {
-                Ok(openings) => openings,
+            let canonical_request = BuildLysisOpeningsV1 {
+                job_id,
+                subjects: subject_batch.clone(),
+            }
+            .encode_body(&self.config.limits)
+            .map_err(|error| stage("encode Lysis openings request", error))?;
+            let openings = match self
+                .rpc
+                .lysis_openings(finalized.intent_id, &canonical_request)
+                .and_then(|encoded| {
+                    LysisOpeningsProofV1::decode_body(&encoded, &self.config.limits).map_err(
+                        |error| crate::public_rpc::PublicRpcError::Malformed {
+                            method: "outbe_getOcompLysisOpeningsV1",
+                            detail: error.to_string(),
+                        },
+                    )
+                }) {
+                Ok(openings) => {
+                    verify_lysis_openings(
+                        &openings,
+                        &finalized,
+                        &subject_batch,
+                        &self.config.limits,
+                    )
+                    .map_err(|error| stage("verify node Lysis openings", error))?;
+                    openings
+                }
                 Err(error) if is_lysis_opening_capacity_error(&error) => {
                     let Some((left, right)) = bisect_opening_subjects(subject_batch) else {
                         return Err(stage("build public Lysis openings", error));
@@ -273,12 +288,55 @@ impl RpcInputExporterV1 {
     }
 }
 
-fn is_lysis_opening_capacity_error(error: &RetentionError) -> bool {
-    matches!(
-        error,
-        RetentionError::Source(detail)
-            if detail.starts_with("Lysis opening bytes exceeds cap: ")
-    )
+fn verified_discovery_intent(
+    discovery: &DiscoveryRecord,
+    config: &RpcInputExporterConfigV1,
+) -> Result<VerifiedFinalizedIntentV1, RpcInputExporterErrorV1> {
+    let summary = &discovery.spec.summary;
+    let intent =
+        JobIntentV1::decode_canonical(&discovery.spec.canonical_job_intent.0, &config.limits)
+            .map_err(|error| stage("decode finalized JobIntent", error))?;
+    let intent_id = intent
+        .intent_id(&config.limits)
+        .map_err(|error| stage("hash finalized JobIntent", error))?;
+    let job_id = intent
+        .job_id(
+            summary.finalized_block_hash,
+            summary.finalized_state_root,
+            &config.limits,
+        )
+        .map_err(|error| stage("derive finalized JobId", error))?;
+    if discovery.cursor != summary.cursor
+        || intent_id != summary.intent_id
+        || job_id != summary.job_id
+        || intent.chain_id != config.chain_id
+        || intent.genesis_hash != config.genesis_hash
+        || intent.fork_id != config.fork_id
+        || intent.protocol_bundle_hash != config.protocol_bundle_hash
+        || summary.protocol_bundle_hash != config.protocol_bundle_hash
+    {
+        return Err(RpcInputExporterErrorV1::Authority(
+            "finalized discovery binding",
+        ));
+    }
+    Ok(VerifiedFinalizedIntentV1 {
+        intent,
+        intent_id,
+        intent_storage_key: intent_storage_key(intent_id)
+            .map_err(|error| stage("derive finalized intent storage key", error))?,
+        job_id,
+        request: FinalizedRequestBindingV1 {
+            block_number: summary.cursor,
+            block_hash: summary.finalized_block_hash,
+            state_root: summary.finalized_state_root,
+        },
+    })
+}
+
+fn is_lysis_opening_capacity_error(error: &impl std::fmt::Display) -> bool {
+    error
+        .to_string()
+        .contains("Lysis opening bytes exceeds cap: ")
 }
 
 fn bisect_opening_subjects(
@@ -313,14 +371,32 @@ fn stage(stage: &'static str, error: impl std::fmt::Display) -> RpcInputExporter
     }
 }
 
+fn projection_open_error(error: RpcProjectionErrorV1) -> RpcInputExporterErrorV1 {
+    match error {
+        RpcProjectionErrorV1::StorageUnavailable => {
+            RpcInputExporterErrorV1::ProjectionStorageUnavailable
+        }
+        error => stage("open finalized receipt projection", error),
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum RpcInputExporterErrorV1 {
     #[error(transparent)]
     Rpc(#[from] crate::public_rpc::PublicRpcError),
     #[error("OCOMP public input authority mismatch: {0}")]
     Authority(&'static str),
+    #[error("OCOMP finalized receipt projection storage is unavailable during startup")]
+    ProjectionStorageUnavailable,
     #[error("OCOMP public input stage `{stage}` failed: {detail}")]
     Stage { stage: &'static str, detail: String },
+}
+
+impl RpcInputExporterErrorV1 {
+    #[must_use]
+    pub const fn is_retryable_startup(&self) -> bool {
+        matches!(self, Self::ProjectionStorageUnavailable)
+    }
 }
 
 #[cfg(test)]
@@ -329,7 +405,18 @@ mod tests {
     use outbe_node::ocomp::retention::RetentionError;
     use outbe_ocomp_protocol::opening::OpeningSubjectsV1;
 
-    use super::{bisect_opening_subjects, is_lysis_opening_capacity_error};
+    use crate::rpc_projection::RpcProjectionErrorV1;
+
+    use super::{bisect_opening_subjects, is_lysis_opening_capacity_error, projection_open_error};
+
+    #[test]
+    fn only_transient_projection_unavailability_is_retryable_at_startup() {
+        let unavailable = projection_open_error(RpcProjectionErrorV1::StorageUnavailable);
+        assert!(unavailable.is_retryable_startup());
+
+        let invalid = projection_open_error(RpcProjectionErrorV1::InvalidConfig);
+        assert!(!invalid.is_retryable_startup());
+    }
 
     #[test]
     fn oversized_opening_subjects_are_bisected_in_canonical_order() {

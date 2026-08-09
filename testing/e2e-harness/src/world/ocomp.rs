@@ -564,6 +564,39 @@ impl OcompTopology {
         Ok(&self.domain(validator_index)?.root)
     }
 
+    /// Prove that release OCOMP roles use the scenario base directory and the
+    /// canonical `validator-N/ocomp/domain-v1` layout. This is intentionally a
+    /// path contract, not a service-UID contract: all harness roles run as the
+    /// launching user.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn verify_release_basedir_contract(&self) -> Result<()> {
+        for validator_index in self.validator_indices()? {
+            let expected = self
+                .cfg
+                .validator_dir(usize::from(validator_index))
+                .join("ocomp")
+                .join("domain-v1");
+            let actual = self.domain_root(validator_index)?;
+            eyre::ensure!(
+                actual == expected,
+                "validator-{validator_index} OCOMP root {} differs from basedir contract {}",
+                actual.display(),
+                expected.display()
+            );
+            for required in [
+                "protocol-bundle-v1.ocb1",
+                "ocomp-key-v1.hex",
+                "ocomp-evm-key.hex",
+            ] {
+                eyre::ensure!(
+                    actual.join(required).is_file(),
+                    "validator-{validator_index} basedir is missing {required}"
+                );
+            }
+        }
+        Ok(())
+    }
+
     /// Canonical chain manifest selected for this scenario before any
     /// mismatched-install fault is injected.
     #[cfg(feature = "ocomp-integration")]
@@ -1038,9 +1071,9 @@ impl OcompTopology {
                 Ok(())
             }
             count if count == expected => Ok(()),
-            count => eyre::bail!(
+            count => Err(eyre::eyre!(
                 "partial OCOMP validator domain material before node start: {count}/{expected} files"
-            ),
+            )),
         }
     }
 
@@ -1221,7 +1254,9 @@ impl OcompTopology {
                 return self.ocomp_delegate_private_key(validator_index);
             }
         }
-        eyre::bail!("ResultVoteV1 OCOMP key is not owned by this pinned test topology")
+        Err(eyre::eyre!(
+            "ResultVoteV1 OCOMP key is not owned by this pinned test topology"
+        ))
     }
 
     #[cfg(feature = "ocomp-integration")]
@@ -2089,6 +2124,66 @@ impl OcompTopology {
             );
         }
         Ok(())
+    }
+
+    /// Recreate the durable state left by a crash after `prepared.ref` but
+    /// before `receipt.ref`, then prove the production SnapshotExporter restores
+    /// the exact receipt reference on restart. No chain state or result is
+    /// injected: only the exporter's local terminal marker is removed.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn verify_prepared_only_exporter_restart(
+        &mut self,
+        validator_index: u8,
+        job_id: B256,
+    ) -> Result<()> {
+        let receipt_root = self
+            .domain_root(validator_index)?
+            .join("exporter-v1")
+            .join("receipts")
+            .join(hex::encode(job_id));
+        let prepared_path = receipt_root.join("prepared.ref");
+        let receipt_path = receipt_root.join("receipt.ref");
+        let prepared_before = fs::read(&prepared_path).map_err(|error| {
+            eyre::eyre!(
+                "read validator-{validator_index} prepared export {}: {error}",
+                prepared_path.display()
+            )
+        })?;
+        let receipt_before = fs::read(&receipt_path).map_err(|error| {
+            eyre::eyre!(
+                "read validator-{validator_index} committed export {}: {error}",
+                receipt_path.display()
+            )
+        })?;
+        eyre::ensure!(
+            !prepared_before.is_empty() && !receipt_before.is_empty(),
+            "prepared export references must be non-empty"
+        );
+
+        self.apply_process_fault(OcompProcessFault::StopSnapshotExporter { validator_index })?;
+        fs::remove_file(&receipt_path)?;
+        self.restart_snapshot_exporter(validator_index)?;
+
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            self.ensure_validator_roles_alive()?;
+            if let Ok(receipt_after) = fs::read(&receipt_path) {
+                eyre::ensure!(
+                    receipt_after == receipt_before,
+                    "prepared-only restart changed the committed export reference"
+                );
+                eyre::ensure!(
+                    fs::read(&prepared_path)? == prepared_before,
+                    "prepared-only restart changed the preparation reference"
+                );
+                return Ok(());
+            }
+            eyre::ensure!(
+                Instant::now() < deadline,
+                "SnapshotExporter did not restore receipt.ref after prepared-only restart"
+            );
+            sleep(Duration::from_millis(100));
+        }
     }
 
     /// Restart every external compute client while preserving the domain data.

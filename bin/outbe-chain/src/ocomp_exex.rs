@@ -412,7 +412,9 @@ where
                 self.validate_request(&locator, hash)?;
                 match self.requests.get(&locator.intent_id) {
                     Some(existing) if same_locator(*existing, locator) => {}
-                    Some(_) => bail!("conflicting OCOMP request locator replay"),
+                    Some(_) => {
+                        bail!("conflicting OCOMP request locator replay");
+                    }
                     None => {
                         self.requests.insert(locator.intent_id, locator);
                     }
@@ -509,7 +511,7 @@ where
                 OcompJobStatus::Expired => self.observe_no_quorum(job_id)?,
                 OcompJobStatus::AwaitingFinality => {}
                 OcompJobStatus::Conflicted | OcompJobStatus::Canceled => {
-                    bail!("unsupported terminal OCOMP state without canonical result")
+                    bail!("unsupported terminal OCOMP state without canonical result");
                 }
             }
             if height >= finalized.deadline_height
@@ -707,7 +709,9 @@ where
                 canonical_result_digest,
             )?,
             EmbeddedJobActionV1::AwaitCanonical { .. } => {}
-            _ => bail!("unexpected embedded OCOMP local-result action"),
+            _ => {
+                bail!("unexpected embedded OCOMP local-result action");
+            }
         }
         Ok(())
     }

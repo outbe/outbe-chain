@@ -202,6 +202,9 @@ pub struct FixtureState {
         Option<crate::world::mongodb::TributeProjectionSnapshot>,
     /// Finalized height immediately before one typed OCOMP process fault.
     pub ocomp_finality_before_fault: Option<u64>,
+    /// Finalized height immediately before the managed projection database is
+    /// paused in the dirty-operations acceptance lane.
+    pub projection_outage_finalized_before: Option<u64>,
     /// Immutable activation height loaded from the scenario's prepared genesis
     /// install. Fresh Measurement uses block 1; the frozen Final fixture uses 32.
     pub ocomp_activation_height: Option<u64>,
@@ -359,6 +362,7 @@ impl Default for FixtureState {
             duplicate_tribute_tx_hash: None,
             tribute_projection_before_duplicate: None,
             ocomp_finality_before_fault: None,
+            projection_outage_finalized_before: None,
             ocomp_activation_height: None,
             ocomp_job_request: None,
             ocomp_dynamic_worldwide_days: Vec::new(),

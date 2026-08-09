@@ -15,8 +15,12 @@ use outbe_ocomp::control::{effective_uid, poc_schema_limits, EndpointIdentity};
 use outbe_ocomp::inbox::WorkerInboxLimits;
 use outbe_ocomp::result_attestation::LocalResultVoteAttesterV1;
 use outbe_ocomp::result_signer::OcompSigner;
-use outbe_ocomp::rpc_discovery::{FinalizedRpcDiscoveryConfigV1, FinalizedRpcDiscoveryV1};
-use outbe_ocomp::rpc_input_exporter::{RpcInputExporterConfigV1, RpcInputExporterV1};
+use outbe_ocomp::rpc_discovery::{
+    FinalizedRpcDiscoveryConfigV1, FinalizedRpcDiscoveryPurposeV1, FinalizedRpcDiscoveryV1,
+};
+use outbe_ocomp::rpc_input_exporter::{
+    RpcInputExporterConfigV1, RpcInputExporterErrorV1, RpcInputExporterV1,
+};
 use outbe_ocomp::rpc_projection::RpcProjectionConfigV1;
 use outbe_ocomp::sign_once::SignOnceStore;
 use outbe_ocomp::supervisor_export::{
@@ -360,6 +364,7 @@ fn run_supervisor(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> 
         identity,
         fork_id: protocol_bundle.bundle().fork_id,
         limits,
+        purpose: FinalizedRpcDiscoveryPurposeV1::VotingAuthority,
     })?;
     let adoption = SupervisorExportAdoption::open(SupervisorExportAdoptionConfig {
         cas_root: runtime.cas_root.clone(),
@@ -581,8 +586,9 @@ fn run_snapshot_exporter(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::E
         identity,
         fork_id: protocol_bundle.bundle().fork_id,
         limits,
+        purpose: FinalizedRpcDiscoveryPurposeV1::InputReplay,
     })?;
-    let mut exporter = RpcInputExporterV1::open(RpcInputExporterConfigV1 {
+    let exporter_config = RpcInputExporterConfigV1 {
         rpc_url: rpc_url.clone(),
         rpc_max_response_bytes: SUPERVISOR_RPC_MAX_RESPONSE_BYTES,
         projection: RpcProjectionConfigV1 {
@@ -610,7 +616,15 @@ fn run_snapshot_exporter(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::E
         receipt_root: runtime.snapshot_exporter_receipt_root,
         protocol_bundle,
         limits,
-    })?;
+    };
+    let mut exporter = retry_snapshot_exporter_startup(
+        || RpcInputExporterV1::open(exporter_config.clone()),
+        RpcInputExporterErrorV1::is_retryable_startup,
+        |error| {
+            eprintln!("OCOMP snapshot exporter startup retry: {error}");
+            std::thread::sleep(SUPERVISOR_RECONCILE_INTERVAL);
+        },
+    )?;
     let mut exported_job_id = None;
     loop {
         if let Err(error) = discovery.reconcile_once() {
@@ -629,6 +643,20 @@ fn run_snapshot_exporter(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::E
             }
         }
         std::thread::sleep(SUPERVISOR_RECONCILE_INTERVAL);
+    }
+}
+
+fn retry_snapshot_exporter_startup<T, E>(
+    mut open: impl FnMut() -> Result<T, E>,
+    retryable: impl Fn(&E) -> bool,
+    mut on_retry: impl FnMut(&E),
+) -> Result<T, E> {
+    loop {
+        match open() {
+            Ok(value) => return Ok(value),
+            Err(error) if retryable(&error) => on_retry(&error),
+            Err(error) => return Err(error),
+        }
     }
 }
 
@@ -665,6 +693,48 @@ mod tests {
 
         cancel_superseded_job(Some(running), Some(newer), Some(&cancelled));
         assert!(cancelled.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn snapshot_exporter_startup_retries_only_retryable_failures() {
+        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+        enum StartupError {
+            Busy,
+            Fatal,
+        }
+
+        let mut attempts = 0_u8;
+        let mut retries = 0_u8;
+        let opened = retry_snapshot_exporter_startup(
+            || {
+                attempts += 1;
+                if attempts < 3 {
+                    Err(StartupError::Busy)
+                } else {
+                    Ok(0xA5_u8)
+                }
+            },
+            |error| *error == StartupError::Busy,
+            |_| retries += 1,
+        )
+        .unwrap();
+        assert_eq!(opened, 0xA5);
+        assert_eq!(attempts, 3);
+        assert_eq!(retries, 2);
+
+        let mut fatal_attempts = 0_u8;
+        assert_eq!(
+            retry_snapshot_exporter_startup(
+                || {
+                    fatal_attempts += 1;
+                    Err::<(), _>(StartupError::Fatal)
+                },
+                |error| *error == StartupError::Busy,
+                |_| panic!("fatal startup errors cannot enter the retry loop"),
+            ),
+            Err(StartupError::Fatal)
+        );
+        assert_eq!(fatal_attempts, 1);
     }
 
     #[test]
