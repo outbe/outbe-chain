@@ -434,14 +434,19 @@ fn execution_read_uses_remaining_request_budget_without_reporting_mongo_outage()
         outbe_tribute::TributeRepositoryError::Storage(error)
             if error.kind() == StorageErrorKind::RequestDeadline
     ));
+    let parent_error = ParentBodySource::get(&readers, EntityRef::Tribute(entity(1)))
+        .expect_err("request-budget expiry must remain distinct from backend unavailability");
     assert!(matches!(
-        ParentBodySource::get(&readers, EntityRef::Tribute(entity(1))),
-        Err(ParentBodySourceError::Unavailable(_))
+        parent_error,
+        ParentBodySourceError::RequestDeadline(_)
+    ));
+    let precompile_error = outbe_primitives::error::PrecompileError::from(parent_error);
+    assert!(matches!(
+        precompile_error,
+        outbe_primitives::error::PrecompileError::BodyReadRequestDeadline
     ));
 
-    readers.report_precompile_error(
-        &outbe_primitives::error::PrecompileError::BodyReadRequestDeadline,
-    );
+    readers.report_precompile_error(&precompile_error);
     assert!(failure_rx.borrow().is_none());
 }
 
