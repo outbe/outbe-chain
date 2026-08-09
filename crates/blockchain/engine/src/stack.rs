@@ -1879,8 +1879,10 @@ where
     // set), read from the follower's OWN genesis state. Consensus finality is a
     // multisig over these keys, so this set — not the VRF group key — is the
     // trust root, and it is already in genesis (the operator provides nothing).
-    let genesis_validators = validators::read_consensus_validators_at_latest(&node.provider)
-        .wrap_err("failed to read genesis validator set for the follower trust anchor")?;
+    let follower_genesis_hash = genesis_hash(&node)?;
+    let genesis_validators =
+        validators::read_consensus_validators_at_block(&node.provider, follower_genesis_hash)
+            .wrap_err("failed to read genesis validator set for the follower trust anchor")?;
     let anchor_participants: commonware_utils::ordered::Set<bls12381::PublicKey> =
         genesis_validators
             .public_keys
