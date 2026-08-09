@@ -70,7 +70,8 @@ not merely a boolean.
 Oracle calls ValidatorSet's role resolver and enforces vote-period rules against
 the represented validator during execution. OCOMP uses the role resolver only
 for its exact ZeroFee envelope; its protocol authority is the independently
-verified inner `ResultVoteV1` committee signature, not the outer EVM sender.
+verified inner `ResultVoteV1` signature by the pinned historical OCOMP key, not
+the outer EVM sender.
 
 ZeroFee remains split into:
 
@@ -109,15 +110,15 @@ actual work uses the separate system budget. Restart or reorg
 rebroadcast reuses the persisted bytes rather than signing a different envelope.
 
 All OCOMP paths are derived from one deployment base path. The default is
-`/opt/outbe-chain`, overridable by `OUTBE_OCOMP_BASE_PATH`. The node OS identity
-is required deployment configuration in `OUTBE_OCOMP_NODE_USER`. The dedicated
-key is:
+`/opt/outbe-chain`, overridable by `OUTBE_OCOMP_BASE_PATH`. OCOMP roles inherit
+the invoking process identity; the protocol does not require fixed service
+usernames. The dedicated key is:
 
 ```text
 <base>/ocomp/data/keys/ocomp-evm-key.hex
 ```
 
-It is a non-symlink regular file owned by the supervisor identity with mode
+It is a non-symlink regular file owned by the effective process UID with mode
 `0600`, one hard link and canonical lowercase hex encoding. Runtime re-checks
 those properties and the opened inode before reading it. Installation creates
 it once from 32 random bytes and never overwrites an existing key.

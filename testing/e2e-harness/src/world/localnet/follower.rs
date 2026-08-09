@@ -23,12 +23,21 @@ impl Localnet {
         if !matches!(self.cfg.tee_mode, TeeMode::Real) {
             bail!("DcapRequired full-node provisioning requires --tee real");
         }
+        self.provision_full_node_node_host(index)
+    }
+
+    /// Provision the production FullNode NodeHost path for any enabled TEE
+    /// policy. DCAP and GramineDirectDev differ only in attestation authority;
+    /// both require the same resident offer-key delivery before node startup.
+    pub fn provision_full_node_node_host(&mut self, index: usize) -> Result<()> {
         let node_dir = self.cfg.validator_dir(index);
         let data_dir = node_dir.join("data");
         fs::create_dir_all(&data_dir)?;
 
         let reth_secret_path = node_dir.join("reth-p2p-secret.hex");
-        fs::write(&reth_secret_path, random_hex_32()?)?;
+        if !reth_secret_path.is_file() {
+            fs::write(&reth_secret_path, random_hex_32()?)?;
+        }
         let relay_key = random_hex_32()?;
         let relay_address = eth::address_of(&relay_key)
             .ok_or_else(|| eyre!("generated full-node relay key is invalid"))?;
@@ -44,7 +53,7 @@ impl Localnet {
             .ok_or_else(|| eyre!("cannot read canonical timestamp for full-node tee join"))?
             .checked_add(7_200)
             .ok_or_else(|| eyre!("full-node tee join lease deadline overflow"))?;
-        Sh::new(&self.cfg).cli_required(args![
+        let mut join = args![
             "tee",
             "join",
             "--enclave-socket",
@@ -63,9 +72,11 @@ impl Localnet {
             relay_key,
             "--timeout-secs",
             "180",
-            "--node-data-dir",
-            data_dir.display(),
-        ])?;
+        ];
+        if matches!(self.cfg.tee_mode, TeeMode::Real | TeeMode::SgxNoAttest) {
+            join.extend(args!["--node-data-dir", data_dir.display()]);
+        }
+        Sh::new(&self.cfg).cli_required(join)?;
         Ok(())
     }
 

@@ -1,9 +1,7 @@
 use std::{fs, os::unix::fs::MetadataExt as _};
 
-use alloy_primitives::{B256, U256};
-use k256::ecdsa::{
-    signature::hazmat::PrehashVerifier as _, Signature, VerifyingKey,
-};
+use alloy_primitives::{keccak256, B256, U256};
+use k256::ecdsa::{signature::hazmat::PrehashVerifier as _, Signature, VerifyingKey};
 use outbe_ocomp::{
     control::EndpointIdentity,
     result_attestation::{LocalResultAttestationErrorV1, LocalResultVoteAttesterV1},
@@ -32,12 +30,7 @@ fn hash(byte: u8) -> B256 {
     B256::repeat_byte(byte)
 }
 
-fn fixture() -> (
-    EndpointIdentity,
-    B256,
-    FinalizedJobSpecV1,
-    LysisResultV1,
-) {
+fn fixture() -> (EndpointIdentity, B256, FinalizedJobSpecV1, LysisResultV1) {
     let limits = poc_schema_limits();
     let fork_id = hash(1);
     let identity = EndpointIdentity {
@@ -221,8 +214,8 @@ fn supervisor_signs_exact_result_vote_once_and_rejects_a_conflict() {
     let signer = OcompSigner::from_secret([1; 32]).unwrap();
     let public_key = signer.public_key_sec1();
     let store = SignOnceStore::open(directory.path().join("sign-once"), owner_uid, limits).unwrap();
-    let attester = LocalResultVoteAttesterV1::new(identity, fork_id, 0, signer, store, limits)
-        .unwrap();
+    let attester =
+        LocalResultVoteAttesterV1::new(identity, fork_id, signer, store, limits).unwrap();
     let canonical = result.encode_canonical(&limits).unwrap();
 
     assert!(matches!(
@@ -232,6 +225,7 @@ fn supervisor_signs_exact_result_vote_once_and_rejects_a_conflict() {
         ))
     ));
     let first = attester.attest(&canonical, &spec, 100).unwrap();
+    assert_eq!(first.ocomp_key_hash, keccak256(public_key));
     let replay = attester.attest(&canonical, &spec, 100).unwrap();
     assert_eq!(first, replay);
     let intent = JobIntentV1::decode_canonical(&spec.canonical_job_intent.0, &limits).unwrap();

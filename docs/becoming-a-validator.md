@@ -97,8 +97,6 @@ outbe-chain node \
   --consensus.storage-dir /var/lib/outbe/consensus \
   --ocomp.supervisor-socket /opt/outbe-chain/ocomp/run/node-supervisor.sock \
   --ocomp.snapshot-exporter-socket /opt/outbe-chain/ocomp/run/node-snapshot-exporter.sock \
-  --ocomp.supervisor-uid "$(id -u outbe-ocomp-supervisor)" \
-  --ocomp.snapshot-exporter-uid "$(id -u outbe-ocomp-export)" \
   --ocomp.protocol-bundle-hash <0x-protocol-bundle-hash> \
   --ocomp.boot-nonce <nonzero-0x32-byte-boot-nonce> \
   --http --http.addr 127.0.0.1 --http.port 8545 --http.api eth,net,web3,outbe \
@@ -111,8 +109,8 @@ ready nonzero resident key and compares them exactly before launching Reth.
 The six `--ocomp.*` control arguments are an all-or-nothing FullNode profile;
 do not pass `--ocomp.key`. Run the normal SnapshotExporter/worker services and
 `outbe-ocomp follower` with the same `OCOMP_CHAIN_ID`, `OCOMP_GENESIS_HASH`,
-`OCOMP_BOOT_NONCE`, `OCOMP_PROTOCOL_BUNDLE_HASH`, `OUTBE_OCOMP_BASE_PATH` and
-`OUTBE_OCOMP_NODE_USER` deployment identity. The follower performs Lysis and
+`OCOMP_BOOT_NONCE`, `OCOMP_PROTOCOL_BUNDLE_HASH` and `OUTBE_OCOMP_BASE_PATH`.
+The follower performs Lysis and
 durably publishes the exact local result, but it never reads an OCOMP signing
 key or `OUTBE_OCOMP_RPC_URL` and never submits a vote.
 
@@ -227,8 +225,6 @@ outbe-chain node --validator \
   --consensus.peers             "<bls_pubkey>@<host:port>,..." \
   --ocomp.supervisor-socket     /run/outbe/ocomp-supervisor.sock \
   --ocomp.snapshot-exporter-socket /run/outbe/ocomp-snapshot-exporter.sock \
-  --ocomp.supervisor-uid        <supervisor-uid> \
-  --ocomp.snapshot-exporter-uid <snapshot-exporter-uid> \
   --ocomp.protocol-bundle-hash  <0x-chain-pinned-bundle-hash> \
   --ocomp.boot-nonce            <fresh-nonzero-0x32-byte-value> \
   --ocomp.key                   /var/lib/outbe/ocomp/ocomp-key-v1.hex \
@@ -243,8 +239,9 @@ change therefore affects only new jobs; old live jobs keep their old index and
 quorum.
 
 The two OCOMP sockets belong to the local Supervisor and SnapshotExporter
-processes. Their peer UIDs, the bundle hash and the boot nonce form one
-all-or-nothing startup profile. The OCOMP key file and the node-owned sign-once
+processes. The bundle hash and boot nonce form one all-or-nothing startup
+profile. All roles inherit the invoking process identity; OCOMP does not require
+fixed service usernames. The OCOMP key file and the node-owned sign-once
 journal under the chain data directory must survive restarts. An exact retry
 returns the byte-identical stored signature; a changed job binding is refused
 as equivocation.
@@ -456,7 +453,6 @@ fallback for production.
 | `--consensus.keys-dir`                                     | where the DKG share/polynomial/output are persisted (default `<datadir>/keys`)                                                                  |
 | `--consensus.listen-addr` / `--consensus.peers`            | consensus P2P listen address / bootstrap hint `<bls_pubkey>@<host:port>`                                                                        |
 | `--ocomp.supervisor-socket` / `--ocomp.snapshot-exporter-socket` | local Supervisor/Follower and SnapshotExporter endpoints; both are mandatory together on validators and certified FullNodes              |
-| `--ocomp.supervisor-uid` / `--ocomp.snapshot-exporter-uid` | expected Unix peer identities for those two local endpoints                                                                                    |
 | `--ocomp.protocol-bundle-hash` / `--ocomp.boot-nonce`      | chain-pinned OCOMP bundle identity / nonzero per-boot control-session binding                                                                   |
 | `--ocomp.key`                                              | validator-only node-owned OCOMP result-signing key registered through `confirm-ready`; omit on FullNode; no static participant index is configured |
 | `--tee-enclave-socket`                                     | mandatory enclave sidecar endpoint; every V1 node fails startup if it is absent or cannot satisfy its genesis-fixed mode                        |

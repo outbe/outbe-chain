@@ -635,34 +635,7 @@ impl PublicVoteRpcClientV1 {
         if bytes.len() > self.max_response_bytes {
             return Err(PublicVoteRpcErrorV1::ResponseTooLarge);
         }
-        #[derive(serde::Deserialize)]
-        struct RpcError {
-            code: i64,
-            message: String,
-        }
-        #[derive(serde::Deserialize)]
-        struct RpcResponse {
-            jsonrpc: String,
-            id: u64,
-            result: Option<serde_json::Value>,
-            error: Option<RpcError>,
-        }
-        let envelope: RpcResponse = serde_json::from_slice(&bytes)
-            .map_err(|error| PublicVoteRpcErrorV1::Malformed(error.to_string()))?;
-        if envelope.jsonrpc != "2.0" || envelope.id != id {
-            return Err(PublicVoteRpcErrorV1::Malformed(
-                "JSON-RPC envelope mismatch".to_owned(),
-            ));
-        }
-        if let Some(error) = envelope.error {
-            return Err(PublicVoteRpcErrorV1::Remote {
-                code: error.code,
-                message: error.message,
-            });
-        }
-        envelope
-            .result
-            .ok_or_else(|| PublicVoteRpcErrorV1::Malformed("missing result".to_owned()))
+        parse_rpc_response(&bytes, id)
     }
 
     fn block_for_tag(&self, tag: serde_json::Value) -> Result<VoteBlockV1, PublicVoteRpcErrorV1> {
@@ -675,6 +648,39 @@ impl PublicVoteRpcClientV1 {
             hash: parse_b256_field(&value, "hash")?,
         })
     }
+}
+
+fn parse_rpc_response(
+    bytes: &[u8],
+    expected_id: u64,
+) -> Result<serde_json::Value, PublicVoteRpcErrorV1> {
+    #[derive(serde::Deserialize)]
+    struct RpcError {
+        code: i64,
+        message: String,
+    }
+
+    let envelope: serde_json::Value = serde_json::from_slice(bytes)
+        .map_err(|error| PublicVoteRpcErrorV1::Malformed(error.to_string()))?;
+    if envelope.get("jsonrpc").and_then(serde_json::Value::as_str) != Some("2.0")
+        || envelope.get("id").and_then(serde_json::Value::as_u64) != Some(expected_id)
+    {
+        return Err(PublicVoteRpcErrorV1::Malformed(
+            "JSON-RPC envelope mismatch".to_owned(),
+        ));
+    }
+    if let Some(error) = envelope.get("error").filter(|error| !error.is_null()) {
+        let error: RpcError = serde_json::from_value(error.clone())
+            .map_err(|error| PublicVoteRpcErrorV1::Malformed(error.to_string()))?;
+        return Err(PublicVoteRpcErrorV1::Remote {
+            code: error.code,
+            message: error.message,
+        });
+    }
+    envelope
+        .get("result")
+        .cloned()
+        .ok_or_else(|| PublicVoteRpcErrorV1::Malformed("missing result".to_owned()))
 }
 
 impl VoteSubmissionRpcV1 for PublicVoteRpcClientV1 {
@@ -1219,7 +1225,6 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use alloy_consensus::TxEip1559;
-    use alloy_eips::eip2718::Encodable2718 as _;
     use alloy_primitives::Bytes;
     use outbe_ocomp_protocol::{
         common::BoundedBytes,
@@ -1240,6 +1245,26 @@ mod tests {
     const JOB_ID: B256 = B256::repeat_byte(0x21);
     const BLOCK_A: B256 = B256::repeat_byte(0x31);
     const BLOCK_B: B256 = B256::repeat_byte(0x32);
+
+    #[test]
+    fn public_rpc_preserves_null_result_for_pending_receipt() {
+        let response = br#"{"jsonrpc":"2.0","id":7,"result":null}"#;
+
+        assert_eq!(
+            parse_rpc_response(response, 7).expect("valid pending receipt response"),
+            serde_json::Value::Null
+        );
+    }
+
+    #[test]
+    fn public_rpc_rejects_success_response_without_result_field() {
+        let response = br#"{"jsonrpc":"2.0","id":7}"#;
+
+        assert!(matches!(
+            parse_rpc_response(response, 7),
+            Err(PublicVoteRpcErrorV1::Malformed(message)) if message == "missing result"
+        ));
+    }
 
     fn test_result(limits: &SchemaLimits) -> LysisResultV1 {
         let roots = ResultRootsV1 {
@@ -1383,7 +1408,7 @@ mod tests {
                 result_validator_set_epoch: 7,
                 result_committee_set_hash: B256::repeat_byte(0x41),
                 result_ocomp_binding_hash: B256::repeat_byte(0x42),
-                validator_index: 0,
+                ocomp_key_hash: B256::repeat_byte(0x43),
                 key_epoch: 1,
                 result,
                 signature_rs: [0; 64],

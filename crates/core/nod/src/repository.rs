@@ -532,15 +532,16 @@ fn validate_page_limit(limit: usize) -> Result<(), NodRepositoryError> {
 }
 
 fn map_parent_source_error(error: NodRepositoryError) -> ParentBodySourceError {
+    use outbe_offchain_storage::StorageErrorKind;
+
     let message = error.to_string();
     match &error {
         NodRepositoryError::Storage(storage)
-            if matches!(
-                storage.kind(),
-                outbe_offchain_storage::StorageErrorKind::Unavailable
-                    | outbe_offchain_storage::StorageErrorKind::RequestDeadline
-            ) =>
+            if storage.kind() == StorageErrorKind::RequestDeadline =>
         {
+            ParentBodySourceError::RequestDeadline(message)
+        }
+        NodRepositoryError::Storage(storage) if storage.kind() == StorageErrorKind::Unavailable => {
             ParentBodySourceError::Unavailable(message)
         }
         _ => ParentBodySourceError::Corruption(message),

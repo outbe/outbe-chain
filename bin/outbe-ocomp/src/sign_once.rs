@@ -41,7 +41,7 @@ pub struct SignOnceSubjectV1 {
     pub result_validator_set_epoch: u64,
     pub result_committee_set_hash: B256,
     pub result_ocomp_binding_hash: B256,
-    pub validator_index: u16,
+    pub ocomp_key_hash: B256,
     pub key_epoch: u64,
     pub result_digest: B256,
 }
@@ -58,7 +58,7 @@ impl SignOnceSubjectV1 {
             result_validator_set_epoch: self.result_validator_set_epoch,
             result_committee_set_hash: self.result_committee_set_hash,
             result_ocomp_binding_hash: self.result_ocomp_binding_hash,
-            validator_index: self.validator_index,
+            ocomp_key_hash: self.ocomp_key_hash,
             key_epoch: self.key_epoch,
             purpose: SignOncePurpose::ResultSignature as u8,
             result_digest: self.result_digest,
@@ -78,7 +78,7 @@ impl SignOnceSubjectV1 {
             result_validator_set_epoch: self.result_validator_set_epoch,
             result_committee_set_hash: self.result_committee_set_hash,
             result_ocomp_binding_hash: self.result_ocomp_binding_hash,
-            validator_index: self.validator_index,
+            ocomp_key_hash: self.ocomp_key_hash,
             key_epoch: self.key_epoch,
             result_digest: self.result_digest,
             signature_rs,
@@ -96,7 +96,7 @@ impl SignOnceSubjectV1 {
             && record.result_validator_set_epoch == self.result_validator_set_epoch
             && record.result_committee_set_hash == self.result_committee_set_hash
             && record.result_ocomp_binding_hash == self.result_ocomp_binding_hash
-            && record.validator_index == self.validator_index
+            && record.ocomp_key_hash == self.ocomp_key_hash
             && record.key_epoch == self.key_epoch
             && record.result_digest == self.result_digest
     }
@@ -745,7 +745,7 @@ fn records_share_subject(left: &SignOnceRecordV1, right: &SignOnceRecordV1) -> b
         && left.result_validator_set_epoch == right.result_validator_set_epoch
         && left.result_committee_set_hash == right.result_committee_set_hash
         && left.result_ocomp_binding_hash == right.result_ocomp_binding_hash
-        && left.validator_index == right.validator_index
+        && left.ocomp_key_hash == right.ocomp_key_hash
         && left.key_epoch == right.key_epoch
         && left.result_digest == right.result_digest
 }

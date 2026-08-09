@@ -116,10 +116,6 @@ pub(crate) fn is_business_failure(error: &PrecompileError) -> bool {
     matches!(error, PrecompileError::Revert(message) if message.starts_with("Metadosis business failure: "))
 }
 
-pub(crate) fn infrastructure_failure(message: impl Into<String>) -> PrecompileError {
-    PrecompileError::Storage(message.into())
-}
-
 pub(crate) fn activation_rejection(code: u16) -> PrecompileError {
     encoded_rejection(OCOMP_ACTIVATION_REJECTED_SELECTOR, code)
 }

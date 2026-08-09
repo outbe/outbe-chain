@@ -9,4 +9,4 @@ mod server;
 pub mod test_support;
 
 pub use api::OutbeApiServer;
-pub use server::OutbeApiHandler;
+pub use server::{OcompLysisOpeningsRuntimeV1, OutbeApiHandler};

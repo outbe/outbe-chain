@@ -5,7 +5,7 @@
 //! the inner OCOMP signature against the pinned historical ValidatorSet and owns
 //! the atomic pinned-ValidatorSet vote transition. It never executes Lysis.
 
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use outbe_compressed_entities::ExecutionScope;
 use outbe_ocomp_protocol::{
     error::ProtocolError,
@@ -28,13 +28,20 @@ use crate::{
     schema::MetadosisContract,
 };
 
-use super::activation::OcompLocalResultAuthority;
 use super::schema::remove_response_deadline_key;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RecordedResultVoteV1 {
     pub outcome: RecordVoteOutcomeV1,
     pub quorum: Option<OcompQuorumV1>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ResolvedHistoricalResultVoteMemberV1 {
+    validator_address: Address,
+    validator_index: u16,
+    key_epoch: u64,
+    ocomp_public_key_sec1: [u8; 33],
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -54,7 +61,6 @@ pub fn dispatch_public_result_vote(
     data: &[u8],
     value: U256,
     is_static: bool,
-    local_result_authority: Option<&dyn OcompLocalResultAuthority>,
 ) -> Result<Bytes> {
     if !value.is_zero() || is_static {
         return Err(vote_reject(CALL_MODE));
@@ -65,13 +71,7 @@ pub fn dispatch_public_result_vote(
         .map_err(|_| vote_reject(MALFORMED_ENCODING))?;
     let inclusion_height = storage.block_number()?;
     MetadosisContract::new(storage)
-        .record_ocomp_result_vote(
-            &vote,
-            inclusion_height,
-            scope,
-            &limits,
-            local_result_authority,
-        )
+        .record_ocomp_result_vote(&vote, inclusion_height, scope, &limits)
         .map_err(map_vote_transition_error)?;
     Ok(Bytes::new())
 }
@@ -191,7 +191,6 @@ pub fn resolve_historical_result_vote_participant(
             || prefix.result_validator_set_epoch != record.intent.result_validator_set_epoch
             || prefix.result_committee_set_hash != record.intent.result_committee_set_hash
             || prefix.result_ocomp_binding_hash != record.intent.result_ocomp_binding_hash
-            || prefix.validator_index >= record.intent.result_member_count
         {
             return Ok(None);
         }
@@ -205,7 +204,6 @@ pub fn resolve_historical_result_vote_participant(
             || prefix.result_validator_set_epoch != accountability.result_validator_set_epoch
             || prefix.result_committee_set_hash != accountability.result_committee_set_hash
             || prefix.result_ocomp_binding_hash != accountability.result_ocomp_binding_hash
-            || prefix.validator_index >= accountability.member_count
         {
             return Ok(None);
         }
@@ -227,18 +225,54 @@ pub fn resolve_historical_result_vote_participant(
         prefix.result_validator_set_epoch,
         prefix.result_committee_set_hash,
     );
-    let Some(member) = outbe_validatorset::read_ocomp_snapshot_member_at(
+    Ok(resolve_historical_result_vote_member(
         storage,
         snapshot_key,
-        prefix.validator_index,
+        member_count,
+        prefix.ocomp_key_hash,
+        prefix.key_epoch,
     )?
-    else {
-        return Ok(None);
-    };
-    if member.key_epoch != prefix.key_epoch {
+    .map(|member| member.validator_address))
+}
+
+fn resolve_historical_result_vote_member(
+    storage: StorageHandle<'_>,
+    snapshot_key: B256,
+    member_count: u16,
+    ocomp_key_hash: B256,
+    key_epoch: u64,
+) -> Result<Option<ResolvedHistoricalResultVoteMemberV1>> {
+    let validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+    let validator_address = validators
+        .ocomp_key_hash_to_validator
+        .read(&ocomp_key_hash)?;
+    if validator_address.is_zero() {
         return Ok(None);
     }
-    Ok(Some(member.validator_address))
+
+    for validator_index in 0..member_count {
+        let member = outbe_validatorset::read_ocomp_snapshot_member_at(
+            storage.clone(),
+            snapshot_key,
+            validator_index,
+        )?
+        .ok_or_else(|| storage_corruption_message("OCOMP historical snapshot member is missing"))?;
+        if member.validator_address != validator_address {
+            continue;
+        }
+        if member.key_epoch != key_epoch
+            || keccak256(member.ocomp_public_key_sec1) != ocomp_key_hash
+        {
+            return Ok(None);
+        }
+        return Ok(Some(ResolvedHistoricalResultVoteMemberV1 {
+            validator_address,
+            validator_index,
+            key_epoch: member.key_epoch,
+            ocomp_public_key_sec1: member.ocomp_public_key_sec1,
+        }));
+    }
+    Ok(None)
 }
 
 /// Resolves and authorizes the outer EVM signer of an OCOMP system carrier.
@@ -285,7 +319,6 @@ impl MetadosisContract<'_> {
         inclusion_height: u64,
         scope: &ExecutionScope,
         limits: &SchemaLimits,
-        local_result_authority: Option<&dyn OcompLocalResultAuthority>,
     ) -> Result<RecordedResultVoteV1> {
         let storage = self.storage.clone();
         let outcome = (|| {
@@ -351,10 +384,12 @@ impl MetadosisContract<'_> {
                 record.intent.result_validator_set_epoch,
                 record.intent.result_committee_set_hash,
             );
-            let member = outbe_validatorset::read_ocomp_snapshot_member_at(
+            let member = resolve_historical_result_vote_member(
                 storage.clone(),
                 snapshot_key,
-                vote.validator_index,
+                snapshot.member_count,
+                vote.ocomp_key_hash,
+                vote.key_epoch,
             )?
             .ok_or_else(|| reject("OCOMP result vote member is missing"))?;
             vote.verify_historical_member(
@@ -382,7 +417,7 @@ impl MetadosisContract<'_> {
             }
             let had_quorum = accountability.quorum.is_some();
             let outcome = accountability
-                .record_verified_vote(vote, inclusion_height, limits)
+                .record_verified_vote(member.validator_index, vote, inclusion_height, limits)
                 .map_err(|error| reject(format!("invalid OCOMP vote transition: {error}")))?;
             let quorum = accountability.quorum.clone();
 
@@ -427,7 +462,6 @@ impl MetadosisContract<'_> {
                             &vote.result,
                             formed,
                             &authority,
-                            local_result_authority,
                         ),
                     )?;
                     let applied = self

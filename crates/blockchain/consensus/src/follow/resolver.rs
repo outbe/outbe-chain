@@ -30,7 +30,6 @@
 
 use std::sync::{Arc, Mutex};
 
-use alloy_consensus::BlockHeader as _;
 use commonware_actor::Feedback;
 use commonware_codec::Encode as _;
 use commonware_consensus::marshal::resolver::handler::{self, Annotation, Key};
@@ -44,7 +43,7 @@ use tracing::{debug, warn};
 
 use crate::digest::Digest;
 use crate::follow::upstream::{CertifiedFinalizedBlock, FinalizedSource, LocalBlockSource};
-use crate::follow::CommitteeChain;
+use crate::follow::{CommitteeChain, FollowerEpocher};
 
 /// The marshal backfill key type for outbe blocks (commitment = block digest).
 pub(super) type ResolverKey = Key<Digest>;
@@ -66,13 +65,12 @@ pub(super) struct ResolverActor<E, F, L> {
     handler: handler::Handler<Digest>,
     upstream: F,
     local: L,
-    /// Shared committee-chaining verifier. A `Finalized` fetch registers the
-    /// fetched block's epoch committee (from its `extra_data`) BEFORE delivering
-    /// the value to the marshal, so the marshal's per-epoch verifier provider
-    /// (the same `CommitteeChain` provider) can verify that block's certificate.
-    /// This closes the boundary-block circularity: the block that *announces*
-    /// epoch N's committee is also the first block *signed by* epoch N.
+    /// Shared committee-chaining verifier. A finalized fetch is independently
+    /// authenticated before any pre-announce or boundary observation is applied;
+    /// the marshal then verifies the same certificate again on delivery.
     chain: Arc<Mutex<CommitteeChain>>,
+    /// Shared authenticated height-to-epoch map used by the marshal.
+    epocher: FollowerEpocher,
     rx: FetchRx,
 }
 
@@ -83,6 +81,7 @@ pub(super) fn init<E, F, L>(
     upstream: F,
     local: L,
     chain: Arc<Mutex<CommitteeChain>>,
+    epocher: FollowerEpocher,
 ) -> (ResolverActor<E, F, L>, FollowResolver) {
     let (tx, rx) = futures::channel::mpsc::unbounded();
     let actor = ResolverActor {
@@ -91,6 +90,7 @@ pub(super) fn init<E, F, L>(
         upstream,
         local,
         chain,
+        epocher,
         rx,
     };
     (actor, FollowResolver { tx })
@@ -114,6 +114,7 @@ where
                     upstream,
                     local,
                     chain,
+                    epocher,
                     mut rx,
                 } = self;
                 while let Some(fetch) = rx.next().await {
@@ -122,7 +123,10 @@ where
                     let upstream = upstream.clone();
                     let local = local.clone();
                     let chain = chain.clone();
-                    task_ctx.spawn(move |_| resolve_one(fetch, handler, upstream, local, chain));
+                    let epocher = epocher.clone();
+                    task_ctx.spawn(move |_| {
+                        resolve_one(fetch, handler, upstream, local, chain, epocher)
+                    });
                 }
             })
     }
@@ -135,6 +139,7 @@ async fn resolve_one<F, L>(
     upstream: F,
     local: L,
     chain: Arc<Mutex<CommitteeChain>>,
+    epocher: FollowerEpocher,
 ) where
     F: FinalizedSource,
     L: LocalBlockSource,
@@ -177,31 +182,17 @@ async fn resolve_one<F, L>(
             }
         }
         Key::Finalized { height } => match upstream.get_finalization(*height).await {
-            Some(CertifiedFinalizedBlock {
-                finalization,
-                block,
-            }) => {
-                // Register this block's epoch committee BEFORE delivering, so the
-                // marshal can verify the finalization. The boundary block that
-                // announces epoch N's committee is itself the first block signed
-                // by epoch N — without this lead-in the marshal would reject it
-                // for "no verifier". Trust is preserved: the marshal still
-                // verifies the certificate against the registered committee, and
-                // the committee is only ever read from a block the prior
-                // (trusted) committee's chain leads to. A non-boundary block
-                // registers nothing (returns Ok(None)).
-                let extra = block.header().extra_data().clone();
-                {
-                    let mut guard = chain.lock().expect("committee chain mutex poisoned");
-                    if let Err(error) = guard.advance_from_block_extra_data(extra.as_ref()) {
-                        warn!(%key, %error, "failed to register committee from fetched boundary block; dropping fetch");
-                        return;
-                    }
+            Some(certified) => {
+                if let Err(error) = super::engine::authenticate_live_finalized(
+                    &chain, &epocher, *height, &certified,
+                ) {
+                    warn!(%key, %error, "failed to authenticate follower finalized delivery; dropping fetch");
+                    return;
                 }
                 // Wire format the marshal expects for a `Finalized` delivery: the
                 // finalization certificate immediately followed by the block.
-                let mut buf = finalization.encode().to_vec();
-                buf.extend_from_slice(block.encode().as_ref());
+                let mut buf = certified.finalization.encode().to_vec();
+                buf.extend_from_slice(certified.block.encode().as_ref());
                 buf.into()
             }
             None => {

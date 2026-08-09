@@ -3,9 +3,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 #[cfg(feature = "ocomp-integration")]
-use outbe_ocomp_protocol::profile::{
-    poc_schema_limits, CapacityProfileV1, OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS,
-};
+use outbe_chain_constants::DEFAULT_OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS;
+#[cfg(feature = "ocomp-integration")]
+use outbe_ocomp_protocol::profile::{poc_schema_limits, CapacityProfileV1};
 #[cfg(feature = "ocomp-integration")]
 use sha2::{Digest as _, Sha256};
 
@@ -117,8 +117,8 @@ fn canonical_final_artifacts_are_complete_hash_bound_and_node_loadable() {
     .unwrap();
     let mut capacity_profile =
         CapacityProfileV1::decode_canonical(&capacity_profile_bytes, &poc_schema_limits()).unwrap();
-    if capacity_profile.result_deadline_blocks != OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS {
-        capacity_profile.result_deadline_blocks = OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS;
+    if capacity_profile.result_deadline_blocks != DEFAULT_OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS {
+        capacity_profile.result_deadline_blocks = DEFAULT_OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS;
         let expected = capacity_profile
             .encode_canonical(&poc_schema_limits())
             .unwrap();
@@ -129,7 +129,8 @@ fn canonical_final_artifacts_are_complete_hash_bound_and_node_loadable() {
         );
     }
     assert_eq!(
-        capacity["capacity_profile"]["result_deadline_blocks"], OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS,
+        capacity["capacity_profile"]["result_deadline_blocks"],
+        DEFAULT_OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS,
         "retained capacity JSON must expose the exact protocol response window"
     );
     let network: serde_json::Value =

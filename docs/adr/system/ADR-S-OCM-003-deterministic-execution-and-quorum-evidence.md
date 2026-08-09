@@ -238,9 +238,9 @@ q = simplex_n3f1_quorum(N)
 
 Each domain independently owns its node, supervisor, exporter, CAS and workers.
 Several processes or workers controlled by one validator contribute one
-participant index and one first vote at most. A later ValidatorSet boundary
-affects only new attempts; already-open attempts retain their pinned members,
-keys, `N` and quorum.
+internally derived participant index and one first vote at most. A later
+ValidatorSet boundary affects only new attempts; already-open attempts retain
+their pinned members, keys, `N` and quorum.
 
 The node owns a separate OCOMP signing key/epoch and an
 `OcompAttestationGate`. The supervisor and worker never receive the key or an
@@ -264,7 +264,7 @@ The sign-once subject binds at least:
 ```text
 (chain/genesis/fork, OCOMP key epoch, JobId, attempt,
  result_validator_set_epoch, result_committee_set_hash,
- result_ocomp_binding_hash, participant index, result purpose)
+ result_ocomp_binding_hash, OCOMP key hash, result purpose)
 ```
 
 An exact retry returns the recorded signature. A different digest for the same
@@ -306,7 +306,7 @@ ResultVoteV1 {
   result_validator_set_epoch,
   result_committee_set_hash,
   result_ocomp_binding_hash,
-  participant_index: u16,
+  ocomp_key_hash,
   key_epoch,
   result: LysisResultV1,
   signature
@@ -322,7 +322,11 @@ bodies.
 The executor bounded-decodes and structurally verifies the canonical result,
 then reconstructs `ResultDigest`. The inner OCOMP signature binds the
 chain/genesis/fork, bundle, job, attempt, all three historical snapshot
-bindings, participant index, key epoch, result purpose and that exact digest.
+bindings, OCOMP key hash, key epoch, result purpose and that exact digest.
+Execution resolves that hash through the existing
+`ocomp_key_hash_to_validator`, finds the validator in the pinned snapshot and
+uses the resulting internal index for the vote slot, bitmap and accountability.
+The vote never accepts a caller-selected snapshot index.
 The outer replay-visible carrier uses the Supervisor's
 role-delegated OCOMP EVM key. The node never receives that private key and the
 Supervisor never receives the node's attestation key. Its visible signed
@@ -335,6 +339,11 @@ q-forming apply run under the separate deterministic system-work budget.
 Actual execution gas is accumulated across system transactions and checked
 against `SYSTEM_TX_ARTIFACT_GAS_LIMIT = 10_000_000_000` before state or receipt
 commit; exceeding that ceiling invalidates the carrier atomically.
+The same ceiling bounds the complete block-internal system workload. An EVM
+out-of-gas result consumes the full system-call limit, so it is treated as hard
+aggregate-budget exhaustion and cannot be converted into a soft receipt after
+earlier mandatory phases have consumed work. Soft failure remains available
+for non-critical `Revert`/bounded `Halt` results that fit the aggregate budget.
 Malformed or unauthorized lookalikes fail closed before that authority is
 granted.
 
@@ -414,7 +423,8 @@ deadline. Only finalized deadline closure moves the node-facing record to
 terminal retention; quorum formation alone must never hide the job from a
 remaining pinned validator.
 
-The finalized binding opens one exact compute-and-vote window of 1,800 blocks.
+The finalized binding opens one exact compute-and-vote window from the immutable
+genesis-installed OCOMP request profile (production default: 1,800 blocks).
 It includes both local Lysis execution and canonical vote inclusion; there is
 no separate short vote-only window. At the exclusive deadline consensus closes
 `OcompAccountabilitySummaryV1`, derives `missing_bitmap` from the pinned slots
@@ -511,7 +521,8 @@ Three votes over different result bytes do not form quorum evidence.
 - `N` authenticated Tribute produce exactly the canonical shard/range set; a
   shard boundary never drops or rejects a valid next Tribute.
 - Worker/scheduler count cannot change result bytes or evidence weight.
-- One validator index contributes at most one first vote to the tally.
+- One validator resolved from the signed OCOMP key hash contributes at most one
+  first vote to its internally derived snapshot slot.
 - The OCOMP key is distinct from the consensus key and unavailable to compute
   processes.
 - The V1 OCOMP key remains `key_epoch = 1` and immutable for a validator address
@@ -524,7 +535,9 @@ Three votes over different result bytes do not form quorum evidence.
   on-chain vote slots.
 - Every remaining pinned slot remains writable until the response deadline even
   after quorum application.
-- The response deadline is exactly 1,800 blocks after the finalized binding.
+- The response deadline is exactly the job-pinned
+  `capacity_profile.result_deadline_blocks` after the finalized binding; the
+  production genesis default is 1,800 blocks.
 - Every pinned participant without a timely valid included vote is recorded as
   missing; only one whose current ValidatorSet status is still `ACTIVE` is
   jailed exactly once at that deadline.
@@ -604,7 +617,7 @@ participates automatically in a new attempt. It also includes synthetic
 accountability/capacity vectors at the current consensus validator bound,
 1/2/4-worker equality, randomized order/retry, restart-safe sign-once refusal,
 system-vote inclusion and replay, continued post-quorum participation, exact
-1,800-block deadline accountability with ACTIVE-only jail and non-ACTIVE
+job-pinned deadline accountability (production default 1,800 blocks) with ACTIVE-only jail and non-ACTIVE
 non-mutation, duplicate/wrong voter rejection, controlled failed late carriers,
 production-pool priority under a saturated higher-tip user workload,
 conflicting-vote evidence, independent FullNode recomputation/fail-closed

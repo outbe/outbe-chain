@@ -361,8 +361,10 @@ pub async fn run_initial_dkg(
 /// Run a DKG ceremony with optional durable local-dealer transcript recovery.
 ///
 /// When a store is supplied, the dealer seed is persisted before any bundle is
-/// sent. A restarted process reconstructs byte-identical bundles and safely
-/// retries them; players' duplicate-bundle ACK cache makes the replay idempotent.
+/// sent. A restarted process reconstructs byte-identical bundles and periodically
+/// replays each previously acknowledged remote dealing until the fresh
+/// process-local Player confirms ingestion with the same ACK. The existing ACK
+/// collection grace still bounds how long an unavailable player delays sealing.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_initial_dkg_durable(
     clock: &impl Clock,
@@ -529,16 +531,21 @@ pub async fn run_initial_dkg_durable(
         }
     }
 
-    // Rehydrate accepted remote ACKs before the first retry so a restarted
-    // dealer immediately targets only players that still owe an ACK.
+    // Rehydrate accepted remote ACKs before the first periodic retry. An ACK is
+    // durable evidence for this local Dealer, but it does not prove that the
+    // remote process-local Player state survived the same restart. Preserve each
+    // acknowledged dealing in a separate byte-identical replay set until the
+    // restarted Player confirms current-process ingestion with the same ACK.
+    let mut restart_replay_shares = BTreeMap::new();
     if let (Some(d), Some(snapshot)) = (dealer.as_mut(), dealer_retry_snapshot.as_ref()) {
+        restart_replay_shares =
+            take_restart_replay_shares(&mut unsent_shares, &snapshot.accepted_acks);
         for (player_pk, ack) in &snapshot.accepted_acks {
             if player_pk == &my_pk {
                 continue;
             }
             d.receive_player_ack(player_pk.clone(), ack.clone())
                 .map_err(|error| eyre::eyre!("failed to replay durable DKG ACK: {error:?}"))?;
-            unsent_shares.remove(player_pk);
             acked_players.insert(player_pk.clone());
         }
     }
@@ -565,6 +572,7 @@ pub async fn run_initial_dkg_durable(
 
     // Send shares to all other players.
     if let Some(my_pub_msg) = my_pub_msg.as_ref() {
+        send_shares(&mut sender, ceremony_id, my_pub_msg, &restart_replay_shares).await;
         send_shares(&mut sender, ceremony_id, my_pub_msg, &unsent_shares).await;
     }
 
@@ -657,9 +665,25 @@ pub async fn run_initial_dkg_durable(
                     }
                     DkgMessage::Ack { ack, .. } => {
                         // We are a Dealer receiving an ack from a Player.
-                        // Only count unique acks per player.
+                        // A byte-identical ACK for a recovered dealing confirms that
+                        // the restarted remote Player ingested our replay. It is
+                        // already present in Dealer state, so do not feed it twice.
                         if let Some(ref mut d) = dealer {
-                            match d.receive_player_ack(from.clone(), ack.clone()) {
+                            if acknowledge_restart_replay(
+                                &mut restart_replay_shares,
+                                dealer_retry_snapshot
+                                    .as_ref()
+                                    .map(|snapshot| &snapshot.accepted_acks),
+                                &from,
+                                &ack,
+                            ) {
+                                debug!(
+                                    ?from,
+                                    remaining = restart_replay_shares.len(),
+                                    "restart replay confirmed by player"
+                                );
+                            } else {
+                                match d.receive_player_ack(from.clone(), ack.clone()) {
                                 Ok(()) => {
                                     let is_new_ack = acked_players.insert(from.clone());
                                     if is_new_ack {
@@ -683,6 +707,7 @@ pub async fn run_initial_dkg_durable(
                                 }
                                 Err(e) => {
                                     debug!(?e, ?from, "ack rejected");
+                                }
                                 }
                             }
                         }
@@ -747,9 +772,22 @@ pub async fn run_initial_dkg_durable(
                 // Advance on the fixed interval schedule (matches the previous
                 // interval-timer cadence, no drift from wakeup latency).
                 next_retry_tick += RETRY_INTERVAL;
-                if should_retry_share_distribution(dealer.is_some(), &unsent_shares) {
+                if should_retry_share_distribution(dealer.is_some(), &restart_replay_shares)
+                    || should_retry_share_distribution(dealer.is_some(), &unsent_shares)
+                {
                     if let Some(my_pub_msg) = my_pub_msg.as_ref() {
-                        debug!(remaining = unsent_shares.len(), "retrying share distribution");
+                        debug!(
+                            unacknowledged = unsent_shares.len(),
+                            restart_replays = restart_replay_shares.len(),
+                            "retrying share distribution"
+                        );
+                        send_shares(
+                            &mut sender,
+                            ceremony_id,
+                            my_pub_msg,
+                            &restart_replay_shares,
+                        )
+                        .await;
                         send_shares(&mut sender, ceremony_id, my_pub_msg, &unsent_shares).await;
                     }
                 }
@@ -795,9 +833,11 @@ pub async fn run_initial_dkg_durable(
         }
         let ack_grace_elapsed =
             ack_collection_deadline.is_some_and(|at| clock.current().duration_since(at).is_ok());
+        let current_process_delivery_complete =
+            unsent_shares.is_empty() && restart_replay_shares.is_empty();
         if dealer.is_some()
             && acked_players.len() >= player_threshold as usize
-            && (acked_players.len() == n as usize || ack_grace_elapsed)
+            && (current_process_delivery_complete || ack_grace_elapsed)
         {
             let Some(d) = dealer.take() else {
                 continue;
@@ -837,6 +877,7 @@ pub async fn run_initial_dkg_durable(
 
             // Broadcast our finalized log to all peers.
             unsent_shares.clear();
+            restart_replay_shares.clear();
             if !send_finalized_log(&mut sender, ceremony_id, signed_log) {
                 debug!("finalized-log broadcast had no accepting recipients this attempt (rate-limited/backpressure); recovered by the DKG retry tick");
             }
@@ -1164,13 +1205,21 @@ pub async fn run_reshare_dealer_only_durable(
     let mut unsent_shares: BTreeMap<bls12381::PublicKey, _> = priv_msgs.into_iter().collect();
     let mut acked_players: std::collections::BTreeSet<bls12381::PublicKey> =
         std::collections::BTreeSet::new();
+    let mut restart_replay_shares =
+        take_restart_replay_shares(&mut unsent_shares, &dealer_retry_snapshot.accepted_acks);
     for (player_pk, ack) in &dealer_retry_snapshot.accepted_acks {
         dealer
             .receive_player_ack(player_pk.clone(), ack.clone())
             .map_err(|error| eyre::eyre!("failed to replay durable dealer-only ACK: {error:?}"))?;
-        unsent_shares.remove(player_pk);
         acked_players.insert(player_pk.clone());
     }
+    send_shares(
+        &mut sender,
+        ceremony_id,
+        &my_pub_msg,
+        &restart_replay_shares,
+    )
+    .await;
     send_shares(&mut sender, ceremony_id, &my_pub_msg, &unsent_shares).await;
 
     // Same runtime-agnostic deadline + interval-cadence retry tick as
@@ -1209,7 +1258,19 @@ pub async fn run_reshare_dealer_only_durable(
 
                 match msg {
                     DkgMessage::Ack { ack, .. } => {
-                        match dealer.receive_player_ack(from.clone(), ack.clone()) {
+                        if acknowledge_restart_replay(
+                            &mut restart_replay_shares,
+                            Some(&dealer_retry_snapshot.accepted_acks),
+                            &from,
+                            &ack,
+                        ) {
+                            debug!(
+                                ?from,
+                                remaining = restart_replay_shares.len(),
+                                "dealer-only restart replay confirmed by player"
+                            );
+                        } else {
+                            match dealer.receive_player_ack(from.clone(), ack.clone()) {
                             Ok(()) => {
                                 let is_new_ack = acked_players.insert(from.clone());
                                 if is_new_ack {
@@ -1233,6 +1294,7 @@ pub async fn run_reshare_dealer_only_durable(
                             Err(e) => {
                                 debug!(?e, ?from, "dealer-only DKG ack rejected");
                             }
+                            }
                         }
                     }
                     DkgMessage::DealerBundle { .. } => {
@@ -1246,11 +1308,19 @@ pub async fn run_reshare_dealer_only_durable(
 
             _ = clock.sleep_until(next_retry_tick) => {
                 next_retry_tick += RETRY_INTERVAL;
-                if !unsent_shares.is_empty() {
+                if !restart_replay_shares.is_empty() || !unsent_shares.is_empty() {
                     debug!(
-                        remaining = unsent_shares.len(),
+                        unacknowledged = unsent_shares.len(),
+                        restart_replays = restart_replay_shares.len(),
                         "dealer-only DKG retrying share distribution"
                     );
+                    send_shares(
+                        &mut sender,
+                        ceremony_id,
+                        &my_pub_msg,
+                        &restart_replay_shares,
+                    )
+                    .await;
                     send_shares(&mut sender, ceremony_id, &my_pub_msg, &unsent_shares).await;
                 }
             },
@@ -1278,7 +1348,9 @@ pub async fn run_reshare_dealer_only_durable(
         }
         let ack_grace_elapsed =
             ack_collection_deadline.is_some_and(|at| clock.current().duration_since(at).is_ok());
-        if acked_players.len() == participants.len() || ack_grace_elapsed {
+        let current_process_delivery_complete =
+            unsent_shares.is_empty() && restart_replay_shares.is_empty();
+        if current_process_delivery_complete || ack_grace_elapsed {
             break dealer.finalize::<N3f1>();
         }
     };
@@ -1547,6 +1619,44 @@ async fn send_shares(
             );
         }
     }
+}
+
+/// Remove previously acknowledged remote dealings from the ordinary retry set
+/// and return them for restart replay. They remain in that replay set until the
+/// remote process regenerates the exact durable ACK, proving that its new
+/// process-local Player state ingested the byte-identical dealing.
+fn take_restart_replay_shares(
+    retry_shares: &mut BTreeMap<
+        bls12381::PublicKey,
+        commonware_cryptography::bls12381::dkg::feldman_desmedt::DealerPrivMsg,
+    >,
+    accepted_acks: &BTreeMap<bls12381::PublicKey, PlayerAck<bls12381::PublicKey>>,
+) -> BTreeMap<
+    bls12381::PublicKey,
+    commonware_cryptography::bls12381::dkg::feldman_desmedt::DealerPrivMsg,
+> {
+    accepted_acks
+        .keys()
+        .filter_map(|player| retry_shares.remove_entry(player))
+        .collect()
+}
+
+fn acknowledge_restart_replay(
+    restart_replay_shares: &mut BTreeMap<
+        bls12381::PublicKey,
+        commonware_cryptography::bls12381::dkg::feldman_desmedt::DealerPrivMsg,
+    >,
+    accepted_acks: Option<&BTreeMap<bls12381::PublicKey, PlayerAck<bls12381::PublicKey>>>,
+    player: &bls12381::PublicKey,
+    received_ack: &PlayerAck<bls12381::PublicKey>,
+) -> bool {
+    let Some(expected_ack) = accepted_acks.and_then(|acks| acks.get(player)) else {
+        return false;
+    };
+    if expected_ack.encode() != received_ack.encode() {
+        return false;
+    }
+    restart_replay_shares.remove(player).is_some()
 }
 
 #[cfg(test)]
@@ -2868,15 +2978,36 @@ mod tests {
             decode_dealer_retry_snapshot(&encode_dealer_retry_snapshot(&snapshot).unwrap())
                 .unwrap();
         let mut retry_targets: BTreeMap<_, _> = recovered_priv_for_retry.into_iter().collect();
+        let mut restart_replay_targets =
+            take_restart_replay_shares(&mut retry_targets, &recovered_snapshot.accepted_acks);
         for (acknowledged, ack) in &recovered_snapshot.accepted_acks {
             recovered_dealer
                 .receive_player_ack(acknowledged.clone(), ack.clone())
                 .unwrap();
-            retry_targets.remove(acknowledged);
         }
         assert!(
             !retry_targets.contains_key(&player_pk),
-            "durable retry must exclude a player whose ACK was journaled"
+            "periodic durable retry must exclude a player whose ACK was journaled"
+        );
+        assert!(
+            restart_replay_targets.contains_key(&player_pk),
+            "restart must retain the byte-identical dealing for periodic replay because the \
+             first replay may precede the remote process-local Player receiver"
+        );
+        let replayed_ack = recovered_snapshot
+            .accepted_acks
+            .get(&player_pk)
+            .unwrap()
+            .clone();
+        assert!(acknowledge_restart_replay(
+            &mut restart_replay_targets,
+            Some(&recovered_snapshot.accepted_acks),
+            &player_pk,
+            &replayed_ack,
+        ));
+        assert!(
+            restart_replay_targets.is_empty(),
+            "the exact regenerated ACK proves that the restarted Player ingested the replay"
         );
     }
 

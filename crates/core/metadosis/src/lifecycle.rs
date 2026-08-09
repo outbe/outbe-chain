@@ -3,9 +3,7 @@
 use alloy_primitives::U256;
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::ExecutionScope;
-use outbe_primitives::{
-    block::BlockRuntimeContext, chain, error::Result, time::timestamp_to_date_key,
-};
+use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 use outbe_promislimit::PromisLimitContract;
 use outbe_tribute::TributeContract;
 
@@ -24,17 +22,6 @@ use crate::{
     schema::{MetadosisContract, WorldwideDayEntryExt},
     terminal::{CapacityForfeitureReceipt, MissedOfferingReceipt},
 };
-
-pub(crate) fn effective_hours(chain_id: u64) -> (u64, u64) {
-    if chain::is_devnet(chain_id) || chain::is_testnet(chain_id) {
-        (
-            BOOTSTRAP_LOOKBACK_DELAY_HOURS,
-            BOOTSTRAP_OFFERING_PERIOD_HOURS,
-        )
-    } else {
-        (LOOKBACK_DELAY_HOURS, OFFERING_PERIOD_HOURS)
-    }
-}
 
 pub(crate) fn validate_metadosis_timestamp(timestamp: u64) -> Result<()> {
     timestamp
@@ -151,14 +138,8 @@ fn initialize_bootstrap_if_needed(
     metadosis: &mut MetadosisContract,
     ctx: &BlockRuntimeContext,
 ) -> Result<()> {
-    if (chain::is_devnet(ctx.block.chain_id) || chain::is_testnet(ctx.block.chain_id))
-        && metadosis.get_bootstrap_end_time()? == 0
-    {
-        let duration = BOOTSTRAP_DURATION_HOURS
-            .checked_mul(SECONDS_PER_HOUR)
-            .ok_or_else(|| {
-                crate::errors::caller_rejection("Metadosis bootstrap duration overflow")
-            })?;
+    if metadosis.get_bootstrap_end_time()? == 0 {
+        let duration = outbe_chain_constants::load(ctx)?.metadosis_bootstrap_duration_seconds;
         let end_time = ctx.block.timestamp.checked_add(duration).ok_or_else(|| {
             crate::errors::caller_rejection("Metadosis bootstrap end timestamp overflow")
         })?;
@@ -175,8 +156,7 @@ fn create_initial_worldwide_day_if_needed(
     if !metadosis.active_wwd.is_empty()? {
         return Ok(());
     }
-    let utc_day = timestamp_to_date_key(timestamp);
-    create_worldwide_day_for_date(metadosis, ctx, utc_day.into())
+    create_worldwide_day_if_needed(metadosis, ctx, timestamp)
 }
 
 pub(crate) fn create_worldwide_day_if_needed(
@@ -207,7 +187,7 @@ pub(crate) fn create_worldwide_day_for_date(
     }
 
     aggregate.ensure_can_insert_active(wwd)?;
-    let (lookback_hours, offering_hours) = effective_hours(ctx.block.chain_id);
+    let constants = outbe_chain_constants::load(ctx)?;
     let forming_start = wwd.start_timestamp();
     let transition = reduce_outer_wwd(None, OuterWwdEvent::CreateDay)?;
     commit_new_wwd(
@@ -215,8 +195,10 @@ pub(crate) fn create_worldwide_day_for_date(
         wwd,
         NewWwdSchedule {
             forming_start,
-            lookback_hours,
-            offering_hours,
+            forming_period_seconds: constants.metadosis_forming_period_seconds,
+            lookback_delay_seconds: constants.metadosis_lookback_delay_seconds,
+            offering_period_seconds: constants.metadosis_offering_period_seconds,
+            waiting_period_seconds: constants.metadosis_waiting_period_seconds,
         },
         &transition,
     )

@@ -29,6 +29,10 @@ use crate::metadosis_p0::{
 pub enum TeeMode {
     /// Real SGX under `gramine-sgx` (needs SGX hardware).
     Real,
+    /// Production enclave under real `gramine-sgx` with remote attestation
+    /// disabled. Uses EGETKEY sealing and a production NodeHost session while
+    /// the chain accepts only GramineDirectDev evidence.
+    SgxNoAttest,
     /// Production enclave binary under `gramine-direct` (no SGX).
     GramineDirect,
     /// Test-only mock enclave binary under `gramine-direct` (no SGX).
@@ -49,7 +53,7 @@ impl TeeMode {
 
     /// Whether SGX device nodes are passed to the Gramine container.
     pub const fn passes_sgx_devices(self) -> bool {
-        matches!(self, TeeMode::Real)
+        matches!(self, TeeMode::Real | TeeMode::SgxNoAttest)
     }
 
     /// Whether the harness supplies a deterministic per-validator DKG seed.
@@ -61,6 +65,7 @@ impl TeeMode {
     pub const fn evidence_name(self) -> &'static str {
         match self {
             Self::Real => "real",
+            Self::SgxNoAttest => "sgx-no-attest",
             Self::GramineDirect => "gramine-direct",
             Self::Mock => "mock",
         }
@@ -70,6 +75,12 @@ impl TeeMode {
     /// execution requirement.
     pub const fn satisfies_gramine_direct_requirement(self) -> bool {
         matches!(self, Self::GramineDirect)
+    }
+
+    /// Whether this mode proves the explicit production SGX-without-DCAP
+    /// profile rather than merely running a development transport.
+    pub const fn satisfies_sgx_no_attest_requirement(self) -> bool {
+        matches!(self, Self::SgxNoAttest)
     }
 }
 
@@ -378,6 +389,14 @@ pub fn unmet(feature: &Feature, scenario: &Scenario, env: &Environment) -> Optio
             env.tee_mode.evidence_name()
         ));
     }
+    if has_tag(feature, scenario, "sgx-no-attest")
+        && !env.tee_mode.satisfies_sgx_no_attest_requirement()
+    {
+        return Some(format!(
+            "needs production SGX without remote attestation (@sgx-no-attest), but --tee {}",
+            env.tee_mode.evidence_name()
+        ));
+    }
     if has_tag(feature, scenario, "sudo") && !env.sudo {
         return Some("needs sudo (@sudo), but --no-sudo".to_string());
     }
@@ -462,6 +481,30 @@ mod tests {
     fn gramine_direct_selects_the_exact_production_enclave_binary() {
         let env = Environment {
             tee_mode: TeeMode::GramineDirect,
+            enclave_bin: PathBuf::from("/artifact-set/outbe-tee-enclave"),
+            mock_bin: PathBuf::from("/artifact-set/outbe-tee-enclave-mock"),
+            ..Environment::default()
+        };
+        assert_eq!(
+            env.selected_enclave_bin(),
+            Path::new("/artifact-set/outbe-tee-enclave")
+        );
+    }
+
+    #[test]
+    fn sgx_no_attest_uses_production_enclave_and_real_sgx_without_dev_seed() {
+        let mode = TeeMode::SgxNoAttest;
+        assert!(mode.enabled());
+        assert!(!mode.uses_mock_binary());
+        assert!(mode.passes_sgx_devices());
+        assert!(!mode.uses_deterministic_dkg_seed());
+        assert_eq!(mode.evidence_name(), "sgx-no-attest");
+        assert!(mode.satisfies_sgx_no_attest_requirement());
+        assert!(!TeeMode::Real.satisfies_sgx_no_attest_requirement());
+        assert!(!TeeMode::GramineDirect.satisfies_sgx_no_attest_requirement());
+
+        let env = Environment {
+            tee_mode: mode,
             enclave_bin: PathBuf::from("/artifact-set/outbe-tee-enclave"),
             mock_bin: PathBuf::from("/artifact-set/outbe-tee-enclave-mock"),
             ..Environment::default()

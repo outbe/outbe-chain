@@ -12,6 +12,7 @@ use std::process::{Command, Stdio};
 
 use alloy_primitives::B256;
 use eyre::{ensure, Context, Result};
+use outbe_chain_constants::DEFAULT_OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS as OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS;
 use outbe_consensus::{
     config::MAX_P2P_MESSAGE_SIZE,
     timing::{DEFAULT_CERTIFICATION_TIMEOUT_MS, DEFAULT_LEADER_TIMEOUT_MS},
@@ -24,7 +25,7 @@ use outbe_ocomp_protocol::{
     generated_shape::{
         OCOMP_CAPACITY_PROFILE_ID_HEX, OCOMP_POC_CANDIDATE_LIMITS_V1, OCOMP_POC_DEVNET_MACHINE_V1,
     },
-    profile::{poc_schema_limits, CapacityProfileV1, OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS},
+    profile::{poc_schema_limits, CapacityProfileV1},
 };
 use outbe_primitives::consensus::OUTBE_MAX_BLOCK_SIZE;
 use serde::Serialize;
@@ -676,8 +677,11 @@ fn generate(
     let generated_limits_manifest_sha256 = sha256(limits_manifest_bytes);
     let capacity_profile_id = parse_b256(OCOMP_CAPACITY_PROFILE_ID_HEX)
         .wrap_err("parse generated capacity profile id")?;
-    let profile =
-        verified.capacity_profile(capacity_profile_id, generated_limits_manifest_sha256)?;
+    let profile = verified.capacity_profile(
+        capacity_profile_id,
+        generated_limits_manifest_sha256,
+        OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS,
+    )?;
     let canonical = profile
         .encode_canonical(&poc_schema_limits())
         .wrap_err("encode canonical capacity profile")?;

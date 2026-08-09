@@ -1385,7 +1385,11 @@ impl ApplicationShared {
                 // the already-trusted E-1 committee — before the self-finalized
                 // activation boundary at E·L+1 (Path A committee-chaining). Otherwise
                 // a DKG is still in flight, so emit a dealer log.
-                if let Some(boundary) = pending_boundary {
+                if let Some(boundary) = self
+                    .dkg_manager
+                    .pending_next_epoch_artifact(round.epoch())
+                    .await
+                {
                     Some(ConsensusHeaderArtifact::CommitteePreAnnounce {
                         epoch: boundary.epoch,
                         outcome: boundary.outcome,

@@ -1046,7 +1046,7 @@ mod tests {
             max_reference_currencies: 256,
             max_oracle_wwd_pair_entries: 256,
             max_active_scurve_entries: 256,
-            result_deadline_blocks: outbe_ocomp_protocol::profile::OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS,
+            result_deadline_blocks: outbe_chain_constants::DEFAULT_OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS,
             source_retention_after_terminal_blocks: 64,
             generated_limits_manifest_hash: B256::repeat_byte(0x31),
         };

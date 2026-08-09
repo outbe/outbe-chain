@@ -48,7 +48,8 @@ use reth_ethereum::{primitives::SealedBlock, Block, Receipt, TxType};
 use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
 
 use crate::ocomp::retention::{
-    inspect_retention_journal, retention_terminal_height_for_status, CandidateFinalityV1,
+    inspect_retention_journal, retention_pressure_watermark_for_test,
+    retention_terminal_height_for_status, seed_retention_journal_for_test, CandidateFinalityV1,
     CandidatePinV1, FinalizedInputProofSource, FinalizedJobPinV1, FinalizedSnapshotArmer,
     JournalDurability, OcompRetentionCoordinator, OcompRetentionService, PinRecordV1,
     PinReleaseReason, PinStateV1, RetentionError, RetentionStatus, RethFinalizedInputProofSource,
@@ -618,6 +619,54 @@ fn ocm_pin_001_missing_finality_keeps_the_job_non_signable_and_can_reconcile_lat
     );
     assert!(!coordinator.is_signable(job_id));
     assert!(coordinator.is_exportable(job_id));
+}
+
+#[test]
+fn ocm_pin_001_old_tentative_survives_repeated_finality_misses_and_restart() {
+    let request = block(100, B256::repeat_byte(0x72), 0x73);
+    let candidate = candidate(&request, B256::repeat_byte(0x74));
+    let job_id = B256::repeat_byte(0x75);
+    let source = Arc::new(DeterministicProofSource::with_jobs([(candidate, job_id)]));
+    let root = tempfile::tempdir().expect("delayed-finality journal root");
+    let coordinator = OcompRetentionCoordinator::open(root.path(), source.clone());
+
+    assert_eq!(
+        DeterministicConsensusDriver::vote(&coordinator, &request),
+        VoteOutcome::Positive
+    );
+    source.set_finality_available(false);
+    for ordinal in 0_u64..9 {
+        assert!(coordinator
+            .reconcile_finalized(&block(
+                200 + ordinal,
+                keccak256(ordinal.to_be_bytes()),
+                u8::try_from(ordinal).expect("bounded fixture ordinal"),
+            ))
+            .is_err());
+    }
+    assert_eq!(
+        ready_record(&coordinator),
+        PinRecordV1 {
+            generation: 1,
+            state: PinStateV1::Tentative { candidate },
+        },
+        "age and repeated reconciliation misses cannot evict unresolved Tentative state"
+    );
+    drop(coordinator);
+
+    source.set_finality_available(true);
+    source.observe_finalized(&request);
+    let restarted = OcompRetentionCoordinator::open(root.path(), source);
+    restarted
+        .reconcile_finalized(&request)
+        .expect("a later exact finality observation reconciles after restart");
+    assert!(matches!(
+        ready_record(&restarted).state,
+        PinStateV1::Finalized {
+            job_id: current,
+            ..
+        } if current == job_id
+    ));
 }
 
 #[test]
@@ -1450,6 +1499,170 @@ fn durable_registry_tracks_more_than_256_independent_jobs_across_restart() {
 }
 
 #[test]
+fn ocm_pin_001_pressure_watermark_compacts_only_released_records_and_survives_restart() {
+    fn pressure_candidate(ordinal: u64) -> CandidatePinV1 {
+        let block_hash = keccak256([b"pressure-block".as_slice(), &ordinal.to_be_bytes()].concat());
+        CandidatePinV1 {
+            block_number: ordinal.saturating_add(1),
+            block_hash,
+            state_root: keccak256([b"pressure-state".as_slice(), &ordinal.to_be_bytes()].concat()),
+            intent_id: keccak256([b"pressure-intent".as_slice(), &ordinal.to_be_bytes()].concat()),
+            wwd: 7,
+            ce_sealed_root: B256::repeat_byte(4),
+            protocol_bundle_hash: B256::repeat_byte(3),
+            input_lease_id: B256::repeat_byte(0x71),
+        }
+    }
+
+    let root = tempfile::tempdir().expect("pressure journal root");
+    let watermark = retention_pressure_watermark_for_test();
+    let ancient_tentative = pressure_candidate(1);
+    let finalized = pressure_candidate(2);
+    let due_terminal = pressure_candidate(3);
+    let future_terminal = pressure_candidate(4);
+    let due_job = keccak256(b"pressure due job");
+    let future_job = keccak256(b"pressure future job");
+    let mut records = vec![
+        (
+            ancient_tentative.block_hash,
+            PinRecordV1 {
+                generation: 1,
+                state: PinStateV1::Tentative {
+                    candidate: ancient_tentative,
+                },
+            },
+        ),
+        (
+            finalized.block_hash,
+            PinRecordV1 {
+                generation: 2,
+                state: PinStateV1::Finalized {
+                    candidate: finalized,
+                    job_id: keccak256(b"pressure finalized job"),
+                    finality_recorded_height: 100,
+                    open_height: 104,
+                    deadline_height: 180,
+                },
+            },
+        ),
+        (
+            due_terminal.block_hash,
+            PinRecordV1 {
+                generation: 3,
+                state: PinStateV1::Terminal {
+                    candidate: due_terminal,
+                    job_id: due_job,
+                    finality_recorded_height: 100,
+                    open_height: 104,
+                    deadline_height: 180,
+                    terminal_height: 200,
+                    release_height: 264,
+                },
+            },
+        ),
+        (
+            future_terminal.block_hash,
+            PinRecordV1 {
+                generation: 4,
+                state: PinStateV1::Terminal {
+                    candidate: future_terminal,
+                    job_id: future_job,
+                    finality_recorded_height: 100,
+                    open_height: 104,
+                    deadline_height: 180,
+                    terminal_height: 400,
+                    release_height: 464,
+                },
+            },
+        ),
+    ];
+    for ordinal in 4_u64..u64::try_from(watermark).expect("watermark fits u64") {
+        let candidate = pressure_candidate(ordinal.saturating_add(10_000));
+        records.push((
+            candidate.block_hash,
+            PinRecordV1 {
+                generation: ordinal.saturating_add(1),
+                state: PinStateV1::Released {
+                    candidate,
+                    job_id: (ordinal % 2 == 0).then(|| keccak256(ordinal.to_be_bytes())),
+                    reason: if ordinal % 2 == 0 {
+                        PinReleaseReason::RetentionSatisfied
+                    } else {
+                        PinReleaseReason::Orphaned
+                    },
+                    observed_height: ordinal,
+                },
+            },
+        ));
+    }
+    assert_eq!(records.len(), watermark);
+    let last_updated = records.last().expect("seed has records").0;
+    seed_retention_journal_for_test(
+        root.path(),
+        u64::try_from(watermark).expect("watermark fits generation"),
+        last_updated,
+        records,
+    )
+    .expect("seed canonical pressure journal");
+
+    let source = Arc::new(DeterministicProofSource::default());
+    let coordinator = OcompRetentionCoordinator::open(root.path(), source.clone());
+    assert_eq!(
+        inspect_retention_journal(root.path())
+            .unwrap()
+            .records
+            .len(),
+        watermark
+    );
+    coordinator
+        .release_due(300)
+        .expect("release due terminal under pressure")
+        .expect("one due terminal transitions");
+    let new_candidate = pressure_candidate(99_999);
+    coordinator
+        .record_tentative(new_candidate)
+        .expect("admission continues after pressure compaction");
+
+    let snapshot = inspect_retention_journal(root.path()).expect("inspect compacted journal");
+    let survivors = snapshot.records.into_iter().collect::<BTreeMap<_, _>>();
+    assert_eq!(survivors.len(), 4);
+    assert_eq!(
+        survivors.get(&ancient_tentative.block_hash).unwrap().state,
+        PinStateV1::Tentative {
+            candidate: ancient_tentative
+        }
+    );
+    assert!(matches!(
+        survivors.get(&finalized.block_hash).unwrap().state,
+        PinStateV1::Finalized { candidate, .. } if candidate == finalized
+    ));
+    assert!(!survivors.contains_key(&due_terminal.block_hash));
+    assert!(matches!(
+        survivors.get(&future_terminal.block_hash).unwrap().state,
+        PinStateV1::Terminal {
+            candidate,
+            job_id,
+            release_height: 464,
+            ..
+        } if candidate == future_terminal && job_id == future_job
+    ));
+    assert_eq!(
+        survivors.get(&new_candidate.block_hash).unwrap().state,
+        PinStateV1::Tentative {
+            candidate: new_candidate
+        }
+    );
+
+    drop(coordinator);
+    let restarted = OcompRetentionCoordinator::open(root.path(), source);
+    assert!(matches!(restarted.status(), RetentionStatus::Ready(_)));
+    assert_eq!(
+        inspect_retention_journal(root.path()).unwrap().records,
+        survivors.into_iter().collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn ocm_pin_001_each_exported_job_remains_addressable_after_a_newer_export() {
     let first_request = block(151, B256::repeat_byte(0x31), 1);
     let second_request = block(221, B256::repeat_byte(0x32), 2);
@@ -1497,7 +1710,7 @@ fn ocm_pin_001_each_exported_job_remains_addressable_after_a_newer_export() {
 }
 
 #[test]
-fn ocm_pin_001_attestation_authority_reloads_every_live_export_by_job_id() {
+fn ocm_pin_001_exported_record_reloads_every_live_export_by_job_id() {
     let limits = poc_schema_limits();
     let first_request = block(151, B256::repeat_byte(0x31), 1);
     let second_request = block(221, B256::repeat_byte(0x32), 2);
@@ -1576,13 +1789,16 @@ fn ocm_pin_001_attestation_authority_reloads_every_live_export_by_job_id() {
     }
 
     for job_id in [first_job_id, second_job_id] {
-        let authority = crate::ocomp::attestation::FinalizedAttestationAuthority::reload_exported(
-            &coordinator,
-            job_id,
-            &limits,
-        )
-        .expect("every live Exported job must remain attestable");
-        assert_eq!(authority.job_id, job_id);
+        let record = coordinator
+            .exported_job_record(job_id)
+            .expect("every live Exported job must remain independently addressable");
+        assert!(matches!(
+            record.state,
+            PinStateV1::Exported {
+                job_id: current,
+                ..
+            } if current == job_id
+        ));
     }
 }
 
@@ -1613,6 +1829,60 @@ fn ocm_pin_001_finalized_state_drives_terminal_retention_without_supervisor_inpu
             job_id: current,
             terminal_height: 160,
             release_height: 224,
+            ..
+        } if current == job_id
+    ));
+}
+
+#[test]
+fn ocm_pin_001_production_open_automatically_releases_due_terminal_across_restart() {
+    let request = block(151, B256::repeat_byte(0x6A), 0x6B);
+    let candidate = candidate(&request, B256::repeat_byte(0x6C));
+    let job_id = B256::repeat_byte(0x6D);
+    let source = Arc::new(DeterministicProofSource::with_jobs([(candidate, job_id)]));
+    let root = tempfile::tempdir().expect("production-open journal root");
+    let coordinator = OcompRetentionCoordinator::open(root.path(), source.clone());
+
+    assert_eq!(
+        DeterministicConsensusDriver::vote(&coordinator, &request),
+        VoteOutcome::Positive
+    );
+    DeterministicConsensusDriver::finalize(source.as_ref(), &coordinator, &request);
+    source.observe_terminal(job_id, 160);
+    coordinator
+        .reconcile_finalized(&block(160, B256::repeat_byte(0x6E), 0x6F))
+        .expect("canonical terminal state is observed");
+    assert!(matches!(
+        ready_record(&coordinator).state,
+        PinStateV1::Terminal {
+            job_id: current,
+            terminal_height: 160,
+            release_height: 224,
+            ..
+        } if current == job_id
+    ));
+
+    coordinator
+        .reconcile_finalized(&block(224, B256::repeat_byte(0x70), 0x71))
+        .expect("production open drains every due terminal record");
+    assert!(matches!(
+        ready_record(&coordinator).state,
+        PinStateV1::Released {
+            job_id: Some(current),
+            reason: PinReleaseReason::RetentionSatisfied,
+            observed_height: 224,
+            ..
+        } if current == job_id
+    ));
+    drop(coordinator);
+
+    let restarted = OcompRetentionCoordinator::open(root.path(), source);
+    assert!(matches!(
+        ready_record(&restarted).state,
+        PinStateV1::Released {
+            job_id: Some(current),
+            reason: PinReleaseReason::RetentionSatisfied,
+            observed_height: 224,
             ..
         } if current == job_id
     ));

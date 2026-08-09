@@ -15,16 +15,14 @@ use outbe_ocomp_protocol::{
     },
     common::{BoundedBytes, EntityId36, ProofBytes},
     control::{
-        AttestationResponseV1, BuildFinalizedIntentProofV1, BuildLysisOpeningsV1,
-        CheckProjectionContainmentV1, CommitLocalResultV1, CommitSnapshotExportV1, ControlFrameV1,
-        ControlMagic, FinalizedIntentProofResponseV1, FinalizedJobSpecV1, FinalizedJobSummaryV1,
-        GetJobSpecV1, GetSnapshotHandoffV1, ListFinalizedJobsResponseV1, ListFinalizedJobsV1,
-        ListSnapshotHandoffsResponseV1, ListSnapshotHandoffsV1, LocalResultCommittedV1,
-        NodeMessageKind, OpenSnapshotLeaseV1, ProjectionCheckpointV1, ProjectionContainedV1,
-        RenewSnapshotLeaseV1, RequestAttestationV1, RunUnitV1, SnapshotExportCommittedV1,
-        SnapshotHandoffV1, SnapshotLeaseOpenedV1, CONTROL_FRAME_HEADER_LEN,
-        MAX_FINALIZED_JOBS_PER_RESPONSE, MAX_SNAPSHOT_HANDOFFS_PER_RESPONSE,
-        SNAPSHOT_LEASE_WIRE_BYTES, WORKER_CONTROL_MAGIC,
+        BuildFinalizedIntentProofV1, BuildLysisOpeningsV1, CheckProjectionContainmentV1,
+        CommitSnapshotExportV1, FinalizedIntentProofResponseV1, FinalizedJobSpecV1,
+        FinalizedJobSummaryV1, GetJobSpecV1, GetSnapshotHandoffV1, ListFinalizedJobsResponseV1,
+        ListFinalizedJobsV1, ListSnapshotHandoffsResponseV1, ListSnapshotHandoffsV1,
+        OpenSnapshotLeaseV1, PreparedVoteTransactionV1, ProjectionCheckpointV1,
+        ProjectionContainedV1, RenewSnapshotLeaseV1, RunUnitV1, SnapshotExportCommittedV1,
+        SnapshotHandoffV1, SnapshotLeaseOpenedV1, MAX_FINALIZED_JOBS_PER_RESPONSE,
+        MAX_SNAPSHOT_HANDOFFS_PER_RESPONSE, SNAPSHOT_LEASE_WIRE_BYTES,
     },
     hash::hash_framed,
     input::{CheckpointIdentityV1, Compression, InputManifestV1},
@@ -64,9 +62,9 @@ use outbe_ocomp_protocol::{
         UnitPhase, UnitSpecV1, WorkOutputHeaderV1,
     },
     vote::{
-        decode_submit_lysis_result_prefix, EquivocationEvidenceV1, OcompAccountabilitySummaryV1,
-        OcompQuorumV1, OcompVoteAccountabilityV1, RecordVoteOutcomeV1, ResultVoteSigningSubjectV1,
-        ResultVoteSlotV1, ResultVoteV1,
+        decode_submit_lysis_result, decode_submit_lysis_result_prefix, EquivocationEvidenceV1,
+        OcompAccountabilitySummaryV1, OcompQuorumV1, OcompVoteAccountabilityV1,
+        RecordVoteOutcomeV1, ResultVoteSigningSubjectV1, ResultVoteSlotV1, ResultVoteV1,
     },
     ProtocolError, SchemaLimits,
 };
@@ -446,7 +444,7 @@ fn validator_identity_hash_is_address_and_bls_bound_without_committee_index() {
 }
 
 #[test]
-fn vote_signing_subject_binds_all_snapshot_coordinates_and_u16_index() {
+fn vote_signing_subject_binds_all_snapshot_coordinates_and_ocomp_key_hash() {
     let subject = ResultVoteSigningSubjectV1 {
         chain_id: 42,
         genesis_hash: hash(40),
@@ -457,7 +455,7 @@ fn vote_signing_subject_binds_all_snapshot_coordinates_and_u16_index() {
         result_validator_set_epoch: 7,
         result_committee_set_hash: hash(45),
         result_ocomp_binding_hash: hash(46),
-        validator_index: 300,
+        ocomp_key_hash: hash(49),
         key_epoch: 1,
         purpose: SignOncePurpose::ResultSignature as u8,
         result_digest: hash(60),
@@ -478,7 +476,7 @@ fn vote_signing_subject_binds_all_snapshot_coordinates_and_u16_index() {
             ..subject
         },
         ResultVoteSigningSubjectV1 {
-            validator_index: 301,
+            ocomp_key_hash: hash(50),
             ..subject
         },
     ] {
@@ -513,7 +511,12 @@ fn dynamic_accountability_uses_supplied_n_quorum_and_lsb0_bitmaps() {
             &snapshot,
         );
         accountability
-            .record_verified_vote(&vote, 106 + u64::from(validator_index), &LIMITS)
+            .record_verified_vote(
+                validator_index,
+                &vote,
+                106 + u64::from(validator_index),
+                &LIMITS,
+            )
             .unwrap();
     }
     assert_eq!(
@@ -523,7 +526,7 @@ fn dynamic_accountability_uses_supplied_n_quorum_and_lsb0_bitmaps() {
 
     let late_vote = signed_vote(8, matching_result, &finalized_intent, job_id, &snapshot);
     accountability
-        .record_verified_vote(&late_vote, 114, &LIMITS)
+        .record_verified_vote(8, &late_vote, 114, &LIMITS)
         .unwrap();
     let summary = accountability.close(120, &LIMITS).unwrap();
     assert_eq!(summary.timely_bitmap, vec![0b0111_1111, 0b0000_0001]);
@@ -550,6 +553,10 @@ fn submit_result_prefix_decoder_is_canonical_bounded_and_panic_free() {
     let calldata =
         outbe_ocomp_protocol::abi::encode_submit_lysis_result_calldata(&vote, &LIMITS).unwrap();
     let prefix = decode_submit_lysis_result_prefix(&calldata, &LIMITS).unwrap();
+    assert_eq!(
+        decode_submit_lysis_result(&calldata, &LIMITS).unwrap(),
+        vote
+    );
     assert_eq!(prefix.protocol_bundle_hash, vote.protocol_bundle_hash);
     assert_eq!(prefix.job_id, vote.job_id);
     assert_eq!(prefix.attempt, vote.attempt);
@@ -565,7 +572,7 @@ fn submit_result_prefix_decoder_is_canonical_bounded_and_panic_free() {
         prefix.result_ocomp_binding_hash,
         vote.result_ocomp_binding_hash
     );
-    assert_eq!(prefix.validator_index, vote.validator_index);
+    assert_eq!(prefix.ocomp_key_hash, vote.ocomp_key_hash);
     assert_eq!(prefix.key_epoch, vote.key_epoch);
 
     for truncated_len in [0, 3, 4, 35, 36, 67, 68, calldata.len() - 1] {
@@ -624,7 +631,7 @@ fn ocomp_system_carrier_classifier_is_exact_and_fail_closed() {
     let candidate = classify_ocomp_system_carrier(canonical, &LIMITS)
         .unwrap()
         .expect("canonical carrier");
-    assert_eq!(candidate.prefix.validator_index, vote.validator_index);
+    assert_eq!(candidate.prefix.ocomp_key_hash, vote.ocomp_key_hash);
     assert_eq!(candidate.prefix.job_id, vote.job_id);
 
     assert!(matches!(
@@ -715,6 +722,8 @@ fn signed_vote(
     job_id: B256,
     snapshot: &TestCommittee,
 ) -> ResultVoteV1 {
+    let key = signing_key(u8::try_from(validator_index).unwrap());
+    let public_key = key.verifying_key().to_encoded_point(true);
     let mut vote = ResultVoteV1 {
         protocol_bundle_hash: finalized_intent.protocol_bundle_hash,
         job_id,
@@ -722,16 +731,13 @@ fn signed_vote(
         result_validator_set_epoch: snapshot.snapshot_epoch,
         result_committee_set_hash: finalized_intent.result_committee_set_hash,
         result_ocomp_binding_hash: snapshot.snapshot_hash(&LIMITS).unwrap(),
-        validator_index,
+        ocomp_key_hash: keccak256(public_key.as_bytes()),
         key_epoch: 1,
         result,
         signature_rs: [0; 64],
     };
     let signing_digest = vote.signing_digest(finalized_intent, &LIMITS).unwrap();
-    vote.signature_rs = sign(
-        &signing_key(u8::try_from(validator_index).unwrap()),
-        signing_digest,
-    );
+    vote.signature_rs = sign(&key, signing_digest);
     vote
 }
 
@@ -749,10 +755,12 @@ fn verify_vote(
             "test historical snapshot binding",
         ));
     }
-    let member = snapshot
+    let (_, member) = snapshot
         .ordered_members
-        .get(usize::from(vote.validator_index))
-        .ok_or(ProtocolError::InvalidInvariant("vote validator index"))?;
+        .iter()
+        .enumerate()
+        .find(|(_, member)| keccak256(member.ocomp_public_key_sec1) == vote.ocomp_key_hash)
+        .ok_or(ProtocolError::InvalidInvariant("vote OCOMP key hash"))?;
     vote.verify_historical_member(
         finalized_intent,
         job_id,
@@ -950,7 +958,7 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         result_validator_set_epoch: snapshot.snapshot_epoch,
         result_committee_set_hash: hash(45),
         result_ocomp_binding_hash: snapshot.snapshot_hash(&LIMITS).unwrap(),
-        validator_index: 0,
+        ocomp_key_hash: keccak256(snapshot.ordered_members[0].ocomp_public_key_sec1),
         key_epoch: 1,
         result_digest,
         signature_rs: [0; 64],
@@ -1263,7 +1271,12 @@ fn direct_result_votes_freeze_supplied_quorum_and_keep_late_accountability_separ
         .unwrap();
         assert_eq!(
             accountability
-                .record_verified_vote(&vote, 106 + u64::from(validator_index), &LIMITS)
+                .record_verified_vote(
+                    validator_index,
+                    &vote,
+                    106 + u64::from(validator_index),
+                    &LIMITS,
+                )
                 .unwrap(),
             RecordVoteOutcomeV1::FirstVote
         );
@@ -1292,7 +1305,7 @@ fn direct_result_votes_freeze_supplied_quorum_and_keep_late_accountability_separ
     )
     .unwrap();
     accountability
-        .record_verified_vote(&minority, 109, &LIMITS)
+        .record_verified_vote(3, &minority, 109, &LIMITS)
         .unwrap();
     assert_eq!(accountability.quorum.as_ref(), Some(&frozen_quorum));
 
@@ -1305,7 +1318,7 @@ fn direct_result_votes_freeze_supplied_quorum_and_keep_late_accountability_separ
     );
     assert_eq!(
         accountability
-            .record_verified_vote(&equivocation, 110, &LIMITS)
+            .record_verified_vote(3, &equivocation, 110, &LIMITS)
             .unwrap(),
         RecordVoteOutcomeV1::EquivocationRecorded
     );
@@ -1790,47 +1803,7 @@ fn desis_request_brief_hash_commits_every_frozen_request_field() {
 }
 
 #[test]
-fn local_control_frame_checks_cap_magic_length_and_worker_shape() {
-    let frame = ControlFrameV1 {
-        magic: ControlMagic::Worker,
-        message_kind: 0x0010,
-        session_generation: 7,
-        request_id: 9,
-        body: vec![1, 2, 3],
-    };
-    let encoded = frame.encode(&LIMITS).unwrap();
-    assert_eq!(encoded.len(), CONTROL_FRAME_HEADER_LEN + 3);
-    assert_eq!(&encoded[4..8], &WORKER_CONTROL_MAGIC);
-    assert_eq!(
-        ControlFrameV1::decode(&encoded, ControlMagic::Worker, &LIMITS).unwrap(),
-        frame
-    );
-    assert!(ControlFrameV1::decode(&encoded, ControlMagic::Node, &LIMITS).is_err());
-
-    let mut malformed = encoded.clone();
-    malformed[3] = malformed[3].saturating_add(1);
-    assert!(ControlFrameV1::decode(&malformed, ControlMagic::Worker, &LIMITS).is_err());
-
-    let tiny = SchemaLimits {
-        codec: LIMITS.codec,
-        max_bounded_bytes: 16,
-        max_proof_bytes: 16,
-        max_opening_bytes: 16,
-        max_collection_items: 16,
-        max_action_items: 16,
-        max_chunk_items: 16,
-        max_unit_inputs: 16,
-        max_result_chunk_bytes: 16,
-        max_control_body_bytes: 2,
-    };
-    assert!(matches!(
-        ControlFrameV1::decode(&encoded, ControlMagic::Worker, &tiny),
-        Err(ProtocolError::CapacityExceeded {
-            what: "control frame bytes",
-            ..
-        })
-    ));
-
+fn worker_run_unit_body_is_canonical_and_bounded() {
     let request = RunUnitV1 {
         protocol_bundle_hash: hash(1),
         job_id: hash(2),
@@ -1936,64 +1909,34 @@ fn finalized_discovery_control_pages_multiple_jobs_canonically() {
 }
 
 #[test]
-fn attestation_control_carries_only_bounded_canonical_artifacts() {
-    let request = RequestAttestationV1 {
-        canonical_result: BoundedBytes(vec![1, 2, 3, 4]),
+fn prepared_vote_transaction_carries_bounded_vote_and_raw_transaction() {
+    let response = PreparedVoteTransactionV1 {
+        canonical_vote: BoundedBytes(vec![1, 2, 3, 4]),
+        raw_transaction: BoundedBytes(vec![5, 6, 7]),
+        transaction_hash: hash(0x92),
     };
     assert_eq!(
-        RequestAttestationV1::decode_body(&request.encode_body(&LIMITS).unwrap(), &LIMITS).unwrap(),
-        request
-    );
-    let response = AttestationResponseV1 {
-        canonical_vote: BoundedBytes(vec![5, 6, 7]),
-    };
-    assert_eq!(
-        AttestationResponseV1::decode_body(&response.encode_body(&LIMITS).unwrap(), &LIMITS)
+        PreparedVoteTransactionV1::decode_body(&response.encode_body(&LIMITS).unwrap(), &LIMITS)
             .unwrap(),
         response
     );
 
-    assert!(RequestAttestationV1 {
-        canonical_result: BoundedBytes(Vec::new()),
+    for invalid in [
+        PreparedVoteTransactionV1 {
+            canonical_vote: BoundedBytes(Vec::new()),
+            ..response.clone()
+        },
+        PreparedVoteTransactionV1 {
+            raw_transaction: BoundedBytes(Vec::new()),
+            ..response.clone()
+        },
+        PreparedVoteTransactionV1 {
+            transaction_hash: B256::ZERO,
+            ..response
+        },
+    ] {
+        assert!(invalid.encode_body(&LIMITS).is_err());
     }
-    .encode_body(&LIMITS)
-    .is_err());
-    assert!(AttestationResponseV1 {
-        canonical_vote: BoundedBytes(Vec::new()),
-    }
-    .encode_body(&LIMITS)
-    .is_err());
-
-    let mut tiny_control = LIMITS;
-    tiny_control.max_control_body_bytes = 3;
-    assert!(request.encode_body(&tiny_control).is_err());
-    assert!(response.encode_body(&tiny_control).is_ok());
-}
-
-#[test]
-fn local_result_commit_is_a_distinct_bounded_non_voting_control_command() {
-    assert_eq!(NodeMessageKind::CommitLocalResult as u16, 0x001c);
-    let request = CommitLocalResultV1 {
-        canonical_result: BoundedBytes(vec![1, 2, 3, 4]),
-    };
-    assert_eq!(
-        CommitLocalResultV1::decode_body(&request.encode_body(&LIMITS).unwrap(), &LIMITS).unwrap(),
-        request
-    );
-    let response = LocalResultCommittedV1 {
-        job_id: hash(0x91),
-        result_digest: hash(0x92),
-    };
-    assert_eq!(
-        LocalResultCommittedV1::decode_body(&response.encode_body(&LIMITS).unwrap(), &LIMITS,)
-            .unwrap(),
-        response
-    );
-    assert!(CommitLocalResultV1 {
-        canonical_result: BoundedBytes(Vec::new()),
-    }
-    .encode_body(&LIMITS)
-    .is_err());
 }
 
 #[test]

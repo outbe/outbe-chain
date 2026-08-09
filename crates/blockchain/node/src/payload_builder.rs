@@ -933,6 +933,10 @@ mod tests {
                     .expect("fresh-devnet OCOMP install fixture is canonical")
                     .into_install();
             install.founder_registrations = vec![founder_registration];
+            let mut oracle = outbe_oracle::contract::OracleContract::new(storage.clone());
+            oracle
+                .register_pair("COEN", "0xUSD")
+                .expect("oracle pair seed succeeds");
             let install_ctx = BlockRuntimeContext::new(
                 BlockContext::empty_for_tests(
                     1,
@@ -944,10 +948,6 @@ mod tests {
             outbe_metadosis::commands::install_fork_profile(&install_ctx, &install)
                 .expect("fresh-devnet OCOMP profile installs through the production command");
 
-            let mut oracle = outbe_oracle::contract::OracleContract::new(storage);
-            oracle
-                .register_pair("COEN", "0xUSD")
-                .expect("oracle pair seed succeeds");
             oracle
                 .set_exchange_rate(
                     alloy_primitives::Address::ZERO,

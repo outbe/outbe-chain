@@ -181,6 +181,25 @@ pub(crate) struct SealSpec {
     pub chain_id_hex: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TestRemoteAttestation {
+    None,
+    Dcap,
+}
+
+impl TestRemoteAttestation {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Dcap => "dcap",
+        }
+    }
+
+    const fn requires_qvl(self) -> bool {
+        matches!(self, Self::Dcap)
+    }
+}
+
 /// Everything needed to launch one enclave container (mirrors `run-testnet.sh:215-293`).
 pub(crate) struct EnclaveSpec {
     pub name: String,
@@ -195,6 +214,9 @@ pub(crate) struct EnclaveSpec {
     pub sudo: bool,
     /// Pass real SGX device nodes through when the host exposes them.
     pub pass_sgx_devices: bool,
+    /// Explicit Gramine remote-attestation mode. SGX device availability selects
+    /// the runtime, not whether DCAP is enabled.
+    pub remote_attestation: TestRemoteAttestation,
     /// `--dkg-seed <hex>` for the container, or `None` (real+seal self-generates).
     pub dkg_seed: Option<String>,
     pub seal: Option<SealSpec>,
@@ -395,6 +417,10 @@ fn inspect_enclave_image_id(sudo: bool) -> Result<DockerImageId> {
 
 fn build_enclave_command(spec: &EnclaveSpec) -> Result<Command> {
     let mut cmd = base_cmd("docker", spec.sudo);
+    cmd.env(
+        "OUTBE_TEST_REMOTE_ATTESTATION",
+        spec.remote_attestation.as_str(),
+    );
     cmd.args([
         "run",
         "--name",
@@ -423,7 +449,9 @@ fn build_enclave_command(spec: &EnclaveSpec) -> Result<Command> {
                 "/var/run/aesmd/aesm.socket:/var/run/aesmd/aesm.socket",
             ]);
         }
-        cmd.args(pinned_qvl_mount_args()?);
+        if spec.remote_attestation.requires_qvl() {
+            cmd.args(pinned_qvl_mount_args()?);
+        }
     }
 
     // Sealed-restart persistent mount.
@@ -536,7 +564,7 @@ fn select_sgx_enclave_device(
     if modern_exists {
         return Ok(Some("/dev/sgx/enclave"));
     }
-    bail!("real SGX mode requires /dev/sgx_enclave or /dev/sgx/enclave")
+    bail!("real SGX mode requires /dev/sgx_enclave or /dev/sgx/enclave");
 }
 
 /// A `Command` for `program`, `sudo`-wrapped when requested.
@@ -699,6 +727,7 @@ mod tests {
             image_id: image_id.clone(),
             sudo: false,
             pass_sgx_devices: false,
+            remote_attestation: TestRemoteAttestation::None,
             dkg_seed: None,
             seal: None,
             log_path: root.path().join("enclave.log"),
@@ -716,6 +745,16 @@ mod tests {
         assert!(!arguments
             .iter()
             .any(|argument| argument == TEST_ENCLAVE_IMAGE));
+        assert!(command.get_envs().any(|(key, value)| {
+            key == "OUTBE_TEST_REMOTE_ATTESTATION" && value.is_some_and(|value| value == "none")
+        }));
+        assert!(!arguments.iter().any(|argument| argument.contains("/qvl/")));
+    }
+
+    #[test]
+    fn only_explicit_dcap_remote_attestation_requires_qvl() {
+        assert!(!TestRemoteAttestation::None.requires_qvl());
+        assert!(TestRemoteAttestation::Dcap.requires_qvl());
     }
 
     #[test]

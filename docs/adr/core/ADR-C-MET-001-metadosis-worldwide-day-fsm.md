@@ -42,9 +42,16 @@ FORMING -> LOOKBACK_DELAY -> OFFERING -> WAITING -> READY
 transition. Local OCOMP execution progress is deliberately not represented by
 that status.
 
-Creation derives all windows from canonical block time and the UTC+14
-WorldwideDay calendar, inserts the record in the active set, and seals its Tribute
-partition. Creation is idempotent by day identity.
+Creation derives all windows from canonical block time, the UTC+14 WorldwideDay
+calendar and immutable `GenesisProtocolParametersV1`. Metadosis receives resolved
+seconds from `outbe-chain-constants` and does not branch on chain id or on whether
+a value came from JSON or a default. It persists the resulting absolute
+boundaries, inserts the record in the active set, and seals its Tribute partition.
+Creation is idempotent by day identity. Block 1 uses the same
+`WorldwideDay::from_timestamp(block_timestamp)` conversion as every later WWD;
+there is no raw-UTC genesis-day special case. The daily emission handler may
+separately materialize the explicitly settled previous UTC accounting day when
+forming its immutable day-limit receipt.
 
 Fresh-devnet genesis must contain one canonical OCOMP fork install bound to the
 chain id, genesis hash and exact install hash, with activation height `1`. Node
@@ -116,11 +123,15 @@ retained work   <= canonical MAX_RECORDS_KEPT
 MAX_ACTIVE_WWDS = normal pipeline + canonical record-retention bound
 ```
 
-Production advances at midnight and noon, so the 12-hour catch-up cadence is
+The production genesis default advances at midnight and noon, so its 12-hour catch-up cadence is
 strictly faster than the 24-hour creation cadence. With continuing ticks an
 already-active candidate has at most 27 admission ticks (324 hours) of older
 pipeline work ahead. Missing external finality is classified as retained OCOMP
 progress, not scheduler starvation.
+
+Fresh LocalNet genesis may shorten phase durations and the advancement interval.
+Only timing changes: reducer transitions, effects and persisted absolute
+deadlines are identical to production.
 
 There is no smaller OCOMP concurrent-job admission limit. The aggregate remains
 bounded by the canonical WWD record-retention policy used by all lifecycle
@@ -279,7 +290,7 @@ receipt, active generation or exact-retry identity.
 
 Response-window close expires/retries only an attempt that never reached its
 snapshot-derived quorum. A timely quorum was already applied by its q-forming
-system vote. At the exact 1,800-block deadline every missing pinned participant
+system vote. At the exact job-pinned deadline (production default 1,800 blocks) every missing pinned participant
 is recorded; only one whose current ValidatorSet status is still `ACTIVE` moves
 to `JAILED`, while every non-ACTIVE status remains unchanged. Timely minority
 votes count as present. Neither quorum apply, jail nor expiry rolls back or
@@ -317,7 +328,9 @@ caps, CapacityForfeiture aggregate retirement/value routing/replay/rollback,
 OCOMP request admission and FIFO cleanup.
 Fresh-devnet startup tests reject missing, malformed, mismatched and late OCOMP
 installs, and Cycle block 1 fails before WWD effects when the persisted profile
-is absent. Linux E2E evidence remains governed by the Metadosis closure plan.
+is absent. Boundary tests cover block-1 creation on both sides of 10:00 UTC and
+the first UTC-midnight settlement without replacing or duplicating the canonical
+genesis WWD. Linux E2E evidence remains governed by the Metadosis closure plan.
 The only retained Metadosis savepoints outside the command seam are
 `#[cfg(test)]` fixture builders. Lysis activation authority remains a
 capability/order frame, not an independent rollback boundary.

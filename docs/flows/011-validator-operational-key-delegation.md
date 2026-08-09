@@ -42,7 +42,8 @@ signable after a later membership boundary.
 - **Expected response:** The receipt signer is the delegate. Oracle ZeroFee names
   the represented validator; the OCOMP system classifier independently resolves
   the pinned participant. Oracle state uses that principal, while OCOMP state
-  uses the independently verified validator index in the inner result vote.
+  resolves the signed OCOMP key hash through the existing key-to-validator
+  mapping and derives that validator's internal index from the pinned snapshot.
 - **Response measures:** One distinct OCOMP delegate per pinned participant, no
   `ORACLE` resolution for them, successful receipts and one finalized quorum
   result.

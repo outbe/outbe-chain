@@ -20,9 +20,22 @@ cd /app
 TEE_DIR="${OUTBE_TEE_DIR:-/tee}"
 mkdir -p "${TEE_DIR}"
 
-REMOTE_ATTESTATION=none
+REMOTE_ATTESTATION="${OUTBE_TEST_REMOTE_ATTESTATION:-none}"
+case "${REMOTE_ATTESTATION}" in
+  none|dcap) ;;
+  *)
+    echo "test entrypoint: OUTBE_TEST_REMOTE_ATTESTATION must be none or dcap" >&2
+    exit 2
+    ;;
+esac
+
+HAS_SGX=0
 if [[ -e /dev/sgx_enclave || -e /dev/sgx/enclave ]]; then
-  REMOTE_ATTESTATION=dcap
+  HAS_SGX=1
+fi
+if [[ "${REMOTE_ATTESTATION}" == dcap && "${HAS_SGX}" != 1 ]]; then
+  echo "test entrypoint: DCAP requires an SGX enclave device" >&2
+  exit 2
 fi
 
 gramine-manifest \
@@ -42,10 +55,10 @@ echo "test entrypoint: ephemeral test identity:" >&2
 gramine-sgx-sigstruct-view outbe-tee-enclave.sig 2>/dev/null \
   | grep -iE "mr_enclave|mr_signer|isv_prod_id|isv_svn|debug" | sed 's/^/  /' >&2
 
-if [[ "${REMOTE_ATTESTATION}" == dcap ]]; then
-  echo "test entrypoint: SGX hardware detected -> gramine-sgx" >&2
+if [[ "${HAS_SGX}" == 1 ]]; then
+  echo "test entrypoint: SGX hardware -> gramine-sgx (remote attestation: ${REMOTE_ATTESTATION})" >&2
   exec gramine-sgx outbe-tee-enclave "$@"
 fi
 
-echo "test entrypoint: no SGX hardware -> gramine-direct (TEST ONLY)" >&2
+echo "test entrypoint: no SGX hardware -> gramine-direct (remote attestation: none, TEST ONLY)" >&2
 exec gramine-direct outbe-tee-enclave "$@"

@@ -1459,14 +1459,13 @@ impl ValidatorSet<'_> {
         Ok(())
     }
 
-    /// Transitions to a new epoch.
+    /// Resets ValidatorSet-owned per-epoch counters for the outgoing committee.
     ///
-    /// Resets per-epoch counters for active/exiting validators, increments `epoch_number`,
-    /// and updates the epoch start timestamp and block.
-    ///
-    /// NOTE: O(n) scan over all validators. Acceptable because epoch transitions
-    /// happen every configured epoch length in blocks.
-    pub fn update_epoch(&mut self, timestamp: u64, block_number: u64) -> Result<()> {
+    /// Kept separate from [`Self::advance_epoch`] because certified-parent and
+    /// late-finalization accounting execute before the receipt-visible boundary
+    /// activation. The executor resets only for a block that actually carries a
+    /// certified BoundaryOutcome, then advances the epoch later in that block.
+    pub fn reset_epoch_counters(&mut self) -> Result<()> {
         let all = self.get_all_validators()?;
         for v in all {
             // Only reset counters for validators that accumulate them.
@@ -1486,6 +1485,11 @@ impl ValidatorSet<'_> {
             self.val_blocks_proposed.write(&addr, 0)?;
         }
 
+        Ok(())
+    }
+
+    /// Advances the activated epoch anchor without resetting counters.
+    pub fn advance_epoch(&mut self, timestamp: u64, block_number: u64) -> Result<()> {
         let epoch = self.epoch_number.read()?;
         let new_epoch = epoch + U256::from(1);
         self.epoch_number.write(new_epoch)?;
@@ -1500,6 +1504,16 @@ impl ValidatorSet<'_> {
         })?;
 
         Ok(())
+    }
+
+    /// Resets per-epoch counters and advances the epoch.
+    ///
+    /// This combined form remains the module-level convenience API. Production
+    /// boundary execution uses the two explicit halves to preserve the
+    /// LateFinalizeCredits ordering contract.
+    pub fn update_epoch(&mut self, timestamp: u64, block_number: u64) -> Result<()> {
+        self.reset_epoch_counters()?;
+        self.advance_epoch(timestamp, block_number)
     }
 
     /// Removes INACTIVE validator entries from the registry via swap-remove.

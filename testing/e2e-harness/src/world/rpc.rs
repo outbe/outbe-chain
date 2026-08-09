@@ -172,6 +172,7 @@ pub struct OcompPublicVoteAccountabilityV1 {
     pub member_count: u16,
     pub quorum_threshold: u16,
     pub slot_validator_indexes: Vec<u16>,
+    pub slot_first_signatures: Vec<(u16, Vec<u8>)>,
     pub quorum_result_digest: Option<B256>,
     pub quorum_height: Option<u64>,
     pub quorum_signer_bitmap: Option<Vec<u8>>,
@@ -205,6 +206,23 @@ pub struct OcompCertifiedGenerationV1 {
     pub result_evidence_hash: B256,
     pub block_number: u64,
     pub block_hash: B256,
+}
+
+/// One Nod body read through a node's exact-block execution/body-proof path.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct NodBodyProjectionV1 {
+    pub nod_id: Bytes,
+    pub owner: Address,
+    pub worldwide_day: u32,
+    pub league_id: u16,
+    pub floor_price_minor: U256,
+    pub gratis_load_minor: U256,
+    pub cost_of_gratis_minor: U256,
+    pub cost_amount_minor: U256,
+    pub is_qualified: bool,
+    pub issuance_currency: u16,
+    pub reference_currency: u16,
+    pub issued_at: u64,
 }
 
 impl CompressedEntityAtHeader {
@@ -971,6 +989,52 @@ impl Rpc {
         .and_then(|value| u64::try_from(value).ok())
     }
 
+    /// Read one canonical Nod body at an exact block. The precompile can return
+    /// it only after the node-local body source verifies the corresponding CE
+    /// membership proof against that block's authenticated parent view.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn nod_body_at(
+        &self,
+        port: u16,
+        block_number: u64,
+        ordinal: u64,
+    ) -> Option<NodBodyProjectionV1> {
+        let rpc_url = self.url(port);
+        let nod_id = eth::read_call_at(
+            &rpc_url,
+            addresses::NOD_ADDR,
+            &INod::tokenByIndexCall {
+                index: U256::from(ordinal),
+            },
+            block_number,
+        )?;
+        let body = eth::read_call_at(
+            &rpc_url,
+            addresses::NOD_ADDR,
+            &INod::nodDataCall {
+                nodId: nod_id.clone(),
+            },
+            block_number,
+        )?;
+        if body.nodId != nod_id {
+            return None;
+        }
+        Some(NodBodyProjectionV1 {
+            nod_id,
+            owner: body.owner,
+            worldwide_day: body.worldwideDay,
+            league_id: body.leagueId,
+            floor_price_minor: body.floorPriceMinor,
+            gratis_load_minor: body.gratisLoadMinor,
+            cost_of_gratis_minor: body.costOfGratisMinor,
+            cost_amount_minor: body.costAmountMinor,
+            is_qualified: body.isQualified,
+            issuance_currency: body.issuanceCurrency,
+            reference_currency: body.referenceCurrency,
+            issued_at: body.issuedAt,
+        })
+    }
+
     /// Canonical Tribute identities indexed by one owner.
     pub fn tributes_by_owner(&self, port: u16, owner: Address) -> Option<Vec<Bytes>> {
         eth::read_call(
@@ -1513,6 +1577,12 @@ impl Rpc {
                 .flatten()
                 .map(|slot| slot.validator_index)
                 .collect(),
+            slot_first_signatures: accountability
+                .slots
+                .iter()
+                .flatten()
+                .map(|slot| (slot.validator_index, slot.first_signature_rs.to_vec()))
+                .collect(),
             quorum_result_digest: quorum.map(|value| value.result_digest),
             quorum_height: quorum.map(|value| value.quorum_height),
             quorum_signer_bitmap: quorum.map(|value| value.signer_bitmap.clone()),
@@ -1648,7 +1718,7 @@ impl Rpc {
     pub fn submit_ocomp_result_vote_bytes(
         &self,
         port: u16,
-        validator: &Validator,
+        signer_key: &str,
         vote_bytes: Vec<u8>,
     ) -> Result<String> {
         let calldata = IMetadosis::submitLysisResultCall {
@@ -1658,9 +1728,9 @@ impl Rpc {
         eth::send_calldata(
             &self.url(port),
             addresses::WWD_ADDR,
-            &validator.evm_key()?,
+            signer_key,
             calldata,
-            outbe_ocomp_protocol::generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1.max_activation_gas,
+            outbe_ocomp_protocol::system_carrier::OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
         )
     }
 

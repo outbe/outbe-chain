@@ -2203,7 +2203,9 @@ pub fn run_lane(repository_root: &Path, lane: &str, requested_output: Option<&Pa
             &E2E_SCENARIO_TAGS,
             true,
         )?,
-        _ => bail!("unsupported exact OCOMP execution lane {lane}"),
+        _ => {
+            bail!("unsupported exact OCOMP execution lane {lane}");
+        }
     }
     run_evidence_binary(
         repository_root,
@@ -2547,6 +2549,11 @@ fn exact_scenario_arguments(
     tag: &str,
     no_sudo: bool,
 ) -> Result<Vec<String>> {
+    let tee_mode = if tag.starts_with("@ocomp-public-") {
+        "sgx-no-attest"
+    } else {
+        "gramine-direct"
+    };
     let mut arguments = vec![
         "--tags".to_owned(),
         tag.to_owned(),
@@ -2554,7 +2561,7 @@ fn exact_scenario_arguments(
         "1".to_owned(),
         "--no-resolve-ports".to_owned(),
         "--tee".to_owned(),
-        "gramine-direct".to_owned(),
+        tee_mode.to_owned(),
         "--all".to_owned(),
         "--repo".to_owned(),
         path_str(repository_root)?.to_owned(),
@@ -2599,7 +2606,7 @@ fn run_evidence_binary(
             status
                 .code()
                 .map_or_else(|| "signal".to_owned(), |code| code.to_string())
-        )
+        );
     }
 }
 
@@ -2647,7 +2654,7 @@ fn require_success(status: ExitStatus, arguments: &[&str]) -> Result<()> {
             status
                 .code()
                 .map_or_else(|| "signal".to_owned(), |code| code.to_string())
-        )
+        );
     }
 }
 
@@ -2688,7 +2695,7 @@ mod tests {
     }
 
     #[test]
-    fn exact_ocomp_scenario_uses_production_enclave_under_gramine_direct() {
+    fn exact_ocomp_e2e_scenario_uses_production_enclave_under_gramine_direct() {
         let arguments = exact_scenario_arguments(
             Path::new("/repo"),
             Path::new("/artifact-set"),
@@ -2701,6 +2708,26 @@ mod tests {
         assert!(arguments
             .windows(2)
             .any(|pair| pair == ["--tee", "gramine-direct"]));
+        assert!(arguments
+            .windows(2)
+            .any(|pair| { pair == ["--enclave-bin", "/artifact-set/outbe-tee-enclave",] }));
+        assert!(!arguments.iter().any(|argument| argument == "--mock-bin"));
+    }
+
+    #[test]
+    fn exact_ocomp_public_scenario_uses_production_sgx_without_attestation() {
+        let arguments = exact_scenario_arguments(
+            Path::new("/repo"),
+            Path::new("/artifact-set"),
+            Path::new("/evidence"),
+            "@ocomp-public-apply",
+            true,
+        )
+        .expect("exact scenario arguments");
+
+        assert!(arguments
+            .windows(2)
+            .any(|pair| pair == ["--tee", "sgx-no-attest"]));
         assert!(arguments
             .windows(2)
             .any(|pair| { pair == ["--enclave-bin", "/artifact-set/outbe-tee-enclave",] }));

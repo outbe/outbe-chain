@@ -264,6 +264,18 @@ async fn wait_for_finalized_parent(
     }
 }
 
+async fn wait_for_optional_ocomp_parent(
+    readiness: Option<ProjectionReadinessHandle>,
+    required: ProjectionCheckpoint,
+) -> eyre::Result<()> {
+    let Some(readiness) = readiness else {
+        return Ok(());
+    };
+    wait_for_finalized_parent(readiness, required)
+        .await
+        .map_err(|error| eyre::eyre!("FullNode OCOMP readiness failed: {error}"))
+}
+
 /// The executor actor.
 pub struct ExecutorActor<E> {
     context: E,
@@ -276,6 +288,7 @@ pub struct ExecutorActor<E> {
     // tokio reactor onto the executor's deterministic-capable path.
     execution_finalized_height_tx: Option<tokio::sync::mpsc::UnboundedSender<u64>>,
     projection_readiness: ProjectionReadinessHandle,
+    ocomp_readiness: Option<ProjectionReadinessHandle>,
     finalized_ce_committer: Option<Arc<dyn FinalizedCeCommitter>>,
     ancestry_readiness: Option<AncestryReadiness>,
     fcu_heartbeat_interval: Duration,
@@ -313,6 +326,7 @@ where
             mailbox_rx: rx,
             execution_finalized_height_tx,
             projection_readiness,
+            ocomp_readiness: None,
             finalized_ce_committer: None,
             ancestry_readiness: None,
             fcu_heartbeat_interval,
@@ -324,6 +338,14 @@ where
 
     pub fn with_ancestry_readiness(mut self, readiness: AncestryReadiness) -> Self {
         self.ancestry_readiness = Some(readiness);
+        self
+    }
+
+    /// Installs the FullNode-only OCOMP replay barrier. Validators deliberately
+    /// leave this unset, preserving their existing execution path.
+    #[must_use]
+    pub fn with_ocomp_readiness(mut self, readiness: ProjectionReadinessHandle) -> Self {
+        self.ocomp_readiness = Some(readiness);
         self
     }
 
@@ -788,6 +810,14 @@ where
             },
         )
         .await?;
+        wait_for_optional_ocomp_parent(
+            self.ocomp_readiness.clone(),
+            ProjectionCheckpoint {
+                block_number: parent_height,
+                block_hash: block.parent_hash(),
+            },
+        )
+        .await?;
 
         let execution_data =
             OutbeExecutionData::new(std::sync::Arc::new(block.clone().into_inner()));
@@ -1056,6 +1086,37 @@ mod tests {
                 .await
                 .expect_err("a fatal projection must fail finalized execution closed");
             assert!(error.to_string().contains("test corrupt body"));
+        });
+    }
+
+    #[test]
+    fn optional_full_node_ocomp_gate_waits_for_the_exact_parent() {
+        commonware_runtime::deterministic::Runner::default().start(|_| async move {
+            let baseline = ProjectionCheckpoint {
+                block_number: 0,
+                block_hash: B256::ZERO,
+            };
+            let required = ProjectionCheckpoint {
+                block_number: 100,
+                block_hash: B256::repeat_byte(0x64),
+            };
+            super::wait_for_optional_ocomp_parent(None, required)
+                .await
+                .expect("Validator path has no FullNode OCOMP gate");
+
+            let (publisher, readiness) =
+                projection_readiness(baseline, ProjectionStatus::CatchingUp { checkpoint: None });
+            let wait = super::wait_for_optional_ocomp_parent(Some(readiness), required);
+            futures::pin_mut!(wait);
+            assert!(matches!(
+                futures::poll!(&mut wait),
+                std::task::Poll::Pending
+            ));
+            publisher.publish(ProjectionStatus::Ready {
+                checkpoint: required,
+            });
+            wait.await
+                .expect("FullNode resumes only at the exact OCOMP checkpoint");
         });
     }
 
@@ -1700,6 +1761,7 @@ mod tests {
                 mailbox_rx,
                 execution_finalized_height_tx: None,
                 projection_readiness,
+                ocomp_readiness: None,
                 finalized_ce_committer: None,
                 ancestry_readiness: None,
                 // Heartbeat far in the future so the biased mailbox arm wins.
@@ -1763,6 +1825,7 @@ mod tests {
                 mailbox_rx,
                 execution_finalized_height_tx: None,
                 projection_readiness,
+                ocomp_readiness: None,
                 finalized_ce_committer: None,
                 ancestry_readiness: None,
                 fcu_heartbeat_interval: std::time::Duration::ZERO,

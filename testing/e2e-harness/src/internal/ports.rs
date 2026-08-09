@@ -444,13 +444,17 @@ mod tests {
         if held.is_ok() {
             let p = Ports::new(true);
             p.start_scenario(2).expect("scan");
-            assert_ne!(p.port(Http, 0), NODE_BASE, "should skip the held port");
+            let first = p.port(Http, 0);
+            assert_ne!(first, NODE_BASE, "should skip the held port");
+            for service in Service::ALL {
+                assert_eq!(
+                    p.port(service, 0),
+                    first + service.offset(),
+                    "block must stay contiguous at {service:?}"
+                );
+            }
             assert!(
-                p.port(OcompSupervisor, 0) - p.port(Http, 0) >= BLOCK - 1,
-                "block must stay contiguous"
-            );
-            assert!(
-                p.port(Http, 1) - p.port(Http, 0) >= BLOCK,
+                p.port(Http, 1) - first >= BLOCK,
                 "the next block follows the cursor"
             );
         }

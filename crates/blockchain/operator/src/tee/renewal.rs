@@ -250,7 +250,9 @@ fn validate_identity(
             NodeBindingSelectorV1::FullNode(public),
             outbe_primitives::tee_attestation_v1::NodeIdV1::FullNode { reth_p2p_public },
         ) if public == reth_p2p_public => {}
-        _ => eyre::bail!("renewal selector does not match the committed node identity"),
+        _ => {
+            eyre::bail!("renewal selector does not match the committed node identity");
+        }
     }
     Ok(())
 }

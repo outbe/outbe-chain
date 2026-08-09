@@ -86,7 +86,9 @@ pub fn assemble_lane(
         "OCM-FAST" | "OCM-INT" => assemble_command_lane(repo, ledger, lane, evidence_dir),
         "OCM-PUBLIC" => assemble_public_lane(repo, ledger, evidence_dir),
         "OCM-E2E" => assemble_e2e_lane(repo, ledger, evidence_dir),
-        _ => eyre::bail!("lane assembly is not implemented for {lane}"),
+        _ => {
+            eyre::bail!("lane assembly is not implemented for {lane}");
+        }
     }
 }
 
@@ -104,7 +106,9 @@ pub fn verify_lane_semantics(
     .wrap_err("decode lane manifest for semantic verification")?;
     let lane = match &manifest.mode {
         EvidenceMode::Lane { lane } => lane.as_str(),
-        _ => eyre::bail!("semantic lane verification requires lane mode"),
+        _ => {
+            eyre::bail!("semantic lane verification requires lane mode");
+        }
     };
     let evidence_dir = manifest_path
         .parent()
@@ -115,7 +119,9 @@ pub fn verify_lane_semantics(
         }
         "OCM-PUBLIC" => verify_scenario_lane(repo, &manifest, evidence_dir, &PUBLIC_SCENARIOS),
         "OCM-E2E" => verify_scenario_lane(repo, &manifest, evidence_dir, &E2E_SCENARIOS),
-        _ => eyre::bail!("semantic lane verification is not implemented for {lane}"),
+        _ => {
+            eyre::bail!("semantic lane verification is not implemented for {lane}");
+        }
     }
 }
 
@@ -626,7 +632,9 @@ fn validate_public_scenario(test_id: &str, scenario: &Value) -> Result<()> {
             );
             Ok(())
         }
-        _ => eyre::bail!("unknown public lane test {test_id}"),
+        _ => {
+            eyre::bail!("unknown public lane test {test_id}");
+        }
     }
 }
 
@@ -647,7 +655,9 @@ fn validate_e2e_scenario(test_id: &str, scenario: &Value) -> Result<()> {
             validate_applied_public_path(scenario)?;
             validate_execution_trace(public)
         }
-        _ => eyre::bail!("unknown E2E lane test {test_id}"),
+        _ => {
+            eyre::bail!("unknown E2E lane test {test_id}");
+        }
     }
 }
 

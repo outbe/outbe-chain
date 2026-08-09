@@ -114,6 +114,11 @@ pub(crate) fn start_bootstrapped_localnet(world: &mut World, opts: &StartOpts) {
         .localnet
         .bind_tee_genesis()
         .expect("bind canonical TEE genesis manifest");
+    #[cfg(feature = "ocomp-integration")]
+    world
+        .ocomp
+        .ensure_validator_domain_material_before_node_start()
+        .expect("stage complete OCOMP validator domain material before node start");
     world.localnet.start(opts).expect("start localnet");
 
     let bootstrap_wait_attempts = world.localnet.tee_bootstrap_wait_attempts();

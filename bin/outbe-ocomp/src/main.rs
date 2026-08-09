@@ -11,14 +11,16 @@ use clap::{Args, Parser, Subcommand};
 use outbe_consensus::{config::init_consensus_chain_id, proof::constants::consensus_chain_id};
 use outbe_ocomp::bundle::PinnedProtocolBundle;
 use outbe_ocomp::cas::CasLimits;
-use outbe_ocomp::control::{
-    effective_uid, poc_schema_limits, require_effective_uid, uid_for_user, EndpointIdentity,
-};
+use outbe_ocomp::control::{effective_uid, poc_schema_limits, EndpointIdentity};
 use outbe_ocomp::inbox::WorkerInboxLimits;
 use outbe_ocomp::result_attestation::LocalResultVoteAttesterV1;
 use outbe_ocomp::result_signer::OcompSigner;
-use outbe_ocomp::rpc_discovery::{FinalizedRpcDiscoveryConfigV1, FinalizedRpcDiscoveryV1};
-use outbe_ocomp::rpc_input_exporter::{RpcInputExporterConfigV1, RpcInputExporterV1};
+use outbe_ocomp::rpc_discovery::{
+    FinalizedRpcDiscoveryConfigV1, FinalizedRpcDiscoveryPurposeV1, FinalizedRpcDiscoveryV1,
+};
+use outbe_ocomp::rpc_input_exporter::{
+    RpcInputExporterConfigV1, RpcInputExporterErrorV1, RpcInputExporterV1,
+};
 use outbe_ocomp::rpc_projection::RpcProjectionConfigV1;
 use outbe_ocomp::sign_once::SignOnceStore;
 use outbe_ocomp::supervisor_export::{
@@ -33,7 +35,7 @@ use outbe_ocomp::vote_submitter::{
     VoteSubmissionConfigV1, VoteSubmissionOutcomeV1,
 };
 use outbe_ocomp::worker::{run_worker, WorkerConfig};
-use outbe_ocomp::worker_transport::MAX_REGISTERED_WORKERS;
+use outbe_ocomp::worker_transport::{SupervisorWorkerServerV1, MAX_REGISTERED_WORKERS};
 use outbe_ocomp_protocol::capacity::OCOMP_POC_CAS_QUOTA_BYTES;
 use outbe_offchain_storage::MongoStorageConfig;
 use outbe_primitives::signer::OutbeEvmSigner;
@@ -82,9 +84,6 @@ struct RuntimeArgs {
     supervisor_address: SocketAddr,
 }
 
-const SUPERVISOR_USER: &str = "outbe-ocomp-supervisor";
-const SNAPSHOT_EXPORTER_USER: &str = "outbe-ocomp-export";
-const WORKER_USER: &str = "outbe-ocomp-worker";
 const BASE_PATH_ENV: &str = "OUTBE_OCOMP_BASE_PATH";
 const VALIDATOR_INDEX_ENV: &str = "OCOMP_VALIDATOR_INDEX";
 const CAS_MAX_OBJECT_BYTES: u64 = 1_048_576;
@@ -176,26 +175,9 @@ impl ProductionLayout {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ProcessRole {
-    Supervisor,
-    SnapshotExporter,
-    Worker,
-}
-
-impl ProcessRole {
-    const fn production_user(self) -> &'static str {
-        match self {
-            Self::Supervisor => SUPERVISOR_USER,
-            Self::SnapshotExporter => SNAPSHOT_EXPORTER_USER,
-            Self::Worker => WORKER_USER,
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 struct RuntimeProfile {
-    effective_role_uid: u32,
+    owner_uid: u32,
     supervisor_address: SocketAddr,
     cas_root: PathBuf,
     worker_inbox_root: PathBuf,
@@ -213,7 +195,7 @@ struct RuntimeProfile {
 }
 
 impl RuntimeProfile {
-    fn resolve(args: &RuntimeArgs, role: ProcessRole) -> Result<Self, Box<dyn std::error::Error>> {
+    fn resolve(args: &RuntimeArgs) -> Result<Self, Box<dyn std::error::Error>> {
         if !args.supervisor_address.ip().is_loopback() || args.supervisor_address.port() == 0 {
             return Err(
                 "--supervisor-address must be a nonzero loopback registration endpoint".into(),
@@ -224,7 +206,7 @@ impl RuntimeProfile {
             let layout =
                 ProductionLayout::from_base(&production.base_path, production.validator_index)?;
             return Ok(Self {
-                effective_role_uid: uid_for_user(role.production_user())?,
+                owner_uid: effective_uid()?,
                 supervisor_address: args.supervisor_address,
                 cas_root: layout.cas_root,
                 worker_inbox_root: layout.worker_inbox_root,
@@ -254,7 +236,7 @@ impl RuntimeProfile {
         }
         let uid = effective_uid()?;
         Ok(Self {
-            effective_role_uid: uid,
+            owner_uid: uid,
             supervisor_address: args.supervisor_address,
             cas_root: root.join("cas-v1"),
             worker_inbox_root: root.join("worker-inbox-v1"),
@@ -277,7 +259,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     match Cli::parse().role {
         Role::Worker(args) => {
             install_consensus_domain(args.chain_id)?;
-            let runtime = RuntimeProfile::resolve(&args.runtime, ProcessRole::Worker)?;
+            let runtime = RuntimeProfile::resolve(&args.runtime)?;
             let limits = poc_schema_limits();
             let canonical_bundle = std::fs::read(&runtime.protocol_bundle_path)?;
             let protocol_bundle = PinnedProtocolBundle::decode(
@@ -286,7 +268,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &limits,
             )?;
             run_worker(WorkerConfig {
-                expected_effective_uid: runtime.effective_role_uid,
                 identity: EndpointIdentity {
                     chain_id: args.chain_id,
                     genesis_hash: args.genesis_hash,
@@ -352,17 +333,14 @@ fn worker_observability_address(
 }
 
 fn print_signer_address(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let runtime = RuntimeProfile::resolve(args, ProcessRole::Supervisor)?;
-    require_effective_uid(runtime.effective_role_uid)?;
-    let signer =
-        OutbeEvmSigner::from_strict_file(runtime.ocomp_evm_key_path, runtime.effective_role_uid)?;
+    let runtime = RuntimeProfile::resolve(args)?;
+    let signer = OutbeEvmSigner::from_strict_file(runtime.ocomp_evm_key_path, runtime.owner_uid)?;
     println!("{}", signer.address());
     Ok(())
 }
 
 fn run_supervisor(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let runtime = RuntimeProfile::resolve(args, ProcessRole::Supervisor)?;
-    require_effective_uid(runtime.effective_role_uid)?;
+    let runtime = RuntimeProfile::resolve(args)?;
     let limits = poc_schema_limits();
     let identity = EndpointIdentity {
         chain_id: required_env("OCOMP_CHAIN_ID")?.parse()?,
@@ -386,6 +364,7 @@ fn run_supervisor(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> 
         identity,
         fork_id: protocol_bundle.bundle().fork_id,
         limits,
+        purpose: FinalizedRpcDiscoveryPurposeV1::VotingAuthority,
     })?;
     let adoption = SupervisorExportAdoption::open(SupervisorExportAdoptionConfig {
         cas_root: runtime.cas_root.clone(),
@@ -399,43 +378,38 @@ fn run_supervisor(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> 
         protocol_bundle: protocol_bundle.clone(),
         limits,
     })?;
-    let runner = Arc::new(SupervisorJobRunnerV1::open(SupervisorJobRunnerConfigV1 {
-        cas_root: runtime.cas_root,
-        cas_limits: CasLimits {
-            max_object_bytes: CAS_MAX_OBJECT_BYTES,
-            max_total_bytes: CAS_MAX_TOTAL_BYTES,
-        },
-        input_ref_root: runtime.snapshot_exporter_input_ref_root,
-        job_root: runtime.supervisor_job_root,
-        worker_inbox_root: runtime.worker_inbox_root,
-        worker_inbox_limits: WorkerInboxLimits {
-            max_artifact_bytes: WORKER_INBOX_MAX_ARTIFACT_BYTES,
-            max_total_bytes: WORKER_INBOX_MAX_TOTAL_BYTES,
-        },
-        supervisor_listen_address: runtime.supervisor_address,
-        registry_generation: required_env("OCOMP_REGISTRY_GENERATION")?.parse()?,
+    let worker_server = SupervisorWorkerServerV1::start(
+        runtime.supervisor_address,
         identity,
-        protocol_bundle,
+        required_env("OCOMP_REGISTRY_GENERATION")?.parse()?,
         limits,
-    })?);
+    )?;
+    let runner = Arc::new(SupervisorJobRunnerV1::open(
+        SupervisorJobRunnerConfigV1 {
+            cas_root: runtime.cas_root,
+            cas_limits: CasLimits {
+                max_object_bytes: CAS_MAX_OBJECT_BYTES,
+                max_total_bytes: CAS_MAX_TOTAL_BYTES,
+            },
+            input_ref_root: runtime.snapshot_exporter_input_ref_root,
+            job_root: runtime.supervisor_job_root,
+            worker_inbox_root: runtime.worker_inbox_root,
+            worker_inbox_limits: WorkerInboxLimits {
+                max_artifact_bytes: WORKER_INBOX_MAX_ARTIFACT_BYTES,
+                max_total_bytes: WORKER_INBOX_MAX_TOTAL_BYTES,
+            },
+            protocol_bundle,
+            limits,
+        },
+        worker_server.dispatcher(),
+    )?);
     let evm_signer =
-        OutbeEvmSigner::from_strict_file(&runtime.ocomp_evm_key_path, runtime.effective_role_uid)?;
-    let result_signer =
-        OcompSigner::from_file(&runtime.ocomp_result_key_path, runtime.effective_role_uid)?;
-    let sign_once = SignOnceStore::open(
-        runtime.supervisor_sign_once_root,
-        runtime.effective_role_uid,
-        limits,
-    )?;
-    let validator_index: u16 = required_env("OCOMP_VALIDATOR_INDEX")?.parse()?;
-    let attester = LocalResultVoteAttesterV1::new(
-        identity,
-        fork_id,
-        validator_index,
-        result_signer,
-        sign_once,
-        limits,
-    )?;
+        OutbeEvmSigner::from_strict_file(&runtime.ocomp_evm_key_path, runtime.owner_uid)?;
+    let result_signer = OcompSigner::from_file(&runtime.ocomp_result_key_path, runtime.owner_uid)?;
+    let sign_once =
+        SignOnceStore::open(runtime.supervisor_sign_once_root, runtime.owner_uid, limits)?;
+    let attester =
+        LocalResultVoteAttesterV1::new(identity, fork_id, result_signer, sign_once, limits)?;
     let vote_preparer =
         LocalVoteTransactionPreparerV1::new(evm_signer, attester, identity.chain_id, limits)?;
     let sender_address = vote_preparer.sender_address();
@@ -589,8 +563,7 @@ fn cancel_superseded_job(
 }
 
 fn run_snapshot_exporter(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let runtime = RuntimeProfile::resolve(args, ProcessRole::SnapshotExporter)?;
-    require_effective_uid(runtime.effective_role_uid)?;
+    let runtime = RuntimeProfile::resolve(args)?;
     let limits = poc_schema_limits();
     let identity = EndpointIdentity {
         chain_id: required_env("OCOMP_CHAIN_ID")?.parse()?,
@@ -613,8 +586,9 @@ fn run_snapshot_exporter(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::E
         identity,
         fork_id: protocol_bundle.bundle().fork_id,
         limits,
+        purpose: FinalizedRpcDiscoveryPurposeV1::InputReplay,
     })?;
-    let mut exporter = RpcInputExporterV1::open(RpcInputExporterConfigV1 {
+    let exporter_config = RpcInputExporterConfigV1 {
         rpc_url: rpc_url.clone(),
         rpc_max_response_bytes: SUPERVISOR_RPC_MAX_RESPONSE_BYTES,
         projection: RpcProjectionConfigV1 {
@@ -642,7 +616,15 @@ fn run_snapshot_exporter(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::E
         receipt_root: runtime.snapshot_exporter_receipt_root,
         protocol_bundle,
         limits,
-    })?;
+    };
+    let mut exporter = retry_snapshot_exporter_startup(
+        || RpcInputExporterV1::open(exporter_config.clone()),
+        RpcInputExporterErrorV1::is_retryable_startup,
+        |error| {
+            eprintln!("OCOMP snapshot exporter startup retry: {error}");
+            std::thread::sleep(SUPERVISOR_RECONCILE_INTERVAL);
+        },
+    )?;
     let mut exported_job_id = None;
     loop {
         if let Err(error) = discovery.reconcile_once() {
@@ -661,6 +643,20 @@ fn run_snapshot_exporter(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::E
             }
         }
         std::thread::sleep(SUPERVISOR_RECONCILE_INTERVAL);
+    }
+}
+
+fn retry_snapshot_exporter_startup<T, E>(
+    mut open: impl FnMut() -> Result<T, E>,
+    retryable: impl Fn(&E) -> bool,
+    mut on_retry: impl FnMut(&E),
+) -> Result<T, E> {
+    loop {
+        match open() {
+            Ok(value) => return Ok(value),
+            Err(error) if retryable(&error) => on_retry(&error),
+            Err(error) => return Err(error),
+        }
     }
 }
 
@@ -700,7 +696,49 @@ mod tests {
     }
 
     #[test]
-    fn fixed_role_cli_rejects_caller_selected_uids_and_paths() {
+    fn snapshot_exporter_startup_retries_only_retryable_failures() {
+        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+        enum StartupError {
+            Busy,
+            Fatal,
+        }
+
+        let mut attempts = 0_u8;
+        let mut retries = 0_u8;
+        let opened = retry_snapshot_exporter_startup(
+            || {
+                attempts += 1;
+                if attempts < 3 {
+                    Err(StartupError::Busy)
+                } else {
+                    Ok(0xA5_u8)
+                }
+            },
+            |error| *error == StartupError::Busy,
+            |_| retries += 1,
+        )
+        .unwrap();
+        assert_eq!(opened, 0xA5);
+        assert_eq!(attempts, 3);
+        assert_eq!(retries, 2);
+
+        let mut fatal_attempts = 0_u8;
+        assert_eq!(
+            retry_snapshot_exporter_startup(
+                || {
+                    fatal_attempts += 1;
+                    Err::<(), _>(StartupError::Fatal)
+                },
+                |error| *error == StartupError::Busy,
+                |_| panic!("fatal startup errors cannot enter the retry loop"),
+            ),
+            Err(StartupError::Fatal)
+        );
+        assert_eq!(fatal_attempts, 1);
+    }
+
+    #[test]
+    fn removed_uid_cli_options_are_rejected() {
         assert!(Cli::try_parse_from([
             "outbe-ocomp",
             "supervisor",
@@ -744,9 +782,9 @@ mod tests {
             development_root: Some(root.path().to_path_buf()),
             supervisor_address: "127.0.0.1:9765".parse().unwrap(),
         };
-        let profile = RuntimeProfile::resolve(&args, ProcessRole::Supervisor).unwrap();
+        let profile = RuntimeProfile::resolve(&args).unwrap();
 
-        assert_eq!(profile.effective_role_uid, effective_uid().unwrap());
+        assert_eq!(profile.owner_uid, effective_uid().unwrap());
         assert!(profile.cas_root.starts_with(root.path()));
         assert!(profile.protocol_bundle_path.starts_with(root.path()));
 
@@ -754,7 +792,7 @@ mod tests {
             development_root: Some(PathBuf::from("relative-domain")),
             supervisor_address: "127.0.0.1:9765".parse().unwrap(),
         };
-        assert!(RuntimeProfile::resolve(&relative, ProcessRole::Supervisor).is_err());
+        assert!(RuntimeProfile::resolve(&relative).is_err());
     }
 
     #[test]
