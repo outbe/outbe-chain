@@ -11,7 +11,7 @@ use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::units::Units;
 
 use crate::precompile::IOracle;
-use crate::schema::{OracleContract, SCALE_1E18};
+use crate::schema::{OracleContract, PairIndex, SCALE_1E18};
 
 /// Maximum validator records processed by the receipt-visible Oracle slash-window
 /// system transaction. The configured genesis maximum is 128; keeping the cap
@@ -280,13 +280,14 @@ pub fn run_tally(oracle: &mut OracleContract, block_number: u64, timestamp: u64)
         return Ok(());
     }
 
-    // Collect vote targets (active pairs)
+    // Collect vote targets (active pairs) with the registry index the rate
+    // columns are keyed by, so the write-back never re-derives it from the pair.
     let pair_count = oracle.pair_count.read()?;
-    let mut active_pairs: Vec<AddressPair> = Vec::new();
+    let mut active_pairs: Vec<(PairIndex, AddressPair)> = Vec::new();
     for pid in 1..=pair_count {
         let pair = oracle.pair_at(pid)?;
         if oracle.vote_target.read(&pair)? {
-            active_pairs.push(pair);
+            active_pairs.push((pid, pair));
         }
     }
     let total_targets = active_pairs.len() as u32;
@@ -297,9 +298,9 @@ pub fn run_tally(oracle: &mut OracleContract, block_number: u64, timestamp: u64)
     }
 
     // Organize votes into per-pair ballots
-    let mut ballot_map: Vec<(AddressPair, Vec<VoteForTally>)> = active_pairs
+    let mut ballot_map: Vec<(PairIndex, AddressPair, Vec<VoteForTally>)> = active_pairs
         .iter()
-        .map(|pair| (*pair, Vec::new()))
+        .map(|(index, pair)| (*index, *pair, Vec::new()))
         .collect();
 
     for vi in 0..voter_count {
@@ -327,9 +328,9 @@ pub fn run_tally(oracle: &mut OracleContract, block_number: u64, timestamp: u64)
             let volume = volume_map.read(&ti)?;
 
             // Find the ballot for this pair
-            if let Some((_, ballot)) = ballot_map
+            if let Some((_, _, ballot)) = ballot_map
                 .iter_mut()
-                .find(|(pair, _)| pair.same_market(&voted_pair))
+                .find(|(_, pair, _)| pair.same_market(&voted_pair))
             {
                 ballot.push(VoteForTally {
                     exchange_rate: rate,
@@ -345,27 +346,27 @@ pub fn run_tally(oracle: &mut OracleContract, block_number: u64, timestamp: u64)
     let ref_pair_idx = ballot_map
         .iter()
         .enumerate()
-        .max_by_key(|(_, (_, ballot))| ballot.iter().map(|v| v.power).sum::<u64>())
+        .max_by_key(|(_, (_, _, ballot))| ballot.iter().map(|v| v.power).sum::<u64>())
         .map(|(idx, _)| idx)
         .unwrap_or(0);
 
     // Tally reference pair directly
-    let ref_pair = ballot_map[ref_pair_idx].0;
+    let (ref_index, ref_pair) = (ballot_map[ref_pair_idx].0, ballot_map[ref_pair_idx].1);
     let ref_median = {
-        let ballot = &mut ballot_map[ref_pair_idx].1;
+        let ballot = &mut ballot_map[ref_pair_idx].2;
         tally_pair(ballot, reward_band, &mut claims)
     };
 
     // Collect reference votes for cross-rate (voter => reference rate)
     let reference_votes: Vec<(Address, U256)> = ballot_map[ref_pair_idx]
-        .1
+        .2
         .iter()
         .map(|v| (v.voter, v.exchange_rate))
         .collect();
 
     // Update reference pair exchange rate
     if !ref_median.is_zero() {
-        oracle.update_exchange_rate(ref_pair, ref_median, block_number, timestamp)?;
+        oracle.update_exchange_rate(ref_index, ref_median, block_number, timestamp)?;
         let event = IOracle::ExchangeRateUpdated {
             base: ref_pair.address1(),
             quote: ref_pair.address2(),
@@ -381,7 +382,7 @@ pub fn run_tally(oracle: &mut OracleContract, block_number: u64, timestamp: u64)
     let mut snapshot_entries: Vec<(AddressPair, U256, U256)> = Vec::new();
     if !ref_median.is_zero() {
         let total_volume: U256 = ballot_map[ref_pair_idx]
-            .1
+            .2
             .iter()
             .map(|v| v.volume)
             .fold(U256::ZERO, |acc, v| acc.saturating_add(v));
@@ -394,8 +395,8 @@ pub fn run_tally(oracle: &mut OracleContract, block_number: u64, timestamp: u64)
             continue;
         }
 
-        let pair = entry.0;
-        let ballot = &entry.1;
+        let (index, pair) = (entry.0, entry.1);
+        let ballot = &entry.2;
 
         if ballot.is_empty() {
             continue;
@@ -417,7 +418,7 @@ pub fn run_tally(oracle: &mut OracleContract, block_number: u64, timestamp: u64)
                 .unwrap_or(U256::ZERO);
 
             if !actual_rate.is_zero() {
-                oracle.update_exchange_rate(pair, actual_rate, block_number, timestamp)?;
+                oracle.update_exchange_rate(index, actual_rate, block_number, timestamp)?;
                 let event = IOracle::ExchangeRateUpdated {
                     base: pair.address1(),
                     quote: pair.address2(),

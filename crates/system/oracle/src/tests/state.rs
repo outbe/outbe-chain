@@ -314,6 +314,85 @@ fn get_exchange_rate_reverts_for_an_unregistered_pair() {
         assert!(oracle.get_exchange_rate(BTC, USDT).is_err());
     });
 }
+
+/// The three rate columns key on the registry index, so a price read is
+/// `pair_to_index` and then slot 12. Pins the raw slots `scripts/seed_genesis.py`
+/// writes, and asserts nothing lands at the pair-derived slot they used to use —
+/// a schema key-type revert would otherwise pass every behavioural test above
+/// while silently orphaning every seeded rate.
+#[test]
+fn the_rate_columns_are_keyed_by_the_registry_index() {
+    use outbe_primitives::addresses::ORACLE_ADDRESS;
+    use outbe_primitives::storage::types::StorageKey;
+
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        let index = oracle
+            .register_pair(AddressPair::from_addresses(COEN, USDT))
+            .unwrap();
+        let rate = U256::from(1_500_000_000_000_000_000u128);
+        oracle
+            .set_exchange_rate(Address::ZERO, COEN, USDT, rate, 42, 86_400)
+            .unwrap();
+
+        let at = |slot: U256| storage.sload(ORACLE_ADDRESS, slot).unwrap();
+        for (base, expected, field) in [
+            (12u64, rate, "exchange_rate"),
+            (13, U256::from(42u64), "exchange_rate_block"),
+            (14, U256::from(86_400u64), "exchange_rate_timestamp"),
+        ] {
+            let base = U256::from(base);
+            assert_eq!(
+                at(index.mapping_slot(base)),
+                expected,
+                "{field} is not keyed by the registry index at base slot {base}; \
+                 scripts/seed_genesis.py hardcodes it"
+            );
+            assert_eq!(
+                at(pair_key(COEN, USDT).mapping_slot(base)),
+                U256::ZERO,
+                "{field} still writes the pair-derived slot"
+            );
+        }
+    });
+}
+
+/// Deactivated pairs lose their rate, and an active neighbour registered after
+/// them keeps its own — the clear walks the registry by index, so an off-by-one
+/// would wipe the wrong column.
+#[test]
+fn remove_excess_feeds_clears_only_the_deactivated_pairs_rate() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        oracle
+            .register_pair(AddressPair::from_addresses(COEN, USDT))
+            .unwrap();
+        oracle
+            .register_pair(AddressPair::from_addresses(ETH, USDT))
+            .unwrap();
+        oracle
+            .set_exchange_rate(Address::ZERO, COEN, USDT, U256::from(7u64), 10, 120)
+            .unwrap();
+        oracle
+            .set_exchange_rate(Address::ZERO, ETH, USDT, U256::from(9u64), 20, 240)
+            .unwrap();
+
+        oracle
+            .deactivate_vote_target(Address::ZERO, COEN, USDT)
+            .unwrap();
+        oracle.remove_excess_feeds().unwrap();
+
+        assert_eq!(
+            oracle.get_exchange_rate(COEN, USDT).unwrap(),
+            (U256::ZERO, 0, 0)
+        );
+        assert_eq!(
+            oracle.get_exchange_rate(ETH, USDT).unwrap(),
+            (U256::from(9u64), 20, 240)
+        );
+    });
+}
+
 #[test]
 fn config_slots_round_trip_every_genesis_parameter() {
     with_storage(|storage| {

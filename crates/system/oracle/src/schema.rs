@@ -68,12 +68,17 @@ pub struct OracleContract {
     pub vote_target: Mapping<AddressPair, bool>,
 
     // === Exchange Rates (slots 12-14) ===
-    // slot 12: mapping(pair => exchange_rate) 1e18 scaled
-    pub exchange_rate: Mapping<AddressPair, U256>,
-    // slot 13: mapping(pair => last_update_block)
-    pub exchange_rate_block: Mapping<AddressPair, u64>,
-    // slot 14: mapping(pair => last_update_timestamp)
-    pub exchange_rate_timestamp: Mapping<AddressPair, u64>,
+    // Keyed by the registry's [`PairIndex`], so a price read is two steps:
+    // `pair_to_index` first, then this column. Only a registered pair has an
+    // index, so an unregistered market has no rate slot to write into at all,
+    // and the index carries the orientation the pair was registered in — the
+    // stored rate is always the canonical direction, never the reciprocal.
+    // slot 12: mapping(pair_index => exchange_rate) 1e18 scaled
+    pub exchange_rate: Mapping<PairIndex, U256>,
+    // slot 13: mapping(pair_index => last_update_block)
+    pub exchange_rate_block: Mapping<PairIndex, u64>,
+    // slot 14: mapping(pair_index => last_update_timestamp)
+    pub exchange_rate_timestamp: Mapping<PairIndex, u64>,
 
     // === Feeder Delegation (slot 15) ===
     // slot 15: mapping(validator_address => feeder_address)

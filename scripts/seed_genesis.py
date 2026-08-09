@@ -1386,7 +1386,8 @@ def seed_oracle(storage: StorageBuilder, config: dict):
       slot 9: retired hole (was mapping(pair_id => pair_hash))
       slot 10: mapping(pair => ordinal)
       slot 11: mapping(pair => is_vote_target)
-      slots 12-14: exchange_rate / block / timestamp, keyed by pair
+      slots 12-14: exchange_rate / block / timestamp, keyed by pair_index
+        (the 1-based ordinal from slot 10), not by the pair itself
       slot 15: feeder delegations
       slots 32-33: protected validators
       slot 43: mapping(pair_index => AddressPair), a two-word value and the only
@@ -1444,18 +1445,20 @@ def seed_oracle(storage: StorageBuilder, config: dict):
 
         rate = parse_int(pair.get("initial_rate", "0"))
         if rate:
-            storage.set_mapping(12, h, rate)
-            storage.set_mapping(13, h, parse_int(pair.get("initial_block", 0)))
-            storage.set_mapping(14, h, parse_int(pair.get("initial_timestamp", 0)))
+            storage.set_mapping(12, u32_bytes(idx), rate)
+            storage.set_mapping(13, u32_bytes(idx), parse_int(pair.get("initial_block", 0)))
+            storage.set_mapping(
+                14, u32_bytes(idx), parse_int(pair.get("initial_timestamp", 0))
+            )
 
     for rate_entry in config.get("initial_rates", []):
         key = (rate_entry["base"], rate_entry["quote"])
-        h = pair_keys.get(key)
-        if h is None:
+        idx = pair_ids.get(key)
+        if idx is None:
             raise ValueError(f"initial rate pair is not registered: {key[0]}/{key[1]}")
-        storage.set_mapping(12, h, parse_int(rate_entry["rate"]))
-        storage.set_mapping(13, h, parse_int(rate_entry.get("block", 0)))
-        storage.set_mapping(14, h, parse_int(rate_entry.get("timestamp", 0)))
+        storage.set_mapping(12, u32_bytes(idx), parse_int(rate_entry["rate"]))
+        storage.set_mapping(13, u32_bytes(idx), parse_int(rate_entry.get("block", 0)))
+        storage.set_mapping(14, u32_bytes(idx), parse_int(rate_entry.get("timestamp", 0)))
 
     for delegation in config.get("feeder_delegations", []):
         validator = delegation["validator"]

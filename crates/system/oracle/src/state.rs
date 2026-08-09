@@ -146,9 +146,7 @@ impl OracleContract<'_> {
             let pair = self.pair_at(pid)?;
             let is_target = self.vote_target.read(&pair)?;
             if !is_target {
-                self.exchange_rate.write(&pair, U256::ZERO)?;
-                self.exchange_rate_block.write(&pair, 0)?;
-                self.exchange_rate_timestamp.write(&pair, 0)?;
+                self.clear_exchange_rate(pid)?;
             }
         }
         Ok(())
@@ -171,27 +169,39 @@ impl OracleContract<'_> {
     /// median input), and none of them is its own reciprocal, so a flipped quote
     /// reverts rather than being reinterpreted.
     pub fn require_pair(&self, base: Address, quote: Address) -> Result<AddressPair> {
-        let pair = self.require_market(base, quote)?;
+        Ok(self.require_pair_with_index(base, quote)?.0)
+    }
+
+    /// [`Self::require_pair`] together with the registry index the rate columns
+    /// are keyed by, resolved from the one lookup both already need.
+    pub fn require_pair_with_index(
+        &self,
+        base: Address,
+        quote: Address,
+    ) -> Result<(AddressPair, PairIndex)> {
+        let (pair, index) = self.require_market(base, quote)?;
         if !pair.is_canonical() {
             return Err(PrecompileError::Revert(
                 "pair must be quoted in canonical form".into(),
             ));
         }
-        Ok(pair)
+        Ok((pair, index))
     }
 
-    /// Resolves an ABI-quoted pair as a market, in either direction.
+    /// Resolves an ABI-quoted pair as a market, in either direction, with its
+    /// registry index.
     ///
     /// The returned pair keys canonical storage whichever way it was quoted, and
     /// `is_canonical()` reports whether the caller quoted it as stored. Only the
     /// spot-rate reads use this — they are the one place a backwards quote has a
     /// well-defined answer, namely the reciprocal.
-    pub fn require_market(&self, base: Address, quote: Address) -> Result<AddressPair> {
+    pub fn require_market(
+        &self,
+        base: Address,
+        quote: Address,
+    ) -> Result<(AddressPair, PairIndex)> {
         let pair = AddressPair::from_addresses(base, quote);
-        if self.pair_to_index.read(&pair)? == 0 {
-            return Err(PrecompileError::Revert("pair not registered".into()));
-        }
-        Ok(pair)
+        Ok((pair, self.require_pair_index(pair)?))
     }
 
     pub fn require_pair_index(&self, pair: AddressPair) -> Result<PairIndex> {
@@ -228,15 +238,15 @@ impl OracleContract<'_> {
     /// returns the reciprocal. The block and timestamp describe the stored
     /// observation and are the same either way.
     pub fn get_exchange_rate(&self, base: Address, quote: Address) -> Result<(U256, u64, u64)> {
-        let pair = self.require_market(base, quote)?;
-        let stored = self.exchange_rate.read(&pair)?;
+        let (pair, index) = self.require_market(base, quote)?;
+        let stored = self.exchange_rate.read(&index)?;
         let rate = if pair.is_canonical() {
             stored
         } else {
             invert_rate(stored)
         };
-        let block = self.exchange_rate_block.read(&pair)?;
-        let ts = self.exchange_rate_timestamp.read(&pair)?;
+        let block = self.exchange_rate_block.read(&index)?;
+        let ts = self.exchange_rate_timestamp.read(&index)?;
         Ok((rate, block, ts))
     }
 
@@ -270,22 +280,30 @@ impl OracleContract<'_> {
             ));
         }
 
-        let pair = self.require_pair(base, quote)?;
-        self.update_exchange_rate(pair, rate, block_number, timestamp)
+        let (_, index) = self.require_pair_with_index(base, quote)?;
+        self.update_exchange_rate(index, rate, block_number, timestamp)
     }
 
     /// Updates the exchange rate from tally results (internal, no caller check).
+    ///
+    /// `index` is the registry index of an already-registered pair; the rate is
+    /// stored in that pair's canonical orientation.
     pub fn update_exchange_rate(
         &mut self,
-        pair: AddressPair,
+        index: PairIndex,
         rate: U256,
         block_number: u64,
         timestamp: u64,
     ) -> Result<()> {
-        self.exchange_rate.write(&pair, rate)?;
-        self.exchange_rate_block.write(&pair, block_number)?;
-        self.exchange_rate_timestamp.write(&pair, timestamp)?;
+        self.exchange_rate.write(&index, rate)?;
+        self.exchange_rate_block.write(&index, block_number)?;
+        self.exchange_rate_timestamp.write(&index, timestamp)?;
         Ok(())
+    }
+
+    /// Zeroes the three rate columns for one registry index.
+    fn clear_exchange_rate(&mut self, index: PairIndex) -> Result<()> {
+        self.update_exchange_rate(index, U256::ZERO, 0, 0)
     }
 
     // -----------------------------------------------------------------------

@@ -264,7 +264,7 @@ pub fn export_genesis(
 
     for pair_id in 1..=pair_count {
         let pair = export_pair_metadata(oracle, pair_id)?;
-        let rate = oracle.exchange_rate.read(&pair)?;
+        let rate = oracle.exchange_rate.read(&pair_id)?;
         if !rate.is_zero() {
             initial_rates.push((pair.address1(), pair.address2(), rate));
         }
