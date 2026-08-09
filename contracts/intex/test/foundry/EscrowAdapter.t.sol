@@ -9,12 +9,12 @@ import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
 import {IAllocator} from "@contracts/vendor/the-compact/interfaces/IAllocator.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
-import {MockERC20} from "@test-mocks/MockERC20.sol";
+import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 
 contract EscrowAdapterTest is Test {
     EscrowAdapter escrow;
     MockTheCompact compact;
-    MockERC20 paymentToken;
+    MockWCOEN paymentToken;
 
     address admin = address(1);
     address bridger = address(2);
@@ -27,7 +27,7 @@ contract EscrowAdapterTest is Test {
     uint32 worldwideDay1 = 1;
     uint32 worldwideDay2 = 2;
 
-    uint128 constant LOCK_AMOUNT = 1000 * 10 ** 6; // 1000 USDC
+    uint128 constant LOCK_AMOUNT = 1000 * 10 ** 6;
 
     /// @dev Stand-in for the inbound bridge message id that carries refund instructions. Threaded
     ///      through `finalizeAuction`/`retryFinalize` into the emitted events.
@@ -41,7 +41,7 @@ contract EscrowAdapterTest is Test {
     function setUp() public {
         escrow = DeployProxy.escrowAdapter(admin, bridger);
         compact = new MockTheCompact();
-        paymentToken = new MockERC20("USD Coin", "USDC", 18);
+        paymentToken = new MockWCOEN();
 
         // Wire dependencies (no allow-list precondition anymore).
         vm.prank(admin);
@@ -695,19 +695,19 @@ contract EscrowAdapterTest is Test {
         escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
 
         // Rewire targeting a new token while locks are still in flight — must revert
-        MockERC20 usdt = new MockERC20("Tether", "USDT", 6);
+        MockWCOEN rotated = new MockWCOEN();
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.LiveLocksOutstanding.selector, uint256(LOCK_AMOUNT)));
         vm.prank(admin);
-        escrow.wire(auction, address(compact), address(usdt));
+        escrow.wire(auction, address(compact), address(rotated));
     }
 
     function test_Wire_RotatePaymentToken_AllowedWhenNoLocks() public {
         // Swap active token when no locks are held.
-        MockERC20 usdt = new MockERC20("Tether", "USDT", 6);
+        MockWCOEN rotated = new MockWCOEN();
         vm.prank(admin);
-        escrow.wire(auction, address(compact), address(usdt));
+        escrow.wire(auction, address(compact), address(rotated));
 
-        assertEq(address(escrow.paymentToken()), address(usdt));
+        assertEq(address(escrow.paymentToken()), address(rotated));
     }
 
     function test_Wire_RewireSameTokenStaysAllowedWithLocks() public {

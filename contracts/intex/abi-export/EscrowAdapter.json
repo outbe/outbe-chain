@@ -73,6 +73,19 @@
     },
     {
       "type": "function",
+      "name": "PAYMENT_TOKEN_DECIMALS",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint8",
+          "internalType": "uint8"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "POST_FINALIZE_REFUND_DELAY",
       "inputs": [],
       "outputs": [
@@ -1553,6 +1566,17 @@
       "type": "error",
       "name": "NotSelf",
       "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "PaymentTokenDecimals",
+      "inputs": [
+        {
+          "name": "actual",
+          "type": "uint8",
+          "internalType": "uint8"
+        }
+      ]
     },
     {
       "type": "error",

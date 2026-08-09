@@ -27,9 +27,9 @@ impl DesisContract<'_> {
             promis_load_minor: u128::try_from(promis_load_minor)
                 .map_err(|_| crate::DesisError::InvalidWorldwideDay(worldwide_day))?,
             call_trigger: IntexCallTrigger {
-                window_days: self.config_call_window_days.read(&worldwide_day)? as u16,
-                threshold_days: self.config_call_threshold_days.read(&worldwide_day)? as u16,
-                intex_call_period: self.config_intex_call_period.read(&worldwide_day)?,
+                call_window: self.config_call_window.read(&worldwide_day)?,
+                call_threshold: self.config_call_threshold.read(&worldwide_day)?,
+                call_notice_period: self.config_call_notice_period.read(&worldwide_day)?,
             },
             min_intex_bid_rate: self.config_min_bid_rate.read(&worldwide_day)?,
             min_intex_bid_quantity: self.config_min_bid_quantity.read(&worldwide_day)? as u16,
@@ -50,12 +50,12 @@ impl DesisContract<'_> {
             .write(&worldwide_day, u32::from(cfg.reference_currency))?;
         self.config_promis_load_minor
             .write(&worldwide_day, U256::from(cfg.promis_load_minor))?;
-        self.config_call_window_days
-            .write(&worldwide_day, u32::from(cfg.call_trigger.window_days))?;
-        self.config_call_threshold_days
-            .write(&worldwide_day, u32::from(cfg.call_trigger.threshold_days))?;
-        self.config_intex_call_period
-            .write(&worldwide_day, cfg.call_trigger.intex_call_period)?;
+        self.config_call_window
+            .write(&worldwide_day, cfg.call_trigger.call_window)?;
+        self.config_call_threshold
+            .write(&worldwide_day, cfg.call_trigger.call_threshold)?;
+        self.config_call_notice_period
+            .write(&worldwide_day, cfg.call_trigger.call_notice_period)?;
         self.config_min_bid_rate
             .write(&worldwide_day, cfg.min_intex_bid_rate)?;
         self.config_min_bid_quantity

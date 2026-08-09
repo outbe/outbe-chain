@@ -47,7 +47,7 @@ library BridgeMsgCodec {
     uint16 internal constant HEADER_LEN = 2;
 
     // encodePacked messages have a tight upper bound that equals the lower bound.
-    uint16 internal constant MIN_LEN_AUCTION_STAGE_START = 93;
+    uint16 internal constant MIN_LEN_AUCTION_STAGE_START = 97;
     uint16 internal constant MIN_LEN_AUCTION_STAGE_CLEARING = 6;
     uint16 internal constant MIN_LEN_AUCTION_RESULT = 22;
     uint16 internal constant MIN_LEN_MARK_CALLED = 6;
@@ -219,10 +219,10 @@ library BridgeMsgCodec {
     }
 
     /// @notice Encodes AUCTION_STAGE_START message.
-    /// @dev encodePacked layout (93 bytes), field order mirrors the Outbe `sol_ext` struct:
+    /// @dev encodePacked layout (97 bytes), field order mirrors the Outbe `sol_ext` struct:
     ///      [bodyVersion(1)][msgType(1)][worldwideDay(4)][commitEnd(4)][revealEnd(4)][issuanceEnd(4)]
     ///      [issuanceCurrency(2)][referenceCurrency(2)][promisLoadMinor(16)][minIntexBidRate(4)][entryPrice(8)][floorPriceMinor(8)]
-    ///      [callPriceMinor(8)][intexCallPeriod(4)][callWindowDays(2)][callThresholdDays(2)][minIntexBidQuantity(2)]
+    ///      [callPriceMinor(8)][callNoticePeriod(4)][callWindow(4)][callThreshold(4)][minIntexBidQuantity(2)]
     ///      [commitBondMinor(16)][dayState(1)]
     /// @param _worldwideDay The worldwide day (yyyymmdd).
     /// @param _commitEnd The commit-stage end timestamp.
@@ -235,9 +235,9 @@ library BridgeMsgCodec {
     /// @param _entryPrice The per-unit entry price (reference ccy); feeds floor/call.
     /// @param _floorPriceMinor The floor price (minor units).
     /// @param _callPriceMinor The call price (minor units).
-    /// @param _intexCallPeriod The Called→deadline window in seconds (0 = default).
-    /// @param _callWindowDays The call-trigger observation window in days.
-    /// @param _callThresholdDays The call-trigger threshold in days.
+    /// @param _callNoticePeriod The Called→deadline window in seconds (0 = default).
+    /// @param _callWindow The call-trigger observation window in seconds.
+    /// @param _callThreshold The call-trigger threshold in seconds.
     /// @param _minIntexBidQuantity The minimum acceptable intex bid quantity.
     /// @param _commitBondMinor The commit-entry bond (payment-token minor units); 0 disables the bond.
     /// @param _dayState The final worldwide-day state (1 = Green, 2 = Red).
@@ -254,9 +254,9 @@ library BridgeMsgCodec {
         uint64 _entryPrice,
         uint64 _floorPriceMinor,
         uint64 _callPriceMinor,
-        uint32 _intexCallPeriod,
-        uint16 _callWindowDays,
-        uint16 _callThresholdDays,
+        uint32 _callNoticePeriod,
+        uint32 _callWindow,
+        uint32 _callThreshold,
         uint16 _minIntexBidQuantity,
         uint128 _commitBondMinor,
         uint8 _dayState
@@ -279,9 +279,9 @@ library BridgeMsgCodec {
             _entryPrice,
             _floorPriceMinor,
             _callPriceMinor,
-            _intexCallPeriod,
-            _callWindowDays,
-            _callThresholdDays,
+            _callNoticePeriod,
+            _callWindow,
+            _callThreshold,
             _minIntexBidQuantity,
             _commitBondMinor,
             _dayState
@@ -329,11 +329,11 @@ library BridgeMsgCodec {
         uint64 entryPriceMinor;
         uint64 floorPriceMinor;
         /// @notice Duration in seconds between Called and the settlement deadline; 0 uses default.
-        uint32 intexCallPeriod;
+        uint32 callNoticePeriod;
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
-        uint16 callWindowDays;
-        uint16 callThresholdDays;
+        uint32 callWindow;
+        uint32 callThreshold;
         uint64 callPriceMinor;
         address[] recipients;
         uint256[] quantities;
@@ -344,8 +344,8 @@ library BridgeMsgCodec {
     ///         router's runtime size (EIP-170). Mirrors `encodeAuctionStageStart`'s layout:
     ///         [bodyVersion(1)][msgType(1)][worldwideDay(4)][commitEnd(4)][revealEnd(4)][issuanceEnd(4)]
     ///         [issuanceCurrency(2)][referenceCurrency(2)][promisLoadMinor(16)][minIntexBidRate(4)]
-    ///         [entryPrice(8)][floorPriceMinor(8)][callPriceMinor(8)][intexCallPeriod(4)]
-    ///         [callWindowDays(2)][callThresholdDays(2)][minIntexBidQuantity(2)][commitBondMinor(16)][dayState(1)]
+    ///         [entryPrice(8)][floorPriceMinor(8)][callPriceMinor(8)][callNoticePeriod(4)]
+    ///         [callWindow(4)][callThreshold(4)][minIntexBidQuantity(2)][commitBondMinor(16)][dayState(1)]
     /// @param _msg The wire-encoded AUCTION_STAGE_START message.
     /// @return worldwideDay The worldwide day (yyyymmdd).
     /// @return dayState The final worldwide-day state (Green or Red).
@@ -364,7 +364,7 @@ library BridgeMsgCodec {
         _assertExactLength(_msg, MSG_AUCTION_STAGE_START, MIN_LEN_AUCTION_STAGE_START);
         _assertBodyVersion(_msg);
         worldwideDay = uint32(bytes4(_msg[2:6]));
-        uint8 rawDayState = uint8(_msg[92]);
+        uint8 rawDayState = uint8(_msg[96]);
         if (rawDayState > uint8(IIntexAuction.WorldwideDayState.Red)) revert IIntexAuction.InvalidDayState();
         dayState = IIntexAuction.WorldwideDayState(rawDayState);
         schedule = IIntexAuction.AuctionSchedule({
@@ -377,16 +377,16 @@ library BridgeMsgCodec {
             referenceCurrency: uint16(bytes2(_msg[20:22])),
             promisLoadMinor: uint128(bytes16(_msg[22:38])),
             callTrigger: IIntexAuction.IntexCallTrigger({
-                windowDays: uint16(bytes2(_msg[70:72])),
-                thresholdDays: uint16(bytes2(_msg[72:74])),
-                intexCallPeriod: uint32(bytes4(_msg[66:70]))
+                callWindow: uint32(bytes4(_msg[70:74])),
+                callThreshold: uint32(bytes4(_msg[74:78])),
+                callNoticePeriod: uint32(bytes4(_msg[66:70]))
             }),
             minIntexBidRate: uint32(bytes4(_msg[38:42])),
-            minIntexBidQuantity: uint16(bytes2(_msg[74:76])),
+            minIntexBidQuantity: uint16(bytes2(_msg[78:80])),
             entryPriceMinor: uint64(bytes8(_msg[42:50])),
             floorPriceMinor: uint64(bytes8(_msg[50:58])),
             callPriceMinor: uint64(bytes8(_msg[58:66])),
-            commitBondMinor: uint128(bytes16(_msg[76:92]))
+            commitBondMinor: uint128(bytes16(_msg[80:96]))
         });
     }
 
@@ -432,7 +432,7 @@ library BridgeMsgCodec {
 
     /// @notice Encodes MARK_CALLED message.
     /// @dev The settlement deadline is derived locally on the destination chain
-    ///      from the series `intexCallPeriod` and the moment markCalled is applied.
+    ///      from the series `callNoticePeriod` and the moment markCalled is applied.
     ///      encodePacked layout (6 bytes): [bodyVersion(1)][msgType(1)][seriesId(4)]
     /// @param _seriesId The auction series identifier.
     /// @return The wire-encoded MARK_CALLED message.

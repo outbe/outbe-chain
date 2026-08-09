@@ -30,10 +30,10 @@ impl IntexState {
 /// Forced-call trigger parameters for a series.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct IntexCallTrigger {
-    pub window_days: u16,
-    pub threshold_days: u16,
+    pub call_window: u32,
+    pub call_threshold: u32,
     /// Seconds between `called_at` and the settlement deadline.
-    pub intex_call_period: u32,
+    pub call_notice_period: u32,
 }
 
 /// Identity parameters captured once at series creation.
@@ -93,13 +93,13 @@ pub struct SeriesRecord {
     // call_trigger group — stored flat (the storage DSL has no nested-struct codec),
     // exposed nested via `call_trigger()`.
     #[attribute(order = 7)]
-    pub call_window_days: u16,
+    pub call_window: u32,
 
     #[attribute(order = 8)]
-    pub call_threshold_days: u16,
+    pub call_threshold: u32,
 
     #[attribute(order = 9)]
-    pub intex_call_period: u32,
+    pub call_notice_period: u32,
 
     #[attribute(order = 10)]
     pub issued_at: u32,
@@ -121,13 +121,31 @@ impl SeriesRecord {
         IntexState::from_u8(self.state)
     }
 
+    pub fn cost_amount_minor(&self) -> Result<U256, IntexError> {
+        cost_amount_minor(self.entry_price_minor, self.promis_load_minor)
+    }
+
     pub fn call_trigger(&self) -> IntexCallTrigger {
         IntexCallTrigger {
-            window_days: self.call_window_days,
-            threshold_days: self.call_threshold_days,
-            intex_call_period: self.intex_call_period,
+            call_window: self.call_window,
+            call_threshold: self.call_threshold,
+            call_notice_period: self.call_notice_period,
         }
     }
+}
+
+/// Cost of one Intex in the reference currency, on the same 1e18 oracle scale as
+/// entry/floor/call. `promis_load_minor` carries its own 1e18, hence the divisor.
+/// Settling converts this into the chosen token's minor units — see
+/// `intexfactory::runtime::quote_cost_amount`.
+pub fn cost_amount_minor(
+    entry_price_minor: U256,
+    promis_load_minor: U256,
+) -> Result<U256, IntexError> {
+    entry_price_minor
+        .checked_mul(promis_load_minor)
+        .map(|v| v / U256::from(10u64).pow(U256::from(18u64)))
+        .ok_or(IntexError::CostAmountOverflow)
 }
 
 /// Paginated creator-reward distribution progress for a series. Exists while a
