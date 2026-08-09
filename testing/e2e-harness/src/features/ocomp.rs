@@ -3634,21 +3634,20 @@ fn four_domains_run_node_facing_roles(world: &mut World) {
     assert_eq!(counts.snapshot_exporters, 4);
     let records = world.ocomp.process_records();
     for validator_index in 0..4_u8 {
-        for role in [OcompProcessRole::SnapshotExporter] {
-            let matches = records
-                .iter()
-                .filter(|record| {
-                    record.validator_index == Some(validator_index)
-                        && record.role == role
-                        && record.worker_ordinal.is_none()
-                        && record.stopped_at_millis.is_none()
-                })
-                .count();
-            assert_eq!(
-                matches, 1,
-                "validator-{validator_index} must own one live {role:?}"
-            );
-        }
+        let role = OcompProcessRole::SnapshotExporter;
+        let matches = records
+            .iter()
+            .filter(|record| {
+                record.validator_index == Some(validator_index)
+                    && record.role == role
+                    && record.worker_ordinal.is_none()
+                    && record.stopped_at_millis.is_none()
+            })
+            .count();
+        assert_eq!(
+            matches, 1,
+            "validator-{validator_index} must own one live {role:?}"
+        );
     }
 }
 
