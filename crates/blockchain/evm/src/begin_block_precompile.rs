@@ -663,7 +663,12 @@ pub(crate) fn run_boundary_outcome(
 ) -> Result<()> {
     let was_participant = outbe_validatorset::contract::ValidatorSet::new(ctx.storage.clone())
         .is_consensus_participant(ctx.block.proposer)?;
-    apply_boundary_outcome(ctx.storage.clone(), artifact)?;
+    apply_boundary_outcome(
+        ctx.storage.clone(),
+        artifact,
+        ctx.block.block_number,
+        ctx.block.timestamp,
+    )?;
     if !was_participant {
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(ctx.storage.clone());
         if vs.is_consensus_participant(ctx.block.proposer)? {
@@ -2289,13 +2294,10 @@ mod tests {
         );
     }
 
-    /// Epoch-boundary ordering: the per-epoch reset runs in
-    /// `apply_pre_execution_changes` (pre-block hooks, executor.rs:2204) BEFORE the
-    /// begin-zone `LateFinalizeCredits` body tx (executor.rs: "begin-zone phases
-    /// execute when their body transaction reaches the loop"). This test mirrors
-    /// that order — reset, then window close — and proves the absentee's window-close
-    /// miss is recorded in the new epoch (NOT wiped); a prior epoch's accumulation is
-    /// reset first.
+    /// Boundary ordering: a block carrying certified `BoundaryOutcome` prepares
+    /// its per-epoch counter reset before the receipt-visible
+    /// `LateFinalizeCredits` body tx. The later BoundaryOutcome advances the
+    /// epoch/set/snapshot without resetting the freshly recorded absentee miss.
     #[test]
     fn window_close_miss_survives_epoch_boundary_reset() {
         use outbe_validatorset::{CommitteeEntry, CommitteeSnapshot};
@@ -2365,12 +2367,14 @@ mod tests {
                 si.voter_miss_count.write(&B, 5).unwrap();
             }
 
-            // Real begin-zone order at an epoch-boundary block: pre-block reset first…
-            {
-                let mut si =
-                    outbe_slashindicator::contract::SlashIndicator::new(ctx.storage.clone());
-                si.reset_epoch_counters(&[A, B]).unwrap();
-            }
+            // Real begin-zone order for a block that actually carries the
+            // certified boundary: boundary-conditioned pre-block reset first…
+            crate::executor::prepare_boundary_epoch_counters(
+                ctx.storage.clone(),
+                &boundary_noop(),
+                ctx.block.block_number,
+            )
+            .unwrap();
             // …then the begin-zone window-close increments.
             run_late_finalize_credits(&ctx, &LateFinalizeCreditsArtifact::default()).unwrap();
 

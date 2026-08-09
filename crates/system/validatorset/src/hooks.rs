@@ -29,6 +29,18 @@ pub fn transition_epoch(storage: StorageHandle, timestamp: u64, block_number: u6
     vs.update_epoch(timestamp, block_number)
 }
 
+/// Resets ValidatorSet-owned outgoing-epoch counters without changing the
+/// activated epoch anchor.
+pub fn reset_epoch_counters(storage: StorageHandle) -> Result<()> {
+    ValidatorSet::new(storage).reset_epoch_counters()
+}
+
+/// Advances the activated epoch anchor after its counters were reset by the
+/// boundary-conditioned pre-execution path.
+pub fn advance_epoch(storage: StorageHandle, timestamp: u64, block_number: u64) -> Result<()> {
+    ValidatorSet::new(storage).advance_epoch(timestamp, block_number)
+}
+
 /// Called from post-execution: record the block's proposer.
 pub fn record_proposer(storage: StorageHandle, beneficiary: Address) -> Result<()> {
     let mut vs = ValidatorSet::new(storage);

@@ -226,6 +226,8 @@ pub mod marker_addresses {
 pub(crate) fn apply_boundary_outcome(
     storage: StorageHandle,
     boundary: &outbe_primitives::consensus::DkgBoundaryArtifact,
+    block_number: u64,
+    timestamp: u64,
 ) -> outbe_primitives::error::Result<()> {
     let reshare = &boundary.reshare;
 
@@ -268,12 +270,28 @@ pub(crate) fn apply_boundary_outcome(
 
     let vs_check = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
     let current_hash = vs_check.active_consensus_set_hash.read()?;
+    let current_epoch: u64 = vs_check
+        .epoch_number
+        .read()?
+        .try_into()
+        .map_err(|_| PrecompileError::Fatal("ValidatorSet epoch exceeds u64".into()))?;
 
     if current_hash != reshare.active_set_hash && !boundary.is_validator_set_change {
         return Err(PrecompileError::Fatal(format!(
             "boundary active_set_hash changed without validator-set change: current={current_hash}, boundary={}",
             reshare.active_set_hash
         )));
+    }
+
+    let advances_epoch =
+        validate_boundary_epoch_transition(current_epoch, boundary.epoch, block_number)?;
+
+    // The activated epoch, active membership/hash and its consensus+OCOMP
+    // snapshot are one state transition. A nominal epoch height is not
+    // activation authority; only this certified BoundaryOutcome is.
+    let activation_guard = storage.checkpoint_guard();
+    if advances_epoch {
+        outbe_validatorset::hooks::advance_epoch(storage.clone(), timestamp, block_number)?;
     }
 
     let inputs = outbe_validatorset::hooks::BoundaryActivationInputs {
@@ -284,8 +302,59 @@ pub(crate) fn apply_boundary_outcome(
         active_set_hash: reshare.active_set_hash,
         tee_expired_target_exclusions: boundary.tee_expired_target_exclusions.clone(),
     };
-    outbe_validatorset::hooks::activate_boundary_atomic(storage, &inputs)?;
+    outbe_validatorset::hooks::activate_boundary_atomic(storage.clone(), &inputs)?;
+    if advances_epoch {
+        outbe_validatorset::contract::ValidatorSet::new(storage).cleanup_inactive_validators(16)?;
+    }
+    activation_guard.commit();
     Ok(())
+}
+
+fn validate_boundary_epoch_transition(
+    current_epoch: u64,
+    incoming_epoch: u64,
+    block_number: u64,
+) -> outbe_primitives::error::Result<bool> {
+    if block_number == 1 && current_epoch == 0 && incoming_epoch == 0 {
+        return Ok(false);
+    }
+    let next_epoch = current_epoch.checked_add(1).ok_or_else(|| {
+        PrecompileError::Fatal("ValidatorSet epoch overflow at BoundaryOutcome".into())
+    })?;
+    if block_number > 1 && incoming_epoch == next_epoch {
+        return Ok(true);
+    }
+    Err(PrecompileError::Fatal(format!(
+        "BoundaryOutcome epoch must bootstrap epoch 0 at block 1 or activate current+1: current={current_epoch}, incoming={incoming_epoch}, block={block_number}"
+    )))
+}
+
+/// Resets outgoing-epoch counters only for a block that actually carries the
+/// next certified BoundaryOutcome. This runs before receipt-visible
+/// LateFinalizeCredits; the BoundaryOutcome later advances epoch/set/snapshot
+/// without erasing misses recorded by that earlier phase.
+pub(crate) fn prepare_boundary_epoch_counters(
+    storage: StorageHandle,
+    boundary: &outbe_primitives::consensus::DkgBoundaryArtifact,
+    block_number: u64,
+) -> outbe_primitives::error::Result<()> {
+    let validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+    let current_epoch: u64 = validators
+        .epoch_number
+        .read()?
+        .try_into()
+        .map_err(|_| PrecompileError::Fatal("ValidatorSet epoch exceeds u64".into()))?;
+    if !validate_boundary_epoch_transition(current_epoch, boundary.epoch, block_number)? {
+        return Ok(());
+    }
+    let addresses: Vec<Address> = validators
+        .get_all_validators()?
+        .into_iter()
+        .map(|validator| validator.validator_address)
+        .collect();
+    outbe_slashindicator::contract::SlashIndicator::new(storage.clone())
+        .reset_epoch_counters(&addresses)?;
+    outbe_validatorset::hooks::reset_epoch_counters(storage)
 }
 
 fn hash_boundary_active_set(addresses: &[Address]) -> B256 {
@@ -512,12 +581,10 @@ where
 /// 4. `RewardsLifecycle::begin_block` — locks in `genesis_utc_day` on
 ///    block 0; the per-block emission and per-day settle paths have
 ///    moved to the Cycle module.
-/// 3. Validator-set epoch boundary: reset slash indicator counters, transition
-///    epoch, cleanup stale INACTIVE validators (cap 16/epoch).
-/// 4. Metadosis WWD state machine has moved to the Cycle handler at
+/// 5. Metadosis WWD state machine has moved to the Cycle handler at
 ///    UTC midnight; no per-block hook here anymore.
-/// 5. Staking matured-unbonding processing.
-/// 6. `OracleLifecycle::begin_block` — tally + daily S-curve only.
+/// 6. Staking matured-unbonding processing.
+/// 7. `OracleLifecycle::begin_block` — tally + daily S-curve only.
 ///
 /// Oracle slash-window force-exits run later as the receipt-visible
 /// `OracleSlashWindow` begin-zone system phase, after optional `BoundaryOutcome`.
@@ -579,27 +646,6 @@ fn run_outbe_pre_execution_hooks_inner(
     // boundary settle moved out of Rewards (Phase 3); the
     // Cycle handler now owns the daily orchestration.
     <outbe_rewards::lifecycle::RewardsLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
-
-    if outbe_validatorset::hooks::is_epoch_boundary(hook_ctx.storage.clone(), block_number)? {
-        // Reset slash indicator per-epoch counters.
-        let vs = outbe_validatorset::contract::ValidatorSet::new(hook_ctx.storage.clone());
-        let all = vs.get_all_validators()?;
-        let addrs: Vec<Address> = all.iter().map(|v| v.validator_address).collect();
-        let mut si = outbe_slashindicator::contract::SlashIndicator::new(hook_ctx.storage.clone());
-        si.reset_epoch_counters(&addrs)?;
-
-        // Transition epoch (resets validator counters, increments epoch number).
-        outbe_validatorset::hooks::transition_epoch(
-            hook_ctx.storage.clone(),
-            timestamp,
-            block_number,
-        )?;
-
-        // Cleanup stale INACTIVE validator entries (cap 16 per epoch).
-        let mut vs_cleanup =
-            outbe_validatorset::contract::ValidatorSet::new(hook_ctx.storage.clone());
-        vs_cleanup.cleanup_inactive_validators(16)?;
-    }
 
     // Metadosis WWD state machine + lysis distribution moved to the
     // Cycle handler. The
@@ -3244,6 +3290,15 @@ where
                 proposer,
             )?;
             run_atomic_storage_hooks(db, ctx, |hook_ctx| -> outbe_primitives::error::Result<()> {
+                if let Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)) =
+                    block_artifacts.consensus_header_artifact.as_ref()
+                {
+                    prepare_boundary_epoch_counters(
+                        hook_ctx.storage.clone(),
+                        boundary,
+                        block_number,
+                    )?;
+                }
                 let result = match self.runtime_body_readers.as_ref() {
                     Some(readers) => run_outbe_pre_execution_hooks_with_readers(
                         hook_ctx,
@@ -11319,6 +11374,14 @@ mod tests {
         is_validator_set_change: bool,
         committee: Vec<(Address, [u8; 48])>,
     ) -> outbe_primitives::consensus::DkgBoundaryArtifact {
+        boundary_with_epoch(0, is_validator_set_change, committee)
+    }
+
+    fn boundary_with_epoch(
+        epoch: u64,
+        is_validator_set_change: bool,
+        committee: Vec<(Address, [u8; 48])>,
+    ) -> outbe_primitives::consensus::DkgBoundaryArtifact {
         let new_active_set: Vec<Address> = committee.iter().map(|(address, _)| *address).collect();
         let vrf_group_public_key_bytes = vec![0x42u8; 96];
         let snapshot = outbe_validatorset::CommitteeSnapshot {
@@ -11336,10 +11399,10 @@ mod tests {
             vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
         };
         let active_set_hash = super::hash_boundary_active_set(&new_active_set);
-        let committee_set_hash = outbe_validatorset::committee_set_hash_v2(0, &snapshot);
+        let committee_set_hash = outbe_validatorset::committee_set_hash_v2(epoch, &snapshot);
         let vrf_group_public_key = keccak256(&vrf_group_public_key_bytes);
         outbe_primitives::consensus::DkgBoundaryArtifact {
-            epoch: 0,
+            epoch,
             dkg_cycle: 0,
             freeze_height: 0,
             planned_activation_height: 0,
@@ -11364,6 +11427,182 @@ mod tests {
     }
 
     #[test]
+    fn certified_delayed_boundary_atomically_advances_epoch_and_snapshot() {
+        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+        StorageHandle::enter(&mut storage, |storage| {
+            let validator = address!("0x1111111111111111111111111111111111111111");
+            let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+            vs.config_owner.write(OWNER).unwrap();
+            vs.set_config_max_validators(128).unwrap();
+            vs.config_is_initialized.write(true).unwrap();
+            vs.register_validator(OWNER, validator, &dummy_pubkey(0xA1))
+                .unwrap();
+            vs.activate_validator_via_boundary_for_test(validator)
+                .unwrap();
+            vs.epoch_number.write(U256::ZERO).unwrap();
+            vs.epoch_start_block.write(1).unwrap();
+            vs.epoch_start_timestamp
+                .write(TEST_BLOCK_TIMESTAMP_BASE)
+                .unwrap();
+            vs.val_missed_blocks.write(&validator, 7).unwrap();
+            vs.val_missed_votes.write(&validator, 8).unwrap();
+            vs.val_blocks_proposed.write(&validator, 9).unwrap();
+            drop(vs);
+            let slash = outbe_slashindicator::contract::SlashIndicator::new(storage.clone());
+            slash.proposer_miss_count.write(&validator, 10).unwrap();
+            slash.voter_miss_count.write(&validator, 11).unwrap();
+
+            let activation_block = 301;
+            let activation_timestamp = TEST_BLOCK_TIMESTAMP_BASE + 600;
+            let boundary = boundary_with_epoch(1, false, vec![(validator, dummy_pubkey(0xA1))]);
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::new(
+                    activation_block,
+                    activation_timestamp,
+                    CHAIN_ID,
+                    validator,
+                    vec![validator],
+                ),
+                storage.clone(),
+            );
+
+            super::prepare_boundary_epoch_counters(storage.clone(), &boundary, activation_block)
+                .expect("certified boundary must prepare outgoing counters");
+            crate::begin_block_precompile::run_boundary_outcome(&ctx, &boundary)
+                .expect("certified delayed boundary must activate");
+
+            let vs_after = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+            assert_eq!(vs_after.epoch_number.read().unwrap(), U256::from(1));
+            assert_eq!(vs_after.epoch_start_block.read().unwrap(), activation_block);
+            assert_eq!(
+                vs_after.epoch_start_timestamp.read().unwrap(),
+                activation_timestamp
+            );
+            assert_eq!(vs_after.val_missed_blocks.read(&validator).unwrap(), 0);
+            assert_eq!(vs_after.val_missed_votes.read(&validator).unwrap(), 0);
+            assert_eq!(vs_after.val_blocks_proposed.read(&validator).unwrap(), 0);
+            let slash_after = outbe_slashindicator::contract::SlashIndicator::new(storage.clone());
+            assert_eq!(slash_after.proposer_miss_count.read(&validator).unwrap(), 0);
+            assert_eq!(slash_after.voter_miss_count.read(&validator).unwrap(), 0);
+            let (_, extension) =
+                outbe_validatorset::read_ocomp_snapshot_extension_at_epoch(storage, 1)
+                    .unwrap()
+                    .expect("activated epoch must publish its OCOMP snapshot");
+            assert_eq!(extension.epoch, 1);
+            assert_eq!(extension.committee_set_hash, boundary.committee_set_hash);
+        });
+    }
+
+    #[test]
+    fn failed_boundary_snapshot_write_rolls_back_epoch_membership_and_counters() {
+        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+        StorageHandle::enter(&mut storage, |storage| {
+            let validator = address!("0x1111111111111111111111111111111111111111");
+            let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+            vs.config_owner.write(OWNER).unwrap();
+            vs.set_config_max_validators(128).unwrap();
+            vs.config_is_initialized.write(true).unwrap();
+            vs.register_validator(OWNER, validator, &dummy_pubkey(0xA1))
+                .unwrap();
+            vs.activate_validator_via_boundary_for_test(validator)
+                .unwrap();
+            vs.epoch_number.write(U256::ZERO).unwrap();
+            vs.epoch_start_block.write(1).unwrap();
+            vs.epoch_start_timestamp
+                .write(TEST_BLOCK_TIMESTAMP_BASE)
+                .unwrap();
+            vs.val_missed_blocks.write(&validator, 7).unwrap();
+            let active_hash_before = vs.active_consensus_set_hash.read().unwrap();
+            // Force the incoming snapshot writer to fail after the boundary
+            // transition has started. The enclosing activation checkpoint must
+            // restore every earlier epoch/set/counter write.
+            vs.val_ocomp_registration
+                .get_bytes(&validator)
+                .clear()
+                .unwrap();
+            drop(vs);
+            let slash = outbe_slashindicator::contract::SlashIndicator::new(storage.clone());
+            slash.proposer_miss_count.write(&validator, 10).unwrap();
+
+            let boundary = boundary_with_epoch(1, false, vec![(validator, dummy_pubkey(0xA1))]);
+            let block_guard = storage.checkpoint_guard();
+            super::prepare_boundary_epoch_counters(storage.clone(), &boundary, 301)
+                .expect("certified boundary must prepare outgoing counters");
+            let error = super::apply_boundary_outcome(
+                storage.clone(),
+                &boundary,
+                301,
+                TEST_BLOCK_TIMESTAMP_BASE + 600,
+            )
+            .expect_err("missing OCOMP registration must reject incoming snapshot");
+            assert!(error.to_string().contains("no admitted OCOMP registration"));
+            drop(block_guard);
+
+            let vs_after = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+            assert_eq!(vs_after.epoch_number.read().unwrap(), U256::ZERO);
+            assert_eq!(vs_after.epoch_start_block.read().unwrap(), 1);
+            assert_eq!(
+                vs_after.epoch_start_timestamp.read().unwrap(),
+                TEST_BLOCK_TIMESTAMP_BASE
+            );
+            assert_eq!(
+                vs_after.active_consensus_set_hash.read().unwrap(),
+                active_hash_before
+            );
+            assert_eq!(vs_after.val_missed_blocks.read(&validator).unwrap(), 7);
+            let slash_after = outbe_slashindicator::contract::SlashIndicator::new(storage.clone());
+            assert_eq!(
+                slash_after.proposer_miss_count.read(&validator).unwrap(),
+                10
+            );
+            assert!(
+                outbe_validatorset::read_ocomp_snapshot_extension_at_epoch(storage, 1)
+                    .unwrap()
+                    .is_none(),
+                "failed activation must not expose an epoch-1 snapshot"
+            );
+        });
+    }
+
+    #[test]
+    fn boundary_rejects_skipped_epoch_without_mutating_current_state() {
+        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+        StorageHandle::enter(&mut storage, |storage| {
+            let validator = address!("0x1111111111111111111111111111111111111111");
+            let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+            vs.config_owner.write(OWNER).unwrap();
+            vs.set_config_max_validators(128).unwrap();
+            vs.config_is_initialized.write(true).unwrap();
+            vs.register_validator(OWNER, validator, &dummy_pubkey(0xA1))
+                .unwrap();
+            vs.activate_validator_via_boundary_for_test(validator)
+                .unwrap();
+            vs.epoch_number.write(U256::ZERO).unwrap();
+            vs.epoch_start_block.write(1).unwrap();
+            drop(vs);
+
+            let boundary = boundary_with_epoch(2, false, vec![(validator, dummy_pubkey(0xA1))]);
+            let error = super::apply_boundary_outcome(
+                storage.clone(),
+                &boundary,
+                301,
+                TEST_BLOCK_TIMESTAMP_BASE + 600,
+            )
+            .expect_err("BoundaryOutcome must not skip activated epochs");
+            assert!(error.to_string().contains("activate current+1"));
+
+            let vs_after = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+            assert_eq!(vs_after.epoch_number.read().unwrap(), U256::ZERO);
+            assert_eq!(vs_after.epoch_start_block.read().unwrap(), 1);
+            assert!(
+                outbe_validatorset::read_ocomp_snapshot_extension_at_epoch(storage, 2)
+                    .unwrap()
+                    .is_none()
+            );
+        });
+    }
+
+    #[test]
     fn apply_boundary_outcome_fatals_on_hash_change_without_set_change() {
         let mut storage = HashMapStorageProvider::new(CHAIN_ID);
         StorageHandle::enter(&mut storage, |storage| {
@@ -11385,7 +11624,13 @@ mod tests {
 
             // Boundary claims membership unchanged but carries a different active set.
             let boundary = boundary_with(false, vec![(val_a, dummy_pubkey(0xA1))]);
-            let err = super::apply_boundary_outcome(storage.clone(), &boundary).unwrap_err();
+            let err = super::apply_boundary_outcome(
+                storage.clone(),
+                &boundary,
+                1,
+                TEST_BLOCK_TIMESTAMP_BASE,
+            )
+            .unwrap_err();
             assert!(
                 err.to_string()
                     .contains("active_set_hash changed without validator-set change"),
@@ -11425,7 +11670,8 @@ mod tests {
                 ],
             );
             let new_hash = boundary.reshare.active_set_hash;
-            super::apply_boundary_outcome(storage.clone(), &boundary).unwrap();
+            super::apply_boundary_outcome(storage.clone(), &boundary, 1, TEST_BLOCK_TIMESTAMP_BASE)
+                .unwrap();
 
             let vs_after = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             let now_hash = vs_after.active_consensus_set_hash.read().unwrap();
@@ -11463,7 +11709,8 @@ mod tests {
                     &boundary.tee_expired_target_exclusions,
                 )
                 .unwrap();
-            super::apply_boundary_outcome(storage.clone(), &boundary).unwrap();
+            super::apply_boundary_outcome(storage.clone(), &boundary, 1, TEST_BLOCK_TIMESTAMP_BASE)
+                .unwrap();
 
             let vs_after = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             assert_eq!(
@@ -11495,7 +11742,13 @@ mod tests {
 
             let mut boundary = boundary_with(false, vec![(retained, dummy_pubkey(0xA1))]);
             boundary.tee_expired_target_exclusions_hash = B256::with_last_byte(0xFF);
-            let error = super::apply_boundary_outcome(storage.clone(), &boundary).unwrap_err();
+            let error = super::apply_boundary_outcome(
+                storage.clone(),
+                &boundary,
+                1,
+                TEST_BLOCK_TIMESTAMP_BASE,
+            )
+            .unwrap_err();
             assert!(error
                 .to_string()
                 .contains("TEE expiry exclusions commitment mismatch"));
@@ -11518,7 +11771,8 @@ mod tests {
             let hash = vs.active_consensus_set_hash.read().unwrap();
 
             let boundary = boundary_with(false, vec![(val_a, dummy_pubkey(0xA1))]);
-            super::apply_boundary_outcome(storage.clone(), &boundary).unwrap();
+            super::apply_boundary_outcome(storage.clone(), &boundary, 1, TEST_BLOCK_TIMESTAMP_BASE)
+                .unwrap();
 
             let vs_after = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             assert_eq!(vs_after.active_consensus_set_hash.read().unwrap(), hash);
@@ -11559,7 +11813,13 @@ mod tests {
             let mut boundary = boundary_with(false, vec![(val_a, dummy_pubkey(0xA1))]);
             boundary.committee_set_hash = B256::with_last_byte(0xFE);
 
-            let err = super::apply_boundary_outcome(storage.clone(), &boundary).unwrap_err();
+            let err = super::apply_boundary_outcome(
+                storage.clone(),
+                &boundary,
+                1,
+                TEST_BLOCK_TIMESTAMP_BASE,
+            )
+            .unwrap_err();
             assert!(
                 err.to_string().contains("committee_set_hash mismatch"),
                 "expected committee_set_hash mismatch, got {err}"
