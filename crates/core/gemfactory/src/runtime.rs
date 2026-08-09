@@ -402,14 +402,17 @@ pub fn mine_gem_promis(
 /// `IssuanceCurrencyNotRegistered` if the pair is not registered, or
 /// `OracleUnavailable` if the pair exists but no rate has been published.
 fn read_oracle_rate(storage: &StorageHandle<'_>, issuance_currency: u16) -> Result<U256> {
-    match coen_rate_for(storage.clone(), issuance_currency)? {
-        None => Err(GemFactoryError::IssuanceCurrencyNotRegistered {
+    if registered_coen_pair(storage.clone(), issuance_currency)?.is_none() {
+        return Err(GemFactoryError::IssuanceCurrencyNotRegistered {
             iso_code: issuance_currency,
         }
-        .into()),
-        Some(rate) if rate.is_zero() => Err(GemFactoryError::OracleUnavailable.into()),
-        Some(rate) => Ok(rate),
+        .into());
     }
+    let rate = coen_rate_for(storage.clone(), issuance_currency)?;
+    if rate.is_zero() {
+        return Err(GemFactoryError::OracleUnavailable.into());
+    }
+    Ok(rate)
 }
 
 fn compute_params(

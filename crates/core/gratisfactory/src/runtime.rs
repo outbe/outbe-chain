@@ -21,7 +21,7 @@ use crate::errors::GratisFactoryError;
 use crate::precompile::IGratisFactory;
 use outbe_fidelity::api::FidelityCohortOp;
 use outbe_gratis::api::{self as gratis, ModifyAuth, PledgeTerms};
-use outbe_oracle::api::coen_rate_for;
+use outbe_oracle::api::{coen_rate_for, registered_coen_pair};
 use outbe_primitives::addresses::GRATIS_FACTORY_ADDRESS;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::reference_currency_abi::IReferenceCurrency;
@@ -59,7 +59,10 @@ fn convert_stables_to_gratis(
     asset: Address,
 ) -> Result<(U256, U256)> {
     let iso_code = read_iso_code(&storage, asset)?;
-    let rate = coen_rate_for(storage, iso_code)?.unwrap_or(U256::ZERO);
+    if registered_coen_pair(storage.clone(), iso_code)?.is_none() {
+        return Err(GratisFactoryError::OracleRateUnavailable.into());
+    }
+    let rate = coen_rate_for(storage, iso_code)?;
     if rate.is_zero() {
         return Err(GratisFactoryError::OracleRateUnavailable.into());
     }

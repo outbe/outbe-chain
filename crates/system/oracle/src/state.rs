@@ -169,39 +169,14 @@ impl OracleContract<'_> {
     /// median input), and none of them is its own reciprocal, so a flipped quote
     /// reverts rather than being reinterpreted.
     pub fn require_pair(&self, base: Address, quote: Address) -> Result<AddressPair> {
-        Ok(self.require_pair_with_index(base, quote)?.0)
-    }
-
-    /// [`Self::require_pair`] together with the registry index the rate columns
-    /// are keyed by, resolved from the one lookup both already need.
-    pub fn require_pair_with_index(
-        &self,
-        base: Address,
-        quote: Address,
-    ) -> Result<(AddressPair, PairIndex)> {
-        let (pair, index) = self.require_market(base, quote)?;
+        let pair = AddressPair::from_addresses(base, quote);
         if !pair.is_canonical() {
             return Err(PrecompileError::Revert(
                 "pair must be quoted in canonical form".into(),
             ));
         }
-        Ok((pair, index))
-    }
-
-    /// Resolves an ABI-quoted pair as a market, in either direction, with its
-    /// registry index.
-    ///
-    /// The returned pair keys canonical storage whichever way it was quoted, and
-    /// `is_canonical()` reports whether the caller quoted it as stored. Only the
-    /// spot-rate reads use this — they are the one place a backwards quote has a
-    /// well-defined answer, namely the reciprocal.
-    pub fn require_market(
-        &self,
-        base: Address,
-        quote: Address,
-    ) -> Result<(AddressPair, PairIndex)> {
-        let pair = AddressPair::from_addresses(base, quote);
-        Ok((pair, self.require_pair_index(pair)?))
+        self.require_pair_index(pair)?;
+        Ok(pair)
     }
 
     pub fn require_pair_index(&self, pair: AddressPair) -> Result<PairIndex> {
@@ -232,19 +207,32 @@ impl OracleContract<'_> {
     // -----------------------------------------------------------------------
 
     /// Returns the current exchange rate for a market (1e18 scaled), quoted in
-    /// the caller's direction, plus the block and timestamp it was last written.
+    /// the caller's direction.
     ///
     /// Only the canonical direction is stored, so quoting the market backwards
-    /// returns the reciprocal. The block and timestamp describe the stored
-    /// observation and are the same either way.
-    pub fn get_exchange_rate(&self, base: Address, quote: Address) -> Result<(U256, u64, u64)> {
-        let (pair, index) = self.require_market(base, quote)?;
+    /// returns the reciprocal. This is the one read that answers either quote
+    /// direction; everything else resolves through [`Self::require_pair`].
+    pub fn get_exchange_rate(&self, base: Address, quote: Address) -> Result<U256> {
+        let pair = AddressPair::from_addresses(base, quote);
+        let index = self.require_pair_index(pair.to_canonical())?;
         let stored = self.exchange_rate.read(&index)?;
         let rate = if pair.is_canonical() {
             stored
         } else {
             invert_rate(stored)
         };
+        Ok(rate)
+    }
+
+    /// [`Self::get_exchange_rate`] together with the block and timestamp of the
+    /// stored observation, which are the same for either quote direction.
+    pub fn get_exchange_rate_data(
+        &self,
+        base: Address,
+        quote: Address,
+    ) -> Result<(U256, u64, u64)> {
+        let index = self.require_pair_index(AddressPair::from_addresses(base, quote))?;
+        let rate = self.get_exchange_rate(base, quote)?;
         let block = self.exchange_rate_block.read(&index)?;
         let ts = self.exchange_rate_timestamp.read(&index)?;
         Ok((rate, block, ts))
@@ -280,7 +268,7 @@ impl OracleContract<'_> {
             ));
         }
 
-        let (_, index) = self.require_pair_with_index(base, quote)?;
+        let index = self.require_pair_index(self.require_pair(base, quote)?)?;
         self.update_exchange_rate(index, rate, block_number, timestamp)
     }
 

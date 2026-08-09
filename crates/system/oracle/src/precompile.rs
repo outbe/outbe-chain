@@ -34,14 +34,14 @@ pub fn dispatch(
         let mut oracle = OracleContract::new(storage);
         use IOracle::IOracleCalls::*;
         match call {
-            getExchangeRate(c) => view(c, |c| Ok(oracle.get_exchange_rate(c.base, c.quote)?.0)),
+            getExchangeRate(c) => view(c, |c| oracle.get_exchange_rate(c.base, c.quote)),
             getExchangeRateData(c) => view(c, |c| {
-                let (rate, block, ts) = oracle.get_exchange_rate(c.base, c.quote)?;
+                let (rate, block, ts) = oracle.get_exchange_rate_data(c.base, c.quote)?;
                 Ok((rate, block, ts).into())
             }),
             getCoenExchangeRateFor(c) => view(c, |c| {
                 let quote = crate::api::currency_address(c.isoCode);
-                Ok(oracle.get_exchange_rate(crate::api::COEN_ASSET, quote)?.0)
+                oracle.get_exchange_rate(crate::api::COEN_ASSET, quote)
             }),
             getVwap(c) => view(c, |c| {
                 let pair = oracle.require_pair(c.base, c.quote)?;

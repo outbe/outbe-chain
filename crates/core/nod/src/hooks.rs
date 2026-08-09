@@ -26,7 +26,7 @@ use alloy_primitives::U256;
 use outbe_compressed_entities::{
     EntityId36, ExecutionScope, ParentBodySource, ParentBodySourceRef,
 };
-use outbe_oracle::api::coen_rate_for;
+use outbe_oracle::api::{coen_rate_for, registered_coen_pair};
 use outbe_primitives::{
     block::{BlockLifecycle, BlockRuntimeContext},
     error::Result,
@@ -85,7 +85,10 @@ pub fn qualify_nods(
     // An unregistered pair or an unpublished rate skips this block's scan
     // (`qualify_buckets_with_rate` returns early on zero) rather than halting
     // the block, matching the gem and intexfactory qualifiers.
-    let rate = coen_rate_for(ctx.storage.clone(), QUALIFIER_REFERENCE_ISO)?.unwrap_or(U256::ZERO);
+    let rate = match registered_coen_pair(ctx.storage.clone(), QUALIFIER_REFERENCE_ISO)? {
+        Some(_) => coen_rate_for(ctx.storage.clone(), QUALIFIER_REFERENCE_ISO)?,
+        None => U256::ZERO,
+    };
     qualify_buckets_with_rate(ctx, scope, parent, rate)
 }
 

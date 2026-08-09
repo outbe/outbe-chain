@@ -124,7 +124,7 @@ fn require_pair_rejects_a_pair_quoted_in_the_wrong_direction() {
             format!("{err:?}").contains("canonical"),
             "expected a canonical-form revert, got {err:?}"
         );
-        assert!(oracle.require_market(USDT, COEN).is_ok());
+        assert!(oracle.get_exchange_rate(USDT, COEN).is_ok());
     });
 }
 
@@ -172,13 +172,13 @@ fn every_pair_read_agrees_on_the_market_whichever_way_it_is_quoted() {
             .unwrap();
 
         assert!(oracle.is_vote_target(COEN, USDT).unwrap());
-        assert_eq!(oracle.get_exchange_rate(COEN, USDT).unwrap().0, rate);
+        assert_eq!(oracle.get_exchange_rate(COEN, USDT).unwrap(), rate);
 
         // Backwards: both answer for the same market, the rate as a reciprocal.
         // Disagreeing here would let a caller act on a rate it cannot fetch.
         assert!(oracle.is_vote_target(USDT, COEN).unwrap());
         assert_eq!(
-            oracle.get_exchange_rate(USDT, COEN).unwrap().0,
+            oracle.get_exchange_rate(USDT, COEN).unwrap(),
             U256::in_units(1u64) / U256::from(4u64)
         );
 
@@ -203,8 +203,8 @@ fn a_backwards_quote_prices_at_the_reciprocal() {
             .set_exchange_rate(Address::ZERO, COEN, USDT, rate, 42, 86_400)
             .unwrap();
 
-        let (forward, fwd_block, fwd_ts) = oracle.get_exchange_rate(COEN, USDT).unwrap();
-        let (backward, bwd_block, bwd_ts) = oracle.get_exchange_rate(USDT, COEN).unwrap();
+        let (forward, fwd_block, fwd_ts) = oracle.get_exchange_rate_data(COEN, USDT).unwrap();
+        let (backward, bwd_block, bwd_ts) = oracle.get_exchange_rate_data(USDT, COEN).unwrap();
 
         assert_eq!(forward, rate);
         assert_eq!(backward, U256::from(400_000_000_000_000_000u128));
@@ -223,8 +223,8 @@ fn an_unpublished_rate_reads_as_zero_from_either_side() {
             .unwrap();
 
         // No reciprocal exists for zero; inverting must not divide by it.
-        assert_eq!(oracle.get_exchange_rate(COEN, USDT).unwrap().0, U256::ZERO);
-        assert_eq!(oracle.get_exchange_rate(USDT, COEN).unwrap().0, U256::ZERO);
+        assert_eq!(oracle.get_exchange_rate(COEN, USDT).unwrap(), U256::ZERO);
+        assert_eq!(oracle.get_exchange_rate(USDT, COEN).unwrap(), U256::ZERO);
     });
 }
 
@@ -286,7 +286,7 @@ fn set_exchange_rate_round_trips_rate_block_and_timestamp() {
             .unwrap();
 
         // Read back
-        let (r, block, ts) = oracle.get_exchange_rate(COEN, USDT).unwrap();
+        let (r, block, ts) = oracle.get_exchange_rate_data(COEN, USDT).unwrap();
         assert_eq!(r, rate);
         assert_eq!(block, 100);
         assert_eq!(ts, 1200);
@@ -383,11 +383,11 @@ fn remove_excess_feeds_clears_only_the_deactivated_pairs_rate() {
         oracle.remove_excess_feeds().unwrap();
 
         assert_eq!(
-            oracle.get_exchange_rate(COEN, USDT).unwrap(),
+            oracle.get_exchange_rate_data(COEN, USDT).unwrap(),
             (U256::ZERO, 0, 0)
         );
         assert_eq!(
-            oracle.get_exchange_rate(ETH, USDT).unwrap(),
+            oracle.get_exchange_rate_data(ETH, USDT).unwrap(),
             (U256::from(9u64), 20, 240)
         );
     });
@@ -723,7 +723,7 @@ fn walking_the_registry_by_index_pairs_each_market_with_its_own_rate() {
             .map(|index| {
                 let pair = oracle.require_pair_at(index).unwrap();
                 let (rate, block, ts) = oracle
-                    .get_exchange_rate(pair.address1(), pair.address2())
+                    .get_exchange_rate_data(pair.address1(), pair.address2())
                     .unwrap();
                 (pair, rate, block, ts)
             })

@@ -9,7 +9,7 @@ use crate::scurve;
 pub use crate::constants::{DAY_TYPE_ISO, DAY_TYPE_PAIR, DAY_TYPE_PAIR_KEY};
 pub use crate::types::{currency_address, AddressPair, AssetType, COEN_ASSET};
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::U256;
 use outbe_common::WorldwideDay;
 use outbe_primitives::{
     block::BlockRuntimeContext,
@@ -73,22 +73,14 @@ pub fn check_reference_currency_with_storage(storage: StorageHandle, iso_code: u
 
 /// Current COEN price in currency `iso_code`, 1e18 scaled.
 ///
-/// * `Ok(None)` — `COEN/<iso_code>` is not a registered pair.
-/// * `Ok(Some(U256::ZERO))` — the pair exists but no rate has been published.
-/// * `Ok(Some(rate))` — a live rate.
-///
-/// Never reverts on "not ready": begin-block scans must be able to skip a block
-/// rather than halt it. Callers that require a rate map the two not-ready cases
-/// onto their own typed errors. This is the single definition of the
+/// Reverts when `COEN/<iso_code>` is not a registered pair, and returns
+/// `U256::ZERO` when it is registered but carries no published rate. Callers
+/// that must not halt a block gate on [`registered_coen_pair`] first and treat
+/// zero as "not ready". This is the single definition of the
 /// `iso_code -> exchange_rate` lookup.
-pub fn coen_rate_for(storage: StorageHandle, iso_code: u16) -> Result<Option<U256>> {
+pub fn coen_rate_for(storage: StorageHandle, iso_code: u16) -> Result<U256> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
-    let index = oracle.pair_index_of(AddressPair::new_coen_to(iso_code))?;
-
-    if index == 0 {
-        return Ok(None);
-    }
-    oracle.exchange_rate.read(&index).map(Some)
+    oracle.get_exchange_rate(COEN_ASSET, currency_address(iso_code))
 }
 
 /// The `COEN/<iso_code>` pair, or `None` when it is not registered.
@@ -247,12 +239,6 @@ pub fn get_max_active_scurve_value(
     let oracle: OracleContract<'_> = OracleContract::new(storage);
     let scurve_timestamp = worldwide_day.to_timestamp_utc();
     scurve::get_max_active_scurve_value(&oracle, pair, scurve_timestamp)
-}
-
-pub fn get_exchange_rate(storage: StorageHandle, base: Address, quote: Address) -> Result<U256> {
-    let oracle: OracleContract<'_> = OracleContract::new(storage);
-    let (rate, _, _) = oracle.get_exchange_rate(base, quote)?;
-    Ok(rate)
 }
 
 /// Annualized currency rate (1e18 scaled) for an ISO 4217 code, read from the

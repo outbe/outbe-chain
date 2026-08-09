@@ -247,7 +247,7 @@ fn run_tally_accepts_a_single_validator_as_the_weighted_median() {
         crate::tally::run_tally(&mut oracle, 2, 24).unwrap();
 
         // Exchange rate should be updated to the voted rate
-        let (stored_rate, block, ts) = oracle.get_exchange_rate(COEN, USDT).unwrap();
+        let (stored_rate, block, ts) = oracle.get_exchange_rate_data(COEN, USDT).unwrap();
         assert_eq!(stored_rate, rate);
         assert_eq!(block, 2);
         assert_eq!(ts, 24);
@@ -300,7 +300,7 @@ fn run_tally_rewards_every_voter_inside_the_reward_band() {
         // Weighted median: powers 100, 200, 100. Total=400, half=200.
         // Sorted: 1000(100), 1001(200), 1002(100).
         // Cumsum: 100(<200), 300(>=200) → median = 1001.
-        let (rate, _, _) = oracle.get_exchange_rate(COEN, USDT).unwrap();
+        let rate = oracle.get_exchange_rate(COEN, USDT).unwrap();
         assert_eq!(rate, U256::in_units(1001u64));
 
         // Reward spread = max(std_dev, 1001 * 0.02 / 2) = max(~0.816, ~10.01) = ~10.01
@@ -342,7 +342,7 @@ fn run_tally_penalizes_a_voter_outside_the_reward_band() {
         crate::tally::run_tally(&mut oracle, 2, 24).unwrap();
 
         // Median should be 50 (powers 100+200 cross threshold before 500)
-        let (rate, _, _) = oracle.get_exchange_rate(COEN, USDT).unwrap();
+        let rate = oracle.get_exchange_rate(COEN, USDT).unwrap();
         assert_eq!(rate, U256::in_units(50u64));
 
         // v1 and v2 should be winners, v3 (outlier at 500) should miss
@@ -399,7 +399,7 @@ fn begin_block_tallies_only_on_a_vote_period_boundary() {
         <crate::lifecycle::OracleLifecycle as BlockLifecycle>::begin_block(&runtime_ctx).unwrap();
         assert!(!oracle.vote_exists.read(&v1).unwrap()); // votes cleared
 
-        let (rate, _, _) = oracle.get_exchange_rate(COEN, USDT).unwrap();
+        let rate = oracle.get_exchange_rate(COEN, USDT).unwrap();
         assert_eq!(rate, U256::in_units(42u64));
     });
 }

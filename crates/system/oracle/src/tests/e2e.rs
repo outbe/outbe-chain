@@ -162,16 +162,16 @@ fn init_from_genesis_imports_every_custom_config_collection() {
         assert!(oracle.is_vote_target(BTC, USDT).unwrap());
 
         // Verify initial rates (only first two pairs have rates).
-        let (rate_coen, blk, ts) = oracle.get_exchange_rate(COEN, usd()).unwrap();
+        let (rate_coen, blk, ts) = oracle.get_exchange_rate_data(COEN, usd()).unwrap();
         assert_eq!(rate_coen, U256::in_units(1u64));
         assert_eq!(blk, 0);
         assert_eq!(ts, 0);
 
-        let (rate_eth, _, _) = oracle.get_exchange_rate(usd(), ETH).unwrap();
+        let rate_eth = oracle.get_exchange_rate(usd(), ETH).unwrap();
         assert_eq!(rate_eth, U256::in_units(2000u64));
 
         // BTC/USDT has no initial rate set → zero.
-        let (rate_btc, _, _) = oracle.get_exchange_rate(BTC, USDT).unwrap();
+        let rate_btc = oracle.get_exchange_rate(BTC, USDT).unwrap();
         assert_eq!(rate_btc, U256::ZERO);
 
         // Verify feeder delegations.
@@ -739,11 +739,11 @@ fn export_genesis_round_trips_the_full_oracle_state() {
         assert_eq!(oracle.pair_index_of(pair_key(usd(), ETH)).unwrap(), 2);
         assert_eq!(oracle.pair_index_of(pair_key(BTC, USDT)).unwrap(), 3);
         assert_eq!(
-            oracle.get_exchange_rate(COEN, usd()).unwrap().0,
+            oracle.get_exchange_rate(COEN, usd()).unwrap(),
             U256::in_units(1u64)
         );
         assert_eq!(
-            oracle.get_exchange_rate(usd(), ETH).unwrap().0,
+            oracle.get_exchange_rate(usd(), ETH).unwrap(),
             U256::in_units(2000u64)
         );
         assert_eq!(oracle.get_feeder(&v1).unwrap(), Address::new([0xAAu8; 20]));

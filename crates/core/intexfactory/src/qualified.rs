@@ -3,7 +3,7 @@
 
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
-use outbe_oracle::api::coen_rate_for;
+use outbe_oracle::api::{coen_rate_for, registered_coen_pair};
 use outbe_primitives::{
     block::{BlockLifecycle, BlockRuntimeContext},
     error::Result,
@@ -43,9 +43,10 @@ pub(crate) const MAX_SERIES_PER_BLOCK: u32 = 256;
 /// Returns the number of series promoted Issued -> Qualified this block.
 pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
     // No pair or no published rate: skip this block's scan rather than halt it.
-    let Some(rate) = coen_rate_for(ctx.storage.clone(), QUALIFIER_REFERENCE_ISO)? else {
+    if registered_coen_pair(ctx.storage.clone(), QUALIFIER_REFERENCE_ISO)?.is_none() {
         return Ok(0);
-    };
+    }
+    let rate = coen_rate_for(ctx.storage.clone(), QUALIFIER_REFERENCE_ISO)?;
     if rate.is_zero() {
         return Ok(0);
     }
