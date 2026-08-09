@@ -2448,6 +2448,70 @@ fn pending_dkg_handoff_decision_covers_planned_height_and_deadline_edges() {
 }
 
 #[test]
+fn startup_pending_dkg_epoch_plan_keeps_future_epoch_separate_before_activation() {
+    let current_epoch = Epoch::new(0);
+    let pending_epoch = Epoch::new(1);
+
+    assert_eq!(
+        startup_pending_dkg_epoch_plan(current_epoch, pending_epoch, 299, 300, 30, Some(275))
+            .unwrap(),
+        StartupPendingDkgEpochPlan::Defer {
+            active_epoch: current_epoch,
+            preregister_after_current: pending_epoch,
+        }
+    );
+}
+
+#[test]
+fn startup_pending_dkg_epoch_plan_restores_activated_epoch_before_boundary_commit() {
+    let previous_epoch = Epoch::new(0);
+    let pending_epoch = Epoch::new(1);
+
+    assert_eq!(
+        startup_pending_dkg_epoch_plan(previous_epoch, pending_epoch, 300, 300, 30, Some(275))
+            .unwrap(),
+        StartupPendingDkgEpochPlan::Activate {
+            previous_epoch,
+            active_epoch: pending_epoch,
+            activation_anchor: 300,
+        }
+    );
+}
+
+#[test]
+fn startup_pending_dkg_epoch_plan_fails_closed_on_invalid_or_expired_handoff() {
+    let current_epoch = Epoch::new(4);
+
+    let wrong_epoch =
+        startup_pending_dkg_epoch_plan(current_epoch, Epoch::new(6), 500, 500, 30, Some(480))
+            .unwrap_err()
+            .to_string();
+    assert!(wrong_epoch.contains("does not follow active epoch"));
+
+    let expired = startup_pending_dkg_epoch_plan(current_epoch, Epoch::new(5), 530, 500, 30, None)
+        .unwrap_err()
+        .to_string();
+    assert!(expired.contains("missed activation deadline 530"));
+}
+
+#[test]
+fn restored_pending_output_survives_until_deferred_activation() {
+    let (_keys, _participants, recovered, _share, _polynomial) = run_test_dkg_complete();
+    assert_eq!(
+        select_pending_canonical_output(None, Some(&recovered)),
+        Some(recovered.clone()),
+        "restart loses the process-local DKG manager ceremony, so the already validated durable output must remain available"
+    );
+
+    let (_keys, _participants, finalized, _share, _polynomial) = run_test_dkg_complete();
+    assert_eq!(
+        select_pending_canonical_output(Some(finalized.clone()), Some(&recovered)),
+        Some(finalized),
+        "a live finalized-log reconstruction remains authoritative when present"
+    );
+}
+
+#[test]
 fn preannounce_carrier_must_match_the_pending_epoch_and_outcome_exactly() {
     let pending = test_boundary_with_vrf_hash(B256::with_last_byte(0x55), 9);
     let exact = ConsensusHeaderArtifact::CommitteePreAnnounce {
@@ -2537,6 +2601,7 @@ fn dealer_only_handoff_requires_the_same_exact_finalized_carrier() {
             is_validator_set_change: true,
         },
         boundary_artifact: Some(boundary.clone()),
+        recovered_output: None,
     };
     let mut provider = MockFinalizedHeaderProvider::default();
     provider.insert(10, None);
@@ -3601,6 +3666,69 @@ fn restarted_finalized_node_does_not_refresh_genesis_dkg() {
 #[cfg(test)]
 mod restart_recovery {
     use super::*;
+
+    #[derive(Debug)]
+    struct RecordingCeStartupRecovery {
+        requested_height: AtomicU64,
+        marker: outbe_compressed_entities::FinalizedMarker,
+    }
+
+    impl CeStartupRecovery for RecordingCeStartupRecovery {
+        fn recover_before_participation(
+            &self,
+            consensus_finalized_height: u64,
+        ) -> std::result::Result<
+            outbe_compressed_entities::FinalizedMarker,
+            crate::ce_recovery::CeStartupRecoveryError,
+        > {
+            self.requested_height
+                .store(consensus_finalized_height, Ordering::SeqCst);
+            Ok(self.marker)
+        }
+    }
+
+    #[test]
+    fn ce_recovery_uses_exact_archive_backed_head_when_ack_floor_lags() {
+        let archive_height = 302;
+        let marshal_processed_height = 301;
+        let archive_hash = B256::repeat_byte(0x42);
+        let round = Round::new(Epoch::new(3), View::new(17));
+        let (recovery_anchor_height, _, _) = reconcile_recovered_execution_head(
+            archive_height,
+            archive_hash,
+            Some(RecoveredApplicationFinalization {
+                round,
+                digest: Digest(archive_hash),
+            }),
+        )
+        .unwrap();
+        let marker = outbe_compressed_entities::FinalizedMarker {
+            commitment_scheme_version: 1,
+            height: archive_height,
+            block_hash: archive_hash,
+            parent_block_hash: B256::repeat_byte(0x41),
+            parent_root: B256::repeat_byte(0x51),
+            new_root: B256::repeat_byte(0x52),
+        };
+        let recovery = RecordingCeStartupRecovery {
+            requested_height: AtomicU64::new(u64::MAX),
+            marker,
+        };
+
+        let recovered = recover_ce_at_reconciled_anchor(
+            &recovery,
+            marshal_processed_height,
+            recovery_anchor_height,
+        )
+        .unwrap();
+
+        assert_eq!(recovered, marker);
+        assert_eq!(
+            recovery.requested_height.load(Ordering::SeqCst),
+            archive_height,
+            "CE recovery must use exact archived finality, not the lagging ACK floor"
+        );
+    }
 
     #[test]
     fn benign_unfinalized_head_lead_is_recoverable() {

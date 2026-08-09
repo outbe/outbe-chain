@@ -53,6 +53,11 @@ const OCOMP_CAPACITY_SUBMISSION_CONCURRENCY: usize = 2;
 // Sequential real-SGX offers remain inside the genesis-bound phase window;
 // the controlled-time step advances immediately after all receipts arrive.
 const METADOSIS_CAPACITY_OFFERING_SECONDS: u64 = 3_600;
+// Cycle forms the immutable limit for WWD D at UTC midnight D+1, exactly
+// 38 hours after the UTC+14 WWD boundary. Keep FORMING open for one additional
+// minute so the controlled-time E2E crosses that real production Cycle first;
+// never seed the receipt directly in the harness.
+const METADOSIS_FRESH_FORMING_SECONDS: u64 = 38 * 3_600 + 60;
 const OCOMP_TRACE_FOLLOWER_SLOT: usize = 14;
 // The immutable Final fixture closes its public offering 360 logical seconds
 // after genesis. A one-Tribute scenario reaches this step much sooner than the
@@ -173,6 +178,10 @@ fn fresh_metadosis_capacity_localnet_at_forming(world: &mut World) {
             (
                 "TESTNET_EPOCH_LENGTH_BLOCKS",
                 OCOMP_TEST_EPOCH_LENGTH_BLOCKS.to_string(),
+            ),
+            (
+                "TESTNET_METADOSIS_FORMING_SECONDS",
+                METADOSIS_FRESH_FORMING_SECONDS.to_string(),
             ),
             (
                 "TESTNET_METADOSIS_OFFERING_SECONDS",
@@ -1526,13 +1535,24 @@ fn fresh_capacity_day_advances_to_offering(world: &mut World) {
 
 #[when("the committee logical clock reaches the fresh capacity processing time")]
 fn committee_clock_reaches_fresh_capacity_processing(world: &mut World) {
-    let target = world
+    const SECONDS_PER_DAY: u64 = 86_400;
+
+    let scheduled_process_time = world
         .state
         .metadosis_fresh_lifecycle_observation
         .as_ref()
         .expect("fresh Metadosis creation evidence")
-        .scheduled_process_time
-        .saturating_add(1);
+        .scheduled_process_time;
+    // The configurable sub-day trigger advances the WWD state machine only as
+    // far as READY. Production settlement deliberately belongs to the daily
+    // Cycle handler, so cross the first UTC midnight after the processing time
+    // before expecting the READY day to become an OCOMP job.
+    let target = scheduled_process_time
+        .checked_div(SECONDS_PER_DAY)
+        .and_then(|day| day.checked_add(1))
+        .and_then(|day| day.checked_mul(SECONDS_PER_DAY))
+        .and_then(|midnight| midnight.checked_add(1))
+        .expect("first UTC daily Cycle after fresh Metadosis processing time");
     advance_fresh_metadosis_time(world, target, &[(0, 1), (1, 2), (2, 3), (3, 4)], 8);
 }
 
@@ -1668,8 +1688,18 @@ fn advance_fresh_metadosis_time(
         .rpc
         .block_timestamp(world.validators.primary_port(), transition.block_number)
         .expect("canonical Metadosis transition block timestamp");
+    let transition_floor = if expected_persisted_status == 8 {
+        world
+            .state
+            .metadosis_fresh_lifecycle_observation
+            .as_ref()
+            .expect("fresh Metadosis lifecycle evidence")
+            .scheduled_process_time
+    } else {
+        requested_timestamp
+    };
     assert!(
-        transition_timestamp >= requested_timestamp.saturating_sub(1),
+        transition_timestamp >= transition_floor.saturating_sub(1),
         "Metadosis transition occurred before its canonical phase boundary"
     );
 

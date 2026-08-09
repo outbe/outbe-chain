@@ -9,9 +9,9 @@ use std::process::Command;
 use std::thread::sleep;
 use std::time::Duration;
 
-use eyre::{bail, Result};
 #[cfg(any(test, feature = "ocomp-integration"))]
-use eyre::{ensure, WrapErr};
+use eyre::ensure;
+use eyre::{bail, Result, WrapErr};
 
 use crate::internal::proc::{self, args, attach_log, read_trimmed, wait_tcp, SealSpec};
 
@@ -19,6 +19,29 @@ use super::{Localnet, StartOpts};
 
 fn unix_time_offset_arg(offset: i64) -> String {
     format!("--testnet.unix-time-offset-secs={offset}")
+}
+
+fn committee_signal_args(pids: &[u32], signal: &str) -> Vec<String> {
+    std::iter::once(format!("-{signal}"))
+        .chain(std::iter::once("--".to_owned()))
+        .chain(pids.iter().map(u32::to_string))
+        .collect()
+}
+
+fn signal_committee(pids: &[u32], signal: &str) -> Result<()> {
+    let status = Command::new("kill")
+        .args(committee_signal_args(pids, signal))
+        .status()
+        .wrap_err_with(|| format!("signal validator committee with SIG{signal}"))?;
+    if !status.success() {
+        // A partially delivered STOP would leave an owned test process frozen.
+        // Best-effort resume the complete cohort before surfacing the failure.
+        let _ = Command::new("kill")
+            .args(committee_signal_args(pids, "CONT"))
+            .status();
+        bail!("failed to signal validator committee with SIG{signal}");
+    }
+    Ok(())
 }
 
 impl Localnet {
@@ -106,9 +129,24 @@ impl Localnet {
 
     /// Stop the complete validator committee before changing the shared
     /// testnet-only logical clock, then relaunch every validator with preserved
-    /// datadirs and enclaves. Clearing all owned guards is the stop barrier:
-    /// this method never runs a mixed-offset voting committee.
+    /// datadirs and enclaves. Freeze the whole cohort with one signal before
+    /// dropping any child guard: stopping validators one by one leaves a live
+    /// quorum long enough to certify a new block between process exits, which
+    /// is not a valid quiescent barrier for a test-only clock change.
     pub fn restart_committee_at_unix_time_offset(&mut self, offset_secs: i64) -> Result<()> {
+        let validator_pids = self
+            .validators
+            .values()
+            .map(proc::ChildGuard::pid)
+            .collect::<Vec<_>>();
+        if validator_pids.len() != self.committee_size() {
+            bail!(
+                "committee clock restart requires {} live validators, found {}",
+                self.committee_size(),
+                validator_pids.len()
+            );
+        }
+        signal_committee(&validator_pids, "STOP")?;
         self.validators.clear();
         if !self.validators.is_empty() {
             bail!("committee stop barrier retained a validator process");
@@ -612,8 +650,9 @@ fn verified_compressed_entities_reconstruction_path(
 #[cfg(test)]
 mod tests {
     use super::{
-        cargo_package_version, compressed_entities_reconstruction_path, rewrite_workspace_version,
-        unix_time_offset_arg, verified_compressed_entities_reconstruction_path,
+        cargo_package_version, committee_signal_args, compressed_entities_reconstruction_path,
+        rewrite_workspace_version, unix_time_offset_arg,
+        verified_compressed_entities_reconstruction_path,
     };
     use clap::Parser;
 
@@ -630,6 +669,14 @@ mod tests {
             .expect("negative clock offset must remain the option value");
 
         assert_eq!(parsed.unix_time_offset_secs, Some(-3));
+    }
+
+    #[test]
+    fn committee_freeze_is_one_noninteractive_signal_for_the_complete_cohort() {
+        assert_eq!(
+            committee_signal_args(&[101, 202, 303, 404], "STOP"),
+            ["-STOP", "--", "101", "202", "303", "404"]
+        );
     }
 
     #[test]

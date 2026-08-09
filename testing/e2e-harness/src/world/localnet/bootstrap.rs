@@ -463,7 +463,7 @@ impl Localnet {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let localnet_forming_period = localnet_forming_period_seconds(now)?;
+        let localnet_forming_period = localnet_metadosis_forming_period_seconds(now, tuning)?;
         // genesisTime is one day in the past so the chain can produce immediately.
         let genesis_time = OffsetDateTime::from_unix_timestamp(now as i64 - 86_400)
             .wrap_err("genesis time")?
@@ -712,6 +712,13 @@ fn localnet_metadosis_offering_period_seconds(tuning: &[(&str, String)]) -> u64 
     )
 }
 
+fn localnet_metadosis_forming_period_seconds(now: u64, tuning: &[(&str, String)]) -> Result<u64> {
+    match tuned_optional(tuning, "TESTNET_METADOSIS_FORMING_SECONDS") {
+        Some(period) => Ok(period),
+        None => localnet_forming_period_seconds(now),
+    }
+}
+
 fn localnet_ocomp_vote_window_blocks(tuning: &[(&str, String)]) -> u64 {
     tuned(
         tuning,
@@ -915,6 +922,23 @@ mod tests {
                 "900".to_owned(),
             )]),
             900
+        );
+    }
+
+    #[test]
+    fn metadosis_forming_period_can_be_tuned_only_in_generated_genesis() {
+        let now = outbe_primitives::time::date_key_to_utc_timestamp(20260302) + 12 * 3_600;
+        assert_eq!(
+            localnet_metadosis_forming_period_seconds(now, &[]).unwrap(),
+            localnet_forming_period_seconds(now).unwrap()
+        );
+        assert_eq!(
+            localnet_metadosis_forming_period_seconds(
+                now,
+                &[("TESTNET_METADOSIS_FORMING_SECONDS", "136860".to_owned())],
+            )
+            .unwrap(),
+            136_860
         );
     }
 

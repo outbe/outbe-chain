@@ -1,17 +1,21 @@
 //! Builds one authenticated Lysis input manifest from finalized public RPC data.
 
-use std::{collections::BTreeSet, path::PathBuf};
+use std::{
+    collections::{BTreeSet, VecDeque},
+    path::PathBuf,
+};
 
 use alloy_primitives::{keccak256, B256};
 use outbe_node::ocomp::{
     build_public_lysis_openings, finality::PublicFinalizedIntentProofBuilderV1,
+    retention::RetentionError,
 };
 use outbe_ocomp_protocol::{
     common::BoundedBytes,
     control::SNAPSHOT_LEASE_WIRE_BYTES,
     input::{materialize_authenticated_openings, CheckpointIdentityV1},
     intent::ExpectedFinalizedIntentBindingV1,
-    opening::partition_lysis_opening_subjects,
+    opening::{partition_lysis_opening_subjects, OpeningSubjectsV1},
     SchemaLimits, SnapshotExportCommittedV1, SnapshotHandoffV1,
 };
 use thiserror::Error;
@@ -150,14 +154,27 @@ impl RpcInputExporterV1 {
         .map_err(|error| stage("partition Lysis opening subjects", error))?;
         let mut fidelity_openings = Vec::new();
         let mut oracle_opening = None;
-        for subject_batch in subjects {
-            let openings = build_public_lysis_openings(
+        let mut pending_subjects = VecDeque::from(subjects);
+        while let Some(subject_batch) = pending_subjects.pop_front() {
+            let openings = match build_public_lysis_openings(
                 &self.rpc,
                 &finalized,
-                subject_batch,
+                subject_batch.clone(),
                 &self.config.limits,
-            )
-            .map_err(|error| stage("build public Lysis openings", error))?;
+            ) {
+                Ok(openings) => openings,
+                Err(error) if is_lysis_opening_capacity_error(&error) => {
+                    let Some((left, right)) = bisect_opening_subjects(subject_batch) else {
+                        return Err(stage("build public Lysis openings", error));
+                    };
+                    // Preserve the canonical owner order while processing the
+                    // left half first.
+                    pending_subjects.push_front(right);
+                    pending_subjects.push_front(left);
+                    continue;
+                }
+                Err(error) => return Err(stage("build public Lysis openings", error)),
+            };
             let materialized = materialize_authenticated_openings(
                 &openings,
                 self.config.protocol_bundle.bundle(),
@@ -256,6 +273,29 @@ impl RpcInputExporterV1 {
     }
 }
 
+fn is_lysis_opening_capacity_error(error: &RetentionError) -> bool {
+    matches!(
+        error,
+        RetentionError::Source(detail)
+            if detail.starts_with("Lysis opening bytes exceeds cap: ")
+    )
+}
+
+fn bisect_opening_subjects(
+    mut subjects: OpeningSubjectsV1,
+) -> Option<(OpeningSubjectsV1, OpeningSubjectsV1)> {
+    let midpoint = subjects.owners.len() / 2;
+    if midpoint == 0 {
+        return None;
+    }
+    let right_owners = subjects.owners.split_off(midpoint);
+    let right = OpeningSubjectsV1 {
+        owners: right_owners,
+        settlement_isos: subjects.settlement_isos.clone(),
+    };
+    Some((subjects, right))
+}
+
 fn local_publication_lease(job_id: B256) -> Vec<u8> {
     let digest = keccak256([b"OCOMP_RPC_INPUT_V1".as_slice(), job_id.as_slice()].concat());
     let mut lease = Vec::with_capacity(SNAPSHOT_LEASE_WIRE_BYTES);
@@ -281,4 +321,48 @@ pub enum RpcInputExporterErrorV1 {
     Authority(&'static str),
     #[error("OCOMP public input stage `{stage}` failed: {detail}")]
     Stage { stage: &'static str, detail: String },
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::Address;
+    use outbe_node::ocomp::retention::RetentionError;
+    use outbe_ocomp_protocol::opening::OpeningSubjectsV1;
+
+    use super::{bisect_opening_subjects, is_lysis_opening_capacity_error};
+
+    #[test]
+    fn oversized_opening_subjects_are_bisected_in_canonical_order() {
+        let subjects = OpeningSubjectsV1 {
+            owners: (1_u8..=5).map(Address::with_last_byte).collect(),
+            settlement_isos: vec![840, 978],
+        };
+        let (left, right) = bisect_opening_subjects(subjects.clone()).expect("splittable");
+
+        assert_eq!(left.owners, subjects.owners[..2]);
+        assert_eq!(right.owners, subjects.owners[2..]);
+        assert_eq!(left.settlement_isos, subjects.settlement_isos);
+        assert_eq!(right.settlement_isos, subjects.settlement_isos);
+        assert!(left.owners.len() < subjects.owners.len());
+        assert!(right.owners.len() < subjects.owners.len());
+
+        let singleton = OpeningSubjectsV1 {
+            owners: vec![Address::with_last_byte(1)],
+            settlement_isos: vec![840],
+        };
+        assert!(bisect_opening_subjects(singleton).is_none());
+    }
+
+    #[test]
+    fn only_lysis_opening_byte_capacity_triggers_bisection() {
+        assert!(is_lysis_opening_capacity_error(&RetentionError::Source(
+            "Lysis opening bytes exceeds cap: 317499 > 262144".to_owned(),
+        )));
+        assert!(!is_lysis_opening_capacity_error(&RetentionError::Source(
+            "raw contract opening bytes exceeds cap: 317499 > 262144".to_owned(),
+        )));
+        assert!(!is_lysis_opening_capacity_error(
+            &RetentionError::RetainedTributeStorageUnavailable,
+        ));
+    }
 }
