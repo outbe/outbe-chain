@@ -639,7 +639,7 @@ fn qualify_series<'a>(
 }
 
 fn setup_pair(oracle: &OracleContract) -> AddressPair {
-    let pair = outbe_oracle::api::coen_iso_pair(QUALIFIER_REFERENCE_ISO);
+    let pair = outbe_oracle::api::AddressPair::new_coen_to(QUALIFIER_REFERENCE_ISO);
     let pair_id = 1u32;
     oracle.pair_to_index.write(&pair, pair_id).unwrap();
     // Full registry entry so the production VWAP paths (calculate_vwaps
@@ -964,7 +964,7 @@ fn scan_and_qualify_promotes_aged_series() {
         runtime::issue(&s, sample(7)).unwrap();
         // Qualifier pair live rate above the floor.
         let oracle = OracleContract::new(s.clone());
-        let pair = outbe_oracle::api::coen_iso_pair(QUALIFIER_REFERENCE_ISO);
+        let pair = outbe_oracle::api::AddressPair::new_coen_to(QUALIFIER_REFERENCE_ISO);
         // The ISO resolves through the pair registry, so the pair must exist.
         oracle.pair_to_index.write(&pair, 1).unwrap();
         oracle
@@ -1047,7 +1047,7 @@ fn scan_and_call_reads_daily_vwap_at_midnight() {
                 .write_snapshot(
                     noon,
                     &[(
-                        outbe_oracle::api::coen_iso_pair(QUALIFIER_REFERENCE_ISO),
+                        outbe_oracle::api::AddressPair::new_coen_to(QUALIFIER_REFERENCE_ISO),
                         breach,
                         U256::from(1),
                     )],
@@ -1085,7 +1085,7 @@ fn scan_does_not_halt_on_overflow_rate() {
     with_factory(|s| {
         runtime::issue(&s, sample(7)).unwrap();
         let oracle = OracleContract::new(s.clone());
-        let pair = outbe_oracle::api::coen_iso_pair(QUALIFIER_REFERENCE_ISO);
+        let pair = outbe_oracle::api::AddressPair::new_coen_to(QUALIFIER_REFERENCE_ISO);
         // Out-of-range rate: price_to_bin overflows.
         oracle.exchange_rate.write(&pair, U256::MAX).unwrap();
 
@@ -1117,7 +1117,7 @@ fn scan_isolates_bad_series() {
             .unwrap();
 
         let oracle = OracleContract::new(s.clone());
-        let pair = outbe_oracle::api::coen_iso_pair(QUALIFIER_REFERENCE_ISO);
+        let pair = outbe_oracle::api::AddressPair::new_coen_to(QUALIFIER_REFERENCE_ISO);
         // The ISO resolves through the pair registry, so the pair must exist.
         oracle.pair_to_index.write(&pair, 1).unwrap();
         oracle
@@ -1173,7 +1173,7 @@ fn call_scan_does_not_halt_on_overflow_vwap() {
 fn scan_caps_work_per_block_and_resumes_via_cursor() {
     with_factory(|s| {
         let oracle = OracleContract::new(s.clone());
-        let pair = outbe_oracle::api::coen_iso_pair(QUALIFIER_REFERENCE_ISO);
+        let pair = outbe_oracle::api::AddressPair::new_coen_to(QUALIFIER_REFERENCE_ISO);
         // The ISO resolves through the pair registry, so the pair must exist.
         oracle.pair_to_index.write(&pair, 1).unwrap();
         // Rate well above both floors so both bins are eligible.

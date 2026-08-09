@@ -73,10 +73,7 @@ fn with_storage<R>(rate_1e18: Option<U256>, f: impl FnOnce(&StorageHandle) -> R)
         if let Some(rate) = rate_1e18 {
             let mut oracle = OracleContract::new(handle.clone());
             oracle
-                .register_pair(outbe_oracle::api::AddressPair::from_addresses(
-                    outbe_oracle::api::COEN_ASSET,
-                    outbe_oracle::api::currency_address(840),
-                ))
+                .register_pair(outbe_oracle::api::AddressPair::new_coen_to(840))
                 .unwrap();
             oracle
                 .set_exchange_rate(

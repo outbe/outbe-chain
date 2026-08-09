@@ -61,9 +61,7 @@ pub(super) type OracleMutation = for<'a> fn(StorageHandle<'a>) -> PrecompileResu
 pub(super) fn seed_ocomp_oracle(provider: &mut HashMapStorageProvider) {
     StorageHandle::enter(provider, |storage| {
         let mut oracle = OracleContract::new(storage.clone());
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, usd()))
-            .unwrap();
+        oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
         crate::api::initialize_fresh_ocomp_profile(storage).unwrap();
     });
 }
@@ -101,9 +99,7 @@ pub(super) fn seed_oracle_with_peak_history(
 ) {
     StorageHandle::enter(provider, |storage| {
         let mut oracle = OracleContract::new(storage.clone());
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, usd()))
-            .unwrap();
+        oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
         if initialize_ocomp {
             crate::api::initialize_fresh_ocomp_profile(storage).unwrap();
         }
@@ -133,9 +129,7 @@ pub(super) fn seed_prefork_oracle_with_peak_history(provider: &mut HashMapStorag
 pub(super) fn seed_prefork_oracle_with_snapshot(provider: &mut HashMapStorageProvider) {
     StorageHandle::enter(provider, |storage| {
         let mut oracle = OracleContract::new(storage);
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, usd()))
-            .unwrap();
+        oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
         oracle
             .write_snapshot(
                 ATOMIC_DAY_START + 100,

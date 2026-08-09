@@ -104,7 +104,7 @@ fn bcd_decode(packed: u16) -> Option<u16> {
 
 #[cfg(test)]
 mod tests {
-    use super::{AssetType};
+    use super::AssetType;
     use alloy_primitives::{address, Address};
 
     /// Highest ISO 4217 numeric currency code.

@@ -1,6 +1,6 @@
 use alloy_primitives::{B256, U256};
 use outbe_common::WorldwideDay;
-use outbe_oracle::api::{coen_iso_pair, AddressPair};
+use outbe_oracle::api::AddressPair;
 use outbe_oracle::schema::OracleContract;
 use outbe_oracle::{
     evaluate_oracle_opening_v1, oracle_count_slot_plan_v1, oracle_opening_slot_plan_v1,
@@ -23,8 +23,8 @@ fn slot_word(storage: &StorageHandle<'_>, slot: B256) -> U256 {
 fn seed_oracle(storage: &StorageHandle<'_>, day: WorldwideDay) -> (AddressPair, AddressPair) {
     let oracle = OracleContract::new(storage.clone());
     // The settlement pair is derived from the ISO code, not stored.
-    let usd_pair = coen_iso_pair(840);
-    let eur_pair = coen_iso_pair(978);
+    let usd_pair = AddressPair::new_coen_to(840);
+    let eur_pair = AddressPair::new_coen_to(978);
     oracle.pair_to_index.write(&usd_pair, 1).unwrap();
     oracle.pair_to_index.write(&eur_pair, 2).unwrap();
     oracle.reference_currencies.push(840).unwrap();
@@ -121,7 +121,7 @@ fn oracle_opening_plan_reads_the_exact_raw_slots_used_by_runtime_semantics() {
 
         let evaluated = evaluate_oracle_opening_v1(day, &[840, 978], &raw_slots).unwrap();
         for iso in [840u16, 978] {
-            let pair = coen_iso_pair(iso);
+            let pair = AddressPair::new_coen_to(iso);
             let runtime_vwap = oracle
                 .get_worldwide_day_vwap_for_pair(day, pair)
                 .unwrap()
@@ -154,7 +154,10 @@ fn oracle_opening_rejects_an_iso_outside_the_on_chain_reference_list() {
         seed_oracle(&storage, day);
         // 826 (GBP) has a registered pair but is absent from slot 55.
         let oracle = OracleContract::new(storage.clone());
-        oracle.pair_to_index.write(&coen_iso_pair(826), 3).unwrap();
+        oracle
+            .pair_to_index
+            .write(&AddressPair::new_coen_to(826), 3)
+            .unwrap();
 
         let plan = oracle_opening_slot_plan_v1(day, &[826, 840, 978], 2, 2, 4, 2).unwrap();
         let raw_slots = plan

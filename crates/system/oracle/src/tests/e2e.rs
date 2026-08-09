@@ -34,7 +34,7 @@ fn init_from_genesis_default_config_matches_the_hardcoded_state() {
         expected.config_enabled.write(true).unwrap();
         expected.config_is_initialized.write(true).unwrap();
         expected
-            .register_pair(AddressPair::from_addresses(COEN, usd()))
+            .register_pair(AddressPair::new_coen_to(840))
             .unwrap();
 
         // Snapshot expected state.
@@ -236,9 +236,7 @@ fn precompile_dispatch_round_trips_an_exchange_rate() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, usd()))
-            .unwrap();
+        oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
         let expected_rate = U256::in_units(123u64);
         oracle
             .set_exchange_rate(Address::ZERO, COEN, usd(), expected_rate, 42, 86_400)
@@ -306,9 +304,7 @@ fn precompile_dispatch_round_trips_the_whole_query_surface() {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
 
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, usd()))
-            .unwrap();
+        oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
         oracle
             .register_pair(AddressPair::from_addresses(usd(), ETH))
             .unwrap();
@@ -796,9 +792,7 @@ fn export_genesis_omits_a_zero_initial_rate() {
 fn store_worldwide_day_vwap_snapshot_round_trips_every_pair() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, usd()))
-            .unwrap();
+        oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
         oracle
             .register_pair(AddressPair::from_addresses(usd(), ETH))
             .unwrap();
@@ -868,9 +862,7 @@ fn day_type_pair_vwap_reports_missing_data_without_reverting() {
         );
 
         let mut oracle = OracleContract::new(storage.clone());
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, usd()))
-            .unwrap();
+        oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
         oracle
             .write_snapshot(
                 1_500,
@@ -905,9 +897,7 @@ fn day_type_pair_vwap_reports_missing_data_without_reverting() {
 fn finalize_utc_day_vwap_persists_every_vote_target_pair() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, usd()))
-            .unwrap();
+        oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
         oracle
             .register_pair(AddressPair::from_addresses(usd(), ETH))
             .unwrap();
@@ -978,9 +968,7 @@ fn finalize_utc_day_vwap_persists_every_vote_target_pair() {
 fn finalize_utc_day_vwap_writes_nothing_for_a_day_without_data() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, usd()))
-            .unwrap();
+        oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
         let utc_day = 20260624u32;
 
         // No snapshots for the day → finalize is a no-op, nothing written.
@@ -1002,9 +990,7 @@ fn finalize_utc_day_vwap_writes_nothing_for_a_day_without_data() {
 fn get_utc_day_vwap_precompile_returns_the_finalized_value() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, usd()))
-            .unwrap();
+        oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
         let utc_day = 20260624u32;
         let day_start = outbe_primitives::time::date_key_to_utc_timestamp(utc_day);
         oracle
@@ -1062,9 +1048,7 @@ fn gas_cost_vwap_50h_window_with_varying_snapshot_counts() {
         let mut storage = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut storage, |handle| {
             let mut oracle = OracleContract::new(handle.clone());
-            oracle
-                .register_pair(AddressPair::from_addresses(COEN, usd()))
-                .unwrap();
+            oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
 
             let start_ts: u64 = 1_000_000;
             let interval = window_seconds / n;

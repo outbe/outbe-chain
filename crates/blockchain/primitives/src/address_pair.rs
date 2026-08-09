@@ -26,7 +26,10 @@ impl AddressPair {
         Self::from_addresses(asset1.into(), asset2.into())
     }
 
-    /// The `COEN/<iso>` pair, e.g. `from_coen_to(840)` for COEN/USD.
+    /// The `COEN/<iso>` pair, e.g. `new_coen_to(840)` for COEN/USD.
+    ///
+    /// COEN base, ISO quote — the orientation these pairs are registered in.
+    /// COEN is also the zero address, so this is the canonical key form too.
     pub fn new_coen_to(iso_code: u16) -> Self {
         AddressPair::from_assets(AssetType::Native, AssetType::IsoCurrency(iso_code))
     }
@@ -93,9 +96,9 @@ impl StorageKey for AddressPair {
 #[cfg(test)]
 mod tests {
     use super::AddressPair;
+    use crate::asset_type::AssetType;
     use crate::storage::types::StorageKey;
     use alloy_primitives::{address, b256, keccak256, Address, U256};
-    use crate::asset_type::AssetType;
 
     const FIRST: Address = address!("0x1111111111111111111111111111111111111111");
     const SECOND: Address = address!("0x2222222222222222222222222222222222222222");
@@ -257,7 +260,7 @@ mod tests {
     }
 
     #[test]
-    fn the_coen_iso_pair_keys_on_the_zero_address_and_the_currency_code() {
+    fn new_coen_to_keys_on_the_zero_address_and_the_currency_code() {
         let pair = AddressPair::new_coen_to(840);
 
         assert_eq!(&pair[0..20], Address::ZERO.as_slice());
@@ -278,8 +281,7 @@ mod tests {
     }
 
     #[test]
-    fn coen_iso_pair_separates_pairs_sharing_an_asset() {
+    fn new_coen_to_separates_pairs_sharing_an_asset() {
         assert_ne!(AddressPair::new_coen_to(840), AddressPair::new_coen_to(978));
     }
-
 }

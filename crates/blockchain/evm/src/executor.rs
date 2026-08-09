@@ -4756,10 +4756,7 @@ mod tests {
             // ISO code, so registering the pair is sufficient.
             let mut oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
             oracle
-                .register_pair(outbe_oracle::api::AddressPair::from_addresses(
-                    outbe_oracle::api::COEN_ASSET,
-                    outbe_oracle::api::currency_address(840),
-                ))
+                .register_pair(outbe_oracle::api::AddressPair::new_coen_to(840))
                 .unwrap();
             oracle
                 .set_exchange_rate(
@@ -4858,10 +4855,7 @@ mod tests {
             // ISO code, so registering the pair is sufficient.
             let mut oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
             oracle
-                .register_pair(outbe_oracle::api::AddressPair::from_addresses(
-                    outbe_oracle::api::COEN_ASSET,
-                    outbe_oracle::api::currency_address(840),
-                ))
+                .register_pair(outbe_oracle::api::AddressPair::new_coen_to(840))
                 .unwrap();
             oracle
                 .set_exchange_rate(
@@ -10861,10 +10855,7 @@ mod tests {
         // reads a registered pair instead of reverting "pair not registered".
         let mut oracle = outbe_oracle::schema::OracleContract::new(storage);
         oracle
-            .register_pair(outbe_oracle::api::AddressPair::from_addresses(
-                outbe_oracle::api::COEN_ASSET,
-                outbe_oracle::api::currency_address(840),
-            ))
+            .register_pair(outbe_oracle::api::AddressPair::new_coen_to(840))
             .unwrap();
         oracle
             .set_exchange_rate(

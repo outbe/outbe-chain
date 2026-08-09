@@ -10,8 +10,6 @@ use outbe_common::WorldwideDay;
 use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::storage::types::StorageKey;
 
-use crate::types::coen_iso_pair;
-
 const PAIR_INDEX_BASE_SLOT: u64 = 10;
 const SCURVE_COUNT_SLOT: u64 = 34;
 const SCURVE_PAIR_BASE_SLOT: u64 = 35;
@@ -258,7 +256,7 @@ pub fn oracle_opening_slot_plan_v1(
     }
     let mut pair_index_slots = BTreeSet::new();
     for iso in reference_isos {
-        let pair_index_slot = mapping_slot(coen_iso_pair(*iso), PAIR_INDEX_BASE_SLOT);
+        let pair_index_slot = mapping_slot(AddressPair::new_coen_to(*iso), PAIR_INDEX_BASE_SLOT);
         if pair_index_slots.insert(pair_index_slot) {
             slots.push(pair_index_slot);
         }
@@ -380,7 +378,7 @@ pub fn evaluate_oracle_opening_v1(
     let target_day = crate::scurve::truncate_to_day(worldwide_day.to_timestamp_utc());
     let mut ordered_entry_prices = Vec::with_capacity(reference_isos.len());
     for iso in reference_isos.iter().copied() {
-        let pair = coen_iso_pair(iso);
+        let pair = AddressPair::new_coen_to(iso);
         // The index is still proven, purely as the registration witness: a zero
         // here means the verifier is pricing an unregistered pair.
         let index = checked_u32(

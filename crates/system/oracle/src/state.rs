@@ -11,7 +11,7 @@ use outbe_primitives::error::{PrecompileError, Result};
 
 use crate::constants::MAX_SNAPSHOT_RETENTION_SECONDS;
 use crate::schema::{OracleContract, PairIndex, SCALE_1E18};
-use outbe_primitives::units::{ONE_COEN};
+use outbe_primitives::units::ONE_COEN;
 
 /// `(exists, bases, quotes, rates, volumes)` — pending aggregate vote.
 type AggregateVote = (bool, Vec<Address>, Vec<Address>, Vec<U256>, Vec<U256>);

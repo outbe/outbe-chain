@@ -14,9 +14,7 @@ fn ocomp_pre_admission_selects_stored_price_and_reads_bounded_counts() {
     let timestamp = 1_753_315_200_u64;
     with_storage_at(timestamp, |storage| {
         let mut oracle = OracleContract::new(storage.clone());
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, usd()))
-            .unwrap();
+        oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
         let wwd = outbe_common::WorldwideDay::from_timestamp(timestamp);
         let last_closed = outbe_primitives::time::previous_date_key(
             outbe_primitives::time::timestamp_to_date_key(timestamp),
@@ -103,9 +101,7 @@ fn ocomp_oracle_profile_initialization_is_exact_and_idempotent() {
         assert!(crate::api::initialize_fresh_ocomp_profile(storage.clone()).is_err());
 
         let mut oracle = OracleContract::new(storage.clone());
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, usd()))
-            .unwrap();
+        oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
         crate::api::initialize_fresh_ocomp_profile(storage.clone()).unwrap();
         crate::api::initialize_fresh_ocomp_profile(storage).unwrap();
 
@@ -118,9 +114,7 @@ fn ocomp_oracle_profile_initialization_is_exact_and_idempotent() {
 fn ocomp_state_version_overflow_rejects_before_oracle_mutation() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, usd()))
-            .unwrap();
+        oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
         crate::api::initialize_fresh_ocomp_profile(storage).unwrap();
         oracle.ocomp_state_version.write(u64::MAX).unwrap();
 
@@ -211,9 +205,7 @@ fn prefork_oracle_event_failures_preserve_historical_best_effort_mutations() {
 fn scurve_count_overflow_rejects_before_any_owner_write() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, usd()))
-            .unwrap();
+        oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
         crate::api::initialize_fresh_ocomp_profile(storage).unwrap();
         oracle.scurve_count.write(u32::MAX).unwrap();
         let version_before = oracle.ocomp_state_version.read().unwrap();
@@ -600,9 +592,7 @@ fn begin_block_scurve_hook_records_the_daily_peak() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, usd()))
-            .unwrap();
+        oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
 
         let day_1 = crate::scurve::DAY_SECONDS;
         let day_2 = 2 * crate::scurve::DAY_SECONDS;
@@ -661,9 +651,7 @@ fn begin_block_finalizes_the_closed_utc_day() {
         let mut oracle = OracleContract::new(storage.clone());
         oracle.config_is_initialized.write(true).unwrap();
         oracle.config_vote_period.write(2).unwrap();
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, usd()))
-            .unwrap();
+        oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
         let coen = pair_key(COEN, usd());
 
         let day_d = 20260624u32;

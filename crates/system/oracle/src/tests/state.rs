@@ -923,7 +923,7 @@ fn ocomp_opening_plan_slots_match_the_schema_layout() {
         // The exact key `openings.rs` derives for a reference ISO. Writing it
         // through the typed schema and reading it back at the raw slot pins the
         // 40-byte `mapping_slot` derivation as well as the slot number.
-        let pair = crate::types::coen_iso_pair(iso);
+        let pair = AddressPair::new_coen_to(iso);
 
         oracle.pair_to_index.write(&pair, 7).unwrap();
         oracle.scurve_count.write(3).unwrap();

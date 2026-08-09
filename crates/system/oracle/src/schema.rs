@@ -141,7 +141,7 @@ pub struct OracleContract {
     pub scurve_last_processed_day: Slot<u64>,
 
     // === Settlement Currencies — retired (slots 40-42) ===
-    // The settlement pair is derived, not stored: `coen_iso_pair(iso)` packs the
+    // The settlement pair is derived, not stored: `AddressPair::new_coen_to(iso)` packs the
     // zero address with the marked ISO address, and an ISO is usable exactly
     // when that pair is present in `pair_index`. Slots 40
     // (`settlement_count`), 41 (`settlement_iso_to_denom`) and 42

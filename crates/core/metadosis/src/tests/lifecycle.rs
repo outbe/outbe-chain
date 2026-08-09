@@ -2157,12 +2157,9 @@ fn test_offering_entry_captures_vwap_unblocks_and_exit_reblocks() {
 
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(outbe_oracle::api::AddressPair::from_addresses(
-                outbe_oracle::api::COEN_ASSET,
-                outbe_oracle::api::currency_address(840),
-            ))
+            .register_pair(outbe_oracle::api::AddressPair::new_coen_to(840))
             .unwrap();
-        let pair = outbe_oracle::api::coen_iso_pair(840);
+        let pair = outbe_oracle::api::AddressPair::new_coen_to(840);
         oracle
             .write_snapshot(
                 previous_forming_start + SECONDS_PER_HOUR,
@@ -2347,12 +2344,9 @@ fn test_missing_previous_vwap_results_in_red_day() {
 
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(outbe_oracle::api::AddressPair::from_addresses(
-                outbe_oracle::api::COEN_ASSET,
-                outbe_oracle::api::currency_address(840),
-            ))
+            .register_pair(outbe_oracle::api::AddressPair::new_coen_to(840))
             .unwrap();
-        let pair = outbe_oracle::api::coen_iso_pair(840);
+        let pair = outbe_oracle::api::AddressPair::new_coen_to(840);
         oracle
             .write_snapshot(
                 forming_start + 30 * SECONDS_PER_HOUR,
@@ -2424,12 +2418,9 @@ fn test_equal_vwap_results_in_red_day() {
 
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(outbe_oracle::api::AddressPair::from_addresses(
-                outbe_oracle::api::COEN_ASSET,
-                outbe_oracle::api::currency_address(840),
-            ))
+            .register_pair(outbe_oracle::api::AddressPair::new_coen_to(840))
             .unwrap();
-        let pair = outbe_oracle::api::coen_iso_pair(840);
+        let pair = outbe_oracle::api::AddressPair::new_coen_to(840);
         oracle
             .write_snapshot(
                 previous_forming_start + SECONDS_PER_HOUR,
@@ -2499,12 +2490,9 @@ fn test_normal_lifecycle_never_leaves_ready_day_type_unknown() {
 
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(outbe_oracle::api::AddressPair::from_addresses(
-                outbe_oracle::api::COEN_ASSET,
-                outbe_oracle::api::currency_address(840),
-            ))
+            .register_pair(outbe_oracle::api::AddressPair::new_coen_to(840))
             .unwrap();
-        let pair = outbe_oracle::api::coen_iso_pair(840);
+        let pair = outbe_oracle::api::AddressPair::new_coen_to(840);
         oracle
             .write_snapshot(
                 previous_forming_start + SECONDS_PER_HOUR,

@@ -28,7 +28,7 @@ pub const DAY_TYPE_ISO: u16 = 840;
 /// The day-type pair: COEN quoted in ISO 840. COEN is the zero address, so this
 /// is also its sorted storage-key form.
 ///
-/// Spelled as a literal because `AddressPair::quoted` is not const —
+/// Spelled as a literal because `AddressPair::new_coen_to` is not const —
 /// `copy_from_slice` is not. The
 /// `the_day_type_pair_key_is_the_coen_iso_840_pair` test is what keeps it
 /// honest.
@@ -41,11 +41,10 @@ pub const DAY_TYPE_PAIR_KEY: AddressPair = AddressPair::new([
 
 #[cfg(test)]
 mod tests {
-    use super::{DAY_TYPE_ISO, DAY_TYPE_PAIR_KEY};
-    use outbe_primitives::asset_type::coen_iso_pair;
+    use super::{AddressPair, DAY_TYPE_ISO, DAY_TYPE_PAIR_KEY};
 
     #[test]
     fn the_day_type_pair_key_is_the_coen_iso_840_pair() {
-        assert_eq!(DAY_TYPE_PAIR_KEY, coen_iso_pair(DAY_TYPE_ISO));
+        assert_eq!(DAY_TYPE_PAIR_KEY, AddressPair::new_coen_to(DAY_TYPE_ISO));
     }
 }

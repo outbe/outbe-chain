@@ -11,12 +11,12 @@ use outbe_compressed_entities::{
 use outbe_nod::{from_canonical_item, precompile::INod, NodContract, NodRepositoryReader};
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
 use outbe_oracle::schema::OracleContract;
+use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::addresses::{COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS};
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_primitives::units::{Units, SCALE_1E18};
 use outbe_tribute::{TributeContract, TributeData, TributeRepositoryReader};
 use std::sync::Arc;
-use outbe_primitives::address_pair::AddressPair;
 
 struct TestBodyRepository {
     tribute_reader: TributeRepositoryReader,
@@ -152,9 +152,7 @@ fn later_nod_failure_rolls_back_the_complete_lysis_attempt() {
         begin_block(storage.clone(), &scope).unwrap();
 
         let mut oracle = OracleContract::new(storage.clone());
-        oracle
-            .register_pair(AddressPair::new_coen_to(840))
-            .unwrap();
+        oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
         oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
         oracle
             .worldwide_day_vwap_pair_count
@@ -163,13 +161,7 @@ fn later_nod_failure_rolls_back_the_complete_lysis_attempt() {
         oracle
             .worldwide_day_vwap_pair
             .get_nested(&wwd)
-            .write_pair(
-                &0_u32,
-                outbe_oracle::api::AddressPair::from_addresses(
-                    outbe_oracle::api::COEN_ASSET,
-                    outbe_oracle::api::currency_address(840),
-                ),
-            )
+            .write_pair(&0_u32, outbe_oracle::api::AddressPair::new_coen_to(840))
             .unwrap();
         oracle
             .worldwide_day_vwap_value
@@ -242,10 +234,7 @@ fn gas_08_lysis_dense_day_completes_and_emits_body_mutations() {
         begin_block(storage.clone(), &scope).unwrap();
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(outbe_oracle::api::AddressPair::from_addresses(
-                outbe_oracle::api::COEN_ASSET,
-                outbe_oracle::api::currency_address(840),
-            ))
+            .register_pair(outbe_oracle::api::AddressPair::new_coen_to(840))
             .unwrap();
         oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
         oracle
@@ -255,13 +244,7 @@ fn gas_08_lysis_dense_day_completes_and_emits_body_mutations() {
         oracle
             .worldwide_day_vwap_pair
             .get_nested(&wwd)
-            .write_pair(
-                &0u32,
-                outbe_oracle::api::AddressPair::from_addresses(
-                    outbe_oracle::api::COEN_ASSET,
-                    outbe_oracle::api::currency_address(840),
-                ),
-            )
+            .write_pair(&0u32, outbe_oracle::api::AddressPair::new_coen_to(840))
             .unwrap();
         oracle
             .worldwide_day_vwap_value
@@ -679,10 +662,7 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
         //    because lysis only reads `get_worldwide_day_vwap_for_pair_id`.
         let mut oracle = OracleContract::new(s.clone());
         oracle
-            .register_pair(outbe_oracle::api::AddressPair::from_addresses(
-                outbe_oracle::api::COEN_ASSET,
-                outbe_oracle::api::currency_address(840),
-            ))
+            .register_pair(outbe_oracle::api::AddressPair::new_coen_to(840))
             .unwrap();
         oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
         oracle
@@ -692,13 +672,7 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
         oracle
             .worldwide_day_vwap_pair
             .get_nested(&wwd)
-            .write_pair(
-                &0u32,
-                outbe_oracle::api::AddressPair::from_addresses(
-                    outbe_oracle::api::COEN_ASSET,
-                    outbe_oracle::api::currency_address(840),
-                ),
-            )
+            .write_pair(&0u32, outbe_oracle::api::AddressPair::new_coen_to(840))
             .unwrap();
         oracle
             .worldwide_day_vwap_value
@@ -1010,10 +984,7 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
         begin_block(s.clone(), &scope).unwrap();
         let mut oracle = OracleContract::new(s.clone());
         oracle
-            .register_pair(outbe_oracle::api::AddressPair::from_addresses(
-                outbe_oracle::api::COEN_ASSET,
-                outbe_oracle::api::currency_address(840),
-            ))
+            .register_pair(outbe_oracle::api::AddressPair::new_coen_to(840))
             .unwrap();
         oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
         oracle
@@ -1023,13 +994,7 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
         oracle
             .worldwide_day_vwap_pair
             .get_nested(&wwd)
-            .write_pair(
-                &0u32,
-                outbe_oracle::api::AddressPair::from_addresses(
-                    outbe_oracle::api::COEN_ASSET,
-                    outbe_oracle::api::currency_address(840),
-                ),
-            )
+            .write_pair(&0u32, outbe_oracle::api::AddressPair::new_coen_to(840))
             .unwrap();
         oracle
             .worldwide_day_vwap_value
@@ -1106,10 +1071,7 @@ fn lysis_records_contributors_aggregated_by_owner() {
         // Oracle: register ISO 840 -> COEN/840 and seed a day VWAP snapshot.
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(outbe_oracle::api::AddressPair::from_addresses(
-                outbe_oracle::api::COEN_ASSET,
-                outbe_oracle::api::currency_address(840),
-            ))
+            .register_pair(outbe_oracle::api::AddressPair::new_coen_to(840))
             .unwrap();
         oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
         oracle
@@ -1119,13 +1081,7 @@ fn lysis_records_contributors_aggregated_by_owner() {
         oracle
             .worldwide_day_vwap_pair
             .get_nested(&wwd)
-            .write_pair(
-                &0u32,
-                outbe_oracle::api::AddressPair::from_addresses(
-                    outbe_oracle::api::COEN_ASSET,
-                    outbe_oracle::api::currency_address(840),
-                ),
-            )
+            .write_pair(&0u32, outbe_oracle::api::AddressPair::new_coen_to(840))
             .unwrap();
         oracle
             .worldwide_day_vwap_value
@@ -1206,10 +1162,7 @@ fn lysis_omits_excluded_owners_from_contributor_map() {
         begin_block(storage.clone(), &scope).unwrap();
         let mut oracle = OracleContract::new(storage.clone());
         oracle
-            .register_pair(outbe_oracle::api::AddressPair::from_addresses(
-                outbe_oracle::api::COEN_ASSET,
-                outbe_oracle::api::currency_address(840),
-            ))
+            .register_pair(outbe_oracle::api::AddressPair::new_coen_to(840))
             .unwrap();
         oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
         oracle
@@ -1219,13 +1172,7 @@ fn lysis_omits_excluded_owners_from_contributor_map() {
         oracle
             .worldwide_day_vwap_pair
             .get_nested(&wwd)
-            .write_pair(
-                &0u32,
-                outbe_oracle::api::AddressPair::from_addresses(
-                    outbe_oracle::api::COEN_ASSET,
-                    outbe_oracle::api::currency_address(840),
-                ),
-            )
+            .write_pair(&0u32, outbe_oracle::api::AddressPair::new_coen_to(840))
             .unwrap();
         oracle
             .worldwide_day_vwap_value
