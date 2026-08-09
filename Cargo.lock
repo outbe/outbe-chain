@@ -7663,6 +7663,7 @@ dependencies = [
  "k256 0.13.4",
  "outbe-accounting",
  "outbe-agentreward",
+ "outbe-chain-constants",
  "outbe-common",
  "outbe-compressed-entities",
  "outbe-consensus",

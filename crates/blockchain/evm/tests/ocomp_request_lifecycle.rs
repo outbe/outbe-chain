@@ -838,6 +838,7 @@ fn real_payload_builder_commits_atomic_request_between_ce_preview_and_final_seal
     let finalized = finalized_record.finalized.as_ref().unwrap();
     let open_height = finalized.open_height;
     let voting = ResultVotingScenario::for_intent(&finalized_record.intent, finalized.job_id);
+    let voting_result = voting.result().clone();
 
     let successor_artifacts =
         decode_outbe_block_artifacts(successor.block().header().extra_data().as_ref()).unwrap();
@@ -1350,6 +1351,13 @@ fn prepare_parent(
     let owner = address!("7300000000000000000000000000000000000073");
     let seal = StorageHandle::enter(&mut seed, |storage| {
         seed_ce_genesis(&storage);
+        for (slot, value) in
+            outbe_chain_constants::GenesisProtocolParametersV1::default().genesis_storage_words()
+        {
+            storage
+                .sstore(outbe_chain_constants::CHAIN_CONSTANTS_ADDRESS, slot, value)
+                .unwrap();
+        }
         begin_block(storage.clone(), &scope).unwrap();
 
         let mut validators = ValidatorSet::new(storage.clone());
