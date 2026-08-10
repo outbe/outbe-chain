@@ -3,6 +3,7 @@
 //! Fetches prices from external providers, aggregates them via VWAP,
 //! and submits oracle votes to the on-chain Oracle precompile.
 
+mod abi;
 mod aggregator;
 mod config;
 mod health;

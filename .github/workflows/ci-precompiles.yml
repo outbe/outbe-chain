@@ -1,0 +1,25 @@
+name: CI precompiles
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/actions/**"
+      - ".github/workflows/_contract-ci.yml"
+      - "contracts/precompiles/**"
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - ".github/actions/**"
+      - ".github/workflows/_contract-ci.yml"
+      - "contracts/precompiles/**"
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: ./.github/workflows/_contract-ci.yml
+    with:
+      project: precompiles
+      abi-check: true

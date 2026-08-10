@@ -32,7 +32,7 @@ sol!(
 );
 
 pub(crate) use INod::{NodBodyDeleted, NodBodyStored, NodBucketBodyDeleted, NodBucketBodyStored};
-pub(crate) use ITribute::{TributeBodyDeleted, TributeBodyStored};
+pub(crate) use ITribute::{TributeBodyDeleted, TributeBodyStored, TributePartitionRetired};
 
 pub(crate) const READ_FIXED_GAS: u64 = 200;
 pub(crate) const READ_GAS_PER_CANONICAL_BYTE: u64 = 8;

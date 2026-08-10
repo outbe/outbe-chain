@@ -1258,11 +1258,7 @@ fn slashindicator_dedup_retains_invalid_vrf_evidence_seen_hash() {
 fn invalid_vrf_evidence_uses_txpool_precompile_path_not_begin_zone() {
     use alloy_sol_types::{sol, SolCall, SolInterface};
 
-    sol! {
-        interface ISlashIndicator {
-            function submitInvalidVrfProofEvidence(bytes calldata evidence) external;
-        }
-    }
+    sol!("../../../contracts/precompiles/src/ISlashIndicator.sol");
 
     // (a) The ABI selector decodes through the txpool precompile's
     // interface. If the entry-point moved to a different routing, this
