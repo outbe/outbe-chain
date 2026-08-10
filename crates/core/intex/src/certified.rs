@@ -162,7 +162,7 @@ fn revert(reason: &'static str) -> PrecompileError {
 
 #[cfg(test)]
 mod tests {
-    use crate::series_id::SeriesId;
+    use crate::schema::SeriesId;
     use alloy_primitives::{Address, LogData};
     use alloy_sol_types::SolEvent;
 

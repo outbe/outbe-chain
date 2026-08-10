@@ -8,8 +8,7 @@ use alloy_primitives::{Address, U256};
 use outbe_primitives::error::Result;
 
 use crate::errors::IntexError;
-use crate::schema::{DistProgress, IntexContract, SeriesRecord};
-use crate::series_id::SeriesId;
+use crate::schema::{DistProgress, IntexContract, SeriesId, SeriesRecord};
 
 impl IntexContract<'_> {
     // ---------------------------------------------------------------------

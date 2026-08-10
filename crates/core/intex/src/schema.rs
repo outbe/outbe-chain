@@ -4,9 +4,10 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::INTEX_ADDRESS;
+use outbe_primitives::storage::types::{Storable, StorableType, StorageKey};
+use std::fmt;
 
 use crate::errors::IntexError;
-use crate::series_id::SeriesId;
 
 /// Series lifecycle state. `Issued -> Qualified -> Called`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,6 +36,115 @@ pub struct IntexCallTrigger {
     pub call_threshold: u32,
     /// Seconds between `called_at` and the settlement deadline.
     pub call_notice_period: u32,
+}
+
+/// Packed series identifier: `worldwide_day (u32) | issuance (3 bytes) | reference (1 byte)`.
+///
+/// Codes are alpha-3 (`USD`) when the oracle knows them and the zero-padded
+/// numeric code (`949`) when it does not; the reference byte is the first byte of
+/// its own three, so one rule covers both forms.
+#[repr(transparent)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SeriesId(u64);
+
+impl SeriesId {
+    /// Packs the three components. Rejects a zero day and any code byte outside
+    /// `A-Z` / `0-9`, so an unpacked id always renders.
+    pub fn pack(worldwide_day: u32, issuance: [u8; 3], reference: u8) -> Result<Self, IntexError> {
+        if worldwide_day == 0 {
+            return Err(IntexError::InvalidSeriesId);
+        }
+        for byte in issuance {
+            if !is_code_byte(byte) {
+                return Err(IntexError::InvalidSeriesId);
+            }
+        }
+        if !is_code_byte(reference) {
+            return Err(IntexError::InvalidSeriesId);
+        }
+        Ok(Self(
+            (u64::from(worldwide_day) << 32)
+                | (u64::from(issuance[0]) << 24)
+                | (u64::from(issuance[1]) << 16)
+                | (u64::from(issuance[2]) << 8)
+                | u64::from(reference),
+        ))
+    }
+
+    pub const fn from_raw(value: u64) -> Self {
+        Self(value)
+    }
+
+    pub const fn value(self) -> u64 {
+        self.0
+    }
+
+    pub const fn worldwide_day(self) -> u32 {
+        (self.0 >> 32) as u32
+    }
+
+    pub const fn issuance_code(self) -> [u8; 3] {
+        [
+            (self.0 >> 24) as u8,
+            (self.0 >> 16) as u8,
+            (self.0 >> 8) as u8,
+        ]
+    }
+
+    pub const fn reference_code(self) -> u8 {
+        self.0 as u8
+    }
+
+    /// The three ASCII digits of an ISO numeric code, used when the oracle holds
+    /// no alpha code for it: `949 -> b"949"`, `32 -> b"032"`.
+    pub fn numeric_code(iso: u16) -> [u8; 3] {
+        let iso = iso % 1000;
+        [
+            b'0' + (iso / 100) as u8,
+            b'0' + ((iso / 10) % 10) as u8,
+            b'0' + (iso % 10) as u8,
+        ]
+    }
+}
+
+const fn is_code_byte(byte: u8) -> bool {
+    byte.is_ascii_uppercase() || byte.is_ascii_digit()
+}
+
+impl fmt::Display for SeriesId {
+    /// `20260212-TRY-U`, or `20260212-949-U` when the issuance code is numeric.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let issuance = self.issuance_code();
+        write!(
+            f,
+            "{}-{}{}{}-{}",
+            self.worldwide_day(),
+            issuance[0] as char,
+            issuance[1] as char,
+            issuance[2] as char,
+            self.reference_code() as char,
+        )
+    }
+}
+
+impl StorableType for SeriesId {
+    const SLOTS: usize = 1;
+}
+
+impl Storable for SeriesId {
+    fn from_word(word: U256) -> Self {
+        Self(word.to::<u64>())
+    }
+
+    fn to_word(&self) -> U256 {
+        U256::from(self.0)
+    }
+}
+
+impl StorageKey for SeriesId {
+    fn key_bytes(&self) -> Vec<u8> {
+        self.0.to_be_bytes().to_vec()
+    }
 }
 
 /// Identity parameters captured once at series creation.

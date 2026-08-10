@@ -9,8 +9,7 @@ use alloy_sol_types::{sol, SolInterface};
 use outbe_primitives::dispatch::{dispatch_call, metadata, view};
 use outbe_primitives::error::Result;
 
-use crate::schema::{IntexContract, SeriesRecord};
-use crate::series_id::SeriesId;
+use crate::schema::{IntexContract, SeriesId, SeriesRecord};
 
 /// Selectors on this precompile that accept native value. The route table binds
 /// this to the address's `ValuePolicy` at compile time, so a selector added here

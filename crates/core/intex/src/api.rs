@@ -20,9 +20,8 @@ use outbe_primitives::storage::StorageHandle;
 use crate::errors::IntexError;
 use crate::schema::{
     CertifiedContributorGenerationProjection, CreateSeriesParams, DistProgress, IntexContract,
-    IntexState, SeriesRecord,
+    IntexState, SeriesId, SeriesRecord,
 };
-use crate::series_id::SeriesId;
 
 /// Immutable contributor target state consumed by OCOMP JobIntent assembly.
 ///

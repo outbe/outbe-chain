@@ -5,8 +5,9 @@ use outbe_primitives::storage::StorageHandle;
 
 use crate::api;
 use crate::precompile::{dispatch, IIntex};
+use crate::schema::SeriesId;
 use crate::schema::{CreateSeriesParams, IntexCallTrigger, IntexState};
-use crate::series_id::SeriesId;
+use outbe_primitives::storage::types::{Storable, StorageKey};
 
 const CHAIN_ID: u64 = 1;
 const ISSUED_AT: u32 = 1_700_000_000;
@@ -535,4 +536,68 @@ fn active_dist_set_swap_remove() {
         assert!(remaining.contains(&33));
         assert!(!remaining.contains(&22));
     });
+}
+
+// ---------------------------------------------------------------------
+// composite series id
+// ---------------------------------------------------------------------
+
+const DAY: u32 = 20_260_212;
+
+#[test]
+fn packs_and_unpacks_every_component() {
+    let id = SeriesId::pack(DAY, *b"TRY", b'U').unwrap();
+    assert_eq!(id.worldwide_day(), DAY);
+    assert_eq!(id.issuance_code(), *b"TRY");
+    assert_eq!(id.reference_code(), b'U');
+    assert_eq!(SeriesId::from_raw(id.value()), id);
+}
+
+#[test]
+fn renders_alpha_and_numeric_forms() {
+    assert_eq!(
+        SeriesId::pack(DAY, *b"TRY", b'U').unwrap().to_string(),
+        "20260212-TRY-U"
+    );
+    assert_eq!(
+        SeriesId::pack(DAY, SeriesId::numeric_code(949), b'U')
+            .unwrap()
+            .to_string(),
+        "20260212-949-U"
+    );
+}
+
+#[test]
+fn numeric_code_zero_pads() {
+    assert_eq!(SeriesId::numeric_code(840), *b"840");
+    assert_eq!(SeriesId::numeric_code(32), *b"032");
+    assert_eq!(SeriesId::numeric_code(8), *b"008");
+}
+
+#[test]
+fn rejects_a_zero_day_and_lowercase_or_symbol_codes() {
+    assert!(SeriesId::pack(0, *b"USD", b'U').is_err());
+    assert!(SeriesId::pack(DAY, *b"usd", b'U').is_err());
+    assert!(SeriesId::pack(DAY, *b"US-", b'U').is_err());
+    assert!(SeriesId::pack(DAY, *b"USD", b'u').is_err());
+    assert!(SeriesId::pack(DAY, *b"USD", 0).is_err());
+}
+
+#[test]
+fn orders_by_day_before_currency() {
+    // Dense enumeration and the bin-tree range scans both walk ids in order,
+    // so a later day must never sort before an earlier one.
+    let early_z = SeriesId::pack(DAY, *b"ZWL", b'Z').unwrap();
+    let late_a = SeriesId::pack(DAY + 1, *b"AED", b'A').unwrap();
+    assert!(early_z < late_a);
+
+    let same_day_a = SeriesId::pack(DAY, *b"AED", b'U').unwrap();
+    assert!(same_day_a < early_z);
+}
+
+#[test]
+fn round_trips_through_storage_word_and_key() {
+    let id = SeriesId::pack(DAY, *b"EUR", b'E').unwrap();
+    assert_eq!(SeriesId::from_word(id.to_word()), id);
+    assert_eq!(id.key_bytes(), id.value().to_be_bytes().to_vec());
 }
