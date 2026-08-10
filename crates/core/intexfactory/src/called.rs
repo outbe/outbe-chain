@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
+use outbe_intex::SeriesId;
 use outbe_oracle::contract::OracleContract;
 use outbe_primitives::{
     block::BlockRuntimeContext,
@@ -80,13 +81,13 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
 
         // Snapshot before mutating: try_call removes Called series.
         let count = factory.qualified_bin_count.read(&next)?;
-        let mut series: Vec<u32> = Vec::with_capacity(count as usize);
+        let mut series: Vec<SeriesId> = Vec::with_capacity(count as usize);
         for i in 0..count {
-            series.push(
+            series.push(SeriesId::from_raw(
                 factory
                     .qualified_bin_series
                     .read(&IntexFactoryContract::bin_index_key(next, i))?,
-            );
+            ));
         }
         for series_id in series {
             // Isolate per-series: a deterministic Err rolls back this series' checkpoint and is
@@ -106,7 +107,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
                 Ok(true) => called = called.saturating_add(1),
                 Ok(false) => {}
                 Err(e) => {
-                    tracing::warn!(target: "outbe::intexfactory", series_id, error = ?e, "call scan: skipping series");
+                    tracing::warn!(target: "outbe::intexfactory", series_id = %series_id, error = ?e, "call scan: skipping series");
                 }
             }
         }
@@ -160,7 +161,7 @@ pub(crate) fn try_call(
     factory: &mut IntexFactoryContract,
     oracle: &OracleContract,
     vwaps: &mut DayVwaps,
-    series_id: u32,
+    series_id: SeriesId,
     last_closed_day: u32,
     now_ts: u64,
 ) -> Result<bool> {
@@ -213,20 +214,20 @@ pub(crate) fn try_call(
     crate::runtime::emit_event(
         storage,
         crate::precompile::IIntexFactory::SeriesCalled {
-            seriesId: series_id,
+            seriesId: series_id.value(),
             calledAt: called_at,
         },
     )?;
     Ok(true)
 }
 
-fn notify_called(storage: &StorageHandle<'_>, series_id: u32) -> Result<()> {
+fn notify_called(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<()> {
     // Relay-float-funded: value 0, so the router self-quotes and pays the bridge fee from its float.
     storage.call(
         ORIGIN_ROUTER_ADDRESS,
         U256::ZERO,
         IOriginRouter::sendMarkCalledCall {
-            seriesId: series_id,
+            seriesId: series_id.value(),
         }
         .abi_encode()
         .into(),

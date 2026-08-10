@@ -1,4 +1,5 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
+use outbe_intex::SeriesId;
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::GEM_FACTORY_ADDRESS;
 
@@ -26,7 +27,7 @@ pub struct GemPosition {
     pub merchant: Address,
 
     #[attribute(order = 1)]
-    pub source_intex_id: u32,
+    pub source_intex_id: SeriesId,
 
     /// Remaining Promis capacity; drains by `gem_load` on each issue.
     #[attribute(order = 2)]
@@ -72,11 +73,11 @@ pub struct GemFactoryContract {
 impl GemFactoryContract<'_> {
     /// `position_id = keccak256("gemposition" ‖ source_intex_id_be ‖ block_number_be)`.
     /// A source Intex is parked once, so `source_intex_id` alone disambiguates.
-    pub fn generate_position_id(source_intex_id: u32, block_number: u64) -> U256 {
-        let mut buf = [0u8; 11 + 4 + 8];
+    pub fn generate_position_id(source_intex_id: SeriesId, block_number: u64) -> U256 {
+        let mut buf = [0u8; 11 + 8 + 8];
         buf[0..11].copy_from_slice(b"gemposition");
-        buf[11..15].copy_from_slice(&source_intex_id.to_be_bytes());
-        buf[15..23].copy_from_slice(&block_number.to_be_bytes());
+        buf[11..19].copy_from_slice(&source_intex_id.value().to_be_bytes());
+        buf[19..27].copy_from_slice(&block_number.to_be_bytes());
         U256::from_be_bytes(keccak256(buf).0)
     }
 }

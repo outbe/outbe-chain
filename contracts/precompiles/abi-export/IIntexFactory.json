@@ -23,8 +23,8 @@
     "inputs": [
       {
         "name": "seriesId",
-        "type": "uint32",
-        "internalType": "uint32"
+        "type": "uint64",
+        "internalType": "uint64"
       },
       {
         "name": "amount",
@@ -62,8 +62,8 @@
     "inputs": [
       {
         "name": "seriesId",
-        "type": "uint32",
-        "internalType": "uint32"
+        "type": "uint64",
+        "internalType": "uint64"
       },
       {
         "name": "paymentToken",
@@ -86,8 +86,8 @@
     "inputs": [
       {
         "name": "seriesId",
-        "type": "uint32",
-        "internalType": "uint32"
+        "type": "uint64",
+        "internalType": "uint64"
       },
       {
         "name": "settler",
@@ -104,8 +104,8 @@
     "inputs": [
       {
         "name": "seriesId",
-        "type": "uint32",
-        "internalType": "uint32"
+        "type": "uint64",
+        "internalType": "uint64"
       },
       {
         "name": "intexHolder",
@@ -131,7 +131,7 @@
     "name": "ProceedsBurned",
     "inputs": [
       {
-        "name": "seriesId",
+        "name": "worldwideDay",
         "type": "uint32",
         "indexed": true,
         "internalType": "uint32"
@@ -150,7 +150,7 @@
     "name": "ProceedsDistributed",
     "inputs": [
       {
-        "name": "seriesId",
+        "name": "worldwideDay",
         "type": "uint32",
         "indexed": true,
         "internalType": "uint32"
@@ -176,9 +176,9 @@
     "inputs": [
       {
         "name": "seriesId",
-        "type": "uint32",
+        "type": "uint64",
         "indexed": true,
-        "internalType": "uint32"
+        "internalType": "uint64"
       },
       {
         "name": "holder",
@@ -207,9 +207,9 @@
     "inputs": [
       {
         "name": "seriesId",
-        "type": "uint32",
+        "type": "uint64",
         "indexed": true,
-        "internalType": "uint32"
+        "internalType": "uint64"
       },
       {
         "name": "calledAt",
@@ -226,9 +226,9 @@
     "inputs": [
       {
         "name": "seriesId",
-        "type": "uint32",
+        "type": "uint64",
         "indexed": true,
-        "internalType": "uint32"
+        "internalType": "uint64"
       },
       {
         "name": "issuedIntexCount",
@@ -251,9 +251,9 @@
     "inputs": [
       {
         "name": "seriesId",
-        "type": "uint32",
+        "type": "uint64",
         "indexed": true,
-        "internalType": "uint32"
+        "internalType": "uint64"
       }
     ],
     "anonymous": false
@@ -264,9 +264,9 @@
     "inputs": [
       {
         "name": "seriesId",
-        "type": "uint32",
+        "type": "uint64",
         "indexed": true,
-        "internalType": "uint32"
+        "internalType": "uint64"
       },
       {
         "name": "intexHolder",

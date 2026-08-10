@@ -57,7 +57,7 @@ interface Network {
 }
 
 const PROMIS_MINED_EVENT = parseAbiItem(
-  "event PromisMined(uint32 indexed seriesId, address indexed holder, uint256 amount, uint256 promisAmount)",
+  "event PromisMined(uint64 indexed seriesId, address indexed holder, uint256 amount, uint256 promisAmount)",
 );
 
 // Auction ids are worldwide days (yyyymmdd), one per day; the auction runs weeks
@@ -168,7 +168,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   /** Per-token NFT metadata URIs for a series; undefined when the chain has no NFT deployed. */
   async function seriesMetadata(
     n: Network,
-    series: number,
+    series: bigint,
   ): Promise<{ collection: string; issued: string; settled: string } | undefined> {
     try {
       const nft = addr(n, "nft");
@@ -189,7 +189,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     }
   }
   /** Payment tokens a series accepts: the vault router's assets for its reference currency. */
-  async function settlementTokens(n: Network, series: number): Promise<`0x${string}`[]> {
+  async function settlementTokens(n: Network, series: bigint): Promise<`0x${string}`[]> {
     const d = (await n.client.readContract({
       address: addr(n, "intex"),
       abi: INTEX_ABI,
@@ -206,7 +206,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   }
 
   /** Per-Intex cost of settling `series` in `token`, in that token's minor units. */
-  async function quoteCostAmount(n: Network, series: number, token: `0x${string}`): Promise<bigint> {
+  async function quoteCostAmount(n: Network, series: bigint, token: `0x${string}`): Promise<bigint> {
     return (await n.client.readContract({
       address: addr(n, "factory"),
       abi: FACTORY_ABI,
@@ -234,7 +234,10 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   // --- shared argument schemas ---
   const networkArg = z.string().describe(`network name (one of: ${NETWORKS.map((d) => d.name).join(", ")})`);
   const accountArg = z.string().optional().describe("0x address to query (default: the configured signer)");
-  const seriesArg = z.number().int().describe("series id");
+  const seriesArg = z
+  .string()
+  .describe("series id (packed uint64, decimal string)")
+  .transform((v) => BigInt(v));
   const worldwideDayArg = z.number().int().describe("auction worldwide day (yyyymmdd)");
   const quantityArg = z.number().int().describe("bid quantity (uint16)");
   const rateArg = z
@@ -264,7 +267,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       const metadata = await seriesMetadata(n, series);
       return ok({
         network: n.name,
-        seriesId: Number(d.seriesId),
+        seriesId: d.seriesId.toString(),
         // scales per crates/core/intex/src/schema.rs (SeriesRecord):
         promisLoad: { raw: d.promisLoadMinor.toString(), value: formatUnits(u256(d.promisLoadMinor), 18) }, // Promis per intex, 18 dec
         entryPrice: { raw: d.entryPriceMinor.toString(), value: formatUnits(u256(d.entryPriceMinor), 18), scale: "1e18 oracle (reference ccy)" },
@@ -847,7 +850,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
 
   // --- Bridge BSC -> outbe (IntexNFT1155Bridge, signed) ----------------------
 
-  async function buildSendParam(n: Network, series: number, amount: bigint, recipient: Address) {
+  async function buildSendParam(n: Network, series: bigint, amount: bigint, recipient: Address) {
     const ids = (await n.client.readContract({
       address: addr(n, "nft"),
       abi: NFT_ABI,

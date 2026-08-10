@@ -2,6 +2,7 @@
 //! + the unqualified-series bin index). Orchestration lives in `runtime.rs`.
 
 use alloy_primitives::{keccak256, Address, B256, U256};
+use outbe_intex::SeriesId;
 use outbe_primitives::error::Result;
 use outbe_primitives::math::{
     price_helper,
@@ -18,7 +19,7 @@ impl IntexFactoryContract<'_> {
     pub(crate) fn read_authorized_settler(
         &self,
         holder: Address,
-        series_id: u32,
+        series_id: SeriesId,
     ) -> Result<Address> {
         let key = Self::authorized_settler_key(holder, series_id);
         self.authorized_settler.read(&key)
@@ -27,7 +28,7 @@ impl IntexFactoryContract<'_> {
     pub(crate) fn write_authorized_settler(
         &mut self,
         holder: Address,
-        series_id: u32,
+        series_id: SeriesId,
         settler: Address,
     ) -> Result<()> {
         let key = Self::authorized_settler_key(holder, series_id);
@@ -36,7 +37,7 @@ impl IntexFactoryContract<'_> {
 
     // --- settleCount ---
 
-    pub(crate) fn bump_settle_count(&mut self, series_id: u32) -> Result<()> {
+    pub(crate) fn bump_settle_count(&mut self, series_id: SeriesId) -> Result<()> {
         let current = self.settle_count.read(&series_id)?;
         self.settle_count
             .write(&series_id, current.saturating_add(U256::from(1)))
@@ -44,14 +45,14 @@ impl IntexFactoryContract<'_> {
 
     // --- mineSeq ---
 
-    pub(crate) fn read_mine_seq(&self, series_id: u32, holder: Address) -> Result<u32> {
+    pub(crate) fn read_mine_seq(&self, series_id: SeriesId, holder: Address) -> Result<u32> {
         let key = Self::mine_seq_key(series_id, holder);
         self.mine_seq.read(&key)
     }
 
     pub(crate) fn write_mine_seq(
         &mut self,
-        series_id: u32,
+        series_id: SeriesId,
         holder: Address,
         value: u32,
     ) -> Result<()> {
@@ -77,7 +78,11 @@ impl IntexFactoryContract<'_> {
         keccak256(buf)
     }
 
-    pub(crate) fn insert_unqualified(&mut self, series_id: u32, floor_price: U256) -> Result<()> {
+    pub(crate) fn insert_unqualified(
+        &mut self,
+        series_id: SeriesId,
+        floor_price: U256,
+    ) -> Result<()> {
         insert_bin(
             &self.unqualified_bin_count,
             &self.unqualified_bin_series,
@@ -87,7 +92,11 @@ impl IntexFactoryContract<'_> {
         )
     }
 
-    pub(crate) fn remove_unqualified(&mut self, series_id: u32, floor_price: U256) -> Result<()> {
+    pub(crate) fn remove_unqualified(
+        &mut self,
+        series_id: SeriesId,
+        floor_price: U256,
+    ) -> Result<()> {
         remove_bin(
             &self.unqualified_bin_count,
             &self.unqualified_bin_series,
@@ -99,7 +108,11 @@ impl IntexFactoryContract<'_> {
 
     // --- qualified-series bin index (by call_price_minor) ---
 
-    pub(crate) fn insert_qualified(&mut self, series_id: u32, trigger_price: U256) -> Result<()> {
+    pub(crate) fn insert_qualified(
+        &mut self,
+        series_id: SeriesId,
+        trigger_price: U256,
+    ) -> Result<()> {
         insert_bin(
             &self.qualified_bin_count,
             &self.qualified_bin_series,
@@ -109,7 +122,11 @@ impl IntexFactoryContract<'_> {
         )
     }
 
-    pub(crate) fn remove_qualified(&mut self, series_id: u32, trigger_price: U256) -> Result<()> {
+    pub(crate) fn remove_qualified(
+        &mut self,
+        series_id: SeriesId,
+        trigger_price: U256,
+    ) -> Result<()> {
         remove_bin(
             &self.qualified_bin_count,
             &self.qualified_bin_series,
@@ -123,16 +140,16 @@ impl IntexFactoryContract<'_> {
 /// Insert `series_id` into the `price` bin of an index and set the trie bit.
 fn insert_bin(
     count_map: &Map<u32, u32>,
-    series_map: &Map<B256, u32>,
+    series_map: &Map<B256, u64>,
     tree: &impl BinTreeStorage,
-    series_id: u32,
+    series_id: SeriesId,
     price: U256,
 ) -> Result<()> {
     let bin_id = IntexFactoryContract::price_to_bin(price)?;
     let count = count_map.read(&bin_id)?;
     series_map.write(
         &IntexFactoryContract::bin_index_key(bin_id, count),
-        series_id,
+        series_id.value(),
     )?;
     count_map.write(&bin_id, count + 1)?;
     tree_math::add(tree, bin_id)?;
@@ -143,9 +160,9 @@ fn insert_bin(
 /// when the bin empties. No-op if absent.
 fn remove_bin(
     count_map: &Map<u32, u32>,
-    series_map: &Map<B256, u32>,
+    series_map: &Map<B256, u64>,
     tree: &impl BinTreeStorage,
-    series_id: u32,
+    series_id: SeriesId,
     price: U256,
 ) -> Result<()> {
     let bin_id = IntexFactoryContract::price_to_bin(price)?;
@@ -155,7 +172,7 @@ fn remove_bin(
     }
     let mut found: Option<u32> = None;
     for i in 0..count {
-        if series_map.read(&IntexFactoryContract::bin_index_key(bin_id, i))? == series_id {
+        if series_map.read(&IntexFactoryContract::bin_index_key(bin_id, i))? == series_id.value() {
             found = Some(i);
             break;
         }

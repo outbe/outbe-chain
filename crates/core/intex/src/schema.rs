@@ -6,6 +6,7 @@ use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::INTEX_ADDRESS;
 
 use crate::errors::IntexError;
+use crate::series_id::SeriesId;
 
 /// Series lifecycle state. `Issued -> Qualified -> Called`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,7 +43,7 @@ pub struct IntexCallTrigger {
 /// widens it to `U256` (the storage DSL has no `u128` codec), always lossless.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateSeriesParams {
-    pub series_id: u32,
+    pub series_id: SeriesId,
     pub worldwide_day: u32,
     pub issued_intex_count: u32,
     /// Promis tokens per Intex unit (18 decimals); bounded by source `uint128`.
@@ -67,7 +68,7 @@ pub struct CreateSeriesParams {
 #[storage_record(exists_field = issued_at)]
 pub struct SeriesRecord {
     #[key]
-    pub series_id: u32,
+    pub series_id: SeriesId,
 
     #[attribute(order = 0)]
     pub issuance_currency: u16,
@@ -202,13 +203,13 @@ impl CertifiedContributorGenerationProjection {
 #[contract(addr = INTEX_ADDRESS)]
 pub struct IntexContract {
     #[attribute(order = 0)]
-    pub series: outbe_primitives::storage::dsl::Map<u32, SeriesRecord>,
+    pub series: outbe_primitives::storage::dsl::Map<SeriesId, SeriesRecord>,
 
     #[attribute(order = 1)]
     pub total_series: outbe_primitives::storage::dsl::Value<u64>,
 
     #[attribute(order = 2)]
-    pub series_id_at_index: outbe_primitives::storage::dsl::Map<u64, u32>,
+    pub series_id_at_index: outbe_primitives::storage::dsl::Map<u64, u64>,
 
     // --- Creator-reward: per-day contributors (owner → nominal share) ---
     // Orders 3-23 are keyed by worldwide day, not by series id.
@@ -297,6 +298,10 @@ pub struct IntexContract {
     /// Exact eligible nominal total committed by the certified root.
     #[attribute(order = 23)]
     pub ocomp_eligible_nominal_total: outbe_primitives::storage::dsl::Map<u32, U256>,
+
+    /// worldwide_day -> number of series created for that day.
+    #[attribute(order = 24)]
+    pub day_series_count: outbe_primitives::storage::dsl::Map<u32, u32>,
 }
 
 impl IntexContract<'_> {
@@ -347,7 +352,7 @@ impl IntexContract<'_> {
         // if the independent auction creates the series later. Version 2 is
         // valid only when the series already existed before certification.
         let valid_series_version =
-            series_version == 1 || (series_version == 2 && self.series_exists(worldwide_day)?);
+            series_version == 1 || (series_version == 2 && self.day_has_series(worldwide_day)?);
         if !valid_series_version || (contributor_count == 0) != eligible_nominal_total.is_zero() {
             return Err(outbe_primitives::error::PrecompileError::Fatal(
                 "installed Intex certified contributor metadata is malformed".into(),

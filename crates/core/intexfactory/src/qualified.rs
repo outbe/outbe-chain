@@ -3,6 +3,7 @@
 
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
+use outbe_intex::SeriesId;
 use outbe_oracle::contract::OracleContract;
 use outbe_primitives::{
     block::{BlockLifecycle, BlockRuntimeContext},
@@ -89,13 +90,13 @@ pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
 
         // Snapshot the bin before mutating: qualify() removes on success.
         let count = factory.unqualified_bin_count.read(&next)?;
-        let mut series: Vec<u32> = Vec::with_capacity(count as usize);
+        let mut series: Vec<SeriesId> = Vec::with_capacity(count as usize);
         for i in 0..count {
-            series.push(
+            series.push(SeriesId::from_raw(
                 factory
                     .unqualified_bin_series
                     .read(&IntexFactoryContract::bin_index_key(next, i))?,
-            );
+            ));
         }
         for series_id in series {
             // Isolate per-series: a deterministic Err rolls back this series' checkpoint and is
@@ -115,7 +116,7 @@ pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
                 Ok(true) => promoted = promoted.saturating_add(1),
                 Ok(false) => {}
                 Err(e) => {
-                    tracing::warn!(target: "outbe::intexfactory", series_id, error = ?e, "qualify scan: skipping series");
+                    tracing::warn!(target: "outbe::intexfactory", series_id = %series_id, error = ?e, "qualify scan: skipping series");
                 }
             }
         }
@@ -137,7 +138,7 @@ pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
 pub(crate) fn try_qualify(
     storage: &StorageHandle<'_>,
     factory: &mut IntexFactoryContract,
-    series_id: u32,
+    series_id: SeriesId,
     qualification_period: u32,
     now: u64,
     rate: U256,
@@ -169,19 +170,19 @@ pub(crate) fn try_qualify(
     crate::runtime::emit_event(
         storage,
         crate::precompile::IIntexFactory::SeriesQualified {
-            seriesId: series_id,
+            seriesId: series_id.value(),
         },
     )?;
     Ok(true)
 }
 
-fn notify_qualified(storage: &StorageHandle<'_>, series_id: u32) -> Result<()> {
+fn notify_qualified(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<()> {
     // Relay-float-funded: value 0, so the router self-quotes and pays the bridge fee from its float.
     storage.call(
         ORIGIN_ROUTER_ADDRESS,
         U256::ZERO,
         IOriginRouter::sendMarkQualifiedCall {
-            seriesId: series_id,
+            seriesId: series_id.value(),
         }
         .abi_encode()
         .into(),

@@ -12,8 +12,8 @@
     "outputs": [
       {
         "name": "",
-        "type": "uint32",
-        "internalType": "uint32"
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ],
     "stateMutability": "view"
@@ -24,8 +24,8 @@
     "inputs": [
       {
         "name": "seriesId",
-        "type": "uint32",
-        "internalType": "uint32"
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ],
     "outputs": [
@@ -36,8 +36,8 @@
         "components": [
           {
             "name": "seriesId",
-            "type": "uint32",
-            "internalType": "uint32"
+            "type": "uint64",
+            "internalType": "uint64"
           },
           {
             "name": "promisLoadMinor",
@@ -125,8 +125,8 @@
     "inputs": [
       {
         "name": "seriesId",
-        "type": "uint32",
-        "internalType": "uint32"
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ],
     "outputs": [
@@ -162,7 +162,7 @@
         "internalType": "bytes32"
       },
       {
-        "name": "seriesId",
+        "name": "worldwideDay",
         "type": "uint32",
         "indexed": true,
         "internalType": "uint32"

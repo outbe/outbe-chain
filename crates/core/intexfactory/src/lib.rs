@@ -17,6 +17,7 @@ pub(crate) mod state;
 pub use api::{issue, read_params};
 pub use config::IntexParams;
 pub use errors::IntexFactoryError;
+pub use outbe_intex::SeriesId;
 pub use qualified::IntexLifecycle;
 pub use runtime::marked_up;
 pub use schema::{IntexFactoryContract, IssuanceParams};

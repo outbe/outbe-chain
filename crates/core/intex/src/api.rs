@@ -22,6 +22,7 @@ use crate::schema::{
     CertifiedContributorGenerationProjection, CreateSeriesParams, DistProgress, IntexContract,
     IntexState, SeriesRecord,
 };
+use crate::series_id::SeriesId;
 
 /// Immutable contributor target state consumed by OCOMP JobIntent assembly.
 ///
@@ -67,7 +68,7 @@ pub fn create_series(storage: &StorageHandle<'_>, params: CreateSeriesParams) ->
 }
 
 /// `Issued -> Qualified`. Mirrors `markQualified`.
-pub fn mark_qualified(storage: &StorageHandle<'_>, series_id: u32) -> Result<()> {
+pub fn mark_qualified(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<()> {
     let mut registry = IntexContract::new(storage.clone());
     let mut record = registry.load_series(series_id)?;
     if record.lifecycle_state()? != IntexState::Issued {
@@ -84,7 +85,7 @@ pub fn mark_qualified(storage: &StorageHandle<'_>, series_id: u32) -> Result<()>
 /// `Issued | Qualified -> Called`. Mirrors `markCalled`. `called_at` is the
 /// block timestamp supplied by the caller (deterministic; no wall clock here).
 /// `Called` is terminal for these transitions.
-pub fn mark_called(storage: &StorageHandle<'_>, series_id: u32, called_at: u32) -> Result<()> {
+pub fn mark_called(storage: &StorageHandle<'_>, series_id: SeriesId, called_at: u32) -> Result<()> {
     let mut registry = IntexContract::new(storage.clone());
     let mut record = registry.load_series(series_id)?;
     let state = record.lifecycle_state()?;
@@ -101,17 +102,20 @@ pub fn mark_called(storage: &StorageHandle<'_>, series_id: u32, called_at: u32) 
 }
 
 /// Read a series record; errors if the series does not exist.
-pub fn read_series(storage: &StorageHandle<'_>, series_id: u32) -> Result<SeriesRecord> {
+pub fn read_series(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<SeriesRecord> {
     IntexContract::new(storage.clone()).load_series(series_id)
 }
 
 /// Read a series record; `None` if the series does not exist.
-pub fn get_series(storage: &StorageHandle<'_>, series_id: u32) -> Result<Option<SeriesRecord>> {
+pub fn get_series(
+    storage: &StorageHandle<'_>,
+    series_id: SeriesId,
+) -> Result<Option<SeriesRecord>> {
     IntexContract::new(storage.clone()).get_series(series_id)
 }
 
 /// Whether a series exists.
-pub fn series_exists(storage: &StorageHandle<'_>, series_id: u32) -> Result<bool> {
+pub fn series_exists(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<bool> {
     IntexContract::new(storage.clone()).series_exists(series_id)
 }
 
@@ -121,8 +125,7 @@ pub fn ocomp_contributor_target_projection(
     worldwide_day: u32,
 ) -> Result<OcompContributorTargetProjection> {
     let registry = IntexContract::new(storage.clone());
-    // Probes the series ledger at the day's own id: holds only while a day derives one series.
-    let exists = registry.series_exists(worldwide_day)?;
+    let exists = registry.day_has_series(worldwide_day)?;
     let legacy_count = registry.read_contributor_count(worldwide_day)?;
     let legacy_total = registry.read_contributor_total(worldwide_day)?;
     if (legacy_count == 0) != legacy_total.is_zero() {
@@ -180,7 +183,7 @@ pub fn total_series(storage: &StorageHandle<'_>) -> Result<u64> {
 }
 
 /// `series_id` at a dense enumeration index.
-pub fn series_id_at(storage: &StorageHandle<'_>, index: u64) -> Result<u32> {
+pub fn series_id_at(storage: &StorageHandle<'_>, index: u64) -> Result<SeriesId> {
     IntexContract::new(storage.clone()).read_series_id_at(index)
 }
 

@@ -1,6 +1,7 @@
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_gem::{api as gem_api, GemAddParams, GemState};
+use outbe_intex::SeriesId;
 use outbe_oracle::contract::OracleContract;
 use outbe_primitives::addresses::{
     GEM_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS, VAULT_ROUTER_ADDRESS,
@@ -91,7 +92,7 @@ pub fn mint_gem(
 pub fn mint_gem_position(
     storage: &StorageHandle<'_>,
     caller: Address,
-    source_intex_id: u32,
+    source_intex_id: SeriesId,
     amount: U256,
 ) -> Result<U256> {
     if caller.is_zero() {
@@ -149,7 +150,7 @@ pub fn mint_gem_position(
 fn burn_parked_intex(
     storage: &StorageHandle<'_>,
     holder: Address,
-    series_id: u32,
+    series_id: SeriesId,
     amount: U256,
 ) -> Result<U256> {
     let ret = storage.call(
@@ -157,7 +158,7 @@ fn burn_parked_intex(
         U256::ZERO,
         IIntexNFT1155::parkIntexCall {
             holder,
-            seriesId: series_id,
+            seriesId: series_id.value(),
             amount,
         }
         .abi_encode()

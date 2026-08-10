@@ -1,5 +1,6 @@
 use alloy_primitives::{address, keccak256, Address, B256, U256};
 use alloy_sol_types::SolCall;
+use outbe_intex::SeriesId;
 use outbe_oracle::contract::OracleContract;
 use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
@@ -50,9 +51,14 @@ fn with_factory<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
     StorageHandle::enter(&mut storage, f)
 }
 
+/// Test ids carry a fixed USD/U pair; only the day varies.
+fn sid(worldwide_day: u32) -> SeriesId {
+    SeriesId::pack(worldwide_day, *b"USD", b'U').unwrap()
+}
+
 fn sample(worldwide_day: u32) -> IssuanceParams {
     IssuanceParams {
-        series_id: worldwide_day,
+        series_id: sid(worldwide_day),
         worldwide_day,
         issued_intex_count: 100,
         promis_load_minor: PROMIS_LOAD_MINOR,
@@ -73,8 +79,8 @@ fn issue_creates_series_in_registry() {
         runtime::issue(&s, sample(7)).unwrap();
 
         // The series is captured in Intex with the issuance identity.
-        let r = outbe_intex::api::read_series(&s, 7).unwrap();
-        assert_eq!(r.series_id, 7);
+        let r = outbe_intex::api::read_series(&s, sid(7)).unwrap();
+        assert_eq!(r.series_id, sid(7));
         assert_eq!(r.promis_load_minor, U256::from(PROMIS_LOAD_MINOR));
         assert_eq!(r.entry_price_minor, U256::from(ENTRY_PRICE));
         // Floor and trigger are derived from the clearing price at issuance.
@@ -120,7 +126,7 @@ fn issue_zero_winners_discards_contributor_map() {
         runtime::issue(&s, p).unwrap();
 
         // No series exists and the never-to-distribute map is discarded.
-        assert!(!outbe_intex::api::series_exists(&s, 7).unwrap());
+        assert!(!outbe_intex::api::series_exists(&s, sid(7)).unwrap());
         assert_eq!(outbe_intex::api::contributor_count(&s, 7).unwrap(), 0);
     });
 }
@@ -148,8 +154,8 @@ fn issue_enrolls_series_in_dense_enumeration() {
         runtime::issue(&s, sample(11)).unwrap();
         runtime::issue(&s, sample(22)).unwrap();
         assert_eq!(outbe_intex::api::total_series(&s).unwrap(), 2);
-        assert_eq!(outbe_intex::api::series_id_at(&s, 0).unwrap(), 11);
-        assert_eq!(outbe_intex::api::series_id_at(&s, 1).unwrap(), 22);
+        assert_eq!(outbe_intex::api::series_id_at(&s, 0).unwrap(), sid(11));
+        assert_eq!(outbe_intex::api::series_id_at(&s, 1).unwrap(), sid(22));
     });
 }
 
@@ -252,7 +258,7 @@ fn with_payment_token<R>(
 #[test]
 fn cost_amount_prices_an_accepted_token() {
     with_payment_token(1, 840, 18, |s| {
-        let cost = runtime::quote_cost_amount(&s, 7, payment_token()).unwrap();
+        let cost = runtime::quote_cost_amount(&s, sid(7), payment_token()).unwrap();
         assert_eq!(cost, U256::from(1_000_000u64));
     });
 }
@@ -260,7 +266,7 @@ fn cost_amount_prices_an_accepted_token() {
 #[test]
 fn cost_amount_rejects_an_unregistered_token() {
     with_payment_token(0, 840, 18, |s| {
-        let err = runtime::quote_cost_amount(&s, 7, payment_token()).unwrap_err();
+        let err = runtime::quote_cost_amount(&s, sid(7), payment_token()).unwrap_err();
         assert!(err.to_string().contains("no registered vault"), "{err}");
     });
 }
@@ -268,7 +274,7 @@ fn cost_amount_rejects_an_unregistered_token() {
 #[test]
 fn cost_amount_rejects_a_foreign_currency() {
     with_payment_token(1, 978, 18, |s| {
-        let err = runtime::quote_cost_amount(&s, 7, payment_token()).unwrap_err();
+        let err = runtime::quote_cost_amount(&s, sid(7), payment_token()).unwrap_err();
         assert!(err.to_string().contains("does not match"), "{err}");
     });
 }
@@ -276,7 +282,7 @@ fn cost_amount_rejects_a_foreign_currency() {
 #[test]
 fn cost_amount_rejects_missing_series() {
     with_factory(|s| {
-        assert!(runtime::quote_cost_amount(&s, 7, payment_token()).is_err());
+        assert!(runtime::quote_cost_amount(&s, sid(7), payment_token()).is_err());
     });
 }
 
@@ -286,7 +292,7 @@ fn cost_amount_dispatch() {
         let out = precompile::dispatch(
             s.clone(),
             &IIntexFactory::quoteCostAmountCall {
-                seriesId: 7,
+                seriesId: sid(7).value(),
                 paymentToken: payment_token(),
             }
             .abi_encode(),
@@ -308,16 +314,24 @@ fn cost_amount_dispatch() {
 #[test]
 fn settle_rejects_zero_amount() {
     with_factory(|s| {
-        assert!(runtime::settle(&s, 7, holder(), holder(), U256::ZERO, payment_token()).is_err());
+        assert!(
+            runtime::settle(&s, sid(7), holder(), holder(), U256::ZERO, payment_token()).is_err()
+        );
     });
 }
 
 #[test]
 fn settle_rejects_missing_series() {
     with_factory(|s| {
-        assert!(
-            runtime::settle(&s, 7, holder(), holder(), U256::from(1), payment_token()).is_err()
-        );
+        assert!(runtime::settle(
+            &s,
+            sid(7),
+            holder(),
+            holder(),
+            U256::from(1),
+            payment_token()
+        )
+        .is_err());
     });
 }
 
@@ -326,8 +340,15 @@ fn settle_rejects_wrong_state_issued() {
     with_factory(|s| {
         // Born Issued; settlement is only valid in Qualified/Called.
         runtime::issue(&s, sample(7)).unwrap();
-        let err =
-            runtime::settle(&s, 7, holder(), holder(), U256::from(1), payment_token()).unwrap_err();
+        let err = runtime::settle(
+            &s,
+            sid(7),
+            holder(),
+            holder(),
+            U256::from(1),
+            payment_token(),
+        )
+        .unwrap_err();
         assert!(err.to_string().to_lowercase().contains("settleable"));
     });
 }
@@ -350,9 +371,16 @@ fn settle_rejects_expired_deadline() {
     StorageHandle::enter(&mut storage, |s| {
         runtime::issue(&s, sample(7)).unwrap();
         // deadline = ISSUED_AT + CALL_NOTICE_PERIOD < now
-        outbe_intex::api::mark_called(&s, 7, ISSUED_AT).unwrap();
-        let err =
-            runtime::settle(&s, 7, holder(), holder(), U256::from(1), payment_token()).unwrap_err();
+        outbe_intex::api::mark_called(&s, sid(7), ISSUED_AT).unwrap();
+        let err = runtime::settle(
+            &s,
+            sid(7),
+            holder(),
+            holder(),
+            U256::from(1),
+            payment_token(),
+        )
+        .unwrap_err();
         assert!(err.to_string().to_lowercase().contains("deadline"));
     });
 }
@@ -361,9 +389,12 @@ fn settle_rejects_expired_deadline() {
 fn set_authorized_settler_round_trip() {
     with_factory(|s| {
         let settler = address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
-        runtime::set_authorized_settler(&s, holder(), 7, settler).unwrap();
+        runtime::set_authorized_settler(&s, holder(), sid(7), settler).unwrap();
         let f = IntexFactoryContract::new(s.clone());
-        assert_eq!(f.read_authorized_settler(holder(), 7).unwrap(), settler);
+        assert_eq!(
+            f.read_authorized_settler(holder(), sid(7)).unwrap(),
+            settler
+        );
     });
 }
 
@@ -373,11 +404,11 @@ fn set_authorized_settler_round_trip() {
 
 #[test]
 fn settled_token_id_derivation() {
-    // uint256(keccak256("SETTLED" ++ seriesId_be32))
-    let series_id = 7u32;
+    // uint256(keccak256("SETTLED" ++ seriesId_be64))
+    let series_id = sid(7);
     let mut buf = Vec::new();
     buf.extend_from_slice(b"SETTLED");
-    buf.extend_from_slice(&series_id.to_be_bytes());
+    buf.extend_from_slice(&series_id.value().to_be_bytes());
     assert_eq!(
         runtime::settled_token_id(series_id),
         U256::from_be_bytes(keccak256(&buf).0)
@@ -388,14 +419,14 @@ fn settled_token_id_derivation() {
 fn compute_pow_hash_matches_manual_sha256() {
     // SHA256(hex(holder)++hex(promisAmount)++hex(seriesId)++hex(seq) ++ nonce_be8)
     let promis_amount = U256::from(1_000u64);
-    let (series_id, seq, nonce) = (7u32, 3u32, 42u64);
+    let (series_id, seq, nonce) = (sid(7), 3u32, 42u64);
     let got = runtime::compute_pow_hash(holder(), promis_amount, series_id, seq, U256::from(nonce))
         .unwrap();
 
     let mut preimage = String::new();
     preimage.push_str(&hex::encode(holder().as_slice()));
     preimage.push_str(&hex::encode(promis_amount.to_be_bytes::<32>()));
-    preimage.push_str(&hex::encode(series_id.to_be_bytes()));
+    preimage.push_str(&hex::encode(series_id.value().to_be_bytes()));
     preimage.push_str(&hex::encode(seq.to_be_bytes()));
     let mut data = preimage.into_bytes();
     data.extend_from_slice(&nonce.to_be_bytes());
@@ -406,12 +437,12 @@ fn compute_pow_hash_matches_manual_sha256() {
 #[test]
 fn validate_pow_accepts_valid_and_rejects_invalid_nonce() {
     let pa = U256::from(1_000u64);
-    let (sid, seq) = (7u32, 0u32);
+    let (series_id, seq) = (sid(7), 0u32);
     // Difficulty 1: ~1/256 of nonces pass; brute-force a valid and an invalid one.
     let mut good = None;
     let mut bad = None;
     for n in 0u64..100_000 {
-        let ok = runtime::validate_pow(holder(), pa, sid, seq, U256::from(n)).is_ok();
+        let ok = runtime::validate_pow(holder(), pa, series_id, seq, U256::from(n)).is_ok();
         if ok && good.is_none() {
             good = Some(n);
         }
@@ -425,7 +456,7 @@ fn validate_pow_accepts_valid_and_rejects_invalid_nonce() {
     assert!(runtime::validate_pow(
         holder(),
         pa,
-        sid,
+        series_id,
         seq,
         U256::from(good.expect("a valid nonce"))
     )
@@ -433,7 +464,7 @@ fn validate_pow_accepts_valid_and_rejects_invalid_nonce() {
     assert!(runtime::validate_pow(
         holder(),
         pa,
-        sid,
+        series_id,
         seq,
         U256::from(bad.expect("an invalid nonce"))
     )
@@ -445,7 +476,7 @@ fn validate_pow_rejects_nonce_over_u64() {
     assert!(runtime::validate_pow(
         holder(),
         U256::from(1u64),
-        1,
+        sid(1),
         0,
         U256::from(u64::MAX) + U256::from(1)
     )
@@ -464,7 +495,9 @@ fn no_auth() -> outbe_promisfactory::api::ModifyAuth {
 #[test]
 fn mine_promis_rejects_zero_amount() {
     with_factory(|s| {
-        assert!(runtime::mine_promis(&s, 7, holder(), U256::ZERO, U256::ZERO, no_auth()).is_err());
+        assert!(
+            runtime::mine_promis(&s, sid(7), holder(), U256::ZERO, U256::ZERO, no_auth()).is_err()
+        );
     });
 }
 
@@ -472,7 +505,8 @@ fn mine_promis_rejects_zero_amount() {
 fn mine_promis_rejects_missing_series() {
     with_factory(|s| {
         assert!(
-            runtime::mine_promis(&s, 7, holder(), U256::from(1), U256::ZERO, no_auth()).is_err()
+            runtime::mine_promis(&s, sid(7), holder(), U256::from(1), U256::ZERO, no_auth())
+                .is_err()
         );
     });
 }
@@ -498,12 +532,12 @@ fn insert_remove_unqualified_roundtrip() {
         let mut f = IntexFactoryContract::new(s.clone());
         let floor = U256::from(2_000u64);
         let bin = IntexFactoryContract::price_to_bin(floor).unwrap();
-        f.insert_unqualified(11, floor).unwrap();
-        f.insert_unqualified(22, floor).unwrap();
+        f.insert_unqualified(sid(11), floor).unwrap();
+        f.insert_unqualified(sid(22), floor).unwrap();
         assert_eq!(f.unqualified_bin_count.read(&bin).unwrap(), 2);
-        f.remove_unqualified(11, floor).unwrap();
+        f.remove_unqualified(sid(11), floor).unwrap();
         assert_eq!(f.unqualified_bin_count.read(&bin).unwrap(), 1);
-        f.remove_unqualified(22, floor).unwrap();
+        f.remove_unqualified(sid(22), floor).unwrap();
         assert_eq!(f.unqualified_bin_count.read(&bin).unwrap(), 0);
     });
 }
@@ -521,7 +555,7 @@ fn try_qualify_gates_qualification_floor_and_latches() {
         assert!(!qualified::try_qualify(
             &s,
             &mut f,
-            7,
+            sid(7),
             QUALIFICATION_PERIOD,
             immature,
             floor + U256::from(1)
@@ -529,20 +563,21 @@ fn try_qualify_gates_qualification_floor_and_latches() {
         .unwrap());
         // Mature but rate == floor (strict >) -> false.
         assert!(
-            !qualified::try_qualify(&s, &mut f, 7, QUALIFICATION_PERIOD, mature, floor).unwrap()
+            !qualified::try_qualify(&s, &mut f, sid(7), QUALIFICATION_PERIOD, mature, floor)
+                .unwrap()
         );
         // Mature + rate > floor -> qualifies, latched, removed from bin.
         assert!(qualified::try_qualify(
             &s,
             &mut f,
-            7,
+            sid(7),
             QUALIFICATION_PERIOD,
             mature,
             floor + U256::from(1)
         )
         .unwrap());
         assert_eq!(
-            outbe_intex::api::read_series(&s, 7)
+            outbe_intex::api::read_series(&s, sid(7))
                 .unwrap()
                 .lifecycle_state()
                 .unwrap(),
@@ -554,7 +589,7 @@ fn try_qualify_gates_qualification_floor_and_latches() {
         assert!(!qualified::try_qualify(
             &s,
             &mut f,
-            7,
+            sid(7),
             QUALIFICATION_PERIOD,
             mature,
             floor + U256::from(1)
@@ -572,14 +607,17 @@ fn dispatch_set_authorized_settler_round_trip() {
     with_factory(|s| {
         let settler = address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
         let data = IIntexFactory::setAuthorizedSettlerCall {
-            seriesId: 7,
+            seriesId: sid(7).value(),
             settler,
         }
         .abi_encode();
         // Caller (holder) is taken from msg.sender, not the calldata.
         precompile::dispatch(s.clone(), &data, holder(), U256::ZERO).unwrap();
         let f = IntexFactoryContract::new(s.clone());
-        assert_eq!(f.read_authorized_settler(holder(), 7).unwrap(), settler);
+        assert_eq!(
+            f.read_authorized_settler(holder(), sid(7)).unwrap(),
+            settler
+        );
     });
 }
 
@@ -588,7 +626,7 @@ fn dispatch_rejects_value() {
     with_factory(|s| {
         let settler = address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
         let data = IIntexFactory::setAuthorizedSettlerCall {
-            seriesId: 7,
+            seriesId: sid(7).value(),
             settler,
         }
         .abi_encode();
@@ -601,7 +639,7 @@ fn dispatch_mine_promis_routes_to_runtime() {
     with_factory(|s| {
         // Missing series -> the runtime error surfaces through dispatch.
         let data = IIntexFactory::minePromisCall {
-            seriesId: 7,
+            seriesId: sid(7).value(),
             amount: U256::from(1),
             nonce: U256::ZERO,
             mac: alloy_primitives::FixedBytes([0u8; 32]),
@@ -628,7 +666,7 @@ fn qualify_series<'a>(
     assert!(qualified::try_qualify(
         s,
         &mut f,
-        id,
+        sid(id),
         QUALIFICATION_PERIOD,
         mature,
         floor + U256::from(1)
@@ -698,12 +736,12 @@ fn insert_remove_qualified_roundtrip() {
         let mut f = IntexFactoryContract::new(s.clone());
         let trigger = U256::from(EXPECTED_TRIGGER);
         let bin = IntexFactoryContract::price_to_bin(trigger).unwrap();
-        f.insert_qualified(11, trigger).unwrap();
-        f.insert_qualified(22, trigger).unwrap();
+        f.insert_qualified(sid(11), trigger).unwrap();
+        f.insert_qualified(sid(22), trigger).unwrap();
         assert_eq!(f.qualified_bin_count.read(&bin).unwrap(), 2);
-        f.remove_qualified(11, trigger).unwrap();
+        f.remove_qualified(sid(11), trigger).unwrap();
         assert_eq!(f.qualified_bin_count.read(&bin).unwrap(), 1);
-        f.remove_qualified(22, trigger).unwrap();
+        f.remove_qualified(sid(22), trigger).unwrap();
         assert_eq!(f.qualified_bin_count.read(&bin).unwrap(), 0);
     });
 }
@@ -725,13 +763,13 @@ fn try_call_marks_called_when_threshold_met() {
             &mut f,
             &oracle,
             &mut called::DayVwaps::new(pair_id),
-            7,
+            sid(7),
             last_closed_day,
             scan_ts
         )
         .unwrap());
         assert_eq!(
-            outbe_intex::api::read_series(&s, 7)
+            outbe_intex::api::read_series(&s, sid(7))
                 .unwrap()
                 .lifecycle_state()
                 .unwrap(),
@@ -768,13 +806,13 @@ fn try_call_skips_when_below_threshold() {
             &mut f,
             &oracle,
             &mut called::DayVwaps::new(pair_id),
-            7,
+            sid(7),
             last_closed_day,
             scan_ts
         )
         .unwrap());
         assert_eq!(
-            outbe_intex::api::read_series(&s, 7)
+            outbe_intex::api::read_series(&s, sid(7))
                 .unwrap()
                 .lifecycle_state()
                 .unwrap(),
@@ -793,7 +831,7 @@ fn try_call_excludes_pre_issuance_days() {
         outbe_intex::api::create_series(
             &s,
             outbe_intex::CreateSeriesParams {
-                series_id: 8,
+                series_id: sid(8),
                 worldwide_day: 8,
                 issued_intex_count: 100,
                 promis_load_minor: PROMIS_LOAD_MINOR,
@@ -811,7 +849,7 @@ fn try_call_excludes_pre_issuance_days() {
             },
         )
         .unwrap();
-        outbe_intex::api::mark_qualified(&s, 8).unwrap();
+        outbe_intex::api::mark_qualified(&s, sid(8)).unwrap();
         let mut f = IntexFactoryContract::new(s.clone());
         let oracle = OracleContract::new(s.clone());
         let pair_id = setup_pair(&oracle);
@@ -827,13 +865,13 @@ fn try_call_excludes_pre_issuance_days() {
             &mut f,
             &oracle,
             &mut called::DayVwaps::new(pair_id),
-            8,
+            sid(8),
             last_closed_day,
             scan_ts
         )
         .unwrap());
         assert_eq!(
-            outbe_intex::api::read_series(&s, 8)
+            outbe_intex::api::read_series(&s, sid(8))
                 .unwrap()
                 .lifecycle_state()
                 .unwrap(),
@@ -852,7 +890,7 @@ fn seed_issued(s: &StorageHandle<'_>, id: u32) {
     outbe_intex::api::create_series(
         s,
         outbe_intex::CreateSeriesParams {
-            series_id: id,
+            series_id: sid(id),
             worldwide_day: id,
             issued_intex_count: 100,
             promis_load_minor: PROMIS_LOAD_MINOR,
@@ -871,7 +909,7 @@ fn seed_issued(s: &StorageHandle<'_>, id: u32) {
     )
     .unwrap();
     IntexFactoryContract::new(s.clone())
-        .insert_unqualified(id, U256::from(EXPECTED_FLOOR))
+        .insert_unqualified(sid(id), U256::from(EXPECTED_FLOOR))
         .unwrap();
 }
 
@@ -892,14 +930,14 @@ fn qualify_survives_router_failure() {
         assert!(qualified::try_qualify(
             &s,
             &mut f,
-            7,
+            sid(7),
             QUALIFICATION_PERIOD,
             mature,
             U256::from(EXPECTED_FLOOR) + U256::from(1)
         )
         .unwrap());
         assert_eq!(
-            outbe_intex::api::read_series(&s, 7)
+            outbe_intex::api::read_series(&s, sid(7))
                 .unwrap()
                 .lifecycle_state()
                 .unwrap(),
@@ -920,9 +958,10 @@ fn call_survives_router_failure() {
     );
     StorageHandle::enter(&mut storage, |s| {
         seed_issued(&s, 7);
-        outbe_intex::api::mark_qualified(&s, 7).unwrap();
+        outbe_intex::api::mark_qualified(&s, sid(7)).unwrap();
         let mut f = IntexFactoryContract::new(s.clone());
-        f.insert_qualified(7, U256::from(EXPECTED_TRIGGER)).unwrap();
+        f.insert_qualified(sid(7), U256::from(EXPECTED_TRIGGER))
+            .unwrap();
 
         let oracle = OracleContract::new(s.clone());
         let pair_id = setup_pair(&oracle);
@@ -941,13 +980,13 @@ fn call_survives_router_failure() {
             &mut f,
             &oracle,
             &mut called::DayVwaps::new(pair_id),
-            7,
+            sid(7),
             last_closed_day,
             scan_ts
         )
         .unwrap());
         assert_eq!(
-            outbe_intex::api::read_series(&s, 7)
+            outbe_intex::api::read_series(&s, sid(7))
                 .unwrap()
                 .lifecycle_state()
                 .unwrap(),
@@ -983,7 +1022,7 @@ fn scan_and_qualify_promotes_aged_series() {
         );
         assert_eq!(qualified::scan_and_qualify(&ctx).unwrap(), 1);
 
-        let r = outbe_intex::api::read_series(&s, 7).unwrap();
+        let r = outbe_intex::api::read_series(&s, sid(7)).unwrap();
         assert_eq!(
             r.lifecycle_state().unwrap(),
             outbe_intex::IntexState::Qualified
@@ -1011,7 +1050,7 @@ fn scan_and_call_force_calls_breached_series() {
         );
         assert_eq!(called::scan_and_call(&ctx).unwrap(), 1);
         assert_eq!(
-            outbe_intex::api::read_series(&s, 7)
+            outbe_intex::api::read_series(&s, sid(7))
                 .unwrap()
                 .lifecycle_state()
                 .unwrap(),
@@ -1064,7 +1103,7 @@ fn scan_and_call_reads_daily_vwap_at_midnight() {
         );
         assert_eq!(called::scan_and_call(&ctx).unwrap(), 1);
         assert_eq!(
-            outbe_intex::api::read_series(&s, 7)
+            outbe_intex::api::read_series(&s, sid(7))
                 .unwrap()
                 .lifecycle_state()
                 .unwrap(),
@@ -1098,7 +1137,7 @@ fn scan_does_not_halt_on_overflow_rate() {
         // Must not halt: returns Ok(0) and leaves the series untouched.
         assert_eq!(qualified::scan_and_qualify(&ctx).unwrap(), 0);
         assert_eq!(
-            outbe_intex::api::read_series(&s, 7)
+            outbe_intex::api::read_series(&s, sid(7))
                 .unwrap()
                 .lifecycle_state()
                 .unwrap(),
@@ -1114,7 +1153,7 @@ fn scan_isolates_bad_series() {
         // A bin entry whose series record does not exist: read_series errors -> the series must be
         // skipped (logged), not halt the block.
         IntexFactoryContract::new(s.clone())
-            .insert_unqualified(999, U256::from(EXPECTED_FLOOR))
+            .insert_unqualified(sid(999), U256::from(EXPECTED_FLOOR))
             .unwrap();
 
         let oracle = OracleContract::new(s.clone());
@@ -1136,7 +1175,7 @@ fn scan_isolates_bad_series() {
         // Bad series (999) skipped; healthy series (7) still qualifies.
         assert_eq!(qualified::scan_and_qualify(&ctx).unwrap(), 1);
         assert_eq!(
-            outbe_intex::api::read_series(&s, 7)
+            outbe_intex::api::read_series(&s, sid(7))
                 .unwrap()
                 .lifecycle_state()
                 .unwrap(),
@@ -1163,7 +1202,7 @@ fn call_scan_does_not_halt_on_overflow_vwap() {
         // Must not halt: returns Ok(0) and leaves the series Qualified.
         assert_eq!(called::scan_and_call(&ctx).unwrap(), 0);
         assert_eq!(
-            outbe_intex::api::read_series(&s, 7)
+            outbe_intex::api::read_series(&s, sid(7))
                 .unwrap()
                 .lifecycle_state()
                 .unwrap(),
@@ -1195,10 +1234,10 @@ fn scan_caps_work_per_block_and_resumes_via_cursor() {
         {
             let mut factory = IntexFactoryContract::new(s.clone());
             for id in 1..=cap {
-                factory.insert_unqualified(id, f1).unwrap();
+                factory.insert_unqualified(sid(id), f1).unwrap();
             }
             for id in 1001..=1005u32 {
-                factory.insert_unqualified(id, f2).unwrap();
+                factory.insert_unqualified(sid(id), f2).unwrap();
             }
         }
         let bin2 = IntexFactoryContract::price_to_bin(f2).unwrap();
@@ -1264,7 +1303,7 @@ fn config_dev_profile_drives_issuance_and_qualification() {
 
         // Issuance captures the dev call-trigger and dev-derived prices.
         let dev = crate::config::IntexParams::DEV;
-        let r = outbe_intex::api::read_series(&s, 7).unwrap();
+        let r = outbe_intex::api::read_series(&s, sid(7)).unwrap();
         assert_eq!(r.call_notice_period, dev.call_notice_period);
         assert_eq!(
             r.floor_price_minor,
@@ -1289,14 +1328,14 @@ fn config_dev_profile_drives_issuance_and_qualification() {
         assert!(qualified::try_qualify(
             &s,
             &mut f,
-            7,
+            sid(7),
             dev.qualification_period,
             after_qualification,
             rate
         )
         .unwrap());
         assert_eq!(
-            outbe_intex::api::read_series(&s, 7)
+            outbe_intex::api::read_series(&s, sid(7))
                 .unwrap()
                 .lifecycle_state()
                 .unwrap(),
@@ -1640,7 +1679,7 @@ fn distribute_no_contributors_burns() {
     let found = storage.get_events(INTEX_FACTORY_ADDRESS).iter().any(|log| {
         log.topics().first() == Some(&sig)
             && IIntexFactory::ProceedsBurned::decode_log_data(log)
-                .map(|ev| ev.seriesId == 7 && ev.amount == U256::from(100u64))
+                .map(|ev| ev.worldwideDay == 7 && ev.amount == U256::from(100u64))
                 .unwrap_or(false)
     });
     assert!(found, "expected ProceedsBurned event");
@@ -1737,14 +1776,14 @@ fn unpublished_selectors_refuse_native_value() {
 
     let calls = [
         IIntexFactory::settleCall {
-            seriesId: 0u32,
+            seriesId: 0u64,
             intexHolder: Address::ZERO,
             amount: U256::ZERO,
             paymentToken: Address::ZERO,
         }
         .abi_encode(),
         IIntexFactory::setAuthorizedSettlerCall {
-            seriesId: 0u32,
+            seriesId: 0u64,
             settler: Address::ZERO,
         }
         .abi_encode(),

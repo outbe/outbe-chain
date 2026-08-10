@@ -936,7 +936,7 @@ fn nonzero_owner_projections_are_snapshotted_in_the_created_intent() {
         outbe_intex::api::create_series(
             &storage,
             outbe_intex::CreateSeriesParams {
-                series_id: fixture.wwd.value(),
+                series_id: outbe_intex::SeriesId::pack(fixture.wwd.value(), *b"USD", b'U').unwrap(),
                 worldwide_day: fixture.wwd.value(),
                 issued_intex_count: 1,
                 promis_load_minor: 1,

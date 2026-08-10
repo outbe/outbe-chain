@@ -10,6 +10,7 @@ use outbe_primitives::dispatch::{dispatch_call, metadata, view};
 use outbe_primitives::error::Result;
 
 use crate::schema::{IntexContract, SeriesRecord};
+use crate::series_id::SeriesId;
 
 /// Selectors on this precompile that accept native value. The route table binds
 /// this to the address's `ValuePolicy` at compile time, so a selector added here
@@ -33,19 +34,21 @@ pub fn dispatch(
         use IIntex::IIntexCalls::*;
         match call {
             seriesData(c) => view(c, |c| {
-                let record = registry.load_series(c.seriesId)?;
+                let record = registry.load_series(SeriesId::from_raw(c.seriesId))?;
                 to_abi_data(&record)
             }),
-            seriesExists(c) => view(c, |c| registry.series_exists(c.seriesId)),
+            seriesExists(c) => view(c, |c| {
+                registry.series_exists(SeriesId::from_raw(c.seriesId))
+            }),
             totalSeries(_) => metadata::<IIntex::totalSeriesCall>(|| registry.read_total_series()),
-            seriesAt(c) => view(c, |c| registry.read_series_id_at(c.index)),
+            seriesAt(c) => view(c, |c| Ok(registry.read_series_id_at(c.index)?.value())),
         }
     })
 }
 
 fn to_abi_data(r: &SeriesRecord) -> Result<IIntex::SeriesData> {
     Ok(IIntex::SeriesData {
-        seriesId: r.series_id,
+        seriesId: r.series_id.value(),
         promisLoadMinor: r.promis_load_minor,
         entryPriceMinor: r.entry_price_minor,
         floorPriceMinor: r.floor_price_minor,

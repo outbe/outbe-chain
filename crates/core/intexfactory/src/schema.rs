@@ -2,13 +2,14 @@
 //! unqualified-series bin index. Canonical series state lives in Intex.
 
 use alloy_primitives::{keccak256, Address, B256, U256};
+use outbe_intex::SeriesId;
 use outbe_macros::{contract, storage_schema};
 use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
 
 /// Issuance inputs captured on Outbe.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IssuanceParams {
-    pub series_id: u32,
+    pub series_id: SeriesId,
     pub worldwide_day: u32,
     pub issued_intex_count: u32,
     pub promis_load_minor: u128,
@@ -36,7 +37,7 @@ pub struct IntexFactoryContract {
 
     /// series_id -> cumulative settle count.
     #[attribute(order = 1)]
-    pub settle_count: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub settle_count: outbe_primitives::storage::dsl::Map<SeriesId, U256>,
 
     /// `keccak256(series_id_be32 ++ holder)` -> monotonic minePromis sequence.
     #[attribute(order = 2)]
@@ -54,7 +55,7 @@ pub struct IntexFactoryContract {
     pub unqualified_bin_count: outbe_primitives::storage::dsl::Map<u32, u32>,
     /// `keccak256(bin_id_be32 ++ index_be32)` -> series_id.
     #[attribute(order = 7)]
-    pub unqualified_bin_series: outbe_primitives::storage::dsl::Map<B256, u32>,
+    pub unqualified_bin_series: outbe_primitives::storage::dsl::Map<B256, u64>,
 
     // Qualified-series bin index (by call_price_minor) for the daily
     // Called scan. A series moves here from the unqualified index on qualify.
@@ -69,7 +70,7 @@ pub struct IntexFactoryContract {
     pub qualified_bin_count: outbe_primitives::storage::dsl::Map<u32, u32>,
     /// `keccak256(bin_id_be32 ++ index_be32)` -> series_id.
     #[attribute(order = 12)]
-    pub qualified_bin_series: outbe_primitives::storage::dsl::Map<B256, u32>,
+    pub qualified_bin_series: outbe_primitives::storage::dsl::Map<B256, u64>,
 
     // Genesis parameter-profile selector (0 = prod, 1 = dev); see crate::config.
     #[attribute(order = 13)]
@@ -83,18 +84,18 @@ pub struct IntexFactoryContract {
 
 impl IntexFactoryContract<'_> {
     /// Composite key for `authorized_settler`: `keccak256(holder ++ series_id_be32)`.
-    pub fn authorized_settler_key(holder: Address, series_id: u32) -> B256 {
-        let mut buf = [0u8; 24];
+    pub fn authorized_settler_key(holder: Address, series_id: SeriesId) -> B256 {
+        let mut buf = [0u8; 28];
         buf[0..20].copy_from_slice(holder.as_slice());
-        buf[20..24].copy_from_slice(&series_id.to_be_bytes());
+        buf[20..28].copy_from_slice(&series_id.value().to_be_bytes());
         keccak256(buf)
     }
 
     /// Composite key for `mine_seq`: `keccak256(series_id_be32 ++ holder)`.
-    pub fn mine_seq_key(series_id: u32, holder: Address) -> B256 {
-        let mut buf = [0u8; 24];
-        buf[0..4].copy_from_slice(&series_id.to_be_bytes());
-        buf[4..24].copy_from_slice(holder.as_slice());
+    pub fn mine_seq_key(series_id: SeriesId, holder: Address) -> B256 {
+        let mut buf = [0u8; 28];
+        buf[0..8].copy_from_slice(&series_id.value().to_be_bytes());
+        buf[8..28].copy_from_slice(holder.as_slice());
         keccak256(buf)
     }
 }

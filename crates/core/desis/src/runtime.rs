@@ -9,6 +9,7 @@ use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_promislimit::PromisLimitContract;
 
 use outbe_intexfactory::constants::{QUALIFIER_ISSUANCE_ISO, QUALIFIER_REFERENCE_ISO};
+use outbe_intexfactory::SeriesId;
 
 use crate::constants::{
     BIDS_FANIN_TIMEOUT_SECS, BID_QUANTITY_FLOOR_BPS, COMMIT_WINDOW_SECONDS, DAY_STATE_GREEN,
@@ -744,7 +745,7 @@ fn clear_inner(
     // Hand issuance to IntexFactory. A zero-winner clearing creates no series;
     // issue() then only discards the day's never-to-distribute creator rewards.
     let params = outbe_intexfactory::schema::IssuanceParams {
-        series_id: derive_series_id(worldwide_day),
+        series_id: derive_series_id(worldwide_day)?,
         worldwide_day,
         issued_intex_count: result.issued_intex_count,
         promis_load_minor: config.promis_load_minor,
@@ -928,9 +929,16 @@ fn calculate_clearing(
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// The single point where a series id is derived from the day; identity until multi-currency (then 1 -> N).
-fn derive_series_id(worldwide_day: u32) -> u32 {
-    worldwide_day
+/// The single point where a series id is built. The currency pair is still the
+/// fixed qualifier pair, so a day yields one series; the clearing partition
+/// replaces the pair with each winning group's own.
+fn derive_series_id(worldwide_day: u32) -> Result<SeriesId> {
+    SeriesId::pack(
+        worldwide_day,
+        SeriesId::numeric_code(QUALIFIER_ISSUANCE_ISO),
+        SeriesId::numeric_code(QUALIFIER_REFERENCE_ISO)[0],
+    )
+    .map_err(Into::into)
 }
 
 fn require_origin_router(caller: Address) -> Result<()> {

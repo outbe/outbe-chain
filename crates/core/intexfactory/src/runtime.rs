@@ -3,6 +3,7 @@
 use alloy_primitives::{keccak256, Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 
+use outbe_intex::SeriesId;
 use outbe_primitives::addresses::{INTEX_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
@@ -77,7 +78,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
     for (chain_id, recipients, quantities) in issuance_legs(&params) {
         let router_params = IOriginRouter::IssuanceInstructionsParams {
             dstChainId: chain_id,
-            seriesId: params.series_id,
+            seriesId: params.series_id.value(),
             worldwideDay: params.worldwide_day,
             issuedIntexCount: params.issued_intex_count,
             promisLoadMinor: params.promis_load_minor,
@@ -114,7 +115,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
         .saturating_add(PROCEEDS_FANIN_TIMEOUT_SECS);
     outbe_intex::api::arm_proceeds(
         storage,
-        params.series_id,
+        params.worldwide_day,
         &params.recipient_chains,
         deadline,
     )?;
@@ -122,7 +123,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
     emit_event(
         storage,
         crate::precompile::IIntexFactory::SeriesIssued {
-            seriesId: params.series_id,
+            seriesId: params.series_id.value(),
             issuedIntexCount: params.issued_intex_count,
             entryPrice: params.entry_price_minor,
         },
@@ -179,7 +180,7 @@ pub(crate) fn derived_cost_amount(
 pub fn set_authorized_settler(
     storage: &StorageHandle<'_>,
     holder: Address,
-    series_id: u32,
+    series_id: SeriesId,
     settler: Address,
 ) -> Result<()> {
     if holder.is_zero() || settler.is_zero() {
@@ -291,7 +292,7 @@ fn burn_ownerless_proceeds(
     emit_event(
         storage,
         crate::precompile::IIntexFactory::ProceedsBurned {
-            seriesId: worldwide_day,
+            worldwideDay: worldwide_day,
             amount,
         },
     )
@@ -340,7 +341,7 @@ pub(crate) fn pay_chunk(storage: &StorageHandle<'_>, worldwide_day: u32, limit: 
         emit_event(
             storage,
             crate::precompile::IIntexFactory::ProceedsDistributed {
-                seriesId: worldwide_day,
+                worldwideDay: worldwide_day,
                 amount: progress.amount,
                 contributors: count,
             },
@@ -390,7 +391,7 @@ pub(crate) fn drain_distributions(storage: &StorageHandle<'_>) -> Result<()> {
 /// (token / vault / NFT) goes via storage.call.
 pub fn settle(
     storage: &StorageHandle<'_>,
-    series_id: u32,
+    series_id: SeriesId,
     intex_holder: Address,
     settler: Address,
     amount: U256,
@@ -419,7 +420,7 @@ pub fn settle(
     }
 
     // Issued balance (NFT). Issued token id = uint256(seriesId).
-    let issued_token_id = U256::from(series_id);
+    let issued_token_id = U256::from(series_id.value());
     let balance = nft_balance_of(storage, intex_holder, issued_token_id)?;
     if balance.is_zero() {
         return Err(IntexFactoryError::ZeroBalance.into());
@@ -487,7 +488,7 @@ pub fn settle(
         INTEX_NFT1155_ADDRESS,
         U256::ZERO,
         IIntexNFT1155::settleCall {
-            seriesId: series_id,
+            seriesId: series_id.value(),
             from: intex_holder,
             to: settler,
             amount,
@@ -501,7 +502,7 @@ pub fn settle(
     emit_event(
         storage,
         crate::precompile::IIntexFactory::Settled {
-            seriesId: series_id,
+            seriesId: series_id.value(),
             intexHolder: intex_holder,
             settler,
             amount,
@@ -526,7 +527,7 @@ fn nft_balance_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Re
 /// minor units. Rejects a token the series does not accept.
 pub fn quote_cost_amount(
     storage: &StorageHandle<'_>,
-    series_id: u32,
+    series_id: SeriesId,
     payment_token: Address,
 ) -> Result<U256> {
     let series = outbe_intex::api::read_series(storage, series_id)?;
@@ -591,7 +592,7 @@ fn erc20_decimals(storage: &StorageHandle<'_>, token: Address) -> Result<u8> {
 /// caller.
 pub fn mine_promis(
     storage: &StorageHandle<'_>,
-    series_id: u32,
+    series_id: SeriesId,
     holder: Address,
     amount: U256,
     nonce: U256,
@@ -627,7 +628,7 @@ pub fn mine_promis(
         U256::ZERO,
         IIntexNFT1155::burnSettledCall {
             holder,
-            seriesId: series_id,
+            seriesId: series_id.value(),
             amount,
         }
         .abi_encode()
@@ -641,7 +642,7 @@ pub fn mine_promis(
     emit_event(
         storage,
         crate::precompile::IIntexFactory::PromisMined {
-            seriesId: series_id,
+            seriesId: series_id.value(),
             holder,
             amount,
             promisAmount: promis_amount,
@@ -651,10 +652,10 @@ pub fn mine_promis(
 }
 
 /// Settled token id = `uint256(keccak256("SETTLED" ++ seriesId))`.
-pub(crate) fn settled_token_id(series_id: u32) -> U256 {
+pub(crate) fn settled_token_id(series_id: SeriesId) -> U256 {
     let mut buf = Vec::with_capacity(7 + 4);
     buf.extend_from_slice(b"SETTLED");
-    buf.extend_from_slice(&series_id.to_be_bytes());
+    buf.extend_from_slice(&series_id.value().to_be_bytes());
     U256::from_be_bytes(keccak256(&buf).0)
 }
 
@@ -662,7 +663,7 @@ pub(crate) fn settled_token_id(series_id: u32) -> U256 {
 pub(crate) fn compute_pow_hash(
     holder: Address,
     promis_amount: U256,
-    series_id: u32,
+    series_id: SeriesId,
     seq: u32,
     nonce: U256,
 ) -> Result<[u8; 32]> {
@@ -672,7 +673,7 @@ pub(crate) fn compute_pow_hash(
     let mut preimage = String::new();
     preimage.push_str(&hex::encode(holder.as_slice()));
     preimage.push_str(&hex::encode(promis_amount.to_be_bytes::<32>()));
-    preimage.push_str(&hex::encode(series_id.to_be_bytes()));
+    preimage.push_str(&hex::encode(series_id.value().to_be_bytes()));
     preimage.push_str(&hex::encode(seq.to_be_bytes()));
 
     let mut data = preimage.into_bytes();
@@ -688,7 +689,7 @@ pub(crate) fn compute_pow_hash(
 pub(crate) fn validate_pow(
     holder: Address,
     promis_amount: U256,
-    series_id: u32,
+    series_id: SeriesId,
     seq: u32,
     nonce: U256,
 ) -> Result<()> {

@@ -112,7 +112,7 @@ pub fn install_certified_contributor_root(
             INTEX_ADDRESS,
             IIntex::CertifiedContributorRootInstalled {
                 activationCallId: input.binding.activation_call_id,
-                seriesId: input.precondition.series_id,
+                worldwideDay: input.precondition.series_id,
                 seriesVersionBefore: input.precondition.expected_series_version,
                 seriesVersionAfter: next_version,
                 contributorCount: input.contributor_count,
@@ -162,8 +162,10 @@ fn revert(reason: &'static str) -> PrecompileError {
 
 #[cfg(test)]
 mod tests {
+    use crate::series_id::SeriesId;
     use alloy_primitives::{Address, LogData};
     use alloy_sol_types::SolEvent;
+
     use outbe_ocomp_protocol::{
         common::EntityId36,
         profile::poc_schema_limits,
@@ -372,6 +374,11 @@ mod tests {
         }
     }
 
+    /// Test ids carry a fixed USD/U pair; only the day varies.
+    fn test_sid(worldwide_day: u32) -> SeriesId {
+        SeriesId::pack(worldwide_day, *b"USD", b'U').unwrap()
+    }
+
     fn input(series_id: u32, call: u8) -> CertifiedContributorRootV1 {
         CertifiedContributorRootV1 {
             binding: binding(call),
@@ -459,7 +466,7 @@ mod tests {
         let (series_exists, legacy_contributors, target) =
             StorageHandle::enter(&mut provider, |storage| {
                 (
-                    api::series_exists(&storage, input.precondition.series_id).unwrap(),
+                    api::series_exists(&storage, test_sid(input.precondition.series_id)).unwrap(),
                     api::read_contributors(&storage, input.precondition.series_id).unwrap(),
                     api::ocomp_contributor_target_projection(
                         &storage,
@@ -532,7 +539,7 @@ mod tests {
             api::create_series(
                 &storage,
                 crate::CreateSeriesParams {
-                    series_id,
+                    series_id: test_sid(series_id),
                     worldwide_day: series_id,
                     issued_intex_count: 1,
                     promis_load_minor: 1,
@@ -587,7 +594,7 @@ mod tests {
             api::create_series(
                 &storage,
                 crate::CreateSeriesParams {
-                    series_id: value.precondition.series_id,
+                    series_id: test_sid(value.precondition.series_id),
                     worldwide_day: value.precondition.series_id,
                     issued_intex_count: 1,
                     promis_load_minor: 1,
@@ -605,7 +612,7 @@ mod tests {
                 },
             )
             .unwrap();
-            assert!(api::series_exists(&storage, value.precondition.series_id).unwrap());
+            assert!(api::series_exists(&storage, test_sid(value.precondition.series_id)).unwrap());
             assert!(
                 api::read_contributors(&storage, value.precondition.series_id)
                     .unwrap()
