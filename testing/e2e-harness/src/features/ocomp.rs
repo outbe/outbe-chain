@@ -2252,18 +2252,21 @@ fn production_ocomp_domains_process_job_intent(world: &mut World) {
          {generation_exists:?}"
     );
     let primary = world.validators.primary_port();
-    world.state.ocomp_validator_balances_before = (0..4)
+    // ResultVoteV1 carriers are signed by the role-scoped OCOMP delegates,
+    // not by the validator owner EOAs.  Probe those exact sender accounts so
+    // unrelated owner-side protocol credits cannot masquerade as carrier fees.
+    world.state.ocomp_validator_balances_before = (0..world.validators.size())
         .map(|validator_index| {
-            let key = world
-                .validators
-                .get(validator_index)
-                .evm_key()
-                .expect("read validator EVM key");
-            let address = eth::address_of(&key).expect("derive validator EVM address");
+            let validator_index = u8::try_from(validator_index)
+                .expect("OCOMP validator index fits the wire representation");
+            let address = world
+                .ocomp
+                .ocomp_delegate_address(validator_index)
+                .expect("derive OCOMP delegate address");
             let balance = world
                 .rpc
                 .balance_on(primary, &format!("{address:#x}"))
-                .expect("read validator EVM balance before result votes");
+                .expect("read OCOMP delegate balance before result votes");
             (address, balance)
         })
         .collect();
@@ -2634,7 +2637,7 @@ fn quorum_applies_lysis_and_creates_nod_with_vote_count(
                     .expect("read validator balance after result votes");
                 assert_eq!(
                     after, *before,
-                    "validator {address:#x} paid for a ZeroFee result vote"
+                    "OCOMP delegate {address:#x} paid for a system-carrier result vote"
                 );
                 balances_after.push((*address, after));
             }
