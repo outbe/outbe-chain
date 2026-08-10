@@ -11,6 +11,7 @@ pub mod certified;
 pub mod errors;
 pub mod precompile;
 pub mod schema;
+pub mod series_id;
 pub(crate) mod state;
 
 pub use certified::{install_certified_contributor_root, CertifiedContributorRootV1};
@@ -19,6 +20,7 @@ pub use schema::{
     cost_amount_minor, CertifiedContributorGenerationProjection, CreateSeriesParams, DistProgress,
     IntexCallTrigger, IntexContract, IntexState, SeriesRecord,
 };
+pub use series_id::SeriesId;
 
 #[cfg(test)]
 mod tests;
