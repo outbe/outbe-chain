@@ -60,9 +60,6 @@ fn convert_stables_to_gratis(
 ) -> Result<(U256, U256)> {
     let iso_code = read_iso_code(&storage, asset)?;
     let rate = coen_rate_for(storage, iso_code)?;
-    if rate.is_zero() {
-        return Err(GratisFactoryError::OracleRateUnavailable.into());
-    }
     let numerator = amount_stables
         .checked_mul(decimals_diff())
         .and_then(|v| v.checked_mul(SCALE_1E18))

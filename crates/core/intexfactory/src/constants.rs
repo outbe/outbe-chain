@@ -32,6 +32,7 @@ pub const PROCEEDS_FANIN_TIMEOUT_SECS: u64 = 24 * 60 * 60;
 /// Time a series must age past `issued_at` before it can become Qualified.
 pub const QUALIFICATION_PERIOD: u32 = 21 * 24 * 3600;
 
+// TODO remove this constant and fetch reference currencies from the oracle
 /// Reference-currency ISO for the qualifier oracle pair (COEN/840 = 840).
 pub const QUALIFIER_REFERENCE_ISO: u16 = 840;
 
