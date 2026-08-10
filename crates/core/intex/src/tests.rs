@@ -460,7 +460,7 @@ fn distribution_progress_lifecycle() {
         api::start_distribution(&s, 7, U256::from(1000u64), U256::from(100u64)).unwrap();
 
         let p = api::get_progress(&s, 7).unwrap().expect("progress exists");
-        assert_eq!(p.series_id, 7);
+        assert_eq!(p.worldwide_day, 7);
         assert_eq!(p.amount, U256::from(1000u64));
         assert_eq!(p.total_nominal, U256::from(100u64));
         assert_eq!(p.cursor, 0);

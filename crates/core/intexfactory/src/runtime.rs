@@ -220,46 +220,46 @@ pub fn distribute(
 /// sweep can both call it safely.
 pub(crate) fn try_settle_proceeds(
     storage: &StorageHandle<'_>,
-    series_id: u32,
+    worldwide_day: u32,
     now: u64,
 ) -> Result<()> {
     // Never overlap a round that is still paying out.
-    if outbe_intex::api::get_progress(storage, series_id)?.is_some() {
+    if outbe_intex::api::get_progress(storage, worldwide_day)?.is_some() {
         return Ok(());
     }
-    let deadline = outbe_intex::api::proceeds_deadline(storage, series_id)?;
+    let deadline = outbe_intex::api::proceeds_deadline(storage, worldwide_day)?;
     if deadline == 0 {
         return Ok(()); // never armed (no issuance for this series)
     }
-    let complete = outbe_intex::api::proceeds_ready(storage, series_id)?;
+    let complete = outbe_intex::api::proceeds_ready(storage, worldwide_day)?;
     if !complete && now < deadline {
         return Ok(()); // keep waiting for the remaining chains
     }
 
-    let pot = outbe_intex::api::take_proceeds_pot(storage, series_id)?;
+    let pot = outbe_intex::api::take_proceeds_pot(storage, worldwide_day)?;
     if pot.is_zero() {
         // Nothing new to pay. Once every chain is in, finalize (clears the map);
         // a forced empty round just idles until a late arrival tops the pot up.
         if complete {
-            outbe_intex::api::finalize_proceeds(storage, series_id)?;
+            outbe_intex::api::finalize_proceeds(storage, worldwide_day)?;
         }
         return Ok(());
     }
 
-    let total = outbe_intex::api::contributor_total(storage, series_id)?;
+    let total = outbe_intex::api::contributor_total(storage, worldwide_day)?;
     if total.is_zero() {
         // Ownerless proceeds: burn instead of stranding them.
-        burn_ownerless_proceeds(storage, series_id, pot)?;
+        burn_ownerless_proceeds(storage, worldwide_day, pot)?;
         if complete {
-            outbe_intex::api::finalize_proceeds(storage, series_id)?;
+            outbe_intex::api::finalize_proceeds(storage, worldwide_day)?;
         }
         return Ok(());
     }
 
     // Finalize on completion only when every winning chain is in; otherwise the
     // deadline forced a partial payout and the map is retained for a top-up.
-    outbe_intex::api::set_proceeds_finalize_on_done(storage, series_id, complete)?;
-    outbe_intex::api::start_distribution(storage, series_id, pot, total)
+    outbe_intex::api::set_proceeds_finalize_on_done(storage, worldwide_day, complete)?;
+    outbe_intex::api::start_distribution(storage, worldwide_day, pot, total)
 }
 
 /// Begin-block sweep: settle every series whose proceeds fan-in deadline has
@@ -267,14 +267,14 @@ pub(crate) fn try_settle_proceeds(
 /// block instead of halting the block.
 pub(crate) fn sweep_proceeds_deadlines(storage: &StorageHandle<'_>, now: u64) -> Result<()> {
     let count = outbe_intex::api::awaiting_proceeds_count(storage)?;
-    let mut series_ids = Vec::with_capacity(count as usize);
+    let mut worldwide_days = Vec::with_capacity(count as usize);
     for i in 0..count {
-        series_ids.push(outbe_intex::api::awaiting_proceeds_at(storage, i)?);
+        worldwide_days.push(outbe_intex::api::awaiting_proceeds_at(storage, i)?);
     }
-    for series_id in series_ids {
-        let res = storage.with_checkpoint(|| try_settle_proceeds(storage, series_id, now));
+    for worldwide_day in worldwide_days {
+        let res = storage.with_checkpoint(|| try_settle_proceeds(storage, worldwide_day, now));
         if let Err(e) = res {
-            tracing::warn!(target: "outbe::intexfactory", series_id, error = ?e, "proceeds sweep: skipping series");
+            tracing::warn!(target: "outbe::intexfactory", worldwide_day, error = ?e, "proceeds sweep: skipping series");
         }
     }
     Ok(())
@@ -284,14 +284,14 @@ pub(crate) fn sweep_proceeds_deadlines(storage: &StorageHandle<'_>, now: u64) ->
 /// destroy the native COEN held by the factory, reducing total supply.
 fn burn_ownerless_proceeds(
     storage: &StorageHandle<'_>,
-    series_id: u32,
+    worldwide_day: u32,
     amount: U256,
 ) -> Result<()> {
     storage.decrease_balance(INTEX_FACTORY_ADDRESS, amount)?;
     emit_event(
         storage,
         crate::precompile::IIntexFactory::ProceedsBurned {
-            seriesId: series_id,
+            seriesId: worldwide_day,
             amount,
         },
     )
@@ -302,21 +302,21 @@ fn burn_ownerless_proceeds(
 /// full `amount` is paid out exactly. On reaching the last contributor the
 /// distribution is finalized (progress + contributor map cleared). Driven by
 /// the begin-block drain.
-pub(crate) fn pay_chunk(storage: &StorageHandle<'_>, series_id: u32, limit: u32) -> Result<()> {
-    let mut progress = outbe_intex::api::get_progress(storage, series_id)?
-        .ok_or(IntexFactoryError::NoDistribution(series_id))?;
-    let count = outbe_intex::api::contributor_count(storage, series_id)?;
+pub(crate) fn pay_chunk(storage: &StorageHandle<'_>, worldwide_day: u32, limit: u32) -> Result<()> {
+    let mut progress = outbe_intex::api::get_progress(storage, worldwide_day)?
+        .ok_or(IntexFactoryError::NoDistribution(worldwide_day))?;
+    let count = outbe_intex::api::contributor_count(storage, worldwide_day)?;
     let end = progress.cursor.saturating_add(limit).min(count);
 
     // A zero denominator would panic on divide; begin-block panics halt the chain (not checkpoint-isolated),
     // so fail as an isolated Err instead.
     if progress.total_nominal.is_zero() {
-        return Err(IntexFactoryError::NoContributors(series_id).into());
+        return Err(IntexFactoryError::NoContributors(worldwide_day).into());
     }
 
     let mut paid = progress.paid_so_far;
     for i in progress.cursor..end {
-        let (owner, nominal) = outbe_intex::api::contributor_at(storage, series_id, i)?;
+        let (owner, nominal) = outbe_intex::api::contributor_at(storage, worldwide_day, i)?;
         // The final contributor absorbs the rounding remainder so the sum of
         // payouts equals `amount` exactly. checked_mul: isolated Err over a silent wrap.
         let share = if i == count - 1 {
@@ -325,7 +325,7 @@ pub(crate) fn pay_chunk(storage: &StorageHandle<'_>, series_id: u32, limit: u32)
             progress
                 .amount
                 .checked_mul(nominal)
-                .ok_or(IntexFactoryError::DistributionOverflow(series_id))?
+                .ok_or(IntexFactoryError::DistributionOverflow(worldwide_day))?
                 / progress.total_nominal
         };
         storage.transfer_balance(INTEX_FACTORY_ADDRESS, owner, share)?;
@@ -336,26 +336,26 @@ pub(crate) fn pay_chunk(storage: &StorageHandle<'_>, series_id: u32, limit: u32)
         // End this round (progress + active-set entry). Whether the contributor
         // map is also cleared depends on the fan-in: finalize when every winning
         // chain is in, otherwise retain the map for a late top-up.
-        outbe_intex::api::finish_distribution_round(storage, series_id)?;
+        outbe_intex::api::finish_distribution_round(storage, worldwide_day)?;
         emit_event(
             storage,
             crate::precompile::IIntexFactory::ProceedsDistributed {
-                seriesId: series_id,
+                seriesId: worldwide_day,
                 amount: progress.amount,
                 contributors: count,
             },
         )?;
-        if outbe_intex::api::proceeds_finalize_on_done(storage, series_id)? {
+        if outbe_intex::api::proceeds_finalize_on_done(storage, worldwide_day)? {
             // A straggler (or a chain sending its proceeds in parts) can top the
             // pot up while this final round drains. finalize clears the map, so
             // pay any such top-up over it first and finalize only once the pot is
             // empty — otherwise the top-up is later burned as ownerless.
-            let pot = outbe_intex::api::take_proceeds_pot(storage, series_id)?;
+            let pot = outbe_intex::api::take_proceeds_pot(storage, worldwide_day)?;
             if pot.is_zero() {
-                outbe_intex::api::finalize_proceeds(storage, series_id)?;
+                outbe_intex::api::finalize_proceeds(storage, worldwide_day)?;
             } else {
-                let total = outbe_intex::api::contributor_total(storage, series_id)?;
-                outbe_intex::api::start_distribution(storage, series_id, pot, total)?;
+                let total = outbe_intex::api::contributor_total(storage, worldwide_day)?;
+                outbe_intex::api::start_distribution(storage, worldwide_day, pot, total)?;
             }
         }
     } else {
@@ -372,15 +372,15 @@ pub(crate) fn pay_chunk(storage: &StorageHandle<'_>, series_id: u32, limit: u32)
 /// that mutates underneath us.
 pub(crate) fn drain_distributions(storage: &StorageHandle<'_>) -> Result<()> {
     let count = outbe_intex::api::active_dist_count(storage)?;
-    let mut series_ids = Vec::with_capacity(count as usize);
+    let mut worldwide_days = Vec::with_capacity(count as usize);
     for i in 0..count {
-        series_ids.push(outbe_intex::api::active_dist_at(storage, i)?);
+        worldwide_days.push(outbe_intex::api::active_dist_at(storage, i)?);
     }
-    for series_id in series_ids {
+    for worldwide_day in worldwide_days {
         // Per-series isolation: Err reverts the series' checkpoint, retried next block.
-        let res = storage.with_checkpoint(|| pay_chunk(storage, series_id, DIST_CHUNK_LIMIT));
+        let res = storage.with_checkpoint(|| pay_chunk(storage, worldwide_day, DIST_CHUNK_LIMIT));
         if let Err(e) = res {
-            tracing::warn!(target: "outbe::intexfactory", series_id, error = ?e, "distribution drain: skipping series");
+            tracing::warn!(target: "outbe::intexfactory", worldwide_day, error = ?e, "distribution drain: skipping series");
         }
     }
     Ok(())
