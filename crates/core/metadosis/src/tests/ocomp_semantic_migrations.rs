@@ -497,23 +497,24 @@ fn deadline_keeps_every_non_active_missing_status_unchanged() {
             .set_block_number(finalized.deadline_height - 1);
         StorageHandle::enter(&mut fixture.provider, |storage| {
             let mut validators = ValidatorSet::new(storage);
-            let before = validators.get_validator(missing).unwrap().unwrap();
             transition_validator_to_status_for_test(
                 &mut validators,
                 missing,
                 current_status,
                 finalized.deadline_height - 1,
             );
+            let transitioned = validators.get_validator(missing).unwrap().unwrap();
             validators
                 .test_set_history(
                     missing,
                     ValidatorHistory::new(
-                        before.joined_at_height,
-                        (before.deactivated_at_height != 0).then_some(before.deactivated_at_height),
+                        transitioned.joined_at_height,
+                        (transitioned.deactivated_at_height != 0)
+                            .then_some(transitioned.deactivated_at_height),
                         7,
-                        before.missed_blocks,
-                        before.missed_votes,
-                        before.blocks_proposed,
+                        transitioned.missed_blocks,
+                        transitioned.missed_votes,
+                        transitioned.blocks_proposed,
                     ),
                 )
                 .unwrap();

@@ -530,23 +530,17 @@ where
         let mut provider = ReadOnlyStorageProvider::new(reader);
         let storage = StorageHandle::new(&mut provider);
         let validators = outbe_validatorset::contract::ValidatorSet::new(storage);
-        let epoch_number = validators
-            .epoch_number
-            .read()
+        let epoch = validators
+            .epoch_snapshot()
             .map_err(|error| internal_err(error.to_string()))?;
+        let epoch_number = epoch.number;
         if epoch_number > U256::from(u64::MAX) {
             return Err(internal_err(
                 "finalized epoch number exceeds u64".to_owned(),
             ));
         }
-        let epoch_start_height = validators
-            .epoch_start_block
-            .read()
-            .map_err(|error| internal_err(error.to_string()))?;
-        let epoch_length_blocks = validators
-            .config_epoch_length_blocks
-            .read()
-            .map_err(|error| internal_err(error.to_string()))?;
+        let epoch_start_height = epoch.start_block;
+        let epoch_length_blocks = epoch.length_blocks;
         if epoch_length_blocks == 0 {
             return Err(internal_err("finalized epoch length is zero".to_owned()));
         }
