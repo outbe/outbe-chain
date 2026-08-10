@@ -17,6 +17,7 @@ eyre.workspace = true
 filetime.workspace = true
 hex.workspace = true
 k256.workspace = true
+outbe-chain-constants.workspace = true
 outbe-metadosis.workspace = true
 outbe-node.workspace = true
 outbe-ocomp-protocol.workspace = true

@@ -233,8 +233,8 @@ mod tests {
                             &poc_schema_limits(),
                         )?;
                         capability.authorize_contributor_installation()?;
-                        capability.authorize_tribute_retirement()?;
                         capability.authorize_carry_over_credit()?;
+                        capability.authorize_tribute_retirement()?;
                         capability.authorize_terminal_receipt()?;
                         Ok(receipt)
                     },
@@ -632,8 +632,8 @@ mod tests {
                     &poc_schema_limits(),
                 )?;
                 capability.authorize_contributor_installation()?;
-                capability.authorize_tribute_retirement()?;
                 capability.authorize_carry_over_credit()?;
+                capability.authorize_tribute_retirement()?;
                 capability.authorize_terminal_receipt()?;
                 Ok(receipt)
             })

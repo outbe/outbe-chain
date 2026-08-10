@@ -6,28 +6,21 @@
 //! [`FollowResolver`](super::resolver), which verifies the certificate against
 //! the epoch committee and hands the block to the executor.
 //!
-//! **Why the driver registers epochs ahead of hinting.** The marshal silently
-//! drops a `hint_finalized` for a height whose epoch has no registered verifier
-//! (see `marshal::core::mailbox::hint_finalized`). Each new epoch's committee is
-//! only known from the boundary block that activates it. So before hinting any
-//! height in epoch N, the driver fetches epoch N's first block from the upstream
-//! and [`advance_from_block_extra_data`](super::CommitteeChain::advance_from_block_extra_data)s
-//! the shared committee chain. This is the same registration the resolver does
-//! on the fetch path; doing it here too keeps the *hint* from being dropped. The
-//! marshal still re-verifies every certificate against the registered committee,
-//! so registration is never a trust shortcut.
+//! The driver never predicts epochs. It hints only through the latest possible
+//! boundary allowed by the observed activation plus genesis grace. The resolver
+//! authenticates a pre-announce/boundary and advances the shared epocher before
+//! handing a boundary block to the marshal.
 
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use commonware_consensus::types::{Epoch, Epocher, Height};
+use commonware_consensus::types::Height;
 use commonware_cryptography::bls12381;
 use commonware_runtime::{Clock, Metrics, Spawner};
 use commonware_utils::vec::NonEmptyVec;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
-use crate::follow::upstream::{FinalizedSource, TipSource};
-use crate::follow::{CommitteeChain, FollowerEpocher};
+use crate::follow::upstream::TipSource;
+use crate::follow::FollowerEpocher;
 use crate::marshal_types::MarshalMailbox;
 
 /// How often the driver wakes to re-hint the marshal's pull window.
@@ -56,43 +49,28 @@ fn stub_targets() -> NonEmptyVec<bls12381::PublicKey> {
 }
 
 /// Configuration for the follow driver.
-pub(super) struct Config<F, T> {
+pub(super) struct Config<T> {
     /// Marshal mailbox — receives `hint_finalized` for each height to pull.
     pub(super) marshal: MarshalMailbox,
-    /// Shared committee chain — epochs are registered here before hinting.
-    pub(super) chain: Arc<Mutex<CommitteeChain>>,
-    /// Upstream finalized-block source — used to fetch each epoch's first block
-    /// for committee registration.
-    pub(super) upstream: F,
     /// Upstream tip discovery.
     pub(super) tip: T,
     /// Height→epoch strategy (shared with the marshal).
     pub(super) epocher: FollowerEpocher,
-    /// The anchor epoch (the first epoch the follower can verify); the driver
-    /// begins pulling from this epoch's first height.
-    pub(super) anchor_epoch: Epoch,
 }
 
 /// The follow driver actor.
-pub(super) struct Driver<E, F, T> {
+pub(super) struct Driver<E, T> {
     context: E,
-    config: Config<F, T>,
-    /// Highest epoch whose committee the driver has ensured is registered.
-    registered_epoch: Option<Epoch>,
+    config: Config<T>,
 }
 
-impl<E, F, T> Driver<E, F, T>
+impl<E, T> Driver<E, T>
 where
     E: Spawner + Clock + Metrics + Send + Sync + 'static,
-    F: FinalizedSource,
     T: TipSource,
 {
-    pub(super) fn new(context: E, config: Config<F, T>) -> Self {
-        Self {
-            context,
-            config,
-            registered_epoch: None,
-        }
+    pub(super) fn new(context: E, config: Config<T>) -> Self {
+        Self { context, config }
     }
 
     pub(super) fn start(self) -> commonware_runtime::Handle<()> {
@@ -101,10 +79,7 @@ where
     }
 
     async fn run(mut self) {
-        info!(
-            anchor_epoch = self.config.anchor_epoch.get(),
-            "follow driver started"
-        );
+        info!("follow driver started");
         // Last successfully discovered upstream tip. A fresh tip query can fail
         // transiently (e.g. the upstream RPC rate-limits our poll with HTTP 429);
         // we keep driving the marshal toward the last known tip rather than
@@ -152,36 +127,18 @@ where
         }
 
         let window_end = tip.get().min(processed.saturating_add(HINT_WINDOW));
-
-        // Ensure every epoch the window spans is registered before hinting (the
-        // marshal drops a hint whose epoch has no verifier). Register from the
-        // window's first NEW height up to its last.
-        let first_epoch = self
+        let hint_end = self
             .config
             .epocher
-            .containing(Height::new(processed.saturating_add(1)))
-            .map_or(self.config.anchor_epoch, |i| i.epoch());
-        let last_epoch = self
-            .config
-            .epocher
-            .containing(Height::new(window_end))
-            .map_or(first_epoch, |i| i.epoch());
-        let mut epoch = first_epoch;
-        while epoch <= last_epoch {
-            if !self.ensure_epoch_registered(epoch).await {
-                // Could not register this epoch yet (upstream gap). Hint only up
-                // to the highest height of the last successfully registered epoch
-                // and retry the rest next tick.
-                break;
-            }
-            epoch = Epoch::new(epoch.get().saturating_add(1));
+            .supported_ceiling()
+            .map_or(processed, |height| window_end.min(height.get()));
+        if hint_end <= processed {
+            debug!(
+                tip = tip.get(),
+                processed, "follow driver waits for an authenticated epoch boundary"
+            );
+            return;
         }
-        // The highest epoch we actually registered bounds how far we may hint.
-        let registered_ceiling = self
-            .registered_epoch
-            .and_then(|e| self.config.epocher.last(e))
-            .map_or(window_end, |h| h.get());
-        let hint_end = window_end.min(registered_ceiling);
 
         let targets = stub_targets();
         let hint_start = processed.saturating_add(1);
@@ -195,53 +152,8 @@ where
             processed,
             hint_start,
             hint_end,
-            registered = ?self.registered_epoch.map(|e| e.get()),
+            observed_ceiling = hint_end,
             "follow driver hinted window"
         );
-    }
-
-    /// Ensure epoch `epoch`'s committee verifier is registered in the shared
-    /// chain. Returns `false` if it could not be registered (so the caller
-    /// stops and retries later).
-    async fn ensure_epoch_registered(&mut self, epoch: Epoch) -> bool {
-        if self.registered_epoch.is_some_and(|r| r >= epoch) {
-            return true;
-        }
-        // Already registered (e.g. anchor bootstrap or resolver fetch)?
-        if self
-            .config
-            .chain
-            .lock()
-            .expect("committee chain mutex poisoned")
-            .highest_registered()
-            .is_some_and(|h| h >= epoch)
-        {
-            self.registered_epoch = Some(self.registered_epoch.map_or(epoch, |r| r.max(epoch)));
-            return true;
-        }
-
-        match super::engine::prepare_committee_chain(
-            &self.config.chain,
-            &self.config.upstream,
-            &self.config.epocher,
-            self.config.anchor_epoch,
-            epoch,
-        )
-        .await
-        {
-            Ok(()) => {
-                self.registered_epoch = self
-                    .config
-                    .chain
-                    .lock()
-                    .expect("committee chain mutex poisoned")
-                    .highest_registered();
-                true
-            }
-            Err(error) => {
-                warn!(epoch = epoch.get(), %error, "could not extend authenticated follower committee chain; will retry");
-                false
-            }
-        }
     }
 }

@@ -3,7 +3,6 @@ use outbe_common::WorldwideDay;
 use outbe_lysis::activation_v1::LysisTerminalPermitV1;
 use outbe_ocomp_protocol::{
     intent::{intent_storage_key, JobIntentV1},
-    profile::OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS,
     receipts::{ActivationOutcome, AggregateActivationReceiptV1, RequestBudgetSplitReceiptV1},
     state::{
         ActiveGenerationV1, LysisTerminalV1, OcompCompletedBindingV1, OcompFinalizedJobV1,
@@ -275,9 +274,14 @@ impl MetadosisContract<'_> {
                 .ok_or_else(|| {
                     storage_corruption_message("OCOMP awaiting-finality deadline overflow")
                 })?;
+            let profile = self
+                .read_ocomp_request_profile(schema_limits)?
+                .ok_or_else(|| {
+                    storage_corruption_message("OCOMP finality has no request profile")
+                })?;
             if finality_recorded_height < record.intent_height
                 || finality_recorded_height > awaiting_finality_deadline
-                || response_window_blocks != OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS
+                || response_window_blocks != profile.capacity_profile.result_deadline_blocks
             {
                 return Err(storage_corruption_message(
                     "OCOMP finality/window height is invalid",

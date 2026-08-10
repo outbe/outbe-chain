@@ -66,7 +66,7 @@ use zeromq::{DealerSocket, Socket, SocketOptions, SocketRecv, SocketSend, ZmqMes
 
 use crate::bundle::PinnedProtocolBundle;
 use crate::cas::{CasError, CasLimits, FilesystemCasReader};
-use crate::control::{poc_schema_limits, require_effective_uid, ControlError, EndpointIdentity};
+use crate::control::{poc_schema_limits, ControlError, EndpointIdentity};
 use crate::inbox::{WorkerInbox, WorkerInboxError, WorkerInboxLimits};
 use crate::input_artifacts::{
     decode_fidelity_subject_key, decode_oracle_subject_key, decode_verified_input_chunk,
@@ -85,7 +85,6 @@ const WORKER_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Debug)]
 pub struct WorkerConfig {
-    pub expected_effective_uid: u32,
     pub identity: EndpointIdentity,
     pub supervisor_address: SocketAddr,
     pub observability_address: SocketAddr,
@@ -172,7 +171,6 @@ pub enum WorkerError {
 }
 
 pub fn run_worker(config: WorkerConfig) -> Result<(), WorkerError> {
-    require_effective_uid(config.expected_effective_uid)?;
     if config.protocol_bundle.hash() != config.identity.protocol_bundle_hash {
         return Err(WorkerError::BundleIdentityMismatch);
     }

@@ -487,6 +487,27 @@ impl Mailbox {
         })
     }
 
+    /// Return the pending boundary for the epoch immediately after `current_epoch`.
+    ///
+    /// This lookup is only for `CommitteePreAnnounce` while the current epoch is
+    /// still active. It is deliberately distinct from
+    /// [`Self::pending_boundary_artifact`], which is the activation lookup for
+    /// the current epoch. Keeping the epoch relation here prevents a next-epoch
+    /// artifact from being activated early or a current artifact from being
+    /// advertised as the next committee.
+    pub async fn pending_next_epoch_artifact(
+        &self,
+        current_epoch: Epoch,
+    ) -> Option<DkgBoundaryArtifact> {
+        let next_epoch = current_epoch.get().checked_add(1)?;
+        self.with_state(|state| {
+            state
+                .pending_boundary
+                .clone()
+                .filter(|artifact| artifact.epoch == next_epoch)
+        })
+    }
+
     pub async fn take_committed_boundary_artifact(&self) -> Option<DkgBoundaryArtifact> {
         self.with_state(|state| {
             let pending = state.pending_boundary.as_ref()?;

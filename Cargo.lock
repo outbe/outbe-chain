@@ -7239,7 +7239,9 @@ dependencies = [
 name = "outbe-chain"
 version = "0.1.0"
 dependencies = [
+ "alloy-consensus",
  "alloy-primitives",
+ "alloy-sol-types",
  "clap",
  "commonware-codec",
  "commonware-consensus",
@@ -7248,14 +7250,17 @@ dependencies = [
  "commonware-storage",
  "commonware-utils",
  "eyre",
+ "futures",
  "hex",
  "k256 0.13.4",
+ "outbe-chain-constants",
  "outbe-compressed-entities",
  "outbe-consensus",
  "outbe-engine",
  "outbe-evm",
  "outbe-metadosis",
  "outbe-node",
+ "outbe-ocomp",
  "outbe-ocomp-protocol",
  "outbe-operator",
  "outbe-primitives",
@@ -7268,6 +7273,7 @@ dependencies = [
  "reth-ethereum",
  "reth-node-builder",
  "reth-node-core",
+ "reth-primitives-traits",
  "reth-provider",
  "reth-rpc-server-types",
  "serde",
@@ -7278,6 +7284,17 @@ dependencies = [
  "tracing",
  "vergen",
  "vergen-git2",
+]
+
+[[package]]
+name = "outbe-chain-constants"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "outbe-primitives",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -7432,18 +7449,22 @@ dependencies = [
  "alloy-sol-types",
  "outbe-accounting",
  "outbe-agentreward",
+ "outbe-chain-constants",
  "outbe-common",
  "outbe-compressed-entities",
  "outbe-desis",
  "outbe-emissionlimit",
+ "outbe-gem",
  "outbe-intexfactory",
  "outbe-macros",
  "outbe-metadosis",
  "outbe-offchain-storage",
+ "outbe-oracle",
  "outbe-primitives",
  "outbe-promislimit",
  "outbe-rewards",
  "outbe-tribute",
+ "outbe-validatorset",
  "proptest",
  "tracing",
 ]
@@ -7513,6 +7534,7 @@ dependencies = [
  "k256 0.13.4",
  "libc",
  "mongodb",
+ "outbe-chain-constants",
  "outbe-common",
  "outbe-compressed-entities",
  "outbe-consensus",
@@ -7642,6 +7664,7 @@ dependencies = [
  "k256 0.13.4",
  "outbe-accounting",
  "outbe-agentreward",
+ "outbe-chain-constants",
  "outbe-common",
  "outbe-compressed-entities",
  "outbe-consensus",
@@ -7767,6 +7790,7 @@ dependencies = [
  "outbe-oracle",
  "outbe-primitives",
  "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
@@ -7775,8 +7799,10 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "base64 0.22.1",
  "outbe-common",
  "outbe-gem",
+ "outbe-intex",
  "outbe-macros",
  "outbe-oracle",
  "outbe-primitives",
@@ -7955,6 +7981,7 @@ dependencies = [
  "alloy-sol-types",
  "k256 0.13.4",
  "num-bigint",
+ "outbe-chain-constants",
  "outbe-common",
  "outbe-compressed-entities",
  "outbe-consensus",
@@ -16266,6 +16293,7 @@ dependencies = [
  "filetime",
  "hex",
  "k256 0.13.4",
+ "outbe-chain-constants",
  "outbe-consensus",
  "outbe-e2e-harness",
  "outbe-evm",

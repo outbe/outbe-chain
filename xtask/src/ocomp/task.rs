@@ -1868,7 +1868,6 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                 &artifact_set,
                 &evidence_dir,
                 &OCM25_PUBLIC_SCENARIO_TAGS,
-                true,
             )?;
             run_evidence_binary(
                 repository_root,
@@ -2123,7 +2122,6 @@ pub fn run_closure(repository_root: &Path, requested_output: Option<&Path>) -> R
         &artifact_set,
         &public_evidence_dir,
         &PUBLIC_SCENARIO_TAGS,
-        true,
     )?;
     run_evidence_binary(
         repository_root,
@@ -2142,7 +2140,6 @@ pub fn run_closure(repository_root: &Path, requested_output: Option<&Path>) -> R
         &artifact_set,
         &e2e_evidence_dir,
         &E2E_SCENARIO_TAGS,
-        true,
     )?;
     run_evidence_binary(
         repository_root,
@@ -2194,16 +2191,16 @@ pub fn run_lane(repository_root: &Path, lane: &str, requested_output: Option<&Pa
             &artifact_set,
             &evidence_dir,
             &PUBLIC_SCENARIO_TAGS,
-            true,
         )?,
         "OCM-E2E" => run_exact_scenario_set(
             repository_root,
             &artifact_set,
             &evidence_dir,
             &E2E_SCENARIO_TAGS,
-            true,
         )?,
-        _ => bail!("unsupported exact OCOMP execution lane {lane}"),
+        _ => {
+            bail!("unsupported exact OCOMP execution lane {lane}");
+        }
     }
     run_evidence_binary(
         repository_root,
@@ -2269,6 +2266,7 @@ fn build_ocomp_e2e_binaries(repository_root: &Path) -> Result<()> {
         &[
             "build",
             "--locked",
+            "--release",
             "-p",
             "outbe-chain",
             "--bin",
@@ -2317,15 +2315,7 @@ fn snapshot_ocomp_artifact_set(repository_root: &Path, run_root: &Path) -> Resul
     let artifact_set = run_root.join("artifact-set");
     std::fs::create_dir_all(&artifact_set)
         .wrap_err_with(|| format!("create exact artifact set {}", artifact_set.display()))?;
-    for (source, name) in [
-        ("target/debug/outbe-chain", "outbe-chain"),
-        ("target/debug/outbe-cli", "outbe-cli"),
-        ("target/debug/outbe-e2e", "outbe-e2e"),
-        ("target/debug/outbe-e2e-evidence", "outbe-e2e-evidence"),
-        ("target/debug/outbe-keygen", "outbe-keygen"),
-        ("target/debug/outbe-ocomp", "outbe-ocomp"),
-        ("target/release/outbe-tee-enclave", "outbe-tee-enclave"),
-    ] {
+    for (source, name) in exact_artifact_sources() {
         let source = repository_root.join(source);
         let destination = artifact_set.join(name);
         copy_immutable_artifact(&source, &destination)?;
@@ -2333,6 +2323,18 @@ fn snapshot_ocomp_artifact_set(repository_root: &Path, run_root: &Path) -> Resul
     std::fs::set_permissions(&artifact_set, std::fs::Permissions::from_mode(0o555))
         .wrap_err_with(|| format!("seal exact artifact set {}", artifact_set.display()))?;
     Ok(artifact_set)
+}
+
+fn exact_artifact_sources() -> [(&'static str, &'static str); 7] {
+    [
+        ("target/release/outbe-chain", "outbe-chain"),
+        ("target/release/outbe-cli", "outbe-cli"),
+        ("target/release/outbe-e2e", "outbe-e2e"),
+        ("target/release/outbe-e2e-evidence", "outbe-e2e-evidence"),
+        ("target/release/outbe-keygen", "outbe-keygen"),
+        ("target/release/outbe-ocomp", "outbe-ocomp"),
+        ("target/release/outbe-tee-enclave", "outbe-tee-enclave"),
+    ]
 }
 
 fn copy_immutable_artifact(source: &Path, destination: &Path) -> Result<()> {
@@ -2402,7 +2404,7 @@ fn run_exact_final_scenario(
 ) -> Result<()> {
     let artifact_set = run_root.join("artifact-set");
     let evidence_dir = run_root.join(format!("final-{name}-evidence"));
-    run_exact_scenario(repository_root, &artifact_set, &evidence_dir, tag, true)
+    run_exact_scenario(repository_root, &artifact_set, &evidence_dir, tag)
 }
 
 fn run_exact_scenario_set(
@@ -2410,7 +2412,6 @@ fn run_exact_scenario_set(
     artifact_set: &Path,
     evidence_dir: &Path,
     tags: &[&str],
-    no_sudo: bool,
 ) -> Result<()> {
     ensure!(!tags.is_empty(), "exact scenario set must not be empty");
     if evidence_dir.exists() {
@@ -2429,13 +2430,7 @@ fn run_exact_scenario_set(
     for (index, tag) in tags.iter().enumerate() {
         let ordinal = index + 1;
         let isolated_evidence_dir = evidence_dir.join(format!(".scenario-run-{ordinal:03}"));
-        run_exact_scenario(
-            repository_root,
-            artifact_set,
-            &isolated_evidence_dir,
-            tag,
-            no_sudo,
-        )?;
+        run_exact_scenario(repository_root, artifact_set, &isolated_evidence_dir, tag)?;
         promote_exact_scenario_evidence(&isolated_evidence_dir, evidence_dir, ordinal)?;
     }
     Ok(())
@@ -2508,7 +2503,6 @@ fn run_exact_scenario(
     artifact_set: &Path,
     evidence_dir: &Path,
     tag: &str,
-    no_sudo: bool,
 ) -> Result<()> {
     if evidence_dir.exists() {
         bail!(
@@ -2516,8 +2510,7 @@ fn run_exact_scenario(
             evidence_dir.display()
         );
     }
-    let arguments =
-        exact_scenario_arguments(repository_root, artifact_set, evidence_dir, tag, no_sudo)?;
+    let arguments = exact_scenario_arguments(repository_root, artifact_set, evidence_dir, tag)?;
     eprintln!(
         "+ {} {}",
         artifact_set.join("outbe-e2e").display(),
@@ -2545,8 +2538,8 @@ fn exact_scenario_arguments(
     artifact_set: &Path,
     evidence_dir: &Path,
     tag: &str,
-    no_sudo: bool,
 ) -> Result<Vec<String>> {
+    let tee_mode = "sgx-no-attest";
     let mut arguments = vec![
         "--tags".to_owned(),
         tag.to_owned(),
@@ -2554,7 +2547,7 @@ fn exact_scenario_arguments(
         "1".to_owned(),
         "--no-resolve-ports".to_owned(),
         "--tee".to_owned(),
-        "gramine-direct".to_owned(),
+        tee_mode.to_owned(),
         "--all".to_owned(),
         "--repo".to_owned(),
         path_str(repository_root)?.to_owned(),
@@ -2570,9 +2563,6 @@ fn exact_scenario_arguments(
     ] {
         arguments.push(flag.to_owned());
         arguments.push(path_str(&artifact_set.join(binary))?.to_owned());
-    }
-    if no_sudo {
-        arguments.push("--no-sudo".to_owned());
     }
     Ok(arguments)
 }
@@ -2599,7 +2589,7 @@ fn run_evidence_binary(
             status
                 .code()
                 .map_or_else(|| "signal".to_owned(), |code| code.to_string())
-        )
+        );
     }
 }
 
@@ -2647,15 +2637,15 @@ fn require_success(status: ExitStatus, arguments: &[&str]) -> Result<()> {
             status
                 .code()
                 .map_or_else(|| "signal".to_owned(), |code| code.to_string())
-        )
+        );
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        copy_immutable_artifact, exact_scenario_arguments, promote_exact_scenario_evidence,
-        E2E_SCENARIO_TAGS, PUBLIC_SCENARIO_TAGS,
+        copy_immutable_artifact, exact_artifact_sources, exact_scenario_arguments,
+        promote_exact_scenario_evidence, E2E_SCENARIO_TAGS, PUBLIC_SCENARIO_TAGS,
     };
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
@@ -2688,23 +2678,53 @@ mod tests {
     }
 
     #[test]
-    fn exact_ocomp_scenario_uses_production_enclave_under_gramine_direct() {
+    fn exact_lane_snapshots_only_release_binaries() {
+        for (source, _) in exact_artifact_sources() {
+            assert!(
+                source.starts_with("target/release/"),
+                "exact lane source is not release: {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn exact_ocomp_e2e_scenario_uses_release_sgx_without_attestation_and_sudo() {
         let arguments = exact_scenario_arguments(
             Path::new("/repo"),
             Path::new("/artifact-set"),
             Path::new("/evidence"),
             "@ocomp-e2e-001",
-            true,
         )
         .expect("exact scenario arguments");
 
         assert!(arguments
             .windows(2)
-            .any(|pair| pair == ["--tee", "gramine-direct"]));
+            .any(|pair| pair == ["--tee", "sgx-no-attest"]));
         assert!(arguments
             .windows(2)
             .any(|pair| { pair == ["--enclave-bin", "/artifact-set/outbe-tee-enclave",] }));
         assert!(!arguments.iter().any(|argument| argument == "--mock-bin"));
+        assert!(!arguments.iter().any(|argument| argument == "--no-sudo"));
+    }
+
+    #[test]
+    fn exact_ocomp_public_scenario_uses_production_sgx_without_attestation() {
+        let arguments = exact_scenario_arguments(
+            Path::new("/repo"),
+            Path::new("/artifact-set"),
+            Path::new("/evidence"),
+            "@ocomp-public-apply",
+        )
+        .expect("exact scenario arguments");
+
+        assert!(arguments
+            .windows(2)
+            .any(|pair| pair == ["--tee", "sgx-no-attest"]));
+        assert!(arguments
+            .windows(2)
+            .any(|pair| { pair == ["--enclave-bin", "/artifact-set/outbe-tee-enclave",] }));
+        assert!(!arguments.iter().any(|argument| argument == "--mock-bin"));
+        assert!(!arguments.iter().any(|argument| argument == "--no-sudo"));
     }
 
     #[test]

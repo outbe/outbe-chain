@@ -18,6 +18,14 @@ library IntexMetadata {
     /// @dev Prices arrive on the 1e18 oracle scale; six fraction digits resolve sub-cent COEN rates.
     uint8 private constant PRICE_DECIMALS = 18;
     uint8 private constant PRICE_PRECISION = 6;
+    /// @dev Scale carried by `promisLoadMinor` (PROMIS * 1e18); unrelated to the price scale above.
+    uint256 private constant PROMIS_SCALE = 1e18;
+
+    /// @dev Cost of one Intex in the reference currency, on the same 1e18 scale as the prices;
+    ///      `promisLoadMinor` carries its own scale, which the divisor removes.
+    function _costAmountMinor(IIntexNFT1155.SeriesData memory data) private pure returns (uint256) {
+        return (uint256(data.entryPriceMinor) * uint256(data.promisLoadMinor)) / PROMIS_SCALE;
+    }
 
     /// @notice Build the `data:application/json;base64,...` URI for a token.
     /// @param data Series record for the token id (Issued or Settled class).
@@ -28,7 +36,7 @@ library IntexMetadata {
 
         bool settled = data.status == IIntexNFT1155.IntexStatus.Settled;
         bool expired = !settled && data.state == IIntexNFT1155.IntexState.Called
-            && timestamp > uint256(data.calledAt) + data.callTrigger.intexCallPeriod;
+            && timestamp > uint256(data.calledAt) + data.callTrigger.callNoticePeriod;
         string memory displayId = _displayId(data);
 
         string memory json = string.concat(
@@ -103,7 +111,10 @@ library IntexMetadata {
             _amountPlain(data.callPriceMinor, PRICE_DECIMALS, PRICE_PRECISION),
             ",\"display_type\":\"number\"},",
             "{\"trait_type\":\"Promis Load\",\"value\":",
-            Strings.toString(data.promisLoadMinor / 1e18),
+            Strings.toString(data.promisLoadMinor / PROMIS_SCALE),
+            ",\"display_type\":\"number\"},",
+            "{\"trait_type\":\"Cost Amount\",\"value\":",
+            _amountPlain(_costAmountMinor(data), PRICE_DECIMALS, PRICE_PRECISION),
             ",\"display_type\":\"number\"}"
         );
 
@@ -114,7 +125,7 @@ library IntexMetadata {
                 Strings.toString(data.calledAt),
                 ",\"display_type\":\"date\"},",
                 "{\"trait_type\":\"Call Deadline\",\"value\":",
-                Strings.toString(uint256(data.calledAt) + data.callTrigger.intexCallPeriod),
+                Strings.toString(uint256(data.calledAt) + data.callTrigger.callNoticePeriod),
                 ",\"display_type\":\"date\"}"
             );
         }
@@ -178,10 +189,10 @@ library IntexMetadata {
             _generateField("Entry Price", _formatAmount(data.entryPriceMinor, PRICE_DECIMALS, PRICE_PRECISION), 265),
             _generateField("Floor Price", _formatAmount(data.floorPriceMinor, PRICE_DECIMALS, PRICE_PRECISION), 310),
             _generateField("Call Price", _formatAmount(data.callPriceMinor, PRICE_DECIMALS, PRICE_PRECISION), 355),
-            _generateField("Promis Load", _formatInteger(data.promisLoadMinor / 1e18), 400)
+            _generateField("Promis Load", _formatInteger(data.promisLoadMinor / PROMIS_SCALE), 400)
         );
         if (!settled && data.calledAt != 0) {
-            uint256 deadline = uint256(data.calledAt) + data.callTrigger.intexCallPeriod;
+            uint256 deadline = uint256(data.calledAt) + data.callTrigger.callNoticePeriod;
             rows = string.concat(rows, _generateField("Call Deadline", _formatTimestamp(deadline), 445));
         }
         return rows;

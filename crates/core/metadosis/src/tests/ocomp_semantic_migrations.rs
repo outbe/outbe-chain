@@ -1,9 +1,7 @@
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_ocomp_protocol::{
-    receipts::ActivationOutcome,
-    state::OcompJobStatus,
-    vote::{OcompVoteAccountabilityV1, ResultVotePrefixV1},
+    receipts::ActivationOutcome, state::OcompJobStatus, vote::OcompVoteAccountabilityV1,
 };
 use outbe_primitives::{
     addresses::{INTEX_ADDRESS, NOD_ADDRESS, PROMIS_LIMIT_ADDRESS, TRIBUTE_ADDRESS},
@@ -168,7 +166,6 @@ fn every_pinned_validator_can_vote_after_quorum_until_the_exclusive_deadline() {
                 finalized.deadline_height - 1,
                 &fixture.scope,
                 &fixture.limits,
-                None,
             )
             .unwrap();
     });
@@ -182,7 +179,6 @@ fn every_pinned_validator_can_vote_after_quorum_until_the_exclusive_deadline() {
                 finalized.deadline_height,
                 &fixture.scope,
                 &fixture.limits,
-                None,
             ),
             Err(PrecompileError::Revert(_))
         ));
@@ -210,33 +206,11 @@ fn every_pinned_validator_can_vote_after_quorum_until_the_exclusive_deadline() {
 }
 
 #[test]
-fn q_forming_vote_requires_exact_node_local_result_before_terminal_transition() {
-    let mut missing = ActivationFixture::new(20, 1_010, true);
-    let missing_before = missing.rollback_snapshot();
-    let error = missing
-        .apply_without_local_result_authority()
-        .expect_err("q-forming result without node-local computation must fail closed");
-    assert!(matches!(error, PrecompileError::Storage(_)));
-    assert!(
-        error.to_string().contains("local Lysis result authority"),
-        "unexpected missing-authority error: {error}"
-    );
-    assert_eq!(missing.rollback_snapshot(), missing_before);
+fn q_forming_validator_quorum_is_canonical_without_node_local_result() {
+    let mut fixture = ActivationFixture::new(20, 1_010, true);
 
-    let mut mismatch = ActivationFixture::new(20, 1_010, true);
-    let mismatch_before = mismatch.rollback_snapshot();
-    let error = mismatch
-        .apply_with_mismatched_local_result()
-        .expect_err("q-forming result that differs from local computation must fail closed");
-    assert!(matches!(error, PrecompileError::Storage(_)));
-    assert!(
-        error.to_string().contains("local Lysis result mismatch"),
-        "unexpected mismatch error: {error}"
-    );
-    assert_eq!(mismatch.rollback_snapshot(), mismatch_before);
-
-    assert_eq!(mismatch.apply().unwrap(), Bytes::new());
-    assert_eq!(mismatch.terminal_outcome(), ActivationOutcome::Applied);
+    assert_eq!(fixture.apply().unwrap(), Bytes::new());
+    assert_eq!(fixture.terminal_outcome(), ActivationOutcome::Applied);
 }
 
 #[test]
@@ -299,16 +273,7 @@ fn authentic_carrier_after_deadline_resolves_pinned_signer_and_returns_deadline_
             .unwrap()
     });
     let late_vote = fixture.signed_result_vote(3);
-    let prefix = ResultVotePrefixV1 {
-        protocol_bundle_hash: late_vote.protocol_bundle_hash,
-        job_id: late_vote.job_id,
-        attempt: late_vote.attempt,
-        result_validator_set_epoch: late_vote.result_validator_set_epoch,
-        result_committee_set_hash: late_vote.result_committee_set_hash,
-        result_ocomp_binding_hash: late_vote.result_ocomp_binding_hash,
-        validator_index: late_vote.validator_index,
-        key_epoch: late_vote.key_epoch,
-    };
+    let prefix = late_vote.prefix();
 
     close_completed_response_window(&mut fixture, finalized.deadline_height).unwrap();
 
@@ -761,7 +726,6 @@ fn submit_vote_result(
     vote: &outbe_ocomp_protocol::vote::ResultVoteV1,
     height: u64,
 ) -> outbe_primitives::error::Result<Bytes> {
-    let local_result_authority = fixture.local_result_authority();
     fixture.provider.set_block_number(height);
     fixture.provider.enable_lysis_activation_frame();
     fixture
@@ -779,7 +743,6 @@ fn submit_vote_result(
             &calldata,
             U256::ZERO,
             false,
-            Some(local_result_authority.as_ref()),
         )
     })
 }
@@ -852,16 +815,7 @@ fn public_dispatch_uses_pinned_dynamic_membership_and_quorum() {
 fn historical_vote_participant_resolution_does_not_consult_current_active_status() {
     let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
     let vote = fixture.signed_result_vote(1);
-    let prefix = ResultVotePrefixV1 {
-        protocol_bundle_hash: vote.protocol_bundle_hash,
-        job_id: vote.job_id,
-        attempt: vote.attempt,
-        result_validator_set_epoch: vote.result_validator_set_epoch,
-        result_committee_set_hash: vote.result_committee_set_hash,
-        result_ocomp_binding_hash: vote.result_ocomp_binding_hash,
-        validator_index: vote.validator_index,
-        key_epoch: vote.key_epoch,
-    };
+    let prefix = vote.prefix();
     let historical_validator = Address::repeat_byte(0xB1);
 
     StorageHandle::enter(&mut fixture.provider, |storage| {
@@ -890,16 +844,7 @@ fn historical_vote_participant_resolution_does_not_consult_current_active_status
 fn system_carrier_signer_is_bound_to_the_historical_validator_or_its_delegate() {
     let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
     let vote = fixture.signed_result_vote(1);
-    let prefix = ResultVotePrefixV1 {
-        protocol_bundle_hash: vote.protocol_bundle_hash,
-        job_id: vote.job_id,
-        attempt: vote.attempt,
-        result_validator_set_epoch: vote.result_validator_set_epoch,
-        result_committee_set_hash: vote.result_committee_set_hash,
-        result_ocomp_binding_hash: vote.result_ocomp_binding_hash,
-        validator_index: vote.validator_index,
-        key_epoch: vote.key_epoch,
-    };
+    let prefix = vote.prefix();
     let historical_validator = Address::repeat_byte(0xB1);
     let delegate = Address::repeat_byte(0xD1);
 
@@ -976,7 +921,7 @@ fn vote_binding_mismatch_is_rejected_before_historical_snapshot_lookup() {
             .unwrap();
 
         let error = MetadosisContract::new(storage)
-            .record_ocomp_result_vote(&vote, 14, &fixture.scope, &fixture.limits, None)
+            .record_ocomp_result_vote(&vote, 14, &fixture.scope, &fixture.limits)
             .unwrap_err();
         assert!(matches!(
             error,
@@ -1008,8 +953,8 @@ fn public_vote_rejects_every_pinned_identity_and_signature_mismatch() {
     wrong.result_ocomp_binding_hash = B256::repeat_byte(0xA3);
     cases.push(("OCOMP binding hash", wrong));
     let mut wrong = base.clone();
-    wrong.validator_index = u16::MAX;
-    cases.push(("participant index", wrong));
+    wrong.ocomp_key_hash = B256::repeat_byte(0xA4);
+    cases.push(("OCOMP key hash", wrong));
     let mut wrong = base.clone();
     wrong.key_epoch = wrong.key_epoch.saturating_add(1);
     cases.push(("key epoch", wrong));

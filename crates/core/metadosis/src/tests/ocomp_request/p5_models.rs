@@ -255,7 +255,6 @@ fn submit_vote(
     validator_index: u8,
     activation_entitled: bool,
 ) -> outbe_primitives::error::Result<alloy_primitives::Bytes> {
-    let local_result_authority = fixture.local_result_authority();
     let calldata = encode_submit_lysis_result_calldata(
         &fixture.signed_result_vote(validator_index),
         &fixture.limits,
@@ -268,14 +267,7 @@ fn submit_vote(
         fixture.provider.enable_lysis_activation_frame();
     }
     StorageHandle::enter(&mut fixture.provider, |storage| {
-        commands::submit_verified_result_vote(
-            storage,
-            &fixture.scope,
-            &calldata,
-            U256::ZERO,
-            false,
-            Some(local_result_authority.as_ref()),
-        )
+        commands::submit_verified_result_vote(storage, &fixture.scope, &calldata, U256::ZERO, false)
     })
 }
 
@@ -940,14 +932,7 @@ fn submit_invalid_vote(
         .provider
         .enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::VerifiedResultVote);
     StorageHandle::enter(&mut fixture.provider, |storage| {
-        commands::submit_verified_result_vote(
-            storage,
-            &fixture.scope,
-            &calldata,
-            U256::ZERO,
-            false,
-            None,
-        )
+        commands::submit_verified_result_vote(storage, &fixture.scope, &calldata, U256::ZERO, false)
     })
 }
 

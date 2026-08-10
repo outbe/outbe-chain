@@ -119,6 +119,7 @@ type EngineHandle = ConsensusEngineHandle<OutbePayloadTypes>;
 /// subsystem.
 pub struct ConsensusStackServices {
     projection_readiness: ProjectionReadinessHandle,
+    ocomp_readiness: Option<ProjectionReadinessHandle>,
     finalized_ce_committer: Arc<dyn FinalizedCeCommitter>,
     ce_startup_recovery: Arc<dyn CeStartupRecovery>,
 }
@@ -131,9 +132,18 @@ impl ConsensusStackServices {
     ) -> Self {
         Self {
             projection_readiness,
+            ocomp_readiness: None,
             finalized_ce_committer,
             ce_startup_recovery,
         }
+    }
+
+    /// Installs the FullNode-only OCOMP execution barrier. Validator callers
+    /// deliberately omit it.
+    #[must_use]
+    pub fn with_ocomp_readiness(mut self, readiness: ProjectionReadinessHandle) -> Self {
+        self.ocomp_readiness = Some(readiness);
+        self
     }
 }
 
@@ -207,6 +217,31 @@ fn reconcile_recovered_execution_head(
         Some(recovered.round),
     ))
 }
+
+/// Reconcile the derived CE tree only after startup has selected an exact
+/// finality anchor backed by both the marshal archive and durable Reth state.
+///
+/// Marshal's processed height is an acknowledgement floor: it can lag the
+/// archive by one block when the process stops after the CE commit but before
+/// the ACK is durably recorded. It is therefore diagnostic context, not the
+/// recovery authority.
+fn recover_ce_at_reconciled_anchor(
+    ce_startup_recovery: &dyn CeStartupRecovery,
+    marshal_processed_height: u64,
+    recovery_anchor_height: u64,
+) -> Result<outbe_compressed_entities::FinalizedMarker> {
+    let recovered = ce_startup_recovery
+        .recover_before_participation(recovery_anchor_height)
+        .wrap_err("compressed-tree startup recovery failed before validator participation")?;
+    info!(
+        marshal_processed_height,
+        recovery_anchor_height,
+        ce_marker_height = recovered.height,
+        "marshal archive and compressed-tree recovery reconciled"
+    );
+    Ok(recovered)
+}
+
 /// epoch restart precondition: bounded wait for the finalization
 /// view to expose the continuity anchor before launching the new-epoch
 /// Simplex engine. Without this, `Automaton::genesis(epoch > 0)` could be
@@ -216,21 +251,6 @@ fn reconcile_recovered_execution_head(
 const EPOCH_RESTART_ANCHOR_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 const EPOCH_RESTART_ANCHOR_POLL_INTERVAL: std::time::Duration =
     std::time::Duration::from_millis(100);
-
-/// A verifier-follower's deferred adoption of a followed DKG rotation's
-/// boundary material. The activated cycle's `BoundaryOutcome` rides the FIRST
-/// new-epoch block (strictly above the activation height), so it can only be
-/// observed after the restarted engine executes past the activation height —
-/// the height-event path scans `[next_scan_height, current_height]` forward
-/// on each finalized height until the artifact appears, then adopts it.
-#[derive(Clone, Copy, Debug)]
-struct PendingVerifierBoundaryAdoption {
-    /// Activation height of the followed rotation; the adopted boundary must
-    /// be committed strictly above it and planned at or above it.
-    activation_height: u64,
-    /// Next unscanned height — each finalized header is examined once.
-    next_scan_height: u64,
-}
 
 /// Read `epochLengthBlocks` from genesis.json `config` section.
 /// Falls back to [`config::DEFAULT_EPOCH_LENGTH_BLOCKS`] if absent.
@@ -477,85 +497,12 @@ fn recover_latest_boundary_artifact(
     Ok(None)
 }
 
-/// Whether a scanned boundary artifact is the one a verifier-follower must
-/// adopt after following a DKG rotation that activated at `activation_height`.
-///
-/// The activated cycle's `BoundaryOutcome` is committed by the FIRST new-epoch
-/// block, i.e. strictly ABOVE the activation height (the old epoch is fenced at
-/// the activation boundary). A boundary found at or below the activation height
-/// is therefore the PREVIOUS cycle's artifact and must not be adopted — doing
-/// so would silently keep the follower one rotation stale (its reshare
-/// prev_output and round would diverge from the committee's, so a later stake
-/// would end ACTIVE-but-voteless). `planned >= activation` additionally rejects
-/// stale-cycle artifacts and accepts newer ones when the follower lags multiple
-/// rotations: adoption is monotone, newest wins.
-const fn verifier_should_adopt_followed_boundary(
-    commit_height: u64,
-    boundary_planned_activation_height: u64,
-    activation_height: u64,
-) -> bool {
-    commit_height > activation_height && boundary_planned_activation_height >= activation_height
-}
-
-/// Forward-scan `[from, to]` (inclusive) for the first header carrying a
-/// `BoundaryOutcome` artifact. Used by the verifier-follower's deferred
-/// boundary adoption, whose search window opens just above the followed
-/// rotation's activation height — the first boundary above it is the activated
-/// cycle's. Headers missing from the provider end the scan (they are not yet
-/// executed locally; the caller resumes from that height on the next finalized
-/// height event), so each header is examined at most once across retries.
-fn scan_first_boundary_after(
-    provider: &(impl HeaderProvider<Header = OutbeHeader> + BlockHashReader),
-    from: u64,
-    to: u64,
-) -> Result<ForwardBoundaryScan> {
-    let mut height = from;
-    while height <= to {
-        let Some(header) = provider
-            .sealed_header(height)
-            .map_err(|error| eyre::eyre!("failed to read header {height}: {error}"))?
-        else {
-            return Ok(ForwardBoundaryScan::NotFound {
-                resume_from: height,
-            });
-        };
-        let artifacts = decode_outbe_block_artifacts(header.header().inner.extra_data.as_ref())
-            .map_err(|error| {
-                eyre::eyre!("failed to decode header artifacts at {height}: {error}")
-            })?;
-        if let Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)) =
-            artifacts.consensus_header_artifact
-        {
-            return Ok(ForwardBoundaryScan::Found {
-                commit_height: height,
-                boundary: Box::new(boundary),
-            });
-        }
-        height = height.saturating_add(1);
-    }
-    Ok(ForwardBoundaryScan::NotFound {
-        resume_from: height,
-    })
-}
-
-#[derive(Clone, Debug)]
-enum ForwardBoundaryScan {
-    Found {
-        commit_height: u64,
-        boundary: Box<DkgBoundaryArtifact>,
-    },
-    NotFound {
-        /// First height not yet examined (missing from the provider or above
-        /// the scan ceiling).
-        resume_from: u64,
-    },
-}
-
 #[derive(Clone, Debug)]
 struct StartupDkgSnapshot {
     last_execution_height: u64,
     last_execution_hash: B256,
     recovered_boundary: Option<(u64, DkgBoundaryArtifact)>,
+    pending_boundary: Option<PendingDkgBoundarySnapshot>,
     context: StartupDkgContext,
 }
 
@@ -576,6 +523,7 @@ fn read_startup_dkg_snapshot(
     node: &OutbeFullNode,
     args: &ConsensusArgs,
     key_backend: &bls::KeyBackend,
+    local_consensus_key: &bls12381::PublicKey,
     genesis_hash: B256,
     dkg_rotation_params: DkgRotationParams,
     last_consensus_finalized_height: u64,
@@ -615,19 +563,21 @@ fn read_startup_dkg_snapshot(
     // one block later; with two of five (e.g. a restarted validator plus a
     // freshly promoted one) the new epoch is 3-of-5 < quorum and the chain
     // deadlocks at the boundary. Anchor = commit_height - 1, uniformly.
-    let mut recovered_boundary = recover_latest_boundary_artifact(
+    let recovered_boundary = recover_latest_boundary_artifact(
         &node.provider,
         boundary_recovery_height,
         dkg_rotation_params,
     )
     .wrap_err("failed to recover latest DKG boundary artifact")?
     .map(|(commit_height, artifact)| (commit_height.saturating_sub(1), artifact));
-    let mut recovered_boundary_finalized = recovered_boundary.is_some();
+    let recovered_boundary_finalized = recovered_boundary.is_some();
+    let mut pending_boundary = None;
 
     if let Some(keys_dir) = args.keys_dir.as_ref() {
         if let Some(snapshot) = recover_pending_dkg_boundary_snapshot(
             keys_dir,
             key_backend,
+            local_consensus_key,
             node,
             recovered_boundary.as_ref(),
         )
@@ -635,13 +585,12 @@ fn read_startup_dkg_snapshot(
         {
             info!(
                 keys_dir = %keys_dir.display(),
-                activated_at_height = snapshot.activated_at_height,
+                completed_at_height = snapshot.completed_at_height,
                 dkg_cycle = snapshot.artifact.dkg_cycle,
                 epoch = snapshot.artifact.epoch,
                 "recovered durable pending DKG boundary snapshot"
             );
-            recovered_boundary = Some((snapshot.activated_at_height, snapshot.artifact));
-            recovered_boundary_finalized = false;
+            pending_boundary = Some(snapshot);
         }
     }
 
@@ -665,6 +614,7 @@ fn read_startup_dkg_snapshot(
         last_execution_height,
         last_execution_hash,
         recovered_boundary,
+        pending_boundary,
         context,
     })
 }
@@ -735,6 +685,7 @@ where
             node,
             args,
             key_backend,
+            &local_pk,
             genesis_hash,
             dkg_rotation_params,
             last_consensus_finalized_height,
@@ -829,13 +780,23 @@ struct FrozenDkgTarget {
 struct PendingDkgActivation {
     target: FrozenDkgTarget,
     complete: dkg_actor::DkgComplete,
-    completed_at_height: u64,
+    boundary_artifact: DkgBoundaryArtifact,
+    /// Present only after restart. The process-local finalized dealer-log
+    /// reconstruction is gone, but this output was revalidated against both
+    /// the durable pending material and the exact boundary artifact.
+    recovered_output: Option<Output<MinSig, bls12381::PublicKey>>,
 }
 
 #[derive(Clone, Debug)]
 struct DealerOnlyDkgActivation {
     target: FrozenDkgTarget,
-    completed_at_height: u64,
+    boundary_artifact: Option<DkgBoundaryArtifact>,
+    recovered_output: Option<Output<MinSig, bls12381::PublicKey>>,
+}
+
+enum RestoredPendingDkgActivation {
+    Participant(PendingDkgActivation),
+    DealerOnly(DealerOnlyDkgActivation),
 }
 
 enum ThresholdMaterial {
@@ -1111,10 +1072,27 @@ fn should_start_dkg_rotation(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PendingDkgActivationDecision {
+enum PendingDkgHandoffDecision {
     Wait,
-    Activate,
+    Activate { activation_anchor: u64 },
     Expired { deadline: u64 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StartupPendingDkgEpochPlan {
+    /// The outgoing epoch remains active. Its channels must be acquired before
+    /// the recovered future-epoch channels are pre-registered.
+    Defer {
+        active_epoch: Epoch,
+        preregister_after_current: Epoch,
+    },
+    /// The outgoing-finalized preannounce already authorized the handoff. The
+    /// first block after restart must therefore be built by the incoming epoch.
+    Activate {
+        previous_epoch: Epoch,
+        active_epoch: Epoch,
+        activation_anchor: u64,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1134,19 +1112,155 @@ fn pending_freeze_block_hash_decision(
     }
 }
 
-fn pending_dkg_activation_decision(
-    current_height: u64,
+fn pending_dkg_handoff_decision(
+    finalized_height: u64,
     planned_activation_height: u64,
     activation_grace_blocks: u64,
-) -> PendingDkgActivationDecision {
+    exact_carrier_height: Option<u64>,
+) -> PendingDkgHandoffDecision {
     let deadline = planned_activation_height.saturating_add(activation_grace_blocks);
-    if current_height > deadline {
-        PendingDkgActivationDecision::Expired { deadline }
-    } else if current_height >= planned_activation_height {
-        PendingDkgActivationDecision::Activate
-    } else {
-        PendingDkgActivationDecision::Wait
+    let finalized_carrier_height = exact_carrier_height.filter(|carrier_height| {
+        *carrier_height <= finalized_height && *carrier_height <= deadline
+    });
+
+    if let Some(carrier_height) = finalized_carrier_height {
+        if finalized_height >= planned_activation_height {
+            return PendingDkgHandoffDecision::Activate {
+                activation_anchor: planned_activation_height.max(carrier_height),
+            };
+        }
+        return PendingDkgHandoffDecision::Wait;
     }
+
+    if finalized_height >= deadline {
+        PendingDkgHandoffDecision::Expired { deadline }
+    } else {
+        PendingDkgHandoffDecision::Wait
+    }
+}
+
+fn startup_pending_dkg_epoch_plan(
+    current_epoch: Epoch,
+    pending_epoch: Epoch,
+    finalized_height: u64,
+    planned_activation_height: u64,
+    activation_grace_blocks: u64,
+    exact_carrier_height: Option<u64>,
+) -> Result<StartupPendingDkgEpochPlan> {
+    let expected_epoch = next_consensus_epoch_after_dkg_activation(current_epoch);
+    ensure!(
+        pending_epoch == expected_epoch,
+        "recovered pending DKG epoch {} does not follow active epoch {}",
+        pending_epoch,
+        current_epoch
+    );
+    match pending_dkg_handoff_decision(
+        finalized_height,
+        planned_activation_height,
+        activation_grace_blocks,
+        exact_carrier_height,
+    ) {
+        PendingDkgHandoffDecision::Wait => Ok(StartupPendingDkgEpochPlan::Defer {
+            active_epoch: current_epoch,
+            preregister_after_current: pending_epoch,
+        }),
+        PendingDkgHandoffDecision::Activate { activation_anchor } => {
+            Ok(StartupPendingDkgEpochPlan::Activate {
+                previous_epoch: current_epoch,
+                active_epoch: pending_epoch,
+                activation_anchor,
+            })
+        }
+        PendingDkgHandoffDecision::Expired { deadline } => Err(eyre::eyre!(
+            "recovered pending DKG epoch {} missed activation deadline {} at finalized height {}",
+            pending_epoch,
+            deadline,
+            finalized_height
+        )),
+    }
+}
+
+fn select_pending_canonical_output(
+    finalized_log_output: Option<Output<MinSig, bls12381::PublicKey>>,
+    recovered_output: Option<&Output<MinSig, bls12381::PublicKey>>,
+) -> Option<Output<MinSig, bls12381::PublicKey>> {
+    finalized_log_output.or_else(|| recovered_output.cloned())
+}
+
+fn preannounce_matches_pending(
+    artifact: &ConsensusHeaderArtifact,
+    pending: &DkgBoundaryArtifact,
+) -> bool {
+    matches!(
+        artifact,
+        ConsensusHeaderArtifact::CommitteePreAnnounce { epoch, outcome }
+            if *epoch == pending.epoch && *outcome == pending.outcome
+    )
+}
+
+fn find_exact_finalized_preannounce_carrier(
+    provider: &(impl HeaderProvider<Header = OutbeHeader> + BlockHashReader),
+    pending: &DkgBoundaryArtifact,
+    finalized_height: u64,
+    activation_grace_blocks: u64,
+) -> Result<Option<u64>> {
+    let deadline = pending
+        .planned_activation_height
+        .saturating_add(activation_grace_blocks);
+    let scan_end = finalized_height.min(deadline);
+    if pending.freeze_height > scan_end {
+        return Ok(None);
+    }
+
+    let mut height = pending.freeze_height;
+    loop {
+        let canonical_hash = provider
+            .block_hash(height)
+            .map_err(|error| {
+                eyre::eyre!("failed to read canonical hash at height {height}: {error}")
+            })?
+            .ok_or_else(|| {
+                eyre::eyre!(
+                    "canonical finalized preannounce scan is missing block hash at height {height}"
+                )
+            })?;
+        let header = provider
+            .sealed_header(height)
+            .map_err(|error| eyre::eyre!("failed to read finalized header {height}: {error}"))?
+            .ok_or_else(|| {
+                eyre::eyre!(
+                    "canonical finalized preannounce scan is missing header at height {height}"
+                )
+            })?;
+        ensure!(
+            header.hash() == canonical_hash,
+            "canonical finalized preannounce header hash mismatch at height {height}: index {canonical_hash}, header {}",
+            header.hash()
+        );
+        ensure!(
+            header.header().inner.number == height,
+            "canonical finalized preannounce header number mismatch: expected {height}, got {}",
+            header.header().inner.number
+        );
+        let artifacts = decode_outbe_block_artifacts(header.header().inner.extra_data.as_ref())
+            .map_err(|error| {
+                eyre::eyre!(
+                    "failed to decode finalized header artifacts at height {height}: {error}"
+                )
+            })?;
+        if artifacts
+            .consensus_header_artifact
+            .as_ref()
+            .is_some_and(|artifact| preannounce_matches_pending(artifact, pending))
+        {
+            return Ok(Some(height));
+        }
+        if height == scan_end {
+            break;
+        }
+        height = height.saturating_add(1);
+    }
+    Ok(None)
 }
 
 fn frozen_dkg_target_expired(
@@ -1253,17 +1367,6 @@ fn execution_watchdog_decision(
 
 fn next_consensus_epoch_after_dkg_activation(current_epoch: Epoch) -> Epoch {
     Epoch::new(current_epoch.get().saturating_add(1))
-}
-
-/// A verifier may discover a rotation only after catching up to its activation
-/// block. In that case there will be no old-epoch finalized-height event after
-/// `current_height` to drive the deferred epoch transition, so the current
-/// height must be replayed through the local scheduler.
-const fn verifier_activation_needs_immediate_replay(
-    current_height: u64,
-    activation_height: u64,
-) -> bool {
-    current_height >= activation_height
 }
 
 fn genesis_hash(node: &OutbeFullNode) -> Result<B256> {
@@ -1747,6 +1850,7 @@ async fn run_follow_stack<E>(
     bridge: ConsensusExecutionBridge,
     upstream: String,
     projection_readiness: ProjectionReadinessHandle,
+    ocomp_readiness: Option<ProjectionReadinessHandle>,
     finalized_ce_committer: Arc<dyn FinalizedCeCommitter>,
     ce_startup_recovery: Arc<dyn CeStartupRecovery>,
 ) -> Result<()>
@@ -1775,8 +1879,10 @@ where
     // set), read from the follower's OWN genesis state. Consensus finality is a
     // multisig over these keys, so this set — not the VRF group key — is the
     // trust root, and it is already in genesis (the operator provides nothing).
-    let genesis_validators = validators::read_consensus_validators_at_latest(&node.provider)
-        .wrap_err("failed to read genesis validator set for the follower trust anchor")?;
+    let follower_genesis_hash = genesis_hash(&node)?;
+    let genesis_validators =
+        validators::read_consensus_validators_at_block(&node.provider, follower_genesis_hash)
+            .wrap_err("failed to read genesis validator set for the follower trust anchor")?;
     let anchor_participants: commonware_utils::ordered::Set<bls12381::PublicKey> =
         genesis_validators
             .public_keys
@@ -1827,6 +1933,7 @@ where
         upstream,
         epoch_length,
         projection_readiness,
+        ocomp_readiness,
         finalized_ce_committer,
         ce_startup_recovery,
         ocomp_storage_root,
@@ -1948,6 +2055,15 @@ async fn reconcile_certified_follower_height(
     Ok(block)
 }
 
+/// Genesis is the trusted follower anchor, not a block carrying a certified
+/// marshal finalization. The executor still acknowledges height zero when it
+/// observes the already-canonical genesis block, so finality observers must
+/// ignore that one notification instead of asking marshal for an impossible
+/// certificate.
+const fn follower_height_has_certified_finalization(height: u64) -> bool {
+    height > 0
+}
+
 /// The committee-chaining follower engine (transport A — upstream RPC, no
 /// consensus P2P). Builds the same marshal + executor as the validator path,
 /// feeds the marshal finalized blocks fetched from the upstream, and verifies
@@ -1961,6 +2077,7 @@ async fn run_certified_follow_stack<E>(
     upstream: String,
     epoch_length_blocks: u32,
     projection_readiness: ProjectionReadinessHandle,
+    ocomp_readiness: Option<ProjectionReadinessHandle>,
     finalized_ce_committer: Arc<dyn FinalizedCeCommitter>,
     ce_startup_recovery: Arc<dyn CeStartupRecovery>,
     ocomp_storage_root: std::path::PathBuf,
@@ -2103,7 +2220,11 @@ where
     // (E+1)·L]`). The validator's `FixedEpocher` disagrees by one block at every
     // multiple of L, which would stall a resolver-only follower at boundary
     // blocks (see outbe_consensus::follow::epocher).
-    let epocher = outbe_consensus::follow::FollowerEpocher::new(u64::from(epoch_length_blocks));
+    let follower_rotation = DkgRotationParams::from_genesis(&node, epoch_length_blocks);
+    let epocher = outbe_consensus::follow::FollowerEpocher::new(
+        u64::from(epoch_length_blocks),
+        follower_rotation.activation_grace_blocks,
+    );
     let view_retention_timeout = u64::from(config::ACTIVITY_TIMEOUT)
         .checked_mul(config::VIEW_RETENTION_MULTIPLIER)
         .ok_or_else(|| eyre::eyre!("view retention timeout overflow"))?;
@@ -2208,34 +2329,17 @@ where
     // `FinalizedSource` and `TipSource` as distinct values).
     let tip_client = crate::follow_transport::UpstreamRpcClient::new(&upstream)?;
 
-    // A recovered marshal archive may already be caught up, so the live driver
-    // would have no new height to pull before the OCOMP finality observer asks
-    // for the recovered epoch's verifier. Rebuild the authenticated
-    // prior-epoch pre-announce chain now, before either concurrent subsystem is
-    // polled. This is idempotent; `run_follow_engine` repeats the same check for
-    // embeddings that do not use this production stack.
-    let recovered_epoch = if last_consensus_finalized.get() == 0 {
-        anchor_epoch
-    } else {
-        marshal_mailbox
-            .get_finalization(last_consensus_finalized)
-            .await
-            .ok_or_else(|| {
-                eyre::eyre!(
-                    "marshal lost recovered finalization at height {} before follower startup",
-                    last_consensus_finalized.get(),
-                )
-            })?
-            .proposal
-            .round
-            .epoch()
-    };
+    // A recovered marshal archive may already be caught up, so rebuild the
+    // authenticated committee chain and exact observed boundary map through its
+    // durable height before either concurrent subsystem is polled. This is
+    // idempotent; `run_follow_engine` repeats the same check for embeddings that
+    // do not use this production stack.
     outbe_consensus::follow::engine::prepare_committee_chain(
         &chain,
         &upstream_client,
         &epocher,
         anchor_epoch,
-        recovered_epoch,
+        last_consensus_finalized,
     )
     .await
     .wrap_err("failed to rebuild authenticated follower committee chain on restart")?;
@@ -2253,9 +2357,12 @@ where
         projection_readiness,
         Some(execution_finalized_height_tx),
     );
-    let _executor_handle = executor_actor
-        .with_finalized_ce_committer(finalized_ce_committer)
-        .start(marshal_mailbox.clone(), last_consensus_finalized);
+    let executor_actor = executor_actor.with_finalized_ce_committer(finalized_ce_committer);
+    let executor_actor = match ocomp_readiness {
+        Some(readiness) => executor_actor.with_ocomp_readiness(readiness),
+        None => executor_actor,
+    };
+    let _executor_handle = executor_actor.start(marshal_mailbox.clone(), last_consensus_finalized);
 
     // ── 4b. Serve `outbe_getFinalization`. The critical observer below owns
     // finality publication only after exact parent-proof persistence and OCOMP
@@ -2271,7 +2378,7 @@ where
     let observer_bridge = bridge.clone();
     let finality_observer = async move {
         let recovered_height = last_consensus_finalized.get();
-        if recovered_height > 0 {
+        if follower_height_has_certified_finalization(recovered_height) {
             reconcile_certified_follower_height(
                 &observer_node,
                 &observer_mailbox,
@@ -2285,6 +2392,9 @@ where
             observer_bridge.set_last_finalized_block_number(recovered_height);
         }
         while let Some(height) = execution_finalized_height_rx.recv().await {
+            if !follower_height_has_certified_finalization(height) {
+                continue;
+            }
             reconcile_certified_follower_height(
                 &observer_node,
                 &observer_mailbox,
@@ -2380,6 +2490,7 @@ where
 {
     let ConsensusStackServices {
         projection_readiness,
+        ocomp_readiness,
         finalized_ce_committer,
         ce_startup_recovery,
     } = services;
@@ -2410,6 +2521,7 @@ where
             bridge,
             upstream,
             projection_readiness,
+            ocomp_readiness,
             finalized_ce_committer,
             ce_startup_recovery,
         )
@@ -2777,14 +2889,9 @@ where
     // genesis-formation proof, crash-recovery detection, and executor start.
     let last_consensus_finalized = map_marshal_init_height(last_consensus_finalized_opt);
 
-    let recovered_ce_marker = ce_startup_recovery
-        .recover_before_participation(last_consensus_finalized.get())
-        .wrap_err("compressed-tree startup recovery failed before validator participation")?;
-
     info!(
-        last_consensus_finalized = last_consensus_finalized.get(),
-        ce_marker_height = recovered_ce_marker.height,
-        "marshal actor initialized"
+        marshal_processed_height = last_consensus_finalized.get(),
+        "marshal actor initialized; exact archive/Reth recovery reconciliation pending"
     );
 
     let startup_snapshot = resolve_startup_dkg_snapshot(
@@ -2802,6 +2909,7 @@ where
     let mut last_execution_height = startup_snapshot.last_execution_height;
     let mut last_execution_hash = startup_snapshot.last_execution_hash;
     let mut recovered_boundary = startup_snapshot.recovered_boundary;
+    let recovered_pending_boundary = startup_snapshot.pending_boundary;
     let startup_dkg_context = startup_snapshot.context;
 
     // Determine founding versus existing identity before any DKG/live-join path.
@@ -2844,17 +2952,33 @@ where
         .await
         .map_err(|e| eyre::eyre!("failed to register initial DKG subchannel: {e}"))?;
 
-    let threshold_material = obtain_threshold_material(
-        ctx,
-        &args,
-        &key_backend,
-        &signing_key,
-        &validator_set,
-        startup_dkg_context,
-        dkg_init_tx,
-        dkg_init_rx,
-    )
-    .await?;
+    let recovered_shareless_output = recovered_boundary
+        .as_ref()
+        .map(|(_height, boundary)| decode_boundary_output(boundary))
+        .transpose()?
+        .filter(|output| output.players().position(&local_consensus_key).is_none());
+    let threshold_material = if let Some(output) = recovered_shareless_output {
+        info!(
+            dkg_output_hash = %dkg_manager::dkg_output_hash(&output),
+            "local validator is absent from the finalized DKG boundary; restoring shareless verifier mode"
+        );
+        ThresholdMaterial::VerifierOnly {
+            polynomial: output.public().clone(),
+            last_dkg_output: Some(output),
+        }
+    } else {
+        obtain_threshold_material(
+            ctx,
+            &args,
+            &key_backend,
+            &signing_key,
+            &validator_set,
+            startup_dkg_context,
+            dkg_init_tx,
+            dkg_init_rx,
+        )
+        .await?
+    };
     let (mut signing_share, mut polynomial, mut last_dkg_output, bootstrap_from_live_dkg) =
         match threshold_material {
             ThresholdMaterial::Ready {
@@ -3024,6 +3148,10 @@ where
         .policy_at(outbe_evm::tee_attestation_activation::TEE_ATTESTATION_V1_ACTIVATION_HEIGHT)
         .map_err(eyre::Report::msg)?
         .clone();
+    let tee_session = args
+        .tee_session_mode
+        .resolve(tee_policy.attestation_mode)
+        .map_err(eyre::Report::msg)?;
     {
         if coordinate_genesis_bootstrap {
             let my_validator = proposer_evm_address.ok_or_else(|| {
@@ -3109,8 +3237,8 @@ where
             let bootstrap_clock = ctx.child("tee_bootstrap_clock");
             let payload = ctx
                 .timeout(deadline, async move {
-                    let (mut enclave, production_manifest) = match tee_policy.attestation_mode {
-                        outbe_primitives::tee_attestation_v1::AttestationMode::DcapRequired => {
+                    let (mut enclave, production_manifest) = match tee_session {
+                        crate::args::ResolvedTeeSession::ProductionNodeHost => {
                             let production = outbe_tee::connect_or_initialize_validator_enclave(
                                 &endpoint,
                                 &node_data_dir,
@@ -3141,7 +3269,7 @@ where
                                 Some(manifest),
                             )
                         }
-                        outbe_primitives::tee_attestation_v1::AttestationMode::GramineDirectDev => {
+                        crate::args::ResolvedTeeSession::Development => {
                             let development = outbe_tee::EnclaveClient::connect_endpoint(&endpoint)
                                 .map_err(|error| {
                                     eyre::eyre!(
@@ -3269,8 +3397,8 @@ where
             let endpoint = socket
                 .to_str()
                 .ok_or_else(|| eyre::eyre!("TEE enclave endpoint is not valid UTF-8"))?;
-            let mut enclave = match tee_policy.attestation_mode {
-                outbe_primitives::tee_attestation_v1::AttestationMode::DcapRequired => {
+            let mut enclave = match tee_session {
+                crate::args::ResolvedTeeSession::ProductionNodeHost => {
                     outbe_tee::RuntimeEnclaveClient::Production(
                         outbe_tee::connect_or_initialize_validator_enclave(
                             endpoint,
@@ -3292,7 +3420,7 @@ where
                         })?,
                     )
                 }
-                outbe_primitives::tee_attestation_v1::AttestationMode::GramineDirectDev => {
+                crate::args::ResolvedTeeSession::Development => {
                     outbe_tee::RuntimeEnclaveClient::Development(Box::new(
                         outbe_tee::EnclaveClient::connect_endpoint(endpoint).map_err(|error| {
                             eyre::eyre!("GramineDirectDev enclave reconnect failed: {error}")
@@ -3310,7 +3438,6 @@ where
 
     // ── 8. Recover execution finalized state ──────────────────────────────
     let active_boundary = recovered_boundary.clone();
-    let active_boundary_finalized = startup_dkg_context.recovered_boundary_finalized;
 
     let recovered_boundary_artifact = active_boundary.as_ref().map(|(_, artifact)| artifact);
     let mut vrf_material_version = recovered_boundary_artifact
@@ -3355,15 +3482,13 @@ where
         polynomial.clone(),
         signing_share.clone(),
     );
-    // The boundary tuple height is the ACTIVATION ANCHOR (the height the live
-    // committee anchored its rotation schedule on), NOT the commit height of the
-    // artifact-carrying block: every producer normalizes commit → anchor
-    // (commit - 1, since the artifact rides the FIRST new-epoch block), and the
-    // pending-snapshot restore stores the anchor directly. Anchoring on the
-    // commit height instead shifts a restarted node's freeze/activation schedule
-    // one block late vs the committee — fatal when several committee members
-    // restart within one epoch (the new epoch loses quorum waiting for an
-    // activation height that can never be produced).
+    // The active boundary tuple height is the ACTIVATION ANCHOR (the height the
+    // live committee anchored its rotation schedule on), NOT the commit height of
+    // the artifact-carrying block: finalized BoundaryOutcome recovery normalizes
+    // commit → anchor (commit - 1, since the artifact rides the first new-epoch
+    // block). A node-local pending snapshot is restored separately and never
+    // changes this active anchor until its exact outgoing-finalized preannounce
+    // authorizes the normal runtime activation path.
     let mut last_dkg_activation_height = active_boundary
         .as_ref()
         .map(|(height, _)| *height)
@@ -3408,17 +3533,6 @@ where
             "marshal ancestry gate closed until executor backfills durable consensus blocks"
         );
     }
-    if !active_boundary_finalized {
-        if let Some(boundary) = recovered_boundary_artifact.cloned() {
-            dkg_manager.note_recovered_pending_boundary(boundary);
-            info!(
-                epoch = recovered_epoch,
-                last_dkg_activation_height,
-                "restored pending DKG boundary into DKG manager before starting Simplex"
-            );
-        }
-    }
-
     // ── 9. Get beacon engine handle and payload builder handle ──────────
     let engine_handle: EngineHandle = node.add_ons_handle.beacon_engine_handle.clone();
     let payload_builder = node.payload_builder_handle.clone();
@@ -3665,6 +3779,12 @@ where
             }
         };
 
+    let _recovered_ce_marker = recover_ce_at_reconciled_anchor(
+        ce_startup_recovery.as_ref(),
+        last_consensus_finalized.get(),
+        recovery_anchor_height,
+    )?;
+
     executor_actor = executor_actor.with_recovered_finalized_state(
         genesis_hash,
         recovery_anchor_height,
@@ -3900,18 +4020,178 @@ where
     let mut frozen_dkg_target: Option<FrozenDkgTarget> = None;
     let mut pending_dkg_activation: Option<PendingDkgActivation> = None;
     let mut dealer_only_dkg_activation: Option<DealerOnlyDkgActivation> = None;
-    // Finalized-follower: a share-less verifier (TEE full-node) never runs a DKG
-    // ceremony, so it never sets `pending_dkg_activation`. Instead it notes the
-    // upcoming activation height here (set at the freeze when it classifies as
-    // NotParticipant) and, when it syncs to that height, advances its epoch +
-    // restarts the engine — reusing its polynomial (the group key is preserved
-    // across reshares) so its per-epoch reporter keeps verifying finality.
-    let mut pending_verifier_activation: Option<u64> = None;
-    // Deferred follow-up to a verifier activation: the activated cycle's
-    // `BoundaryOutcome` rides the first new-epoch block, which this follower
-    // can only execute AFTER its engine restarts, so the activation block
-    // queues the adoption here and the height-event path completes it.
-    let mut pending_verifier_boundary_adoption: Option<PendingVerifierBoundaryAdoption> = None;
+    let mut deferred_startup_pending_epoch: Option<Epoch> = None;
+    if let Some(snapshot) = recovered_pending_boundary {
+        let pending_epoch = Epoch::new(snapshot.artifact.epoch);
+        let keys_dir = args.keys_dir.as_ref().ok_or_else(|| {
+            eyre::eyre!("recovered pending DKG boundary without configured keys directory")
+        })?;
+        dkg_manager.note_recovered_pending_boundary(snapshot.artifact.clone());
+        let restored = restore_pending_dkg_activation(
+            snapshot,
+            keys_dir,
+            &key_backend,
+            &signing_key.public_key(),
+            &node,
+        )?;
+        let pending_artifact = match &restored {
+            RestoredPendingDkgActivation::Participant(pending) => &pending.boundary_artifact,
+            RestoredPendingDkgActivation::DealerOnly(pending) => {
+                pending.boundary_artifact.as_ref().ok_or_else(|| {
+                    eyre::eyre!("recovered dealer-only DKG handoff has no boundary artifact")
+                })?
+            }
+        };
+        let exact_carrier_height = find_exact_finalized_preannounce_carrier(
+            &node.provider,
+            pending_artifact,
+            recovery_anchor_height,
+            dkg_rotation_params.activation_grace_blocks,
+        )?;
+        let startup_plan = startup_pending_dkg_epoch_plan(
+            current_epoch,
+            pending_epoch,
+            recovery_anchor_height,
+            pending_artifact.planned_activation_height,
+            dkg_rotation_params.activation_grace_blocks,
+            exact_carrier_height,
+        )?;
+
+        match startup_plan {
+            StartupPendingDkgEpochPlan::Defer {
+                active_epoch,
+                preregister_after_current,
+            } => {
+                ensure!(
+                    active_epoch == current_epoch,
+                    "deferred startup DKG plan changed active epoch"
+                );
+                match restored {
+                    RestoredPendingDkgActivation::Participant(pending) => {
+                        frozen_dkg_target = Some(pending.target.clone());
+                        pending_dkg_activation = Some(pending);
+                    }
+                    RestoredPendingDkgActivation::DealerOnly(pending) => {
+                        frozen_dkg_target = Some(pending.target.clone());
+                        dealer_only_dkg_activation = Some(pending);
+                    }
+                }
+                deferred_startup_pending_epoch = Some(preregister_after_current);
+                info!(
+                    active_epoch = %current_epoch,
+                    pending_epoch = %preregister_after_current,
+                    finalized_height = recovery_anchor_height,
+                    "restored future DKG handoff; current-epoch channels will be acquired first"
+                );
+            }
+            StartupPendingDkgEpochPlan::Activate {
+                previous_epoch,
+                active_epoch,
+                activation_anchor,
+            } => {
+                let (target, canonical_output, activated_signing_share, boundary_artifact) =
+                    match restored {
+                        RestoredPendingDkgActivation::Participant(pending) => (
+                            pending.target,
+                            pending.complete.output,
+                            pending.complete.share,
+                            pending.boundary_artifact,
+                        ),
+                        RestoredPendingDkgActivation::DealerOnly(pending) => {
+                            let boundary_artifact = pending.boundary_artifact.ok_or_else(|| {
+                                eyre::eyre!(
+                                    "recovered dealer-only DKG activation has no boundary artifact"
+                                )
+                            })?;
+                            let output = decode_boundary_output(&boundary_artifact).wrap_err(
+                                "failed to decode recovered dealer-only DKG activation output",
+                            )?;
+                            (pending.target, output, None, boundary_artifact)
+                        }
+                    };
+                ensure!(
+                    boundary_artifact.epoch == active_epoch.get(),
+                    "recovered DKG boundary epoch {} does not match activated startup epoch {}",
+                    boundary_artifact.epoch,
+                    active_epoch
+                );
+                let activated_vrf_material_version =
+                    outbe_validatorset::next_vrf_material_version(vrf_material_version)?;
+                ensure!(
+                    boundary_artifact.vrf_material_version == activated_vrf_material_version,
+                    "recovered DKG VRF material version {} does not follow active version {}",
+                    boundary_artifact.vrf_material_version,
+                    vrf_material_version
+                );
+                let activated_validator_set =
+                    validator_set_for_dkg_output_players(&canonical_output, &target.validator_set)?;
+                let activated_participants =
+                    participants_from_validator_set(&activated_validator_set)?;
+
+                signing_share = activated_signing_share;
+                polynomial = canonical_output.public().clone();
+                last_dkg_output = Some(canonical_output.clone());
+                vrf_material_version = activated_vrf_material_version;
+                vrf_materials.activate(
+                    vrf_material_version,
+                    polynomial.clone(),
+                    signing_share.clone(),
+                );
+                register_epoch_validation_providers(
+                    active_epoch,
+                    &activated_participants,
+                    &activated_validator_set,
+                    None,
+                    &vrf_materials,
+                    &certificate_scheme_provider,
+                    &committee_provider,
+                )?;
+                let recovered_peer_map = build_peer_map(&activated_validator_set, &bootnode_map);
+                let _ = oracle.overwrite(recovered_peer_map);
+                validator_set = activated_validator_set;
+                participants = activated_participants;
+                dkg_cycle = target.dkg_cycle.saturating_add(1);
+                last_dkg_activation_height = activation_anchor;
+                vrf_safety.note_activated(
+                    vrf_material_version,
+                    activation_anchor,
+                    dkg_rotation_params.planned_activation_height(activation_anchor),
+                    dkg_rotation_params.activation_grace_blocks,
+                );
+                publish_randomness_status(&bridge, &vrf_safety);
+                application_epoch_fence.arm_activation_boundary(previous_epoch, activation_anchor);
+                application_epoch_fence.advance_epoch(active_epoch);
+                current_epoch = active_epoch;
+                frozen_dkg_target = None;
+                pending_dkg_activation = None;
+                dealer_only_dkg_activation = None;
+                next_epoch_subchannels = Some(
+                    outbe_consensus::epoch_subchannels::register_epoch_subchannels(
+                        active_epoch,
+                        &mut vote_mux,
+                        &mut cert_mux,
+                        &mut res_mux,
+                    )
+                    .await
+                    .wrap_err_with(|| {
+                        format!(
+                            "pre-register activated startup subchannels for epoch {active_epoch}"
+                        )
+                    })?,
+                );
+                info!(
+                    previous_epoch = %previous_epoch,
+                    active_epoch = %active_epoch,
+                    activation_anchor,
+                    finalized_height = recovery_anchor_height,
+                    vrf_material_version,
+                    dkg_cycle = target.dkg_cycle,
+                    dkg_output_hash = %dkg_manager::dkg_output_hash(&canonical_output),
+                    "restored preannounce-authorized DKG activation before boundary commit"
+                );
+            }
+        }
+    }
     let mut latest_consensus_tip = *consensus_tip_rx.borrow();
     let mut pending_provider_ready_height: Option<u64> = None;
     let mut watchdog_unhealthy_since: Option<SystemTime> = None;
@@ -3950,6 +4230,32 @@ where
             &mut res_mux,
         )
         .await?;
+
+        if let Some(pending_epoch) = deferred_startup_pending_epoch.take() {
+            ensure!(
+                next_epoch_subchannels.is_none(),
+                "recovered future DKG handoff collided with an existing subchannel stash"
+            );
+            next_epoch_subchannels = Some(
+                outbe_consensus::epoch_subchannels::register_epoch_subchannels(
+                    pending_epoch,
+                    &mut vote_mux,
+                    &mut cert_mux,
+                    &mut res_mux,
+                )
+                .await
+                .wrap_err_with(|| {
+                    format!(
+                        "pre-register recovered future-epoch subchannels after acquiring current epoch {current_epoch}"
+                    )
+                })?,
+            );
+            info!(
+                active_epoch = %current_epoch,
+                pending_epoch = %pending_epoch,
+                "pre-registered recovered future DKG channels after current epoch"
+            );
+        }
 
         // ── b. Build HybridScheme for this epoch ────────────────────────
         use commonware_consensus::simplex::elector::Config as ElectorConfig;
@@ -4153,26 +4459,27 @@ where
                                         "failed to read latest block height after DKG completion: {error}"
                                     )
                                 })?;
-                            match pending_dkg_activation_decision(
+                            if frozen_dkg_target_expired(
                                 current_height,
                                 target.planned_activation_height,
                                 dkg_rotation_params.activation_grace_blocks,
                             ) {
-                                PendingDkgActivationDecision::Expired { deadline } => {
-                                    vrf_safety.mark_expired(current_height);
-                                    publish_randomness_status(&bridge, &vrf_safety);
-                                    return Err(eyre::eyre!(
-                                        "DKG completed after VRF expiry: cycle {}, height {}, deadline {}",
-                                        target.dkg_cycle,
-                                        current_height,
-                                        deadline
-                                    ));
-                                }
-                                PendingDkgActivationDecision::Wait
-                                | PendingDkgActivationDecision::Activate => {}
+                                let deadline = target
+                                    .planned_activation_height
+                                    .saturating_add(
+                                        dkg_rotation_params.activation_grace_blocks,
+                                    );
+                                vrf_safety.mark_expired(current_height);
+                                publish_randomness_status(&bridge, &vrf_safety);
+                                return Err(eyre::eyre!(
+                                    "DKG completed without time for an outgoing-finalized preannounce: cycle {}, height {}, deadline {}",
+                                    target.dkg_cycle,
+                                    current_height,
+                                    deadline
+                                ));
                             }
 
-                            if let Some(ref keys_dir) = args.keys_dir {
+                            let boundary_artifact = if let Some(ref keys_dir) = args.keys_dir {
                                 persist_completed_dkg_before_activation(
                                     keys_dir,
                                     &key_backend,
@@ -4182,8 +4489,23 @@ where
                                     &target,
                                     &dkg_complete,
                                     current_height,
-                                )?;
-                            }
+                                )?
+                            } else {
+                                build_completed_dkg_boundary(
+                                    current_epoch,
+                                    vrf_material_version,
+                                    &participants,
+                                    &target,
+                                    &dkg_complete,
+                                )?
+                            };
+
+                            // Publish only after the exact artifact and threshold
+                            // material are durable. Proposers can now carry this
+                            // next-epoch artifact as a CommitteePreAnnounce before
+                            // activation; the same immutable object is retained for
+                            // the activation boundary below.
+                            dkg_manager.note_ceremony_completed(boundary_artifact.clone());
 
                             info!(
                                 epoch = %current_epoch,
@@ -4191,7 +4513,7 @@ where
                                 is_validator_set_change = target.is_validator_set_change,
                                 planned_activation_height = target.planned_activation_height,
                                 current_height,
-                                "DKG completed; waiting for activation height"
+                                "DKG completed; waiting for exact outgoing-finalized preannounce carrier"
                             );
                             outbe_consensus::metrics::record_dkg_status(2); // completed
                             outbe_consensus::metrics::record_reshare_completed();
@@ -4249,15 +4571,13 @@ where
                                 })?,
                             );
 
-                            let should_activate_now = current_height >= target.planned_activation_height;
                             pending_dkg_activation = Some(PendingDkgActivation {
                                 target,
                                 complete: dkg_complete,
-                                completed_at_height: current_height,
+                                boundary_artifact,
+                                recovered_output: None,
                             });
-                            if should_activate_now {
-                                let _ = execution_finalized_height_tx.send(current_height);
-                            }
+                            let _ = execution_finalized_height_tx.send(current_height);
                         }
                         Ok(DkgTaskOutcome::DealerOnly(dealer_only_complete)) => {
                             let Some(target) = frozen_dkg_target.as_ref().cloned() else {
@@ -4277,6 +4597,25 @@ where
                                         "failed to read latest block height after dealer-only DKG completion: {error}"
                                     )
                                 })?;
+                            if frozen_dkg_target_expired(
+                                current_height,
+                                target.planned_activation_height,
+                                dkg_rotation_params.activation_grace_blocks,
+                            ) {
+                                let deadline = target
+                                    .planned_activation_height
+                                    .saturating_add(
+                                        dkg_rotation_params.activation_grace_blocks,
+                                    );
+                                vrf_safety.mark_expired(current_height);
+                                publish_randomness_status(&bridge, &vrf_safety);
+                                return Err(eyre::eyre!(
+                                    "dealer-only DKG completed without time for an outgoing-finalized preannounce: cycle {}, height {}, deadline {}",
+                                    target.dkg_cycle,
+                                    current_height,
+                                    deadline
+                                ));
+                            }
                             info!(
                                 epoch = %current_epoch,
                                 dkg_cycle = target.dkg_cycle,
@@ -4286,7 +4625,8 @@ where
                             );
                             dealer_only_dkg_activation = Some(DealerOnlyDkgActivation {
                                 target,
-                                completed_at_height: current_height,
+                                boundary_artifact: None,
+                                recovered_output: None,
                             });
                             outbe_consensus::metrics::record_dkg_status(2);
                             outbe_consensus::metrics::record_reshare_completed();
@@ -4615,204 +4955,39 @@ where
                         }
                     }
 
-                    // Deferred verifier-follower boundary adoption: refresh this
-                    // follower's DKG material from the boundary of the rotation it just
-                    // followed, so its NEXT reshare presents what the committee holds.
-                    // The ceremony id binds round + FULL previous output + participants,
-                    // so a long-lived full-node that follows >=1 reshare then stakes
-                    // must track BOTH the chain's current output (stale prev_output ->
-                    // info_hash mismatch -> dealer bundles ignored) AND the chain's
-                    // dkg_cycle (the follower skips the freeze-path `dkg_cycle`
-                    // increment at its `continue`, so its round goes stale -> wrong mux
-                    // sub-channel + dealer logs fail verification) -> ceremony timeout
-                    // -> ACTIVE-but-voteless. Mirrors startup recovery (`dkg_cycle =
-                    // artifact.dkg_cycle + 1`), which is why the restart path never had
-                    // this gap. Group key is preserved across reshares, so finality
-                    // (verified via the participant set) is unaffected while the
-                    // adoption is pending.
-                    if let Some(adoption) = pending_verifier_boundary_adoption {
-                        if current_height >= adoption.next_scan_height {
-                            match scan_first_boundary_after(
-                                &node.provider,
-                                adoption.next_scan_height,
-                                current_height,
-                            ) {
-                                Ok(ForwardBoundaryScan::Found {
-                                    commit_height,
-                                    boundary: activated_boundary,
-                                }) => {
-                                    pending_verifier_boundary_adoption = None;
-                                    if verifier_should_adopt_followed_boundary(
-                                        commit_height,
-                                        activated_boundary.planned_activation_height,
-                                        adoption.activation_height,
-                                    ) {
-                                        match decode_boundary_output(&activated_boundary) {
-                                            Ok(activated_output) => {
-                                                vrf_material_version =
-                                                    activated_boundary.vrf_material_version;
-                                                dkg_cycle = activated_boundary
-                                                    .dkg_cycle
-                                                    .saturating_add(1);
-                                                polynomial = activated_output.public().clone();
-                                                vrf_materials.activate(
-                                                    vrf_material_version,
-                                                    polynomial.clone(),
-                                                    None,
-                                                );
-                                                last_dkg_output = Some(activated_output);
-                                                vrf_safety.note_activated(
-                                                    vrf_material_version,
-                                                    last_dkg_activation_height,
-                                                    dkg_rotation_params
-                                                        .planned_activation_height(
-                                                            last_dkg_activation_height,
-                                                        ),
-                                                    dkg_rotation_params.activation_grace_blocks,
-                                                );
-                                                publish_randomness_status(&bridge, &vrf_safety);
-                                                info!(
-                                                    commit_height,
-                                                    activation_height =
-                                                        adoption.activation_height,
-                                                    dkg_cycle,
-                                                    vrf_material_version,
-                                                    "verifier-follower: adopted activated DKG boundary output"
-                                                );
-                                            }
-                                            Err(error) => warn!(
-                                                %error,
-                                                "verifier-follower: failed to decode activated boundary output; keeping prior DKG material"
-                                            ),
-                                        }
-                                    } else {
-                                        warn!(
-                                            commit_height,
-                                            boundary_planned_activation_height =
-                                                activated_boundary.planned_activation_height,
-                                            activation_height = adoption.activation_height,
-                                            "verifier-follower: boundary found above the followed activation belongs to a stale cycle; keeping prior DKG material"
-                                        );
-                                    }
-                                }
-                                Ok(ForwardBoundaryScan::NotFound { resume_from }) => {
-                                    // The first new-epoch block is not executed locally
-                                    // yet — resume from the first unexamined height on
-                                    // the next finalized height event.
-                                    pending_verifier_boundary_adoption =
-                                        Some(PendingVerifierBoundaryAdoption {
-                                            activation_height: adoption.activation_height,
-                                            next_scan_height: resume_from,
-                                        });
-                                }
-                                Err(error) => warn!(
-                                    %error,
-                                    next_scan_height = adoption.next_scan_height,
-                                    "verifier-follower: failed to scan for activated boundary; retrying on next finalized height"
-                                ),
-                            }
-                        }
-                    }
-
-                    // Verifier-follower DKG activation: a share-less verifier that noted an
-                    // upcoming rotation (above) advances its epoch once it has synced to the
-                    // activation height. It does NOT run a ceremony and reuses its polynomial
-                    // (the reshare preserves the group public key, so the per-epoch reporter
-                    // built at the top of `'epoch_loop` keeps verifying the new epoch's
-                    // finality); only `current_epoch` advances and the Simplex engine restarts.
-                    if let Some(activation_height) = pending_verifier_activation {
-                        if current_height >= activation_height {
-                            let next_epoch =
-                                next_consensus_epoch_after_dkg_activation(current_epoch);
-                            info!(
-                                epoch = %current_epoch,
-                                next_epoch = %next_epoch,
-                                activation_height,
-                                "verifier-follower: DKG rotation activated — advancing epoch (reusing preserved group key) and restarting the Simplex engine"
-                            );
-                            pending_verifier_activation = None;
-                            // Anchor on the OBSERVED height (mirror the participant path's
-                            // `current_height.max(activation_height)`), not the planned height —
-                            // `last_dkg_activation_height` is a local accumulator that drives the
-                            // next freeze/activation schedule, so storing the bare planned value
-                            // would let schedule skew accumulate vs the committee across cycles.
-                            last_dkg_activation_height = current_height.max(activation_height);
-                            application_epoch_fence.advance_epoch(next_epoch);
-                            engine_handle_task.abort();
-                            current_epoch = next_epoch;
-                            // Same FinalizationActor anchor wait as the participant activation
-                            // path: the restarted engine's floor needs the activation block
-                            // finalized before `'epoch_loop` rebuilds the scheme.
-                            let deadline =
-                                ctx.current() + EPOCH_RESTART_ANCHOR_TIMEOUT;
-                            loop {
-                                let (finalized, finalized_hash, round_ready) = {
-                                    let view = finalization_view.read();
-                                    (
-                                        view.last_finalized_number,
-                                        view.forkchoice.finalized_block_hash,
-                                        view.last_finalized_round.is_some(),
-                                    )
-                                };
-                                if finalized >= activation_height
-                                    && finalized_hash != alloy_primitives::B256::ZERO
-                                    && round_ready
-                                {
-                                    break;
-                                }
-                                if ctx.current() >= deadline {
-                                    return Err(eyre::eyre!(
-                                        "verifier DKG activation race after {:?}: \
-                                         finalized=(height={}, hash={}, round_ready={}) \
-                                         activation_height={}",
-                                        EPOCH_RESTART_ANCHOR_TIMEOUT,
-                                        finalized,
-                                        finalized_hash,
-                                        round_ready,
-                                        activation_height
-                                    ));
-                                }
-                                ctx.sleep(EPOCH_RESTART_ANCHOR_POLL_INTERVAL).await;
-                            }
-                            // Queue adoption of the just-activated boundary's DKG
-                            // material. It CANNOT be read here: the activated cycle's
-                            // `BoundaryOutcome` rides the FIRST new-epoch block —
-                            // strictly ABOVE the activation height — and this follower
-                            // executes finalized blocks only while its (just aborted)
-                            // engine runs, so waiting for the artifact in this block
-                            // would deadlock against our own engine restart. The
-                            // height-event path performs the scan + adoption once the
-                            // restarted engine executes past the activation height.
-                            pending_verifier_boundary_adoption =
-                                Some(PendingVerifierBoundaryAdoption {
-                                    activation_height,
-                                    next_scan_height: activation_height.saturating_add(1),
-                                });
-                            continue 'epoch_loop;
-                        }
-                    }
-
                     if let Some(pending) = pending_dkg_activation.as_ref() {
-                        let activation_height = current_height.max(pending.completed_at_height);
-                        match pending_dkg_activation_decision(
-                            activation_height,
+                        let consensus_finalized_height = finalization_view
+                            .read()
+                            .last_finalized_number
+                            .min(current_height);
+                        let exact_carrier_height = find_exact_finalized_preannounce_carrier(
+                            &node.provider,
+                            &pending.boundary_artifact,
+                            consensus_finalized_height,
+                            dkg_rotation_params.activation_grace_blocks,
+                        )?;
+                        match pending_dkg_handoff_decision(
+                            consensus_finalized_height,
                             pending.target.planned_activation_height,
                             dkg_rotation_params.activation_grace_blocks,
+                            exact_carrier_height,
                         ) {
-                            PendingDkgActivationDecision::Expired { deadline } => {
-                                vrf_safety.mark_expired(activation_height);
+                            PendingDkgHandoffDecision::Expired { deadline } => {
+                                vrf_safety.mark_expired(consensus_finalized_height);
                                 publish_randomness_status(&bridge, &vrf_safety);
                                 return Err(eyre::eyre!(
                                     "pending DKG activation missed VRF expiry: cycle {}, height {}, deadline {}",
                                     pending.target.dkg_cycle,
-                                    activation_height,
+                                    consensus_finalized_height,
                                     deadline
                                 ));
                             }
-                            PendingDkgActivationDecision::Wait => {}
-                            PendingDkgActivationDecision::Activate => {
-                                let Some(canonical_output) =
-                                    dkg_manager.canonical_output(current_epoch)
+                            PendingDkgHandoffDecision::Wait => {}
+                            PendingDkgHandoffDecision::Activate { activation_anchor: activation_height } => {
+                                let Some(canonical_output) = select_pending_canonical_output(
+                                    dkg_manager.canonical_output(current_epoch),
+                                    pending.recovered_output.as_ref(),
+                                )
                                 else {
                                     warn!(
                                         epoch = %current_epoch,
@@ -4828,6 +5003,7 @@ where
                                 };
                             let target = pending.target;
                             let dkg_complete = pending.complete;
+                            let boundary_artifact = pending.boundary_artifact;
                             if let Err(error) = dkg_manager::assert_canonical_output(
                                 &dkg_complete.output,
                                 &canonical_output,
@@ -4859,49 +5035,26 @@ where
                             let activated_polynomial = canonical_output.public().clone();
                             let activated_signing_share = dkg_complete.share;
                             let next_epoch = next_consensus_epoch_after_dkg_activation(current_epoch);
-                            let boundary_artifact = dkg_manager::build_boundary_artifact(
-                                dkg_manager::BoundaryArtifactInput {
-                                    epoch: next_epoch,
-                                    validator_set: &activated_validator_set,
-                                    output: &canonical_output,
-                                    is_full_dkg: false,
-                                    dkg_cycle: target.dkg_cycle,
-                                    freeze_height: target.freeze_height,
-                                    planned_activation_height: target.planned_activation_height,
-                                    vrf_material_version: activated_vrf_material_version,
-                                    is_validator_set_change: activated_is_validator_set_change,
-                                    tee_reshare_registrations: Vec::new(),
-                                    tee_expired_target_exclusions: target
-                                        .tee_expired_target_exclusions
-                                        .clone(),
-                                },
-                            )?;
+                            ensure!(
+                                boundary_artifact.epoch == next_epoch.get(),
+                                "completed DKG boundary epoch {} does not match activation epoch {}",
+                                boundary_artifact.epoch,
+                                next_epoch.get()
+                            );
+                            let published_boundary = dkg_manager
+                                .pending_boundary_artifact(next_epoch)
+                                .await
+                                .ok_or_else(|| {
+                                    eyre::eyre!(
+                                        "completed DKG boundary is missing from manager at activation"
+                                    )
+                                })?;
+                            ensure!(
+                                published_boundary == boundary_artifact,
+                                "published pre-announce boundary diverged before activation"
+                            );
                             let epoch_boundary_height =
                                 activation_height.max(target.planned_activation_height);
-                            if let Some(ref keys_dir) = args.keys_dir {
-                                // A shareless VERIFIER activation (C1) has no private
-                                // share to persist; only the boundary snapshot is saved.
-                                if let Some(share) = activated_signing_share.as_ref() {
-                                    save_pending_dkg_state(
-                                        keys_dir,
-                                        share,
-                                        &activated_polynomial,
-                                        &canonical_output,
-                                        &key_backend,
-                                    )
-                                    .wrap_err(
-                                        "failed to durably save pending DKG state before activation",
-                                    )?;
-                                }
-                                save_pending_dkg_boundary(
-                                    keys_dir,
-                                    &PendingDkgBoundarySnapshot {
-                                        artifact: boundary_artifact.clone(),
-                                        activated_at_height: epoch_boundary_height,
-                                    },
-                                )
-                                .wrap_err("failed to durably save pending DKG boundary before activation")?;
-                            }
 
                             vrf_material_version = activated_vrf_material_version;
                             polynomial = activated_polynomial;
@@ -4913,7 +5066,6 @@ where
                                 signing_share.clone(),
                             );
 
-                            dkg_manager.note_ceremony_completed(boundary_artifact);
                             application_epoch_fence.arm_activation_boundary(
                                 current_epoch,
                                 epoch_boundary_height,
@@ -5017,35 +5169,111 @@ where
                         }
                     }
 
-                    // Read the dealer-only decision WITHOUT holding a borrow on
-                    // `dealer_only_dkg_activation` so the Activate arm can `.take()` it.
-                    let dealer_only_decision = dealer_only_dkg_activation.as_ref().map(|d| {
-                        (
-                            current_height.max(d.completed_at_height),
-                            d.target.planned_activation_height,
-                            d.target.dkg_cycle,
-                        )
+                    if dealer_only_dkg_activation
+                        .as_ref()
+                        .is_some_and(|pending| pending.boundary_artifact.is_none())
+                    {
+                        if let Some(canonical_output) = dkg_manager.canonical_output(current_epoch) {
+                            let target = dealer_only_dkg_activation
+                                .as_ref()
+                                .map(|pending| pending.target.clone())
+                                .ok_or_else(|| eyre::eyre!("dealer-only activation disappeared while preparing boundary"))?;
+                            let complete = dkg_actor::DkgComplete {
+                                output: canonical_output,
+                                share: None,
+                                participants: target.participants.clone(),
+                            };
+                            let boundary_artifact = if let Some(ref keys_dir) = args.keys_dir {
+                                persist_completed_dkg_before_activation(
+                                    keys_dir,
+                                    &key_backend,
+                                    current_epoch,
+                                    vrf_material_version,
+                                    &participants,
+                                    &target,
+                                    &complete,
+                                    current_height,
+                                )?
+                            } else {
+                                build_completed_dkg_boundary(
+                                    current_epoch,
+                                    vrf_material_version,
+                                    &participants,
+                                    &target,
+                                    &complete,
+                                )?
+                            };
+                            dkg_manager.note_ceremony_completed(boundary_artifact.clone());
+                            if next_epoch_subchannels.is_none() {
+                                let next_epoch =
+                                    next_consensus_epoch_after_dkg_activation(current_epoch);
+                                next_epoch_subchannels = Some(
+                                    outbe_consensus::epoch_subchannels::register_epoch_subchannels(
+                                        next_epoch,
+                                        &mut vote_mux,
+                                        &mut cert_mux,
+                                        &mut res_mux,
+                                    )
+                                    .await
+                                    .wrap_err_with(|| {
+                                        format!(
+                                            "pre-register next-epoch subchannels for dealer-only handoff epoch {next_epoch}"
+                                        )
+                                    })?,
+                                );
+                            }
+                            let pending = dealer_only_dkg_activation
+                                .as_mut()
+                                .ok_or_else(|| eyre::eyre!("dealer-only activation disappeared before boundary publication"))?;
+                            pending.boundary_artifact = Some(boundary_artifact);
+                            info!(
+                                epoch = %current_epoch,
+                                dkg_cycle = target.dkg_cycle,
+                                "dealer-only DKG reconstructed and published durable pending boundary"
+                            );
+                        }
+                    }
+
+                    let dealer_only_decision = dealer_only_dkg_activation.as_ref().and_then(|d| {
+                        d.boundary_artifact.as_ref().map(|boundary_artifact| {
+                            (
+                                d.target.planned_activation_height,
+                                d.target.dkg_cycle,
+                                boundary_artifact.clone(),
+                            )
+                        })
                     });
-                    if let Some((activation_height, planned_activation_height, target_dkg_cycle)) =
+                    if let Some((planned_activation_height, target_dkg_cycle, boundary_artifact)) =
                         dealer_only_decision
                     {
-                        match pending_dkg_activation_decision(
-                            activation_height,
+                        let consensus_finalized_height = finalization_view
+                            .read()
+                            .last_finalized_number
+                            .min(current_height);
+                        let exact_carrier_height = find_exact_finalized_preannounce_carrier(
+                            &node.provider,
+                            &boundary_artifact,
+                            consensus_finalized_height,
+                            dkg_rotation_params.activation_grace_blocks,
+                        )?;
+                        match pending_dkg_handoff_decision(
+                            consensus_finalized_height,
                             planned_activation_height,
                             dkg_rotation_params.activation_grace_blocks,
+                            exact_carrier_height,
                         ) {
-                            PendingDkgActivationDecision::Expired { deadline } => {
-                                vrf_safety.mark_expired(activation_height);
+                            PendingDkgHandoffDecision::Expired { deadline } => {
+                                vrf_safety.mark_expired(consensus_finalized_height);
                                 publish_randomness_status(&bridge, &vrf_safety);
                                 return Err(eyre::eyre!(
                                     "dealer-only DKG activation missed VRF expiry: cycle {}, height {}, deadline {}",
                                     target_dkg_cycle,
-                                    activation_height,
+                                    consensus_finalized_height,
                                     deadline
                                 ));
                             }
-                            PendingDkgActivationDecision::Wait => {}
-                            PendingDkgActivationDecision::Activate => {
+                            PendingDkgHandoffDecision::Wait => {}
+                            PendingDkgHandoffDecision::Activate { activation_anchor: activation_height } => {
                                 // S3 demotion: an exited validator (deactivated/unstaked) is a
                                 // previous-output dealer but not a frozen-target player, so it
                                 // finishes its dealer duties for the resharded committee and then,
@@ -5059,31 +5287,49 @@ where
                                 // membership change, so unlike the same-membership verifier-follow
                                 // the node MUST take the new polynomial + participant set here (it
                                 // has them from the ceremony) rather than reusing the old ones.
-                                let Some(canonical_output) =
-                                    dkg_manager.canonical_output(current_epoch)
-                                else {
-                                    warn!(
-                                        epoch = %current_epoch,
-                                        activation_height,
-                                        "exited validator: dealer-only activation reached but resharded canonical output not yet reconstructed; waiting"
-                                    );
-                                    continue;
-                                };
+                                let canonical_output = select_pending_canonical_output(
+                                    dkg_manager.canonical_output(current_epoch),
+                                    dealer_only_dkg_activation
+                                        .as_ref()
+                                        .and_then(|pending| pending.recovered_output.as_ref()),
+                                )
+                                    .ok_or_else(|| eyre::eyre!(
+                                        "dealer-only pending boundary lost its canonical output before activation"
+                                    ))?;
+                                let next_epoch =
+                                    next_consensus_epoch_after_dkg_activation(current_epoch);
+                                let published_boundary = dkg_manager
+                                    .pending_boundary_artifact(next_epoch)
+                                    .await
+                                    .ok_or_else(|| {
+                                        eyre::eyre!(
+                                            "dealer-only completed DKG boundary is missing from manager at activation"
+                                        )
+                                    })?;
+                                ensure!(
+                                    published_boundary == boundary_artifact,
+                                    "dealer-only published preannounce boundary diverged before activation"
+                                );
                                 let Some(dealer_only) = dealer_only_dkg_activation.take() else {
                                     return Err(eyre::eyre!(
                                         "dealer-only activation missing after decision at height {activation_height}"
                                     ));
                                 };
                                 let target = dealer_only.target;
-                                let next_epoch =
-                                    next_consensus_epoch_after_dkg_activation(current_epoch);
+                                let activated_validator_set =
+                                    validator_set_for_dkg_output_players(
+                                        &canonical_output,
+                                        &target.validator_set,
+                                    )?;
+                                let activated_participants =
+                                    participants_from_validator_set(&activated_validator_set)?;
                                 info!(
                                     epoch = %current_epoch,
                                     next_epoch = %next_epoch,
                                     activation_height,
                                     old = participants.len(),
-                                    new = target.participants.len(),
-                                    "exited validator: dealer-only DKG duties complete — demoting to verifier-follower of the resharded committee"
+                                    new = activated_participants.len(),
+                                    "shareless verifier: authenticated DKG handoff complete"
                                 );
                                 let new_vrf_material_version =
                                     match outbe_validatorset::next_vrf_material_version(
@@ -5098,8 +5344,8 @@ where
                                 signing_share = None;
                                 polynomial = canonical_output.public().clone();
                                 last_dkg_output = Some(canonical_output);
-                                validator_set = target.validator_set.clone();
-                                participants = target.participants.clone();
+                                validator_set = activated_validator_set;
+                                participants = activated_participants;
                                 vrf_material_version = new_vrf_material_version;
                                 dkg_cycle = target.dkg_cycle.saturating_add(1);
                                 vrf_materials.activate(
@@ -5107,8 +5353,17 @@ where
                                     polynomial.clone(),
                                     None,
                                 );
-                                let anchored_height = current_height.max(activation_height);
-                                last_dkg_activation_height = anchored_height;
+                                register_epoch_validation_providers(
+                                    next_epoch,
+                                    &participants,
+                                    &validator_set,
+                                    None,
+                                    &vrf_materials,
+                                    &certificate_scheme_provider,
+                                    &committee_provider,
+                                )?;
+                                let anchored_height = activation_height;
+                                last_dkg_activation_height = activation_height;
                                 vrf_safety.note_activated(
                                     vrf_material_version,
                                     anchored_height,
@@ -5116,6 +5371,11 @@ where
                                     dkg_rotation_params.activation_grace_blocks,
                                 );
                                 publish_randomness_status(&bridge, &vrf_safety);
+                                application_epoch_fence.arm_activation_boundary(
+                                    current_epoch,
+                                    activation_height,
+                                );
+                                frozen_dkg_target = None;
                                 application_epoch_fence.advance_epoch(next_epoch);
                                 engine_handle_task.abort();
                                 current_epoch = next_epoch;
@@ -5324,7 +5584,7 @@ where
                     }
 
                     let freeze_height = dkg_rotation_params.freeze_height(last_dkg_activation_height);
-                    if pending_verifier_activation.is_none()
+                    if dealer_only_dkg_activation.is_none()
                         && should_start_dkg_rotation(
                             frozen_dkg_target.is_some(),
                             pending_dkg_activation.is_some(),
@@ -5357,49 +5617,68 @@ where
                                     &new_participants,
                                 );
                                 if local_role == LocalDkgRole::NotParticipant {
-                                    // A share-less verifier-follower (TEE full-node) is not a
-                                    // committee member: neither a previous dealer nor a frozen
-                                    // target player. It must NOT crash or run a ceremony — it
-                                    // notes the activation height and keeps following; when it
-                                    // syncs to that height it advances its epoch (reusing its
-                                    // polynomial, since the group key is preserved across
-                                    // reshares) so its per-epoch reporter verifies the new epoch's
-                                    // finality. A node that HELD a share but is now NotParticipant
-                                    // is a real error and still fails.
+                                    // A share-less verifier-follower does not run a ceremony,
+                                    // but it observes the same finalized dealer logs, reconstructs
+                                    // the exact incoming output, publishes/validates the same
+                                    // preannounce, and crosses the same outgoing-finalized
+                                    // handoff as participants. Reusing the old polynomial at the
+                                    // planned height would bypass authentication and cannot follow
+                                    // membership-changing rotations safely.
                                     if signing_share.is_none() {
-                                        // Finalized-follow is only valid for a SAME-MEMBERSHIP
-                                        // reshare: certificate verification binds the ordered
-                                        // participant set (not just the preserved group key), and
-                                        // the rebuilt verifier scheme requires polynomial-total ==
-                                        // participant-count. On a membership change the verifier
-                                        // would need the NEW group polynomial (only the group key,
-                                        // not the full polynomial, is on-chain), so fail loudly +
-                                        // resync rather than silently reuse a stale committee.
-                                        if new_participants != participants {
-                                            return Err(eyre::eyre!(
-                                                "verifier-follower cannot follow a membership-changing DKG reshare at height {freeze_height} \
-                                                 (committee {} → {}); resync required",
-                                                participants.len(),
-                                                new_participants.len()
-                                            ));
-                                        }
+                                        let peer_map = build_peer_map(&new_set, &bootnode_map);
+                                        let chain_peer_set_id =
+                                            p2p_oracle_chain_peer_set_id(freeze_height);
+                                        let dkg_peer_set_id =
+                                            p2p_oracle_dkg_peer_set_id(freeze_height);
+                                        let _ = oracle.track(chain_peer_set_id, peer_map.clone());
+                                        let _ = oracle.track(dkg_peer_set_id, peer_map);
+                                        dkg_manager
+                                            .note_ceremony_started_with_finalized_log_tx(
+                                                current_epoch,
+                                                dkg_cycle,
+                                                last_dkg_output.clone(),
+                                                new_participants.clone(),
+                                                None,
+                                            )
+                                            .wrap_err(
+                                                "failed to initialize verifier-follower DKG reconstruction",
+                                            )?;
+                                        let mut replay_height = freeze_height;
+                                        replay_finalized_dealer_logs_into_manager(
+                                            &node.provider,
+                                            &mut replay_height,
+                                            current_height,
+                                            &dkg_manager,
+                                        )
+                                        .wrap_err(
+                                            "failed to replay finalized dealer logs for verifier-follower",
+                                        )?;
+                                        let is_validator_set_change =
+                                            new_participants != participants;
+                                        let target = FrozenDkgTarget {
+                                            dkg_cycle,
+                                            freeze_height,
+                                            planned_activation_height,
+                                            validator_set: new_set,
+                                            participants: new_participants,
+                                            tee_expired_target_exclusions,
+                                            is_validator_set_change,
+                                        };
                                         info!(
                                             freeze_height,
                                             planned_activation_height,
-                                            "verifier-follower: DKG rotation noted; will advance epoch at the activation height"
+                                            dkg_cycle,
+                                            "verifier-follower: reconstructing pending DKG boundary before authenticated handoff"
                                         );
-                                        pending_verifier_activation = Some(planned_activation_height);
-                                        if verifier_activation_needs_immediate_replay(
-                                            current_height,
-                                            planned_activation_height,
-                                        ) {
-                                            // Re-enter this height-event path immediately. The
-                                            // pending-activation branch above will advance the
-                                            // epoch before the verifier waits for a new-epoch
-                                            // block that its old verifier cannot accept.
-                                            let _ = execution_finalized_height_tx
-                                                .send(current_height);
-                                        }
+                                        frozen_dkg_target = Some(target.clone());
+                                        dealer_only_dkg_activation =
+                                            Some(DealerOnlyDkgActivation {
+                                                target,
+                                                boundary_artifact: None,
+                                                recovered_output: None,
+                                            });
+                                        outbe_consensus::metrics::record_dkg_status(2);
+                                        let _ = execution_finalized_height_tx.send(current_height);
                                         continue;
                                     }
                                     return Err(eyre::eyre!(
@@ -5841,14 +6120,15 @@ pub fn migrate_dkg_keys_if_needed(
     }
     Ok(())
 }
-const DKG_PENDING_BOUNDARY_MAGIC: &[u8; 8] = b"ODKGPB01";
+const DKG_PENDING_BOUNDARY_MAGIC: &[u8; 8] = b"ODKGPB02";
+const DKG_PENDING_BOUNDARY_LEGACY_MAGIC: &[u8; 8] = b"ODKGPB01";
 const STARTUP_JOIN_SCAN_INTERVAL: Duration = Duration::from_millis(250);
 const DKG_OUTPUT_MAX_PARTICIPANTS: u32 = 256;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct PendingDkgBoundarySnapshot {
     artifact: DkgBoundaryArtifact,
-    activated_at_height: u64,
+    completed_at_height: u64,
 }
 
 struct StartupLiveJoinResult {
@@ -5974,7 +6254,7 @@ fn encode_pending_dkg_boundary_snapshot(snapshot: &PendingDkgBoundarySnapshot) -
     })?;
     let mut out = Vec::with_capacity(DKG_PENDING_BOUNDARY_MAGIC.len() + 8 + 4 + boundary.len());
     out.extend_from_slice(DKG_PENDING_BOUNDARY_MAGIC);
-    out.extend_from_slice(&snapshot.activated_at_height.to_be_bytes());
+    out.extend_from_slice(&snapshot.completed_at_height.to_be_bytes());
     out.extend_from_slice(&len.to_be_bytes());
     out.extend_from_slice(boundary.as_ref());
     Ok(out)
@@ -5987,12 +6267,17 @@ fn decode_pending_dkg_boundary_snapshot(bytes: &[u8]) -> Result<PendingDkgBounda
         "pending DKG boundary snapshot too short: {} < {header_len}",
         bytes.len()
     );
+    let magic = &bytes[..DKG_PENDING_BOUNDARY_MAGIC.len()];
     ensure!(
-        &bytes[..DKG_PENDING_BOUNDARY_MAGIC.len()] == DKG_PENDING_BOUNDARY_MAGIC,
+        magic != DKG_PENDING_BOUNDARY_LEGACY_MAGIC,
+        "unsupported pending DKG boundary snapshot version ODKGPB01"
+    );
+    ensure!(
+        magic == DKG_PENDING_BOUNDARY_MAGIC,
         "invalid pending DKG boundary snapshot magic"
     );
     let height_offset = DKG_PENDING_BOUNDARY_MAGIC.len();
-    let activated_at_height = u64::from_be_bytes(
+    let completed_at_height = u64::from_be_bytes(
         bytes[height_offset..height_offset + 8]
             .try_into()
             .map_err(|_| eyre::eyre!("invalid pending DKG boundary height field"))?,
@@ -6019,12 +6304,45 @@ fn decode_pending_dkg_boundary_snapshot(bytes: &[u8]) -> Result<PendingDkgBounda
         })?;
     Ok(PendingDkgBoundarySnapshot {
         artifact,
-        activated_at_height,
+        completed_at_height,
     })
 }
 
 fn pending_dkg_boundary_path(storage_dir: &std::path::Path) -> std::path::PathBuf {
     storage_dir.join(DKG_PENDING_BOUNDARY_FILE)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_completed_dkg_boundary(
+    current_epoch: Epoch,
+    vrf_material_version: u64,
+    current_participants: &commonware_utils::ordered::Set<bls12381::PublicKey>,
+    target: &FrozenDkgTarget,
+    complete: &dkg_actor::DkgComplete,
+) -> Result<DkgBoundaryArtifact> {
+    let activated_validator_set =
+        validator_set_for_dkg_output_players(&complete.output, &target.validator_set)?;
+    let activated_participants = participants_from_validator_set(&activated_validator_set)?;
+    ensure!(
+        complete.participants == activated_participants,
+        "completed DKG participant set does not match reconstructed output players"
+    );
+    let next_epoch = next_consensus_epoch_after_dkg_activation(current_epoch);
+    let next_vrf_material_version =
+        outbe_validatorset::next_vrf_material_version(vrf_material_version)?;
+    dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
+        epoch: next_epoch,
+        validator_set: &activated_validator_set,
+        output: &complete.output,
+        is_full_dkg: false,
+        dkg_cycle: target.dkg_cycle,
+        freeze_height: target.freeze_height,
+        planned_activation_height: target.planned_activation_height,
+        vrf_material_version: next_vrf_material_version,
+        is_validator_set_change: activated_participants != *current_participants,
+        tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: target.tee_expired_target_exclusions.clone(),
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -6037,31 +6355,15 @@ fn persist_completed_dkg_before_activation(
     target: &FrozenDkgTarget,
     complete: &dkg_actor::DkgComplete,
     completed_at_height: u64,
-) -> Result<()> {
-    let activated_validator_set =
-        validator_set_for_dkg_output_players(&complete.output, &target.validator_set)?;
-    let activated_participants = participants_from_validator_set(&activated_validator_set)?;
-    ensure!(
-        complete.participants == activated_participants,
-        "completed DKG participant set does not match reconstructed output players"
-    );
+) -> Result<DkgBoundaryArtifact> {
+    let boundary_artifact = build_completed_dkg_boundary(
+        current_epoch,
+        vrf_material_version,
+        current_participants,
+        target,
+        complete,
+    )?;
     let next_epoch = next_consensus_epoch_after_dkg_activation(current_epoch);
-    let next_vrf_material_version =
-        outbe_validatorset::next_vrf_material_version(vrf_material_version)?;
-    let boundary_artifact =
-        dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
-            epoch: next_epoch,
-            validator_set: &activated_validator_set,
-            output: &complete.output,
-            is_full_dkg: false,
-            dkg_cycle: target.dkg_cycle,
-            freeze_height: target.freeze_height,
-            planned_activation_height: target.planned_activation_height,
-            vrf_material_version: next_vrf_material_version,
-            is_validator_set_change: activated_participants != *current_participants,
-            tee_reshare_registrations: Vec::new(),
-            tee_expired_target_exclusions: target.tee_expired_target_exclusions.clone(),
-        })?;
 
     if let Some(share) = complete.share.as_ref() {
         save_pending_dkg_state(
@@ -6073,12 +6375,11 @@ fn persist_completed_dkg_before_activation(
         )
         .wrap_err("failed to durably save completed DKG state before activation")?;
     }
-    let activated_at_height = completed_at_height.max(target.planned_activation_height);
     save_pending_dkg_boundary(
         keys_dir,
         &PendingDkgBoundarySnapshot {
-            artifact: boundary_artifact,
-            activated_at_height,
+            artifact: boundary_artifact.clone(),
+            completed_at_height,
         },
     )
     .wrap_err("failed to durably save completed DKG boundary before activation")?;
@@ -6086,11 +6387,11 @@ fn persist_completed_dkg_before_activation(
         keys_dir = %keys_dir.display(),
         dkg_cycle = target.dkg_cycle,
         epoch = %next_epoch,
-        activated_at_height,
+        completed_at_height,
         dkg_output_hash = %dkg_manager::dkg_output_hash(&complete.output),
         "persisted completed DKG state before activation"
     );
-    Ok(())
+    Ok(boundary_artifact)
 }
 
 fn save_pending_dkg_boundary(
@@ -6134,10 +6435,8 @@ fn pending_boundary_is_finalized(
     pending: &PendingDkgBoundarySnapshot,
     recovered_boundary: Option<&(u64, DkgBoundaryArtifact)>,
 ) -> bool {
-    recovered_boundary.is_some_and(|(height, artifact)| {
-        artifact == &pending.artifact
-            || (*height >= pending.activated_at_height
-                && artifact.dkg_cycle >= pending.artifact.dkg_cycle)
+    recovered_boundary.is_some_and(|(_height, artifact)| {
+        artifact == &pending.artifact || artifact.dkg_cycle > pending.artifact.dkg_cycle
     })
 }
 
@@ -6193,38 +6492,171 @@ fn validate_pending_boundary_snapshot(
 fn recover_pending_dkg_boundary_snapshot(
     storage_dir: &std::path::Path,
     key_backend: &bls::KeyBackend,
+    local_consensus_key: &bls12381::PublicKey,
     node: &OutbeFullNode,
     recovered_boundary: Option<&(u64, DkgBoundaryArtifact)>,
 ) -> Result<Option<PendingDkgBoundarySnapshot>> {
     let Some(snapshot) = load_pending_dkg_boundary(storage_dir)? else {
         return Ok(None);
     };
+    if let Some((_height, finalized)) = recovered_boundary {
+        ensure!(
+            finalized.dkg_cycle != snapshot.artifact.dkg_cycle || finalized == &snapshot.artifact,
+            "finalized DKG boundary conflicts with pending snapshot for cycle {}",
+            snapshot.artifact.dkg_cycle
+        );
+    }
     if pending_boundary_is_finalized(&snapshot, recovered_boundary) {
+        let exact_boundary_finalized =
+            recovered_boundary.is_some_and(|(_height, finalized)| finalized == &snapshot.artifact);
+        if exact_boundary_finalized {
+            let boundary_output = decode_boundary_output(&snapshot.artifact)
+                .wrap_err("failed to decode finalized pending DKG boundary output")?;
+            if boundary_output
+                .players()
+                .position(local_consensus_key)
+                .is_some()
+            {
+                let (share, polynomial, pending_output) =
+                    load_pending_dkg_state(storage_dir, key_backend)?.ok_or_else(|| {
+                        eyre::eyre!(
+                            "finalized pending DKG boundary includes the local validator but pending private material is unavailable"
+                        )
+                    })?;
+                dkg_manager::assert_canonical_output(
+                    &pending_output,
+                    &boundary_output,
+                    "finalized pending DKG material",
+                )?;
+                save_dkg_state(
+                    storage_dir,
+                    &share,
+                    &polynomial,
+                    &pending_output,
+                    key_backend,
+                )
+                .wrap_err("failed to promote finalized pending DKG state during restart")?;
+            }
+        }
         clear_pending_dkg_boundary(storage_dir);
         remove_pending_dkg_state(storage_dir);
+        dkg_actor::DkgDealerRetryStore::in_keys_dir(storage_dir, key_backend.clone())
+            .clear()
+            .wrap_err("failed to retire finalized pending DKG retry state during restart")?;
         info!(
             storage_dir = %storage_dir.display(),
-            activated_at_height = snapshot.activated_at_height,
+            completed_at_height = snapshot.completed_at_height,
             dkg_cycle = snapshot.artifact.dkg_cycle,
-            "cleared stale pending DKG boundary snapshot after finalized boundary recovery"
+            exact_boundary_finalized,
+            "retired pending DKG snapshot after finalized boundary recovery"
         );
         return Ok(None);
     }
 
-    let local_output = match load_pending_dkg_state(storage_dir, key_backend)?.or_else(|| {
-        load_saved_dkg_state(storage_dir, key_backend)
-            .ok()
-            .flatten()
-    }) {
-        Some((_, _, output)) => output,
-        None => {
+    let boundary_output = decode_boundary_output(&snapshot.artifact)
+        .wrap_err("failed to decode recovered pending DKG boundary output")?;
+    validate_pending_boundary_snapshot(&snapshot, &boundary_output, node)?;
+    let local_is_incoming_participant = boundary_output
+        .players()
+        .position(local_consensus_key)
+        .is_some();
+    match load_pending_dkg_state(storage_dir, key_backend)? {
+        Some((_, _, pending_output)) => {
+            dkg_manager::assert_canonical_output(
+                &pending_output,
+                &boundary_output,
+                "recovered pending DKG material",
+            )?;
+        }
+        None if local_is_incoming_participant => {
             return Err(eyre::eyre!(
-                "pending DKG boundary snapshot exists but no matching pending/saved DKG material is available"
+                "pending DKG boundary includes the local validator but matching pending private material is unavailable"
             ));
         }
-    };
-    validate_pending_boundary_snapshot(&snapshot, &local_output, node)?;
+        None => {
+            info!(
+                epoch = snapshot.artifact.epoch,
+                dkg_cycle = snapshot.artifact.dkg_cycle,
+                "recovered dealer-only pending DKG boundary without incoming private share"
+            );
+        }
+    }
     Ok(Some(snapshot))
+}
+
+fn restore_pending_dkg_activation(
+    snapshot: PendingDkgBoundarySnapshot,
+    storage_dir: &std::path::Path,
+    key_backend: &bls::KeyBackend,
+    local_consensus_key: &bls12381::PublicKey,
+    node: &OutbeFullNode,
+) -> Result<RestoredPendingDkgActivation> {
+    let output = decode_boundary_output(&snapshot.artifact)
+        .wrap_err("failed to decode pending DKG output during runtime restore")?;
+    let (validator_set, tee_expired_target_exclusions) =
+        match refresh_validator_set_at_height(node, snapshot.artifact.freeze_height)? {
+            FrozenValidatorSetRefresh::Ready {
+                validator_set,
+                tee_expired_target_exclusions,
+                ..
+            } => (validator_set, tee_expired_target_exclusions),
+            FrozenValidatorSetRefresh::PendingBlockHash => {
+                return Err(eyre::eyre!(
+                "pending DKG freeze-height state unavailable at height {} during runtime restore",
+                snapshot.artifact.freeze_height
+            ));
+            }
+        };
+    let activated_validator_set = validator_set_for_dkg_output_players(&output, &validator_set)
+        .wrap_err("pending DKG output does not match its frozen validator set")?;
+    let participants = participants_from_validator_set(&activated_validator_set)?;
+    ensure!(
+        tee_expired_target_exclusions == snapshot.artifact.tee_expired_target_exclusions,
+        "pending DKG TEE expiry exclusions do not match freeze-height state"
+    );
+    let target = FrozenDkgTarget {
+        dkg_cycle: snapshot.artifact.dkg_cycle,
+        freeze_height: snapshot.artifact.freeze_height,
+        planned_activation_height: snapshot.artifact.planned_activation_height,
+        validator_set,
+        participants: participants.clone(),
+        tee_expired_target_exclusions,
+        is_validator_set_change: snapshot.artifact.is_validator_set_change,
+    };
+
+    if participants.position(local_consensus_key).is_some() {
+        let (share, _polynomial, pending_output) =
+            load_pending_dkg_state(storage_dir, key_backend)?.ok_or_else(|| {
+                eyre::eyre!(
+                    "pending DKG boundary includes the local validator but pending private material is unavailable"
+                )
+            })?;
+        dkg_manager::assert_canonical_output(
+            &pending_output,
+            &output,
+            "restored pending participant DKG state",
+        )?;
+        Ok(RestoredPendingDkgActivation::Participant(
+            PendingDkgActivation {
+                target,
+                complete: dkg_actor::DkgComplete {
+                    output: output.clone(),
+                    share: Some(share),
+                    participants,
+                },
+                boundary_artifact: snapshot.artifact,
+                recovered_output: Some(output),
+            },
+        ))
+    } else {
+        Ok(RestoredPendingDkgActivation::DealerOnly(
+            DealerOnlyDkgActivation {
+                target,
+                boundary_artifact: Some(snapshot.artifact),
+                recovered_output: Some(output),
+            },
+        ))
+    }
 }
 
 fn startup_live_join_scan_height(
@@ -6713,8 +7145,8 @@ async fn obtain_threshold_material(
             && !startup_dkg_context.recovered_boundary_finalized
         {
             return Err(eyre::eyre!(
-                    "pending DKG boundary snapshot was recovered but matching DKG material is unavailable"
-                ));
+                "pending DKG boundary snapshot was recovered but matching DKG material is unavailable"
+            ));
         }
 
         if startup_dkg_context.has_chain_finalized_dkg_boundary() {

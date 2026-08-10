@@ -401,7 +401,9 @@ impl PlanningLedger {
                     );
                     observed_retired.insert(id.clone());
                 }
-                status => bail!("PFS requirement {id} has illegal status {status}"),
+                status => {
+                    bail!("PFS requirement {id} has illegal status {status}");
+                }
             }
         }
         ensure!(

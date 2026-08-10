@@ -4,7 +4,6 @@
 //! It composes the already verified export, planner, one-unit worker boundary,
 //! admission catalog, finalizer and locally signed result-vote submitter.
 
-use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -21,7 +20,6 @@ use thiserror::Error;
 use crate::admission_catalog::{AdmissionCatalogError, VerifiedAdmissionCatalog};
 use crate::bundle::PinnedProtocolBundle;
 use crate::cas::{CasLimits, CasWriterRole, FilesystemCas, FilesystemCasReader};
-use crate::control::EndpointIdentity;
 use crate::export_binding::VerifiedExportedManifestBinding;
 use crate::inbox::{WorkerInbox, WorkerInboxLimits};
 use crate::input_artifacts::poc_input_list_limits;
@@ -31,7 +29,7 @@ use crate::lysis_plan_audit::LocalLysisPlanAuditV1;
 use crate::lysis_scheduler::admit_reported_lysis_unit_v1;
 use crate::payout_artifact::write_contributor_payout_artifact;
 use crate::supervisor::DiscoveryRecord;
-use crate::worker_transport::{SupervisorWorkerServerV1, MAX_REGISTERED_WORKERS};
+use crate::worker_transport::{SupervisorWorkerDispatcherV1, MAX_REGISTERED_WORKERS};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DispatchWaveV1 {
@@ -47,9 +45,6 @@ pub struct SupervisorJobRunnerConfigV1 {
     pub job_root: PathBuf,
     pub worker_inbox_root: PathBuf,
     pub worker_inbox_limits: WorkerInboxLimits,
-    pub supervisor_listen_address: SocketAddr,
-    pub registry_generation: u64,
-    pub identity: EndpointIdentity,
     pub protocol_bundle: PinnedProtocolBundle,
     pub limits: SchemaLimits,
 }
@@ -66,32 +61,14 @@ pub struct SupervisorJobRunnerV1 {
     config: SupervisorJobRunnerConfigV1,
     cas: FilesystemCas,
     reader: FilesystemCasReader,
-    workers: SupervisorWorkerServerV1,
+    workers: SupervisorWorkerDispatcherV1,
 }
 
 impl SupervisorJobRunnerV1 {
-    pub fn open(config: SupervisorJobRunnerConfigV1) -> Result<Self, SupervisorJobRunnerErrorV1> {
-        if !config.supervisor_listen_address.ip().is_loopback()
-            || config.supervisor_listen_address.port() == 0
-        {
-            return Err(SupervisorJobRunnerErrorV1::Invariant(
-                "supervisor worker registration address must be nonzero loopback",
-            ));
-        }
-        if config.registry_generation == 0 {
-            return Err(SupervisorJobRunnerErrorV1::Invariant(
-                "supervisor worker session generation must be nonzero",
-            ));
-        }
-        let workers = stage(
-            "start Supervisor Axum/ZeroMQ worker transport",
-            SupervisorWorkerServerV1::start(
-                config.supervisor_listen_address,
-                config.identity,
-                config.registry_generation,
-                config.limits,
-            ),
-        )?;
+    pub fn open(
+        config: SupervisorJobRunnerConfigV1,
+        workers: SupervisorWorkerDispatcherV1,
+    ) -> Result<Self, SupervisorJobRunnerErrorV1> {
         let cas = stage(
             "open supervisor job CAS writer",
             FilesystemCas::open(
@@ -115,8 +92,9 @@ impl SupervisorJobRunnerV1 {
     pub fn poll_workers(&self) -> Result<usize, SupervisorJobRunnerErrorV1> {
         stage(
             "read Supervisor connected worker registry",
-            self.workers.registered_workers(),
+            self.workers.status(),
         )
+        .map(|status| status.connected_workers)
     }
 
     pub fn run_to_result(
@@ -359,7 +337,7 @@ impl SupervisorJobRunnerV1 {
         requests: Vec<(u32, RunUnitV1)>,
         cancelled: &AtomicBool,
     ) -> Result<Vec<(u32, UnitFinishedV1)>, SupervisorJobRunnerErrorV1> {
-        let dispatcher = self.workers.dispatcher();
+        let dispatcher = self.workers.clone();
         std::thread::scope(|scope| {
             let handles = requests
                 .into_iter()
@@ -378,7 +356,7 @@ impl SupervisorJobRunnerV1 {
                     let result = handle.join().map_err(|_| {
                         SupervisorJobRunnerErrorV1::Invariant("worker dispatch thread panicked")
                     })?;
-                    stage(
+                    retryable_stage(
                         "dispatch exact Lysis unit through Supervisor Worker transport",
                         result,
                     )
@@ -415,15 +393,44 @@ fn stage<T, E: std::fmt::Display>(
 
 fn stage_error(name: &'static str, error: impl std::fmt::Display) -> SupervisorJobRunnerErrorV1 {
     SupervisorJobRunnerErrorV1::Stage {
+        class: SupervisorJobFailureClassV1::Unrecoverable,
         name,
         detail: error.to_string(),
     }
 }
 
+fn retryable_stage<T, E: std::fmt::Display>(
+    name: &'static str,
+    result: Result<T, E>,
+) -> Result<T, SupervisorJobRunnerErrorV1> {
+    result.map_err(|error| retryable_stage_error(name, error))
+}
+
+fn retryable_stage_error(
+    name: &'static str,
+    error: impl std::fmt::Display,
+) -> SupervisorJobRunnerErrorV1 {
+    SupervisorJobRunnerErrorV1::Stage {
+        class: SupervisorJobFailureClassV1::Retryable,
+        name,
+        detail: error.to_string(),
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SupervisorJobFailureClassV1 {
+    Retryable,
+    Unrecoverable,
+}
+
 #[derive(Debug, Error)]
 pub enum SupervisorJobRunnerErrorV1 {
     #[error("supervisor Lysis job stage `{name}` failed: {detail}")]
-    Stage { name: &'static str, detail: String },
+    Stage {
+        class: SupervisorJobFailureClassV1,
+        name: &'static str,
+        detail: String,
+    },
     #[error("supervisor Lysis job invariant failed: {0}")]
     Invariant(&'static str),
     #[error("worker failed plan ordinal {plan_ordinal} ({unit_id})")]
@@ -432,10 +439,41 @@ pub enum SupervisorJobRunnerErrorV1 {
     Cancelled,
 }
 
+impl SupervisorJobRunnerErrorV1 {
+    #[must_use]
+    pub const fn class(&self) -> SupervisorJobFailureClassV1 {
+        match self {
+            Self::Stage { class, .. } => *class,
+            Self::Invariant(_) => SupervisorJobFailureClassV1::Unrecoverable,
+            Self::WorkerFailed { .. } | Self::Cancelled => SupervisorJobFailureClassV1::Retryable,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use outbe_ocomp_protocol::unit::UnitPhase;
+
+    #[test]
+    fn runner_errors_expose_typed_retryability() {
+        assert_eq!(
+            SupervisorJobRunnerErrorV1::WorkerFailed {
+                plan_ordinal: 7,
+                unit_id: B256::repeat_byte(0x71),
+            }
+            .class(),
+            SupervisorJobFailureClassV1::Retryable
+        );
+        assert_eq!(
+            SupervisorJobRunnerErrorV1::Invariant("corrupt finalized input").class(),
+            SupervisorJobFailureClassV1::Unrecoverable
+        );
+        assert_eq!(
+            retryable_stage_error("dispatch Worker unit", "worker unavailable").class(),
+            SupervisorJobFailureClassV1::Retryable
+        );
+    }
 
     #[test]
     fn dispatch_waves_parallelize_peers_but_separate_dependency_levels() {

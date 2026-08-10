@@ -34,7 +34,7 @@ pub fn dispatch(
         match call {
             seriesData(c) => view(c, |c| {
                 let record = registry.load_series(c.seriesId)?;
-                Ok(to_abi_data(&record))
+                to_abi_data(&record)
             }),
             seriesExists(c) => view(c, |c| registry.series_exists(c.seriesId)),
             totalSeries(_) => metadata::<IIntex::totalSeriesCall>(|| registry.read_total_series()),
@@ -67,21 +67,23 @@ fn to_abi_generation(
     )
 }
 
-fn to_abi_data(r: &SeriesRecord) -> IIntex::SeriesData {
-    IIntex::SeriesData {
+fn to_abi_data(r: &SeriesRecord) -> Result<IIntex::SeriesData> {
+    Ok(IIntex::SeriesData {
         seriesId: r.series_id,
         promisLoadMinor: r.promis_load_minor,
         entryPriceMinor: r.entry_price_minor,
         floorPriceMinor: r.floor_price_minor,
         issuedIntexCount: r.issued_intex_count,
-        callWindowDays: r.call_window_days,
-        callThresholdDays: r.call_threshold_days,
+        callWindow: r.call_window,
+        callThreshold: r.call_threshold,
         callPriceMinor: r.call_price_minor,
         state: r.state,
         issuedAt: r.issued_at,
         calledAt: r.called_at,
-        intexCallPeriod: r.intex_call_period,
+        callNoticePeriod: r.call_notice_period,
         issuanceCurrency: r.issuance_currency,
         referenceCurrency: r.reference_currency,
-    }
+        worldwideDay: r.worldwide_day,
+        costAmountMinor: r.cost_amount_minor()?,
+    })
 }

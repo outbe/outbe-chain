@@ -86,7 +86,9 @@ pub fn assemble_lane(
         "OCM-FAST" | "OCM-INT" => assemble_command_lane(repo, ledger, lane, evidence_dir),
         "OCM-PUBLIC" => assemble_public_lane(repo, ledger, evidence_dir),
         "OCM-E2E" => assemble_e2e_lane(repo, ledger, evidence_dir),
-        _ => eyre::bail!("lane assembly is not implemented for {lane}"),
+        _ => {
+            eyre::bail!("lane assembly is not implemented for {lane}");
+        }
     }
 }
 
@@ -104,7 +106,9 @@ pub fn verify_lane_semantics(
     .wrap_err("decode lane manifest for semantic verification")?;
     let lane = match &manifest.mode {
         EvidenceMode::Lane { lane } => lane.as_str(),
-        _ => eyre::bail!("semantic lane verification requires lane mode"),
+        _ => {
+            eyre::bail!("semantic lane verification requires lane mode");
+        }
     };
     let evidence_dir = manifest_path
         .parent()
@@ -115,7 +119,9 @@ pub fn verify_lane_semantics(
         }
         "OCM-PUBLIC" => verify_scenario_lane(repo, &manifest, evidence_dir, &PUBLIC_SCENARIOS),
         "OCM-E2E" => verify_scenario_lane(repo, &manifest, evidence_dir, &E2E_SCENARIOS),
-        _ => eyre::bail!("semantic lane verification is not implemented for {lane}"),
+        _ => {
+            eyre::bail!("semantic lane verification is not implemented for {lane}");
+        }
     }
 }
 
@@ -433,7 +439,12 @@ fn validate_scenario_manifest_identity(
     ensure!(
         sections.get("exact_binary_hashes") == Some(&identity.exact_binaries)
             && sections.get("genesis_fork_bundle_and_profiles") == Some(&identity.launch_identity)
-            && manifest_image_id == Some(&identity.gramine_image_id),
+            && manifest_image_id == Some(&identity.gramine_image_id)
+            && sections
+                .get("exact_config_and_service_unit_hashes")
+                .and_then(Value::as_object)
+                .and_then(|section| section.get("execution_profile"))
+                == Some(&identity.execution_profile),
         "scenario lane manifest identity differs from retained scenarios"
     );
     Ok(())
@@ -444,6 +455,7 @@ struct ScenarioRunIdentity {
     exact_binaries: Value,
     launch_identity: Value,
     gramine_image_id: Value,
+    execution_profile: Value,
 }
 
 fn scenario_run_identity(
@@ -452,7 +464,26 @@ fn scenario_run_identity(
     let mut exact_binaries = None;
     let mut launch_identity = None;
     let mut gramine_image_id = None;
+    let mut execution_profile = None;
     for (scenario_name, (_, scenario)) in scenarios {
+        let tee = path(scenario, &["environment", "tee"])?;
+        let sudo = path(scenario, &["environment", "sudo"])?;
+        let all = path(scenario, &["environment", "all"])?;
+        ensure!(
+            tee.as_str() == Some("sgx-no-attest")
+                && sudo.as_bool() == Some(true)
+                && all.as_bool() == Some(true),
+            "scenario {scenario_name} did not use release SGX-no-attest with sudo and fail-not-skip"
+        );
+        let profile = json!({"tee": tee, "sudo": sudo, "all": all});
+        match &execution_profile {
+            Some(expected) => ensure!(
+                expected == &profile,
+                "scenario {scenario_name} used another execution profile"
+            ),
+            None => execution_profile = Some(profile),
+        }
+
         let binaries = path(scenario, &["ocomp", "exact_binaries"])?;
         ensure!(
             binaries.as_object().is_some_and(|value| {
@@ -506,6 +537,8 @@ fn scenario_run_identity(
             .ok_or_else(|| eyre::eyre!("scenario set has no exact launch identity"))?,
         gramine_image_id: gramine_image_id
             .ok_or_else(|| eyre::eyre!("scenario set has no Gramine Docker image identity"))?,
+        execution_profile: execution_profile
+            .ok_or_else(|| eyre::eyre!("scenario set has no execution profile"))?,
     })
 }
 
@@ -531,6 +564,7 @@ fn scenario_sections(
                 "exact_config_and_service_unit_hashes" => json!({
                     "launch_identity": &identity.launch_identity,
                     "gramine_image_id": &identity.gramine_image_id,
+                    "execution_profile": &identity.execution_profile,
                 }),
                 "genesis_fork_bundle_and_profiles" => identity.launch_identity.clone(),
                 "test_discovery" => json!(discovery),
@@ -538,6 +572,7 @@ fn scenario_sections(
                     "validated_scenarios": scenario_paths,
                     "process_orchestration": "rust_e2e_harness",
                     "gramine_image_id": &identity.gramine_image_id,
+                    "execution_profile": &identity.execution_profile,
                 }),
                 "skip_todo_quarantine_retry_and_timeout_records" => json!({
                     "automatic_retries": 0,
@@ -626,7 +661,9 @@ fn validate_public_scenario(test_id: &str, scenario: &Value) -> Result<()> {
             );
             Ok(())
         }
-        _ => eyre::bail!("unknown public lane test {test_id}"),
+        _ => {
+            eyre::bail!("unknown public lane test {test_id}");
+        }
     }
 }
 
@@ -647,7 +684,9 @@ fn validate_e2e_scenario(test_id: &str, scenario: &Value) -> Result<()> {
             validate_applied_public_path(scenario)?;
             validate_execution_trace(public)
         }
-        _ => eyre::bail!("unknown E2E lane test {test_id}"),
+        _ => {
+            eyre::bail!("unknown E2E lane test {test_id}");
+        }
     }
 }
 
@@ -1036,6 +1075,9 @@ mod tests {
             .collect::<serde_json::Map<_, _>>();
         json!({
             "environment": {
+                "tee": "sgx-no-attest",
+                "sudo": true,
+                "all": true,
                 "gramine_image_id": gramine_image_id,
             },
             "ocomp": {
@@ -1110,7 +1152,10 @@ mod tests {
             ),
             (
                 "exact_config_and_service_unit_hashes".to_owned(),
-                json!({"gramine_image_id": identity.gramine_image_id}),
+                json!({
+                    "gramine_image_id": identity.gramine_image_id.clone(),
+                    "execution_profile": identity.execution_profile.clone(),
+                }),
             ),
         ]);
         validate_scenario_manifest_identity(&sections, &identity)
@@ -1135,6 +1180,19 @@ mod tests {
         changed_image.get_mut("second").expect("second").1["environment"]["gramine_image_id"] =
             json!(format!("sha256:{}", "cd".repeat(32)));
         assert!(scenario_run_identity(&changed_image).is_err());
+
+        let mut wrong_tee = scenarios.clone();
+        wrong_tee.get_mut("second").expect("second").1["environment"]["tee"] =
+            json!("gramine-direct");
+        assert!(scenario_run_identity(&wrong_tee).is_err());
+
+        let mut without_sudo = scenarios.clone();
+        without_sudo.get_mut("second").expect("second").1["environment"]["sudo"] = json!(false);
+        assert!(scenario_run_identity(&without_sudo).is_err());
+
+        let mut fail_can_skip = scenarios.clone();
+        fail_can_skip.get_mut("second").expect("second").1["environment"]["all"] = json!(false);
+        assert!(scenario_run_identity(&fail_can_skip).is_err());
 
         let mut missing_image = scenarios;
         missing_image.get_mut("second").expect("second").1["environment"]

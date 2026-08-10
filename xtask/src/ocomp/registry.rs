@@ -20,7 +20,9 @@ impl RowKind {
             "object" => Ok(Self::Object),
             "domain" => Ok(Self::Domain),
             "list" => Ok(Self::List),
-            value => bail!("unknown registry row type {value:?}"),
+            value => {
+                bail!("unknown registry row type {value:?}");
+            }
         }
     }
 

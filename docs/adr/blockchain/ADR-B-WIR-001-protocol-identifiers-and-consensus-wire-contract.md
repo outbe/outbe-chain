@@ -95,12 +95,15 @@ An OCOMP attempt binds its result vote to three independent coordinates:
 `ResultVoteV1`, the signature preimage and the durable sign-once record. Changing
 any one changes the signed subject and quorum evidence.
 
-Participant indices are `u16`. Vote/accountability bitmaps are byte vectors of
-exact length `ceil(N / 8)` in LSB0 order: participant `i` uses byte `i / 8`, bit
-`i % 8`; unused high bits of the final byte are zero. `N` and quorum threshold
-are explicit in the attempt and accountability object. OCOMP defines no separate
-validator-count cap; allocation and synthetic capacity checks use the current
-consensus validator bound.
+`ResultVoteV1` carries the signed OCOMP key hash, not a caller-selected
+participant index. Execution resolves the hash with the existing
+key-to-validator mapping and derives the internal `u16` participant index by
+scanning the pinned historical snapshot. Vote/accountability bitmaps are byte
+vectors of exact length `ceil(N / 8)` in LSB0 order: participant `i` uses byte
+`i / 8`, bit `i % 8`; unused high bits of the final byte are zero. `N` and
+quorum threshold are explicit in the attempt and accountability object. OCOMP
+defines no separate validator-count cap; allocation and synthetic capacity
+checks use the current consensus validator bound.
 
 `submitLysisResult(bytes)` has one canonical bounded prefix decoder. It verifies
 the selector, ABI offset and length, generated payload cap, zero padding and OCB1

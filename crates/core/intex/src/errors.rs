@@ -26,6 +26,8 @@ pub enum IntexError {
     ContributorLeavesAlreadyPaid(u32),
     #[error("certified payout round already open for series {0}")]
     CertifiedRoundExists(u32),
+    #[error("cost amount overflow")]
+    CostAmountOverflow,
 }
 
 impl From<IntexError> for PrecompileError {

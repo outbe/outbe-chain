@@ -80,6 +80,22 @@ An ordinary predeploy binds address, runtime bytecode hash, storage root, compil
 source provenance and immutable-address assumptions. Genesis cannot overwrite a
 non-identical existing allocation entry.
 
+### Immutable genesis protocol parameters
+
+Optional `config.outbeProtocol` timing overrides are resolved exactly once by
+`outbe-chain constants genesis`. The Rust-owned schema materializes the complete
+`GenesisProtocolParametersV1` record at system account `0x...EE11` before OCOMP
+registrations bind the genesis hash. Missing JSON fields use canonical production
+defaults during generation; missing or corrupt runtime storage never falls back.
+The account has marker code, a schema version, all resolved values, a parameters
+hash and an installed marker, but no public dispatch or runtime writer.
+
+Runtime consumers call `outbe-chain-constants` and receive the same immutable
+typed record without observing whether a field was explicit or defaulted. The
+process cache is keyed by non-zero genesis hash. Python tooling may copy
+`seed.protocol_constants` to JSON but does not reproduce the Rust slot layout.
+The normative catalog is `docs/genesis-protocol-constants.md`.
+
 ### Startup validation and readiness
 
 Before proposing, validating or serving authoritative reads, a node validates:

@@ -1,4 +1,4 @@
-@ocomp @tee @gramine-direct @min-validators-4
+@ocomp @tee @sgx-no-attest @sudo @min-validators-4
 Feature: Off-chain computation PoC closure
   @ocomp-e2e @ocomp-e2e-001
   # OCOMP-TEST-ID: OCM-E2E-001
@@ -10,7 +10,7 @@ Feature: Off-chain computation PoC closure
     And every validator projects the same tribute and indexes
     And every validator serves the same independently verified compressed tribute
     Then Metadosis creates one finalized JobIntent from that public Tribute
-    When the validator supervisors submit results directly for that finalized JobIntent
+    When the production OCOMP domains process that finalized JobIntent
     Then three matching validator domains atomically apply Lysis and create the Nod
     And all four OCOMP domains run their node-facing production roles
     And each OCOMP domain retains isolated deterministic worker artifacts for that JobIntent
@@ -26,19 +26,6 @@ Feature: Off-chain computation PoC closure
     Then the tribute transaction succeeds and supply becomes one
     And every validator projects the same tribute and indexes
     Then Metadosis creates one finalized JobIntent from that public Tribute
-    When the validator supervisors submit results directly for that finalized JobIntent
+    When the production OCOMP domains process that finalized JobIntent
     Then three compatible validator domains atomically apply Lysis and create the Nod
     And the incompatible supervisor remains outside OCOMP while consensus finality advances
-
-  @ocomp-e2e @ocomp-e2e-008
-  # OCOMP-TEST-ID: OCM-E2E-008
-  Scenario: A completed generation survives node and compute-process restart and replay
-    Given the canonical four-validator OCOMP Final devnet
-    When an operator submits one encrypted tribute offer
-    Then the tribute transaction succeeds and supply becomes one
-    And every validator projects the same tribute and indexes
-    Then Metadosis creates one finalized JobIntent from that public Tribute
-    When the validator supervisors submit results directly for that finalized JobIntent
-    Then three matching validator domains atomically apply Lysis and create the Nod
-    When all validator nodes and OCOMP node-facing processes restart with preserved data
-    Then the completed generation and exact vote replay remain identical

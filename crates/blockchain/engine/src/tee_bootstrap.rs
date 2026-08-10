@@ -156,6 +156,25 @@ fn evidence_intent(evidence: &AttestationEvidenceV1) -> &RegistrationIntentV1 {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BootstrapEvidenceKind {
+    Dcap,
+    GramineDirectDev,
+}
+
+fn bootstrap_evidence_kind(
+    policy: AttestationMode,
+    production_session: bool,
+) -> eyre::Result<BootstrapEvidenceKind> {
+    match (policy, production_session) {
+        (AttestationMode::DcapRequired, true) => Ok(BootstrapEvidenceKind::Dcap),
+        (AttestationMode::DcapRequired, false) => Err(eyre::eyre!(
+            "DcapRequired genesis policy cannot use a development enclave session"
+        )),
+        (AttestationMode::GramineDirectDev, _) => Ok(BootstrapEvidenceKind::GramineDirectDev),
+    }
+}
+
 fn submission_validator(submission: &TeeBootstrapParticipantSubmissionV2) -> eyre::Result<Address> {
     match evidence_intent(&submission.evidence).node_id {
         NodeIdV1::Validator { address, .. } => Ok(Address::from(address)),
@@ -237,9 +256,12 @@ pub fn build_local_tee_bootstrap_submission_v2(
         enclave_id,
         node_host_authorization_hash,
     ) = match (policy.attestation_mode, &mut *client) {
-        (AttestationMode::DcapRequired, RuntimeEnclaveClient::Production(_)) => {
+        (
+            AttestationMode::DcapRequired | AttestationMode::GramineDirectDev,
+            RuntimeEnclaveClient::Production(_),
+        ) => {
             let manifest = production_manifest.ok_or_else(|| {
-                eyre::eyre!("DcapRequired OST3 requires one committed NodeHost manifest")
+                eyre::eyre!("production OST3 requires one committed NodeHost manifest")
             })?;
             if manifest.chain_id != policy.chain_id
                 || manifest.genesis_hash != policy.genesis_hash
@@ -311,11 +333,6 @@ pub fn build_local_tee_bootstrap_submission_v2(
                 "DcapRequired genesis policy cannot use a development enclave session"
             ));
         }
-        (AttestationMode::GramineDirectDev, RuntimeEnclaveClient::Production(_)) => {
-            return Err(eyre::eyre!(
-                "GramineDirectDev genesis policy cannot use a production enclave session"
-            ));
-        }
     };
 
     let node_id_hash = node_id
@@ -356,8 +373,12 @@ pub fn build_local_tee_bootstrap_submission_v2(
         .sign_hash(&intent_hash)
         .map_err(|error| eyre::eyre!("cannot sign OST3 registration intent: {error}"))?;
 
-    let (evidence, enclave_signature) = match client {
-        RuntimeEnclaveClient::Production(production) => {
+    let evidence_kind = bootstrap_evidence_kind(
+        policy.attestation_mode,
+        matches!(client, RuntimeEnclaveClient::Production(_)),
+    )?;
+    let (evidence, enclave_signature) = match (evidence_kind, client) {
+        (BootstrapEvidenceKind::Dcap, RuntimeEnclaveClient::Production(production)) => {
             let generated = production
                 .generate_dcap_quote(&intent)
                 .map_err(|error| eyre::eyre!("production OST3 quote generation failed: {error}"))?;
@@ -376,7 +397,30 @@ pub fn build_local_tee_bootstrap_submission_v2(
                 enclave_signature,
             )
         }
-        RuntimeEnclaveClient::Development(development) => {
+        (BootstrapEvidenceKind::Dcap, RuntimeEnclaveClient::Development(_)) => {
+            return Err(eyre::eyre!(
+                "DcapRequired genesis policy cannot use a development enclave session"
+            ));
+        }
+        (BootstrapEvidenceKind::GramineDirectDev, RuntimeEnclaveClient::Production(production)) => {
+            let enclave_signature = production
+                .sign_registration_intent_dev_v1(&intent)
+                .map_err(|error| {
+                    eyre::eyre!("production SGX-no-attest OST3 intent signing failed: {error}")
+                })?;
+            (
+                AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
+                    intent,
+                    dev_attestation_public: attestation_ed25519,
+                    dev_signature: enclave_signature,
+                }),
+                enclave_signature,
+            )
+        }
+        (
+            BootstrapEvidenceKind::GramineDirectDev,
+            RuntimeEnclaveClient::Development(development),
+        ) => {
             let enclave_signature = development
                 .sign_registration_intent_dev_v1(&intent)
                 .map_err(|error| eyre::eyre!("development OST3 intent signing failed: {error}"))?;
@@ -1241,10 +1285,28 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::DeliveryTracker;
+    use super::{bootstrap_evidence_kind, BootstrapEvidenceKind, DeliveryTracker};
     use alloy_primitives::B256;
     use commonware_cryptography::{bls12381, Signer as _};
     use commonware_p2p::Recipients;
+    use outbe_primitives::tee_attestation_v1::AttestationMode;
+
+    #[test]
+    fn bootstrap_evidence_depends_on_policy_not_local_session_security() {
+        assert_eq!(
+            bootstrap_evidence_kind(AttestationMode::DcapRequired, true).unwrap(),
+            BootstrapEvidenceKind::Dcap
+        );
+        assert_eq!(
+            bootstrap_evidence_kind(AttestationMode::GramineDirectDev, true).unwrap(),
+            BootstrapEvidenceKind::GramineDirectDev
+        );
+        assert_eq!(
+            bootstrap_evidence_kind(AttestationMode::GramineDirectDev, false).unwrap(),
+            BootstrapEvidenceKind::GramineDirectDev
+        );
+        assert!(bootstrap_evidence_kind(AttestationMode::DcapRequired, false).is_err());
+    }
 
     #[test]
     fn delivery_tracker_retries_only_unacknowledged_peers() {

@@ -1,7 +1,8 @@
 //! Bounded blocking JSON-RPC transport for the standalone OCOMP service.
 //!
-//! Returned bytes are never authority by themselves. Callers bind them to a
-//! finalized block and verify the supplied Ethereum/Commonware proofs locally.
+//! Job discovery reads the node's finalized state, while purpose-bound input
+//! RPCs return exact request-state material that the caller checks against its
+//! durable finalized `JobIntent` binding.
 
 use std::{
     io::Read as _,
@@ -9,13 +10,9 @@ use std::{
     time::Duration,
 };
 
-use alloy_primitives::{Address, Bytes, LogData, B256, U256};
+use alloy_primitives::{Address, Bytes, LogData, B256};
 use alloy_sol_types::SolCall as _;
 use outbe_metadosis::precompile::IMetadosis;
-use outbe_node::ocomp::finality::{
-    PublicAccountProofV1, PublicBlockViewV1, PublicExactBlockProofSourceV1,
-    PublicFinalizationBytesV1, PublicStorageProofV1,
-};
 use serde_json::{json, Value};
 use thiserror::Error;
 
@@ -99,12 +96,27 @@ impl PublicOcompRpcClientV1 {
         })
     }
 
-    pub fn job_record_at_number(
+    pub fn job_record_at_hash(
         &self,
         intent_id: B256,
-        block_number: u64,
+        block_hash: B256,
     ) -> Result<Vec<u8>, PublicRpcError> {
-        self.job_record_at_tag(intent_id, Value::String(format!("0x{block_number:x}")))
+        self.job_record_at_tag(intent_id, exact_block_hash_tag(block_hash))
+    }
+
+    pub fn lysis_openings(
+        &self,
+        intent_id: B256,
+        canonical_request: &[u8],
+    ) -> Result<Vec<u8>, PublicRpcError> {
+        let value = self.call(
+            "outbe_getOcompLysisOpeningsV1",
+            json!([
+                format!("{intent_id:#x}"),
+                format!("0x{}", hex::encode(canonical_request))
+            ]),
+        )?;
+        parse_hex_bytes(&value, "outbe_getOcompLysisOpeningsV1")
     }
 
     fn job_record_at_tag(
@@ -182,26 +194,13 @@ impl PublicOcompRpcClientV1 {
             .cloned()
             .ok_or(PublicRpcError::MissingResult(method))
     }
+}
 
-    fn account_proof_at_hash(
-        &self,
-        address: Address,
-        storage_slots: &[B256],
-        block_hash: B256,
-    ) -> Result<PublicAccountProofV1, PublicRpcError> {
-        let value = self.call(
-            "eth_getProof",
-            json!([
-                format!("{address:#x}"),
-                storage_slots
-                    .iter()
-                    .map(|slot| format!("{slot:#x}"))
-                    .collect::<Vec<_>>(),
-                { "blockHash": format!("{block_hash:#x}"), "requireCanonical": true }
-            ]),
-        )?;
-        parse_account_proof(value, address)
-    }
+fn exact_block_hash_tag(block_hash: B256) -> Value {
+    json!({
+        "blockHash": format!("{block_hash:#x}"),
+        "requireCanonical": true,
+    })
 }
 
 fn normalize_block_receipts(
@@ -326,50 +325,6 @@ fn normalize_block_receipts(
     })
 }
 
-impl PublicExactBlockProofSourceV1 for PublicOcompRpcClientV1 {
-    type Error = PublicRpcError;
-
-    fn finalization(&self, height: u64) -> Result<PublicFinalizationBytesV1, Self::Error> {
-        let value = self.call("outbe_getFinalization", json!([height]))?;
-        Ok(PublicFinalizationBytesV1 {
-            finalization_bytes: parse_named_hex(
-                &value,
-                "finalizationHex",
-                "outbe_getFinalization",
-            )?,
-            block_bytes: parse_named_hex(&value, "blockHex", "outbe_getFinalization")?,
-        })
-    }
-
-    fn block_by_hash(&self, block_hash: B256) -> Result<PublicBlockViewV1, Self::Error> {
-        let block = parse_block(self.call(
-            "eth_getBlockByHash",
-            json!([format!("{block_hash:#x}"), false]),
-        )?)?;
-        Ok(PublicBlockViewV1 {
-            hash: block.hash,
-            state_root: block.state_root,
-            number: block.number,
-        })
-    }
-
-    fn job_record(&self, intent_id: B256, block_hash: B256) -> Result<Vec<u8>, Self::Error> {
-        self.job_record_at_tag(
-            intent_id,
-            json!({ "blockHash": format!("{block_hash:#x}"), "requireCanonical": true }),
-        )
-    }
-
-    fn account_proof(
-        &self,
-        address: Address,
-        storage_slots: &[B256],
-        block_hash: B256,
-    ) -> Result<PublicAccountProofV1, Self::Error> {
-        self.account_proof_at_hash(address, storage_slots, block_hash)
-    }
-}
-
 fn parse_block(value: Value) -> Result<FinalizedRpcBlockV1, PublicRpcError> {
     if value.is_null() {
         return Err(PublicRpcError::MissingBlock);
@@ -381,58 +336,6 @@ fn parse_block(value: Value) -> Result<FinalizedRpcBlockV1, PublicRpcError> {
     })
 }
 
-fn parse_account_proof(
-    value: Value,
-    expected_address: Address,
-) -> Result<PublicAccountProofV1, PublicRpcError> {
-    let address = field(&value, "address", "eth_getProof")?
-        .as_str()
-        .ok_or_else(|| malformed("eth_getProof", "address is not a string"))?
-        .parse::<Address>()
-        .map_err(|error| malformed("eth_getProof", &error.to_string()))?;
-    if address != expected_address {
-        return Err(malformed("eth_getProof", "proof address mismatch"));
-    }
-    let account_nodes = parse_hex_array(
-        field(&value, "accountProof", "eth_getProof")?,
-        "accountProof",
-    )?;
-    let storage = field(&value, "storageProof", "eth_getProof")?
-        .as_array()
-        .ok_or_else(|| malformed("eth_getProof", "storageProof is not an array"))?;
-    let mut storage_proofs = Vec::with_capacity(storage.len());
-    for item in storage {
-        storage_proofs.push(PublicStorageProofV1 {
-            key: parse_storage_key(field(item, "key", "eth_getProof storage proof")?)?,
-            value: parse_hex_u256(
-                field(item, "value", "eth_getProof storage proof")?,
-                "storage value",
-            )?,
-            nodes: parse_hex_array(
-                field(item, "proof", "eth_getProof storage proof")?,
-                "storage proof",
-            )?,
-        });
-    }
-    Ok(PublicAccountProofV1 {
-        address,
-        nonce: parse_hex_u64(field(&value, "nonce", "eth_getProof")?, "account nonce")?,
-        balance: parse_hex_u256(field(&value, "balance", "eth_getProof")?, "account balance")?,
-        storage_root: parse_b256(
-            field(&value, "storageHash", "eth_getProof")?,
-            "storage root",
-        )?,
-        code_hash: parse_b256(field(&value, "codeHash", "eth_getProof")?, "code hash")?,
-        account_nodes,
-        storage_proofs,
-    })
-}
-
-fn parse_storage_key(value: &Value) -> Result<B256, PublicRpcError> {
-    let key = parse_hex_u256(value, "storage key")?;
-    Ok(B256::from(key.to_be_bytes::<32>()))
-}
-
 fn field<'a>(
     value: &'a Value,
     name: &str,
@@ -441,23 +344,6 @@ fn field<'a>(
     value
         .get(name)
         .ok_or_else(|| malformed(method, &format!("missing {name}")))
-}
-
-fn parse_named_hex(
-    value: &Value,
-    name: &str,
-    method: &'static str,
-) -> Result<Vec<u8>, PublicRpcError> {
-    parse_hex_bytes(field(value, name, method)?, method)
-}
-
-fn parse_hex_array(value: &Value, field_name: &'static str) -> Result<Vec<Bytes>, PublicRpcError> {
-    value
-        .as_array()
-        .ok_or_else(|| malformed("eth_getProof", &format!("{field_name} is not an array")))?
-        .iter()
-        .map(|value| parse_hex_bytes(value, "eth_getProof").map(Bytes::from))
-        .collect()
 }
 
 fn parse_hex_bytes(value: &Value, method: &'static str) -> Result<Vec<u8>, PublicRpcError> {
@@ -479,12 +365,6 @@ fn parse_b256(value: &Value, what: &'static str) -> Result<B256, PublicRpcError>
 fn parse_hex_u64(value: &Value, what: &'static str) -> Result<u64, PublicRpcError> {
     let encoded = value.as_str().ok_or_else(|| malformed("RPC", what))?;
     u64::from_str_radix(encoded.strip_prefix("0x").unwrap_or(encoded), 16)
-        .map_err(|error| malformed("RPC", &error.to_string()))
-}
-
-fn parse_hex_u256(value: &Value, what: &'static str) -> Result<U256, PublicRpcError> {
-    let encoded = value.as_str().ok_or_else(|| malformed("RPC", what))?;
-    U256::from_str_radix(encoded.strip_prefix("0x").unwrap_or(encoded), 16)
         .map_err(|error| malformed("RPC", &error.to_string()))
 }
 
@@ -607,11 +487,14 @@ mod tests {
     }
 
     #[test]
-    fn accepts_quantity_encoded_storage_proof_keys() {
-        assert_eq!(parse_storage_key(&json!("0x0")).unwrap(), B256::ZERO);
+    fn finalized_state_reads_use_an_exact_canonical_block_hash() {
+        let block_hash = hash(0x77);
         assert_eq!(
-            parse_storage_key(&json!("0x2a")).unwrap(),
-            B256::from(U256::from(42).to_be_bytes::<32>())
+            exact_block_hash_tag(block_hash),
+            json!({
+                "blockHash": format!("{block_hash:#x}"),
+                "requireCanonical": true,
+            })
         );
     }
 }

@@ -12,6 +12,7 @@ use std::process::{Command, Stdio};
 
 use alloy_primitives::B256;
 use eyre::{ensure, Context, Result};
+use outbe_chain_constants::DEFAULT_OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS as OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS;
 use outbe_consensus::{
     config::MAX_P2P_MESSAGE_SIZE,
     timing::{DEFAULT_CERTIFICATION_TIMEOUT_MS, DEFAULT_LEADER_TIMEOUT_MS},
@@ -24,7 +25,7 @@ use outbe_ocomp_protocol::{
     generated_shape::{
         OCOMP_CAPACITY_PROFILE_ID_HEX, OCOMP_POC_CANDIDATE_LIMITS_V1, OCOMP_POC_DEVNET_MACHINE_V1,
     },
-    profile::{poc_schema_limits, CapacityProfileV1, OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS},
+    profile::{poc_schema_limits, CapacityProfileV1},
 };
 use outbe_primitives::consensus::OUTBE_MAX_BLOCK_SIZE;
 use serde::Serialize;
@@ -268,10 +269,11 @@ fn append_capacity_scenarios(command: &mut Command, scenario_paths: &[PathBuf]) 
 }
 
 fn build_capacity_binaries(repository_root: &Path) -> Result<()> {
-    let mut debug = Command::new("cargo");
-    debug.current_dir(repository_root).args([
+    let mut release = Command::new("cargo");
+    release.current_dir(repository_root).args([
         "build",
         "--locked",
+        "--release",
         "-p",
         "outbe-chain",
         "--bin",
@@ -294,7 +296,7 @@ fn build_capacity_binaries(repository_root: &Path) -> Result<()> {
         "ocomp-integration",
         "--bins",
     ]);
-    run_checked(&mut debug, "build exact debug OCOMP capacity binaries")?;
+    run_checked(&mut release, "build exact release OCOMP capacity binaries")?;
 
     let mut enclave = Command::new("cargo");
     enclave.current_dir(repository_root).args([
@@ -366,12 +368,12 @@ struct CapacityBinariesV1 {
 impl CapacityBinariesV1 {
     fn from_repository(repository_root: &Path) -> Result<Self> {
         Ok(Self {
-            chain: repository_root.join("target/debug/outbe-chain"),
-            ocomp: repository_root.join("target/debug/outbe-ocomp"),
-            cli: repository_root.join("target/debug/outbe-cli"),
-            keygen: repository_root.join("target/debug/outbe-keygen"),
-            e2e: repository_root.join("target/debug/outbe-e2e"),
-            evidence: repository_root.join("target/debug/outbe-e2e-evidence"),
+            chain: repository_root.join("target/release/outbe-chain"),
+            ocomp: repository_root.join("target/release/outbe-ocomp"),
+            cli: repository_root.join("target/release/outbe-cli"),
+            keygen: repository_root.join("target/release/outbe-keygen"),
+            e2e: repository_root.join("target/release/outbe-e2e"),
+            evidence: repository_root.join("target/release/outbe-e2e-evidence"),
             enclave: repository_root.join("target/release/outbe-tee-enclave"),
         })
     }
@@ -491,9 +493,8 @@ fn capacity_systemd_command(
         .arg("--concurrency")
         .arg("1")
         .arg("--no-resolve-ports")
-        .arg("--no-sudo")
         .arg("--tee")
-        .arg("gramine-direct")
+        .arg("sgx-no-attest")
         .arg("--all")
         .arg("--no-cleanup")
         .arg("--repo")
@@ -676,8 +677,11 @@ fn generate(
     let generated_limits_manifest_sha256 = sha256(limits_manifest_bytes);
     let capacity_profile_id = parse_b256(OCOMP_CAPACITY_PROFILE_ID_HEX)
         .wrap_err("parse generated capacity profile id")?;
-    let profile =
-        verified.capacity_profile(capacity_profile_id, generated_limits_manifest_sha256)?;
+    let profile = verified.capacity_profile(
+        capacity_profile_id,
+        generated_limits_manifest_sha256,
+        OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS,
+    )?;
     let canonical = profile
         .encode_canonical(&poc_schema_limits())
         .wrap_err("encode canonical capacity profile")?;
@@ -817,6 +821,26 @@ mod tests {
     }
 
     #[test]
+    fn capacity_binary_sources_are_all_release_artifacts() {
+        let binaries = CapacityBinariesV1::from_repository(Path::new("/repo")).unwrap();
+        for path in [
+            binaries.chain,
+            binaries.ocomp,
+            binaries.cli,
+            binaries.keygen,
+            binaries.e2e,
+            binaries.evidence,
+            binaries.enclave,
+        ] {
+            assert!(
+                path.starts_with("/repo/target/release"),
+                "capacity source is not a release artifact: {}",
+                path.display()
+            );
+        }
+    }
+
+    #[test]
     fn ocm_cap_001_generation_is_deterministic_and_bound_to_exact_inputs() {
         let evidence = evidence();
         let evidence_bytes = serde_json::to_vec_pretty(&evidence).unwrap();
@@ -858,12 +882,12 @@ mod tests {
     fn ocm_cap_001_cold_runner_builds_one_dedicated_non_retrying_public_command() {
         let root = Path::new("/repo");
         let binaries = CapacityBinariesV1 {
-            chain: root.join("target/debug/outbe-chain"),
-            ocomp: root.join("target/debug/outbe-ocomp"),
-            cli: root.join("target/debug/outbe-cli"),
-            keygen: root.join("target/debug/outbe-keygen"),
-            e2e: root.join("target/debug/outbe-e2e"),
-            evidence: root.join("target/debug/outbe-e2e-evidence"),
+            chain: root.join("target/release/outbe-chain"),
+            ocomp: root.join("target/release/outbe-ocomp"),
+            cli: root.join("target/release/outbe-cli"),
+            keygen: root.join("target/release/outbe-keygen"),
+            e2e: root.join("target/release/outbe-e2e"),
+            evidence: root.join("target/release/outbe-e2e-evidence"),
             enclave: root.join("target/release/outbe-tee-enclave"),
         };
         let command = capacity_systemd_command(
@@ -894,17 +918,18 @@ mod tests {
         assert!(arguments.contains(&format!("--property=MemoryMax={CAPACITY_MEMORY_MAX_BYTES}")));
         assert!(arguments
             .windows(2)
-            .any(|pair| pair == ["--cli-bin", "/repo/target/debug/outbe-cli"]));
+            .any(|pair| pair == ["--cli-bin", "/repo/target/release/outbe-cli"]));
         assert!(arguments
             .windows(2)
-            .any(|pair| pair == ["--keygen-bin", "/repo/target/debug/outbe-keygen"]));
+            .any(|pair| pair == ["--keygen-bin", "/repo/target/release/outbe-keygen"]));
         assert!(arguments
             .windows(2)
-            .any(|pair| pair == ["--tee", "gramine-direct"]));
+            .any(|pair| pair == ["--tee", "sgx-no-attest"]));
         assert!(arguments
             .windows(2)
             .any(|pair| { pair == ["--enclave-bin", "/repo/target/release/outbe-tee-enclave",] }));
         assert!(!arguments.iter().any(|argument| argument == "--mock-bin"));
+        assert!(!arguments.iter().any(|argument| argument == "--no-sudo"));
         assert_eq!(
             arguments
                 .iter()
@@ -1071,7 +1096,7 @@ mod tests {
                 pid1_is_systemd: true,
                 unified_cgroup_v2: true,
                 writable_resource_cgroup: true,
-                production_enclave_gramine_direct: true,
+                production_enclave_sgx_no_attest: true,
             },
             budget,
             runs,

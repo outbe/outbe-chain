@@ -459,44 +459,17 @@ impl EnclaveClient {
         Ok(resp)
     }
 
-    /// Ask the separate development enclave to sign one exact canonical
-    /// GramineDirectDev registration intent. No quote or DCAP verdict is
-    /// produced by this path.
+    /// Ask the enclave to sign one exact canonical GramineDirectDev
+    /// registration intent. This development transport never produces a quote
+    /// or DCAP verdict.
     pub fn sign_registration_intent_dev_v1(
         &mut self,
         intent: &RegistrationIntentV1,
     ) -> Result<[u8; 64], TransportError> {
-        if intent.attestation_mode != AttestationMode::GramineDirectDev
-            || intent.attestation_ed25519 != self.attestation_pub()
-        {
-            return Err(TransportError::Attestation(
-                "development registration intent does not bind this enclave and mode".into(),
-            ));
-        }
-        let canonical = intent
-            .encode_canonical()
-            .map_err(|error| TransportError::Codec(error.to_string()))?;
-        match self.request(&EnclaveRequest::SignRegistrationIntentDevV1 {
-            intent: canonical.clone(),
-        })? {
-            EnclaveResponse::RegistrationIntentSignedDevV1 {
-                intent: echoed,
-                enclave_signature,
-            } if echoed == canonical => {
-                let signature: [u8; 64] = enclave_signature.try_into().map_err(|_| {
-                    TransportError::Attestation(
-                        "development enclave returned a non-canonical Ed25519 signature".into(),
-                    )
-                })?;
-                if !intent.verify_enclave_signature(&signature) {
-                    return Err(TransportError::Attestation(
-                        "development enclave returned an invalid intent signature".into(),
-                    ));
-                }
-                Ok(signature)
-            }
-            _ => Err(TransportError::UnexpectedResponse),
-        }
+        let attestation_pub = self.attestation_pub();
+        request_gramine_direct_dev_signature(attestation_pub, intent, |request| {
+            self.request(request)
+        })
     }
 }
 
@@ -761,6 +734,19 @@ impl AuthorizedEnclaveClient {
         validate_generated_dcap_quote(intent, &canonical_intent, self.attestation_pub, response)
     }
 
+    /// Sign GramineDirectDev evidence through the authenticated production
+    /// NodeHost session. The enclave itself permits this only while running in
+    /// real SGX with remote attestation disabled (`SgxNoAttest`).
+    pub fn sign_registration_intent_dev_v1(
+        &mut self,
+        intent: &RegistrationIntentV1,
+    ) -> Result<[u8; 64], TransportError> {
+        let attestation_pub = self.attestation_pub;
+        request_gramine_direct_dev_signature(attestation_pub, intent, |request| {
+            self.request(request)
+        })
+    }
+
     /// Verify exact canonical evidence against exact canonical policy and
     /// consensus time inside the initialized Gramine enclave. The bounded
     /// multi-frame protocol is hidden from callers.
@@ -906,6 +892,44 @@ impl AuthorizedEnclaveClient {
 
     pub fn attestation_pub(&self) -> [u8; 32] {
         self.attestation_pub
+    }
+}
+
+fn request_gramine_direct_dev_signature(
+    attestation_pub: [u8; 32],
+    intent: &RegistrationIntentV1,
+    request: impl FnOnce(&EnclaveRequest) -> Result<EnclaveResponse, TransportError>,
+) -> Result<[u8; 64], TransportError> {
+    if intent.attestation_mode != AttestationMode::GramineDirectDev
+        || intent.attestation_ed25519 != attestation_pub
+    {
+        return Err(TransportError::Attestation(
+            "GramineDirectDev registration intent does not bind this enclave and mode".into(),
+        ));
+    }
+    let canonical = intent
+        .encode_canonical()
+        .map_err(|error| TransportError::Codec(error.to_string()))?;
+    match request(&EnclaveRequest::SignRegistrationIntentDevV1 {
+        intent: canonical.clone(),
+    })? {
+        EnclaveResponse::RegistrationIntentSignedDevV1 {
+            intent: echoed,
+            enclave_signature,
+        } if echoed == canonical => {
+            let signature: [u8; 64] = enclave_signature.try_into().map_err(|_| {
+                TransportError::Attestation(
+                    "enclave returned a non-canonical GramineDirectDev Ed25519 signature".into(),
+                )
+            })?;
+            if !intent.verify_enclave_signature(&signature) {
+                return Err(TransportError::Attestation(
+                    "enclave returned an invalid GramineDirectDev intent signature".into(),
+                ));
+            }
+            Ok(signature)
+        }
+        _ => Err(TransportError::UnexpectedResponse),
     }
 }
 

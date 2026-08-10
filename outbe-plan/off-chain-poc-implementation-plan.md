@@ -1915,9 +1915,11 @@ It does not regenerate DKG/validator identity or mutate final genesis.
 The cold runner first snapshots every executed binary into a new read-only
 artifact-set directory and all five scenarios bind those paths and hashes;
 later builds cannot invalidate an existing run by replacing `target/` files.
-Before any `gramine-direct` container starts, the harness resolves the local
-test image tag to its canonical Docker `sha256:` image ID, launches by that ID
-and binds it into every scenario plus the capacity artifact-set hash.
+Before any `sgx-no-attest` container starts, the harness resolves the local
+Gramine image tag to its canonical Docker `sha256:` image ID, launches the
+release production enclave with real SGX devices through sudo, and binds the
+image into every scenario plus the capacity artifact-set hash. Debug binaries,
+`--no-sudo` and non-SGX `gramine-direct` evidence are rejected.
 Finality latency is the maximum positive validator observation from canonical
 q-forming block application to finalization acknowledgement. Any binary change
 requires a new artifact set and five new runs rather than mutation of old
@@ -1997,8 +1999,8 @@ constructed by a step.
 `OCM-26`; no other network changes.
 
 **Reuse/non-goals:** reuse existing localnet/Mongo/Gramine/process/evidence
-harness. Do not add real-SGX claims, exhaustive CE crash matrix, backlog policy,
-production release gate, TargetLarge or second program.
+harness and its release `sgx-no-attest` profile. Do not add native DCAP claims,
+an exhaustive CE crash matrix, backlog policy, TargetLarge or a second program.
 
 **Test first/owned IDs:**
 

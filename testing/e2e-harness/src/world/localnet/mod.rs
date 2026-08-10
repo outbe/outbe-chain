@@ -128,7 +128,7 @@ impl Localnet {
     fn retain_enclave_image_id(&mut self, image_id: DockerImageId) -> Result<()> {
         match &self.enclave_image_id {
             Some(established) if established != &image_id => {
-                bail!("Gramine Docker image identity changed during the scenario")
+                bail!("Gramine Docker image identity changed during the scenario");
             }
             Some(_) => Ok(()),
             None => {
@@ -199,7 +199,7 @@ impl Localnet {
     /// node's production/testnet default remains unchanged and must be chosen
     /// for the deployment topology by its operator.
     fn extend_real_sgx_startup_timeout(&self, args: &mut Vec<String>) {
-        if matches!(self.cfg.tee_mode, crate::env::TeeMode::Real) {
+        if self.cfg.tee_mode.passes_sgx_devices() {
             args.extend(args!["--tee-bootstrap-timeout-secs", "180"]);
         }
     }
@@ -214,7 +214,7 @@ impl Localnet {
             .get(&i)
             .cloned()
             .unwrap_or_else(|| self.cfg.dir.join("genesis.json"));
-        args![
+        let mut args = args![
             "node",
             "--chain",
             chain_manifest.display(),
@@ -227,6 +227,8 @@ impl Localnet {
             self.cfg.http_port(i),
             "--http.api",
             "eth,net,web3,outbe,debug",
+            "--rpc.eth-proof-window",
+            1868,
             "--port",
             self.cfg.p2p_port(i),
             "--discovery.port",
@@ -245,7 +247,11 @@ impl Localnet {
             CO_LOCATED_DEVNET_CROSS_BLOCK_CACHE_MIB,
             "--log.file.directory",
             node_dir.join("logs").display(),
-        ]
+        ];
+        if matches!(self.cfg.tee_mode, crate::env::TeeMode::SgxNoAttest) {
+            args.extend(args!["--tee-session-mode", "production-node-host"]);
+        }
+        args
     }
 
     /// Comma-joined reth bootnodes from `reth-bootnodes.txt` (comments stripped).
@@ -382,7 +388,7 @@ impl Localnet {
 /// result. Widen only the hardware E2E lane; production/testnet retain their
 /// explicit operator-selected/default deadline.
 fn extend_real_sgx_process_environment(mode: crate::env::TeeMode, cmd: &mut Command) {
-    if matches!(mode, crate::env::TeeMode::Real) {
+    if mode.passes_sgx_devices() {
         cmd.env("OUTBE_TEE_IO_TIMEOUT_SECS", "300");
     }
 }
@@ -467,8 +473,29 @@ mod tests {
         use crate::env::TeeMode;
 
         assert_eq!(configured_timeout(TeeMode::Real).as_deref(), Some("300"));
+        assert_eq!(
+            configured_timeout(TeeMode::SgxNoAttest).as_deref(),
+            Some("300")
+        );
         assert_eq!(configured_timeout(TeeMode::Mock), None);
         assert_eq!(configured_timeout(TeeMode::GramineDirect), None);
+    }
+
+    #[test]
+    fn sgx_no_attest_selects_production_node_host_session() {
+        let env = Environment {
+            tee_mode: crate::env::TeeMode::SgxNoAttest,
+            ..Environment::default()
+        };
+        env.ports
+            .start_scenario(env.validators)
+            .expect("allocate deterministic scenario ports");
+        let localnet = Localnet::new(Config::for_scenario(&env, 1));
+        let args = localnet.reth_base_args(Path::new("/tmp/outbe-e2e-node"), 0);
+
+        assert!(args
+            .windows(2)
+            .any(|pair| { pair[0] == "--tee-session-mode" && pair[1] == "production-node-host" }));
     }
 
     #[test]
@@ -485,6 +512,22 @@ mod tests {
             .map(|pair| pair[1].as_str());
 
         assert_eq!(cache_size, Some("512"));
+    }
+
+    #[test]
+    fn every_localnet_node_retains_the_ocomp_exact_state_proof_window() {
+        let env = Environment::default();
+        env.ports
+            .start_scenario(env.validators)
+            .expect("allocate deterministic scenario ports");
+        let localnet = Localnet::new(Config::for_scenario(&env, 1));
+        let args = localnet.reth_base_args(Path::new("/tmp/outbe-e2e-node"), 0);
+        let proof_window = args
+            .windows(2)
+            .find(|pair| pair[0] == "--rpc.eth-proof-window")
+            .map(|pair| pair[1].as_str());
+
+        assert_eq!(proof_window, Some("1868"));
     }
 
     /// Both layouts, and nothing else — in particular not `validator-*/data`.

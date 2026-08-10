@@ -819,9 +819,10 @@ fn dispatch_with_initialization(
                         .to_string(),
                 };
             };
-            if initialization.mode() != InitializationMode::Development {
+            if !initialization.gramine_direct_dev_evidence_allowed() {
                 return EnclaveResponse::Error {
-                    message: "production enclave cannot sign GramineDirectDev evidence".to_string(),
+                    message: "GramineDirectDev evidence requires development mode or production SGX without remote attestation"
+                        .to_string(),
                 };
             }
             let result = (|| -> Result<Vec<u8>, String> {
@@ -1728,6 +1729,85 @@ mod tests {
             .unwrap();
     }
 
+    #[test]
+    fn sgx_no_attest_production_session_signs_only_gramine_direct_dev_evidence() {
+        use outbe_primitives::tee_attestation_v1::{
+            AttestationMode, AttestationOperationV1, EnclaveProfile, RegistrationIntentV1,
+        };
+
+        let root = tempfile::tempdir().unwrap();
+        let boot = EnclaveBootConfig::new([0x10; 32], root.path().to_path_buf(), 0);
+        let keys = EnclaveKeys::new([0x41; 32], Some([0x41; 32])).unwrap();
+        let initialization = InitializationState::production_with_challenge_and_attestation(
+            Arc::new(boot.clone()),
+            &keys,
+            [0x42; 32],
+            crate::gramine::AttestationType::SgxNoAttest,
+        )
+        .unwrap();
+        let (manifest, node_signature) = signed_initialization_manifest(
+            &keys,
+            [0x42; 32],
+            [0x43; 32],
+            EnclaveProfile::Validator,
+        );
+        let pending = initialization
+            .prepare(
+                &manifest.encode_canonical().unwrap(),
+                &node_signature,
+                &keys,
+            )
+            .unwrap();
+        initialization.commit(pending, &keys).unwrap();
+        let intent = RegistrationIntentV1 {
+            chain_id: manifest.chain_id,
+            genesis_hash: manifest.genesis_hash,
+            operation: AttestationOperationV1::RegisterEnclave,
+            attestation_mode: AttestationMode::GramineDirectDev,
+            policy_hash: B256::repeat_byte(0x44),
+            enclave_profile: manifest.enclave_profile,
+            node_id: manifest.node_id.clone(),
+            enclave_id: manifest.enclave_id().unwrap(),
+            binding_id: B256::repeat_byte(0x45),
+            binding_version: 1,
+            registration_version: 0,
+            renewal_nonce: 0,
+            transition_nonce: 0,
+            requested_valid_until: 7_200,
+            recipient_x25519: manifest.recipient_x25519,
+            attestation_ed25519: manifest.attestation_ed25519,
+            noise_responder_x25519: manifest.noise_responder_x25519,
+            node_host_authorization_hash: manifest.node_host_authorization_hash().unwrap(),
+        };
+        let canonical = intent.encode_canonical().unwrap();
+        let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
+        let mut dkg = DkgSessionStore::new();
+        let response = dispatch_with_initialization(
+            EnclaveRequest::SignRegistrationIntentDevV1 {
+                intent: canonical.clone(),
+            },
+            &keys,
+            &mut dkg,
+            &offer_key,
+            B256::from(manifest.chain_id),
+            DispatchInitializationContext {
+                boot: Some(&boot),
+                initialization: Some(&initialization),
+                quote_generator: |_| panic!("SGX-no-attest dev evidence must not request DCAP"),
+            },
+        );
+        let EnclaveResponse::RegistrationIntentSignedDevV1 {
+            intent: echoed,
+            enclave_signature,
+        } = response
+        else {
+            panic!("unexpected response: {response:?}")
+        };
+        assert_eq!(echoed, canonical);
+        let signature: [u8; 64] = enclave_signature.try_into().unwrap();
+        assert!(intent.verify_enclave_signature(&signature));
+    }
+
     fn spawn_production_connection(
         keys: Arc<EnclaveKeys>,
         boot: Arc<EnclaveBootConfig>,
@@ -1948,6 +2028,91 @@ mod tests {
                 .unwrap(),
             DcapVerificationOutcomeV1::Rejected(DcapRejectCodeV1::EvidenceNonCanonical)
         );
+        drop(client);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn authorized_node_host_client_signs_dev_evidence_in_sgx_no_attest_mode() {
+        use outbe_primitives::tee_attestation_v1::{
+            AttestationMode, AttestationOperationV1, EnclaveProfile, RegistrationIntentV1,
+        };
+        use outbe_tee::{AuthorizedEnclaveClient, NodeHostNoiseKey};
+
+        let root = tempfile::tempdir().unwrap();
+        let socket = root.path().join("enclave.sock");
+        let endpoint = socket.to_str().unwrap().to_string();
+        let boot = Arc::new(EnclaveBootConfig::new(
+            [0x10; 32],
+            root.path().to_path_buf(),
+            0,
+        ));
+        let keys = Arc::new(EnclaveKeys::new([0x53; 32], Some([0x53; 32])).unwrap());
+        let initialization = Arc::new(
+            InitializationState::production_with_challenge_and_attestation(
+                boot.clone(),
+                &keys,
+                [0x54; 32],
+                crate::gramine::AttestationType::SgxNoAttest,
+            )
+            .unwrap(),
+        );
+        let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
+        let listener = UnixListener::bind(&socket).unwrap();
+        let server_keys = keys.clone();
+        let server_initialization = initialization.clone();
+        let server = std::thread::spawn(move || {
+            for _ in 0..2 {
+                let (stream, _) = listener.accept().unwrap();
+                serve_connection_with(
+                    stream,
+                    &server_keys,
+                    &offer_key,
+                    Some(&boot),
+                    &server_initialization,
+                )
+                .unwrap();
+            }
+        });
+
+        let challenge = AuthorizedEnclaveClient::discover_endpoint(&endpoint).unwrap();
+        let node_host_path = root.path().join("node-host-noise.key");
+        let node_host = NodeHostNoiseKey::create_new(&node_host_path).unwrap();
+        let (manifest, node_signature) = signed_initialization_manifest(
+            &keys,
+            challenge.challenge,
+            node_host.public(),
+            EnclaveProfile::Validator,
+        );
+        let mut client = AuthorizedEnclaveClient::initialize_endpoint(
+            &endpoint,
+            &manifest,
+            &node_signature,
+            &node_host,
+        )
+        .unwrap();
+        let intent = RegistrationIntentV1 {
+            chain_id: manifest.chain_id,
+            genesis_hash: manifest.genesis_hash,
+            operation: AttestationOperationV1::RegisterEnclave,
+            attestation_mode: AttestationMode::GramineDirectDev,
+            policy_hash: B256::repeat_byte(0x55),
+            enclave_profile: manifest.enclave_profile,
+            node_id: manifest.node_id.clone(),
+            enclave_id: manifest.enclave_id().unwrap(),
+            binding_id: B256::repeat_byte(0x56),
+            binding_version: 1,
+            registration_version: 0,
+            renewal_nonce: 0,
+            transition_nonce: 0,
+            requested_valid_until: 7_200,
+            recipient_x25519: manifest.recipient_x25519,
+            attestation_ed25519: manifest.attestation_ed25519,
+            noise_responder_x25519: manifest.noise_responder_x25519,
+            node_host_authorization_hash: manifest.node_host_authorization_hash().unwrap(),
+        };
+        let signature = client.sign_registration_intent_dev_v1(&intent).unwrap();
+        assert!(intent.verify_enclave_signature(&signature));
         drop(client);
         server.join().unwrap();
     }

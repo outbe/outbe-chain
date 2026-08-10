@@ -20,6 +20,8 @@ use alloy_primitives::{keccak256, Address, Bytes, TxKind, B256, U256};
 #[cfg(feature = "ocomp-integration")]
 use k256::ecdsa::{signature::hazmat::PrehashSigner as _, Signature, SigningKey};
 #[cfg(feature = "ocomp-integration")]
+use outbe_chain_constants::GENESIS_CONFIG_KEY;
+#[cfg(feature = "ocomp-integration")]
 use outbe_common::WorldwideDay;
 #[cfg(feature = "ocomp-integration")]
 use outbe_metadosis::config::{
@@ -27,9 +29,11 @@ use outbe_metadosis::config::{
     OCOMP_POC_FINAL_ACTIVATION_HEIGHT,
 };
 #[cfg(feature = "ocomp-integration")]
-use outbe_metadosis::genesis::FreshDevnetGenesisBuilder;
+use outbe_metadosis::genesis::{FreshDevnetGenesisBuilder, GenesisWorldwideDay};
 #[cfg(feature = "ocomp-integration")]
 use outbe_metadosis::proof_layout::METADOSIS_STORAGE_LAYOUT_V1_HASH;
+#[cfg(feature = "ocomp-integration")]
+use outbe_metadosis::{WwdDayType, WwdStatus};
 #[cfg(feature = "ocomp-integration")]
 use outbe_ocomp_protocol::{
     activation::SignOncePurpose,
@@ -45,7 +49,7 @@ use outbe_ocomp_protocol::{
 };
 #[cfg(feature = "ocomp-integration")]
 use outbe_primitives::{
-    addresses::{METADOSIS_ADDRESS, TRIBUTE_ADDRESS, VALIDATOR_SET_ADDRESS},
+    addresses::{METADOSIS_ADDRESS, ORACLE_ADDRESS, TRIBUTE_ADDRESS, VALIDATOR_SET_ADDRESS},
     signer::OutbeEvmSigner,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
     OutbeHeader,
@@ -83,6 +87,10 @@ const OCOMP_MAX_WORKERS_PER_DOMAIN: usize = 4;
 const WRITER_LEASE_LAPSE: Duration = Duration::from_secs(7);
 #[cfg(feature = "ocomp-integration")]
 const EXPORTER_RESTART_ATTEMPTS: u8 = 3;
+#[cfg(feature = "ocomp-integration")]
+const OCOMP_BASE_PATH_ENV: &str = "OUTBE_OCOMP_BASE_PATH";
+#[cfg(feature = "ocomp-integration")]
+const OCOMP_VALIDATOR_INDEX_ENV: &str = "OCOMP_VALIDATOR_INDEX";
 #[cfg(any(feature = "ocomp-integration", test))]
 const OCOMP_MAX_PROCESS_RECORDS: usize = 64;
 const OCOMP_MAX_FAULT_RECORDS: usize = 32;
@@ -108,6 +116,8 @@ const OCOMP_DYNAMIC_SECOND_OFFERING_AFTER_GENESIS_SECS: u64 = 700;
 pub(crate) const OCOMP_TEST_EPOCH_LENGTH_BLOCKS: u64 = 300;
 #[cfg(feature = "ocomp-integration")]
 pub(crate) const OCOMP_DYNAMIC_DKG_PREPARE_WINDOW_BLOCKS: u64 = 10;
+#[cfg(feature = "ocomp-integration")]
+pub(crate) const OCOMP_DYNAMIC_VOTE_WINDOW_BLOCKS: u64 = OCOMP_TEST_EPOCH_LENGTH_BLOCKS * 3 / 2;
 
 /// Fixed process roles represented in one validator's OCOMP domain.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -490,7 +500,7 @@ impl OcompTopology {
     }
 
     /// Stage the compute-only profile required by an OCOMP-enabled FullNode.
-    /// The node itself no longer owns an OCOMP control transport, so this
+    /// The node owns the embedded Supervisor and its Worker endpoint, so this
     /// returns no node CLI arguments. The durable domain remains outside the
     /// ACTIVE voting topology and intentionally contains no voting keys.
     #[cfg(feature = "ocomp-integration")]
@@ -557,6 +567,39 @@ impl OcompTopology {
     /// Scenario-owned root for one validator domain.
     pub fn domain_root(&self, validator_index: u8) -> Result<&Path> {
         Ok(&self.domain(validator_index)?.root)
+    }
+
+    /// Prove that release OCOMP roles use the scenario base directory and the
+    /// canonical `validator-N/ocomp/domain-v1` layout. This is intentionally a
+    /// path contract, not a service-UID contract: all harness roles run as the
+    /// launching user.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn verify_release_basedir_contract(&self) -> Result<()> {
+        for validator_index in self.validator_indices()? {
+            let expected = self
+                .cfg
+                .validator_dir(usize::from(validator_index))
+                .join("ocomp")
+                .join("domain-v1");
+            let actual = self.domain_root(validator_index)?;
+            eyre::ensure!(
+                actual == expected,
+                "validator-{validator_index} OCOMP root {} differs from basedir contract {}",
+                actual.display(),
+                expected.display()
+            );
+            for required in [
+                "protocol-bundle-v1.ocb1",
+                "ocomp-key-v1.hex",
+                "ocomp-evm-key.hex",
+            ] {
+                eyre::ensure!(
+                    actual.join(required).is_file(),
+                    "validator-{validator_index} basedir is missing {required}"
+                );
+            }
+        }
+        Ok(())
     }
 
     /// Canonical chain manifest selected for this scenario before any
@@ -666,8 +709,6 @@ impl OcompTopology {
             .launch_identity
             .ok_or_else(|| eyre::eyre!("OCOMP launch identity is unavailable"))?;
         let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
-        vote.validator_index = u16::from(validator_index);
-        vote.signature_rs = [0; 64];
         let bundle = ProtocolBundleV1::decode_canonical(
             &fs::read(
                 self.domain_root(validator_index)?
@@ -675,6 +716,11 @@ impl OcompTopology {
             )?,
             &limits,
         )?;
+        let key = fs::read_to_string(self.domain_root(validator_index)?.join("ocomp-key-v1.hex"))?;
+        let signing_key = SigningKey::from_slice(&hex::decode(key.trim())?)?;
+        let public_key = signing_key.verifying_key().to_encoded_point(true);
+        vote.ocomp_key_hash = keccak256(public_key.as_bytes());
+        vote.signature_rs = [0; 64];
         let subject = ResultVoteSigningSubjectV1 {
             chain_id: identity.chain_id,
             genesis_hash: identity.genesis_hash,
@@ -685,13 +731,11 @@ impl OcompTopology {
             result_validator_set_epoch: vote.result_validator_set_epoch,
             result_committee_set_hash: vote.result_committee_set_hash,
             result_ocomp_binding_hash: vote.result_ocomp_binding_hash,
-            validator_index: u16::from(validator_index),
+            ocomp_key_hash: vote.ocomp_key_hash,
             key_epoch: vote.key_epoch,
             purpose: SignOncePurpose::ResultSignature as u8,
             result_digest: vote.result_digest(&limits)?,
         };
-        let key = fs::read_to_string(self.domain_root(validator_index)?.join("ocomp-key-v1.hex"))?;
-        let signing_key = SigningKey::from_slice(&hex::decode(key.trim())?)?;
         let signature: Signature =
             signing_key.sign_prehash(subject.signing_digest()?.as_slice())?;
         vote.signature_rs = signature
@@ -737,10 +781,10 @@ impl OcompTopology {
         self.prepare_measurement_fork_install_inner(None, &[], false, None)
     }
 
-    /// Prepare the same immutable measurement fork plus a short, pre-start
-    /// WorldwideDay schedule. This changes no JobIntent/result/state after
-    /// launch: it only lets a public Tribute offered by the scenario naturally
-    /// reach the production Metadosis request transition in bounded test time.
+    /// Prepare the same immutable measurement fork plus one bounded, internally
+    /// consistent OFFERING fixture. Its Metadosis VWAP fields are derived from
+    /// Oracle snapshots, and Tribute pricing uses the same VWAP/S-curve state as
+    /// production before the public transaction enters the normal lifecycle.
     #[cfg(feature = "ocomp-integration")]
     pub fn prepare_public_measurement_fork_install(&self) -> Result<OcompMeasurementForkV1> {
         self.prepare_measurement_fork_install_inner(
@@ -767,13 +811,18 @@ impl OcompTopology {
 
     /// Prepare two independently scheduled public jobs around one real DKG
     /// membership boundary. The shortened epoch is still above the normative
-    /// snapshot-retention lower bound; the exact production 1,800-block
-    /// compute-and-vote deadline is left unchanged.
+    /// snapshot-retention lower bound; the compute-and-vote deadline comes from
+    /// the same immutable genesis constants record used by production.
     #[cfg(feature = "ocomp-integration")]
     pub fn prepare_dynamic_membership_fork_install(&self) -> Result<OcompDynamicMembershipForkV1> {
         let genesis_path = self.cfg.dir.join("genesis.json");
         let mut genesis: serde_json::Value = serde_json::from_slice(&fs::read(&genesis_path)?)?;
         let chain_id = genesis_chain_id(&genesis)?;
+        schedule_public_measurement_day(
+            &mut genesis,
+            chain_id,
+            OCOMP_DYNAMIC_FIRST_OFFERING_AFTER_GENESIS_SECS,
+        )?;
         let schedule = schedule_dynamic_membership_days(&mut genesis, chain_id)?;
         let config = genesis
             .get("config")
@@ -787,8 +836,13 @@ impl OcompTopology {
                 && config
                     .get("dkgPrepareWindowBlocks")
                     .and_then(serde_json::Value::as_u64)
-                    == Some(OCOMP_DYNAMIC_DKG_PREPARE_WINDOW_BLOCKS),
-            "dynamic OCOMP epoch and DKG window must be configured before ValidatorSet genesis is seeded"
+                    == Some(OCOMP_DYNAMIC_DKG_PREPARE_WINDOW_BLOCKS)
+                && config
+                    .get(GENESIS_CONFIG_KEY)
+                    .and_then(|value| value.pointer("/ocomp/computeVoteWindowBlocks"))
+                    .and_then(serde_json::Value::as_u64)
+                    == Some(OCOMP_DYNAMIC_VOTE_WINDOW_BLOCKS),
+            "dynamic OCOMP epoch, DKG and vote windows must be configured before ValidatorSet genesis is seeded"
         );
         replace_json_atomically(&genesis_path, &genesis)?;
 
@@ -994,8 +1048,44 @@ impl OcompTopology {
         .launch_identity())
     }
 
-    /// Launch the complete baseline compute runtime for every genesis ACTIVE
-    /// validator: one Supervisor, one SnapshotExporter, and Worker ordinal 0.
+    /// Ensure every validator has the complete node-owned OCOMP domain before
+    /// the production node starts its embedded ExEx. Ordinary fresh LocalNet
+    /// bootstraps stage the generated founder material here. Specialized Final
+    /// and measurement fixtures publish their own exact domain material before
+    /// reaching this point and must never be overwritten.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn ensure_validator_domain_material_before_node_start(&self) -> Result<()> {
+        let required_names = [
+            "protocol-bundle-v1.ocb1",
+            "ocomp-key-v1.hex",
+            "ocomp-evm-key.hex",
+        ];
+        let expected = self.domains.len() * required_names.len();
+        let present = self
+            .domains
+            .iter()
+            .flat_map(|domain| {
+                required_names
+                    .iter()
+                    .map(move |name| domain.root.join(name))
+            })
+            .filter(|path| path.is_file())
+            .count();
+        match present {
+            0 => {
+                let _identity = self.prepare_bootstrapped_runtime()?;
+                Ok(())
+            }
+            count if count == expected => Ok(()),
+            count => Err(eyre::eyre!(
+                "partial OCOMP validator domain material before node start: {count}/{expected} files"
+            )),
+        }
+    }
+
+    /// Launch the external compute clients for every genesis ACTIVE validator:
+    /// one SnapshotExporter and Worker ordinal 0. Each node owns its embedded
+    /// Supervisor and Worker endpoint.
     #[cfg(feature = "ocomp-integration")]
     pub fn start_baseline_runtime(&mut self, identity: OcompLaunchIdentityV1) -> Result<()> {
         self.install_ocomp_delegate_bindings()?;
@@ -1006,7 +1096,7 @@ impl OcompTopology {
         Ok(())
     }
 
-    /// Prove both child-process liveness and mutual Worker/Supervisor
+    /// Prove child-process liveness and mutual Worker/embedded-Supervisor
     /// registration for the complete baseline runtime.
     #[cfg(feature = "ocomp-integration")]
     pub fn ensure_baseline_runtime_ready(
@@ -1154,6 +1244,28 @@ impl OcompTopology {
     }
 
     #[cfg(feature = "ocomp-integration")]
+    pub fn ocomp_delegate_private_key(&self, validator_index: u8) -> Result<String> {
+        self.domain(validator_index)?;
+        Ok(format!("0x{}", ocomp_evm_private_key(validator_index)))
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    pub fn ocomp_delegate_private_key_for_vote(&self, vote: &ResultVoteV1) -> Result<String> {
+        for validator_index in self.validator_indices()? {
+            let encoded =
+                fs::read_to_string(self.domain_root(validator_index)?.join("ocomp-key-v1.hex"))?;
+            let signing_key = SigningKey::from_slice(&hex::decode(encoded.trim())?)?;
+            let public_key = signing_key.verifying_key().to_encoded_point(true);
+            if keccak256(public_key.as_bytes()) == vote.ocomp_key_hash {
+                return self.ocomp_delegate_private_key(validator_index);
+            }
+        }
+        Err(eyre::eyre!(
+            "ResultVoteV1 OCOMP key is not owned by this pinned test topology"
+        ))
+    }
+
+    #[cfg(feature = "ocomp-integration")]
     pub fn verify_ocomp_delegate_bindings(&self) -> Result<()> {
         const ORACLE_ROLE: u8 = 1;
         const OCOMP_ROLE: u8 = 2;
@@ -1252,6 +1364,10 @@ impl OcompTopology {
 
         let base_spec = parse_outbe_chain_spec(&genesis_path)?;
         let base_genesis_hash = base_spec.genesis_hash();
+        let protocol_constants =
+            outbe_chain_constants::GenesisProtocolParametersV1::from_materialized_genesis(
+                &genesis,
+            )?;
         let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
         let install = measurement_fork_install(
             chain_id,
@@ -1259,6 +1375,7 @@ impl OcompTopology {
             OCOMP_MEASUREMENT_ACTIVATION_HEIGHT,
             &self.cfg.dir.join("validators.json"),
             &limits,
+            protocol_constants.ocomp_compute_vote_window_blocks,
             max_terminal_job_records,
         )?;
         install.validate_for_chain(chain_id, base_genesis_hash, &limits)?;
@@ -1277,7 +1394,9 @@ impl OcompTopology {
         let mut manifest_changed = false;
         match config.get(outbe_node::ocomp::fork::OCOMP_FORK_INSTALL_GENESIS_KEY) {
             Some(existing) if existing == &manifest => {}
-            Some(_) => eyre::bail!("refusing to replace a different OCOMP fork install"),
+            Some(_) => {
+                eyre::bail!("refusing to replace a different OCOMP fork install");
+            }
             None => {
                 config.insert(
                     outbe_node::ocomp::fork::OCOMP_FORK_INSTALL_GENESIS_KEY.to_owned(),
@@ -1291,7 +1410,9 @@ impl OcompTopology {
         });
         match config.get(outbe_node::ocomp::fork::METADOSIS_STORAGE_LAYOUT_GENESIS_KEY) {
             Some(existing) if existing == &layout_manifest => {}
-            Some(_) => eyre::bail!("refusing to replace a different Metadosis storage layout"),
+            Some(_) => {
+                eyre::bail!("refusing to replace a different Metadosis storage layout");
+            }
             None => {
                 config.insert(
                     outbe_node::ocomp::fork::METADOSIS_STORAGE_LAYOUT_GENESIS_KEY.to_owned(),
@@ -1392,8 +1513,8 @@ impl OcompTopology {
         })
     }
 
-    /// Start the production Supervisor and SnapshotExporter in every validator
-    /// domain after the corresponding node control sockets are ready.
+    /// Start the external SnapshotExporter in every validator domain after the
+    /// corresponding Node-owned embedded Supervisor endpoint is ready.
     #[cfg(feature = "ocomp-integration")]
     pub fn start_validator_roles(&mut self, identity: OcompLaunchIdentityV1) -> Result<()> {
         if !self.cfg.bin_ocomp.is_file() {
@@ -1403,7 +1524,7 @@ impl OcompTopology {
             );
         }
         if self.launch_identity.is_some() {
-            eyre::bail!("OCOMP validator roles were already started for this scenario");
+            eyre::bail!("OCOMP validator runtime was already started for this scenario");
         }
         self.launch_identity = Some(identity);
         self.launch_identity_evidence = Some(OcompLaunchIdentityEvidenceV1 {
@@ -1427,8 +1548,8 @@ impl OcompTopology {
         self.ensure_validator_roles_alive()
     }
 
-    /// Start node-facing OCOMP roles for a validator only after the certified
-    /// boundary has made it ACTIVE and its domain has been appended.
+    /// Start the external OCOMP exporter for a validator only after the
+    /// certified boundary has made it ACTIVE and its domain has been appended.
     #[cfg(feature = "ocomp-integration")]
     pub fn start_active_validator_roles(&mut self, validator_index: u8) -> Result<()> {
         let identity = self
@@ -1440,8 +1561,8 @@ impl OcompTopology {
     }
 
     /// Start the exact keyless compute plane required by a certified FullNode.
-    /// Its `follower` process shares the validator Supervisor pipeline but has
-    /// no signing key, EVM relay or vote submission path.
+    /// The FullNode owns its embedded Supervisor; the harness starts only its
+    /// external SnapshotExporter and Worker and provides no vote keys.
     #[cfg(feature = "ocomp-integration")]
     pub fn start_keyless_full_node_roles(&mut self, validator_index: u8) -> Result<()> {
         let identity = self
@@ -1449,15 +1570,11 @@ impl OcompTopology {
             .ok_or_else(|| eyre::eyre!("OCOMP launch identity is not established"))?;
         let domain = self.keyless_full_node_domain(validator_index)?;
         eyre::ensure!(
-            domain.supervisor.is_none() && domain.snapshot_exporter.is_none(),
+            domain.supervisor.is_none()
+                && domain.snapshot_exporter.is_none()
+                && domain.workers.is_empty(),
             "keyless FullNode OCOMP roles are already started"
         );
-        let follower = self.spawn_keyless_full_node_role(
-            validator_index,
-            OcompProcessRole::Follower,
-            identity,
-        )?;
-        self.attach_keyless_full_node_owned(validator_index, OcompProcessRole::Follower, follower)?;
         let exporter = self.spawn_keyless_full_node_role(
             validator_index,
             OcompProcessRole::SnapshotExporter,
@@ -1468,6 +1585,13 @@ impl OcompTopology {
             OcompProcessRole::SnapshotExporter,
             exporter,
         )?;
+        let worker = self.spawn_worker_process(
+            validator_index,
+            0,
+            self.keyless_full_node_domain(validator_index)?.root.clone(),
+            identity,
+        )?;
+        self.attach_keyless_full_node_owned(validator_index, OcompProcessRole::Worker, worker)?;
         sleep(Duration::from_secs(2));
         self.ensure_keyless_full_node_roles_alive(validator_index)
     }
@@ -1476,15 +1600,19 @@ impl OcompTopology {
     /// durable domain remain intact for validator-mode promotion.
     #[cfg(feature = "ocomp-integration")]
     pub fn stop_keyless_full_node_roles(&mut self, validator_index: u8) -> Result<()> {
-        let (follower, exporter) = {
+        let (exporter, workers) = {
             let domain = self.keyless_full_node_domain_mut(validator_index)?;
-            (domain.supervisor.take(), domain.snapshot_exporter.take())
+            (
+                domain.snapshot_exporter.take(),
+                std::mem::take(&mut domain.workers),
+            )
         };
-        let follower = follower.ok_or_else(|| eyre::eyre!("FullNode follower is not running"))?;
         let exporter =
             exporter.ok_or_else(|| eyre::eyre!("FullNode snapshot exporter is not running"))?;
-        self.stop_owned(follower);
         self.stop_owned(exporter);
+        for (_, worker) in workers {
+            self.stop_owned(worker);
+        }
         Ok(())
     }
 
@@ -1504,16 +1632,8 @@ impl OcompTopology {
         let domain = self.domain(validator_index)?;
         eyre::ensure!(
             domain.supervisor.is_none() && domain.snapshot_exporter.is_none(),
-            "validator-{validator_index} OCOMP roles are already started"
+            "validator-{validator_index} OCOMP runtime is already started"
         );
-        let supervisor =
-            self.spawn_validator_role(validator_index, OcompProcessRole::Supervisor, identity)?;
-        self.attach_owned(
-            Some(validator_index),
-            OcompProcessRole::Supervisor,
-            None,
-            supervisor,
-        )?;
 
         let exporter = self.spawn_validator_role(
             validator_index,
@@ -1554,6 +1674,26 @@ impl OcompTopology {
         }
 
         let domain_root = domain.root.clone();
+        let guard =
+            self.spawn_worker_process(validator_index, worker_ordinal, domain_root, identity)?;
+
+        self.attach_owned(
+            Some(validator_index),
+            OcompProcessRole::Worker,
+            Some(worker_ordinal),
+            guard,
+        )?;
+        Ok(())
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    fn spawn_worker_process(
+        &self,
+        validator_index: u8,
+        worker_ordinal: u32,
+        domain_root: PathBuf,
+        identity: OcompLaunchIdentityV1,
+    ) -> Result<ChildGuard> {
         let log_path = domain_root.join(format!("worker-{worker_ordinal}.log"));
         let log = OpenOptions::new()
             .create(true)
@@ -1573,11 +1713,9 @@ impl OcompTopology {
             expected_observability_port
         );
 
-        let mut command = Command::new(&self.cfg.bin_ocomp);
+        let mut command = self.release_role_command(validator_index, OcompProcessRole::Worker)?;
         command
             .arg("worker")
-            .arg("--development-root")
-            .arg(&domain_root)
             .arg("--chain-id")
             .arg(identity.chain_id.to_string())
             .arg("--genesis-hash")
@@ -1599,18 +1737,21 @@ impl OcompTopology {
                 self.cfg.bin_ocomp.display()
             );
         }
-        let guard = ChildGuard::spawn(
+        ChildGuard::spawn(
             format!("validator-{validator_index} OCOMP worker-{worker_ordinal}"),
             command,
-        )?;
+        )
+    }
 
-        self.attach_owned(
-            Some(validator_index),
-            OcompProcessRole::Worker,
-            Some(worker_ordinal),
-            guard,
-        )?;
-        Ok(())
+    #[cfg(feature = "ocomp-integration")]
+    fn release_role_command(&self, validator_index: u8, role: OcompProcessRole) -> Result<Command> {
+        eyre::ensure!(
+            role != OcompProcessRole::Follower,
+            "the FullNode Supervisor is embedded in outbe-chain; no external follower role exists"
+        );
+        let mut command = Command::new(&self.cfg.bin_ocomp);
+        configure_release_layout(&mut command, &self.cfg.dir, validator_index);
+        Ok(command)
     }
 
     #[cfg(feature = "ocomp-integration")]
@@ -1624,7 +1765,9 @@ impl OcompTopology {
         let role_name = match role {
             OcompProcessRole::Supervisor => "supervisor",
             OcompProcessRole::SnapshotExporter => "snapshot-exporter",
-            _ => eyre::bail!("validator service launcher accepts only fixed node-facing roles"),
+            _ => {
+                eyre::bail!("validator service launcher accepts only fixed node-facing roles");
+            }
         };
         let log_path = domain_root.join(format!("{role_name}.log"));
         let log = OpenOptions::new()
@@ -1633,11 +1776,9 @@ impl OcompTopology {
             .open(&log_path)?;
         let stderr = log.try_clone()?;
 
-        let mut command = Command::new(&self.cfg.bin_ocomp);
+        let mut command = self.release_role_command(validator_index, role)?;
         command
             .arg(role_name)
-            .arg("--development-root")
-            .arg(&domain_root)
             .current_dir(&self.cfg.repo)
             .env("OCOMP_CHAIN_ID", identity.chain_id.to_string())
             .env(
@@ -1666,7 +1807,7 @@ impl OcompTopology {
                         self.cfg.ocomp_supervisor_port(validator_index)
                     ))
                     .env("OUTBE_OCOMP_RPC_URL", self.cfg.rpc_url(validator_index))
-                    .env("OCOMP_VALIDATOR_INDEX", validator_index.to_string());
+                    .env(OCOMP_VALIDATOR_INDEX_ENV, validator_index.to_string());
             }
             OcompProcessRole::SnapshotExporter => {
                 let validator_index = usize::from(validator_index);
@@ -1711,7 +1852,9 @@ impl OcompTopology {
         let role_name = match role {
             OcompProcessRole::Follower => "follower",
             OcompProcessRole::SnapshotExporter => "snapshot-exporter",
-            _ => eyre::bail!("FullNode launcher accepts only follower/exporter roles"),
+            _ => {
+                eyre::bail!("FullNode launcher accepts only follower/exporter roles");
+            }
         };
         let log_path = domain_root.join(format!("{role_name}.log"));
         let log = OpenOptions::new()
@@ -1720,11 +1863,9 @@ impl OcompTopology {
             .open(&log_path)?;
         let stderr = log.try_clone()?;
         let index = usize::from(validator_index);
-        let mut command = Command::new(&self.cfg.bin_ocomp);
+        let mut command = self.release_role_command(validator_index, role)?;
         command
             .arg(role_name)
-            .arg("--development-root")
-            .arg(&domain_root)
             .current_dir(&self.cfg.repo)
             .env("OCOMP_CHAIN_ID", identity.chain_id.to_string())
             .env(
@@ -1785,15 +1926,17 @@ impl OcompTopology {
         }
         let domain = self.keyless_full_node_domain(validator_index)?;
         match role {
-            OcompProcessRole::Follower if domain.supervisor.is_none() => {}
             OcompProcessRole::SnapshotExporter if domain.snapshot_exporter.is_none() => {}
-            _ => eyre::bail!("invalid or duplicate keyless FullNode role attachment"),
+            OcompProcessRole::Worker if !domain.workers.contains_key(&0) => {}
+            _ => {
+                eyre::bail!("invalid or duplicate keyless FullNode role attachment");
+            }
         }
         let record_index = self.records.len();
         self.records.push(OcompProcessRecordV1 {
             validator_index: Some(validator_index),
             role,
-            worker_ordinal: None,
+            worker_ordinal: (role == OcompProcessRole::Worker).then_some(0),
             pid: guard.pid(),
             started_at_millis: unix_time_millis(),
             stopped_at_millis: None,
@@ -1804,8 +1947,10 @@ impl OcompTopology {
         };
         let domain = self.keyless_full_node_domain_mut(validator_index)?;
         match role {
-            OcompProcessRole::Follower => domain.supervisor = Some(process),
             OcompProcessRole::SnapshotExporter => domain.snapshot_exporter = Some(process),
+            OcompProcessRole::Worker => {
+                domain.workers.insert(0, process);
+            }
             _ => unreachable!("role validated above"),
         }
         Ok(())
@@ -1813,15 +1958,12 @@ impl OcompTopology {
 
     #[cfg(feature = "ocomp-integration")]
     fn ensure_keyless_full_node_roles_alive(&mut self, validator_index: u8) -> Result<()> {
-        for role in [
-            OcompProcessRole::Follower,
-            OcompProcessRole::SnapshotExporter,
-        ] {
+        for role in [OcompProcessRole::SnapshotExporter, OcompProcessRole::Worker] {
             let (record_index, exited) = {
                 let domain = self.keyless_full_node_domain_mut(validator_index)?;
                 let process = match role {
-                    OcompProcessRole::Follower => domain.supervisor.as_mut(),
                     OcompProcessRole::SnapshotExporter => domain.snapshot_exporter.as_mut(),
+                    OcompProcessRole::Worker => domain.workers.get_mut(&0),
                     _ => unreachable!(),
                 }
                 .ok_or_else(|| eyre::eyre!("FullNode OCOMP {role:?} is missing"))?;
@@ -1830,8 +1972,8 @@ impl OcompTopology {
             if exited {
                 self.records[record_index].stopped_at_millis = Some(unix_time_millis());
                 let role_name = match role {
-                    OcompProcessRole::Follower => "follower",
                     OcompProcessRole::SnapshotExporter => "snapshot-exporter",
+                    OcompProcessRole::Worker => "worker-0",
                     _ => unreachable!(),
                 };
                 eyre::bail!(
@@ -1852,20 +1994,9 @@ impl OcompTopology {
     #[cfg(feature = "ocomp-integration")]
     pub fn ensure_validator_roles_alive(&mut self) -> Result<()> {
         for validator_index in self.validator_indices()? {
-            for role in [
-                OcompProcessRole::Supervisor,
-                OcompProcessRole::SnapshotExporter,
-            ] {
+            for role in [OcompProcessRole::SnapshotExporter] {
                 let intentionally_stopped = self.faults.iter().any(|record| {
                     matches!(
-                        (role, record.fault),
-                        (
-                            OcompProcessRole::Supervisor,
-                            OcompProcessFault::StopSupervisor {
-                                validator_index: stopped
-                            }
-                        ) if stopped == validator_index
-                    ) || matches!(
                         (role, record.fault),
                         (
                             OcompProcessRole::SnapshotExporter,
@@ -1878,9 +2009,8 @@ impl OcompTopology {
                 let (record_index, exited) = {
                     let domain = self.domain_mut(validator_index)?;
                     let process = match role {
-                        OcompProcessRole::Supervisor => domain.supervisor.as_mut(),
                         OcompProcessRole::SnapshotExporter => domain.snapshot_exporter.as_mut(),
-                        _ => unreachable!("fixed iteration above"),
+                        _ => unreachable!("fixed exporter iteration above"),
                     };
                     let Some(process) = process else {
                         if intentionally_stopped {
@@ -1895,9 +2025,8 @@ impl OcompTopology {
                 if exited {
                     self.records[record_index].stopped_at_millis = Some(unix_time_millis());
                     let role_name = match role {
-                        OcompProcessRole::Supervisor => "supervisor",
                         OcompProcessRole::SnapshotExporter => "snapshot-exporter",
-                        _ => unreachable!("fixed iteration above"),
+                        _ => unreachable!("fixed exporter iteration above"),
                     };
                     let log_path = self
                         .domain(validator_index)?
@@ -1939,43 +2068,23 @@ impl OcompTopology {
         Ok(())
     }
 
-    /// Restart only the fixed Supervisor role in one domain after a typed stop.
+    /// Restart one external Worker after a typed stop. The embedded Supervisor
+    /// remains owned by the node throughout the fault.
     #[cfg(feature = "ocomp-integration")]
-    pub fn restart_supervisor(&mut self, validator_index: u8) -> Result<()> {
-        if self.domain(validator_index)?.supervisor.is_some() {
-            eyre::bail!("validator-{validator_index} supervisor is already running");
+    pub fn restart_worker(&mut self, validator_index: u8, worker_ordinal: u32) -> Result<()> {
+        if self
+            .domain(validator_index)?
+            .workers
+            .contains_key(&worker_ordinal)
+        {
+            eyre::bail!("validator-{validator_index} worker-{worker_ordinal} is already running");
         }
         let identity = self
             .launch_identity
             .ok_or_else(|| eyre::eyre!("OCOMP launch identity is not established"))?;
-        let supervisor =
-            self.spawn_validator_role(validator_index, OcompProcessRole::Supervisor, identity)?;
-        self.attach_owned(
-            Some(validator_index),
-            OcompProcessRole::Supervisor,
-            None,
-            supervisor,
-        )?;
+        self.activate_worker(validator_index, worker_ordinal, identity)?;
         sleep(Duration::from_secs(2));
-        let (record_index, exited) = {
-            let process = self
-                .domain_mut(validator_index)?
-                .supervisor
-                .as_mut()
-                .expect("attached immediately above");
-            (process.record_index, process.guard.exited())
-        };
-        if exited {
-            self.records[record_index].stopped_at_millis = Some(unix_time_millis());
-            eyre::bail!(
-                "validator-{validator_index} OCOMP supervisor exited during typed restart:\n{}",
-                tail_file(
-                    &self.domain(validator_index)?.root.join("supervisor.log"),
-                    20
-                )
-            );
-        }
-        Ok(())
+        self.ensure_worker_alive(validator_index, worker_ordinal)
     }
 
     /// Restart the fixed SnapshotExporter role in one domain after a typed stop.
@@ -2042,19 +2151,90 @@ impl OcompTopology {
         Ok(())
     }
 
-    /// Restart both fixed node-facing roles while preserving the domain data.
-    /// A role may already be absent because an earlier scenario fault stopped
-    /// it; restarting the complete domain remains one well-defined operation.
+    /// Recreate the durable state left by a crash after `prepared.ref` but
+    /// before `receipt.ref`, then prove the production SnapshotExporter restores
+    /// the exact receipt reference on restart. No chain state or result is
+    /// injected: only the exporter's local terminal marker is removed.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn verify_prepared_only_exporter_restart(
+        &mut self,
+        validator_index: u8,
+        job_id: B256,
+    ) -> Result<()> {
+        let receipt_root = self
+            .domain_root(validator_index)?
+            .join("exporter-v1")
+            .join("receipts")
+            .join(hex::encode(job_id));
+        let prepared_path = receipt_root.join("prepared.ref");
+        let receipt_path = receipt_root.join("receipt.ref");
+        let prepared_before = fs::read(&prepared_path).map_err(|error| {
+            eyre::eyre!(
+                "read validator-{validator_index} prepared export {}: {error}",
+                prepared_path.display()
+            )
+        })?;
+        let receipt_before = fs::read(&receipt_path).map_err(|error| {
+            eyre::eyre!(
+                "read validator-{validator_index} committed export {}: {error}",
+                receipt_path.display()
+            )
+        })?;
+        eyre::ensure!(
+            !prepared_before.is_empty() && !receipt_before.is_empty(),
+            "prepared export references must be non-empty"
+        );
+
+        self.apply_process_fault(OcompProcessFault::StopSnapshotExporter { validator_index })?;
+        fs::remove_file(&receipt_path)?;
+        self.restart_snapshot_exporter(validator_index)?;
+
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            self.ensure_validator_roles_alive()?;
+            if let Ok(receipt_after) = fs::read(&receipt_path) {
+                eyre::ensure!(
+                    receipt_after == receipt_before,
+                    "prepared-only restart changed the committed export reference"
+                );
+                eyre::ensure!(
+                    fs::read(&prepared_path)? == prepared_before,
+                    "prepared-only restart changed the preparation reference"
+                );
+                return Ok(());
+            }
+            eyre::ensure!(
+                Instant::now() < deadline,
+                "SnapshotExporter did not restore receipt.ref after prepared-only restart"
+            );
+            sleep(Duration::from_millis(100));
+        }
+    }
+
+    /// Restart every external compute client while preserving the domain data.
+    /// The embedded Supervisor restarts with the node and is not a harness-owned
+    /// process.
     #[cfg(feature = "ocomp-integration")]
     pub fn restart_node_facing_processes(&mut self, validator_index: u8) -> Result<()> {
-        if let Some(process) = self.domain_mut(validator_index)?.supervisor.take() {
+        let (exporter, workers) = {
+            let domain = self.domain_mut(validator_index)?;
+            (
+                domain.snapshot_exporter.take(),
+                std::mem::take(&mut domain.workers),
+            )
+        };
+        if let Some(process) = exporter {
             self.stop_owned(process);
         }
-        if let Some(process) = self.domain_mut(validator_index)?.snapshot_exporter.take() {
+        let worker_ordinals = workers.keys().copied().collect::<Vec<_>>();
+        for (_, process) in workers {
             self.stop_owned(process);
         }
         self.restart_snapshot_exporter(validator_index)?;
-        self.restart_supervisor(validator_index)
+        for worker_ordinal in worker_ordinals {
+            self.restart_worker(validator_index, worker_ordinal)?;
+        }
+        Ok(())
     }
 
     /// Replace a stopped Supervisor with a process that has a valid local
@@ -2222,9 +2402,11 @@ impl OcompTopology {
         match self.launch_identity {
             Some(established) if established == identity => Ok(()),
             Some(_) => {
-                eyre::bail!("OCOMP worker launch identity differs from the scenario network")
+                eyre::bail!("OCOMP worker launch identity differs from the scenario network");
             }
-            None => eyre::bail!("OCOMP validator roles must start before workers"),
+            None => {
+                eyre::bail!("OCOMP validator roles must start before workers");
+            }
         }
     }
 
@@ -2328,7 +2510,7 @@ impl OcompTopology {
         }
         match role {
             OcompProcessRole::Follower => {
-                eyre::bail!("keyless FullNode roles use their dedicated attachment path")
+                eyre::bail!("keyless FullNode roles use their dedicated attachment path");
             }
             OcompProcessRole::Supervisor => {
                 let index = validator_index
@@ -2394,6 +2576,13 @@ impl OcompTopology {
         }
         Ok(())
     }
+}
+
+#[cfg(feature = "ocomp-integration")]
+fn configure_release_layout(command: &mut Command, base_path: &Path, validator_index: u8) {
+    command
+        .env(OCOMP_BASE_PATH_ENV, base_path)
+        .env(OCOMP_VALIDATOR_INDEX_ENV, validator_index.to_string());
 }
 
 #[cfg(feature = "ocomp-integration")]
@@ -2534,7 +2723,9 @@ fn genesis_chain_id(genesis: &serde_json::Value) -> Result<u64> {
             let encoded = encoded.strip_prefix("0x").unwrap_or(encoded);
             u64::from_str_radix(encoded, 16).map_err(Into::into)
         }
-        _ => eyre::bail!("genesis chainId is neither a number nor a hex string"),
+        _ => {
+            eyre::bail!("genesis chainId is neither a number nor a hex string");
+        }
     }
 }
 
@@ -2556,9 +2747,7 @@ fn schedule_dynamic_membership_days(
     let second_processing_time = genesis_timestamp
         .checked_add(OCOMP_DYNAMIC_SECOND_OFFERING_AFTER_GENESIS_SECS)
         .ok_or_else(|| eyre::eyre!("second dynamic OCOMP processing time overflow"))?;
-    let first_worldwide_day = crate::world::localnet::worldwide_day()
-        .parse::<WorldwideDay>()
-        .map_err(|error| eyre::eyre!("invalid measurement WorldwideDay: {error}"))?;
+    let first_worldwide_day = WorldwideDay::from_timestamp(genesis_timestamp);
     let second_worldwide_day = WorldwideDay::from_timestamp(
         first_worldwide_day
             .start_timestamp()
@@ -2648,7 +2837,9 @@ fn schedule_dynamic_membership_days(
                 );
                 account_key
             }
-            None => eyre::bail!("generated genesis has no {label} account"),
+            None => {
+                eyre::bail!("generated genesis has no {label} account");
+            }
         };
         let words = alloc
             .get_mut(&account_key)
@@ -2683,76 +2874,162 @@ fn schedule_public_measurement_day(
     chain_id: u64,
     offering_after_genesis_secs: u64,
 ) -> Result<bool> {
-    if offering_after_genesis_secs == 0 {
-        eyre::bail!("OCOMP public measurement offering duration must be non-zero");
-    }
+    eyre::ensure!(
+        offering_after_genesis_secs > 0,
+        "OCOMP public measurement offering duration must be non-zero"
+    );
     let genesis_timestamp = genesis
         .get("timestamp")
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| eyre::eyre!("generated genesis has no timestamp"))
         .and_then(|encoded| u64::try_from(parse_hex_word(encoded)?).map_err(Into::into))?;
+    let worldwide_day = WorldwideDay::from_timestamp(genesis_timestamp);
+    let forming_start = worldwide_day.start_timestamp();
+    eyre::ensure!(
+        forming_start < genesis_timestamp,
+        "OCOMP public measurement genesis timestamp must follow WorldwideDay start"
+    );
     let offering_end = genesis_timestamp
         .checked_add(offering_after_genesis_secs)
         .ok_or_else(|| eyre::eyre!("OCOMP public measurement offering end overflow"))?;
-    let worldwide_day = crate::world::localnet::worldwide_day()
-        .parse::<WorldwideDay>()
-        .map_err(|error| eyre::eyre!("invalid measurement WorldwideDay: {error}"))?;
 
     let mut provider = HashMapStorageProvider::new(chain_id);
-    {
+    let account_keys = {
         let alloc = genesis
             .get("alloc")
             .and_then(serde_json::Value::as_object)
             .ok_or_else(|| eyre::eyre!("generated genesis has no alloc object"))?;
-        let metadosis_key = find_alloc_address_key(alloc, METADOSIS_ADDRESS)?
-            .ok_or_else(|| eyre::eyre!("generated genesis has no Metadosis account"))?;
-        let words = alloc
-            .get(&metadosis_key)
-            .and_then(|account| account.get("storage"))
-            .and_then(serde_json::Value::as_object)
-            .ok_or_else(|| eyre::eyre!("Metadosis genesis account has no storage object"))?;
-        for (slot, value) in words {
-            provider.storage.insert(
-                (METADOSIS_ADDRESS, parse_hex_word(slot)?),
-                parse_storage_word(value)?,
-            );
+        let mut keys = Vec::with_capacity(3);
+        for (address, label) in [
+            (METADOSIS_ADDRESS, "Metadosis"),
+            (ORACLE_ADDRESS, "Oracle"),
+            (TRIBUTE_ADDRESS, "Tribute"),
+        ] {
+            let account_key = find_alloc_address_key(alloc, address)?
+                .ok_or_else(|| eyre::eyre!("generated genesis has no {label} account"))?;
+            let words = alloc
+                .get(&account_key)
+                .and_then(|account| account.get("storage"))
+                .and_then(serde_json::Value::as_object)
+                .ok_or_else(|| eyre::eyre!("{label} genesis account has no storage object"))?;
+            for (slot, value) in words {
+                provider
+                    .storage
+                    .insert((address, parse_hex_word(slot)?), parse_storage_word(value)?);
+            }
+            keys.push((address, account_key));
         }
-    }
+        keys
+    };
 
+    provider.set_block_number(1);
     let changed = StorageHandle::enter(&mut provider, |storage| {
-        FreshDevnetGenesisBuilder::new()
-            .retime_offering_day(worldwide_day, offering_end)
-            .apply(storage)
-            .map(|report| report.changed)
+        let pair_id = outbe_oracle::api::get_pair_id(storage.clone(), 840)?;
+        let previous_vwap = outbe_oracle::api::get_exchange_rate(
+            storage.clone(),
+            outbe_oracle::api::DAY_TYPE_PAIR.0,
+            outbe_oracle::api::DAY_TYPE_PAIR.1,
+        )?;
+        if previous_vwap.is_zero() {
+            return Err(outbe_primitives::error::PrecompileError::Fatal(
+                "OCOMP public measurement Oracle seed has zero COEN/0xUSD rate".into(),
+            ));
+        }
+        let current_vwap = previous_vwap.checked_mul(U256::from(2)).ok_or_else(|| {
+            outbe_primitives::error::PrecompileError::Fatal(
+                "OCOMP public measurement VWAP overflow".into(),
+            )
+        })?;
+        let previous_day = worldwide_day.previous_date_key();
+        let previous_end = forming_start.checked_sub(1).ok_or_else(|| {
+            outbe_primitives::error::PrecompileError::Fatal(
+                "OCOMP public measurement previous VWAP window underflow".into(),
+            )
+        })?;
+        let volume = U256::from(1_000_000_000_000_000_000_u128);
+        let mut oracle = outbe_oracle::contract::OracleContract::new(storage.clone());
+        oracle.write_snapshot(previous_end, &[(pair_id, previous_vwap, volume)])?;
+        oracle.write_snapshot(forming_start, &[(pair_id, current_vwap, volume)])?;
+        if !outbe_oracle::api::store_worldwide_day_vwap_snapshot(
+            storage.clone(),
+            previous_day,
+            previous_day.start_timestamp(),
+            previous_end,
+        )? || !outbe_oracle::api::store_worldwide_day_vwap_snapshot(
+            storage.clone(),
+            worldwide_day,
+            forming_start,
+            genesis_timestamp,
+        )? {
+            return Err(outbe_primitives::error::PrecompileError::Fatal(
+                "OCOMP public measurement Oracle VWAP snapshot is empty".into(),
+            ));
+        }
+        let stored_previous = outbe_oracle::api::day_type_pair_vwap(storage.clone(), previous_day)?
+            .ok_or_else(|| {
+                outbe_primitives::error::PrecompileError::Fatal(
+                    "OCOMP public measurement previous VWAP is missing".into(),
+                )
+            })?;
+        let stored_current = outbe_oracle::api::day_type_pair_vwap(storage.clone(), worldwide_day)?
+            .ok_or_else(|| {
+                outbe_primitives::error::PrecompileError::Fatal(
+                    "OCOMP public measurement current VWAP is missing".into(),
+                )
+            })?;
+        let day_type = if stored_current > stored_previous {
+            WwdDayType::Green
+        } else {
+            WwdDayType::Red
+        };
+        let day_limit = U256::from(500)
+            .checked_mul(U256::from(1_000_000_000_000_000_000_u128))
+            .ok_or_else(|| {
+                outbe_primitives::error::PrecompileError::Fatal(
+                    "OCOMP public measurement day limit overflow".into(),
+                )
+            })?;
+        let report = FreshDevnetGenesisBuilder::new()
+            .seed_active_worldwide_day(GenesisWorldwideDay {
+                worldwide_day,
+                status: WwdStatus::Offering,
+                day_type,
+                forming_start,
+                forming_end: genesis_timestamp,
+                lookback_end: genesis_timestamp,
+                offering_end,
+                scheduled_process_time: offering_end,
+                metadosis_limit_amount: day_limit,
+                previous_vwap: stored_previous,
+                current_vwap: stored_current,
+            })
+            .apply(storage.clone())?;
+        outbe_tribute::TributeContract::new(storage).unseal_day(worldwide_day)?;
+        Ok(report.changed)
     })?;
 
-    if !changed {
-        return Ok(false);
-    }
     let alloc = genesis
         .get_mut("alloc")
         .and_then(serde_json::Value::as_object_mut)
         .ok_or_else(|| eyre::eyre!("generated genesis has no alloc object"))?;
-    let metadosis_key = find_alloc_address_key(alloc, METADOSIS_ADDRESS)?
-        .ok_or_else(|| eyre::eyre!("generated genesis has no Metadosis account"))?;
-    let words = alloc
-        .get_mut(&metadosis_key)
-        .and_then(serde_json::Value::as_object_mut)
-        .and_then(|account| account.get_mut("storage"))
-        .and_then(serde_json::Value::as_object_mut)
-        .ok_or_else(|| eyre::eyre!("Metadosis genesis account has no storage object"))?;
-    for ((address, slot), value) in &provider.storage {
-        if *address != METADOSIS_ADDRESS {
-            continue;
-        }
-        let slot = format!("0x{slot:064x}");
-        if value.is_zero() {
-            words.remove(&slot);
-        } else {
-            words.insert(slot, serde_json::Value::String(format!("0x{value:064x}")));
+    for (address, account_key) in account_keys {
+        let words = alloc
+            .get_mut(&account_key)
+            .and_then(serde_json::Value::as_object_mut)
+            .and_then(|account| account.get_mut("storage"))
+            .and_then(serde_json::Value::as_object_mut)
+            .ok_or_else(|| eyre::eyre!("genesis account {address:#x} has no storage object"))?;
+        words.clear();
+        for ((stored_address, slot), value) in &provider.storage {
+            if *stored_address == address && !value.is_zero() {
+                words.insert(
+                    format!("0x{slot:064x}"),
+                    serde_json::Value::String(format!("0x{value:064x}")),
+                );
+            }
         }
     }
-    Ok(true)
+    Ok(changed)
 }
 
 #[cfg(feature = "ocomp-integration")]
@@ -2933,13 +3210,14 @@ fn measurement_fork_install(
     activation_height: u64,
     validators_path: &Path,
     limits: &outbe_ocomp_protocol::SchemaLimits,
+    result_deadline_blocks: u64,
     max_terminal_job_records: Option<u16>,
 ) -> Result<OcompForkInstallV1> {
     let protocol_bundle = provisional_measurement_bundle();
     let protocol_bundle_hash = protocol_bundle.protocol_bundle_hash(limits)?;
     let founder_registrations =
         measurement_founder_registrations(validators_path, chain_id, genesis_hash, limits)?;
-    let mut capacity_profile = provisional_measurement_capacity_profile();
+    let mut capacity_profile = provisional_measurement_capacity_profile(result_deadline_blocks);
     if let Some(max_terminal_job_records) = max_terminal_job_records {
         eyre::ensure!(
             max_terminal_job_records > 0,
@@ -3047,7 +3325,7 @@ fn ocomp_evm_private_key(validator_index: u8) -> String {
 }
 
 #[cfg(feature = "ocomp-integration")]
-fn provisional_measurement_capacity_profile() -> CapacityProfileV1 {
+fn provisional_measurement_capacity_profile(result_deadline_blocks: u64) -> CapacityProfileV1 {
     CapacityProfileV1 {
         profile_id: B256::repeat_byte(13),
         max_tributes_per_work_shard: 256,
@@ -3061,7 +3339,7 @@ fn provisional_measurement_capacity_profile() -> CapacityProfileV1 {
         max_reference_currencies: 256,
         max_oracle_wwd_pair_entries: 256,
         max_active_scurve_entries: 256,
-        result_deadline_blocks: outbe_ocomp_protocol::profile::OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS,
+        result_deadline_blocks,
         source_retention_after_terminal_blocks: 64,
         generated_limits_manifest_hash: B256::repeat_byte(23),
     }
@@ -3080,10 +3358,12 @@ fn publish_exact_file(path: &Path, bytes: &[u8], mode: u32) -> Result<()> {
             }
             Ok(())
         }
-        Ok(_) => eyre::bail!(
-            "refusing to replace a different OCOMP artifact at {}",
-            path.display()
-        ),
+        Ok(_) => {
+            eyre::bail!(
+                "refusing to replace a different OCOMP artifact at {}",
+                path.display()
+            );
+        }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             let mut file = OpenOptions::new()
                 .write(true)
@@ -3235,7 +3515,12 @@ mod tests {
     use crate::internal::proc::ChildGuard;
     use alloy_primitives::B256;
     #[cfg(feature = "ocomp-integration")]
-    use outbe_metadosis::{genesis::GenesisWorldwideDay, WwdDayType, WwdStatus};
+    use outbe_chain_constants::{
+        GenesisProtocolParametersV1, CHAIN_CONSTANTS_ADDRESS, CHAIN_CONSTANTS_MARKER_CODE,
+        GENESIS_CONFIG_KEY,
+    };
+    #[cfg(feature = "ocomp-integration")]
+    use outbe_metadosis::{WwdDayType, WwdStatus};
 
     use super::*;
 
@@ -3276,6 +3561,39 @@ mod tests {
 
     fn topology() -> TestTopology {
         topology_with_validators(Environment::default().validators)
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
+    fn release_ocomp_layout_uses_the_scenario_base_and_never_the_debug_override() {
+        let mut command = Command::new("outbe-ocomp");
+        command.arg("snapshot-exporter");
+        configure_release_layout(&mut command, Path::new("/tmp/release-e2e"), 7);
+
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(args, vec!["snapshot-exporter"]);
+        assert!(!args.iter().any(|arg| arg == "--development-root"));
+
+        let environment = command
+            .get_envs()
+            .map(|(name, value)| {
+                (
+                    name.to_string_lossy().into_owned(),
+                    value.map(|value| value.to_string_lossy().into_owned()),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(
+            environment.get(OCOMP_BASE_PATH_ENV),
+            Some(&Some("/tmp/release-e2e".to_owned()))
+        );
+        assert_eq!(
+            environment.get(OCOMP_VALIDATOR_INDEX_ENV),
+            Some(&Some("7".to_owned()))
+        );
     }
 
     fn child_guard() -> ChildGuard {
@@ -3767,6 +4085,9 @@ mod tests {
                 .unwrap();
         }
 
+        topology
+            .ensure_validator_domain_material_before_node_start()
+            .unwrap();
         let identity = topology.prepare_bootstrapped_runtime().unwrap();
         assert_eq!(identity, prepared.launch_identity());
         for (index, expected_key) in expected_keys.iter().enumerate() {
@@ -3825,6 +4146,22 @@ mod tests {
 
     #[cfg(feature = "ocomp-integration")]
     #[test]
+    fn node_start_rejects_partially_staged_validator_domain_material() {
+        let topology = topology();
+        prepare_measurement_genesis_fixture(&topology);
+        topology.prepare_measurement_fork_install().unwrap();
+        fs::remove_file(topology.domain_root(0).unwrap().join("ocomp-evm-key.hex")).unwrap();
+
+        let error = topology
+            .ensure_validator_domain_material_before_node_start()
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("partial OCOMP validator domain material"));
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
     fn supervisor_readiness_requires_the_expected_registered_connected_workers() {
         let ready = SupervisorWorkerStatusV1 {
             registry_generation: 1,
@@ -3867,7 +4204,7 @@ mod tests {
 
     #[cfg(feature = "ocomp-integration")]
     #[test]
-    fn public_measurement_schedule_keeps_the_seeded_day_offering_then_reaches_ready() {
+    fn public_measurement_schedule_seeds_consistent_green_day_and_oracle_vwaps() {
         let topology = topology();
         prepare_public_measurement_genesis_fixture(&topology);
         let prepared = topology.prepare_public_measurement_fork_install().unwrap();
@@ -3876,33 +4213,64 @@ mod tests {
                 .unwrap();
         let genesis_timestamp =
             u64::try_from(parse_hex_word(genesis["timestamp"].as_str().unwrap()).unwrap()).unwrap();
-        let worldwide_day = crate::world::localnet::worldwide_day()
-            .parse::<WorldwideDay>()
-            .unwrap();
         let alloc = genesis["alloc"].as_object().unwrap();
         let metadosis_key = find_alloc_address_key(alloc, METADOSIS_ADDRESS)
             .unwrap()
             .unwrap();
+        let oracle_key = find_alloc_address_key(alloc, outbe_primitives::addresses::ORACLE_ADDRESS)
+            .unwrap()
+            .unwrap();
         let mut provider = HashMapStorageProvider::new(genesis_chain_id(&genesis).unwrap());
-        for (slot, value) in alloc[&metadosis_key]["storage"].as_object().unwrap() {
-            provider.storage.insert(
-                (METADOSIS_ADDRESS, parse_hex_word(slot).unwrap()),
-                parse_storage_word(value).unwrap(),
-            );
+        for (address, account_key) in [
+            (METADOSIS_ADDRESS, metadosis_key),
+            (outbe_primitives::addresses::ORACLE_ADDRESS, oracle_key),
+        ] {
+            for (slot, value) in alloc[&account_key]["storage"].as_object().unwrap() {
+                provider.storage.insert(
+                    (address, parse_hex_word(slot).unwrap()),
+                    parse_storage_word(value).unwrap(),
+                );
+            }
         }
         StorageHandle::enter(&mut provider, |storage| {
-            let day = outbe_metadosis::api::worldwide_day(storage, worldwide_day)
+            let days = outbe_metadosis::api::offering_worldwide_days(storage.clone()).unwrap();
+            assert_eq!(days.len(), 1);
+            let day = outbe_metadosis::api::worldwide_day(storage.clone(), days[0])
                 .unwrap()
                 .unwrap();
+            assert_eq!(
+                day.worldwide_day,
+                WorldwideDay::from_timestamp(genesis_timestamp)
+            );
             assert_eq!(day.status, WwdStatus::Offering);
+            assert_eq!(day.day_type, WwdDayType::Green);
+            assert!(day.metadosis_limit_amount > U256::ZERO);
+            assert!(day.previous_vwap > U256::ZERO);
+            assert!(day.current_vwap > day.previous_vwap);
             assert_eq!(
-                day.offering_end,
-                genesis_timestamp + OCOMP_PUBLIC_OFFERING_AFTER_GENESIS_SECS
+                outbe_oracle::api::day_type_pair_vwap(
+                    storage.clone(),
+                    day.worldwide_day.previous_date_key(),
+                )
+                .unwrap(),
+                Some(day.previous_vwap)
             );
             assert_eq!(
-                day.scheduled_process_time,
-                genesis_timestamp + OCOMP_PUBLIC_OFFERING_AFTER_GENESIS_SECS
+                outbe_oracle::api::day_type_pair_vwap(storage.clone(), day.worldwide_day).unwrap(),
+                Some(day.current_vwap)
             );
+            let pair_id = outbe_oracle::api::get_pair_id(storage.clone(), 840).unwrap();
+            let vwap = outbe_oracle::api::get_worldwide_day_vwap_for_pair_id(
+                storage.clone(),
+                day.worldwide_day,
+                pair_id,
+            )
+            .unwrap()
+            .unwrap();
+            let scurve =
+                outbe_oracle::api::get_max_active_scurve_value(storage, day.worldwide_day, pair_id)
+                    .unwrap();
+            assert!(vwap.max(scurve) > U256::ZERO);
         });
         assert_eq!(
             prepared.install.request_profile.genesis_hash,
@@ -3916,7 +4284,10 @@ mod tests {
     #[test]
     fn dynamic_membership_fixture_schedules_two_distinct_public_jobs() {
         let topology = topology();
-        prepare_public_measurement_genesis_fixture(&topology);
+        prepare_public_measurement_genesis_fixture_with_vote_window(
+            &topology,
+            OCOMP_DYNAMIC_VOTE_WINDOW_BLOCKS,
+        );
         let genesis_path = topology.cfg.dir.join("genesis.json");
         let mut configured: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&genesis_path).unwrap()).unwrap();
@@ -3987,6 +4358,16 @@ mod tests {
         });
         assert!(prepared.first_processing_time < prepared.second_processing_time);
         assert_eq!(prepared.fork.install.founder_registrations.len(), 4);
+        assert_eq!(
+            prepared
+                .fork
+                .install
+                .request_profile
+                .capacity_profile
+                .result_deadline_blocks,
+            OCOMP_DYNAMIC_VOTE_WINDOW_BLOCKS,
+            "dynamic OCOMP fixture must use the immutable genesis vote window"
+        );
         let chain_spec = parse_outbe_chain_spec(&topology.cfg.dir.join("genesis.json")).unwrap();
         outbe_node::ocomp::fork::load_ocomp_fork_install(&chain_spec)
             .unwrap()
@@ -4044,9 +4425,6 @@ mod tests {
                     > U256::ZERO
             );
         }
-        let worldwide_day = crate::world::localnet::worldwide_day()
-            .parse::<WorldwideDay>()
-            .unwrap();
         let metadosis_key = find_alloc_address_key(alloc, METADOSIS_ADDRESS)
             .unwrap()
             .unwrap();
@@ -4058,18 +4436,19 @@ mod tests {
             );
         }
         StorageHandle::enter(&mut provider, |storage| {
-            let day = outbe_metadosis::api::worldwide_day(storage, worldwide_day)
+            let days = outbe_metadosis::api::offering_worldwide_days(storage.clone()).unwrap();
+            assert_eq!(days, vec![WorldwideDay::from_timestamp(genesis_timestamp)]);
+            let day = outbe_metadosis::api::worldwide_day(storage, days[0])
                 .unwrap()
                 .unwrap();
             assert_eq!(day.status, WwdStatus::Offering);
+            assert_eq!(day.day_type, WwdDayType::Green);
+            assert!(day.metadosis_limit_amount > U256::ZERO);
             assert_eq!(
                 day.offering_end,
                 genesis_timestamp + OCOMP_CAPACITY_OFFERING_AFTER_GENESIS_SECS
             );
-            assert_eq!(
-                day.scheduled_process_time,
-                genesis_timestamp + OCOMP_CAPACITY_OFFERING_AFTER_GENESIS_SECS
-            );
+            assert_eq!(day.scheduled_process_time, day.offering_end);
         });
         assert_eq!(
             prepared.install.request_profile.genesis_hash,
@@ -4163,6 +4542,22 @@ mod tests {
         let mut genesis = serde_json::to_value(&spec.genesis).unwrap();
         genesis["config"][outbe_node::ocomp::fork::EPOCH_LENGTH_BLOCKS_GENESIS_KEY] =
             serde_json::json!(OCOMP_TEST_EPOCH_LENGTH_BLOCKS);
+        let parameters = GenesisProtocolParametersV1::default();
+        let storage = parameters
+            .genesis_storage_words()
+            .into_iter()
+            .map(|(slot, value)| {
+                (
+                    format!("0x{slot:064x}"),
+                    serde_json::Value::String(format!("0x{value:064x}")),
+                )
+            })
+            .collect::<serde_json::Map<_, _>>();
+        genesis["alloc"][format!("{CHAIN_CONSTANTS_ADDRESS:#x}")] = serde_json::json!({
+            "balance": "0x0",
+            "code": format!("0x{}", hex::encode(CHAIN_CONSTANTS_MARKER_CODE)),
+            "storage": storage,
+        });
         std::fs::write(
             topology.cfg.dir.join("genesis.json"),
             serde_json::to_vec_pretty(&genesis).unwrap(),
@@ -4185,6 +4580,14 @@ mod tests {
 
     #[cfg(feature = "ocomp-integration")]
     fn prepare_public_measurement_genesis_fixture(topology: &OcompTopology) {
+        prepare_public_measurement_genesis_fixture_with_vote_window(topology, 120);
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    fn prepare_public_measurement_genesis_fixture_with_vote_window(
+        topology: &OcompTopology,
+        vote_window_blocks: u64,
+    ) {
         prepare_measurement_genesis_fixture(topology);
         let genesis_path = topology.cfg.dir.join("genesis.json");
         let mut genesis: serde_json::Value =
@@ -4194,33 +4597,67 @@ mod tests {
             .unwrap()
             .as_secs();
         genesis["timestamp"] = serde_json::Value::String(format!("0x{now:x}"));
-        let chain_id = genesis_chain_id(&genesis).unwrap();
-        let worldwide_day = crate::world::localnet::worldwide_day()
-            .parse::<WorldwideDay>()
-            .unwrap();
-        let mut provider = HashMapStorageProvider::new(chain_id);
-        StorageHandle::enter(&mut provider, |storage| {
-            FreshDevnetGenesisBuilder::new()
-                .seed_active_worldwide_day(GenesisWorldwideDay {
-                    worldwide_day,
-                    status: WwdStatus::Offering,
-                    day_type: WwdDayType::Green,
-                    forming_start: now.saturating_sub(30),
-                    forming_end: now.saturating_sub(20),
-                    lookback_end: now.saturating_sub(10),
-                    offering_end: 4_000_000_000,
-                    scheduled_process_time: 4_100_000_000,
-                    metadosis_limit_amount: U256::from(500),
-                    previous_vwap: U256::ZERO,
-                    current_vwap: U256::from(1),
-                })
-                .apply(storage)
-                .unwrap();
+        genesis["config"][GENESIS_CONFIG_KEY] = serde_json::json!({
+            "schemaVersion": 1,
+            "metadosis": {
+                "formingPeriodSeconds": 60,
+                "lookbackDelaySeconds": 0,
+                "offeringPeriodSeconds": 120,
+                "waitingPeriodSeconds": 30,
+                "bootstrapDurationSeconds": 300,
+                "advanceIntervalSeconds": 10
+            },
+            "ocomp": { "computeVoteWindowBlocks": vote_window_blocks }
         });
-        let storage = provider
+        let parameters =
+            GenesisProtocolParametersV1::resolve(genesis["config"].get(GENESIS_CONFIG_KEY))
+                .unwrap();
+        let storage = parameters
+            .genesis_storage_words()
+            .into_iter()
+            .map(|(slot, value)| {
+                (
+                    format!("0x{slot:064x}"),
+                    serde_json::Value::String(format!("0x{value:064x}")),
+                )
+            })
+            .collect::<serde_json::Map<_, _>>();
+        genesis["alloc"][format!("{CHAIN_CONSTANTS_ADDRESS:#x}")] = serde_json::json!({
+            "balance": "0x0",
+            "code": format!("0x{}", hex::encode(CHAIN_CONSTANTS_MARKER_CODE)),
+            "storage": storage,
+        });
+        genesis["alloc"][format!("{METADOSIS_ADDRESS:#x}")] = serde_json::json!({
+            "balance": "0x0",
+            "code": "0xef",
+            "storage": {},
+        });
+        let worldwide_day = WorldwideDay::from_timestamp(now);
+        let mut oracle_config = outbe_oracle::logic::OracleGenesisConfig::default_config();
+        oracle_config.initial_rates = vec![(
+            "COEN".into(),
+            "0xUSD".into(),
+            U256::from(1_000_000_000_000_000_000_u128),
+        )];
+        oracle_config.settlement_currencies =
+            vec![(840, "0xUSD".into(), "COEN".into(), "0xUSD".into())];
+        oracle_config.scurve_entries = vec![outbe_oracle::logic::GenesisScurveEntry {
+            pair_id: 1,
+            peak_day: worldwide_day.to_timestamp_utc(),
+            peak_price: U256::from(1_000_000_000_000_000_000_u128),
+        }];
+        let mut oracle_provider = HashMapStorageProvider::new(1);
+        StorageHandle::enter(&mut oracle_provider, |storage| {
+            let mut oracle = outbe_oracle::contract::OracleContract::new(storage);
+            outbe_oracle::logic::init_from_genesis(&mut oracle, &oracle_config)
+        })
+        .unwrap();
+        let oracle_storage = oracle_provider
             .storage
-            .iter()
-            .filter(|((address, _), value)| *address == METADOSIS_ADDRESS && !value.is_zero())
+            .into_iter()
+            .filter(|((address, _), value)| {
+                *address == outbe_primitives::addresses::ORACLE_ADDRESS && !value.is_zero()
+            })
             .map(|((_, slot), value)| {
                 (
                     format!("0x{slot:064x}"),
@@ -4228,9 +4665,15 @@ mod tests {
                 )
             })
             .collect::<serde_json::Map<_, _>>();
-        genesis["alloc"][format!("{METADOSIS_ADDRESS:#x}")] = serde_json::json!({
+        genesis["alloc"][format!("{:#x}", outbe_primitives::addresses::ORACLE_ADDRESS)] = serde_json::json!({
             "balance": "0x0",
-            "storage": storage,
+            "code": "0xef",
+            "storage": oracle_storage,
+        });
+        genesis["alloc"][format!("{TRIBUTE_ADDRESS:#x}")] = serde_json::json!({
+            "balance": "0x0",
+            "code": "0xef",
+            "storage": {},
         });
         std::fs::write(genesis_path, serde_json::to_vec_pretty(&genesis).unwrap()).unwrap();
     }

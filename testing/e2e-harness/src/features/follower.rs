@@ -95,6 +95,24 @@ fn tuned_setup(world: &mut World) {
     );
 }
 
+/// A short epoch with enough grace to hold a frozen 4->5 target beyond its
+/// planned boundary, then complete it at an observed (off-grid) height. The
+/// high test felony threshold keeps the deliberately absent target member from
+/// changing the old ACTIVE set before the delayed boundary is exercised.
+#[given("a fresh localnet for an off-grid follower boundary")]
+fn off_grid_boundary_setup(world: &mut World) {
+    boot_localnet(
+        world,
+        6,
+        &[
+            ("TESTNET_EPOCH_LENGTH_BLOCKS", "60".to_string()),
+            ("TESTNET_DKG_PREPARE_WINDOW_BLOCKS", "20".to_string()),
+            ("TESTNET_DKG_ACTIVATION_GRACE_BLOCKS", "120".to_string()),
+            ("TESTNET_DEV_FELONY_THRESHOLD", "59".to_string()),
+        ],
+    );
+}
+
 /// Drive the committee past a reshare (`vrfMaterialVersion` becomes non-zero).
 #[when("the committee drives past a reshare")]
 fn drive_past_reshare(world: &mut World) {
@@ -122,6 +140,18 @@ fn cold_follower(world: &mut World) {
         .localnet
         .launch_follower("follower", FOLLOWER1_SLOT, 0, 0)
         .expect("launch follower1");
+}
+
+#[when("a production FullNode with its own enclave syncs from the committee")]
+fn production_full_node_follower(world: &mut World) {
+    world
+        .localnet
+        .provision_full_node_node_host(FOLLOWER1_SLOT)
+        .expect("provision production FullNode NodeHost and enclave");
+    world
+        .localnet
+        .launch_dcap_full_node("follower", FOLLOWER1_SLOT, 0)
+        .expect("launch production FullNode follower");
 }
 
 /// S1 — follower1 reaches lockstep with the committee.
@@ -208,6 +238,18 @@ fn switch_upstream_and_restart_follower(world: &mut World) {
         .localnet
         .launch_follower("follower", FOLLOWER1_SLOT, 1, 0)
         .expect("restart follower from durable datadir against healthy upstream");
+}
+
+#[when("the follower restarts from its durable datadir against the same upstream")]
+fn restart_follower_same_upstream(world: &mut World) {
+    world
+        .localnet
+        .stop_follower("follower")
+        .expect("stop follower before durable restart");
+    world
+        .localnet
+        .launch_dcap_full_node("follower", FOLLOWER1_SLOT, 0)
+        .expect("restart follower from durable datadir against validator-0");
 }
 
 /// S1b — follower1 publishes its tip; launch follower2 chained off it.

@@ -99,7 +99,7 @@ lanes:
     automatic_retries: 0
   OCM-PUBLIC:
     command: mise run ocomp-poc-public-path
-    platform: fresh_four_node_localnet
+    platform: privileged_linux_four_validator_release_sgx_no_attest
     frequency: every_relevant_pr
     timeout_minutes: 45
     required: true
@@ -107,7 +107,7 @@ lanes:
     automatic_retries: 0
   OCM-E2E:
     command: mise run ocomp-poc-e2e -- --evidence-dir <dir>
-    platform: privileged_linux_four_validator_production_enclave_gramine_direct
+    platform: privileged_linux_four_validator_release_sgx_no_attest
     frequency: closure_candidate_and_scheduled_main
     timeout_minutes: 120
     required: true

@@ -319,19 +319,42 @@ mod tests {
     use outbe_promislimit::PromisLimitContract;
 
     const CHAIN_ID: u64 = 1;
+    const GENESIS_HASH: B256 = B256::repeat_byte(0x11);
+    const CONSENSUS_KEY: [u8; 48] = [7; 48];
     const FB: B256 = B256::repeat_byte(0xAB);
     const V0: Address = address!("0x00000000000000000000000000000000000000A0");
     const V1: Address = address!("0x00000000000000000000000000000000000000A1");
     const V2: Address = address!("0x00000000000000000000000000000000000000A2");
     const V3: Address = address!("0x00000000000000000000000000000000000000A3");
 
-    fn run(f: impl FnOnce(&BlockRuntimeContext)) {
-        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-        storage.set_block_number(156);
-        storage.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::ForkProfile);
-        let install = ForkInstallScenario::measurement_at(156, CHAIN_ID, B256::repeat_byte(0x11))
+    fn install_ocomp_profile(storage: &mut HashMapStorageProvider) {
+        let install = ForkInstallScenario::measurement_at(156, CHAIN_ID, GENESIS_HASH)
+            .unwrap()
+            .with_founder_validators(&[(V0, CONSENSUS_KEY)])
             .unwrap()
             .into_install();
+        let registration = install.founder_registrations[0]
+            .encode_canonical(&outbe_metadosis::config::poc_schema_limits())
+            .unwrap();
+        storage.enter(|handle| {
+            let mut validators = outbe_validatorset::contract::ValidatorSet::new(handle.clone());
+            validators.set_config_max_validators(1).unwrap();
+            validators
+                .register_validator(Address::ZERO, V0, &CONSENSUS_KEY)
+                .unwrap();
+            validators.mark_pending(V0).unwrap();
+            validators
+                .confirm_validator_ready(V0, &registration)
+                .unwrap();
+            validators
+                .activate_validator_via_boundary_for_test(V0)
+                .unwrap();
+            let (base, quote) = outbe_oracle::api::DAY_TYPE_PAIR;
+            outbe_oracle::contract::OracleContract::new(handle)
+                .register_pair(base, quote)
+                .unwrap();
+        });
+        storage.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::ForkProfile);
         storage.enter(|handle| {
             let ctx = BlockRuntimeContext::new(
                 BlockContext::new(156, 100, CHAIN_ID, Address::ZERO, Vec::new()),
@@ -339,6 +362,12 @@ mod tests {
             );
             outbe_metadosis::commands::install_fork_profile(&ctx, &install).unwrap();
         });
+    }
+
+    fn run(f: impl FnOnce(&BlockRuntimeContext)) {
+        let mut storage = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, GENESIS_HASH);
+        storage.set_block_number(156);
+        install_ocomp_profile(&mut storage);
         storage.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CertifiedFinality);
         storage.enter(|handle| {
             let ctx = BlockRuntimeContext::new(
@@ -459,19 +488,9 @@ mod tests {
 
     #[test]
     fn ocomp_late_settlement_residue_waits_for_daily_limit_formation() {
-        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+        let mut storage = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, GENESIS_HASH);
         storage.set_block_number(156);
-        storage.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::ForkProfile);
-        let install = ForkInstallScenario::measurement_at(156, CHAIN_ID, B256::repeat_byte(0x11))
-            .unwrap()
-            .into_install();
-        storage.enter(|handle| {
-            let ctx = BlockRuntimeContext::new(
-                BlockContext::new(156, 0, CHAIN_ID, Address::ZERO, Vec::new()),
-                handle,
-            );
-            outbe_metadosis::commands::install_fork_profile(&ctx, &install).unwrap();
-        });
+        install_ocomp_profile(&mut storage);
         let wwd = WorldwideDay::new(20_260_728);
         let timestamp = wwd.start_timestamp();
         let expected_residue = U256::from(1_000);

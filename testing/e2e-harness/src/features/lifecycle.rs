@@ -85,7 +85,7 @@ fn full_node_syncs(world: &mut World) {
     let joiner_port = world.validators.http_port(idx);
     world
         .localnet
-        .launch_joiner_full_node(idx, 0, 0, &[])
+        .launch_joiner_full_node(idx, 0, &[])
         .expect("launch non-voting full node");
     let h = world.rpc.wait_block(joiner_port, 20, 40).unwrap_or(0);
     assert!(h >= 20, "full node did not catch up to tip (head {h})");

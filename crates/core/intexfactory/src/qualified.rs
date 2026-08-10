@@ -1,5 +1,5 @@
 //! Per-block qualification: drains floor-bins crossed by the live COEN/0xUSD
-//! rate and qualifies matured (21d) Issued series. Runs in `begin_block`.
+//! rate and qualifies Issued series past their qualification period. Runs in `begin_block`.
 
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
@@ -64,7 +64,7 @@ pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
         }
     };
     let mut factory = IntexFactoryContract::new(ctx.storage.clone());
-    let maturity_secs = crate::config::read(&factory)?.maturity_period_secs;
+    let qualification_period = crate::config::read(&factory)?.qualification_period;
 
     let mut promoted: u32 = 0;
     // Cap per-block work and resume next block from a persisted bin cursor: the scan
@@ -106,7 +106,7 @@ pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
                     &ctx.storage,
                     &mut factory,
                     series_id,
-                    maturity_secs,
+                    qualification_period,
                     now,
                     rate,
                 )
@@ -133,12 +133,12 @@ pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
     Ok(promoted)
 }
 
-/// Qualify one series if Issued, matured (>21d), and `rate` exceeds its floor.
+/// Qualify one series if Issued, past its qualification period, and `rate` exceeds its floor.
 pub(crate) fn try_qualify(
     storage: &StorageHandle<'_>,
     factory: &mut IntexFactoryContract,
     series_id: u32,
-    maturity_secs: u64,
+    qualification_period: u32,
     now: u64,
     rate: U256,
 ) -> Result<bool> {
@@ -149,8 +149,8 @@ pub(crate) fn try_qualify(
     if series.lifecycle_state()? != IntexState::Issued {
         return Ok(false);
     }
-    let mature_at = u64::from(series.issued_at).saturating_add(maturity_secs);
-    if now <= mature_at {
+    let qualifies_at = u64::from(series.issued_at).saturating_add(u64::from(qualification_period));
+    if now <= qualifies_at {
         return Ok(false);
     }
     let floor = series.floor_price_minor;

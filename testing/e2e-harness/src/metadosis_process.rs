@@ -163,7 +163,7 @@ fn retain_fresh_genesis_artifacts(genesis_path: &Path, artifacts: &Path) -> Resu
 
 #[cfg(not(feature = "ocomp-integration"))]
 fn retain_fresh_genesis_artifacts(_genesis_path: &Path, _artifacts: &Path) -> Result<()> {
-    eyre::bail!("fresh-devnet evidence requires the ocomp-integration feature")
+    eyre::bail!("fresh-devnet evidence requires the ocomp-integration feature");
 }
 
 pub fn run_p0_parity(repo: &Path, output: &Path) -> Result<()> {
