@@ -14,7 +14,7 @@ use std::{
     },
 };
 
-use alloy_primitives::{Address, Bytes, Log, B256, U256};
+use alloy_primitives::{keccak256, Address, Bytes, Log, B256, U256};
 use k256::ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
@@ -156,7 +156,6 @@ pub(crate) trait FixtureKernelExt {
         status: crate::WwdStatus,
     ) -> PrecompileResult<()>;
 
-    #[cfg(test)]
     fn fixture_create_ready_day(
         &mut self,
         wwd: WorldwideDay,
@@ -311,7 +310,6 @@ impl FixtureKernelExt for MetadosisContract<'_> {
             .write(status.as_u8())
     }
 
-    #[cfg(test)]
     fn fixture_create_ready_day(
         &mut self,
         wwd: WorldwideDay,
@@ -489,7 +487,7 @@ fn capacity_profile() -> CapacityProfileV1 {
         max_reference_currencies: 256,
         max_oracle_wwd_pair_entries: 256,
         max_active_scurve_entries: 256,
-        result_deadline_blocks: outbe_ocomp_protocol::profile::OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS,
+        result_deadline_blocks: outbe_chain_constants::DEFAULT_OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS,
         source_retention_after_terminal_blocks: 64,
         generated_limits_manifest_hash: hash(23),
     }
@@ -540,6 +538,15 @@ fn bundle() -> ProtocolBundleV1 {
 
 fn signing_key(index: u8) -> SigningKey {
     SigningKey::from_bytes((&[index + 1; 32]).into()).unwrap()
+}
+
+fn ocomp_key_hash(index: u8) -> B256 {
+    keccak256(
+        signing_key(index)
+            .verifying_key()
+            .to_encoded_point(true)
+            .as_bytes(),
+    )
 }
 
 fn sign(key: &SigningKey, digest: B256) -> [u8; 64] {
@@ -1007,7 +1014,7 @@ pub fn signed_result_vote_for_intent(
         result_validator_set_epoch: intent.result_validator_set_epoch,
         result_committee_set_hash: intent.result_committee_set_hash,
         result_ocomp_binding_hash: intent.result_ocomp_binding_hash,
-        validator_index: u16::from(validator_index),
+        ocomp_key_hash: ocomp_key_hash(validator_index),
         key_epoch: 1,
         result: result.clone(),
         signature_rs: [0; 64],
@@ -1067,38 +1074,6 @@ impl OcompFinalizedIntentAuthority for FixedFinality {
             return Err(FinalizedIntentVerificationError::WrongProtocolBundle.into());
         }
         Ok(self.verified.clone())
-    }
-}
-
-#[derive(Clone)]
-struct FixedLocalResult {
-    expected: LysisResultV1,
-}
-
-impl crate::ocomp::activation::OcompLocalResultAuthority for FixedLocalResult {
-    fn verify_exact(
-        &self,
-        job_id: B256,
-        result: &LysisResultV1,
-        limits: &SchemaLimits,
-    ) -> Result<(), crate::ocomp::activation::OcompLocalResultAuthorityError> {
-        if self.expected.job_id != job_id {
-            return Err(
-                crate::ocomp::activation::OcompLocalResultAuthorityError::Missing { job_id },
-            );
-        }
-        let expected = self.expected.encode_canonical(limits).map_err(|error| {
-            crate::ocomp::activation::OcompLocalResultAuthorityError::Unavailable(error.to_string())
-        })?;
-        let actual = result.encode_canonical(limits).map_err(|error| {
-            crate::ocomp::activation::OcompLocalResultAuthorityError::Unavailable(error.to_string())
-        })?;
-        if expected != actual {
-            return Err(
-                crate::ocomp::activation::OcompLocalResultAuthorityError::Mismatch { job_id },
-            );
-        }
-        Ok(())
     }
 }
 
@@ -1227,7 +1202,6 @@ pub struct ActivationFixture {
     pub intent_id: B256,
     pub limits: SchemaLimits,
     pub request_receipt: RequestBudgetSplitReceiptV1,
-    local_result_authority: Arc<dyn crate::ocomp::activation::OcompLocalResultAuthority>,
 }
 
 impl ActivationFixture {
@@ -1357,10 +1331,6 @@ impl ActivationFixture {
             )
             .unwrap();
         let result = result(bundle_hash, job_id, &limits);
-        let local_result_authority: Arc<dyn crate::ocomp::activation::OcompLocalResultAuthority> =
-            Arc::new(FixedLocalResult {
-                expected: result.clone(),
-            });
         let expected = ExpectedFinalizedIntentBindingV1 {
             chain_id: intent.chain_id,
             genesis_hash: intent.genesis_hash,
@@ -1489,7 +1459,7 @@ impl ActivationFixture {
                     result_validator_set_epoch: intent.result_validator_set_epoch,
                     result_committee_set_hash: intent.result_committee_set_hash,
                     result_ocomp_binding_hash: intent.result_ocomp_binding_hash,
-                    validator_index: u16::from(index),
+                    ocomp_key_hash: ocomp_key_hash(index),
                     key_epoch: 1,
                     result: result.clone(),
                     signature_rs: [0; 64],
@@ -1502,7 +1472,6 @@ impl ActivationFixture {
                         finalized.open_height + u64::from(index),
                         &scope,
                         &limits,
-                        Some(local_result_authority.as_ref()),
                     )
                     .unwrap();
             }
@@ -1517,7 +1486,6 @@ impl ActivationFixture {
             intent_id,
             limits,
             request_receipt,
-            local_result_authority,
         }
     }
 
@@ -1534,7 +1502,7 @@ impl ActivationFixture {
             result_validator_set_epoch: intent.result_validator_set_epoch,
             result_committee_set_hash: intent.result_committee_set_hash,
             result_ocomp_binding_hash: intent.result_ocomp_binding_hash,
-            validator_index: u16::from(validator_index),
+            ocomp_key_hash: ocomp_key_hash(validator_index),
             key_epoch: 1,
             result: self.result.clone(),
             signature_rs: [0; 64],
@@ -1579,38 +1547,10 @@ impl ActivationFixture {
     }
 
     pub fn dispatch_current(&mut self) -> PrecompileResult<Bytes> {
-        let authority = self.local_result_authority.clone();
-        self.dispatch_current_with(Some(authority.as_ref()))
+        self.dispatch_current_with()
     }
 
-    #[cfg(test)]
-    pub(crate) fn apply_without_local_result_authority(&mut self) -> PrecompileResult<Bytes> {
-        self.provider.enable_lysis_activation_frame();
-        self.dispatch_current_with(None)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn apply_with_mismatched_local_result(&mut self) -> PrecompileResult<Bytes> {
-        let mut different = self.result.clone();
-        different.result_chunk_list_root = B256::repeat_byte(0xE1);
-        let authority = FixedLocalResult {
-            expected: different,
-        };
-        self.provider.enable_lysis_activation_frame();
-        self.dispatch_current_with(Some(&authority))
-    }
-
-    #[cfg(test)]
-    pub(crate) fn local_result_authority(
-        &self,
-    ) -> Arc<dyn crate::ocomp::activation::OcompLocalResultAuthority> {
-        self.local_result_authority.clone()
-    }
-
-    fn dispatch_current_with(
-        &mut self,
-        local_result_authority: Option<&dyn crate::ocomp::activation::OcompLocalResultAuthority>,
-    ) -> PrecompileResult<Bytes> {
+    fn dispatch_current_with(&mut self) -> PrecompileResult<Bytes> {
         let calldata = self.calldata();
         self.provider
             .enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::VerifiedResultVote);
@@ -1621,7 +1561,6 @@ impl ActivationFixture {
                 calldata.as_ref(),
                 U256::ZERO,
                 false,
-                local_result_authority,
             )
         })
     }

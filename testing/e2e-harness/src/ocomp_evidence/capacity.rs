@@ -54,6 +54,7 @@ struct ScenarioSourceV1 {
 struct ScenarioEnvironmentV1 {
     validators: u64,
     tee: String,
+    sudo: bool,
     all: bool,
     gramine_image_id: String,
 }
@@ -195,9 +196,10 @@ pub fn assemble_capacity_run(ordinal: u8, scenario_path: &Path) -> Result<Capaci
     );
     ensure!(
         scenario.environment.validators == 4
-            && scenario.environment.tee == "gramine-direct"
+            && scenario.environment.tee == "sgx-no-attest"
+            && scenario.environment.sudo
             && scenario.environment.all,
-        "capacity scenario did not use four validators, the production enclave under gramine-direct and --all"
+        "capacity scenario did not use four validators, release SGX-no-attest, sudo and --all"
     );
     let revision = hex::decode(&scenario.source.sha).wrap_err("decode source revision")?;
     ensure!(
@@ -371,7 +373,7 @@ pub fn assemble_capacity_evidence(
         "capacity assembly requires exactly five scenario records"
     );
     let mut process_memory_limit_bytes = None;
-    let mut production_enclave_gramine_direct = true;
+    let mut production_enclave_sgx_no_attest = true;
     let mut writable_resource_cgroup = true;
     for path in scenario_paths {
         let bytes = std::fs::read(path.as_ref()).wrap_err_with(|| {
@@ -403,7 +405,8 @@ pub fn assemble_capacity_evidence(
                 Some(expected)
             }
         };
-        production_enclave_gramine_direct &= scenario.environment.tee == "gramine-direct";
+        production_enclave_sgx_no_attest &=
+            scenario.environment.tee == "sgx-no-attest" && scenario.environment.sudo;
         writable_resource_cgroup &= scenario
             .ocomp
             .public_path
@@ -424,7 +427,7 @@ pub fn assemble_capacity_evidence(
         pid1_is_systemd: host.pid1_is_systemd,
         unified_cgroup_v2: host.unified_cgroup_v2,
         writable_resource_cgroup,
-        production_enclave_gramine_direct,
+        production_enclave_sgx_no_attest,
     };
     let runs = scenario_paths
         .iter()
@@ -540,7 +543,8 @@ mod tests {
             "result": "passed",
             "environment": {
                 "validators": 4,
-                "tee": "gramine-direct",
+                "tee": "sgx-no-attest",
+                "sudo": true,
                 "all": true,
                 "gramine_image_id": format!("sha256:{}", "ab".repeat(32)),
             },
@@ -641,6 +645,16 @@ mod tests {
         fs::write(&path, serde_json::to_vec_pretty(&another_image).unwrap()).unwrap();
         let another_image_run = assemble_capacity_run(1, &path).unwrap();
         assert_ne!(run.artifact_set_hash, another_image_run.artifact_set_hash);
+
+        let mut wrong_tee = scenario.clone();
+        wrong_tee["environment"]["tee"] = json!("gramine-direct");
+        fs::write(&path, serde_json::to_vec_pretty(&wrong_tee).unwrap()).unwrap();
+        assert!(assemble_capacity_run(1, &path).is_err());
+
+        let mut without_sudo = scenario.clone();
+        without_sudo["environment"]["sudo"] = json!(false);
+        fs::write(&path, serde_json::to_vec_pretty(&without_sudo).unwrap()).unwrap();
+        assert!(assemble_capacity_run(1, &path).is_err());
 
         let mut dirty = scenario;
         dirty["source"]["dirty"] = json!(true);

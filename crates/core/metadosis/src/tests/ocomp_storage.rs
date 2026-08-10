@@ -43,7 +43,7 @@ const WWD: WorldwideDay = WorldwideDay::new(20_260_723);
 const REQUEST_HEIGHT: u64 = 10;
 const DEADLINE_HEIGHT: u64 = REQUEST_HEIGHT
     + outbe_ocomp_protocol::state::RESULT_VOTE_MIN_FINALITY_DEPTH
-    + outbe_ocomp_protocol::profile::OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS;
+    + outbe_chain_constants::DEFAULT_OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS;
 const REQUEST_TIME: u64 = 1_753_315_200;
 const DAY_LIMIT: U256 = U256::from_limbs([1_000, 0, 0, 0]);
 const LYSIS_BUDGET: U256 = U256::from_limbs([700, 0, 0, 0]);
@@ -64,7 +64,7 @@ pub(super) fn capacity_profile() -> CapacityProfileV1 {
         max_reference_currencies: 256,
         max_oracle_wwd_pair_entries: 256,
         max_active_scurve_entries: 256,
-        result_deadline_blocks: outbe_ocomp_protocol::profile::OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS,
+        result_deadline_blocks: outbe_chain_constants::DEFAULT_OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS,
         source_retention_after_terminal_blocks: 64,
         generated_limits_manifest_hash: B256::repeat_byte(0x23),
     }
@@ -299,6 +299,12 @@ fn open_job(
     limits: &outbe_ocomp_protocol::SchemaLimits,
     fsm_limits: JobFsmLimits,
 ) -> outbe_ocomp_protocol::state::OcompFinalizedJobV1 {
+    // Production installs this immutable profile at genesis activation. These
+    // storage-focused tests construct records directly, so mirror that
+    // prerequisite before exercising finality.
+    contract
+        .initialize_ocomp_request_profile(&request_profile(), limits)
+        .unwrap();
     let finalized = contract
         .record_ocomp_finality(
             intent_id,

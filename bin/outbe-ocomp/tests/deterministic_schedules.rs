@@ -17,7 +17,7 @@ use outbe_ocomp::{
     admission_catalog::{AdmissionCatalogError, AdmissionOutcome, VerifiedAdmissionCatalog},
     bundle::PinnedProtocolBundle,
     cas::{CasLimits, CasWriterRole, FilesystemCas, FilesystemCasReader},
-    control::{effective_uid, poc_schema_limits, EndpointIdentity},
+    control::{poc_schema_limits, EndpointIdentity},
     inbox::{WorkerInbox, WorkerInboxLimits},
     input_artifacts::{
         poc_input_list_limits, publish_input_artifact_set, InputArtifactContents,
@@ -57,7 +57,6 @@ use outbe_primitives::addresses::{METADOSIS_ADDRESS, ORACLE_ADDRESS};
 use tempfile::tempdir;
 
 const CHILD_MODE: &str = "OUTBE_OCOMP_DET_WORKER_CHILD";
-const CHILD_USER: &str = "OUTBE_OCOMP_DET_WORKER_USER";
 const CHILD_CHAIN_ID: &str = "OUTBE_OCOMP_DET_CHAIN_ID";
 const CHILD_GENESIS: &str = "OUTBE_OCOMP_DET_GENESIS";
 const CHILD_BOOT_NONCE: &str = "OUTBE_OCOMP_DET_BOOT_NONCE";
@@ -329,9 +328,6 @@ fn run_schedule(worker_count: usize, seed: u64) -> ScheduleOutcome {
         WorkerInbox::open(&inbox_root, INBOX_LIMITS).expect("open deterministic worker inbox");
     let replay_inbox = WorkerInbox::open(&replay_inbox_root, INBOX_LIMITS)
         .expect("open deterministic replay inbox");
-    let uid = effective_uid().expect("deterministic worker uid");
-    let user = uid.to_string();
-
     let mut completed = vec![false; total_units as usize];
     let mut schedule = Vec::new();
     let mut round = 0_u64;
@@ -373,7 +369,6 @@ fn run_schedule(worker_count: usize, seed: u64) -> ScheduleOutcome {
                 .into_iter()
                 .enumerate()
                 .map(|(slot, (ordinal, request))| {
-                    let user = &user;
                     let cas_root = &cas_root;
                     let inbox_root = &inbox_root;
                     (
@@ -383,8 +378,6 @@ fn run_schedule(worker_count: usize, seed: u64) -> ScheduleOutcome {
                             execute_worker_request(
                                 10_000 + round * 16 + slot as u64,
                                 0x20_u8.wrapping_add(ordinal as u8),
-                                user,
-                                uid,
                                 cas_root,
                                 inbox_root,
                                 &request,
@@ -412,8 +405,6 @@ fn run_schedule(worker_count: usize, seed: u64) -> ScheduleOutcome {
                 interrupt_worker_request(
                     20_000 + round,
                     0x90_u8.wrapping_add(ordinal as u8),
-                    &user,
-                    uid,
                     &cas_root,
                     &inbox_root,
                     &request,
@@ -422,8 +413,6 @@ fn run_schedule(worker_count: usize, seed: u64) -> ScheduleOutcome {
                 let retry = execute_worker_request(
                     30_000 + round,
                     0xa0_u8.wrapping_add(ordinal as u8),
-                    &user,
-                    uid,
                     &cas_root,
                     &inbox_root,
                     &request,
@@ -768,8 +757,6 @@ fn schedule_key(seed: u64, round: u64, ordinal: u32) -> u64 {
 fn launch_worker(
     generation: u64,
     boot: u8,
-    user: &str,
-    _uid: u32,
     cas_root: &Path,
     inbox_root: &Path,
     limits: SchemaLimits,
@@ -791,7 +778,6 @@ fn launch_worker(
     command
         .args(["--exact", TEST_NAME, "--nocapture"])
         .env(CHILD_MODE, "1")
-        .env(CHILD_USER, user)
         .env(CHILD_CHAIN_ID, worker_identity.chain_id.to_string())
         .env(
             CHILD_GENESIS,
@@ -825,14 +811,12 @@ fn launch_worker(
 fn execute_worker_request(
     generation: u64,
     boot: u8,
-    user: &str,
-    uid: u32,
     cas_root: &Path,
     inbox_root: &Path,
     request: &RunUnitV1,
     limits: SchemaLimits,
 ) -> UnitFinishedV1 {
-    let (child, server) = launch_worker(generation, boot, user, uid, cas_root, inbox_root, limits);
+    let (child, server) = launch_worker(generation, boot, cas_root, inbox_root, limits);
     let finished = server
         .dispatch(request)
         .expect("dispatch deterministic RunUnit over ZeroMQ");
@@ -859,15 +843,12 @@ fn execute_worker_request(
 fn interrupt_worker_request(
     generation: u64,
     boot: u8,
-    user: &str,
-    uid: u32,
     cas_root: &Path,
     inbox_root: &Path,
     request: &RunUnitV1,
     limits: SchemaLimits,
 ) {
-    let (mut child, server) =
-        launch_worker(generation, boot, user, uid, cas_root, inbox_root, limits);
+    let (mut child, server) = launch_worker(generation, boot, cas_root, inbox_root, limits);
     let dispatcher = server.dispatcher();
     let request = request.clone();
     std::thread::spawn(move || {
@@ -899,17 +880,12 @@ fn run_child_worker() {
             .parse::<B256>()
             .unwrap_or_else(|_| panic!("invalid {name}"))
     };
-    let uid = env::var(CHILD_USER)
-        .expect("deterministic worker child uid")
-        .parse::<u32>()
-        .expect("valid deterministic worker child uid");
     let limits = poc_schema_limits();
     let expected_bundle_hash = parse_b256(CHILD_BUNDLE);
     let canonical_bundle = support::protocol_bundle()
         .encode_canonical(&limits)
         .expect("canonical deterministic child bundle");
     run_worker(WorkerConfig {
-        expected_effective_uid: uid,
         identity: EndpointIdentity {
             chain_id: parse_u64(CHILD_CHAIN_ID),
             genesis_hash: parse_b256(CHILD_GENESIS),

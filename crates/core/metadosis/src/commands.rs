@@ -242,7 +242,6 @@ pub fn submit_verified_result_vote(
     data: &[u8],
     value: U256,
     is_static: bool,
-    local_result_authority: Option<&dyn crate::api::OcompLocalResultAuthority>,
 ) -> Result<Bytes> {
     let binding = metadosis_verified_vote_binding(data);
     let exact_worldwide_day = crate::ocomp::vote::result_vote_worldwide_day(storage.clone(), data)?;
@@ -256,7 +255,6 @@ pub fn submit_verified_result_vote(
                     data,
                     value,
                     is_static,
-                    local_result_authority,
                 )
             });
             match attempted {

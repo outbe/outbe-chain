@@ -9,7 +9,6 @@ use crate::{
 
 pub use crate::aggregate::{WwdDayType, WwdStatus as WorldwideDayStatus};
 pub use crate::ocomp::activation::{OcompFinalityAuthorityError, OcompFinalizedIntentAuthority};
-pub use crate::ocomp::activation::{OcompLocalResultAuthority, OcompLocalResultAuthorityError};
 pub use crate::pre_admission::MetadosisPreAdmissionProjection;
 pub use crate::state::DayLimitFormationReceipt;
 pub use crate::terminal::{CapacityForfeitureReceipt, MissedOfferingReceipt};

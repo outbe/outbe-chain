@@ -98,6 +98,15 @@ pub(crate) fn run(arguments: &[String]) -> eyre::Result<()> {
 fn write_bindings(args: &OcompBindingsArgs) -> eyre::Result<()> {
     require_new_output(&args.output, "OCOMP bindings")?;
     let (chain_id, genesis_hash) = parse_base_identity(&args.input)?;
+    let input_genesis: serde_json::Value = serde_json::from_slice(
+        &fs::read(&args.input)
+            .wrap_err_with(|| format!("read input genesis {}", args.input.display()))?,
+    )
+    .wrap_err("decode input genesis JSON")?;
+    let _protocol_constants =
+        outbe_chain_constants::GenesisProtocolParametersV1::from_materialized_genesis(
+            &input_genesis,
+        )?;
     let validator_identity_hashes = validator_identities(&args.validators)?;
     let document = OcompBindingsDocumentV1 {
         schema_version: 1,
@@ -122,6 +131,15 @@ fn generate_genesis(args: &OcompGenesisArgs) -> eyre::Result<()> {
     require_new_output(&args.protocol_bundle_output, "OCOMP protocol bundle")?;
 
     let (chain_id, genesis_hash) = parse_base_identity(&args.input)?;
+    let input_genesis: serde_json::Value = serde_json::from_slice(
+        &fs::read(&args.input)
+            .wrap_err_with(|| format!("read input genesis {}", args.input.display()))?,
+    )
+    .wrap_err("decode input genesis JSON")?;
+    let protocol_constants =
+        outbe_chain_constants::GenesisProtocolParametersV1::from_materialized_genesis(
+            &input_genesis,
+        )?;
     let validator_identity_hashes = validator_identities(&args.validators)?;
     let protocol_bundle = measurement_protocol_bundle();
     let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
@@ -143,7 +161,9 @@ fn generate_genesis(args: &OcompGenesisArgs) -> eyre::Result<()> {
             fork_id: protocol_bundle.fork_id,
             protocol_bundle_hash,
             correctness_profile_id: protocol_bundle.correctness_profile_id,
-            capacity_profile: measurement_capacity_profile(),
+            capacity_profile: measurement_capacity_profile(
+                protocol_constants.ocomp_compute_vote_window_blocks,
+            ),
             source_availability_policy_id: B256::repeat_byte(44),
         },
         protocol_bundle,
@@ -364,7 +384,7 @@ fn validate_output(
     Ok(())
 }
 
-fn measurement_capacity_profile() -> CapacityProfileV1 {
+fn measurement_capacity_profile(result_deadline_blocks: u64) -> CapacityProfileV1 {
     CapacityProfileV1 {
         profile_id: B256::repeat_byte(13),
         max_tributes_per_work_shard: 256,
@@ -378,7 +398,7 @@ fn measurement_capacity_profile() -> CapacityProfileV1 {
         max_reference_currencies: 256,
         max_oracle_wwd_pair_entries: 256,
         max_active_scurve_entries: 256,
-        result_deadline_blocks: outbe_ocomp_protocol::profile::OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS,
+        result_deadline_blocks,
         source_retention_after_terminal_blocks: 64,
         generated_limits_manifest_hash: B256::repeat_byte(23),
     }

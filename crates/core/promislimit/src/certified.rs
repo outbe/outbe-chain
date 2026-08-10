@@ -309,9 +309,9 @@ mod tests {
             storage.with_lysis_activation_frame(activation_call_id, |capability| {
                 capability.authorize_nod_installation()?;
                 capability.authorize_contributor_installation()?;
-                capability.authorize_tribute_retirement()?;
                 let receipt =
                     credit_certified_carry_over(&storage, capability, input, &poc_schema_limits())?;
+                capability.authorize_tribute_retirement()?;
                 capability.authorize_terminal_receipt()?;
                 Ok(receipt)
             })
@@ -480,7 +480,6 @@ mod tests {
             storage.with_lysis_activation_frame(input.binding.activation_call_id, |capability| {
                 capability.authorize_nod_installation()?;
                 capability.authorize_contributor_installation()?;
-                capability.authorize_tribute_retirement()?;
                 assert!(credit_certified_carry_over(
                     &storage,
                     capability,
@@ -494,6 +493,7 @@ mod tests {
                     &input,
                     &poc_schema_limits(),
                 )?;
+                capability.authorize_tribute_retirement()?;
                 capability.authorize_terminal_receipt()?;
                 Ok(receipt)
             })
@@ -510,20 +510,14 @@ mod tests {
             storage.with_lysis_activation_frame(input.binding.activation_call_id, |capability| {
                 capability.authorize_nod_installation()?;
                 capability.authorize_contributor_installation()?;
-                assert!(credit_certified_carry_over(
-                    &storage,
-                    capability,
-                    &input,
-                    &poc_schema_limits(),
-                )
-                .is_err());
-                capability.authorize_tribute_retirement()?;
+                assert!(capability.authorize_tribute_retirement().is_err());
                 let receipt = credit_certified_carry_over(
                     &storage,
                     capability,
                     &input,
                     &poc_schema_limits(),
                 )?;
+                capability.authorize_tribute_retirement()?;
                 capability.authorize_terminal_receipt()?;
                 Ok(receipt)
             })

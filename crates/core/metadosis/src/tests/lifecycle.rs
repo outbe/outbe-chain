@@ -406,7 +406,7 @@ fn assert_genesis_created_once(
     provider: &mut HashMapStorageProvider,
     timestamp: u64,
 ) -> outbe_common::WorldwideDay {
-    let expected = outbe_common::WorldwideDay::new(timestamp_to_date_key(timestamp));
+    let expected = outbe_common::WorldwideDay::from_timestamp(timestamp);
     StorageHandle::enter(provider, |storage| {
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.active_wwd.read_all().unwrap(), vec![expected]);
@@ -2063,7 +2063,7 @@ fn absent_profile_rejects_populated_ready_before_failed_state_or_lysis_effects()
 }
 
 #[test]
-fn test_cold_start_creates_utc_day_and_current_utc_plus_14_day() {
+fn test_cold_start_creates_only_current_utc_plus_14_day() {
     with_storage(|storage| {
         let timestamp =
             outbe_common::WorldwideDay::new(20260302).start_timestamp() + 2 * SECONDS_PER_HOUR;
@@ -2071,32 +2071,66 @@ fn test_cold_start_creates_utc_day_and_current_utc_plus_14_day() {
 
         let metadosis = MetadosisContract::new(storage.clone());
         let active = metadosis.active_wwd.read_all().unwrap();
-        assert!(active.contains(&20260301u32.into()));
-        assert!(active.contains(&20260302u32.into()));
+        assert_eq!(active, vec![20260302u32.into()]);
         assert_eq!(
             metadosis.get_bootstrap_end_time().unwrap(),
             timestamp + BOOTSTRAP_DURATION_HOURS * SECONDS_PER_HOUR
         );
 
         let tribute = TributeContract::new(storage);
-        assert!(tribute.is_day_sealed(20260301u32.into()).unwrap());
         assert!(tribute.is_day_sealed(20260302u32.into()).unwrap());
     });
 }
 
 #[test]
-fn test_cold_start_non_bootstrap_chain_uses_default_schedule_and_no_bootstrap_end_time() {
+fn genesis_day_uses_the_canonical_utc_plus_14_boundary() {
+    let utc_midnight = crate::runtime::date_key_to_timestamp(20260302);
+
+    for (timestamp, expected) in [
+        (utc_midnight + 9 * SECONDS_PER_HOUR + 59 * 60, 20260302),
+        (utc_midnight + 10 * SECONDS_PER_HOUR, 20260303),
+    ] {
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        seed_genesis_profile(&mut provider);
+        run_init_genesis_command(&mut provider, 1, timestamp).unwrap();
+
+        let created = assert_genesis_created_once(&mut provider, timestamp);
+        assert_eq!(created, outbe_common::WorldwideDay::new(expected));
+        let constants = outbe_chain_constants::GenesisProtocolParametersV1::default();
+        StorageHandle::enter(&mut provider, |storage| {
+            let metadosis = MetadosisContract::new(storage);
+            let day = metadosis.worldwide_days.entry(created);
+            let forming_start = created.start_timestamp();
+            let forming_end = forming_start + constants.metadosis_forming_period_seconds;
+            let lookback_end = forming_end + constants.metadosis_lookback_delay_seconds;
+            let offering_end = lookback_end + constants.metadosis_offering_period_seconds;
+            assert_eq!(day.forming_start().read().unwrap(), forming_start);
+            assert_eq!(day.forming_end().read().unwrap(), forming_end);
+            assert_eq!(day.lookback_end().read().unwrap(), lookback_end);
+            assert_eq!(day.offering_end().read().unwrap(), offering_end);
+            assert_eq!(
+                day.scheduled_process_time().read().unwrap(),
+                offering_end + constants.metadosis_waiting_period_seconds
+            );
+        });
+    }
+}
+
+#[test]
+fn test_cold_start_uses_genesis_default_schedule_independent_of_chain_id() {
     with_storage(|storage| {
         let timestamp =
             outbe_common::WorldwideDay::new(20260302).start_timestamp() + 2 * SECONDS_PER_HOUR;
         run_begin_block_with_chain_id(storage.clone(), 1, timestamp, CHAIN_ID);
 
         let metadosis = MetadosisContract::new(storage.clone());
-        assert_eq!(metadosis.get_bootstrap_end_time().unwrap(), 0);
+        assert_eq!(
+            metadosis.get_bootstrap_end_time().unwrap(),
+            timestamp + BOOTSTRAP_DURATION_HOURS * SECONDS_PER_HOUR
+        );
 
         let active = metadosis.active_wwd.read_all().unwrap();
-        assert!(active.contains(&20260301u32.into()));
-        assert!(active.contains(&20260302u32.into()));
+        assert_eq!(active, vec![20260302u32.into()]);
 
         let wwd = 20260302u32;
         let forming_start = outbe_common::WorldwideDay::new(wwd).start_timestamp();
@@ -2123,6 +2157,50 @@ fn test_cold_start_non_bootstrap_chain_uses_default_schedule_and_no_bootstrap_en
                 .unwrap(),
             expected_offering_end
         );
+    });
+}
+
+#[test]
+fn test_cold_start_uses_materialized_short_genesis_schedule() {
+    with_storage(|storage| {
+        let forming_period = outbe_primitives::time::UTC_PLUS_14_OFFSET + 60;
+        let parameters = outbe_chain_constants::GenesisProtocolParametersV1 {
+            metadosis_forming_period_seconds: forming_period,
+            metadosis_lookback_delay_seconds: 0,
+            metadosis_offering_period_seconds: 120,
+            metadosis_waiting_period_seconds: 30,
+            metadosis_bootstrap_duration_seconds: 300,
+            metadosis_advance_interval_seconds: 10,
+            ocomp_compute_vote_window_blocks: 120,
+        };
+        parameters.validate().unwrap();
+        for (slot, value) in parameters.genesis_storage_words() {
+            outbe_primitives::storage::types::Slot::<U256>::new(
+                slot,
+                outbe_chain_constants::CHAIN_CONSTANTS_ADDRESS,
+                storage.clone(),
+            )
+            .write(value)
+            .unwrap();
+        }
+
+        let timestamp = crate::runtime::date_key_to_timestamp(20260302) + 30;
+        run_begin_block_with_chain_id(storage.clone(), 1, timestamp, CHAIN_ID);
+
+        let metadosis = MetadosisContract::new(storage);
+        let day = metadosis.worldwide_days.entry(20260302u32.into());
+        let start = outbe_common::WorldwideDay::new(20260302).start_timestamp();
+        assert_eq!(day.forming_end().read().unwrap(), start + forming_period);
+        assert_eq!(day.lookback_end().read().unwrap(), start + forming_period);
+        assert_eq!(
+            day.offering_end().read().unwrap(),
+            start + forming_period + 120
+        );
+        assert_eq!(
+            day.scheduled_process_time().read().unwrap(),
+            start + forming_period + 150
+        );
+        assert_eq!(metadosis.get_bootstrap_end_time().unwrap(), timestamp + 300);
     });
 }
 
@@ -3250,6 +3328,21 @@ fn test_events_emitted_for_accumulation_and_lifecycle() {
 fn auction_brief_dispatched_only_on_the_ready_tick() {
     const SECONDS_PER_DAY: u64 = 24 * SECONDS_PER_HOUR;
     with_storage(|storage| {
+        let parameters = outbe_chain_constants::GenesisProtocolParametersV1 {
+            // Preserve the original five-day characterization explicitly in
+            // genesis instead of deriving a hidden schedule from chain id.
+            metadosis_lookback_delay_seconds: 0,
+            ..Default::default()
+        };
+        for (slot, value) in parameters.genesis_storage_words() {
+            outbe_primitives::storage::types::Slot::<U256>::new(
+                slot,
+                outbe_chain_constants::CHAIN_CONSTANTS_ADDRESS,
+                storage.clone(),
+            )
+            .write(value)
+            .unwrap();
+        }
         let wwd_key: u32 = 20260601;
         let base_ts = crate::runtime::date_key_to_timestamp(wwd_key);
 
@@ -3262,9 +3355,9 @@ fn auction_brief_dispatched_only_on_the_ready_tick() {
             .unwrap();
         drop(metadosis);
 
-        // k1 FORMING, k2 offering entry, k3 mid-offering, k4 READY.
+        // k1 FORMING, k2 offering entry, k3-k4 offering/waiting, k5 READY.
         let mut stages = Vec::new();
-        for k in 1..5u64 {
+        for k in 1..6u64 {
             run_begin_block(storage.clone(), k + 1, base_ts + k * SECONDS_PER_DAY);
             let desis = storage.contract::<outbe_desis::schema::DesisContract>();
             stages.push(desis.auction_stage.read(&wwd_key).unwrap());
@@ -3273,7 +3366,7 @@ fn auction_brief_dispatched_only_on_the_ready_tick() {
         let briefed = outbe_desis::schema::AuctionStage::Briefed as u8;
         assert_eq!(
             stages,
-            vec![0, 0, 0, briefed],
+            vec![0, 0, 0, 0, briefed],
             "the brief must dispatch on the READY tick only"
         );
     });

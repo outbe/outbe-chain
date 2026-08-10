@@ -13,10 +13,7 @@ use alloy_evm::{
 use alloy_primitives::{Address, Bytes, TxKind, B256};
 use core::ops::{Deref, DerefMut};
 use outbe_compressed_entities::ExecutionScope;
-use outbe_metadosis::{
-    api::{OcompFinalizedIntentAuthority, OcompLocalResultAuthority},
-    config::OcompForkInstallV1,
-};
+use outbe_metadosis::{api::OcompFinalizedIntentAuthority, config::OcompForkInstallV1};
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::system_tx::OcompLifecycleActivation;
 use reth_ethereum::evm::{
@@ -342,8 +339,6 @@ pub struct OutbeEvmFactory {
         Arc<std::sync::RwLock<Option<Arc<outbe_compressed_entities::CompressedTreeService>>>>,
     ocomp_finality_authority:
         Arc<std::sync::RwLock<Option<Arc<dyn OcompFinalizedIntentAuthority>>>>,
-    ocomp_local_result_authority:
-        Arc<std::sync::RwLock<Option<Arc<dyn OcompLocalResultAuthority>>>>,
     ocomp_lifecycle_activation: Arc<std::sync::RwLock<OcompLifecycleActivation>>,
     ocomp_fork_install: Arc<std::sync::RwLock<Option<Arc<OcompForkInstallV1>>>>,
 }
@@ -366,13 +361,6 @@ impl core::fmt::Debug for OutbeEvmFactory {
                 "ocomp_finality_authority",
                 &self
                     .ocomp_finality_authority
-                    .read()
-                    .is_ok_and(|authority| authority.is_some()),
-            )
-            .field(
-                "ocomp_local_result_authority",
-                &self
-                    .ocomp_local_result_authority
                     .read()
                     .is_ok_and(|authority| authority.is_some()),
             )
@@ -433,7 +421,6 @@ impl OutbeEvmFactory {
             runtime_body_readers: Some(runtime_body_readers),
             compressed_tree_service: Arc::default(),
             ocomp_finality_authority: Arc::default(),
-            ocomp_local_result_authority: Arc::default(),
             ocomp_lifecycle_activation: Arc::default(),
             ocomp_fork_install: Arc::default(),
         }
@@ -463,16 +450,6 @@ impl OutbeEvmFactory {
             .ocomp_finality_authority
             .write()
             .expect("OCOMP finality authority lock") = Some(authority);
-    }
-
-    pub(crate) fn install_ocomp_local_result_authority(
-        &self,
-        authority: Arc<dyn OcompLocalResultAuthority>,
-    ) {
-        *self
-            .ocomp_local_result_authority
-            .write()
-            .expect("OCOMP local result authority lock") = Some(authority);
     }
 
     pub fn install_ocomp_lifecycle_activation(&self, activation: OcompLifecycleActivation) {
@@ -535,11 +512,6 @@ impl EvmFactory for OutbeEvmFactory {
             .read()
             .ok()
             .and_then(|authority| authority.clone());
-        let ocomp_local_result_authority = self
-            .ocomp_local_result_authority
-            .read()
-            .ok()
-            .and_then(|authority| authority.clone());
         let ocomp_fork_install = self
             .ocomp_fork_install
             .read()
@@ -555,7 +527,6 @@ impl EvmFactory for OutbeEvmFactory {
                 runtime_body_readers.clone(),
                 execution_scope.clone(),
                 ocomp_finality_authority,
-                ocomp_local_result_authority,
                 ocomp_lifecycle_active,
             ),
             ocomp_fork_install,

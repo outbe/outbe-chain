@@ -348,7 +348,9 @@ fn cmd_ocomp(output_dir: PathBuf, args: OcompRegistrationArgs) -> Result<()> {
     for path in [&key_path, &registration_path] {
         match std::fs::symlink_metadata(path) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Ok(_) => eyre::bail!("OCOMP artifact already exists: {}", path.display()),
+            Ok(_) => {
+                eyre::bail!("OCOMP artifact already exists: {}", path.display());
+            }
             Err(error) => {
                 return Err(error).wrap_err_with(|| {
                     format!("failed to inspect OCOMP artifact path: {}", path.display())

@@ -391,7 +391,7 @@ pub fn verify_retained_semantics(
         EvidenceMode::Lane { .. } => verify_lane_semantics(repo, ledger, manifest_path),
         EvidenceMode::PocClosure => verify_closure_semantics(repo, ledger, manifest_path),
         EvidenceMode::TaskProgress { .. } => {
-            eyre::bail!("task_progress is a report mode, not a retained evidence bundle")
+            eyre::bail!("task_progress is a report mode, not a retained evidence bundle");
         }
     }
 }
@@ -490,10 +490,17 @@ fn retain_scenario_image_identity(
     lane: &str,
     sections: &BTreeMap<String, Value>,
 ) -> Result<()> {
-    let identity = sections
+    let config = sections
         .get("exact_config_and_service_unit_hashes")
         .and_then(Value::as_object)
-        .and_then(|section| section.get("gramine_image_id"))
+        .ok_or_else(|| eyre::eyre!("lane {lane} lacks exact execution identity"))?;
+    ensure!(
+        config.get("execution_profile")
+            == Some(&json!({"tee": "sgx-no-attest", "sudo": true, "all": true})),
+        "lane {lane} did not use release SGX-no-attest with sudo and fail-not-skip"
+    );
+    let identity = config
+        .get("gramine_image_id")
         .and_then(Value::as_str)
         .ok_or_else(|| eyre::eyre!("lane {lane} lacks Gramine Docker image identity"))?;
     crate::internal::proc::DockerImageId::from_inspect_output(identity)
@@ -535,6 +542,7 @@ fn closure_sections(
                 "exact_config_and_service_unit_hashes" => json!({
                     "launch_identity": identity.launch,
                     "gramine_image_id": identity.gramine_image,
+                    "execution_profile": {"tee": "sgx-no-attest", "sudo": true, "all": true},
                     "verified_lane_manifests": lane_index,
                 }),
                 "genesis_fork_bundle_and_profiles" => identity.launch.clone(),
@@ -593,23 +601,43 @@ mod tests {
 
     #[test]
     fn closure_requires_one_immutable_gramine_image_across_scenario_lanes() {
-        let sections = |image_id: &str| {
+        let sections = |image_id: &str, tee: &str, sudo: bool| {
             BTreeMap::from([(
                 "exact_config_and_service_unit_hashes".to_owned(),
-                json!({"gramine_image_id": image_id}),
+                json!({
+                    "gramine_image_id": image_id,
+                    "execution_profile": {"tee": tee, "sudo": sudo, "all": true},
+                }),
             )])
         };
         let first = format!("sha256:{}", "ab".repeat(32));
         let second = format!("sha256:{}", "cd".repeat(32));
         let mut retained = None;
 
-        retain_scenario_image_identity(&mut retained, "OCM-PUBLIC", &sections(&first))
-            .expect("first scenario lane establishes image identity");
-        retain_scenario_image_identity(&mut retained, "OCM-E2E", &sections(&first))
-            .expect("same image identity is accepted");
-        assert!(
-            retain_scenario_image_identity(&mut retained, "OCM-E2E", &sections(&second)).is_err()
-        );
+        retain_scenario_image_identity(
+            &mut retained,
+            "OCM-PUBLIC",
+            &sections(&first, "sgx-no-attest", true),
+        )
+        .expect("first scenario lane establishes image identity");
+        retain_scenario_image_identity(
+            &mut retained,
+            "OCM-E2E",
+            &sections(&first, "sgx-no-attest", true),
+        )
+        .expect("same image identity is accepted");
+        assert!(retain_scenario_image_identity(
+            &mut retained,
+            "OCM-E2E",
+            &sections(&second, "sgx-no-attest", true),
+        )
+        .is_err());
+        assert!(retain_scenario_image_identity(
+            &mut retained,
+            "OCM-E2E",
+            &sections(&first, "gramine-direct", false),
+        )
+        .is_err());
         assert!(
             retain_scenario_image_identity(&mut retained, "OCM-E2E", &BTreeMap::new()).is_err()
         );

@@ -58,9 +58,11 @@ impl LocalnetLane {
     fn ensure_implemented(self) -> Result<()> {
         match self {
             Self::DevMock => Ok(()),
-            Self::RealSgx => bail!(
-                "real-SGX LocalNet is deferred to outbe-chain-8lp; no mock or GramineDirectDev fallback is permitted"
-            ),
+            Self::RealSgx => {
+                bail!(
+                    "real-SGX LocalNet is deferred to outbe-chain-8lp; no mock or GramineDirectDev fallback is permitted"
+                );
+            }
         }
     }
 }
@@ -482,11 +484,14 @@ fn ensure_ocomp_process_inventory(
             "supervisor" => supervisors += 1,
             "snapshot_exporter" => snapshot_exporters += 1,
             "worker" => workers += 1,
-            role => bail!("unexpected persistent LocalNet OCOMP role {role}"),
+            role => {
+                bail!("unexpected persistent LocalNet OCOMP role {role}");
+            }
         }
     }
     ensure!(
-        supervisors == counts.supervisors
+        supervisors == 0
+            && counts.supervisors == counts.snapshot_exporters
             && snapshot_exporters == counts.snapshot_exporters
             && workers == counts.workers,
         "exact OCOMP process inventory differs from readiness counts"
@@ -734,7 +739,7 @@ fn snapshot_ocomp_processes(
             OcompProcessRole::SnapshotExporter => "snapshot_exporter",
             OcompProcessRole::Worker => "worker",
             OcompProcessRole::Follower => {
-                bail!("baseline LocalNet unexpectedly owns an OCOMP follower process")
+                bail!("baseline LocalNet unexpectedly owns an OCOMP follower process");
             }
         };
         let process_identity = process_identity(record.pid).ok_or_else(|| {
@@ -789,10 +794,12 @@ async fn wait_for_ocomp_runtime(
         ocomp.ensure_baseline_processes_alive(1)?;
         match ocomp.observe_baseline_runtime(1) {
             Ok(counts) => return Ok(counts),
-            Err(error) if Instant::now() >= deadline => bail!(
-                "OCOMP Supervisors/Workers did not become ready within {} seconds: {error}",
-                timeout.as_secs()
-            ),
+            Err(error) if Instant::now() >= deadline => {
+                bail!(
+                    "OCOMP Supervisors/Workers did not become ready within {} seconds: {error}",
+                    timeout.as_secs()
+                );
+            }
             Err(_) => {}
         }
         tokio::time::sleep(Duration::from_millis(250)).await;
@@ -877,7 +884,7 @@ fn require_ocomp_integration_build() -> Result<()> {
     {
         bail!(
             "persistent LocalNet requires outbe-e2e built with --features ocomp-integration so OCOMP Supervisors and Workers are mandatory"
-        )
+        );
     }
 }
 
@@ -1155,7 +1162,7 @@ impl StartLock {
                 Err(error) => return Err(error.into()),
             }
         }
-        bail!("could not acquire LocalNet start lock")
+        bail!("could not acquire LocalNet start lock");
     }
 }
 

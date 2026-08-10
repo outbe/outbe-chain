@@ -33,15 +33,15 @@ impl MetadosisContract<'_> {
         &mut self,
         _permit: &crate::commit::CommitPermit<'_>,
         wwd: WorldwideDayKey,
-        forming_start: u64,
-        lookback_delay_hours: u64,
-        offering_period_hours: u64,
+        schedule: crate::commit::NewWwdSchedule,
     ) -> Result<()> {
         self.create_worldwide_day_raw(
             wwd,
-            forming_start,
-            lookback_delay_hours,
-            offering_period_hours,
+            schedule.forming_start,
+            schedule.forming_period_seconds,
+            schedule.lookback_delay_seconds,
+            schedule.offering_period_seconds,
+            schedule.waiting_period_seconds,
         )
     }
 
@@ -125,25 +125,22 @@ impl MetadosisContract<'_> {
         &mut self,
         wwd: WorldwideDayKey,
         forming_start: u64,
-        lookback_delay_hours: u64,
-        offering_period_hours: u64,
+        forming_period_seconds: u64,
+        lookback_delay_seconds: u64,
+        offering_period_seconds: u64,
+        waiting_period_seconds: u64,
     ) -> Result<()> {
-        let hours_to_seconds = |hours: u64, label: &str| {
-            hours.checked_mul(SECONDS_PER_HOUR).ok_or_else(|| {
-                crate::errors::caller_rejection(format!("Metadosis {label} duration overflow"))
-            })
-        };
         let forming_end = forming_start
-            .checked_add(hours_to_seconds(FORMING_PERIOD_HOURS, "forming")?)
+            .checked_add(forming_period_seconds)
             .ok_or_else(|| crate::errors::caller_rejection("Metadosis forming window overflow"))?;
         let lookback_end = forming_end
-            .checked_add(hours_to_seconds(lookback_delay_hours, "lookback")?)
+            .checked_add(lookback_delay_seconds)
             .ok_or_else(|| crate::errors::caller_rejection("Metadosis lookback window overflow"))?;
         let offering_end = lookback_end
-            .checked_add(hours_to_seconds(offering_period_hours, "offering")?)
+            .checked_add(offering_period_seconds)
             .ok_or_else(|| crate::errors::caller_rejection("Metadosis offering window overflow"))?;
         let scheduled_process_time = offering_end
-            .checked_add(hours_to_seconds(WAITING_PERIOD_HOURS, "waiting")?)
+            .checked_add(waiting_period_seconds)
             .ok_or_else(|| crate::errors::caller_rejection("Metadosis waiting window overflow"))?;
 
         self.worldwide_days.create(&WorldwideDay {

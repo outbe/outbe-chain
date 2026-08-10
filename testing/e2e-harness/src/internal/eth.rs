@@ -109,6 +109,20 @@ sol! {
     }
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface INod {
+        struct NodData {
+            bytes nodId;
+            address owner;
+            uint32 worldwideDay;
+            uint16 leagueId;
+            uint256 floorPriceMinor;
+            uint256 gratisLoadMinor;
+            uint256 costOfGratisMinor;
+            uint256 costAmountMinor;
+            bool isQualified;
+            uint16 issuanceCurrency;
+            uint16 referenceCurrency;
+            uint64 issuedAt;
+        }
         struct CertifiedGenerationData {
             bool exists;
             uint32 worldwideDay;
@@ -124,6 +138,8 @@ sol! {
             uint64 issuedAt;
         }
         function totalSupply() external view returns (uint256);
+        function tokenByIndex(uint256 index) external view returns (bytes memory);
+        function nodData(bytes calldata nodId) external view returns (NodData memory);
         function certifiedGeneration(uint32 worldwideDay)
             external
             view

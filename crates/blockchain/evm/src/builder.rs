@@ -640,32 +640,31 @@ mod tests {
 
     fn seed_active_validators(db: &mut TestDb, validators: &[Address]) {
         let chain_spec = test_chain_spec();
+        let founders = validators
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(idx, validator)| {
+                let mut consensus_key = [0u8; 48];
+                consensus_key[0] = idx as u8 + 1;
+                (validator, consensus_key)
+            })
+            .collect::<Vec<_>>();
         let install = outbe_metadosis::test_support::ForkInstallScenario::measurement_at(
             1,
             chain_spec.chain().id(),
             chain_spec.genesis_hash(),
         )
         .unwrap()
+        .with_founder_validators(&founders)
+        .unwrap()
         .into_install();
-        let mut metadosis_genesis = HashMapStorageProvider::new(chain_spec.chain().id());
-        metadosis_genesis.set_block_number(1);
-        metadosis_genesis.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::ForkProfile);
-        metadosis_genesis.enter(|storage| {
-            let ctx = BlockRuntimeContext::new(
-                BlockContext::empty_for_tests(1, 1_700_000_001, chain_spec.chain().id()),
-                storage,
-            );
-            outbe_metadosis::commands::install_fork_profile(&ctx, &install).unwrap();
-        });
-        let ctx = BlockContext::new(
-            0,
-            0,
-            MAINNET.chain().id(),
-            GENESIS_OWNER,
-            validators.to_vec(),
+        let mut metadosis_genesis = HashMapStorageProvider::new_with_chain_identity(
+            chain_spec.chain().id(),
+            chain_spec.genesis_hash(),
         );
-        let mut provider = DirectStorageProvider::new(db, ctx);
-        StorageHandle::enter(&mut provider, |storage| {
+        metadosis_genesis.set_block_number(1);
+        metadosis_genesis.enter(|storage| {
             let root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
             storage
                 .sstore(
@@ -687,12 +686,17 @@ mod tests {
             vs.config_epoch_length_blocks.write(60).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
-            for (idx, validator) in validators.iter().copied().enumerate() {
-                let mut pk = [0u8; 48];
-                pk[0] = idx as u8 + 1;
-                vs.register_validator(Address::ZERO, validator, &pk)
+            for ((validator, consensus_key), registration) in
+                founders.iter().zip(&install.founder_registrations)
+            {
+                vs.register_validator(Address::ZERO, *validator, consensus_key)
                     .unwrap();
-                vs.activate_validator_via_boundary_for_test(validator)
+                vs.mark_pending(*validator).unwrap();
+                let encoded = registration
+                    .encode_canonical(&outbe_metadosis::config::poc_schema_limits())
+                    .unwrap();
+                vs.confirm_validator_ready(*validator, &encoded).unwrap();
+                vs.activate_validator_via_boundary_for_test(*validator)
                     .unwrap();
             }
             // Seed the COEN/840 oracle pair + a 1.0 rate so begin-block
@@ -714,11 +718,17 @@ mod tests {
                 )
                 .unwrap();
         });
-        provider.flush().expect("validator seed flush must succeed");
-        drop(provider);
+        metadosis_genesis.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::ForkProfile);
+        metadosis_genesis.enter(|storage| {
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(1, 1_700_000_001, chain_spec.chain().id()),
+                storage,
+            );
+            outbe_metadosis::commands::install_fork_profile(&ctx, &install).unwrap();
+        });
         for ((address, slot), value) in metadosis_genesis.storage {
             db.insert_account_storage(address, slot, value)
-                .expect("Metadosis production-route genesis seed must install");
+                .expect("production-route genesis seed must install");
         }
 
         let marker_code = RevmBytecode::new_legacy([0xef].into());

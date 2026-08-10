@@ -32,7 +32,7 @@ use outbe_ocomp::admission_catalog::{
 };
 use outbe_ocomp::bundle::PinnedProtocolBundle;
 use outbe_ocomp::cas::{CasLimits, CasWriterRole, FilesystemCas, FilesystemCasReader};
-use outbe_ocomp::control::{effective_uid, poc_schema_limits, EndpointIdentity};
+use outbe_ocomp::control::{poc_schema_limits, EndpointIdentity};
 use outbe_ocomp::inbox::{WorkerInbox, WorkerInboxLimits};
 use outbe_ocomp::input_artifacts::{
     decode_verified_input_chunk, derive_input_chunk_ref, poc_input_list_limits,
@@ -90,7 +90,6 @@ struct TestWorkerDispatch {
 }
 
 const CHILD_MODE: &str = "OUTBE_OCOMP_TEST_WORKER_CHILD";
-const CHILD_USER: &str = "OUTBE_OCOMP_TEST_WORKER_USER";
 const CHILD_CHAIN_ID: &str = "OUTBE_OCOMP_TEST_CHAIN_ID";
 const CHILD_GENESIS: &str = "OUTBE_OCOMP_TEST_GENESIS";
 const CHILD_BOOT_NONCE: &str = "OUTBE_OCOMP_TEST_BOOT_NONCE";
@@ -384,9 +383,6 @@ fn real_worker_processes_execute_through_output_finalize() {
                 .expect("canonical plan commitment"),
         )
         .expect("plan object");
-    let uid = effective_uid().expect("effective uid");
-    let user = uid.to_string();
-
     let (listener, supervisor_address) = supervisor_listener();
     let supervisor_identity = identity(0xB0);
     let mut workers = Vec::new();
@@ -400,7 +396,6 @@ fn real_worker_processes_execute_through_output_finalize() {
                 "--nocapture",
             ])
             .env(CHILD_MODE, "1")
-            .env(CHILD_USER, &user)
             .env(CHILD_CHAIN_ID, worker_identity.chain_id.to_string())
             .env(
                 CHILD_GENESIS,
@@ -598,7 +593,6 @@ fn real_worker_processes_execute_through_output_finalize() {
             "--nocapture",
         ])
         .env(CHILD_MODE, "1")
-        .env(CHILD_USER, &user)
         .env(CHILD_CHAIN_ID, worker_identity.chain_id.to_string())
         .env(
             CHILD_GENESIS,
@@ -724,7 +718,6 @@ fn real_worker_processes_execute_through_output_finalize() {
             "--nocapture",
         ])
         .env(CHILD_MODE, "1")
-        .env(CHILD_USER, &user)
         .env(CHILD_CHAIN_ID, worker_identity.chain_id.to_string())
         .env(
             CHILD_GENESIS,
@@ -857,7 +850,6 @@ fn real_worker_processes_execute_through_output_finalize() {
             "--nocapture",
         ])
         .env(CHILD_MODE, "1")
-        .env(CHILD_USER, &user)
         .env(CHILD_CHAIN_ID, worker_identity.chain_id.to_string())
         .env(
             CHILD_GENESIS,
@@ -999,8 +991,6 @@ fn real_worker_processes_execute_through_output_finalize() {
     let prefix_leaf_artifact = execute_real_worker_unit(
         500,
         0x91,
-        &user,
-        uid,
         directory.path(),
         cas_limits,
         &inbox_root,
@@ -1054,8 +1044,6 @@ fn real_worker_processes_execute_through_output_finalize() {
     let prefix_root_artifact = execute_real_worker_unit(
         501,
         0x93,
-        &user,
-        uid,
         directory.path(),
         cas_limits,
         &inbox_root,
@@ -1100,8 +1088,6 @@ fn real_worker_processes_execute_through_output_finalize() {
     let prefix_down_root_artifact = execute_real_worker_unit(
         502,
         0x95,
-        &user,
-        uid,
         directory.path(),
         cas_limits,
         &inbox_root,
@@ -1161,8 +1147,6 @@ fn real_worker_processes_execute_through_output_finalize() {
     let prefix_down_leaf_artifact = execute_real_worker_unit(
         503,
         0x97,
-        &user,
-        uid,
         directory.path(),
         cas_limits,
         &inbox_root,
@@ -1234,8 +1218,6 @@ fn real_worker_processes_execute_through_output_finalize() {
     let output_finalize_artifact = execute_real_worker_unit(
         504,
         0x99,
-        &user,
-        uid,
         directory.path(),
         cas_limits,
         &inbox_root,
@@ -1422,8 +1404,6 @@ fn real_worker_processes_execute_through_output_finalize() {
     let owner_artifact = execute_real_worker_unit(
         505,
         0x9A,
-        &user,
-        uid,
         directory.path(),
         cas_limits,
         &inbox_root,
@@ -1479,8 +1459,6 @@ fn real_worker_processes_execute_through_output_finalize() {
     let bucket_artifact = execute_real_worker_unit(
         506,
         0x9B,
-        &user,
-        uid,
         directory.path(),
         cas_limits,
         &inbox_root,
@@ -1555,8 +1533,6 @@ fn real_worker_processes_execute_through_output_finalize() {
     let root_reduce_artifact = execute_real_worker_unit(
         507,
         0x9c,
-        &user,
-        uid,
         directory.path(),
         cas_limits,
         &inbox_root,
@@ -2091,8 +2067,6 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
         finalized_artifacts.push(output_artifact);
     }
 
-    let uid = effective_uid().expect("effective uid");
-    let user = uid.to_string();
     let output_finalize_offset = topology
         .phase_unit_count(UnitPhase::Enumerate)
         .checked_add(topology.phase_unit_count(UnitPhase::FidelityMap))
@@ -2125,8 +2099,6 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
         let artifact = execute_real_worker_unit(
             700 + u64::try_from(ordinal).expect("merge generation"),
             0xa0 + u8::try_from(ordinal).expect("merge boot"),
-            &user,
-            uid,
             directory.path(),
             cas_limits,
             &inbox_root,
@@ -2168,8 +2140,6 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
     let merged_artifact = execute_real_worker_unit(
         702,
         0xa2,
-        &user,
-        uid,
         directory.path(),
         cas_limits,
         &inbox_root,
@@ -2238,8 +2208,6 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
         let artifact = execute_real_worker_unit(
             703 + u64::try_from(ordinal).expect("bucket generation"),
             0xa3 + u8::try_from(ordinal).expect("bucket boot"),
-            &user,
-            uid,
             directory.path(),
             cas_limits,
             &inbox_root,
@@ -2281,8 +2249,6 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
     let merged_bucket_artifact = execute_real_worker_unit(
         705,
         0xa5,
-        &user,
-        uid,
         directory.path(),
         cas_limits,
         &inbox_root,
@@ -2371,8 +2337,6 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
         let artifact = execute_real_worker_unit(
             707 + u64::from(ordinal),
             0xa7 + u8::try_from(ordinal).expect("root reduce boot"),
-            &user,
-            uid,
             directory.path(),
             cas_limits,
             &inbox_root,
@@ -2455,8 +2419,6 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
     let root_reduce_artifact = execute_real_worker_unit(
         709,
         0xa9,
-        &user,
-        uid,
         directory.path(),
         cas_limits,
         &inbox_root,
@@ -2495,8 +2457,6 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
 fn execute_real_worker_unit(
     generation: u64,
     boot: u8,
-    user: &str,
-    _uid: u32,
     cas_root: &std::path::Path,
     cas_limits: CasLimits,
     inbox_root: &std::path::Path,
@@ -2519,7 +2479,6 @@ fn execute_real_worker_unit(
             "--nocapture",
         ])
         .env(CHILD_MODE, "1")
-        .env(CHILD_USER, user)
         .env(CHILD_CHAIN_ID, worker_identity.chain_id.to_string())
         .env(
             CHILD_GENESIS,
@@ -2615,17 +2574,12 @@ fn run_child_worker() {
             .parse::<B256>()
             .unwrap_or_else(|_| panic!("invalid {name}"))
     };
-    let uid = env::var(CHILD_USER)
-        .expect("worker child uid")
-        .parse::<u32>()
-        .expect("valid worker child uid");
     let limits = poc_schema_limits();
     let expected_bundle_hash = parse_b256(CHILD_BUNDLE);
     let canonical_bundle = support::protocol_bundle()
         .encode_canonical(&limits)
         .expect("canonical child protocol bundle");
     run_worker(WorkerConfig {
-        expected_effective_uid: uid,
         identity: EndpointIdentity {
             chain_id: parse_u64(CHILD_CHAIN_ID),
             genesis_hash: parse_b256(CHILD_GENESIS),

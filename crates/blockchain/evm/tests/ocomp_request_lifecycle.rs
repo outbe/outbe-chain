@@ -59,7 +59,7 @@ use outbe_metadosis::{
     WwdDayType,
 };
 use outbe_nod::NodContract;
-use outbe_node::{ocomp::local_result::LocalLysisResultStore, OutbePayloadBuilder};
+use outbe_node::OutbePayloadBuilder;
 use outbe_ocomp_protocol::{
     abi::encode_submit_lysis_result_calldata,
     receipts::AggregateActivationReceiptV1,
@@ -839,22 +839,6 @@ fn real_payload_builder_commits_atomic_request_between_ce_preview_and_final_seal
     let open_height = finalized.open_height;
     let voting = ResultVotingScenario::for_intent(&finalized_record.intent, finalized.job_id);
     let voting_result = voting.result().clone();
-    let local_result_directory = tempfile::tempdir().unwrap();
-    let local_result_authority = Arc::new(
-        LocalLysisResultStore::open(
-            local_result_directory.path().join("local-results"),
-            poc_schema_limits(),
-        )
-        .unwrap(),
-    );
-    local_result_authority
-        .commit(
-            finalized.job_id,
-            &voting_result
-                .encode_canonical(&poc_schema_limits())
-                .unwrap(),
-        )
-        .unwrap();
 
     let successor_artifacts =
         decode_outbe_block_artifacts(successor.block().header().extra_data().as_ref()).unwrap();
@@ -881,7 +865,6 @@ fn real_payload_builder_commits_atomic_request_between_ce_preview_and_final_seal
             &prepared.tree_service,
             &signer,
             &runtime_body_readers,
-            &local_result_authority,
             &fork_install,
             &dkg,
             &snapshot,
@@ -908,7 +891,6 @@ fn real_payload_builder_commits_atomic_request_between_ce_preview_and_final_seal
         &prepared.tree_service,
         &signer,
         &runtime_body_readers,
-        &local_result_authority,
         &fork_install,
         &dkg,
         &snapshot,
@@ -929,16 +911,7 @@ fn real_payload_builder_commits_atomic_request_between_ce_preview_and_final_seal
     voting_open_state.storage = voting_open.storage.clone();
     StorageHandle::enter(&mut voting_open_state, |storage| {
         for (validator_index, vote) in &signed_votes {
-            let prefix = outbe_ocomp_protocol::vote::ResultVotePrefixV1 {
-                protocol_bundle_hash: vote.protocol_bundle_hash,
-                job_id: vote.job_id,
-                attempt: vote.attempt,
-                result_validator_set_epoch: vote.result_validator_set_epoch,
-                result_committee_set_hash: vote.result_committee_set_hash,
-                result_ocomp_binding_hash: vote.result_ocomp_binding_hash,
-                validator_index: vote.validator_index,
-                key_epoch: vote.key_epoch,
-            };
+            let prefix = vote.prefix();
             assert_eq!(
                 outbe_metadosis::resolve_historical_result_vote_participant(
                     storage.clone(),
@@ -974,7 +947,6 @@ fn real_payload_builder_commits_atomic_request_between_ce_preview_and_final_seal
         &prepared.tree_service,
         &signer,
         &runtime_body_readers,
-        &local_result_authority,
         &fork_install,
         &dkg,
         &snapshot,
@@ -1119,7 +1091,6 @@ fn build_canonical_ocomp_successor(
     tree_service: &Arc<CompressedTreeService>,
     signer: &Arc<OutbeEvmSigner>,
     runtime_body_readers: &RuntimeBodyReaders,
-    local_result_authority: &Arc<LocalLysisResultStore>,
     fork_install: &Arc<outbe_metadosis::config::OcompForkInstallV1>,
     dkg: &Dkg,
     snapshot: &CommitteeSnapshot,
@@ -1147,7 +1118,6 @@ fn build_canonical_ocomp_successor(
     )
     .with_evm_signer(signer.clone())
     .with_compressed_tree_service(tree_service.clone())
-    .with_ocomp_local_result_authority(local_result_authority.clone())
     .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(PARENT_HEIGHT))
     .with_ocomp_fork_install(fork_install.clone());
     let metadata = finalized_parent_metadata(dkg, snapshot, height - 1, parent.hash());
@@ -1381,6 +1351,13 @@ fn prepare_parent(
     let owner = address!("7300000000000000000000000000000000000073");
     let seal = StorageHandle::enter(&mut seed, |storage| {
         seed_ce_genesis(&storage);
+        for (slot, value) in
+            outbe_chain_constants::GenesisProtocolParametersV1::default().genesis_storage_words()
+        {
+            storage
+                .sstore(outbe_chain_constants::CHAIN_CONSTANTS_ADDRESS, slot, value)
+                .unwrap();
+        }
         begin_block(storage.clone(), &scope).unwrap();
 
         let mut validators = ValidatorSet::new(storage.clone());

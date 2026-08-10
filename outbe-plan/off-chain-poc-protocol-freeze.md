@@ -2316,12 +2316,14 @@ runtime does not grant.
 
 The capacity command creates the measurement cgroup through the system systemd
 manager and sets the transient service `User`/`Group` to the invoking
-unprivileged account. This is an evidence-runner privilege only: the E2E command
-and every node/OCOMP child remain unprivileged and run with `--no-sudo`. A
-user-manager service is not sufficient because a valid host may omit the
-`io` controller from `user.slice`; accepting such a service would silently lose
-the required kernel `io.stat` evidence. Passwordless permission to create this
-single bounded transient service is therefore a machine precondition.
+unprivileged account. The E2E runner keeps sudo enabled so its production
+Gramine container can receive the real SGX devices while using
+`sgx-no-attest`; `--no-sudo` and non-SGX `gramine-direct` are not accepted
+capacity evidence. A user-manager service is not sufficient because a valid
+host may omit the `io` controller from `user.slice`; accepting such a service
+would silently lose the required kernel `io.stat` evidence. Passwordless sudo
+for the bounded transient service and SGX container setup is therefore a
+machine precondition.
 
 ### 8.3 Required generated fields
 

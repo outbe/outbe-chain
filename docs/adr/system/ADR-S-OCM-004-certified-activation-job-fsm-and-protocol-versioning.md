@@ -263,7 +263,9 @@ executor:
 3. bounded-decodes and validates the canonical `LysisResultV1`, reconstructs
    `ResultDigest`, then verifies `JobId`, attempt, bundle, all three historical
    snapshot bindings,
-   `u16` participant index, key epoch, signature domain and low-`s` OCOMP signature;
+   signed OCOMP key hash, key epoch, signature domain and low-`s` OCOMP
+   signature; the existing key-to-validator mapping and pinned snapshot derive
+   the internal `u16` participant index;
 4. stores the first vote in that validator's pinned-snapshot slot with the
    consensus-assigned inclusion height;
 5. treats an exact retry as idempotent;

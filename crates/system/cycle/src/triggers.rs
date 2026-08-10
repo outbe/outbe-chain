@@ -110,65 +110,80 @@ pub fn metadosis_mutation_lease_budget_per_tick() -> u8 {
 
 /// Active trigger table. Order is informational only — the dispatcher
 /// fires triggers independently per slot.
-pub const ACTIVE_TRIGGERS: &[TriggerSpec] = &[
-    TriggerSpec {
-        id: TriggerId::EmissionLimit1.as_u32(),
-        label: "emission_limit_1",
-        period_seconds: 86_400,
-        start_offset_seconds: 0,
-        // daily emission orchestrator settles the previous UTC
-        // day; it MUST observe the parent block's Phase 1 accounting before
-        // firing, otherwise validator-pool top-ups and daily-fee reads would
-        // race the parent-finalization tx.
-        requires_accounting_window: true,
-        handler: TriggerHandler::EmissionLimitDaily,
-    },
-    TriggerSpec {
-        id: TriggerId::IntexCallDaily.as_u32(),
-        label: "intex_call_daily",
-        period_seconds: 86_400,
-        start_offset_seconds: 0,
-        // Reads finalized oracle VWAP history and marks series Called; no
-        // dependency on the parent block's settlement accounting.
-        requires_accounting_window: false,
-        handler: TriggerHandler::IntexDaily,
-    },
-    TriggerSpec {
-        id: TriggerId::WwdAdvanceNoon.as_u32(),
-        label: "wwd_advance_noon",
-        period_seconds: 86_400,
-        // WWD forming/offering window edges land at 12:00 UTC
-        // (`forming_end = forming_start(10:00 UTC) + 50h`); with only the
-        // midnight tick every 12:00 transition was applied ~12h late.
-        start_offset_seconds: 43_200,
-        // Pure status-window walk over active WorldwideDays: reads
-        // Metadosis windows and the Oracle, never the parent block's
-        // settlement accounting. Day creation and READY settlement stay
-        // on the midnight `emission_limit_1` trigger.
-        requires_accounting_window: false,
-        handler: TriggerHandler::WwdAdvanceNoon,
-    },
-    TriggerSpec {
-        id: TriggerId::AuctionAdvance.as_u32(),
-        label: "auction_advance",
-        period_seconds: 43_200,
-        start_offset_seconds: 0,
-        // Gated like emission_limit_1 so the brief it writes and this start
-        // land in the same slot.
-        requires_accounting_window: true,
-        handler: TriggerHandler::AuctionAdvance,
-    },
-    TriggerSpec {
-        id: TriggerId::GemCallDaily.as_u32(),
-        label: "gem_call_daily",
-        period_seconds: 86_400,
-        start_offset_seconds: 0,
-        // Reads finalized oracle VWAP history to force-call / forfeit-burn gems;
-        // no dependency on the parent block's settlement accounting.
-        requires_accounting_window: false,
-        handler: TriggerHandler::GemCallDaily,
-    },
-];
+pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [TriggerSpec; 5] {
+    let production_default = outbe_chain_constants::DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS;
+    let (wwd_period_seconds, wwd_start_offset_seconds) =
+        if metadosis_advance_interval_seconds == production_default {
+            // Preserve the historical noon-only dedicated trigger. The
+            // midnight daily handler is the other production advancement.
+            (86_400, production_default)
+        } else {
+            // Short genesis profiles drive the dedicated advancement directly.
+            (metadosis_advance_interval_seconds, 0)
+        };
+    [
+        TriggerSpec {
+            id: TriggerId::EmissionLimit1.as_u32(),
+            label: "emission_limit_1",
+            period_seconds: 86_400,
+            start_offset_seconds: 0,
+            // daily emission orchestrator settles the previous UTC
+            // day; it MUST observe the parent block's Phase 1 accounting before
+            // firing, otherwise validator-pool top-ups and daily-fee reads would
+            // race the parent-finalization tx.
+            requires_accounting_window: true,
+            handler: TriggerHandler::EmissionLimitDaily,
+        },
+        TriggerSpec {
+            id: TriggerId::IntexCallDaily.as_u32(),
+            label: "intex_call_daily",
+            period_seconds: 86_400,
+            start_offset_seconds: 0,
+            // Reads finalized oracle VWAP history and marks series Called; no
+            // dependency on the parent block's settlement accounting.
+            requires_accounting_window: false,
+            handler: TriggerHandler::IntexDaily,
+        },
+        TriggerSpec {
+            id: TriggerId::WwdAdvanceNoon.as_u32(),
+            label: "wwd_advance",
+            // Defaults to every 12 hours (midnight/noon). LocalNet can use a
+            // shorter genesis-bound interval without changing daily creation.
+            period_seconds: wwd_period_seconds,
+            start_offset_seconds: wwd_start_offset_seconds,
+            // Pure status-window walk over active WorldwideDays: reads
+            // Metadosis windows and the Oracle, never the parent block's
+            // settlement accounting. Day creation and READY settlement stay
+            // on the midnight `emission_limit_1` trigger.
+            requires_accounting_window: false,
+            handler: TriggerHandler::WwdAdvanceNoon,
+        },
+        TriggerSpec {
+            id: TriggerId::AuctionAdvance.as_u32(),
+            label: "auction_advance",
+            period_seconds: 43_200,
+            start_offset_seconds: 0,
+            // Gated like emission_limit_1 so the brief it writes and this start
+            // land in the same slot.
+            requires_accounting_window: true,
+            handler: TriggerHandler::AuctionAdvance,
+        },
+        TriggerSpec {
+            id: TriggerId::GemCallDaily.as_u32(),
+            label: "gem_call_daily",
+            period_seconds: 86_400,
+            start_offset_seconds: 0,
+            // Reads finalized oracle VWAP history to force-call / forfeit-burn gems;
+            // no dependency on the parent block's settlement accounting.
+            requires_accounting_window: false,
+            handler: TriggerHandler::GemCallDaily,
+        },
+    ]
+}
+
+pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 5] =
+    active_triggers(outbe_chain_constants::DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS);
+pub const ACTIVE_TRIGGERS: &[TriggerSpec] = &ACTIVE_TRIGGER_ARRAY;
 
 /// Returns the next slot strictly greater than `last_executed_at`.
 /// Pure function: same `(period, offset, last)` tuple always returns
@@ -187,4 +202,29 @@ pub fn next_fire_at(period: u64, offset: u64, last_executed_at: u64) -> u64 {
     let diff = last_executed_at - offset;
     let k = diff / period + 1;
     offset + k * period
+}
+
+#[cfg(test)]
+mod protocol_parameter_tests {
+    use super::*;
+
+    #[test]
+    fn only_wwd_advancement_uses_the_genesis_interval() {
+        let configured = active_triggers(10);
+        assert_eq!(configured[0].period_seconds, 86_400);
+        assert_eq!(configured[1].period_seconds, 86_400);
+        assert_eq!(configured[2].period_seconds, 10);
+        assert_eq!(configured[2].start_offset_seconds, 0);
+        assert_eq!(configured[3].period_seconds, 43_200);
+        assert_eq!(configured[4].period_seconds, 86_400);
+        assert!(matches!(
+            configured[4].handler,
+            TriggerHandler::GemCallDaily
+        ));
+
+        let defaults =
+            active_triggers(outbe_chain_constants::DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS);
+        assert_eq!(defaults[2].period_seconds, 86_400);
+        assert_eq!(defaults[2].start_offset_seconds, 43_200);
+    }
 }

@@ -1,6 +1,6 @@
 //! Canonical direct on-chain result votes and bounded accountability state.
 
-use alloy_primitives::B256;
+use alloy_primitives::{keccak256, B256};
 
 use crate::{
     abi::SUBMIT_LYSIS_RESULT_SELECTOR,
@@ -22,7 +22,7 @@ wire_struct! {
         pub result_validator_set_epoch: u64,
         pub result_committee_set_hash: B256,
         pub result_ocomp_binding_hash: B256,
-        pub validator_index: u16,
+        pub ocomp_key_hash: B256,
         pub key_epoch: u64,
         pub result: LysisResultV1,
         pub signature_rs: [u8; 64],
@@ -37,11 +37,25 @@ pub struct ResultVotePrefixV1 {
     pub result_validator_set_epoch: u64,
     pub result_committee_set_hash: B256,
     pub result_ocomp_binding_hash: B256,
-    pub validator_index: u16,
+    pub ocomp_key_hash: B256,
     pub key_epoch: u64,
 }
 
 impl ResultVoteV1 {
+    #[must_use]
+    pub const fn prefix(&self) -> ResultVotePrefixV1 {
+        ResultVotePrefixV1 {
+            protocol_bundle_hash: self.protocol_bundle_hash,
+            job_id: self.job_id,
+            attempt: self.attempt,
+            result_validator_set_epoch: self.result_validator_set_epoch,
+            result_committee_set_hash: self.result_committee_set_hash,
+            result_ocomp_binding_hash: self.result_ocomp_binding_hash,
+            ocomp_key_hash: self.ocomp_key_hash,
+            key_epoch: self.key_epoch,
+        }
+    }
+
     pub fn encode_canonical(&self, limits: &SchemaLimits) -> Result<Vec<u8>, ProtocolError> {
         crate::schema::encode_top(self, ObjectKind::ResultVoteV1, limits)
     }
@@ -70,7 +84,7 @@ impl ResultVoteV1 {
             result_validator_set_epoch: body.read_u64()?,
             result_committee_set_hash: body.read_b256()?,
             result_ocomp_binding_hash: body.read_b256()?,
-            validator_index: body.read_u16()?,
+            ocomp_key_hash: body.read_b256()?,
             key_epoch: body.read_u64()?,
         })
     }
@@ -80,6 +94,24 @@ pub fn decode_submit_lysis_result_prefix(
     calldata: &[u8],
     limits: &SchemaLimits,
 ) -> Result<ResultVotePrefixV1, ProtocolError> {
+    let payload = decode_submit_lysis_result_payload(calldata)?;
+    ResultVoteV1::decode_canonical_prefix(payload, limits)
+}
+
+/// Decode the complete canonical vote carried by `submitLysisResult(bytes)`.
+///
+/// This shares the exact ABI length, padding and schema bounds used by the
+/// hot-path prefix decoder so a finalized-block observer cannot accept a
+/// different envelope from txpool or execution.
+pub fn decode_submit_lysis_result(
+    calldata: &[u8],
+    limits: &SchemaLimits,
+) -> Result<ResultVoteV1, ProtocolError> {
+    let payload = decode_submit_lysis_result_payload(calldata)?;
+    ResultVoteV1::decode_canonical(payload, limits)
+}
+
+fn decode_submit_lysis_result_payload(calldata: &[u8]) -> Result<&[u8], ProtocolError> {
     const ABI_HEAD_LEN: usize = 68;
     if calldata.len() < ABI_HEAD_LEN {
         return Err(ProtocolError::UnexpectedEof {
@@ -135,7 +167,7 @@ pub fn decode_submit_lysis_result_prefix(
         calldata[payload_end..].iter().all(|byte| *byte == 0),
         "submitLysisResult ABI padding",
     )?;
-    ResultVoteV1::decode_canonical_prefix(&calldata[ABI_HEAD_LEN..payload_end], limits)
+    Ok(&calldata[ABI_HEAD_LEN..payload_end])
 }
 
 fn abi_word_to_usize(word: &[u8]) -> Result<usize, ProtocolError> {
@@ -242,7 +274,7 @@ pub struct ResultVoteSigningSubjectV1 {
     pub result_validator_set_epoch: u64,
     pub result_committee_set_hash: B256,
     pub result_ocomp_binding_hash: B256,
-    pub validator_index: u16,
+    pub ocomp_key_hash: B256,
     pub key_epoch: u64,
     pub purpose: u8,
     pub result_digest: B256,
@@ -250,7 +282,7 @@ pub struct ResultVoteSigningSubjectV1 {
 
 impl ResultVoteSigningSubjectV1 {
     pub fn signing_digest(self) -> Result<B256, ProtocolError> {
-        let mut payload = Vec::with_capacity(8 * 3 + 32 * 7 + 4 + 2 + 1);
+        let mut payload = Vec::with_capacity(8 * 3 + 32 * 8 + 4 + 1);
         payload.extend_from_slice(&self.chain_id.to_be_bytes());
         payload.extend_from_slice(self.genesis_hash.as_slice());
         payload.extend_from_slice(self.fork_id.as_slice());
@@ -260,7 +292,7 @@ impl ResultVoteSigningSubjectV1 {
         payload.extend_from_slice(&self.result_validator_set_epoch.to_be_bytes());
         payload.extend_from_slice(self.result_committee_set_hash.as_slice());
         payload.extend_from_slice(self.result_ocomp_binding_hash.as_slice());
-        payload.extend_from_slice(&self.validator_index.to_be_bytes());
+        payload.extend_from_slice(self.ocomp_key_hash.as_slice());
         payload.extend_from_slice(&self.key_epoch.to_be_bytes());
         payload.push(self.purpose);
         payload.extend_from_slice(self.result_digest.as_slice());
@@ -311,7 +343,10 @@ impl ResultVoteV1 {
                 && finalized_intent.result_member_count == member_count,
             "vote committee binding",
         )?;
-        require(self.validator_index < member_count, "vote validator index")?;
+        require(
+            self.ocomp_key_hash == keccak256(member_ocomp_public_key_sec1),
+            "vote OCOMP key hash",
+        )?;
         require(
             self.key_epoch == POC_KEY_EPOCH && member_key_epoch == self.key_epoch,
             "vote key epoch",
@@ -351,7 +386,7 @@ impl ResultVoteV1 {
             result_validator_set_epoch: self.result_validator_set_epoch,
             result_committee_set_hash: self.result_committee_set_hash,
             result_ocomp_binding_hash: self.result_ocomp_binding_hash,
-            validator_index: self.validator_index,
+            ocomp_key_hash: self.ocomp_key_hash,
             key_epoch: self.key_epoch,
             purpose: 1, // SignOncePurpose::ResultSignature
             result_digest: self.result_digest(limits)?,
@@ -362,12 +397,13 @@ impl ResultVoteV1 {
 
 impl ResultVoteSlotV1 {
     pub fn from_vote(
+        validator_index: u16,
         vote: &ResultVoteV1,
         submitted_height: u64,
         limits: &SchemaLimits,
     ) -> Result<Self, ProtocolError> {
         Ok(Self {
-            validator_index: vote.validator_index,
+            validator_index,
             first_result_digest: vote.result_digest(limits)?,
             key_epoch: vote.key_epoch,
             first_signature_rs: vote.signature_rs,
@@ -377,8 +413,7 @@ impl ResultVoteSlotV1 {
     }
 
     fn exact_vote(&self, vote: &ResultVoteV1, vote_digest: B256, _submitted_height: u64) -> bool {
-        self.validator_index == vote.validator_index
-            && self.first_result_digest == vote_digest
+        self.first_result_digest == vote_digest
             && self.key_epoch == vote.key_epoch
             && self.first_signature_rs == vote.signature_rs
     }
@@ -410,6 +445,7 @@ impl OcompVoteAccountabilityV1 {
 
     pub fn record_verified_vote(
         &mut self,
+        validator_index: u16,
         vote: &ResultVoteV1,
         submitted_height: u64,
         limits: &SchemaLimits,
@@ -426,11 +462,16 @@ impl OcompVoteAccountabilityV1 {
         let vote_digest = vote.result_digest(limits)?;
         let slot = self
             .slots
-            .get_mut(usize::from(vote.validator_index))
+            .get_mut(usize::from(validator_index))
             .ok_or(ProtocolError::InvalidInvariant("vote slot index"))?;
         let outcome = match slot {
             None => {
-                *slot = Some(ResultVoteSlotV1::from_vote(vote, submitted_height, limits)?);
+                *slot = Some(ResultVoteSlotV1::from_vote(
+                    validator_index,
+                    vote,
+                    submitted_height,
+                    limits,
+                )?);
                 RecordVoteOutcomeV1::FirstVote
             }
             Some(existing) if existing.exact_vote(vote, vote_digest, submitted_height) => {

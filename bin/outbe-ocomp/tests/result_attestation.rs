@@ -1,6 +1,6 @@
 use std::{fs, os::unix::fs::MetadataExt as _};
 
-use alloy_primitives::{B256, U256};
+use alloy_primitives::{keccak256, B256, U256};
 use k256::ecdsa::{signature::hazmat::PrehashVerifier as _, Signature, VerifyingKey};
 use outbe_ocomp::{
     control::EndpointIdentity,
@@ -215,7 +215,7 @@ fn supervisor_signs_exact_result_vote_once_and_rejects_a_conflict() {
     let public_key = signer.public_key_sec1();
     let store = SignOnceStore::open(directory.path().join("sign-once"), owner_uid, limits).unwrap();
     let attester =
-        LocalResultVoteAttesterV1::new(identity, fork_id, 0, signer, store, limits).unwrap();
+        LocalResultVoteAttesterV1::new(identity, fork_id, signer, store, limits).unwrap();
     let canonical = result.encode_canonical(&limits).unwrap();
 
     assert!(matches!(
@@ -225,6 +225,7 @@ fn supervisor_signs_exact_result_vote_once_and_rejects_a_conflict() {
         ))
     ));
     let first = attester.attest(&canonical, &spec, 100).unwrap();
+    assert_eq!(first.ocomp_key_hash, keccak256(public_key));
     let replay = attester.attest(&canonical, &spec, 100).unwrap();
     assert_eq!(first, replay);
     let intent = JobIntentV1::decode_canonical(&spec.canonical_job_intent.0, &limits).unwrap();

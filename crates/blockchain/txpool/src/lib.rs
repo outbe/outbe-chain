@@ -897,7 +897,7 @@ mod tests {
             result_validator_set_epoch: 7,
             result_committee_set_hash: B256::repeat_byte(0x33),
             result_ocomp_binding_hash: B256::repeat_byte(0x34),
-            validator_index: 1,
+            ocomp_key_hash: B256::repeat_byte(0x35),
             key_epoch: 1,
         };
         let mut body = Vec::new();
@@ -907,9 +907,9 @@ mod tests {
         body.extend_from_slice(&prefix.result_validator_set_epoch.to_be_bytes());
         body.extend_from_slice(prefix.result_committee_set_hash.as_slice());
         body.extend_from_slice(prefix.result_ocomp_binding_hash.as_slice());
-        body.extend_from_slice(&prefix.validator_index.to_be_bytes());
+        body.extend_from_slice(prefix.ocomp_key_hash.as_slice());
         body.extend_from_slice(&prefix.key_epoch.to_be_bytes());
-        body.resize(150, 0);
+        body.resize(180, 0);
         let payload = encode_envelope(ObjectKind::ResultVoteV1, &body, poc_schema_limits().codec)
             .expect("canonical OCOMP vote prefix must encode");
         assert_eq!(payload.len(), OCB1_HEADER_LEN + body.len());

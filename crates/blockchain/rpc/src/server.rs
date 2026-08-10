@@ -5,7 +5,7 @@
 //! This would provide light-client-grade trust: verify that 2/3+1 validators
 //! signed each block using the group public key from the ValidatorSet contract.
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, Bytes, B256, U256};
 use jsonrpsee::core::RpcResult;
 use outbe_compressed_entities::{
     CeDomain, CompressedTreeService, PointReadRequestV1, PointReadResultV1, SelectedHeaderV1,
@@ -78,6 +78,26 @@ pub struct OutbeApiHandler<P> {
     projection_readiness: ProjectionReadinessHandle,
     point_reads: Option<PointReadRuntime>,
     tee_renewal_schedule: Option<TeeRenewalScheduleConfigV1>,
+    ocomp_lysis_openings: Option<OcompLysisOpeningsRuntimeV1>,
+}
+
+type OcompLysisOpeningsBuilderV1 =
+    dyn Fn(B256, Bytes) -> Result<Bytes, String> + Send + Sync + 'static;
+
+#[derive(Clone)]
+pub struct OcompLysisOpeningsRuntimeV1(Arc<OcompLysisOpeningsBuilderV1>);
+
+impl OcompLysisOpeningsRuntimeV1 {
+    #[must_use]
+    pub fn new(
+        builder: impl Fn(B256, Bytes) -> Result<Bytes, String> + Send + Sync + 'static,
+    ) -> Self {
+        Self(Arc::new(builder))
+    }
+
+    fn build(&self, intent_id: B256, subjects: Bytes) -> Result<Bytes, String> {
+        (self.0)(intent_id, subjects)
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -123,6 +143,7 @@ impl<P> OutbeApiHandler<P> {
             projection_readiness,
             point_reads: None,
             tee_renewal_schedule: None,
+            ocomp_lysis_openings: None,
         }
     }
 
@@ -139,6 +160,7 @@ impl<P> OutbeApiHandler<P> {
             projection_readiness,
             point_reads: None,
             tee_renewal_schedule: None,
+            ocomp_lysis_openings: None,
         }
     }
 
@@ -157,6 +179,7 @@ impl<P> OutbeApiHandler<P> {
             projection_readiness,
             point_reads: None,
             tee_renewal_schedule: None,
+            ocomp_lysis_openings: None,
         }
     }
 
@@ -185,6 +208,12 @@ impl<P> OutbeApiHandler<P> {
             dkg_prepare_window_blocks,
             minimum_block_time_millis,
         });
+        self
+    }
+
+    #[must_use]
+    pub fn with_ocomp_lysis_openings(mut self, runtime: OcompLysisOpeningsRuntimeV1) -> Self {
+        self.ocomp_lysis_openings = Some(runtime);
         self
     }
 }
@@ -285,6 +314,21 @@ where
         request: PointReadRequestV1,
     ) -> RpcResult<PointReadResultV1> {
         self.serve_compressed_entity(request).await
+    }
+
+    async fn get_ocomp_lysis_openings_v1(
+        &self,
+        intent_id: B256,
+        canonical_request: Bytes,
+    ) -> RpcResult<Bytes> {
+        let runtime = self
+            .ocomp_lysis_openings
+            .clone()
+            .ok_or_else(|| internal_err("OCOMP Lysis openings are not configured".to_owned()))?;
+        tokio::task::spawn_blocking(move || runtime.build(intent_id, canonical_request))
+            .await
+            .map_err(|error| internal_err(format!("OCOMP openings worker failed: {error}")))?
+            .map_err(internal_err)
     }
 
     async fn derive_keys(
@@ -736,7 +780,9 @@ fn invalid_params_err(msg: String) -> jsonrpsee::types::ErrorObject<'static> {
 
 #[cfg(test)]
 mod tests {
-    use super::read_effective_slash_config;
+    use alloy_primitives::{Bytes, B256};
+
+    use super::{read_effective_slash_config, OcompLysisOpeningsRuntimeV1};
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 
     #[test]
@@ -752,5 +798,26 @@ mod tests {
         assert_eq!(config.voter_felony_threshold, 500);
         assert_eq!(config.slash_amount_percent, 5);
         assert_eq!(config.evidence_reward_percent, 10);
+    }
+
+    #[test]
+    fn ocomp_openings_runtime_forwards_exact_intent_and_canonical_request() {
+        let expected_intent = B256::repeat_byte(0x41);
+        let expected_request = Bytes::from_static(b"canonical-request");
+        let runtime = OcompLysisOpeningsRuntimeV1::new({
+            let expected_request = expected_request.clone();
+            move |intent_id, request| {
+                assert_eq!(intent_id, expected_intent);
+                assert_eq!(request, expected_request);
+                Ok(Bytes::from_static(b"canonical-openings"))
+            }
+        });
+
+        assert_eq!(
+            runtime
+                .build(expected_intent, expected_request)
+                .expect("purpose-bound openings"),
+            Bytes::from_static(b"canonical-openings")
+        );
     }
 }

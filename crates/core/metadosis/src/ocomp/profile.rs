@@ -1,8 +1,7 @@
 use alloy_primitives::B256;
+use outbe_chain_constants::DEFAULT_OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS;
 use outbe_ocomp_protocol::{
-    generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1,
-    profile::{CapacityProfileV1, OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS},
-    SchemaLimits,
+    generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1, profile::CapacityProfileV1, SchemaLimits,
 };
 use outbe_primitives::error::Result;
 
@@ -155,7 +154,8 @@ pub(super) fn validate_request_profile(profile: &OcompRequestProfile) -> Result<
         || capacity.max_oracle_wwd_pair_entries > max_oracle_entries
         || capacity.max_active_scurve_entries == 0
         || capacity.max_active_scurve_entries > max_active_scurve_entries
-        || capacity.result_deadline_blocks != OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS
+        || capacity.result_deadline_blocks == 0
+        || capacity.result_deadline_blocks > DEFAULT_OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS
         || capacity.source_retention_after_terminal_blocks
             != candidate.source_retention_after_terminal_blocks
     {

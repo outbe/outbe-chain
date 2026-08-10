@@ -4,7 +4,7 @@
 //! discovery record. The dedicated OCOMP key signs the inner `ResultVoteV1`;
 //! the EVM key signs only the outer transaction.
 
-use alloy_primitives::B256;
+use alloy_primitives::{keccak256, B256};
 use outbe_ocomp_protocol::{
     committee::{verify_low_s_prehash, POC_KEY_EPOCH},
     control::FinalizedJobSpecV1,
@@ -24,7 +24,7 @@ use crate::{
 pub struct LocalResultVoteAttesterV1 {
     identity: EndpointIdentity,
     fork_id: B256,
-    validator_index: u16,
+    ocomp_key_hash: B256,
     signer: OcompSigner,
     sign_once: SignOnceStore,
     limits: SchemaLimits,
@@ -34,7 +34,6 @@ impl LocalResultVoteAttesterV1 {
     pub fn new(
         identity: EndpointIdentity,
         fork_id: B256,
-        validator_index: u16,
         signer: OcompSigner,
         sign_once: SignOnceStore,
         limits: SchemaLimits,
@@ -44,14 +43,20 @@ impl LocalResultVoteAttesterV1 {
                 "configured OCOMP key epoch",
             ));
         }
+        let ocomp_key_hash = keccak256(signer.public_key_sec1());
         Ok(Self {
             identity,
             fork_id,
-            validator_index,
+            ocomp_key_hash,
             signer,
             sign_once,
             limits,
         })
+    }
+
+    #[must_use]
+    pub const fn ocomp_key_hash(&self) -> B256 {
+        self.ocomp_key_hash
     }
 
     pub fn attest(
@@ -77,12 +82,6 @@ impl LocalResultVoteAttesterV1 {
                 "canonical voting window",
             ));
         }
-        if self.validator_index >= intent.result_member_count {
-            return Err(LocalResultAttestationErrorV1::Binding(
-                "configured validator index for finalized snapshot",
-            ));
-        }
-
         let result_digest = result.result_digest(&self.limits)?;
         let subject = SignOnceSubjectV1 {
             chain_id: self.identity.chain_id,
@@ -94,7 +93,7 @@ impl LocalResultVoteAttesterV1 {
             result_validator_set_epoch: intent.result_validator_set_epoch,
             result_committee_set_hash: intent.result_committee_set_hash,
             result_ocomp_binding_hash: intent.result_ocomp_binding_hash,
-            validator_index: self.validator_index,
+            ocomp_key_hash: self.ocomp_key_hash,
             key_epoch: self.signer.key_epoch(),
             result_digest,
         };
@@ -111,7 +110,7 @@ impl LocalResultVoteAttesterV1 {
             result_validator_set_epoch: intent.result_validator_set_epoch,
             result_committee_set_hash: intent.result_committee_set_hash,
             result_ocomp_binding_hash: intent.result_ocomp_binding_hash,
-            validator_index: self.validator_index,
+            ocomp_key_hash: self.ocomp_key_hash,
             key_epoch: self.signer.key_epoch(),
             result,
             signature_rs: record.signature_rs,

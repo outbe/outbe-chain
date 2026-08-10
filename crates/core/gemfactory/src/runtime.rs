@@ -164,7 +164,7 @@ fn burn_parked_intex(
         .into(),
     )?;
     IIntexNFT1155::parkIntexCall::abi_decode_returns(&ret)
-        .map_err(|_| PrecompileError::Revert("parkIntex return undecodable".into()).into())
+        .map_err(|_| PrecompileError::Revert("parkIntex return undecodable".into()))
 }
 
 /// Issue one Merchant gem to a customer, draining the position's capacity.

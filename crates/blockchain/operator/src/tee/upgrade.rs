@@ -595,7 +595,9 @@ pub fn copy_same_platform_sealed_root_and_checkpoint_v1(
                 ..current
             })
         }
-        _ => eyre::bail!("sealed root can be copied only at candidate-prepared checkpoint"),
+        _ => {
+            eyre::bail!("sealed root can be copied only at candidate-prepared checkpoint");
+        }
     }
 }
 
@@ -855,15 +857,14 @@ pub async fn run_upgrade_submission_v1(
             }
             UpgradeJournalStateV1::SubmissionPrepared { ref submission, .. } => {
                 let transaction_hash = last_transaction_hash(submission)?;
-                if finalized_transition_matches_v1(rpc, selector, node_data_dir, submission).await? {
+                if finalized_transition_matches_v1(rpc, selector, node_data_dir, submission).await?
+                {
                     let finalized = read_finalized_renewal_view_v1(rpc, selector).await?;
                     record_upgrade_submitted_v1(
                         node_data_dir,
                         finalized.schedule.finalized_height,
                     )?;
-                    return Ok(UpgradeSubmissionOutcomeV1::AlreadySubmitted {
-                        transaction_hash,
-                    });
+                    return Ok(UpgradeSubmissionOutcomeV1::AlreadySubmitted { transaction_hash });
                 }
                 let raw = submission
                     .relay_variants
@@ -875,7 +876,8 @@ pub async fn run_upgrade_submission_v1(
                         .wrap_err("parse transition transaction hash")?,
                     Err(error) if transaction_is_already_known(&error) => raw.transaction_hash,
                     Err(error) => {
-                        return Err(error).wrap_err("submit exact measurement-transition transaction")
+                        return Err(error)
+                            .wrap_err("submit exact measurement-transition transaction")
                     }
                 };
                 if returned_hash != raw.transaction_hash {
@@ -919,9 +921,11 @@ pub async fn run_upgrade_submission_v1(
                 finalized_height,
                 activation_height,
                 ..
-            } => eyre::bail!(
-                "upgrade missed successor activation cutoff {activation_height} at finalized height {finalized_height}"
-            ),
+            } => {
+                eyre::bail!(
+                    "upgrade missed successor activation cutoff {activation_height} at finalized height {finalized_height}"
+                );
+            }
         }
     }
 }
@@ -1141,7 +1145,9 @@ fn validate_candidate_identity_v1(
             NodeBindingSelectorV1::FullNode(public),
             outbe_primitives::tee_attestation_v1::NodeIdV1::FullNode { reth_p2p_public },
         ) if public == reth_p2p_public => {}
-        _ => eyre::bail!("upgrade selector does not match the candidate node identity"),
+        _ => {
+            eyre::bail!("upgrade selector does not match the candidate node identity");
+        }
     }
     Ok(())
 }

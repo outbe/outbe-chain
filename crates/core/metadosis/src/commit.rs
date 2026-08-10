@@ -131,8 +131,10 @@ pub(crate) fn commit_emergency_fail(
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct NewWwdSchedule {
     pub(crate) forming_start: u64,
-    pub(crate) lookback_hours: u64,
-    pub(crate) offering_hours: u64,
+    pub(crate) forming_period_seconds: u64,
+    pub(crate) lookback_delay_seconds: u64,
+    pub(crate) offering_period_seconds: u64,
+    pub(crate) waiting_period_seconds: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -180,13 +182,7 @@ fn commit_new_wwd_inner(
         )));
     }
 
-    metadosis.commit_create_worldwide_day(
-        permit,
-        worldwide_day,
-        schedule.forming_start,
-        schedule.lookback_hours,
-        schedule.offering_hours,
-    )?;
+    metadosis.commit_create_worldwide_day(permit, worldwide_day, schedule)?;
     metadosis.commit_add_active_wwd(permit, worldwide_day)?;
     TributeContract::new(metadosis.storage.clone()).seal_day(worldwide_day)?;
 
@@ -638,7 +634,7 @@ mod tests {
                 max_oracle_wwd_pair_entries: 256,
                 max_active_scurve_entries: 256,
                 result_deadline_blocks:
-                    outbe_ocomp_protocol::profile::OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS,
+                    outbe_chain_constants::DEFAULT_OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS,
                 source_retention_after_terminal_blocks: 64,
                 generated_limits_manifest_hash: B256::repeat_byte(0x23),
             },

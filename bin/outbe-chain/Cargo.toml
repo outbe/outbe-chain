@@ -15,10 +15,12 @@ name = "outbe-chain"
 path = "src/main.rs"
 
 [dependencies]
+outbe-chain-constants.workspace = true
 outbe-evm.workspace = true
 outbe-compressed-entities.workspace = true
 outbe-rpc.workspace = true
 outbe-node.workspace = true
+outbe-ocomp.workspace = true
 outbe-ocomp-protocol.workspace = true
 outbe-consensus.workspace = true
 outbe-engine.workspace = true
@@ -41,6 +43,8 @@ commonware-cryptography.workspace = true
 commonware-runtime.workspace = true
 
 alloy-primitives.workspace = true
+alloy-consensus.workspace = true
+alloy-sol-types.workspace = true
 clap.workspace = true
 eyre.workspace = true
 hex.workspace = true
@@ -50,6 +54,8 @@ serde.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
+futures.workspace = true
+reth-primitives-traits.workspace = true
 
 [dev-dependencies]
 commonware-consensus.workspace = true

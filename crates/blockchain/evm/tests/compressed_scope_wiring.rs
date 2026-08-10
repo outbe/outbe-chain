@@ -52,7 +52,7 @@ fn execution_db(proposer: Address, parent_root: B256) -> CacheDB<EmptyDBTyped<Pr
             .register_validator(owner, proposer, &public_key)
             .unwrap();
         validators
-            .activate_reshared_set(&[proposer], B256::ZERO)
+            .activate_validator_via_boundary_for_test(proposer)
             .unwrap();
 
         let mut oracle = outbe_oracle::schema::OracleContract::new(storage);

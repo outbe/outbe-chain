@@ -172,6 +172,7 @@ pub struct OcompPublicVoteAccountabilityV1 {
     pub member_count: u16,
     pub quorum_threshold: u16,
     pub slot_validator_indexes: Vec<u16>,
+    pub slot_first_signatures: Vec<(u16, Vec<u8>)>,
     pub quorum_result_digest: Option<B256>,
     pub quorum_height: Option<u64>,
     pub quorum_signer_bitmap: Option<Vec<u8>>,
@@ -1513,6 +1514,12 @@ impl Rpc {
                 .flatten()
                 .map(|slot| slot.validator_index)
                 .collect(),
+            slot_first_signatures: accountability
+                .slots
+                .iter()
+                .flatten()
+                .map(|slot| (slot.validator_index, slot.first_signature_rs.to_vec()))
+                .collect(),
             quorum_result_digest: quorum.map(|value| value.result_digest),
             quorum_height: quorum.map(|value| value.quorum_height),
             quorum_signer_bitmap: quorum.map(|value| value.signer_bitmap.clone()),
@@ -1648,7 +1655,7 @@ impl Rpc {
     pub fn submit_ocomp_result_vote_bytes(
         &self,
         port: u16,
-        validator: &Validator,
+        signer_key: &str,
         vote_bytes: Vec<u8>,
     ) -> Result<String> {
         let calldata = IMetadosis::submitLysisResultCall {
@@ -1658,9 +1665,9 @@ impl Rpc {
         eth::send_calldata(
             &self.url(port),
             addresses::WWD_ADDR,
-            &validator.evm_key()?,
+            signer_key,
             calldata,
-            outbe_ocomp_protocol::generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1.max_activation_gas,
+            outbe_ocomp_protocol::system_carrier::OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
         )
     }
 

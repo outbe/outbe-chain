@@ -212,6 +212,6 @@ change. OCOMP can evolve operationally without owning its economics.
     an independent reference corpus.
 15. Prove 1/2/4-worker byte equality, Supervisor-submitted authenticated system
     result votes only after finality+4, snapshot-derived quorum binding,
-    1,800-block all-participant accountability with ACTIVE-only deadline jail
+    job-pinned all-participant accountability (production default 1,800 blocks) with ACTIVE-only deadline jail
     and non-ACTIVE non-mutation, independent FullNode recomputation and the full
     PFS-002 activation/output path.

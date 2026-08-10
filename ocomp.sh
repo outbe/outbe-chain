@@ -4,11 +4,11 @@
 #
 # Direct OCOMP launcher. The chain process must already expose its standard
 # JSON-RPC endpoint; OCOMP has no private node control port. This script owns
-# role identities, directories, process groups, status and shutdown directly.
+# role processes, directories, process groups, status and shutdown directly.
 #
 # Usage:
-#   sudo OUTBE_OCOMP_BASE_PATH=/path/to/network OCOMP_VALIDATOR_INDEX=0 ./ocomp.sh install
-#   sudo OUTBE_OCOMP_BASE_PATH=/path/to/network OCOMP_VALIDATOR_INDEX=0 ./ocomp.sh start
+#   OUTBE_OCOMP_BASE_PATH=/path/to/network OCOMP_VALIDATOR_INDEX=0 ./ocomp.sh install
+#   OUTBE_OCOMP_BASE_PATH=/path/to/network OCOMP_VALIDATOR_INDEX=0 ./ocomp.sh start
 
 set -euo pipefail
 
@@ -29,11 +29,7 @@ readonly OCOMP_BINARY="${OUTBE_OCOMP_BINARY:-$BASE_DIR/outbe-ocomp}"
 readonly OCOMP_ENV_FILE="$VALIDATOR_ROOT/ocomp.env"
 readonly OCOMP_EXPORT_ENV_FILE="$VALIDATOR_ROOT/ocomp-export.env"
 
-# Role identities are fixed.
-readonly SUPERVISOR_USER="outbe-ocomp-supervisor"
-readonly EXPORTER_USER="outbe-ocomp-export"
-readonly WORKER_USER="outbe-ocomp-worker"
-readonly ARTIFACT_GROUP="outbe-ocomp-artifacts"
+readonly RUNTIME_UID="${EUID:-$(id -u)}"
 
 readonly OCOMP_ROOT="$VALIDATOR_ROOT/ocomp"
 readonly RUNTIME_ROOT="$OCOMP_ROOT/run"
@@ -67,79 +63,38 @@ die() {
   exit 1
 }
 
-require_root() {
-  [[ ${EUID:-$(id -u)} -eq 0 ]] || die "run as root (sudo $0 ...)"
-}
-
 require_command() {
   command -v "$1" >/dev/null 2>&1 || die "required command is missing: $1"
 }
 
-ensure_group() {
-  local group=$1
-  getent group "$group" >/dev/null 2>&1 || groupadd --system "$group"
-}
-
-ensure_user() {
-  local user=$1
-  if ! id -u "$user" >/dev/null 2>&1; then
-    ensure_group "$user"
-    useradd \
-      --system \
-      --gid "$user" \
-      --home-dir /nonexistent \
-      --no-create-home \
-      --shell /usr/sbin/nologin \
-      "$user"
-  fi
-}
-
-add_user_to_group() {
-  local user=$1
-  local group=$2
-  id -nG "$user" | tr ' ' '\n' | grep -Fxq "$group" ||
-    usermod --append --groups "$group" "$user"
-}
-
-prepare_identities() {
-  ensure_group "$ARTIFACT_GROUP"
-  ensure_user "$SUPERVISOR_USER"
-  ensure_user "$EXPORTER_USER"
-  ensure_user "$WORKER_USER"
-
-  add_user_to_group "$SUPERVISOR_USER" "$ARTIFACT_GROUP"
-  add_user_to_group "$EXPORTER_USER" "$ARTIFACT_GROUP"
-  add_user_to_group "$WORKER_USER" "$ARTIFACT_GROUP"
-}
-
 prepare_directories() {
-  install -d -m 0755 -o root -g root "$OCOMP_ROOT"
-  install -d -m 0755 -o root -g root "$RUNTIME_ROOT"
-  install -d -m 0700 -o root -g root "$PID_ROOT"
-  install -d -m 0700 -o root -g root \
+  install -d -m 0755 "$OCOMP_ROOT"
+  install -d -m 0755 "$RUNTIME_ROOT"
+  install -d -m 0700 "$PID_ROOT"
+  install -d -m 0700 \
     "$PID_ROOT/supervisor"
-  install -d -m 0700 -o root -g root \
+  install -d -m 0700 \
     "$PID_ROOT/snapshot-exporter"
   local ordinal
   for ordinal in 0 1 2 3; do
-    install -d -m 0700 -o root -g root "$PID_ROOT/worker-$ordinal"
+    install -d -m 0700 "$PID_ROOT/worker-$ordinal"
   done
-  install -d -m 0750 -o "$SUPERVISOR_USER" -g "$ARTIFACT_GROUP" "$STATE_ROOT"
-  install -d -m 0770 -o "$SUPERVISOR_USER" -g "$ARTIFACT_GROUP" \
+  install -d -m 0750 "$STATE_ROOT"
+  install -d -m 0770 \
     "$STATE_ROOT/cas-v1" \
     "$STATE_ROOT/cas-v1/objects" \
     "$STATE_ROOT/cas-v1/refs" \
     "$STATE_ROOT/cas-v1/staging" \
     "$STATE_ROOT/worker-inbox-v1"
-  install -d -m 0770 -o "$EXPORTER_USER" -g "$ARTIFACT_GROUP" \
+  install -d -m 0770 \
     "$STATE_ROOT/cas-v1/staging/exporter"
-  install -d -m 0770 -o "$SUPERVISOR_USER" -g "$ARTIFACT_GROUP" \
+  install -d -m 0770 \
     "$STATE_ROOT/cas-v1/staging/supervisor"
-  install -d -m 0750 -o "$EXPORTER_USER" -g "$ARTIFACT_GROUP" \
+  install -d -m 0750 \
     "$STATE_ROOT/exporter-v1"
-  install -d -m 0700 -o "$SUPERVISOR_USER" -g "$ARTIFACT_GROUP" \
+  install -d -m 0700 \
     "$STATE_ROOT/supervisor-v1"
-  install -d -m 0750 -o root -g root "$LOG_ROOT"
+  install -d -m 0750 "$LOG_ROOT"
   local log_file
   for log_file in \
     "$SUPERVISOR_LOG" \
@@ -153,7 +108,6 @@ prepare_directories() {
       : >"$log_file"
     fi
     [[ -f "$log_file" ]] || die "log path is not a regular file: $log_file"
-    chown root:root "$log_file"
     chmod 0640 "$log_file"
   done
 }
@@ -168,7 +122,6 @@ prepare_ocomp_evm_key() {
       umask 077
       openssl rand -hex -out "$temporary_key" 32
     )
-    chown "$SUPERVISOR_USER":"$SUPERVISOR_USER" "$temporary_key"
     chmod 0600 "$temporary_key"
     if ln -- "$temporary_key" "$OCOMP_EVM_KEY"; then
       rm -f -- "$temporary_key"
@@ -184,7 +137,7 @@ prepare_ocomp_evm_key() {
     die "OCOMP EVM key is not a regular non-symlink file: $OCOMP_EVM_KEY"
 
   local expected_uid actual_uid mode link_count
-  expected_uid=$(id -u "$SUPERVISOR_USER")
+  expected_uid=$RUNTIME_UID
   actual_uid=$(stat -c '%u' "$OCOMP_EVM_KEY")
   mode=$(stat -c '%a' "$OCOMP_EVM_KEY")
   link_count=$(stat -c '%h' "$OCOMP_EVM_KEY")
@@ -200,11 +153,10 @@ prepare_ocomp_evm_key() {
 
   local signer_address
   if ! signer_address=$(
-    runuser --user "$SUPERVISOR_USER" -- \
-      env \
-        OUTBE_OCOMP_BASE_PATH="${RUNTIME_ENV[OUTBE_OCOMP_BASE_PATH]}" \
-        OCOMP_VALIDATOR_INDEX="${RUNTIME_ENV[OCOMP_VALIDATOR_INDEX]}" \
-        "$OCOMP_BINARY" signer-address
+    env \
+      OUTBE_OCOMP_BASE_PATH="${RUNTIME_ENV[OUTBE_OCOMP_BASE_PATH]}" \
+      OCOMP_VALIDATOR_INDEX="${RUNTIME_ENV[OCOMP_VALIDATOR_INDEX]}" \
+      "$OCOMP_BINARY" signer-address
   ); then
     if ((created == 1)); then
       rm -f -- "$OCOMP_EVM_KEY"
@@ -215,14 +167,7 @@ prepare_ocomp_evm_key() {
 }
 
 prepare() {
-  require_root
-  require_command getent
-  require_command groupadd
-  require_command useradd
-  require_command usermod
-  require_command runuser
   require_command setsid
-  require_command setpriv
   require_command prlimit
   require_command flock
   require_command timeout
@@ -230,7 +175,6 @@ prepare() {
   require_command openssl
   [[ -x "$OCOMP_BINARY" ]] ||
     die "OCOMP binary is missing or not executable: $OCOMP_BINARY"
-  prepare_identities
   prepare_directories
   prepare_ocomp_evm_key
 }
@@ -341,12 +285,10 @@ terminate_process_group() {
 
 start_role() {
   local name=$1
-  local user=$2
-  local group=$3
-  local pid_file=$4
-  local log_file=$5
-  local expected_command=$6
-  shift 6
+  local pid_file=$2
+  local log_file=$3
+  local expected_command=$4
+  shift 4
 
   if pid_is_running "$pid_file"; then
     echo "ocomp: $name already running (pid $(cut -d ' ' -f 1 "$pid_file"))"
@@ -360,11 +302,6 @@ start_role() {
   (
     umask 0027
     exec setsid \
-      setpriv \
-        --reuid="$user" \
-        --regid="$group" \
-        --init-groups \
-        --no-new-privs \
       env -i \
         PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
         HOME=/nonexistent \
@@ -385,7 +322,7 @@ start_role() {
       local actual_uid command_line
       actual_uid=$(stat -c '%u' "/proc/$pid")
       command_line=$(tr '\0' ' ' <"/proc/$pid/cmdline")
-      if [[ "$actual_uid" == "$(id -u "$user")" &&
+      if [[ "$actual_uid" == "$RUNTIME_UID" &&
         "$command_line" == *"$expected_command"* ]]; then
         echo "ocomp: started $name (pid $pid)"
         START_ROLE_LAUNCHED=1
@@ -402,23 +339,15 @@ start_role() {
 verify_prerequisites() {
   [[ -x "$OCOMP_BINARY" ]] || die "OCOMP binary is missing or not executable: $OCOMP_BINARY"
   [[ -r "$PROTOCOL_BUNDLE" ]] || die "protocol bundle is missing: $PROTOCOL_BUNDLE"
-  local role_user
-  for role_user in "$SUPERVISOR_USER" "$EXPORTER_USER" "$WORKER_USER"; do
-    runuser --user "$role_user" -- test -r "$PROTOCOL_BUNDLE" ||
-      die "$role_user cannot read protocol bundle $PROTOCOL_BUNDLE"
-  done
-  runuser --user "$SUPERVISOR_USER" -- test -r "$OCOMP_EVM_KEY" ||
-    die "$SUPERVISOR_USER cannot read OCOMP EVM key $OCOMP_EVM_KEY"
-  runuser --user "$SUPERVISOR_USER" -- test -r "$OCOMP_RESULT_KEY" ||
-    die "$SUPERVISOR_USER cannot read pre-provisioned OCOMP result key $OCOMP_RESULT_KEY"
+  [[ -r "$OCOMP_EVM_KEY" ]] || die "OCOMP EVM key is unreadable: $OCOMP_EVM_KEY"
+  [[ -r "$OCOMP_RESULT_KEY" ]] ||
+    die "pre-provisioned OCOMP result key is unreadable: $OCOMP_RESULT_KEY"
 }
 
 start_worker() {
   local ordinal=$1
   start_role \
     "worker $ordinal" \
-    "$WORKER_USER" \
-    "$ARTIFACT_GROUP" \
     "$(worker_pid_file "$ordinal")" \
     "$(worker_log_file "$ordinal")" \
     "$OCOMP_BINARY worker" \
@@ -441,8 +370,6 @@ start_worker() {
 start_supervisor() {
   start_role \
     "supervisor" \
-    "$SUPERVISOR_USER" \
-    "$ARTIFACT_GROUP" \
     "$SUPERVISOR_PID" \
     "$SUPERVISOR_LOG" \
     "$OCOMP_BINARY supervisor" \
@@ -463,8 +390,6 @@ start_supervisor() {
 start_exporter() {
   start_role \
     "snapshot exporter" \
-    "$EXPORTER_USER" \
-    "$ARTIFACT_GROUP" \
     "$EXPORTER_PID" \
     "$EXPORTER_LOG" \
     "$OCOMP_BINARY snapshot-exporter" \
@@ -498,14 +423,13 @@ start() {
     if [[ $exit_code -ne 0 ]]; then
       set +e
       ((STARTED_SUPERVISOR_THIS_RUN == 0)) ||
-        stop_pid "supervisor" "$SUPERVISOR_USER" "$OCOMP_BINARY supervisor" "$SUPERVISOR_PID"
+        stop_pid "supervisor" "$OCOMP_BINARY supervisor" "$SUPERVISOR_PID"
       ((STARTED_EXPORTER_THIS_RUN == 0)) ||
-        stop_pid "snapshot exporter" "$EXPORTER_USER" "$OCOMP_BINARY snapshot-exporter" "$EXPORTER_PID"
+        stop_pid "snapshot exporter" "$OCOMP_BINARY snapshot-exporter" "$EXPORTER_PID"
       local ordinal
       for ordinal in "${STARTED_WORKER_ORDINALS_THIS_RUN[@]}"; do
         stop_pid \
           "worker $ordinal" \
-          "$WORKER_USER" \
           "$OCOMP_BINARY worker" \
           "$(worker_pid_file "$ordinal")"
       done
@@ -534,9 +458,8 @@ acquire_lifecycle_lock() {
 
 stop_pid() {
   local name=$1
-  local expected_user=$2
-  local expected_command=$3
-  local pid_file=$4
+  local expected_command=$2
+  local pid_file=$3
   if ! pid_is_running "$pid_file"; then
     rm -f "$pid_file"
     echo "ocomp: $name is not running"
@@ -545,12 +468,11 @@ stop_pid() {
 
   local pid recorded_ticks
   read -r pid recorded_ticks <"$pid_file"
-  local expected_uid actual_uid command_line
-  expected_uid=$(id -u "$expected_user")
+  local actual_uid command_line
   actual_uid=$(stat -c '%u' "/proc/$pid")
   command_line=$(tr '\0' ' ' <"/proc/$pid/cmdline")
-  [[ "$actual_uid" == "$expected_uid" ]] ||
-    die "refusing to stop $name: pid $pid belongs to uid $actual_uid, expected $expected_uid"
+  [[ "$actual_uid" == "$RUNTIME_UID" ]] ||
+    die "refusing to stop $name: pid $pid belongs to uid $actual_uid, expected $RUNTIME_UID"
   [[ "$command_line" == *"$expected_command"* ]] ||
     die "refusing to stop $name: pid $pid command does not contain $expected_command"
   terminate_process_group "$pid"
@@ -567,16 +489,14 @@ stop_pid() {
 }
 
 stop() {
-  require_root
   require_command flock
   acquire_lifecycle_lock
-  stop_pid "supervisor" "$SUPERVISOR_USER" "$OCOMP_BINARY supervisor" "$SUPERVISOR_PID"
-  stop_pid "snapshot exporter" "$EXPORTER_USER" "$OCOMP_BINARY snapshot-exporter" "$EXPORTER_PID"
+  stop_pid "supervisor" "$OCOMP_BINARY supervisor" "$SUPERVISOR_PID"
+  stop_pid "snapshot exporter" "$OCOMP_BINARY snapshot-exporter" "$EXPORTER_PID"
   local ordinal
   for ordinal in 0 1 2 3; do
     stop_pid \
       "worker $ordinal" \
-      "$WORKER_USER" \
       "$OCOMP_BINARY worker" \
       "$(worker_pid_file "$ordinal")"
   done
@@ -620,7 +540,6 @@ status() {
 }
 
 logs() {
-  require_root
   tail -n 100 -F \
     "$SUPERVISOR_LOG" \
     "$EXPORTER_LOG" \
@@ -632,10 +551,10 @@ logs() {
 
 usage() {
   cat <<EOF
-Usage: sudo $0 <command>
+Usage: $0 <command>
 
 Commands:
-  install   Create the fixed OCOMP users, groups and data directories.
+  install   Create OCOMP data directories for the invoking process identity.
   start     Start worker, snapshot exporter and supervisor.
   stop      Stop all standalone OCOMP processes.
   restart   Stop and start all standalone OCOMP processes.

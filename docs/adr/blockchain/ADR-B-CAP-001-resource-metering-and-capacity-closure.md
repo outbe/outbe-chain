@@ -160,7 +160,7 @@ The result-vote state remains one bounded monolithic accountability value with
 dynamic slots and `ceil(N/8)` LSB0 bitmaps. CI constructs its worst closed shape
 at the consensus bound, round-trips the canonical codec, checks the one-vote
 internal-work formula and proves bounded system execution across the exact
-1,800-block compute-vote window. The gate reads the exported consensus bound
+genesis-installed compute-vote window (production default 1,800 blocks). The gate reads the exported consensus bound
 and derives `N`, quorum and bitmap size; no OCOMP-specific member-count literal
 or frozen example is architecture. It separately proves that each canonical
 `gas_limit = 30_000` vote carrier consumes no user-lane gas while its actual

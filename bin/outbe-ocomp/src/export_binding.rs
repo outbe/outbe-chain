@@ -399,10 +399,11 @@ fn validate_binding_authority(
     limits: &SchemaLimits,
 ) -> Result<(), ExportBindingError> {
     let intent = JobIntentV1::decode_canonical(&discovery.spec.canonical_job_intent.0, limits)?;
-    require(
-        binding.discovery_generation == discovery.generation,
-        "discovery generation",
-    )?;
+    // `discovery_generation` belongs to the legacy single-current local
+    // journal. It is retained for decoding old local artifacts, but it is not
+    // authority in the embedded multi-job path. The exact finalized cursor and
+    // full spec hash below bind this receipt more strongly and independently of
+    // local discovery order.
     require(
         binding.finalized_cursor == discovery.cursor,
         "finalized cursor",

@@ -213,6 +213,9 @@ TEE_REGISTRY_ADDRESS = "000000000000000000000000000000000000ee0a"
 # before production dispatch activates.
 STABLECOIN_FACTORY_ADDRESS = "000000000000000000000000000000000000ee0f"
 STABLECOIN_POLICY_REGISTRY_ADDRESS = "000000000000000000000000000000000000ee10"
+# Immutable protocol timing record. Python may author config.outbeProtocol, but
+# only `outbe-chain constants genesis` owns this account's Rust storage layout.
+CHAIN_CONSTANTS_ADDRESS = "000000000000000000000000000000000000ee11"
 STABLECOIN_ADDRESS_PREFIX = "53c0"
 OUTBE_SYSTEM_TX_ADDRESS = "ff00000000000000000000000000000000000001"
 
@@ -243,9 +246,17 @@ ALL_PRECOMPILE_ADDRESSES = [
 
 # Protocol-owned balance accumulators without precompile dispatch. They are
 # collision-protected for genesis tooling but do not receive marker bytecode.
-PROTOCOL_ACCUMULATOR_ADDRESSES = [CCA_ADDRESS, MERCHANT_ADDRESS]
+PROTOCOL_ACCUMULATOR_ADDRESSES = [
+    CCA_ADDRESS,
+    MERCHANT_ADDRESS,
+]
+IMMUTABLE_PROTOCOL_ADDRESSES = [CHAIN_CONSTANTS_ADDRESS]
 
-PROTECTED_PROTOCOL_ADDRESSES = set(ALL_PRECOMPILE_ADDRESSES + PROTOCOL_ACCUMULATOR_ADDRESSES)
+PROTECTED_PROTOCOL_ADDRESSES = set(
+    ALL_PRECOMPILE_ADDRESSES
+    + PROTOCOL_ACCUMULATOR_ADDRESSES
+    + IMMUTABLE_PROTOCOL_ADDRESSES
+)
 
 # Marker bytecode for precompile accounts (prevents EIP-161 empty account removal)
 MARKER_CODE = "0xef"
@@ -1597,6 +1608,38 @@ def seed_external_contracts(alloc, contracts_list, contracts_dir):
 
 # --- Main ---
 
+def seed_protocol_constants(genesis: dict, seed: dict) -> None:
+    """Copy optional protocol timing overrides into genesis config.
+
+    Rust resolves defaults, validates the complete record, and materializes its
+    storage later. Keeping that layout out of Python preserves one owner for the
+    consensus-visible schema.
+    """
+    profile = seed.get("protocol_constants")
+    if profile is None:
+        return
+    if not isinstance(profile, dict):
+        raise ValueError("seed protocol_constants must be a JSON object")
+    config = genesis.setdefault("config", {})
+    if not isinstance(config, dict):
+        raise ValueError("genesis config must be a JSON object")
+    existing = config.get("outbeProtocol")
+    if existing is not None and existing != profile:
+        raise ValueError(
+            "seed protocol_constants conflicts with genesis config.outbeProtocol"
+        )
+    config["outbeProtocol"] = json.loads(json.dumps(profile))
+
+
+def clear_seeded_metadosis_days(seed: dict) -> None:
+    """Let block-1 create the first WorldwideDay from protocol timings."""
+    metadosis = seed.get("metadosis")
+    if metadosis is None:
+        return
+    if not isinstance(metadosis, dict):
+        raise ValueError("seed metadosis must be a JSON object")
+    metadosis["worldwide_days"] = []
+
 def override_worldwide_day(seed: dict, day: int) -> None:
     """Retarget every worldwide-day reference in a seed to `day` (YYYYMMDD), in
     place: metadosis worldwide_days[].wwd, oracle scurve_seeds[].peak_day, and
@@ -1647,6 +1690,12 @@ def main():
              "hardcoded day desyncs from the per-block "
              "WorldwideDay::from_timestamp(block) and wedges metadosis processing.",
     )
+    parser.add_argument(
+        "--fresh-metadosis",
+        action="store_true",
+        help="Do not seed an already-OFFERING WorldwideDay; block 1 creates it "
+             "from config.outbeProtocol timings. Intended for production-shaped E2E.",
+    )
     args = parser.parse_args()
 
     with open(args.genesis) as f:
@@ -1655,11 +1704,15 @@ def main():
     with open(args.seed) as f:
         seed = json.load(f)
 
+    seed_protocol_constants(genesis, seed)
+
     # Retarget the seeded worldwide-day to the genesis (current) date when asked,
     # before any seeder consumes `seed`, so metadosis, the oracle S-curve, the
     # tribute day_totals init, and the NODs all agree on the same active day.
     if args.worldwide_day is not None:
         override_worldwide_day(seed, args.worldwide_day)
+    if args.fresh_metadosis:
+        clear_seeded_metadosis_days(seed)
 
     validators = []
     if args.validators:

@@ -663,7 +663,12 @@ pub(crate) fn run_boundary_outcome(
 ) -> Result<()> {
     let was_participant = outbe_validatorset::contract::ValidatorSet::new(ctx.storage.clone())
         .is_consensus_participant(ctx.block.proposer)?;
-    apply_boundary_outcome(ctx.storage.clone(), artifact)?;
+    apply_boundary_outcome(
+        ctx.storage.clone(),
+        artifact,
+        ctx.block.block_number,
+        ctx.block.timestamp,
+    )?;
     if !was_participant {
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(ctx.storage.clone());
         if vs.is_consensus_participant(ctx.block.proposer)? {
@@ -1103,6 +1108,7 @@ mod tests {
     use outbe_primitives::{consensus::ReshareResult, storage::hashmap::HashMapStorageProvider};
 
     const CHAIN_ID: u64 = 2026;
+    const GENESIS_HASH: B256 = B256::repeat_byte(0x11);
     const OWNER: Address = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
     const VALIDATOR: Address = address!("0x1111111111111111111111111111111111111111");
 
@@ -1183,15 +1189,18 @@ mod tests {
     }
 
     fn configured_storage(block_number: u64, timestamp: u64) -> HashMapStorageProvider {
-        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        let consensus_key = [7u8; 48];
+        let mut provider = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, GENESIS_HASH);
         provider.set_block_number(block_number);
         provider.set_timestamp(U256::from(timestamp));
         provider.set_beneficiary(VALIDATOR);
         let install = outbe_metadosis::test_support::ForkInstallScenario::measurement_at(
             1,
             CHAIN_ID,
-            B256::repeat_byte(0x11),
+            GENESIS_HASH,
         )
+        .unwrap()
+        .with_founder_validators(&[(VALIDATOR, consensus_key)])
         .unwrap()
         .into_install();
         provider.enter(|storage| {
@@ -1214,12 +1223,19 @@ mod tests {
             vs.config_owner.write(OWNER).unwrap();
             vs.set_config_max_validators(128).unwrap();
             vs.config_epoch_length_blocks.write(10).unwrap();
-            vs.register_validator(OWNER, VALIDATOR, &[7u8; 48]).unwrap();
+            vs.register_validator(OWNER, VALIDATOR, &consensus_key)
+                .unwrap();
+            vs.mark_pending(VALIDATOR).unwrap();
+            let registration = install.founder_registrations[0]
+                .encode_canonical(&outbe_metadosis::config::poc_schema_limits())
+                .unwrap();
+            vs.confirm_validator_ready(VALIDATOR, &registration)
+                .unwrap();
             vs.activate_validator_via_boundary_for_test(VALIDATOR)
                 .unwrap();
-            vs.val_has_bls_share.write(&VALIDATOR, true).unwrap();
-            vs.active_consensus_set_hash
-                .write(active_set_hash(&[VALIDATOR]))
+            let (base, quote) = outbe_oracle::api::DAY_TYPE_PAIR;
+            outbe_oracle::contract::OracleContract::new(storage.clone())
+                .register_pair(base, quote)
                 .unwrap();
         });
         provider.set_block_number(1);
@@ -1242,7 +1258,7 @@ mod tests {
         timestamp: u64,
         storage: std::collections::HashMap<(Address, U256), U256>,
     ) -> HashMapStorageProvider {
-        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        let mut provider = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, GENESIS_HASH);
         provider.set_block_number(block_number);
         provider.set_timestamp(U256::from(timestamp));
         provider.set_beneficiary(VALIDATOR);
@@ -2278,13 +2294,10 @@ mod tests {
         );
     }
 
-    /// Epoch-boundary ordering: the per-epoch reset runs in
-    /// `apply_pre_execution_changes` (pre-block hooks, executor.rs:2204) BEFORE the
-    /// begin-zone `LateFinalizeCredits` body tx (executor.rs: "begin-zone phases
-    /// execute when their body transaction reaches the loop"). This test mirrors
-    /// that order — reset, then window close — and proves the absentee's window-close
-    /// miss is recorded in the new epoch (NOT wiped); a prior epoch's accumulation is
-    /// reset first.
+    /// Boundary ordering: a block carrying certified `BoundaryOutcome` prepares
+    /// its per-epoch counter reset before the receipt-visible
+    /// `LateFinalizeCredits` body tx. The later BoundaryOutcome advances the
+    /// epoch/set/snapshot without resetting the freshly recorded absentee miss.
     #[test]
     fn window_close_miss_survives_epoch_boundary_reset() {
         use outbe_validatorset::{CommitteeEntry, CommitteeSnapshot};
@@ -2354,12 +2367,14 @@ mod tests {
                 si.voter_miss_count.write(&B, 5).unwrap();
             }
 
-            // Real begin-zone order at an epoch-boundary block: pre-block reset first…
-            {
-                let mut si =
-                    outbe_slashindicator::contract::SlashIndicator::new(ctx.storage.clone());
-                si.reset_epoch_counters(&[A, B]).unwrap();
-            }
+            // Real begin-zone order for a block that actually carries the
+            // certified boundary: boundary-conditioned pre-block reset first…
+            crate::executor::prepare_boundary_epoch_counters(
+                ctx.storage.clone(),
+                &boundary_noop(),
+                ctx.block.block_number,
+            )
+            .unwrap();
             // …then the begin-zone window-close increments.
             run_late_finalize_credits(&ctx, &LateFinalizeCreditsArtifact::default()).unwrap();
 

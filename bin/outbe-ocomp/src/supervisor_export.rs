@@ -12,7 +12,7 @@ use crate::{
         ExportReceiptBindingCandidate, ExportedManifestBindingStore,
         VerifiedExportedManifestBinding,
     },
-    export_receipt::ExportReceiptReader,
+    export_receipt::{ExportReceiptError, ExportReceiptReader},
     input_artifacts::poc_input_list_limits,
     input_ref_catalog::VerifiedInputChunkRefCatalog,
     supervisor::DiscoveryRecord,
@@ -75,10 +75,13 @@ impl SupervisorExportAdoption {
         else {
             return Ok(SupervisorExportAdoptionOutcome::Pending);
         };
-        let receipt = stage(
-            "load exact exporter receipt",
-            receipt_reader.load_exact(&self.reader),
-        )?;
+        let receipt = match receipt_reader.load_exact(&self.reader) {
+            Ok(receipt) => receipt,
+            Err(error) if receipt_publication_pending(&error) => {
+                return Ok(SupervisorExportAdoptionOutcome::Pending)
+            }
+            Err(error) => return Err(stage_error("load exact exporter receipt", error)),
+        };
         let input_refs = stage(
             "reopen exported input-ref catalog read-only",
             VerifiedInputChunkRefCatalog::reopen(
@@ -126,8 +129,44 @@ fn stage<T, E: std::fmt::Display>(
     })
 }
 
+fn stage_error(
+    stage: &'static str,
+    error: impl std::fmt::Display,
+) -> SupervisorExportAdoptionError {
+    SupervisorExportAdoptionError::Stage {
+        stage,
+        detail: error.to_string(),
+    }
+}
+
+fn receipt_publication_pending(error: &ExportReceiptError) -> bool {
+    matches!(
+        error,
+        ExportReceiptError::MissingPreparation | ExportReceiptError::MissingReceipt
+    )
+}
+
 #[derive(Debug, Error)]
 pub enum SupervisorExportAdoptionError {
     #[error("supervisor export-adoption stage `{stage}` failed: {detail}")]
     Stage { stage: &'static str, detail: String },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::export_receipt::ExportReceiptError;
+
+    #[test]
+    fn incomplete_export_publication_is_pending() {
+        assert!(receipt_publication_pending(
+            &ExportReceiptError::MissingPreparation
+        ));
+        assert!(receipt_publication_pending(
+            &ExportReceiptError::MissingReceipt
+        ));
+        assert!(!receipt_publication_pending(
+            &ExportReceiptError::ConflictingReceipt
+        ));
+    }
 }

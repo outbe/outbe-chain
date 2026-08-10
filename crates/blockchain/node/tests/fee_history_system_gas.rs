@@ -255,6 +255,8 @@ async fn gas_14_rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
     let ocomp_fork_install = Arc::new(
         ForkInstallScenario::measurement_at(1, DEVNET_CHAIN_ID, genesis_hash)
             .expect("fresh-devnet OCOMP install fixture is canonical")
+            .with_founder_validators(&[(proposer, genesis_validator_pubkey())])
+            .expect("OCOMP founder registration matches the seeded validator")
             .into_install(),
     );
     let ce_db = CeMdbx::open(
@@ -305,7 +307,6 @@ async fn gas_14_rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
         .set_dev(true);
 
     let outbe_node = OutbeNode {
-        ocomp_local_result_authority: None,
         bridge: Some(bridge),
         evm_signer: Some(signer),
         runtime_body_readers: RuntimeBodyReaders::new(Arc::new(MemoryStorage::new())),

@@ -746,6 +746,27 @@ struct TeeJoinArgs<'a> {
     timeout_secs: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum JoinTransport {
+    AuthorizedNodeHost,
+    Development,
+}
+
+fn select_join_transport(
+    attestation_mode: AttestationMode,
+    has_node_data_dir: bool,
+) -> Result<JoinTransport> {
+    match (attestation_mode, has_node_data_dir) {
+        (AttestationMode::DcapRequired, true) | (AttestationMode::GramineDirectDev, true) => {
+            Ok(JoinTransport::AuthorizedNodeHost)
+        }
+        (AttestationMode::DcapRequired, false) => Err(eyre::eyre!(
+            "DcapRequired tee join requires --node-data-dir"
+        )),
+        (AttestationMode::GramineDirectDev, false) => Ok(JoinTransport::Development),
+    }
+}
+
 async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
     let TeeJoinArgs {
         private_key,
@@ -867,6 +888,7 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
         .policy_hash()
         .map_err(|error| eyre::eyre!("active V1 policy is invalid: {error}"))?;
 
+    let join_transport = select_join_transport(policy.attestation_mode, node_data_dir.is_some())?;
     let (
         mut enclave,
         recipient_x25519,
@@ -874,15 +896,11 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
         noise_responder_x25519,
         enclave_id,
         node_host_authorization_hash,
-    ) = match policy.attestation_mode {
-        AttestationMode::DcapRequired => {
-            let node_data_dir = node_data_dir
-                .ok_or_else(|| eyre::eyre!("DcapRequired tee join requires --node-data-dir"))?;
+    ) = match join_transport {
+        JoinTransport::AuthorizedNodeHost => {
+            let node_data_dir = node_data_dir.expect("transport selection requires node data dir");
             fs::create_dir_all(node_data_dir).wrap_err_with(|| {
-                format!(
-                    "create DcapRequired node data directory {}",
-                    node_data_dir.display()
-                )
+                format!("create NodeHost data directory {}", node_data_dir.display())
             })?;
             let signer = |hash| sign_node_hash(&node_signing_key, hash);
             let client = match (&node_id, profile) {
@@ -944,12 +962,7 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
                 authorization,
             )
         }
-        AttestationMode::GramineDirectDev => {
-            if node_data_dir.is_some() {
-                return Err(eyre::eyre!(
-                    "GramineDirectDev does not consume production --node-data-dir NodeHost state"
-                ));
-            }
+        JoinTransport::Development => {
             let development = EnclaveClient::connect_endpoint(enclave_socket).map_err(|error| {
                 eyre::eyre!("connect development enclave at {enclave_socket}: {error}")
             })?;
@@ -1005,8 +1018,11 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
         .map_err(|error| eyre::eyre!("invalid V1 registration intent: {error}"))?;
     let node_signature = sign_node_hash(&node_signing_key, intent_hash)
         .map_err(|error| eyre::eyre!("sign V1 node intent: {error}"))?;
-    let (evidence, enclave_signature) = match &mut enclave {
-        RuntimeEnclaveClient::Production(client) => {
+    let (evidence, enclave_signature) = match policy.attestation_mode {
+        AttestationMode::DcapRequired => {
+            let RuntimeEnclaveClient::Production(client) = &mut enclave else {
+                unreachable!("DCAP transport selection always uses authenticated NodeHost")
+            };
             let generated = client
                 .generate_dcap_quote(&intent)
                 .map_err(|error| eyre::eyre!("generate intent-bound DCAP quote: {error}"))?;
@@ -1023,10 +1039,15 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
                 signature,
             )
         }
-        RuntimeEnclaveClient::Development(client) => {
-            let signature = client
-                .sign_registration_intent_dev_v1(&intent)
-                .map_err(|error| eyre::eyre!("sign development V1 intent: {error}"))?;
+        AttestationMode::GramineDirectDev => {
+            let signature = match &mut enclave {
+                RuntimeEnclaveClient::Production(client) => client
+                    .sign_registration_intent_dev_v1(&intent)
+                    .map_err(|error| eyre::eyre!("sign SGX development V1 intent: {error}"))?,
+                RuntimeEnclaveClient::Development(client) => client
+                    .sign_registration_intent_dev_v1(&intent)
+                    .map_err(|error| eyre::eyre!("sign development V1 intent: {error}"))?,
+            };
             (
                 AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
                     intent,
@@ -1150,10 +1171,10 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
         EnclaveResponse::OfferKeyForRegistryIngested {
             tribute_offer_public,
         } => {
-            if policy.attestation_mode == AttestationMode::DcapRequired {
+            if join_transport == JoinTransport::AuthorizedNodeHost {
                 drop(enclave);
                 let node_data_dir = node_data_dir.ok_or_else(|| {
-                    eyre::eyre!("DcapRequired onboarding lost its required node data directory")
+                    eyre::eyre!("authenticated onboarding lost its required node data directory")
                 })?;
                 let signer = |hash| sign_node_hash(&node_signing_key, hash);
                 let mut reopened = match (&node_id_for_reopen, profile) {
@@ -1202,7 +1223,7 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
                     }
                 }
             }
-            if policy.attestation_mode == AttestationMode::DcapRequired {
+            if join_transport == JoinTransport::AuthorizedNodeHost {
                 println!(
                     "✓ offer key durably installed and the authenticated enclave connection reopened (offer_public 0x{}). \
                      You can now start outbe-chain node.",
@@ -1545,6 +1566,23 @@ mod tests {
         assert!(parse_nonzero_b256(&"11".repeat(32), "binding").is_ok());
         assert!(parse_nonzero_b256(&"00".repeat(32), "binding").is_err());
         assert!(parse_nonzero_b256(&"11".repeat(31), "binding").is_err());
+    }
+
+    #[test]
+    fn join_transport_uses_node_host_for_sgx_without_dcap() {
+        assert_eq!(
+            select_join_transport(AttestationMode::DcapRequired, true).unwrap(),
+            JoinTransport::AuthorizedNodeHost
+        );
+        assert!(select_join_transport(AttestationMode::DcapRequired, false).is_err());
+        assert_eq!(
+            select_join_transport(AttestationMode::GramineDirectDev, true).unwrap(),
+            JoinTransport::AuthorizedNodeHost
+        );
+        assert_eq!(
+            select_join_transport(AttestationMode::GramineDirectDev, false).unwrap(),
+            JoinTransport::Development
+        );
     }
 
     #[test]
