@@ -3,11 +3,19 @@
 //! `python3 seed_genesis.py`); the genesis skeleton, port rewrite, and dev felony
 //! patch are native Rust.
 
-use std::fs;
+#[cfg(all(test, unix))]
+use std::fs::Permissions;
+use std::fs::{self, OpenOptions};
+use std::io::Write as _;
 use std::num::NonZeroU64;
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+use std::path::Path;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(not(feature = "ocomp-integration"))]
+use alloy_primitives::hex;
 use eyre::{bail, eyre, Result, WrapErr};
 use outbe_primitives::chain::{DEVNET_CHAIN_ID, TESTNET_CHAIN_ID};
 use serde_json::json;
@@ -300,8 +308,12 @@ impl Localnet {
         match self.cfg.tee_mode {
             TeeMode::Real => {
                 let signing_key = self.cfg.dir.join("test-sgx-signing-key.pem");
-                let image_id =
-                    proc::ensure_enclave_image(&self.cfg.repo, self.cfg.sudo, &signing_key)?;
+                let image_id = proc::ensure_enclave_image(
+                    &self.cfg.repo,
+                    self.cfg.sudo,
+                    &signing_key,
+                    self.enclave_image_id.as_ref(),
+                )?;
                 let measurement = proc::inspect_test_sgx_measurement(
                     &self.cfg.repo,
                     &self.real_enclave_bin()?,
@@ -453,6 +465,40 @@ impl Localnet {
         Ok(())
     }
 
+    /// Stage the founder material required by each node's mandatory embedded
+    /// OCOMP runtime when the harness is built without the external OCOMP
+    /// scenario drivers.
+    #[cfg(not(feature = "ocomp-integration"))]
+    pub(crate) fn ensure_embedded_ocomp_domain_material(&self) -> Result<()> {
+        for index in 0..self.committee_size() {
+            self.ensure_embedded_ocomp_validator_domain_material(index)?;
+        }
+        Ok(())
+    }
+
+    /// Stage one validator's mandatory embedded OCOMP runtime domain. Founder
+    /// startup and late validator promotion share this exact material contract.
+    #[cfg(not(feature = "ocomp-integration"))]
+    pub(crate) fn ensure_embedded_ocomp_validator_domain_material(
+        &self,
+        index: usize,
+    ) -> Result<()> {
+        let bundle = fs::read(self.cfg.dir.join("protocol-bundle-v1.ocb1"))?;
+        let validator_dir = self.cfg.validator_dir(index);
+        let signing_key = fs::read(validator_dir.join("ocomp-key-v1.hex"))?;
+        let domain = validator_dir.join("ocomp").join("domain-v1");
+        fs::create_dir_all(&domain)?;
+        publish_embedded_ocomp_file(&domain.join("protocol-bundle-v1.ocb1"), &bundle, 0o640)?;
+        publish_embedded_ocomp_file(&domain.join("ocomp-key-v1.hex"), &signing_key, 0o600)?;
+        let validator_index = u8::try_from(index)?;
+        let evm_key = hex::encode([validator_index.saturating_add(0x71); 32]);
+        publish_embedded_ocomp_file(
+            &domain.join("ocomp-evm-key.hex"),
+            format!("{evm_key}\n").as_bytes(),
+            0o600,
+        )?;
+        Ok(())
+    }
     /// Keep a debug-only logical-clock E2E internally consistent by shifting the
     /// genesis header by the same signed number of seconds passed to every node.
     /// Without this, block 1 is correctly rejected by the testnet max-drift
@@ -526,8 +572,11 @@ impl Localnet {
     /// otherwise-valid chain IDs.
     pub fn rebootstrap_with_profile(&mut self, n: usize, profile: &BootstrapProfile) -> Result<()> {
         profile.validate_for_committee(n)?;
+        let signing_key_path = self.cfg.dir.join("test-sgx-signing-key.pem");
+        let signing_key = read_rebootstrap_signing_key(&signing_key_path)?;
         self.stop()?;
         self.wipe()?;
+        restore_rebootstrap_signing_key(&signing_key_path, signing_key.as_deref())?;
         self.bootstrap_with_profile(n, profile)
     }
 
@@ -798,6 +847,85 @@ impl Localnet {
     }
 }
 
+fn read_rebootstrap_signing_key(path: &Path) -> Result<Option<Vec<u8>>> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+        bail!(
+            "unsafe test SGX signing key before localnet rebootstrap: {}",
+            path.display()
+        );
+    }
+    #[cfg(unix)]
+    if metadata.permissions().mode() & 0o077 != 0 {
+        bail!(
+            "test SGX signing key has unsafe permissions before localnet rebootstrap: {}",
+            path.display()
+        );
+    }
+    Ok(Some(fs::read(path)?))
+}
+
+fn restore_rebootstrap_signing_key(path: &Path, signing_key: Option<&[u8]>) -> Result<()> {
+    let Some(signing_key) = signing_key else {
+        return Ok(());
+    };
+    let parent = path
+        .parent()
+        .ok_or_else(|| eyre!("test SGX signing key has no parent"))?;
+    fs::create_dir_all(parent)?;
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options.open(path)?;
+    file.write_all(signing_key)?;
+    file.sync_all()?;
+    Ok(())
+}
+
+#[cfg(not(feature = "ocomp-integration"))]
+fn publish_embedded_ocomp_file(path: &Path, bytes: &[u8], mode: u32) -> Result<()> {
+    match fs::read(path) {
+        Ok(existing) if existing == bytes => {
+            let metadata = fs::symlink_metadata(path)?;
+            if !metadata.file_type().is_file() {
+                bail!(
+                    "existing embedded OCOMP artifact is not a regular file: {}",
+                    path.display()
+                );
+            }
+            #[cfg(unix)]
+            if metadata.permissions().mode() & 0o777 != mode {
+                bail!(
+                    "existing embedded OCOMP artifact has unsafe permissions: {}",
+                    path.display()
+                );
+            }
+            Ok(())
+        }
+        Ok(_) => bail!(
+            "refusing to replace a different embedded OCOMP artifact at {}",
+            path.display()
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let mut options = OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            options.mode(mode);
+            #[cfg(not(unix))]
+            let _ = mode;
+            let mut file = options.open(path)?;
+            file.write_all(bytes)?;
+            file.sync_all()?;
+            Ok(())
+        }
+        Err(error) => Err(error.into()),
+    }
+}
 fn apply_co_located_sgx_timing(
     genesis: &mut serde_json::Value,
     tee_mode: crate::env::TeeMode,
@@ -889,6 +1017,121 @@ fn localnet_forming_period_seconds(now: u64) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rebootstrap_preserves_the_scenario_signing_key_across_wipe() {
+        let directory = tempfile::tempdir().unwrap();
+        let scenario = directory.path().join("scenario-1");
+        let signing_key_path = scenario.join("test-sgx-signing-key.pem");
+        fs::create_dir_all(&scenario).unwrap();
+        fs::write(&signing_key_path, b"scenario signing key").unwrap();
+        #[cfg(unix)]
+        fs::set_permissions(&signing_key_path, Permissions::from_mode(0o600)).unwrap();
+
+        let signing_key = read_rebootstrap_signing_key(&signing_key_path).unwrap();
+        fs::remove_dir_all(&scenario).unwrap();
+        restore_rebootstrap_signing_key(&signing_key_path, signing_key.as_deref()).unwrap();
+
+        assert_eq!(
+            fs::read(&signing_key_path).unwrap(),
+            b"scenario signing key"
+        );
+        #[cfg(unix)]
+        assert_eq!(
+            fs::metadata(&signing_key_path)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
+
+    #[cfg(not(feature = "ocomp-integration"))]
+    #[test]
+    fn default_bootstrap_stages_embedded_ocomp_domain_material() {
+        let directory = tempfile::tempdir().unwrap();
+        let env = crate::env::Environment {
+            data_dir: directory.path().to_path_buf(),
+            validators: 2,
+            ..crate::env::Environment::default()
+        };
+        env.ports.start_scenario(env.validators).unwrap();
+        let localnet = Localnet::new(crate::internal::config::Config::for_scenario(&env, 1));
+        fs::create_dir_all(&localnet.cfg.dir).unwrap();
+        fs::write(
+            localnet.cfg.dir.join("protocol-bundle-v1.ocb1"),
+            b"canonical-bundle",
+        )
+        .unwrap();
+        for index in 0..env.validators {
+            let validator_dir = localnet.cfg.validator_dir(index);
+            fs::create_dir_all(&validator_dir).unwrap();
+            fs::write(
+                validator_dir.join("ocomp-key-v1.hex"),
+                format!("{}\n", hex::encode([index as u8 + 1; 32])),
+            )
+            .unwrap();
+        }
+
+        localnet.ensure_embedded_ocomp_domain_material().unwrap();
+        localnet.ensure_embedded_ocomp_domain_material().unwrap();
+
+        let joiner_index = env.validators;
+        let joiner_dir = localnet.cfg.validator_dir(joiner_index);
+        fs::create_dir_all(&joiner_dir).unwrap();
+        fs::write(
+            joiner_dir.join("ocomp-key-v1.hex"),
+            b"joiner-registration-secret\n",
+        )
+        .unwrap();
+        localnet
+            .ensure_embedded_ocomp_validator_domain_material(joiner_index)
+            .unwrap();
+        localnet
+            .ensure_embedded_ocomp_validator_domain_material(joiner_index)
+            .unwrap();
+
+        for index in 0..env.validators {
+            let validator_dir = localnet.cfg.validator_dir(index);
+            let domain = validator_dir.join("ocomp").join("domain-v1");
+            assert_eq!(
+                fs::read(domain.join("protocol-bundle-v1.ocb1")).unwrap(),
+                b"canonical-bundle"
+            );
+            assert_eq!(
+                fs::read(domain.join("ocomp-key-v1.hex")).unwrap(),
+                fs::read(validator_dir.join("ocomp-key-v1.hex")).unwrap()
+            );
+            assert_eq!(
+                fs::read_to_string(domain.join("ocomp-evm-key.hex")).unwrap(),
+                format!("{}\n", hex::encode([index as u8 + 0x71; 32]))
+            );
+            #[cfg(unix)]
+            assert_eq!(
+                fs::metadata(domain.join("ocomp-evm-key.hex"))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
+
+        let joiner_domain = joiner_dir.join("ocomp").join("domain-v1");
+        assert_eq!(
+            fs::read(joiner_domain.join("protocol-bundle-v1.ocb1")).unwrap(),
+            b"canonical-bundle"
+        );
+        assert_eq!(
+            fs::read(joiner_domain.join("ocomp-key-v1.hex")).unwrap(),
+            b"joiner-registration-secret\n"
+        );
+        assert_eq!(
+            fs::read_to_string(joiner_domain.join("ocomp-evm-key.hex")).unwrap(),
+            format!("{}\n", hex::encode([joiner_index as u8 + 0x71; 32]))
+        );
+    }
 
     #[test]
     fn localnet_forming_edge_tracks_the_canonical_utc_plus_14_day() {

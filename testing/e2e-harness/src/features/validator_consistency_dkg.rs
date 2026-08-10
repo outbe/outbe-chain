@@ -11,6 +11,7 @@ use std::time::Duration;
 use alloy_primitives::{keccak256, Address, B256};
 use cucumber::{given, then, when};
 
+use crate::features::common::start_bootstrapped_localnet;
 use crate::world::localnet::{BootstrapProfile, StartOpts};
 use crate::world::World;
 
@@ -40,27 +41,7 @@ fn boot_profiled_localnet(world: &mut World, owner: Option<usize>) {
         .localnet
         .bootstrap_with_profile(committee_size, &profile)
         .expect("bootstrap profiled localnet");
-    world
-        .localnet
-        .start(&StartOpts::with_voting_window(6))
-        .expect("start profiled localnet");
-
-    if world.localnet.tee_enabled() {
-        assert!(
-            world
-                .rpc
-                .wait_bootstrapped(world.localnet.tee_bootstrap_wait_attempts()),
-            "TEE chain did not bootstrap"
-        );
-    } else {
-        assert!(
-            world
-                .rpc
-                .wait_block(world.validators.primary_port(), 1, 18)
-                .is_some(),
-            "tee-less chain RPC did not become reachable"
-        );
-    }
+    start_bootstrapped_localnet(world, &StartOpts::with_voting_window(6));
 }
 
 fn planned_activation(world: &World) -> u64 {
@@ -215,7 +196,7 @@ fn confirm_joiner_after_freeze(world: &mut World) {
 
     let outcome = world
         .rpc
-        .confirm_ready_outcome(&key)
+        .confirm_ready_outcome(&key, joiner_index)
         .expect("submit post-freeze readiness");
     assert!(
         outcome.success,
@@ -518,7 +499,7 @@ fn confirmed_pending_joiner(world: &mut World) {
     world.rpc.stake(&key, 1000).expect("stake joiner");
     let ready = world
         .rpc
-        .confirm_ready_outcome(&key)
+        .confirm_ready_outcome(&key, joiner_index)
         .expect("confirm initial readiness");
     assert!(ready.success, "initial readiness confirmation reverted");
     assert_eq!(

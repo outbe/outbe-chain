@@ -13,6 +13,7 @@ use std::time::Duration;
 use alloy_primitives::{Address, Bytes, B256};
 use cucumber::{given, then, when};
 
+use crate::features::common::start_bootstrapped_localnet;
 use crate::world::localnet::{BootstrapProfile, StartOpts};
 use crate::world::rpc::{TxOutcome, ValidatorP2pAddress, ValidatorRecord};
 use crate::world::validators::RegistrationIdentity;
@@ -122,28 +123,7 @@ fn boot_profiled_localnet(world: &mut World, profile: &BootstrapProfile) {
         .localnet
         .bootstrap_with_profile(committee_size, profile)
         .expect("bootstrap checked localnet profile");
-    world
-        .localnet
-        .start(&StartOpts::with_voting_window(6))
-        .expect("start profiled localnet");
-    wait_until_chain_ready(world);
-}
-
-fn wait_until_chain_ready(world: &World) {
-    if world.localnet.tee_enabled() {
-        assert!(
-            world
-                .rpc
-                .wait_bootstrapped(world.localnet.tee_bootstrap_wait_attempts()),
-            "TEE chain did not bootstrap"
-        );
-    } else {
-        let port = world.validators.primary_port();
-        assert!(
-            world.rpc.wait_block(port, 1, 18).is_some(),
-            "tee-less chain RPC did not become ready"
-        );
-    }
+    start_bootstrapped_localnet(world, &StartOpts::with_voting_window(6));
 }
 
 fn registry_identity_bundle(world: &World, port: u16) -> RegistryIdentityBundle {
@@ -319,11 +299,7 @@ fn rebootstrap_with_valid_chain_id(world: &mut World, chain_id: u64) {
         .mongodb
         .reset_projection_state()
         .expect("reset first-chain projection state");
-    world
-        .localnet
-        .start(&StartOpts::with_voting_window(6))
-        .expect("start re-bootstrapped localnet");
-    wait_until_chain_ready(world);
+    start_bootstrapped_localnet(world, &StartOpts::with_voting_window(6));
     assert_eq!(
         world.rpc.chain_id(world.validators.primary_port()),
         Some(chain_id),

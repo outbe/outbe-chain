@@ -321,11 +321,7 @@ pub(super) fn register_validator(storage: StorageHandle, addr: Address, stake: U
 
 /// Register a validator and move it to the canonical staked-but-not-ready
 /// phase without constructing or overwriting a lifecycle payload.
-pub(super) fn register_waiting_for_readiness(
-    storage: StorageHandle,
-    addr: Address,
-    stake: U256,
-) {
+pub(super) fn register_waiting_for_readiness(storage: StorageHandle, addr: Address, stake: U256) {
     let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage);
     if !vs.config_is_initialized.read().unwrap() {
         vs.config_is_initialized.write(true).unwrap();

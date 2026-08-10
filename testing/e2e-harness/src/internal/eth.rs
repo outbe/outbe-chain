@@ -243,28 +243,6 @@ pub(crate) fn read_call_reverts_at<C: SolCall>(
     })
 }
 
-/// `eth_call` raw calldata and return the revert payload the node reports, or
-/// `None` when the call succeeds or fails without revert data. This surfaces
-/// the machine-readable rejection bytes that transaction receipts omit.
-#[cfg(feature = "ocomp-integration")]
-pub(crate) fn call_revert_data(url: &str, to: Address, data: Vec<u8>) -> Option<Vec<u8>> {
-    let url = url.to_string();
-    block_on(async move {
-        let provider = ProviderBuilder::new().connect_http(url.parse().ok()?);
-        let tx = TransactionRequest::default()
-            .to(to)
-            .input(Bytes::from(data).into());
-        match provider.call(tx).block(BlockId::latest()).await {
-            Ok(_) => None,
-            Err(error) => {
-                let payload = error.as_error_resp()?;
-                let raw = payload.data.as_ref()?.get().trim_matches('"').to_owned();
-                hex::decode(raw.trim_start_matches("0x")).ok()
-            }
-        }
-    })
-}
-
 /// Simulate a state-changing call at the canonical head while preserving the
 /// RPC server's revert error. This is diagnostic only: E2E mutation paths still
 /// submit a real transaction and assert its mined receipt.
@@ -944,6 +922,10 @@ mod tests {
         assert_eq!(
             IValidatorSet::getP2pAddressCall::SELECTOR,
             selector("getP2pAddress(address)")
+        );
+        assert_eq!(
+            IValidatorSet::confirmValidatorReadyCall::SELECTOR,
+            selector("confirmValidatorReady(bytes)")
         );
         assert_eq!(
             IValidatorSetRaw::activateResharedSetCall::SELECTOR,

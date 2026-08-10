@@ -10,6 +10,7 @@ use std::time::Duration;
 use alloy_primitives::{Address, U256};
 use cucumber::{given, then, when};
 
+use crate::features::common::start_bootstrapped_localnet;
 use crate::validator_evidence::conflicting_notarize_for_validator;
 use crate::world::localnet::{BootstrapProfile, StartOpts};
 use crate::world::rpc::ValidatorRecord;
@@ -56,26 +57,7 @@ fn boot_profile(world: &mut World, profile: BootstrapProfile) {
         .localnet
         .bootstrap_with_profile(committee_size, &profile)
         .expect("bootstrap consistency localnet");
-    world
-        .localnet
-        .start(&StartOpts::default())
-        .expect("start consistency localnet");
-    if world.localnet.tee_enabled() {
-        assert!(
-            world
-                .rpc
-                .wait_bootstrapped(world.localnet.tee_bootstrap_wait_attempts()),
-            "TEE chain did not bootstrap"
-        );
-    } else {
-        assert!(
-            world
-                .rpc
-                .wait_block(world.validators.primary_port(), 1, 18)
-                .is_some(),
-            "tee-less chain RPC did not become reachable"
-        );
-    }
+    start_bootstrapped_localnet(world, &StartOpts::default());
 }
 
 fn wait_status(world: &World, address: &str, wanted: u8, tries: u32) -> ValidatorRecord {

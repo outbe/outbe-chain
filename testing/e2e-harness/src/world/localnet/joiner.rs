@@ -244,6 +244,7 @@ impl Localnet {
         let key = read_evm_key(&vd)?;
         let addr = eth::address_of(&key).ok_or_else(|| eyre!("bad joiner evm key"))?;
         self.prepare_joiner_ocomp_identity(index, addr, &bls)?;
+        let chain_id = self.chain_id()?.to_string();
         let sig = first_hex(
             &self.keygen(&[
                 "sign-registration",
@@ -251,6 +252,8 @@ impl Localnet {
                 &signing_key,
                 "--validator-address",
                 &format!("{addr:#x}"),
+                "--chain-id",
+                &chain_id,
             ])?,
             120,
         )
@@ -552,6 +555,9 @@ impl Localnet {
     /// Launch the joiner node (validator-mode, verifier-join args), passing any
     /// extra node args (e.g. `--consensus.keys-dir ...`). Port of `e2e_launch_joiner`.
     pub fn launch_joiner(&mut self, index: usize, extra: &[&str]) -> Result<()> {
+        #[cfg(not(feature = "ocomp-integration"))]
+        self.ensure_embedded_ocomp_validator_domain_material(index)?;
+
         let vd = self.cfg.validator_dir(index);
         fs::create_dir_all(vd.join("data"))?;
         fs::create_dir_all(vd.join("logs"))?;

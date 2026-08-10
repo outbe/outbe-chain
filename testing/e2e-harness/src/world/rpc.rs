@@ -2588,12 +2588,23 @@ impl Rpc {
     }
 
     /// Direct typed stale-join confirmation, including a reverted receipt.
-    pub fn confirm_ready_outcome(&self, key: &str) -> Result<TxOutcome> {
-        let registration = std::fs::read(
-            self.cfg
-                .validator_dir(self.cfg.validators)
-                .join("ocomp-registration-v1.ocb1"),
-        )?;
+    pub fn confirm_ready_outcome(&self, key: &str, validator_index: usize) -> Result<TxOutcome> {
+        let registration_path = self
+            .cfg
+            .validator_dir(validator_index)
+            .join("ocomp-registration-v1.ocb1");
+        let registration = std::fs::read(&registration_path).wrap_err_with(|| {
+            format!(
+                "read validator-{validator_index} canonical OCOMP registration {}",
+                registration_path.display()
+            )
+        })?;
+        if registration.is_empty() {
+            return Err(eyre!(
+                "validator-{validator_index} canonical OCOMP registration is empty: {}",
+                registration_path.display()
+            ));
+        }
         eth::send_call_outcome(
             &self.cfg.rpc0,
             addresses::VS_ADDR,

@@ -572,7 +572,7 @@ fn early_unjail_requires_reconfirmation_and_reshare(world: &mut World) {
 
     let confirmation = world
         .rpc
-        .confirm_ready_outcome(&victim_key)
+        .confirm_ready_outcome(&victim_key, 3)
         .expect("reconfirm validator readiness");
     assert!(
         confirmation.success,
@@ -597,7 +597,9 @@ fn retain_current_epoch_evidence(world: &mut World) {
         world,
         6,
         &[
-            ("TESTNET_EPOCH_LENGTH_BLOCKS", "24".to_owned()),
+            // Eight retained snapshots cover seven epoch intervals. Keep that
+            // span above the mandatory OCOMP job lifetime: 7 * 30 > 188.
+            ("TESTNET_EPOCH_LENGTH_BLOCKS", "30".to_owned()),
             ("TESTNET_DKG_PREPARE_WINDOW_BLOCKS", "16".to_owned()),
             ("TESTNET_DKG_ACTIVATION_GRACE_BLOCKS", "12".to_owned()),
             ("TESTNET_DEV_FELONY_THRESHOLD", "23".to_owned()),
