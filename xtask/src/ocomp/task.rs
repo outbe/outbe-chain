@@ -2260,6 +2260,17 @@ fn evidence_verifier(repository_root: &Path) -> Result<()> {
     )
 }
 
+const OCOMP_E2E_HARNESS_BUILD_ARGS: &[&str] = &[
+    "build",
+    "--locked",
+    "--release",
+    "-p",
+    "outbe-e2e-harness",
+    "--features",
+    "ocomp-integration",
+    "--bins",
+];
+
 fn build_ocomp_e2e_binaries(repository_root: &Path) -> Result<()> {
     cargo(
         repository_root,
@@ -2285,18 +2296,7 @@ fn build_ocomp_e2e_binaries(repository_root: &Path) -> Result<()> {
             "outbe-keygen",
         ],
     )?;
-    cargo(
-        repository_root,
-        &[
-            "build",
-            "--locked",
-            "-p",
-            "outbe-e2e-harness",
-            "--features",
-            "ocomp-integration",
-            "--bins",
-        ],
-    )?;
+    cargo(repository_root, OCOMP_E2E_HARNESS_BUILD_ARGS)?;
     cargo(
         repository_root,
         &[
@@ -2646,7 +2646,7 @@ mod tests {
     use super::{
         copy_immutable_artifact, exact_artifact_sources, exact_scenario_arguments,
         fresh_task_output_dir, promote_exact_scenario_evidence, E2E_SCENARIO_TAGS,
-        PUBLIC_SCENARIO_TAGS,
+        OCOMP_E2E_HARNESS_BUILD_ARGS, PUBLIC_SCENARIO_TAGS,
     };
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
@@ -2700,6 +2700,14 @@ mod tests {
                 "exact lane source is not release: {source}"
             );
         }
+    }
+
+    #[test]
+    fn exact_lane_rebuilds_the_harness_in_release_profile_before_snapshot() {
+        assert!(
+            OCOMP_E2E_HARNESS_BUILD_ARGS.contains(&"--release"),
+            "exact closure would copy a stale target/release harness"
+        );
     }
 
     #[test]
