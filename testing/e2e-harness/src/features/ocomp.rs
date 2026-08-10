@@ -331,6 +331,9 @@ fn start_ocomp_measurement_localnet(
             .prepare_measurement_fork_install()
             .expect("publish the immutable measurement fork before node launch"),
     };
+    if let Some(worldwide_day) = measurement_fork.public_worldwide_day {
+        world.state.wwd = Some(worldwide_day.to_string());
+    }
     world
         .localnet
         .bind_tee_genesis()

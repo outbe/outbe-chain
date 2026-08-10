@@ -363,6 +363,7 @@ struct SupervisorWorkerStatusV1 {
 pub struct OcompMeasurementForkV1 {
     pub install: OcompForkInstallV1,
     pub install_hash: B256,
+    pub public_worldwide_day: Option<WorldwideDay>,
 }
 
 /// Exact two-job schedule plus immutable fork used by the dynamic-membership E2E.
@@ -925,6 +926,7 @@ impl OcompTopology {
         Ok(OcompMeasurementForkV1 {
             install,
             install_hash,
+            public_worldwide_day: None,
         })
     }
 
@@ -1038,6 +1040,7 @@ impl OcompTopology {
         Ok(OcompMeasurementForkV1 {
             install: install.as_ref().clone(),
             install_hash,
+            public_worldwide_day: None,
         }
         .launch_identity())
     }
@@ -1335,13 +1338,17 @@ impl OcompTopology {
         let chain_id = genesis_chain_id(&genesis)?;
         let capacity_accounts_changed =
             fund_capacity_tribute_accounts(&mut genesis, capacity_tribute_private_keys)?;
-        let public_day_changed = if let Some(offering_after_genesis_secs) =
-            public_offering_after_genesis_secs
-        {
-            schedule_public_measurement_day(&mut genesis, chain_id, offering_after_genesis_secs)?
-        } else {
-            false
-        };
+        let (public_day_changed, public_worldwide_day) =
+            if let Some(offering_after_genesis_secs) = public_offering_after_genesis_secs {
+                let (changed, worldwide_day) = schedule_public_measurement_day(
+                    &mut genesis,
+                    chain_id,
+                    offering_after_genesis_secs,
+                )?;
+                (changed, Some(worldwide_day))
+            } else {
+                (false, None)
+            };
         let seeded_metadosis_changed = if clear_seeded_metadosis {
             clear_seeded_metadosis_days(&mut genesis, chain_id)?
         } else {
@@ -1431,6 +1438,7 @@ impl OcompTopology {
         Ok(OcompMeasurementForkV1 {
             install,
             install_hash,
+            public_worldwide_day,
         })
     }
 
@@ -2848,7 +2856,7 @@ fn schedule_public_measurement_day(
     genesis: &mut serde_json::Value,
     chain_id: u64,
     offering_after_genesis_secs: u64,
-) -> Result<bool> {
+) -> Result<(bool, WorldwideDay)> {
     eyre::ensure!(
         offering_after_genesis_secs > 0,
         "OCOMP public measurement offering duration must be non-zero"
@@ -3004,7 +3012,7 @@ fn schedule_public_measurement_day(
             }
         }
     }
-    Ok(changed)
+    Ok((changed, worldwide_day))
 }
 
 #[cfg(feature = "ocomp-integration")]
@@ -4413,6 +4421,7 @@ mod tests {
         StorageHandle::enter(&mut provider, |storage| {
             let days = outbe_metadosis::api::offering_worldwide_days(storage.clone()).unwrap();
             assert_eq!(days, vec![WorldwideDay::from_timestamp(genesis_timestamp)]);
+            assert_eq!(prepared.public_worldwide_day, Some(days[0]));
             let day = outbe_metadosis::api::worldwide_day(storage, days[0])
                 .unwrap()
                 .unwrap();
