@@ -112,14 +112,14 @@ fn require_pair_rejects_a_pair_quoted_in_the_wrong_direction() {
             .unwrap();
 
         assert_eq!(
-            oracle.require_pair(COEN, USDT).unwrap(),
+            oracle.require_pair_from(COEN, USDT).unwrap(),
             pair_key(COEN, USDT)
         );
 
         // Reads whose value has no direction of its own — a VWAP, an S-curve
         // peak — cannot answer a backwards quote, so they refuse it. Only the
         // spot rate has a reciprocal.
-        let err = oracle.require_pair(USDT, COEN).unwrap_err();
+        let err = oracle.require_pair_from(USDT, COEN).unwrap_err();
         assert!(
             format!("{err:?}").contains("canonical"),
             "expected a canonical-form revert, got {err:?}"

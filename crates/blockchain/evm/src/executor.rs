@@ -4838,13 +4838,12 @@ mod tests {
             // ISO code, so registering the pair is sufficient.
             let mut oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
             oracle
-                .register_pair(outbe_oracle::api::AddressPair::new_coen_to(840))
+                .register_pair(outbe_oracle::api::DAY_TYPE_PAIR)
                 .unwrap();
             oracle
                 .set_exchange_rate(
                     Address::ZERO,
-                    outbe_oracle::api::COEN_ASSET,
-                    outbe_oracle::api::currency_address(840),
+                    outbe_oracle::api::DAY_TYPE_PAIR,
                     U256::from(1_000_000_000_000_000_000u128),
                     0,
                     0,

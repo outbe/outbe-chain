@@ -1103,6 +1103,7 @@ fn u256_to_u64(name: &str, value: U256) -> Result<u64> {
 
 #[cfg(test)]
 mod tests {
+    use alloy_consensus::private::alloy_serde::storage;
     use super::*;
     use alloy_primitives::{address, keccak256, B256};
     use outbe_primitives::{consensus::ReshareResult, storage::hashmap::HashMapStorageProvider};
@@ -1233,10 +1234,8 @@ mod tests {
                 .unwrap();
             vs.activate_validator_via_boundary_for_test(VALIDATOR)
                 .unwrap();
-            let (base, quote) = outbe_oracle::api::DAY_TYPE_PAIR;
-            outbe_oracle::contract::OracleContract::new(storage.clone())
-                .register_pair(base, quote)
-                .unwrap();
+            
+            outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
         });
         provider.set_block_number(1);
         provider.enable_metadosis_mutation_frame(

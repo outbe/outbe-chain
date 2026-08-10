@@ -55,7 +55,7 @@ impl OracleContract<'_> {
     /// well-defined reading. The storage key sorts regardless, so registering
     /// the inverse of an existing pair is rejected as a duplicate. Returns the
     /// assigned enumeration index (1-based).
-    pub fn register_pair(&mut self, pair: AddressPair) -> Result<PairIndex> {
+    pub(crate) fn register_pair(&mut self, pair: AddressPair) -> Result<PairIndex> {
         if pair.address1() == pair.address2() {
             return Err(PrecompileError::Revert(
                 "pair base and quote must differ".into(),
@@ -117,7 +117,7 @@ impl OracleContract<'_> {
                 "only system can deactivate vote target".into(),
             ));
         }
-        let pair = self.require_pair(base, quote)?;
+        let pair = self.require_pair_from(base, quote)?;
         self.vote_target.write(&pair, false)?;
         Ok(())
     }
@@ -134,7 +134,7 @@ impl OracleContract<'_> {
                 "only system can activate vote target".into(),
             ));
         }
-        let pair = self.require_pair(base, quote)?;
+        let pair = self.require_pair_from(base, quote)?;
         self.vote_target.write(&pair, true)?;
         Ok(())
     }
@@ -168,18 +168,22 @@ impl OracleContract<'_> {
     /// bare scalar with no direction of its own (a VWAP, an S-curve peak, a
     /// median input), and none of them is its own reciprocal, so a flipped quote
     /// reverts rather than being reinterpreted.
-    pub fn require_pair(&self, base: Address, quote: Address) -> Result<AddressPair> {
+    pub fn require_pair_from(&self, base: Address, quote: Address) -> Result<AddressPair> {
         let pair = AddressPair::from_addresses(base, quote);
-        if !pair.is_canonical() {
-            return Err(PrecompileError::Revert(
-                "pair must be quoted in canonical form".into(),
-            ));
-        }
+        self.require_pair(pair)
+    }
+
+    pub fn require_pair(&self, pair: AddressPair) -> Result<AddressPair> {
         self.require_pair_index(pair)?;
         Ok(pair)
     }
 
     pub fn require_pair_index(&self, pair: AddressPair) -> Result<PairIndex> {
+        if !pair.is_canonical() {
+            return Err(PrecompileError::Revert(
+                "pair must be quoted in canonical form".into(),
+            ));
+        }
         let index = self.pair_to_index.read(&pair)?;
         if index == 0 {
             return Err(PrecompileError::Revert("pair not registered".into()));
@@ -211,7 +215,7 @@ impl OracleContract<'_> {
     ///
     /// Only the canonical direction is stored, so quoting the market backwards
     /// returns the reciprocal. This is the one read that answers either quote
-    /// direction; everything else resolves through [`Self::require_pair`].
+    /// direction; everything else resolves through [`Self::require_pair_from`].
     pub fn get_exchange_rate(&self, base: Address, quote: Address) -> Result<U256> {
         let pair = AddressPair::from_addresses(base, quote);
         let index = self.require_pair_index(pair.to_canonical())?;
@@ -252,11 +256,10 @@ impl OracleContract<'_> {
     }
 
     /// Sets the exchange rate for a pair (system-only bootstrap write).
-    pub fn set_exchange_rate(
+    pub(crate) fn set_exchange_rate(
         &mut self,
         caller: Address,
-        base: Address,
-        quote: Address,
+        pair: AddressPair,
         rate: U256,
         block_number: u64,
         timestamp: u64,
@@ -267,8 +270,7 @@ impl OracleContract<'_> {
                 "only system can set exchange rate directly".into(),
             ));
         }
-
-        let index = self.require_pair_index(self.require_pair(base, quote)?)?;
+        let index = self.require_pair_index(pair)?;
         self.update_exchange_rate(index, rate, block_number, timestamp)
     }
 

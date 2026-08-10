@@ -3,13 +3,13 @@
 //! Exposes read-only helpers that other modules call to validate
 //! currency support, without going through the precompile dispatch.
 
-use crate::schema::OracleContract;
+use crate::schema::{OracleContract, PairIndex};
 use crate::scurve;
 
-pub use crate::constants::{DAY_TYPE_ISO, DAY_TYPE_PAIR, DAY_TYPE_PAIR_KEY};
+pub use crate::constants::{DAY_TYPE_ISO, DAY_TYPE_PAIR};
 pub use crate::types::{currency_address, AddressPair, AssetType, COEN_ASSET};
 
-use alloy_primitives::U256;
+use alloy_primitives::{Address, U256};
 use outbe_common::WorldwideDay;
 use outbe_primitives::{
     block::BlockRuntimeContext,
@@ -99,6 +99,23 @@ pub fn require_coen_pair(storage: StorageHandle, iso_code: u16) -> Result<Addres
         .ok_or_else(|| PrecompileError::Revert("pair not registered".into()))
 }
 
+pub fn register_pair(storage: StorageHandle, pair: AddressPair) -> Result<PairIndex> {
+    let mut oracle: OracleContract<'_> = OracleContract::new(storage);
+    oracle.register_pair(pair)
+}
+
+pub fn set_exchange_rate(
+    storage: StorageHandle,
+    caller: Address,
+    pair: AddressPair,
+    rate: U256,
+    block_number: u64,
+    timestamp: u64,
+) -> Result<()> {
+    let mut oracle: OracleContract<'_> = OracleContract::new(storage);
+    oracle.set_exchange_rate(caller, pair, rate, block_number, timestamp)
+}
+
 pub fn get_worldwide_day_vwap_for_pair(
     storage: StorageHandle,
     worldwide_day: WorldwideDay,
@@ -181,10 +198,10 @@ pub fn day_type_pair_vwap(
     worldwide_day: WorldwideDay,
 ) -> Result<Option<U256>> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
-    if oracle.pair_index_of(DAY_TYPE_PAIR_KEY)? == 0 {
+    if oracle.pair_index_of(DAY_TYPE_PAIR)? == 0 {
         return Ok(None);
     }
-    oracle.get_worldwide_day_vwap_for_pair(worldwide_day, DAY_TYPE_PAIR_KEY)
+    oracle.get_worldwide_day_vwap_for_pair(worldwide_day, DAY_TYPE_PAIR)
 }
 
 /// Computes and stores the WorldwideDay VWAP snapshot for `[start_time,
@@ -211,10 +228,10 @@ pub fn store_worldwide_day_vwap_snapshot(
 /// `None` when the pair is not registered or the day has no finalized value.
 pub fn day_type_pair_utc_vwap(storage: StorageHandle, utc_day: u32) -> Result<Option<U256>> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
-    if oracle.pair_index_of(DAY_TYPE_PAIR_KEY)? == 0 {
+    if oracle.pair_index_of(DAY_TYPE_PAIR)? == 0 {
         return Ok(None);
     }
-    oracle.get_utc_day_vwap_for_pair(utc_day, DAY_TYPE_PAIR_KEY)
+    oracle.get_utc_day_vwap_for_pair(utc_day, DAY_TYPE_PAIR)
 }
 
 /// Returns the finalized VWAP for `pair` on the given UTC calendar day

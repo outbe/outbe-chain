@@ -19,9 +19,6 @@ pub(crate) const MAX_SNAPSHOT_RETENTION_SECONDS: u64 = 365 * 24 * 3600;
 /// could not be recomputed regardless.
 pub const MAX_UTC_DAY_VWAP_BACKFILL_DAYS: u32 = 366;
 
-/// The pair whose WorldwideDay VWAP drives the GREEN/RED day-type decision.
-pub const DAY_TYPE_PAIR: (&str, &str) = ("COEN", "840");
-
 /// ISO 4217 code the day-type pair is quoted in.
 pub const DAY_TYPE_ISO: u16 = 840;
 
@@ -32,7 +29,7 @@ pub const DAY_TYPE_ISO: u16 = 840;
 /// `copy_from_slice` is not. The
 /// `the_day_type_pair_key_is_the_coen_iso_840_pair` test is what keeps it
 /// honest.
-pub const DAY_TYPE_PAIR_KEY: AddressPair = AddressPair::new([
+pub const DAY_TYPE_PAIR: AddressPair = AddressPair::new([
     // COEN — 20 zero bytes.
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, //
     // ISO 840 — the marker plus BCD 840.
@@ -41,10 +38,10 @@ pub const DAY_TYPE_PAIR_KEY: AddressPair = AddressPair::new([
 
 #[cfg(test)]
 mod tests {
-    use super::{AddressPair, DAY_TYPE_ISO, DAY_TYPE_PAIR_KEY};
+    use super::{AddressPair, DAY_TYPE_ISO, DAY_TYPE_PAIR};
 
     #[test]
     fn the_day_type_pair_key_is_the_coen_iso_840_pair() {
-        assert_eq!(DAY_TYPE_PAIR_KEY, AddressPair::new_coen_to(DAY_TYPE_ISO));
+        assert_eq!(DAY_TYPE_PAIR, AddressPair::new_coen_to(DAY_TYPE_ISO));
     }
 }

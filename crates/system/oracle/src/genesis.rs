@@ -164,7 +164,7 @@ pub fn init_from_genesis(oracle: &mut OracleContract, config: &OracleGenesisConf
 
     // Set initial exchange rates (system caller = Address::ZERO).
     for (base, quote, rate) in &config.initial_rates {
-        oracle.set_exchange_rate(Address::ZERO, *base, *quote, *rate, 0, 0)?;
+        oracle.set_exchange_rate(Address::ZERO, AddressPair::from_addresses(*base, *quote), *rate, 0, 0)?;
     }
 
     // Record role-scoped feeder delegations in ValidatorSet.
@@ -212,7 +212,7 @@ pub fn init_from_genesis(oracle: &mut OracleContract, config: &OracleGenesisConf
     for snapshot in &config.snapshots {
         let mut entries = Vec::with_capacity(snapshot.entries.len());
         for (base, quote, rate, volume) in &snapshot.entries {
-            let pair = oracle.require_pair(*base, *quote)?;
+            let pair = oracle.require_pair_from(*base, *quote)?;
             entries.push((pair, *rate, *volume));
         }
         oracle.write_snapshot(snapshot.timestamp, &entries)?;
@@ -220,7 +220,7 @@ pub fn init_from_genesis(oracle: &mut OracleContract, config: &OracleGenesisConf
 
     // Import S-curve entries.
     for entry in &config.scurve_entries {
-        let pair = oracle.require_pair(entry.base, entry.quote)?;
+        let pair = oracle.require_pair_from(entry.base, entry.quote)?;
         crate::scurve::store_scurve_entry(oracle, pair, entry.peak_day, entry.peak_price)?;
     }
 
@@ -412,7 +412,7 @@ fn import_aggregate_votes(
         for (base, quote, _, _) in &vote.entries {
             // `require_pair` also rejects a pair quoted against its registered
             // direction, so an imported vote cannot smuggle in an inverted rate.
-            let pair = oracle.require_pair(*base, *quote).map_err(|_| {
+            let pair = oracle.require_pair_from(*base, *quote).map_err(|_| {
                 PrecompileError::Revert("aggregate vote pair is not registered".into())
             })?;
             if !seen_pairs.insert(pair) {

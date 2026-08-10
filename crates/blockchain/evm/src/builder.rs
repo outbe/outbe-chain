@@ -703,15 +703,11 @@ mod tests {
             // NOD/GEM/INTEX floor-price promotion resolves a live rate instead
             // of soft-skipping the scan. The qualifiers derive the pair from the
             // ISO code, so registering the pair is sufficient.
-            let mut oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-            oracle
-                .register_pair(outbe_oracle::api::AddressPair::new_coen_to(840))
-                .unwrap();
-            oracle
-                .set_exchange_rate(
+            outbe_oracle::api::register_pair(storage.clone(),outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
+            outbe_oracle::api::set_exchange_rate(
+                storage.clone(),
                     Address::ZERO,
-                    outbe_oracle::api::COEN_ASSET,
-                    outbe_oracle::api::currency_address(840),
+                    outbe_oracle::api::DAY_TYPE_PAIR,
                     U256::from(1_000_000_000_000_000_000u128),
                     0,
                     0,

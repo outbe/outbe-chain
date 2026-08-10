@@ -10,7 +10,7 @@ use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::time::{date_key_to_utc_timestamp, SECONDS_PER_DAY};
 use std::collections::BTreeSet;
 
-use crate::constants::DAY_TYPE_PAIR_KEY;
+use crate::constants::DAY_TYPE_PAIR;
 use crate::precompile::IOracle;
 use crate::schema::{OracleContract, SCALE_1E18};
 
@@ -23,7 +23,7 @@ impl OracleContract<'_> {
     pub fn initialize_fresh_ocomp_profile(&mut self) -> Result<()> {
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
-            if self.pair_index_of(DAY_TYPE_PAIR_KEY)? == 0 {
+            if self.pair_index_of(DAY_TYPE_PAIR)? == 0 {
                 return Err(PrecompileError::Fatal(
                     "Oracle OCOMP day-type pair is not registered".into(),
                 ));
@@ -105,7 +105,7 @@ impl OracleContract<'_> {
         // notice.
         let mut resolved = Vec::with_capacity(tuples.len());
         for (base, quote, _, _) in tuples {
-            resolved.push(self.require_pair(*base, *quote)?);
+            resolved.push(self.require_pair_from(*base, *quote)?);
         }
 
         // Check for duplicate pairs in the submission. Kept separate from the
@@ -533,7 +533,7 @@ impl OracleContract<'_> {
             let vwap = vwaps[i as usize];
             pair_map.write_pair(&i, pair)?;
             value_map.write(&i, vwap)?;
-            if profile_ready && pair.same_market(&DAY_TYPE_PAIR_KEY) {
+            if profile_ready && pair.same_market(&DAY_TYPE_PAIR) {
                 self.ocomp_day_type_vwap_by_utc_day.write(&utc_day, vwap)?;
             }
             let event = IOracle::VwapCalculated {
