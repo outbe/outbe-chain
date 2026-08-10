@@ -13,7 +13,7 @@ use alloy_sol_types::sol;
 
 sol!("../../../contracts/tokens/src/interfaces/IERC20.sol");
 
-sol!("../../../contracts/tokens/src/interfaces/IVaultV2.sol");
+sol!("../../../contracts/precompiles/src/IVaultV2.sol");
 
 sol!("../../../contracts/tokens/src/interfaces/IReferenceCurrency.sol");
 
