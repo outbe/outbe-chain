@@ -3,6 +3,7 @@
 //! Exposes read-only helpers that other modules call to validate
 //! currency support, without going through the precompile dispatch.
 
+use crate::errors::{OracleError, OracleOcompError};
 use crate::schema::{OracleContract, PairIndex};
 use crate::scurve;
 
@@ -13,7 +14,7 @@ use alloy_primitives::{Address, U256};
 use outbe_common::WorldwideDay;
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    error::{PrecompileError, Result},
+    error::Result,
     storage::StorageHandle,
     time::{previous_date_key, timestamp_to_date_key},
 };
@@ -43,14 +44,19 @@ pub struct OcompOraclePreAdmissionProjection {
 
 /// Validates that `iso_code` is registered as a reference currency.
 ///
-/// Returns `Ok(())` if the code is present in `reference_currencies`,
-/// or `PrecompileError::Revert` with a descriptive message otherwise.
+/// Returns `Ok(())` if the code is present in `reference_currencies`, or
+/// [`OracleError::NotReferenceCurrency`] otherwise.
 ///
 /// Reference currencies are the ISO 4217 numeric codes considered valid
 /// for off-chain pricing references. The list is pre-filled at genesis
 /// with `[840]` (USD) and may be extended via future protocol upgrades.
 pub fn check_reference_currency(ctx: &BlockRuntimeContext, iso_code: u16) -> Result<()> {
     check_reference_currency_with_storage(ctx.storage.clone(), iso_code)
+}
+
+pub fn get_all_reference_currencies(ctx: &BlockRuntimeContext) -> Result<Vec<u16>> {
+    let oracle: OracleContract<'_> = OracleContract::new(ctx.storage.clone());
+    oracle.reference_currencies.read_all()
 }
 
 /// Same validation as [`check_reference_currency`] but takes a bare
@@ -66,9 +72,7 @@ pub fn check_reference_currency_with_storage(storage: StorageHandle, iso_code: u
             }
         }
     }
-    Err(PrecompileError::Revert(format!(
-        "iso_code {iso_code} is not a registered reference currency"
-    )))
+    Err(OracleError::NotReferenceCurrency { iso_code }.into())
 }
 
 /// Current COEN price in currency `iso_code`, 1e18 scaled.
@@ -100,8 +104,7 @@ pub fn registered_coen_pair(storage: StorageHandle, iso_code: u16) -> Result<Opt
 
 /// [`registered_coen_pair`] with the "not registered" revert callers repeat.
 pub fn require_coen_pair(storage: StorageHandle, iso_code: u16) -> Result<AddressPair> {
-    registered_coen_pair(storage, iso_code)?
-        .ok_or_else(|| PrecompileError::Revert("pair not registered".into()))
+    registered_coen_pair(storage, iso_code)?.ok_or_else(|| OracleError::PairNotRegistered.into())
 }
 
 pub fn register_pair(storage: StorageHandle, pair: AddressPair) -> Result<PairIndex> {
@@ -163,11 +166,9 @@ pub fn ocomp_pre_admission_projection(
         };
     let scurve_count = oracle.scurve_count.read()?;
     let scurve_oldest = oracle.scurve_oldest_idx.read()?;
-    let active_scurve_entries = scurve_count.checked_sub(scurve_oldest).ok_or_else(|| {
-        PrecompileError::BodyReadCorruption(
-            "Oracle S-curve oldest index exceeds write count".into(),
-        )
-    })?;
+    let active_scurve_entries = scurve_count
+        .checked_sub(scurve_oldest)
+        .ok_or(OracleOcompError::ScurveOldestExceedsWriteCount)?;
 
     Ok(OcompOraclePreAdmissionProjection {
         profile_ready,
@@ -212,9 +213,6 @@ pub fn day_type_pair_vwap(
 /// Computes and stores the WorldwideDay VWAP snapshot for `[start_time,
 /// end_time)`. Returns `true` if a snapshot was written, `false` if the window
 /// held no oracle data (a deterministic no-op, not an error).
-///
-/// Owns the legacy `"no VWAP data"` revert string so callers route off the typed
-/// `bool` instead of matching oracle error text across the module seam.
 pub fn store_worldwide_day_vwap_snapshot(
     storage: StorageHandle,
     worldwide_day: WorldwideDay,
@@ -222,11 +220,7 @@ pub fn store_worldwide_day_vwap_snapshot(
     end_time: u64,
 ) -> Result<bool> {
     let mut oracle: OracleContract<'_> = OracleContract::new(storage);
-    match oracle.store_worldwide_day_vwap_snapshot(worldwide_day, start_time, end_time) {
-        Ok(()) => Ok(true),
-        Err(PrecompileError::Revert(msg)) if msg.contains("no VWAP data") => Ok(false),
-        Err(err) => Err(err),
-    }
+    oracle.store_worldwide_day_vwap_snapshot(worldwide_day, start_time, end_time)
 }
 
 /// Finalized per-UTC-day VWAP for the [`DAY_TYPE_PAIR`] (`COEN/840`), or

@@ -7,7 +7,9 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
 use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::addresses::ORACLE_ADDRESS;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
+
+use crate::errors::OracleError;
 use outbe_primitives::units::Units;
 
 use crate::precompile::IOracle;
@@ -478,11 +480,11 @@ pub fn slash_and_reset_counters(oracle: &mut OracleContract, _timestamp: u64) ->
     let vs = outbe_validatorset::contract::ValidatorSet::new(oracle.storage.clone());
     let all_validators = vs.get_all_validators()?;
     if all_validators.len() > MAX_ORACLE_SLASH_WINDOW_VALIDATORS {
-        return Err(PrecompileError::Revert(format!(
-            "Oracle slash-window validator set size {} exceeds cap {}",
-            all_validators.len(),
-            MAX_ORACLE_SLASH_WINDOW_VALIDATORS
-        )));
+        return Err(OracleError::SlashWindowValidatorSetExceedsCap {
+            actual: all_validators.len(),
+            cap: MAX_ORACLE_SLASH_WINDOW_VALIDATORS,
+        }
+        .into());
     }
 
     for v in &all_validators {

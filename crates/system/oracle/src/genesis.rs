@@ -9,7 +9,9 @@ use crate::types::AssetType;
 use alloy_primitives::{Address, U256};
 use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::asset_type::COEN_ASSET;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
+
+use crate::errors::OracleError;
 use std::collections::BTreeSet;
 
 /// A price snapshot entry for genesis import/export.
@@ -135,15 +137,13 @@ pub fn init_from_genesis(oracle: &mut OracleContract, config: &OracleGenesisConf
 
     // Validate config parameters
     if config.vote_period == 0 {
-        return Err(PrecompileError::Revert("vote_period must be > 0".into()));
+        return Err(OracleError::VotePeriodZero.into());
     }
     if config.slash_window == 0 {
-        return Err(PrecompileError::Revert("slash_window must be > 0".into()));
+        return Err(OracleError::SlashWindowZero.into());
     }
     if config.lookback_duration > MAX_SNAPSHOT_RETENTION_SECONDS {
-        return Err(PrecompileError::Revert(
-            "lookback_duration exceeds snapshot retention window".into(),
-        ));
+        return Err(OracleError::LookbackExceedsRetention.into());
     }
 
     oracle.config_vote_period.write(config.vote_period)?;
@@ -188,14 +188,10 @@ pub fn init_from_genesis(oracle: &mut OracleContract, config: &OracleGenesisConf
     for reference in &config.reference_currencies {
         let iso_code = reference.iso_code;
         if iso_code == 0 {
-            return Err(PrecompileError::Revert(
-                "reference iso_code must be non-zero".into(),
-            ));
+            return Err(OracleError::ReferenceIsoCodeZero.into());
         }
         if !seen_reference_iso.insert(iso_code) {
-            return Err(PrecompileError::Revert(format!(
-                "duplicate reference iso_code: {iso_code}"
-            )));
+            return Err(OracleError::DuplicateReferenceIsoCode { iso_code }.into());
         }
         oracle.reference_currencies.push(iso_code)?;
         oracle
@@ -394,42 +390,30 @@ fn import_aggregate_votes(
 
     for vote in aggregate_votes {
         if vote.validator == Address::ZERO {
-            return Err(PrecompileError::Revert(
-                "aggregate vote validator must be non-zero".into(),
-            ));
+            return Err(OracleError::AggregateVoteValidatorZero.into());
         }
         if !seen_validators.insert(vote.validator) {
-            return Err(PrecompileError::Revert(
-                "duplicate aggregate vote validator".into(),
-            ));
+            return Err(OracleError::DuplicateAggregateVoteValidator.into());
         }
         if oracle.vote_exists.read(&vote.validator)? {
-            return Err(PrecompileError::Revert(
-                "aggregate vote already exists for validator".into(),
-            ));
+            return Err(OracleError::AggregateVoteAlreadyExists.into());
         }
         if vote.entries.len() > u32::MAX as usize || vote.entries.len() as u32 > pair_count {
-            return Err(PrecompileError::Revert(
-                "aggregate vote tuple count exceeds registered pair count".into(),
-            ));
+            return Err(OracleError::AggregateVoteTupleCountExceedsPairCount.into());
         }
 
         let mut seen_pairs = BTreeSet::new();
         for (base, quote, _, _) in &vote.entries {
             // `require_pair` also rejects a pair quoted against its registered
             // direction, so an imported vote cannot smuggle in an inverted rate.
-            let pair = oracle.require_pair_from(*base, *quote).map_err(|_| {
-                PrecompileError::Revert("aggregate vote pair is not registered".into())
-            })?;
+            let pair = oracle
+                .require_pair_from(*base, *quote)
+                .map_err(|_| OracleError::AggregateVotePairNotRegistered)?;
             if !seen_pairs.insert(pair) {
-                return Err(PrecompileError::Revert(
-                    "duplicate pair in aggregate vote".into(),
-                ));
+                return Err(OracleError::DuplicatePairInAggregateVote.into());
             }
             if !oracle.vote_target.read(&pair)? {
-                return Err(PrecompileError::Revert(
-                    "aggregate vote pair is not a vote target".into(),
-                ));
+                return Err(OracleError::AggregateVotePairNotVoteTarget.into());
             }
         }
 
@@ -465,26 +449,20 @@ fn export_aggregate_votes(oracle: &OracleContract) -> Result<Vec<GenesisAggregat
     let mut aggregate_votes = Vec::with_capacity(voter_count as usize);
 
     for voter_idx in 0..voter_count {
-        let validator = oracle.voter_list.get(voter_idx)?.ok_or_else(|| {
-            PrecompileError::Revert(format!(
-                "missing aggregate vote validator at voter index {voter_idx}"
-            ))
-        })?;
+        let validator = oracle.voter_list.get(voter_idx)?.ok_or(
+            OracleError::MissingAggregateVoteValidator {
+                voter_index: voter_idx,
+            },
+        )?;
 
         if validator == Address::ZERO {
-            return Err(PrecompileError::Revert(
-                "aggregate vote validator must be non-zero".into(),
-            ));
+            return Err(OracleError::AggregateVoteValidatorZero.into());
         }
         if !seen_validators.insert(validator) {
-            return Err(PrecompileError::Revert(
-                "duplicate aggregate vote validator".into(),
-            ));
+            return Err(OracleError::DuplicateAggregateVoteValidator.into());
         }
         if !oracle.vote_exists.read(&validator)? {
-            return Err(PrecompileError::Revert(
-                "voter list contains validator without aggregate vote".into(),
-            ));
+            return Err(OracleError::VoterListEntryWithoutVote.into());
         }
 
         let tuple_count = oracle.vote_tuple_count.read(&validator)?;
@@ -497,16 +475,12 @@ fn export_aggregate_votes(oracle: &OracleContract) -> Result<Vec<GenesisAggregat
         for tuple_idx in 0..tuple_count {
             let pair = pair_map.read_pair(&tuple_idx)?;
             if oracle.pair_index_of(pair)? == 0 {
-                return Err(PrecompileError::Revert(
-                    "aggregate vote pair is not registered".into(),
-                ));
+                return Err(OracleError::AggregateVotePairNotRegistered.into());
             }
             // Deduplicate on the market, not the quote direction, so the same
             // pair submitted both ways round is still caught.
             if !seen_pairs.insert(pair.to_canonical()) {
-                return Err(PrecompileError::Revert(
-                    "duplicate pair in aggregate vote".into(),
-                ));
+                return Err(OracleError::DuplicatePairInAggregateVote.into());
             }
             entries.push((
                 pair.address1(),
@@ -531,9 +505,7 @@ fn export_aggregate_votes(oracle: &OracleContract) -> Result<Vec<GenesisAggregat
 fn export_pair_metadata(oracle: &OracleContract, pair_id: u32) -> Result<AddressPair> {
     let pair = oracle.pair_at(pair_id)?;
     if oracle.pair_index_of(pair)? != pair_id {
-        return Err(PrecompileError::Revert(format!(
-            "missing pair metadata for pair_id {pair_id}"
-        )));
+        return Err(OracleError::MissingPairMetadata { pair_id }.into());
     }
     Ok(pair)
 }

@@ -151,7 +151,8 @@ pub(super) fn store_wwd_snapshot_mutation(storage: StorageHandle<'_>) -> Precomp
         outbe_common::WorldwideDay::from_timestamp(ATOMIC_DAY_START),
         ATOMIC_DAY_START,
         ATOMIC_DAY_START + outbe_primitives::time::SECONDS_PER_DAY,
-    )
+    )?;
+    Ok(())
 }
 
 pub(super) fn finalize_utc_day_mutation(storage: StorageHandle<'_>) -> PrecompileResult<()> {

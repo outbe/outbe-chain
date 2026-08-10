@@ -1,14 +1,13 @@
 //! Bounded raw-storage slot plans for historical OCOMP Oracle openings.
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fmt::{Display, Formatter},
-};
+use std::collections::{BTreeMap, BTreeSet};
 
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::storage::types::StorageKey;
+
+use crate::errors::OracleOcompError;
 
 const PAIR_INDEX_BASE_SLOT: u64 = 10;
 const SCURVE_COUNT_SLOT: u64 = 34;
@@ -47,17 +46,6 @@ pub struct OracleOpeningSlotPlanV1 {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum OracleOpeningPlanError {
-    MissingMandatoryUsdReference,
-    NonCanonicalReferenceIsos,
-    ReferenceIsoCountExceedsCap { actual: usize, cap: usize },
-    ReferenceCurrencyCountExceedsCap { actual: u32, cap: u32 },
-    WorldwideDayPairCountExceedsCap { actual: u32, cap: u32 },
-    ScurveOldestExceedsCount { oldest: u32, count: u32 },
-    ActiveScurveCountExceedsCap { actual: u32, cap: u32 },
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OracleOpeningEvaluationV1 {
     pub ordered_entry_prices: Vec<(u16, U256)>,
 }
@@ -72,93 +60,6 @@ impl OracleOpeningEvaluationV1 {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum OracleOpeningEvaluationError {
-    Plan(OracleOpeningPlanError),
-    DuplicateSlot(B256),
-    MissingSlot(B256),
-    NonCanonicalSlotSequence,
-    IntegerOverflow(&'static str),
-    InvalidWorldwideDayExists(U256),
-    PairNotRegistered { iso: u16 },
-    IsoNotAReferenceCurrency { iso: u16 },
-}
-
-impl Display for OracleOpeningEvaluationError {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Plan(error) => write!(formatter, "{error}"),
-            Self::DuplicateSlot(slot) => write!(formatter, "duplicate Oracle opening slot {slot}"),
-            Self::MissingSlot(slot) => write!(formatter, "missing Oracle opening slot {slot}"),
-            Self::NonCanonicalSlotSequence => {
-                formatter.write_str("Oracle opening slots do not match the canonical plan")
-            }
-            Self::IntegerOverflow(field) => {
-                write!(
-                    formatter,
-                    "Oracle opening {field} does not fit its runtime type"
-                )
-            }
-            Self::InvalidWorldwideDayExists(value) => {
-                write!(formatter, "invalid Oracle WorldwideDay exists flag {value}")
-            }
-            Self::PairNotRegistered { iso } => {
-                write!(formatter, "Oracle ISO {iso} names an unregistered pair")
-            }
-            Self::IsoNotAReferenceCurrency { iso } => {
-                write!(
-                    formatter,
-                    "Oracle ISO {iso} is not an on-chain reference currency"
-                )
-            }
-        }
-    }
-}
-
-impl std::error::Error for OracleOpeningEvaluationError {}
-
-impl From<OracleOpeningPlanError> for OracleOpeningEvaluationError {
-    fn from(error: OracleOpeningPlanError) -> Self {
-        Self::Plan(error)
-    }
-}
-
-impl Display for OracleOpeningPlanError {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::MissingMandatoryUsdReference => {
-                formatter.write_str("reference ISO list does not contain mandatory 840")
-            }
-            Self::NonCanonicalReferenceIsos => {
-                formatter.write_str("reference ISO list is not strictly ascending")
-            }
-            Self::ReferenceIsoCountExceedsCap { actual, cap } => {
-                write!(formatter, "reference ISO count {actual} exceeds cap {cap}")
-            }
-            Self::ReferenceCurrencyCountExceedsCap { actual, cap } => {
-                write!(
-                    formatter,
-                    "on-chain reference currency count {actual} exceeds cap {cap}"
-                )
-            }
-            Self::WorldwideDayPairCountExceedsCap { actual, cap } => {
-                write!(formatter, "WWD VWAP pair count {actual} exceeds cap {cap}")
-            }
-            Self::ScurveOldestExceedsCount { oldest, count } => {
-                write!(
-                    formatter,
-                    "S-curve oldest index {oldest} exceeds count {count}"
-                )
-            }
-            Self::ActiveScurveCountExceedsCap { actual, cap } => {
-                write!(formatter, "active S-curve count {actual} exceeds cap {cap}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for OracleOpeningPlanError {}
-
 /// Round one: the fixed-size count probe.
 ///
 /// The full plan's length depends on collection sizes that are themselves on
@@ -167,7 +68,7 @@ impl std::error::Error for OracleOpeningPlanError {}
 pub fn oracle_count_slot_plan_v1(
     worldwide_day: WorldwideDay,
     reference_isos: &[u16],
-) -> Result<OracleCountSlotPlanV1, OracleOpeningPlanError> {
+) -> Result<OracleCountSlotPlanV1, OracleOcompError> {
     validate_reference_isos(reference_isos)?;
     let slots = vec![
         direct_slot(REFERENCE_CURRENCIES_SLOT),
@@ -199,42 +100,42 @@ pub fn oracle_opening_slot_plan_v1(
     worldwide_day_pair_count: u32,
     scurve_count: u32,
     scurve_oldest: u32,
-) -> Result<OracleOpeningSlotPlanV1, OracleOpeningPlanError> {
+) -> Result<OracleOpeningSlotPlanV1, OracleOcompError> {
     validate_reference_isos(reference_isos)?;
     if reference_currency_count > MAX_OCOMP_REFERENCE_CURRENCIES {
-        return Err(OracleOpeningPlanError::ReferenceCurrencyCountExceedsCap {
+        return Err(OracleOcompError::ReferenceCurrencyCountExceedsCap {
             actual: reference_currency_count,
             cap: MAX_OCOMP_REFERENCE_CURRENCIES,
         });
     }
     if worldwide_day_pair_count > MAX_OCOMP_WWD_PAIR_ENTRIES {
-        return Err(OracleOpeningPlanError::WorldwideDayPairCountExceedsCap {
+        return Err(OracleOcompError::WorldwideDayPairCountExceedsCap {
             actual: worldwide_day_pair_count,
             cap: MAX_OCOMP_WWD_PAIR_ENTRIES,
         });
     }
     let active_scurve_count = scurve_count.checked_sub(scurve_oldest).ok_or(
-        OracleOpeningPlanError::ScurveOldestExceedsCount {
+        OracleOcompError::ScurveOldestExceedsCount {
             oldest: scurve_oldest,
             count: scurve_count,
         },
     )?;
     if active_scurve_count > MAX_OCOMP_ACTIVE_SCURVE_ENTRIES {
-        return Err(OracleOpeningPlanError::ActiveScurveCountExceedsCap {
+        return Err(OracleOcompError::ActiveScurveCountExceedsCap {
             actual: active_scurve_count,
             cap: MAX_OCOMP_ACTIVE_SCURVE_ENTRIES,
         });
     }
 
     let wwd_slots = usize::from(u16::try_from(worldwide_day_pair_count).map_err(|_| {
-        OracleOpeningPlanError::WorldwideDayPairCountExceedsCap {
+        OracleOcompError::WorldwideDayPairCountExceedsCap {
             actual: worldwide_day_pair_count,
             cap: MAX_OCOMP_WWD_PAIR_ENTRIES,
         }
     })?)
     .saturating_mul(3);
     let scurve_slots = usize::from(u16::try_from(active_scurve_count).map_err(|_| {
-        OracleOpeningPlanError::ActiveScurveCountExceedsCap {
+        OracleOcompError::ActiveScurveCountExceedsCap {
             actual: active_scurve_count,
             cap: MAX_OCOMP_ACTIVE_SCURVE_ENTRIES,
         }
@@ -298,25 +199,25 @@ pub fn evaluate_oracle_opening_v1(
     worldwide_day: WorldwideDay,
     reference_isos: &[u16],
     ordered_slots: &[(B256, U256)],
-) -> Result<OracleOpeningEvaluationV1, OracleOpeningEvaluationError> {
+) -> Result<OracleOpeningEvaluationV1, OracleOcompError> {
     let count_plan = oracle_count_slot_plan_v1(worldwide_day, reference_isos)?;
     let mut values = BTreeMap::new();
     for (slot, value) in ordered_slots {
         if values.insert(*slot, *value).is_some() {
-            return Err(OracleOpeningEvaluationError::DuplicateSlot(*slot));
+            return Err(OracleOcompError::DuplicateSlot(*slot));
         }
     }
     let value_at = |slot: B256| {
         values
             .get(&slot)
             .copied()
-            .ok_or(OracleOpeningEvaluationError::MissingSlot(slot))
+            .ok_or(OracleOcompError::MissingSlot(slot))
     };
     let reference_currency_count =
         checked_u32(value_at(count_plan.slots[0])?, "reference currency count")?;
     let worldwide_day_exists = value_at(count_plan.slots[1])?;
     if worldwide_day_exists > U256::from(1) {
-        return Err(OracleOpeningEvaluationError::InvalidWorldwideDayExists(
+        return Err(OracleOcompError::InvalidWorldwideDayExists(
             worldwide_day_exists,
         ));
     }
@@ -337,7 +238,7 @@ pub fn evaluate_oracle_opening_v1(
         .map(|(slot, _)| *slot)
         .ne(plan.slots.iter().copied())
     {
-        return Err(OracleOpeningEvaluationError::NonCanonicalSlotSequence);
+        return Err(OracleOcompError::NonCanonicalSlotSequence);
     }
 
     let mut worldwide_day_vwaps = Vec::with_capacity(worldwide_day_pair_count as usize);
@@ -372,7 +273,7 @@ pub fn evaluate_oracle_opening_v1(
         registered.insert(checked_u16(word, "reference currency ISO")?);
     }
     if let Some(iso) = reference_isos.iter().find(|iso| !registered.contains(iso)) {
-        return Err(OracleOpeningEvaluationError::IsoNotAReferenceCurrency { iso: *iso });
+        return Err(OracleOcompError::IsoNotAReferenceCurrency { iso: *iso });
     }
 
     let target_day = crate::scurve::truncate_to_day(worldwide_day.to_timestamp_utc());
@@ -386,7 +287,7 @@ pub fn evaluate_oracle_opening_v1(
             "reference pair index",
         )?;
         if index == 0 {
-            return Err(OracleOpeningEvaluationError::PairNotRegistered { iso });
+            return Err(OracleOcompError::PairNotRegistered { iso });
         }
         // Entries are matched on the market, not the quote direction: a pair
         // registered as `<iso>/COEN` still prices, exactly as it did when both
@@ -418,42 +319,42 @@ pub fn evaluate_oracle_opening_v1(
     })
 }
 
-fn checked_u32(value: U256, field: &'static str) -> Result<u32, OracleOpeningEvaluationError> {
+fn checked_u32(value: U256, field: &'static str) -> Result<u32, OracleOcompError> {
     if value > U256::from(u32::MAX) {
-        Err(OracleOpeningEvaluationError::IntegerOverflow(field))
+        Err(OracleOcompError::IntegerOverflow(field))
     } else {
         Ok(value.to::<u32>())
     }
 }
 
-fn checked_u16(value: U256, field: &'static str) -> Result<u16, OracleOpeningEvaluationError> {
+fn checked_u16(value: U256, field: &'static str) -> Result<u16, OracleOcompError> {
     if value > U256::from(u16::MAX) {
-        Err(OracleOpeningEvaluationError::IntegerOverflow(field))
+        Err(OracleOcompError::IntegerOverflow(field))
     } else {
         Ok(value.to::<u16>())
     }
 }
 
-fn checked_u64(value: U256, field: &'static str) -> Result<u64, OracleOpeningEvaluationError> {
+fn checked_u64(value: U256, field: &'static str) -> Result<u64, OracleOcompError> {
     if value > U256::from(u64::MAX) {
-        Err(OracleOpeningEvaluationError::IntegerOverflow(field))
+        Err(OracleOcompError::IntegerOverflow(field))
     } else {
         Ok(value.to::<u64>())
     }
 }
 
-fn validate_reference_isos(isos: &[u16]) -> Result<(), OracleOpeningPlanError> {
+fn validate_reference_isos(isos: &[u16]) -> Result<(), OracleOcompError> {
     if isos.len() > MAX_OCOMP_REFERENCE_ISOS {
-        return Err(OracleOpeningPlanError::ReferenceIsoCountExceedsCap {
+        return Err(OracleOcompError::ReferenceIsoCountExceedsCap {
             actual: isos.len(),
             cap: MAX_OCOMP_REFERENCE_ISOS,
         });
     }
     if !isos.contains(&MANDATORY_USD_ISO) {
-        return Err(OracleOpeningPlanError::MissingMandatoryUsdReference);
+        return Err(OracleOcompError::MissingMandatoryUsdReference);
     }
     if isos.windows(2).any(|pair| pair[0] >= pair[1]) {
-        return Err(OracleOpeningPlanError::NonCanonicalReferenceIsos);
+        return Err(OracleOcompError::NonCanonicalReferenceIsos);
     }
     Ok(())
 }

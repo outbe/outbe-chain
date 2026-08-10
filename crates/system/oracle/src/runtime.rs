@@ -6,11 +6,12 @@ use alloy_sol_types::SolEvent;
 use outbe_common::WorldwideDay;
 use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::addresses::ORACLE_ADDRESS;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::time::{date_key_to_utc_timestamp, SECONDS_PER_DAY};
 use std::collections::BTreeSet;
 
 use crate::constants::DAY_TYPE_PAIR;
+use crate::errors::{OracleError, OracleOcompError};
 use crate::precompile::IOracle;
 use crate::schema::{OracleContract, SCALE_1E18};
 
@@ -24,23 +25,17 @@ impl OracleContract<'_> {
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
             if self.pair_index_of(DAY_TYPE_PAIR)? == 0 {
-                return Err(PrecompileError::Fatal(
-                    "Oracle OCOMP day-type pair is not registered".into(),
-                ));
+                return Err(OracleOcompError::DayTypePairNotRegistered.into());
             }
 
             if self.ocomp_profile_ready.read()? {
                 if self.ocomp_state_version.read()? == 0 {
-                    return Err(PrecompileError::Fatal(
-                        "Oracle OCOMP profile is ready with zero state version".into(),
-                    ));
+                    return Err(OracleOcompError::ProfileReadyWithZeroVersion.into());
                 }
                 return Ok(());
             }
             if self.ocomp_state_version.read()? != 0 {
-                return Err(PrecompileError::Fatal(
-                    "Oracle OCOMP profile contains partial pre-fork state".into(),
-                ));
+                return Err(OracleOcompError::PartialPreForkState.into());
             }
 
             self.ocomp_state_version.write(1)?;
@@ -58,13 +53,12 @@ impl OracleContract<'_> {
         }
         let current = self.ocomp_state_version.read()?;
         if current == 0 {
-            return Err(PrecompileError::BodyReadCorruption(
-                "Oracle OCOMP profile is ready with zero state version".into(),
-            ));
+            return Err(OracleOcompError::StateVersionZero.into());
         }
-        current.checked_add(1).map(Some).ok_or_else(|| {
-            PrecompileError::BodyReadCorruption("Oracle OCOMP state version overflow".into())
-        })
+        current
+            .checked_add(1)
+            .map(Some)
+            .ok_or_else(|| OracleOcompError::StateVersionOverflow.into())
     }
 
     pub(crate) fn commit_ocomp_state_version(&self, next: Option<u64>) -> Result<()> {
@@ -93,9 +87,7 @@ impl OracleContract<'_> {
         // Validate tuple count: cannot exceed active pair count
         let pair_count = self.pair_count.read()?;
         if tuples.len() as u32 > pair_count {
-            return Err(PrecompileError::Revert(
-                "vote tuple count exceeds registered pair count".into(),
-            ));
+            return Err(OracleError::VoteTupleCountExceedsPairCount.into());
         }
 
         // Resolve every quoted pair up front. `require_pair` rejects an
@@ -114,9 +106,7 @@ impl OracleContract<'_> {
         let mut seen = BTreeSet::new();
         for pair in &resolved {
             if !seen.insert(*pair) {
-                return Err(PrecompileError::Revert(
-                    "duplicate pair in vote submission".into(),
-                ));
+                return Err(OracleError::DuplicatePairInVote.into());
             }
         }
 
@@ -124,16 +114,14 @@ impl OracleContract<'_> {
         for pair in &resolved {
             let is_target = self.vote_target.read(pair)?;
             if !is_target {
-                return Err(PrecompileError::Revert("pair is not a vote target".into()));
+                return Err(OracleError::PairNotVoteTarget.into());
             }
         }
 
         // Check if already voted this period
         let already_voted = self.vote_exists.read(&validator)?;
         if already_voted {
-            return Err(PrecompileError::Revert(
-                "validator already voted this period".into(),
-            ));
+            return Err(OracleError::AlreadyVotedThisPeriod.into());
         }
 
         // Mark as voted FIRST to prevent concurrent overwrite (ORC-AUD-037).
@@ -207,13 +195,23 @@ impl OracleContract<'_> {
         start_time: u64,
         end_time: u64,
     ) -> Result<U256> {
+        self.try_calculate_vwap(pair, start_time, end_time)?
+            .ok_or_else(|| OracleError::NoVwapData.into())
+    }
+
+    /// [`Self::calculate_vwap`] with "the window held no samples" as `Ok(None)`.
+    ///
+    /// Callers that skip empty pairs rather than reverting route through this,
+    /// so no code path has to recognise the empty case by its revert message.
+    pub(crate) fn try_calculate_vwap(
+        &self,
+        pair: AddressPair,
+        start_time: u64,
+        end_time: u64,
+    ) -> Result<Option<U256>> {
         match self.try_daily_aggregate_vwap(pair, start_time, end_time) {
-            Ok(Some(vwap)) => return Ok(vwap),
-            Ok(None) if end_time.saturating_sub(start_time) >= 86_400 => {
-                return Err(PrecompileError::Revert(
-                    "no VWAP data in the requested time range".into(),
-                ));
-            }
+            Ok(Some(vwap)) => return Ok(Some(vwap)),
+            Ok(None) if end_time.saturating_sub(start_time) >= 86_400 => return Ok(None),
             Ok(None) => {}
             Err(e) => return Err(e),
         }
@@ -222,9 +220,7 @@ impl OracleContract<'_> {
         let oldest_idx = self.snapshot_oldest_idx.read()?;
 
         if write_idx <= oldest_idx {
-            return Err(PrecompileError::Revert(
-                "no VWAP data in the requested time range".into(),
-            ));
+            return Ok(None);
         }
 
         let range_start = self.binary_search_snapshot_idx(start_time, oldest_idx, write_idx)?;
@@ -249,26 +245,23 @@ impl OracleContract<'_> {
                 let vol = if volume.is_zero() { SCALE_1E18 } else { volume };
 
                 price_volume_sum = price_volume_sum
-                    .checked_add(rate.checked_mul(vol).ok_or_else(|| {
-                        PrecompileError::Revert("VWAP overflow: rate * volume".into())
-                    })?)
-                    .ok_or_else(|| {
-                        PrecompileError::Revert("VWAP overflow: sum accumulation".into())
-                    })?;
+                    .checked_add(
+                        rate.checked_mul(vol)
+                            .ok_or(OracleError::VwapOverflow("rate * volume"))?,
+                    )
+                    .ok_or(OracleError::VwapOverflow("sum accumulation"))?;
                 volume_sum = volume_sum
                     .checked_add(vol)
-                    .ok_or_else(|| PrecompileError::Revert("VWAP overflow: volume sum".into()))?;
+                    .ok_or(OracleError::VwapOverflow("volume sum"))?;
                 break;
             }
         }
 
         if volume_sum.is_zero() {
-            return Err(PrecompileError::Revert(
-                "no VWAP data in the requested time range".into(),
-            ));
+            return Ok(None);
         }
 
-        Ok(price_volume_sum / volume_sum)
+        Ok(Some(price_volume_sum / volume_sum))
     }
 
     /// Calculates TWAP (time-weighted average price) for a pair.
@@ -281,11 +274,20 @@ impl OracleContract<'_> {
         now: u64,
         lookback_seconds: u64,
     ) -> Result<U256> {
+        self.try_calculate_twap(pair, now, lookback_seconds)?
+            .ok_or_else(|| OracleError::NoTwapData.into())
+    }
+
+    /// [`Self::calculate_twap`] with "the window held no samples" as `Ok(None)`.
+    fn try_calculate_twap(
+        &self,
+        pair: AddressPair,
+        now: u64,
+        lookback_seconds: u64,
+    ) -> Result<Option<U256>> {
         let max_lookback = self.config_lookback_duration.read()?;
         if lookback_seconds == 0 || lookback_seconds > max_lookback {
-            return Err(PrecompileError::Revert(
-                "lookback_seconds must be > 0 and <= lookback_duration".into(),
-            ));
+            return Err(OracleError::InvalidLookbackSeconds.into());
         }
         let start_time = now.saturating_sub(lookback_seconds);
 
@@ -317,13 +319,11 @@ impl OracleContract<'_> {
         }
 
         if data.is_empty() {
-            return Err(PrecompileError::Revert(
-                "no TWAP data in the requested time range".into(),
-            ));
+            return Ok(None);
         }
 
         if data.len() == 1 {
-            return Ok(data[0].1);
+            return Ok(Some(data[0].1));
         }
 
         // TWAP: weight each price by time until next price change
@@ -335,42 +335,46 @@ impl OracleContract<'_> {
             let pv = data[i]
                 .1
                 .checked_mul(duration)
-                .ok_or_else(|| PrecompileError::Revert("TWAP overflow".into()))?;
+                .ok_or(OracleError::TwapOverflow)?;
             price_time_sum = price_time_sum
                 .checked_add(pv)
-                .ok_or_else(|| PrecompileError::Revert("TWAP overflow".into()))?;
+                .ok_or(OracleError::TwapOverflow)?;
             time_sum = time_sum
                 .checked_add(duration)
-                .ok_or_else(|| PrecompileError::Revert("TWAP overflow".into()))?;
+                .ok_or(OracleError::TwapOverflow)?;
         }
 
         // Include last price until `now`
-        let last = data
-            .last()
-            .ok_or_else(|| PrecompileError::Revert("missing TWAP data".into()))?;
+        let last = data.last().ok_or(OracleError::MissingTwapData)?;
         let last_duration = U256::from(now.saturating_sub(last.0));
         if !last_duration.is_zero() {
             let pv = last
                 .1
                 .checked_mul(last_duration)
-                .ok_or_else(|| PrecompileError::Revert("TWAP overflow".into()))?;
+                .ok_or(OracleError::TwapOverflow)?;
             price_time_sum = price_time_sum
                 .checked_add(pv)
-                .ok_or_else(|| PrecompileError::Revert("TWAP overflow".into()))?;
+                .ok_or(OracleError::TwapOverflow)?;
             time_sum = time_sum
                 .checked_add(last_duration)
-                .ok_or_else(|| PrecompileError::Revert("TWAP overflow".into()))?;
+                .ok_or(OracleError::TwapOverflow)?;
         }
 
         if time_sum.is_zero() {
-            return Ok(data[0].1);
+            return Ok(Some(data[0].1));
         }
 
-        Ok(price_time_sum / time_sum)
+        Ok(Some(price_time_sum / time_sum))
     }
 
     /// Calculates TWAPs for all active vote-target pairs.
     pub fn calculate_twaps(&self, now: u64, lookback_seconds: u64) -> Result<PairSeries> {
+        self.try_calculate_twaps(now, lookback_seconds)?
+            .ok_or_else(|| OracleError::NoTwapData.into())
+    }
+
+    /// [`Self::calculate_twaps`] with "no pair had data" as `Ok(None)`.
+    fn try_calculate_twaps(&self, now: u64, lookback_seconds: u64) -> Result<Option<PairSeries>> {
         let count = self.pair_count.read()?;
         let mut pairs = Vec::new();
         let mut twaps = Vec::new();
@@ -382,33 +386,33 @@ impl OracleContract<'_> {
                 continue;
             }
 
-            match self.calculate_twap(entry, now, lookback_seconds) {
-                Ok(twap) => {
-                    pairs.push(entry);
-                    twaps.push(twap);
-                    lookbacks.push(lookback_seconds);
-                }
-                Err(PrecompileError::Revert(msg))
-                    if msg.contains("no TWAP data") || msg.contains("no VWAP data") => {}
-                Err(err) => return Err(err),
+            if let Some(twap) = self.try_calculate_twap(entry, now, lookback_seconds)? {
+                pairs.push(entry);
+                twaps.push(twap);
+                lookbacks.push(lookback_seconds);
             }
         }
 
         if pairs.is_empty() {
-            return Err(PrecompileError::Revert(
-                "no TWAP data in the requested time range".into(),
-            ));
+            return Ok(None);
         }
 
-        Ok((pairs, twaps, lookbacks))
+        Ok(Some((pairs, twaps, lookbacks)))
     }
 
     /// Calculates VWAPs for all active vote-target pairs over an explicit range.
     pub fn calculate_vwaps(&self, start_time: u64, end_time: u64) -> Result<PairSeries> {
+        self.try_calculate_vwaps(start_time, end_time)?
+            .ok_or_else(|| OracleError::NoVwapData.into())
+    }
+
+    /// [`Self::calculate_vwaps`] with "no pair had data" as `Ok(None)`.
+    ///
+    /// An invalid range is still an error: an empty result means the oracle had
+    /// nothing to say about a well-formed window, not that the window was junk.
+    fn try_calculate_vwaps(&self, start_time: u64, end_time: u64) -> Result<Option<PairSeries>> {
         if start_time >= end_time {
-            return Err(PrecompileError::Revert(
-                "start_time must be less than end_time".into(),
-            ));
+            return Err(OracleError::InvalidVwapRange.into());
         }
 
         let count = self.pair_count.read()?;
@@ -423,33 +427,29 @@ impl OracleContract<'_> {
                 continue;
             }
 
-            match self.calculate_vwap(entry, start_time, end_time) {
-                Ok(vwap) => {
-                    pairs.push(entry);
-                    vwaps.push(vwap);
-                    lookbacks.push(lookback);
-                }
-                Err(PrecompileError::Revert(msg)) if msg.contains("no VWAP data") => {}
-                Err(err) => return Err(err),
+            if let Some(vwap) = self.try_calculate_vwap(entry, start_time, end_time)? {
+                pairs.push(entry);
+                vwaps.push(vwap);
+                lookbacks.push(lookback);
             }
         }
 
         if pairs.is_empty() {
-            return Err(PrecompileError::Revert(
-                "no VWAP data in the requested time range".into(),
-            ));
+            return Ok(None);
         }
 
-        Ok((pairs, vwaps, lookbacks))
+        Ok(Some((pairs, vwaps, lookbacks)))
     }
 
-    /// Calculates VWAPs for the given WorldwideDay window and stores them in oracle state.
+    /// Calculates VWAPs for the given WorldwideDay window and stores them in
+    /// oracle state. Returns `false` when the window held no oracle data, in
+    /// which case nothing is written — a deterministic no-op, not an error.
     pub fn store_worldwide_day_vwap_snapshot(
         &mut self,
         worldwide_day: WorldwideDay,
         start_time: u64,
         end_time: u64,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         if self.ocomp_profile_ready.read()? {
             let storage = self.storage.clone();
             storage.with_checkpoint(|| {
@@ -465,8 +465,10 @@ impl OracleContract<'_> {
         worldwide_day: WorldwideDay,
         start_time: u64,
         end_time: u64,
-    ) -> Result<()> {
-        let (pairs, vwaps, _) = self.calculate_vwaps(start_time, end_time)?;
+    ) -> Result<bool> {
+        let Some((pairs, vwaps, _)) = self.try_calculate_vwaps(start_time, end_time)? else {
+            return Ok(false);
+        };
         let next_ocomp_version = self.next_ocomp_state_version()?;
 
         self.worldwide_day_vwap_exists.write(&worldwide_day, true)?;
@@ -485,7 +487,8 @@ impl OracleContract<'_> {
             value_map.write(&i, *vwap)?;
         }
 
-        self.commit_ocomp_state_version(next_ocomp_version)
+        self.commit_ocomp_state_version(next_ocomp_version)?;
+        Ok(true)
     }
 
     /// Computes and persists the VWAP of every active vote-target pair for the
@@ -512,12 +515,10 @@ impl OracleContract<'_> {
         let day_start = date_key_to_utc_timestamp(utc_day);
         let day_end = day_start.saturating_add(SECONDS_PER_DAY);
 
-        let (pairs, vwaps) = match self.calculate_vwaps(day_start, day_end) {
-            Ok((pairs, vwaps, _)) => (pairs, vwaps),
-            // No vote-target pair had data for the day — leave it unwritten so
-            // `pair_count == 0` reads as finalized-empty against the watermark.
-            Err(PrecompileError::Revert(msg)) if msg.contains("no VWAP data") => return Ok(()),
-            Err(e) => return Err(e),
+        // No vote-target pair had data for the day — leave it unwritten so
+        // `pair_count == 0` reads as finalized-empty against the watermark.
+        let Some((pairs, vwaps, _)) = self.try_calculate_vwaps(day_start, day_end)? else {
+            return Ok(());
         };
         let next_ocomp_version = self.next_ocomp_state_version()?;
         let profile_ready = self.ocomp_profile_ready.read()?;
@@ -564,11 +565,9 @@ impl OracleContract<'_> {
     ) -> Result<(U256, U256, U256, String)> {
         let day_start = crate::scurve::truncate_to_day(timestamp);
         let day_end = day_start.saturating_add(crate::scurve::DAY_SECONDS);
-        let vwap = match self.calculate_vwap(pair, day_start, day_end) {
-            Ok(vwap) => vwap,
-            Err(PrecompileError::Revert(msg)) if msg.contains("no VWAP data") => U256::ZERO,
-            Err(err) => return Err(err),
-        };
+        let vwap = self
+            .try_calculate_vwap(pair, day_start, day_end)?
+            .unwrap_or(U256::ZERO);
         let max_scurve = crate::scurve::get_max_active_scurve_value(self, pair, timestamp)?;
 
         let (nominal, source) = if vwap.is_zero() && max_scurve.is_zero() {

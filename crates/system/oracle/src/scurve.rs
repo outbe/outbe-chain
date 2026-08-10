@@ -7,7 +7,9 @@
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
 use outbe_primitives::addresses::ORACLE_ADDRESS;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
+
+use crate::errors::OracleError;
 
 use outbe_primitives::address_pair::AddressPair;
 
@@ -345,9 +347,9 @@ fn store_scurve_entry_inner(
     peak_price: U256,
 ) -> Result<()> {
     let idx = oracle.scurve_count.read()?;
-    let next_idx = idx.checked_add(1).ok_or_else(|| {
-        PrecompileError::BodyReadCorruption("Oracle S-curve write index overflow".into())
-    })?;
+    let next_idx = idx
+        .checked_add(1)
+        .ok_or(OracleError::ScurveWriteIndexOverflow)?;
     let next_ocomp_version = oracle.next_ocomp_state_version()?;
     oracle.scurve_pair.write_pair(&idx, pair)?;
     oracle.scurve_peak_day.write(&idx, peak_day)?;

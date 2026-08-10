@@ -26,18 +26,14 @@ use alloy_primitives::U256;
 use outbe_compressed_entities::{
     EntityId36, ExecutionScope, ParentBodySource, ParentBodySourceRef,
 };
-use outbe_oracle::api::{coen_rate_for, registered_coen_pair};
+use outbe_oracle::api::{coen_rate_for, get_all_reference_currencies};
 use outbe_primitives::{
     block::{BlockLifecycle, BlockRuntimeContext},
     error::Result,
     math::{constants::MAX_BIN_ID, tree_math},
 };
 
-use crate::{
-    api,
-    constants::{MAX_BUCKET_QUALIFICATIONS_PER_BLOCK, QUALIFIER_REFERENCE_ISO},
-    schema::NodContract,
-};
+use crate::{api, constants::MAX_BUCKET_QUALIFICATIONS_PER_BLOCK, schema::NodContract};
 
 pub struct NodLifecycle;
 
@@ -82,11 +78,24 @@ pub fn qualify_nods(
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
 ) -> Result<()> {
-    // An unregistered pair or an unpublished rate skips this block's scan
+    // The oracle's first reference currency is COEN/840 by genesis order. An
+    // uninitialized registry yields no rate and skips this block's scan
     // (`qualify_buckets_with_rate` returns early on zero) rather than halting
     // the block, matching the gem and intexfactory qualifiers.
-    let rate = match registered_coen_pair(ctx.storage.clone(), QUALIFIER_REFERENCE_ISO)? {
-        Some(_) => coen_rate_for(ctx.storage.clone(), QUALIFIER_REFERENCE_ISO)?,
+    //
+    // TODO(nod): qualify against every reference currency, not just the first.
+    // `floor_price_minor` is denominated in the entity's own
+    // `reference_currency`, but `NodBucketState` does not carry it and
+    // `NodContract::bucket_key` hashes only `(worldwide_day, floor_price_minor)`
+    // — so floors in different currencies collide into one bucket and there is
+    // nothing to match a per-currency rate against. Gem guards the same mismatch
+    // at `outbe_gem::runtime::GemContract::qualify` (`item.reference_currency !=
+    // QUALIFIER_REFERENCE_ISO` → skip). Making Nod currency-aware needs
+    // `reference_currency` as a `NodBucketState` attribute *and* a `bucket_key`
+    // input, plus a per-currency bin index: a storage-layout change with a
+    // replay boundary, landing in its own PR.
+    let rate = match get_all_reference_currencies(ctx)?.first() {
+        Some(&iso_code) => coen_rate_for(ctx.storage.clone(), iso_code)?,
         None => U256::ZERO,
     };
     qualify_buckets_with_rate(ctx, scope, parent, rate)

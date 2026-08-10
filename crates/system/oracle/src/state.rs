@@ -7,9 +7,10 @@
 use alloy_primitives::{Address, U256};
 use outbe_common::WorldwideDay;
 use outbe_primitives::address_pair::AddressPair;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 
 use crate::constants::MAX_SNAPSHOT_RETENTION_SECONDS;
+use crate::errors::OracleError;
 use crate::schema::{OracleContract, PairIndex, SCALE_1E18};
 use outbe_primitives::units::ONE_COEN;
 
@@ -57,18 +58,14 @@ impl OracleContract<'_> {
     /// assigned enumeration index (1-based).
     pub(crate) fn register_pair(&mut self, pair: AddressPair) -> Result<PairIndex> {
         if pair.address1() == pair.address2() {
-            return Err(PrecompileError::Revert(
-                "pair base and quote must differ".into(),
-            ));
+            return Err(OracleError::PairBaseQuoteIdentical.into());
         }
         if !pair.is_canonical() {
-            return Err(PrecompileError::Revert(
-                "pair should be in the canonical form".into(),
-            ));
+            return Err(OracleError::PairNotCanonical.into());
         }
 
         if self.pair_to_index.read(&pair)? != 0 {
-            return Err(PrecompileError::Revert("pair already registered".into()));
+            return Err(OracleError::PairAlreadyRegistered.into());
         }
 
         let count = self.pair_count.read()?;
@@ -100,7 +97,7 @@ impl OracleContract<'_> {
     /// the value.
     pub fn require_pair_at(&self, index: PairIndex) -> Result<AddressPair> {
         if index == 0 || index > self.pair_count.read()? {
-            return Err(PrecompileError::Revert("pair index out of range".into()));
+            return Err(OracleError::PairIndexOutOfRange.into());
         }
         self.pair_at(index)
     }
@@ -113,9 +110,7 @@ impl OracleContract<'_> {
         quote: Address,
     ) -> Result<()> {
         if caller != Address::ZERO {
-            return Err(PrecompileError::Revert(
-                "only system can deactivate vote target".into(),
-            ));
+            return Err(OracleError::OnlySystem("deactivate vote target").into());
         }
         let pair = self.require_pair_from(base, quote)?;
         self.vote_target.write(&pair, false)?;
@@ -130,9 +125,7 @@ impl OracleContract<'_> {
         quote: Address,
     ) -> Result<()> {
         if caller != Address::ZERO {
-            return Err(PrecompileError::Revert(
-                "only system can activate vote target".into(),
-            ));
+            return Err(OracleError::OnlySystem("activate vote target").into());
         }
         let pair = self.require_pair_from(base, quote)?;
         self.vote_target.write(&pair, true)?;
@@ -180,13 +173,11 @@ impl OracleContract<'_> {
 
     pub fn require_pair_index(&self, pair: AddressPair) -> Result<PairIndex> {
         if !pair.is_canonical() {
-            return Err(PrecompileError::Revert(
-                "pair must be quoted in canonical form".into(),
-            ));
+            return Err(OracleError::PairQuoteNotCanonical.into());
         }
         let index = self.pair_to_index.read(&pair)?;
         if index == 0 {
-            return Err(PrecompileError::Revert("pair not registered".into()));
+            return Err(OracleError::PairNotRegistered.into());
         }
         Ok(index)
     }
@@ -250,9 +241,7 @@ impl OracleContract<'_> {
     pub fn get_currency_rate(&self, iso_code: u16) -> Result<U256> {
         let rate = self.reference_currency_rate.read(&iso_code)?;
         if rate.is_zero() {
-            return Err(PrecompileError::Revert(format!(
-                "no currency rate for iso_code {iso_code}"
-            )));
+            return Err(OracleError::NoCurrencyRate { iso_code }.into());
         }
         Ok(rate)
     }
@@ -268,9 +257,7 @@ impl OracleContract<'_> {
     ) -> Result<()> {
         // Bootstrap write path: only callable by system (Address::ZERO)
         if caller != Address::ZERO {
-            return Err(PrecompileError::Revert(
-                "only system can set exchange rate directly".into(),
-            ));
+            return Err(OracleError::OnlySystem("set exchange rate directly").into());
         }
         let index = self.require_pair_index(pair)?;
         self.update_exchange_rate(index, rate, block_number, timestamp)
@@ -335,7 +322,7 @@ impl OracleContract<'_> {
             caller,
             outbe_validatorset::delegation::ValidatorDelegateRole::Oracle,
         )?
-        .ok_or_else(|| PrecompileError::Revert("caller is not an active ORACLE signer".into()))
+        .ok_or_else(|| OracleError::NotActiveOracleSigner.into())
     }
 
     /// Clears all votes and resets the voter list. Called after tally.
@@ -422,9 +409,9 @@ impl OracleContract<'_> {
         entries: &[(AddressPair, U256, U256)],
     ) -> Result<()> {
         let idx = self.snapshot_write_idx.read()?;
-        let next_snapshot_idx = idx.checked_add(1).ok_or_else(|| {
-            PrecompileError::BodyReadCorruption("Oracle snapshot write index overflow".into())
-        })?;
+        let next_snapshot_idx = idx
+            .checked_add(1)
+            .ok_or(OracleError::SnapshotWriteIndexOverflow)?;
         let next_ocomp_version = self.next_ocomp_state_version()?;
 
         self.snapshot_timestamp.write(&idx, timestamp)?;
@@ -656,9 +643,7 @@ impl OracleContract<'_> {
         worldwide_day: WorldwideDay,
     ) -> Result<WorldwideDayVwapSnapshot> {
         if !self.worldwide_day_vwap_exists.read(&worldwide_day)? {
-            return Err(PrecompileError::Revert(
-                "worldwide day VWAP snapshot not found".into(),
-            ));
+            return Err(OracleError::WorldwideDayVwapSnapshotNotFound.into());
         }
 
         let start_time = self.worldwide_day_vwap_start.read(&worldwide_day)?;

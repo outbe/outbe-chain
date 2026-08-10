@@ -4,8 +4,8 @@ use outbe_oracle::api::AddressPair;
 use outbe_oracle::schema::OracleContract;
 use outbe_oracle::{
     evaluate_oracle_opening_v1, oracle_count_slot_plan_v1, oracle_opening_slot_plan_v1,
-    OracleOpeningEvaluationError, OracleOpeningPlanError, MAX_OCOMP_ACTIVE_SCURVE_ENTRIES,
-    MAX_OCOMP_REFERENCE_CURRENCIES, MAX_OCOMP_WWD_PAIR_ENTRIES,
+    OracleOcompError, MAX_OCOMP_ACTIVE_SCURVE_ENTRIES, MAX_OCOMP_REFERENCE_CURRENCIES,
+    MAX_OCOMP_WWD_PAIR_ENTRIES,
 };
 use outbe_primitives::{
     addresses::ORACLE_ADDRESS,
@@ -169,7 +169,7 @@ fn oracle_opening_rejects_an_iso_outside_the_on_chain_reference_list() {
 
         assert_eq!(
             evaluate_oracle_opening_v1(day, &[826, 840, 978], &raw_slots),
-            Err(OracleOpeningEvaluationError::IsoNotAReferenceCurrency { iso: 826 })
+            Err(OracleOcompError::IsoNotAReferenceCurrency { iso: 826 })
         );
     });
 }
@@ -189,28 +189,28 @@ fn oracle_opening_plan_checks_every_cap_before_detail_allocation() {
     .is_ok());
     assert_eq!(
         oracle_opening_slot_plan_v1(day, &isos, MAX_OCOMP_REFERENCE_CURRENCIES + 1, 0, 0, 0),
-        Err(OracleOpeningPlanError::ReferenceCurrencyCountExceedsCap {
+        Err(OracleOcompError::ReferenceCurrencyCountExceedsCap {
             actual: 257,
             cap: 256,
         })
     );
     assert_eq!(
         oracle_opening_slot_plan_v1(day, &isos, 1, MAX_OCOMP_WWD_PAIR_ENTRIES + 1, 0, 0),
-        Err(OracleOpeningPlanError::WorldwideDayPairCountExceedsCap {
+        Err(OracleOcompError::WorldwideDayPairCountExceedsCap {
             actual: 257,
             cap: 256,
         })
     );
     assert_eq!(
         oracle_opening_slot_plan_v1(day, &isos, 1, 0, MAX_OCOMP_ACTIVE_SCURVE_ENTRIES + 1, 0),
-        Err(OracleOpeningPlanError::ActiveScurveCountExceedsCap {
+        Err(OracleOcompError::ActiveScurveCountExceedsCap {
             actual: 257,
             cap: 256,
         })
     );
     assert_eq!(
         oracle_opening_slot_plan_v1(day, &isos, 1, 0, 2, 3),
-        Err(OracleOpeningPlanError::ScurveOldestExceedsCount {
+        Err(OracleOcompError::ScurveOldestExceedsCount {
             oldest: 3,
             count: 2,
         })

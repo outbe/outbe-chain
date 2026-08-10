@@ -642,6 +642,50 @@ fn calculate_vwap_isolates_each_pair_within_one_snapshot() {
         assert_eq!(vwap_eth, U256::in_units(2000u64));
     });
 }
+
+/// The bulk calculators skip pairs that hold no samples, but a rejected argument
+/// is not "no data" — it has to reach the caller instead of being absorbed into
+/// the empty-result path.
+#[test]
+fn bulk_calculators_propagate_argument_errors_instead_of_reporting_no_data() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        init_oracle(&mut oracle);
+        oracle
+            .register_pair(AddressPair::from_addresses(COEN, USDT))
+            .unwrap();
+        oracle
+            .write_snapshot(
+                1000,
+                &[(
+                    pair_key(COEN, USDT),
+                    U256::in_units(1u64),
+                    U256::in_units(100u64),
+                )],
+            )
+            .unwrap();
+
+        let err = oracle.calculate_twaps(2000, 0).unwrap_err();
+        assert!(
+            err.to_string().contains("lookback_seconds"),
+            "zero lookback must surface as an argument error, got {err:?}"
+        );
+
+        let err = oracle.calculate_vwaps(2000, 2000).unwrap_err();
+        assert!(
+            err.to_string().contains("start_time must be less than"),
+            "empty range must surface as an argument error, got {err:?}"
+        );
+
+        // A well-formed window with no samples still reports the no-data revert.
+        let err = oracle.calculate_vwaps(5000, 6000).unwrap_err();
+        assert!(
+            err.to_string().contains("no VWAP data"),
+            "empty window must stay a no-data revert, got {err:?}"
+        );
+    });
+}
+
 #[test]
 fn submit_vote_stores_tuples_until_clear_votes_drains_them() {
     with_storage(|storage| {

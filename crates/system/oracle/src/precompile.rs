@@ -1,3 +1,4 @@
+use crate::errors::OracleError;
 use crate::schema::OracleContract;
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolEvent, SolInterface};
@@ -102,9 +103,7 @@ pub fn dispatch(
                 let pair = oracle.require_pair_from(c.base, c.quote)?;
                 match oracle.get_utc_day_vwap_for_pair(c.utcDay, pair)? {
                     Some(vwap) => Ok(vwap),
-                    None => Err(outbe_primitives::error::PrecompileError::Revert(
-                        "no finalized VWAP for that UTC day".into(),
-                    )),
+                    None => Err(OracleError::NoFinalizedUtcDayVwap.into()),
                 }
             }),
             getScurveValue(c) => view(c, |c| {
