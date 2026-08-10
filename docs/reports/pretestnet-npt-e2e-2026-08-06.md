@@ -266,6 +266,12 @@ validator/FullNode canonical result chunks, NOD body fields и membership proof 
   выполнены на clean revision;
 - `outbe-chain-08n.6`: публичный burst из 6–7 `offerTribute` может сформировать
   gas-valid блок, исполнение которого превышает consensus certification budget.
+  Повторный B12-прогон с тремя одновременными Tribute воспроизвёл тот же класс:
+  prewarm и canonical validation последовательно выполнили шесть SGX-вызовов
+  через process-local enclave mutex, две ноды не уложились в view, а receipt
+  появился только после nullified view и повторного включения. Хост предоставляет
+  16 logical CPU / 8 физических ядер, но canonical capacity-runner намеренно
+  ограничен `CPUQuota=400%`, то есть заявленным четырёхъядерным minimum profile.
 
 Кроме того, quality task `outbe-chain-08n.2`, final acceptance task
 `outbe-chain-08n.5` и dynamic-OCOMP acceptance `outbe-chain-8ui.7` остаются
@@ -284,6 +290,13 @@ launch identity. Для закрытия остался запуск обоих 
 |---|---|---|
 | B12/T07 | OCOMP xtask/evidence contract | Выполнить пять cold release SGX-no-attest capacity runs и exact closure на одной clean revision |
 | `outbe-chain-08n.6` | Tribute admission/gas accounting и consensus certification budget | После architecture freeze выбрать детерминированный production-safe burst bound; до решения публичный burst остаётся P0 NO-GO |
+
+Открытый диагностический вопрос для `outbe-chain-08n.6`: повторить batch=3 с
+разнесением validator+enclave по выделенным CPU и без четырёхъядерной квоты.
+Такой прогон отделит влияние colocated resource contention, но не может закрыть
+B12 для текущего `OCOMP_POC_DEVNET_MACHINE_V1`: зелёный результат на 16 CPU
+доказывает другой аппаратный профиль. До отдельного решения capacity-сценарий
+отправляет не более двух Tribute одновременно и не заявляет burst throughput.
 
 ### Явно пропущенные или частичные строки
 
