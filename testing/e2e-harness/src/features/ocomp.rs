@@ -4572,7 +4572,7 @@ fn runtime_traces_cover_ocomp_execution_paths(world: &mut World) {
             .collect::<Vec<_>>();
         let follower_markers = world
             .localnet
-            .ocomp_runtime_trace_markers("follower")
+            .ocomp_runtime_trace_markers_at_validator_slot("follower", OCOMP_TRACE_FOLLOWER_SLOT)
             .expect("parse late follower OCOMP trace");
         let historical_request_observed = follower_markers.iter().any(|marker| {
             marker.kind == "terminal_request_committed"
