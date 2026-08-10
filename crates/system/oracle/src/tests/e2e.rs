@@ -182,13 +182,12 @@ fn init_from_genesis_imports_every_custom_config_collection() {
 
         // An ISO resolves through the pair registry alone.
         assert_eq!(
-            crate::api::registered_coen_pair(storage.clone(), 840).unwrap(),
-            Some(pair_key(COEN, usd()))
+            crate::api::require_coen_pair(storage.clone(), 840)
+                .unwrap()
+                .0,
+            pair_key(COEN, usd())
         );
-        assert_eq!(
-            crate::api::registered_coen_pair(storage.clone(), 978).unwrap(),
-            None
-        );
+        assert!(crate::api::require_coen_pair(storage.clone(), 978).is_err());
     });
 }
 

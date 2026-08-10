@@ -75,13 +75,10 @@ pub fn check_reference_currency_with_storage(storage: StorageHandle, iso_code: u
     Err(OracleError::NotReferenceCurrency { iso_code }.into())
 }
 
-/// Current COEN price in currency `iso_code`, 1e18 scaled.
+/// Current COEN price to currency `iso_code`, 1e18 scaled.
 ///
-/// Reverts when `COEN/<iso_code>` is not a registered pair, and returns
-/// `U256::ZERO` when it is registered but carries no published rate. Callers
-/// that must not halt a block gate on [`registered_coen_pair`] first and treat
-/// zero as "not ready". This is the single definition of the
-/// `iso_code -> exchange_rate` lookup.
+/// Returns errors when `COEN/<iso_code>` is not a registered pair, or
+/// no rates are found.
 pub fn coen_rate_for(storage: StorageHandle, iso_code: u16) -> Result<U256> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
     oracle.get_exchange_rate(COEN_ASSET, currency_address(iso_code))
@@ -92,19 +89,19 @@ pub fn get_exchange_rate(storage: StorageHandle, base: Address, quote: Address) 
     oracle.get_exchange_rate(base, quote)
 }
 
-/// The `COEN/<iso_code>` pair, or `None` when it is not registered.
-///
-/// The key itself is a pure function of the ISO code; the storage read only
-/// answers "is it registered", which is what callers actually branch on.
-pub fn registered_coen_pair(storage: StorageHandle, iso_code: u16) -> Result<Option<AddressPair>> {
+/// The registered `COEN/<iso_code>` pair and its index, reverting when the
+/// pair is not registered.
+pub fn require_coen_pair(
+    storage: StorageHandle,
+    iso_code: u16,
+) -> Result<(AddressPair, PairIndex)> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
     let pair = AddressPair::new_coen_to(iso_code);
-    Ok((oracle.pair_index_of(pair)? != 0).then_some(pair))
-}
-
-/// [`registered_coen_pair`] with the "not registered" revert callers repeat.
-pub fn require_coen_pair(storage: StorageHandle, iso_code: u16) -> Result<AddressPair> {
-    registered_coen_pair(storage, iso_code)?.ok_or_else(|| OracleError::PairNotRegistered.into())
+    let index = oracle.pair_index_of(pair)?;
+    if index == 0 {
+        return Err(OracleError::PairNotRegistered { pair }.into());
+    }
+    Ok((pair, index))
 }
 
 pub fn register_pair(storage: StorageHandle, pair: AddressPair) -> Result<PairIndex> {

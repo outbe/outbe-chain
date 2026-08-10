@@ -61,11 +61,11 @@ impl OracleContract<'_> {
             return Err(OracleError::PairBaseQuoteIdentical.into());
         }
         if !pair.is_canonical() {
-            return Err(OracleError::PairNotCanonical.into());
+            return Err(OracleError::PairNotCanonical { pair }.into());
         }
 
-        if self.pair_to_index.read(&pair)? != 0 {
-            return Err(OracleError::PairAlreadyRegistered.into());
+        if self.pair_index_of(pair)? != 0 {
+            return Err(OracleError::PairAlreadyRegistered { pair }.into());
         }
 
         let count = self.pair_count.read()?;
@@ -97,7 +97,7 @@ impl OracleContract<'_> {
     /// the value.
     pub fn require_pair_at(&self, index: PairIndex) -> Result<AddressPair> {
         if index == 0 || index > self.pair_count.read()? {
-            return Err(OracleError::PairIndexOutOfRange.into());
+            return Err(OracleError::PairIndexOutOfRange { index }.into());
         }
         self.pair_at(index)
     }
@@ -173,11 +173,11 @@ impl OracleContract<'_> {
 
     pub fn require_pair_index(&self, pair: AddressPair) -> Result<PairIndex> {
         if !pair.is_canonical() {
-            return Err(OracleError::PairQuoteNotCanonical.into());
+            return Err(OracleError::PairNotCanonical { pair }.into());
         }
         let index = self.pair_to_index.read(&pair)?;
         if index == 0 {
-            return Err(OracleError::PairNotRegistered.into());
+            return Err(OracleError::PairNotRegistered { pair }.into());
         }
         Ok(index)
     }
@@ -211,6 +211,9 @@ impl OracleContract<'_> {
         let pair = AddressPair::from_addresses(base, quote);
         let index = self.require_pair_index(pair.to_canonical())?;
         let stored = self.exchange_rate.read(&index)?;
+        if stored == U256::ZERO {
+            return Err(OracleError::NoRateForPair { pair }.into());
+        }
         let rate = if pair.is_canonical() {
             stored
         } else {

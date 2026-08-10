@@ -10,7 +10,9 @@
 //! arm. Errors that are not oracle-specific (out-of-gas, storage faults) keep
 //! coming from `outbe_primitives::error::PrecompileError`.
 
+use crate::schema::PairIndex;
 use alloy_primitives::{B256, U256};
+use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
@@ -20,16 +22,14 @@ pub enum OracleError {
     // -- pair registry ------------------------------------------------------
     #[error("pair base and quote must differ")]
     PairBaseQuoteIdentical,
-    #[error("pair should be in the canonical form")]
-    PairNotCanonical,
-    #[error("pair must be quoted in canonical form")]
-    PairQuoteNotCanonical,
-    #[error("pair already registered")]
-    PairAlreadyRegistered,
-    #[error("pair not registered")]
-    PairNotRegistered,
-    #[error("pair index out of range")]
-    PairIndexOutOfRange,
+    #[error("pair {pair} should be in the canonical form")]
+    PairNotCanonical { pair: AddressPair },
+    #[error("pair {pair} already registered")]
+    PairAlreadyRegistered { pair: AddressPair },
+    #[error("pair {pair} not registered")]
+    PairNotRegistered { pair: AddressPair },
+    #[error("pair index {index} out of range")]
+    PairIndexOutOfRange { index: PairIndex },
 
     // -- authorization ------------------------------------------------------
     /// The argument completes the sentence, e.g. `"activate vote target"`.
@@ -118,6 +118,8 @@ pub enum OracleError {
     SnapshotWriteIndexOverflow,
     #[error("Oracle S-curve write index overflow")]
     ScurveWriteIndexOverflow,
+    #[error("No rate for pair {pair}")]
+    NoRateForPair { pair: AddressPair },
 }
 
 impl From<OracleError> for PrecompileError {
@@ -132,11 +134,11 @@ impl From<OracleError> for PrecompileError {
             }
 
             PairBaseQuoteIdentical
-            | PairNotCanonical
-            | PairQuoteNotCanonical
-            | PairAlreadyRegistered
-            | PairNotRegistered
-            | PairIndexOutOfRange
+            | PairNotCanonical { .. }
+            | PairAlreadyRegistered { .. }
+            | PairNotRegistered { .. }
+            | PairIndexOutOfRange { .. }
+            | NoRateForPair { .. }
             | OnlySystem(_)
             | NotActiveOracleSigner
             | VoteTupleCountExceedsPairCount
@@ -284,7 +286,9 @@ mod tests {
         }
 
         for err in [
-            OracleError::PairNotRegistered,
+            OracleError::PairNotRegistered {
+                pair: AddressPair::new_coen_to(840),
+            },
             OracleError::NoVwapData,
             OracleError::OnlySystem("activate vote target"),
             OracleError::NoCurrencyRate { iso_code: 978 },
@@ -327,8 +331,11 @@ mod tests {
     #[test]
     fn messages_match_the_strings_callers_see() {
         assert_eq!(
-            OracleError::PairNotRegistered.to_string(),
-            "pair not registered"
+            OracleError::PairNotRegistered {
+                pair: AddressPair::new_coen_to(840),
+            }
+            .to_string(),
+            format!("pair {} not registered", AddressPair::new_coen_to(840))
         );
         assert_eq!(
             OracleError::VwapOverflow("rate * volume").to_string(),

@@ -9,10 +9,7 @@ use std::collections::BTreeMap;
 
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
-use outbe_oracle::{
-    api::{registered_coen_pair, AddressPair},
-    schema::OracleContract,
-};
+use outbe_oracle::{api::AddressPair, schema::OracleContract};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},
@@ -31,10 +28,8 @@ use crate::state::QualifiedBinTree;
 /// Run the daily Called scan. Returns the number of series force-called.
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     let oracle = OracleContract::new(ctx.storage.clone());
-    // This scan needs the pair itself, not the rate: it reads the day's finalized VWAP.
-    let Some(pair) = registered_coen_pair(ctx.storage.clone(), QUALIFIER_REFERENCE_ISO)? else {
-        return Ok(0);
-    };
+    let (pair, _) =
+        outbe_oracle::api::require_coen_pair(ctx.storage.clone(), QUALIFIER_REFERENCE_ISO)?;
 
     // Most recent fully-closed UTC day (finalized VWAP).
     let last_closed_day = previous_date_key(timestamp_to_date_key(ctx.block.timestamp));
@@ -42,6 +37,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     // The Oracle begin-block hook finalizes that day earlier in this same
     // block; a lagging watermark means the ordering broke — skip loudly
     // instead of misreading an unfinalized day as empty.
+    // todo use api.rs
     let finalized = oracle.utc_day_vwap_last_finalized.read()?;
     if finalized < last_closed_day {
         tracing::warn!(target: "outbe::intexfactory", last_closed_day, finalized, "call scan: utc-day VWAP not finalized yet, skipping run");

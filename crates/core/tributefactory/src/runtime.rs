@@ -256,15 +256,14 @@ fn resolve_tribute_price(
     issuance_currency: u16,
     worldwide_day: WorldwideDay,
 ) -> Result<U256> {
-    let pair_id = outbe_oracle::api::registered_coen_pair(storage.clone(), issuance_currency)?
-        .ok_or(TributeFactoryError::IssuanceCurrencyNotRegistered { issuance_currency })?;
+    let (pair, _) = outbe_oracle::api::require_coen_pair(storage.clone(), issuance_currency)?;
     let oracle = OracleContract::new(storage);
 
     let vwap = oracle
-        .get_worldwide_day_vwap_for_pair(worldwide_day, pair_id)?
+        .get_worldwide_day_vwap_for_pair(worldwide_day, pair)?
         .unwrap_or(U256::ZERO);
     let scurve_timestamp = worldwide_day.to_timestamp_utc();
-    let max_scurve = scurve::get_max_active_scurve_value(&oracle, pair_id, scurve_timestamp)?;
+    let max_scurve = scurve::get_max_active_scurve_value(&oracle, pair, scurve_timestamp)?;
 
     Ok(vwap.max(max_scurve))
 }

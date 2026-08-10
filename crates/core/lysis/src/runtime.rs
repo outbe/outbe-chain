@@ -227,15 +227,11 @@ fn resolve_entry_price_minor(
     worldwide_day: WorldwideDay,
     iso_code: u16,
 ) -> Result<U256> {
-    let pair_id = outbe_oracle::api::require_coen_pair(storage.clone(), iso_code)?;
-    let vwap = outbe_oracle::api::get_worldwide_day_vwap_for_pair(
-        storage.clone(),
-        worldwide_day,
-        pair_id,
-    )?
-    .unwrap_or(U256::ZERO);
-    let max_scurve =
-        outbe_oracle::api::get_max_active_scurve_value(storage, worldwide_day, pair_id)?;
+    let (pair, _) = outbe_oracle::api::require_coen_pair(storage.clone(), iso_code)?;
+    let vwap =
+        outbe_oracle::api::get_worldwide_day_vwap_for_pair(storage.clone(), worldwide_day, pair)?
+            .unwrap_or(U256::ZERO);
+    let max_scurve = outbe_oracle::api::get_max_active_scurve_value(storage, worldwide_day, pair)?;
     let nominal = vwap.max(max_scurve);
     if nominal.is_zero() {
         return Err(PrecompileError::Revert(
