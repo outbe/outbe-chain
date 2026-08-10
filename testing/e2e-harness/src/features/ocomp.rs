@@ -43,10 +43,10 @@ use crate::world::World;
 
 const OCOMP_CAPACITY_TRIBUTE_COUNT: usize = 257;
 // The capacity scenario proves the protocol path and the 256+1 shard boundary,
-// not Tribute burst throughput. Keep at most two offers in flight until
-// outbe-chain-08n.6 gives blocking TEE work a production-safe block budget.
-const OCOMP_CAPACITY_SUBMISSION_CONCURRENCY: usize = 2;
-// The capacity lane proves the second 256-Tribute work shard using 33
+// not Tribute burst throughput. Keep exactly three offers in flight: this stays
+// below the known per-block offer ceiling while using the available test host.
+const OCOMP_CAPACITY_SUBMISSION_CONCURRENCY: usize = 3;
+// The capacity lane proves the second 256-Tribute work shard using 86
 // gas-bounded submission rounds. Keep the logical genesis window short, while
 // leaving enough room for debug-build block production before controlled time
 // advances the same chain to the next phase.
@@ -4739,7 +4739,15 @@ fn lysis_vote_reverts_with_lifecycle_inactive_code(world: &mut World) {
 
 #[cfg(test)]
 mod tests {
-    use super::{dynamic_live_ports_after_jail, joiner_restart_is_in_safe_early_epoch_window};
+    use super::{
+        dynamic_live_ports_after_jail, joiner_restart_is_in_safe_early_epoch_window,
+        OCOMP_CAPACITY_SUBMISSION_CONCURRENCY,
+    };
+
+    #[test]
+    fn capacity_population_submits_three_tributes_per_round() {
+        assert_eq!(OCOMP_CAPACITY_SUBMISSION_CONCURRENCY, 3);
+    }
 
     #[test]
     fn dynamic_deadline_checks_only_nodes_that_can_advance_after_jail() {
