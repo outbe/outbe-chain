@@ -154,19 +154,13 @@ fn later_nod_failure_rolls_back_the_complete_lysis_attempt() {
             .unwrap();
         let oracle = OracleContract::new(storage.clone());
         oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
-        oracle
-            .worldwide_day_vwap_pair_count
-            .write(&wwd, 1_u32)
-            .unwrap();
-        oracle
-            .worldwide_day_vwap_pair
-            .get_nested(&wwd)
-            .write_pair(&0_u32, outbe_oracle::api::AddressPair::new_coen_to(840))
+        let pair_index = oracle
+            .pair_index_of(outbe_oracle::api::AddressPair::new_coen_to(840))
             .unwrap();
         oracle
             .worldwide_day_vwap_value
             .get_nested(&wwd)
-            .write(&0_u32, U256::from(500_000_000_000_000_000_u128))
+            .write(&pair_index, U256::from(500_000_000_000_000_000_u128))
             .unwrap();
 
         let first = gas_audit_tribute(1, owner, wwd, nominal);
@@ -236,19 +230,13 @@ fn gas_08_lysis_dense_day_completes_and_emits_body_mutations() {
             .unwrap();
         let oracle = OracleContract::new(storage.clone());
         oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
-        oracle
-            .worldwide_day_vwap_pair_count
-            .write(&wwd, 1u32)
-            .unwrap();
-        oracle
-            .worldwide_day_vwap_pair
-            .get_nested(&wwd)
-            .write_pair(&0u32, outbe_oracle::api::AddressPair::new_coen_to(840))
+        let pair_index = oracle
+            .pair_index_of(outbe_oracle::api::AddressPair::new_coen_to(840))
             .unwrap();
         oracle
             .worldwide_day_vwap_value
             .get_nested(&wwd)
-            .write(&0u32, cost_of_gratis)
+            .write(&pair_index, cost_of_gratis)
             .unwrap();
 
         let mut tribute = TributeContract::new(storage.clone());
@@ -662,19 +650,13 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
         outbe_oracle::api::register_pair(s.clone(), outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
         let oracle = OracleContract::new(s.clone());
         oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
-        oracle
-            .worldwide_day_vwap_pair_count
-            .write(&wwd, 1u32)
-            .unwrap();
-        oracle
-            .worldwide_day_vwap_pair
-            .get_nested(&wwd)
-            .write_pair(&0u32, outbe_oracle::api::AddressPair::new_coen_to(840))
+        let pair_index = oracle
+            .pair_index_of(outbe_oracle::api::AddressPair::new_coen_to(840))
             .unwrap();
         oracle
             .worldwide_day_vwap_value
             .get_nested(&wwd)
-            .write(&0u32, cost_of_gratis)
+            .write(&pair_index, cost_of_gratis)
             .unwrap();
 
         // Seed compact lifecycle state plus the canonical direct-map commitment,
@@ -982,19 +964,13 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
         outbe_oracle::api::register_pair(s.clone(), outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
         let oracle = OracleContract::new(s.clone());
         oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
-        oracle
-            .worldwide_day_vwap_pair_count
-            .write(&wwd, 1u32)
-            .unwrap();
-        oracle
-            .worldwide_day_vwap_pair
-            .get_nested(&wwd)
-            .write_pair(&0u32, outbe_oracle::api::AddressPair::new_coen_to(840))
+        let pair_index = oracle
+            .pair_index_of(outbe_oracle::api::AddressPair::new_coen_to(840))
             .unwrap();
         oracle
             .worldwide_day_vwap_value
             .get_nested(&wwd)
-            .write(&0u32, cost_of_gratis)
+            .write(&pair_index, cost_of_gratis)
             .unwrap();
 
         let mut tribute = TributeContract::new(s.clone());
@@ -1068,19 +1044,13 @@ fn lysis_records_contributors_aggregated_by_owner() {
             .unwrap();
         let oracle = OracleContract::new(storage.clone());
         oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
-        oracle
-            .worldwide_day_vwap_pair_count
-            .write(&wwd, 1u32)
-            .unwrap();
-        oracle
-            .worldwide_day_vwap_pair
-            .get_nested(&wwd)
-            .write_pair(&0u32, outbe_oracle::api::AddressPair::new_coen_to(840))
+        let pair_index = oracle
+            .pair_index_of(outbe_oracle::api::AddressPair::new_coen_to(840))
             .unwrap();
         oracle
             .worldwide_day_vwap_value
             .get_nested(&wwd)
-            .write(&0u32, cost_of_gratis)
+            .write(&pair_index, cost_of_gratis)
             .unwrap();
 
         // Distinct owners: lysis derives nod_id from (owner, day), so an owner
@@ -1158,19 +1128,13 @@ fn lysis_omits_excluded_owners_from_contributor_map() {
             .unwrap();
         let oracle = OracleContract::new(storage.clone());
         oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
-        oracle
-            .worldwide_day_vwap_pair_count
-            .write(&wwd, 1u32)
-            .unwrap();
-        oracle
-            .worldwide_day_vwap_pair
-            .get_nested(&wwd)
-            .write_pair(&0u32, outbe_oracle::api::AddressPair::new_coen_to(840))
+        let pair_index = oracle
+            .pair_index_of(outbe_oracle::api::AddressPair::new_coen_to(840))
             .unwrap();
         oracle
             .worldwide_day_vwap_value
             .get_nested(&wwd)
-            .write(&0u32, cost_of_gratis)
+            .write(&pair_index, cost_of_gratis)
             .unwrap();
 
         let owner_a = gas_audit_address(1);

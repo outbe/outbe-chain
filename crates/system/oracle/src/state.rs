@@ -651,66 +651,59 @@ impl OracleContract<'_> {
 
         let start_time = self.worldwide_day_vwap_start.read(&worldwide_day)?;
         let end_time = self.worldwide_day_vwap_end.read(&worldwide_day)?;
-        let pair_count = self.worldwide_day_vwap_pair_count.read(&worldwide_day)?;
         let lookback = end_time.saturating_sub(start_time);
 
-        let pair_map = self.worldwide_day_vwap_pair.get_nested(&worldwide_day);
+        let pair_count = self.pair_count.read()?;
         let value_map = self.worldwide_day_vwap_value.get_nested(&worldwide_day);
-        let mut bases = Vec::with_capacity(pair_count as usize);
-        let mut quotes = Vec::with_capacity(pair_count as usize);
-        let mut vwaps = Vec::with_capacity(pair_count as usize);
-        let mut lookbacks = Vec::with_capacity(pair_count as usize);
-        for idx in 0..pair_count {
-            let entry = pair_map.read_pair(&idx)?;
+        let mut bases = Vec::new();
+        let mut quotes = Vec::new();
+        let mut vwaps = Vec::new();
+        let mut lookbacks = Vec::new();
+        for index in 1..=pair_count {
+            let vwap = value_map.read(&index)?;
+            if vwap.is_zero() {
+                continue;
+            }
+            let entry = self.pair_at(index)?;
             bases.push(entry.address1());
             quotes.push(entry.address2());
-            vwaps.push(value_map.read(&idx)?);
+            vwaps.push(vwap);
             lookbacks.push(lookback);
         }
 
         Ok((start_time, end_time, bases, quotes, vwaps, lookbacks))
     }
 
-    /// Returns a stored WorldwideDay VWAP for a specific pair, if present.
+    /// Returns a stored WorldwideDay VWAP for the pair registered under `index`,
+    /// or `None` when the day has no snapshot or that pair had no data in it.
     pub fn get_worldwide_day_vwap_for_pair(
         &self,
         worldwide_day: WorldwideDay,
-        pair: AddressPair,
+        index: PairIndex,
     ) -> Result<Option<U256>> {
         if !self.worldwide_day_vwap_exists.read(&worldwide_day)? {
             return Ok(None);
         }
 
-        let pair_count = self.worldwide_day_vwap_pair_count.read(&worldwide_day)?;
-        let pair_map = self.worldwide_day_vwap_pair.get_nested(&worldwide_day);
-        let value_map = self.worldwide_day_vwap_value.get_nested(&worldwide_day);
-        for idx in 0..pair_count {
-            if pair_map.read_pair(&idx)?.same_market(&pair) {
-                return Ok(Some(value_map.read(&idx)?));
-            }
-        }
-
-        Ok(None)
+        let vwap = self
+            .worldwide_day_vwap_value
+            .get_nested(&worldwide_day)
+            .read(&index)?;
+        Ok((!vwap.is_zero()).then_some(vwap))
     }
 
-    /// Returns the finalized per-UTC-day VWAP for `pair` on `utc_day`
-    /// (yyyymmdd UTC), or `None` if the day is not finalized or had no data for
-    /// that pair. To distinguish "not finalized yet" from "finalized, no data",
-    /// compare `utc_day` against `utc_day_vwap_last_finalized`.
+    /// Returns the finalized per-UTC-day VWAP for the pair registered under
+    /// `index` on `utc_day` (yyyymmdd UTC), or `None` if the day is not
+    /// finalized or had no data for that pair. To distinguish "not finalized
+    /// yet" from "finalized, no data", compare `utc_day` against
+    /// `utc_day_vwap_last_finalized`.
     pub fn get_utc_day_vwap_for_pair(
         &self,
         utc_day: u32,
-        pair: AddressPair,
+        index: PairIndex,
     ) -> Result<Option<U256>> {
-        let pair_count = self.utc_day_vwap_pair_count.read(&utc_day)?;
-        let pair_map = self.utc_day_vwap_pair.get_nested(&utc_day);
-        let value_map = self.utc_day_vwap_value.get_nested(&utc_day);
-        for idx in 0..pair_count {
-            if pair_map.read_pair(&idx)?.same_market(&pair) {
-                return Ok(Some(value_map.read(&idx)?));
-            }
-        }
-        Ok(None)
+        let vwap = self.utc_day_vwap_value.get_nested(&utc_day).read(&index)?;
+        Ok((!vwap.is_zero()).then_some(vwap))
     }
 
     /// Returns the full finalized VWAP set for `utc_day` as
@@ -720,17 +713,20 @@ impl OracleContract<'_> {
         &self,
         utc_day: u32,
     ) -> Result<(Vec<Address>, Vec<Address>, Vec<U256>)> {
-        let pair_count = self.utc_day_vwap_pair_count.read(&utc_day)?;
-        let pair_map = self.utc_day_vwap_pair.get_nested(&utc_day);
+        let pair_count = self.pair_count.read()?;
         let value_map = self.utc_day_vwap_value.get_nested(&utc_day);
-        let mut bases = Vec::with_capacity(pair_count as usize);
-        let mut quotes = Vec::with_capacity(pair_count as usize);
-        let mut vwaps = Vec::with_capacity(pair_count as usize);
-        for idx in 0..pair_count {
-            let entry = pair_map.read_pair(&idx)?;
+        let mut bases = Vec::new();
+        let mut quotes = Vec::new();
+        let mut vwaps = Vec::new();
+        for index in 1..=pair_count {
+            let vwap = value_map.read(&index)?;
+            if vwap.is_zero() {
+                continue;
+            }
+            let entry = self.pair_at(index)?;
             bases.push(entry.address1());
             quotes.push(entry.address2());
-            vwaps.push(value_map.read(&idx)?);
+            vwaps.push(vwap);
         }
         Ok((bases, quotes, vwaps))
     }

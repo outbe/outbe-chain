@@ -476,15 +476,15 @@ impl OracleContract<'_> {
             .write(&worldwide_day, start_time)?;
         self.worldwide_day_vwap_end
             .write(&worldwide_day, end_time)?;
-        self.worldwide_day_vwap_pair_count
-            .write(&worldwide_day, pairs.len() as u32)?;
 
-        let pair_map = self.worldwide_day_vwap_pair.get_nested(&worldwide_day);
+        // Keyed by the registry index, so the pair itself is already recorded in
+        // `pair_by_index`. Values not written stay zero, which reads back as "no
+        // VWAP for this pair on this day". A WorldwideDay is written once, at the
+        // Metadosis ResolveForming edge, so a second write with fewer pairs
+        // cannot leave a stale entry behind.
         let value_map = self.worldwide_day_vwap_value.get_nested(&worldwide_day);
-        for (idx, (pair, vwap)) in pairs.iter().zip(vwaps.iter()).enumerate() {
-            let i = idx as u32;
-            pair_map.write_pair(&i, *pair)?;
-            value_map.write(&i, *vwap)?;
+        for (pair, vwap) in pairs.iter().zip(vwaps.iter()) {
+            value_map.write(&self.pair_index_of(*pair)?, *vwap)?;
         }
 
         self.commit_ocomp_state_version(next_ocomp_version)?;
@@ -497,11 +497,11 @@ impl OracleContract<'_> {
     /// `[date_key_to_utc_timestamp(utc_day), +SECONDS_PER_DAY)`.
     ///
     /// Pairs without data for the day are skipped (mirrors `calculate_vwaps`);
-    /// if no pair has data, nothing is written, so the day keeps
-    /// `pair_count == 0`. Emits one `VwapCalculated` event per written pair in
+    /// if no pair has data, nothing is written, so the day stays empty and is
+    /// told apart from an unfinalized one by the `utc_day_vwap_last_finalized`
+    /// watermark. Emits one `VwapCalculated` event per written pair in
     /// registration order. The method overwrites unconditionally — the
-    /// caller gates re-finalization via the `utc_day_vwap_last_finalized`
-    /// watermark.
+    /// caller gates re-finalization via that same watermark.
     pub fn finalize_utc_day_vwap(&mut self, utc_day: u32) -> Result<()> {
         if self.ocomp_profile_ready.read()? {
             let storage = self.storage.clone();
@@ -515,25 +515,20 @@ impl OracleContract<'_> {
         let day_start = date_key_to_utc_timestamp(utc_day);
         let day_end = day_start.saturating_add(SECONDS_PER_DAY);
 
-        // No vote-target pair had data for the day — leave it unwritten so
-        // `pair_count == 0` reads as finalized-empty against the watermark.
+        // No vote-target pair had data for the day — leave it unwritten so the
+        // day reads as finalized-empty against the watermark.
         let Some((pairs, vwaps, _)) = self.try_calculate_vwaps(day_start, day_end)? else {
             return Ok(());
         };
         let next_ocomp_version = self.next_ocomp_state_version()?;
         let profile_ready = self.ocomp_profile_ready.read()?;
 
-        // `pairs.len()` is bounded by the registry's u32 `pair_count`, so the
-        // conversion is lossless; `unwrap_or` keeps it panic-free per runtime rules.
-        let count = u32::try_from(pairs.len()).unwrap_or(u32::MAX);
-        self.utc_day_vwap_pair_count.write(&utc_day, count)?;
-        let pair_map = self.utc_day_vwap_pair.get_nested(&utc_day);
+        // Keyed by the registry index; unwritten entries stay zero and read back
+        // as "no VWAP for this pair on this day". Re-finalizing a closed day
+        // recomputes over the same immutable window, so no stale entry survives.
         let value_map = self.utc_day_vwap_value.get_nested(&utc_day);
-        for i in 0..count {
-            let pair = pairs[i as usize];
-            let vwap = vwaps[i as usize];
-            pair_map.write_pair(&i, pair)?;
-            value_map.write(&i, vwap)?;
+        for (pair, vwap) in pairs.iter().copied().zip(vwaps.iter().copied()) {
+            value_map.write(&self.pair_index_of(pair)?, vwap)?;
             if profile_ready && pair.same_market(&DAY_TYPE_PAIR) {
                 self.ocomp_day_type_vwap_by_utc_day.write(&utc_day, vwap)?;
             }

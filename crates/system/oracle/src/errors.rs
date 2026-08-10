@@ -207,8 +207,8 @@ pub enum OracleOcompError {
     ReferenceIsoCountExceedsCap { actual: usize, cap: usize },
     #[error("on-chain reference currency count {actual} exceeds cap {cap}")]
     ReferenceCurrencyCountExceedsCap { actual: u32, cap: u32 },
-    #[error("WWD VWAP pair count {actual} exceeds cap {cap}")]
-    WorldwideDayPairCountExceedsCap { actual: u32, cap: u32 },
+    #[error("pair index count {actual} does not match {expected} reference ISOs")]
+    PairIndexCountMismatch { actual: usize, expected: usize },
     #[error("S-curve oldest index {oldest} exceeds count {count}")]
     ScurveOldestExceedsCount { oldest: u32, count: u32 },
     #[error("active S-curve count {actual} exceeds cap {cap}")]
@@ -253,7 +253,7 @@ impl From<OracleOcompError> for PrecompileError {
             | NonCanonicalReferenceIsos
             | ReferenceIsoCountExceedsCap { .. }
             | ReferenceCurrencyCountExceedsCap { .. }
-            | WorldwideDayPairCountExceedsCap { .. }
+            | PairIndexCountMismatch { .. }
             | ScurveOldestExceedsCount { .. }
             | ActiveScurveCountExceedsCap { .. }
             | DuplicateSlot(_)

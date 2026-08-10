@@ -636,7 +636,7 @@ fn raw_fidelity_opening(
 }
 
 fn raw_oracle_opening(day: WorldwideDay, finalized_state_root: B256) -> RawContractOpeningProofV1 {
-    let plan = oracle_opening_slot_plan_v1(day, &[840, 978], 2, 2, 0, 0)
+    let plan = oracle_opening_slot_plan_v1(day, &[840, 978], 2, &[1, 2], 0, 0)
         .expect("deterministic Oracle slot plan");
     let scale = U256::from(1_000_000_000_000_000_000_u64);
     let values = [
@@ -646,17 +646,11 @@ fn raw_oracle_opening(day: WorldwideDay, finalized_state_root: B256) -> RawContr
         U256::from(1),   // pair_index[COEN/840]
         U256::from(2),   // pair_index[COEN/978]
         U256::from(1),   // wwd_vwap_exists
-        U256::from(2),   // wwd_vwap_pair_count
-        // Each entry is (pair base, pair quote, value). COEN is the zero
-        // address and an ISO encodes as 0x0cc<bcd>, so 840 is 0xcc840.
-        U256::ZERO,
-        U256::from(0xcc840),
-        scale,
-        U256::ZERO,
-        U256::from(0xcc978),
-        scale * U256::from(2),
-        U256::ZERO, // scurve_count
-        U256::ZERO, // scurve_oldest
+        // One value word per subject pair, at its registry index.
+        scale,                 // wwd_vwap_value[1]
+        scale * U256::from(2), // wwd_vwap_value[2]
+        U256::ZERO,            // scurve_count
+        U256::ZERO,            // scurve_oldest
     ];
     assert_eq!(plan.slots.len(), values.len());
     RawContractOpeningProofV1 {

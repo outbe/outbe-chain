@@ -55,6 +55,7 @@ fn ocomp_pre_admission_selects_stored_price_and_reads_bounded_counts() {
         )
         .unwrap();
 
+        let registered_pairs = oracle.pair_count.read().unwrap();
         let closed = crate::api::ocomp_pre_admission_projection(
             storage.clone(),
             wwd,
@@ -70,7 +71,8 @@ fn ocomp_pre_admission_selects_stored_price_and_reads_bounded_counts() {
         );
         assert_eq!(closed.auction_entry_price_source_day, last_closed);
         assert_eq!(closed.oracle_state_version, 5);
-        assert_eq!(closed.wwd_pair_entries, 1);
+        // The opening bound is now the registry size, not a per-day entry count.
+        assert_eq!(closed.wwd_pair_entries, registered_pairs);
         assert_eq!(closed.active_scurve_entries, 1);
 
         let next_timestamp = timestamp + outbe_primitives::time::SECONDS_PER_DAY;
@@ -90,7 +92,8 @@ fn ocomp_pre_admission_selects_stored_price_and_reads_bounded_counts() {
         );
         assert_eq!(fallback.auction_entry_price_source_day, next_wwd.value());
         assert_eq!(fallback.oracle_state_version, 5);
-        assert_eq!(fallback.wwd_pair_entries, 0);
+        // Registry-derived, so it does not drop to zero on a day with no snapshot.
+        assert_eq!(fallback.wwd_pair_entries, registered_pairs);
         assert_eq!(fallback.active_scurve_entries, 1);
     });
 }
@@ -178,7 +181,7 @@ fn prefork_oracle_event_failures_preserve_historical_best_effort_mutations() {
             oracle
                 .get_utc_day_vwap_for_pair(
                     outbe_primitives::time::timestamp_to_date_key(ATOMIC_DAY_START),
-                    pair_key(COEN, usd()),
+                    oracle.pair_index_of(pair_key(COEN, usd())).unwrap(),
                 )
                 .unwrap(),
             Some(U256::from(125))
@@ -678,12 +681,16 @@ fn begin_block_finalizes_the_closed_utc_day() {
 
         assert_eq!(oracle.utc_day_vwap_last_finalized.read().unwrap(), day_d);
         assert_eq!(
-            oracle.get_utc_day_vwap_for_pair(day_d, coen).unwrap(),
+            oracle
+                .get_utc_day_vwap_for_pair(day_d, oracle.pair_index_of(coen).unwrap())
+                .unwrap(),
             Some(U256::from(170u64))
         );
         // The in-progress current day is not finalized.
         assert_eq!(
-            oracle.get_utc_day_vwap_for_pair(day_d1, coen).unwrap(),
+            oracle
+                .get_utc_day_vwap_for_pair(day_d1, oracle.pair_index_of(coen).unwrap())
+                .unwrap(),
             None
         );
 
@@ -711,7 +718,9 @@ fn begin_block_finalizes_the_closed_utc_day() {
         <crate::lifecycle::OracleLifecycle as BlockLifecycle>::begin_block(&ctx3).unwrap();
         assert_eq!(oracle.utc_day_vwap_last_finalized.read().unwrap(), day_d1);
         assert_eq!(
-            oracle.get_utc_day_vwap_for_pair(day_d1, coen).unwrap(),
+            oracle
+                .get_utc_day_vwap_for_pair(day_d1, oracle.pair_index_of(coen).unwrap())
+                .unwrap(),
             Some(U256::from(190u64))
         );
     });

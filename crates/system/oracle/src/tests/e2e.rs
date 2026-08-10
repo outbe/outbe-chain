@@ -827,9 +827,24 @@ fn store_worldwide_day_vwap_snapshot_round_trips_every_pair() {
         assert_eq!(lookbacks, vec![2_000, 2_000]);
         assert_eq!(
             oracle
-                .get_worldwide_day_vwap_for_pair(20260302u32.into(), pair_key(COEN, usd()))
+                .get_worldwide_day_vwap_for_pair(
+                    20260302u32.into(),
+                    oracle.pair_index_of(pair_key(COEN, usd())).unwrap()
+                )
                 .unwrap(),
             Some(U256::from(110u64))
+        );
+        // A registered pair with no data that day reads as absent, not as some
+        // neighbouring entry's value.
+        oracle.register_pair(pair_key(BTC, USDT)).unwrap();
+        assert_eq!(
+            oracle
+                .get_worldwide_day_vwap_for_pair(
+                    20260302u32.into(),
+                    oracle.pair_index_of(pair_key(BTC, USDT)).unwrap()
+                )
+                .unwrap(),
+            None
         );
 
         use crate::precompile::IOracle;
@@ -934,16 +949,16 @@ fn finalize_utc_day_vwap_persists_every_vote_target_pair() {
 
         oracle.finalize_utc_day_vwap(utc_day).unwrap();
 
-        assert_eq!(oracle.utc_day_vwap_pair_count.read(&utc_day).unwrap(), 2);
+        let index_of = |pair| oracle.pair_index_of(pair).unwrap();
         assert_eq!(
             oracle
-                .get_utc_day_vwap_for_pair(utc_day, pair_key(COEN, usd()))
+                .get_utc_day_vwap_for_pair(utc_day, index_of(pair_key(COEN, usd())))
                 .unwrap(),
             Some(U256::from(133u64))
         );
         assert_eq!(
             oracle
-                .get_utc_day_vwap_for_pair(utc_day, pair_key(usd(), ETH))
+                .get_utc_day_vwap_for_pair(utc_day, index_of(pair_key(usd(), ETH)))
                 .unwrap(),
             Some(U256::from(2_200u64))
         );
@@ -953,16 +968,17 @@ fn finalize_utc_day_vwap_persists_every_vote_target_pair() {
         assert_eq!(quotes, vec![usd(), ETH]);
         assert_eq!(vwaps, vec![U256::from(133u64), U256::from(2_200u64)]);
 
-        // Unknown pair on a finalized day, and an unfinalized day, both read None.
+        // Unregistered pair (index 0) on a finalized day, and an unfinalized
+        // day, both read None.
         assert_eq!(
             oracle
-                .get_utc_day_vwap_for_pair(utc_day, pair_key(BTC, USDT))
+                .get_utc_day_vwap_for_pair(utc_day, index_of(pair_key(BTC, USDT)))
                 .unwrap(),
             None
         );
         assert_eq!(
             oracle
-                .get_utc_day_vwap_for_pair(20260101, pair_key(COEN, usd()))
+                .get_utc_day_vwap_for_pair(20260101, index_of(pair_key(COEN, usd())))
                 .unwrap(),
             None
         );
@@ -979,10 +995,12 @@ fn finalize_utc_day_vwap_writes_nothing_for_a_day_without_data() {
         // No snapshots for the day → finalize is a no-op, nothing written.
         oracle.finalize_utc_day_vwap(utc_day).unwrap();
 
-        assert_eq!(oracle.utc_day_vwap_pair_count.read(&utc_day).unwrap(), 0);
         assert_eq!(
             oracle
-                .get_utc_day_vwap_for_pair(utc_day, pair_key(COEN, usd()))
+                .get_utc_day_vwap_for_pair(
+                    utc_day,
+                    oracle.pair_index_of(pair_key(COEN, usd())).unwrap()
+                )
                 .unwrap(),
             None
         );

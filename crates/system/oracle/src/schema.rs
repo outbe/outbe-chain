@@ -165,7 +165,7 @@ pub struct OracleContract {
     // (`settlement_iso_to_denom_string`) are retired holes. 44 held the second
     // half of the registry entry back when a pair needed two parallel columns.
 
-    // === WorldwideDay VWAP Snapshots (slots 47-52) ===
+    // === WorldwideDay VWAP Snapshots (slots 47-49, 52) ===
     // slot 47: mapping(worldwide_day => exists)
     #[slot(47)]
     pub worldwide_day_vwap_exists: Mapping<WorldwideDay, bool>,
@@ -173,11 +173,18 @@ pub struct OracleContract {
     pub worldwide_day_vwap_start: Mapping<WorldwideDay, u64>,
     // slot 49: mapping(worldwide_day => end_time)
     pub worldwide_day_vwap_end: Mapping<WorldwideDay, u64>,
-    // slot 50: mapping(worldwide_day => pair_count)
-    pub worldwide_day_vwap_pair_count: Mapping<WorldwideDay, PairIndex>,
-    // slot 51: mapping(worldwide_day => mapping(pair_index => pair))
-    pub worldwide_day_vwap_pair: Mapping<WorldwideDay, Mapping<PairIndex, AddressPair>>,
+    // Slots 50 (`worldwide_day_vwap_pair_count`) and 51
+    // (`worldwide_day_vwap_pair`) are retired holes. Do not reuse. They existed
+    // only to name the pair behind a per-day entry ordinal; the column below is
+    // keyed by the registry index instead, so the pair is already in
+    // `pair_by_index`.
     // slot 52: mapping(worldwide_day => mapping(pair_index => vwap))
+    // Inner key is the registry [`PairIndex`] — the same key space as
+    // `pair_by_index`, so `1..=pair_count` enumerates the day. An absent entry
+    // reads as zero and means "no VWAP for that pair on that day".
+    // slot 52 — pinned: without this anchor the running slot counter would slide
+    // it up into the retired 50-51 hole.
+    #[slot(52)]
     pub worldwide_day_vwap_value: Mapping<WorldwideDay, Mapping<PairIndex, U256>>,
 
     // === Daily Rolling VWAP Aggregates (slots 53-54) ===
@@ -194,20 +201,21 @@ pub struct OracleContract {
     // + index. Pre-filled at genesis with [840] (USD).
     pub reference_currencies: StorageVec<u16>,
 
-    // === Per-UTC-Day VWAP Snapshots (slots 56-59) ===
+    // === Per-UTC-Day VWAP Snapshots (slots 58-59) ===
     // Finalized VWAP for a full UTC calendar day, keyed by a yyyymmdd UTC date
     // key (e.g. 20260625) — NOT a WorldwideDay (which is UTC+14). Written once
     // per closed day by the begin-block lifecycle from the canonical
     // `[date_key_to_utc_timestamp(utc_day), +SECONDS_PER_DAY)` window. Stored
-    // forever (no pruning). A day with no oracle data is never written, so
-    // `pair_count == 0` means "not finalized OR finalized-empty"; the three
-    // states are disambiguated against `utc_day_vwap_last_finalized`.
+    // forever (no pruning). A day with no oracle data is never written, so an
+    // empty day is indistinguishable from an unfinalized one by its entries
+    // alone; `utc_day_vwap_last_finalized` is the authority on which is which.
     //
-    // mapping(utc_day => number of (pair, vwap) entries finalized for the day)
-    pub utc_day_vwap_pair_count: Mapping<u32, PairIndex>,
-    // mapping(utc_day => mapping(pair_index => pair))
-    pub utc_day_vwap_pair: Mapping<u32, Mapping<PairIndex, AddressPair>>,
-    // mapping(utc_day => mapping(pair_index => vwap)) 1e18 scaled
+    // Slots 56 (`utc_day_vwap_pair_count`) and 57 (`utc_day_vwap_pair`) are
+    // retired holes. Do not reuse.
+    // slot 58: mapping(utc_day => mapping(pair_index => vwap)) 1e18 scaled.
+    // Inner key is the registry [`PairIndex`], as for the WorldwideDay column
+    // above. slot 58 — pinned against the retired 56-57 hole.
+    #[slot(58)]
     pub utc_day_vwap_value: Mapping<u32, Mapping<PairIndex, U256>>,
     // Monotonic watermark: most recent fully-closed UTC day that has been
     // finalized (yyyymmdd). 0 = nothing finalized yet. Backfill is contiguous,

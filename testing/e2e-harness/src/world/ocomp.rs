@@ -4235,10 +4235,12 @@ mod tests {
                 Some(day.current_vwap)
             );
             let pair = outbe_oracle::api::DAY_TYPE_PAIR;
+            let (_, pair_index) =
+                outbe_oracle::api::require_coen_pair(storage.clone(), 840).unwrap();
             let vwap = outbe_oracle::api::get_worldwide_day_vwap_for_pair(
                 storage.clone(),
                 day.worldwide_day,
-                pair,
+                pair_index,
             )
             .unwrap()
             .unwrap();

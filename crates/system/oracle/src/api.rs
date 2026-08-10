@@ -38,6 +38,10 @@ pub struct OcompOraclePreAdmissionProjection {
     pub auction_entry_price_source: OcompAuctionEntryPriceSource,
     pub auction_entry_price_source_day: u32,
     pub oracle_state_version: u64,
+    /// Registered pairs, i.e. the upper bound on the day-VWAP entries an
+    /// opening proof can be asked to cover. Now that the WorldwideDay VWAP
+    /// column is keyed by the registry index, the registry size *is* that
+    /// bound; there is no separate per-day entry count to read.
     pub wwd_pair_entries: u32,
     pub active_scurve_entries: u32,
 }
@@ -121,13 +125,16 @@ pub fn set_exchange_rate(
     oracle.set_exchange_rate(caller, pair, rate, block_number, timestamp)
 }
 
+/// Stored WorldwideDay VWAP for the pair registered under `index`, or `None`
+/// when the day has no snapshot or that pair had no data in it. Callers get the
+/// index from [`require_coen_pair`] or [`register_pair`].
 pub fn get_worldwide_day_vwap_for_pair(
     storage: StorageHandle,
     worldwide_day: WorldwideDay,
-    pair: AddressPair,
+    index: PairIndex,
 ) -> Result<Option<U256>> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
-    oracle.get_worldwide_day_vwap_for_pair(worldwide_day, pair)
+    oracle.get_worldwide_day_vwap_for_pair(worldwide_day, index)
 }
 
 /// Selects the already-stored auction entry price and returns only O(1)
@@ -173,7 +180,7 @@ pub fn ocomp_pre_admission_projection(
         auction_entry_price_source,
         auction_entry_price_source_day: source_day,
         oracle_state_version: oracle.ocomp_state_version.read()?,
-        wwd_pair_entries: oracle.worldwide_day_vwap_pair_count.read(&worldwide_day)?,
+        wwd_pair_entries: oracle.pair_count.read()?,
         active_scurve_entries,
     })
 }
@@ -201,10 +208,11 @@ pub fn day_type_pair_vwap(
     worldwide_day: WorldwideDay,
 ) -> Result<Option<U256>> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
-    if oracle.pair_index_of(DAY_TYPE_PAIR)? == 0 {
+    let index = oracle.pair_index_of(DAY_TYPE_PAIR)?;
+    if index == 0 {
         return Ok(None);
     }
-    oracle.get_worldwide_day_vwap_for_pair(worldwide_day, DAY_TYPE_PAIR)
+    oracle.get_worldwide_day_vwap_for_pair(worldwide_day, index)
 }
 
 /// Computes and stores the WorldwideDay VWAP snapshot for `[start_time,
@@ -224,10 +232,11 @@ pub fn store_worldwide_day_vwap_snapshot(
 /// `None` when the pair is not registered or the day has no finalized value.
 pub fn day_type_pair_utc_vwap(storage: StorageHandle, utc_day: u32) -> Result<Option<U256>> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
-    if oracle.pair_index_of(DAY_TYPE_PAIR)? == 0 {
+    let index = oracle.pair_index_of(DAY_TYPE_PAIR)?;
+    if index == 0 {
         return Ok(None);
     }
-    oracle.get_utc_day_vwap_for_pair(utc_day, DAY_TYPE_PAIR)
+    oracle.get_utc_day_vwap_for_pair(utc_day, index)
 }
 
 /// Returns the finalized VWAP for `pair` on the given UTC calendar day
@@ -238,10 +247,10 @@ pub fn day_type_pair_utc_vwap(storage: StorageHandle, utc_day: u32) -> Result<Op
 pub fn get_utc_day_vwap(
     storage: StorageHandle,
     utc_day: u32,
-    pair: AddressPair,
+    index: PairIndex,
 ) -> Result<Option<U256>> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
-    oracle.get_utc_day_vwap_for_pair(utc_day, pair)
+    oracle.get_utc_day_vwap_for_pair(utc_day, index)
 }
 
 pub fn get_max_active_scurve_value(

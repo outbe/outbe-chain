@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
-use outbe_oracle::{api::AddressPair, schema::OracleContract};
+use outbe_oracle::schema::{OracleContract, PairIndex};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},
@@ -28,7 +28,7 @@ use crate::state::QualifiedBinTree;
 /// Run the daily Called scan. Returns the number of series force-called.
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     let oracle = OracleContract::new(ctx.storage.clone());
-    let (pair, _) =
+    let (_, pair_index) =
         outbe_oracle::api::require_coen_pair(ctx.storage.clone(), QUALIFIER_REFERENCE_ISO)?;
 
     // Most recent fully-closed UTC day (finalized VWAP).
@@ -44,7 +44,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
         return Ok(0);
     }
 
-    let last_closed_vwap = match oracle.get_utc_day_vwap_for_pair(last_closed_day, pair)? {
+    let last_closed_vwap = match oracle.get_utc_day_vwap_for_pair(last_closed_day, pair_index)? {
         Some(v) if !v.is_zero() => v,
         _ => return Ok(0),
     };
@@ -59,7 +59,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     };
     let mut factory = IntexFactoryContract::new(ctx.storage.clone());
 
-    let mut vwaps = DayVwaps::new(pair);
+    let mut vwaps = DayVwaps::new(pair_index);
     vwaps.seed(last_closed_day, Some(last_closed_vwap));
 
     let mut called: u32 = 0;
@@ -120,14 +120,14 @@ pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
 
 /// Finalized per-day VWAPs of one oracle pair, read once per scan.
 pub(crate) struct DayVwaps {
-    pair: AddressPair,
+    pair_index: PairIndex,
     days: BTreeMap<u32, Option<U256>>,
 }
 
 impl DayVwaps {
-    pub(crate) fn new(pair: AddressPair) -> Self {
+    pub(crate) fn new(pair_index: PairIndex) -> Self {
         Self {
-            pair,
+            pair_index,
             days: BTreeMap::new(),
         }
     }
@@ -140,7 +140,7 @@ impl DayVwaps {
         if let Some(v) = self.days.get(&day) {
             return Ok(*v);
         }
-        let v = oracle.get_utc_day_vwap_for_pair(day, self.pair)?;
+        let v = oracle.get_utc_day_vwap_for_pair(day, self.pair_index)?;
         self.days.insert(day, v);
         Ok(v)
     }

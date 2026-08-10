@@ -80,7 +80,7 @@ pub fn run_call_daily(ctx: &BlockRuntimeContext) -> Result<()> {
 /// the number of gems mutated (called or burned).
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     let oracle = OracleContract::new(ctx.storage.clone());
-    let (pair, _) =
+    let (_, pair_index) =
         outbe_oracle::api::require_coen_pair(ctx.storage.clone(), QUALIFIER_REFERENCE_ISO)?;
 
     // Most recent fully-closed UTC day (finalized VWAP).
@@ -102,7 +102,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     let mut window: Vec<(u32, Option<U256>)> = Vec::with_capacity(window_days as usize);
     let mut day = last_closed_day;
     for _ in 0..window_days {
-        window.push((day, oracle.get_utc_day_vwap_for_pair(day, pair)?));
+        window.push((day, oracle.get_utc_day_vwap_for_pair(day, pair_index)?));
         day = previous_date_key(day);
     }
 

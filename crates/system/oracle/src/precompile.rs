@@ -100,8 +100,9 @@ pub fn dispatch(
                 oracle.calculate_vwap(pair, c.startTime, c.endTime)
             }),
             getUtcDayVwap(c) => view(c, |c| {
-                let pair = oracle.require_pair_from(c.base, c.quote)?;
-                match oracle.get_utc_day_vwap_for_pair(c.utcDay, pair)? {
+                let index =
+                    oracle.require_pair_index(AddressPair::from_addresses(c.base, c.quote))?;
+                match oracle.get_utc_day_vwap_for_pair(c.utcDay, index)? {
                     Some(vwap) => Ok(vwap),
                     None => Err(OracleError::NoFinalizedUtcDayVwap.into()),
                 }

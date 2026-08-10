@@ -656,16 +656,12 @@ fn setup_pair(oracle: &OracleContract) -> AddressPair {
 }
 
 fn set_vwap(oracle: &OracleContract, utc_day: u32, pair: AddressPair, value: U256) {
-    oracle.utc_day_vwap_pair_count.write(&utc_day, 1).unwrap();
-    oracle
-        .utc_day_vwap_pair
-        .get_nested(&utc_day)
-        .write_pair(&0, pair)
-        .unwrap();
+    // The value column is keyed by the pair's registry index.
+    let pair_id = oracle.pair_index_of(pair).unwrap();
     oracle
         .utc_day_vwap_value
         .get_nested(&utc_day)
-        .write(&0, value)
+        .write(&pair_id, value)
         .unwrap();
     // Mirror the begin-block hook: the watermark covers every seeded day.
     if oracle.utc_day_vwap_last_finalized.read().unwrap() < utc_day {
@@ -726,7 +722,7 @@ fn try_call_marks_called_when_threshold_met() {
             &s,
             &mut f,
             &oracle,
-            &mut called::DayVwaps::new(pair),
+            &mut called::DayVwaps::new(oracle.pair_index_of(pair).unwrap()),
             7,
             last_closed_day,
             scan_ts
@@ -769,7 +765,7 @@ fn try_call_skips_when_below_threshold() {
             &s,
             &mut f,
             &oracle,
-            &mut called::DayVwaps::new(pair),
+            &mut called::DayVwaps::new(oracle.pair_index_of(pair).unwrap()),
             7,
             last_closed_day,
             scan_ts
@@ -828,7 +824,7 @@ fn try_call_excludes_pre_issuance_days() {
             &s,
             &mut f,
             &oracle,
-            &mut called::DayVwaps::new(pair),
+            &mut called::DayVwaps::new(oracle.pair_index_of(pair).unwrap()),
             8,
             last_closed_day,
             scan_ts
@@ -942,7 +938,7 @@ fn call_survives_router_failure() {
             &s,
             &mut f,
             &oracle,
-            &mut called::DayVwaps::new(pair),
+            &mut called::DayVwaps::new(oracle.pair_index_of(pair).unwrap()),
             7,
             last_closed_day,
             scan_ts

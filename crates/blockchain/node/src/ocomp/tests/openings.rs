@@ -15,7 +15,7 @@ use outbe_ocomp_protocol::{
     league_snapshot::{league_snapshot_slot, ordered_league_snapshot_slots},
     opening::OpeningSubjectsV1,
 };
-use outbe_oracle::{oracle_count_slot_plan_v1, oracle_opening_slot_plan_v1};
+use outbe_oracle::{oracle_count_slot_plan_v1, oracle_opening_slot_plan_v1, ORACLE_COUNT_SLOTS_V1};
 use outbe_primitives::addresses::{FIDELITY_ADDRESS, METADOSIS_ADDRESS, ORACLE_ADDRESS};
 use reth_chainspec::ChainInfo;
 use reth_primitives_traits::{Account, Bytecode};
@@ -521,8 +521,10 @@ fn lysis_opening_builder_returns_league_snapshot_and_oracle_proofs() {
 
     let oracle_counts =
         oracle_count_slot_plan_v1(day, &subjects.reference_isos).expect("Oracle count fixture");
-    let oracle_plan = oracle_opening_slot_plan_v1(day, &subjects.reference_isos, 1, 1, 1, 0)
-        .expect("bounded Oracle fixture");
+    let oracle_pair_indices = vec![1u32; subjects.reference_isos.len()];
+    let oracle_plan =
+        oracle_opening_slot_plan_v1(day, &subjects.reference_isos, 1, &oracle_pair_indices, 1, 0)
+            .expect("bounded Oracle fixture");
     let mut oracle_values = oracle_plan
         .slots
         .iter()
@@ -531,11 +533,17 @@ fn lysis_opening_builder_returns_league_snapshot_and_oracle_proofs() {
         .collect::<BTreeMap<_, _>>();
     // reference_currencies: length then the single registered ISO.
     oracle_values.insert(oracle_plan.slots[1], U256::from(840));
-    oracle_values.insert(oracle_counts.slots[0], U256::from(1));
-    oracle_values.insert(oracle_counts.slots[1], U256::from(1));
-    oracle_values.insert(oracle_counts.slots[2], U256::from(1));
-    oracle_values.insert(oracle_counts.slots[3], U256::from(1));
-    oracle_values.insert(oracle_counts.slots[4], U256::ZERO);
+    oracle_values.insert(oracle_counts.slots[0], U256::from(1)); // reference currency count
+    oracle_values.insert(oracle_counts.slots[1], U256::from(1)); // wwd_vwap_exists
+    oracle_values.insert(oracle_counts.slots[2], U256::from(1)); // scurve_count
+    oracle_values.insert(oracle_counts.slots[3], U256::ZERO); // scurve_oldest
+                                                              // The pair-index word must equal the index the plan above was built from.
+    for (slot, index) in oracle_counts.slots[ORACLE_COUNT_SLOTS_V1..]
+        .iter()
+        .zip(&oracle_pair_indices)
+    {
+        oracle_values.insert(*slot, U256::from(*index));
+    }
     let oracle_slots = oracle_values.into_iter().collect::<Vec<_>>();
 
     let (state, state_root) = opening_state(&[

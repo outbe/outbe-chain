@@ -216,7 +216,7 @@ fn real_worker_processes_execute_through_output_finalize() {
         account_proof: ProofBytes(vec![0xa1]),
         storage_proof: ProofBytes(vec![0xb1]),
     };
-    let oracle_plan = oracle_opening_slot_plan_v1(day, &[840, 978], 2, 2, 0, 0)
+    let oracle_plan = oracle_opening_slot_plan_v1(day, &[840, 978], 2, &[1, 2], 0, 0)
         .expect("fixture Oracle slot plan");
     let scale = U256::from(1_000_000_000_000_000_000_u64);
     let oracle_values = [
@@ -226,17 +226,11 @@ fn real_worker_processes_execute_through_output_finalize() {
         U256::from(1),   // pair_index[COEN/840]
         U256::from(2),   // pair_index[COEN/978]
         U256::from(1),   // wwd_vwap_exists
-        U256::from(2),   // wwd_vwap_pair_count
-        // Each entry is (pair base, pair quote, value). COEN is the zero
-        // address and an ISO encodes as 0x0cc<bcd>, so 840 is 0xcc840.
-        U256::ZERO,
-        U256::from(0xcc840),
-        scale,
-        U256::ZERO,
-        U256::from(0xcc978),
-        scale * U256::from(2),
-        U256::ZERO, // scurve_count
-        U256::ZERO, // scurve_oldest
+        // One value word per subject pair, at its registry index.
+        scale,                 // wwd_vwap_value[1]
+        scale * U256::from(2), // wwd_vwap_value[2]
+        U256::ZERO,            // scurve_count
+        U256::ZERO,            // scurve_oldest
     ];
     assert_eq!(oracle_plan.slots.len(), oracle_values.len());
     let oracle_raw = RawContractOpeningProofV1 {

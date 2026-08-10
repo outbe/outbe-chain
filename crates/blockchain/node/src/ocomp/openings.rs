@@ -10,7 +10,7 @@ use outbe_ocomp_protocol::{
     opening::{LysisOpeningsProofV1, OpeningSubjectsV1},
     SchemaLimits,
 };
-use outbe_oracle::{oracle_count_slot_plan_v1, oracle_opening_slot_plan_v1};
+use outbe_oracle::{oracle_count_slot_plan_v1, oracle_opening_slot_plan_v1, ORACLE_COUNT_SLOTS_V1};
 use outbe_primitives::addresses::{METADOSIS_ADDRESS, ORACLE_ADDRESS};
 use reth_provider::StateProviderFactory;
 use reth_storage_api::StateProvider;
@@ -251,15 +251,19 @@ fn oracle_slots_from_authenticated_opening(
         .map_err(|error| RetentionError::Source(error.to_string()))?;
     let reference_currency_count =
         authenticated_u32(&values, counts.slots[0], "Oracle reference currency count")?;
-    let worldwide_day_pair_count =
-        authenticated_u32(&values, counts.slots[2], "Oracle WWD VWAP pair count")?;
-    let scurve_count = authenticated_u32(&values, counts.slots[3], "Oracle S-curve count")?;
-    let scurve_oldest = authenticated_u32(&values, counts.slots[4], "Oracle S-curve oldest")?;
+    let scurve_count = authenticated_u32(&values, counts.slots[2], "Oracle S-curve count")?;
+    let scurve_oldest = authenticated_u32(&values, counts.slots[3], "Oracle S-curve oldest")?;
+    // The trailing count-plan words are the subject pairs' registry indices,
+    // which address their day-VWAP value slots in round two.
+    let pair_indices = counts.slots[ORACLE_COUNT_SLOTS_V1..]
+        .iter()
+        .map(|slot| authenticated_u32(&values, *slot, "Oracle reference pair index"))
+        .collect::<Result<Vec<_>, _>>()?;
     oracle_opening_slot_plan_v1(
         day,
         &subjects.reference_isos,
         reference_currency_count,
-        worldwide_day_pair_count,
+        &pair_indices,
         scurve_count,
         scurve_oldest,
     )
@@ -344,29 +348,29 @@ fn oracle_slots(
         counts.slots[0],
         "Oracle reference currency count",
     )?;
-    let worldwide_day_pair_count = read_u32(
-        state,
-        ORACLE_ADDRESS,
-        counts.slots[2],
-        "Oracle WWD VWAP pair count",
-    )?;
     let scurve_count = read_u32(
         state,
         ORACLE_ADDRESS,
-        counts.slots[3],
+        counts.slots[2],
         "Oracle S-curve count",
     )?;
     let scurve_oldest = read_u32(
         state,
         ORACLE_ADDRESS,
-        counts.slots[4],
+        counts.slots[3],
         "Oracle S-curve oldest",
     )?;
+    // The trailing count-plan words are the subject pairs' registry indices,
+    // which address their day-VWAP value slots in round two.
+    let pair_indices = counts.slots[ORACLE_COUNT_SLOTS_V1..]
+        .iter()
+        .map(|slot| read_u32(state, ORACLE_ADDRESS, *slot, "Oracle reference pair index"))
+        .collect::<Result<Vec<_>, _>>()?;
     oracle_opening_slot_plan_v1(
         day,
         &subjects.reference_isos,
         reference_currency_count,
-        worldwide_day_pair_count,
+        &pair_indices,
         scurve_count,
         scurve_oldest,
     )

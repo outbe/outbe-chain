@@ -1122,16 +1122,17 @@ fn ocomp_opening_plan_slots_match_the_schema_layout() {
         oracle.scurve_oldest_idx.write(1).unwrap();
         oracle.reference_currencies.push(iso).unwrap();
         oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
-        oracle.worldwide_day_vwap_pair_count.write(&wwd, 1).unwrap();
-        oracle
-            .worldwide_day_vwap_pair
-            .get_nested(&wwd)
-            .write_pair(&0u32, pair_key(COEN, usd()))
-            .unwrap();
+        // Both VWAP value columns are keyed by the registry index the pair was
+        // given above, so the raw slot derivation is pinned against that index.
         oracle
             .worldwide_day_vwap_value
             .get_nested(&wwd)
-            .write(&0u32, U256::from(333u64))
+            .write(&7u32, U256::from(333u64))
+            .unwrap();
+        oracle
+            .utc_day_vwap_value
+            .get_nested(&20260302u32)
+            .write(&7u32, U256::from(444u64))
             .unwrap();
 
         // Direct (non-mapping) slots.
@@ -1179,37 +1180,20 @@ fn ocomp_opening_plan_slots_match_the_schema_layout() {
             base(1),
             "worldwide_day_vwap_exists",
         );
-        assert_mapping_slot(
-            &storage,
-            wwd,
-            base(50),
-            base(1),
-            "worldwide_day_vwap_pair_count",
-        );
         // Nested maps: the outer key derives the inner map's base slot.
         assert_mapping_slot(
             &storage,
-            0u32,
-            wwd.mapping_slot(base(51)),
-            as_word(COEN),
-            "worldwide_day_vwap_pair",
-        );
-        assert_eq!(
-            storage
-                .sload(
-                    ORACLE_ADDRESS,
-                    0u32.mapping_slot(wwd.mapping_slot(base(51))) + base(1)
-                )
-                .unwrap(),
-            as_word(usd()),
-            "worldwide_day_vwap_pair quote word is not at the entry slot + 1"
-        );
-        assert_mapping_slot(
-            &storage,
-            0u32,
+            7u32,
             wwd.mapping_slot(base(52)),
             base(333),
             "worldwide_day_vwap_value",
+        );
+        assert_mapping_slot(
+            &storage,
+            7u32,
+            20260302u32.mapping_slot(base(58)),
+            base(444),
+            "utc_day_vwap_value",
         );
     });
 }
