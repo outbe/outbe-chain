@@ -186,9 +186,25 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
   // --- Oracle ----------------------------------------------------------------
   server.tool(
     "currency_pairs",
-    "All oracle price pairs (pairId, base, quote, active).",
+    "All oracle price pairs (index, base, quote, active).",
     {},
-    handler(async () => ok(await view(ctx, "oracle", "getPairs", []))),
+    handler(async () => {
+      // The oracle enumerates its registry by index rather than returning the
+      // whole table, so the table is assembled here.
+      const count = Number(await view(ctx, "oracle", "getPairCount", []));
+      const indices = Array.from({ length: count }, (_, i) => i + 1);
+      const pairs = await Promise.all(
+        indices.map(async (index) => {
+          const pair = (await view(ctx, "oracle", "getPairByIndex", [index])) as {
+            base: string;
+            quote: string;
+          };
+          const active = await view(ctx, "oracle", "isVoteTarget", [pair.base, pair.quote]);
+          return { index, base: pair.base, quote: pair.quote, active };
+        }),
+      );
+      return ok(pairs);
+    }),
   );
 
   server.tool(

@@ -933,10 +933,6 @@ mod tests {
                     .expect("fresh-devnet OCOMP install fixture is canonical")
                     .into_install();
             install.founder_registrations = vec![founder_registration];
-            let mut oracle = outbe_oracle::contract::OracleContract::new(storage.clone());
-            oracle
-                .register_pair("COEN", "0xUSD")
-                .expect("oracle pair seed succeeds");
             let install_ctx = BlockRuntimeContext::new(
                 BlockContext::empty_for_tests(
                     1,
@@ -948,16 +944,17 @@ mod tests {
             outbe_metadosis::commands::install_fork_profile(&install_ctx, &install)
                 .expect("fresh-devnet OCOMP profile installs through the production command");
 
-            oracle
-                .set_exchange_rate(
-                    alloy_primitives::Address::ZERO,
-                    "COEN",
-                    "0xUSD",
-                    U256::from(1_000_000_000_000_000_000u128),
-                    0,
-                    0,
-                )
-                .expect("oracle rate seed succeeds");
+            outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
+                .expect("oracle pair seed succeeds");
+            outbe_oracle::api::set_exchange_rate(
+                storage,
+                alloy_primitives::Address::ZERO,
+                outbe_oracle::api::DAY_TYPE_PAIR,
+                U256::from(1_000_000_000_000_000_000u128),
+                0,
+                0,
+            )
+            .expect("oracle rate seed succeeds");
         });
 
         let provider =

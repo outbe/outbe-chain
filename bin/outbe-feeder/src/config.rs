@@ -259,7 +259,7 @@ mod tests {
         let mut cfg = minimal_config(2);
         cfg.currency_pairs.push(CurrencyPairConfig {
             base: "COEN".to_string(),
-            quote: "0xUSD".to_string(),
+            quote: "840".to_string(),
             chain_denom: None,
             providers: vec![],
         });
@@ -271,7 +271,7 @@ mod tests {
         let mut cfg = minimal_config(2);
         cfg.currency_pairs.push(CurrencyPairConfig {
             base: "COEN".to_string(),
-            quote: "0xUSD".to_string(),
+            quote: "840".to_string(),
             chain_denom: None,
             providers: vec!["nonexistent_exchange".to_string()],
         });
@@ -283,7 +283,7 @@ mod tests {
         let mut cfg = minimal_config(2);
         cfg.currency_pairs.push(CurrencyPairConfig {
             base: "COEN".to_string(),
-            quote: "0xUSD".to_string(),
+            quote: "840".to_string(),
             chain_denom: None,
             providers: vec!["mock".to_string()],
         });
@@ -300,7 +300,7 @@ mod tests {
         });
         cfg.currency_pairs.push(CurrencyPairConfig {
             base: "COEN".to_string(),
-            quote: "0xUSD".to_string(),
+            quote: "840".to_string(),
             chain_denom: Some("unit".to_string()),
             providers: vec!["mock_http".to_string()],
         });
@@ -317,7 +317,12 @@ mod tests {
         // Canonical localnet chain id (scripts/prepare_network.py DEFAULT_CHAIN_ID).
         assert_eq!(cfg.chain.chain_id, 54322345);
         assert_eq!(cfg.oracle.vote_period, 8);
-        assert_eq!(cfg.currency_pairs.len(), 7);
+        // COEN/840 is the only pair the chain registers; the decorative
+        // XAU/BTC/ETH/stablecoin entries were dropped because no code read them
+        // and they name assets with no on-chain address.
+        assert_eq!(cfg.currency_pairs.len(), 1);
+        assert_eq!(cfg.currency_pairs[0].base, "COEN");
+        assert_eq!(cfg.currency_pairs[0].quote, "840");
         assert!(cfg
             .currency_pairs
             .iter()

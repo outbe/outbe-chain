@@ -1,5 +1,5 @@
 use alloy_primitives::U256;
-use outbe_oracle::contract::OracleContract;
+use outbe_oracle::{api::coen_rate_for, schema::OracleContract};
 use outbe_primitives::{
     block::{BlockLifecycle, BlockRuntimeContext},
     error::Result,
@@ -28,21 +28,7 @@ impl BlockLifecycle for GemLifecycle {
 }
 
 pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
-    let oracle = OracleContract::new(ctx.storage.clone());
-
-    // Resolve the COEN/<reference_currency> pair via the Oracle's ISO registry,
-    // matching the lookup used by gemfactory::mint_gem.
-    let pair_hash = oracle
-        .settlement_iso_to_pair
-        .read(&QUALIFIER_REFERENCE_ISO)?;
-    if pair_hash.is_zero() {
-        return Ok(0);
-    }
-    let rate = oracle.exchange_rate.read(&pair_hash)?;
-    if rate.is_zero() {
-        return Ok(0);
-    }
-
+    let rate = coen_rate_for(ctx.storage.clone(), QUALIFIER_REFERENCE_ISO)?;
     let now = ctx.block.timestamp;
     let r_bin = GemContract::price_to_bin(rate)?;
     let mut gem = GemContract::new(ctx.storage.clone());
@@ -94,16 +80,8 @@ pub fn run_call_daily(ctx: &BlockRuntimeContext) -> Result<()> {
 /// the number of gems mutated (called or burned).
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     let oracle = OracleContract::new(ctx.storage.clone());
-    let pair_hash = oracle
-        .settlement_iso_to_pair
-        .read(&QUALIFIER_REFERENCE_ISO)?;
-    if pair_hash.is_zero() {
-        return Ok(0);
-    }
-    let pair_id = oracle.pair_hash_to_id.read(&pair_hash)?;
-    if pair_id == 0 {
-        return Ok(0);
-    }
+    let (_, pair_index) =
+        outbe_oracle::api::require_coen_pair(ctx.storage.clone(), QUALIFIER_REFERENCE_ISO)?;
 
     // Most recent fully-closed UTC day (finalized VWAP).
     let last_closed_day = previous_date_key(timestamp_to_date_key(ctx.block.timestamp));
@@ -124,7 +102,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     let mut window: Vec<(u32, Option<U256>)> = Vec::with_capacity(window_days as usize);
     let mut day = last_closed_day;
     for _ in 0..window_days {
-        window.push((day, oracle.get_utc_day_vwap_for_pair_id(day, pair_id)?));
+        window.push((day, oracle.get_utc_day_vwap_for_pair(day, pair_index)?));
         day = previous_date_key(day);
     }
 

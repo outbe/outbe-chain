@@ -203,7 +203,7 @@ fn owner_257_starts_another_bounded_opening_request() {
         );
         assert!(requests
             .iter()
-            .all(|request| request.settlement_isos == [840]));
+            .all(|request| request.reference_isos == [840]));
     }
 }
 
@@ -212,7 +212,7 @@ fn aggregate_node_proof_materializes_source_specific_records_and_roots() {
     let bundle = bundle();
     let subjects = OpeningSubjectsV1 {
         owners: vec![owner(1)],
-        settlement_isos: vec![840],
+        reference_isos: vec![840],
     };
     let raw = |contract_address, slot| RawContractOpeningProofV1 {
         contract_address,

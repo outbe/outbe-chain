@@ -15,25 +15,18 @@
 //! out instead of re-pricing the collateral a transaction later.
 
 use alloy_primitives::{Address, B256, U256};
-use alloy_sol_types::SolEvent;
+use alloy_sol_types::{SolCall, SolEvent};
 
 use crate::errors::GratisFactoryError;
 use crate::precompile::IGratisFactory;
 use outbe_fidelity::api::FidelityCohortOp;
 use outbe_gratis::api::{self as gratis, ModifyAuth, PledgeTerms};
-use outbe_oracle::api::get_exchange_rate;
+use outbe_oracle::api::coen_rate_for;
 use outbe_primitives::addresses::GRATIS_FACTORY_ADDRESS;
 use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::reference_currency_abi::IReferenceCurrency;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::SCALE_1E18;
-
-/// Native token base symbol used for the COEN/USD oracle pair lookup. Gratis is
-/// priced at the COEN price because `mine_coen` converts the two 1:1.
-pub const NATIVE_TOKEN: &str = "COEN";
-
-/// Stable settlement quote symbol. Matches the pair used by tributefactory and
-/// metadosis.
-pub const STABLECOIN: &str = "0xUSD";
 
 /// Decimal-gap factor between COEN (10^18) and stablecoin (10^6). Cosmos:
 /// `decimalsDiff = sdk.NewIntWithDecimal(1, 12)`.
@@ -41,18 +34,32 @@ fn decimals_diff() -> U256 {
     U256::from(1_000_000_000_000u128)
 }
 
+/// Reads the pledged asset's ISO 4217 currency code via a static
+/// `IReferenceCurrency.isoCode()` sub-call, mirroring credisfactory's
+/// `read_iso_code`. The pledge is then priced against COEN/<that currency>
+/// rather than a hardcoded pair, so it cannot be quoted in one currency while
+/// the Credis position opens against another.
+fn read_iso_code(storage: &StorageHandle<'_>, asset: Address) -> Result<u16> {
+    let ret = storage.staticcall(
+        asset,
+        IReferenceCurrency::isoCodeCall {}.abi_encode().into(),
+    )?;
+    IReferenceCurrency::isoCodeCall::abi_decode_returns(&ret)
+        .map_err(|_| GratisFactoryError::AssetIsoUndecodable.into())
+}
+
 /// Inverse of the credis issuance formula
 /// (`stables = gratis * rate / (decimalsDiff * 1e18)`), rounded **up** so the pledged
 /// collateral always covers the requested credit rather than falling a wei short.
+/// Gratis is priced at the COEN price because `mine_coen` converts the two 1:1.
 /// Returns `(gratis_cost, rate)`.
 fn convert_stables_to_gratis(
     storage: StorageHandle<'_>,
     amount_stables: U256,
+    asset: Address,
 ) -> Result<(U256, U256)> {
-    let rate = get_exchange_rate(storage, NATIVE_TOKEN, STABLECOIN)?;
-    if rate.is_zero() {
-        return Err(GratisFactoryError::OracleRateUnavailable.into());
-    }
+    let iso_code = read_iso_code(&storage, asset)?;
+    let rate = coen_rate_for(storage, iso_code)?;
     let numerator = amount_stables
         .checked_mul(decimals_diff())
         .and_then(|v| v.checked_mul(SCALE_1E18))
@@ -86,7 +93,8 @@ pub fn pledge_gratis(
         return Err(GratisFactoryError::InvalidAmount.into());
     }
 
-    let (gratis_amount, entry_rate) = convert_stables_to_gratis(storage.clone(), amount_stables)?;
+    let (gratis_amount, entry_rate) =
+        convert_stables_to_gratis(storage.clone(), amount_stables, asset)?;
     if gratis_amount > max_gratis {
         return Err(GratisFactoryError::GratisCapExceeded.into());
     }

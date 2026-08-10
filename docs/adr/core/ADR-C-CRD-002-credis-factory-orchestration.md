@@ -26,7 +26,7 @@ It does not own any of those modules' state.
 3. verify the GratisPool spend proof bound to the bundle, action, chain and zero
    context nonce, consuming the nullifier;
 4. convert the denomination's 18-decimal Gratis amount into six-decimal stable
-   amount using the pinned `COEN/0xUSD` Oracle rate and explicit decimal gap;
+   amount using the pinned `COEN/840` Oracle rate and explicit decimal gap;
 5. staticcall the selected asset's `isoCode()` and snapshot its currency rate;
 6. create the Credis position using the nullifier as unique identity input;
 7. persist the original denomination for reclaim derivation; and
@@ -109,7 +109,7 @@ choreography. Credis and VaultRouter remain separately auditable state owners.
    assets for disbursement and repayment.
 6. Validate that asset ISO, Oracle settlement pair, VaultRouter vault asset and
    token decimals describe the same economic currency.
-7. Hard-coded six-decimal conversion and `COEN/0xUSD` symbol require a versioned
+7. Hard-coded six-decimal conversion and `COEN/840` symbol require a versioned
    multi-currency/decimal design.
 8. Add failure injection after nullifier consumption, position creation,
    denomination write, vault withdrawal, installment advance, token pull/deposit

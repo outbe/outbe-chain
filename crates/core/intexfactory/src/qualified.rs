@@ -1,9 +1,9 @@
-//! Per-block qualification: drains floor-bins crossed by the live COEN/0xUSD
+//! Per-block qualification: drains floor-bins crossed by the live COEN/840
 //! rate and qualifies Issued series past their qualification period. Runs in `begin_block`.
 
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
-use outbe_oracle::contract::OracleContract;
+use outbe_oracle::api::coen_rate_for;
 use outbe_primitives::{
     block::{BlockLifecycle, BlockRuntimeContext},
     error::Result,
@@ -42,17 +42,7 @@ pub(crate) const MAX_SERIES_PER_BLOCK: u32 = 256;
 
 /// Returns the number of series promoted Issued -> Qualified this block.
 pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
-    let oracle = OracleContract::new(ctx.storage.clone());
-    let pair_hash = oracle
-        .settlement_iso_to_pair
-        .read(&QUALIFIER_REFERENCE_ISO)?;
-    if pair_hash.is_zero() {
-        return Ok(0);
-    }
-    let rate = oracle.exchange_rate.read(&pair_hash)?;
-    if rate.is_zero() {
-        return Ok(0);
-    }
+    let rate = coen_rate_for(ctx.storage.clone(), QUALIFIER_REFERENCE_ISO)?;
 
     let now = ctx.block.timestamp;
     // Deterministic out-of-range rate: skip the block's scan instead of halting it.

@@ -27,6 +27,16 @@ const CREATED_AT: u64 = 1_700_000_000;
 fn alice() -> Address {
     address!("0x1111111111111111111111111111111111111111")
 }
+/// ISO 4217 code the pledged asset reports via `isoCode()`.
+const ASSET_ISO: u16 = 840;
+
+/// ABI-encoded `uint16` return for the asset's `isoCode()` static sub-call.
+fn iso_word(iso: u16) -> Bytes {
+    let mut b = vec![0u8; 32];
+    b[30..32].copy_from_slice(&iso.to_be_bytes());
+    Bytes::from(b)
+}
+
 /// The stablecoin a pledge is quoted in.
 fn asset() -> Address {
     address!("0x0888088808880888088808880888088808880888")
@@ -36,7 +46,7 @@ fn one_e18() -> U256 {
     U256::from(10u64).pow(U256::from(18u64))
 }
 
-/// COEN/0xUSD rate these tests seed: 2.0, 1e18-scaled.
+/// COEN/840 rate these tests seed: 2.0, 1e18-scaled.
 fn oracle_rate() -> U256 {
     U256::from(2u64) * one_e18()
 }
@@ -85,13 +95,19 @@ fn view_pledged(s: &StorageHandle<'_>, a: Address) -> U256 {
     decrypt_pledged(&vk, a, &blob).unwrap()
 }
 
-/// Register the COEN/0xUSD pair the pledge conversion reads.
+/// Register the COEN/840 pair plus the ISO 840 settlement mapping the pledge
+/// conversion resolves through (the asset's `isoCode()` selects the pair).
 fn seed_oracle(storage: StorageHandle<'_>, rate_1e18: U256) {
-    let mut oracle = outbe_oracle::contract::OracleContract::new(storage);
-    oracle.register_pair("COEN", "0xUSD").unwrap();
-    oracle
-        .set_exchange_rate(Address::ZERO, "COEN", "0xUSD", rate_1e18, 0, 0)
-        .unwrap();
+    outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
+    outbe_oracle::api::set_exchange_rate(
+        storage,
+        Address::ZERO,
+        outbe_oracle::api::DAY_TYPE_PAIR,
+        rate_1e18,
+        0,
+        0,
+    )
+    .unwrap();
 }
 
 /// Give `account` a positive Fidelity index so `pledge_gratis` clears the
@@ -110,13 +126,16 @@ fn seed_fidelity(storage: StorageHandle<'_>, account: Address) {
 /// Run `f` in a fresh storage scope with BOTH the Gratis and Promis in-process
 /// enclaves installed (mineFromPromis burns confidential promis then mints
 /// confidential gratis), the block time set (so Fidelity reads a non-zero `now`), and
-/// the COEN/0xUSD pair seeded (pledges are priced from it).
+/// the COEN/840 pair seeded (pledges are priced from it).
 fn with_env<R>(f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
     test_enclave::install();
     outbe_promis::enclave_client::test_enclave::install();
     fidelity_enclave::install();
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(CREATED_AT));
+    // `pledge_gratis` staticcalls the asset for its ISO 4217 code before pricing.
+    storage.enable_sub_call_stub();
+    storage.stub_sub_call_at(asset(), iso_word(ASSET_ISO));
     let out = StorageHandle::enter(&mut storage, |s| {
         seed_oracle(s.clone(), oracle_rate());
         f(s.clone())

@@ -15,7 +15,7 @@ pub const MAX_FIDELITY_OWNERS_PER_OPENING: usize = 256;
 wire_struct! {
     pub struct OpeningSubjectsV1 {
         pub owners: Vec<Address>,
-        pub settlement_isos: Vec<u16>,
+        pub reference_isos: Vec<u16>,
     }
     validate = validate_opening_subjects;
 }
@@ -86,7 +86,7 @@ impl RawContractOpeningProofV1 {
 /// callers publish one byte-identical Oracle opening after verification.
 pub fn partition_lysis_opening_subjects(
     owners: &[Address],
-    settlement_isos: &[u16],
+    reference_isos: &[u16],
     limits: &SchemaLimits,
 ) -> Result<Vec<OpeningSubjectsV1>, ProtocolError> {
     require(!owners.is_empty(), "opening owner set must not be empty")?;
@@ -95,20 +95,20 @@ pub fn partition_lysis_opening_subjects(
         "opening owners strictly ordered and unique",
     )?;
     require(
-        !settlement_isos.is_empty(),
-        "opening settlement ISO set must not be empty",
+        !reference_isos.is_empty(),
+        "opening reference ISO set must not be empty",
     )?;
     require(
-        settlement_isos.len() <= limits.max_collection_items,
-        "opening settlement ISO cap",
+        reference_isos.len() <= limits.max_collection_items,
+        "opening reference ISO cap",
     )?;
     require(
-        settlement_isos.windows(2).all(|pair| pair[0] < pair[1]),
-        "opening settlement ISOs strictly ordered and unique",
+        reference_isos.windows(2).all(|pair| pair[0] < pair[1]),
+        "opening reference ISOs strictly ordered and unique",
     )?;
     require(
-        settlement_isos.contains(&840),
-        "opening settlement ISOs include mandatory 840",
+        reference_isos.contains(&840),
+        "opening reference ISOs include mandatory 840",
     )?;
 
     let batch_count = owners.len().div_ceil(MAX_FIDELITY_OWNERS_PER_OPENING);
@@ -127,7 +127,7 @@ pub fn partition_lysis_opening_subjects(
     for batch in owners.chunks(MAX_FIDELITY_OWNERS_PER_OPENING) {
         let request = OpeningSubjectsV1 {
             owners: batch.to_vec(),
-            settlement_isos: settlement_isos.to_vec(),
+            reference_isos: reference_isos.to_vec(),
         };
         request.validate(limits)?;
         requests.push(request);
@@ -152,23 +152,23 @@ fn validate_opening_subjects(
         "opening owners strictly ordered and unique",
     )?;
     require(
-        !subjects.settlement_isos.is_empty(),
-        "opening settlement ISO set must not be empty",
+        !subjects.reference_isos.is_empty(),
+        "opening reference ISO set must not be empty",
     )?;
     require(
-        subjects.settlement_isos.len() <= limits.max_collection_items,
-        "opening settlement ISO cap",
+        subjects.reference_isos.len() <= limits.max_collection_items,
+        "opening reference ISO cap",
     )?;
     require(
         subjects
-            .settlement_isos
+            .reference_isos
             .windows(2)
             .all(|pair| pair[0] < pair[1]),
-        "opening settlement ISOs strictly ordered and unique",
+        "opening reference ISOs strictly ordered and unique",
     )?;
     require(
-        subjects.settlement_isos.contains(&840),
-        "opening settlement ISOs include mandatory 840",
+        subjects.reference_isos.contains(&840),
+        "opening reference ISOs include mandatory 840",
     )
 }
 
@@ -240,7 +240,7 @@ fn opening_subjects_encoded_len(subjects: &OpeningSubjectsV1) -> Result<usize, P
         4,
         checked_product(subjects.owners.len(), 20)?,
         4,
-        checked_product(subjects.settlement_isos.len(), 2)?,
+        checked_product(subjects.reference_isos.len(), 2)?,
     ])
 }
 
@@ -314,7 +314,7 @@ mod tests {
             wwd: 20_260_724,
             subjects: OpeningSubjectsV1 {
                 owners: vec![Address::repeat_byte(0x48)],
-                settlement_isos: vec![840],
+                reference_isos: vec![840],
             },
             fidelity: raw(Address::repeat_byte(0x49)),
             oracle: raw(Address::repeat_byte(0x4a)),

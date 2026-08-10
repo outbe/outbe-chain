@@ -5,13 +5,13 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [],
@@ -23,13 +23,13 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [],
@@ -65,9 +65,14 @@
         "internalType": "bool"
       },
       {
-        "name": "pairIds",
-        "type": "uint32[]",
-        "internalType": "uint32[]"
+        "name": "bases",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "quotes",
+        "type": "address[]",
+        "internalType": "address[]"
       },
       {
         "name": "rates",
@@ -104,9 +109,14 @@
         "internalType": "uint64[]"
       },
       {
-        "name": "pairIds",
-        "type": "uint32[]",
-        "internalType": "uint32[]"
+        "name": "bases",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "quotes",
+        "type": "address[]",
+        "internalType": "address[]"
       },
       {
         "name": "rates",
@@ -127,9 +137,14 @@
     "inputs": [],
     "outputs": [
       {
-        "name": "pairIds",
-        "type": "uint32[]",
-        "internalType": "uint32[]"
+        "name": "bases",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "quotes",
+        "type": "address[]",
+        "internalType": "address[]"
       },
       {
         "name": "peakDays",
@@ -150,13 +165,13 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [
@@ -169,6 +184,25 @@
         "name": "peakPrices",
         "type": "uint256[]",
         "internalType": "uint256[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getCoenExchangeRateFor",
+    "inputs": [
+      {
+        "name": "isoCode",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "rate",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -198,13 +232,13 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [
@@ -222,13 +256,37 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "rate",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getExchangeRateData",
+    "inputs": [
+      {
+        "name": "base",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [
@@ -246,29 +304,6 @@
         "name": "lastTimestamp",
         "type": "uint64",
         "internalType": "uint64"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getExchangeRates",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "rates",
-        "type": "uint256[]",
-        "internalType": "uint256[]"
-      },
-      {
-        "name": "blocks",
-        "type": "uint64[]",
-        "internalType": "uint64[]"
-      },
-      {
-        "name": "timestamps",
-        "type": "uint64[]",
-        "internalType": "uint64[]"
       }
     ],
     "stateMutability": "view"
@@ -298,13 +333,13 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "timestamp",
@@ -327,13 +362,13 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "timestamp",
@@ -367,6 +402,30 @@
   },
   {
     "type": "function",
+    "name": "getPairByIndex",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "base",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getPairCount",
     "inputs": [],
     "outputs": [
@@ -374,34 +433,6 @@
         "name": "count",
         "type": "uint32",
         "internalType": "uint32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getPairs",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "pairIds",
-        "type": "uint32[]",
-        "internalType": "uint32[]"
-      },
-      {
-        "name": "bases",
-        "type": "string[]",
-        "internalType": "string[]"
-      },
-      {
-        "name": "quotes",
-        "type": "string[]",
-        "internalType": "string[]"
-      },
-      {
-        "name": "isActive",
-        "type": "bool[]",
-        "internalType": "bool[]"
       }
     ],
     "stateMutability": "view"
@@ -455,13 +486,13 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "count",
@@ -507,13 +538,13 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [
@@ -541,13 +572,13 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "timestamp",
@@ -570,13 +601,13 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "timestamp",
@@ -604,71 +635,6 @@
         "name": "values",
         "type": "uint256[]",
         "internalType": "uint256[]"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getSettlementCount",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "count",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getSettlementCurrencies",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "isoCodes",
-        "type": "uint16[]",
-        "internalType": "uint16[]"
-      },
-      {
-        "name": "denoms",
-        "type": "string[]",
-        "internalType": "string[]"
-      },
-      {
-        "name": "denomHashes",
-        "type": "bytes32[]",
-        "internalType": "bytes32[]"
-      },
-      {
-        "name": "pairHashes",
-        "type": "bytes32[]",
-        "internalType": "bytes32[]"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getSettlementCurrency",
-    "inputs": [
-      {
-        "name": "isoCode",
-        "type": "uint16",
-        "internalType": "uint16"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "denomHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "pairHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
       }
     ],
     "stateMutability": "view"
@@ -713,13 +679,13 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "lookbackSeconds",
@@ -748,9 +714,14 @@
     ],
     "outputs": [
       {
-        "name": "pairIds",
-        "type": "uint32[]",
-        "internalType": "uint32[]"
+        "name": "bases",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "quotes",
+        "type": "address[]",
+        "internalType": "address[]"
       },
       {
         "name": "twaps",
@@ -771,13 +742,13 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "utcDay",
@@ -829,9 +800,14 @@
     "inputs": [],
     "outputs": [
       {
-        "name": "pairIds",
-        "type": "uint32[]",
-        "internalType": "uint32[]"
+        "name": "bases",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "quotes",
+        "type": "address[]",
+        "internalType": "address[]"
       }
     ],
     "stateMutability": "view"
@@ -842,13 +818,13 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "lookbackSeconds",
@@ -871,13 +847,13 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "startTime",
@@ -916,9 +892,14 @@
     ],
     "outputs": [
       {
-        "name": "pairIds",
-        "type": "uint32[]",
-        "internalType": "uint32[]"
+        "name": "bases",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "quotes",
+        "type": "address[]",
+        "internalType": "address[]"
       },
       {
         "name": "vwaps",
@@ -955,9 +936,14 @@
         "internalType": "uint64"
       },
       {
-        "name": "pairIds",
-        "type": "uint32[]",
-        "internalType": "uint32[]"
+        "name": "bases",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "quotes",
+        "type": "address[]",
+        "internalType": "address[]"
       },
       {
         "name": "vwaps",
@@ -978,13 +964,13 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [
@@ -1002,13 +988,13 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "rate",
@@ -1030,13 +1016,13 @@
         "components": [
           {
             "name": "base",
-            "type": "string",
-            "internalType": "string"
+            "type": "address",
+            "internalType": "address"
           },
           {
             "name": "quote",
-            "type": "string",
-            "internalType": "string"
+            "type": "address",
+            "internalType": "address"
           },
           {
             "name": "exchangeRate",
@@ -1060,15 +1046,15 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "indexed": false,
-        "internalType": "string"
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "indexed": false,
-        "internalType": "string"
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       },
       {
         "name": "rate",
@@ -1084,10 +1070,16 @@
     "name": "ExchangeRateUpdated",
     "inputs": [
       {
-        "name": "pairId",
-        "type": "uint32",
+        "name": "base",
+        "type": "address",
         "indexed": true,
-        "internalType": "uint32"
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       },
       {
         "name": "rate",
@@ -1128,10 +1120,16 @@
     "name": "ScurvePeakDetected",
     "inputs": [
       {
-        "name": "pairId",
-        "type": "uint32",
+        "name": "base",
+        "type": "address",
         "indexed": true,
-        "internalType": "uint32"
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       },
       {
         "name": "peakPrice",
@@ -1224,15 +1222,15 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "indexed": false,
-        "internalType": "string"
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "indexed": false,
-        "internalType": "string"
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       }
     ],
     "anonymous": false
@@ -1243,15 +1241,15 @@
     "inputs": [
       {
         "name": "base",
-        "type": "string",
-        "indexed": false,
-        "internalType": "string"
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       },
       {
         "name": "quote",
-        "type": "string",
-        "indexed": false,
-        "internalType": "string"
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       }
     ],
     "anonymous": false
@@ -1267,10 +1265,16 @@
         "internalType": "uint32"
       },
       {
-        "name": "pairId",
-        "type": "uint32",
+        "name": "base",
+        "type": "address",
         "indexed": true,
-        "internalType": "uint32"
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       },
       {
         "name": "vwap",

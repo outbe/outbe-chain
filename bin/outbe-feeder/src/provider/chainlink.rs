@@ -20,7 +20,8 @@ fn map_symbol(base: &str, quote: &str) -> Option<(String, String)> {
         other => other.to_uppercase(),
     };
     let tsym = match quote {
-        "0xUSD" => "USD".to_string(),
+        // ISO 4217 numeric quote -> the feed's stable-pair symbol.
+        "840" => "USD".to_string(),
         other => other.to_uppercase(),
     };
     Some((fsym, tsym))

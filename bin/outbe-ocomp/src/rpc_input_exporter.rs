@@ -349,7 +349,7 @@ fn bisect_opening_subjects(
     let right_owners = subjects.owners.split_off(midpoint);
     let right = OpeningSubjectsV1 {
         owners: right_owners,
-        settlement_isos: subjects.settlement_isos.clone(),
+        reference_isos: subjects.reference_isos.clone(),
     };
     Some((subjects, right))
 }
@@ -422,20 +422,20 @@ mod tests {
     fn oversized_opening_subjects_are_bisected_in_canonical_order() {
         let subjects = OpeningSubjectsV1 {
             owners: (1_u8..=5).map(Address::with_last_byte).collect(),
-            settlement_isos: vec![840, 978],
+            reference_isos: vec![840, 978],
         };
         let (left, right) = bisect_opening_subjects(subjects.clone()).expect("splittable");
 
         assert_eq!(left.owners, subjects.owners[..2]);
         assert_eq!(right.owners, subjects.owners[2..]);
-        assert_eq!(left.settlement_isos, subjects.settlement_isos);
-        assert_eq!(right.settlement_isos, subjects.settlement_isos);
+        assert_eq!(left.reference_isos, subjects.reference_isos);
+        assert_eq!(right.reference_isos, subjects.reference_isos);
         assert!(left.owners.len() < subjects.owners.len());
         assert!(right.owners.len() < subjects.owners.len());
 
         let singleton = OpeningSubjectsV1 {
             owners: vec![Address::with_last_byte(1)],
-            settlement_isos: vec![840],
+            reference_isos: vec![840],
         };
         assert!(bisect_opening_subjects(singleton).is_none());
     }
