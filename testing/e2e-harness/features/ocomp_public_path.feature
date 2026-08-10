@@ -62,6 +62,7 @@ Feature: Off-chain computation public path
     Given a fresh four-validator OCOMP public capacity localnet
     When all 257 capacity owners submit one encrypted Tribute each
     Then all validators observe exactly 257 public Tributes for the capacity day
+    When the committee logical clock reaches the public capacity processing time
     Then Metadosis creates one finalized JobIntent from that public Tribute
     When the production OCOMP domains process that finalized JobIntent
     Then three matching validator domains atomically apply Lysis and create the Nod

@@ -102,7 +102,7 @@ const OCOMP_MEASUREMENT_BLOCK_GAS_LIMIT: u64 = 40_000_000;
 #[cfg(feature = "ocomp-integration")]
 const OCOMP_PUBLIC_OFFERING_AFTER_GENESIS_SECS: u64 = 120;
 #[cfg(feature = "ocomp-integration")]
-pub(crate) const OCOMP_CAPACITY_OFFERING_AFTER_GENESIS_SECS: u64 = 360;
+pub(crate) const OCOMP_CAPACITY_OFFERING_AFTER_GENESIS_SECS: u64 = 3_600;
 #[cfg(feature = "ocomp-integration")]
 const OCOMP_DYNAMIC_FIRST_OFFERING_AFTER_GENESIS_SECS: u64 = 180;
 #[cfg(feature = "ocomp-integration")]
@@ -4428,6 +4428,11 @@ mod tests {
             assert_eq!(day.status, WwdStatus::Offering);
             assert_eq!(day.day_type, WwdDayType::Green);
             assert!(day.metadosis_limit_amount > U256::ZERO);
+            assert_eq!(
+                day.offering_end - genesis_timestamp,
+                3_600,
+                "the 257-Tribute real-SGX capacity population needs the full bounded one-hour offering window"
+            );
             assert_eq!(
                 day.offering_end,
                 genesis_timestamp + OCOMP_CAPACITY_OFFERING_AFTER_GENESIS_SECS

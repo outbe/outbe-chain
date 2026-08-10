@@ -1580,8 +1580,6 @@ fn fresh_capacity_day_advances_to_offering(world: &mut World) {
 
 #[when("the committee logical clock reaches the fresh capacity processing time")]
 fn committee_clock_reaches_fresh_capacity_processing(world: &mut World) {
-    const SECONDS_PER_DAY: u64 = 86_400;
-
     let scheduled_process_time = world
         .state
         .metadosis_fresh_lifecycle_observation
@@ -1592,13 +1590,19 @@ fn committee_clock_reaches_fresh_capacity_processing(world: &mut World) {
     // far as READY. Production settlement deliberately belongs to the daily
     // Cycle handler, so cross the first UTC midnight after the processing time
     // before expecting the READY day to become an OCOMP job.
-    let target = scheduled_process_time
+    let target = first_daily_cycle_after(scheduled_process_time);
+    advance_fresh_metadosis_time(world, target, &[(0, 1), (1, 2), (2, 3), (3, 4)], 8);
+}
+
+fn first_daily_cycle_after(timestamp: u64) -> u64 {
+    const SECONDS_PER_DAY: u64 = 86_400;
+
+    timestamp
         .checked_div(SECONDS_PER_DAY)
         .and_then(|day| day.checked_add(1))
         .and_then(|day| day.checked_mul(SECONDS_PER_DAY))
         .and_then(|midnight| midnight.checked_add(1))
-        .expect("first UTC daily Cycle after fresh Metadosis processing time");
-    advance_fresh_metadosis_time(world, target, &[(0, 1), (1, 2), (2, 3), (3, 4)], 8);
+        .expect("first UTC daily Cycle after Metadosis processing time")
 }
 
 #[then("the same fresh capacity day advances through WAITING and READY")]
@@ -1655,29 +1659,12 @@ fn advance_fresh_metadosis_time(
     expected_edges: &[(u8, u8)],
     expected_persisted_status: u8,
 ) {
-    let before_restart = finalized_points_at_common_height(world, 1);
-    let before_height = before_restart[0].block_number;
-    let offset = logical_time_offset(requested_timestamp, unix_time_secs());
-    stop_ocomp_roles_before_committee_time_change(world);
-    world
-        .localnet
-        .restart_committee_at_unix_time_offset(offset)
-        .unwrap_or_else(|error| {
-            panic!(
-                "restart the complete committee at logical timestamp {requested_timestamp}: {error:#}"
-            )
-        });
-    // The initial production-shaped launch starts external OCOMP roles only
-    // after node RPC/TEE bootstrap. Preserve that ordering on a controlled-time
-    // restart and require every validator, not only the primary, to import one
-    // common finalized block before an exporter opens its projection.
-    let _ = finalized_points_at_common_height(world, before_height.saturating_add(1));
-    restart_ocomp_roles_after_committee_time_change(world);
-
+    let (offset, before_restart, minimum_height) =
+        restart_committee_at_logical_time(world, requested_timestamp);
     let worldwide_day = fresh_metadosis_wwd(world);
     let deadline = Instant::now() + Duration::from_secs(240);
     let (after_restart, changes) = loop {
-        let points = finalized_points_at_common_height(world, before_height.saturating_add(1));
+        let points = finalized_points_at_common_height(world, minimum_height);
         let common_height = points[0].block_number;
         let states = world
             .validators
@@ -1769,6 +1756,32 @@ fn advance_fresh_metadosis_time(
     } else {
         lifecycle.ready_validator_count = 4;
     }
+}
+
+fn restart_committee_at_logical_time(
+    world: &mut World,
+    requested_timestamp: u64,
+) -> (i64, Vec<MetadosisFinalizedPointV1>, u64) {
+    let before_restart = finalized_points_at_common_height(world, 1);
+    let before_height = before_restart[0].block_number;
+    let offset = logical_time_offset(requested_timestamp, unix_time_secs());
+    stop_ocomp_roles_before_committee_time_change(world);
+    world
+        .localnet
+        .restart_committee_at_unix_time_offset(offset)
+        .unwrap_or_else(|error| {
+            panic!(
+                "restart the complete committee at logical timestamp {requested_timestamp}: {error:#}"
+            )
+        });
+    // The initial production-shaped launch starts external OCOMP roles only
+    // after node RPC/TEE bootstrap. Preserve that ordering on a controlled-time
+    // restart and require every validator, not only the primary, to import one
+    // common finalized block before an exporter opens its projection.
+    let minimum_height = before_height.saturating_add(1);
+    let _ = finalized_points_at_common_height(world, minimum_height);
+    restart_ocomp_roles_after_committee_time_change(world);
+    (offset, before_restart, minimum_height)
 }
 
 fn stop_ocomp_roles_before_committee_time_change(world: &mut World) {
@@ -2102,6 +2115,45 @@ fn all_validators_observe_257_public_tributes(world: &mut World) {
                 )
             });
     }
+}
+
+#[when("the committee logical clock reaches the public capacity processing time")]
+fn committee_clock_reaches_public_capacity_processing(world: &mut World) {
+    let worldwide_day = world
+        .state
+        .wwd
+        .as_deref()
+        .expect("capacity WorldwideDay")
+        .parse::<u32>()
+        .expect("numeric capacity WorldwideDay");
+    let finalized_points = finalized_points_at_common_height(world, 1);
+    let common_height = finalized_points[0].block_number;
+    let states = world
+        .validators
+        .committee_ports()
+        .into_iter()
+        .map(|port| {
+            world
+                .rpc
+                .metadosis_wwd_state_at(port, worldwide_day, common_height)
+        })
+        .collect::<Vec<_>>();
+    let state = states[0]
+        .clone()
+        .expect("capacity WorldwideDay exists at the common finalized height");
+    assert!(
+        states
+            .iter()
+            .all(|candidate| candidate.as_ref() == Some(&state)),
+        "validators expose different capacity WorldwideDay state before the controlled-time transition"
+    );
+    assert_eq!(
+        state.status, 2,
+        "capacity WorldwideDay must remain in OFFERING until all 257 receipts and projections are observed"
+    );
+
+    let target = first_daily_cycle_after(state.scheduled_process_time);
+    let _ = restart_committee_at_logical_time(world, target);
 }
 
 #[then("Metadosis creates one finalized JobIntent from that public Tribute")]
