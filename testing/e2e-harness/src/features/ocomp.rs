@@ -72,17 +72,22 @@ const METADOSIS_INITIAL_WWD_ELAPSED_SECS: u64 = 15 * 3_600;
 
 #[given("a fresh four-validator OCOMP measurement localnet")]
 fn fresh_ocomp_measurement_localnet(world: &mut World) {
-    start_ocomp_measurement_localnet(world, None);
+    start_ocomp_measurement_localnet(world, None, None);
 }
 
 #[given("a fresh four-validator OCOMP public measurement localnet")]
 fn fresh_ocomp_public_measurement_localnet(world: &mut World) {
-    start_ocomp_measurement_localnet(world, Some(0));
+    start_ocomp_measurement_localnet(world, Some(0), None);
+}
+
+#[given("a fresh four-validator OCOMP short-window public measurement localnet")]
+fn fresh_ocomp_short_window_public_measurement_localnet(world: &mut World) {
+    start_ocomp_measurement_localnet(world, Some(0), Some(6));
 }
 
 #[given("a fresh four-validator OCOMP public capacity localnet")]
 fn fresh_ocomp_public_capacity_localnet(world: &mut World) {
-    start_ocomp_measurement_localnet(world, Some(OCOMP_CAPACITY_TRIBUTE_COUNT));
+    start_ocomp_measurement_localnet(world, Some(OCOMP_CAPACITY_TRIBUTE_COUNT), None);
 }
 
 #[given("a fresh four-validator OCOMP failure-recovery localnet")]
@@ -280,16 +285,17 @@ fn start_canonical_ocomp_final_devnet(
 fn start_ocomp_measurement_localnet(
     world: &mut World,
     public_capacity_tribute_count: Option<usize>,
+    vote_window_blocks: Option<u64>,
 ) {
     let shorten_public_day = public_capacity_tribute_count.is_some();
-    bootstrap_localnet(
-        world,
-        6,
-        &[(
-            "TESTNET_EPOCH_LENGTH_BLOCKS",
-            OCOMP_TEST_EPOCH_LENGTH_BLOCKS.to_string(),
-        )],
-    );
+    let mut tuning = vec![(
+        "TESTNET_EPOCH_LENGTH_BLOCKS",
+        OCOMP_TEST_EPOCH_LENGTH_BLOCKS.to_string(),
+    )];
+    if let Some(window) = vote_window_blocks {
+        tuning.push(("TESTNET_OCOMP_VOTE_WINDOW_BLOCKS", window.to_string()));
+    }
+    bootstrap_localnet(world, 6, &tuning);
     let mut start_opts = if shorten_public_day {
         let now_secs = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -2302,11 +2308,10 @@ fn validator_two_prepares_held_vote(world: &mut World) {
     };
     let vote = ResultVoteV1::decode_canonical(&vote_bytes, &poc_schema_limits())
         .expect("canonical public ResultVoteV1");
-    let validator = world.validators.get(VALIDATOR_INDEX);
-    let key = validator
-        .evm_key()
-        .expect("read validator-2 EVM key for address derivation");
-    let address = eth::address_of(&key).expect("derive validator-2 EVM address");
+    let address = world
+        .ocomp
+        .ocomp_delegate_address(VALIDATOR_INDEX as u8)
+        .expect("derive validator-2 OCOMP delegate address");
     let nonce = world
         .rpc
         .canonical_nonce_on(primary, address)
