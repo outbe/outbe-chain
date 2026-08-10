@@ -9,11 +9,12 @@ Beads.
 - Ветка: `test/end-to-end`.
 - Исходный commit: `96e31331e86fe781362eb5298ae8be6bb15b11c4`.
 - Исходный `origin/main`: тот же commit.
-- Текущая база проверяемого worktree: `9b8de5591008` в ветке
-  `test/end-to-end`. Поверх неё проверены ещё не закоммиченные узкие slices
-  finalized-RPC discovery/replay, production retention release и exporter
-  crash replay; их точный diff перечислен в `git status`, а для каждой
-  runtime-строки ниже отдельно указан run directory и SHA256 evidence.
+- Текущий commit проверяемого worktree: `260b9821` в ветке
+  `test/end-to-end`. Поверх него находится незакоммиченный tests-only slice,
+  который добавляет в основной `@ocomp-public-apply` проверку совпадения
+  validator/FullNode canonical result chunks и `NodMembershipProofV1`, плюс
+  обновляет этот журнал. Production-код slice не меняет; для runtime-строки
+  указан точный run directory и SHA256 evidence.
 - Workspace: 67 Rust packages, 244 targets.
 - Общее решение по выпуску: сеть обновляется через wipe; эта проверка не
   изменяет testnet.
@@ -79,14 +80,14 @@ Beads.
 | B02a | Non-native feature profiles | Точечные `cargo check` для mock, OCOMP integration и остальных поддерживаемых non-native features | Все входящие в testnet-подготовку feature-профили типизируются без `native-dcap` | PASS | Пять профилей типизируются: enclave `mock`, harness `ocomp-finality-fixture`, harness `ocomp-integration`, consensus/chain `test-marshal-drop`, TEE `tee-attestation-v1`. Единственный RED был tests-only unused import вне `ocomp-integration`; после feature-gate correction тот же `ocomp-finality-fixture --all-targets` PASS |
 | B03 | Workspace release | `mise run build-release` | Release-профиль собирается auditable | PASS | Актуальный повтор на базе `9b8de5591008` плюс finalized-RPC/retention/export-replay slices: exit 0 за 2m38s; `outbe-chain` SHA256 `f3efe7912b2356a661f07d5f4480f07bcd080c75cbe694dbf85fe9d39d5985c0`, остальные exact binaries записаны в evidence обоих SGX/no-DCAP сценариев |
 | B04 | Formatting | `mise run fmt-check` | Форматирование воспроизводимо | PASS | Исходный FAIL был только rustfmt в двух OCOMP result-attestation файлах; `25e593a2`, повторный check PASS |
-| B05 | Clippy | `cargo clippy --all-targets -- -D warnings` и точечные non-native feature profiles | Все входящие в scope targets без warnings; native DCAP не запускается | PASS | Первый прогон нашёл stale test references на удалённый Unix control transport; `a157277d` перевёл тесты на HTTP/ZMQ-era canonical types, повторный all-target Clippy PASS |
+| B05 | Clippy | `cargo clippy --all-targets -- -D warnings` и точечные non-native feature profiles | Все входящие в scope targets без warnings; native DCAP не запускается | PASS | Актуальный повтор на рабочем дереве нашёл один `useless_conversion` в GemFactory; лишний `.into()` удалён без изменения семантики. Повторный full-workspace all-target Clippy exit 0; GemFactory 23/23 tests PASS |
 | B06 | Dependency hygiene | `mise run audit-machete` | Нет неиспользуемых workspace dependencies | PASS | Exit 0 на `25e593a2`; unused dependencies не найдены |
-| B07 | Supply-chain policy | `mise run audit-deny` | Advisory/license/ban/source policy проходит | FAIL | Advisories, bans и sources проходят; license policy отклоняет `etag 4.0.0`, `str-buf 3.0.3`, `xxhash-rust 0.8.18` с `BSL-1.0` |
-| B08 | RustSec | `mise run audit-rustsec` | Lockfile не содержит неразобранных уязвимостей | FAIL | Актуальная advisory DB `1237bbe0`: `RUSTSEC-2026-0118` и `-0119` в `hickory-proto 0.25.2`, `RUSTSEC-2025-0055` в `tracing-subscriber 0.2.25`; дополнительно 5 unmaintained и 4 unsound warnings |
+| B07 | Supply-chain policy | `mise run audit-deny` | Advisory/license/ban/source policy проходит | PASS | После явного решения разрешить Boost Software License 1.0 в `deny.toml`: license-only gate и полный повтор на `260b9821` завершились с exit 0; `advisories ok, bans ok, licenses ok, sources ok` |
+| B08 | RustSec | `mise run audit-rustsec` | Lockfile не содержит неразобранных применимых уязвимостей | PASS | Exit 0 на `260b9821` с отдельной актуальной cargo-audit DB. `RUSTSEC-2026-0118` и `-0119` для транзитивного `hickory-proto 0.25.2` признаны неприменимыми: Outbe явно отключает DNS discovery, DNSSEC feature не собран, уязвимые NSEC3/name-compression пути недостижимы. Ранее принятое исключение `RUSTSEC-2025-0055` также синхронизировано во всех gates. Пять unmaintained и четыре unsound warning не скрыты и вынесены в R02 |
 | B09 | Unused dependencies | `mise run audit-udeps` | Nightly udeps проходит для всех targets | PASS | `cargo +nightly udeps --workspace --all-targets` вне sandbox: exit 0, `All deps seem to have been used`. До прогона исправлены только пять nightly-incompatible tail `bail!` expressions в harness/chain, без изменения runtime-семантики |
 | B10 | Consensus layering | `mise run audit-consensus-deps` | Consensus не зависит транзитивно от EVM | PASS | `consensus dependency boundary: OK` на `96e31331` |
 | B11 | Generated OCOMP registry | `cargo xtask ocomp registry --check` | Generated registry совпадает с нормативными входами | PASS | Exit 0 на `96e31331` |
-| B12 | OCOMP shape/capacity | `mise run ocomp-poc-capacity` | Shape/capacity и Final-arming ограничения воспроизводимы | BLOCKED | Текущий OCM-26 контракт требует clean revision, пять cold runs и жёстко связан с debug + `--no-sudo` + non-SGX `gramine-direct`; typed evidence отклоняет другой TEE profile. Это можно сохранить как отдельное nonhardware capacity evidence, но нельзя выдать за принятую release SGX/no-attest acceptance без явного решения |
+| B12 | OCOMP shape/capacity | `mise run ocomp-poc-capacity` | Shape/capacity и Final-arming ограничения воспроизводимы | NOT RUN | Runner и typed evidence выровнены на единый профиль: только release-бинарники, `sudo`, настоящий SGX и `sgx-no-attest`; debug, `--no-sudo`, non-SGX `gramine-direct` и mixed-profile evidence отклоняются. Профильные unit/integration tests и registry gate проходят. Статус остаётся NOT RUN до пяти cold runs на одной clean revision |
 | B13 | OCOMP shape | `cargo xtask ocomp shape --check` | Generated shape freeze совпадает с нормативными входами | PASS | Exit 0 на `96e31331` |
 | B13a | Final fixtures | `cargo xtask ocomp final-artifacts ... --check` с checked-in Final inputs | Canonical Final OCOMP artifacts воспроизводимы | PASS | Исходный RED подтвердил известный drift после normative system-gas изменений. Две независимые генерации дали побайтово одинаковый набор; checked-in downstream profile/bundle/fork/genesis artifacts перегенерированы, повторный `--check` exit 0; capacity manifest/profile не изменились |
 | B14 | Storage layouts | Репозиторный layout-hash gate | Consensus storage layout не изменился незаметно | PASS | Workspace `storage_layout` filter exit 0; Metadosis `tests::state::test_storage_dsl_layout_slots` PASS и повторно связал exact slots с `METADOSIS_STORAGE_LAYOUT_V1_HASH` |
@@ -102,7 +103,7 @@ Beads.
 | T04 | GramineDirectDev live SGX-no-attest E2E | `outbe-e2e --tee sgx-no-attest --validators 4 --all --name "Entire committee recovers after all enclaves restart"` | Четыре validator nodes используют production enclave, реальный SGX/EGETKEY и NodeHost; DCAP/QVL не вызываются и не монтируются; sealed restart сохраняет ключ и финализацию | PASS | 1 scenario / 3 steps PASS; Tribute visible at block 6, all four enclaves and nodes restarted, sealed offer keys restored and finalization resumed. Scenario receipt SHA256 `0fe2ca2568f01a0216ee4f9619da621778111f4d14b0f348da0d78d778107757`; tested production binary SHA256 `ca60ada35470b87ec05e66339abe892462370c6305fc5502fb6a63d17d7f9906`; harness binary SHA256 `3a7843f71855f65f183588a55501263ca0dc17bf3c1481291931d3d374ee21ab` |
 | T05 | Hardware SGX/DCAP E2E | `mise run e2e-sgx` | Исключено из текущей приёмки | N/A | Решение пользователя: native DCAP не проверять |
 | T06 | Native-DCAP SGX release | Hardware/native-DCAP release gates | Исключено из текущей приёмки | N/A | Решение пользователя: native DCAP не проверять |
-| T07 | OCOMP evidence closure | `mise run ocomp-poc-closure-run` | Exact-artifact OCOMP lanes создают проверяемый evidence bundle | BLOCKED | Closure отклоняет dirty revision. Даже после commit текущий runner смешивает debug artifacts, `--no-sudo`, fresh SGX E2E-008 и canonical-Final/non-SGX E2E-001/007, а closure требует одну launch identity. Исправление требует отдельного решения о canonical fixture/evidence contract; это не узкая правка одних tags |
+| T07 | OCOMP evidence closure | `mise run ocomp-poc-closure-run` | Exact-artifact OCOMP lanes создают проверяемый evidence bundle | NOT RUN | Closure contract выровнен на тот же release + `sudo` + `sgx-no-attest` профиль, что B12 и production-shaped E2E. Launch identity теперь связывает execution profile и один Gramine image; mixed/debug/non-SGX/no-sudo evidence отклоняется. Профильные verifier tests проходят; статус остаётся NOT RUN до exact closure на clean revision |
 
 ## Обязательный production-shaped OCOMP E2E
 
@@ -117,14 +118,14 @@ domain convergence → Lysis apply → NOD state and bodies`.
 
 | ID | Проверка | Критерий PASS | Результат | Доказательство |
 |---|---|---|---|---|
-| O01 | Настоящий JobIntent | Intent создаётся chain lifecycle после Tribute, а не тестовым setter | PASS | `@ocomp-public-apply`, `/tmp/outbe-e2e-public-release.wHuPFB`: chain-created intent `0xb3f6…98f6`, request block 30, finality 31, open 35; 10/10 steps PASS |
+| O01 | Настоящий JobIntent | Intent создаётся chain lifecycle после Tribute, а не тестовым setter | PASS | `@ocomp-public-apply`, `/tmp/outbe-o08-cas-proof.wvOBJW`: chain-created intent `0x2654…64b2`, request block 32, finality 33, open 37; 13/13 steps PASS |
 | O02 | Production coordinator | Используется тот же `open()`, что в ноде; test-only `open_with_retained_tributes` не подменяет путь | PASS | Тот же release process E2E запускает embedded node coordinator и внешние production roles; прямого test-only constructor/result injection нет |
-| O03 | Arming race | В E2E исполняются `finalized_marker` и атомарный arm; advancing marker не создаёт вечный retry | PASS | Public-path job открылся на block 35 и дошёл до activation на block 38 через настоящий pin/arming/export путь |
+| O03 | Arming race | В E2E исполняются `finalized_marker` и атомарный arm; advancing marker не создаёт вечный retry | PASS | Public-path job открылся на block 37 и дошёл до activation на block 40 через настоящий pin/arming/export путь |
 | O04 | Export и lease | Finalized snapshot экспортирован и принят Supervisor с точной identity | PASS | Актуальный `@metadosis-fresh-devnet`: production SnapshotExporter прочитал typed JobIntent и request-bound openings по exact finalized block, Supervisor/Worker завершили job `0x697d…9319`; evidence `scenario-002.json`, SHA256 `45e2e63c7c3181ff3516fe95370b16bea722663bfca701b5169db0a6cbf38ffb` |
-| O05 | Worker result | Worker реально выполняет unit и возвращает результат, а не только остаётся жив | PASS | Четыре независимых result-vote tx с разными OCOMP signers, одинаковый result digest `0x77f3…6ed`, без прямого ввода результата |
-| O06 | Validator submission | Каждый ожидаемый validator domain подписывает и отправляет результат своего вычисления | PASS | Четыре успешных canonical vote transactions в block 38; calldata 1604, gas_used 0 в system lane |
-| O07 | Terminal outcome | Job достигает `Completed`; quorum, Lysis roots/manifest и on-chain result совпадают | PASS | Activation и certified generation в block 38; Tribute=1, NOD=1; atomic quorum apply и exact completed retry подтверждены. Evidence SHA256 `1bdd3079ee60c03bee04569a0cdf97551972d3d071b2d889a85dca6e96ec7de2` |
-| O08 | NOD materialization | FullNode и validators имеют одинаковый NOD state, bodies и membership proofs | PARTIAL | Validator state/data и certified roots доказаны; отдельное полное доказательство FullNode NOD bodies + membership proofs остаётся незакрытым |
+| O05 | Worker result | Worker реально выполняет unit и возвращает результат, а не только остаётся жив | PASS | Четыре независимых result-vote tx с разными OCOMP signers, одинаковый result digest `0xb065…ae19`, без прямого ввода результата |
+| O06 | Validator submission | Каждый ожидаемый validator domain подписывает и отправляет результат своего вычисления | PASS | Четыре успешных canonical vote transactions в block 40; calldata 1604, gas_used 0 в system lane |
+| O07 | Terminal outcome | Job достигает `Completed`; quorum, Lysis roots/manifest и on-chain result совпадают | PASS | Activation и certified generation в block 40; Tribute=1, NOD=1; atomic quorum apply и exact completed retry подтверждены. Evidence SHA256 `d528dab47cc7b0179bba4fc41e73d161d612a2d62d36ec04b84038f25970bf25` |
+| O08 | NOD materialization | FullNode и validators имеют одинаковый NOD state, bodies и membership proofs | PASS | Validator-0 и keyless FullNode независимо сохранили побайтово одинаковый canonical `ResultChunkV1`/`NodActionV1` для job `0x68f5…fecf`; action несёт все canonical NOD body fields. `NodMembershipProofV1` для ordinal 0 проверен против finalized `ActiveNodSetV1` и `nod_root=0xa224…0721`; state root и certified generation FullNode совпали с validator. Тот же release SGX run, 13/13, evidence SHA256 `d528dab47cc7b0179bba4fc41e73d161d612a2d62d36ec04b84038f25970bf25` |
 | O09 | Restart/replay | Supervisor, Worker, validator и FullNode restart сохраняют exact-retry/sign-once свойства | PASS | Актуальный `@ocomp-e2e-008`: `/tmp/outbe-npt-lifecycle.PYZ19I/run/run-1786298662-3468315/scenario-1`, exact completed generation/vote replay после restart, clean log audit; evidence SHA256 `bda799255e76c40a43a76c894225e52fec2f1fbc1baa0d1caf4fd73bcb03cfdf` |
 | O10 | Исторический membership | Старый job сохраняет pinned ACTIVE snapshot, новый использует обновлённый ValidatorSet | PASS | `@ocomp-dynamic-overlap`, `/tmp/outbe-e2e-dynamic-release.KQm6Z3`: old 4/q3 и current 5/q4 одновременно; 13/13 steps PASS; SHA256 `fde92cfc8d61d0c3cb1585d814ab7c980e0f9a921eb804eb082de2aa72b099ee` |
 | O11 | Deadline accountability | Все pinned validators голосуют в 1800-block window; missing current ACTIVE получает jail | PASS | Тот же dynamic-overlap E2E доказал deadline accountability/jail и FullNode compute-only роль без изменения исторического snapshot |
@@ -134,10 +135,10 @@ domain convergence → Lysis apply → NOD state and bodies`.
 | ID | Сценарий/граница | Разрешённая подготовка | Запрещённая подмена | Фактическое покрытие | Статус/доказательство |
 |---|---|---|---|---|---|
 | H01 | `@ocomp-dynamic-overlap` | Два согласованных `WorldwideDay` и короткий vote window записаны в immutable genesis до запуска | Нельзя считать это доказательством Create/FORMING/phase transitions | Реальные Tribute tx, два chain-created JobIntent, pinned 4/q3 и 5/q4 snapshots, FullNode compute-only, Worker results и публичные validator votes | PARTIAL. `/tmp/outbe-e2e-harness-2112543`: путь дошёл до обоих jobs и затем обнаружил test-only deadline drift 1800 вместо genesis 120. `/tmp/outbe-e2e-harness-2249770`: после RED→GREEN regression дошёл до fifth FullNode state parity, после чего был сознательно остановлен для trust-аудита; PASS не заявляется |
-| H02 | `@ocomp-public-apply` | Один OFFERING day, Oracle VWAP и funding подготовлены в genesis | Не доказывает runtime-создание WWD | После JobIntent harness наблюдает настоящие worker results, публичные result-vote tx, одинаковую activation/NOD state и distinct signers; direct result submit helper не вызывается | PASS. `/tmp/outbe-e2e-public-release.wHuPFB`, 10/10 steps, clean audit, SHA256 `1bdd3079ee60c03bee04569a0cdf97551972d3d071b2d889a85dca6e96ec7de2` |
+| H02 | `@ocomp-public-apply` | Один OFFERING day, Oracle VWAP и funding подготовлены в genesis | Не доказывает runtime-создание WWD | После JobIntent harness наблюдает настоящие worker results, публичные result-vote tx, одинаковую activation/NOD state и distinct signers; FullNode CAS chunk и NOD membership proof проверяются против finalized root; direct result submit helper не вызывается | PASS. `/tmp/outbe-o08-cas-proof.wvOBJW`, 13/13 steps, clean audit, SHA256 `d528dab47cc7b0179bba4fc41e73d161d612a2d62d36ec04b84038f25970bf25` |
 | H03 | `@metadosis-fresh-devnet` | Ключи, funding, Oracle initial data, immutable timing constants и OCOMP install | Seeded active WWD очищается до старта; JobIntent/result/NOD и post-start storage injection запрещены | Block 1 создаёт WWD в FORMING; production Cycle формирует immutable day limit; реальные blocks проходят фазы; 257 CLI offers отправляются максимум по 2; затем production Supervisor/Worker/vote/Lysis/NOD | PASS. Актуальный совместный release-прогон `@metadosis-fresh-devnet or @ocomp-e2e-008`: 2/2 сценария, 24/24 шага, настоящий SGX/Gramine, `sgx.remote_attestation=none`, `--tee sgx-no-attest`, clean log audit. Fresh-flow провёл 257 публичных Tribute через все Metadosis-фазы, создал finalized JobIntent, получил три matching validator results, атомарно применил Lysis и создал ровно 257 NOD; validator-0 реконструировал certified generation из canonical history. Run: `/tmp/outbe-npt-lifecycle.PYZ19I/run/run-1786298662-3468315/scenario-2`; evidence SHA256 `629c4c3bd92de4216de12941f2ff6252576d4abab0885f6471aea64c47496332`; `outbe-chain` SHA256 `f3efe7912b2356a661f07d5f4480f07bcd080c75cbe694dbf85fe9d39d5985c0` |
 | H04 | Deadline source equivalence | `computeVoteWindowBlocks` материализуется в immutable genesis constants | Test-only builder не вправе использовать отдельный hardcoded default | Production `outbe-chain ocomp genesis` на том же profile сформировал 120; harness раньше сформировал 1800 | PASS focused regression: `dynamic_membership_fixture_schedules_two_distinct_public_jobs` сначала RED 1800/120, после локальной test-only правки GREEN; `cargo fmt --all -- --check` и build harness PASS |
-| H05 | Direct-result injection audit | Direct submit helpers разрешены только в negative/retry/component steps | Happy-path `JobIntent → Worker → vote → Lysis → NOD` не может ими пользоваться | `production_ocomp_domains_process_job_intent` проверяет pre-state/liveness; terminal step читает finalized public tx/accountability/activation/NOD. Прямые submit helpers находятся в отдельных mutation/retry шагах | PASS статический source audit; всё ещё требуется H03 runtime PASS |
+| H05 | Direct-result injection audit | Direct submit helpers разрешены только в negative/retry/component steps | Happy-path `JobIntent → Worker → vote → Lysis → NOD` не может ими пользоваться | `production_ocomp_domains_process_job_intent` проверяет pre-state/liveness; terminal step читает finalized public tx/accountability/activation/NOD. Прямые submit helpers находятся в отдельных mutation/retry шагах | PASS: source audit дополнен прошедшими H02/H03 runtime-сценариями без direct-result injection |
 | H06 | Embedded OCOMP crash restart | Harness выполняет dirty restart с сохранением production datadir и одинаковых durable checkpoints; задержка старта не используется как обход | Нельзя удалять/откатывать checkpoint, ждать случайный дополнительный блок или ослаблять canonical hash validation | Restart/replay сценарий восстанавливает embedded OCOMP checkpoint, exact result и sign-once state | PASS. `@ocomp-e2e-008`, 9/9 steps, `restart_replay_verified=true`; `/tmp/outbe-e2e-restart-release.YIgHvA` |
 | H07 | Consensus restart с асимметричным unfinalized head | Все nodes имеют один certified anchor, но часть успела сохранить следующий unfinalized head/view | Нельзя выравнивать heads перед остановкой, чистить WAL или сбрасывать safety lock ради зелёного теста | Controlled-time flow дважды останавливает и последовательно поднимает весь committee с сохранёнными datadir/WAL/CE; после каждого запуска требует общий следующий finalized block до старта OCOMP roles | PASS. Тот же H03 run прошёл оба coordinated restart без выравнивания heads, очистки WAL или отката CE, затем finalized boundary H300 и полный Lysis/NOD. Run: `/tmp/metadosis-boundary-retry.3ECYgm/r/run-1786286533-3079681/scenario-1` |
 
@@ -171,6 +172,7 @@ Persistent `outbe-e2e localnet` на фиксированной точке жё�
 | ID | Риск | Решение текущего PR | Follow-up |
 |---|---|---|---|
 | R01 | `outbe_getOcompLysisOpeningsV1` выполняет историческое state/proof построение в обычном публичном RPC namespace; без отдельного admission/local-only транспорта удалённый клиент может расходовать node-local CPU и blocking pool | Не расширять текущий Tribute → NOD correctness-slice транспортом или аутентификацией; риск не считается закрытым зелёным E2E | `outbe-chain-9t3` |
+| R02 | RustSec сообщает пять unmaintained и четыре unsound warning: `atomic-polyfill`, `bincode`, `derivative`, `paste`, `proc-macro-error2`, `anyhow`, два advisory для `git2` и `memmap2` | Предупреждения остаются видимыми в выводе `mise run audit-rustsec`; они не классифицированы как применимые vulnerability и не блокируют B08 | Отдельный dependency-hygiene slice при обновлении upstream dependency graph |
 
 Проверка loopback/auth для `OUTBE_OCOMP_RPC_URL` также сознательно отложена:
 текущий операционный контракт предполагает, что Supervisor обращается к RPC
@@ -253,31 +255,46 @@ startup errors остаются fatal. Повторный `@ocomp-e2e-008` на 
 restart, certified DKG boundary, 257/257 публичных Tribute, finalized JobIntent,
 Supervisor/Worker computation, quorum, Lysis и 257 NOD без state/result injection. Dynamic
 4→5 membership, delayed finality, pressure compaction, prepared-only crash replay, Mongo outage и
-full restart также имеют прямые зелёные evidence.
+full restart также имеют прямые зелёные evidence. Отдельный public-path run доказал совпадение
+validator/FullNode canonical result chunks, NOD body fields и membership proof против finalized
+`nod_root`.
 
 Полный completion-аудит сохраняет следующие независимые NO-GO/неполные строки:
 
-- `B07`: license policy не принимает три зависимости под BSL-1.0;
-- `B08`: в release dependency graph остаются три RustSec advisory и отдельные
-  unmaintained/unsound warnings;
-- `B12` и `T07`: их xtask-контракты смешивают debug/non-SGX canonical Final lanes
-  с принятым release + `sudo` + `sgx-no-attest` production profile;
-- `O08`: текущий E2E доказывает одинаковый canonical Lysis result и validator-side
-  NOD state/roots, но не доказывает на всё ещё работающей FullNode точные NOD bodies
-  и membership proofs. Code audit показывает существующие canonical `NodBodyStored`
-  события, CE replay и локальный proof builder, поэтому это пока evidence-gap, а не
-  доказанный отсутствующий production path;
+- `B12` и `T07`: runners, typed evidence и closure contract уже выровнены
+  на release + `sudo` + `sgx-no-attest`, но сами gates ещё не
+  выполнены на clean revision;
 - `outbe-chain-08n.6`: публичный burst из 6–7 `offerTribute` может сформировать
   gas-valid блок, исполнение которого превышает consensus certification budget.
 
-Кроме того, final acceptance tasks `outbe-chain-08n.5` и `outbe-chain-8ui.7`
-остаются открыты. Поэтому итоговый статус всей цели — **NO-GO**, а `16/18`
+Кроме того, quality task `outbe-chain-08n.2`, final acceptance task
+`outbe-chain-08n.5` и dynamic-OCOMP acceptance `outbe-chain-8ui.7` остаются
+открыты. Поэтому итоговый статус всей цели — **NO-GO**, а `16/18`
 используется только как счётчик завершённого внутреннего пакета.
 
-`B12`/`T07` не будут запущены как ложная SGX acceptance и не будут молча
-переписаны в более широкий scope. Supply-chain решения, ограничение публичного
-Tribute burst и расширение FullNode evidence требуют отдельных явно ограниченных
-срезов.
+`B12`/`T07` больше не позволяют прежний смешанный профиль: evidence
+tooling замораживает release artifacts, `sudo`, `sgx-no-attest` и единую
+launch identity. Для закрытия остался запуск обоих gates на clean revision.
+Ограничение публичного Tribute burst остаётся отдельным architecture-frozen
+срезом.
+
+### Оставшаяся работа
+
+| Блокер | Владелец инварианта | Следующее действие |
+|---|---|---|
+| B12/T07 | OCOMP xtask/evidence contract | Выполнить пять cold release SGX-no-attest capacity runs и exact closure на одной clean revision |
+| `outbe-chain-08n.6` | Tribute admission/gas accounting и consensus certification budget | После architecture freeze выбрать детерминированный production-safe burst bound; до решения публичный burst остаётся P0 NO-GO |
+
+### Явно пропущенные или частичные строки
+
+- T05/T06 — `N/A`: native DCAP и hardware-DCAP lanes исключены прямым
+  решением пользователя; live acceptance выполнен на настоящем SGX с
+  `sgx.remote_attestation=none`.
+- B12/T07 — `NOT RUN`, а не `PASS`: runners и evidence contract уже
+  выражают выбранный профиль единообразно, но пять cold runs и
+  exact closure ещё не выполнены на clean revision.
+- H01 — намеренно `PARTIAL`: seeded WorldwideDay доказывает dynamic overlap,
+  но не runtime-создание дня; полный runtime lifecycle отдельно доказан H03.
 
 ## Исправленные дефекты тестового слоя
 
@@ -308,3 +325,19 @@ Tribute burst и расширение FullNode evidence требуют отде�
   `BoundaryOutcome`. Регрессии покрывают отсутствие boundary, delayed boundary,
   skipped epoch, rollback при ошибке snapshot и сохранение LateFinalize miss.
   Точный release SGX/no-DCAP H03 после исправления прошёл 15/15 шагов.
+
+Остальные defect/acceptance commits этой ветки, которые входят в итоговое
+доказательство:
+
+- `82f184bc` — восстановлен production SGX/no-attestation network profile;
+- `e55f94cb` — vote slot выводится из зарегистрированного OCOMP-ключа;
+- `64e5dc2a` и `c95ced29` — единый WWD schedule и корректный UTC+14 genesis day;
+- `88bca021` — OCOMP-роли используют identity пользователя запуска без
+  выдуманных service UID;
+- `53d110dc` — восстановлен full-path restart/replay;
+- `0131a218` — execution read deadlines сохраняются через storage readers;
+- `f9cd12cf` — follower restart якорится к genesis ValidatorSet, а не к
+  текущему live set;
+- `8b154fcb` — production `open()` release/pressure regressions, exporter
+  prepared-only exact replay, finalized RPC path и соответствующие E2E
+  evidence сведены в один acceptance slice.

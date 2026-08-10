@@ -1,4 +1,4 @@
-@ocomp @tee @gramine-direct @min-validators-4
+@ocomp @tee @sgx-no-attest @sudo @min-validators-4
 Feature: Off-chain computation PoC closure
   @ocomp-e2e @ocomp-e2e-001
   # OCOMP-TEST-ID: OCM-E2E-001

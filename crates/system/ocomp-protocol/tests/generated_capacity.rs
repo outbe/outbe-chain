@@ -27,7 +27,7 @@ fn conforming_machine() -> ObservedMachineFactsV1 {
         pid1_is_systemd: true,
         unified_cgroup_v2: true,
         writable_resource_cgroup: true,
-        production_enclave_gramine_direct: true,
+        production_enclave_sgx_no_attest: true,
     }
 }
 

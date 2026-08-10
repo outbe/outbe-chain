@@ -104,6 +104,7 @@ pub(crate) fn write_scenario(input: ScenarioEvidence<'_>) -> Result<()> {
         "environment": {
             "validators": input.env.validators,
             "tee": input.env.tee_mode.evidence_name(),
+            "sudo": input.env.sudo,
             "all": input.env.all,
             "gramine_image_id": input.gramine_image_id,
         },

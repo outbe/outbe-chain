@@ -98,12 +98,12 @@ run = "cargo install --locked cargo-nextest"
 [tasks.audit]
 description = "Audit debug binaries for known vulnerabilities"
 depends = ["build"]
-run = "find target/debug -maxdepth 1 -type f -perm +111 -name 'outbe-*' -exec cargo audit bin {} \\;"
+run = "find target/debug -maxdepth 1 -type f -perm +111 -name 'outbe-*' -exec cargo audit --db ~/.cargo/rustsec-audit-db --ignore RUSTSEC-2025-0055 --ignore RUSTSEC-2026-0118 --ignore RUSTSEC-2026-0119 bin {} \\;"
 
 [tasks.audit-release]
 description = "Audit release binaries for known vulnerabilities"
 depends = ["build-release"]
-run = "find target/release -maxdepth 1 -type f -perm +111 -name 'outbe-*' -exec cargo audit bin {} \\;"
+run = "find target/release -maxdepth 1 -type f -perm +111 -name 'outbe-*' -exec cargo audit --db ~/.cargo/rustsec-audit-db --ignore RUSTSEC-2025-0055 --ignore RUSTSEC-2026-0118 --ignore RUSTSEC-2026-0119 bin {} \\;"
 
 # ─── Audit toolchain (rust-module-audit skill entry points) ─────────── #
 
@@ -138,7 +138,11 @@ run = "cargo deny check"
 
 [tasks.audit-rustsec]
 description = "cargo audit (RustSec workspace dependency advisories)"
-run = "cargo audit"
+# Keep the adjudicated exceptions aligned with deny.toml and cve-scan.yml.
+# RUSTSEC-2026-0118/-0119 are not applicable because Outbe disables DNS
+# discovery and does not enable Hickory DNSSEC. cargo-deny uses a hashed
+# database layout under ~/.cargo/advisory-db, so cargo-audit needs its own path.
+run = "cargo audit --db ~/.cargo/rustsec-audit-db --ignore RUSTSEC-2025-0055 --ignore RUSTSEC-2026-0118 --ignore RUSTSEC-2026-0119"
 
 [tasks.audit-machete]
 description = "cargo machete (unused workspace dependencies)"
