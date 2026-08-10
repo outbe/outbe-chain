@@ -235,7 +235,9 @@ impl OracleContract<'_> {
         base: Address,
         quote: Address,
     ) -> Result<(U256, u64, u64)> {
-        let index = self.require_pair_index(AddressPair::from_addresses(base, quote))?;
+        // Both quote directions read the same slot, matching `get_exchange_rate`.
+        let index =
+            self.require_pair_index(AddressPair::from_addresses(base, quote).to_canonical())?;
         let rate = self.get_exchange_rate(base, quote)?;
         let block = self.exchange_rate_block.read(&index)?;
         let ts = self.exchange_rate_timestamp.read(&index)?;

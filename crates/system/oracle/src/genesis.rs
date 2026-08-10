@@ -3,14 +3,14 @@
 //! Owns the `OracleGenesisConfig` shape plus the `init_from_genesis` /
 //! `export_genesis` round-trip used for chain bootstrap and state migration.
 
-use alloy_primitives::{Address, U256};
-use outbe_primitives::address_pair::AddressPair;
-use outbe_primitives::error::{PrecompileError, Result};
-use std::collections::BTreeSet;
-
 use crate::constants::{DAY_TYPE_ISO, DEFAULT_USD_CURRENCY_RATE, MAX_SNAPSHOT_RETENTION_SECONDS};
 use crate::schema::OracleContract;
 use crate::types::AssetType;
+use alloy_primitives::{Address, U256};
+use outbe_primitives::address_pair::AddressPair;
+use outbe_primitives::asset_type::COEN_ASSET;
+use outbe_primitives::error::{PrecompileError, Result};
+use std::collections::BTreeSet;
 
 /// A price snapshot entry for genesis import/export.
 #[derive(Clone, Debug)]
@@ -106,7 +106,7 @@ impl OracleGenesisConfig {
             min_valid_per_window: U256::from(50_000_000_000_000_000u128), // 0.05
             slash_fraction: U256::ZERO,
             lookback_duration: 86400,
-            pairs: vec![(Address::ZERO, AssetType::IsoCurrency(DAY_TYPE_ISO).into())],
+            pairs: vec![(COEN_ASSET, AssetType::IsoCurrency(DAY_TYPE_ISO).into())],
             initial_rates: vec![],
             feeder_delegations: vec![],
             reference_currencies: vec![ReferenceCurrency {
@@ -164,7 +164,13 @@ pub fn init_from_genesis(oracle: &mut OracleContract, config: &OracleGenesisConf
 
     // Set initial exchange rates (system caller = Address::ZERO).
     for (base, quote, rate) in &config.initial_rates {
-        oracle.set_exchange_rate(Address::ZERO, AddressPair::from_addresses(*base, *quote), *rate, 0, 0)?;
+        oracle.set_exchange_rate(
+            Address::ZERO,
+            AddressPair::from_addresses(*base, *quote),
+            *rate,
+            0,
+            0,
+        )?;
     }
 
     // Record role-scoped feeder delegations in ValidatorSet.

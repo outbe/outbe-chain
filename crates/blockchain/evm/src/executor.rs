@@ -4396,7 +4396,20 @@ mod tests {
         );
     }
 
+    /// The genesis-alloc chain constants every block hook reads; production
+    /// gets them from the genesis alloc, so tests have to seed them too.
+    fn seed_chain_constants_genesis(storage: &StorageHandle<'_>) {
+        for (slot, value) in
+            outbe_chain_constants::GenesisProtocolParametersV1::default().genesis_storage_words()
+        {
+            storage
+                .sstore(outbe_chain_constants::CHAIN_CONSTANTS_ADDRESS, slot, value)
+                .unwrap();
+        }
+    }
+
     fn seed_compressed_entities_genesis(storage: StorageHandle<'_>) {
+        seed_chain_constants_genesis(&storage);
         let root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
         storage
             .sstore(
@@ -4836,19 +4849,17 @@ mod tests {
             // NOD/GEM/INTEX floor-price promotion resolves a live rate instead
             // of soft-skipping the scan. The qualifiers derive the pair from the
             // ISO code, so registering the pair is sufficient.
-            let mut oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-            oracle
-                .register_pair(outbe_oracle::api::DAY_TYPE_PAIR)
+            outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
                 .unwrap();
-            oracle
-                .set_exchange_rate(
-                    Address::ZERO,
-                    outbe_oracle::api::DAY_TYPE_PAIR,
-                    U256::from(1_000_000_000_000_000_000u128),
-                    0,
-                    0,
-                )
-                .unwrap();
+            outbe_oracle::api::set_exchange_rate(
+                storage.clone(),
+                Address::ZERO,
+                outbe_oracle::api::DAY_TYPE_PAIR,
+                U256::from(1_000_000_000_000_000_000u128),
+                0,
+                0,
+            )
+            .unwrap();
         });
         seed_test_ocomp_profile(&mut seed_storage, block_number, &install);
         if cycle_frames != 0 {
@@ -4947,20 +4958,17 @@ mod tests {
             // NOD/GEM/INTEX floor-price promotion resolves a live rate instead
             // of soft-skipping the scan. The qualifiers derive the pair from the
             // ISO code, so registering the pair is sufficient.
-            let mut oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-            oracle
-                .register_pair(outbe_oracle::api::AddressPair::new_coen_to(840))
+            outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
                 .unwrap();
-            oracle
-                .set_exchange_rate(
-                    Address::ZERO,
-                    outbe_oracle::api::COEN_ASSET,
-                    outbe_oracle::api::currency_address(840),
-                    U256::from(1_000_000_000_000_000_000u128),
-                    0,
-                    0,
-                )
-                .unwrap();
+            outbe_oracle::api::set_exchange_rate(
+                storage.clone(),
+                Address::ZERO,
+                outbe_oracle::api::DAY_TYPE_PAIR,
+                U256::from(1_000_000_000_000_000_000u128),
+                0,
+                0,
+            )
+            .unwrap();
             seed_extra(storage);
         });
         seed_test_ocomp_profile(&mut seed_storage, 0, &install);
@@ -8312,7 +8320,9 @@ mod tests {
             1,
             B256::repeat_byte(0x91),
         );
-        let boundary = boundary_with(
+        // Block 2 activates current+1, so the boundary carries epoch 1.
+        let boundary = boundary_with_epoch(
+            1,
             true,
             vec![
                 (proposer, dummy_pubkey(0xA2)),
@@ -10878,20 +10888,17 @@ mod tests {
         seed_test_committee_snapshot(storage.clone(), &[(validator, *pk)]);
         // Seed COEN/840 pair + 1.0 rate so begin-block NOD/GEM/INTEX promotion
         // reads a registered pair instead of reverting "pair not registered".
-        let mut oracle = outbe_oracle::schema::OracleContract::new(storage);
-        oracle
-            .register_pair(outbe_oracle::api::AddressPair::new_coen_to(840))
+        outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
-        oracle
-            .set_exchange_rate(
-                Address::ZERO,
-                outbe_oracle::api::COEN_ASSET,
-                outbe_oracle::api::currency_address(840),
-                U256::from(1_000_000_000_000_000_000u128),
-                0,
-                0,
-            )
-            .unwrap();
+        outbe_oracle::api::set_exchange_rate(
+            storage,
+            Address::ZERO,
+            outbe_oracle::api::DAY_TYPE_PAIR,
+            U256::from(1_000_000_000_000_000_000u128),
+            0,
+            0,
+        )
+        .unwrap();
     }
 
     fn register_and_activate_with_ocomp_registration(
@@ -10933,18 +10940,17 @@ mod tests {
             registration,
         );
         seed_test_committee_snapshot(storage.clone(), &[(validator, *consensus_key)]);
-        let mut oracle = outbe_oracle::contract::OracleContract::new(storage);
-        oracle.register_pair("COEN", "0xUSD").unwrap();
-        oracle
-            .set_exchange_rate(
-                Address::ZERO,
-                "COEN",
-                "0xUSD",
-                U256::from(1_000_000_000_000_000_000u128),
-                0,
-                0,
-            )
+        outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
+        outbe_oracle::api::set_exchange_rate(
+            storage,
+            Address::ZERO,
+            outbe_oracle::api::DAY_TYPE_PAIR,
+            U256::from(1_000_000_000_000_000_000u128),
+            0,
+            0,
+        )
+        .unwrap();
     }
 
     #[test]

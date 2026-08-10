@@ -347,8 +347,7 @@ mod tests {
 
     fn seed_external_ocomp_prerequisites(provider: &mut HashMapStorageProvider) {
         StorageHandle::enter(provider, |storage| {
-            outbe_oracle::schema::OracleContract::new(storage)
-                .register_pair(outbe_oracle::api::DAY_TYPE_PAIR)
+            outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
                 .unwrap();
         });
     }

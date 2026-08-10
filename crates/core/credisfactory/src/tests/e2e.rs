@@ -77,20 +77,17 @@ fn chain_b256() -> B256 {
 }
 
 fn seed_oracle(storage: StorageHandle<'_>, rate_1e18: U256) {
-    let mut oracle = OracleContract::new(storage);
-    oracle
-        .register_pair(outbe_oracle::api::AddressPair::new_coen_to(840))
-        .unwrap();
-    oracle
-        .set_exchange_rate(
-            Address::ZERO,
-            outbe_oracle::api::COEN_ASSET,
-            outbe_oracle::api::currency_address(840),
-            rate_1e18,
-            0,
-            0,
-        )
-        .unwrap();
+    outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
+    outbe_oracle::api::set_exchange_rate(
+        storage.clone(),
+        Address::ZERO,
+        outbe_oracle::api::DAY_TYPE_PAIR,
+        rate_1e18,
+        0,
+        0,
+    )
+    .unwrap();
+    let oracle = OracleContract::new(storage);
     oracle
         .reference_currency_rate
         .write(&ISSUANCE_ISO, refi_rate())

@@ -6,6 +6,7 @@
 
 use alloy_sol_types::sol;
 
+// TODO refactor this to link sol file instead of in-place copy
 sol! {
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IERC20 {

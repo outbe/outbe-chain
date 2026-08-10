@@ -119,7 +119,13 @@ pub fn dispatch(
                 mutate_void(c, caller, |sender, c| {
                     // block_number and timestamp are not available in precompile context.
                     // Use 0 for bootstrap writes — tally will overwrite with real values.
-                    oracle.set_exchange_rate(sender, AddressPair::from_addresses(c.base, c.quote), c.rate, 0, 0)?;
+                    oracle.set_exchange_rate(
+                        sender,
+                        AddressPair::from_addresses(c.base, c.quote),
+                        c.rate,
+                        0,
+                        0,
+                    )?;
                     let event = IOracle::ExchangeRateSet { base, quote, rate };
                     let _ = oracle
                         .storage

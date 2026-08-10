@@ -55,20 +55,17 @@ fn execution_db(proposer: Address, parent_root: B256) -> CacheDB<EmptyDBTyped<Pr
             .activate_validator_via_boundary_for_test(proposer)
             .unwrap();
 
-        let mut oracle = outbe_oracle::schema::OracleContract::new(storage);
-        oracle
-            .register_pair(outbe_oracle::api::AddressPair::new_coen_to(840))
+        outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
-        oracle
-            .set_exchange_rate(
-                Address::ZERO,
-                outbe_oracle::api::COEN_ASSET,
-                outbe_oracle::api::currency_address(840),
-                U256::from(1_000_000_000_000_000_000_u128),
-                0,
-                0,
-            )
-            .unwrap();
+        outbe_oracle::api::set_exchange_rate(
+            storage,
+            Address::ZERO,
+            outbe_oracle::api::DAY_TYPE_PAIR,
+            U256::from(1_000_000_000_000_000_000_u128),
+            0,
+            0,
+        )
+        .unwrap();
     });
 
     let mut db = CacheDB::<EmptyDBTyped<ProviderError>>::default();

@@ -78,17 +78,14 @@ fn proposal_activation(created: u64) -> u64 {
 }
 
 fn seed_oracle_for_pre_exec(storage: StorageHandle) {
-    let mut oracle = outbe_oracle::schema::OracleContract::new(storage);
-    if oracle
-        .register_pair(outbe_oracle::api::AddressPair::new_coen_to(840))
-        .is_err()
+    if outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR).is_err()
     {
         return;
     }
-    let _ = oracle.set_exchange_rate(
+    let _ = outbe_oracle::api::set_exchange_rate(
+        storage,
         Address::ZERO,
-        outbe_oracle::api::COEN_ASSET,
-        outbe_oracle::api::currency_address(840),
+        outbe_oracle::api::DAY_TYPE_PAIR,
         U256::from(1_000_000_000_000_000_000u128),
         0,
         0,

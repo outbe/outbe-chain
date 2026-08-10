@@ -1103,7 +1103,6 @@ fn u256_to_u64(name: &str, value: U256) -> Result<u64> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::private::alloy_serde::storage;
     use super::*;
     use alloy_primitives::{address, keccak256, B256};
     use outbe_primitives::{consensus::ReshareResult, storage::hashmap::HashMapStorageProvider};
@@ -1220,6 +1219,13 @@ mod tests {
                     U256::from_be_slice(root.as_slice()),
                 )
                 .unwrap();
+            for (slot, value) in outbe_chain_constants::GenesisProtocolParametersV1::default()
+                .genesis_storage_words()
+            {
+                storage
+                    .sstore(outbe_chain_constants::CHAIN_CONSTANTS_ADDRESS, slot, value)
+                    .unwrap();
+            }
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
             vs.set_config_max_validators(128).unwrap();
@@ -1234,8 +1240,9 @@ mod tests {
                 .unwrap();
             vs.activate_validator_via_boundary_for_test(VALIDATOR)
                 .unwrap();
-            
-            outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
+
+            outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
+                .unwrap();
         });
         provider.set_block_number(1);
         provider.enable_metadosis_mutation_frame(

@@ -680,6 +680,15 @@ mod tests {
                     U256::from_be_slice(root.as_slice()),
                 )
                 .unwrap();
+            // Production reads these from the genesis alloc; the block hooks
+            // treat their absence as fatal.
+            for (slot, value) in outbe_chain_constants::GenesisProtocolParametersV1::default()
+                .genesis_storage_words()
+            {
+                storage
+                    .sstore(outbe_chain_constants::CHAIN_CONSTANTS_ADDRESS, slot, value)
+                    .unwrap();
+            }
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(Address::ZERO).unwrap();
             vs.set_config_max_validators(128).unwrap();
@@ -703,16 +712,17 @@ mod tests {
             // NOD/GEM/INTEX floor-price promotion resolves a live rate instead
             // of soft-skipping the scan. The qualifiers derive the pair from the
             // ISO code, so registering the pair is sufficient.
-            outbe_oracle::api::register_pair(storage.clone(),outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
+            outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
+                .unwrap();
             outbe_oracle::api::set_exchange_rate(
                 storage.clone(),
-                    Address::ZERO,
-                    outbe_oracle::api::DAY_TYPE_PAIR,
-                    U256::from(1_000_000_000_000_000_000u128),
-                    0,
-                    0,
-                )
-                .unwrap();
+                Address::ZERO,
+                outbe_oracle::api::DAY_TYPE_PAIR,
+                U256::from(1_000_000_000_000_000_000u128),
+                0,
+                0,
+            )
+            .unwrap();
         });
         metadosis_genesis.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::ForkProfile);
         metadosis_genesis.enter(|storage| {
@@ -754,6 +764,15 @@ mod tests {
         );
         db.insert_account_info(
             outbe_primitives::addresses::METADOSIS_ADDRESS,
+            AccountInfo {
+                code_hash: marker_code.hash_slow(),
+                code: Some(marker_code.clone()),
+                ..Default::default()
+            },
+        );
+        // Without an account the seeded constant slots read back as zero.
+        db.insert_account_info(
+            outbe_chain_constants::CHAIN_CONSTANTS_ADDRESS,
             AccountInfo {
                 code_hash: marker_code.hash_slow(),
                 code: Some(marker_code),

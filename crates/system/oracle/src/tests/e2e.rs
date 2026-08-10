@@ -239,7 +239,13 @@ fn precompile_dispatch_round_trips_an_exchange_rate() {
         oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
         let expected_rate = U256::in_units(123u64);
         oracle
-            .set_exchange_rate(Address::ZERO, COEN, usd(), expected_rate, 42, 86_400)
+            .set_exchange_rate(
+                Address::ZERO,
+                AddressPair::from_addresses(COEN, usd()),
+                expected_rate,
+                42,
+                86_400,
+            )
             .unwrap();
 
         use crate::precompile::IOracle;

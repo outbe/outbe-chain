@@ -168,7 +168,13 @@ fn every_pair_read_agrees_on_the_market_whichever_way_it_is_quoted() {
             .unwrap();
         let rate = U256::in_units(4u64);
         oracle
-            .set_exchange_rate(Address::ZERO, COEN, USDT, rate, 1, 1)
+            .set_exchange_rate(
+                Address::ZERO,
+                AddressPair::from_addresses(COEN, USDT),
+                rate,
+                1,
+                1,
+            )
             .unwrap();
 
         assert!(oracle.is_vote_target(COEN, USDT).unwrap());
@@ -185,7 +191,13 @@ fn every_pair_read_agrees_on_the_market_whichever_way_it_is_quoted() {
         // Writes stay canonical-only: a backwards quote has no direction-free
         // reading on the way in.
         assert!(oracle
-            .set_exchange_rate(Address::ZERO, USDT, COEN, U256::from(9u64), 1, 1)
+            .set_exchange_rate(
+                Address::ZERO,
+                AddressPair::from_addresses(USDT, COEN),
+                U256::from(9u64),
+                1,
+                1
+            )
             .is_err());
     });
 }
@@ -200,7 +212,13 @@ fn a_backwards_quote_prices_at_the_reciprocal() {
         // 2.5 COEN per USDT.
         let rate = U256::from(2_500_000_000_000_000_000u128);
         oracle
-            .set_exchange_rate(Address::ZERO, COEN, USDT, rate, 42, 86_400)
+            .set_exchange_rate(
+                Address::ZERO,
+                AddressPair::from_addresses(COEN, USDT),
+                rate,
+                42,
+                86_400,
+            )
             .unwrap();
 
         let (forward, fwd_block, fwd_ts) = oracle.get_exchange_rate_data(COEN, USDT).unwrap();
@@ -282,7 +300,13 @@ fn set_exchange_rate_round_trips_rate_block_and_timestamp() {
         // Set rate (system call)
         let rate = U256::from(1_500_000_000_000_000_000u128); // 1.5
         oracle
-            .set_exchange_rate(Address::ZERO, COEN, USDT, rate, 100, 1200)
+            .set_exchange_rate(
+                Address::ZERO,
+                AddressPair::from_addresses(COEN, USDT),
+                rate,
+                100,
+                1200,
+            )
             .unwrap();
 
         // Read back
@@ -302,7 +326,13 @@ fn set_exchange_rate_rejects_a_non_system_caller() {
             .unwrap();
 
         let caller = Address::new([1u8; 20]);
-        let result = oracle.set_exchange_rate(caller, COEN, USDT, U256::from(1u64), 0, 0);
+        let result = oracle.set_exchange_rate(
+            caller,
+            AddressPair::from_addresses(COEN, USDT),
+            U256::from(1u64),
+            0,
+            0,
+        );
         assert!(result.is_err());
     });
 }
@@ -332,7 +362,13 @@ fn the_rate_columns_are_keyed_by_the_registry_index() {
             .unwrap();
         let rate = U256::from(1_500_000_000_000_000_000u128);
         oracle
-            .set_exchange_rate(Address::ZERO, COEN, USDT, rate, 42, 86_400)
+            .set_exchange_rate(
+                Address::ZERO,
+                AddressPair::from_addresses(COEN, USDT),
+                rate,
+                42,
+                86_400,
+            )
             .unwrap();
 
         let at = |slot: U256| storage.sload(ORACLE_ADDRESS, slot).unwrap();
@@ -371,10 +407,22 @@ fn remove_excess_feeds_clears_only_the_deactivated_pairs_rate() {
             .register_pair(AddressPair::from_addresses(ETH, USDT))
             .unwrap();
         oracle
-            .set_exchange_rate(Address::ZERO, COEN, USDT, U256::from(7u64), 10, 120)
+            .set_exchange_rate(
+                Address::ZERO,
+                AddressPair::from_addresses(COEN, USDT),
+                U256::from(7u64),
+                10,
+                120,
+            )
             .unwrap();
         oracle
-            .set_exchange_rate(Address::ZERO, ETH, USDT, U256::from(9u64), 20, 240)
+            .set_exchange_rate(
+                Address::ZERO,
+                AddressPair::from_addresses(ETH, USDT),
+                U256::from(9u64),
+                20,
+                240,
+            )
             .unwrap();
 
         oracle
@@ -711,10 +759,22 @@ fn walking_the_registry_by_index_pairs_each_market_with_its_own_rate() {
         let rate1 = U256::from(1_500_000_000_000_000_000u128);
         let rate2 = U256::from(2_000_000_000_000_000_000u128);
         oracle
-            .set_exchange_rate(Address::ZERO, COEN, USDT, rate1, 10, 120)
+            .set_exchange_rate(
+                Address::ZERO,
+                AddressPair::from_addresses(COEN, USDT),
+                rate1,
+                10,
+                120,
+            )
             .unwrap();
         oracle
-            .set_exchange_rate(Address::ZERO, ETH, USDT, rate2, 20, 240)
+            .set_exchange_rate(
+                Address::ZERO,
+                AddressPair::from_addresses(ETH, USDT),
+                rate2,
+                20,
+                240,
+            )
             .unwrap();
 
         let count = oracle.pair_count.read().unwrap();

@@ -98,20 +98,16 @@ fn view_pledged(s: &StorageHandle<'_>, a: Address) -> U256 {
 /// Register the COEN/840 pair plus the ISO 840 settlement mapping the pledge
 /// conversion resolves through (the asset's `isoCode()` selects the pair).
 fn seed_oracle(storage: StorageHandle<'_>, rate_1e18: U256) {
-    let mut oracle = outbe_oracle::schema::OracleContract::new(storage);
-    oracle
-        .register_pair(outbe_oracle::api::AddressPair::new_coen_to(840))
-        .unwrap();
-    oracle
-        .set_exchange_rate(
-            Address::ZERO,
-            outbe_oracle::api::COEN_ASSET,
-            outbe_oracle::api::currency_address(840),
-            rate_1e18,
-            0,
-            0,
-        )
-        .unwrap();
+    outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
+    outbe_oracle::api::set_exchange_rate(
+        storage,
+        Address::ZERO,
+        outbe_oracle::api::DAY_TYPE_PAIR,
+        rate_1e18,
+        0,
+        0,
+    )
+    .unwrap();
 }
 
 /// Give `account` a positive Fidelity index so `pledge_gratis` clears the

@@ -83,6 +83,11 @@ pub fn coen_rate_for(storage: StorageHandle, iso_code: u16) -> Result<U256> {
     oracle.get_exchange_rate(COEN_ASSET, currency_address(iso_code))
 }
 
+pub fn get_exchange_rate(storage: StorageHandle, base: Address, quote: Address) -> Result<U256> {
+    let oracle: OracleContract<'_> = OracleContract::new(storage);
+    oracle.get_exchange_rate(base, quote)
+}
+
 /// The `COEN/<iso_code>` pair, or `None` when it is not registered.
 ///
 /// The key itself is a pure function of the ISO code; the storage read only
