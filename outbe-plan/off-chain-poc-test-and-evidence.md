@@ -1,7 +1,7 @@
 # Off-chain PoC: test architecture and completion evidence
 
-Status: **ALIGNED ON 2026-07-26 — FULL-RESULT VOTE, QUORUM APPLY AND
-ACCOUNTABILITY EVIDENCE REQUIRED**
+Status: **ALIGNED ON 2026-08-10 — CURRENT PUBLIC-RPC/HTTP/ZEROMQ PATH,
+FULL-RESULT VOTE, QUORUM APPLY AND ACCOUNTABILITY EVIDENCE REQUIRED**
 
 Scope: the tests, production boundaries, allowed oracles, evidence records and
 CI gates that can prove the bounded Lysis V1 PoC was implemented. This document
@@ -33,6 +33,8 @@ and POC-01..POC-26 = PASS
 and every required PFS-002 row = PASS
 and story steps 1..13 = PASS
 and PFS-002-03 = RETIRED with its unreachable-production-state reason
+and OCM-DIS-001/OCM-EXP-001/OCM-CTL-001 = RETIRED with their
+    deleted-transport/input-architecture reasons
 and PFS-002-07/-08 = DEFERRED with their fixed reasons
 and skipped/todo/quarantined/missing/retried-away assertions = 0
 and closure verifier result = PASS
@@ -179,10 +181,10 @@ testing/e2e-harness/tests/ocomp_evidence_verifier.rs
 |---|---|---|
 | `OCM-REQ-001` | payload builder -> begin/user/CE-seal/end executor -> Metadosis | split, exact GREEN Desis or RED carry-over, intent/index/event commit together; final CE root is bound; no Nod/contributor/Tribute-consume effect; retry does not repeat the early effect |
 | `OCM-PIN-001` | deterministic consensus boundary -> production node pin coordinator/journal/attestation gate | tentative record durable before positive vote; finalize/export transition; exact competing finality releases the orphan; restart preserves refusal; the real gate returns typed `NotExported` without creating a sign-once record |
-| `OCM-DIS-001` | finalized cursor -> public RPC discovery | dropped event still discovers one job; duplicate/restart remains exactly once |
-| `OCM-EXP-001` | retained CE MDBX + real Mongo + historical openings -> exporter | complete fold/root/count/nominal; parent-job retention and cursor GC across at least `S+1` Tribute; deterministic left-first opening-proof bisection preserves owner order/completeness under the control cap and a one-owner oversize abstains; body omission/change, opening mutation, source-ahead/behind and exporter restart yield exact export or abstention |
 | `OCM-CAS-001` | exporter/supervisor/worker filesystem CAS | atomic publish, same-descriptor verify, membership/order/length; truncate/change/reorder/TOCTOU/quota faults never reach signing |
-| `OCM-CTL-001` | Supervisor Axum registration plus ZeroMQ/TCP Worker transport | registration binding, stale generation, bounded 1..4 registry, asynchronous dispatch, cancellation/redelivery and stale completion rejection; blocks continue while OCOMP is unavailable |
+| `OCM-WRK-001` | production Worker child processes consume Supervisor-dispatched units | real child processes execute through output-finalize and materialize/adopt a two-leaf shuffle merge |
+| `OCM-WTR-001` | production Axum registration plus ZeroMQ/TCP Worker transport state | bounded four-worker registry, cancellation/ready recovery, lease-expiry redelivery, stale-completion rejection and non-blocking health/status |
+| `OCM-WOBS-001` | production Worker Salvo observability | health and status remain available while the Worker is busy |
 | `OCM-DET-001` | real worker processes and reducer | one `S+1` parent job produces two primary shards; 1/2/4 workers, randomized completion, kill/retry and cache hit/miss produce byte-identical plan commitment/result roots/digest; removing either shard prevents reduction/signing |
 | `OCM-SIG-001` | node attestation gate + real sign-once filesystem | file/directory fsync-before-release, fault at each persistence boundary, exact retry, different digest refusal before/after restart |
 | `OCM-VOT-001` | public full-result vote dispatch -> four compact slots -> quorum | each vote carries canonical `LysisResultV1`; exactly three matching eligible indexes form q; duplicate, unknown, wrong epoch/key, malformed result, minority and equivocation cases are bounded and deterministic; only one canonical result is retained at q |
@@ -223,14 +225,17 @@ start four nodes:
 | Test ID | New lane | Focused proof |
 |---|---|---|
 | `OCM-E2E-002` | `OCM-INT` | production Metadosis empty-day branch, Desis brief, carry-over and zero Job/Nod state |
-| `OCM-E2E-004` | `OCM-INT` | production Tribute changed-body duplicate rejection with unchanged supply, totals, pre-admission and owner/day indexes; `PFS-002-05` separately also requires `OCM-EXP-001` exact export completeness |
+| `OCM-E2E-004` | `OCM-INT` | production Tribute changed-body duplicate rejection with unchanged supply, totals, pre-admission and owner/day indexes; accepted-input closure is proved by `OCM-CAS-001` and the production `OCM-E2E-001` path |
 | `OCM-E2E-006` | `OCM-INT` | production q-forming dispatch and outer checkpoint rollback for every owner failure, followed by exact retry on the same fixture |
 
-`OCM-E2E-003` and `OCM-E2E-005` are retired tombstones and cannot be reused.
-The former depended on an unreachable zero-limit premise; the latter attempted
-to prove a validator-local retention invariant by timing a live consensus
-proposal micro-window. `PFS-002-10` is instead closed by `OCM-PIN-001` in the
-required `OCM-INT` lane.
+`OCM-E2E-003`, `OCM-E2E-005`, `OCM-DIS-001`, `OCM-EXP-001` and
+`OCM-CTL-001` are retired tombstones and cannot be reused. The first two were
+retired for the unreachable-state and unreliable-consensus-window reasons
+already recorded in the ledger. The last three belonged to the removed Unix
+control and retained CE-MDBX/openings input architecture. Current public-RPC
+discovery/export is proved by `OCM-E2E-001` and `OCM-E2E-008`; CAS closure and
+current Worker transport are proved by `OCM-CAS-001`, `OCM-WRK-001`,
+`OCM-WTR-001` and `OCM-WOBS-001`.
 
 ### 4.5 Existing Tribute harness reuse contract
 
@@ -266,8 +271,9 @@ independently runnable and does not depend on OCOMP. Shared behavior uses typed
 Duplicate public admission remains independently covered by the existing
 Tribute projection feature. The OCOMP closure does not repeat a complete
 Lysis generation for that rejection: `OCM-E2E-004` now composes the focused
-production Tribute admission test with `OCM-EXP-001`, which proves exact export
-membership from retained accepted identities.
+production Tribute admission test with `OCM-CAS-001` and the mandatory
+`OCM-E2E-001` path, which prove exact accepted-input closure without reviving
+the deleted exporter matrix.
 
 ## 5. Exact four-validator demonstration
 
@@ -312,7 +318,7 @@ evidence ledger.
 | 2 | `OCM-E2E-001`, `OCM-REQ-001` | request block/finality refs, split receipt, intent OCB1, voting/apply preconditions, expiry and event |
 | 3 | `OCM-E2E-001` | exact request-height public proofs showing one early effect, zero new Nod/contributor/Tribute-consume effect and no duplicate on retry |
 | 4 | `OCM-E2E-001` | supervisor-3 exit status while node-3 and committee finality advance |
-| 5 | `OCM-E2E-001`, `OCM-EXP-001`, `OCM-DET-001` | three independent manifest roots, plan hashes and identical result digests; domain-local process/artifact identities |
+| 5 | `OCM-E2E-001`, `OCM-CAS-001`, `OCM-DET-001` | three independent manifest roots, plan hashes and identical result digests; domain-local process/artifact identities |
 | 6 | `OCM-E2E-001`, `OCM-VOT-001`, `OCM-PUB-001` | three separately signed full-result vote transactions, compact slots, identical derived digest and txpool/gossip/inclusion refs |
 | 7 | `OCM-E2E-001`, `OCM-APL-002` | finalized q-forming vote receipt, the one stored canonical result, terminal job and all public owner/generation reads and proofs |
 | 8 | `OCM-E2E-001`, `OCM-SEM-001` | independent reference output and field-by-field semantic comparison |
@@ -324,9 +330,10 @@ evidence ledger.
 
 For step 11, `OCM-TIM-001` uses the same production request and quorum-apply
 entrypoints at controlled heights and compares canonical normalized results.
-Mongo/opening/CAS mutation matrices remain in `OCM-EXP-001`, `OCM-CAS-001` and
-`OCM-SIG-001`; the tracer scenario proves that those already-tested components
-are wired together, not every internal fault permutation again.
+CAS and sign-once mutation matrices remain in `OCM-CAS-001` and
+`OCM-SIG-001`; public-RPC discovery/export and prepared-only recovery are
+proved end to end by `OCM-E2E-001` and `OCM-E2E-008`, not by reviving the
+deleted retained-MDBX exporter fixture.
 
 ### 5.3 No-on-chain-compute trace
 
