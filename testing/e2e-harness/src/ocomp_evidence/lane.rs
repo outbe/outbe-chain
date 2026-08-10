@@ -796,8 +796,13 @@ fn validate_applied_public_path_with_vote_count(
         open_height <= quorum_height && quorum_height < deadline_height,
         "public quorum height lies outside the response window"
     );
+    let quorum_signer_bitmap = four_member_bitmap(accountability, "quorum_signer_bitmap")?;
     ensure!(
-        u64_field(accountability, "quorum_signer_bitmap")?.count_ones() == 3,
+        quorum_signer_bitmap
+            .iter()
+            .map(|byte| byte.count_ones())
+            .sum::<u32>()
+            == 3,
         "public quorum bitmap is not exactly q=3"
     );
     let slots = array_field(accountability, "slot_validator_indexes")?
@@ -903,8 +908,8 @@ fn validate_expired_public_path(scenario: &Value) -> Result<()> {
         "no-quorum accountability did not close exactly at the deadline"
     );
     ensure!(
-        u64_field(accountability, "timely_bitmap")? == 0b0011
-            && u64_field(accountability, "missing_bitmap")? == 0b1100,
+        four_member_bitmap(accountability, "timely_bitmap")? == [0b0011]
+            && four_member_bitmap(accountability, "missing_bitmap")? == [0b1100],
         "expired job accountability bitmaps are incorrect"
     );
     ensure!(
@@ -968,6 +973,23 @@ fn u64_field(value: &Value, field: &str) -> Result<u64> {
         .get(field)
         .and_then(Value::as_u64)
         .ok_or_else(|| eyre::eyre!("JSON field {field} is not a u64"))
+}
+
+fn four_member_bitmap(value: &Value, field: &str) -> Result<Vec<u8>> {
+    let bitmap = array_field(value, field)?
+        .iter()
+        .enumerate()
+        .map(|(index, byte)| {
+            byte.as_u64()
+                .and_then(|byte| u8::try_from(byte).ok())
+                .ok_or_else(|| eyre::eyre!("JSON bitmap {field}[{index}] is not a byte"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    ensure!(
+        bitmap.len() == 1 && bitmap[0] & 0b1111_0000 == 0,
+        "JSON bitmap {field} is not a canonical four-member LSB0 bitmap"
+    );
+    Ok(bitmap)
 }
 
 fn bool_field(value: &Value, field: &str) -> Result<bool> {
@@ -1048,7 +1070,7 @@ mod tests {
                         "job_id": "0xjob",
                         "quorum_result_digest": "0xresult",
                         "quorum_height": 18,
-                        "quorum_signer_bitmap": 7,
+                        "quorum_signer_bitmap": [7],
                         "slot_validator_indexes": [0, 1, 2, 3],
                     },
                     "result_vote_transactions": transactions,
@@ -1074,8 +1096,8 @@ mod tests {
                     "vote_accountability": {
                         "closed_height": 30,
                         "quorum_result_digest": null,
-                        "timely_bitmap": 3,
-                        "missing_bitmap": 12,
+                        "timely_bitmap": [3],
+                        "missing_bitmap": [12],
                     },
                     "expired_without_nod": true,
                     "late_vote_reverted": true,
@@ -1145,6 +1167,19 @@ mod tests {
         missing_slot["ocomp"]["public_path"]["vote_accountability"]["slot_validator_indexes"] =
             json!([0, 1, 2]);
         assert!(validate_applied_public_path(&missing_slot).is_err());
+    }
+
+    #[test]
+    fn public_evidence_accepts_canonical_dynamic_bitmaps() {
+        let mut applied = applied_scenario();
+        applied["ocomp"]["public_path"]["vote_accountability"]["quorum_signer_bitmap"] =
+            json!([0b0111]);
+        validate_applied_public_path(&applied).expect("canonical quorum bitmap");
+
+        let mut expired = expired_scenario();
+        expired["ocomp"]["public_path"]["vote_accountability"]["timely_bitmap"] = json!([0b0011]);
+        expired["ocomp"]["public_path"]["vote_accountability"]["missing_bitmap"] = json!([0b1100]);
+        validate_expired_public_path(&expired).expect("canonical accountability bitmaps");
     }
 
     #[test]

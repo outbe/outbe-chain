@@ -8044,6 +8044,7 @@ dependencies = [
  "k256 0.13.4",
  "metrics",
  "mongodb",
+ "outbe-chain-constants",
  "outbe-common",
  "outbe-compressed-entities",
  "outbe-consensus",
