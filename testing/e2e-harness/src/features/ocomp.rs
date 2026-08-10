@@ -1575,6 +1575,10 @@ fn fresh_capacity_day_advances_to_offering(world: &mut World) {
     );
 }
 
+/// How far before the daily settlement midnight the clock is parked, so the
+/// committee finishes re-forming before the settlement block runs.
+const SETTLEMENT_APPROACH_SECS: u64 = 300;
+
 #[when("the committee logical clock reaches the fresh capacity processing time")]
 fn committee_clock_reaches_fresh_capacity_processing(world: &mut World) {
     const SECONDS_PER_DAY: u64 = 86_400;
@@ -1589,11 +1593,17 @@ fn committee_clock_reaches_fresh_capacity_processing(world: &mut World) {
     // far as READY. Production settlement deliberately belongs to the daily
     // Cycle handler, so cross the first UTC midnight after the processing time
     // before expecting the READY day to become an OCOMP job.
+    //
+    // Land short of that midnight rather than on it. Settlement reads every
+    // Tribute body of the day inside one block, and those reads fail together
+    // when a consensus view is cancelled mid-flight — which is exactly what the
+    // committee does in the moments after a restart. Arriving early lets the
+    // committee quiesce, and the clock then crosses midnight in real time.
     let target = scheduled_process_time
         .checked_div(SECONDS_PER_DAY)
         .and_then(|day| day.checked_add(1))
         .and_then(|day| day.checked_mul(SECONDS_PER_DAY))
-        .and_then(|midnight| midnight.checked_add(1))
+        .and_then(|midnight| midnight.checked_sub(SETTLEMENT_APPROACH_SECS))
         .expect("first UTC daily Cycle after fresh Metadosis processing time");
     advance_fresh_metadosis_time(world, target, &[(0, 1), (1, 2), (2, 3), (3, 4)], 8);
 }
