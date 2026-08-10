@@ -21,6 +21,7 @@ use alloy_primitives::hex;
 use eyre::{bail, eyre, Result, WrapErr};
 
 const TEST_ENCLAVE_IMAGE: &str = "outbe-tee-enclave-gramine-test";
+const TEST_ENCLAVE_IMAGE_BUILD_ARGS: &[&str] = &["build", "--provenance=false", "-f"];
 const PINNED_QVL_RUNTIME_FILES: &[(&str, &str)] = &[
     (
         "/usr/lib/x86_64-linux-gnu/libsgx_dcap_quoteverify.so.1.13.103.0",
@@ -356,7 +357,12 @@ pub(crate) fn ensure_enclave_image(
     let ctx = repo.join("bin/outbe-tee-enclave/gramine");
     let dockerfile = ctx.join("Dockerfile.test");
     let status = base_cmd("docker", sudo)
-        .args(["build", "-f"])
+        // BuildKit's default provenance attestation changes the top-level
+        // manifest-list digest on every otherwise identical build. The exact
+        // E2E artifact contract requires one stable immutable image ID across
+        // independently launched scenarios, so the test adapter publishes the
+        // deterministic platform manifest instead.
+        .args(TEST_ENCLAVE_IMAGE_BUILD_ARGS)
         .arg(&dockerfile)
         .args(["-t", TEST_ENCLAVE_IMAGE])
         .arg(&ctx)
@@ -707,6 +713,14 @@ mod tests {
                 "accepted non-canonical Docker image identity: {invalid}"
             );
         }
+    }
+
+    #[test]
+    fn test_enclave_image_build_disables_nondeterministic_provenance() {
+        assert_eq!(
+            TEST_ENCLAVE_IMAGE_BUILD_ARGS,
+            ["build", "--provenance=false", "-f"]
+        );
     }
 
     #[test]

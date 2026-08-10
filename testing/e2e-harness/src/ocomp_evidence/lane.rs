@@ -432,18 +432,18 @@ fn validate_scenario_manifest_identity(
     sections: &BTreeMap<String, Value>,
     identity: &ScenarioRunIdentity,
 ) -> Result<()> {
-    let manifest_image_id = sections
+    let manifest_config = sections
         .get("exact_config_and_service_unit_hashes")
-        .and_then(Value::as_object)
-        .and_then(|section| section.get("gramine_image_id"));
+        .and_then(Value::as_object);
     ensure!(
         sections.get("exact_binary_hashes") == Some(&identity.exact_binaries)
-            && sections.get("genesis_fork_bundle_and_profiles") == Some(&identity.launch_identity)
-            && manifest_image_id == Some(&identity.gramine_image_id)
-            && sections
-                .get("exact_config_and_service_unit_hashes")
-                .and_then(Value::as_object)
-                .and_then(|section| section.get("execution_profile"))
+            && sections.get("genesis_fork_bundle_and_profiles")
+                == Some(&identity.launch_evidence())
+            && manifest_config.and_then(|section| section.get("scenario_launch_identities"))
+                == Some(&json!(identity.scenario_launch_identities))
+            && manifest_config.and_then(|section| section.get("gramine_image_id"))
+                == Some(&identity.gramine_image_id)
+            && manifest_config.and_then(|section| section.get("execution_profile"))
                 == Some(&identity.execution_profile),
         "scenario lane manifest identity differs from retained scenarios"
     );
@@ -453,19 +453,54 @@ fn validate_scenario_manifest_identity(
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ScenarioRunIdentity {
     exact_binaries: Value,
-    launch_identity: Value,
+    scenario_launch_identities: BTreeMap<String, Value>,
     gramine_image_id: Value,
     execution_profile: Value,
+}
+
+impl ScenarioRunIdentity {
+    fn launch_evidence(&self) -> Value {
+        json!({
+            "scenario_launch_identities": &self.scenario_launch_identities,
+        })
+    }
+}
+
+fn validate_launch_identity(launch: &Value, scenario_name: &str) -> Result<()> {
+    ensure!(
+        launch.is_object(),
+        "scenario {scenario_name} lacks exact launch identity"
+    );
+    ensure!(
+        path(launch, &["chain_id"])?.as_u64().is_some()
+            && path(launch, &["activation_height"])?.as_u64().is_some(),
+        "scenario {scenario_name} has invalid numeric launch identity"
+    );
+    for field in [
+        "genesis_hash",
+        "protocol_bundle_hash",
+        "fork_install_hash",
+        "classification",
+        "metadosis_storage_layout_hash",
+    ] {
+        ensure!(
+            path(launch, &[field])?
+                .as_str()
+                .is_some_and(|value| !value.is_empty()),
+            "scenario {scenario_name} has invalid launch identity field {field}"
+        );
+    }
+    Ok(())
 }
 
 fn scenario_run_identity(
     scenarios: &BTreeMap<String, (String, Value)>,
 ) -> Result<ScenarioRunIdentity> {
     let mut exact_binaries = None;
-    let mut launch_identity = None;
+    let mut scenario_launch_identities = BTreeMap::new();
     let mut gramine_image_id = None;
     let mut execution_profile = None;
-    for (scenario_name, (_, scenario)) in scenarios {
+    for (scenario_name, (scenario_path, scenario)) in scenarios {
         let tee = path(scenario, &["environment", "tee"])?;
         let sudo = path(scenario, &["environment", "sudo"])?;
         let all = path(scenario, &["environment", "all"])?;
@@ -503,17 +538,13 @@ fn scenario_run_identity(
         }
 
         let launch = path(scenario, &["ocomp", "topology", "launch_identity"])?;
+        validate_launch_identity(launch, scenario_name)?;
         ensure!(
-            launch.is_object(),
-            "scenario {scenario_name} lacks exact launch identity"
+            scenario_launch_identities
+                .insert(scenario_path.clone(), launch.clone())
+                .is_none(),
+            "scenario launch identity member {scenario_path} is duplicated"
         );
-        match &launch_identity {
-            Some(expected) => ensure!(
-                expected == launch,
-                "scenario {scenario_name} used another genesis/fork/bundle identity"
-            ),
-            None => launch_identity = Some(launch.clone()),
-        }
 
         let image_id = path(scenario, &["environment", "gramine_image_id"])?;
         let image_id_text = image_id
@@ -533,8 +564,7 @@ fn scenario_run_identity(
     Ok(ScenarioRunIdentity {
         exact_binaries: exact_binaries
             .ok_or_else(|| eyre::eyre!("scenario set has no exact binary identity"))?,
-        launch_identity: launch_identity
-            .ok_or_else(|| eyre::eyre!("scenario set has no exact launch identity"))?,
+        scenario_launch_identities,
         gramine_image_id: gramine_image_id
             .ok_or_else(|| eyre::eyre!("scenario set has no Gramine Docker image identity"))?,
         execution_profile: execution_profile
@@ -562,11 +592,11 @@ fn scenario_sections(
                 "source_and_toolchain" => json!(source),
                 "exact_binary_hashes" => identity.exact_binaries.clone(),
                 "exact_config_and_service_unit_hashes" => json!({
-                    "launch_identity": &identity.launch_identity,
+                    "scenario_launch_identities": &identity.scenario_launch_identities,
                     "gramine_image_id": &identity.gramine_image_id,
                     "execution_profile": &identity.execution_profile,
                 }),
-                "genesis_fork_bundle_and_profiles" => identity.launch_identity.clone(),
+                "genesis_fork_bundle_and_profiles" => identity.launch_evidence(),
                 "test_discovery" => json!(discovery),
                 "machine_and_service_topology" => json!({
                     "validated_scenarios": scenario_paths,
@@ -1087,7 +1117,10 @@ mod tests {
                         "chain_id": 3151908,
                         "genesis_hash": genesis_hash,
                         "protocol_bundle_hash": "0xbundle",
-                        "fork_install_hash": "0xfork",
+                        "fork_install_hash": format!("0xfork-{genesis_hash}"),
+                        "classification": "measurement",
+                        "activation_height": 1,
+                        "metadosis_storage_layout_hash": "0xlayout",
                     },
                 },
             },
@@ -1129,7 +1162,7 @@ mod tests {
     }
 
     #[test]
-    fn scenario_set_requires_one_binary_chain_and_gramine_image_identity() {
+    fn scenario_set_allows_distinct_fresh_launches_with_one_binary_and_gramine_identity() {
         let image_id = format!("sha256:{}", "ab".repeat(32));
         let first = run_identity_scenario("aa", "0xgenesis", &image_id);
         let second = first.clone();
@@ -1148,11 +1181,12 @@ mod tests {
             ),
             (
                 "genesis_fork_bundle_and_profiles".to_owned(),
-                identity.launch_identity.clone(),
+                identity.launch_evidence(),
             ),
             (
                 "exact_config_and_service_unit_hashes".to_owned(),
                 json!({
+                    "scenario_launch_identities": identity.scenario_launch_identities.clone(),
                     "gramine_image_id": identity.gramine_image_id.clone(),
                     "execution_profile": identity.execution_profile.clone(),
                 }),
@@ -1174,7 +1208,41 @@ mod tests {
         let mut changed_chain = scenarios.clone();
         changed_chain.get_mut("second").expect("second").1["ocomp"]["topology"]
             ["launch_identity"]["genesis_hash"] = json!("0xother");
-        assert!(scenario_run_identity(&changed_chain).is_err());
+        let changed_identity = scenario_run_identity(&changed_chain)
+            .expect("fresh scenarios retain their own exact genesis identity");
+        assert_eq!(
+            changed_identity.scenario_launch_identities["scenario-002.json"]["genesis_hash"],
+            json!("0xother")
+        );
+        assert_eq!(changed_identity.scenario_launch_identities.len(), 2);
+
+        let mut missing_launch = sections.clone();
+        missing_launch
+            .get_mut("genesis_fork_bundle_and_profiles")
+            .expect("launch evidence")["scenario_launch_identities"]
+            .as_object_mut()
+            .expect("scenario launch map")
+            .remove("scenario-002.json");
+        assert!(validate_scenario_manifest_identity(&missing_launch, &identity).is_err());
+
+        let mut changed_profile = scenarios.clone();
+        changed_profile.get_mut("second").expect("second").1["ocomp"]["topology"]
+            ["launch_identity"]["protocol_bundle_hash"] = json!("0xother-bundle");
+        let changed_profile_identity = scenario_run_identity(&changed_profile)
+            .expect("each retained scenario may exercise another exact launch profile");
+        assert_eq!(
+            changed_profile_identity.scenario_launch_identities["scenario-002.json"]
+                ["protocol_bundle_hash"],
+            json!("0xother-bundle")
+        );
+
+        let mut malformed_launch = scenarios.clone();
+        malformed_launch.get_mut("second").expect("second").1["ocomp"]["topology"]
+            ["launch_identity"]
+            .as_object_mut()
+            .expect("launch identity")
+            .remove("fork_install_hash");
+        assert!(scenario_run_identity(&malformed_launch).is_err());
 
         let mut changed_image = scenarios.clone();
         changed_image.get_mut("second").expect("second").1["environment"]["gramine_image_id"] =

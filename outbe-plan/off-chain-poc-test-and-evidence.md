@@ -444,7 +444,15 @@ missing/non-PASS ID. Retired and deferred planning rows never become runtime
 assertions. CI job names, JSON status and Markdown reports carry the mode, so
 task progress cannot be mistaken for full success.
 
-For `gramine-direct`, the exact artifact set includes the canonical Docker
+Scenario lanes may use isolated fresh genesis instances and may intentionally
+mix canonical Final and fresh Measurement profiles. Their common source,
+binary, Gramine-image and execution-profile identity remains exact, while each
+complete protocol launch identity (including bundle, genesis and genesis-bound
+fork install) is retained and verified under the exact `scenario-*.json` member
+path. Closure nests those maps by lane; it never substitutes one scenario's
+launch identity for another.
+
+For `sgx-no-attest`, the exact artifact set includes the canonical Docker
 `sha256:` image ID resolved before the run. Enclave and signing-key containers
 are launched by that immutable ID rather than the mutable local test tag;
 scenario aggregation rejects a missing or different ID, and capacity hashing
