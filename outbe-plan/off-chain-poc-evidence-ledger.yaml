@@ -606,13 +606,14 @@ tests:
     status: planned
     layer: PROCESS
     lane: OCM-INT
-    planned_path: crates/blockchain/node/src/ocomp/tests/sign_once.rs
-    production_entrypoint: OcompAttestationGate and sign-once store
+    planned_path: bin/outbe-ocomp/tests/sign_once.rs
+    production_entrypoint: OCOMP Supervisor sign-once store
     real_components:
-      - production_attestation_gate
+      - production_supervisor
+      - production_sign_once_store
       - production_ocomp_key
       - real_filesystem
-      - restarted_node_process
+      - restarted_supervisor_process
     substitutions:
       - deterministic_fault_injection_at_named_persistence_boundaries
     substitution_justification: >

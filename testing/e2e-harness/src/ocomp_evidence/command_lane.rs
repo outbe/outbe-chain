@@ -660,7 +660,19 @@ const INT_PLAN: &[CommandBatchV1] = &[
             "--lib",
             "ocomp::tests",
         ],
-        test_ids: &["OCM-PIN-001", "OCM-SIG-001"],
+        test_ids: &["OCM-PIN-001"],
+    },
+    CommandBatchV1 {
+        command_id: "int-ocomp-sign-once",
+        arguments: &[
+            "test",
+            "--locked",
+            "-p",
+            "outbe-ocomp",
+            "--test",
+            "sign_once",
+        ],
+        test_ids: &["OCM-SIG-001"],
     },
     CommandBatchV1 {
         command_id: "int-ocomp-core",
@@ -862,6 +874,23 @@ mod tests {
                 "integration lane omits current focused evidence {current}"
             );
         }
+
+        let sign_once = plan
+            .iter()
+            .find(|batch| batch.test_ids == ["OCM-SIG-001"])
+            .expect("OCM-SIG-001 must have one exact executable owner");
+        assert_eq!(
+            sign_once.arguments,
+            [
+                "test",
+                "--locked",
+                "-p",
+                "outbe-ocomp",
+                "--test",
+                "sign_once",
+            ],
+            "OCM-SIG-001 must execute its marked durability target"
+        );
 
         let ledger = ledger();
         for retired in ["OCM-DIS-001", "OCM-EXP-001", "OCM-CTL-001"] {
