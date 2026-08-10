@@ -2366,10 +2366,10 @@ fn fresh_task_output_dir(task: &str) -> Result<std::path::PathBuf> {
         .duration_since(std::time::UNIX_EPOCH)
         .wrap_err("system clock precedes Unix epoch")?
         .as_millis();
-    let path = std::env::temp_dir().join(format!(
-        "outbe-ocomp-{task}-{}-{timestamp}",
-        std::process::id()
-    ));
+    // Keep the task root compact: the E2E harness adds run/scenario/validator
+    // components before creating reth.ipc, whose Linux sun_path is limited to
+    // 107 pathname bytes plus the terminating NUL.
+    let path = std::env::temp_dir().join(format!("{task}-{}-{timestamp}", std::process::id()));
     if path.exists() {
         bail!("fresh task output already exists: {}", path.display());
     }
@@ -2645,11 +2645,26 @@ fn require_success(status: ExitStatus, arguments: &[&str]) -> Result<()> {
 mod tests {
     use super::{
         copy_immutable_artifact, exact_artifact_sources, exact_scenario_arguments,
-        promote_exact_scenario_evidence, E2E_SCENARIO_TAGS, PUBLIC_SCENARIO_TAGS,
+        fresh_task_output_dir, promote_exact_scenario_evidence, E2E_SCENARIO_TAGS,
+        PUBLIC_SCENARIO_TAGS,
     };
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
+
+    #[test]
+    fn ocm26_output_root_leaves_room_for_the_reth_ipc_socket() {
+        let output = fresh_task_output_dir("ocm26").expect("fresh OCM-26 output root");
+        let ipc =
+            output.join("run-01/data/run-1786339127-4194304/scenario-1/validator-0/data/reth.ipc");
+
+        assert!(
+            ipc.as_os_str().len() <= 107,
+            "OCM-26 reth IPC path exceeds Linux sun_path capacity: {} bytes at {}",
+            ipc.as_os_str().len(),
+            ipc.display()
+        );
+    }
 
     #[test]
     fn exact_lane_artifact_snapshot_is_an_independent_read_only_copy() {
