@@ -76,8 +76,8 @@
     "inputs": [
       {
         "name": "sourceIntexId",
-        "type": "uint64",
-        "internalType": "uint64"
+        "type": "bytes14",
+        "internalType": "bytes14"
       },
       {
         "name": "amount",

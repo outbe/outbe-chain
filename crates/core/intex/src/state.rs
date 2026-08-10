@@ -6,6 +6,7 @@
 
 use alloy_primitives::{Address, U256};
 use outbe_primitives::error::Result;
+use outbe_primitives::storage::types::Storable;
 
 use crate::errors::IntexError;
 use crate::schema::{DistProgress, IntexContract, SeriesId, SeriesRecord};
@@ -54,7 +55,7 @@ impl IntexContract<'_> {
 
     fn append_to_global_index(&mut self, series_id: SeriesId) -> Result<()> {
         let total = self.total_series.read()?;
-        self.series_id_at_index.write(&total, series_id.value())?;
+        self.series_id_at_index.write(&total, series_id.to_word())?;
         self.total_series.write(total + 1)?;
         Ok(())
     }
@@ -64,7 +65,7 @@ impl IntexContract<'_> {
     }
 
     pub(crate) fn read_series_id_at(&self, index: u64) -> Result<SeriesId> {
-        Ok(SeriesId::from_raw(self.series_id_at_index.read(&index)?))
+        Ok(SeriesId::from_word(self.series_id_at_index.read(&index)?))
     }
 
     // ---------------------------------------------------------------------

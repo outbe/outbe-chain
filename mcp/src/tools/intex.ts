@@ -33,7 +33,7 @@ import {
   bridgeDstChainId,
   intexAddress,
 } from "../intex/registry.js";
-import { auctionStage, desisStage, epochIso, intexState, intexStatus, isActiveStage, lockStatus } from "../intex/format.js";
+import { auctionStage, desisStage, epochIso, intexState, intexStatus, isActiveStage, lockStatus, fromSeriesId, toSeriesId } from "../intex/format.js";
 import { commitHash, revealBidTypedData } from "../intex/bid.js";
 import { POW_DIFFICULTY, grindNonce } from "../intex/pow.js";
 
@@ -57,7 +57,7 @@ interface Network {
 }
 
 const PROMIS_MINED_EVENT = parseAbiItem(
-  "event PromisMined(uint64 indexed seriesId, address indexed holder, uint256 amount, uint256 promisAmount)",
+  "event PromisMined(bytes14 indexed seriesId, address indexed holder, uint256 amount, uint256 promisAmount)",
 );
 
 // Auction ids are worldwide days (yyyymmdd), one per day; the auction runs weeks
@@ -168,7 +168,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   /** Per-token NFT metadata URIs for a series; undefined when the chain has no NFT deployed. */
   async function seriesMetadata(
     n: Network,
-    series: bigint,
+    series: Hex,
   ): Promise<{ collection: string; issued: string; settled: string } | undefined> {
     try {
       const nft = addr(n, "nft");
@@ -189,7 +189,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     }
   }
   /** Payment tokens a series accepts: the vault router's assets for its reference currency. */
-  async function settlementTokens(n: Network, series: bigint): Promise<`0x${string}`[]> {
+  async function settlementTokens(n: Network, series: Hex): Promise<`0x${string}`[]> {
     const d = (await n.client.readContract({
       address: addr(n, "intex"),
       abi: INTEX_ABI,
@@ -206,7 +206,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   }
 
   /** Per-Intex cost of settling `series` in `token`, in that token's minor units. */
-  async function quoteCostAmount(n: Network, series: bigint, token: `0x${string}`): Promise<bigint> {
+  async function quoteCostAmount(n: Network, series: Hex, token: `0x${string}`): Promise<bigint> {
     return (await n.client.readContract({
       address: addr(n, "factory"),
       abi: FACTORY_ABI,
@@ -236,8 +236,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   const accountArg = z.string().optional().describe("0x address to query (default: the configured signer)");
   const seriesArg = z
   .string()
-  .describe("series id (packed uint64, decimal string)")
-  .transform((v) => BigInt(v));
+  .describe('series id, e.g. "20260212-TRY-U"')
+  .transform((v) => toSeriesId(v));
   const worldwideDayArg = z.number().int().describe("auction worldwide day (yyyymmdd)");
   const quantityArg = z.number().int().describe("bid quantity (uint16)");
   const rateArg = z
@@ -267,7 +267,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       const metadata = await seriesMetadata(n, series);
       return ok({
         network: n.name,
-        seriesId: d.seriesId.toString(),
+        seriesId: fromSeriesId(d.seriesId as unknown as Hex),
         // scales per crates/core/intex/src/schema.rs (SeriesRecord):
         promisLoad: { raw: d.promisLoadMinor.toString(), value: formatUnits(u256(d.promisLoadMinor), 18) }, // Promis per intex, 18 dec
         entryPrice: { raw: d.entryPriceMinor.toString(), value: formatUnits(u256(d.entryPriceMinor), 18), scale: "1e18 oracle (reference ccy)" },
@@ -305,15 +305,15 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
           functionName: "totalSeries",
         })) as bigint,
       );
-      const ids: number[] = [];
+      const ids: string[] = [];
       for (let i = 0; i < total; i++) {
         const id = (await n.client.readContract({
           address: addr(n, "intex"),
           abi: INTEX_ABI,
           functionName: "seriesAt",
           args: [BigInt(i)],
-        })) as number;
-        ids.push(Number(id));
+        })) as Hex;
+        ids.push(fromSeriesId(id));
       }
       return ok({ network: n.name, total, seriesIds: ids });
     }),
@@ -850,7 +850,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
 
   // --- Bridge BSC -> outbe (IntexNFT1155Bridge, signed) ----------------------
 
-  async function buildSendParam(n: Network, series: bigint, amount: bigint, recipient: Address) {
+  async function buildSendParam(n: Network, series: Hex, amount: bigint, recipient: Address) {
     const ids = (await n.client.readContract({
       address: addr(n, "nft"),
       abi: NFT_ABI,

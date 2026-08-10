@@ -333,13 +333,13 @@ fn precompile_series_data_round_trip() {
         api::mark_qualified(&s, sid(7)).unwrap();
 
         let call = IIntex::seriesDataCall {
-            seriesId: sid(7).value(),
+            seriesId: sid(7).into(),
         }
         .abi_encode();
         let out = dispatch(s.clone(), &call, Address::ZERO, U256::ZERO).unwrap();
         let data = IIntex::seriesDataCall::abi_decode_returns(&out).unwrap();
 
-        assert_eq!(data.seriesId, sid(7).value());
+        assert_eq!(data.seriesId, alloy_primitives::FixedBytes::from(sid(7)));
         assert_eq!(data.promisLoadMinor, U256::from(PROMIS_LOAD_MINOR));
         assert_eq!(data.entryPriceMinor, U256::from(2_000u64));
         assert_eq!(data.floorPriceMinor, U256::from(1_500u64));
@@ -357,7 +357,7 @@ fn precompile_series_data_round_trip() {
 fn precompile_series_data_missing_reverts() {
     with_registry(|s| {
         let call = IIntex::seriesDataCall {
-            seriesId: sid(99).value(),
+            seriesId: sid(99).into(),
         }
         .abi_encode();
         assert!(dispatch(s.clone(), &call, Address::ZERO, U256::ZERO).is_err());
@@ -370,14 +370,14 @@ fn precompile_series_exists() {
         api::create_series(&s, sample_params(7)).unwrap();
 
         let yes = IIntex::seriesExistsCall {
-            seriesId: sid(7).value(),
+            seriesId: sid(7).into(),
         }
         .abi_encode();
         let out = dispatch(s.clone(), &yes, Address::ZERO, U256::ZERO).unwrap();
         assert!(IIntex::seriesExistsCall::abi_decode_returns(&out).unwrap());
 
         let no = IIntex::seriesExistsCall {
-            seriesId: sid(8).value(),
+            seriesId: sid(8).into(),
         }
         .abi_encode();
         let out = dispatch(s.clone(), &no, Address::ZERO, U256::ZERO).unwrap();
@@ -402,7 +402,7 @@ fn precompile_total_and_at() {
         let out = dispatch(s.clone(), &at1, Address::ZERO, U256::ZERO).unwrap();
         assert_eq!(
             IIntex::seriesAtCall::abi_decode_returns(&out).unwrap(),
-            sid(22).value()
+            alloy_primitives::FixedBytes::from(sid(22))
         );
     });
 }
@@ -550,11 +550,11 @@ fn packs_and_unpacks_every_component() {
     assert_eq!(id.worldwide_day(), DAY);
     assert_eq!(id.issuance_code(), *b"TRY");
     assert_eq!(id.reference_code(), b'U');
-    assert_eq!(SeriesId::from_raw(id.value()), id);
+    assert_eq!(SeriesId::from_bytes(*id.as_bytes()), id);
 }
 
 #[test]
-fn renders_alpha_and_numeric_forms() {
+fn reads_as_text_in_both_code_forms() {
     assert_eq!(
         SeriesId::pack(DAY, *b"TRY", b'U').unwrap().to_string(),
         "20260212-TRY-U"
@@ -577,6 +577,7 @@ fn numeric_code_zero_pads() {
 #[test]
 fn rejects_a_zero_day_and_lowercase_or_symbol_codes() {
     assert!(SeriesId::pack(0, *b"USD", b'U').is_err());
+    assert!(SeriesId::pack(100_000_000, *b"USD", b'U').is_err());
     assert!(SeriesId::pack(DAY, *b"usd", b'U').is_err());
     assert!(SeriesId::pack(DAY, *b"US-", b'U').is_err());
     assert!(SeriesId::pack(DAY, *b"USD", b'u').is_err());
@@ -599,5 +600,5 @@ fn orders_by_day_before_currency() {
 fn round_trips_through_storage_word_and_key() {
     let id = SeriesId::pack(DAY, *b"EUR", b'E').unwrap();
     assert_eq!(SeriesId::from_word(id.to_word()), id);
-    assert_eq!(id.key_bytes(), id.value().to_be_bytes().to_vec());
+    assert_eq!(id.key_bytes(), b"20260212-EUR-E".to_vec());
 }

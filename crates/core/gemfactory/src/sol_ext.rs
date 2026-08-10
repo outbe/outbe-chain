@@ -17,7 +17,7 @@ sol! {
 
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IIntexNFT1155 {
-        function parkIntex(address holder, uint64 seriesId, uint256 amount) external returns (uint256);
+        function parkIntex(address holder, bytes14 seriesId, uint256 amount) external returns (uint256);
     }
 }
 

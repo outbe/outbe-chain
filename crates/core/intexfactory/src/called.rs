@@ -11,6 +11,7 @@ use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
 use outbe_intex::SeriesId;
 use outbe_oracle::contract::OracleContract;
+use outbe_primitives::storage::types::Storable;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},
@@ -83,7 +84,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
         let count = factory.qualified_bin_count.read(&next)?;
         let mut series: Vec<SeriesId> = Vec::with_capacity(count as usize);
         for i in 0..count {
-            series.push(SeriesId::from_raw(
+            series.push(SeriesId::from_word(
                 factory
                     .qualified_bin_series
                     .read(&IntexFactoryContract::bin_index_key(next, i))?,
@@ -214,7 +215,7 @@ pub(crate) fn try_call(
     crate::runtime::emit_event(
         storage,
         crate::precompile::IIntexFactory::SeriesCalled {
-            seriesId: series_id.value(),
+            seriesId: series_id.into(),
             calledAt: called_at,
         },
     )?;
@@ -227,7 +228,7 @@ fn notify_called(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<()>
         ORIGIN_ROUTER_ADDRESS,
         U256::ZERO,
         IOriginRouter::sendMarkCalledCall {
-            seriesId: series_id.value(),
+            seriesId: series_id.into(),
         }
         .abi_encode()
         .into(),

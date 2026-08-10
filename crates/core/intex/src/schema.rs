@@ -1,7 +1,7 @@
 //! Storage schema for the Intex runtime module: the canonical per-series
 //! identity + lifecycle ledger. One record per `seriesId`.
 
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{keccak256, Address, FixedBytes, B256, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::INTEX_ADDRESS;
 use outbe_primitives::storage::types::{Storable, StorableType, StorageKey};
@@ -38,65 +38,65 @@ pub struct IntexCallTrigger {
     pub call_notice_period: u32,
 }
 
-/// Packed series identifier: `worldwide_day (u32) | issuance (3 bytes) | reference (1 byte)`.
-///
-/// Codes are alpha-3 (`USD`) when the oracle knows them and the zero-padded
-/// numeric code (`949`) when it does not; the reference byte is the first byte of
-/// its own three, so one rule covers both forms.
+/// Series identifier: the 14 ASCII bytes of `20260212-TRY-U`. A currency with no
+/// alpha code in the oracle falls back to its zero-padded numeric code (`949`).
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct SeriesId(u64);
+pub struct SeriesId([u8; SERIES_ID_LEN]);
+
+pub const SERIES_ID_LEN: usize = 14;
+
+const DAY_DIGITS: usize = 8;
+const ISSUANCE_AT: usize = 9;
+const REFERENCE_AT: usize = 13;
 
 impl SeriesId {
-    /// Packs the three components. Rejects a zero day and any code byte outside
-    /// `A-Z` / `0-9`, so an unpacked id always renders.
+    /// Rejects a day outside eight digits and code bytes outside `A-Z` / `0-9`.
     pub fn pack(worldwide_day: u32, issuance: [u8; 3], reference: u8) -> Result<Self, IntexError> {
-        if worldwide_day == 0 {
+        if worldwide_day == 0 || worldwide_day > 99_999_999 {
             return Err(IntexError::InvalidSeriesId);
         }
-        for byte in issuance {
-            if !is_code_byte(byte) {
-                return Err(IntexError::InvalidSeriesId);
-            }
-        }
-        if !is_code_byte(reference) {
+        if !issuance.iter().all(|byte| is_code_byte(*byte)) || !is_code_byte(reference) {
             return Err(IntexError::InvalidSeriesId);
         }
-        Ok(Self(
-            (u64::from(worldwide_day) << 32)
-                | (u64::from(issuance[0]) << 24)
-                | (u64::from(issuance[1]) << 16)
-                | (u64::from(issuance[2]) << 8)
-                | u64::from(reference),
-        ))
+        let mut bytes = [b'-'; SERIES_ID_LEN];
+        let mut day = worldwide_day;
+        for slot in bytes[..DAY_DIGITS].iter_mut().rev() {
+            *slot = b'0' + (day % 10) as u8;
+            day /= 10;
+        }
+        bytes[ISSUANCE_AT..ISSUANCE_AT + 3].copy_from_slice(&issuance);
+        bytes[REFERENCE_AT] = reference;
+        Ok(Self(bytes))
     }
 
-    pub const fn from_raw(value: u64) -> Self {
-        Self(value)
+    pub const fn from_bytes(bytes: [u8; SERIES_ID_LEN]) -> Self {
+        Self(bytes)
     }
 
-    pub const fn value(self) -> u64 {
-        self.0
+    pub const fn as_bytes(&self) -> &[u8; SERIES_ID_LEN] {
+        &self.0
     }
 
-    pub const fn worldwide_day(self) -> u32 {
-        (self.0 >> 32) as u32
+    pub fn worldwide_day(&self) -> u32 {
+        self.0[..DAY_DIGITS].iter().fold(0u32, |acc, byte| {
+            acc * 10 + u32::from(byte.wrapping_sub(b'0'))
+        })
     }
 
-    pub const fn issuance_code(self) -> [u8; 3] {
+    pub fn issuance_code(&self) -> [u8; 3] {
         [
-            (self.0 >> 24) as u8,
-            (self.0 >> 16) as u8,
-            (self.0 >> 8) as u8,
+            self.0[ISSUANCE_AT],
+            self.0[ISSUANCE_AT + 1],
+            self.0[ISSUANCE_AT + 2],
         ]
     }
 
-    pub const fn reference_code(self) -> u8 {
-        self.0 as u8
+    pub const fn reference_code(&self) -> u8 {
+        self.0[REFERENCE_AT]
     }
 
-    /// The three ASCII digits of an ISO numeric code, used when the oracle holds
-    /// no alpha code for it: `949 -> b"949"`, `32 -> b"032"`.
+    /// `949 -> b"949"`, `32 -> b"032"`.
     pub fn numeric_code(iso: u16) -> [u8; 3] {
         let iso = iso % 1000;
         [
@@ -112,18 +112,8 @@ const fn is_code_byte(byte: u8) -> bool {
 }
 
 impl fmt::Display for SeriesId {
-    /// `20260212-TRY-U`, or `20260212-949-U` when the issuance code is numeric.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let issuance = self.issuance_code();
-        write!(
-            f,
-            "{}-{}{}{}-{}",
-            self.worldwide_day(),
-            issuance[0] as char,
-            issuance[1] as char,
-            issuance[2] as char,
-            self.reference_code() as char,
-        )
+        f.write_str(&String::from_utf8_lossy(&self.0))
     }
 }
 
@@ -131,19 +121,36 @@ impl StorableType for SeriesId {
     const SLOTS: usize = 1;
 }
 
+/// Left-aligned in the word, matching the Solidity `bytes14` layout.
 impl Storable for SeriesId {
     fn from_word(word: U256) -> Self {
-        Self(word.to::<u64>())
+        let mut bytes = [0u8; SERIES_ID_LEN];
+        bytes.copy_from_slice(&word.to_be_bytes::<32>()[..SERIES_ID_LEN]);
+        Self(bytes)
     }
 
     fn to_word(&self) -> U256 {
-        U256::from(self.0)
+        let mut word = [0u8; 32];
+        word[..SERIES_ID_LEN].copy_from_slice(&self.0);
+        U256::from_be_bytes(word)
     }
 }
 
 impl StorageKey for SeriesId {
     fn key_bytes(&self) -> Vec<u8> {
-        self.0.to_be_bytes().to_vec()
+        self.0.to_vec()
+    }
+}
+
+impl From<SeriesId> for FixedBytes<SERIES_ID_LEN> {
+    fn from(id: SeriesId) -> Self {
+        Self(id.0)
+    }
+}
+
+impl From<FixedBytes<SERIES_ID_LEN>> for SeriesId {
+    fn from(value: FixedBytes<SERIES_ID_LEN>) -> Self {
+        Self(value.0)
     }
 }
 
@@ -222,7 +229,7 @@ pub struct SeriesRecord {
     #[attribute(order = 12)]
     pub state: u8,
 
-    /// Worldwide day whose tributes fed this series (== series_id until multi-currency).
+    /// Worldwide day whose tributes fed this series; also the id's leading digits.
     #[attribute(order = 13, default = 0)]
     pub worldwide_day: u32,
 }
@@ -319,7 +326,7 @@ pub struct IntexContract {
     pub total_series: outbe_primitives::storage::dsl::Value<u64>,
 
     #[attribute(order = 2)]
-    pub series_id_at_index: outbe_primitives::storage::dsl::Map<u64, u64>,
+    pub series_id_at_index: outbe_primitives::storage::dsl::Map<u64, U256>,
 
     // --- Creator-reward: per-day contributors (owner → nominal share) ---
     // Orders 3-23 are keyed by worldwide day, not by series id.

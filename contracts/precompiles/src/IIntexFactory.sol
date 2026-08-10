@@ -14,12 +14,12 @@ interface IIntexFactory {
     ///         settler. Allowed in Qualified (voluntary) and Called (forced).
     ///         `paymentToken` must be registered with the vault router under the
     ///         series' reference currency.
-    function settle(uint64 seriesId, address intexHolder, uint256 amount, address paymentToken)
+    function settle(bytes14 seriesId, address intexHolder, uint256 amount, address paymentToken)
         external;
 
     /// @notice Per-Intex cost of settling `seriesId` in `paymentToken`, in that
     ///         token's minor units. Reverts if the series does not accept it.
-    function quoteCostAmount(uint64 seriesId, address paymentToken) external view returns (uint256 costAmountMinor);
+    function quoteCostAmount(bytes14 seriesId, address paymentToken) external view returns (uint256 costAmountMinor);
 
     /// @notice Burn settled Intexes and mint confidential Promis, gated by
     ///         off-chain proof of work. Caller is the holder. Authorized by the
@@ -28,12 +28,12 @@ interface IIntexFactory {
     ///         op-nonce (fetch via `outbe_deriveKeys` + `IPromis.opNonceOf`) and the
     ///         bound amount is `promis_load_minor * amount`. Returns the minted
     ///         Promis amount.
-    function minePromis(uint64 seriesId, uint256 amount, uint256 nonce, bytes32 mac, uint64 opNonce)
+    function minePromis(bytes14 seriesId, uint256 amount, uint256 nonce, bytes32 mac, uint64 opNonce)
         external
         returns (uint256 promisAmount);
 
     /// @notice Authorize `settler` to settle the caller's position in `seriesId`.
-    function setAuthorizedSettler(uint64 seriesId, address settler) external;
+    function setAuthorizedSettler(bytes14 seriesId, address settler) external;
 
     /// @notice Credit auction proceeds (native COEN, sent as msg.value) from
     ///         `srcChainId` into the day's pot. Callable only by the OriginRouter.
@@ -46,19 +46,19 @@ interface IIntexFactory {
     function distribute(uint32 worldwideDay, uint32 srcChainId) external payable;
 
     /// @notice A new series was created from a cleared auction.
-    event SeriesIssued(uint64 indexed seriesId, uint32 issuedIntexCount, uint256 entryPrice);
+    event SeriesIssued(bytes14 indexed seriesId, uint32 issuedIntexCount, uint256 entryPrice);
 
     /// @notice `amount` Issued Intexes of `seriesId` were settled.
-    event Settled(uint64 indexed seriesId, address indexed intexHolder, address indexed settler, uint256 amount);
+    event Settled(bytes14 indexed seriesId, address indexed intexHolder, address indexed settler, uint256 amount);
 
     /// @notice Settled Intexes were burned and `promisAmount` Promis minted.
-    event PromisMined(uint64 indexed seriesId, address indexed holder, uint256 amount, uint256 promisAmount);
+    event PromisMined(bytes14 indexed seriesId, address indexed holder, uint256 amount, uint256 promisAmount);
 
     /// @notice The series qualified (Issued → Qualified).
-    event SeriesQualified(uint64 indexed seriesId);
+    event SeriesQualified(bytes14 indexed seriesId);
 
     /// @notice The series was force-called (Qualified → Called).
-    event SeriesCalled(uint64 indexed seriesId, uint32 calledAt);
+    event SeriesCalled(bytes14 indexed seriesId, uint32 calledAt);
 
     /// @notice The day's auction proceeds were fully paid out to `contributors`
     ///         tribute owners, totalling `amount` native COEN.

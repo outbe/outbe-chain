@@ -22,7 +22,7 @@ interface IIntex {
     );
 
     struct SeriesData {
-        uint64 seriesId;
+        bytes14 seriesId;
         uint256 promisLoadMinor;
         uint256 entryPriceMinor;
         uint256 floorPriceMinor;
@@ -42,14 +42,14 @@ interface IIntex {
 
     /// @notice Full identity + lifecycle record for a series. Reverts if the
     ///         series does not exist.
-    function seriesData(uint64 seriesId) external view returns (SeriesData memory);
+    function seriesData(bytes14 seriesId) external view returns (SeriesData memory);
 
     /// @notice Whether a series exists.
-    function seriesExists(uint64 seriesId) external view returns (bool);
+    function seriesExists(bytes14 seriesId) external view returns (bool);
 
     /// @notice Number of series ever created (dense-enumeration length).
     function totalSeries() external view returns (uint64);
 
     /// @notice The series id at a dense-enumeration index.
-    function seriesAt(uint64 index) external view returns (uint64);
+    function seriesAt(uint64 index) external view returns (bytes14);
 }

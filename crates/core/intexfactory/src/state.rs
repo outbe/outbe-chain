@@ -9,6 +9,7 @@ use outbe_primitives::math::{
     tree_math::{self, BinTreeStorage},
 };
 use outbe_primitives::storage::dsl::Map;
+use outbe_primitives::storage::types::Storable;
 
 use crate::constants::BIN_STEP_BP;
 use crate::schema::IntexFactoryContract;
@@ -140,7 +141,7 @@ impl IntexFactoryContract<'_> {
 /// Insert `series_id` into the `price` bin of an index and set the trie bit.
 fn insert_bin(
     count_map: &Map<u32, u32>,
-    series_map: &Map<B256, u64>,
+    series_map: &Map<B256, U256>,
     tree: &impl BinTreeStorage,
     series_id: SeriesId,
     price: U256,
@@ -149,7 +150,7 @@ fn insert_bin(
     let count = count_map.read(&bin_id)?;
     series_map.write(
         &IntexFactoryContract::bin_index_key(bin_id, count),
-        series_id.value(),
+        series_id.to_word(),
     )?;
     count_map.write(&bin_id, count + 1)?;
     tree_math::add(tree, bin_id)?;
@@ -160,7 +161,7 @@ fn insert_bin(
 /// when the bin empties. No-op if absent.
 fn remove_bin(
     count_map: &Map<u32, u32>,
-    series_map: &Map<B256, u64>,
+    series_map: &Map<B256, U256>,
     tree: &impl BinTreeStorage,
     series_id: SeriesId,
     price: U256,
@@ -172,7 +173,8 @@ fn remove_bin(
     }
     let mut found: Option<u32> = None;
     for i in 0..count {
-        if series_map.read(&IntexFactoryContract::bin_index_key(bin_id, i))? == series_id.value() {
+        if series_map.read(&IntexFactoryContract::bin_index_key(bin_id, i))? == series_id.to_word()
+        {
             found = Some(i);
             break;
         }

@@ -5,6 +5,7 @@ use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
 use outbe_intex::SeriesId;
 use outbe_oracle::contract::OracleContract;
+use outbe_primitives::storage::types::Storable;
 use outbe_primitives::{
     block::{BlockLifecycle, BlockRuntimeContext},
     error::Result,
@@ -92,7 +93,7 @@ pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
         let count = factory.unqualified_bin_count.read(&next)?;
         let mut series: Vec<SeriesId> = Vec::with_capacity(count as usize);
         for i in 0..count {
-            series.push(SeriesId::from_raw(
+            series.push(SeriesId::from_word(
                 factory
                     .unqualified_bin_series
                     .read(&IntexFactoryContract::bin_index_key(next, i))?,
@@ -170,7 +171,7 @@ pub(crate) fn try_qualify(
     crate::runtime::emit_event(
         storage,
         crate::precompile::IIntexFactory::SeriesQualified {
-            seriesId: series_id.value(),
+            seriesId: series_id.into(),
         },
     )?;
     Ok(true)
@@ -182,7 +183,7 @@ fn notify_qualified(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<
         ORIGIN_ROUTER_ADDRESS,
         U256::ZERO,
         IOriginRouter::sendMarkQualifiedCall {
-            seriesId: series_id.value(),
+            seriesId: series_id.into(),
         }
         .abi_encode()
         .into(),

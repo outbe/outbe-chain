@@ -158,7 +158,7 @@ fn burn_parked_intex(
         U256::ZERO,
         IIntexNFT1155::parkIntexCall {
             holder,
-            seriesId: series_id.value(),
+            seriesId: series_id.into(),
             amount,
         }
         .abi_encode()

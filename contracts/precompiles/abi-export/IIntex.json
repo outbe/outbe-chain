@@ -12,8 +12,8 @@
     "outputs": [
       {
         "name": "",
-        "type": "uint64",
-        "internalType": "uint64"
+        "type": "bytes14",
+        "internalType": "bytes14"
       }
     ],
     "stateMutability": "view"
@@ -24,8 +24,8 @@
     "inputs": [
       {
         "name": "seriesId",
-        "type": "uint64",
-        "internalType": "uint64"
+        "type": "bytes14",
+        "internalType": "bytes14"
       }
     ],
     "outputs": [
@@ -36,8 +36,8 @@
         "components": [
           {
             "name": "seriesId",
-            "type": "uint64",
-            "internalType": "uint64"
+            "type": "bytes14",
+            "internalType": "bytes14"
           },
           {
             "name": "promisLoadMinor",
@@ -125,8 +125,8 @@
     "inputs": [
       {
         "name": "seriesId",
-        "type": "uint64",
-        "internalType": "uint64"
+        "type": "bytes14",
+        "internalType": "bytes14"
       }
     ],
     "outputs": [

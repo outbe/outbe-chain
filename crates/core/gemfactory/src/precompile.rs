@@ -32,7 +32,7 @@ pub fn dispatch(
                 runtime::mint_gem_position(
                     &storage,
                     sender,
-                    SeriesId::from_raw(c.sourceIntexId),
+                    SeriesId::from(c.sourceIntexId),
                     c.amount,
                 )
             }),

@@ -292,7 +292,7 @@ fn cost_amount_dispatch() {
         let out = precompile::dispatch(
             s.clone(),
             &IIntexFactory::quoteCostAmountCall {
-                seriesId: sid(7).value(),
+                seriesId: sid(7).into(),
                 paymentToken: payment_token(),
             }
             .abi_encode(),
@@ -408,7 +408,7 @@ fn settled_token_id_derivation() {
     let series_id = sid(7);
     let mut buf = Vec::new();
     buf.extend_from_slice(b"SETTLED");
-    buf.extend_from_slice(&series_id.value().to_be_bytes());
+    buf.extend_from_slice(series_id.as_bytes());
     assert_eq!(
         runtime::settled_token_id(series_id),
         U256::from_be_bytes(keccak256(&buf).0)
@@ -426,7 +426,7 @@ fn compute_pow_hash_matches_manual_sha256() {
     let mut preimage = String::new();
     preimage.push_str(&hex::encode(holder().as_slice()));
     preimage.push_str(&hex::encode(promis_amount.to_be_bytes::<32>()));
-    preimage.push_str(&hex::encode(series_id.value().to_be_bytes()));
+    preimage.push_str(&hex::encode(series_id.as_bytes()));
     preimage.push_str(&hex::encode(seq.to_be_bytes()));
     let mut data = preimage.into_bytes();
     data.extend_from_slice(&nonce.to_be_bytes());
@@ -607,7 +607,7 @@ fn dispatch_set_authorized_settler_round_trip() {
     with_factory(|s| {
         let settler = address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
         let data = IIntexFactory::setAuthorizedSettlerCall {
-            seriesId: sid(7).value(),
+            seriesId: sid(7).into(),
             settler,
         }
         .abi_encode();
@@ -626,7 +626,7 @@ fn dispatch_rejects_value() {
     with_factory(|s| {
         let settler = address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
         let data = IIntexFactory::setAuthorizedSettlerCall {
-            seriesId: sid(7).value(),
+            seriesId: sid(7).into(),
             settler,
         }
         .abi_encode();
@@ -639,7 +639,7 @@ fn dispatch_mine_promis_routes_to_runtime() {
     with_factory(|s| {
         // Missing series -> the runtime error surfaces through dispatch.
         let data = IIntexFactory::minePromisCall {
-            seriesId: sid(7).value(),
+            seriesId: sid(7).into(),
             amount: U256::from(1),
             nonce: U256::ZERO,
             mac: alloy_primitives::FixedBytes([0u8; 32]),
@@ -1776,14 +1776,14 @@ fn unpublished_selectors_refuse_native_value() {
 
     let calls = [
         IIntexFactory::settleCall {
-            seriesId: 0u64,
+            seriesId: Default::default(),
             intexHolder: Address::ZERO,
             amount: U256::ZERO,
             paymentToken: Address::ZERO,
         }
         .abi_encode(),
         IIntexFactory::setAuthorizedSettlerCall {
-            seriesId: 0u64,
+            seriesId: Default::default(),
             settler: Address::ZERO,
         }
         .abi_encode(),
