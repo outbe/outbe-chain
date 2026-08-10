@@ -16,7 +16,7 @@ use outbe_chain_constants::GenesisProtocolParametersV1;
 use outbe_common::WorldwideDay;
 use outbe_ocomp_protocol::{
     profile::poc_schema_limits,
-    result::LysisResultV1,
+    result::{ActiveNodSetV1, LysisResultV1, NodActionV1, NodMembershipProofV1, ResultChunkV1},
     state::{OcompJobRecordV1, OcompJobStatus, OcompTerminalOutcome},
     system_carrier::{MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS, OCOMP_SYSTEM_CARRIER_GAS_LIMIT},
     vote::ResultVoteV1,
@@ -1030,6 +1030,48 @@ fn full_node_local_result_path(world: &World, job_id: B256) -> std::path::PathBu
             "{}.lysis-result-v1.ocb1",
             hex::encode(job_id.as_slice())
         ))
+}
+
+fn result_nod_actions_on(world: &World, node_index: usize, job_id: B256) -> Vec<NodActionV1> {
+    let objects = world
+        .validators
+        .data_dir(node_index)
+        .parent()
+        .expect("node data directory has a node-slot parent")
+        .join("ocomp")
+        .join("domain-v1")
+        .join("cas-v1")
+        .join("objects");
+    let limits = poc_schema_limits();
+    let mut chunks = Vec::new();
+    for prefix in std::fs::read_dir(&objects).expect("read OCOMP CAS prefix directory") {
+        let prefix = prefix.expect("read OCOMP CAS prefix entry");
+        assert!(
+            prefix.file_type().expect("read CAS prefix type").is_dir(),
+            "OCOMP CAS prefix is not a directory: {:?}",
+            prefix.path()
+        );
+        for object in std::fs::read_dir(prefix.path()).expect("read OCOMP CAS object directory") {
+            let object = object.expect("read OCOMP CAS object entry");
+            assert!(
+                object.file_type().expect("read CAS object type").is_file(),
+                "OCOMP CAS object is not a file: {:?}",
+                object.path()
+            );
+            let bytes = std::fs::read(object.path()).expect("read OCOMP CAS object");
+            if let Ok(chunk) = ResultChunkV1::decode_canonical(&bytes, &limits) {
+                if chunk.job_id == job_id {
+                    chunks.push(chunk);
+                }
+            }
+        }
+    }
+    chunks.sort_by_key(|chunk| chunk.chunk_ordinal);
+    assert!(!chunks.is_empty(), "node has no result chunks for {job_id}");
+    chunks
+        .into_iter()
+        .flat_map(|chunk| chunk.ordered_nod_actions)
+        .collect()
 }
 
 #[then("the FullNode independently materializes job A without voting")]
@@ -2764,16 +2806,41 @@ fn keyless_full_node_verifies_finalized_nod_body(world: &mut World) {
         "FullNode exposes a different certified Nod generation"
     );
 
-    let validator_body = world
-        .rpc
-        .nod_body_at(primary, activation.block_number, 0)
-        .expect("validator exact-block Nod body/proof read");
-    let full_node_body = world
-        .rpc
-        .nod_body_at(full_node, activation.block_number, 0)
-        .expect("FullNode exact-block Nod body/proof read");
-    assert_eq!(full_node_body, validator_body);
-    assert_eq!(full_node_body.worldwide_day, activation.worldwide_day);
+    let tribute_owner_key = world
+        .validators
+        .by_name("validator-0")
+        .expect("public Tribute owner")
+        .evm_key()
+        .expect("public Tribute owner key");
+    let tribute_owner = eth::address_of(&tribute_owner_key).expect("public Tribute owner address");
+    let validator_actions = result_nod_actions_on(world, 0, generation.job_id);
+    let full_node_actions =
+        result_nod_actions_on(world, world.validators.joiner_index(), generation.job_id);
+    assert_eq!(full_node_actions, validator_actions);
+    let [action] = full_node_actions.as_slice() else {
+        panic!("single-Tribute proof scenario must materialize exactly one Nod action")
+    };
+    assert_eq!(action.owner, tribute_owner);
+    assert_eq!(action.wwd, activation.worldwide_day);
+    let authority = ActiveNodSetV1 {
+        job_id: generation.job_id,
+        program_semantics_hash: generation.program_semantics_hash,
+        worldwide_day: generation.worldwide_day,
+        generation: generation.generation,
+        nod_root: generation.nod_root,
+        nod_count: generation.nod_count,
+    };
+    NodMembershipProofV1 {
+        job_id: generation.job_id,
+        program_semantics_hash: generation.program_semantics_hash,
+        worldwide_day: generation.worldwide_day,
+        generation: generation.generation,
+        nod_ordinal: 0,
+        action: action.clone(),
+        membership_siblings: Vec::new(),
+    }
+    .verify_against(&authority, &poc_schema_limits())
+    .expect("FullNode Nod action membership proof against finalized generation root");
 
     let request = world
         .state

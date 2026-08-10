@@ -1,4 +1,4 @@
-@ocomp @tee @sgx-no-attest @min-validators-4
+@ocomp @tee @sgx-no-attest @sudo @min-validators-4
 Feature: Off-chain computation public path
   @ocomp-public-prefix
   Scenario: A public encrypted Tribute becomes one finalized JobIntent
@@ -14,11 +14,11 @@ Feature: Off-chain computation public path
   # OCOMP-TEST-ID: OCM-PUB-004
   Scenario: Four independent domains certify and atomically apply one public Lysis result
     Given a fresh four-validator OCOMP public measurement localnet
-    When a fifth node syncs as a non-voting FullNode
-    Then the fifth node has canonical state parity without OCOMP vote capability
     When an operator submits one encrypted tribute offer
     Then the tribute transaction succeeds and supply becomes one
     And every validator projects the same tribute and indexes
+    When a fifth node syncs as a non-voting FullNode
+    Then the fifth node has canonical state parity without OCOMP vote capability
     Then Metadosis creates one finalized JobIntent from that public Tribute
     When the production OCOMP domains process that finalized JobIntent
     Then three matching validator domains atomically apply Lysis and create the Nod
