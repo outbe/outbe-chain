@@ -1,4 +1,4 @@
-//! Steps for `features/s7a_downtime_slash.feature` — port of
+//! Validator downtime steps used by `features/validator_lifecycle.feature`.
 //! The downtime-slashing feature. Kill one committee validator and prove
 //! the chain keeps finalizing on the surviving 3-of-4 BFT quorum, then prove the
 //! resulting voter felony burns exactly the configured stake once.

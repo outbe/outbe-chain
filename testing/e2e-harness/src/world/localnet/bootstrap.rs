@@ -4,11 +4,8 @@
 //! patch are native Rust.
 
 use std::fs;
-use std::path::Path;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
-#[cfg(unix)]
-use std::{fs::Permissions, os::unix::fs::PermissionsExt as _};
 
 use eyre::{bail, eyre, Result, WrapErr};
 use outbe_primitives::chain::{DEVNET_CHAIN_ID, TESTNET_CHAIN_ID};
@@ -17,8 +14,6 @@ use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 use crate::{env::TeeMode, internal::proc};
 
-#[cfg(feature = "ocomp-integration")]
-use super::ymd_utc;
 use super::{worldwide_day, Localnet};
 
 /// 10000 COEN (`10000 * 10^18`) as hex — the per-validator liquid balance.
@@ -38,19 +33,6 @@ const LOCALNET_METADOSIS_WAITING_SECONDS: u64 = 30;
 const LOCALNET_METADOSIS_BOOTSTRAP_SECONDS: u64 = 300;
 const LOCALNET_METADOSIS_ADVANCE_SECONDS: u64 = 10;
 const LOCALNET_OCOMP_VOTE_WINDOW_BLOCKS: u64 = 120;
-const OCOMP_FINAL_FIXTURE_ROOT: &str = "testing/e2e-harness/fixtures/ocomp-final-v1";
-const OCOMP_FINAL_ROOT_FILES: &[(&str, u32)] = &[
-    ("dkg-output.hex", 0o600),
-    ("polynomial.hex", 0o600),
-    ("reth-bootnodes.txt", 0o640),
-    ("validators.json", 0o640),
-];
-const OCOMP_FINAL_VALIDATOR_FILES: &[&str] = &[
-    "evm-key.hex",
-    "reth-p2p-secret.hex",
-    "signing-key.hex",
-    "signing-share.hex",
-];
 
 impl Localnet {
     /// Add the canonical block-1 TEE manifest after every scenario has finished
@@ -240,89 +222,6 @@ impl Localnet {
         fs::rename(&genesis, &original)?;
         fs::rename(&generated, &genesis)?;
         Ok(())
-    }
-
-    /// Offset the debug-node wall clock to the immutable timestamp baked into
-    /// the canonical OCOMP fixture without rewriting that fixture.
-    #[cfg(feature = "ocomp-integration")]
-    pub(crate) fn ocomp_final_clock_offset(&self, now_secs: u64) -> Result<i64> {
-        let target = self.ocomp_final_genesis_timestamp()?;
-        let offset = i128::from(target) - i128::from(now_secs);
-        i64::try_from(offset).map_err(|_| eyre!("canonical OCOMP clock offset leaves i64 range"))
-    }
-
-    /// Worldwide-day key authored by the immutable Final fixture's logical
-    /// genesis time, independent of the host's current wall clock.
-    #[cfg(feature = "ocomp-integration")]
-    pub(crate) fn ocomp_final_worldwide_day(&self) -> Result<String> {
-        let target = self.ocomp_final_genesis_timestamp()?;
-        Ok(ymd_utc(target.saturating_add(50_400)))
-    }
-
-    #[cfg(feature = "ocomp-integration")]
-    fn ocomp_final_genesis_timestamp(&self) -> Result<u64> {
-        let path = self.cfg.dir.join("genesis.json");
-        let genesis: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
-        let raw = genesis
-            .get("timestamp")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| eyre!("canonical OCOMP genesis timestamp is not a string"))?;
-        u64::from_str_radix(raw.trim_start_matches("0x"), 16).map_err(Into::into)
-    }
-
-    /// Materialize the checked-in `Final` OCOMP devnet.
-    ///
-    /// Committee/DKG identities and the armed chain manifest are immutable
-    /// fixture inputs. Only consensus and reth endpoint ports are rewritten for
-    /// the scenario's allocated loopback port blocks.
-    pub fn bootstrap_ocomp_final(&self) -> Result<()> {
-        if self.cfg.dir.exists()
-            && fs::read_dir(&self.cfg.dir)
-                .wrap_err_with(|| format!("read scenario root {}", self.cfg.dir.display()))?
-                .next()
-                .is_some()
-        {
-            bail!(
-                "canonical OCOMP fixture target is not empty: {}",
-                self.cfg.dir.display()
-            );
-        }
-
-        let fixture = self.cfg.repo.join(OCOMP_FINAL_FIXTURE_ROOT);
-        let base = fixture.join("base");
-        let artifacts = fixture.join("artifacts");
-        let validator_manifest: serde_json::Value =
-            serde_json::from_slice(&fs::read(base.join("validators.json"))?)?;
-        let fixture_validators = validator_manifest
-            .as_array()
-            .ok_or_else(|| eyre!("canonical OCOMP validators manifest is not an array"))?
-            .len();
-        eyre::ensure!(
-            fixture_validators == self.committee_size(),
-            "canonical OCOMP fixture contains {fixture_validators} validators, harness requested {}",
-            self.committee_size()
-        );
-        fs::create_dir_all(&self.cfg.dir)?;
-        for (relative, mode) in OCOMP_FINAL_ROOT_FILES {
-            copy_fixture_file(&base.join(relative), &self.cfg.dir.join(relative), *mode)?;
-        }
-        for validator_index in 0..fixture_validators {
-            for relative in OCOMP_FINAL_VALIDATOR_FILES {
-                copy_fixture_file(
-                    &base
-                        .join(format!("validator-{validator_index}"))
-                        .join(relative),
-                    &self.cfg.validator_dir(validator_index).join(relative),
-                    0o600,
-                )?;
-            }
-        }
-        copy_fixture_file(
-            &artifacts.join("genesis-final.json"),
-            &self.cfg.dir.join("genesis.json"),
-            0o640,
-        )?;
-        self.rewrite_ports()
     }
 
     /// Keep a debug-only logical-clock E2E internally consistent by shifting the
@@ -624,31 +523,6 @@ impl Localnet {
         fs::write(&path, serde_json::to_string_pretty(&genesis)? + "\n")?;
         Ok(())
     }
-}
-
-fn copy_fixture_file(source: &Path, destination: &Path, mode: u32) -> Result<()> {
-    let metadata = fs::symlink_metadata(source)
-        .wrap_err_with(|| format!("inspect OCOMP fixture file {}", source.display()))?;
-    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
-        bail!(
-            "OCOMP fixture input is not a regular non-symlink file: {}",
-            source.display()
-        );
-    }
-    let parent = destination
-        .parent()
-        .ok_or_else(|| eyre!("OCOMP fixture destination has no parent"))?;
-    fs::create_dir_all(parent)?;
-    fs::copy(source, destination).wrap_err_with(|| {
-        format!(
-            "copy OCOMP fixture {} to {}",
-            source.display(),
-            destination.display()
-        )
-    })?;
-    #[cfg(unix)]
-    fs::set_permissions(destination, Permissions::from_mode(mode))?;
-    Ok(())
 }
 
 fn apply_co_located_sgx_timing(

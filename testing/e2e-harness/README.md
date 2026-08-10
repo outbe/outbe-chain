@@ -78,13 +78,13 @@ coverage of assertions that the row explicitly marks as a gap.
 
 ## Layout
 
-- `features/` — Gherkin fixtures. `update_operator.feature` is wired end-to-end;
-  `tribute_projection.feature` covers encrypted-offer projection plus compressed
-  entity presence and absence proofs; `stablecoin_factory_v1.feature` covers the
-  fresh-genesis Factory product flow and full-committee restart.
-  `ocomp_public_path.feature` includes the Linux-only fresh Metadosis path:
-  finalized runtime block-1 `Create`, two whole-committee logical-time restart
-  barriers with canonical phase durations, and terminal OCOMP on the same WWD.
+- `features/` — eight responsibility-owned Gherkin suites: `tribute`,
+  `validator_lifecycle`, `fullnode`, `ocomp`, `governance`, `zerofee`,
+  `products`, and `tee_onboarding`. Shared prerequisites are steps inside the
+  owning behavior, not standalone scenarios that repeat a shorter prefix.
+  `ocomp.feature` owns the Linux-only fresh Metadosis path from finalized
+  block-1 `Create` through terminal OCOMP, FullNode verification, NOD, and
+  restart/replay on the same WWD.
 - `release-features/` — the separate exact-artifact hardware-SGX acceptance scenario.
   It does not bootstrap a localnet or MongoDB and never rebuilds the release image.
 - `src/env.rs` — `TeeMode`, the `EnvCli` clap flags, `Environment`, and the
@@ -368,7 +368,7 @@ Run the complete Tribute compressed-entity feature (happy path and edge cases):
 cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
   --tee gramine-direct \
   --validators 4 \
-  --input 'testing/e2e-harness/features/tribute_projection.feature'
+  --input 'testing/e2e-harness/features/tribute.feature'
 ```
 
 Run only the creation happy path:
@@ -377,7 +377,7 @@ Run only the creation happy path:
 cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
   --tee gramine-direct \
   --validators 4 \
-  --name "A successful tribute is persisted by every validator"
+  --name "One public Tribute has complete projection and duplicate protection"
 ```
 
 The scenario performs the complete product flow:

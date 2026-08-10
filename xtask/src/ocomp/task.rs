@@ -17,15 +17,7 @@ const PUBLIC_SCENARIO_TAGS: [&str; 3] = [
     "@ocomp-public-mutation",
 ];
 
-const E2E_SCENARIO_TAGS: [&str; 3] = ["@ocomp-e2e-001", "@ocomp-e2e-007", "@ocomp-e2e-008"];
-
-const OCM25_PUBLIC_SCENARIO_TAGS: [&str; 5] = [
-    "@ocomp-public-apply",
-    "@ocomp-public-expiry",
-    "@ocomp-public-mutation",
-    "@ocomp-fork-restart",
-    "@ocomp-fork-mismatch",
-];
+const E2E_SCENARIO_TAGS: [&str; 2] = ["@ocomp-e2e-001", "@ocomp-e2e-007"];
 
 pub fn run(repository_root: &Path, task: &str) -> Result<()> {
     match task {
@@ -1867,7 +1859,7 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                 repository_root,
                 &artifact_set,
                 &evidence_dir,
-                &OCM25_PUBLIC_SCENARIO_TAGS,
+                &PUBLIC_SCENARIO_TAGS,
             )?;
             run_evidence_binary(
                 repository_root,
@@ -1893,9 +1885,9 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "OCM-REQ-001",
                     "OCM-FIN-001",
                     "OCM-PIN-001",
-                    "OCM-CTL-001",
-                    "OCM-DIS-001",
-                    "OCM-EXP-001",
+                    "OCM-WRK-001",
+                    "OCM-WTR-001",
+                    "OCM-WOBS-001",
                     "OCM-CAS-001",
                     "OCM-DET-001",
                     "OCM-SIG-001",
@@ -2019,13 +2011,6 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
             )?;
             require_matching_final_consensus_artifacts(&generated_artifacts, &checked_artifacts)?;
 
-            for (name, tag) in [
-                ("final-capacity", "@ocomp-final-capacity"),
-                ("fork-restart", "@ocomp-fork-restart"),
-                ("fork-mismatch", "@ocomp-fork-mismatch"),
-            ] {
-                run_exact_final_scenario(repository_root, &run_root, name, tag)?;
-            }
             eprintln!(
                 "OCM-26 immutable evidence retained at {}",
                 run_root.display()
@@ -2045,9 +2030,9 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "OCM-REQ-001",
                     "OCM-FIN-001",
                     "OCM-PIN-001",
-                    "OCM-CTL-001",
-                    "OCM-DIS-001",
-                    "OCM-EXP-001",
+                    "OCM-WRK-001",
+                    "OCM-WTR-001",
+                    "OCM-WOBS-001",
                     "OCM-CAS-001",
                     "OCM-DET-001",
                     "OCM-SIG-001",
@@ -2396,17 +2381,6 @@ fn require_matching_final_consensus_artifacts(generated: &Path, checked: &Path) 
     Ok(())
 }
 
-fn run_exact_final_scenario(
-    repository_root: &Path,
-    run_root: &Path,
-    name: &str,
-    tag: &str,
-) -> Result<()> {
-    let artifact_set = run_root.join("artifact-set");
-    let evidence_dir = run_root.join(format!("final-{name}-evidence"));
-    run_exact_scenario(repository_root, &artifact_set, &evidence_dir, tag)
-}
-
 fn run_exact_scenario_set(
     repository_root: &Path,
     artifact_set: &Path,
@@ -2645,8 +2619,7 @@ fn require_success(status: ExitStatus, arguments: &[&str]) -> Result<()> {
 mod tests {
     use super::{
         copy_immutable_artifact, exact_artifact_sources, exact_scenario_arguments,
-        fresh_task_output_dir, promote_exact_scenario_evidence, E2E_SCENARIO_TAGS,
-        OCOMP_E2E_HARNESS_BUILD_ARGS, PUBLIC_SCENARIO_TAGS,
+        fresh_task_output_dir, promote_exact_scenario_evidence, OCOMP_E2E_HARNESS_BUILD_ARGS,
     };
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
@@ -2748,26 +2721,6 @@ mod tests {
             .any(|pair| { pair == ["--enclave-bin", "/artifact-set/outbe-tee-enclave",] }));
         assert!(!arguments.iter().any(|argument| argument == "--mock-bin"));
         assert!(!arguments.iter().any(|argument| argument == "--no-sudo"));
-    }
-
-    #[test]
-    fn public_lane_is_three_closed_single_scenario_runs() {
-        assert_eq!(
-            PUBLIC_SCENARIO_TAGS,
-            [
-                "@ocomp-public-apply",
-                "@ocomp-public-expiry",
-                "@ocomp-public-mutation",
-            ]
-        );
-    }
-
-    #[test]
-    fn e2e_lane_is_three_closed_single_scenario_runs() {
-        assert_eq!(
-            E2E_SCENARIO_TAGS,
-            ["@ocomp-e2e-001", "@ocomp-e2e-007", "@ocomp-e2e-008",]
-        );
     }
 
     #[test]

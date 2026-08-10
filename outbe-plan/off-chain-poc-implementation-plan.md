@@ -1737,7 +1737,7 @@ can emit one hash-indexed multi-scenario evidence bundle.
   existing `Localnet` modules;
 - `testing/e2e-harness/src/features/ocomp.rs`, registered by
   `src/features/mod.rs`;
-- the existing `features/tribute_projection.feature` and
+- the responsibility-owned `features/tribute.feature` and
   `src/features/tribute_projection.rs` as the executable public-Tribute
   baseline;
 - OCOMP process/CAS guards, event drop/corruption/schedule/bundle/failpoint
@@ -1773,7 +1773,7 @@ replica set, CE proof verifier, ChildGuard and per-scenario data/evidence. Do
 not create another harness or production deployment controller.
 
 **Mandatory public-Tribute fixture contract:** `OCM-E2E-001` starts with the
-same production path exercised by `tribute_projection.feature`, while that
+same production path exercised by `tribute.feature`, while that
 existing feature remains an independent regression test and does not acquire
 an OCOMP dependency. Before the scenario may observe a `JobIntent`, retained
 evidence must prove, in order:
@@ -1830,7 +1830,7 @@ capacity generation.
 - `bin/outbe-ocomp/src/{supervisor_job,vote_submitter}.rs`;
 - `crates/blockchain/node/src/ocomp/control.rs` restricted inner attestation seam;
 - `xtask/src/ocomp/task.rs` public-path task runner and exact PUB-ID gate;
-- `testing/e2e-harness/features/ocomp_public_path.feature`;
+- `testing/e2e-harness/features/ocomp.feature`;
 - OCOMP step definitions and exact block/state proof collectors;
 - `mise run ocomp-poc-public-path`;
 - measurement-only network/profile generator inputs.
@@ -1972,7 +1972,7 @@ verification.
 
 **Files/symbols:**
 
-- `testing/e2e-harness/features/ocomp_poc.feature`;
+- `testing/e2e-harness/features/ocomp.feature`;
 - `testing/e2e-harness/src/features/ocomp.rs` and its single
   `src/features/mod.rs` registration;
 - OCOMP scenario steps and evidence correlation, including the mandatory

@@ -201,7 +201,7 @@ success capability, result or receipt.
 |---|---|---|
 | `OCM-PUB-001` | RPC -> txpool -> P2P -> proposal -> import -> replay | cap-1 and cap accepted; cap+1 rejected consistently; same receipt/state/CE/header result on all nodes |
 | `OCM-PUB-002` | public `submitLysisResult(bytes)` changed-binding rejection and recovery | one representative changed binding rejects with exact scoped pre/post equality; restarting the stopped supervisors forms the valid quorum through RPC/txpool/P2P/import |
-| `OCM-PUB-003` | begin-zone expiry versus public full-result votes | height `< deadline` may fill a slot and q may apply; height `= deadline` first expires a non-quorum job and rejects a new slot; no proposer-order race; a terminal job still accepts the fourth timely accountability vote |
+| `OCM-PUB-003` | begin-zone expiry versus public full-result votes | height `< deadline` may fill a slot and q may apply; height `= deadline` first expires a non-quorum job and rejects a new slot; the live public receipt may be included at `deadline` or `deadline + 1` and is late in both cases; no proposer-order race; a terminal job still accepts the fourth timely accountability vote |
 | `OCM-PUB-004` | completed full-result vote replay | duplicate same-validator vote is idempotent with no new owner effects/events; changed binding or equivocation follows the frozen rejection/evidence rule and cannot change the terminal result |
 
 These tests use block production and import/replay APIs, not a direct executor
@@ -241,7 +241,7 @@ current Worker transport are proved by `OCM-CAS-001`, `OCM-WRK-001`,
 
 OCOMP is an extension of the existing
 `testing/e2e-harness`, not a parallel runner. The executable baseline is
-`features/tribute_projection.feature` backed by
+`features/tribute.feature` backed by
 `src/features/tribute_projection.rs`, `World`, `Rpc`, `MongoDb`, `Localnet` and
 the existing CE point-read verifier. `OCM-24` adds one registered
 `src/features/ocomp.rs` module and one `world::ocomp` handle; it does not add a
@@ -500,7 +500,7 @@ The E2E task resolves to the existing harness entrypoint:
 cargo run --locked -p outbe-e2e-harness --bin outbe-e2e -- \
   --tee gramine-direct --validators 4 --all \
   --enclave-bin target/release/outbe-tee-enclave \
-  --input testing/e2e-harness/features/ocomp_poc.feature \
+  --input testing/e2e-harness/features/ocomp.feature \
   --evidence-dir <dir>
 ```
 

@@ -26,7 +26,6 @@ use outbe_common::WorldwideDay;
 #[cfg(feature = "ocomp-integration")]
 use outbe_metadosis::config::{
     OcompForkInstallClassification, OcompForkInstallV1, OcompRequestProfile,
-    OCOMP_POC_FINAL_ACTIVATION_HEIGHT,
 };
 #[cfg(feature = "ocomp-integration")]
 use outbe_metadosis::genesis::{FreshDevnetGenesisBuilder, GenesisWorldwideDay};
@@ -94,8 +93,6 @@ pub const METADOSIS_STORAGE_LAYOUT_V1_HASH_HEX: &str =
 #[cfg(feature = "ocomp-integration")]
 pub const OCOMP_MEASUREMENT_ACTIVATION_HEIGHT: u64 =
     outbe_node::ocomp::fork::GENESIS_ACTIVE_OCOMP_HEIGHT;
-#[cfg(feature = "ocomp-integration")]
-pub const OCOMP_FINAL_ACTIVATION_HEIGHT: u64 = OCOMP_POC_FINAL_ACTIVATION_HEIGHT;
 /// Provisional block envelope used by the disposable OCM-25 measurement chain.
 #[cfg(feature = "ocomp-integration")]
 const OCOMP_MEASUREMENT_BLOCK_GAS_LIMIT: u64 = 40_000_000;
@@ -652,6 +649,7 @@ impl OcompTopology {
             let vote_path = root
                 .join("supervisor-v1")
                 .join("vote-submissions")
+                .join(&job_component)
                 .join(format!("{job_component}.vote.v1"));
             let vote_metadata = fs::symlink_metadata(&vote_path)?;
             eyre::ensure!(
@@ -891,50 +889,6 @@ impl OcompTopology {
         let prepared =
             self.prepare_measurement_fork_install_inner(None, &private_keys, true, None)?;
         Ok((prepared, private_keys))
-    }
-
-    /// Load the checked-in canonical `Final` install and publish only its
-    /// node-local bundle and test-validator signing material.
-    ///
-    /// Unlike the measurement helpers, this path never mutates genesis,
-    /// committee membership, capacity, schedule or fork bindings.
-    #[cfg(feature = "ocomp-integration")]
-    pub fn prepare_final_fork_install(&self) -> Result<OcompMeasurementForkV1> {
-        let genesis_path = self.cfg.dir.join("genesis.json");
-        let spec = parse_outbe_chain_spec(&genesis_path)?;
-        let chain_id = spec.chain().id();
-        let genesis_hash = spec.genesis_hash();
-        let loaded = outbe_node::ocomp::fork::require_startup_ocomp_fork_install(&spec)?;
-        let install = loaded.as_ref().clone();
-        if install.classification != OcompForkInstallClassification::Final {
-            eyre::bail!(
-                "canonical OCOMP fixture contains a non-Final fork install: {:?}",
-                install.classification
-            );
-        }
-        if install.activation_height != OCOMP_FINAL_ACTIVATION_HEIGHT {
-            eyre::bail!(
-                "canonical OCOMP fixture activates at {}, expected {}",
-                install.activation_height,
-                OCOMP_FINAL_ACTIVATION_HEIGHT
-            );
-        }
-        let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
-        install.validate_for_chain(chain_id, genesis_hash, &limits)?;
-        let install_hash = install.install_hash(&limits)?;
-        self.publish_validator_domain_material(&install)?;
-        Ok(OcompMeasurementForkV1 {
-            install,
-            install_hash,
-            public_worldwide_day: None,
-        })
-    }
-
-    /// Recover the deterministic public capacity-owner keys funded by the
-    /// canonical Final fixture. Keys remain harness-only test material.
-    #[cfg(feature = "ocomp-integration")]
-    pub fn final_capacity_tribute_private_keys(&self, count: usize) -> Result<Vec<String>> {
-        capacity_tribute_private_keys(count)
     }
 
     #[cfg(feature = "ocomp-integration")]
@@ -3615,7 +3569,10 @@ mod tests {
                 .join(&job_component)
                 .join("admissions");
             let worker_outputs = root.join("worker-inbox-v1").join("artifacts");
-            let votes = root.join("supervisor-v1").join("vote-submissions");
+            let votes = root
+                .join("supervisor-v1")
+                .join("vote-submissions")
+                .join(&job_component);
             fs::create_dir_all(&admissions).unwrap();
             fs::create_dir_all(&worker_outputs).unwrap();
             fs::create_dir_all(&votes).unwrap();

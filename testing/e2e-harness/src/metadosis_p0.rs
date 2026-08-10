@@ -3,7 +3,7 @@
 //! The runner executes the existing maximum-shaped public OCOMP scenario six
 //! times: debug/release node artifacts under unset, removed named, and arbitrary
 //! process environments. This module binds every run to its actual inherited
-//! environment, immutable Final fixture, exact binaries, and consensus outputs.
+//! environment, exact source/artifacts, exact binaries, and consensus outputs.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -18,15 +18,14 @@ use crate::ocomp_evidence::{sha256_hex, MemberDigestV1};
 use crate::world::rpc::BlockCommitmentV1;
 
 pub const METADOSIS_P0_EVIDENCE_KIND: &str = "outbe.metadosis-p0-parity";
-pub const METADOSIS_P0_SCHEMA_VERSION: u16 = 1;
+pub const METADOSIS_P0_SCHEMA_VERSION: u16 = 2;
 pub const REMOVED_OWNER_FAILPOINT: &str = "OUTBE_E2E_OCOMP_OWNER_FAILPOINT";
 pub const METADOSIS_P0_SCENARIO: &str =
-    "The canonical Final devnet processes a shard-cap-plus-one population";
+    "A shard-cap-plus-one public population is completely processed";
 
-const METADOSIS_P0_FEATURE: &str = "Off-chain computation public path";
+const METADOSIS_P0_FEATURE: &str = "Off-chain computation and Metadosis";
 const NAMED_FAILPOINT_VALUE: &str = "nod_receipt_root";
 const ARBITRARY_FAILPOINT_VALUE: &str = "metadosis-p0-arbitrary-unrecognized-value";
-const FINAL_FIXTURE: &str = "testing/e2e-harness/fixtures/ocomp-final-v1";
 const REQUIRED_BINARY_NAMES: [&str; 6] = [
     "outbe_chain",
     "outbe_ocomp",
@@ -200,7 +199,6 @@ pub struct MetadosisP0ParityEvidenceV1 {
     pub schema_version: u16,
     pub source_revision: String,
     pub feature_tree_sha256: String,
-    pub canonical_final_fixture_sha256: String,
     pub canonical_genesis_sha256: String,
     pub gramine_image_id: String,
     pub ocomp_launch_identity: MetadosisP0LaunchIdentityV1,
@@ -230,7 +228,6 @@ struct ScenarioEnvironmentV1 {
 struct ScenarioP0ReceiptV1 {
     environment: MetadosisP0EnvironmentReceiptV1,
     genesis: MemberDigestV1,
-    canonical_final_fixture_sha256: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -315,42 +312,11 @@ pub fn current_clean_git_revision(repo: &Path) -> Result<String> {
     Ok(revision)
 }
 
-/// Hash every checked-in canonical Final input in path-and-content order.
-pub fn canonical_final_fixture_sha256(repo: &Path) -> Result<String> {
-    let root = repo.join(FINAL_FIXTURE);
-    let mut files = WalkDir::new(&root)
-        .follow_links(false)
-        .into_iter()
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .wrap_err_with(|| format!("walk canonical Final fixture {}", root.display()))?;
-    files.retain(|entry| entry.file_type().is_file());
-    files.sort_by_key(|entry| entry.path().to_path_buf());
-    ensure!(!files.is_empty(), "canonical Final fixture is empty");
-    let mut preimage = Vec::new();
-    for entry in files {
-        let relative = entry
-            .path()
-            .strip_prefix(&root)
-            .wrap_err("canonical Final member escaped fixture root")?;
-        let relative = relative
-            .to_str()
-            .ok_or_else(|| eyre::eyre!("canonical Final member path is not UTF-8"))?;
-        let bytes = std::fs::read(entry.path())
-            .wrap_err_with(|| format!("read canonical Final member {}", entry.path().display()))?;
-        preimage.extend_from_slice(&(relative.len() as u64).to_be_bytes());
-        preimage.extend_from_slice(relative.as_bytes());
-        preimage.extend_from_slice(&(bytes.len() as u64).to_be_bytes());
-        preimage.extend_from_slice(&bytes);
-    }
-    Ok(sha256_hex(&preimage))
-}
-
 pub fn verify_metadosis_p0_parity(
     expected_source_revision: &str,
     feature_tree_bytes: &[u8],
     debug_node: &Path,
     release_node: &Path,
-    expected_final_fixture_sha256: &str,
     cases: &[MetadosisP0CaseInput],
 ) -> Result<MetadosisP0ParityEvidenceV1> {
     ensure!(
@@ -368,11 +334,6 @@ pub fn verify_metadosis_p0_parity(
         MetadosisP0Case::ALL
     );
     validate_feature_tree(feature_tree_bytes)?;
-    ensure!(
-        is_sha256(expected_final_fixture_sha256),
-        "canonical Final fixture digest is malformed"
-    );
-
     let debug_bytes = std::fs::read(debug_node)
         .wrap_err_with(|| format!("read debug node {}", debug_node.display()))?;
     let release_bytes = std::fs::read(release_node)
@@ -423,12 +384,7 @@ pub fn verify_metadosis_p0_parity(
             "{} reuses byte-identical scenario evidence",
             case.case.label()
         );
-        validate_scenario_envelope(
-            case.case,
-            expected_source_revision,
-            expected_final_fixture_sha256,
-            &scenario,
-        )?;
+        validate_scenario_envelope(case.case, expected_source_revision, &scenario)?;
         ensure!(
             scenario_data_dirs.insert(scenario.scenario_data_dir.clone()),
             "{} reuses a scenario data directory",
@@ -509,7 +465,6 @@ pub fn verify_metadosis_p0_parity(
         schema_version: METADOSIS_P0_SCHEMA_VERSION,
         source_revision: expected_source_revision.to_owned(),
         feature_tree_sha256: sha256_hex(feature_tree_bytes),
-        canonical_final_fixture_sha256: expected_final_fixture_sha256.to_owned(),
         canonical_genesis_sha256: canonical_genesis.expect("six cases set canonical genesis"),
         gramine_image_id: canonical_gramine_image.expect("six cases set Gramine image"),
         ocomp_launch_identity: canonical_launch_identity
@@ -526,7 +481,6 @@ pub fn verify_metadosis_p0_parity(
 fn validate_scenario_envelope(
     case: MetadosisP0Case,
     expected_source_revision: &str,
-    expected_final_fixture_sha256: &str,
     scenario: &ScenarioRecordV1,
 ) -> Result<()> {
     ensure!(
@@ -555,11 +509,6 @@ fn validate_scenario_envelope(
     ensure!(
         scenario.metadosis_p0.environment == MetadosisP0EnvironmentReceiptV1::expected(case),
         "{} retained the wrong process-environment receipt",
-        case.label()
-    );
-    ensure!(
-        scenario.metadosis_p0.canonical_final_fixture_sha256 == expected_final_fixture_sha256,
-        "{} used a different canonical Final fixture",
         case.label()
     );
     validate_member_digest(&scenario.metadosis_p0.genesis)?;
@@ -672,8 +621,8 @@ fn validate_launch_identity(identity: &MetadosisP0LaunchIdentityV1) -> Result<()
             && is_prefixed_hash(&identity.genesis_hash)
             && is_prefixed_hash(&identity.protocol_bundle_hash)
             && is_prefixed_hash(&identity.fork_install_hash)
-            && identity.classification == "final"
-            && identity.activation_height == 32
+            && identity.classification == "measurement"
+            && identity.activation_height == 1
             && identity.metadosis_storage_layout_hash
                 == crate::world::ocomp::METADOSIS_STORAGE_LAYOUT_V1_HASH_HEX,
         "OCOMP launch identity is malformed"
@@ -762,8 +711,6 @@ mod tests {
     const SOURCE_REVISION: &str = "0123456789012345678901234567890123456789";
     const FEATURE_TREE: &[u8] =
         b"outbe-metadosis v0.1.0 (/repo/metadosis)\n    outbe-chain v0.1.0 (/repo/chain)\n";
-    const FIXTURE_SHA256: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-
     fn observation() -> serde_json::Value {
         let commitment = json!({
             "block_hash": B256::repeat_byte(4),
@@ -862,7 +809,6 @@ mod tests {
                             "genesis.json",
                             "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
                         ),
-                        "canonical_final_fixture_sha256": FIXTURE_SHA256
                     },
                     "ocomp": {
                         "exact_binaries": binaries,
@@ -872,8 +818,8 @@ mod tests {
                                 "genesis_hash": format!("0x{}", "11".repeat(32)),
                                 "protocol_bundle_hash": format!("0x{}", "22".repeat(32)),
                                 "fork_install_hash": format!("0x{}", "33".repeat(32)),
-                                "classification": "final",
-                                "activation_height": 32,
+                                "classification": "measurement",
+                                "activation_height": 1,
                                 "metadosis_storage_layout_hash":
                                     crate::world::ocomp::METADOSIS_STORAGE_LAYOUT_V1_HASH_HEX
                             }
@@ -901,14 +847,7 @@ mod tests {
         release: &Path,
         cases: &[MetadosisP0CaseInput],
     ) -> Result<MetadosisP0ParityEvidenceV1> {
-        verify_metadosis_p0_parity(
-            SOURCE_REVISION,
-            FEATURE_TREE,
-            debug,
-            release,
-            FIXTURE_SHA256,
-            cases,
-        )
+        verify_metadosis_p0_parity(SOURCE_REVISION, FEATURE_TREE, debug, release, cases)
     }
 
     fn mutate_case(
@@ -972,15 +911,10 @@ mod tests {
             b"outbe-metadosis v0.1.0\noutbe-metadosis feature \"test-utils\"\noutbe-chain v0.1.0\n"
                 .as_slice(),
         ] {
-            assert!(verify_metadosis_p0_parity(
-                SOURCE_REVISION,
-                tree,
-                &debug,
-                &release,
-                FIXTURE_SHA256,
-                &cases
-            )
-            .is_err());
+            assert!(
+                verify_metadosis_p0_parity(SOURCE_REVISION, tree, &debug, &release, &cases)
+                    .is_err()
+            );
         }
     }
 
