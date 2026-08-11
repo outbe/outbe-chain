@@ -584,6 +584,20 @@ fn startup_dkg_round_zero_requires_genesis_formation_proof() {
 }
 
 #[test]
+fn existing_chain_without_current_threshold_material_fails_with_recovery_contract() {
+    let error = missing_current_threshold_material_error(
+        "saved DKG material is stale for the latest finalized boundary",
+    );
+    let message = error.to_string();
+
+    assert!(message.contains("startup cannot recover threshold material before sync starts"));
+    assert!(message.contains("--consensus.public-polynomial"));
+    assert!(message.contains("--consensus.dkg-output"));
+    assert!(message.contains("without --consensus.signing-share"));
+    assert!(message.contains("saved DKG material is stale"));
+}
+
+#[test]
 fn offer_key_gate_allows_only_proven_founding_identity_to_be_keyless() {
     let founding = StartupDkgContext {
         last_execution_height: 0,
@@ -912,12 +926,6 @@ fn recovered_boundary_rejects_stale_threshold_material() {
         ),
         "saved or CLI material from an older DKG boundary must not build a signer"
     );
-}
-
-#[test]
-fn startup_live_join_uses_next_cycle_after_recovered_boundary() {
-    let boundary = test_boundary_with_vrf_hash(B256::with_last_byte(0x55), 244);
-    assert_eq!(next_live_reshare_round(&boundary), 245);
 }
 
 #[derive(Clone, Default)]
@@ -1989,38 +1997,6 @@ fn test_startup_live_join_scan_height_never_uses_unfinalized_execution_head() {
         .to_string();
     assert!(error.contains("refusing to recover DKG artifacts from unfinalized execution head"));
     assert_eq!(startup_live_join_scan_height(5, 0, true).unwrap(), 0);
-}
-
-#[test]
-fn test_startup_live_join_round_follows_chain_dkg_cycle() {
-    let (keys, _participants, output, _share, _polynomial) = run_test_dkg_complete();
-
-    let validator_set = validators::ValidatorSet {
-        public_keys: keys.iter().map(|key| key.public_key()).collect(),
-        addresses: vec![
-            Address::with_last_byte(0x11),
-            Address::with_last_byte(0x22),
-            Address::with_last_byte(0x33),
-        ],
-        p2p_addresses: vec![validators::ValidatorP2pAddress::Missing; 3],
-    };
-
-    let artifact = dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
-        epoch: Epoch::new(42),
-        validator_set: &validator_set,
-        output: &output,
-        is_full_dkg: false,
-        dkg_cycle: 41,
-        freeze_height: 10,
-        planned_activation_height: 20,
-        vrf_material_version: 41,
-        is_validator_set_change: true,
-        tee_reshare_registrations: Vec::new(),
-        tee_expired_target_exclusions: Vec::new(),
-    })
-    .unwrap();
-
-    assert_eq!(next_live_reshare_round(&artifact), 42);
 }
 
 #[test]

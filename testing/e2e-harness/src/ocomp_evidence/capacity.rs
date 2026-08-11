@@ -107,21 +107,21 @@ struct CapacityPublicObservationV1 {
     q_forming_transaction_hash: B256,
     q_forming_block_number: u64,
     q_forming_block_hash: B256,
-    #[serde(default)]
+    #[serde(default, rename = "q_forming_receipt_success")]
     _q_forming_receipt_success: Option<bool>,
-    #[serde(default)]
+    #[serde(default, rename = "q_forming_receipt_sha256")]
     _q_forming_receipt_sha256: Option<String>,
-    #[serde(default)]
+    #[serde(default, rename = "q_forming_validator_receipt_sha256")]
     _q_forming_validator_receipt_sha256: Option<Vec<String>>,
-    #[serde(default)]
+    #[serde(default, rename = "q_forming_state_root")]
     _q_forming_state_root: Option<B256>,
-    #[serde(default)]
+    #[serde(default, rename = "q_forming_ce_root")]
     _q_forming_ce_root: Option<B256>,
-    #[serde(default)]
+    #[serde(default, rename = "q_forming_validator_commitments")]
     _q_forming_validator_commitments: Option<Vec<crate::world::rpc::BlockCommitmentV1>>,
-    #[serde(default)]
+    #[serde(default, rename = "canonical_import_validator_count")]
     _canonical_import_validator_count: Option<u8>,
-    #[serde(default)]
+    #[serde(default, rename = "canonical_import_verified")]
     _canonical_import_verified: Option<bool>,
     finalized_block_number: u64,
     finalized_block_hash: B256,
@@ -579,6 +579,14 @@ mod tests {
                         "q_forming_transaction_hash": B256::repeat_byte(3),
                         "q_forming_block_number": 40,
                         "q_forming_block_hash": B256::repeat_byte(4),
+                        "q_forming_receipt_success": true,
+                        "q_forming_receipt_sha256": "11".repeat(32),
+                        "q_forming_validator_receipt_sha256": vec!["11".repeat(32); 4],
+                        "q_forming_state_root": B256::repeat_byte(12),
+                        "q_forming_ce_root": B256::repeat_byte(13),
+                        "q_forming_validator_commitments": [],
+                        "canonical_import_validator_count": 4,
+                        "canonical_import_verified": true,
                         "finalized_block_number": 42,
                         "finalized_block_hash": B256::repeat_byte(5),
                         "tribute_count": 257,

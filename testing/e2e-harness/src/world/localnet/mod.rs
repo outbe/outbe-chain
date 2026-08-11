@@ -33,7 +33,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use eyre::{bail, Result, WrapErr};
 
 use crate::internal::config::Config;
-use crate::internal::proc::{args, redact_args_for_log, ChildGuard, DockerImageId, EnclaveGuard};
+use crate::internal::proc::{
+    self, args, redact_args_for_log, ChildGuard, DockerImageId, EnclaveGuard,
+};
 use crate::internal::shell::Sh;
 
 /// Per-node execution cache for validators co-located by the devnet harness.
@@ -136,6 +138,25 @@ impl Localnet {
                 Ok(())
             }
         }
+    }
+
+    fn ensure_enclave_image_once_with<F>(&mut self, resolve: F) -> Result<()>
+    where
+        F: FnOnce() -> Result<DockerImageId>,
+    {
+        if self.enclave_image_id.is_some() {
+            return Ok(());
+        }
+        self.retain_enclave_image_id(resolve()?)
+    }
+
+    fn ensure_enclave_image_once(&mut self) -> Result<()> {
+        let repo = self.cfg.repo.clone();
+        let sudo = self.cfg.sudo;
+        let signing_key = self.cfg.dir.join("test-sgx-signing-key.pem");
+        self.ensure_enclave_image_once_with(|| {
+            proc::ensure_enclave_image(&repo, sudo, &signing_key)
+        })
     }
 
     pub(crate) fn enclave_image_id(&self) -> Option<&str> {

@@ -1,7 +1,8 @@
-use alloy_primitives::{address, keccak256, Address, B256, U256};
+use alloy_primitives::{address, keccak256, Address, U256};
 use alloy_sol_types::SolCall;
 use outbe_intex::SeriesId;
-use outbe_oracle::contract::OracleContract;
+use outbe_oracle::api::AddressPair;
+use outbe_oracle::schema::OracleContract;
 use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
@@ -675,33 +676,30 @@ fn qualify_series<'a>(
     f
 }
 
-fn setup_pair(oracle: &OracleContract) -> u32 {
-    let pair_hash = B256::repeat_byte(0x11);
-    let pair_id = 1u32;
-    oracle
-        .settlement_iso_to_pair
-        .write(&QUALIFIER_REFERENCE_ISO, pair_hash)
-        .unwrap();
-    oracle.pair_hash_to_id.write(&pair_hash, pair_id).unwrap();
+/// Registry index the fixtures register the qualifier pair at; the rate
+/// columns are keyed by it.
+const PAIR_ID: u32 = 1;
+
+fn setup_pair(oracle: &OracleContract) -> AddressPair {
+    let pair = outbe_oracle::api::AddressPair::new_coen_to(QUALIFIER_REFERENCE_ISO);
+    let pair_id = PAIR_ID;
+    oracle.pair_to_index.write(&pair, pair_id).unwrap();
     // Full registry entry so the production VWAP paths (calculate_vwaps
-    // iterating registered vote-target pairs) see the pair too.
+    // iterating registered vote-target pairs) see the pair too. `pair_at` reads
+    // the reverse column.
     oracle.pair_count.write(pair_id).unwrap();
-    oracle.pair_id_to_hash.write(&pair_id, pair_hash).unwrap();
-    oracle.vote_target.write(&pair_hash, true).unwrap();
-    pair_id
+    oracle.pair_by_index.write_pair(&pair_id, pair).unwrap();
+    oracle.vote_target.write(&pair, true).unwrap();
+    pair
 }
 
-fn set_vwap(oracle: &OracleContract, utc_day: u32, pair_id: u32, value: U256) {
-    oracle.utc_day_vwap_pair_count.write(&utc_day, 1).unwrap();
-    oracle
-        .utc_day_vwap_pair_id
-        .get_nested(&utc_day)
-        .write(&0, pair_id)
-        .unwrap();
+fn set_vwap(oracle: &OracleContract, utc_day: u32, pair: AddressPair, value: U256) {
+    // The value column is keyed by the pair's registry index.
+    let pair_id = oracle.pair_index_of(pair).unwrap();
     oracle
         .utc_day_vwap_value
         .get_nested(&utc_day)
-        .write(&0, value)
+        .write(&pair_id, value)
         .unwrap();
     // Mirror the begin-block hook: the watermark covers every seeded day.
     if oracle.utc_day_vwap_last_finalized.read().unwrap() < utc_day {
@@ -710,10 +708,10 @@ fn set_vwap(oracle: &OracleContract, utc_day: u32, pair_id: u32, value: U256) {
 }
 
 /// Set `days` consecutive closed UTC days ending at `latest` to `value`.
-fn fill_days(oracle: &OracleContract, latest: u32, pair_id: u32, days: u32, value: U256) {
+fn fill_days(oracle: &OracleContract, latest: u32, pair: AddressPair, days: u32, value: U256) {
     let mut d = latest;
     for _ in 0..days {
-        set_vwap(oracle, d, pair_id, value);
+        set_vwap(oracle, d, pair, value);
         d = previous_date_key(d);
     }
 }
@@ -751,18 +749,18 @@ fn try_call_marks_called_when_threshold_met() {
     with_factory(|s| {
         let mut f = qualify_series(&s, 7, sample(7));
         let oracle = OracleContract::new(s.clone());
-        let pair_id = setup_pair(&oracle);
+        let pair = setup_pair(&oracle);
         // All 30 window days above the trigger (threshold is 21).
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;
         let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
         let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
-        fill_days(&oracle, last_closed_day, pair_id, 30, breach);
+        fill_days(&oracle, last_closed_day, pair, 30, breach);
 
         assert!(called::try_call(
             &s,
             &mut f,
             &oracle,
-            &mut called::DayVwaps::new(pair_id),
+            &mut called::DayVwaps::new(oracle.pair_index_of(pair).unwrap()),
             sid(7),
             last_closed_day,
             scan_ts
@@ -785,7 +783,7 @@ fn try_call_skips_when_below_threshold() {
     with_factory(|s| {
         let mut f = qualify_series(&s, 7, sample(7));
         let oracle = OracleContract::new(s.clone());
-        let pair_id = setup_pair(&oracle);
+        let pair = setup_pair(&oracle);
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;
         let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
         let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
@@ -793,11 +791,11 @@ fn try_call_skips_when_below_threshold() {
                                                  // 20 breach days + 10 calm days; threshold is 21.
         let mut d = last_closed_day;
         for _ in 0..20 {
-            set_vwap(&oracle, d, pair_id, breach);
+            set_vwap(&oracle, d, pair, breach);
             d = previous_date_key(d);
         }
         for _ in 0..10 {
-            set_vwap(&oracle, d, pair_id, calm);
+            set_vwap(&oracle, d, pair, calm);
             d = previous_date_key(d);
         }
 
@@ -805,7 +803,7 @@ fn try_call_skips_when_below_threshold() {
             &s,
             &mut f,
             &oracle,
-            &mut called::DayVwaps::new(pair_id),
+            &mut called::DayVwaps::new(oracle.pair_index_of(pair).unwrap()),
             sid(7),
             last_closed_day,
             scan_ts
@@ -852,19 +850,19 @@ fn try_call_excludes_pre_issuance_days() {
         outbe_intex::api::mark_qualified(&s, sid(8)).unwrap();
         let mut f = IntexFactoryContract::new(s.clone());
         let oracle = OracleContract::new(s.clone());
-        let pair_id = setup_pair(&oracle);
+        let pair = setup_pair(&oracle);
         // Scan only ~23 days after issuance, but set all 30 window days as
         // breaches: the ~7 pre-issuance days must not count, so 23 < 27.
         let scan_ts = ISSUED_AT as u64 + 23 * DAY;
         let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
         let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
-        fill_days(&oracle, last_closed_day, pair_id, 30, breach);
+        fill_days(&oracle, last_closed_day, pair, 30, breach);
 
         assert!(!called::try_call(
             &s,
             &mut f,
             &oracle,
-            &mut called::DayVwaps::new(pair_id),
+            &mut called::DayVwaps::new(oracle.pair_index_of(pair).unwrap()),
             sid(8),
             last_closed_day,
             scan_ts
@@ -964,13 +962,13 @@ fn call_survives_router_failure() {
             .unwrap();
 
         let oracle = OracleContract::new(s.clone());
-        let pair_id = setup_pair(&oracle);
+        let pair = setup_pair(&oracle);
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;
         let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
         fill_days(
             &oracle,
             last_closed_day,
-            pair_id,
+            pair,
             30,
             U256::from(EXPECTED_TRIGGER) + U256::from(1),
         );
@@ -979,7 +977,7 @@ fn call_survives_router_failure() {
             &s,
             &mut f,
             &oracle,
-            &mut called::DayVwaps::new(pair_id),
+            &mut called::DayVwaps::new(oracle.pair_index_of(pair).unwrap()),
             sid(7),
             last_closed_day,
             scan_ts
@@ -1005,14 +1003,13 @@ fn scan_and_qualify_promotes_aged_series() {
         runtime::issue(&s, sample(7)).unwrap();
         // Qualifier pair live rate above the floor.
         let oracle = OracleContract::new(s.clone());
-        let pair_hash = B256::repeat_byte(0x11);
-        oracle
-            .settlement_iso_to_pair
-            .write(&QUALIFIER_REFERENCE_ISO, pair_hash)
-            .unwrap();
+        let pair = outbe_oracle::api::AddressPair::new_coen_to(QUALIFIER_REFERENCE_ISO);
+        // The ISO resolves through the pair registry, so the pair must exist
+        // and the rate columns are keyed by its index.
+        oracle.pair_to_index.write(&pair, PAIR_ID).unwrap();
         oracle
             .exchange_rate
-            .write(&pair_hash, U256::from(EXPECTED_FLOOR) + U256::from(1))
+            .write(&PAIR_ID, U256::from(EXPECTED_FLOOR) + U256::from(1))
             .unwrap();
 
         let mature_ts = ISSUED_AT as u64 + 21 * DAY + 1;
@@ -1038,11 +1035,11 @@ fn scan_and_call_force_calls_breached_series() {
     with_factory(|s| {
         let _f = qualify_series(&s, 7, sample(7));
         let oracle = OracleContract::new(s.clone());
-        let pair_id = setup_pair(&oracle);
+        let pair = setup_pair(&oracle);
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;
         let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
         let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
-        fill_days(&oracle, last_closed_day, pair_id, 30, breach);
+        fill_days(&oracle, last_closed_day, pair, 30, breach);
 
         let ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID),
@@ -1071,7 +1068,7 @@ fn scan_and_call_reads_daily_vwap_at_midnight() {
     with_factory(|s| {
         let _f = qualify_series(&s, 7, sample(7));
         let mut oracle = OracleContract::new(s.clone());
-        let pair_id = setup_pair(&oracle);
+        setup_pair(&oracle);
         // Exact midnight UTC, well past the qualification period.
         let scan_ts = (ISSUED_AT as u64 / DAY + 60) * DAY;
         let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
@@ -1087,7 +1084,14 @@ fn scan_and_call_reads_daily_vwap_at_midnight() {
         for day in days {
             let noon = date_key_to_utc_timestamp(day) + DAY / 2;
             oracle
-                .write_snapshot(noon, &[(pair_id, breach, U256::from(1))])
+                .write_snapshot(
+                    noon,
+                    &[(
+                        outbe_oracle::api::AddressPair::new_coen_to(QUALIFIER_REFERENCE_ISO),
+                        breach,
+                        U256::from(1),
+                    )],
+                )
                 .unwrap();
             oracle.finalize_utc_day_vwap(day).unwrap();
         }
@@ -1121,13 +1125,10 @@ fn scan_does_not_halt_on_overflow_rate() {
     with_factory(|s| {
         runtime::issue(&s, sample(7)).unwrap();
         let oracle = OracleContract::new(s.clone());
-        let pair_hash = B256::repeat_byte(0x11);
-        oracle
-            .settlement_iso_to_pair
-            .write(&QUALIFIER_REFERENCE_ISO, pair_hash)
-            .unwrap();
+        let pair = outbe_oracle::api::AddressPair::new_coen_to(QUALIFIER_REFERENCE_ISO);
+        oracle.pair_to_index.write(&pair, PAIR_ID).unwrap();
         // Out-of-range rate: price_to_bin overflows.
-        oracle.exchange_rate.write(&pair_hash, U256::MAX).unwrap();
+        oracle.exchange_rate.write(&PAIR_ID, U256::MAX).unwrap();
 
         let mature_ts = ISSUED_AT as u64 + 21 * DAY + 1;
         let ctx = BlockRuntimeContext::new(
@@ -1157,14 +1158,13 @@ fn scan_isolates_bad_series() {
             .unwrap();
 
         let oracle = OracleContract::new(s.clone());
-        let pair_hash = B256::repeat_byte(0x11);
-        oracle
-            .settlement_iso_to_pair
-            .write(&QUALIFIER_REFERENCE_ISO, pair_hash)
-            .unwrap();
+        let pair = outbe_oracle::api::AddressPair::new_coen_to(QUALIFIER_REFERENCE_ISO);
+        // The ISO resolves through the pair registry, so the pair must exist
+        // and the rate columns are keyed by its index.
+        oracle.pair_to_index.write(&pair, PAIR_ID).unwrap();
         oracle
             .exchange_rate
-            .write(&pair_hash, U256::from(EXPECTED_FLOOR) + U256::from(1))
+            .write(&PAIR_ID, U256::from(EXPECTED_FLOOR) + U256::from(1))
             .unwrap();
 
         let mature_ts = ISSUED_AT as u64 + 21 * DAY + 1;
@@ -1189,11 +1189,11 @@ fn call_scan_does_not_halt_on_overflow_vwap() {
     with_factory(|s| {
         let _f = qualify_series(&s, 7, sample(7));
         let oracle = OracleContract::new(s.clone());
-        let pair_id = setup_pair(&oracle);
+        let pair = setup_pair(&oracle);
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;
         let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
         // Out-of-range VWAP for the completed day: price_to_bin overflows.
-        fill_days(&oracle, last_closed_day, pair_id, 1, U256::MAX);
+        fill_days(&oracle, last_closed_day, pair, 1, U256::MAX);
 
         let ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID),
@@ -1215,15 +1215,14 @@ fn call_scan_does_not_halt_on_overflow_vwap() {
 fn scan_caps_work_per_block_and_resumes_via_cursor() {
     with_factory(|s| {
         let oracle = OracleContract::new(s.clone());
-        let pair_hash = B256::repeat_byte(0x11);
-        oracle
-            .settlement_iso_to_pair
-            .write(&QUALIFIER_REFERENCE_ISO, pair_hash)
-            .unwrap();
+        let pair = outbe_oracle::api::AddressPair::new_coen_to(QUALIFIER_REFERENCE_ISO);
+        // The ISO resolves through the pair registry, so the pair must exist
+        // and the rate columns are keyed by its index.
+        oracle.pair_to_index.write(&pair, PAIR_ID).unwrap();
         // Rate well above both floors so both bins are eligible.
         oracle
             .exchange_rate
-            .write(&pair_hash, U256::from(EXPECTED_FLOOR) * U256::from(1000))
+            .write(&PAIR_ID, U256::from(EXPECTED_FLOOR) * U256::from(1000))
             .unwrap();
 
         // Two distinct bins: the first holds exactly MAX_SERIES_PER_BLOCK entries, the second a few.

@@ -303,7 +303,7 @@ and independent implementations.
 
 For every logical price observation:
 
-1. map ISO code through `settlement_iso_to_pair` and `pair_hash_to_id`;
+1. map ISO code through `coen_iso_pair` and `pair_to_index`;
 2. reject an unregistered/zero pair ID;
 3. read the WWD VWAP if present, otherwise use zero;
 4. evaluate every applicable S-curve record for that pair at WWD UTC day;
@@ -352,7 +352,7 @@ The request phase applies the part known before Lysis:
 
 - GREEN: dispatch one Desis brief with supply `auction_base`;
 - RED: dispatch no brief and credit `auction_base` to carry-over;
-- entry price is the last closed UTC-day `COEN/0xUSD` VWAP selected at request
+- entry price is the last closed UTC-day `COEN/840` VWAP selected at request
   logical time, falling back to the frozen Metadosis `current_vwap`;
 - anchor/time is request logical time.
 

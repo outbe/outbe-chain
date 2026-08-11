@@ -395,7 +395,7 @@ mod tests {
         let providers: Vec<Box<dyn Provider>> = vec![Box::new(MockProvider::new())];
         let config = test_config(vec![CurrencyPairConfig {
             base: "ETH".into(),
-            quote: "0xUSD".into(),
+            quote: "840".into(),
             chain_denom: None,
             providers: vec!["mock".into()],
         }]);
@@ -439,7 +439,7 @@ mod tests {
                 let mut m = HashMap::new();
                 for (base, quote) in pairs {
                     let key = format!("{base}/{quote}");
-                    if key == "ETH/0xUSD" {
+                    if key == "ETH/840" {
                         m.insert(
                             key,
                             TickerPrice {
@@ -459,7 +459,7 @@ mod tests {
         let providers: Vec<Box<dyn Provider>> = vec![Box::new(TickerOnlyProvider)];
         let config = test_config(vec![CurrencyPairConfig {
             base: "ETH".into(),
-            quote: "0xUSD".into(),
+            quote: "840".into(),
             chain_denom: None,
             providers: vec!["ticker_only".into()],
         }]);
@@ -497,8 +497,8 @@ mod tests {
                 for (base, quote) in pairs {
                     let key = format!("{base}/{quote}");
                     let price = match key.as_str() {
-                        "COEN/0xUSD" => self.coen_price,
-                        "ETH/0xUSD" => self.eth_price,
+                        "COEN/840" => self.coen_price,
+                        "ETH/840" => self.eth_price,
                         _ => continue,
                     };
                     prices.insert(
@@ -528,13 +528,13 @@ mod tests {
         let config = test_config(vec![
             CurrencyPairConfig {
                 base: "COEN".into(),
-                quote: "0xUSD".into(),
+                quote: "840".into(),
                 chain_denom: None,
                 providers: vec!["provider_a".into()],
             },
             CurrencyPairConfig {
                 base: "ETH".into(),
-                quote: "0xUSD".into(),
+                quote: "840".into(),
                 chain_denom: None,
                 providers: vec!["provider_b".into()],
             },
@@ -548,8 +548,8 @@ mod tests {
         let coen_price = coen.price.to::<u128>() as f64 / SCALE_1E18_U128 as f64;
         let eth_price = eth.price.to::<u128>() as f64 / SCALE_1E18_U128 as f64;
 
-        assert_eq!(coen.quote, "0xUSD");
-        assert_eq!(eth.quote, "0xUSD");
+        assert_eq!(coen.quote, "840");
+        assert_eq!(eth.quote, "840");
         assert!(
             (coen_price - 1.0).abs() < f64::EPSILON,
             "COEN used the wrong provider price: {coen_price}"

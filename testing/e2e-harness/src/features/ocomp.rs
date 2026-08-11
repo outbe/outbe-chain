@@ -22,15 +22,10 @@ use outbe_ocomp_protocol::{
     vote::ResultVoteV1,
 };
 
-use crate::features::common::{
-    bootstrap_final_ocomp_localnet, bootstrap_localnet, start_bootstrapped_localnet,
-};
+use crate::features::common::{bootstrap_localnet, start_bootstrapped_localnet};
 use crate::internal::eth;
 use crate::world::localnet::StartOpts;
-use crate::world::ocomp::{
-    OcompForkMismatchEvidenceV1, OcompForkRestartEvidenceV1, OcompMeasurementForkV1,
-    OcompProcessFault, OcompProcessRole,
-};
+use crate::world::ocomp::{OcompMeasurementForkV1, OcompProcessFault, OcompProcessRole};
 use crate::world::ocomp::{
     OCOMP_CAPACITY_OFFERING_AFTER_GENESIS_SECS, OCOMP_DYNAMIC_DKG_PREPARE_WINDOW_BLOCKS,
     OCOMP_DYNAMIC_VOTE_WINDOW_BLOCKS, OCOMP_TEST_EPOCH_LENGTH_BLOCKS,
@@ -42,11 +37,12 @@ use crate::world::state::{
 use crate::world::World;
 
 const OCOMP_CAPACITY_TRIBUTE_COUNT: usize = 257;
+const OCOMP_CAPACITY_COMPLETION_TIMEOUT_SECS: u64 = 300;
 // The capacity scenario proves the protocol path and the 256+1 shard boundary,
 // not Tribute burst throughput. Keep at most two offers in flight until
 // outbe-chain-08n.6 gives blocking TEE work a production-safe block budget.
 const OCOMP_CAPACITY_SUBMISSION_CONCURRENCY: usize = 2;
-// The capacity lane proves the second 256-Tribute work shard using 33
+// The capacity lane proves the second 256-Tribute work shard using 129
 // gas-bounded submission rounds. Keep the logical genesis window short, while
 // leaving enough room for debug-build block production before controlled time
 // advances the same chain to the next phase.
@@ -59,30 +55,55 @@ const METADOSIS_CAPACITY_OFFERING_SECONDS: u64 = 3_600;
 // never seed the receipt directly in the harness.
 const METADOSIS_FRESH_FORMING_SECONDS: u64 = 38 * 3_600 + 60;
 const OCOMP_TRACE_FOLLOWER_SLOT: usize = 14;
-// The immutable Final fixture closes its public offering 360 logical seconds
-// after genesis. A one-Tribute scenario reaches this step much sooner than the
-// 257-Tribute capacity scenario, so its bounded wait must include the remaining
-// offering interval plus finalization/request publication slack.
-const OCOMP_FINAL_JOB_REQUEST_TIMEOUT_SECS: u64 = 300;
+// A one-Tribute scenario can reach request publication well before its
+// genesis-bound offering window closes, so the bounded wait includes the
+// remaining phase interval plus finalization/request publication slack.
+const OCOMP_JOB_REQUEST_TIMEOUT_SECS: u64 = 300;
 // A WWD begins at 10:00 UTC on the previous civil date (UTC+14 midnight), while
 // the block-1 bootstrap derives its first key from the raw UTC civil date.
 // Starting 15 hours into the WWD places block 1 at 01:00 UTC on that same key:
 // both date conventions select the fixture WWD and it remains inside FORMING.
 const METADOSIS_INITIAL_WWD_ELAPSED_SECS: u64 = 15 * 3_600;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BoundedCompletionDecision {
+    Complete,
+    Continue,
+    TimedOut,
+}
+
+fn bounded_completion_decision(
+    all_complete: bool,
+    now: Instant,
+    deadline: Instant,
+) -> BoundedCompletionDecision {
+    if all_complete {
+        BoundedCompletionDecision::Complete
+    } else if now >= deadline {
+        BoundedCompletionDecision::TimedOut
+    } else {
+        BoundedCompletionDecision::Continue
+    }
+}
+
 #[given("a fresh four-validator OCOMP measurement localnet")]
 fn fresh_ocomp_measurement_localnet(world: &mut World) {
-    start_ocomp_measurement_localnet(world, None);
+    start_ocomp_measurement_localnet(world, None, None);
 }
 
 #[given("a fresh four-validator OCOMP public measurement localnet")]
 fn fresh_ocomp_public_measurement_localnet(world: &mut World) {
-    start_ocomp_measurement_localnet(world, Some(0));
+    start_ocomp_measurement_localnet(world, Some(0), None);
+}
+
+#[given("a fresh four-validator OCOMP short-window public measurement localnet")]
+fn fresh_ocomp_short_window_public_measurement_localnet(world: &mut World) {
+    start_ocomp_measurement_localnet(world, Some(0), Some(6));
 }
 
 #[given("a fresh four-validator OCOMP public capacity localnet")]
 fn fresh_ocomp_public_capacity_localnet(world: &mut World) {
-    start_ocomp_measurement_localnet(world, Some(OCOMP_CAPACITY_TRIBUTE_COUNT));
+    start_ocomp_measurement_localnet(world, Some(OCOMP_CAPACITY_TRIBUTE_COUNT), None);
 }
 
 #[given("a fresh four-validator OCOMP failure-recovery localnet")]
@@ -233,63 +254,20 @@ fn fresh_metadosis_capacity_localnet_at_forming(world: &mut World) {
     wait_for_finalized_ocomp_activation(world);
 }
 
-#[given("the canonical four-validator OCOMP Final devnet")]
-fn canonical_ocomp_final_devnet(world: &mut World) {
-    start_canonical_ocomp_final_devnet(world, true, false);
-}
-
-#[given("the canonical four-validator OCOMP Final devnet before H")]
-fn canonical_ocomp_final_devnet_before_h(world: &mut World) {
-    start_canonical_ocomp_final_devnet(world, false, true);
-}
-
-fn start_canonical_ocomp_final_devnet(
-    world: &mut World,
-    wait_for_activation: bool,
-    activate_workers: bool,
-) {
-    bootstrap_final_ocomp_localnet(world, 6);
-    world.state.ocomp_capacity_tribute_private_keys = world
-        .ocomp
-        .final_capacity_tribute_private_keys(OCOMP_CAPACITY_TRIBUTE_COUNT)
-        .expect("derive funded canonical capacity owners");
-    let now_secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock is after unix epoch")
-        .as_secs();
-    let mut start_opts = StartOpts {
-        voting_window: Some(6),
-        unix_time_offset_secs: Some(
-            world
-                .localnet
-                .ocomp_final_clock_offset(now_secs)
-                .expect("derive canonical OCOMP logical clock"),
-        ),
-        genesis_timestamp_pre_shifted: true,
-    };
-    let prepared = world
-        .ocomp
-        .prepare_final_fork_install()
-        .expect("load canonical OCOMP Final install");
-    launch_prepared_ocomp(world, &mut start_opts, &prepared, activate_workers);
-    if wait_for_activation {
-        wait_for_finalized_ocomp_activation(world);
-    }
-}
-
 fn start_ocomp_measurement_localnet(
     world: &mut World,
     public_capacity_tribute_count: Option<usize>,
+    vote_window_blocks: Option<u64>,
 ) {
     let shorten_public_day = public_capacity_tribute_count.is_some();
-    bootstrap_localnet(
-        world,
-        6,
-        &[(
-            "TESTNET_EPOCH_LENGTH_BLOCKS",
-            OCOMP_TEST_EPOCH_LENGTH_BLOCKS.to_string(),
-        )],
-    );
+    let mut tuning = vec![(
+        "TESTNET_EPOCH_LENGTH_BLOCKS",
+        OCOMP_TEST_EPOCH_LENGTH_BLOCKS.to_string(),
+    )];
+    if let Some(window) = vote_window_blocks {
+        tuning.push(("TESTNET_OCOMP_VOTE_WINDOW_BLOCKS", window.to_string()));
+    }
+    bootstrap_localnet(world, 6, &tuning);
     let mut start_opts = if shorten_public_day {
         let now_secs = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -331,6 +309,9 @@ fn start_ocomp_measurement_localnet(
             .prepare_measurement_fork_install()
             .expect("publish the immutable measurement fork before node launch"),
     };
+    if let Some(worldwide_day) = measurement_fork.public_worldwide_day {
+        world.state.wwd = Some(worldwide_day.to_string());
+    }
     world
         .localnet
         .bind_tee_genesis()
@@ -653,7 +634,7 @@ fn job_b_uses_the_new_snapshot_while_job_a_keeps_the_old_one(world: &mut World) 
     let mut ports = world.validators.committee_ports();
     ports.push(world.validators.http_port(world.validators.joiner_index()));
     let primary = world.validators.primary_port();
-    let deadline = Instant::now() + Duration::from_secs(OCOMP_FINAL_JOB_REQUEST_TIMEOUT_SECS);
+    let deadline = Instant::now() + Duration::from_secs(OCOMP_JOB_REQUEST_TIMEOUT_SECS);
     let mut last_observation = "no finalized job B request observed".to_owned();
 
     let (
@@ -1577,8 +1558,6 @@ fn fresh_capacity_day_advances_to_offering(world: &mut World) {
 
 #[when("the committee logical clock reaches the fresh capacity processing time")]
 fn committee_clock_reaches_fresh_capacity_processing(world: &mut World) {
-    const SECONDS_PER_DAY: u64 = 86_400;
-
     let scheduled_process_time = world
         .state
         .metadosis_fresh_lifecycle_observation
@@ -1589,13 +1568,19 @@ fn committee_clock_reaches_fresh_capacity_processing(world: &mut World) {
     // far as READY. Production settlement deliberately belongs to the daily
     // Cycle handler, so cross the first UTC midnight after the processing time
     // before expecting the READY day to become an OCOMP job.
-    let target = scheduled_process_time
+    let target = first_daily_cycle_after(scheduled_process_time);
+    advance_fresh_metadosis_time(world, target, &[(0, 1), (1, 2), (2, 3), (3, 4)], 8);
+}
+
+fn first_daily_cycle_after(timestamp: u64) -> u64 {
+    const SECONDS_PER_DAY: u64 = 86_400;
+
+    timestamp
         .checked_div(SECONDS_PER_DAY)
         .and_then(|day| day.checked_add(1))
         .and_then(|day| day.checked_mul(SECONDS_PER_DAY))
         .and_then(|midnight| midnight.checked_add(1))
-        .expect("first UTC daily Cycle after fresh Metadosis processing time");
-    advance_fresh_metadosis_time(world, target, &[(0, 1), (1, 2), (2, 3), (3, 4)], 8);
+        .expect("first UTC daily Cycle after Metadosis processing time")
 }
 
 #[then("the same fresh capacity day advances through WAITING and READY")]
@@ -1652,29 +1637,12 @@ fn advance_fresh_metadosis_time(
     expected_edges: &[(u8, u8)],
     expected_persisted_status: u8,
 ) {
-    let before_restart = finalized_points_at_common_height(world, 1);
-    let before_height = before_restart[0].block_number;
-    let offset = logical_time_offset(requested_timestamp, unix_time_secs());
-    stop_ocomp_roles_before_committee_time_change(world);
-    world
-        .localnet
-        .restart_committee_at_unix_time_offset(offset)
-        .unwrap_or_else(|error| {
-            panic!(
-                "restart the complete committee at logical timestamp {requested_timestamp}: {error:#}"
-            )
-        });
-    // The initial production-shaped launch starts external OCOMP roles only
-    // after node RPC/TEE bootstrap. Preserve that ordering on a controlled-time
-    // restart and require every validator, not only the primary, to import one
-    // common finalized block before an exporter opens its projection.
-    let _ = finalized_points_at_common_height(world, before_height.saturating_add(1));
-    restart_ocomp_roles_after_committee_time_change(world);
-
+    let (offset, before_restart, minimum_height) =
+        restart_committee_at_logical_time(world, requested_timestamp);
     let worldwide_day = fresh_metadosis_wwd(world);
     let deadline = Instant::now() + Duration::from_secs(240);
     let (after_restart, changes) = loop {
-        let points = finalized_points_at_common_height(world, before_height.saturating_add(1));
+        let points = finalized_points_at_common_height(world, minimum_height);
         let common_height = points[0].block_number;
         let states = world
             .validators
@@ -1766,6 +1734,32 @@ fn advance_fresh_metadosis_time(
     } else {
         lifecycle.ready_validator_count = 4;
     }
+}
+
+fn restart_committee_at_logical_time(
+    world: &mut World,
+    requested_timestamp: u64,
+) -> (i64, Vec<MetadosisFinalizedPointV1>, u64) {
+    let before_restart = finalized_points_at_common_height(world, 1);
+    let before_height = before_restart[0].block_number;
+    let offset = logical_time_offset(requested_timestamp, unix_time_secs());
+    stop_ocomp_roles_before_committee_time_change(world);
+    world
+        .localnet
+        .restart_committee_at_unix_time_offset(offset)
+        .unwrap_or_else(|error| {
+            panic!(
+                "restart the complete committee at logical timestamp {requested_timestamp}: {error:#}"
+            )
+        });
+    // The initial production-shaped launch starts external OCOMP roles only
+    // after node RPC/TEE bootstrap. Preserve that ordering on a controlled-time
+    // restart and require every validator, not only the primary, to import one
+    // common finalized block before an exporter opens its projection.
+    let minimum_height = before_height.saturating_add(1);
+    let _ = finalized_points_at_common_height(world, minimum_height);
+    restart_ocomp_roles_after_committee_time_change(world);
+    (offset, before_restart, minimum_height)
 }
 
 fn stop_ocomp_roles_before_committee_time_change(world: &mut World) {
@@ -1861,6 +1855,15 @@ fn finalized_points_at_common_height(
         );
         sleep(Duration::from_millis(250));
     }
+}
+
+fn post_restart_convergence_target(finalized_heights: impl IntoIterator<Item = u64>) -> u64 {
+    finalized_heights
+        .into_iter()
+        .max()
+        .expect("restarted validator cohort is non-empty")
+        .checked_add(1)
+        .expect("post-restart convergence height does not overflow")
 }
 
 fn common_block_hash(world: &World, height: u64) -> B256 {
@@ -2063,22 +2066,35 @@ fn all_validators_observe_257_public_tributes(world: &mut World) {
         .expect("capacity WorldwideDay")
         .parse::<u32>()
         .expect("numeric capacity WorldwideDay");
-    for port in world.validators.committee_ports() {
-        let deadline = Instant::now() + Duration::from_secs(60);
-        loop {
-            if let Some(ids) = world.rpc.tributes_by_day(port, worldwide_day) {
-                let distinct = ids.iter().collect::<std::collections::BTreeSet<_>>();
-                if ids.len() == OCOMP_CAPACITY_TRIBUTE_COUNT
-                    && distinct.len() == OCOMP_CAPACITY_TRIBUTE_COUNT
-                {
-                    break;
-                }
-            }
-            assert!(
-                Instant::now() < deadline,
-                "validator on port {port} did not expose 257 distinct public Tributes"
-            );
-            sleep(Duration::from_millis(250));
+    let committee_ports = world.validators.committee_ports();
+    let completion_deadline =
+        Instant::now() + Duration::from_secs(OCOMP_CAPACITY_COMPLETION_TIMEOUT_SECS);
+    loop {
+        let observations = committee_ports
+            .iter()
+            .map(|port| {
+                let ids = world.rpc.tributes_by_day(*port, worldwide_day);
+                let count = ids.as_ref().map_or(0, Vec::len);
+                let distinct = ids.as_ref().map_or(0, |ids| {
+                    ids.iter().collect::<std::collections::BTreeSet<_>>().len()
+                });
+                (*port, world.rpc.head(*port), count, distinct)
+            })
+            .collect::<Vec<_>>();
+        let all_complete = observations.iter().all(|(_, _, count, distinct)| {
+            *count == OCOMP_CAPACITY_TRIBUTE_COUNT && *distinct == OCOMP_CAPACITY_TRIBUTE_COUNT
+        });
+        match bounded_completion_decision(
+            all_complete,
+            Instant::now(),
+            completion_deadline,
+        ) {
+            BoundedCompletionDecision::Complete => break,
+            BoundedCompletionDecision::Continue => sleep(Duration::from_millis(250)),
+            BoundedCompletionDecision::TimedOut => panic!(
+                "committee did not expose 257 distinct public Tributes within the shared {}s completion window: {observations:?}",
+                OCOMP_CAPACITY_COMPLETION_TIMEOUT_SECS
+            ),
         }
     }
 
@@ -2101,6 +2117,45 @@ fn all_validators_observe_257_public_tributes(world: &mut World) {
     }
 }
 
+#[when("the committee logical clock reaches the public capacity processing time")]
+fn committee_clock_reaches_public_capacity_processing(world: &mut World) {
+    let worldwide_day = world
+        .state
+        .wwd
+        .as_deref()
+        .expect("capacity WorldwideDay")
+        .parse::<u32>()
+        .expect("numeric capacity WorldwideDay");
+    let finalized_points = finalized_points_at_common_height(world, 1);
+    let common_height = finalized_points[0].block_number;
+    let states = world
+        .validators
+        .committee_ports()
+        .into_iter()
+        .map(|port| {
+            world
+                .rpc
+                .metadosis_wwd_state_at(port, worldwide_day, common_height)
+        })
+        .collect::<Vec<_>>();
+    let state = states[0]
+        .clone()
+        .expect("capacity WorldwideDay exists at the common finalized height");
+    assert!(
+        states
+            .iter()
+            .all(|candidate| candidate.as_ref() == Some(&state)),
+        "validators expose different capacity WorldwideDay state before the controlled-time transition"
+    );
+    assert_eq!(
+        state.status, 2,
+        "capacity WorldwideDay must remain in OFFERING until all 257 receipts and projections are observed"
+    );
+
+    let target = first_daily_cycle_after(state.scheduled_process_time);
+    let _ = restart_committee_at_logical_time(world, target);
+}
+
 #[then("Metadosis creates one finalized JobIntent from that public Tribute")]
 fn metadosis_creates_finalized_job_intent(world: &mut World) {
     let expected_wwd = world
@@ -2110,7 +2165,7 @@ fn metadosis_creates_finalized_job_intent(world: &mut World) {
         .expect("measurement WorldwideDay")
         .parse::<u32>()
         .expect("numeric measurement WorldwideDay");
-    let deadline = Instant::now() + Duration::from_secs(OCOMP_FINAL_JOB_REQUEST_TIMEOUT_SECS);
+    let deadline = Instant::now() + Duration::from_secs(OCOMP_JOB_REQUEST_TIMEOUT_SECS);
     let activation_height = world
         .state
         .ocomp_activation_height
@@ -2191,18 +2246,21 @@ fn production_ocomp_domains_process_job_intent(world: &mut World) {
          {generation_exists:?}"
     );
     let primary = world.validators.primary_port();
-    world.state.ocomp_validator_balances_before = (0..4)
+    // ResultVoteV1 carriers are signed by the role-scoped OCOMP delegates,
+    // not by the validator owner EOAs.  Probe those exact sender accounts so
+    // unrelated owner-side protocol credits cannot masquerade as carrier fees.
+    world.state.ocomp_validator_balances_before = (0..world.validators.size())
         .map(|validator_index| {
-            let key = world
-                .validators
-                .get(validator_index)
-                .evm_key()
-                .expect("read validator EVM key");
-            let address = eth::address_of(&key).expect("derive validator EVM address");
+            let validator_index = u8::try_from(validator_index)
+                .expect("OCOMP validator index fits the wire representation");
+            let address = world
+                .ocomp
+                .ocomp_delegate_address(validator_index)
+                .expect("derive OCOMP delegate address");
             let balance = world
                 .rpc
                 .balance_on(primary, &format!("{address:#x}"))
-                .expect("read validator EVM balance before result votes");
+                .expect("read OCOMP delegate balance before result votes");
             (address, balance)
         })
         .collect();
@@ -2247,11 +2305,10 @@ fn validator_two_prepares_held_vote(world: &mut World) {
     };
     let vote = ResultVoteV1::decode_canonical(&vote_bytes, &poc_schema_limits())
         .expect("canonical public ResultVoteV1");
-    let validator = world.validators.get(VALIDATOR_INDEX);
-    let key = validator
-        .evm_key()
-        .expect("read validator-2 EVM key for address derivation");
-    let address = eth::address_of(&key).expect("derive validator-2 EVM address");
+    let address = world
+        .ocomp
+        .ocomp_delegate_address(VALIDATOR_INDEX as u8)
+        .expect("derive validator-2 OCOMP delegate address");
     let nonce = world
         .rpc
         .canonical_nonce_on(primary, address)
@@ -2574,7 +2631,7 @@ fn quorum_applies_lysis_and_creates_nod_with_vote_count(
                     .expect("read validator balance after result votes");
                 assert_eq!(
                     after, *before,
-                    "validator {address:#x} paid for a ZeroFee result vote"
+                    "OCOMP delegate {address:#x} paid for a system-carrier result vote"
                 );
                 balances_after.push((*address, after));
             }
@@ -3199,7 +3256,7 @@ fn job_a_opens_on_the_historical_four_validator_snapshot(world: &mut World) {
         .state
         .ocomp_activation_height
         .expect("dynamic OCOMP activation height");
-    let deadline = Instant::now() + Duration::from_secs(OCOMP_FINAL_JOB_REQUEST_TIMEOUT_SECS);
+    let deadline = Instant::now() + Duration::from_secs(OCOMP_JOB_REQUEST_TIMEOUT_SECS);
 
     let (request, record) = loop {
         let requests = ports
@@ -3967,252 +4024,6 @@ fn validator_zero_worker_restarts(world: &mut World) {
     );
 }
 
-#[when("validator 0 restarts before, across, and after the OCOMP fork height")]
-fn validator_zero_restarts_across_fork(world: &mut World) {
-    const VALIDATOR_INDEX: usize = 0;
-    const GENERIC_PROTOCOL_BASELINE: u64 = 0;
-
-    let activation = world
-        .state
-        .ocomp_activation_height
-        .expect("prepared Final OCOMP activation height");
-    let primary = world.validators.http_port(VALIDATOR_INDEX);
-    let witness = world.validators.http_port(1);
-    let pre_fork_restart_from_height = world.rpc.head(primary).expect("validator-0 head");
-    assert!(
-        pre_fork_restart_from_height + 4 < activation,
-        "restart scenario started too close to H: head={pre_fork_restart_from_height}, H={activation}"
-    );
-
-    world
-        .localnet
-        .restart_validator_and_enclave(VALIDATOR_INDEX)
-        .expect("restart validator-0 before H");
-    let pre_fork_rejoined_height = world
-        .rpc
-        .wait_block(primary, pre_fork_restart_from_height.saturating_add(1), 20)
-        .expect("validator-0 rejoins before H");
-    assert!(
-        pre_fork_rejoined_height < activation,
-        "pre-fork restart rejoined after H: head={pre_fork_rejoined_height}, H={activation}"
-    );
-
-    let deadline = Instant::now() + Duration::from_secs(90);
-    let down_across_fork_from_height = loop {
-        let head = world.rpc.head(witness).expect("witness head before H");
-        if head >= activation.saturating_sub(2) {
-            assert!(
-                head < activation,
-                "missed the pre-H shutdown window: head={head}, H={activation}"
-            );
-            break head;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "witness did not approach OCOMP activation height {activation}"
-        );
-        sleep(Duration::from_millis(100));
-    };
-
-    world
-        .localnet
-        .kill_validator(VALIDATOR_INDEX)
-        .expect("keep validator-0 down across H");
-    assert!(
-        world
-            .rpc
-            .wait_finalized_at_least(witness, activation.saturating_add(1), 60),
-        "three live validators did not finalize through H while validator-0 was down"
-    );
-    let finalized_while_down_height = world.rpc.finalized(witness).expect("witness finality");
-
-    world
-        .localnet
-        .restart()
-        .expect("restart validator-0 after the network finalized H");
-    let replayed_through_height = world
-        .rpc
-        .wait_block(primary, finalized_while_down_height, 60)
-        .expect("validator-0 replays through the finalized activation block");
-    assert_eq!(
-        world.rpc.active_version_on(primary),
-        Some(GENERIC_PROTOCOL_BASELINE),
-        "OCOMP activation must not change the generic protocol version"
-    );
-    assert_eq!(
-        world.rpc.active_version_on(witness),
-        Some(GENERIC_PROTOCOL_BASELINE),
-        "live committee changed the generic protocol version at OCOMP activation"
-    );
-
-    let post_fork_restart_from_height = world.rpc.head(primary).expect("post-H validator-0 head");
-    assert!(post_fork_restart_from_height >= activation);
-    world
-        .localnet
-        .restart_validator_and_enclave(VALIDATOR_INDEX)
-        .expect("restart validator-0 after H");
-    let post_fork_rejoined_height = world
-        .rpc
-        .wait_block(primary, post_fork_restart_from_height.saturating_add(1), 30)
-        .expect("validator-0 rejoins after H");
-    assert_eq!(
-        world.rpc.active_version_on(primary),
-        Some(GENERIC_PROTOCOL_BASELINE),
-        "post-H restart changed the generic protocol version"
-    );
-    world
-        .ocomp
-        .ensure_validator_roles_alive()
-        .expect("node-facing OCOMP roles survive validator restarts");
-    world
-        .ocomp
-        .record_fork_restart_evidence(OcompForkRestartEvidenceV1 {
-            validator_index: VALIDATOR_INDEX as u8,
-            activation_height: activation,
-            pre_fork_restart_from_height,
-            pre_fork_rejoined_height,
-            down_across_fork_from_height,
-            finalized_while_down_height,
-            replayed_through_height,
-            post_fork_restart_from_height,
-            post_fork_rejoined_height,
-        })
-        .expect("retain validated fork restart evidence");
-}
-
-#[then("the OCOMP evidence records successful H-1, H, and H+1 recovery")]
-fn fork_restart_evidence_is_closed(world: &mut World) {
-    let snapshot = world
-        .ocomp
-        .evidence_snapshot()
-        .expect("build OCOMP restart evidence snapshot");
-    snapshot
-        .validate()
-        .expect("validate OCOMP restart evidence");
-    assert!(
-        snapshot.fork_restart.is_some(),
-        "restart scenario must retain exact fork-height observations"
-    );
-}
-
-#[when("validator 0 restarts with a different valid immutable OCOMP fork install")]
-fn validator_zero_restarts_with_mismatched_fork_install(world: &mut World) {
-    const VALIDATOR_INDEX: usize = 0;
-    const GENERIC_PROTOCOL_BASELINE: u64 = 0;
-
-    let primary = world.validators.http_port(VALIDATOR_INDEX);
-    let witness = world.validators.http_port(1);
-    let activation = world
-        .state
-        .ocomp_activation_height
-        .expect("prepared Final OCOMP activation height");
-    let canonical_head_before_restart = world.rpc.head(primary).expect("validator-0 head");
-    assert!(
-        canonical_head_before_restart < activation,
-        "fork mismatch must be installed before H"
-    );
-
-    let mismatched = world
-        .ocomp
-        .prepare_mismatched_fork_manifest(VALIDATOR_INDEX as u8)
-        .expect("create a valid same-genesis manifest with a distinct install");
-    world
-        .localnet
-        .restart_validator_with_chain_manifest(VALIDATOR_INDEX, mismatched.path.clone())
-        .expect("restart validator-0 with its mismatched immutable fork install");
-
-    assert!(
-        world
-            .rpc
-            .wait_finalized_at_least(witness, activation.saturating_add(1), 60,),
-        "the three canonical validators did not finalize through H"
-    );
-    let canonical_finalized_after_fork = world
-        .rpc
-        .finalized(witness)
-        .expect("canonical finality after H");
-    let mismatched_head_after_fork = world.rpc.head(primary).expect("mismatched validator head");
-    assert!(
-        mismatched_head_after_fork < activation,
-        "mismatched validator imported the canonical activation block"
-    );
-    let canonical_active_protocol_version = world
-        .rpc
-        .active_version_on(witness)
-        .expect("canonical active protocol version");
-    let mismatched_active_protocol_version = world
-        .rpc
-        .active_version_on(primary)
-        .expect("mismatched validator active protocol version");
-    assert_eq!(
-        canonical_active_protocol_version, GENERIC_PROTOCOL_BASELINE,
-        "canonical OCOMP activation changed the generic protocol version"
-    );
-    assert_eq!(
-        mismatched_active_protocol_version, GENERIC_PROTOCOL_BASELINE,
-        "mismatched OCOMP install changed the generic protocol version"
-    );
-
-    world
-        .ocomp
-        .record_fork_mismatch_evidence(OcompForkMismatchEvidenceV1 {
-            validator_index: VALIDATOR_INDEX as u8,
-            canonical_install_hash: format!("{:#x}", mismatched.canonical_install_hash),
-            mismatched_install_hash: format!("{:#x}", mismatched.mismatched_install_hash),
-            canonical_activation_height: mismatched.canonical_activation_height,
-            mismatched_activation_height: mismatched.mismatched_activation_height,
-            canonical_head_before_restart,
-            mismatched_head_after_fork,
-            canonical_finalized_after_fork,
-        })
-        .expect("retain validated fork mismatch evidence");
-}
-
-#[then("the canonical committee finalizes through H while the mismatched validator stays before H")]
-fn fork_mismatch_is_fail_closed(world: &mut World) {
-    let snapshot = world
-        .ocomp
-        .evidence_snapshot()
-        .expect("build OCOMP fork mismatch evidence snapshot");
-    snapshot
-        .validate()
-        .expect("validate OCOMP fork mismatch evidence");
-    assert!(
-        snapshot.fork_mismatch.is_some(),
-        "fork mismatch scenario must retain exact install and height observations"
-    );
-}
-
-#[when("validator 0 returns to the canonical OCOMP fork install")]
-fn validator_zero_returns_to_canonical_fork_install(world: &mut World) {
-    const VALIDATOR_INDEX: usize = 0;
-
-    let primary = world.validators.http_port(VALIDATOR_INDEX);
-    let witness = world.validators.http_port(1);
-    let target = world
-        .rpc
-        .finalized(witness)
-        .expect("canonical finality before restoring validator-0");
-    let canonical_manifest = world.ocomp.canonical_chain_manifest_path();
-    world
-        .localnet
-        .restart_validator_with_chain_manifest(VALIDATOR_INDEX, canonical_manifest)
-        .expect("restart validator-0 with the canonical immutable OCOMP install");
-    world
-        .rpc
-        .wait_block(primary, target, 60)
-        .expect("restored validator-0 replays the canonical OCOMP activation");
-    assert_eq!(
-        world.rpc.active_version_on(primary),
-        Some(0),
-        "restored OCOMP validator changed the generic protocol version"
-    );
-    world
-        .ocomp
-        .ensure_validator_roles_alive()
-        .expect("canonical OCOMP roles remain available after validator restoration");
-}
-
 #[when("validator 0 OCOMP supervisor is replaced by an incompatible peer")]
 fn replace_validator_zero_with_incompatible_supervisor(world: &mut World) {
     let primary = world.validators.primary_port();
@@ -4361,9 +4172,18 @@ fn restart_completed_network_and_ocomp_processes(world: &mut World) {
         );
     }
 
-    // One node becoming reachable is not enough: every exporter must open the
-    // same finalized projection after the whole committee has converged.
-    let _ = finalized_points_at_common_height(world, before.saturating_add(1));
+    // A shared historical floor is not enough: sequential restarts can leave
+    // peers at different live heads. Require one fresh canonical finalization
+    // beyond the most advanced peer observed after the complete cohort is back.
+    let convergence_target = post_restart_convergence_target(
+        world.validators.committee_ports().into_iter().map(|port| {
+            world
+                .rpc
+                .finalized(port)
+                .expect("finalized height after validator restart")
+        }),
+    );
+    let _ = finalized_points_at_common_height(world, convergence_target);
     restart_ocomp_roles_after_committee_time_change(world);
 }
 
@@ -4468,7 +4288,11 @@ fn late_follower_replays_ocomp_history(world: &mut World) {
         .expect("finalized activation before historical replay");
     world
         .localnet
-        .launch_follower("follower", OCOMP_TRACE_FOLLOWER_SLOT, 0, 0)
+        .provision_full_node_node_host(OCOMP_TRACE_FOLLOWER_SLOT)
+        .expect("provision late historical-replay FullNode NodeHost");
+    world
+        .localnet
+        .launch_dcap_full_node("follower", OCOMP_TRACE_FOLLOWER_SLOT, 0)
         .expect("launch late historical-replay follower");
     let follower_port = world.validators.http_port(OCOMP_TRACE_FOLLOWER_SLOT);
     assert!(
@@ -4509,7 +4333,7 @@ fn runtime_traces_cover_ocomp_execution_paths(world: &mut World) {
             .collect::<Vec<_>>();
         let follower_markers = world
             .localnet
-            .ocomp_runtime_trace_markers("follower")
+            .ocomp_runtime_trace_markers_at_validator_slot("follower", OCOMP_TRACE_FOLLOWER_SLOT)
             .expect("parse late follower OCOMP trace");
         let historical_request_observed = follower_markers.iter().any(|marker| {
             marker.kind == "terminal_request_committed"
@@ -4603,88 +4427,49 @@ fn runtime_traces_cover_ocomp_execution_paths(world: &mut World) {
     });
 }
 
-/// The `submitLysisResult` selector is publicly callable on any chain. While
-/// the OCOMP lifecycle is inactive it must behave as an ordinary reverting
-/// call — included with a failed receipt, never aborting payload building
-/// (the 2026-05-15 proposer-stall incident class).
-#[when("an operator submits a Lysis result vote before OCOMP activation")]
-fn operator_submits_lysis_vote_before_activation(world: &mut World) {
-    let primary = world.validators.primary_port();
-    let validator_key = world
-        .validators
-        .get(0)
-        .evm_key()
-        .expect("read validator-0 EVM key");
-    let tx_hash = world
-        .rpc
-        .submit_ocomp_result_vote_bytes(primary, &validator_key, vec![0_u8; 8])
-        .expect("a pre-activation Lysis vote must be includable, not stall the proposer");
-    let receipt = world
-        .rpc
-        .transaction_receipt(&tx_hash, primary)
-        .expect("pre-activation Lysis vote receipt");
-    assert_eq!(
-        receipt.get("status").and_then(serde_json::Value::as_str),
-        Some("0x0"),
-        "a pre-activation Lysis vote must revert, not succeed"
-    );
-    let inclusion_block = world
-        .rpc
-        .receipt_block_number(&tx_hash, primary)
-        .expect("pre-activation Lysis vote inclusion block");
-    world.state.metadosis_inactive_lysis_vote_hash = Some(tx_hash);
-    world.state.metadosis_inactive_lysis_vote_block = Some(inclusion_block);
-}
-
-#[then("the vote transaction reverts with the lifecycle-inactive code and finalization continues")]
-fn lysis_vote_reverts_with_lifecycle_inactive_code(world: &mut World) {
-    let primary = world.validators.primary_port();
-    let inclusion_block = world
-        .state
-        .metadosis_inactive_lysis_vote_block
-        .expect("pre-activation Lysis vote inclusion block");
-
-    // Receipts omit revert data; replay the identical calldata through
-    // `eth_call` to observe the machine-readable rejection bytes.
-    let calldata = {
-        use alloy_sol_types::SolCall as _;
-        crate::internal::eth::IMetadosis::submitLysisResultCall {
-            resultVoteV1: alloy_primitives::Bytes::from(vec![0_u8; 8]),
-        }
-        .abi_encode()
-    };
-    let revert_data = eth::call_revert_data(
-        &world.rpc.url(primary),
-        crate::internal::addresses::WWD_ADDR,
-        calldata,
-    )
-    .expect("pre-activation Lysis vote must revert with rejection data");
-    let mut expected = Vec::with_capacity(36);
-    expected.extend_from_slice(
-        outbe_ocomp_protocol::abi::OCOMP_RESULT_VOTE_REJECTED_SELECTOR.as_slice(),
-    );
-    expected.extend_from_slice(&alloy_primitives::U256::from(5_u64).to_be_bytes::<32>());
-    assert_eq!(
-        revert_data, expected,
-        "pre-activation rejection must be OcompResultVoteRejected(5)"
-    );
-    world.state.metadosis_inactive_lysis_reject_code = Some(5);
-
-    // The chain must keep finalizing past the reverting transaction on every
-    // validator: the selector must never poison block production.
-    for port in world.validators.committee_ports() {
-        assert!(
-            world
-                .rpc
-                .wait_finalized_at_least(port, inclusion_block + 2, 60),
-            "finalization stalled after a pre-activation Lysis vote on port {port}"
-        );
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{dynamic_live_ports_after_jail, joiner_restart_is_in_safe_early_epoch_window};
+    use super::{
+        bounded_completion_decision, dynamic_live_ports_after_jail,
+        joiner_restart_is_in_safe_early_epoch_window, post_restart_convergence_target,
+        BoundedCompletionDecision, OCOMP_CAPACITY_SUBMISSION_CONCURRENCY,
+    };
+
+    #[test]
+    fn capacity_completion_window_returns_as_soon_as_every_validator_is_done() {
+        let started = std::time::Instant::now();
+        let deadline = started + std::time::Duration::from_secs(300);
+
+        assert_eq!(
+            bounded_completion_decision(true, started, deadline),
+            BoundedCompletionDecision::Complete
+        );
+        assert_eq!(
+            bounded_completion_decision(false, started, deadline),
+            BoundedCompletionDecision::Continue
+        );
+    }
+
+    #[test]
+    fn capacity_completion_window_fails_only_when_the_shared_budget_expires() {
+        let started = std::time::Instant::now();
+        let deadline = started + std::time::Duration::from_secs(300);
+
+        assert_eq!(
+            bounded_completion_decision(false, deadline, deadline),
+            BoundedCompletionDecision::TimedOut
+        );
+        assert_eq!(
+            bounded_completion_decision(true, deadline, deadline),
+            BoundedCompletionDecision::Complete,
+            "an observed completed result wins at the deadline boundary"
+        );
+    }
+
+    #[test]
+    fn capacity_population_submits_two_tributes_per_round() {
+        assert_eq!(OCOMP_CAPACITY_SUBMISSION_CONCURRENCY, 2);
+    }
 
     #[test]
     fn dynamic_deadline_checks_only_nodes_that_can_advance_after_jail() {
@@ -4692,6 +4477,11 @@ mod tests {
             dynamic_live_ports_after_jail(vec![10, 11, 12, 13], 3, 14),
             vec![10, 11, 12, 14]
         );
+    }
+
+    #[test]
+    fn restart_convergence_advances_beyond_the_most_advanced_peer() {
+        assert_eq!(post_restart_convergence_target([99, 104, 107, 107]), 108);
     }
 
     #[test]

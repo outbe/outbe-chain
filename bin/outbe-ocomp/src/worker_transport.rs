@@ -1,4 +1,5 @@
 //! Axum registration/status plus a TCP ZeroMQ command channel for OCOMP workers.
+// OCOMP-TEST-ID: OCM-WTR-001
 
 use std::collections::{BTreeMap, VecDeque};
 use std::net::SocketAddr;

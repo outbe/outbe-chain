@@ -107,9 +107,7 @@ fn cycle_storage_for(chain_id: u64) -> HashMapStorageProvider {
         validators
             .activate_validator_via_boundary_for_test(founder)
             .unwrap();
-        let (base, quote) = outbe_oracle::api::DAY_TYPE_PAIR;
-        outbe_oracle::contract::OracleContract::new(ctx.storage.clone())
-            .register_pair(base, quote)
+        outbe_oracle::api::register_pair(ctx.storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
         outbe_metadosis::commands::install_fork_profile(&ctx, &install).unwrap();
     });

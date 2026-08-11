@@ -2,7 +2,7 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_gem::{api as gem_api, GemAddParams, GemState};
 use outbe_intex::SeriesId;
-use outbe_oracle::contract::OracleContract;
+use outbe_oracle::api::{coen_rate_for, require_coen_pair};
 use outbe_primitives::addresses::{
     GEM_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS, VAULT_ROUTER_ADDRESS,
 };
@@ -277,7 +277,7 @@ pub fn settle_gem(
     // The Cost Amount is paid in the gem's Settlement Currency
     // Reject any payment asset whose ISO 4217 code differs from it.
     let expected =
-        settlement_currency_iso(storage, item.issuance_currency, item.reference_currency)?;
+        settlement_currency_iso(storage, item.issuance_currency, item.reference_currency);
     let asset_iso = read_iso_code(storage, asset)?;
     if asset_iso != expected {
         return Err(GemFactoryError::SettlementCurrencyMismatch {
@@ -341,14 +341,12 @@ fn settlement_currency_iso(
     storage: &StorageHandle<'_>,
     issuance_currency: u16,
     reference_currency: u16,
-) -> Result<u16> {
-    let oracle = OracleContract::new(storage.clone());
-    let pair_hash = oracle.settlement_iso_to_pair.read(&issuance_currency)?;
-    Ok(if pair_hash.is_zero() {
-        reference_currency
-    } else {
+) -> u16 {
+    if require_coen_pair(storage.clone(), issuance_currency).is_ok() {
         issuance_currency
-    })
+    } else {
+        reference_currency
+    }
 }
 
 /// Reads the settlement asset's ISO 4217 code via a static
@@ -399,20 +397,12 @@ pub fn mine_gem_promis(
     Ok(item.gem_load_minor)
 }
 
-/// Looks up the COEN/`issuance_currency` rate via Oracle's
-/// `settlement_iso_to_pair` registry. Reverts with
-/// `IssuanceCurrencyNotRegistered` if the ISO code has no pair mapping, or
+/// Looks up the COEN/`issuance_currency` rate via Oracle's derived pair
+/// lookup. Reverts with
+/// `IssuanceCurrencyNotRegistered` if the pair is not registered, or
 /// `OracleUnavailable` if the pair exists but no rate has been published.
 fn read_oracle_rate(storage: &StorageHandle<'_>, issuance_currency: u16) -> Result<U256> {
-    let oracle = OracleContract::new(storage.clone());
-    let pair_hash = oracle.settlement_iso_to_pair.read(&issuance_currency)?;
-    if pair_hash.is_zero() {
-        return Err(GemFactoryError::IssuanceCurrencyNotRegistered {
-            iso_code: issuance_currency,
-        }
-        .into());
-    }
-    let rate = oracle.exchange_rate.read(&pair_hash)?;
+    let rate = coen_rate_for(storage.clone(), issuance_currency)?;
     if rate.is_zero() {
         return Err(GemFactoryError::OracleUnavailable.into());
     }

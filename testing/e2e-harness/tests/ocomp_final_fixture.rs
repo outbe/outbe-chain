@@ -90,6 +90,13 @@ fn canonical_ocomp_base_fixture_has_only_bootstrap_authorities() {
         !config.contains_key("ocompForkInstallV1"),
         "base fixture must remain unarmed until final-artifact generation"
     );
+    assert_genesis_epoch_matches_validator_set(&genesis);
+    assert_eq!(
+        outbe_chain_constants::GenesisProtocolParametersV1::from_materialized_genesis(&genesis)
+            .expect("canonical base genesis materializes immutable chain constants"),
+        outbe_chain_constants::GenesisProtocolParametersV1::default(),
+        "canonical fixture without explicit overrides must materialize production defaults"
+    );
 
     for forbidden in ["data", "logs", "ocomp", "tee", "node.log", "enclave.log"] {
         assert!(
@@ -144,6 +151,15 @@ fn canonical_final_artifacts_are_complete_hash_bound_and_node_loadable() {
     );
 
     let genesis_path = root.join("genesis-final.json");
+    let genesis: serde_json::Value =
+        serde_json::from_slice(&fs::read(&genesis_path).unwrap()).unwrap();
+    assert_genesis_epoch_matches_validator_set(&genesis);
+    assert_eq!(
+        outbe_chain_constants::GenesisProtocolParametersV1::from_materialized_genesis(&genesis)
+            .expect("canonical Final genesis materializes immutable chain constants"),
+        outbe_chain_constants::GenesisProtocolParametersV1::default(),
+        "Final artifact must preserve the base fixture's chain constants"
+    );
     let chain_spec = reth_ethereum::cli::chainspec::chain_value_parser(
         genesis_path.to_str().expect("fixture path is UTF-8"),
     )
@@ -183,6 +199,26 @@ fn canonical_final_artifacts_are_complete_hash_bound_and_node_loadable() {
             .capacity_profile
             .max_tributes_per_work_shard,
         256
+    );
+}
+
+fn assert_genesis_epoch_matches_validator_set(genesis: &serde_json::Value) {
+    const VALIDATOR_SET: &str = "000000000000000000000000000000000000ee00";
+    const EPOCH_LENGTH_SLOT: &str =
+        "0x0000000000000000000000000000000000000000000000000000000000000002";
+
+    let configured = genesis["config"]["epochLengthBlocks"]
+        .as_u64()
+        .expect("positive genesis config epochLengthBlocks");
+    let stored_hex = genesis["alloc"][VALIDATOR_SET]["storage"][EPOCH_LENGTH_SLOT]
+        .as_str()
+        .expect("ValidatorSet epoch length storage slot");
+    let stored = u64::from_str_radix(stored_hex.trim_start_matches("0x"), 16)
+        .expect("ValidatorSet epoch length is canonical hex");
+
+    assert_eq!(
+        stored, configured,
+        "canonical genesis must seed ValidatorSet epoch length from config"
     );
 }
 

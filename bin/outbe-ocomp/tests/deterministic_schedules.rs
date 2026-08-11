@@ -6,7 +6,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{Address, B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
 use outbe_e2e_harness::ocomp_finality_fixture::{finalized_intent_proof_fixture, fixture_league};
@@ -168,12 +168,12 @@ fn run_schedule(worker_count: usize, seed: u64) -> ScheduleOutcome {
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
-    let settlement_isos = [840, 978];
+    let reference_isos = [840, 978];
     let oracle_raw = raw_oracle_opening(day, proof_fixture.state_root);
 
     let mut fidelity_openings = Vec::new();
     let mut oracle_opening = None;
-    for subjects in partition_lysis_opening_subjects(&owners, &settlement_isos, &limits)
+    for subjects in partition_lysis_opening_subjects(&owners, &reference_isos, &limits)
         .expect("partition deterministic opening subjects")
     {
         let fidelity = raw_fidelity_opening(&subjects, proof_fixture.state_root, intent.wwd);
@@ -636,26 +636,21 @@ fn raw_fidelity_opening(
 }
 
 fn raw_oracle_opening(day: WorldwideDay, finalized_state_root: B256) -> RawContractOpeningProofV1 {
-    let usd_pair = keccak256(b"USD/COEN");
-    let eur_pair = keccak256(b"EUR/COEN");
-    let plan = oracle_opening_slot_plan_v1(day, &[(840, usd_pair), (978, eur_pair)], 2, 0, 0)
+    let plan = oracle_opening_slot_plan_v1(day, &[840, 978], 2, &[1, 2], 0, 0)
         .expect("deterministic Oracle slot plan");
     let scale = U256::from(1_000_000_000_000_000_000_u64);
     let values = [
-        U256::from_be_bytes(keccak256(b"USD").0),
-        U256::from_be_bytes(usd_pair.0),
-        U256::from(1),
-        U256::from_be_bytes(keccak256(b"EUR").0),
-        U256::from_be_bytes(eur_pair.0),
-        U256::from(2),
-        U256::from(1),
-        U256::from(2),
-        U256::from(1),
-        scale,
-        U256::from(2),
-        scale * U256::from(2),
-        U256::ZERO,
-        U256::ZERO,
+        U256::from(2),   // reference_currencies length
+        U256::from(840), // reference_currencies[0]
+        U256::from(978), // reference_currencies[1]
+        U256::from(1),   // pair_index[COEN/840]
+        U256::from(2),   // pair_index[COEN/978]
+        U256::from(1),   // wwd_vwap_exists
+        // One value word per subject pair, at its registry index.
+        scale,                 // wwd_vwap_value[1]
+        scale * U256::from(2), // wwd_vwap_value[2]
+        U256::ZERO,            // scurve_count
+        U256::ZERO,            // scurve_oldest
     ];
     assert_eq!(plan.slots.len(), values.len());
     RawContractOpeningProofV1 {

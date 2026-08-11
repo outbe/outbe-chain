@@ -68,7 +68,7 @@ use outbe_ocomp_protocol::{
 };
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
-use outbe_oracle::contract::OracleContract;
+use outbe_oracle::schema::OracleContract;
 use outbe_primitives::{
     addresses::{
         COMPRESSED_ENTITIES_ADDRESS, METADOSIS_ADDRESS, REWARDS_ADDRESS, TRIBUTE_FACTORY_ADDRESS,
@@ -1387,19 +1387,13 @@ fn prepare_parent(
         write_committee_snapshot(storage.clone(), FINALIZED_EPOCH, snapshot).unwrap();
 
         let mut oracle = OracleContract::new(storage.clone());
-        let mut oracle_genesis = outbe_oracle::logic::OracleGenesisConfig::default_config();
+        let mut oracle_genesis = outbe_oracle::genesis::OracleGenesisConfig::default_config();
         oracle_genesis.initial_rates.push((
-            "COEN".to_owned(),
-            "0xUSD".to_owned(),
+            outbe_oracle::api::COEN_ASSET,
+            outbe_oracle::api::currency_address(840),
             U256::from(2_000_000_000_000_000_000u128),
         ));
-        oracle_genesis.settlement_currencies.push((
-            840,
-            "0xUSD".to_owned(),
-            "COEN".to_owned(),
-            "0xUSD".to_owned(),
-        ));
-        outbe_oracle::logic::init_from_genesis(&mut oracle, &oracle_genesis).unwrap();
+        outbe_oracle::genesis::init_from_genesis(&mut oracle, &oracle_genesis).unwrap();
 
         let activation_ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(PARENT_HEIGHT, parent_time, CHAIN_ID),

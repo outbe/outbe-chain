@@ -1,20 +1,19 @@
 # Генеральная pre-testnet NPT/E2E-приёмка — 6 августа 2026
 
-Статус: выполняется. Этот документ — живой журнал доказательств для
-`outbe-chain-08n`, а не список задач. Состояние работ и зависимости хранятся в
-Beads.
+Статус: приёмка завершена с итогом **NO-GO**. Этот документ — журнал
+доказательств для `outbe-chain-08n`, а не список задач. Состояние работ и
+зависимости хранятся в Beads.
 
 ## Фиксированная точка
 
-- Ветка: `test/end-to-end`.
+- Ветка финальной приёмки: `test/e2e` (исходная работа началась в
+  `test/end-to-end`).
 - Исходный commit: `96e31331e86fe781362eb5298ae8be6bb15b11c4`.
 - Исходный `origin/main`: тот же commit.
-- Текущий commit проверяемого worktree: `260b9821` в ветке
-  `test/end-to-end`. Поверх него находится незакоммиченный tests-only slice,
-  который добавляет в основной `@ocomp-public-apply` проверку совпадения
-  validator/FullNode canonical result chunks и `NodMembershipProofV1`, плюс
-  обновляет этот журнал. Production-код slice не меняет; для runtime-строки
-  указан точный run directory и SHA256 evidence.
+- Финальный functional-capacity evidence собран на clean commit
+  `018c8967c01a3c720233d196e2bc8c7ca4e5bca5`; последующий отчётный коммит
+  меняет только этот журнал и Beads export. Для каждого runtime-сценария ниже
+  указан собственный точный source SHA, run directory и SHA-256 evidence.
 - Workspace: 67 Rust packages, 244 targets.
 - Общее решение по выпуску: сеть обновляется через wipe; эта проверка не
   изменяет testnet.
@@ -87,7 +86,7 @@ Beads.
 | B09 | Unused dependencies | `mise run audit-udeps` | Nightly udeps проходит для всех targets | PASS | `cargo +nightly udeps --workspace --all-targets` вне sandbox: exit 0, `All deps seem to have been used`. До прогона исправлены только пять nightly-incompatible tail `bail!` expressions в harness/chain, без изменения runtime-семантики |
 | B10 | Consensus layering | `mise run audit-consensus-deps` | Consensus не зависит транзитивно от EVM | PASS | `consensus dependency boundary: OK` на `96e31331` |
 | B11 | Generated OCOMP registry | `cargo xtask ocomp registry --check` | Generated registry совпадает с нормативными входами | PASS | Exit 0 на `96e31331` |
-| B12 | OCOMP shape/capacity | `mise run ocomp-poc-capacity` | Shape/capacity и Final-arming ограничения воспроизводимы | NOT RUN | Runner и typed evidence выровнены на единый профиль: только release-бинарники, `sudo`, настоящий SGX и `sgx-no-attest`; debug, `--no-sudo`, non-SGX `gramine-direct` и mixed-profile evidence отклоняются. Профильные unit/integration tests и registry gate проходят. Статус остаётся NOT RUN до пяти cold runs на одной clean revision |
+| B12 | OCOMP functional capacity | `target/release/outbe-e2e --tags @ocomp-capacity --concurrency 1 --no-resolve-ports --tee sgx-no-attest --all --no-cleanup` | Один production-shaped прогон обрабатывает shard-cap-plus-one population без искусственного ограничения ресурсов | PASS | Clean revision `018c8967`: 1 scenario, 9/9 steps PASS за 1 602 504 ms. На всех четырёх валидаторах подтверждены 257 distinct Tribute, production Supervisor/Workers, q=3 Lysis apply, 257 NOD и historical replay. Запуск использовал все ресурсы хоста — без `CPUQuota` и `MemoryMax`. Evidence `/tmp/ocomp-b12-single-unlimited.ICK6Nj/evidence/scenario-001.json`, SHA-256 `7b0cff678ae29041a4ecf9b1c62576173617c4c8d3ecca30eeccfe520d01aa94` |
 | B13 | OCOMP shape | `cargo xtask ocomp shape --check` | Generated shape freeze совпадает с нормативными входами | PASS | Exit 0 на `96e31331` |
 | B13a | Final fixtures | `cargo xtask ocomp final-artifacts ... --check` с checked-in Final inputs | Canonical Final OCOMP artifacts воспроизводимы | PASS | Исходный RED подтвердил известный drift после normative system-gas изменений. Две независимые генерации дали побайтово одинаковый набор; checked-in downstream profile/bundle/fork/genesis artifacts перегенерированы, повторный `--check` exit 0; capacity manifest/profile не изменились |
 | B14 | Storage layouts | Репозиторный layout-hash gate | Consensus storage layout не изменился незаметно | PASS | Workspace `storage_layout` filter exit 0; Metadosis `tests::state::test_storage_dsl_layout_slots` PASS и повторно связал exact slots с `METADOSIS_STORAGE_LAYOUT_V1_HASH` |
@@ -103,7 +102,7 @@ Beads.
 | T04 | GramineDirectDev live SGX-no-attest E2E | `outbe-e2e --tee sgx-no-attest --validators 4 --all --name "Entire committee recovers after all enclaves restart"` | Четыре validator nodes используют production enclave, реальный SGX/EGETKEY и NodeHost; DCAP/QVL не вызываются и не монтируются; sealed restart сохраняет ключ и финализацию | PASS | 1 scenario / 3 steps PASS; Tribute visible at block 6, all four enclaves and nodes restarted, sealed offer keys restored and finalization resumed. Scenario receipt SHA256 `0fe2ca2568f01a0216ee4f9619da621778111f4d14b0f348da0d78d778107757`; tested production binary SHA256 `ca60ada35470b87ec05e66339abe892462370c6305fc5502fb6a63d17d7f9906`; harness binary SHA256 `3a7843f71855f65f183588a55501263ca0dc17bf3c1481291931d3d374ee21ab` |
 | T05 | Hardware SGX/DCAP E2E | `mise run e2e-sgx` | Исключено из текущей приёмки | N/A | Решение пользователя: native DCAP не проверять |
 | T06 | Native-DCAP SGX release | Hardware/native-DCAP release gates | Исключено из текущей приёмки | N/A | Решение пользователя: native DCAP не проверять |
-| T07 | OCOMP evidence closure | `mise run ocomp-poc-closure-run` | Exact-artifact OCOMP lanes создают проверяемый evidence bundle | NOT RUN | Closure contract выровнен на тот же release + `sudo` + `sgx-no-attest` профиль, что B12 и production-shaped E2E. Launch identity теперь связывает execution profile и один Gramine image; mixed/debug/non-SGX/no-sudo evidence отклоняется. Профильные verifier tests проходят; статус остаётся NOT RUN до exact closure на clean revision |
+| T07 | OCOMP evidence closure | Офлайн-проверка evidence B12 | Проверяемый evidence связан с точным release SHA и профилем запуска | RETIRED AS E2E | Отдельный `ocomp-poc-closure-run` повторял уже консолидированные OCOMP workflows и исключён как дублирующий E2E. После единственного B12 проверяется его сохранённый evidence без запуска новой сети |
 
 ## Обязательный production-shaped OCOMP E2E
 
@@ -173,6 +172,7 @@ Persistent `outbe-e2e localnet` на фиксированной точке жё�
 |---|---|---|---|
 | R01 | `outbe_getOcompLysisOpeningsV1` выполняет историческое state/proof построение в обычном публичном RPC namespace; без отдельного admission/local-only транспорта удалённый клиент может расходовать node-local CPU и blocking pool | Не расширять текущий Tribute → NOD correctness-slice транспортом или аутентификацией; риск не считается закрытым зелёным E2E | `outbe-chain-9t3` |
 | R02 | RustSec сообщает пять unmaintained и четыре unsound warning: `atomic-polyfill`, `bincode`, `derivative`, `paste`, `proc-macro-error2`, `anyhow`, два advisory для `git2` и `memmap2` | Предупреждения остаются видимыми в выводе `mise run audit-rustsec`; они не классифицированы как применимые vulnerability и не блокируют B08 | Отдельный dependency-hygiene slice при обновлении upstream dependency graph |
+| R03 | Сертифицированная финальность OCOMP может прийти раньше exact local execution receipts; после восьми retries текущий retention path способен отбросить finalized boundary | Один зелёный B12 не опровергает сохранённый production-reachable RED. До durable ordered join testnet update остаётся NO-GO | `outbe-chain-ohz.2.1` |
 
 Проверка loopback/auth для `OUTBE_OCOMP_RPC_URL` также сознательно отложена:
 текущий операционный контракт предполагает, что Supervisor обращается к RPC
@@ -184,13 +184,13 @@ Persistent `outbe-e2e localnet` на фиксированной точке жё�
 завершёнными пакетами, а не 18 независимыми циклами
 «изменение → сборка → E2E»:
 
-1. Статические и OCOMP-profile gates: B02a, B09, B12, B13a, B14, T02, T07.
+1. Статические и OCOMP-profile gates: B02a, B09, B12, B13a, B14 и T02.
 2. Контрактные workspace: T03 и T03a.
 3. Controlled-time lifecycle и единый retention seam: L01–L04 и L08.
 4. Dirty-start и эксплуатационные отказы: L06, L07, L09 и L10.
 
-Текущий пакетный прогресс: `16/18` закрыты (B02a, B09, B13a, B14, T02, T03,
-T03a, L01–L04, L06–L10), `2/18` остаются: B12 и T07.
+Текущий пакетный прогресс: `18/18` закрыты. T07 снят как дублирующий E2E,
+а единственный B12 выполнен и проверен офлайн.
 
 Внутри пакета сначала параллельно завершаются анализ, тестовый код,
 документация и независимые production-правки. Затем выполняются один общий
@@ -242,15 +242,14 @@ startup errors остаются fatal. Повторный `@ocomp-e2e-008` на 
    вспомогательная component-проверка.
 6. O01–O11 production-shaped OCOMP и dynamic membership acceptance.
 7. L01–L10 controlled-time и dirty-start сценарии.
-8. T07 exact OCOMP evidence gates; native-DCAP/hardware строки T05–T06 не
-   запускаются.
+8. Офлайн-валидация evidence единственного B12; отдельный T07 E2E и
+   native-DCAP/hardware строки T05–T06 не запускаются.
 9. Полный повтор затронутых gates и итоговый go/no-go.
 
 ## Текущий вывод
 
 Решение по обновлению testnet пока **NO-GO**. Production-shaped
-путь и 16 из 18 строк текущего пакетного прогона закрыты, но это не означает,
-что из всей генеральной приёмки осталось только две строки. Release SGX/no-DCAP сценарии
+путь и все 18 строк текущего пакетного прогона закрыты. Release SGX/no-DCAP сценарии
 прошли настоящий block-1 Create, production Cycle, controlled-time coordinated
 restart, certified DKG boundary, 257/257 публичных Tribute, finalized JobIntent,
 Supervisor/Worker computation, quorum, Lysis и 257 NOD без state/result injection. Dynamic
@@ -259,40 +258,42 @@ full restart также имеют прямые зелёные evidence. Отд�
 validator/FullNode canonical result chunks, NOD body fields и membership proof против finalized
 `nod_root`.
 
-Полный completion-аудит сохраняет следующие независимые NO-GO/неполные строки:
+Полный completion-аудит сохраняет один независимый NO-GO вне закрытого
+18-строчного пакета: `outbe-chain-ohz.2.1`. Сертифицированная финальность может
+опередить локальные execution receipts; существующая восьмишаговая retry-лестница
+тогда способна отбросить точную finalized boundary. Текущий B12 прошёл, но один
+зелёный функциональный прогон не опровергает уже сохранённое production-reachable
+RED-доказательство этого race.
 
-- `B12` и `T07`: runners, typed evidence и closure contract уже выровнены
-  на release + `sudo` + `sgx-no-attest`, но сами gates ещё не
-  выполнены на clean revision;
-- `outbe-chain-08n.6`: публичный burst из 6–7 `offerTribute` может сформировать
-  gas-valid блок, исполнение которого превышает consensus certification budget.
+Quality task `outbe-chain-08n.2` и dynamic-OCOMP acceptance
+`outbe-chain-8ui.7` закрыты после сверки каждого дочернего acceptance criterion.
+`outbe-chain-08n.5` закрывает публикацию этого финального NO-GO. Задача
+`outbe-chain-08n.6` по решению владельца является отдельной характеристикой
+burst/certification timing и не блокирует этот go/no-go.
 
-Кроме того, quality task `outbe-chain-08n.2`, final acceptance task
-`outbe-chain-08n.5` и dynamic-OCOMP acceptance `outbe-chain-8ui.7` остаются
-открыты. Поэтому итоговый статус всей цели — **NO-GO**, а `16/18`
-используется только как счётчик завершённого внутреннего пакета.
-
-`B12`/`T07` больше не позволяют прежний смешанный профиль: evidence
-tooling замораживает release artifacts, `sudo`, `sgx-no-attest` и единую
-launch identity. Для закрытия остался запуск обоих gates на clean revision.
-Ограничение публичного Tribute burst остаётся отдельным architecture-frozen
-срезом.
+B12 выполнен на release artifacts, с `sudo`, настоящим SGX и
+`sgx-no-attest`, без cgroup-ограничений. Офлайн-проверка подтвердила clean source
+SHA, exact binary hashes, четыре успешных уникальных vote, q=3 membership,
+257/257 Tribute/NOD и совпадение historical replay. Пять повторных cold-runs и
+отдельный T07 E2E не являются функциональными acceptance gates.
 
 ### Оставшаяся работа
 
 | Блокер | Владелец инварианта | Следующее действие |
 |---|---|---|
-| B12/T07 | OCOMP xtask/evidence contract | Выполнить пять cold release SGX-no-attest capacity runs и exact closure на одной clean revision |
-| `outbe-chain-08n.6` | Tribute admission/gas accounting и consensus certification budget | После architecture freeze выбрать детерминированный production-safe burst bound; до решения публичный burst остаётся P0 NO-GO |
+| `outbe-chain-ohz.2.1` | OCOMP retention: join certified finality с exact local execution | После отдельного architecture freeze реализовать durable ordered join; текущая задача B12 этот production-дефект не скрывает и не исправляет |
+
+Отдельный performance/capacity benchmark при необходимости может определять
+собственный минимальный аппаратный профиль и повторяемость. Он не является B12:
+функциональная приёмка не ограничивает CPU/RAM и не заявляет burst throughput.
 
 ### Явно пропущенные или частичные строки
 
 - T05/T06 — `N/A`: native DCAP и hardware-DCAP lanes исключены прямым
   решением пользователя; live acceptance выполнен на настоящем SGX с
   `sgx.remote_attestation=none`.
-- B12/T07 — `NOT RUN`, а не `PASS`: runners и evidence contract уже
-  выражают выбранный профиль единообразно, но пять cold runs и
-  exact closure ещё не выполнены на clean revision.
+- B12 — `PASS`: выполнен один clean-revision functional run без искусственного
+  ограничения ресурсов; evidence проверен офлайн. T07 снят как дублирующий E2E.
 - H01 — намеренно `PARTIAL`: seeded WorldwideDay доказывает dynamic overlap,
   но не runtime-создание дня; полный runtime lifecycle отдельно доказан H03.
 
@@ -341,3 +342,16 @@ launch identity. Для закрытия остался запуск обоих 
 - `8b154fcb` — production `open()` release/pressure regressions, exporter
   prepared-only exact replay, finalized RPC path и соответствующие E2E
   evidence сведены в один acceptance slice.
+- `bb328729` — authentic late OCOMP carrier даёт status-0 receipt после
+  deadline, не прерывая блок и не меняя accountability;
+- `1e988b8c` — release evidence tooling пересобирает release harness перед
+  snapshot артефактов;
+- `6446fb48`, `27416a9d` и `37a97bca` — evidence contract переведён на текущий
+  HTTP/ZeroMQ transport, сохраняет точную launch identity и исполняет sign-once
+  owner;
+- `82ce04f4` — 53 пересекавшихся E2E-сценария сведены в 37 дополняющих
+  сценариев по восьми владельцам поведения без теста на фиксированное число;
+- `4cd6142f` — B12 ожидает полный committee result в одном общем 300-секундном
+  окне и завершается сразу после достижения результата;
+- `018c8967` — отдельный T07 network-run и пять повторных cold-runs удалены из
+  функциональной приёмки как дублирование; сохранена офлайн-проверка B12.

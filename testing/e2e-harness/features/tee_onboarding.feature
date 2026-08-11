@@ -1,8 +1,7 @@
 @tee @real-sgx @min-validators-4
-Feature: DcapRequired one-time permanent offer-key onboarding
-  P0 ends when an attested Validator or FullNode has durably ingested the
-  permanent genesis offer key and can restart through its authenticated
-  NodeHost identity. Validator-set activation is tested separately.
+Feature: Permanent TEE offer-key onboarding
+  Validator-set activation is tested separately. This scenario owns only the
+  permanent attested key and authenticated NodeHost restart contract.
 
   Scenario: Validator and FullNode survive restart after production onboarding
     Given a fresh localnet with a 6-block voting window

@@ -1,4 +1,4 @@
-//! Steps for `features/s1_s2_s6_s3_lifecycle.feature` — port of
+//! Validator lifecycle steps used by `features/validator_lifecycle.feature`.
 //! The validator lifecycle feature, one chain through four e2e.md stages:
 //!   S1 cold full-node sync + tribute offer (state/supply parity)
 //!   S2 promote full-node -> validator via reshare (stake -> confirm -> ACTIVE)

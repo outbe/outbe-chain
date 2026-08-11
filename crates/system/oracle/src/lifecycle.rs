@@ -4,8 +4,8 @@ use outbe_primitives::{
     time::{previous_date_key, timestamp_to_date_key},
 };
 
-use crate::contract::OracleContract;
-use crate::logic::MAX_UTC_DAY_VWAP_BACKFILL_DAYS;
+use crate::constants::MAX_UTC_DAY_VWAP_BACKFILL_DAYS;
+use crate::schema::OracleContract;
 use crate::scurve;
 use crate::tally;
 
@@ -83,10 +83,9 @@ fn run_begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
     if current_day > last_processed && timestamp > 0 {
         let pair_count = oracle.pair_count.read()?;
         for pid in 1..=pair_count {
-            let hash = oracle.pair_id_to_hash.read(&pid)?;
-            let is_target = oracle.vote_target.read(&hash)?;
-            if is_target {
-                scurve::process_daily_scurve(&mut oracle, pid, timestamp)?;
+            let pair = oracle.pair_at(pid)?;
+            if oracle.vote_target.read(&pair)? {
+                scurve::process_daily_scurve(&mut oracle, pair, timestamp)?;
             }
         }
         oracle.scurve_last_processed_day.write(current_day)?;

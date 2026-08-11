@@ -11,7 +11,7 @@ The governance precompile address is
 ## Committee flow (OIP / GIP via vote)
 
 Same process as
-[`governance_oip_gip.feature`](../../testing/e2e-harness/features/governance_oip_gip.feature):
+[`governance.feature`](../../testing/e2e-harness/features/governance.feature):
 
 ```text
 validator -> outbe-cli vote propose (target=GOVERNANCE, JSON kind+text)

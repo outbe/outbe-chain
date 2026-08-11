@@ -1,4 +1,4 @@
-//! Steps for `features/update_operator.feature` — a step-for-step port of
+//! Protocol update steps used by `features/governance.feature`.
 //! The update-operator feature. Each step drives the
 //! `World` handles only; no `cast`/`cli` strings appear here.
 

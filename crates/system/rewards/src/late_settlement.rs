@@ -349,10 +349,7 @@ mod tests {
             validators
                 .activate_validator_via_boundary_for_test(V0)
                 .unwrap();
-            let (base, quote) = outbe_oracle::api::DAY_TYPE_PAIR;
-            outbe_oracle::contract::OracleContract::new(handle)
-                .register_pair(base, quote)
-                .unwrap();
+            outbe_oracle::api::register_pair(handle, outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
         });
         storage.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::ForkProfile);
         storage.enter(|handle| {

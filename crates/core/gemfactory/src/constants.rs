@@ -1,6 +1,3 @@
-pub const NATIVE_TOKEN: &str = "COEN";
-pub const STABLECOIN: &str = "0xUSD";
-
 /// Floor-price markup rate: floor = `entry × (100 + FLOOR_RATE) / 100`
 /// (8 => 1.08x entry).
 pub const FLOOR_RATE: u64 = 8;

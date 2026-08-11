@@ -1,3 +1,4 @@
+// OCOMP-TEST-ID: OCM-WRK-001
 mod support;
 
 use std::env;
@@ -216,27 +217,21 @@ fn real_worker_processes_execute_through_output_finalize() {
         account_proof: ProofBytes(vec![0xa1]),
         storage_proof: ProofBytes(vec![0xb1]),
     };
-    let usd_pair = keccak256(b"USD/COEN");
-    let eur_pair = keccak256(b"EUR/COEN");
-    let oracle_plan =
-        oracle_opening_slot_plan_v1(day, &[(840, usd_pair), (978, eur_pair)], 2, 0, 0)
-            .expect("fixture Oracle slot plan");
+    let oracle_plan = oracle_opening_slot_plan_v1(day, &[840, 978], 2, &[1, 2], 0, 0)
+        .expect("fixture Oracle slot plan");
     let scale = U256::from(1_000_000_000_000_000_000_u64);
     let oracle_values = [
-        U256::from_be_bytes(keccak256(b"USD").0),
-        U256::from_be_bytes(usd_pair.0),
-        U256::from(1),
-        U256::from_be_bytes(keccak256(b"EUR").0),
-        U256::from_be_bytes(eur_pair.0),
-        U256::from(2),
-        U256::from(1),
-        U256::from(2),
-        U256::from(1),
-        scale,
-        U256::from(2),
-        scale * U256::from(2),
-        U256::ZERO,
-        U256::ZERO,
+        U256::from(2),   // reference_currencies length
+        U256::from(840), // reference_currencies[0]
+        U256::from(978), // reference_currencies[1]
+        U256::from(1),   // pair_index[COEN/840]
+        U256::from(2),   // pair_index[COEN/978]
+        U256::from(1),   // wwd_vwap_exists
+        // One value word per subject pair, at its registry index.
+        scale,                 // wwd_vwap_value[1]
+        scale * U256::from(2), // wwd_vwap_value[2]
+        U256::ZERO,            // scurve_count
+        U256::ZERO,            // scurve_oldest
     ];
     assert_eq!(oracle_plan.slots.len(), oracle_values.len());
     let oracle_raw = RawContractOpeningProofV1 {
@@ -262,7 +257,7 @@ fn real_worker_processes_execute_through_output_finalize() {
             wwd: day.value(),
             subjects: OpeningSubjectsV1 {
                 owners: vec![owner],
-                settlement_isos: vec![840, 978],
+                reference_isos: vec![840, 978],
             },
             fidelity: fidelity_raw,
             oracle: oracle_raw,

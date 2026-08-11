@@ -4,7 +4,6 @@ use outbe_compressed_entities::{begin_block, end_block, ExecutionScope};
 use outbe_desis::{AuctionStage, DesisContract};
 use outbe_nod::NodContract;
 use outbe_ocomp_protocol::state::{OcompJobStatus, OcompTerminalOutcome};
-use outbe_oracle::contract::OracleContract;
 use outbe_primitives::{
     addresses::{COMPRESSED_ENTITIES_ADDRESS, METADOSIS_ADDRESS},
     block::{BlockContext, BlockRuntimeContext},
@@ -84,8 +83,8 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
         seed_ce_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
 
-        let mut oracle = OracleContract::new(storage.clone());
-        oracle.register_pair("COEN", "0xUSD").unwrap();
+        outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
+            .unwrap();
         outbe_oracle::api::initialize_fresh_ocomp_profile(storage.clone()).unwrap();
 
         let mut metadosis = MetadosisContract::new(storage.clone());
@@ -1177,8 +1176,8 @@ fn prepare_request_fixture_with_day_type(
         seed_ce_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
 
-        let mut oracle = OracleContract::new(storage.clone());
-        oracle.register_pair("COEN", "0xUSD").unwrap();
+        outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
+            .unwrap();
         // `oracle_ready` gates OCOMP admission: when false the Oracle profile is
         // left un-armed so the terminal request defers with OracleProfileNotReady
         // (the deferral path formerly exercised via Fidelity readiness).
@@ -1280,8 +1279,8 @@ fn prepare_ready_days_fixture(
         seed_active_ocomp_snapshot(storage.clone(), 5);
         seed_ce_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
-        let mut oracle = OracleContract::new(storage.clone());
-        oracle.register_pair("COEN", "0xUSD").unwrap();
+        outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
+            .unwrap();
         // When false the Oracle profile is left un-armed so the terminal request
         // defers with OracleProfileNotReady (arm it mid-test to make a day eligible).
         if oracle_ready {

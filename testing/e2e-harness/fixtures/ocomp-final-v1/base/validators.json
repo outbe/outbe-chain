@@ -7,16 +7,16 @@
   {
     "public_key": "9536534deb3bfa9507c4bb9cee26b96637e5a6cf4b9463dbe129f4b68268ca5933bb3515173b5df21cea7548649e852b",
     "address": "0xEa95C94c391C8193a2124fA9D1CA4bF1e90c04Bc",
-    "p2p_address": "127.0.0.1:18558"
+    "p2p_address": "127.0.0.1:18564"
   },
   {
     "public_key": "a1ff06edfbeb7635d5b9ab1e9c1ef1829f88e3911a241b4497b93c23c0fbdb71ced7a320205641ae750cd4a1e797ca4d",
     "address": "0x159309E4c409d5d90915eF2f5FBEa64Ea332F52C",
-    "p2p_address": "127.0.0.1:18565"
+    "p2p_address": "127.0.0.1:18577"
   },
   {
     "public_key": "a47418dfc7a5109ba3d0b5bf01de3eaa084c2175223f091e0041d58bc6d6d8cc13a6937a3a2736c0c12320a5e75dd2bb",
     "address": "0x59547FF8454149DF31DE659530EFA81622e3b720",
-    "p2p_address": "127.0.0.1:18572"
+    "p2p_address": "127.0.0.1:18590"
   }
 ]

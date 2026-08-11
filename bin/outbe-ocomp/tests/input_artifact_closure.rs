@@ -68,7 +68,7 @@ fn worker_reconstructs_the_complete_manifest_from_exact_cas_streams() {
             wwd: day.value(),
             subjects: OpeningSubjectsV1 {
                 owners: vec![owner],
-                settlement_isos: vec![840, 978],
+                reference_isos: vec![840, 978],
             },
             fidelity: raw_opening(Address::repeat_byte(0x45), 0x46, 7),
             oracle: raw_opening(Address::repeat_byte(0x47), 0x48, 8),

@@ -4,7 +4,7 @@ use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     derive_poseidon_entity_id, EntityId36, ExecutionScope, ParentBodySource,
 };
-use outbe_oracle::{contract::OracleContract, scurve};
+use outbe_oracle::{schema::OracleContract, scurve};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_tee::protocol::{EncryptedTributeOffer, TributeOfferStatus, TributeZkContext};
 use outbe_tribute::{TributeContract, TributeData};
@@ -256,24 +256,13 @@ fn resolve_tribute_price(
     issuance_currency: u16,
     worldwide_day: WorldwideDay,
 ) -> Result<U256> {
-    let oracle = OracleContract::new(storage);
-    let pair_hash = oracle.settlement_iso_to_pair.read(&issuance_currency)?;
-    if pair_hash.is_zero() {
-        return Err(
-            TributeFactoryError::IssuanceCurrencyNotRegistered { issuance_currency }.into(),
-        );
-    }
-
-    let pair_id = oracle.pair_hash_to_id.read(&pair_hash)?;
-    if pair_id == 0 {
-        return Err(TributeFactoryError::SettlementCurrencyPairNotRegistered.into());
-    }
-
-    let vwap = oracle
-        .get_worldwide_day_vwap_for_pair_id(worldwide_day, pair_id)?
-        .unwrap_or(U256::ZERO);
+    let (pair, index) = outbe_oracle::api::require_coen_pair(storage.clone(), issuance_currency)?;
+    let vwap =
+        outbe_oracle::api::get_worldwide_day_vwap_for_pair(storage.clone(), worldwide_day, index)?
+            .unwrap_or(U256::ZERO);
     let scurve_timestamp = worldwide_day.to_timestamp_utc();
-    let max_scurve = scurve::get_max_active_scurve_value(&oracle, pair_id, scurve_timestamp)?;
+    let oracle = OracleContract::new(storage);
+    let max_scurve = scurve::get_max_active_scurve_value(&oracle, pair, scurve_timestamp)?;
 
     Ok(vwap.max(max_scurve))
 }
