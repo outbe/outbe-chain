@@ -2,9 +2,6 @@
 pragma solidity ^0.8.30;
 
 /// @notice Flattened view of a node-enclave binding.
-/// @dev Declared at file level (not nested in the interface) so the generated
-///      Rust type stays at module scope for the consensus precompile and the
-///      host operator tooling that both decode it.
 struct NodeEnclaveBindingV1View {
     bool exists;
     bytes32 nodeIdHash;

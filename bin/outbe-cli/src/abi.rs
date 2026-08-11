@@ -1,8 +1,7 @@
 //! ABI definitions for outbe precompile contracts.
 //!
 //! Every interface is generated from its canonical Solidity source under
-//! `contracts/precompiles/src/`, so the CLI can never drift from the selectors
-//! the node actually dispatches.
+//! `contracts/precompiles/src/`.
 
 use alloy_primitives::{address, Address};
 use alloy_sol_types::sol;

@@ -2,11 +2,7 @@
 pragma solidity ^0.8.30;
 
 /// @title IVaultV2
-/// @notice Yield-vault surface the Vault Router deposits into and withdraws
-///         from on behalf of a position owner.
-/// @dev ERC-4626-shaped but deliberately narrowed to the calls the router makes;
-///      `deposit`/`withdraw` carry an explicit `onBehalf` owner because the
-///      router is the `msg.sender` for every position it manages.
+/// @notice A copy of the Morpho VaultV2 interface
 interface IVaultV2 {
     /// @notice Underlying ERC-20 asset held by the vault.
     function asset() external view returns (address);
