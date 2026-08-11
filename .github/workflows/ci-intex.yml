@@ -94,6 +94,33 @@ jobs:
       - name: Run Forge tests
         run: forge test -vv
 
+  abi:
+    name: ABI Export Check
+    runs-on: depot-ubuntu-24.04
+    needs: [compile]
+    defaults:
+      run:
+        working-directory: contracts/intex
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup
+        uses: ./.github/actions/setup-node-yarn-foundry
+        with:
+          working-directory: contracts/intex
+
+      - name: Export ABI
+        run: yarn compile && yarn cd:extract-abi
+
+      - name: Verify abi-export is up to date
+        run: |
+          if ! git diff --quiet -- abi-export; then
+            echo "::error::abi-export is stale — run 'yarn compile && yarn cd:extract-abi' and commit the result"
+            git diff -- abi-export
+            exit 1
+          fi
+
   slither:
     name: Slither
     runs-on: depot-ubuntu-24.04
@@ -163,6 +190,7 @@ jobs:
       - format
       - compile
       - test-foundry
+      - abi
       - slither
       - aderyn
     timeout-minutes: 5

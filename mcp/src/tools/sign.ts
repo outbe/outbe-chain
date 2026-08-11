@@ -163,14 +163,9 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
     ),
   );
 
-  // --- rewards / agentreward -------------------------------------------------
-  server.tool(
-    "rewards_claim",
-    "Claim pending validator rewards. Requires OUTBE_PRIVATE_KEY.",
-    { wait: z.boolean().optional() },
-    handler(({ wait }) => submit(ctx, "rewards", "claimRewards", [], GAS_DEFAULT, wait ?? true)),
-  );
-
+  // --- agentreward -----------------------------------------------------------
+  // The Rewards precompile (EE03) exposes no callable methods — validator
+  // emission is paid in gems (crates/system/rewards/src/precompile.rs).
   server.tool(
     "agentreward_claim",
     "Claim AgentReward balance. amount in COEN. Requires OUTBE_PRIVATE_KEY.",

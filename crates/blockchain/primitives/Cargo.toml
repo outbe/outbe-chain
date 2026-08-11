@@ -49,6 +49,7 @@ hex.workspace = true
 alloy-primitives = { workspace = true, features = ["rand"] }
 ed25519-dalek.workspace = true
 proptest.workspace = true
+serde_json.workspace = true
 tempfile.workspace = true
 trybuild = "1"
 

@@ -41,17 +41,11 @@ interface IOracle {
     ///      if the market is not registered. Unlike the other pair-scoped reads,
     ///      this one accepts either direction — a spot rate is the only value
     ///      here that has a well-defined inverse.
-    function getExchangeRate(address base, address quote)
-        external
-        view
-        returns (uint256 rate);
+    function getExchangeRate(address base, address quote) external view returns (uint256 rate);
 
     /// @notice `getExchangeRate` for `COEN/<isoCode>`. COEN is the zero address
     ///         and so always sorts first: this is never the inverted direction.
-    function getCoenExchangeRateFor(uint16 isoCode)
-        external
-        view
-        returns (uint256 rate);
+    function getCoenExchangeRateFor(uint16 isoCode) external view returns (uint256 rate);
 
     /// @notice `getExchangeRate` plus when the rate was last written. The block
     ///         and timestamp describe the stored observation and are the same

@@ -108,17 +108,17 @@ on any precompile, decoded. `contract` is a registry name or a `0x` address.
 `gratis_balance`, `promis_balance`,
 `fidelity_index`, `agentreward_claimable`, `worldwide_days_offering`, `worldwide_day_get`,
 `currency_pairs`, `currency_rate`, `currency_rate_vwap`, `validators`, `validator_get`,
-`staking_info`, `rewards_claimable`.
+`staking_info`.
 
 **Governance reads** (canon / meta-canon / proposals) — `metacanon_get`, `canon_get`,
 `oip_get { id }`, `gip_get { id }`, `oip_list`, `gip_list`. `*_get` returns the full
 text + status. `*_list` is index-backed and **paginated**: give `author` (their
-proposals) or `status` = `accepted` (Approved or Implemented) | `rejected`, plus
+proposals) or `status` (`Draft` | `Approved` | `Rejected` | `Rework` | `Implemented`), plus
 optional `offset` (default 0) / `limit` (default 100, max 1000); it returns
 `{ total, offset, limit, … }` with proposal metadata only (omits the text body).
 
 **Signing (allowlist, need `OUTBE_PRIVATE_KEY`)** — `tribute_offer`, `staking_stake`,
-`staking_unstake`, `staking_unbonded_claim`, `rewards_claim`, `agentreward_claim`,
+`staking_unstake`, `staking_unbonded_claim`, `agentreward_claim`,
 `oracle_feeder_delegate`, `oracle_vote_submit`. Amounts are whole COEN strings (`"100"`,
 `"1.5"`), scaled to 1e18 minor units internally. Transactions are EIP-1559 (type 2) with
 an explicit gas limit (`tribute_offer` can't be `eth_estimateGas`-simulated because the
@@ -246,13 +246,14 @@ series and amount.
 
 ## Notes
 
-- Contract registry, addresses and ABIs live in `src/registry.ts`. Source of truth:
-  `contracts/precompiles/src/I*.sol` (+ `crates/blockchain/primitives/src/addresses.rs`).
-  `ITeeRegistry` has no `.sol`; its ABI comes from `bin/outbe-cli/src/abi.rs`.
-- ABIs are embedded as viem human-readable signatures (no Solidity compile step).
-  If an interface changes, regenerate from `forge inspect <I>.sol abi` and update
-  `registry.ts`. A method whose deployed shape differs from HEAD (node running an
-  older/newer binary) will surface a viem decode error — align the ABI to the node.
+- Addresses live in `src/registry.ts` (mirroring
+  `crates/blockchain/primitives/src/addresses.rs`).
+- **ABIs are generated, never hand-written.** `src/abi.ts` imports the committed
+  `contracts/*/abi-export/*.json` and each contract uses its interface ABI whole
+  — no filtering. The source of truth is the Solidity in
+  `contracts/precompiles/src/I*.sol` and `contracts/tokens/src/interfaces/*.sol`;
+  regenerate with `mise run export-abi` from the repo root. A method that no
+  longer exists surfaces as a viem "method not found" error at call time.
 - Crypto port mirrors `scripts/tribute_offer.py`, verified end-to-end against
   `rpc.testnet.outbe.net` (decryption reaches business logic; no AEAD failure).
 - Intent domain logic lives in `src/intent/` (`registry`, `tokens`, `format`); the
@@ -260,5 +261,5 @@ series and amount.
   `sign.ts`. Networks reuse the root `createCtx` (`src/chain.ts`) — a resolved
   network is just a thin view over a chain `Ctx`. Contract source of truth:
   `contracts/intent/` (router/order encoder) and `contracts/intent/examples/scripts/*`
-  (reference user flow). The router/ERC20 ABIs are embedded as human-readable
-  signatures, same as `registry.ts`.
+  (reference user flow). The router/ERC20 ABIs are generated, same as
+  `registry.ts` — see `src/abi.ts`.

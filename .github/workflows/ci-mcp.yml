@@ -1,0 +1,60 @@
+name: CI mcp
+
+# The MCP server imports its contract ABIs from the committed
+# `contracts/*/abi-export/*.json` at build time, so a missing or malformed
+# artifact has to break here rather than at `mcp-publish`.
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/ci-mcp.yml"
+      - "mcp/**"
+      - "contracts/intent/abi-export/**"
+      - "contracts/intex/abi-export/**"
+      - "contracts/precompiles/abi-export/**"
+      - "contracts/tokens/abi-export/**"
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - ".github/workflows/ci-mcp.yml"
+      - "mcp/**"
+      - "contracts/intent/abi-export/**"
+      - "contracts/intex/abi-export/**"
+      - "contracts/precompiles/abi-export/**"
+      - "contracts/tokens/abi-export/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Typecheck + Build
+    runs-on: depot-ubuntu-24.04
+    defaults:
+      run:
+        working-directory: mcp
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: mcp/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
