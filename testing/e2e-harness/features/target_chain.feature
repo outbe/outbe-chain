@@ -17,3 +17,4 @@ Feature: Local target chain
     Then the target router may mint on the venue
     When the intex engine is deployed on the committee chain
     Then the committee chain hosts the intex engine
+    And the origin router knows where proceeds come from

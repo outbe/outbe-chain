@@ -1,5 +1,6 @@
 //! Steps for the intex engine deployed onto the committee's own chain.
 
+use alloy_sol_types::sol;
 use cucumber::{then, when};
 
 use crate::env::environment;
@@ -39,4 +40,37 @@ fn committee_chain_hosts_engine(world: &mut World) {
             "{name} reported at {address} but the committee chain holds no code there"
         );
     }
+}
+
+sol! {
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IProceedsRoute {
+        function tokenBridge() external view returns (address);
+        function wcoen() external view returns (address);
+    }
+}
+
+#[then("the origin router knows where proceeds come from")]
+fn origin_router_knows_proceeds_route(world: &mut World) {
+    let url = world.rpc.url(world.validators.primary_port());
+    let contracts = world
+        .state
+        .origin_contracts
+        .clone()
+        .expect("a deploy recorded its addresses");
+
+    // Without the route an inbound delivery reverts as an unauthorised caller,
+    // and the day never opens a payout round.
+    let bridge = eth::read_call(
+        &url,
+        contracts.origin_router,
+        &IProceedsRoute::tokenBridgeCall {},
+    )
+    .expect("read tokenBridge from the origin router");
+    let token = eth::read_call(&url, contracts.origin_router, &IProceedsRoute::wcoenCall {})
+        .expect("read wcoen from the origin router");
+    assert!(
+        !bridge.is_zero() && token == contracts.wcoen,
+        "proceeds route is unset: bridge {bridge}, token {token}"
+    );
 }

@@ -31,6 +31,8 @@ pub struct OriginContracts {
     /// collection and router a remote chain would host sit here too.
     pub intex_nft: Address,
     pub target_router: Address,
+    /// Unwraps inbound proceeds to native; funded so it can pay.
+    pub wcoen: Address,
 }
 
 /// Deploy the cross-chain hub and the origin engine onto the committee's chain.
@@ -87,6 +89,23 @@ pub fn deploy(repo: &Path, url: &str, chain_id: u64) -> Result<OriginContracts> 
     )?;
 
     let bridge = address_from(&hub, "ERC7786Bridge:")?;
+
+    // Proceeds arrive as WCOEN and are unwrapped to native. The repository's own
+    // WETH-style stub pays from its balance, so nothing new is written here; the
+    // deployer stands in for the token bridge, which is only an authorised caller.
+    let wcoen = address_from(
+        &forge::run(
+            &intex,
+            &[
+                "create",
+                "test/foundry/cross-chain/OriginRouterProceeds.t.sol:MockWCOEN",
+            ],
+            &[],
+            url,
+        )?,
+        "Deployed to:",
+    )?;
+
     let origin = forge::run(
         &intex,
         &["script", "deploy/DeployOrigin.s.sol:DeployOrigin"],
@@ -94,6 +113,8 @@ pub fn deploy(repo: &Path, url: &str, chain_id: u64) -> Result<OriginContracts> 
             ("BRIDGE_ADDRESS", format!("{bridge:?}")),
             ("TARGET_CHAIN_IDS", chain.clone()),
             ("SALT_VERSION", SALT_VERSION.to_owned()),
+            ("OUTBE_WCOEN_BRIDGE", DEPLOYER_ADDRESS.to_owned()),
+            ("OUTBE_WCOEN_TOKEN", format!("{wcoen:?}")),
         ],
         url,
     )?;
@@ -119,6 +140,7 @@ pub fn deploy(repo: &Path, url: &str, chain_id: u64) -> Result<OriginContracts> 
         origin_router: address_from(&origin, "OriginRouter:")?,
         intex_nft: address_from(&venue, "IntexNFT1155:")?,
         target_router: address_from(&venue, "TargetRouter:")?,
+        wcoen,
     };
     wire(&intex, &contracts, url, chain_id)?;
     Ok(contracts)
