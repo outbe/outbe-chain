@@ -24,7 +24,7 @@ holder, client-side) can read them.
   chainId)` and `opNonce` must equal `gratis.opNonceOf(account)`.
 - **The loan is priced at pledge time.** You name the *credit* you want
   (`amountStables` of `asset`), not the collateral: the chain converts it to gratis at
-  the COEN/0xUSD oracle rate and seals the stables amount, the asset and the rate into
+  the COEN/840 oracle rate and seals the stables amount, the asset and the rate into
   the encrypted pledge ticket. `maxGratis` caps the derived cost (the MAC only covers
   `amountStables`, so this is the slippage guard — and it is authenticated by your
   transaction signature). The gratis actually charged comes back on the

@@ -2861,11 +2861,11 @@ fn schedule_public_measurement_day(
 
     provider.set_block_number(1);
     let changed = StorageHandle::enter(&mut provider, |storage| {
-        let pair_id = outbe_oracle::api::get_pair_id(storage.clone(), 840)?;
+        let pair = outbe_oracle::api::DAY_TYPE_PAIR;
         let previous_vwap = outbe_oracle::api::get_exchange_rate(
             storage.clone(),
-            outbe_oracle::api::DAY_TYPE_PAIR.0,
-            outbe_oracle::api::DAY_TYPE_PAIR.1,
+            pair.address1(),
+            pair.address2(),
         )?;
         if previous_vwap.is_zero() {
             return Err(outbe_primitives::error::PrecompileError::Fatal(
@@ -2884,9 +2884,9 @@ fn schedule_public_measurement_day(
             )
         })?;
         let volume = U256::from(1_000_000_000_000_000_000_u128);
-        let mut oracle = outbe_oracle::contract::OracleContract::new(storage.clone());
-        oracle.write_snapshot(previous_end, &[(pair_id, previous_vwap, volume)])?;
-        oracle.write_snapshot(forming_start, &[(pair_id, current_vwap, volume)])?;
+        let mut oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+        oracle.write_snapshot(previous_end, &[(pair, previous_vwap, volume)])?;
+        oracle.write_snapshot(forming_start, &[(pair, current_vwap, volume)])?;
         if !outbe_oracle::api::store_worldwide_day_vwap_snapshot(
             storage.clone(),
             previous_day,
@@ -4199,16 +4199,18 @@ mod tests {
                 outbe_oracle::api::day_type_pair_vwap(storage.clone(), day.worldwide_day).unwrap(),
                 Some(day.current_vwap)
             );
-            let pair_id = outbe_oracle::api::get_pair_id(storage.clone(), 840).unwrap();
-            let vwap = outbe_oracle::api::get_worldwide_day_vwap_for_pair_id(
+            let pair = outbe_oracle::api::DAY_TYPE_PAIR;
+            let (_, pair_index) =
+                outbe_oracle::api::require_coen_pair(storage.clone(), 840).unwrap();
+            let vwap = outbe_oracle::api::get_worldwide_day_vwap_for_pair(
                 storage.clone(),
                 day.worldwide_day,
-                pair_id,
+                pair_index,
             )
             .unwrap()
             .unwrap();
             let scurve =
-                outbe_oracle::api::get_max_active_scurve_value(storage, day.worldwide_day, pair_id)
+                outbe_oracle::api::get_max_active_scurve_value(storage, day.worldwide_day, pair)
                     .unwrap();
             assert!(vwap.max(scurve) > U256::ZERO);
         });
@@ -4579,23 +4581,23 @@ mod tests {
             "storage": {},
         });
         let worldwide_day = WorldwideDay::from_timestamp(now);
-        let mut oracle_config = outbe_oracle::logic::OracleGenesisConfig::default_config();
+        let day_pair = outbe_oracle::api::DAY_TYPE_PAIR;
+        let mut oracle_config = outbe_oracle::genesis::OracleGenesisConfig::default_config();
         oracle_config.initial_rates = vec![(
-            "COEN".into(),
-            "0xUSD".into(),
+            day_pair.address1(),
+            day_pair.address2(),
             U256::from(1_000_000_000_000_000_000_u128),
         )];
-        oracle_config.settlement_currencies =
-            vec![(840, "0xUSD".into(), "COEN".into(), "0xUSD".into())];
-        oracle_config.scurve_entries = vec![outbe_oracle::logic::GenesisScurveEntry {
-            pair_id: 1,
+        oracle_config.scurve_entries = vec![outbe_oracle::genesis::GenesisScurveEntry {
+            base: day_pair.address1(),
+            quote: day_pair.address2(),
             peak_day: worldwide_day.to_timestamp_utc(),
             peak_price: U256::from(1_000_000_000_000_000_000_u128),
         }];
         let mut oracle_provider = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut oracle_provider, |storage| {
-            let mut oracle = outbe_oracle::contract::OracleContract::new(storage);
-            outbe_oracle::logic::init_from_genesis(&mut oracle, &oracle_config)
+            let mut oracle = outbe_oracle::schema::OracleContract::new(storage);
+            outbe_oracle::genesis::init_from_genesis(&mut oracle, &oracle_config)
         })
         .unwrap();
         let oracle_storage = oracle_provider

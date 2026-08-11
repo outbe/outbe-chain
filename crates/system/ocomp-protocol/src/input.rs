@@ -230,7 +230,7 @@ pub fn materialize_authenticated_openings(
         source_kind: OpeningSourceKind::Oracle,
         canonical_subject_key: BoundedBytes(canonical_oracle_subject(
             openings.wwd,
-            &openings.subjects.settlement_isos,
+            &openings.subjects.reference_isos,
         )?),
         canonical_value: BoundedBytes(canonical_slot_values(&openings.oracle, limits)?),
         opening_codec_id: bundle.oracle_opening_codec_id,

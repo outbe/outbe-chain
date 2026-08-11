@@ -11,7 +11,8 @@ use outbe_primitives::storage::StorageHandle;
 
 use crate::errors::CredisFactoryError;
 use crate::precompile::ICredisFactory;
-use crate::sol_ext::{IReferenceCurrency, IERC20};
+use crate::sol_ext::IERC20;
+use outbe_primitives::reference_currency_abi::IReferenceCurrency;
 
 // ---------------------------------------------------------------------------
 // request_credis

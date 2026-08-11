@@ -205,3 +205,43 @@ fn absent_certified_generation_has_an_explicit_public_abi_result() {
         assert_eq!(actual.issuedAt, 0);
     });
 }
+
+/// An unregistered COEN/<qualifier ISO> pair must skip the block's qualification
+/// scan, not halt the block. Before the ISO migration this path propagated
+/// `Revert("pair not registered")` out of `begin_block`; it now soft-skips like
+/// the gem and intexfactory qualifiers.
+#[test]
+fn qualify_nods_skips_the_block_when_the_settlement_pair_is_unregistered() {
+    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let mut provider = HashMapStorageProvider::new(1);
+    let scope = ExecutionScope::new();
+    StorageHandle::enter(&mut provider, |storage| {
+        seed_compressed_entities_genesis(&storage);
+        begin_block(storage.clone(), &scope).unwrap();
+        let ctx = outbe_primitives::block::BlockRuntimeContext::new(
+            outbe_primitives::block::BlockContext::empty_for_tests(1, 1_752_534_000, 1),
+            storage.clone(),
+        );
+        // Oracle storage is untouched, so ISO 840 has no settlement pair.
+        crate::hooks::qualify_nods(&ctx, &scope, &parent).unwrap();
+    });
+}
+
+/// A registered pair with no published rate must also skip rather than qualify
+/// every bucket against a zero rate.
+#[test]
+fn qualify_nods_skips_the_block_when_the_pair_has_no_published_rate() {
+    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let mut provider = HashMapStorageProvider::new(1);
+    let scope = ExecutionScope::new();
+    StorageHandle::enter(&mut provider, |storage| {
+        seed_compressed_entities_genesis(&storage);
+        begin_block(storage.clone(), &scope).unwrap();
+
+        let ctx = outbe_primitives::block::BlockRuntimeContext::new(
+            outbe_primitives::block::BlockContext::empty_for_tests(1, 1_752_534_000, 1),
+            storage.clone(),
+        );
+        crate::hooks::qualify_nods(&ctx, &scope, &parent).unwrap();
+    });
+}
