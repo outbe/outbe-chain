@@ -15,3 +15,5 @@ Feature: Local target chain
     Then the target chain hosts the intex venue
     When the intex venue is wired
     Then the target router may mint on the venue
+    When the intex engine is deployed on the committee chain
+    Then the committee chain hosts the intex engine

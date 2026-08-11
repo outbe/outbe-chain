@@ -5,7 +5,7 @@
 //! other launched process, so a dropped `World` takes it down.
 
 use std::net::TcpListener;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 
 use alloy_primitives::{Address, B256};
@@ -297,8 +297,6 @@ impl TargetChain {
         };
         read.ok_or_else(|| eyre!("read the role id from {holder}"))
     }
-
-    /// Run one forge command in `dir` against this chain, returning its output.
 }
 
 /// An OS-assigned free port, so the committee's own contiguous port blocks stay
