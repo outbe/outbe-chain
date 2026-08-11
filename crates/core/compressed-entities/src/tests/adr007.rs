@@ -274,6 +274,7 @@ fn nod_item(id: EntityId36, owner: Address) -> NodItemBodyV1 {
         issuance_currency: 840,
         reference_currency: 978,
         issued_at: 7,
+        is_settled: false,
     }
 }
 
@@ -2173,6 +2174,7 @@ fn maximum_v1_body_footprint_and_storage_tail_cleanup_are_exact() {
         issuance_currency: u16::MAX,
         reference_currency: u16::MAX,
         issued_at: u64::MAX,
+        is_settled: true,
     };
     let shorter = NodItemBodyV1 {
         nod_id: id,
@@ -2186,6 +2188,7 @@ fn maximum_v1_body_footprint_and_storage_tail_cleanup_are_exact() {
         issuance_currency: 0,
         reference_currency: 0,
         issued_at: 0,
+        is_settled: false,
     };
     let maximum_stored = StoredBody::new_v1(encode_nod_item_v1(&maximum).unwrap())
         .unwrap()

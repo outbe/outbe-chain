@@ -149,6 +149,7 @@ fn nod_item_v1_uses_one_strict_canonical_protobuf_representation() {
         issuance_currency: 3,
         reference_currency: 4,
         issued_at: 5,
+        is_settled: false,
     };
     let expected = hex::decode(concat!(
         "0a2400000001",
@@ -350,6 +351,7 @@ fn protobuf_profile_rejects_order_length_width_wire_and_range_violations() {
         issuance_currency: 3,
         reference_currency: 4,
         issued_at: 5,
+        is_settled: false,
     };
     assert!(matches!(
         decode_nod_item_v1(&shorten_length_delimited(

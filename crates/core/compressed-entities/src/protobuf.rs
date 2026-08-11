@@ -35,6 +35,9 @@ pub struct NodItemBodyV1 {
     pub issuance_currency: u16,
     pub reference_currency: u16,
     pub issued_at: u64,
+    /// Set once the Nod's cost amount has been paid into the reserve vault.
+    /// Encoded only when true, so unsettled bodies keep their exact prior bytes.
+    pub is_settled: bool,
 }
 
 /// Canonical v1 Nod bucket payload.
@@ -200,6 +203,7 @@ pub fn encode_nod_item_v1(body: &NodItemBodyV1) -> Result<Vec<u8>, CanonicalBody
     encode_optional_varint_field(9, u64::from(body.issuance_currency), &mut output);
     encode_optional_varint_field(10, u64::from(body.reference_currency), &mut output);
     encode_optional_varint_field(11, body.issued_at, &mut output);
+    encode_optional_varint_field(12, u64::from(body.is_settled), &mut output);
     Ok(output)
 }
 
@@ -217,6 +221,7 @@ pub fn decode_nod_item_v1(bytes: &[u8]) -> Result<NodItemBodyV1, CanonicalBodyEr
     let issuance_currency = optional_u16(&mut fields, 9)?;
     let reference_currency = optional_u16(&mut fields, 10)?;
     let issued_at = optional_varint(&mut fields, 11)?;
+    let is_settled = optional_bool(&mut fields, 12)?;
     fields.finish()?;
 
     let body = NodItemBodyV1 {
@@ -231,6 +236,7 @@ pub fn decode_nod_item_v1(bytes: &[u8]) -> Result<NodItemBodyV1, CanonicalBodyEr
         issuance_currency,
         reference_currency,
         issued_at,
+        is_settled,
     };
     validate_identity_day(body.nod_id, body.worldwide_day)?;
     if encode_nod_item_v1(&body)? != bytes {
