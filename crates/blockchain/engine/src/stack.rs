@@ -3546,6 +3546,8 @@ where
     // ordered (unbounded) mpsc rather than a latest-only `watch` deliberately: the
     // drain feeds per-height rotation-threshold logic (freeze/activation heights),
     // so heights are processed in sequence rather than coalesced to the latest.
+    let (executor_finalized_height_tx, mut executor_finalized_height_rx) =
+        tokio::sync::mpsc::unbounded_channel::<u64>();
     let (execution_finalized_height_tx, mut execution_finalized_height_rx) =
         tokio::sync::mpsc::unbounded_channel::<u64>();
     let (consensus_tip_tx, mut consensus_tip_rx) =
@@ -3588,7 +3590,7 @@ where
         recovery_anchor_height,
         recovery_anchor_hash,
         projection_readiness.clone(),
-        Some(execution_finalized_height_tx.clone()),
+        Some(executor_finalized_height_tx),
     );
 
     // ── 12. Create application actor and handler ────────────────────────
@@ -3876,8 +3878,31 @@ where
             ocomp_proof_source,
         ),
     );
-    let (ocomp_retention_service, ocomp_retention_handle) =
-        outbe_node::ocomp::retention::OcompRetentionService::new(ocomp_retention_coordinator);
+    let (ocomp_retention_service, ocomp_retention_handle, ocomp_retention_execution_handle) =
+        outbe_node::ocomp::retention::OcompRetentionService::new_with_execution_readiness(
+            ocomp_retention_coordinator,
+            None,
+            recovery_anchor_height,
+        );
+    if last_consensus_finalized > Height::zero() {
+        let recovered_tip = marshal_mailbox
+            .get_block(last_consensus_finalized)
+            .await
+            .ok_or_else(|| {
+                eyre::eyre!(
+                    "marshal is missing recovered finalized block at height {} for OCOMP retention",
+                    last_consensus_finalized.get()
+                )
+            })?;
+        ocomp_retention_handle
+            .reconcile_finalized(&recovered_tip)
+            .map_err(|error| {
+                eyre::eyre!(
+                    "failed to seed OCOMP retention from recovered finalized height {}: {error}",
+                    last_consensus_finalized.get()
+                )
+            })?;
+    }
     let ocomp_retention: Arc<dyn OcompRetentionHook> = Arc::new(ocomp_retention_handle);
 
     // Resolve consensus-sync block timings from genesis (timing.rs fallbacks,
@@ -3945,6 +3970,24 @@ where
     let _ocomp_retention_worker = ctx
         .child("ocomp_retention")
         .spawn(move |_ctx| ocomp_retention_service.run());
+    let execution_height_fanout = execution_finalized_height_tx.clone();
+    let _ocomp_execution_ready_worker = ctx.child("ocomp_execution_ready").spawn(move |_ctx| {
+        async move {
+            while let Some(height) = executor_finalized_height_rx.recv().await {
+                if let Err(error) = ocomp_retention_execution_handle
+                    .notify_execution_finalized(height)
+                {
+                    tracing::warn!(
+                        target: "outbe::ocomp",
+                        height,
+                        %error,
+                        "OCOMP execution-readiness notification failed locally; consensus execution continues"
+                    );
+                }
+                let _ = execution_height_fanout.send(height);
+            }
+        }
+    });
 
     // Half B step 21: construct FinalizationActor + matching mailbox.
     // After step 21 the actor IS the production finalization path: the

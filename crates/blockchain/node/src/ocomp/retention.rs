@@ -922,8 +922,8 @@ pub struct OcompRetentionCoordinator {
 }
 
 const FINALITY_NOTIFICATION_CAPACITY: usize = 256;
-const FINALITY_RECONCILIATION_MAX_ATTEMPTS: usize = 8;
 const FINALITY_RECONCILIATION_INITIAL_BACKOFF_MS: u64 = 25;
+const FINALITY_RECONCILIATION_MAX_BACKOFF_MS: u64 = 800;
 
 /// Bounded, ordered node-owned worker for finalized-block reconciliation.
 ///
@@ -936,6 +936,7 @@ pub struct OcompRetentionService {
     coordinator: Arc<OcompRetentionCoordinator>,
     snapshot_armer: Option<Arc<dyn FinalizedSnapshotArmer>>,
     finalized_rx: tokio::sync::mpsc::Receiver<ConsensusBlock>,
+    execution_ready_rx: tokio::sync::watch::Receiver<u64>,
 }
 
 /// Arms the exact finalized snapshot before later finalized blocks can advance
@@ -954,6 +955,14 @@ pub struct OcompRetentionHandle {
     finalized_tx: tokio::sync::mpsc::Sender<ConsensusBlock>,
 }
 
+/// Executor-facing notification that exact canonical receipts through `height`
+/// are locally readable. It carries no consensus authority: certified block
+/// identity still comes exclusively from [`OcompRetentionHandle`].
+#[derive(Clone)]
+pub struct OcompRetentionExecutionHandle {
+    execution_ready_tx: tokio::sync::watch::Sender<u64>,
+}
+
 impl OcompRetentionService {
     pub fn new(coordinator: Arc<OcompRetentionCoordinator>) -> (Self, OcompRetentionHandle) {
         Self::new_with_snapshot_armer(coordinator, None)
@@ -963,6 +972,34 @@ impl OcompRetentionService {
         coordinator: Arc<OcompRetentionCoordinator>,
         snapshot_armer: Option<Arc<dyn FinalizedSnapshotArmer>>,
     ) -> (Self, OcompRetentionHandle) {
+        let (execution_ready_tx, execution_ready_rx) = tokio::sync::watch::channel(u64::MAX);
+        drop(execution_ready_tx);
+        Self::new_inner(coordinator, snapshot_armer, execution_ready_rx)
+    }
+
+    /// Construct the production ordered join between certified finality and
+    /// exact local execution. `initial_execution_ready_height` is the executor
+    /// recovery anchor; later progress is supplied through the returned handle.
+    pub fn new_with_execution_readiness(
+        coordinator: Arc<OcompRetentionCoordinator>,
+        snapshot_armer: Option<Arc<dyn FinalizedSnapshotArmer>>,
+        initial_execution_ready_height: u64,
+    ) -> (Self, OcompRetentionHandle, OcompRetentionExecutionHandle) {
+        let (execution_ready_tx, execution_ready_rx) =
+            tokio::sync::watch::channel(initial_execution_ready_height);
+        let (service, handle) = Self::new_inner(coordinator, snapshot_armer, execution_ready_rx);
+        (
+            service,
+            handle,
+            OcompRetentionExecutionHandle { execution_ready_tx },
+        )
+    }
+
+    fn new_inner(
+        coordinator: Arc<OcompRetentionCoordinator>,
+        snapshot_armer: Option<Arc<dyn FinalizedSnapshotArmer>>,
+        execution_ready_rx: tokio::sync::watch::Receiver<u64>,
+    ) -> (Self, OcompRetentionHandle) {
         let (finalized_tx, finalized_rx) =
             tokio::sync::mpsc::channel(FINALITY_NOTIFICATION_CAPACITY);
         (
@@ -970,6 +1007,7 @@ impl OcompRetentionService {
                 coordinator: coordinator.clone(),
                 snapshot_armer,
                 finalized_rx,
+                execution_ready_rx,
             },
             OcompRetentionHandle {
                 coordinator,
@@ -982,7 +1020,21 @@ impl OcompRetentionService {
         while let Some(block) = self.finalized_rx.recv().await {
             let block_number = block.number();
             let block_hash = block.block_hash();
-            for attempt in 1..=FINALITY_RECONCILIATION_MAX_ATTEMPTS {
+            while block_number > *self.execution_ready_rx.borrow_and_update() {
+                if self.execution_ready_rx.changed().await.is_err() {
+                    tracing::warn!(
+                        target: "outbe::ocomp",
+                        block_number,
+                        block_hash = %block_hash,
+                        execution_ready_height = *self.execution_ready_rx.borrow(),
+                        "OCOMP execution-readiness source closed with finalized work pending; marshal replay will recover it after restart"
+                    );
+                    return;
+                }
+            }
+
+            let mut attempt = 0_u64;
+            loop {
                 let coordinator = self.coordinator.clone();
                 let snapshot_armer = self.snapshot_armer.clone();
                 let finalized_block = block.clone();
@@ -1003,44 +1055,71 @@ impl OcompRetentionService {
                 .await
                 {
                     Ok(Ok(())) => break,
-                    Ok(Err(error)) if attempt < FINALITY_RECONCILIATION_MAX_ATTEMPTS => {
+                    Ok(Err(error)) => {
+                        attempt = attempt.saturating_add(1);
                         let backoff_ms = FINALITY_RECONCILIATION_INITIAL_BACKOFF_MS
-                            .saturating_mul(1_u64 << (attempt - 1).min(5));
-                        tracing::debug!(
+                            .saturating_mul(1_u64 << attempt.saturating_sub(1).min(5))
+                            .min(FINALITY_RECONCILIATION_MAX_BACKOFF_MS);
+                        if attempt == 1 || attempt.is_multiple_of(64) {
+                            tracing::warn!(
+                                target: "outbe::ocomp",
+                                block_number,
+                                block_hash = %block_hash,
+                                attempt,
+                                backoff_ms,
+                                %error,
+                                "OCOMP pin reconciliation is stalled; retaining the exact finalized block"
+                            );
+                        } else {
+                            tracing::debug!(
+                                target: "outbe::ocomp",
+                                block_number,
+                                block_hash = %block_hash,
+                                attempt,
+                                backoff_ms,
+                                %error,
+                                "OCOMP pin reconciliation will retry the same exact finalized block"
+                            );
+                        }
+                        tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                    }
+                    Err(error) => {
+                        attempt = attempt.saturating_add(1);
+                        tracing::warn!(
                             target: "outbe::ocomp",
                             block_number,
                             block_hash = %block_hash,
                             attempt,
-                            backoff_ms,
                             %error,
-                            "OCOMP pin reconciliation will retry after a transient local failure"
+                            "OCOMP pin reconciliation task failed; retaining the exact finalized block"
                         );
-                        tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
-                    }
-                    Ok(Err(error)) => {
-                        tracing::warn!(
-                            target: "outbe::ocomp",
-                            block_number,
-                            block_hash = %block_hash,
-                            attempts = attempt,
-                            %error,
-                            "OCOMP pin reconciliation failed in node-owned worker"
-                        );
-                        break;
-                    }
-                    Err(error) => {
-                        tracing::warn!(
-                            target: "outbe::ocomp",
-                            block_number,
-                            block_hash = %block_hash,
-                            %error,
-                            "OCOMP pin reconciliation worker task failed"
-                        );
-                        break;
+                        tokio::time::sleep(Duration::from_millis(
+                            FINALITY_RECONCILIATION_MAX_BACKOFF_MS,
+                        ))
+                        .await;
                     }
                 }
             }
         }
+    }
+}
+
+impl OcompRetentionExecutionHandle {
+    pub fn notify_execution_finalized(&self, height: u64) -> Result<(), OcompRetentionHookError> {
+        if self.execution_ready_tx.receiver_count() == 0 {
+            return Err(OcompRetentionHookError::new(
+                "OCOMP retention execution-readiness worker is unavailable",
+            ));
+        }
+        self.execution_ready_tx.send_if_modified(|current| {
+            if height > *current {
+                *current = height;
+                true
+            } else {
+                false
+            }
+        });
+        Ok(())
     }
 }
 
