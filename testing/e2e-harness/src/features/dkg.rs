@@ -57,13 +57,6 @@ fn freeze_target(world: &mut World) {
         .localnet
         .provision_joiner(idx)
         .expect("provision joiner");
-    #[cfg(feature = "ocomp-integration")]
-    world
-        .ocomp
-        .stage_joiner_domain_material(
-            u8::try_from(idx).expect("joiner index fits OCOMP harness wire"),
-        )
-        .expect("stage joiner OCOMP domain before validator-mode start");
     world
         .localnet
         .launch_joiner(idx, &[])

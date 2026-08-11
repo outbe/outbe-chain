@@ -8,13 +8,23 @@ use crate::features::common::boot_localnet_with_opts;
 use crate::world::localnet::StartOpts;
 use crate::world::World;
 
+const ZEROFEE_BOUNDARY_FORMING_PERIOD_SECONDS: u64 = 50 * 60 * 60;
+
+fn boundary_protocol_tuning() -> [(&'static str, String); 1] {
+    [(
+        "TESTNET_METADOSIS_FORMING_SECONDS",
+        ZEROFEE_BOUNDARY_FORMING_PERIOD_SECONDS.to_string(),
+    )]
+}
+
 #[given("a fresh localnet near the next UTC worldwide-day boundary")]
 fn near_day_boundary(world: &mut World) {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system time after epoch")
         .as_secs();
-    boot_localnet_with_opts(world, 20, &[], StartOpts::near_next_utc_day(20, now));
+    let tuning = boundary_protocol_tuning();
+    boot_localnet_with_opts(world, 20, &tuning, StartOpts::near_next_utc_day(20, now));
     let timestamp = world
         .rpc
         .latest_block_timestamp(world.validators.primary_port())
@@ -23,6 +33,27 @@ fn near_day_boundary(world: &mut World) {
         timestamp % 86_400 >= 86_200,
         "debug-node clock did not enter the worldwide-day boundary window: {timestamp}"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn boundary_profile_keeps_forming_open_after_the_genesis_clock_shift() {
+        let wwd_start = outbe_primitives::time::date_key_to_utc_timestamp(20260812)
+            - outbe_primitives::time::UTC_PLUS_14_OFFSET;
+        let shifted_genesis = outbe_primitives::time::date_key_to_utc_timestamp(20260812) - 2 * 60;
+
+        assert!(
+            wwd_start + ZEROFEE_BOUNDARY_FORMING_PERIOD_SECONDS > shifted_genesis,
+            "the ZeroFee day-boundary clock must not start after FORMING expired"
+        );
+        assert_eq!(
+            boundary_protocol_tuning(),
+            [("TESTNET_METADOSIS_FORMING_SECONDS", "180000".to_owned())]
+        );
+    }
 }
 
 #[then("Pectra and the ZeroFee views are ready")]

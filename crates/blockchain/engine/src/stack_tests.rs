@@ -2471,6 +2471,16 @@ fn startup_pending_dkg_epoch_plan_fails_closed_on_invalid_or_expired_handoff() {
 }
 
 #[test]
+fn deferred_startup_pending_dkg_reserves_the_following_cycle() {
+    assert_eq!(next_dkg_cycle_after_restored_target(2, 2), 3);
+    assert_eq!(next_dkg_cycle_after_restored_target(5, 2), 5);
+    assert_eq!(
+        next_dkg_cycle_after_restored_target(u64::MAX, u64::MAX),
+        u64::MAX
+    );
+}
+
+#[test]
 fn restored_pending_output_survives_until_deferred_activation() {
     let (_keys, _participants, recovered, _share, _polynomial) = run_test_dkg_complete();
     assert_eq!(

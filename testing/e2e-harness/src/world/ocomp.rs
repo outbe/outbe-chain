@@ -540,21 +540,8 @@ impl OcompTopology {
             index == self.domains.len(),
             "staged joiner must be the next ordered validator index"
         );
-        let source_bundle = self.domain_root(0)?.join("protocol-bundle-v1.ocb1");
-        let source_key = self.cfg.validator_dir(index).join("ocomp-key-v1.hex");
-        let bundle = fs::read(&source_bundle)?;
-        let signing_key = fs::read(&source_key)?;
-        let root = self
-            .cfg
-            .validator_dir(index)
-            .join("ocomp")
-            .join("domain-v1");
-        fs::create_dir_all(&root)?;
-        publish_exact_file(&root.join("protocol-bundle-v1.ocb1"), &bundle, 0o640)?;
-        publish_exact_file(&root.join("ocomp-key-v1.hex"), &signing_key, 0o600)?;
         let evm_key = format!("{}\n", ocomp_evm_private_key(validator_index));
-        publish_exact_file(&root.join("ocomp-evm-key.hex"), evm_key.as_bytes(), 0o600)?;
-        Ok(())
+        stage_joiner_domain_material_with_evm_key(&self.cfg, index, evm_key.as_bytes())
     }
 
     /// Scenario-owned root for one validator domain.
@@ -2515,6 +2502,43 @@ impl OcompTopology {
     }
 }
 
+/// Stage the node-owned OCOMP domain for a joiner that will start directly in
+/// Validator mode. Without an explicit OCOMP delegate, the validator EVM key
+/// is the canonical carrier authority.
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn stage_direct_joiner_domain_material(cfg: &Config, index: usize) -> Result<()> {
+    let prefixed = crate::internal::proc::read_evm_key(&cfg.validator_dir(index))?;
+    let raw = prefixed
+        .strip_prefix("0x")
+        .ok_or_else(|| eyre::eyre!("validator EVM key is missing its canonical prefix"))?;
+    eyre::ensure!(
+        raw.len() == 64
+            && raw
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+        "validator EVM key must be exactly 32 lowercase hex bytes"
+    );
+    let evm_key = format!("{raw}\n");
+    stage_joiner_domain_material_with_evm_key(cfg, index, evm_key.as_bytes())
+}
+
+#[cfg(feature = "ocomp-integration")]
+fn stage_joiner_domain_material_with_evm_key(
+    cfg: &Config,
+    index: usize,
+    evm_key: &[u8],
+) -> Result<()> {
+    let founder = cfg.validator_dir(0).join("ocomp").join("domain-v1");
+    let bundle = fs::read(founder.join("protocol-bundle-v1.ocb1"))?;
+    let signing_key = fs::read(cfg.validator_dir(index).join("ocomp-key-v1.hex"))?;
+    let root = cfg.validator_dir(index).join("ocomp").join("domain-v1");
+    fs::create_dir_all(&root)?;
+    publish_exact_file(&root.join("protocol-bundle-v1.ocb1"), &bundle, 0o640)?;
+    publish_exact_file(&root.join("ocomp-key-v1.hex"), &signing_key, 0o600)?;
+    publish_exact_file(&root.join("ocomp-evm-key.hex"), evm_key, 0o600)?;
+    Ok(())
+}
+
 #[cfg(feature = "ocomp-integration")]
 fn configure_release_layout(command: &mut Command, base_path: &Path, validator_index: u8) {
     command
@@ -3632,6 +3656,43 @@ mod tests {
             .iter()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte)));
         assert!(topology.domain_root(4).is_err());
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
+    fn direct_joiner_domain_uses_validator_evm_fallback_without_a_delegate() {
+        let topology = topology_with_validators(4);
+        let founder_bundle = topology
+            .domain_root(0)
+            .unwrap()
+            .join("protocol-bundle-v1.ocb1");
+        fs::create_dir_all(founder_bundle.parent().unwrap()).unwrap();
+        fs::write(&founder_bundle, b"pinned-bundle").unwrap();
+        let joiner = topology.cfg.validator_dir(4);
+        fs::create_dir_all(&joiner).unwrap();
+        fs::write(
+            joiner.join("ocomp-key-v1.hex"),
+            b"joiner-registration-secret\n",
+        )
+        .unwrap();
+        let validator_evm_key = format!("0x{}\n", "ab".repeat(32));
+        fs::write(joiner.join("evm-key.hex"), validator_evm_key).unwrap();
+
+        stage_direct_joiner_domain_material(&topology.cfg, 4).unwrap();
+
+        let staged = joiner.join("ocomp").join("domain-v1");
+        assert_eq!(
+            fs::read(staged.join("protocol-bundle-v1.ocb1")).unwrap(),
+            b"pinned-bundle"
+        );
+        assert_eq!(
+            fs::read(staged.join("ocomp-key-v1.hex")).unwrap(),
+            b"joiner-registration-secret\n"
+        );
+        assert_eq!(
+            fs::read(staged.join("ocomp-evm-key.hex")).unwrap(),
+            format!("{}\n", "ab".repeat(32)).as_bytes()
+        );
     }
 
     #[cfg(feature = "ocomp-integration")]

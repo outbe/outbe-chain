@@ -1372,6 +1372,13 @@ fn next_consensus_epoch_after_dkg_activation(current_epoch: Epoch) -> Epoch {
     Epoch::new(current_epoch.get().saturating_add(1))
 }
 
+fn next_dkg_cycle_after_restored_target(
+    current_next_cycle: u64,
+    restored_target_cycle: u64,
+) -> u64 {
+    current_next_cycle.max(restored_target_cycle.saturating_add(1))
+}
+
 fn genesis_hash(node: &OutbeFullNode) -> Result<B256> {
     let hash = node
         .provider
@@ -4032,6 +4039,10 @@ where
                 })?
             }
         };
+        let restored_target_dkg_cycle = match &restored {
+            RestoredPendingDkgActivation::Participant(pending) => pending.target.dkg_cycle,
+            RestoredPendingDkgActivation::DealerOnly(pending) => pending.target.dkg_cycle,
+        };
         let exact_carrier_height = find_exact_finalized_preannounce_carrier(
             &node.provider,
             pending_artifact,
@@ -4056,6 +4067,8 @@ where
                     active_epoch == current_epoch,
                     "deferred startup DKG plan changed active epoch"
                 );
+                dkg_cycle =
+                    next_dkg_cycle_after_restored_target(dkg_cycle, restored_target_dkg_cycle);
                 match restored {
                     RestoredPendingDkgActivation::Participant(pending) => {
                         frozen_dkg_target = Some(pending.target.clone());

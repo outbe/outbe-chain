@@ -97,6 +97,8 @@ impl Localnet {
     /// (port of `e2e_provision_joiner`). Leaves keys under `validator-<index>/`.
     pub fn provision_joiner(&mut self, index: usize) -> Result<()> {
         self.provision_joiner_registration(index)?;
+        #[cfg(feature = "ocomp-integration")]
+        crate::world::ocomp::stage_direct_joiner_domain_material(&self.cfg, index)?;
         self.join_validator_enclave(index)
     }
 
