@@ -86,6 +86,10 @@ impl TributeFactoryContract<'_> {
         let offering_day = *outbe_metadosis::api::offering_worldwide_days(self.storage.clone())?
             .first()
             .ok_or_else(|| PrecompileError::Revert("no worldwide day is OFFERING".to_string()))?;
+
+        outbe_oracle::api::check_reference_currency_with_storage(self.storage.clone(),reference_currency)?;
+
+        // todo this is wrong
         let tribute_price =
             resolve_tribute_price(self.storage.clone(), reference_currency, offering_day)?;
         if tribute_price.is_zero() {

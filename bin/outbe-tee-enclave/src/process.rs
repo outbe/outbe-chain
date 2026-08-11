@@ -72,7 +72,6 @@ fn process_one(
 
     // worldwide_day / currency come from the encrypted payload (authoritative);
     // the node already read the current USDC/COEN rate and passed it in.
-    check_currency(offer.reference_currency)?;
     check_currency(payload.currency)?;
 
     let amount_minor = normalize_amount(&payload.amount_base, &payload.amount_atto)?;
