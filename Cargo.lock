@@ -8515,6 +8515,7 @@ dependencies = [
  "hex",
  "k256 0.13.4",
  "libc",
+ "outbe-common",
  "outbe-primitives",
  "pem",
  "postcard",

@@ -154,6 +154,9 @@ fn validate_tribute_offer_batch_response(
 mod tests {
     use super::*;
     use alloy_primitives::{Address, U256};
+    use outbe_tee::protocol::WorldwideDay;
+
+    const NEXT_DAY: WorldwideDay = WorldwideDay::new(20250116);
 
     fn sample_tribute_offer() -> EncryptedTributeOffer {
         EncryptedTributeOffer {
@@ -161,7 +164,7 @@ mod tests {
             cipher_text: vec![1, 2, 3, 4],
             nonce: vec![0u8; 12],
             ephemeral_pubkey: U256::from(7u64),
-            worldwide_day: 20250115,
+            worldwide_day: WorldwideDay::new(20250115),
             tribute_currency: 840,
             reference_currency: 840,
             exclude_from_intex_issuance: false,
@@ -200,7 +203,7 @@ mod tests {
         let offers = vec![sample_tribute_offer()];
 
         for mutate in [
-            (|o: &mut EncryptedTributeOffer| o.worldwide_day = 20250116) as fn(&mut _),
+            (|o: &mut EncryptedTributeOffer| o.worldwide_day = NEXT_DAY) as fn(&mut _),
             |o: &mut EncryptedTributeOffer| o.tribute_currency = 978,
             |o: &mut EncryptedTributeOffer| o.tribute_price_minor = U256::from(2_000u64),
         ] {

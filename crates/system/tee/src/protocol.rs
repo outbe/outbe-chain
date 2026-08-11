@@ -17,6 +17,8 @@
 
 use alloy_primitives::{Address, B256, U256};
 
+pub use outbe_common::WorldwideDay;
+
 /// Hard cap for the deterministic registry onboarding artifact. The current
 /// X25519/nonce/AEAD envelope is substantially smaller; this prevents a
 /// malformed enclave response from creating an unbounded consensus log.
@@ -58,10 +60,13 @@ pub struct EncryptedTributeOffer {
     /// ABI `ephemeralPubkey` (uint256): client ephemeral X25519 public key for
     /// ECDHE, big-endian.
     pub ephemeral_pubkey: U256,
-    /// ABI `worldwideDay`: UTC+14 day key (`YYYYMMDD`). Already checked for
-    /// calendar validity and OFFERING status by the node; the enclave binds it
-    /// into `token_id`.
-    pub worldwide_day: u32,
+    /// ABI `worldwideDay`: UTC+14 day key (`YYYYMMDD`). Calendar validity and
+    /// OFFERING status are settled by the node before the call; the enclave
+    /// binds the value into `token_id` without re-deriving either. The host
+    /// recomputes the same `(owner, day)` identity from its own input and
+    /// rejects a mismatch, and every validator re-executes the call, so the
+    /// chain — not a second in-enclave calendar — is what anchors this field.
+    pub worldwide_day: WorldwideDay,
     /// ABI `tributeCurrency`: ISO 4217 code the tribute amount is denominated
     /// in, and the currency `tribute_price_minor` prices.
     pub tribute_currency: u16,
@@ -837,7 +842,7 @@ pub fn inputs_canonical_hash(offers: &[EncryptedTributeOffer]) -> B256 {
         buf.extend_from_slice(&(offer.nonce.len() as u32).to_be_bytes());
         buf.extend_from_slice(&offer.nonce);
         buf.extend_from_slice(&offer.ephemeral_pubkey.to_be_bytes::<32>());
-        buf.extend_from_slice(&offer.worldwide_day.to_be_bytes());
+        buf.extend_from_slice(&offer.worldwide_day.value().to_be_bytes());
         buf.extend_from_slice(&offer.tribute_currency.to_be_bytes());
         buf.extend_from_slice(&offer.reference_currency.to_be_bytes());
         buf.push(u8::from(offer.exclude_from_intex_issuance));

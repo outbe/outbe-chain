@@ -7,7 +7,9 @@
 //! one more thing for the two sides to keep in agreement.
 //!
 //! What the enclave does NOT do (stays on the host):
-//!   - worldwide-day OFFERING status check (needs chain state);
+//!   - worldwide-day calendar validity and OFFERING status (one `WorldwideDay`
+//!     check on the node, whose `(owner, day)` identity recompute then rejects
+//!     any day the enclave was fed that disagrees with it);
 //!   - tribute-already-exists check;
 //!   - SU-hash used-marking (replay prevention);
 //!   - agent-reward (wallet/SRA) increments.
@@ -15,8 +17,8 @@
 //! The host applies those after receiving the public results. SU-hash markers
 //! and agent-reward routing in a privacy-preserving form are a later slice.
 //!
-//! Determinism: the price map is supplied by the node from committed Oracle state
-//! (identical on every validator), and every step here is pure integer/hash
+//! Determinism: each offer's price is supplied by the node from committed Oracle
+//! state (identical on every validator), and every step here is pure integer/hash
 //! math, so all validators produce byte-identical results. A forged price
 //! surfaces as a state-root mismatch on re-execution.
 
@@ -24,7 +26,7 @@ use alloy_primitives::{Address, B256, U256};
 
 use outbe_tee::protocol::{EncryptedTributeOffer, TributeOfferResult, TributeOfferStatus};
 
-use crate::compute::{compute_nominal, compute_token_id, normalize_amount, worldwide_day_is_valid};
+use crate::compute::{compute_nominal, compute_token_id, normalize_amount};
 use crate::crypto::ecdhe_tribute_offer_decrypt;
 use crate::payload::parse_and_validate;
 use crate::zk_claim::derive_expected_hashes;
@@ -78,12 +80,6 @@ fn process_one(
         return Err("amount must be positive".to_string());
     }
 
-    // The day was already checked for calendar validity and OFFERING status by
-    // the node, but the host is untrusted here and the day is folded into
-    // `token_id`, so re-check it rather than inherit a nonsense value.
-    if !worldwide_day_is_valid(offer.worldwide_day) {
-        return Err("worldwide_day is invalid".to_string());
-    }
     // The price is host-supplied and `compute_nominal` divides by it, so a zero
     // is rejected here rather than trusted to the host's own filtering.
     if offer.tribute_price_minor.is_zero() {
@@ -139,14 +135,15 @@ mod tests {
     use super::*;
     use crate::compute::{compute_token_id, SCALE_1E18};
     use crate::crypto::{chacha20poly1305_encrypt, hkdf_sha256};
-    use outbe_tee::protocol::TributeZkContext;
+    use outbe_tee::protocol::{TributeZkContext, WorldwideDay};
     use x25519_dalek::{PublicKey, StaticSecret};
 
     const OFFER_SK: [u8; 32] = [7u8; 32];
     const SALT: [u8; 32] = [3u8; 32];
     const NONCE: [u8; 12] = [1u8; 12];
     const DRAFT: &str = "0x1111111111111111111111111111111111111111111111111111111111111111";
-    const DAY: u32 = 20250115;
+    const DAY: WorldwideDay = WorldwideDay::new(20250115);
+    const NEXT_DAY: WorldwideDay = WorldwideDay::new(20250116);
 
     /// Encrypt a payload the way a client would (ephemeral_secret x tribute_offer_pub).
     /// Day, currencies and price are cleartext offer fields; tests that care mutate
@@ -254,20 +251,6 @@ mod tests {
         );
     }
 
-    /// The host validates the day too, but the enclave does not inherit host
-    /// values it folds into `token_id` without checking them.
-    #[test]
-    fn invalid_worldwide_day_is_rejected() {
-        let mut offer = make_tribute_offer(Address::repeat_byte(0xD1), GOOD_JSON);
-        offer.worldwide_day = 20250230; // February 30th
-
-        let (results, _) = process_tribute_offer_batch(&key(), &[offer]);
-        assert!(matches!(
-            &results[0].status,
-            TributeOfferStatus::Rejected { reason } if reason.contains("worldwide_day is invalid")
-        ));
-    }
-
     #[test]
     fn zk_enabled_offer_returns_expected_hashes_bound_to_owner_and_sender() {
         let sender = Address::repeat_byte(0xAB);
@@ -328,7 +311,7 @@ mod tests {
         let original = nft_hash(base.clone());
 
         let mut other_day = base.clone();
-        other_day.worldwide_day = 20250116;
+        other_day.worldwide_day = NEXT_DAY;
         assert_ne!(original, nft_hash(other_day));
 
         let mut other_currency = base;
@@ -466,7 +449,7 @@ mod tests {
         let base = outbe_tee::protocol::inputs_canonical_hash(&offers);
 
         for mutate in [
-            (|o: &mut EncryptedTributeOffer| o.worldwide_day = 20250116) as fn(&mut _),
+            (|o: &mut EncryptedTributeOffer| o.worldwide_day = NEXT_DAY) as fn(&mut _),
             |o: &mut EncryptedTributeOffer| o.tribute_currency = 978,
             |o: &mut EncryptedTributeOffer| o.exclude_from_intex_issuance = true,
             |o: &mut EncryptedTributeOffer| o.tribute_price_minor = U256::from(2u64) * SCALE_1E18,
