@@ -37,6 +37,7 @@ use crate::world::state::{
 use crate::world::World;
 
 const OCOMP_CAPACITY_TRIBUTE_COUNT: usize = 257;
+const OCOMP_CAPACITY_COMPLETION_TIMEOUT_SECS: u64 = 300;
 // The capacity scenario proves the protocol path and the 256+1 shard boundary,
 // not Tribute burst throughput. Keep at most two offers in flight until
 // outbe-chain-08n.6 gives blocking TEE work a production-safe block budget.
@@ -63,6 +64,27 @@ const OCOMP_JOB_REQUEST_TIMEOUT_SECS: u64 = 300;
 // Starting 15 hours into the WWD places block 1 at 01:00 UTC on that same key:
 // both date conventions select the fixture WWD and it remains inside FORMING.
 const METADOSIS_INITIAL_WWD_ELAPSED_SECS: u64 = 15 * 3_600;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BoundedCompletionDecision {
+    Complete,
+    Continue,
+    TimedOut,
+}
+
+fn bounded_completion_decision(
+    all_complete: bool,
+    now: Instant,
+    deadline: Instant,
+) -> BoundedCompletionDecision {
+    if all_complete {
+        BoundedCompletionDecision::Complete
+    } else if now >= deadline {
+        BoundedCompletionDecision::TimedOut
+    } else {
+        BoundedCompletionDecision::Continue
+    }
+}
 
 #[given("a fresh four-validator OCOMP measurement localnet")]
 fn fresh_ocomp_measurement_localnet(world: &mut World) {
@@ -2044,22 +2066,35 @@ fn all_validators_observe_257_public_tributes(world: &mut World) {
         .expect("capacity WorldwideDay")
         .parse::<u32>()
         .expect("numeric capacity WorldwideDay");
-    for port in world.validators.committee_ports() {
-        let deadline = Instant::now() + Duration::from_secs(60);
-        loop {
-            if let Some(ids) = world.rpc.tributes_by_day(port, worldwide_day) {
-                let distinct = ids.iter().collect::<std::collections::BTreeSet<_>>();
-                if ids.len() == OCOMP_CAPACITY_TRIBUTE_COUNT
-                    && distinct.len() == OCOMP_CAPACITY_TRIBUTE_COUNT
-                {
-                    break;
-                }
-            }
-            assert!(
-                Instant::now() < deadline,
-                "validator on port {port} did not expose 257 distinct public Tributes"
-            );
-            sleep(Duration::from_millis(250));
+    let committee_ports = world.validators.committee_ports();
+    let completion_deadline =
+        Instant::now() + Duration::from_secs(OCOMP_CAPACITY_COMPLETION_TIMEOUT_SECS);
+    loop {
+        let observations = committee_ports
+            .iter()
+            .map(|port| {
+                let ids = world.rpc.tributes_by_day(*port, worldwide_day);
+                let count = ids.as_ref().map_or(0, Vec::len);
+                let distinct = ids.as_ref().map_or(0, |ids| {
+                    ids.iter().collect::<std::collections::BTreeSet<_>>().len()
+                });
+                (*port, world.rpc.head(*port), count, distinct)
+            })
+            .collect::<Vec<_>>();
+        let all_complete = observations.iter().all(|(_, _, count, distinct)| {
+            *count == OCOMP_CAPACITY_TRIBUTE_COUNT && *distinct == OCOMP_CAPACITY_TRIBUTE_COUNT
+        });
+        match bounded_completion_decision(
+            all_complete,
+            Instant::now(),
+            completion_deadline,
+        ) {
+            BoundedCompletionDecision::Complete => break,
+            BoundedCompletionDecision::Continue => sleep(Duration::from_millis(250)),
+            BoundedCompletionDecision::TimedOut => panic!(
+                "committee did not expose 257 distinct public Tributes within the shared {}s completion window: {observations:?}",
+                OCOMP_CAPACITY_COMPLETION_TIMEOUT_SECS
+            ),
         }
     }
 
@@ -4395,9 +4430,41 @@ fn runtime_traces_cover_ocomp_execution_paths(world: &mut World) {
 #[cfg(test)]
 mod tests {
     use super::{
-        dynamic_live_ports_after_jail, joiner_restart_is_in_safe_early_epoch_window,
-        post_restart_convergence_target, OCOMP_CAPACITY_SUBMISSION_CONCURRENCY,
+        bounded_completion_decision, dynamic_live_ports_after_jail,
+        joiner_restart_is_in_safe_early_epoch_window, post_restart_convergence_target,
+        BoundedCompletionDecision, OCOMP_CAPACITY_SUBMISSION_CONCURRENCY,
     };
+
+    #[test]
+    fn capacity_completion_window_returns_as_soon_as_every_validator_is_done() {
+        let started = std::time::Instant::now();
+        let deadline = started + std::time::Duration::from_secs(300);
+
+        assert_eq!(
+            bounded_completion_decision(true, started, deadline),
+            BoundedCompletionDecision::Complete
+        );
+        assert_eq!(
+            bounded_completion_decision(false, started, deadline),
+            BoundedCompletionDecision::Continue
+        );
+    }
+
+    #[test]
+    fn capacity_completion_window_fails_only_when_the_shared_budget_expires() {
+        let started = std::time::Instant::now();
+        let deadline = started + std::time::Duration::from_secs(300);
+
+        assert_eq!(
+            bounded_completion_decision(false, deadline, deadline),
+            BoundedCompletionDecision::TimedOut
+        );
+        assert_eq!(
+            bounded_completion_decision(true, deadline, deadline),
+            BoundedCompletionDecision::Complete,
+            "an observed completed result wins at the deadline boundary"
+        );
+    }
 
     #[test]
     fn capacity_population_submits_two_tributes_per_round() {
