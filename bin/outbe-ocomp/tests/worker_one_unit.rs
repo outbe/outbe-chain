@@ -1677,7 +1677,7 @@ fn real_worker_processes_execute_through_output_finalize() {
                 max_nod_count: manifest.tribute_count,
             },
             contributors: ContributorTargetPreconditionV1 {
-                series_id: day.value(),
+                worldwide_day: day.value(),
                 expected_series_version: 1,
                 max_contributor_count: manifest.tribute_count,
                 max_eligible_nominal_total: manifest.tribute_nominal_total,

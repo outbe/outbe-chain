@@ -407,7 +407,7 @@ fn production_intent(block_number: u64) -> JobIntentV1 {
                 max_nod_count: 0,
             },
             contributors: ContributorTargetPreconditionV1 {
-                series_id: 7,
+                worldwide_day: 7,
                 expected_series_version: 1,
                 max_contributor_count: 0,
                 max_eligible_nominal_total: U256::ZERO,

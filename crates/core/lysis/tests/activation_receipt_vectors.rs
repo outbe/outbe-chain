@@ -376,7 +376,7 @@ fn owner_receipts(
         issued_at: plan.nod().issued_at(),
     };
     let contributor_projection = ContributorStateEventProjectionV1 {
-        series_id: plan.contributors().precondition().series_id,
+        worldwide_day: plan.contributors().precondition().worldwide_day,
         series_version_before: plan.contributors().precondition().expected_series_version,
         series_version_after: plan.contributors().precondition().expected_series_version + 1,
         contributor_count: plan.contributors().contributor_count(),

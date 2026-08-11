@@ -269,7 +269,7 @@ fn intent(
                 max_nod_count: 1,
             },
             contributors: ContributorTargetPreconditionV1 {
-                series_id: WWD.value(),
+                worldwide_day: WWD.value(),
                 expected_series_version: 0,
                 max_contributor_count: 1,
                 max_eligible_nominal_total: U256::from(10),

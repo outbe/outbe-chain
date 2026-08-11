@@ -214,7 +214,7 @@ pub struct CertifiedPayoutRound {
 /// only the proof root and exact aggregate scalars.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CertifiedContributorGenerationProjection {
-    pub series_id: u32,
+    pub worldwide_day: u32,
     pub series_version: u64,
     pub contributor_root: B256,
     pub contributor_count: u32,
@@ -401,7 +401,7 @@ impl IntexContract<'_> {
         }
 
         Ok(Some(CertifiedContributorGenerationProjection {
-            series_id,
+            worldwide_day: series_id,
             series_version,
             contributor_root,
             contributor_count,

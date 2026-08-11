@@ -34,7 +34,7 @@ use crate::schema::{
 /// once; the version is active output authority, not reservation state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct OcompContributorTargetProjection {
-    pub series_id: u32,
+    pub worldwide_day: u32,
     pub expected_series_version: u64,
     pub contributor_count: u32,
     pub contributor_total: U256,
@@ -162,7 +162,7 @@ pub fn ocomp_contributor_target_projection(
         None => (base_version, legacy_count, legacy_total),
     };
     Ok(OcompContributorTargetProjection {
-        series_id,
+        worldwide_day: series_id,
         expected_series_version,
         contributor_count,
         contributor_total,

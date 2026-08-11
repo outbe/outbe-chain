@@ -458,7 +458,7 @@ mod tests {
                     max_nod_count: 1,
                 },
                 contributors: ContributorTargetPreconditionV1 {
-                    series_id: 20_260_809,
+                    worldwide_day: 20_260_809,
                     expected_series_version: 1,
                     max_contributor_count: 1,
                     max_eligible_nominal_total: U256::from(10),

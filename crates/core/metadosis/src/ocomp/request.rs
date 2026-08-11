@@ -320,7 +320,7 @@ fn build_and_commit_request(
             max_nod_count: sealed_tribute_projection.tribute_count,
         },
         contributors: ContributorTargetPreconditionV1 {
-            series_id: wwd.value(),
+            worldwide_day: wwd.value(),
             expected_series_version: contributor_target.expected_series_version,
             max_contributor_count: sealed_tribute_projection.tribute_count,
             max_eligible_nominal_total: sealed_tribute_projection.tribute_nominal_amount,

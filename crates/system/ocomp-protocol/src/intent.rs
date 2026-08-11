@@ -102,7 +102,7 @@ wire_struct! {
 
 wire_struct! {
     pub struct ContributorTargetPreconditionV1 {
-        pub series_id: u32,
+        pub worldwide_day: u32,
         pub expected_series_version: u64,
         pub max_contributor_count: u32,
         pub max_eligible_nominal_total: U256,
@@ -215,7 +215,7 @@ impl ActivationPreconditionsV1 {
             self.tribute.wwd == intent.wwd
                 && self.nod.wwd == intent.wwd
                 && self.metadosis.wwd == intent.wwd
-                && self.contributors.series_id == intent.wwd,
+                && self.contributors.worldwide_day == intent.wwd,
             "activation precondition day binding",
         )?;
         require(

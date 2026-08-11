@@ -148,7 +148,7 @@ fn intent(day_type: DayType, request_receipt_hash: B256) -> JobIntentV1 {
                 max_nod_count: 2,
             },
             contributors: ContributorTargetPreconditionV1 {
-                series_id: 7,
+                worldwide_day: 7,
                 expected_series_version: 8,
                 max_contributor_count: 2,
                 max_eligible_nominal_total: U256::from(1_000),
