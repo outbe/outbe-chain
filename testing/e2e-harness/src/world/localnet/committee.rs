@@ -236,7 +236,7 @@ impl Localnet {
             .repo
             .join("target/e2e-upgrades")
             .join(version.replace('.', "-"));
-        let binary = target.join("debug/outbe-chain");
+        let binary = target.join("release/outbe-chain");
 
         if worktree.exists() {
             let _ = Command::new("git")
@@ -268,6 +268,7 @@ impl Localnet {
                     .args([
                         "build",
                         "--offline",
+                        "--release",
                         "-p",
                         "outbe-chain",
                         "--bin",

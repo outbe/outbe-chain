@@ -8,7 +8,7 @@ Feature: FullNode synchronization, failover, promotion, and replay
   Scenario: Chained FullNodes stop on upstream loss and recover through a healthy upstream
     Given a fresh localnet with a short epoch
     When the committee drives past a reshare
-    And a cold follower syncs from the committee
+    And a production FullNode with its own enclave syncs from the committee
     Then the follower reaches the committee finalized checkpoint with matching hash and state root
     When a second follower chains off the first
     Then the chained follower reaches lockstep with the committee
@@ -21,7 +21,7 @@ Feature: FullNode synchronization, failover, promotion, and replay
   Scenario: Warm promotion survives duplicate readiness and boundary restarts
     Given a fresh localnet with a short epoch
     When the committee drives past a reshare
-    And a cold follower syncs from the committee
+    And a production FullNode with its own enclave syncs from the committee
     Then the follower reaches the committee finalized checkpoint with matching hash and state root
     When the first follower is promoted to a validator with its warm datadir
     And readiness is resubmitted before the warm promotion restart
