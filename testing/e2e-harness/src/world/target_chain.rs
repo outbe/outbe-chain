@@ -161,14 +161,13 @@ impl TargetChain {
         // A mailbox the adapter can hold; delivery across two chains is a relay
         // concern, not a deploy one.
         let mailbox = address_from(
-            &self.forge(
+            &self.forge_with_ctor(
                 &crosschain,
                 &[
                     "create",
                     "test/mocks/MockHyperlaneMailbox.sol:MockHyperlaneMailbox",
-                    "--constructor-args",
-                    &chain_id,
                 ],
+                &[&chain_id],
                 &[],
                 &url,
             )?,
@@ -318,6 +317,19 @@ impl TargetChain {
         env: &[(&str, String)],
         url: &str,
     ) -> Result<String> {
+        self.forge_with_ctor(dir, args, &[], env, url)
+    }
+
+    /// `--constructor-args` is variadic, so it can only ever be the last flag:
+    /// anything after it is swallowed as a constructor value.
+    fn forge_with_ctor(
+        &self,
+        dir: &Path,
+        args: &[&str],
+        ctor: &[&str],
+        env: &[(&str, String)],
+        url: &str,
+    ) -> Result<String> {
         let mut cmd = Command::new("forge");
         cmd.current_dir(dir)
             .args(args)
@@ -331,6 +343,9 @@ impl TargetChain {
         }
         for (key, value) in env {
             cmd.env(key, value);
+        }
+        if !ctor.is_empty() {
+            cmd.arg("--constructor-args").args(ctor);
         }
         let out = cmd.output()?;
         if !out.status.success() {
