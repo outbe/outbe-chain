@@ -231,6 +231,13 @@ outbe-chain node --validator \
   --tee-enclave-socket          127.0.0.1:7000
 ```
 
+An existing-chain validator must not wait for a future DKG boundary during
+startup, because synchronization is not running yet. If its local signing share
+or DKG material is missing or stale, startup fails immediately. Restart it with
+the current public polynomial and DKG output, without `--consensus.signing-share`,
+so it can synchronize as `VerifierOnly` and acquire a new share through the
+normal running reshare path.
+
 There is deliberately no OCOMP validator-index or committee file. For every
 finalized job the node opens that job's historical ValidatorSet snapshot,
 finds `VALIDATOR_ADDR`, checks that the stored OCOMP public key matches

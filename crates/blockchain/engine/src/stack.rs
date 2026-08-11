@@ -11,7 +11,6 @@
 //!    a. From saved DKG state on disk (restart precedence)
 //!    b. From CLI args (`--consensus.signing-share` + `--consensus.public-polynomial`)
 //!    c. Via interactive DKG ceremony during fresh genesis formation
-//!    d. Via startup live-join reshare when the chain already has DKG state
 //! 5. Create Muxers for epoch-scoped consensus channels
 //! 6. Enter epoch loop:
 //!    a. Register epoch sub-channels, build HybridScheme + Reporter
@@ -39,9 +38,8 @@ use commonware_cryptography::{
     Signer as _,
 };
 use commonware_p2p::{
-    authenticated::lookup,
-    utils::mux::{MuxHandle, Muxer},
-    Address, AddressableManager, Receiver as P2pReceiver, Sender as P2pSender,
+    authenticated::lookup, utils::mux::Muxer, Address, AddressableManager, Receiver as P2pReceiver,
+    Sender as P2pSender,
 };
 use commonware_runtime::{
     buffer::paged::CacheRef, BufferPooler, Clock, Metrics, Network, Quota, Resolver, Spawner,
@@ -806,7 +804,6 @@ enum ThresholdMaterial {
         last_dkg_output: Option<Output<MinSig, bls12381::PublicKey>>,
         bootstrap_from_live_dkg: bool,
     },
-    StartupLiveJoinRequired,
     /// Verifier-join: the node has the public group polynomial + DKG output but NO
     /// threshold share. It runs the consensus engine as a VERIFIER — it follows and
     /// verifies finalized blocks (driving its execution layer to sync) but cannot
@@ -816,6 +813,12 @@ enum ThresholdMaterial {
         polynomial: Sharing<MinSig>,
         last_dkg_output: Option<Output<MinSig, bls12381::PublicKey>>,
     },
+}
+
+fn missing_current_threshold_material_error(reason: impl std::fmt::Display) -> eyre::Report {
+    eyre::eyre!(
+        "startup cannot recover threshold material before sync starts: {reason}. Restart with the current --consensus.public-polynomial and --consensus.dkg-output without --consensus.signing-share so the node can sync as VerifierOnly and acquire a share through the running reshare path"
+    )
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2640,7 +2643,7 @@ where
 
     // Build peer set from validator config + bootnodes.
     let peer_map = build_peer_map(&validator_set, &bootnode_map);
-    let mut initial_peer_map = peer_map.clone();
+    let initial_peer_map = peer_map.clone();
     let resolved_count = peer_map.len();
     let _ = oracle.track(p2p_oracle_chain_peer_set_id(0), peer_map);
     info!(
@@ -2906,9 +2909,9 @@ where
         last_consensus_finalized.get(),
     )
     .await?;
-    let mut last_execution_height = startup_snapshot.last_execution_height;
-    let mut last_execution_hash = startup_snapshot.last_execution_hash;
-    let mut recovered_boundary = startup_snapshot.recovered_boundary;
+    let last_execution_height = startup_snapshot.last_execution_height;
+    let last_execution_hash = startup_snapshot.last_execution_hash;
+    let recovered_boundary = startup_snapshot.recovered_boundary;
     let recovered_pending_boundary = startup_snapshot.pending_boundary;
     let startup_dkg_context = startup_snapshot.context;
 
@@ -2945,7 +2948,6 @@ where
     );
 
     // ── 6. Obtain threshold material ────────────────────────────────────
-    let mut startup_live_join_completed = false;
     // For initial DKG, use subchannel 0 of the DKG mux.
     let (dkg_init_tx, dkg_init_rx) = dkg_mux
         .register(0)
@@ -2996,61 +2998,6 @@ where
                 polynomial,
                 last_dkg_output,
             } => (None, polynomial, last_dkg_output, false),
-            ThresholdMaterial::StartupLiveJoinRequired => {
-                startup_live_join_completed = true;
-                let joined = run_startup_live_join_reshare(
-                    ctx,
-                    &args,
-                    &key_backend,
-                    &signing_key,
-                    &node,
-                    &mut dkg_mux,
-                    &mut oracle,
-                    &bootnode_map,
-                    last_consensus_finalized.get(),
-                )
-                .await?;
-                recovered_boundary = Some((
-                    joined.activated_at_height,
-                    joined.activated_boundary.clone(),
-                ));
-                last_execution_height = node.provider.last_block_number().map_err(|error| {
-                    eyre::eyre!(
-                        "failed to refresh execution height after startup live-join: {error}"
-                    )
-                })?;
-                last_execution_hash = if last_execution_height > 0 {
-                    node.provider
-                        .block_hash(last_execution_height)
-                        .map_err(|error| {
-                            eyre::eyre!(
-                                "failed to refresh execution hash at height {last_execution_height} after startup live-join: {error}"
-                            )
-                        })?
-                        .ok_or_else(|| {
-                            eyre::eyre!(
-                                "missing execution hash at refreshed startup live-join height {last_execution_height}"
-                            )
-                        })?
-                } else {
-                    genesis_hash
-                };
-                validator_set = validators::read_consensus_validators_at_latest(&node.provider)
-                    .wrap_err("failed to read consensus validators after startup live-join")?;
-                initial_peer_map = build_peer_map(&validator_set, &bootnode_map);
-                let _ = oracle.overwrite(initial_peer_map.clone());
-                info!(
-                    validators = validator_set.public_keys.len(),
-                    peers = initial_peer_map.len(),
-                    "startup live-join refreshed validator and peer set after activation"
-                );
-                (
-                    Some(joined.signing_share),
-                    joined.polynomial,
-                    Some(joined.output),
-                    false,
-                )
-            }
         };
 
     // Verifier-join supplies public threshold material without a signing share.
@@ -3729,11 +3676,11 @@ where
                 last_execution_hash,
                 recovered,
             )?,
-            Err(error) if startup_live_join_completed || args.trust_el_head => {
+            Err(error) if args.trust_el_head => {
                 warn!(
                     %error,
                     last_execution_height,
-                    "marshal archive lacks finalized-round history after startup live-join; continuing from synced execution boundary"
+                    "marshal archive lacks finalized-round history; trusting the execution boundary"
                 );
                 (recovery_anchor_height, recovery_anchor_hash, None)
             }
@@ -6165,25 +6112,12 @@ pub fn migrate_dkg_keys_if_needed(
 }
 const DKG_PENDING_BOUNDARY_MAGIC: &[u8; 8] = b"ODKGPB02";
 const DKG_PENDING_BOUNDARY_LEGACY_MAGIC: &[u8; 8] = b"ODKGPB01";
-const STARTUP_JOIN_SCAN_INTERVAL: Duration = Duration::from_millis(250);
 const DKG_OUTPUT_MAX_PARTICIPANTS: u32 = 256;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct PendingDkgBoundarySnapshot {
     artifact: DkgBoundaryArtifact,
     completed_at_height: u64,
-}
-
-struct StartupLiveJoinResult {
-    signing_share: Share,
-    polynomial: Sharing<MinSig>,
-    output: Output<MinSig, bls12381::PublicKey>,
-    activated_at_height: u64,
-    activated_boundary: DkgBoundaryArtifact,
-}
-
-fn next_live_reshare_round(previous_boundary: &DkgBoundaryArtifact) -> u64 {
-    previous_boundary.dkg_cycle.saturating_add(1)
 }
 
 fn decode_boundary_output(
@@ -6724,35 +6658,6 @@ fn startup_live_join_scan_height(
     Ok(execution_height.min(consensus_finalized_height))
 }
 
-fn feed_finalized_dealer_logs_from_headers(
-    provider: &impl HeaderProvider<Header = OutbeHeader>,
-    next_scan_height: &mut u64,
-    latest_height: u64,
-    finalized_log_tx: &tokio::sync::mpsc::UnboundedSender<Bytes>,
-) -> Result<()> {
-    while *next_scan_height <= latest_height {
-        if let Some(header) = provider
-            .sealed_header(*next_scan_height)
-            .map_err(|error| eyre::eyre!("failed to read header {}: {error}", *next_scan_height))?
-        {
-            let artifacts = decode_outbe_block_artifacts(header.header().inner.extra_data.as_ref())
-                .map_err(|error| {
-                    eyre::eyre!(
-                        "failed to decode header artifacts at {}: {error}",
-                        *next_scan_height
-                    )
-                })?;
-            if let Some(ConsensusHeaderArtifact::DealerLog(bytes)) =
-                artifacts.consensus_header_artifact
-            {
-                let _ = finalized_log_tx.send(bytes);
-            }
-        }
-        *next_scan_height = next_scan_height.saturating_add(1);
-    }
-    Ok(())
-}
-
 fn replay_finalized_dealer_logs_into_manager(
     provider: &impl HeaderProvider<Header = OutbeHeader>,
     next_scan_height: &mut u64,
@@ -6787,271 +6692,6 @@ fn replay_finalized_dealer_logs_into_manager(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn run_startup_live_join_reshare<E, S, R, O>(
-    ctx: &E,
-    args: &ConsensusArgs,
-    key_backend: &bls::KeyBackend,
-    signing_key: &bls12381::PrivateKey,
-    node: &OutbeFullNode,
-    dkg_mux: &mut MuxHandle<S, R>,
-    oracle: &mut O,
-    bootnode_map: &BTreeMap<Vec<u8>, SocketAddr>,
-    last_consensus_finalized_height: u64,
-) -> Result<StartupLiveJoinResult>
-where
-    E: Clock,
-    S: P2pSender<PublicKey = bls12381::PublicKey>,
-    R: P2pReceiver<PublicKey = bls12381::PublicKey>,
-    O: AddressableManager<PublicKey = bls12381::PublicKey>,
-{
-    let local_pk = commonware_cryptography::Signer::public_key(signing_key);
-    let epoch_length_blocks = epoch_length_blocks_from_genesis(node)?;
-    let dkg_rotation_params = DkgRotationParams::from_genesis(node, epoch_length_blocks);
-    // Single-pass by design: startup live-join recovers from the immutable
-    // finalized-height snapshot once and refuses to wait/retry on an unfinalized
-    // head (hence no loop — the previous `loop` always broke or returned on its
-    // first iteration).
-    let (last_activation_height, previous_boundary) = {
-        let last_execution_height = node.provider.last_block_number().map_err(|e| {
-            eyre::eyre!("failed to get last block number for startup live join: {e}")
-        })?;
-        let recovery_height = startup_live_join_scan_height(
-            last_execution_height,
-            last_consensus_finalized_height,
-            args.trust_el_head,
-        )?;
-        match recover_latest_boundary_artifact(&node.provider, recovery_height, dkg_rotation_params)
-            .wrap_err("failed to recover latest DKG boundary for startup live join")?
-        {
-            Some(boundary) => boundary,
-            None => {
-                return Err(eyre::eyre!(
-                    "startup live join could not recover a prior finalized DKG boundary at consensus-finalized height {}; refusing to wait on an immutable startup height snapshot or scan unfinalized execution head {}. Wait for durable finalized evidence or use a documented trusted-join flow.",
-                    last_consensus_finalized_height,
-                    last_execution_height
-                ));
-            }
-        }
-    };
-    let previous_output = decode_boundary_output(&previous_boundary)?;
-    let dkg_round = next_live_reshare_round(&previous_boundary);
-    let freeze_height = dkg_rotation_params.freeze_height(last_activation_height);
-    let planned_activation_height =
-        dkg_rotation_params.planned_activation_height(last_activation_height);
-    let activation_deadline =
-        planned_activation_height.saturating_add(dkg_rotation_params.activation_grace_blocks);
-
-    let (target_height, target_validator_set, target_participants) = loop {
-        let current_height = node.provider.last_block_number().map_err(|error| {
-            eyre::eyre!("failed to read latest block height for startup live join: {error}")
-        })?;
-        if current_height > activation_deadline {
-            return Err(eyre::eyre!(
-                "startup live join missed DKG activation window: current height {}, deadline {}",
-                current_height,
-                activation_deadline
-            ));
-        }
-
-        if current_height < freeze_height {
-            info!(
-                current_height,
-                freeze_height, "startup live join waiting for DKG freeze height"
-            );
-            ctx.sleep(Duration::from_secs(1)).await;
-            continue;
-        }
-
-        let (target_validator_set, target_participants) =
-            match refresh_validator_set_at_height(node, freeze_height) {
-                Ok(FrozenValidatorSetRefresh::Ready {
-                    validator_set,
-                    participants,
-                    ..
-                }) => (validator_set, participants),
-                Ok(FrozenValidatorSetRefresh::PendingBlockHash) => {
-                    info!(
-                        current_height,
-                        freeze_height, "startup live join waiting for freeze block hash"
-                    );
-                    ctx.sleep(Duration::from_secs(1)).await;
-                    continue;
-                }
-                Err(error) => {
-                    return Err(error)
-                        .wrap_err("failed to read frozen validator set for startup live join");
-                }
-            };
-
-        if target_participants.position(&local_pk).is_none() {
-            info!(
-                current_height,
-                "startup live join waiting for local key to appear in active target set"
-            );
-            ctx.sleep(Duration::from_secs(1)).await;
-            continue;
-        }
-        break (current_height, target_validator_set, target_participants);
-    };
-
-    let target_peer_map = build_peer_map(&target_validator_set, bootnode_map);
-    let target_peer_count = target_peer_map.len();
-    let chain_peer_set_id = p2p_oracle_chain_peer_set_id(freeze_height);
-    let dkg_peer_set_id = p2p_oracle_dkg_peer_set_id(freeze_height);
-    let _ = oracle.track(chain_peer_set_id, target_peer_map.clone());
-    let _ = oracle.track(dkg_peer_set_id, target_peer_map);
-
-    info!(
-        target_validators = target_validator_set.public_keys.len(),
-        target_peers = target_peer_count,
-        chain_peer_set_id,
-        dkg_peer_set_id,
-        target_height,
-        dkg_round,
-        freeze_height,
-        planned_activation_height,
-        "startup live join entering player-only DKG reshare"
-    );
-    let (dkg_tx, dkg_rx) = dkg_mux
-        .register(dkg_round)
-        .await
-        .map_err(|e| eyre::eyre!("failed to register startup live-join DKG subchannel: {e}"))?;
-    let (finalized_log_tx, finalized_log_rx) = tokio::sync::mpsc::unbounded_channel();
-    let mut next_scan_height = freeze_height;
-    let dkg_future = dkg_actor::run_initial_dkg_durable(
-        ctx,
-        signing_key.clone(),
-        target_participants,
-        Some(previous_output),
-        None,
-        dkg_round,
-        None,
-        Some(finalized_log_rx),
-        dkg_dealer_retry_store(args, key_backend),
-        dkg_tx,
-        dkg_rx,
-    );
-    tokio::pin!(dkg_future);
-    let complete = loop {
-        let mut scan_timer = Box::pin(ctx.sleep(STARTUP_JOIN_SCAN_INTERVAL));
-        tokio::select! {
-            result = &mut dkg_future => {
-                break result.wrap_err("startup live-join DKG failed")?;
-            }
-            _ = &mut scan_timer => {
-                let latest_execution_height = node.provider.last_block_number().map_err(|error| {
-                    eyre::eyre!("failed to read latest block height while scanning startup live-join logs: {error}")
-                })?;
-                let latest_height = startup_live_join_scan_height(
-                    latest_execution_height,
-                    last_consensus_finalized_height,
-                    args.trust_el_head,
-                )?;
-                feed_finalized_dealer_logs_from_headers(
-                    &node.provider,
-                    &mut next_scan_height,
-                    latest_height,
-                    &finalized_log_tx,
-                )?;
-            }
-        }
-    };
-
-    let polynomial = complete.output.public().clone();
-    let expected_vrf_group_public_key = vrf_group_public_key_hash(&polynomial);
-    let (activated_at_height, activated_boundary) = loop {
-        let current_height = node.provider.last_block_number().map_err(|error| {
-            eyre::eyre!(
-                "failed to read latest block height while waiting for startup live-join activation: {error}"
-            )
-        })?;
-        let recovery_height = startup_live_join_scan_height(
-            current_height,
-            last_consensus_finalized_height,
-            args.trust_el_head,
-        )?;
-        if let Some((height, boundary)) =
-            recover_latest_boundary_artifact(&node.provider, recovery_height, dkg_rotation_params)
-                .wrap_err("failed to recover startup live-join activation boundary")?
-        {
-            if boundary.dkg_cycle == dkg_round
-                && boundary.vrf_group_public_key == expected_vrf_group_public_key
-            {
-                info!(
-                    height,
-                    dkg_round,
-                    vrf_group_public_key = %expected_vrf_group_public_key,
-                    "startup live-join boundary finalized; threshold material is current"
-                );
-                // Same activation-anchor normalization as `read_startup_dkg_snapshot`:
-                // the artifact rides the FIRST new-epoch block (activation + 1), so
-                // anchoring on the commit height would shift this node's whole
-                // rotation schedule one block late vs the live committee.
-                break (height.saturating_sub(1), boundary);
-            }
-        }
-
-        if current_height > activation_deadline {
-            return Err(eyre::eyre!(
-                "startup live join DKG completed but matching BoundaryOutcome was not finalized before deadline: current height {}, deadline {}, dkg_round {}, vrf_group_public_key {}",
-                current_height,
-                activation_deadline,
-                dkg_round,
-                expected_vrf_group_public_key
-            ));
-        }
-
-        info!(
-            current_height,
-            activation_deadline,
-            dkg_round,
-            vrf_group_public_key = %expected_vrf_group_public_key,
-            "startup live join waiting for matching chain-finalized DKG boundary"
-        );
-        ctx.sleep(STARTUP_JOIN_SCAN_INTERVAL).await;
-    };
-
-    let canonical_output = decode_boundary_output(&activated_boundary)
-        .wrap_err("failed to decode startup live-join activation boundary output")?;
-    dkg_manager::assert_canonical_output(
-        &complete.output,
-        &canonical_output,
-        &format!("startup live-join cycle {dkg_round}"),
-    )?;
-    let canonical_polynomial = canonical_output.public().clone();
-
-    // Startup live-join runs `run_initial_dkg` in chain-finalized mode, so a finalize
-    // failure can return a shareless (verifier) result. A startup joiner that can only
-    // verify should instead use the `ThresholdMaterial::VerifierOnly` startup path
-    // (provisioned public polynomial), so here we require a share. (Follow-up: make
-    // `StartupLiveJoinResult.signing_share` optional → VerifierOnly for symmetric
-    // startup resilience.)
-    let signing_share = complete.share.ok_or_else(|| {
-        eyre::eyre!(
-            "startup live-join DKG completed without a signing share; join as a verifier via a \
-             provisioned public polynomial instead"
-        )
-    })?;
-    if let Some(ref keys_dir) = args.keys_dir {
-        save_dkg_state(
-            keys_dir,
-            &signing_share,
-            &canonical_polynomial,
-            &canonical_output,
-            key_backend,
-        )?;
-    }
-
-    Ok(StartupLiveJoinResult {
-        signing_share,
-        polynomial: canonical_polynomial,
-        output: canonical_output,
-        activated_at_height,
-        activated_boundary,
-    })
-}
-
 /// Obtain threshold material (signing share + public polynomial).
 ///
 /// Three paths (tried in order):
@@ -7059,8 +6699,9 @@ where
 /// 2. **CLI args provided** — fallback for fresh bootstrap / manual provisioning
 /// 3. **No material and no chain DKG history** — run the one-time interactive
 ///    genesis DKG ceremony over P2P (BLOCKING, no blocks)
-/// 4. **No material or stale material on an existing chain** — wait for live
-///    reshare instead of starting a new genesis DKG
+/// 4. **No material or stale material on an existing chain** — fail startup with
+///    the explicit `VerifierOnly` recovery contract; startup cannot wait for sync
+///    before Marshal and Executor are running
 ///
 /// Returns `(share, polynomial, previous_output, bootstrap_from_live_dkg)`.
 ///
@@ -7192,21 +6833,14 @@ async fn obtain_threshold_material(
             ));
         }
 
-        if startup_dkg_context.has_chain_finalized_dkg_boundary() {
-            // A verifier-join (no signing share, has --public-polynomial) must NOT
-            // enter the startup live-join reshare path on RESTART: that path waits
-            // for the freeze height WITHOUT driving sync, so a restarted-but-behind
-            // verifier deadlocks (current_height frozen below freeze_height forever —
-            // it can never reach the freeze without the engine running). Instead it
-            // falls through to the VerifierOnly path below, loads its polynomial,
-            // and syncs as a verifier; the running epoch loop then handles any
-            // reshare once it is synced + in the frozen target (the finalized-follower
-            // path for a non-staked full-node, the participant path once it is a
-            // PENDING frozen-target player). Only a share-holding node (a
-            // reconnecting signer) needs the immediate startup live-join reshare.
-            if !(args.signing_share.is_none() && args.public_polynomial.is_some()) {
-                return Ok(ThresholdMaterial::StartupLiveJoinRequired);
-            }
+        if startup_dkg_context.has_chain_finalized_dkg_boundary()
+            && !(args.signing_share.is_none()
+                && args.public_polynomial.is_some()
+                && args.dkg_output.is_some())
+        {
+            return Err(missing_current_threshold_material_error(
+                "saved and pending DKG material do not match the latest finalized boundary",
+            ));
         }
     }
 
@@ -7231,9 +6865,11 @@ async fn obtain_threshold_material(
                 share_path = %share_path.display(),
                 poly_path = %poly_path.display(),
                 recovered_dkg_output_hash = ?startup_dkg_context.recovered_dkg_output_hash,
-                "CLI DKG material lacks required output for recovered chain boundary; waiting for live reshare"
+                "CLI DKG material lacks required output for recovered chain boundary"
             );
-            return Ok(ThresholdMaterial::StartupLiveJoinRequired);
+            return Err(missing_current_threshold_material_error(
+                "CLI DKG material lacks the output required by the latest finalized boundary",
+            ));
         }
 
         if !vrf_material_matches_recovered_boundary(&polynomial, startup_dkg_context)
@@ -7248,9 +6884,11 @@ async fn obtain_threshold_material(
                 local_dkg_output_hash = ?cli_dkg_output.as_ref().map(dkg_manager::dkg_output_hash),
                 recovered_vrf_group_public_key = ?startup_dkg_context.recovered_vrf_group_public_key,
                 recovered_dkg_output_hash = ?startup_dkg_context.recovered_dkg_output_hash,
-                "CLI DKG material is stale for the latest finalized boundary; waiting for live reshare"
+                "CLI DKG material is stale for the latest finalized boundary"
             );
-            return Ok(ThresholdMaterial::StartupLiveJoinRequired);
+            return Err(missing_current_threshold_material_error(
+                "CLI DKG material is stale for the latest finalized boundary",
+            ));
         }
 
         info!(
@@ -7302,9 +6940,11 @@ async fn obtain_threshold_material(
                 last_execution_height = startup_dkg_context.last_execution_height,
                 has_finalized_dkg_boundary = startup_dkg_context.has_chain_finalized_dkg_boundary(),
                 local_key_in_current_consensus_set,
-                "no current threshold material; startup live-join reshare is required"
+                "no current threshold material is available for existing-chain startup"
             );
-            return Ok(ThresholdMaterial::StartupLiveJoinRequired);
+            return Err(missing_current_threshold_material_error(
+                "no current threshold material is available for existing-chain startup",
+            ));
         }
         StartupDkgMode::InitialGenesisDkg => {}
     }
