@@ -291,7 +291,14 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
     ) -> Result<VoteSubmissionOutcomeV1, VoteSubmissionErrorV1> {
         let record = self.journal.load(job_id)?;
         let Some(record) = record else {
-            return self.prepare(preparer, job_id, result_digest, canonical_result, finalized, 1);
+            return self.prepare(
+                preparer,
+                job_id,
+                result_digest,
+                canonical_result,
+                finalized,
+                1,
+            );
         };
         self.require_record_binding(&record, result_digest)?;
         if matches!(
