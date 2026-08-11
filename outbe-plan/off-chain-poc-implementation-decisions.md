@@ -117,8 +117,11 @@ generated cap values?
 Resolved. See the
 [`protocol-byte and capacity freeze`](off-chain-poc-protocol-freeze.md).
 
-PoC now has one exact fork/profile identity, OCB1 canonical grammar and object
-registry, public `activateLysis(bytes)` ABI, hash/root/signature contracts,
+PoC now has one exact source, binary, Gramine-image and execution-profile
+identity. Every isolated scenario retains its own complete protocol launch
+identity, including the protocol bundle, genesis and genesis-bound fork install.
+The closure also binds one OCB1 canonical grammar and object registry, public
+`activateLysis(bytes)` ABI, hash/root/signature contracts,
 closed intent/input/unit/result-chunk/result/certificate/precondition/receipt schemas,
 exclusive 64-block deadline and fixed phase behavior. Candidate limits are
 upper bounds. Ticket #10 removed a dependency cycle by splitting the gate:
@@ -389,8 +392,11 @@ on-chain Lysis are forbidden outcome oracles.
 
 Stable planned commands separate fast PR, integration, public-path, E2E and
 evidence-verification lanes. Automatic test retries are zero;
-full closure consumes one exact source/binary/genesis/fork/bundle/profile
-identity and a retained hash-indexed evidence bundle.
+full closure consumes one exact source, binary set, Gramine image and execution
+profile. Each independently launched scenario contributes its own complete
+protocol launch identity (chain, genesis, bundle, fork install, classification,
+activation and layout) to the retained hash-indexed evidence bundle; the
+verifier reconstructs and compares that complete map.
 
 ## #10: What is the dependency-ordered implementation task graph?
 

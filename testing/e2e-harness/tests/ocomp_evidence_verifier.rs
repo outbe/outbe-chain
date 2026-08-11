@@ -30,7 +30,13 @@ fn checked_in_ledger_has_exact_owned_references() {
             .keys()
             .map(String::as_str)
             .collect::<Vec<_>>(),
-        ["OCM-E2E-003", "OCM-E2E-005"]
+        [
+            "OCM-CTL-001",
+            "OCM-DIS-001",
+            "OCM-E2E-003",
+            "OCM-E2E-005",
+            "OCM-EXP-001",
+        ]
     );
     for retired in ledger.retired_tests.values() {
         assert_eq!(retired.status, "RETIRED");

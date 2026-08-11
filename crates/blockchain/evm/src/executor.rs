@@ -4312,6 +4312,9 @@ mod tests {
         address, keccak256, logs_bloom, Address, Bytes, Log, Signature, TxKind, B256, U256,
     };
     use alloy_sol_types::{SolCall, SolEvent};
+    use outbe_chain_constants::{
+        GenesisProtocolParametersV1, CHAIN_CONSTANTS_ADDRESS, CHAIN_CONSTANTS_MARKER_CODE,
+    };
     use outbe_common::WorldwideDay;
     use outbe_compressed_entities::{
         CandidateCacheLimits, CeMdbx, CeWorkConfig, CompressedTreeService, EnvironmentIdentity,
@@ -4425,6 +4428,14 @@ mod tests {
                 U256::from_be_slice(root.as_slice()),
             )
             .unwrap();
+    }
+
+    fn seed_default_chain_constants(storage: StorageHandle<'_>) {
+        for (slot, value) in GenesisProtocolParametersV1::default().genesis_storage_words() {
+            storage
+                .sstore(CHAIN_CONSTANTS_ADDRESS, slot, value)
+                .expect("test chain constants seed succeeds");
+        }
     }
 
     #[test]
@@ -4659,6 +4670,7 @@ mod tests {
         let proposer_key = dummy_pubkey(0xA2);
         let install = test_ocomp_fork_install(&chain_spec, &[(proposer, proposer_key)]);
         StorageHandle::enter(&mut seed_storage, |storage| {
+            seed_default_chain_constants(storage.clone());
             seed_compressed_entities_genesis(storage.clone());
             seed_registered_active_validator_with_registration(
                 storage.clone(),
@@ -4673,6 +4685,15 @@ mod tests {
 
         let mut db = cache_db_from_storage(seed_storage);
         let marker_code = Bytecode::new_legacy([0xef].into());
+        let constants_marker_code = Bytecode::new_legacy(CHAIN_CONSTANTS_MARKER_CODE.into());
+        db.insert_account_info(
+            CHAIN_CONSTANTS_ADDRESS,
+            AccountInfo {
+                code_hash: constants_marker_code.hash_slow(),
+                code: Some(constants_marker_code),
+                ..Default::default()
+            },
+        );
         db.insert_account_info(
             outbe_primitives::addresses::VALIDATOR_SET_ADDRESS,
             AccountInfo {
@@ -4736,6 +4757,7 @@ mod tests {
         let proposer_key = dummy_pubkey(0xA2);
         let install = test_ocomp_fork_install(&chain_spec, &[(proposer, proposer_key)]);
         StorageHandle::enter(&mut seed_storage, |storage| {
+            seed_default_chain_constants(storage.clone());
             seed_compressed_entities_genesis(storage.clone());
             seed_registered_active_validator_with_registration(
                 storage.clone(),
@@ -4750,6 +4772,15 @@ mod tests {
 
         let mut db = cache_db_from_storage(seed_storage);
         let marker_code = Bytecode::new_legacy([0xef].into());
+        let constants_marker_code = Bytecode::new_legacy(CHAIN_CONSTANTS_MARKER_CODE.into());
+        db.insert_account_info(
+            CHAIN_CONSTANTS_ADDRESS,
+            AccountInfo {
+                code_hash: constants_marker_code.hash_slow(),
+                code: Some(constants_marker_code),
+                ..Default::default()
+            },
+        );
         db.insert_account_info(
             outbe_primitives::addresses::VALIDATOR_SET_ADDRESS,
             AccountInfo {
@@ -4828,6 +4859,7 @@ mod tests {
         let install = test_ocomp_fork_install(&chain_spec, validators);
         seed_storage.set_block_number(block_number);
         StorageHandle::enter(&mut seed_storage, |storage| {
+            seed_default_chain_constants(storage.clone());
             seed_compressed_entities_genesis(storage.clone());
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
@@ -4896,6 +4928,7 @@ mod tests {
             // seeded slot survives as live state here too (otherwise an empty
             // account's storage reads back as zero).
             outbe_primitives::addresses::ACCOUNTING_PROGRESS_ADDRESS,
+            CHAIN_CONSTANTS_ADDRESS,
         ];
         // `cache_db_from_storage` carries storage slots but not balances, and the
         // marker-info insert below overwrites `AccountInfo`. Capture any balance a
@@ -4943,6 +4976,7 @@ mod tests {
         let active_key = dummy_pubkey(0xA2);
         let install = test_ocomp_fork_install(&chain_spec, &[(active, active_key)]);
         StorageHandle::enter(&mut seed_storage, |storage| {
+            seed_default_chain_constants(storage.clone());
             seed_compressed_entities_genesis(storage.clone());
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
@@ -4985,6 +5019,15 @@ mod tests {
 
         let mut db = cache_db_from_storage(seed_storage);
         let marker_code = Bytecode::new_legacy([0xef].into());
+        let constants_marker_code = Bytecode::new_legacy(CHAIN_CONSTANTS_MARKER_CODE.into());
+        db.insert_account_info(
+            CHAIN_CONSTANTS_ADDRESS,
+            AccountInfo {
+                code_hash: constants_marker_code.hash_slow(),
+                code: Some(constants_marker_code),
+                ..Default::default()
+            },
+        );
         db.insert_account_info(
             outbe_primitives::addresses::VALIDATOR_SET_ADDRESS,
             AccountInfo {

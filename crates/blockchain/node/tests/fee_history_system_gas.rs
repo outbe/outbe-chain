@@ -11,6 +11,9 @@ use alloy_genesis::Genesis;
 use alloy_primitives::{keccak256, Address, Bytes, B256};
 use alloy_provider::{Provider, ProviderBuilder};
 use eyre::{bail, Context};
+use outbe_chain_constants::{
+    GenesisProtocolParametersV1, CHAIN_CONSTANTS_ADDRESS, CHAIN_CONSTANTS_MARKER_CODE,
+};
 use outbe_compressed_entities::{
     CandidateCacheLimits, CeMdbx, CompressedTreeService, EnvironmentIdentity, FinalizedMarker,
     ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
@@ -121,7 +124,33 @@ fn seed_single_validator_genesis(signer: &OutbeEvmSigner) -> eyre::Result<Genesi
     }
 
     let raw = std::fs::read_to_string(&output_path).wrap_err("read seeded genesis")?;
-    serde_json::from_str(&raw).wrap_err("parse seeded genesis")
+    let mut materialized: serde_json::Value =
+        serde_json::from_str(&raw).wrap_err("parse seeded genesis JSON")?;
+    let storage = GenesisProtocolParametersV1::default()
+        .genesis_storage_words()
+        .into_iter()
+        .map(|(slot, value)| {
+            (
+                format!("{slot:#066x}"),
+                serde_json::json!(format!("{value:#066x}")),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
+    materialized
+        .get_mut("alloc")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| eyre::eyre!("seeded genesis alloc must be an object"))?
+        .insert(
+            format!("{CHAIN_CONSTANTS_ADDRESS:#x}"),
+            serde_json::json!({
+                "balance": "0x0",
+                "code": format!("0x{}", hex::encode(CHAIN_CONSTANTS_MARKER_CODE)),
+                "storage": storage,
+            }),
+        );
+    GenesisProtocolParametersV1::from_materialized_genesis(&materialized)
+        .wrap_err("validate materialized test chain constants")?;
+    serde_json::from_value(materialized).wrap_err("decode materialized seeded genesis")
 }
 
 fn chain_spec_with_genesis(genesis: Genesis) -> Arc<ChainSpec<OutbeHeader>> {

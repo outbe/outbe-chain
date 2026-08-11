@@ -26,8 +26,8 @@ use super::schema::{
     METADOSIS_RUN_RECEIPT_SCHEMA_VERSION,
 };
 use crate::metadosis_p0::{
-    canonical_final_fixture_sha256, capture_outbe_chain_feature_tree, verify_metadosis_p0_parity,
-    MetadosisP0Case, MetadosisP0CaseInput, METADOSIS_P0_SCENARIO,
+    capture_outbe_chain_feature_tree, verify_metadosis_p0_parity, MetadosisP0Case,
+    MetadosisP0CaseInput, METADOSIS_P0_SCENARIO,
 };
 use crate::verification_ledger::{
     verify_domain_evidence, verify_member_digests, verify_source_checkout, AssertionStatus,
@@ -362,9 +362,9 @@ fn verify_fresh_devnet_process(
         serde_json::from_slice(&std::fs::read(bundle_root.join(&scenarios[0]))?)
             .wrap_err("decode fresh-devnet scenario receipt")?;
     ensure!(
-        scenario["feature"] == "Off-chain computation public path"
+        scenario["feature"] == "Off-chain computation and Metadosis"
             && scenario["scenario"]
-                == "A fresh Metadosis day runs from Create through terminal OCOMP"
+                == "A public Tribute completes real OCOMP, FullNode verification, NOD, and replay"
             && scenario["result"] == "passed",
         "fresh-devnet scenario identity or verdict mismatch"
     );
@@ -816,7 +816,6 @@ fn verify_p0_process(
         retained_feature_tree == exact_feature_tree,
         "retained P0 feature tree differs from the exact verifier command"
     );
-    let final_fixture_sha256 = canonical_final_fixture_sha256(repo)?;
     let cases = MetadosisP0Case::ALL
         .into_iter()
         .map(|case| MetadosisP0CaseInput {
@@ -829,7 +828,6 @@ fn verify_p0_process(
         &exact_feature_tree,
         &root.join("artifacts/outbe-chain-debug"),
         &root.join("artifacts/outbe-chain-release"),
-        &final_fixture_sha256,
         &cases,
     )?;
     let mut reconstructed_bytes = serde_json::to_vec_pretty(&reconstructed)?;
@@ -1206,8 +1204,8 @@ mod tests {
                 "tracked_dirty": false,
                 "untracked_dirty": false
             },
-            "feature": "Off-chain computation public path",
-            "scenario": "A fresh Metadosis day runs from Create through terminal OCOMP",
+            "feature": "Off-chain computation and Metadosis",
+            "scenario": "A public Tribute completes real OCOMP, FullNode verification, NOD, and replay",
             "result": "passed",
             "environment": {
                 "validators": 4,

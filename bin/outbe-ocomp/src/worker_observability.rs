@@ -1,4 +1,5 @@
 //! Salvo-only observability surface for one OCOMP Worker process.
+// OCOMP-TEST-ID: OCM-WOBS-001
 
 use std::net::SocketAddr;
 use std::sync::{mpsc, Arc, Mutex};

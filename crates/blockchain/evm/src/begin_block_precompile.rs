@@ -1105,12 +1105,21 @@ fn u256_to_u64(name: &str, value: U256) -> Result<u64> {
 mod tests {
     use super::*;
     use alloy_primitives::{address, keccak256, B256};
+    use outbe_chain_constants::{GenesisProtocolParametersV1, CHAIN_CONSTANTS_ADDRESS};
     use outbe_primitives::{consensus::ReshareResult, storage::hashmap::HashMapStorageProvider};
 
     const CHAIN_ID: u64 = 2026;
     const GENESIS_HASH: B256 = B256::repeat_byte(0x11);
     const OWNER: Address = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
     const VALIDATOR: Address = address!("0x1111111111111111111111111111111111111111");
+
+    fn seed_default_chain_constants(storage: StorageHandle<'_>) {
+        for (slot, value) in GenesisProtocolParametersV1::default().genesis_storage_words() {
+            storage
+                .sstore(CHAIN_CONSTANTS_ADDRESS, slot, value)
+                .expect("test chain constants seed succeeds");
+        }
+    }
 
     fn metadata() -> CertifiedParentAccountingMetadata {
         CertifiedParentAccountingMetadata {
@@ -1204,6 +1213,7 @@ mod tests {
         .unwrap()
         .into_install();
         provider.enter(|storage| {
+            seed_default_chain_constants(storage.clone());
             let root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
             storage
                 .sstore(

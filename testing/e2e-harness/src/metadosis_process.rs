@@ -17,12 +17,13 @@ use outbe_metadosis::config::OcompForkInstallV1;
 use outbe_ocomp_protocol::profile::poc_schema_limits;
 
 use crate::metadosis_p0::{
-    canonical_final_fixture_sha256, capture_outbe_chain_feature_tree, current_clean_git_revision,
-    verify_metadosis_p0_parity, MetadosisP0Case, MetadosisP0CaseInput, REMOVED_OWNER_FAILPOINT,
+    capture_outbe_chain_feature_tree, current_clean_git_revision, verify_metadosis_p0_parity,
+    MetadosisP0Case, MetadosisP0CaseInput, REMOVED_OWNER_FAILPOINT,
 };
 
-const FRESH_SCENARIO: &str = "A fresh Metadosis day runs from Create through terminal OCOMP";
-const P0_SCENARIO: &str = "The canonical Final devnet processes a shard-cap-plus-one population";
+const FRESH_SCENARIO: &str =
+    "A public Tribute completes real OCOMP, FullNode verification, NOD, and replay";
+const P0_SCENARIO: &str = "A shard-cap-plus-one public population is completely processed";
 
 pub fn run_fresh_devnet(repo: &Path, output: &Path) -> Result<()> {
     let lane = Lane::prepare(repo, output)?;
@@ -110,11 +111,7 @@ pub fn run_fresh_devnet(repo: &Path, output: &Path) -> Result<()> {
         .args(["--enclave-bin", path(&artifacts.join("outbe-tee-enclave"))])
         .args([
             "--input",
-            path(
-                &lane
-                    .repo
-                    .join("testing/e2e-harness/features/ocomp_public_path.feature"),
-            ),
+            path(&lane.repo.join("testing/e2e-harness/features/ocomp.feature")),
         ])
         .args(["--name", FRESH_SCENARIO]);
     lane.run_logged(&mut command, &lane.output.join("run.log"))?;
@@ -270,7 +267,6 @@ pub fn run_p0_parity(repo: &Path, output: &Path) -> Result<()> {
     }
 
     let source_revision = current_clean_git_revision(&lane.repo)?;
-    let fixture_sha = canonical_final_fixture_sha256(&lane.repo)?;
     let inputs = MetadosisP0Case::ALL
         .into_iter()
         .map(|case| MetadosisP0CaseInput {
@@ -283,7 +279,6 @@ pub fn run_p0_parity(repo: &Path, output: &Path) -> Result<()> {
         &feature_tree,
         &debug_node,
         &release_node,
-        &fixture_sha,
         &inputs,
     )?;
     let mut bytes = serde_json::to_vec_pretty(&evidence)?;
@@ -326,11 +321,7 @@ fn run_p0_case(
         ])
         .args([
             "--input",
-            path(
-                &lane
-                    .repo
-                    .join("testing/e2e-harness/features/ocomp_public_path.feature"),
-            ),
+            path(&lane.repo.join("testing/e2e-harness/features/ocomp.feature")),
         ])
         .args(["--name", P0_SCENARIO]);
     match case {

@@ -385,12 +385,7 @@ impl Localnet {
     pub(super) fn start_node_enclave(&mut self, index: usize) -> Result<()> {
         let vd = self.cfg.validator_dir(index);
         let port = self.cfg.tee_port(index);
-        let image_id = proc::ensure_enclave_image(
-            &self.cfg.repo,
-            self.cfg.sudo,
-            &self.cfg.dir.join("test-sgx-signing-key.pem"),
-        )?;
-        self.retain_enclave_image_id(image_id)?;
+        self.ensure_enclave_image_once()?;
         let enclave_bin = if self.cfg.tee_mode.uses_mock_binary() {
             self.cfg.bin_mock.clone()
         } else {

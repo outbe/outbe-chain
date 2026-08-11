@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use clap::{Parser, Subcommand};
 use eyre::{ensure, Result, WrapErr};
 use outbe_e2e_harness::metadosis_p0::{
-    canonical_final_fixture_sha256, capture_outbe_chain_feature_tree, current_clean_git_revision,
-    verify_metadosis_p0_parity, MetadosisP0Case, MetadosisP0CaseInput,
+    capture_outbe_chain_feature_tree, current_clean_git_revision, verify_metadosis_p0_parity,
+    MetadosisP0Case, MetadosisP0CaseInput,
 };
 use outbe_e2e_harness::ocomp_evidence::{
     assemble_closure, assemble_lane, closure_manifest_in, discover, manifest_in, publish_report,
@@ -165,7 +165,6 @@ fn main() -> Result<()> {
                 "retained feature tree differs from the exact verifier command"
             );
             let source_revision = current_clean_git_revision(&repo)?;
-            let final_fixture_sha256 = canonical_final_fixture_sha256(&repo)?;
             let cases = [
                 (MetadosisP0Case::DebugUnset, debug_unset),
                 (MetadosisP0Case::DebugNamed, debug_named),
@@ -187,7 +186,6 @@ fn main() -> Result<()> {
                 &exact_feature_tree,
                 &debug_node,
                 &release_node,
-                &final_fixture_sha256,
                 &cases,
             )?;
             publish_json_output(&output, &evidence)?;

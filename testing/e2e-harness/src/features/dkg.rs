@@ -1,4 +1,4 @@
-//! Steps for `features/s5_dkg_failure.feature` — port of
+//! DKG failure steps used by `features/validator_lifecycle.feature`.
 //! The DKG-failure feature. Freeze a 4->5 reshare target, then take the
 //! joiner AND one committee validator offline so the ceremony begins with only
 //! 3 online players (< player_threshold) and cannot complete. The OLD committee

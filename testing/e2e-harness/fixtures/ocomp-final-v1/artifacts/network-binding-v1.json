@@ -8,11 +8,11 @@
   "generated_capacity_manifest_sha256": "0xc8b7da59768a1178f772177abc8082881c162565c179c235883f44c0f9d6b0e4",
   "capacity_evidence_sha256": "0x1bbe70942341ba3d2d9809c37e2ded19e93173d25e3e006d7e5166f39e400238",
   "generated_limits_manifest_sha256": "0x5714005fb64ea5714229b552c28445cd7f5e7673af998b0ca172d7ba341a7002",
-  "generator_source_sha256": "0x9d7063b5b9d08ee9ce663e1244c9546a1edae7e1cbdfda9b66b94fcf9436949e",
-  "base_genesis_sha256": "0x6b639a5fe3bfdfbaf39db5a4f626290fdfb502da18a21870cb12e91165544f52",
-  "validators_manifest_sha256": "0x3617ad77b9807df61d12760c0e3c74527bbbc66565e795243a21338f3b218f2e",
+  "generator_source_sha256": "0x80b4473a1bd5e2069c6ef19a7092a7a544d28785fb19dbc20afe6af3a0a4c9a8",
+  "base_genesis_sha256": "0x0dfb33f20e110890389962e2048a608e23fd8e43646e15762e3ee3106f3a7efb",
+  "validators_manifest_sha256": "0x505f6e82c2e38259f05148996f9c52a6e37b8e735b799e8501b2ea415ed745b7",
   "chain_id": 54322345,
-  "genesis_hash": "0x75522a685765ded264302d6f43dc40fe78d359994e85f36a91889fe39aba7936",
+  "genesis_hash": "0x74bf5707eb186cf81d6f05b7ac3097d5da89f675e0c21d908c015aea25b40ffa",
   "fork_id": "0x1d1378c5bf42070e0326f13d3094f4b7ed3ef42c63edb3179745045f65027eb2",
   "correctness_profile_id": "0x0469002bbc5065d8e9d200daede2a65ec479cad78210d7dadabdd5320d241c8d",
   "correctness_profile_ocb1_sha256": "0x100b5be7e614215515c4e4e67127a39846adc93b4c7c8606341959d5ffb37c20",
@@ -21,8 +21,8 @@
   "protocol_bundle_hash": "0x7ce96d3adb6702dccdba5f3d79b58c71830af1b413ffcead26ddec86cea68bd9",
   "protocol_bundle_ocb1_sha256": "0x9d365a8c7f2407736164077824318f7584ddaca86c0ce363be7c25f008538a0a",
   "founder_registration_count": 4,
-  "fork_install_hash": "0x4e8662728bdb35146c23156a1bf0997bb016fc21fe9d41bde74e1268fb36dbf5",
-  "fork_install_ocb1_sha256": "0x15c3e66a9651ea53c1c81d22b545816306920a6174980869d84f518cc96606b5",
-  "chain_manifest_sha256": "0xe1a9dffd2f6a05c8c59da6d576c576f292f5500a28ed95110a5be94f9dfc6f26",
-  "semantic_artifacts_sha256": "0xf4ec82f7cfcc36a16318975cad85a587ef3ed43d201d1dfdef8d700980230b5b"
+  "fork_install_hash": "0xc882346a0c7c5557414cb49f29abcaea3437e081d9b1f9ca3c7e86aea1ea2385",
+  "fork_install_ocb1_sha256": "0x039cdc32039f6ad6e055ad31ccb9f7005a4169ec8cfd000a28fff4a54815f92d",
+  "chain_manifest_sha256": "0xe9c1b6248971df56e608fc819178fa540916c05e68e21813dba23c694472f44e",
+  "semantic_artifacts_sha256": "0x4b66e43f31656660ae9f54e39e0b6981f2bb3637e3bd3a6a60479366a052c54b"
 }

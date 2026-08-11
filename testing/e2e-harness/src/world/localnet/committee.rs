@@ -52,12 +52,7 @@ impl Localnet {
         self.start_opts = opts.clone();
         let n = self.committee_size();
         if self.tee_enabled() {
-            let image_id = proc::ensure_enclave_image(
-                &self.cfg.repo,
-                self.cfg.sudo,
-                &self.cfg.dir.join("test-sgx-signing-key.pem"),
-            )?;
-            self.retain_enclave_image_id(image_id)?;
+            self.ensure_enclave_image_once()?;
         }
         let bootnodes = self.bootnodes();
         let chain_id_hex = if self.tee_enabled() {
@@ -520,7 +515,7 @@ mod owned_committee_tests {
 
     use crate::env::Environment;
     use crate::internal::config::Config;
-    use crate::internal::proc::ChildGuard;
+    use crate::internal::proc::{ChildGuard, DockerImageId};
 
     use super::Localnet;
 
@@ -544,6 +539,35 @@ mod owned_committee_tests {
             .ensure_committee_alive()
             .expect_err("an exited owned validator must fail readiness");
         assert!(error.to_string().contains("validator-0 exited"));
+    }
+
+    #[test]
+    fn pinned_enclave_image_is_not_resolved_again_on_committee_restart() {
+        let env = Environment {
+            validators: 1,
+            data_dir: tempfile::tempdir().unwrap().keep(),
+            ..Environment::default()
+        };
+        env.ports.start_scenario(1).unwrap();
+        let mut localnet = Localnet::new(Config::resolve(&env));
+        let mut resolutions = 0;
+        let expected = format!("sha256:{}", "1".repeat(64));
+
+        localnet
+            .ensure_enclave_image_once_with(|| {
+                resolutions += 1;
+                DockerImageId::from_inspect_output(&expected)
+            })
+            .unwrap();
+        localnet
+            .ensure_enclave_image_once_with(|| {
+                resolutions += 1;
+                DockerImageId::from_inspect_output(&format!("sha256:{}", "2".repeat(64)))
+            })
+            .unwrap();
+
+        assert_eq!(resolutions, 1);
+        assert_eq!(localnet.enclave_image_id(), Some(expected.as_str()));
     }
 }
 

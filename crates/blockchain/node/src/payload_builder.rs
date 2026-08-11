@@ -715,6 +715,7 @@ mod tests {
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{address, keccak256, Bytes, Signature, TxKind};
     use alloy_rpc_types_engine::PayloadId;
+    use outbe_chain_constants::GenesisProtocolParametersV1;
     use outbe_compressed_entities::{
         CandidateCacheLimits, CeMdbx, CompressedTreeService, EnvironmentIdentity,
         ExactParentIdentity, FinalizedMarker, ACTIVE_COMMITMENT_SCHEME,
@@ -887,6 +888,11 @@ mod tests {
         seed.set_block_number(1);
         seed.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::ForkProfile);
         StorageHandle::enter(&mut seed, |storage| {
+            for (slot, value) in GenesisProtocolParametersV1::default().genesis_storage_words() {
+                storage
+                    .sstore(outbe_chain_constants::CHAIN_CONSTANTS_ADDRESS, slot, value)
+                    .expect("test chain constants seed succeeds");
+            }
             let root = outbe_compressed_entities::sealed_root(B256::ZERO)
                 .expect("CE genesis root is deterministic");
             storage
