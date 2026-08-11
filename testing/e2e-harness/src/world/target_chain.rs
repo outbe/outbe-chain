@@ -15,6 +15,7 @@ use eyre::{bail, eyre, Result};
 use crate::internal::config::Config;
 use crate::internal::eth;
 use crate::internal::proc::{attach_log, wait_tcp, ChildGuard};
+use crate::world::forge::{self, address_from, DEPLOYER_ADDRESS, DEPLOYER_KEY, SALT_VERSION};
 
 /// Which role id to read off a venue contract.
 enum Role {
@@ -28,15 +29,6 @@ pub const TARGET_CHAIN_ID: u64 = 31338;
 
 /// Seconds to wait for the chain to accept connections.
 const READY_TRIES: u32 = 60;
-
-/// The chain's first prefunded account. Its key is public by construction, which
-/// is the point: a throwaway chain is deployed without a production key. The
-/// `e2e-test` contract addresses the node is built against derive from it.
-const DEPLOYER_KEY: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
-const DEPLOYER_ADDRESS: &str = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
-
-/// CREATE3 salt namespace for the throwaway set, kept away from the pinned one.
-const SALT_VERSION: &str = "e2e-test";
 
 /// Addresses one target-chain deploy produced.
 #[derive(Clone, Debug)]
@@ -146,7 +138,7 @@ impl TargetChain {
         let chain_id = TARGET_CHAIN_ID.to_string();
 
         let create_x = address_from(
-            &self.forge(
+            &forge::run(
                 &crosschain,
                 &[
                     "script",
@@ -161,7 +153,7 @@ impl TargetChain {
         // A mailbox the adapter can hold; delivery across two chains is a relay
         // concern, not a deploy one.
         let mailbox = address_from(
-            &self.forge_with_ctor(
+            &forge::run_with_ctor(
                 &crosschain,
                 &[
                     "create",
@@ -175,7 +167,7 @@ impl TargetChain {
         )?;
 
         let bridge = address_from(
-            &self.forge(
+            &forge::run(
                 &crosschain,
                 &["script", "script/DeployAll.s.sol:DeployAll"],
                 &[
@@ -190,7 +182,7 @@ impl TargetChain {
             "ERC7786Bridge:",
         )?;
 
-        let venue = self.forge(
+        let venue = forge::run(
             &intex,
             &["script", "deploy/DeployTarget.s.sol:DeployTarget"],
             &[
@@ -307,69 +299,6 @@ impl TargetChain {
     }
 
     /// Run one forge command in `dir` against this chain, returning its output.
-    ///
-    /// The environment is inherited so a mise-provisioned foundry resolves; only
-    /// the deploy inputs the scripts read are added.
-    fn forge(
-        &self,
-        dir: &Path,
-        args: &[&str],
-        env: &[(&str, String)],
-        url: &str,
-    ) -> Result<String> {
-        self.forge_with_ctor(dir, args, &[], env, url)
-    }
-
-    /// `--constructor-args` is variadic, so it can only ever be the last flag:
-    /// anything after it is swallowed as a constructor value.
-    fn forge_with_ctor(
-        &self,
-        dir: &Path,
-        args: &[&str],
-        ctor: &[&str],
-        env: &[(&str, String)],
-        url: &str,
-    ) -> Result<String> {
-        let mut cmd = Command::new("forge");
-        cmd.current_dir(dir)
-            .args(args)
-            .args(["--broadcast", "--rpc-url", url]);
-        // `forge create` takes the key directly; scripts read it from the env.
-        if args.first() == Some(&"create") {
-            cmd.args(["--private-key", DEPLOYER_KEY]);
-        } else {
-            cmd.env("DEPLOYER_PK", DEPLOYER_KEY)
-                .env("DEPLOYER_PRIVATE_KEY", DEPLOYER_KEY);
-        }
-        for (key, value) in env {
-            cmd.env(key, value);
-        }
-        if !ctor.is_empty() {
-            cmd.arg("--constructor-args").args(ctor);
-        }
-        let out = cmd.output()?;
-        if !out.status.success() {
-            bail!(
-                "forge {} in {} failed: {}",
-                args.join(" "),
-                dir.display(),
-                String::from_utf8_lossy(&out.stderr)
-            );
-        }
-        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-    }
-}
-
-/// The address a deploy script logged after `label`.
-fn address_from(output: &str, label: &str) -> Result<Address> {
-    output
-        .lines()
-        .rev()
-        .find_map(|line| line.split_once(label))
-        .and_then(|(_, tail)| tail.split_whitespace().next())
-        .ok_or_else(|| eyre!("no address logged after {label:?}"))?
-        .parse()
-        .map_err(|error| eyre!("unparseable address after {label:?}: {error}"))
 }
 
 /// An OS-assigned free port, so the committee's own contiguous port blocks stay

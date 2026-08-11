@@ -11,6 +11,7 @@ pub mod mongodb;
 pub mod ocomp;
 pub mod rpc;
 pub mod state;
+pub mod forge;
 pub mod target_chain;
 pub mod validators;
 
