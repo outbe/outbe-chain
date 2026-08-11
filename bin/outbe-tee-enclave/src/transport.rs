@@ -850,13 +850,17 @@ fn dispatch_with_initialization(
                 Err(message) => EnclaveResponse::Error { message },
             }
         }
-        EnclaveRequest::ProcessTributeOfferBatch { offers } => {
+        EnclaveRequest::ProcessTributeOfferBatch {
+            offers,
+            tribute_prices,
+        } => {
             let derived = offer_key.get();
             let km = match derived {
                 Some(d) => keys.tribute_offer_key_material_with(d.secret()),
                 None => keys.tribute_offer_key_material(),
             };
-            let (results, inputs_canonical_hash) = process_tribute_offer_batch(&km, &offers);
+            let (results, inputs_canonical_hash) =
+                process_tribute_offer_batch(&km, &offers, &tribute_prices);
             // Sign (inputs_canonical_hash ‖ results) with the enclave's
             // Ed25519 attestation key. The host verifies this against the
             // attestation key it pinned from the quote, proving the results were

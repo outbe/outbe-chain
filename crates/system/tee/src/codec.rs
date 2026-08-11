@@ -96,9 +96,14 @@ mod tests {
                 ephemeral_pubkey: U256::from(12345u64),
                 reference_currency: 840,
                 exclude_from_intex_issuance: false,
-                tribute_price_minor: U256::from(1u64),
                 zk_context: None,
             }],
+            // Several entries so the map's postcard encoding is exercised, not
+            // just the single-entry case.
+            tribute_prices: std::collections::BTreeMap::from([
+                (840u16, U256::from(1u64)),
+                (978u16, U256::from(2u64)),
+            ]),
         };
         let bytes = encode_request(&req).unwrap();
         assert_eq!(decode_request(&bytes).unwrap(), req);

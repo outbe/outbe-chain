@@ -1,6 +1,7 @@
 //! End-to-end transport test: a real UDS, a Noise-IK handshake, and an encrypted
 //! `ProcessTributeOfferBatch` round-trip between the host client and the enclave server.
 
+use std::collections::BTreeMap;
 use std::os::unix::net::UnixListener;
 use std::thread;
 
@@ -29,11 +30,7 @@ const GOOD_JSON: &str = r#"{
 }"#;
 
 /// Encrypt an offer to the enclave offer key + salt, exactly as a client would.
-fn encrypt_offer(
-    tribute_offer_public: [u8; 32],
-    owner: Address,
-    price: U256,
-) -> EncryptedTributeOffer {
+fn encrypt_offer(tribute_offer_public: [u8; 32], owner: Address) -> EncryptedTributeOffer {
     let eph_sk = [9u8; 32];
     let eph_pub = PublicKey::from(&StaticSecret::from(eph_sk)).to_bytes();
     let shared = StaticSecret::from(eph_sk).diffie_hellman(&PublicKey::from(tribute_offer_public));
@@ -52,7 +49,6 @@ fn encrypt_offer(
         ephemeral_pubkey: U256::from_be_bytes(eph_pub),
         reference_currency: 840,
         exclude_from_intex_issuance: false,
-        tribute_price_minor: price,
         zk_context: None,
     }
 }
@@ -88,10 +84,11 @@ fn handshake_and_offer_roundtrip_over_uds() {
     // Encrypted ProcessTributeOfferBatch decrypts + prices the offer in the enclave.
     let owner = Address::repeat_byte(0xAB);
     let price = U256::from(2u64) * U256::from(1_000_000_000_000_000_000u64); // 2.0
-    let offer = encrypt_offer(tribute_offer_public, owner, price);
+    let offer = encrypt_offer(tribute_offer_public, owner);
     match client
         .request(&EnclaveRequest::ProcessTributeOfferBatch {
             offers: vec![offer],
+            tribute_prices: BTreeMap::from([(840u16, price)]),
         })
         .unwrap()
     {
@@ -246,13 +243,14 @@ fn transport_throughput_offers_per_sec() {
         .map(|i| {
             let mut o = [0u8; 20];
             o[0..8].copy_from_slice(&(i as u64).to_be_bytes());
-            encrypt_offer(tribute_offer_public, Address::from(o), price)
+            encrypt_offer(tribute_offer_public, Address::from(o))
         })
         .collect();
 
     let send = |client: &mut EnclaveClient| match client
         .request(&EnclaveRequest::ProcessTributeOfferBatch {
             offers: batch.clone(),
+            tribute_prices: BTreeMap::from([(840u16, price)]),
         })
         .unwrap()
     {

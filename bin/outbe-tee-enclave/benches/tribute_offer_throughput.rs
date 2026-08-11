@@ -20,6 +20,8 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Through
 use alloy_primitives::{Address, U256};
 use x25519_dalek::{PublicKey, StaticSecret};
 
+use std::collections::BTreeMap;
+
 use outbe_tee::protocol::EncryptedTributeOffer;
 use outbe_tee::OFFER_HKDF_SALT;
 use outbe_tee_enclave::compute::compute_token_id;
@@ -60,7 +62,7 @@ fn key_material() -> TributeOfferKeyMaterial<'static> {
 /// Encrypt one offer exactly as a client would: ephemeral X25519 -> ECDHE with
 /// the offer public key -> HKDF -> ChaCha20Poly1305 over the JSON payload. This
 /// is the client's cost, done outside the timed region.
-fn make_offer(owner: Address, price: U256) -> EncryptedTributeOffer {
+fn make_offer(owner: Address) -> EncryptedTributeOffer {
     let eph_sk = [9u8; 32];
     let eph_pub = PublicKey::from(&StaticSecret::from(eph_sk)).to_bytes();
     let shared = StaticSecret::from(eph_sk).diffie_hellman(&PublicKey::from(offer_public()));
@@ -78,30 +80,33 @@ fn make_offer(owner: Address, price: U256) -> EncryptedTributeOffer {
         ephemeral_pubkey: U256::from_be_bytes(eph_pub),
         reference_currency: 840,
         exclude_from_intex_issuance: false,
-        tribute_price_minor: price,
         zk_context: None,
     }
 }
 
 /// Distinct owners so each offer yields a distinct `token_id` (realistic batch).
 fn make_batch(n: usize) -> Vec<EncryptedTributeOffer> {
-    let price = U256::from(2u64) * U256::from(1_000_000_000_000_000_000u64);
     (0..n)
         .map(|i| {
             let mut owner = [0u8; 20];
             owner[0..8].copy_from_slice(&(i as u64).to_be_bytes());
-            make_offer(Address::from(owner), price)
+            make_offer(Address::from(owner))
         })
         .collect()
+}
+
+/// The batch price map every bench prices against: one USD entry at 2.0.
+fn bench_prices() -> BTreeMap<u16, U256> {
+    BTreeMap::from([(
+        840u16,
+        U256::from(2u64) * U256::from(1_000_000_000_000_000_000u64),
+    )])
 }
 
 /// Component costs: isolate the two heavy primitives so the batch number can be
 /// attributed (decrypt vs Poseidon vs the rest).
 fn bench_components(c: &mut Criterion) {
-    let offer = make_offer(
-        Address::repeat_byte(0xAB),
-        U256::from(2u64) * U256::from(1_000_000_000_000_000_000u64),
-    );
+    let offer = make_offer(Address::repeat_byte(0xAB));
     let ephemeral = offer.ephemeral_pubkey.to_be_bytes::<32>();
     let owner = Address::repeat_byte(0xAB);
 
@@ -136,9 +141,14 @@ fn bench_components(c: &mut Criterion) {
     // Full single-offer path (decrypt + parse + economics + Poseidon).
     let one = vec![offer.clone()];
     let key = key_material();
+    let prices = bench_prices();
     g.bench_function("process_one_full", |b| {
         b.iter(|| {
-            process_tribute_offer_batch(std::hint::black_box(&key), std::hint::black_box(&one))
+            process_tribute_offer_batch(
+                std::hint::black_box(&key),
+                std::hint::black_box(&one),
+                std::hint::black_box(&prices),
+            )
         })
     });
 
@@ -149,13 +159,18 @@ fn bench_components(c: &mut Criterion) {
 /// transport. The per-block on-chain budget divided by this gives offers/block.
 fn bench_batch_throughput(c: &mut Criterion) {
     let key = key_material();
+    let prices = bench_prices();
     let mut g = c.benchmark_group("batch");
     for &n in &[1usize, 10, 100, 500] {
         let batch = make_batch(n);
         g.throughput(Throughput::Elements(n as u64));
         g.bench_with_input(BenchmarkId::from_parameter(n), &batch, |b, batch| {
             b.iter(|| {
-                process_tribute_offer_batch(std::hint::black_box(&key), std::hint::black_box(batch))
+                process_tribute_offer_batch(
+                    std::hint::black_box(&key),
+                    std::hint::black_box(batch),
+                    std::hint::black_box(&prices),
+                )
             })
         });
     }

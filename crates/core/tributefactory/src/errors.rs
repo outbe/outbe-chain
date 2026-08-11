@@ -11,6 +11,12 @@ pub enum TributeFactoryError {
     #[error("decryption failed: {0}")]
     DecryptionFailed(String),
 
+    /// The enclave processed the offer and returned `Rejected`. Distinct from
+    /// [`Self::DecryptionFailed`], which covers the transport and the enclave
+    /// never answering at all.
+    #[error("enclave rejected the offer: {0}")]
+    EnclaveRejected(String),
+
     #[error("zkProof is required when ZK verification is enabled")]
     ZkProofRequired,
 

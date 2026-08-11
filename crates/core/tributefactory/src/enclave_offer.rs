@@ -16,9 +16,10 @@
 //! thread (the `StorageHandle` `!Send` constraint). A dead sidecar surfaces as a
 //! typed `tee_sidecar_unavailable` error (the offer reverts).
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
-use alloy_primitives::B256;
+use alloy_primitives::{B256, U256};
 use outbe_tee::protocol::{
     EnclaveRequest, EnclaveResponse, EncryptedTributeOffer, TributeOfferResult,
 };
@@ -75,9 +76,10 @@ pub fn init_enclave_client(socket: &Path) -> eyre::Result<()> {
 }
 
 /// Process a batch of offers through the enclave: it decrypts (offer key stays in
-/// SGX), applies the node-supplied oracle price, computes economics + Poseidon
-/// `token_id`, and returns the public `TributeOfferResult[]`. The host then issues
-/// the Tributes from the returned fields (no host recompute).
+/// SGX), selects each offer's price from the node-supplied `tribute_prices` map by
+/// the decrypted issuance currency, computes economics + Poseidon `token_id`, and
+/// returns the public `TributeOfferResult[]`. The host then issues the Tributes
+/// from the returned fields (no host recompute).
 ///
 /// The host recomputes `inputs_canonical_hash` from the request it sent and
 /// compares it to the enclave's — a mismatch is enclave non-determinism
@@ -89,6 +91,7 @@ pub fn init_enclave_client(socket: &Path) -> eyre::Result<()> {
 /// [`validate_tribute_offer_batch_response`] so they are unit-testable without a sidecar.
 pub fn process_tribute_offer_batch_via_enclave(
     offers: &[EncryptedTributeOffer],
+    tribute_prices: &BTreeMap<u16, U256>,
 ) -> eyre::Result<Vec<TributeOfferResult>> {
     // Route through the process-global enclave client (shared with the TEE registry
     // seal). Pin the attestation key from this authorized or structurally bound session before the
@@ -97,6 +100,7 @@ pub fn process_tribute_offer_batch_via_enclave(
         let attestation_pub = client.attestation_pub();
         let response = client.request(&EnclaveRequest::ProcessTributeOfferBatch {
             offers: offers.to_vec(),
+            tribute_prices: tribute_prices.clone(),
         });
         (attestation_pub, response)
     })
@@ -112,6 +116,7 @@ pub fn process_tribute_offer_batch_via_enclave(
             attestation_tag,
         } => validate_tribute_offer_batch_response(
             offers,
+            tribute_prices,
             results,
             inputs_canonical_hash,
             &attestation_pub,
@@ -128,12 +133,13 @@ pub fn process_tribute_offer_batch_via_enclave(
 /// Returns the results on success. Pure (no transport) so it is unit-testable.
 fn validate_tribute_offer_batch_response(
     offers: &[EncryptedTributeOffer],
+    tribute_prices: &BTreeMap<u16, U256>,
     results: Vec<TributeOfferResult>,
     inputs_canonical_hash: B256,
     attestation_pub: &[u8; 32],
     attestation_tag: &[u8],
 ) -> eyre::Result<Vec<TributeOfferResult>> {
-    let expected = outbe_tee::protocol::inputs_canonical_hash(offers);
+    let expected = outbe_tee::protocol::inputs_canonical_hash(offers, tribute_prices);
     if inputs_canonical_hash != expected {
         return Err(eyre::eyre!(
             "tee_enclave_nondeterminism: inputs_canonical_hash mismatch"
@@ -152,7 +158,7 @@ fn validate_tribute_offer_batch_response(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{Address, U256};
+    use alloy_primitives::Address;
 
     fn sample_tribute_offer() -> EncryptedTributeOffer {
         EncryptedTributeOffer {
@@ -162,9 +168,12 @@ mod tests {
             ephemeral_pubkey: U256::from(7u64),
             reference_currency: 840,
             exclude_from_intex_issuance: false,
-            tribute_price_minor: U256::from(1_000u64),
             zk_context: None,
         }
+    }
+
+    fn sample_prices() -> BTreeMap<u16, U256> {
+        BTreeMap::from([(840u16, U256::from(1_000u64))])
     }
 
     /// A returned `inputs_canonical_hash` that disagrees with the host's
@@ -173,16 +182,47 @@ mod tests {
     #[test]
     fn validate_rejects_inputs_canonical_hash_divergence() {
         let offers = vec![sample_tribute_offer()];
+        let prices = sample_prices();
         let wrong_hash = B256::repeat_byte(0xFF);
         // Sanity: the wrong hash really differs from the canonical recompute.
         assert_ne!(
             wrong_hash,
-            outbe_tee::protocol::inputs_canonical_hash(&offers)
+            outbe_tee::protocol::inputs_canonical_hash(&offers, &prices)
         );
 
-        let err =
-            validate_tribute_offer_batch_response(&offers, Vec::new(), wrong_hash, &[0u8; 32], &[])
-                .expect_err("hash divergence must be rejected");
+        let err = validate_tribute_offer_batch_response(
+            &offers,
+            &prices,
+            Vec::new(),
+            wrong_hash,
+            &[0u8; 32],
+            &[],
+        )
+        .expect_err("hash divergence must be rejected");
+        assert!(
+            err.to_string().contains("tee_enclave_nondeterminism"),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// The price map is a request input, so a batch that shipped different prices
+    /// must not validate against a hash computed over the ones actually sent —
+    /// otherwise the map rides to the enclave unattested.
+    #[test]
+    fn validate_binds_the_price_map() {
+        let offers = vec![sample_tribute_offer()];
+        let other_prices = BTreeMap::from([(840u16, U256::from(2_000u64))]);
+        let hash_of_other = outbe_tee::protocol::inputs_canonical_hash(&offers, &other_prices);
+
+        let err = validate_tribute_offer_batch_response(
+            &offers,
+            &sample_prices(),
+            Vec::new(),
+            hash_of_other,
+            &[0u8; 32],
+            &[],
+        )
+        .expect_err("a hash over different prices must be rejected");
         assert!(
             err.to_string().contains("tee_enclave_nondeterminism"),
             "unexpected error: {err}"

@@ -4,7 +4,6 @@ use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     derive_poseidon_entity_id, EntityId36, ExecutionScope, ParentBodySource,
 };
-use outbe_oracle::{schema::OracleContract, scurve};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_tee::protocol::{EncryptedTributeOffer, TributeOfferStatus, TributeZkContext};
 use outbe_tribute::{TributeContract, TributeData};
@@ -26,13 +25,14 @@ pub(crate) struct OfferTributeInput {
 }
 
 impl TributeFactoryContract<'_> {
-    /// Single live offer path: an encrypted offer arrives; the host reads the
-    /// current USDC/COEN oracle rate at this block, hands the offer + rate to the
-    /// enclave (`ProcessTributeOfferBatch`), and issues the Tribute from the returned
-    /// `TributeOfferResult` without recomputing economics. The public canonical
-    /// identity is independently recomputed and checked before issuance.
+    /// Single live offer path: an encrypted offer arrives; the host reads the COEN
+    /// price of every registered ISO pair at this block, hands the offer + price
+    /// map to the enclave (`ProcessTributeOfferBatch`), and issues the Tribute from
+    /// the returned `TributeOfferResult` without recomputing economics. The public
+    /// canonical identity is independently recomputed and checked before issuance.
     /// `worldwide_day`/`currency` are NOT ABI args — they live in the encrypted
-    /// payload; the enclave reads them and they come back in the result.
+    /// payload; the enclave reads them, prices the offer against the decrypted
+    /// currency, and they come back in the result.
     pub(crate) fn offer_tribute(
         &mut self,
         scope: &ExecutionScope,
@@ -80,19 +80,26 @@ impl TributeFactoryContract<'_> {
             | outbe_l2registry::api::ZkOfferCheck::Disabled { .. } => None,
         };
 
-        // Current rate at this block. There is a single active OFFERING
-        // day, so its committed oracle price is the current rate (identical on
+        // Current rates at this block. There is a single active OFFERING
+        // day, so its committed oracle prices are the current rates (identical on
         // every validator).
         let offering_day = *outbe_metadosis::api::offering_worldwide_days(self.storage.clone())?
             .first()
             .ok_or_else(|| PrecompileError::Revert("no worldwide day is OFFERING".to_string()))?;
 
-        outbe_oracle::api::check_reference_currency_with_storage(self.storage.clone(),reference_currency)?;
+        outbe_oracle::api::check_reference_currency_with_storage(
+            self.storage.clone(),
+            reference_currency,
+        )?;
 
-        // todo this is wrong
-        let tribute_price =
-            resolve_tribute_price(self.storage.clone(), reference_currency, offering_day)?;
-        if tribute_price.is_zero() {
+        // The offer is priced in its issuance currency, which lives in the
+        // encrypted payload — unreachable here. Ship every currency the Oracle can
+        // price for this day and let the enclave select the one it decrypts. An
+        // empty map means the Oracle is cold for the day, which no currency choice
+        // can rescue, so fail before paying for the enclave round trip.
+        let tribute_prices =
+            outbe_oracle::api::coen_pair_prices(self.storage.clone(), offering_day)?;
+        if tribute_prices.is_empty() {
             return Err(TributeFactoryError::NominalPriceUnavailable {
                 worldwide_day: offering_day,
             }
@@ -106,10 +113,11 @@ impl TributeFactoryContract<'_> {
             None => None,
         };
 
-        // Hand the encrypted offer + rate to the enclave. It decrypts, applies the
-        // rate, computes economics (U256) + Poseidon token_id, and returns the
-        // public result. The host does not recompute private economics, but it
-        // can and must verify the public owner/day identity recipe.
+        // Hand the encrypted offer + price map to the enclave. It decrypts, picks
+        // the rate for the decrypted issuance currency, computes economics (U256) +
+        // Poseidon token_id, and returns the public result. The host does not
+        // recompute private economics, but it can and must verify the public
+        // owner/day identity recipe.
         let offer = EncryptedTributeOffer {
             owner: caller,
             cipher_text: cipher_text.to_vec(),
@@ -117,18 +125,20 @@ impl TributeFactoryContract<'_> {
             ephemeral_pubkey,
             reference_currency,
             exclude_from_intex_issuance,
-            tribute_price_minor: tribute_price,
             zk_context,
         };
-        let results = crate::enclave_offer::process_tribute_offer_batch_via_enclave(&[offer])
-            .map_err(|e| TributeFactoryError::DecryptionFailed(e.to_string()))?;
+        let results = crate::enclave_offer::process_tribute_offer_batch_via_enclave(
+            &[offer],
+            &tribute_prices,
+        )
+        .map_err(|e| TributeFactoryError::DecryptionFailed(e.to_string()))?;
         let result = results
             .into_iter()
             .next()
             .ok_or_else(|| TributeFactoryError::DecryptionFailed("empty enclave result".into()))?;
 
         if let TributeOfferStatus::Rejected { reason } = &result.status {
-            return Err(TributeFactoryError::DecryptionFailed(reason.clone()).into());
+            return Err(TributeFactoryError::EnclaveRejected(reason.clone()).into());
         }
         if let Some(public) = zk_public_inputs {
             validate_zk_result(&zk_proof, public, result.zk_expected_hashes.as_ref())?;
@@ -253,22 +263,6 @@ fn parse_su_hashes(su_hashes: &[String]) -> Result<Vec<B256>> {
             Ok(B256::from_slice(&bytes))
         })
         .collect()
-}
-
-fn resolve_tribute_price(
-    storage: outbe_primitives::storage::StorageHandle,
-    issuance_currency: u16,
-    worldwide_day: WorldwideDay,
-) -> Result<U256> {
-    let (pair, index) = outbe_oracle::api::require_coen_pair(storage.clone(), issuance_currency)?;
-    let vwap =
-        outbe_oracle::api::get_worldwide_day_vwap_for_pair(storage.clone(), worldwide_day, index)?
-            .unwrap_or(U256::ZERO);
-    let scurve_timestamp = worldwide_day.to_timestamp_utc();
-    let oracle = OracleContract::new(storage);
-    let max_scurve = scurve::get_max_active_scurve_value(&oracle, pair, scurve_timestamp)?;
-
-    Ok(vwap.max(max_scurve))
 }
 
 pub(crate) fn validate_agent_reward_addresses(
