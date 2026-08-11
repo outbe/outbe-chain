@@ -20,6 +20,12 @@ pub enum NodFactoryError {
     #[error("nod is not qualified")]
     NodNotQualified,
 
+    #[error("nod is already settled")]
+    NodAlreadySettled,
+
+    #[error("nod is not settled")]
+    NodNotSettled,
+
     #[error("insufficient proof of work")]
     InsufficientProofOfWork,
 

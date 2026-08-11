@@ -117,6 +117,20 @@ impl World {
             .unwrap()
     }
 
+    fn settle(&mut self, nod_id: EntityId36, payer: Address) -> U256 {
+        self.enter(|storage, scope, parent| {
+            api::settle_nod(&storage, scope, parent, payer, nod_id, Address::ZERO)
+        })
+        .unwrap()
+    }
+
+    fn is_settled(&mut self, nod_id: EntityId36) -> bool {
+        self.enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
+            .unwrap()
+            .unwrap()
+            .is_settled
+    }
+
     fn qualify(&mut self, nod_id: EntityId36) {
         self.enter(|storage, scope, parent| {
             let item = nod_api::get_item(&storage, scope, parent, nod_id)
@@ -231,7 +245,6 @@ fn failed_authorization_preserves_the_loaded_nod() {
                 Address::repeat_byte(0x44),
                 nod_id,
                 nonce,
-                Address::ZERO,
                 dummy_auth(),
             )
         })
@@ -252,6 +265,7 @@ fn invalid_gratis_mac_rolls_back_the_nod_burn() {
     let input = params(Address::repeat_byte(0x45));
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
+    world.settle(nod_id, input.owner);
     let nonce = find_valid_nonce(nod_id);
 
     world
@@ -263,7 +277,6 @@ fn invalid_gratis_mac_rolls_back_the_nod_burn() {
                 input.owner,
                 nod_id,
                 nonce,
-                Address::ZERO,
                 dummy_auth(),
             )
         })
@@ -280,6 +293,7 @@ fn qualified_mine_deletes_item_and_last_bucket_then_emits_burn() {
     let input = params(Address::repeat_byte(0x55));
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
+    world.settle(nod_id, input.owner);
     world.provider.clear_events(NOD_ADDRESS);
     world.provider.clear_events(NOD_FACTORY_ADDRESS);
     let nonce = find_valid_nonce(nod_id);
@@ -292,7 +306,6 @@ fn qualified_mine_deletes_item_and_last_bucket_then_emits_burn() {
                 input.owner,
                 nod_id,
                 nonce,
-                Address::ZERO,
                 mine_auth(input.owner, input.gratis_load_minor),
             )
         })
@@ -324,6 +337,112 @@ fn qualified_mine_deletes_item_and_last_bucket_then_emits_burn() {
             (NOD_FACTORY_ADDRESS, INodFactory::NodBurned::SIGNATURE_HASH),
         ]
     );
+}
+
+#[test]
+fn mine_gratis_rejects_an_unsettled_nod() {
+    let mut world = World::new();
+    let input = params(Address::repeat_byte(0x56));
+    let nod_id = world.issue(&input);
+    world.qualify(nod_id);
+    let nonce = find_valid_nonce(nod_id);
+
+    let error = world
+        .enter(|storage, scope, parent| {
+            api::mine_gratis(
+                &storage,
+                scope,
+                parent,
+                input.owner,
+                nod_id,
+                nonce,
+                mine_auth(input.owner, input.gratis_load_minor),
+            )
+        })
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        PrecompileError::Revert(ref reason) if reason == &NodFactoryError::NodNotSettled.to_string()
+    ));
+    assert!(world
+        .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
+        .unwrap()
+        .is_some());
+}
+
+#[test]
+fn settle_nod_accepts_any_payer() {
+    let mut world = World::new();
+    let input = params(Address::repeat_byte(0x57));
+    let nod_id = world.issue(&input);
+    assert!(!world.is_settled(nod_id));
+    world.provider.clear_events(NOD_FACTORY_ADDRESS);
+
+    let stranger = Address::repeat_byte(0x58);
+    assert_eq!(world.settle(nod_id, stranger), input.cost_amount_minor);
+    assert!(world.is_settled(nod_id));
+
+    let settled: Vec<_> = world
+        .provider
+        .get_ordered_events()
+        .iter()
+        .filter(|event| event.address == NOD_FACTORY_ADDRESS)
+        .filter_map(|event| INodFactory::NodSettled::decode_log_data(&event.data).ok())
+        .collect();
+    assert_eq!(settled.len(), 1);
+    assert_eq!(settled[0].owner, input.owner);
+    assert_eq!(settled[0].payer, stranger);
+    assert_eq!(settled[0].amountPaid, input.cost_amount_minor);
+}
+
+#[test]
+fn settle_nod_rejects_double_settlement() {
+    let mut world = World::new();
+    let input = params(Address::repeat_byte(0x59));
+    let nod_id = world.issue(&input);
+    world.settle(nod_id, input.owner);
+
+    let error = world
+        .enter(|storage, scope, parent| {
+            api::settle_nod(&storage, scope, parent, input.owner, nod_id, Address::ZERO)
+        })
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        PrecompileError::Revert(ref reason)
+            if reason == &NodFactoryError::NodAlreadySettled.to_string()
+    ));
+}
+
+#[test]
+fn settle_before_qualification_then_mine_after() {
+    let mut world = World::new();
+    let input = params(Address::repeat_byte(0x5a));
+    let nod_id = world.issue(&input);
+
+    // Paying is allowed while the bucket is still unqualified.
+    world.settle(nod_id, Address::repeat_byte(0x5b));
+    world.qualify(nod_id);
+
+    let nonce = find_valid_nonce(nod_id);
+    let minted = world
+        .enter(|storage, scope, parent| {
+            api::mine_gratis(
+                &storage,
+                scope,
+                parent,
+                input.owner,
+                nod_id,
+                nonce,
+                mine_auth(input.owner, input.gratis_load_minor),
+            )
+        })
+        .unwrap();
+    assert_eq!(minted, input.gratis_load_minor);
+    assert!(world
+        .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
+        .unwrap()
+        .is_none());
 }
 
 #[test]

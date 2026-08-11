@@ -186,6 +186,23 @@ impl NodContract<'_> {
         }
     }
 
+    /// Marks a loaded Nod item settled using the capability retained by the caller's checks.
+    pub(crate) fn record_nod_settled(
+        &mut self,
+        scope: &ExecutionScope,
+        item: LoadedNodItem,
+    ) -> Result<()> {
+        let (mut item, capability) = item.into_parts();
+        item.is_settled = true;
+        let canonical = crate::repository::canonical_item(&item);
+        update(
+            self.storage_handle(),
+            scope,
+            capability,
+            BodyInput::NodItem(&canonical),
+        )
+    }
+
     /// Records compact removal state using capabilities retained by the caller's checks.
     pub(crate) fn record_nod_removed(
         &mut self,

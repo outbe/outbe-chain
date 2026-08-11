@@ -56,6 +56,18 @@ pub fn add_nod(
         .with_checkpoint(|| nod.record_nod_issued(scope, parent, item, entry_price_minor))
 }
 
+/// Marks a previously loaded Nod item as settled atomically.
+pub fn settle_nod(
+    storage: &StorageHandle<'_>,
+    scope: &ExecutionScope,
+    item: LoadedNodItem,
+) -> Result<()> {
+    let mut nod = NodContract::new(storage.clone());
+    storage
+        .clone()
+        .with_checkpoint(|| nod.record_nod_settled(scope, item))
+}
+
 /// Removes a previously loaded Nod item and updates or deletes its loaded bucket atomically.
 pub fn remove_nod(
     storage: &StorageHandle<'_>,

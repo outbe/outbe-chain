@@ -14,11 +14,6 @@
         "internalType": "uint256"
       },
       {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
         "name": "mac",
         "type": "bytes32",
         "internalType": "bytes32"
@@ -27,6 +22,30 @@
         "name": "opNonce",
         "type": "uint64",
         "internalType": "uint64"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "settleNod",
+    "inputs": [
+      {
+        "name": "nodId",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [
@@ -202,6 +221,43 @@
       },
       {
         "name": "costAmountMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "NodSettled",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "payer",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "nodId",
+        "type": "bytes",
+        "indexed": false,
+        "internalType": "bytes"
+      },
+      {
+        "name": "asset",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "amountPaid",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

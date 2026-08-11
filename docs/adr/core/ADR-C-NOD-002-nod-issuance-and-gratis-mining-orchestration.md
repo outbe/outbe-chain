@@ -9,11 +9,12 @@
 
 ## Context
 
-NodFactory has two different authorities. Lysis calls it to construct one Nod from
-validated transformation economics. A Nod owner later calls it to prove work, pay
-the recorded cost into reserve liquidity, consume the qualified Nod and mint the
-matching Gratis plus Fidelity cohort. It owns no independent persistent ledger, but
-it owns an economically critical multi-module transaction boundary.
+NodFactory has three different authorities. Lysis calls it to construct one Nod from
+validated transformation economics. Anyone may later pay the recorded cost into
+reserve liquidity on that Nod's behalf. The Nod owner separately proves work,
+consumes the qualified and settled Nod and mints the matching Gratis plus Fidelity
+cohort. It owns no independent persistent ledger, but it owns an economically
+critical multi-module transaction boundary.
 
 ## Decision
 
@@ -21,12 +22,22 @@ it owns an economically critical multi-module transaction boundary.
 and uniqueness, derives canonical Nod and bucket identities, stamps canonical block
 time, delegates authenticated ledger mutation to ADR-C-NOD-001 and emits `NodIssued`.
 
-`INodFactory.mineGratis` is the sole user ABI command. It rejects value, requires exact
-36-byte Nod id, verified owner and bucket bodies, caller ownership, valid bounded
-PoW nonce and a qualified bucket. For nonzero recorded cost it transfers the chosen
-asset from owner to NodFactory, approves VaultRouter and deposits the exact cost.
-It then consumes the Nod, emits `NodBurned`, and mints exactly its `gratis_load_minor`
-through Gratisfactory, which also records the Fidelity acquisition cohort.
+`INodFactory.settleNod` and `INodFactory.mineGratis` are the two user ABI commands.
+Both reject value and require an exact 36-byte Nod id.
+
+`settleNod` is deliberately unrestricted: any address may settle any live Nod at any
+point in its life, including before its bucket qualifies. It requires only that the
+Nod exists and is not already settled. For nonzero recorded cost it transfers the
+chosen asset from the payer to NodFactory, approves VaultRouter and deposits the
+exact cost; it then marks the authenticated Nod body settled and emits `NodSettled`.
+Settlement is recorded on the Nod body, so it dies with the Nod and cannot be
+inherited by a later Nod re-issued under the same derived identity.
+
+`mineGratis` requires verified owner and bucket bodies, caller ownership, a valid
+bounded PoW nonce, a qualified bucket and a settled Nod. It moves no value of its
+own. It consumes the Nod, emits `NodBurned`, and mints exactly its
+`gratis_load_minor` through Gratisfactory, which also records the Fidelity
+acquisition cohort.
 
 ## Inputs, effects and invariants
 
@@ -35,17 +46,20 @@ currency codes. The Nod id and bucket key are derived, never caller-selected, an
 `issued_at` is the executing block timestamp. One owner/day identity can be issued
 only once while live.
 
+A successful settlement receipt proves that, when cost is nonzero, the configured
+asset moved exactly that amount into the registered reserve-vault path, and that
+the Nod body carries `is_settled` afterwards — atomically or not at all.
+
 A successful mining receipt proves all of:
 
 - caller was the authenticated Nod owner and the shared bucket was qualified;
 - PoW validated over the exact 36-byte id and a nonce representable as `u64`;
-- when cost is nonzero, the configured asset moved exactly that amount into the
-  registered reserve-vault path;
+- the Nod was already settled;
 - exactly one Nod and its membership/supply contribution were removed;
 - exactly the recorded Gratis load was minted to the same owner and entered one
   Fidelity cohort;
-- payment, allowance, vault shares, Nod/CE state, Gratis/Fidelity state and all
-  events committed in the same EVM transaction or none did.
+- Nod/CE state, Gratis/Fidelity state and all events committed in the same EVM
+  transaction or none did.
 
 NodFactory has no durable replay map. The authenticated Nod deletion is the mining
 replay guard: the same id cannot mine twice. PoW itself is reusable evidence and is
@@ -53,10 +67,11 @@ not a consumption marker.
 
 ## Authority and production entrypoints
 
-The user can reach only `mineGratis`; no ABI issuance selector exists. Lysis calls
-the public Rust `outbe_nodfactory::api::issue_nod`. Tests and other crates can call
-the same function, so the intended Lysis authority is currently conventional.
-Mining also has a public Rust API duplicating the ABI command.
+The user can reach `settleNod` and `mineGratis`; no ABI issuance selector exists.
+Lysis calls the public Rust `outbe_nodfactory::api::issue_nod`. Tests and other
+crates can call the same function, so the intended Lysis authority is currently
+conventional. Settling and mining also have public Rust APIs duplicating the ABI
+commands.
 
 Outbound effects use EVM subcalls to arbitrary `asset`, then the fixed
 VaultRouter precompile. VaultRouter independently requires NodFactory to be a
@@ -66,16 +81,17 @@ Gratis/Fidelity mutation uses an in-process typed API after Nod removal.
 ## Atomicity, external calls and reentrancy
 
 The outer EVM transaction journal is the authoritative rollback domain. A failure
-in transfer, approval, vault deposit, Nod removal, event emission, Gratis mint or
-Fidelity cohort must revert earlier child-call and compressed-entity effects.
-Lysis provides a still larger checkpoint around all Nod issues and Tribute
+in transfer, approval, vault deposit, settlement write, Nod removal, event emission,
+Gratis mint or Fidelity cohort must revert earlier child-call and compressed-entity
+effects. Lysis provides a still larger checkpoint around all Nod issues and Tribute
 consumption.
 
-External token and vault calls occur before the Nod is consumed. The storage
-subcall adapter rejects provider-borrow re-entry at its internal seam, but the
-module requires explicit production evidence for EVM reentrancy and stale verified
-capabilities. Checks-effects-interactions or a typed in-progress guard is preferred
-if arbitrary token callbacks can re-enter the precompile.
+`settleNod` follows checks-effects-interactions: the settled flag is written before
+the token and vault subcalls, so a token that re-enters the precompile for the same
+Nod hits `NodAlreadySettled` rather than paying twice. `mineGratis` no longer makes
+external calls before consuming its replay guard. The storage subcall adapter
+rejects provider-borrow re-entry at its internal seam, but the module still requires
+explicit production evidence for EVM reentrancy and stale verified capabilities.
 
 ## Determinism, PoW and bounds
 
@@ -100,24 +116,29 @@ Evidence inspected includes NodFactory runtime/API/precompile/errors/tests and
 Solidity interfaces, Lysis production caller, Nod verified-capability API,
 Gratisfactory/Fidelity mint path, VaultRouter authorization/deposit path and EVM
 subcall adapter. Current unit tests cover issuance overlay visibility, duplicate and
-owner rejection, qualified zero-cost removal and event order. They do not prove the
-nonzero-cost production path.
+owner rejection, qualified zero-cost removal, event order, the unsettled-mining
+rejection, third-party settlement and double-settlement rejection. They do not prove
+the nonzero-cost production path.
 
 ## module audit profile
 
-The intended commands are `IssueFromLysis(LysisNodReceipt)` and
-`MineQualifiedNod(MiningRequest) -> MiningReceipt`. The latter receipt must account
-for asset movement, vault shares, consumed Nod id and minted Gratis/cohort. Closure
-requires typed asset selection, checked token results, reentrancy safety and tests
-through the real ABI/subcall interfaces.
+The intended commands are `IssueFromLysis(LysisNodReceipt)`,
+`SettleNod(SettlementRequest) -> SettlementReceipt` and
+`MineQualifiedNod(MiningRequest) -> MiningReceipt`. The settlement receipt must
+account for asset movement and vault shares; the mining receipt for consumed Nod id
+and minted Gratis/cohort. Closure requires typed asset selection, checked token
+results, reentrancy safety and tests through the real ABI/subcall interfaces.
 
 ## Consequences and rejected alternatives
 
 Keeping orchestration outside Nod preserves a small authenticated ledger and makes
-external payment risk independently auditable. Deleting before payment was not
-adopted in current code, but journal rollback means either order can be atomic;
-the selected order still needs a reentrancy argument. Treating PoW as a ledger
-field was rejected because Nod deletion already provides one-shot consumption.
+external payment risk independently auditable. Splitting payment out of mining lets
+a Nod be funded ahead of time and by a third party, at the cost of one extra
+transaction and one extra bit of authenticated body state. Recording `is_settled` on
+the Nod body was chosen over a NodFactory-side map because derived Nod identities
+are reusable after a burn, and a side map would leak a stale settled flag into a
+re-issued Nod. Treating PoW as a ledger field was rejected because Nod deletion
+already provides one-shot consumption.
 Combining this ADR with ADR-C-NOD-001 was rejected because external assets, VaultRouter
 and Gratis/Fidelity are a separate authority and failure domain.
 
@@ -136,13 +157,14 @@ and Gratis/Fidelity are a separate authority and failure domain.
   the decoded result.
 - Close `issue_nod` behind an unforgeable Lysis capability/receipt and validate all
   issue economics at this boundary. Any crate can currently issue arbitrary Nods.
-- Add a reentrancy proof/test for malicious asset and vault callbacks. External
-  calls happen before the Nod replay guard is consumed.
+- Add a reentrancy proof/test for malicious asset and vault callbacks against the
+  `settleNod` effects-before-interactions ordering.
 - Put an explicit checkpoint/command guard around the complete mining orchestration
   or prove the outer EVM journal always includes CE overlay events and every
   in-process mutation on all production entrypoints.
-- Define zero-cost mining asset semantics in the ABI. Accepting any address,
-  including zero, is implemented but not capability/version signaled.
+- Define zero-cost settlement asset semantics in the ABI. Accepting any address,
+  including zero, is implemented but not capability/version signaled. A zero-cost
+  Nod still requires an explicit `settleNod` call before it can be mined.
 - Pin and version PoW difficulty/preimage and specify whether old Nods retain their
   issuance-era difficulty after a protocol update.
 - Validate nonzero Gratis load and cost/floor/entry/currency relationships before

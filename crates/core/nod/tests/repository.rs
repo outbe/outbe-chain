@@ -49,6 +49,7 @@ fn nod(nod_id: EntityId36, owner: Address) -> NodItemState {
         issuance_currency: 0,
         reference_currency: u16::MAX,
         issued_at: u64::MAX,
+        is_settled: true,
     }
 }
 
@@ -248,6 +249,22 @@ fn projection_session_owns_item_prior_state_and_rejects_untracked_identity() {
     ));
 }
 
+/// An unsettled body must encode exactly as it did before `is_settled` existed,
+/// so no stored Nod needs migrating; settling only appends field 12.
+#[test]
+fn settlement_only_appends_to_the_canonical_nod_payload() {
+    let mut body = nod(
+        entity(U256::from(7), WorldwideDay::new(20_260_715)),
+        Address::repeat_byte(0x77),
+    );
+    body.is_settled = false;
+    let unsettled = encode_nod_item_v1(&canonical_item(&body)).unwrap();
+    body.is_settled = true;
+    let settled = encode_nod_item_v1(&canonical_item(&body)).unwrap();
+
+    assert_eq!(settled, [unsettled.as_slice(), &[0x60, 0x01]].concat());
+}
+
 #[test]
 fn canonical_stored_bodies_roundtrip_all_nod_field_boundaries() {
     for body in [
@@ -263,6 +280,7 @@ fn canonical_stored_bodies_roundtrip_all_nod_field_boundaries() {
             issuance_currency: 0,
             reference_currency: 0,
             issued_at: 0,
+            is_settled: false,
         },
         NodItemState {
             nod_id: entity(U256::MAX, WorldwideDay::new(u32::MAX)),
@@ -276,6 +294,7 @@ fn canonical_stored_bodies_roundtrip_all_nod_field_boundaries() {
             issuance_currency: u16::MAX,
             reference_currency: u16::MAX,
             issued_at: u64::MAX,
+            is_settled: true,
         },
     ] {
         let stored = stored_nod(&body);
@@ -291,6 +310,7 @@ fn canonical_stored_bodies_roundtrip_all_nod_field_boundaries() {
         assert_eq!(decoded.issuance_currency, body.issuance_currency);
         assert_eq!(decoded.reference_currency, body.reference_currency);
         assert_eq!(decoded.issued_at, body.issued_at);
+        assert_eq!(decoded.is_settled, body.is_settled);
     }
 
     for body in [
