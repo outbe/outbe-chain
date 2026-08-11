@@ -13,8 +13,8 @@ use alloy_sol_types::sol;
 use eyre::{bail, eyre, Result};
 
 use crate::internal::config::Config;
-use crate::internal::proc::{attach_log, wait_tcp, ChildGuard};
 use crate::internal::eth;
+use crate::internal::proc::{attach_log, wait_tcp, ChildGuard};
 
 /// Which role id to read off a venue contract.
 enum Role {
@@ -148,7 +148,10 @@ impl TargetChain {
         let create_x = address_from(
             &self.forge(
                 &crosschain,
-                &["script", "script/0_DeployCreateX.s.sol:DeployCreateXDeterministic"],
+                &[
+                    "script",
+                    "script/0_DeployCreateX.s.sol:DeployCreateXDeterministic",
+                ],
                 &[("CONTRACT_SALT", SALT_VERSION.to_owned())],
                 &url,
             )?,
@@ -261,7 +264,12 @@ impl TargetChain {
         Ok(())
     }
 
-    fn send<C: alloy_sol_types::SolCall>(&self, url: &str, to: Address, call: &C) -> Result<String> {
+    fn send<C: alloy_sol_types::SolCall>(
+        &self,
+        url: &str,
+        to: Address,
+        call: &C,
+    ) -> Result<String> {
         eth::send_call(url, to, DEPLOYER_KEY, call, None)
     }
 
@@ -303,7 +311,13 @@ impl TargetChain {
     ///
     /// The environment is inherited so a mise-provisioned foundry resolves; only
     /// the deploy inputs the scripts read are added.
-    fn forge(&self, dir: &Path, args: &[&str], env: &[(&str, String)], url: &str) -> Result<String> {
+    fn forge(
+        &self,
+        dir: &Path,
+        args: &[&str],
+        env: &[(&str, String)],
+        url: &str,
+    ) -> Result<String> {
         let mut cmd = Command::new("forge");
         cmd.current_dir(dir)
             .args(args)
