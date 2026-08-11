@@ -3,9 +3,9 @@ use std::str::FromStr;
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::stablecoin::{
     decode_canonical_stablecoin_create, encode_canonical_stablecoin_create, is_supported_iso4217,
-    predict_stablecoin, stablecoin_address, stablecoin_token_id, stablecoin_token_id_preimage,
-    StablecoinCodecError, StablecoinCreatePayload, ISO_4217_NUMERIC_CODES,
-    ISO_4217_SNAPSHOT_PUBLISHED, ISO_4217_SNAPSHOT_SHA256,
+    iso_4217_alpha, predict_stablecoin, stablecoin_address, stablecoin_token_id,
+    stablecoin_token_id_preimage, StablecoinCodecError, StablecoinCreatePayload, ISO_4217_ALPHA,
+    ISO_4217_NUMERIC_CODES, ISO_4217_SNAPSHOT_PUBLISHED, ISO_4217_SNAPSHOT_SHA256,
 };
 use proptest::prelude::*;
 use serde::Deserialize;
@@ -94,6 +94,7 @@ struct Iso4217Snapshot {
     published: String,
     source_sha256: String,
     numeric_codes: Vec<u16>,
+    alpha_codes: Vec<String>,
 }
 
 #[test]
@@ -142,6 +143,17 @@ fn pinned_iso_snapshot_matches_the_production_set() {
     assert_eq!(snapshot.published, ISO_4217_SNAPSHOT_PUBLISHED);
     assert_eq!(snapshot.source_sha256, ISO_4217_SNAPSHOT_SHA256);
     assert_eq!(snapshot.numeric_codes, ISO_4217_NUMERIC_CODES);
+
+    assert_eq!(snapshot.alpha_codes.len(), ISO_4217_ALPHA.len());
+    for ((expected, alpha), code) in snapshot
+        .alpha_codes
+        .iter()
+        .zip(ISO_4217_ALPHA)
+        .zip(ISO_4217_NUMERIC_CODES)
+    {
+        assert_eq!(expected.as_bytes(), alpha, "alpha for {code}");
+        assert!(alpha.iter().all(u8::is_ascii_uppercase), "alpha for {code}");
+    }
     assert!(snapshot
         .numeric_codes
         .windows(2)
@@ -331,4 +343,19 @@ fn decode_prefix(value: &str) -> [u8; 2] {
 
 fn decode_hex(value: &str) -> Vec<u8> {
     hex::decode(value.strip_prefix("0x").unwrap()).unwrap()
+}
+
+#[test]
+fn every_pinned_code_resolves_to_its_own_letters() {
+    for (code, alpha) in ISO_4217_NUMERIC_CODES.iter().zip(ISO_4217_ALPHA) {
+        assert_eq!(iso_4217_alpha(*code), Some(*alpha), "alpha for {code}");
+    }
+}
+
+#[test]
+fn a_code_outside_the_pinned_list_has_no_letters() {
+    // 0 and 500 are not assigned; 1000 is past the three-digit range.
+    for code in [0u16, 500, 1000] {
+        assert_eq!(iso_4217_alpha(code), None, "unexpected alpha for {code}");
+    }
 }
