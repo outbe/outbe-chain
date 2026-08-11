@@ -301,14 +301,13 @@ async fn offer(
     // 2. Build the plaintext payload. `tribute_draft_id` + `su_hashes` are fresh
     //    random — su hashes must be unique per offer.
     let wwd: u32 = worldwide_day.into();
-    // worldwide_day + currency are the authoritative offer fields (encrypted);
-    // they also travel cleartext as ABI args so the node can resolve the price,
-    // and the enclave verifies the two copies match.
+    // worldwide_day + currency are cleartext ABI args (below) so the node can
+    // admit and price the offer without decrypting; the ciphertext carries only
+    // what must stay confidential. `referenceCurrency` is a separate axis again
+    // (it drives gem/intex qualification), not the pricing key.
     let payload = serde_json::json!({
         "creator": format!("{creator:?}"),
         "tribute_draft_id": tribute_draft_id,
-        "worldwide_day": wwd,
-        "currency": currency,
         "amount_base": amount_base,
         "amount_atto": "0",
         "su_hashes": [su_hash],
@@ -329,6 +328,8 @@ async fn offer(
         cipherText: cipher_text.into(),
         nonce: nonce.to_vec().into(),
         ephemeralPubkey: U256::from_be_bytes(eph_pub),
+        worldwideDay: wwd,
+        tributeCurrency: currency,
         referenceCurrency: currency,
         excludeFromIntexIssuance: exclude_from_intex_issuance,
         zkProof: zk_proof,

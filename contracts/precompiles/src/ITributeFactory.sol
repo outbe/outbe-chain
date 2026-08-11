@@ -16,6 +16,8 @@ interface ITributeFactory {
         bytes calldata cipherText,
         bytes calldata nonce,
         uint256 ephemeralPubkey,
+        uint32 worldwideDay,
+        uint16 tributeCurrency,
         uint16 referenceCurrency,
         bool excludeFromIntexIssuance,
         bytes calldata zkProof,
