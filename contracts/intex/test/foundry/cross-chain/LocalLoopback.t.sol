@@ -12,6 +12,7 @@ import {IDesis} from "@contracts/origin/interfaces/IDesis.sol";
 import {IERC7786TokenReceiver} from "@contracts/origin/interfaces/IERC7786TokenReceiver.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
+import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
@@ -334,7 +335,7 @@ contract LocalLoopbackTest is Test {
         origin.sendIssuanceInstructions(
             IOriginRouter.IssuanceInstructionsParams({
                 dstChainId: local,
-                seriesId: DAY,
+                seriesId: CreateSeriesLib.seriesId(DAY),
                 worldwideDay: DAY,
                 issuedIntexCount: 50,
                 promisLoadMinor: PROMIS_LOAD_MINOR,
@@ -350,7 +351,7 @@ contract LocalLoopbackTest is Test {
                 quantities: amounts
             })
         );
-        uint256 tokenId = intex.issuedTokenId(DAY);
+        uint256 tokenId = intex.issuedTokenId(CreateSeriesLib.seriesId(DAY));
         assertEq(intex.balanceOf(iba1, tokenId), 30, "iba1 mint");
         assertEq(intex.balanceOf(iba2, tokenId), 20, "iba2 mint");
 

@@ -67,11 +67,9 @@ library IntexMetadata {
         );
     }
 
-    /// @dev `<worldwideDay>-<issuance ccy>-<reference ccy>` — the composite series id format.
+    /// @dev The series id verbatim — it is already the readable `20260212-TRY-U`.
     function _displayId(IIntexNFT1155.SeriesData memory data) private pure returns (string memory) {
-        return string.concat(
-            Strings.toString(data.worldwideDay), "-", _pad3(data.issuanceCurrency), "-", _pad3(data.referenceCurrency)
-        );
+        return string(abi.encodePacked(data.seriesId));
     }
 
     function _buildAttributes(IIntexNFT1155.SeriesData memory data, bool settled, bool expired)
@@ -310,13 +308,6 @@ library IntexMetadata {
 
     function _pad2(uint256 n) private pure returns (string memory) {
         if (n < 10) return string.concat("0", Strings.toString(n));
-        return Strings.toString(n);
-    }
-
-    /// @dev ISO 4217 numeric codes are three digits, zero-padded.
-    function _pad3(uint16 n) private pure returns (string memory) {
-        if (n < 10) return string.concat("00", Strings.toString(n));
-        if (n < 100) return string.concat("0", Strings.toString(n));
         return Strings.toString(n);
     }
 }

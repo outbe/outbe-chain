@@ -12,7 +12,8 @@ import {CreateSeriesLib} from "./helpers/CreateSeriesLib.sol";
 ///      (series birth, lifecycle transitions) and never on supply moves.
 contract IntexNFT1155Erc4906Test is Test {
     bytes32 internal constant METADATA_UPDATE_TOPIC = keccak256("MetadataUpdate(uint256)");
-    uint32 internal constant SERIES_ID = 20260622;
+    uint32 internal constant SERIES_ID_DAY = 20260622;
+    bytes14 internal constant SERIES_ID = "20260622-USD-U";
     uint32 internal constant CAP = 10_000;
     uint32 internal constant CALL_PERIOD = 14 days;
 
@@ -59,7 +60,7 @@ contract IntexNFT1155Erc4906Test is Test {
         vm.recordLogs();
         vm.startPrank(bridger);
 
-        nft.createSeries(CreateSeriesLib.params(SERIES_ID, CAP, CALL_PERIOD));
+        nft.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, CAP, CALL_PERIOD));
         (uint256 count, uint256 tokenId) = _metadataUpdates();
         assertEq(count, 1, "createSeries emits once");
         assertEq(tokenId, iTok);

@@ -61,7 +61,8 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
     uint32 internal constant BNB_CHAIN_ID = 1;
     uint32 internal constant OUTBE_CHAIN_ID = 2;
 
-    uint32 internal constant SERIES_ID = 20250101;
+    uint32 internal constant SERIES_ID_DAY = 20250101;
+    bytes14 internal constant SERIES_ID = "20250101-USD-U";
 
     TargetRouter internal bnbRouter;
     OriginRouter internal outbeRouter;
@@ -119,22 +120,22 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
     /// @notice MARK_CALLED for a series the BNB intex has never seen reverts deterministically
     ///         (`NonexistentToken`) — the bridge rolls back rather than swallowing it.
     function test_TM_PrematureMarkCalled_Reverts() public {
-        bytes memory packet = BridgeMsgCodec.encodeMarkCalled(SERIES_ID);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.NonexistentToken.selector, uint256(SERIES_ID)));
+        bytes memory packet = BridgeMsgCodec.encodeMarkCalled(SERIES_ID, SERIES_ID_DAY);
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.NonexistentToken.selector, uint256(uint112(SERIES_ID))));
         _deliverToTM(packet);
     }
 
     /// @notice After the prerequisite (the series) lands, re-delivering the same MARK_CALLED succeeds and the
     ///         series flips to Called — the transport-redelivery model resolves the out-of-order arrival.
     function test_TM_MarkCalledRedeliverySucceedsAfterSeriesLands() public {
-        bytes memory packet = BridgeMsgCodec.encodeMarkCalled(SERIES_ID);
+        bytes memory packet = BridgeMsgCodec.encodeMarkCalled(SERIES_ID, SERIES_ID_DAY);
 
         // Premature: no series yet → revert.
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.NonexistentToken.selector, uint256(SERIES_ID)));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.NonexistentToken.selector, uint256(uint112(SERIES_ID))));
         _deliverToTM(packet);
 
         // Prerequisite lands (the ISSUANCE that would have created the series).
-        intex.createSeries(CreateSeriesLib.params(SERIES_ID, 10_000, 0));
+        intex.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
 
         // Redelivery of the identical message now succeeds.
         _deliverToTM(packet);

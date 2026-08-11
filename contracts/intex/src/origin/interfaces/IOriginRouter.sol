@@ -60,7 +60,7 @@ interface IOriginRouter {
     /// @param sendId Bridge send identifier.
     /// @param seriesId Series identifier.
     /// @param recipientsCount Number of recipients.
-    event IssuanceInstructionsSent(bytes32 indexed sendId, uint32 indexed seriesId, uint256 recipientsCount);
+    event IssuanceInstructionsSent(bytes32 indexed sendId, bytes14 indexed seriesId, uint256 recipientsCount);
 
     /// @notice Emitted when refund instructions are sent to a target chain.
     /// @param sendId Bridge send identifier.
@@ -71,12 +71,12 @@ interface IOriginRouter {
     /// @notice Emitted when a mark-called message is sent to a target chain.
     /// @param sendId Bridge send identifier.
     /// @param seriesId Series identifier.
-    event MarkCalledSent(bytes32 indexed sendId, uint32 indexed seriesId);
+    event MarkCalledSent(bytes32 indexed sendId, bytes14 indexed seriesId);
 
     /// @notice Emitted when a mark-qualified message is sent to a target chain.
     /// @param sendId Bridge send identifier.
     /// @param seriesId Series identifier.
-    event MarkQualifiedSent(bytes32 indexed sendId, uint32 indexed seriesId);
+    event MarkQualifiedSent(bytes32 indexed sendId, bytes14 indexed seriesId);
 
     /// @notice Emitted when `wire` updates the `desis` and `intexFactory` dependencies and rotates their roles.
     /// @param desisOld Previous `desis` (zero on first wiring).
@@ -168,7 +168,7 @@ interface IOriginRouter {
     struct IssuanceInstructionsParams {
         /// @notice Destination chain for this issuance leg (must be in the series' STAGE_START snapshot).
         uint32 dstChainId;
-        uint32 seriesId;
+        bytes14 seriesId;
         /// @notice Worldwide day the series was derived from (provenance; carried to the destination NFT).
         uint32 worldwideDay;
         uint32 issuedIntexCount;
@@ -277,9 +277,9 @@ interface IOriginRouter {
         uint128[] calldata paidAmounts
     ) external view returns (uint256 fee);
     /// @notice Native fee to broadcast mark-called (summed over the day's snapshot targets).
-    function quoteSendMarkCalled(uint32 seriesId) external view returns (uint256 fee);
+    function quoteSendMarkCalled(bytes14 seriesId, uint32 worldwideDay) external view returns (uint256 fee);
     /// @notice Native fee to broadcast mark-qualified (summed over the day's snapshot targets).
-    function quoteSendMarkQualified(uint32 seriesId) external view returns (uint256 fee);
+    function quoteSendMarkQualified(bytes14 seriesId, uint32 worldwideDay) external view returns (uint256 fee);
 
     // --- Send ---
     /// @notice Broadcast auction stage start to every registered target, snapshotting the target set for the day.
@@ -311,10 +311,10 @@ interface IOriginRouter {
     ) external payable returns (bytes32 sendId);
     /// @notice Broadcast mark-called over the day's snapshot. Restricted to `INTEX_FACTORY_ROLE`.
     /// @dev The settlement deadline is derived on the destination chain from `callNoticePeriod`.
-    function sendMarkCalled(uint32 seriesId) external payable;
+    function sendMarkCalled(bytes14 seriesId, uint32 worldwideDay) external payable;
     /// @notice Broadcast mark-qualified over the day's snapshot, flipping the series to Qualified.
     ///         Restricted to `INTEX_FACTORY_ROLE`.
-    function sendMarkQualified(uint32 seriesId) external payable;
+    function sendMarkQualified(bytes14 seriesId, uint32 worldwideDay) external payable;
 
     /// @notice Permissionless flush of a parked outbound leg.
     function flushPendingSend(uint256 idx) external;

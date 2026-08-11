@@ -77,7 +77,7 @@ contract EscrowAdapterHardeningTest is Test {
     address internal bidderA = address(0xA);
     address internal bidderB = address(0xB);
 
-    uint32 internal constant SERIES = 1;
+    uint32 internal constant SERIES = 20260102;
 
     function setUp() public {
         escrow = DeployProxy.escrowAdapter(admin, bridger);

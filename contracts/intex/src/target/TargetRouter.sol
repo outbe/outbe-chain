@@ -63,7 +63,7 @@ contract TargetRouter is
     /// @notice An issuance mint parked because a recipient's ERC-1155 receiver hook reverted; retried via
     ///         `flushPendingIssuanceMint`.
     struct PendingIssuanceMint {
-        uint32 seriesId;
+        bytes14 seriesId;
         address recipient;
         uint256 quantity;
         bool exists;
@@ -213,7 +213,7 @@ contract TargetRouter is
     function pendingIssuanceMints(uint256 idx)
         external
         view
-        returns (uint32 seriesId, address recipient, uint256 quantity, bool exists, bool done)
+        returns (bytes14 seriesId, address recipient, uint256 quantity, bool exists, bool done)
     {
         PendingIssuanceMint storage p = _ts().pendingIssuanceMints[idx];
         return (p.seriesId, p.recipient, p.quantity, p.exists, p.done);
@@ -506,7 +506,7 @@ contract TargetRouter is
     }
 
     /// @notice Self-call shim around a single issuance mint; isolates a reverting recipient hook.
-    function mintIssuanceOne(uint32 seriesId, address to, uint256 quantity) external {
+    function mintIssuanceOne(bytes14 seriesId, address to, uint256 quantity) external {
         if (msg.sender != address(this)) revert NotSelf();
         _ts().intex.mint(to, quantity, seriesId);
     }
@@ -553,7 +553,7 @@ contract TargetRouter is
     ///      `flushPendingHoldersRelay`; markCalled itself still succeeds.
     function _handleMarkCalled(uint32 _srcChainId, bytes calldata _message) internal {
         TargetRouterStorage storage $ = _ts();
-        uint32 seriesId = BridgeMsgCodec.decodeMarkCalled(_message);
+        bytes14 seriesId = BridgeMsgCodec.decodeMarkCalled(_message);
 
         $.intex.markCalled(seriesId);
 
@@ -600,7 +600,7 @@ contract TargetRouter is
     /// @dev Unlike markCalled, qualifying is a pure status flip (Issued -> Qualified) with no holder
     ///      migration, so there is nothing to bridge back to Outbe.
     function _handleMarkQualified(uint32 _srcChainId, bytes calldata _message) internal {
-        uint32 seriesId = BridgeMsgCodec.decodeMarkQualified(_message);
+        bytes14 seriesId = BridgeMsgCodec.decodeMarkQualified(_message);
 
         _ts().intex.markQualified(seriesId);
 

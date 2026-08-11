@@ -43,8 +43,9 @@ contract PayNativeAccountingTest is CrossChainTest {
     address internal admin = address(this);
     address internal auctionRole = address(0xA11C7);
 
-    uint32 internal constant SERIES_ID = 20260501;
-    uint256 internal constant TOKEN_ID = uint256(SERIES_ID);
+    uint32 internal constant SERIES_ID_DAY = 20260501;
+    bytes14 internal constant SERIES_ID = "20260501-USD-U";
+    uint256 internal constant TOKEN_ID = uint256(uint112(SERIES_ID));
     address internal holder = address(0xCAFE);
 
     function setUp() public {
@@ -78,7 +79,7 @@ contract PayNativeAccountingTest is CrossChainTest {
         intex.grantRole(intex.RELAYER_ROLE(), address(bnbRouter));
 
         // Series + holder balance so markCalled/holder enumeration and the entry-path bridge sends have tokens.
-        intex.createSeries(CreateSeriesLib.params(SERIES_ID, 10_000, 0));
+        intex.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
         intex.markQualified(SERIES_ID);
         intex.mint(holder, 5, SERIES_ID);
     }
@@ -240,7 +241,12 @@ contract PayNativeAccountingTest is CrossChainTest {
     }
 
     function _deliverMarkCalled() internal {
-        _deliver(OUTBE_CHAIN_ID, address(outbeRouter), address(bnbRouter), BridgeMsgCodec.encodeMarkCalled(SERIES_ID));
+        _deliver(
+            OUTBE_CHAIN_ID,
+            address(outbeRouter),
+            address(bnbRouter),
+            BridgeMsgCodec.encodeMarkCalled(SERIES_ID, SERIES_ID_DAY)
+        );
     }
 
     // ---------------------------------------------------------------

@@ -28,9 +28,9 @@ sol! {
         function sendIssuanceInstructions(IssuanceInstructionsParams calldata params)
             external payable returns (bytes32 sendId);
 
-        function sendMarkQualified(bytes14 seriesId) external payable returns (bytes32 sendId);
+        function sendMarkQualified(bytes14 seriesId, uint32 worldwideDay) external payable returns (bytes32 sendId);
 
-        function sendMarkCalled(bytes14 seriesId) external payable returns (bytes32 sendId);
+        function sendMarkCalled(bytes14 seriesId, uint32 worldwideDay) external payable returns (bytes32 sendId);
     }
 
     #[sol(alloy_sol_types = alloy_sol_types)]

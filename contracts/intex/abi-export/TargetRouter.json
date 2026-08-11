@@ -267,8 +267,8 @@
       "inputs": [
         {
           "name": "seriesId",
-          "type": "uint32",
-          "internalType": "uint32"
+          "type": "bytes14",
+          "internalType": "bytes14"
         },
         {
           "name": "to",
@@ -420,8 +420,8 @@
       "outputs": [
         {
           "name": "seriesId",
-          "type": "uint32",
-          "internalType": "uint32"
+          "type": "bytes14",
+          "internalType": "bytes14"
         },
         {
           "name": "recipient",
@@ -971,9 +971,9 @@
         },
         {
           "name": "seriesId",
-          "type": "uint32",
+          "type": "bytes14",
           "indexed": true,
-          "internalType": "uint32"
+          "internalType": "bytes14"
         },
         {
           "name": "recipientsCount",
@@ -996,9 +996,9 @@
         },
         {
           "name": "seriesId",
-          "type": "uint32",
+          "type": "bytes14",
           "indexed": true,
-          "internalType": "uint32"
+          "internalType": "bytes14"
         },
         {
           "name": "recipient",
@@ -1027,9 +1027,9 @@
         },
         {
           "name": "seriesId",
-          "type": "uint32",
+          "type": "bytes14",
           "indexed": true,
-          "internalType": "uint32"
+          "internalType": "bytes14"
         }
       ],
       "anonymous": false
@@ -1046,9 +1046,9 @@
         },
         {
           "name": "seriesId",
-          "type": "uint32",
+          "type": "bytes14",
           "indexed": true,
-          "internalType": "uint32"
+          "internalType": "bytes14"
         }
       ],
       "anonymous": false
@@ -1065,9 +1065,9 @@
         },
         {
           "name": "seriesId",
-          "type": "uint32",
+          "type": "bytes14",
           "indexed": true,
-          "internalType": "uint32"
+          "internalType": "bytes14"
         }
       ],
       "anonymous": false

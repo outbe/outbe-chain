@@ -48,11 +48,17 @@ contract BridgeMsgCodecGoldenTest is Test {
     }
 
     function test_Golden_MarkCalled() public pure {
-        assertEq(BridgeMsgCodec.encodeMarkCalled(0x11223344), hex"010811223344");
+        // [ver=01][type=08][seriesId="20260212-TRY-U"][wwd=01352574]
+        assertEq(
+            BridgeMsgCodec.encodeMarkCalled("20260212-TRY-U", 20260212), hex"010832303236303231322d5452592d5501352574"
+        );
     }
 
     function test_Golden_MarkQualified() public pure {
-        assertEq(BridgeMsgCodec.encodeMarkQualified(0x11223344), hex"010911223344");
+        assertEq(
+            BridgeMsgCodec.encodeMarkQualified("20260212-TRY-U", 20260212),
+            hex"010932303236303231322d5452592d5501352574"
+        );
     }
 
     function test_Golden_BidsDone() public pure {
@@ -223,7 +229,7 @@ contract BridgeMsgCodecGoldenTest is Test {
         quantities[1] = 0xBEEF;
 
         BridgeMsgCodec.IssuanceInstructionsPayload memory p;
-        p.seriesId = 0x11223344;
+        p.seriesId = "20260212-TRY-U";
         p.worldwideDay = 0x55555555; // distinct from seriesId so a field swap can't pass
         p.issuedIntexCount = 0x55667788;
         p.promisLoadMinor = 0x0102030405060708090A0B0C0D0E0F10;
@@ -241,7 +247,7 @@ contract BridgeMsgCodecGoldenTest is Test {
         BridgeMsgCodec.IssuanceInstructionsPayload memory d =
             this.exposedDecodeIssuanceInstructions(BridgeMsgCodec.encodeIssuanceInstructions(p));
 
-        assertEq(d.seriesId, 0x11223344, "seriesId");
+        assertEq(d.seriesId, bytes14("20260212-TRY-U"), "seriesId");
         assertEq(d.worldwideDay, 0x55555555, "worldwideDay");
         assertEq(d.issuedIntexCount, 0x55667788, "issuedIntexCount");
         assertEq(d.promisLoadMinor, 0x0102030405060708090A0B0C0D0E0F10, "promisLoadMinor");
@@ -263,8 +269,14 @@ contract BridgeMsgCodecGoldenTest is Test {
         assertEq(
             this.exposedDecodeAuctionStageClearing(BridgeMsgCodec.encodeAuctionStageClearing(0x0A0B0C0D)), 0x0A0B0C0D
         );
-        assertEq(this.exposedDecodeMarkCalled(BridgeMsgCodec.encodeMarkCalled(0x0A0B0C0D)), 0x0A0B0C0D);
-        assertEq(this.exposedDecodeMarkQualified(BridgeMsgCodec.encodeMarkQualified(0x0A0B0C0D)), 0x0A0B0C0D);
+        assertEq(
+            this.exposedDecodeMarkCalled(BridgeMsgCodec.encodeMarkCalled("20260212-TRY-U", 20260212)),
+            bytes14("20260212-TRY-U")
+        );
+        assertEq(
+            this.exposedDecodeMarkQualified(BridgeMsgCodec.encodeMarkQualified("20260212-TRY-U", 20260212)),
+            bytes14("20260212-TRY-U")
+        );
     }
 
     // External calldata wrappers for the internal decoders.
@@ -277,11 +289,11 @@ contract BridgeMsgCodecGoldenTest is Test {
         return BridgeMsgCodec.decodeAuctionStageClearing(p);
     }
 
-    function exposedDecodeMarkCalled(bytes calldata p) external pure returns (uint32) {
+    function exposedDecodeMarkCalled(bytes calldata p) external pure returns (bytes14) {
         return BridgeMsgCodec.decodeMarkCalled(p);
     }
 
-    function exposedDecodeMarkQualified(bytes calldata p) external pure returns (uint32) {
+    function exposedDecodeMarkQualified(bytes calldata p) external pure returns (bytes14) {
         return BridgeMsgCodec.decodeMarkQualified(p);
     }
 

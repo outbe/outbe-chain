@@ -37,10 +37,12 @@ contract IntexNFT1155BridgeTest is CrossChainTest {
     address internal recipientA = address(0xA11CE);
     address internal recipientB = address(0xCAFE);
 
-    uint32 internal constant SERIES_A = 20260601;
-    uint32 internal constant SERIES_B = 20260602;
-    uint256 internal constant TID_A = uint256(SERIES_A);
-    uint256 internal constant TID_B = uint256(SERIES_B);
+    uint32 internal constant SERIES_A_DAY = 20260601;
+    bytes14 internal constant SERIES_A = "20260601-USD-U";
+    uint32 internal constant SERIES_B_DAY = 20260602;
+    bytes14 internal constant SERIES_B = "20260602-USD-U";
+    uint256 internal constant TID_A = uint256(uint112(SERIES_A));
+    uint256 internal constant TID_B = uint256(uint112(SERIES_B));
 
     function setUp() public {
         _setUpBridge();
@@ -55,9 +57,10 @@ contract IntexNFT1155BridgeTest is CrossChainTest {
         dstBatch.setRemoteMessenger(SRC_CHAIN_ID, _interop(SRC_CHAIN_ID, address(srcBatch)));
 
         for (uint32 i = 0; i < 2; i++) {
-            uint32 series = i == 0 ? SERIES_A : SERIES_B;
-            srcToken.createSeries(CreateSeriesLib.params(series, 1_000_000, 0));
-            dstToken.createSeries(CreateSeriesLib.params(series, 1_000_000, 0));
+            uint32 day = i == 0 ? SERIES_A_DAY : SERIES_B_DAY;
+            bytes14 series = i == 0 ? SERIES_A : SERIES_B;
+            srcToken.createSeries(CreateSeriesLib.params(day, 1_000_000, 0));
+            dstToken.createSeries(CreateSeriesLib.params(day, 1_000_000, 0));
             srcToken.markQualified(series);
             dstToken.markQualified(series);
         }

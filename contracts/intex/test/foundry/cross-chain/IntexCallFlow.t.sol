@@ -56,8 +56,9 @@ contract IntexCallFlowTest is CrossChainTest {
     address private holder2 = address(0x20);
     address private holder3 = address(0x30);
 
-    uint32 private constant SERIES_ID = 20250101;
-    uint256 private constant TOKEN_ID = uint256(SERIES_ID);
+    uint32 private constant SERIES_ID_DAY = 20250101;
+    bytes14 private constant SERIES_ID = "20250101-USD-U";
+    uint256 private constant TOKEN_ID = uint256(uint112(SERIES_ID));
     uint32 private constant ISSUED_INTEX_COUNT = 10_000;
 
     function setUp() public {
@@ -96,7 +97,7 @@ contract IntexCallFlowTest is CrossChainTest {
         // ---- Register BNB target + seed the day snapshot (mark-called broadcasts over it) ----
         originRouter.addTarget(BNB_CHAIN_ID);
         vm.deal(address(originRouter), 100 ether);
-        _seedDaySnapshot(SERIES_ID);
+        _seedDaySnapshot(SERIES_ID_DAY);
 
         // ---- Grant roles ----
         auction.grantRole(auction.RELAYER_ROLE(), address(targetRouter));
@@ -115,7 +116,7 @@ contract IntexCallFlowTest is CrossChainTest {
 
     /// @dev Create the series on a given Intex contract with the shared default parameters.
     function _createSeries(IntexNFT1155 intex) internal {
-        intex.createSeries(CreateSeriesLib.params(SERIES_ID, ISSUED_INTEX_COUNT, uint32(21 days)));
+        intex.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_INTEX_COUNT, uint32(21 days)));
     }
 
     /// @dev Fire a minimal STAGE_START (as the DESIS_ROLE holder) so the day's target snapshot exists for the
@@ -133,7 +134,7 @@ contract IntexCallFlowTest is CrossChainTest {
     // ============================================================
 
     /// @notice Helper: triggers markCalled from the intexFactory and hand-delivers both bridge messages.
-    function _triggerCallAndBridge(uint32 seriesId, bool hasHolders) internal {
+    function _triggerCallAndBridge(bytes14 seriesId, uint32 worldwideDay, bool hasHolders) internal {
         // Desis applies markCalled locally on Outbe before sending the notice to BSC.
         // Without it, the system bridge crosschainMint on Outbe would land in `Issued` and revert.
         if (hasHolders) {
@@ -141,9 +142,9 @@ contract IntexCallFlowTest is CrossChainTest {
         }
 
         // 1. OriginRouter sends MARK_CALLED → BSC. Record the payload for hand-delivery.
-        uint256 fee = originRouter.quoteSendMarkCalled(seriesId);
+        uint256 fee = originRouter.quoteSendMarkCalled(seriesId, worldwideDay);
         vm.prank(intexFactory);
-        originRouter.sendMarkCalled{value: fee}(seriesId);
+        originRouter.sendMarkCalled{value: fee}(seriesId, worldwideDay);
         bytes memory markCalledPayload = bridge.lastPayload();
 
         // 2. Deliver MARK_CALLED → TargetRouter._handleMarkCalled. If holders exist, this fires the
@@ -174,7 +175,7 @@ contract IntexCallFlowTest is CrossChainTest {
         assertEq(intexOutbe.balanceOf(holder3, TOKEN_ID), 0);
 
         uint32 calledAt = uint32(block.timestamp);
-        _triggerCallAndBridge(SERIES_ID, true);
+        _triggerCallAndBridge(SERIES_ID, SERIES_ID_DAY, true);
 
         // BSC: all tokens burned
         assertEq(intexBnb.balanceOf(holder1, TOKEN_ID), 0, "holder1 BSC balance should be 0");
@@ -201,7 +202,7 @@ contract IntexCallFlowTest is CrossChainTest {
         intexBnb.mint(holder1, 100, SERIES_ID);
         _createSeries(intexOutbe);
 
-        _triggerCallAndBridge(SERIES_ID, true);
+        _triggerCallAndBridge(SERIES_ID, SERIES_ID_DAY, true);
 
         assertEq(intexBnb.balanceOf(holder1, TOKEN_ID), 0);
         assertEq(intexOutbe.balanceOf(holder1, TOKEN_ID), 100);
@@ -211,7 +212,7 @@ contract IntexCallFlowTest is CrossChainTest {
     function test_call_noHolders() public {
         _createSeries(intexBnb);
 
-        _triggerCallAndBridge(SERIES_ID, false);
+        _triggerCallAndBridge(SERIES_ID, SERIES_ID_DAY, false);
 
         IIntexNFT1155.SeriesData memory data = intexBnb.readData(SERIES_ID);
         assertEq(uint8(data.state), uint8(IIntexNFT1155.IntexState.Called));
@@ -224,7 +225,7 @@ contract IntexCallFlowTest is CrossChainTest {
         intexBnb.mint(holder2, 40, SERIES_ID);
         _createSeries(intexOutbe);
 
-        _triggerCallAndBridge(SERIES_ID, true);
+        _triggerCallAndBridge(SERIES_ID, SERIES_ID_DAY, true);
 
         assertEq(intexOutbe.seriesHolderCount(TOKEN_ID), 2);
 
@@ -245,7 +246,7 @@ contract IntexCallFlowTest is CrossChainTest {
 
         assertEq(intexBnb.seriesHolderCount(TOKEN_ID), 2);
 
-        _triggerCallAndBridge(SERIES_ID, true);
+        _triggerCallAndBridge(SERIES_ID, SERIES_ID_DAY, true);
 
         assertEq(intexBnb.seriesHolderCount(TOKEN_ID), 0);
         assertEq(intexBnb.balanceOf(holder1, TOKEN_ID), 0);

@@ -95,7 +95,7 @@ contract BridgeMsgCodecValidationTest is Test {
     }
 
     function test_MarkCalled_OverLong_Reverts() public {
-        bytes memory tooLong = abi.encodePacked(BridgeMsgCodec.encodeMarkCalled(1), hex"00");
+        bytes memory tooLong = abi.encodePacked(BridgeMsgCodec.encodeMarkCalled("20260212-TRY-U", 20260212), hex"00");
         vm.expectRevert(
             abi.encodeWithSelector(
                 BridgeMsgCodec.InvalidPayloadLength.selector,
@@ -108,7 +108,7 @@ contract BridgeMsgCodecValidationTest is Test {
     }
 
     function test_MarkQualified_OverLong_Reverts() public {
-        bytes memory tooLong = abi.encodePacked(BridgeMsgCodec.encodeMarkQualified(1), hex"00");
+        bytes memory tooLong = abi.encodePacked(BridgeMsgCodec.encodeMarkQualified("20260212-TRY-U", 20260212), hex"00");
         vm.expectRevert(
             abi.encodeWithSelector(
                 BridgeMsgCodec.InvalidPayloadLength.selector,
@@ -142,8 +142,16 @@ contract BridgeMsgCodecValidationTest is Test {
         assertEq(this.exposedDecodeAuctionStageClearing(BridgeMsgCodec.encodeAuctionStageClearing(7)), 7, "clearing");
         (uint32 rs,,,) = this.exposedDecodeAuctionResult(BridgeMsgCodec.encodeAuctionResult(9, 1, 1, 1));
         assertEq(rs, 9, "result");
-        assertEq(this.exposedDecodeMarkCalled(BridgeMsgCodec.encodeMarkCalled(11)), 11, "markCalled");
-        assertEq(this.exposedDecodeMarkQualified(BridgeMsgCodec.encodeMarkQualified(12)), 12, "markQualified");
+        assertEq(
+            this.exposedDecodeMarkCalled(BridgeMsgCodec.encodeMarkCalled("20260212-TRY-U", 20260212)),
+            bytes14("20260212-TRY-U"),
+            "markCalled"
+        );
+        assertEq(
+            this.exposedDecodeMarkQualified(BridgeMsgCodec.encodeMarkQualified("20260212-TRY-U", 20260212)),
+            bytes14("20260212-TRY-U"),
+            "markQualified"
+        );
     }
 
     // --- outbound encoders cap payload arrays at MAX_PAYLOAD_ARRAY_LEN ---
@@ -264,11 +272,11 @@ contract BridgeMsgCodecValidationTest is Test {
         return BridgeMsgCodec.decodeAuctionResult(p);
     }
 
-    function exposedDecodeMarkCalled(bytes calldata p) external pure returns (uint32) {
+    function exposedDecodeMarkCalled(bytes calldata p) external pure returns (bytes14) {
         return BridgeMsgCodec.decodeMarkCalled(p);
     }
 
-    function exposedDecodeMarkQualified(bytes calldata p) external pure returns (uint32) {
+    function exposedDecodeMarkQualified(bytes calldata p) external pure returns (bytes14) {
         return BridgeMsgCodec.decodeMarkQualified(p);
     }
 
@@ -292,7 +300,7 @@ contract BridgeMsgCodecValidationTest is Test {
 
     function exposedEncodeIssuance(uint16 n) external pure returns (bytes memory) {
         BridgeMsgCodec.IssuanceInstructionsPayload memory payload;
-        payload.seriesId = 1;
+        payload.seriesId = "20260212-TRY-U";
         payload.recipients = new address[](n);
         payload.quantities = new uint256[](n);
         return BridgeMsgCodec.encodeIssuanceInstructions(payload);

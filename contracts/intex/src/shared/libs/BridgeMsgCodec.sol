@@ -7,7 +7,7 @@ import {IIntexAuction} from "../../target/interfaces/IIntexAuction.sol";
 /// @author Outbe
 /// @notice Library for encoding and decoding bridge messages between the target chains and Outbe.
 /// @dev Auction messages (stages, bids, result, refunds) are keyed by `worldwideDay`; series messages
-///      (issuance, mark) are keyed by `seriesId` (both uint32, equal in value while one series per day).
+///      (issuance, mark) are keyed by `seriesId` and carry their day alongside it.
 /// @dev Wire layout: `[bodyVersion(1)][msgType(1)][body]`. `bodyVersion` lets the format
 ///      evolve independently of `msgType`; decoders reject unknown versions.
 library BridgeMsgCodec {
@@ -50,8 +50,8 @@ library BridgeMsgCodec {
     uint16 internal constant MIN_LEN_AUCTION_STAGE_START = 97;
     uint16 internal constant MIN_LEN_AUCTION_STAGE_CLEARING = 6;
     uint16 internal constant MIN_LEN_AUCTION_RESULT = 22;
-    uint16 internal constant MIN_LEN_MARK_CALLED = 6;
-    uint16 internal constant MIN_LEN_MARK_QUALIFIED = 6;
+    uint16 internal constant MIN_LEN_MARK_CALLED = 20;
+    uint16 internal constant MIN_LEN_MARK_QUALIFIED = 20;
     // BIDS_DONE: [ver(1)][type(1)][worldwideDay(4)][srcChainId(4)][relayGeneration(4)][totalBatches(2)][totalBids(4)]
     uint16 internal constant MIN_LEN_BIDS_DONE = 20;
 
@@ -321,7 +321,7 @@ library BridgeMsgCodec {
     ///      pins it on `SeriesData` and `IntexNFT1155.mint` rejects any mint
     ///      that would push `totalSupply` past it.
     struct IssuanceInstructionsPayload {
-        uint32 seriesId;
+        bytes14 seriesId;
         /// @notice Worldwide day the series was derived from — carried so the destination records real provenance.
         uint32 worldwideDay;
         uint32 issuedIntexCount;
@@ -433,19 +433,21 @@ library BridgeMsgCodec {
     /// @notice Encodes MARK_CALLED message.
     /// @dev The settlement deadline is derived locally on the destination chain
     ///      from the series `callNoticePeriod` and the moment markCalled is applied.
-    ///      encodePacked layout (6 bytes): [bodyVersion(1)][msgType(1)][seriesId(4)]
+    ///      encodePacked layout (20 bytes): [bodyVersion(1)][msgType(1)][seriesId(14)][worldwideDay(4)]
     /// @param _seriesId The auction series identifier.
+    /// @param _worldwideDay The worldwide day the series was derived from.
     /// @return The wire-encoded MARK_CALLED message.
-    function encodeMarkCalled(uint32 _seriesId) internal pure returns (bytes memory) {
-        return abi.encodePacked(BODY_VERSION_V1, MSG_MARK_CALLED, _seriesId);
+    function encodeMarkCalled(bytes14 _seriesId, uint32 _worldwideDay) internal pure returns (bytes memory) {
+        return abi.encodePacked(BODY_VERSION_V1, MSG_MARK_CALLED, _seriesId, _worldwideDay);
     }
 
     /// @notice Encodes MARK_QUALIFIED message.
-    /// @dev encodePacked layout (6 bytes): [bodyVersion(1)][msgType(1)][seriesId(4)]
+    /// @dev encodePacked layout (20 bytes): [bodyVersion(1)][msgType(1)][seriesId(14)][worldwideDay(4)]
     /// @param _seriesId The auction series identifier.
+    /// @param _worldwideDay The worldwide day the series was derived from.
     /// @return The wire-encoded MARK_QUALIFIED message.
-    function encodeMarkQualified(uint32 _seriesId) internal pure returns (bytes memory) {
-        return abi.encodePacked(BODY_VERSION_V1, MSG_MARK_QUALIFIED, _seriesId);
+    function encodeMarkQualified(bytes14 _seriesId, uint32 _worldwideDay) internal pure returns (bytes memory) {
+        return abi.encodePacked(BODY_VERSION_V1, MSG_MARK_QUALIFIED, _seriesId, _worldwideDay);
     }
 
     // --- Decoding ---
@@ -664,25 +666,25 @@ library BridgeMsgCodec {
     }
 
     /// @notice Decodes MARK_CALLED message.
-    /// @dev encodePacked layout (6 bytes): [bodyVersion(1)][msgType(1)][seriesId(4)]
-    ///      Reverts `InvalidPayloadLength` unless exactly 6 bytes, then `UnsupportedBodyVersion`.
+    /// @dev encodePacked layout (20 bytes): [bodyVersion(1)][msgType(1)][seriesId(14)][worldwideDay(4)]
+    ///      Reverts `InvalidPayloadLength` unless exactly 20 bytes, then `UnsupportedBodyVersion`.
     /// @param _msg The wire-encoded MARK_CALLED message.
     /// @return seriesId The auction series identifier.
-    function decodeMarkCalled(bytes calldata _msg) internal pure returns (uint32 seriesId) {
+    function decodeMarkCalled(bytes calldata _msg) internal pure returns (bytes14 seriesId) {
         _assertExactLength(_msg, MSG_MARK_CALLED, MIN_LEN_MARK_CALLED);
         _assertBodyVersion(_msg);
-        seriesId = uint32(bytes4(_msg[2:6]));
+        seriesId = bytes14(_msg[2:16]);
     }
 
     /// @notice Decodes MARK_QUALIFIED message.
-    /// @dev encodePacked layout (6 bytes): [bodyVersion(1)][msgType(1)][seriesId(4)]
-    ///      Reverts `InvalidPayloadLength` unless exactly 6 bytes, then `UnsupportedBodyVersion`.
+    /// @dev encodePacked layout (20 bytes): [bodyVersion(1)][msgType(1)][seriesId(14)][worldwideDay(4)]
+    ///      Reverts `InvalidPayloadLength` unless exactly 20 bytes, then `UnsupportedBodyVersion`.
     /// @param _msg The wire-encoded MARK_QUALIFIED message.
     /// @return seriesId The auction series identifier.
-    function decodeMarkQualified(bytes calldata _msg) internal pure returns (uint32 seriesId) {
+    function decodeMarkQualified(bytes calldata _msg) internal pure returns (bytes14 seriesId) {
         _assertExactLength(_msg, MSG_MARK_QUALIFIED, MIN_LEN_MARK_QUALIFIED);
         _assertBodyVersion(_msg);
-        seriesId = uint32(bytes4(_msg[2:6]));
+        seriesId = bytes14(_msg[2:16]);
     }
 
     // --- Validation helpers ---

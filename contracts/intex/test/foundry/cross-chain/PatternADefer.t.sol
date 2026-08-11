@@ -73,8 +73,9 @@ contract PatternADeferTest is CrossChainTest {
     address internal admin = address(this);
     // Registered peer standing in for the Outbe-side router; delivery is authenticated against this address.
     address internal outbePeer = makeAddr("outbePeer");
-    uint32 internal constant SERIES_ID = 20260301;
-    uint256 internal constant TOKEN_ID = uint256(SERIES_ID);
+    uint32 internal constant SERIES_ID_DAY = 20260301;
+    bytes14 internal constant SERIES_ID = "20260301-USD-U";
+    uint256 internal constant TOKEN_ID = uint256(uint112(SERIES_ID));
 
     function setUp() public {
         _setUpBridge();
@@ -103,7 +104,7 @@ contract PatternADeferTest is CrossChainTest {
         intex.grantRole(intex.RELAYER_ROLE(), address(bnbRouter));
 
         // Series so markCalled + holder enumeration work.
-        intex.createSeries(CreateSeriesLib.params(SERIES_ID, 10_000, 0));
+        intex.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
         intex.markQualified(SERIES_ID);
     }
 
@@ -120,18 +121,18 @@ contract PatternADeferTest is CrossChainTest {
         // TM has zero native float but the bridge charges a fee, so `_send` reverts when relaying bids.
         assertEq(address(bnbRouter).balance, 0);
 
-        _deliverBridge(BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID));
+        _deliverBridge(BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID_DAY));
 
         // First parked slot.
         (uint32 seriesId, bool exists, bool done) = bnbRouter.pendingBidsRelays(0);
-        assertEq(seriesId, SERIES_ID, "deferred seriesId");
+        assertEq(seriesId, SERIES_ID_DAY, "deferred worldwideDay");
         assertTrue(exists);
         assertFalse(done);
         assertEq(bnbRouter.nextPendingBidsRelayIdx(), 1);
     }
 
     function test_TM_FlushBidsRelaySucceedsAfterTopUp() public {
-        _deliverBridge(BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID));
+        _deliverBridge(BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID_DAY));
 
         // Top up TM float generously so the retry can pay the bridge fee.
         vm.deal(address(bnbRouter), 10 ether);
@@ -143,7 +144,7 @@ contract PatternADeferTest is CrossChainTest {
     }
 
     function test_TM_FlushBidsRelayDoubleFlushRevertsAlreadyFlushed() public {
-        _deliverBridge(BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID));
+        _deliverBridge(BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID_DAY));
         vm.deal(address(bnbRouter), 10 ether);
         bnbRouter.flushPendingBidsRelay(0);
 
@@ -158,14 +159,14 @@ contract PatternADeferTest is CrossChainTest {
 
     function test_TM_RelayBidsToOutbe_ExternalCallerRevertsNotSelf() public {
         vm.expectRevert(ITargetRouter.NotSelf.selector);
-        bnbRouter.relayBidsToOutbe(SERIES_ID);
+        bnbRouter.relayBidsToOutbe(SERIES_ID_DAY);
     }
 
     // a zero-bid auction still emits one empty final batch (the no-bid completion signal),
     // instead of the old early-return that sent nothing.
     function test_TM_BidsRelay_ZeroBids_SendsOneEmptyFinalBatch() public {
         stubAuction.setBidCount(0);
-        _deliverBridge(BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID));
+        _deliverBridge(BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID_DAY));
         vm.deal(address(bnbRouter), 10 ether);
 
         vm.recordLogs();
@@ -180,7 +181,7 @@ contract PatternADeferTest is CrossChainTest {
     // final chunk carries the remainder. (130 bids -> 64 + 64 + 2.)
     function test_TM_BidsRelay_ChunksAboveCap() public {
         stubAuction.setBidCount(130);
-        _deliverBridge(BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID));
+        _deliverBridge(BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID_DAY));
         vm.deal(address(bnbRouter), 10 ether);
 
         vm.recordLogs();
@@ -214,7 +215,7 @@ contract PatternADeferTest is CrossChainTest {
     // ---------------------------------------------------------------
 
     function _markCalledPacket() internal pure returns (bytes memory) {
-        return BridgeMsgCodec.encodeMarkCalled(SERIES_ID);
+        return BridgeMsgCodec.encodeMarkCalled(SERIES_ID, SERIES_ID_DAY);
     }
 
     // A holder set larger than MAX_BATCH_SIZE is split across multiple systemMultiSend chunks, so a big

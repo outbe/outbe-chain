@@ -59,7 +59,7 @@ contract UpgradeDrillTest is CrossChainTest {
 
         vm.startPrank(admin);
         nft.createSeries(CreateSeriesLib.params(7, 100, 0));
-        nft.mint(holder, 3, 7);
+        nft.mint(holder, 3, CreateSeriesLib.seriesId(7));
         vm.stopPrank();
 
         IntexNFT1155V2 newImpl = new IntexNFT1155V2();
@@ -67,9 +67,10 @@ contract UpgradeDrillTest is CrossChainTest {
         nft.upgradeToAndCall(address(newImpl), "");
 
         _assertUpgraded(address(nft), address(newImpl));
-        assertEq(nft.balanceOf(holder, 7), 3, "balance lost");
-        assertEq(nft.totalSupply(7), 3, "supply lost");
-        (,,,,,,,, uint32 issuedAt,,,, IIntexNFT1155.IntexState state) = nft.seriesData(7);
+        assertEq(nft.balanceOf(holder, nft.issuedTokenId(CreateSeriesLib.seriesId(7))), 3, "balance lost");
+        assertEq(nft.totalSupply(nft.issuedTokenId(CreateSeriesLib.seriesId(7))), 3, "supply lost");
+        (,,,,,,,, uint32 issuedAt,,,, IIntexNFT1155.IntexState state) =
+            nft.seriesData(nft.issuedTokenId(CreateSeriesLib.seriesId(7)));
         assertGt(issuedAt, 0, "series record lost");
         assertEq(uint8(state), uint8(IIntexNFT1155.IntexState.Issued), "state lost");
         assertTrue(nft.hasRole(nft.RELAYER_ROLE(), admin), "role lost");
@@ -88,7 +89,7 @@ contract UpgradeDrillTest is CrossChainTest {
 
         vm.startPrank(admin);
         nft.createSeries(CreateSeriesLib.params(7, 100, 0));
-        nft.mint(holder, 3, 7);
+        nft.mint(holder, 3, CreateSeriesLib.seriesId(7));
         vm.stopPrank();
 
         IntexNFT1155V2Reinit newImpl = new IntexNFT1155V2Reinit();
@@ -99,8 +100,8 @@ contract UpgradeDrillTest is CrossChainTest {
         assertEq(address(uint160(uint256(implSlot))), address(newImpl), "implementation not swapped");
         uint256 migratedFlag = uint256(vm.load(address(nft), _V2_REINIT_SLOT));
         assertEq(migratedFlag, UPGRADE_PROBE, "reinitializer did not run");
-        assertEq(nft.balanceOf(holder, 7), 3, "balance lost across reinit");
-        assertEq(nft.totalSupply(7), 3, "supply lost across reinit");
+        assertEq(nft.balanceOf(holder, nft.issuedTokenId(CreateSeriesLib.seriesId(7))), 3, "balance lost across reinit");
+        assertEq(nft.totalSupply(nft.issuedTokenId(CreateSeriesLib.seriesId(7))), 3, "supply lost across reinit");
     }
 
     function test_Drill_IntexAuction() public {

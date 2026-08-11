@@ -41,7 +41,7 @@ contract OriginRouterTest is CrossChainTest {
     address private user = address(0x1);
 
     uint32 private constant WORLDWIDE_DAY = 20250115; // yyyymmdd — the auction day (root)
-    uint32 private constant SERIES_ID = WORLDWIDE_DAY; // derived (identity while one series per day)
+    bytes14 private constant SERIES_ID = "20250115-USD-U";
 
     function setUp() public {
         _setUpBridge();
@@ -164,7 +164,7 @@ contract OriginRouterTest is CrossChainTest {
     function test_sendMarkCalled_revert_unauthorized() public {
         vm.prank(user);
         vm.expectRevert();
-        originRouter.sendMarkCalled{value: 0.1 ether}(SERIES_ID);
+        originRouter.sendMarkCalled{value: 0.1 ether}(SERIES_ID, WORLDWIDE_DAY);
     }
 
     function test_sendAuctionStageClearing_revert_unauthorized() public {
@@ -208,7 +208,7 @@ contract OriginRouterTest is CrossChainTest {
     function test_sendMarkQualified_revert_unauthorized() public {
         vm.prank(user);
         vm.expectRevert();
-        originRouter.sendMarkQualified{value: 0.1 ether}(SERIES_ID);
+        originRouter.sendMarkQualified{value: 0.1 ether}(SERIES_ID, WORLDWIDE_DAY);
     }
 
     // --- Validation Tests ---
@@ -327,7 +327,7 @@ contract OriginRouterTest is CrossChainTest {
     }
 
     function test_quoteSendMarkCalled() public view {
-        uint256 fee = originRouter.quoteSendMarkCalled(SERIES_ID);
+        uint256 fee = originRouter.quoteSendMarkCalled(SERIES_ID, WORLDWIDE_DAY);
 
         assertEq(fee, 0.001 ether);
     }

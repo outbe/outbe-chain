@@ -13,10 +13,11 @@ import {MetadataTestLib} from "./helpers/MetadataTestLib.sol";
 contract IntexNFT1155MetadataTest is Test {
     using MetadataTestLib for bytes;
 
-    uint32 internal constant SERIES_ID = 20260622;
+    uint32 internal constant SERIES_ID_DAY = 20260622;
+    bytes14 internal constant SERIES_ID = "20260622-USD-U";
     uint32 internal constant CAP = 10_000;
     uint32 internal constant CALL_PERIOD = 14 days;
-    string internal constant DISPLAY_ID = "20260622-840-840";
+    string internal constant DISPLAY_ID = "20260622-USD-U";
 
     // A COEN rate of 0.001 on the 1e18 oracle scale, with the protocol's 1.08x floor and 2.28x call.
     uint64 internal constant ENTRY_PRICE = 1e15;
@@ -38,7 +39,7 @@ contract IntexNFT1155MetadataTest is Test {
         bytes32 settlementRole = token.SETTLEMENT_ROLE();
         vm.prank(admin);
         token.grantRole(settlementRole, bridger);
-        IIntexNFT1155.CreateSeriesParams memory params = CreateSeriesLib.params(SERIES_ID, CAP, CALL_PERIOD);
+        IIntexNFT1155.CreateSeriesParams memory params = CreateSeriesLib.params(SERIES_ID_DAY, CAP, CALL_PERIOD);
         params.entryPriceMinor = ENTRY_PRICE;
         params.floorPriceMinor = FLOOR_PRICE;
         params.callPriceMinor = CALL_PRICE;
@@ -179,14 +180,16 @@ contract IntexNFT1155MetadataTest is Test {
         assertEq(IntexMetadata.tokenURI(legacy, block.timestamp), token.contractURI());
     }
 
-    function test_tokenURI_ZeroPadsCurrencies() public view {
+    /// @dev A currency the oracle has no letters for keeps its digits in the id.
+    function test_tokenURI_RendersTheNumericFallbackId() public view {
         IIntexNFT1155.SeriesData memory data;
-        data.worldwideDay = SERIES_ID;
-        data.issuanceCurrency = 8;
-        data.referenceCurrency = 84;
+        data.worldwideDay = SERIES_ID_DAY;
+        data.seriesId = "20260622-949-U";
+        data.issuanceCurrency = 949;
+        data.referenceCurrency = 840;
         data.issuedAt = 1;
         bytes memory json = MetadataTestLib.decodeJsonDataUri(IntexMetadata.tokenURI(data, block.timestamp));
-        _assertContains(json, "\"name\":\"Intex Series 20260622-008-084\",");
+        _assertContains(json, "\"name\":\"Intex Series 20260622-949-U\",");
     }
 
     function test_contractURI_CollectionDocument() public view {
@@ -208,7 +211,7 @@ contract IntexNFT1155MetadataTest is Test {
 
     function test_tokenURI_TrimsFractionAndKeepsWholeAmounts() public view {
         IIntexNFT1155.SeriesData memory data;
-        data.worldwideDay = SERIES_ID;
+        data.worldwideDay = SERIES_ID_DAY;
         data.issuedAt = 1;
         data.entryPriceMinor = 12e18; // whole units render without a decimal point
         data.floorPriceMinor = 1e12; // smallest value the six-digit precision keeps

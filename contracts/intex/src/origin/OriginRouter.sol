@@ -58,8 +58,6 @@ contract OriginRouter is
         /// @dev 1-based index in `targetChainIds` (0 = absent); 1-based disambiguates the first target under swap-pop.
         mapping(uint32 chainId => uint256 indexPlus1) targetIndexPlus1;
         /// @dev Per-day target snapshot frozen at STAGE_START; the day's sends fan out over this, not the live registry.
-        ///      Keyed by `worldwideDay`. The issuance/mark sends index it by `seriesId`, which lands on the same slot
-        ///      only while `seriesId == worldwideDay`; a multi-currency series allocator must map seriesId → worldwideDay here.
         mapping(uint32 worldwideDay => uint32[] chainIds) seriesTargets;
         /// @dev Outbound legs that failed to dispatch, awaiting a permissionless flush.
         mapping(uint256 idx => ParkedSend) parkedSends;
@@ -308,15 +306,20 @@ contract OriginRouter is
     }
 
     /// @inheritdoc IOriginRouter
-    function quoteSendMarkCalled(uint32 seriesId) external view returns (uint256) {
-        return
-            _broadcastFee(_seriesOrRegistry(seriesId), BridgeMsgCodec.encodeMarkCalled(seriesId), IntexGas.MARK_CALLED);
+    function quoteSendMarkCalled(bytes14 seriesId, uint32 worldwideDay) external view returns (uint256) {
+        return _broadcastFee(
+            _seriesOrRegistry(worldwideDay),
+            BridgeMsgCodec.encodeMarkCalled(seriesId, worldwideDay),
+            IntexGas.MARK_CALLED
+        );
     }
 
     /// @inheritdoc IOriginRouter
-    function quoteSendMarkQualified(uint32 seriesId) external view returns (uint256) {
+    function quoteSendMarkQualified(bytes14 seriesId, uint32 worldwideDay) external view returns (uint256) {
         return _broadcastFee(
-            _seriesOrRegistry(seriesId), BridgeMsgCodec.encodeMarkQualified(seriesId), IntexGas.MARK_QUALIFIED
+            _seriesOrRegistry(worldwideDay),
+            BridgeMsgCodec.encodeMarkQualified(seriesId, worldwideDay),
+            IntexGas.MARK_QUALIFIED
         );
     }
 
@@ -379,7 +382,7 @@ contract OriginRouter is
         // Empty `recipients` is valid: a snapshot chain with no local winners still needs the series created.
         uint256 len = params.recipients.length;
         if (len != params.quantities.length) revert ArrayLengthMismatch();
-        _requireSeriesTarget(params.seriesId, params.dstChainId);
+        _requireSeriesTarget(params.worldwideDay, params.dstChainId);
         sendId = _sendOrPark(
             params.dstChainId,
             BridgeMsgCodec.encodeIssuanceInstructions(_toCodecPayload(params)),
@@ -409,10 +412,10 @@ contract OriginRouter is
     }
 
     /// @inheritdoc IOriginRouter
-    function sendMarkCalled(uint32 seriesId) external payable onlyRole(INTEX_FACTORY_ROLE) {
-        uint32[] memory snapshot = _os().seriesTargets[seriesId];
+    function sendMarkCalled(bytes14 seriesId, uint32 worldwideDay) external payable onlyRole(INTEX_FACTORY_ROLE) {
+        uint32[] memory snapshot = _os().seriesTargets[worldwideDay];
         if (snapshot.length == 0) revert NoTargets();
-        bytes memory payload = BridgeMsgCodec.encodeMarkCalled(seriesId);
+        bytes memory payload = BridgeMsgCodec.encodeMarkCalled(seriesId, worldwideDay);
         for (uint256 i = 0; i < snapshot.length; ++i) {
             bytes32 sendId = _sendOrPark(snapshot[i], payload, IntexGas.MARK_CALLED);
             emit MarkCalledSent(sendId, seriesId);
@@ -420,10 +423,10 @@ contract OriginRouter is
     }
 
     /// @inheritdoc IOriginRouter
-    function sendMarkQualified(uint32 seriesId) external payable onlyRole(INTEX_FACTORY_ROLE) {
-        uint32[] memory snapshot = _os().seriesTargets[seriesId];
+    function sendMarkQualified(bytes14 seriesId, uint32 worldwideDay) external payable onlyRole(INTEX_FACTORY_ROLE) {
+        uint32[] memory snapshot = _os().seriesTargets[worldwideDay];
         if (snapshot.length == 0) revert NoTargets();
-        bytes memory payload = BridgeMsgCodec.encodeMarkQualified(seriesId);
+        bytes memory payload = BridgeMsgCodec.encodeMarkQualified(seriesId, worldwideDay);
         for (uint256 i = 0; i < snapshot.length; ++i) {
             bytes32 sendId = _sendOrPark(snapshot[i], payload, IntexGas.MARK_QUALIFIED);
             emit MarkQualifiedSent(sendId, seriesId);

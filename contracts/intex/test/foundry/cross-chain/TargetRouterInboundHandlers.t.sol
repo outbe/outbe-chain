@@ -31,7 +31,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
     uint32 internal constant OUTBE_CHAIN_ID = 2;
 
     uint32 internal constant WORLDWIDE_DAY = 20250101; // yyyymmdd — the auction day (root)
-    uint32 internal constant SERIES_ID = WORLDWIDE_DAY; // derived (identity while one series per day)
+    bytes14 internal constant SERIES_ID = "20250101-USD-U";
     uint32 internal constant ISSUED_INTEX_COUNT = 100;
     uint128 internal constant PROMIS_LOAD_MINOR = 1000;
     uint64 internal constant ENTRY_PRICE = 100e6;
@@ -108,14 +108,14 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
 
         // No revealed bids: one empty BIDS_BATCH plus a BIDS_DONE(totalBatches=1, totalBids=0).
         vm.expectEmit(false, true, false, true, address(bnbRouter));
-        emit ITargetRouter.BidsDoneSent(bytes32(0), SERIES_ID, 1, 0);
-        _deliver(BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID));
+        emit ITargetRouter.BidsDoneSent(bytes32(0), WORLDWIDE_DAY, 1, 0);
+        _deliver(BridgeMsgCodec.encodeAuctionStageClearing(WORLDWIDE_DAY));
     }
 
     function test_handleAuctionStageClearing_idempotentOnRedelivery() public {
         _seedAuction();
         vm.warp(block.timestamp + 1 days);
-        bytes memory packet = BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID);
+        bytes memory packet = BridgeMsgCodec.encodeAuctionStageClearing(WORLDWIDE_DAY);
         _deliver(packet); // first CLEARING relays
 
         // A redelivered CLEARING must not re-relay under a fresh generation.
@@ -142,7 +142,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         uint256 tokenId = intex.issuedTokenId(SERIES_ID);
         assertEq(intex.balanceOf(bidder, tokenId), 5);
 
-        _deliver(local, localOrigin, address(localRouter), BridgeMsgCodec.encodeMarkCalled(SERIES_ID));
+        _deliver(local, localOrigin, address(localRouter), BridgeMsgCodec.encodeMarkCalled(SERIES_ID, WORLDWIDE_DAY));
 
         assertEq(uint8(intex.readData(SERIES_ID).state), uint8(IIntexNFT1155.IntexState.Called), "series Called");
         assertEq(intex.balanceOf(bidder, tokenId), 5, "holders retained on the canonical NFT (no migration)");
@@ -226,7 +226,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         assertEq(intex.balanceOf(bidder, tokenId), 5, "good recipient minted");
         assertEq(intex.balanceOf(address(bad), tokenId), 0, "reverting recipient not minted");
         assertEq(bnbRouter.nextPendingIssuanceMintIdx(), 1, "one mint parked");
-        (uint32 s, address r, uint256 q, bool exists, bool done) = bnbRouter.pendingIssuanceMints(0);
+        (bytes14 s, address r, uint256 q, bool exists, bool done) = bnbRouter.pendingIssuanceMints(0);
         assertEq(s, SERIES_ID);
         assertEq(r, address(bad));
         assertEq(q, 3);
@@ -287,7 +287,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
     function test_handleMarkQualified_flipsStatusOnIntex() public {
         _seedSeriesOnIntex();
 
-        bytes memory packet = BridgeMsgCodec.encodeMarkQualified(SERIES_ID);
+        bytes memory packet = BridgeMsgCodec.encodeMarkQualified(SERIES_ID, WORLDWIDE_DAY);
         _deliver(packet);
 
         IIntexNFT1155.SeriesData memory data = intex.readData(SERIES_ID);
