@@ -7,7 +7,7 @@ Feature: Validator admission, membership, recovery, and removal
   Scenario: A FullNode becomes ACTIVE, preserves an in-flight offer, and exits cleanly
     Given a fresh lifecycle localnet with a 6-block voting window
     When operator "validator-0" submits a tribute offer
-    Then the committee processes the offer without changing the day status
+    Then the committee processes and projects the offer
     When a full node joins and syncs to the committee tip
     Then the full node matches committee supply and state root and is not a participant
     When the full node stakes and confirms readiness

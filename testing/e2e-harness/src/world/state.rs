@@ -174,8 +174,6 @@ pub struct FixtureState {
     pub joiner_offer_public_before_restart: Option<[u8; 32]>,
     /// VRF expiry observed while a permanently stalled frozen DKG target is live.
     pub vrf_expiry_height: Option<u64>,
-    /// Worldwide-day status byte captured before a tribute offer (invariant check).
-    pub wwd_status_before: Option<String>,
     /// Exact lifecycle accounting snapshot captured immediately before exit.
     pub lifecycle_stake_before_exit: Option<alloy_primitives::U256>,
     pub lifecycle_total_before_exit: Option<alloy_primitives::U256>,
@@ -347,7 +345,6 @@ impl Default for FixtureState {
             marker_count: None,
             joiner_offer_public_before_restart: None,
             vrf_expiry_height: None,
-            wwd_status_before: None,
             lifecycle_stake_before_exit: None,
             lifecycle_total_before_exit: None,
             lifecycle_staking_balance_before_exit: None,
