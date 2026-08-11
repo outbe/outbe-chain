@@ -103,7 +103,7 @@ Beads.
 | T04 | GramineDirectDev live SGX-no-attest E2E | `outbe-e2e --tee sgx-no-attest --validators 4 --all --name "Entire committee recovers after all enclaves restart"` | Четыре validator nodes используют production enclave, реальный SGX/EGETKEY и NodeHost; DCAP/QVL не вызываются и не монтируются; sealed restart сохраняет ключ и финализацию | PASS | 1 scenario / 3 steps PASS; Tribute visible at block 6, all four enclaves and nodes restarted, sealed offer keys restored and finalization resumed. Scenario receipt SHA256 `0fe2ca2568f01a0216ee4f9619da621778111f4d14b0f348da0d78d778107757`; tested production binary SHA256 `ca60ada35470b87ec05e66339abe892462370c6305fc5502fb6a63d17d7f9906`; harness binary SHA256 `3a7843f71855f65f183588a55501263ca0dc17bf3c1481291931d3d374ee21ab` |
 | T05 | Hardware SGX/DCAP E2E | `mise run e2e-sgx` | Исключено из текущей приёмки | N/A | Решение пользователя: native DCAP не проверять |
 | T06 | Native-DCAP SGX release | Hardware/native-DCAP release gates | Исключено из текущей приёмки | N/A | Решение пользователя: native DCAP не проверять |
-| T07 | OCOMP evidence closure | `mise run ocomp-poc-closure-run` | Exact-artifact OCOMP lanes создают проверяемый evidence bundle | NOT RUN | Closure contract выровнен на тот же release + `sudo` + `sgx-no-attest` профиль, что B12 и production-shaped E2E. Launch identity теперь связывает execution profile и один Gramine image; mixed/debug/non-SGX/no-sudo evidence отклоняется. Профильные verifier tests проходят; статус остаётся NOT RUN до exact closure на clean revision |
+| T07 | OCOMP evidence closure | Офлайн-проверка evidence B12 | Проверяемый evidence связан с точным release SHA и профилем запуска | RETIRED AS E2E | Отдельный `ocomp-poc-closure-run` повторял уже консолидированные OCOMP workflows и исключён как дублирующий E2E. После единственного B12 проверяется его сохранённый evidence без запуска новой сети |
 
 ## Обязательный production-shaped OCOMP E2E
 
@@ -184,13 +184,13 @@ Persistent `outbe-e2e localnet` на фиксированной точке жё�
 завершёнными пакетами, а не 18 независимыми циклами
 «изменение → сборка → E2E»:
 
-1. Статические и OCOMP-profile gates: B02a, B09, B12, B13a, B14, T02, T07.
+1. Статические и OCOMP-profile gates: B02a, B09, B12, B13a, B14 и T02.
 2. Контрактные workspace: T03 и T03a.
 3. Controlled-time lifecycle и единый retention seam: L01–L04 и L08.
 4. Dirty-start и эксплуатационные отказы: L06, L07, L09 и L10.
 
-Текущий пакетный прогресс: `16/18` закрыты (B02a, B09, B13a, B14, T02, T03,
-T03a, L01–L04, L06–L10), `2/18` остаются: B12 и T07.
+Текущий пакетный прогресс: `17/18` закрыты (включая снятый как дублирующий
+T07), остаётся один функциональный gate: B12.
 
 Внутри пакета сначала параллельно завершаются анализ, тестовый код,
 документация и независимые production-правки. Затем выполняются один общий
@@ -242,15 +242,14 @@ startup errors остаются fatal. Повторный `@ocomp-e2e-008` на 
    вспомогательная component-проверка.
 6. O01–O11 production-shaped OCOMP и dynamic membership acceptance.
 7. L01–L10 controlled-time и dirty-start сценарии.
-8. T07 exact OCOMP evidence gates; native-DCAP/hardware строки T05–T06 не
-   запускаются.
+8. Офлайн-валидация evidence единственного B12; отдельный T07 E2E и
+   native-DCAP/hardware строки T05–T06 не запускаются.
 9. Полный повтор затронутых gates и итоговый go/no-go.
 
 ## Текущий вывод
 
 Решение по обновлению testnet пока **NO-GO**. Production-shaped
-путь и 16 из 18 строк текущего пакетного прогона закрыты, но это не означает,
-что из всей генеральной приёмки осталось только две строки. Release SGX/no-DCAP сценарии
+путь и 17 из 18 строк текущего пакетного прогона закрыты. Release SGX/no-DCAP сценарии
 прошли настоящий block-1 Create, production Cycle, controlled-time coordinated
 restart, certified DKG boundary, 257/257 публичных Tribute, finalized JobIntent,
 Supervisor/Worker computation, quorum, Lysis и 257 NOD без state/result injection. Dynamic
@@ -261,9 +260,8 @@ validator/FullNode canonical result chunks, NOD body fields и membership proof 
 
 Полный completion-аудит сохраняет следующие независимые NO-GO/неполные строки:
 
-- `B12` и `T07`: runners, typed evidence и closure contract уже выровнены
-  на release + `sudo` + `sgx-no-attest`, но сами gates ещё не
-  выполнены на clean revision;
+- `B12`: runner и typed evidence выровнены на release + `sudo` +
+  `sgx-no-attest`, но один итоговый прогон ещё не выполнен на clean revision;
 - `outbe-chain-08n.6`: публичный burst из 6–7 `offerTribute` может сформировать
   gas-valid блок, исполнение которого превышает consensus certification budget.
   Повторный B12-прогон с тремя одновременными Tribute воспроизвёл тот же класс:
@@ -275,12 +273,13 @@ validator/FullNode canonical result chunks, NOD body fields и membership proof 
 
 Кроме того, quality task `outbe-chain-08n.2`, final acceptance task
 `outbe-chain-08n.5` и dynamic-OCOMP acceptance `outbe-chain-8ui.7` остаются
-открыты. Поэтому итоговый статус всей цели — **NO-GO**, а `16/18`
+открыты. Поэтому итоговый статус всей цели — **NO-GO**, а `17/18`
 используется только как счётчик завершённого внутреннего пакета.
 
-`B12`/`T07` больше не позволяют прежний смешанный профиль: evidence
-tooling замораживает release artifacts, `sudo`, `sgx-no-attest` и единую
-launch identity. Для закрытия остался запуск обоих gates на clean revision.
+`B12` не позволяет прежний смешанный профиль: evidence tooling замораживает
+release artifacts, `sudo`, `sgx-no-attest` и единую launch identity. Для
+закрытия нужен один B12 на clean revision и офлайн-проверка его evidence.
+T07 как отдельный E2E удалён: он повторял тот же workflow.
 Ограничение публичного Tribute burst остаётся отдельным architecture-frozen
 срезом.
 
@@ -288,7 +287,7 @@ launch identity. Для закрытия остался запуск обоих 
 
 | Блокер | Владелец инварианта | Следующее действие |
 |---|---|---|
-| B12/T07 | OCOMP xtask/evidence contract | Выполнить пять cold release SGX-no-attest capacity runs и exact closure на одной clean revision |
+| B12 | OCOMP capacity E2E | Пересобрать только изменившийся release harness, выполнить один полный SGX-no-attest run и офлайн проверить его evidence |
 | `outbe-chain-08n.6` | Tribute admission/gas accounting и consensus certification budget | После architecture freeze выбрать детерминированный production-safe burst bound; до решения публичный burst остаётся P0 NO-GO |
 
 Открытый диагностический вопрос для `outbe-chain-08n.6`: повторить batch=3 с
@@ -303,9 +302,9 @@ B12 для текущего `OCOMP_POC_DEVNET_MACHINE_V1`: зелёный рез
 - T05/T06 — `N/A`: native DCAP и hardware-DCAP lanes исключены прямым
   решением пользователя; live acceptance выполнен на настоящем SGX с
   `sgx.remote_attestation=none`.
-- B12/T07 — `NOT RUN`, а не `PASS`: runners и evidence contract уже
-  выражают выбранный профиль единообразно, но пять cold runs и
-  exact closure ещё не выполнены на clean revision.
+- B12 — `NOT RUN`, а не `PASS`: runner и evidence contract уже выражают
+  выбранный профиль единообразно, но один итоговый run ещё не выполнен на
+  clean revision. T07 снят как дублирующий E2E.
 - H01 — намеренно `PARTIAL`: seeded WorldwideDay доказывает dynamic overlap,
   но не runtime-создание дня; полный runtime lifecycle отдельно доказан H03.
 
