@@ -478,7 +478,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
           minIntexBidQuantity: Number(d.params.minIntexBidQuantity),
           // entry bond pulled at commit and returned at reveal/cancel; 0 = no bond.
           commitBondMinor: { raw: d.params.commitBondMinor.toString(), value: formatUnits(d.params.commitBondMinor, dec) },
-          // entry/floor/call are in the reference currency (USD); raw on-chain integers.
+          // entry/floor/call are in the reference currency, on the 1e9 wire scale; raw integers.
           entryPriceMinor: d.params.entryPriceMinor.toString(),
           floorPriceMinor: d.params.floorPriceMinor.toString(),
           callPriceMinor: d.params.callPriceMinor.toString(),

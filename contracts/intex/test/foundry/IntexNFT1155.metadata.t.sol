@@ -20,7 +20,7 @@ contract IntexNFT1155MetadataTest is Test {
     string internal constant DISPLAY_ID = "20260622-USD-U";
 
     // A COEN rate of 0.001 on the 1e18 oracle scale, with the protocol's 1.08x floor and 2.28x call.
-    uint64 internal constant ENTRY_PRICE = 1e15;
+    uint64 internal constant ENTRY_PRICE = 1e6;
     uint64 internal constant FLOOR_PRICE = (ENTRY_PRICE * 108) / 100;
     uint64 internal constant CALL_PRICE = (ENTRY_PRICE * 228) / 100;
     uint128 internal constant PROMIS_LOAD = 100_000e18;
@@ -213,15 +213,15 @@ contract IntexNFT1155MetadataTest is Test {
         IIntexNFT1155.SeriesData memory data;
         data.worldwideDay = SERIES_ID_DAY;
         data.issuedAt = 1;
-        data.entryPriceMinor = 12e18; // whole units render without a decimal point
-        data.floorPriceMinor = 1e12; // smallest value the six-digit precision keeps
-        data.callPriceMinor = 1_234_567_890_123_456; // truncated to six digits
+        data.entryPriceMinor = 12e9; // whole units render without a decimal point
+        data.floorPriceMinor = 1e3; // smallest value the six-digit precision keeps
+        data.callPriceMinor = 1_234_567; // truncated to six digits
         bytes memory json = MetadataTestLib.decodeJsonDataUri(IntexMetadata.tokenURI(data, block.timestamp));
         _assertContains(json, "{\"trait_type\":\"Entry Price\",\"value\":12,\"display_type\":\"number\"}");
         _assertContains(json, "{\"trait_type\":\"Floor Price\",\"value\":0.000001,\"display_type\":\"number\"}");
         _assertContains(json, "{\"trait_type\":\"Call Price\",\"value\":0.001234,\"display_type\":\"number\"}");
 
-        data.entryPriceMinor = 1e11; // below the precision floor
+        data.entryPriceMinor = 1e2; // below the precision floor
         json = MetadataTestLib.decodeJsonDataUri(IntexMetadata.tokenURI(data, block.timestamp));
         _assertContains(json, "{\"trait_type\":\"Entry Price\",\"value\":0,\"display_type\":\"number\"}");
     }

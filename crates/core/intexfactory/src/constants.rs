@@ -44,6 +44,9 @@ pub const BIN_STEP_BP: u16 = 25;
 
 /// Markup rates in percentage points: price = entry * (PRICE_RATE_DEN + rate) / PRICE_RATE_DEN.
 pub const PRICE_RATE_DEN: u16 = 100;
+
+/// Oracle prices carry 1e18; the wire and the target chains carry 1e9.
+pub const WIRE_PRICE_DIVISOR: u64 = 1_000_000_000;
 /// Floor price = entry * 1.08.
 pub const FLOOR_RATE: u16 = 8;
 /// Call price = entry * 2.28; its breach arms a Call Event.

@@ -144,12 +144,9 @@ fn send_stage_start(
 ) -> Result<()> {
     let floor_price = outbe_intexfactory::marked_up(config.entry_price_minor, iparams.floor_rate)?;
     let call_price = outbe_intexfactory::marked_up(config.entry_price_minor, iparams.call_rate)?;
-    let entry_price_u64 = u64::try_from(config.entry_price_minor)
-        .map_err(|_| PrecompileError::Revert("entry price exceeds u64".into()))?;
-    let floor_price_u64 = u64::try_from(floor_price)
-        .map_err(|_| PrecompileError::Revert("floor price exceeds u64".into()))?;
-    let call_price_u64 = u64::try_from(call_price)
-        .map_err(|_| PrecompileError::Revert("call price exceeds u64".into()))?;
+    let entry_price_u64 = outbe_intexfactory::to_wire_price(config.entry_price_minor)?;
+    let floor_price_u64 = outbe_intexfactory::to_wire_price(floor_price)?;
+    let call_price_u64 = outbe_intexfactory::to_wire_price(call_price)?;
     let stage_params = IOriginRouter::AuctionStageStartParams {
         worldwideDay: worldwide_day,
         commitEnd: commit_end,

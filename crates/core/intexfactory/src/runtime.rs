@@ -14,7 +14,7 @@ use outbe_vaultrouter::api::IVaultRouter;
 use crate::config;
 use crate::constants::{
     DIST_CHUNK_LIMIT, INTEX_NFT1155_ADDRESS, ORIGIN_ROUTER_ADDRESS, POW_DIFFICULTY, PRICE_RATE_DEN,
-    PROCEEDS_FANIN_TIMEOUT_SECS,
+    PROCEEDS_FANIN_TIMEOUT_SECS, WIRE_PRICE_DIVISOR,
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
@@ -47,12 +47,9 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
     let floor_price_minor = marked_up(params.entry_price_minor, cfg.floor_rate)?;
     let call_price_minor = marked_up(params.entry_price_minor, cfg.call_rate)?;
 
-    let entry_price_minor_u64 = u64::try_from(params.entry_price_minor)
-        .map_err(|_| PrecompileError::Revert("entry price exceeds u64".into()))?;
-    let floor_price_minor_u64 = u64::try_from(floor_price_minor)
-        .map_err(|_| PrecompileError::Revert("floor price exceeds u64".into()))?;
-    let call_price_minor_u64 = u64::try_from(call_price_minor)
-        .map_err(|_| PrecompileError::Revert("call price exceeds u64".into()))?;
+    let entry_price_minor_u64 = to_wire_price(params.entry_price_minor)?;
+    let floor_price_minor_u64 = to_wire_price(floor_price_minor)?;
+    let call_price_minor_u64 = to_wire_price(call_price_minor)?;
 
     let record = outbe_intex::CreateSeriesParams {
         series_id: params.series_id,
@@ -149,6 +146,15 @@ pub(crate) fn issuance_legs(params: &IssuanceParams) -> Vec<(u32, Vec<Address>, 
             (chain_id, recipients, quantities)
         })
         .collect()
+}
+
+/// Narrows an oracle-scale price for the wire, which carries prices as `u64` on
+/// the 1e9 scale. At 1e18 the type caps prices near 18.44, and since the call
+/// price is the entry price marked up, the auction stops working once COEN
+/// passes roughly 8 — silently, by reverting the day and retrying forever.
+pub fn to_wire_price(price_minor: U256) -> Result<u64> {
+    u64::try_from(price_minor / U256::from(WIRE_PRICE_DIVISOR))
+        .map_err(|_| PrecompileError::Revert("price exceeds the wire scale".into()))
 }
 
 /// Applies a markup rate in percentage points: `entry * (100 + rate) / 100`.

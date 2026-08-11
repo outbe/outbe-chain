@@ -28,7 +28,7 @@ library CreateSeriesLib {
             referenceCurrency: 840,
             issuedIntexCount: issuedIntexCount,
             promisLoadMinor: 100_000 * 1e18,
-            entryPriceMinor: 1e13,
+            entryPriceMinor: 1e4,
             floorPriceMinor: 100,
             callPriceMinor: 200,
             callTrigger: IIntexNFT1155.IntexCallTrigger({
