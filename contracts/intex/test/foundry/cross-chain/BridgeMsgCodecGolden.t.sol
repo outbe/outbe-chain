@@ -31,7 +31,7 @@ contract BridgeMsgCodecGoldenTest is Test {
         );
         assertEq(
             encoded,
-            hex"0103112233445566778899aabbccddeeff00c1c2d1d20102030405060708090a0b0c0d0e0f101a2b3c4d112233445566778899aabbccddeeff00a1b2c3d4e5f60718cafebabe56789abcabcdf1f2f3f4f5f6f7f8f9fafbfcfdfeff0101"
+            hex"0103112233445566778899aabbccddeeff00c1c2d1d20102030405060708090a0b0c0d0e0f101a2b3c4d112233445566778899aabbccddeeff00a1b2c3d4e5f60718cafebabe0000567800009abcabcdf1f2f3f4f5f6f7f8f9fafbfcfdfeff0101"
         );
         assertEq(encoded.length, BridgeMsgCodec.MIN_LEN_AUCTION_STAGE_START);
     }
@@ -116,9 +116,9 @@ contract BridgeMsgCodecGoldenTest is Test {
         assertEq(params.entryPriceMinor, 0x1122334455667788, "entryPrice");
         assertEq(params.floorPriceMinor, 0x99AABBCCDDEEFF00, "floorPriceMinor");
         assertEq(params.callPriceMinor, 0xA1B2C3D4E5F60718, "callPriceMinor");
-        assertEq(params.callTrigger.intexCallPeriod, 0xCAFEBABE, "intexCallPeriod");
-        assertEq(params.callTrigger.windowDays, 0x5678, "callWindowDays");
-        assertEq(params.callTrigger.thresholdDays, 0x9ABC, "callThresholdDays");
+        assertEq(params.callTrigger.callNoticePeriod, 0xCAFEBABE, "callNoticePeriod");
+        assertEq(params.callTrigger.callWindow, 0x5678, "callWindow");
+        assertEq(params.callTrigger.callThreshold, 0x9ABC, "callThreshold");
         assertEq(params.minIntexBidQuantity, 0xABCD, "minIntexBidQuantity");
         assertEq(params.commitBondMinor, 0xF1F2F3F4F5F6F7F8F9FAFBFCFDFEFF01, "commitBondMinor");
     }
@@ -229,11 +229,11 @@ contract BridgeMsgCodecGoldenTest is Test {
         p.promisLoadMinor = 0x0102030405060708090A0B0C0D0E0F10;
         p.entryPriceMinor = 0x0A0B0C0D0E0F1011;
         p.floorPriceMinor = 0x99AABBCCDDEEFF00;
-        p.intexCallPeriod = 0xCAFEBABE;
+        p.callNoticePeriod = 0xCAFEBABE;
         p.issuanceCurrency = 0x4321;
         p.referenceCurrency = 0x1234;
-        p.callWindowDays = 0x5678;
-        p.callThresholdDays = 0x9ABC;
+        p.callWindow = 0x5678;
+        p.callThreshold = 0x9ABC;
         p.callPriceMinor = 0xA1B2C3D4E5F60718;
         p.recipients = recipients;
         p.quantities = quantities;
@@ -247,11 +247,11 @@ contract BridgeMsgCodecGoldenTest is Test {
         assertEq(d.promisLoadMinor, 0x0102030405060708090A0B0C0D0E0F10, "promisLoadMinor");
         assertEq(d.entryPriceMinor, 0x0A0B0C0D0E0F1011, "entryPriceMinor");
         assertEq(d.floorPriceMinor, 0x99AABBCCDDEEFF00, "floorPriceMinor");
-        assertEq(d.intexCallPeriod, 0xCAFEBABE, "intexCallPeriod");
+        assertEq(d.callNoticePeriod, 0xCAFEBABE, "callNoticePeriod");
         assertEq(d.issuanceCurrency, 0x4321, "issuanceCurrency");
         assertEq(d.referenceCurrency, 0x1234, "referenceCurrency");
-        assertEq(d.callWindowDays, 0x5678, "callWindowDays");
-        assertEq(d.callThresholdDays, 0x9ABC, "callThresholdDays");
+        assertEq(d.callWindow, 0x5678, "callWindow");
+        assertEq(d.callThreshold, 0x9ABC, "callThreshold");
         assertEq(d.callPriceMinor, 0xA1B2C3D4E5F60718, "callPriceMinor");
         assertEq(d.recipients[0], address(0xA11CE), "recipients[0]");
         assertEq(d.recipients[1], address(0xB0B), "recipients[1]");

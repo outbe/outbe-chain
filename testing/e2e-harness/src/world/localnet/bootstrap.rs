@@ -4,11 +4,8 @@
 //! patch are native Rust.
 
 use std::fs;
-use std::path::Path;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
-#[cfg(unix)]
-use std::{fs::Permissions, os::unix::fs::PermissionsExt as _};
 
 use eyre::{bail, eyre, Result, WrapErr};
 use outbe_primitives::chain::{DEVNET_CHAIN_ID, TESTNET_CHAIN_ID};
@@ -17,8 +14,6 @@ use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 use crate::{env::TeeMode, internal::proc};
 
-#[cfg(feature = "ocomp-integration")]
-use super::ymd_utc;
 use super::{worldwide_day, Localnet};
 
 /// 10000 COEN (`10000 * 10^18`) as hex — the per-validator liquid balance.
@@ -31,20 +26,13 @@ const VOTER_FELONY_SLOT: u64 = 12;
 /// A lifecycle E2E may opt into a short delay; testnet seed defaults remain
 /// untouched. The value is supplied through `TESTNET_UNBONDING_PERIOD_SECS`.
 const STAKING_SUFFIX: &str = "ee02";
-const OCOMP_FINAL_FIXTURE_ROOT: &str = "testing/e2e-harness/fixtures/ocomp-final-v1";
-const OCOMP_FINAL_VALIDATORS: usize = 4;
-const OCOMP_FINAL_ROOT_FILES: &[(&str, u32)] = &[
-    ("dkg-output.hex", 0o600),
-    ("polynomial.hex", 0o600),
-    ("reth-bootnodes.txt", 0o640),
-    ("validators.json", 0o640),
-];
-const OCOMP_FINAL_VALIDATOR_FILES: &[&str] = &[
-    "evm-key.hex",
-    "reth-p2p-secret.hex",
-    "signing-key.hex",
-    "signing-share.hex",
-];
+const LOCALNET_METADOSIS_FORMING_LEAD_SECONDS: u64 = 60;
+const LOCALNET_METADOSIS_LOOKBACK_SECONDS: u64 = 0;
+const LOCALNET_METADOSIS_OFFERING_SECONDS: u64 = 120;
+const LOCALNET_METADOSIS_WAITING_SECONDS: u64 = 30;
+const LOCALNET_METADOSIS_BOOTSTRAP_SECONDS: u64 = 300;
+const LOCALNET_METADOSIS_ADVANCE_SECONDS: u64 = 10;
+const LOCALNET_OCOMP_VOTE_WINDOW_BLOCKS: u64 = 120;
 
 impl Localnet {
     /// Add the canonical block-1 TEE manifest after every scenario has finished
@@ -53,7 +41,7 @@ impl Localnet {
     /// `GramineDirectDev` chains. The product binary constructs and validates the
     /// policy bytes; the harness never reimplements its codec.
     pub(crate) fn bind_tee_genesis(&self) -> Result<()> {
-        self.ensure_real_lane_ocomp_genesis()?;
+        self.ensure_ocomp_genesis()?;
         let genesis = self.cfg.dir.join("genesis.json");
         let value: serde_json::Value = serde_json::from_slice(&fs::read(&genesis)?)?;
         if value
@@ -105,7 +93,7 @@ impl Localnet {
                     .arg("--minimum-tcb-evaluation-data-number")
                     .arg("1");
             }
-            TeeMode::GramineDirect | TeeMode::Mock => {
+            TeeMode::SgxNoAttest | TeeMode::GramineDirect | TeeMode::Mock => {
                 command.arg("gramine-direct-dev");
             }
         }
@@ -122,13 +110,11 @@ impl Localnet {
     /// every network. Build that independent prerequisite with the product
     /// tooling before binding the hardware TEE policy; the DCAP harness does
     /// not reproduce either OCOMP's canonical codec or its signatures.
-    fn ensure_real_lane_ocomp_genesis(&self) -> Result<()> {
-        if !matches!(self.cfg.tee_mode, TeeMode::Real) {
-            return Ok(());
-        }
-        if self.committee_size() != OCOMP_FINAL_VALIDATORS {
-            bail!("real DcapRequired E2E requires exactly {OCOMP_FINAL_VALIDATORS} validators");
-        }
+    fn ensure_ocomp_genesis(&self) -> Result<()> {
+        eyre::ensure!(
+            self.committee_size() > 0,
+            "LocalNet OCOMP genesis requires validators"
+        );
 
         let genesis = self.cfg.dir.join("genesis.json");
         let current: serde_json::Value = serde_json::from_slice(&fs::read(&genesis)?)?;
@@ -177,9 +163,26 @@ impl Localnet {
         let identities = bindings
             .get("validatorIdentityHashes")
             .and_then(serde_json::Value::as_array)
-            .filter(|identities| identities.len() == OCOMP_FINAL_VALIDATORS)
-            .ok_or_else(|| eyre!("OCOMP bindings require exactly four validator identities"))?;
-        for (index, identity) in identities.iter().enumerate() {
+            .ok_or_else(|| eyre!("OCOMP bindings missing validator identities"))?;
+        let validator_manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(&validators)?)?;
+        let validator_manifest = validator_manifest
+            .as_array()
+            .ok_or_else(|| eyre!("validators manifest is not an array"))?;
+        eyre::ensure!(
+            identities.len() == self.committee_size()
+                && validator_manifest.len() == self.committee_size(),
+            "OCOMP founder registrations must cover the complete genesis ValidatorSet"
+        );
+        for (index, validator) in validator_manifest.iter().enumerate() {
+            let validator_address = validator
+                .get("address")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| eyre!("validator-{index} manifest address is missing"))?;
+            let consensus_bls = validator
+                .get("public_key")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| eyre!("validator-{index} manifest public key is missing"))?;
             let output_dir = self.cfg.validator_dir(index);
             let mut keygen = Command::new(&self.cfg.bin_keygen);
             keygen
@@ -190,22 +193,10 @@ impl Localnet {
                 .arg(required_u64("chainId")?.to_string())
                 .arg("--genesis-hash")
                 .arg(required_string("genesisHash")?)
-                .arg("--fork-id")
-                .arg(required_string("forkId")?)
-                .arg("--protocol-bundle-hash")
-                .arg(required_string("protocolBundleHash")?)
-                .arg("--validator-index")
-                .arg(index.to_string())
-                .arg("--validator-identity-hash")
-                .arg(
-                    identity
-                        .as_str()
-                        .ok_or_else(|| eyre!("OCOMP validator identity is not a string"))?,
-                )
-                .arg("--valid-from-height")
-                .arg(required_u64("activationHeight")?.to_string())
-                .arg("--valid-until-height-exclusive")
-                .arg(required_u64("validUntilHeightExclusive")?.to_string());
+                .arg("--validator-address")
+                .arg(validator_address)
+                .arg("--consensus-bls-min-pk")
+                .arg(consensus_bls);
             self.run_setup(&mut keygen, "outbe-keygen ocomp")?;
         }
 
@@ -231,81 +222,6 @@ impl Localnet {
         fs::rename(&genesis, &original)?;
         fs::rename(&generated, &genesis)?;
         Ok(())
-    }
-
-    /// Offset the debug-node wall clock to the immutable timestamp baked into
-    /// the canonical OCOMP fixture without rewriting that fixture.
-    #[cfg(feature = "ocomp-integration")]
-    pub(crate) fn ocomp_final_clock_offset(&self, now_secs: u64) -> Result<i64> {
-        let target = self.ocomp_final_genesis_timestamp()?;
-        let offset = i128::from(target) - i128::from(now_secs);
-        i64::try_from(offset).map_err(|_| eyre!("canonical OCOMP clock offset leaves i64 range"))
-    }
-
-    /// Worldwide-day key authored by the immutable Final fixture's logical
-    /// genesis time, independent of the host's current wall clock.
-    #[cfg(feature = "ocomp-integration")]
-    pub(crate) fn ocomp_final_worldwide_day(&self) -> Result<String> {
-        let target = self.ocomp_final_genesis_timestamp()?;
-        Ok(ymd_utc(target.saturating_add(50_400)))
-    }
-
-    #[cfg(feature = "ocomp-integration")]
-    fn ocomp_final_genesis_timestamp(&self) -> Result<u64> {
-        let path = self.cfg.dir.join("genesis.json");
-        let genesis: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
-        let raw = genesis
-            .get("timestamp")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| eyre!("canonical OCOMP genesis timestamp is not a string"))?;
-        u64::from_str_radix(raw.trim_start_matches("0x"), 16).map_err(Into::into)
-    }
-
-    /// Materialize the checked-in, four-validator `Final` OCOMP devnet.
-    ///
-    /// Committee/DKG identities and the armed chain manifest are immutable
-    /// fixture inputs. Only consensus and reth endpoint ports are rewritten for
-    /// the scenario's allocated loopback port blocks.
-    pub fn bootstrap_ocomp_final(&self) -> Result<()> {
-        if self.committee_size() != OCOMP_FINAL_VALIDATORS {
-            bail!("canonical OCOMP fixture requires exactly {OCOMP_FINAL_VALIDATORS} validators");
-        }
-        if self.cfg.dir.exists()
-            && fs::read_dir(&self.cfg.dir)
-                .wrap_err_with(|| format!("read scenario root {}", self.cfg.dir.display()))?
-                .next()
-                .is_some()
-        {
-            bail!(
-                "canonical OCOMP fixture target is not empty: {}",
-                self.cfg.dir.display()
-            );
-        }
-
-        let fixture = self.cfg.repo.join(OCOMP_FINAL_FIXTURE_ROOT);
-        let base = fixture.join("base");
-        let artifacts = fixture.join("artifacts");
-        fs::create_dir_all(&self.cfg.dir)?;
-        for (relative, mode) in OCOMP_FINAL_ROOT_FILES {
-            copy_fixture_file(&base.join(relative), &self.cfg.dir.join(relative), *mode)?;
-        }
-        for validator_index in 0..OCOMP_FINAL_VALIDATORS {
-            for relative in OCOMP_FINAL_VALIDATOR_FILES {
-                copy_fixture_file(
-                    &base
-                        .join(format!("validator-{validator_index}"))
-                        .join(relative),
-                    &self.cfg.validator_dir(validator_index).join(relative),
-                    0o600,
-                )?;
-            }
-        }
-        copy_fixture_file(
-            &artifacts.join("genesis-final.json"),
-            &self.cfg.dir.join("genesis.json"),
-            0o640,
-        )?;
-        self.rewrite_ports()
     }
 
     /// Keep a debug-only logical-clock E2E internally consistent by shifting the
@@ -367,6 +283,9 @@ impl Localnet {
         self.patch_felony(tuning)?;
         // Step 2d: opt-in lifecycle timing for claim/accounting E2E scenarios.
         self.patch_staking_timing(tuning)?;
+        // Step 2e: resolve optional protocol timings into immutable genesis
+        // storage before OCOMP registrations bind the genesis hash.
+        self.materialize_protocol_constants()?;
         Ok(())
     }
 
@@ -414,9 +333,13 @@ impl Localnet {
     /// DKG params from `tuning`) plus a pre-funded `alloc` of each validator
     /// address (`bootstrap-testnet.sh:133-203`).
     fn write_genesis(&self, tuning: &[(&str, String)]) -> Result<()> {
-        let epoch = tuned(tuning, "TESTNET_EPOCH_LENGTH_BLOCKS", 120);
+        // OCOMP retains committee snapshots for a bounded number of epochs.
+        // The default must cover one complete result-vote window; 120 blocks
+        // was accepted before OCOMP became mandatory but is now invalid.
+        let epoch = tuned(tuning, "TESTNET_EPOCH_LENGTH_BLOCKS", 300);
         let dkg_prepare = tuned(tuning, "TESTNET_DKG_PREPARE_WINDOW_BLOCKS", 30);
         let dkg_grace = tuned(tuning, "TESTNET_DKG_ACTIVATION_GRACE_BLOCKS", 30);
+        let ocomp_vote_window = localnet_ocomp_vote_window_blocks(tuning);
         let validator_balance = validator_balance_hex(tuning);
 
         let vjson: serde_json::Value =
@@ -439,6 +362,7 @@ impl Localnet {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
+        let localnet_forming_period = localnet_metadosis_forming_period_seconds(now, tuning)?;
         // genesisTime is one day in the past so the chain can produce immediately.
         let genesis_time = OffsetDateTime::from_unix_timestamp(now as i64 - 86_400)
             .wrap_err("genesis time")?
@@ -469,6 +393,21 @@ impl Localnet {
                 "dkgPrepareWindowBlocks": dkg_prepare,
                 "dkgActivationGraceBlocks": dkg_grace,
                 "genesisTime": genesis_time,
+                "outbeProtocol": {
+                    "schemaVersion": 1,
+                    "metadosis": {
+                        "formingPeriodSeconds": localnet_forming_period,
+                        "lookbackDelaySeconds": LOCALNET_METADOSIS_LOOKBACK_SECONDS,
+                        "offeringPeriodSeconds":
+                            localnet_metadosis_offering_period_seconds(tuning),
+                        "waitingPeriodSeconds": LOCALNET_METADOSIS_WAITING_SECONDS,
+                        "bootstrapDurationSeconds": LOCALNET_METADOSIS_BOOTSTRAP_SECONDS,
+                        "advanceIntervalSeconds": LOCALNET_METADOSIS_ADVANCE_SECONDS,
+                    },
+                    "ocomp": {
+                        "computeVoteWindowBlocks": ocomp_vote_window,
+                    },
+                },
             },
             "nonce": "0x0",
             "timestamp": format!("0x{now:x}"),
@@ -507,15 +446,34 @@ impl Localnet {
             .arg(self.cfg.dir.join("validators.json"))
             .arg("--worldwide-day")
             .arg(worldwide_day)
+            .arg("--fresh-metadosis")
             .arg("--output")
             .arg(&genesis);
         self.run_setup(&mut cmd, "seed_genesis.py")
     }
 
+    fn materialize_protocol_constants(&self) -> Result<()> {
+        let genesis = self.cfg.dir.join("genesis.json");
+        let generated = self.cfg.dir.join("genesis.constants.json");
+        let original = self.cfg.dir.join("genesis.pre-constants.json");
+        let mut command = Command::new(&self.cfg.bin_chain);
+        command
+            .arg("constants")
+            .arg("genesis")
+            .arg("--input")
+            .arg(&genesis)
+            .arg("--output")
+            .arg(&generated);
+        self.run_setup(&mut command, "outbe-chain constants genesis")?;
+        fs::rename(&genesis, &original)?;
+        fs::rename(&generated, &genesis)?;
+        Ok(())
+    }
+
     /// Lower the SlashIndicator felony thresholds so downtime slashing triggers
     /// within the short dev epoch (`bootstrap-testnet.sh:228-253`).
     fn patch_felony(&self, tuning: &[(&str, String)]) -> Result<()> {
-        let epoch = tuned(tuning, "TESTNET_EPOCH_LENGTH_BLOCKS", 120);
+        let epoch = tuned(tuning, "TESTNET_EPOCH_LENGTH_BLOCKS", 300);
         let felony_threshold = tuned(tuning, "TESTNET_DEV_FELONY_THRESHOLD", DEV_FELONY_THRESHOLD);
         if felony_threshold >= epoch {
             bail!("dev felony threshold {felony_threshold} must be < epoch length {epoch}");
@@ -567,36 +525,14 @@ impl Localnet {
     }
 }
 
-fn copy_fixture_file(source: &Path, destination: &Path, mode: u32) -> Result<()> {
-    let metadata = fs::symlink_metadata(source)
-        .wrap_err_with(|| format!("inspect OCOMP fixture file {}", source.display()))?;
-    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
-        bail!(
-            "OCOMP fixture input is not a regular non-symlink file: {}",
-            source.display()
-        );
-    }
-    let parent = destination
-        .parent()
-        .ok_or_else(|| eyre!("OCOMP fixture destination has no parent"))?;
-    fs::create_dir_all(parent)?;
-    fs::copy(source, destination).wrap_err_with(|| {
-        format!(
-            "copy OCOMP fixture {} to {}",
-            source.display(),
-            destination.display()
-        )
-    })?;
-    #[cfg(unix)]
-    fs::set_permissions(destination, Permissions::from_mode(mode))?;
-    Ok(())
-}
-
 fn apply_co_located_sgx_timing(
     genesis: &mut serde_json::Value,
     tee_mode: crate::env::TeeMode,
 ) -> Result<()> {
-    if !matches!(tee_mode, crate::env::TeeMode::Real) {
+    if !matches!(
+        tee_mode,
+        crate::env::TeeMode::Real | crate::env::TeeMode::SgxNoAttest
+    ) {
         return Ok(());
     }
     let config = genesis["config"]
@@ -607,13 +543,13 @@ fn apply_co_located_sgx_timing(
     Ok(())
 }
 
-/// Hardware E2E exercises the same DcapRequired network class as testnet.
-/// Dev-only enclave modes keep the separately identified devnet chain and can
-/// never become a fallback for the hardware lane.
+/// DCAP hardware E2E exercises the same DcapRequired network class as testnet.
+/// SGX-no-attest uses real hardware but deliberately keeps the separately
+/// identified GramineDirectDev chain.
 const fn localnet_chain_id(tee_mode: TeeMode) -> u64 {
     match tee_mode {
         TeeMode::Real => TESTNET_CHAIN_ID,
-        TeeMode::GramineDirect | TeeMode::Mock => DEVNET_CHAIN_ID,
+        TeeMode::SgxNoAttest | TeeMode::GramineDirect | TeeMode::Mock => DEVNET_CHAIN_ID,
     }
 }
 
@@ -640,6 +576,29 @@ fn tuned_optional(tuning: &[(&str, String)], key: &str) -> Option<u64> {
         .iter()
         .find(|(candidate, _)| *candidate == key)
         .and_then(|(_, value)| value.parse().ok())
+}
+
+fn localnet_metadosis_offering_period_seconds(tuning: &[(&str, String)]) -> u64 {
+    tuned(
+        tuning,
+        "TESTNET_METADOSIS_OFFERING_SECONDS",
+        LOCALNET_METADOSIS_OFFERING_SECONDS,
+    )
+}
+
+fn localnet_metadosis_forming_period_seconds(now: u64, tuning: &[(&str, String)]) -> Result<u64> {
+    match tuned_optional(tuning, "TESTNET_METADOSIS_FORMING_SECONDS") {
+        Some(period) => Ok(period),
+        None => localnet_forming_period_seconds(now),
+    }
+}
+
+fn localnet_ocomp_vote_window_blocks(tuning: &[(&str, String)]) -> u64 {
+    tuned(
+        tuning,
+        "TESTNET_OCOMP_VOTE_WINDOW_BLOCKS",
+        LOCALNET_OCOMP_VOTE_WINDOW_BLOCKS,
+    )
 }
 
 fn validator_balance_hex(tuning: &[(&str, String)]) -> String {
@@ -693,6 +652,16 @@ fn address_has_suffix(key: &str, suffix: &str) -> bool {
     format!("{k:0>40}").ends_with(suffix)
 }
 
+fn localnet_forming_period_seconds(now: u64) -> Result<u64> {
+    let current_wwd = outbe_primitives::time::worldwide_day_from_timestamp(now);
+    let current_wwd_start = outbe_primitives::time::date_key_to_utc_timestamp(current_wwd)
+        .checked_sub(outbe_primitives::time::UTC_PLUS_14_OFFSET)
+        .ok_or_else(|| eyre!("cannot derive LocalNet WorldwideDay start"))?;
+    now.checked_sub(current_wwd_start)
+        .and_then(|elapsed| elapsed.checked_add(LOCALNET_METADOSIS_FORMING_LEAD_SECONDS))
+        .ok_or_else(|| eyre!("cannot derive LocalNet Metadosis forming period"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -708,6 +677,25 @@ mod tests {
                 }
             }
         })
+    }
+
+    #[test]
+    fn localnet_forming_edge_tracks_the_canonical_utc_plus_14_day() {
+        let utc_midnight = outbe_primitives::time::date_key_to_utc_timestamp(20260302);
+
+        for now in [
+            utc_midnight + 9 * 3_600 + 59 * 60,
+            utc_midnight + 10 * 3_600,
+        ] {
+            let wwd = outbe_primitives::time::worldwide_day_from_timestamp(now);
+            let wwd_start = outbe_primitives::time::date_key_to_utc_timestamp(wwd)
+                - outbe_primitives::time::UTC_PLUS_14_OFFSET;
+            let period = localnet_forming_period_seconds(now).unwrap();
+            assert_eq!(
+                wwd_start + period,
+                now + LOCALNET_METADOSIS_FORMING_LEAD_SECONDS
+            );
+        }
     }
 
     #[test]
@@ -779,6 +767,7 @@ mod tests {
     #[test]
     fn hardware_and_dev_tee_lanes_have_distinct_network_identities() {
         assert_eq!(localnet_chain_id(TeeMode::Real), TESTNET_CHAIN_ID);
+        assert_eq!(localnet_chain_id(TeeMode::SgxNoAttest), DEVNET_CHAIN_ID);
         assert_eq!(localnet_chain_id(TeeMode::GramineDirect), DEVNET_CHAIN_ID);
         assert_eq!(localnet_chain_id(TeeMode::Mock), DEVNET_CHAIN_ID);
     }
@@ -792,6 +781,53 @@ mod tests {
         assert_eq!(
             u128::from_str_radix(tuned.trim_start_matches("0x"), 16).unwrap(),
             2_100_000u128 * 10u128.pow(18)
+        );
+    }
+
+    #[test]
+    fn metadosis_offering_period_can_be_tuned_only_in_generated_genesis() {
+        assert_eq!(
+            localnet_metadosis_offering_period_seconds(&[]),
+            LOCALNET_METADOSIS_OFFERING_SECONDS
+        );
+        assert_eq!(
+            localnet_metadosis_offering_period_seconds(&[(
+                "TESTNET_METADOSIS_OFFERING_SECONDS",
+                "900".to_owned(),
+            )]),
+            900
+        );
+    }
+
+    #[test]
+    fn metadosis_forming_period_can_be_tuned_only_in_generated_genesis() {
+        let now = outbe_primitives::time::date_key_to_utc_timestamp(20260302) + 12 * 3_600;
+        assert_eq!(
+            localnet_metadosis_forming_period_seconds(now, &[]).unwrap(),
+            localnet_forming_period_seconds(now).unwrap()
+        );
+        assert_eq!(
+            localnet_metadosis_forming_period_seconds(
+                now,
+                &[("TESTNET_METADOSIS_FORMING_SECONDS", "136860".to_owned())],
+            )
+            .unwrap(),
+            136_860
+        );
+    }
+
+    #[test]
+    fn ocomp_vote_window_can_be_tuned_only_in_generated_genesis() {
+        assert_eq!(
+            localnet_ocomp_vote_window_blocks(&[]),
+            LOCALNET_OCOMP_VOTE_WINDOW_BLOCKS
+        );
+        assert_eq!(
+            localnet_ocomp_vote_window_blocks(&[(
+                "TESTNET_OCOMP_VOTE_WINDOW_BLOCKS",
+                "450".to_owned(),
+            )]),
+            450
         );
     }
 }

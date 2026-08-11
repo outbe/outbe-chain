@@ -104,6 +104,23 @@ impl MongoDb {
         }
     }
 
+    /// Pause only a scenario-owned MongoDB fixture. External caller-owned
+    /// databases are deliberately outside the harness fault surface.
+    pub fn pause_managed(&self) -> Result<()> {
+        self.guard
+            .as_ref()
+            .ok_or_else(|| eyre!("projection MongoDB is caller-owned and cannot be paused"))?
+            .pause()
+    }
+
+    /// Resume the exact scenario-owned replica set and wait for PRIMARY.
+    pub fn resume_managed(&self) -> Result<()> {
+        self.guard
+            .as_ref()
+            .ok_or_else(|| eyre!("projection MongoDB is caller-owned and cannot be resumed"))?
+            .resume()
+    }
+
     /// Wait for all three tribute namespaces in every validator database, then
     /// assert the complete BSON documents are identical across the committee.
     pub fn wait_for_tribute_projection(&self, tx_hash: &str, tries: u32) -> Result<()> {

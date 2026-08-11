@@ -3,12 +3,7 @@
 use alloy_primitives::U256;
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::ExecutionScope;
-use outbe_primitives::{
-    block::BlockRuntimeContext,
-    chain,
-    error::{PrecompileError, Result},
-    time::timestamp_to_date_key,
-};
+use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 use outbe_promislimit::PromisLimitContract;
 use outbe_tribute::TributeContract;
 
@@ -28,21 +23,10 @@ use crate::{
     terminal::{CapacityForfeitureReceipt, MissedOfferingReceipt},
 };
 
-pub(crate) fn effective_hours(chain_id: u64) -> (u64, u64) {
-    if chain::is_devnet(chain_id) || chain::is_testnet(chain_id) {
-        (
-            BOOTSTRAP_LOOKBACK_DELAY_HOURS,
-            BOOTSTRAP_OFFERING_PERIOD_HOURS,
-        )
-    } else {
-        (LOOKBACK_DELAY_HOURS, OFFERING_PERIOD_HOURS)
-    }
-}
-
 pub(crate) fn validate_metadosis_timestamp(timestamp: u64) -> Result<()> {
     timestamp
         .checked_add(outbe_primitives::time::UTC_PLUS_14_OFFSET)
-        .ok_or_else(|| PrecompileError::Revert("Metadosis UTC+14 timestamp overflow".into()))?;
+        .ok_or_else(|| crate::errors::caller_rejection("Metadosis UTC+14 timestamp overflow"))?;
     Ok(())
 }
 
@@ -107,7 +91,7 @@ pub(crate) fn advance_active_worldwide_days(
                 admission_consumed = true;
             }
             unexpected => {
-                return Err(PrecompileError::Fatal(format!(
+                return Err(crate::errors::storage_corruption(format!(
                     "AdvanceDue produced non-Cycle transition {unexpected:?}"
                 )));
             }
@@ -127,7 +111,9 @@ fn apply_wwd_advance_edges(
         let edge_resolution = apply_wwd_advance_edge_effect(metadosis, wwd, *edge)?;
         if let Some(resolution) = edge_resolution {
             if rate_resolution.replace(resolution).is_some() {
-                return Err(PrecompileError::Fatal(duplicate_resolution_message.into()));
+                return Err(crate::errors::storage_corruption(
+                    duplicate_resolution_message.into(),
+                ));
             }
         }
     }
@@ -152,16 +138,10 @@ fn initialize_bootstrap_if_needed(
     metadosis: &mut MetadosisContract,
     ctx: &BlockRuntimeContext,
 ) -> Result<()> {
-    if (chain::is_devnet(ctx.block.chain_id) || chain::is_testnet(ctx.block.chain_id))
-        && metadosis.get_bootstrap_end_time()? == 0
-    {
-        let duration = BOOTSTRAP_DURATION_HOURS
-            .checked_mul(SECONDS_PER_HOUR)
-            .ok_or_else(|| {
-                PrecompileError::Revert("Metadosis bootstrap duration overflow".into())
-            })?;
+    if metadosis.get_bootstrap_end_time()? == 0 {
+        let duration = outbe_chain_constants::load(ctx)?.metadosis_bootstrap_duration_seconds;
         let end_time = ctx.block.timestamp.checked_add(duration).ok_or_else(|| {
-            PrecompileError::Revert("Metadosis bootstrap end timestamp overflow".into())
+            crate::errors::caller_rejection("Metadosis bootstrap end timestamp overflow")
         })?;
         metadosis.set_bootstrap_end_time(end_time)?;
     }
@@ -176,8 +156,7 @@ fn create_initial_worldwide_day_if_needed(
     if !metadosis.active_wwd.is_empty()? {
         return Ok(());
     }
-    let utc_day = timestamp_to_date_key(timestamp);
-    create_worldwide_day_for_date(metadosis, ctx, utc_day.into())
+    create_worldwide_day_if_needed(metadosis, ctx, timestamp)
 }
 
 pub(crate) fn create_worldwide_day_if_needed(
@@ -199,7 +178,7 @@ pub(crate) fn create_worldwide_day_for_date(
     let existing_forming_start = metadosis.worldwide_days.entry(wwd).forming_start().read()?;
     if existing_forming_start != 0 {
         let current = aggregate.record(wwd).ok_or_else(|| {
-            PrecompileError::Fatal(format!(
+            crate::errors::storage_corruption(format!(
                 "Metadosis WWD {wwd} record exists outside validated membership"
             ))
         })?;
@@ -208,7 +187,7 @@ pub(crate) fn create_worldwide_day_for_date(
     }
 
     aggregate.ensure_can_insert_active(wwd)?;
-    let (lookback_hours, offering_hours) = effective_hours(ctx.block.chain_id);
+    let constants = outbe_chain_constants::load(ctx)?;
     let forming_start = wwd.start_timestamp();
     let transition = reduce_outer_wwd(None, OuterWwdEvent::CreateDay)?;
     commit_new_wwd(
@@ -216,8 +195,10 @@ pub(crate) fn create_worldwide_day_for_date(
         wwd,
         NewWwdSchedule {
             forming_start,
-            lookback_hours,
-            offering_hours,
+            forming_period_seconds: constants.metadosis_forming_period_seconds,
+            lookback_delay_seconds: constants.metadosis_lookback_delay_seconds,
+            offering_period_seconds: constants.metadosis_offering_period_seconds,
+            waiting_period_seconds: constants.metadosis_waiting_period_seconds,
         },
         &transition,
     )
@@ -255,7 +236,7 @@ fn apply_capacity_forfeiture(
     rate_resolution: Option<WwdRateResolution>,
 ) -> Result<()> {
     if retained_count != MAX_RETAINED_WWDS {
-        return Err(PrecompileError::Fatal(
+        return Err(crate::errors::storage_corruption(
             "CapacityForfeiture requires the exact retained admission cap".into(),
         ));
     }
@@ -264,7 +245,7 @@ fn apply_capacity_forfeiture(
         .get_bytes(&current.worldwide_day)
         .is_empty()?
     {
-        return Err(PrecompileError::Fatal(
+        return Err(crate::errors::storage_corruption(
             "CapacityForfeiture victim already has OCOMP state".into(),
         ));
     }
@@ -272,27 +253,27 @@ fn apply_capacity_forfeiture(
         .read_capacity_forfeiture_receipt(current.worldwide_day)?
         .is_some()
     {
-        return Err(PrecompileError::Fatal(
+        return Err(crate::errors::storage_corruption(
             "active CapacityForfeiture victim already has a receipt".into(),
         ));
     }
     let formation = metadosis
         .ocomp_day_limit_formation(current.worldwide_day)?
         .ok_or_else(|| {
-            PrecompileError::Fatal(
+            crate::errors::storage_corruption(
                 "CapacityForfeiture requires an immutable formed day limit".into(),
             )
         })?;
     if formation.day_limit != current.metadosis_limit_amount {
-        return Err(PrecompileError::Fatal(
+        return Err(crate::errors::storage_corruption(
             "CapacityForfeiture formed day limit does not match WWD state".into(),
         ));
     }
 
     let max_retained_wwds = u32::try_from(MAX_RETAINED_WWDS)
-        .map_err(|_| PrecompileError::Fatal("retained WWD cap exceeds u32".into()))?;
+        .map_err(|_| crate::errors::storage_corruption("retained WWD cap exceeds u32".into()))?;
     let retained_count_before = u32::try_from(retained_count)
-        .map_err(|_| PrecompileError::Fatal("retained WWD count exceeds u32".into()))?;
+        .map_err(|_| crate::errors::storage_corruption("retained WWD count exceeds u32".into()))?;
     let storage = metadosis.storage.clone();
     let result = (|| {
         let tribute = TributeContract::new(storage.clone())
@@ -354,10 +335,12 @@ fn apply_missed_offering(
     let formation = metadosis
         .ocomp_day_limit_formation(current.worldwide_day)?
         .ok_or_else(|| {
-            PrecompileError::Fatal("MissedOffering requires an immutable formed day limit".into())
+            crate::errors::storage_corruption(
+                "MissedOffering requires an immutable formed day limit".into(),
+            )
         })?;
     if formation.day_limit != current.metadosis_limit_amount {
-        return Err(PrecompileError::Fatal(
+        return Err(crate::errors::storage_corruption(
             "MissedOffering formed day limit does not match WWD state".into(),
         ));
     }
@@ -365,7 +348,7 @@ fn apply_missed_offering(
         .read_missed_offering_receipt(current.worldwide_day)?
         .is_some()
     {
-        return Err(PrecompileError::Fatal(
+        return Err(crate::errors::storage_corruption(
             "active WWD already has a terminal receipt".into(),
         ));
     }

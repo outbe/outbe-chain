@@ -109,6 +109,20 @@ sol! {
     }
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface INod {
+        struct NodData {
+            bytes nodId;
+            address owner;
+            uint32 worldwideDay;
+            uint16 leagueId;
+            uint256 floorPriceMinor;
+            uint256 gratisLoadMinor;
+            uint256 costOfGratisMinor;
+            uint256 costAmountMinor;
+            bool isQualified;
+            uint16 issuanceCurrency;
+            uint16 referenceCurrency;
+            uint64 issuedAt;
+        }
         struct CertifiedGenerationData {
             bool exists;
             uint32 worldwideDay;
@@ -124,6 +138,8 @@ sol! {
             uint64 issuedAt;
         }
         function totalSupply() external view returns (uint256);
+        function tokenByIndex(uint256 index) external view returns (bytes memory);
+        function nodData(bytes calldata nodId) external view returns (NodData memory);
         function certifiedGeneration(uint32 worldwideDay)
             external
             view
@@ -144,6 +160,21 @@ sol! {
             external
             view
             returns (bytes memory activeGenerationV1);
+        function getWorldwideDayTerminalReceipt(uint32 wwd)
+            external
+            view
+            returns (
+                uint8 outcome,
+                uint256 valueRouted,
+                uint256 carryOverBefore,
+                uint256 carryOverAfter,
+                uint8 retirementOutcome,
+                uint64 blockNumber
+            );
+    }
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IPromisLimit {
+        function totalUnallocated() external view returns (uint256);
     }
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IDesis {
@@ -288,28 +319,6 @@ pub(crate) fn read_call_reverts_at<C: SolCall>(
             Err(error) => {
                 let message = error.to_string().to_ascii_lowercase();
                 Some(message.contains("revert"))
-            }
-        }
-    })
-}
-
-/// `eth_call` raw calldata and return the revert payload the node reports, or
-/// `None` when the call succeeds or fails without revert data. This surfaces
-/// the machine-readable rejection bytes that transaction receipts omit.
-#[cfg(feature = "ocomp-integration")]
-pub(crate) fn call_revert_data(url: &str, to: Address, data: Vec<u8>) -> Option<Vec<u8>> {
-    let url = url.to_string();
-    block_on(async move {
-        let provider = ProviderBuilder::new().connect_http(url.parse().ok()?);
-        let tx = TransactionRequest::default()
-            .to(to)
-            .input(Bytes::from(data).into());
-        match provider.call(tx).block(BlockId::latest()).await {
-            Ok(_) => None,
-            Err(error) => {
-                let payload = error.as_error_resp()?;
-                let raw = payload.data.as_ref()?.get().trim_matches('"').to_owned();
-                hex::decode(raw.trim_start_matches("0x")).ok()
             }
         }
     })

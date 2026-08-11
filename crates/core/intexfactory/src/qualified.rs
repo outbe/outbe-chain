@@ -1,9 +1,9 @@
-//! Per-block qualification: drains floor-bins crossed by the live COEN/0xUSD
-//! rate and qualifies matured (21d) Issued series. Runs in `begin_block`.
+//! Per-block qualification: drains floor-bins crossed by the live COEN/840
+//! rate and qualifies Issued series past their qualification period. Runs in `begin_block`.
 
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
-use outbe_oracle::contract::OracleContract;
+use outbe_oracle::api::coen_rate_for;
 use outbe_primitives::{
     block::{BlockLifecycle, BlockRuntimeContext},
     error::Result,
@@ -42,17 +42,7 @@ pub(crate) const MAX_SERIES_PER_BLOCK: u32 = 256;
 
 /// Returns the number of series promoted Issued -> Qualified this block.
 pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
-    let oracle = OracleContract::new(ctx.storage.clone());
-    let pair_hash = oracle
-        .settlement_iso_to_pair
-        .read(&QUALIFIER_REFERENCE_ISO)?;
-    if pair_hash.is_zero() {
-        return Ok(0);
-    }
-    let rate = oracle.exchange_rate.read(&pair_hash)?;
-    if rate.is_zero() {
-        return Ok(0);
-    }
+    let rate = coen_rate_for(ctx.storage.clone(), QUALIFIER_REFERENCE_ISO)?;
 
     let now = ctx.block.timestamp;
     // Deterministic out-of-range rate: skip the block's scan instead of halting it.
@@ -64,7 +54,7 @@ pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
         }
     };
     let mut factory = IntexFactoryContract::new(ctx.storage.clone());
-    let maturity_secs = crate::config::read(&factory)?.maturity_period_secs;
+    let qualification_period = crate::config::read(&factory)?.qualification_period;
 
     let mut promoted: u32 = 0;
     // Cap per-block work and resume next block from a persisted bin cursor: the scan
@@ -106,7 +96,7 @@ pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
                     &ctx.storage,
                     &mut factory,
                     series_id,
-                    maturity_secs,
+                    qualification_period,
                     now,
                     rate,
                 )
@@ -133,12 +123,12 @@ pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
     Ok(promoted)
 }
 
-/// Qualify one series if Issued, matured (>21d), and `rate` exceeds its floor.
+/// Qualify one series if Issued, past its qualification period, and `rate` exceeds its floor.
 pub(crate) fn try_qualify(
     storage: &StorageHandle<'_>,
     factory: &mut IntexFactoryContract,
     series_id: u32,
-    maturity_secs: u64,
+    qualification_period: u32,
     now: u64,
     rate: U256,
 ) -> Result<bool> {
@@ -149,8 +139,8 @@ pub(crate) fn try_qualify(
     if series.lifecycle_state()? != IntexState::Issued {
         return Ok(false);
     }
-    let mature_at = u64::from(series.issued_at).saturating_add(maturity_secs);
-    if now <= mature_at {
+    let qualifies_at = u64::from(series.issued_at).saturating_add(u64::from(qualification_period));
+    if now <= qualifies_at {
         return Ok(false);
     }
     let floor = series.floor_price_minor;

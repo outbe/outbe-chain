@@ -55,11 +55,11 @@ fn register_active_validator(storage: StorageHandle, addr: Address, seed: u8) {
     let mut vs = ValidatorSet::new(storage.clone());
     if vs.config_owner.read().unwrap().is_zero() {
         vs.config_owner.write(VALIDATOR_OWNER).unwrap();
-        vs.config_max_validators.write(100).unwrap();
+        vs.set_config_max_validators(100).unwrap();
     }
     vs.register_validator(VALIDATOR_OWNER, addr, &dummy_pubkey(seed))
         .unwrap();
-    vs.activate_validator(addr).unwrap();
+    vs.activate_validator_via_boundary_for_test(addr).unwrap();
 }
 
 fn setup_four_validators(storage: StorageHandle) {
@@ -78,14 +78,14 @@ fn proposal_activation(created: u64) -> u64 {
 }
 
 fn seed_oracle_for_pre_exec(storage: StorageHandle) {
-    let mut oracle = outbe_oracle::contract::OracleContract::new(storage);
-    if oracle.register_pair("COEN", "0xUSD").is_err() {
+    if outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR).is_err()
+    {
         return;
     }
-    let _ = oracle.set_exchange_rate(
+    let _ = outbe_oracle::api::set_exchange_rate(
+        storage,
         Address::ZERO,
-        "COEN",
-        "0xUSD",
+        outbe_oracle::api::DAY_TYPE_PAIR,
         U256::from(1_000_000_000_000_000_000u128),
         0,
         0,

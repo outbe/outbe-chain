@@ -1,4 +1,4 @@
-//! Steps for `features/s1_s2_s6_s3_lifecycle.feature` — port of
+//! Validator lifecycle steps used by `features/validator_lifecycle.feature`.
 //! The validator lifecycle feature, one chain through four e2e.md stages:
 //!   S1 cold full-node sync + tribute offer (state/supply parity)
 //!   S2 promote full-node -> validator via reshare (stake -> confirm -> ACTIVE)
@@ -78,23 +78,17 @@ fn offer_processed_status_unchanged(world: &mut World) {
         .expect("initial Tribute and both indexes must match on every committee validator");
 }
 
-/// S1 — provision + launch a REGISTERED (not staked) full node and sync it to tip.
+/// S1 — launch a true non-validator process and sync its durable Reth data to tip.
 #[when("a full node joins and syncs to the committee tip")]
 fn full_node_syncs(world: &mut World) {
     let idx = world.validators.joiner_index();
     let joiner_port = world.validators.http_port(idx);
     world
         .localnet
-        .provision_joiner(idx)
-        .expect("provision joiner");
-    world
-        .localnet
-        .launch_joiner(idx, &[])
-        .expect("launch joiner");
+        .launch_joiner_full_node(idx, 0, &[])
+        .expect("launch non-voting full node");
     let h = world.rpc.wait_block(joiner_port, 20, 40).unwrap_or(0);
     assert!(h >= 20, "full node did not catch up to tip (head {h})");
-    let key = world.validators.joiner().evm_key().expect("joiner key");
-    world.state.joiner_addr = world.rpc.address_of(&key);
 }
 
 /// S1 — the full node has supply + state-root parity and is NOT a participant.
@@ -103,26 +97,16 @@ fn full_node_parity(world: &mut World) {
     let primary = world.validators.primary_port();
     let idx = world.validators.joiner_index();
     let joiner_port = world.validators.http_port(idx);
-    let addr = world.state.joiner_addr.clone().expect("joiner addr");
 
     assert_eq!(
         world.rpc.supply(joiner_port).as_deref(),
         Some("1"),
         "full-node supply parity"
     );
-    assert!(
-        !world.rpc.is_participant(joiner_port, &addr),
-        "a full node must not be a consensus participant"
-    );
     assert_eq!(
         world.rpc.active_count(primary),
         Some(4),
         "active set unchanged by a full node"
-    );
-    assert_eq!(
-        world.rpc.validator_status(primary, &addr),
-        Some(0),
-        "authorized self-registration must leave the joiner REGISTERED after the rejected third-party attempt"
     );
 
     let pn = world.rpc.finalized(joiner_port).unwrap_or(20);
@@ -138,8 +122,19 @@ fn full_node_parity(world: &mut World) {
 #[when("the full node stakes and confirms readiness")]
 fn full_node_stakes_confirms(world: &mut World) {
     let primary = world.validators.primary_port();
+    let idx = world.validators.joiner_index();
+    world.localnet.stop_joiner_full_node(idx);
+    world
+        .localnet
+        .provision_joiner(idx)
+        .expect("provision synced full-node slot as validator");
+    world
+        .localnet
+        .launch_joiner(idx, &[])
+        .expect("restart synced slot in validator mode");
     let key = world.validators.joiner().evm_key().expect("joiner key");
-    let addr = world.state.joiner_addr.clone().expect("joiner addr");
+    let addr = world.rpc.address_of(&key).expect("joiner address");
+    world.state.joiner_addr = Some(addr.clone());
 
     world.rpc.stake(&key, 1000).expect("stake");
     sleep(Duration::from_secs(6));

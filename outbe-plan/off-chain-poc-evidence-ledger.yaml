@@ -71,6 +71,25 @@ retired_tests:
       coordinator, durable journal and attestation gate. A live four-node fork
       required timing a consensus proposal micro-window, duplicated those
       invariants and was not reliable evidence; this ID must not be reused.
+  OCM-DIS-001:
+    status: RETIRED
+    reason: >-
+      The Unix-control-era discovery process test was removed when production
+      discovery moved to finalized public RPC. The current public-RPC path is
+      proved by OCM-E2E-001 and must not be overclaimed through this old ID.
+  OCM-EXP-001:
+    status: RETIRED
+    reason: >-
+      The retained CE-MDBX/openings exporter matrix described a deleted input
+      architecture. Current CAS closure, production public-RPC E2E and
+      prepared-only restart evidence own the surviving contract; this ID must
+      not be rebound to the ignored manual public-RPC fixture.
+  OCM-CTL-001:
+    status: RETIRED
+    reason: >-
+      The former Unix control protocol target was deleted. Current Worker
+      process, HTTP/ZeroMQ transport and observability evidence use the new
+      OCM-WRK-001, OCM-WTR-001 and OCM-WOBS-001 IDs.
 
 deferred:
   PFS-002-07:
@@ -99,7 +118,7 @@ lanes:
     automatic_retries: 0
   OCM-PUBLIC:
     command: mise run ocomp-poc-public-path
-    platform: fresh_four_node_localnet
+    platform: privileged_linux_four_validator_release_sgx_no_attest
     frequency: every_relevant_pr
     timeout_minutes: 45
     required: true
@@ -107,7 +126,7 @@ lanes:
     automatic_retries: 0
   OCM-E2E:
     command: mise run ocomp-poc-e2e -- --evidence-dir <dir>
-    platform: privileged_linux_four_validator_production_enclave_gramine_direct
+    platform: privileged_linux_four_validator_release_sgx_no_attest
     frequency: closure_candidate_and_scheduled_main
     timeout_minutes: 120
     required: true
@@ -486,52 +505,6 @@ tests:
       - last_reference_retention_gc
       - multi_job_restart_recovery
       - restart_attestation_refusal
-  OCM-DIS-001:
-    status: planned
-    layer: PROCESS
-    lane: OCM-INT
-    planned_path: bin/outbe-ocomp/tests/finalized_discovery.rs
-    production_entrypoint: finalized cursor over real node-supervisor UDS
-    real_components:
-      - production_node_control_server
-      - production_supervisor_process
-      - real_uds
-      - real_supervisor_journal
-    substitutions: []
-    oracles:
-      - PROCESS_BOUNDARY
-      - DURABLE_JOURNAL
-    evidence:
-      - dropped_event_cursor_discovery
-      - duplicate_and_restart_exactly_once
-  OCM-EXP-001:
-    status: planned
-    layer: PROCESS
-    lane: OCM-INT
-    planned_path: bin/outbe-ocomp/tests/finalized_export.rs
-    production_entrypoint: checkpoint exporter with CE MDBX, Mongo and openings
-    real_components:
-      - production_checkpoint_lease
-      - real_ce_mdbx
-      - real_mongodb_replica_set
-      - production_opening_source
-      - exporter_process
-      - production_filesystem_cas
-      - node_owned_export_commit
-    substitutions: []
-    oracles:
-      - FINALITY_PROOF
-      - DIGESTED_ARTIFACT
-    evidence:
-      - full_fold_root_count_nominal
-      - parent_job_multi_page_retention_release
-      - body_and_opening_mutation_matrix
-      - source_lag_ahead_and_restart_results
-      - absent_sign_record_on_failure
-      - bounded_256_owner_request_partition
-      - deterministic_control_cap_bisection_preserves_owner_order_and_completeness
-      - single_owner_control_cap_abstention
-      - source_specific_opening_roots_and_manifest_commit
   OCM-CAS-001:
     status: planned
     layer: PROCESS
@@ -555,25 +528,60 @@ tests:
       - unchanged_sign_journal
       - exact_bytes_kind_codec_and_bundle_binding
       - four_real_worker_processes_consume_pinned_inputs
-  OCM-CTL-001:
+  OCM-WRK-001:
     status: planned
     layer: PROCESS
     lane: OCM-INT
-    planned_path: bin/outbe-ocomp/tests/control_protocol.rs
-    production_entrypoint: OcompControlV1 and fixed worker/exporter UDS
+    planned_path: bin/outbe-ocomp/tests/worker_one_unit.rs
+    production_entrypoint: production Worker child processes consuming Supervisor-dispatched units
     real_components:
-      - production_control_server_and_clients
-      - real_uds
-      - real_peer_credentials
+      - production_worker_processes
+      - production_supervisor_worker_server
+      - production_filesystem_cas
+      - production_lysis_unit_executor
+    substitutions: []
+    oracles:
+      - PROCESS_BOUNDARY
+      - DIGESTED_ARTIFACT
+    evidence:
+      - real_worker_processes_execute_through_output_finalize
+      - real_worker_materializes_and_adopts_two_leaf_shuffle_merges
+  OCM-WTR-001:
+    status: planned
+    layer: MODULE
+    lane: OCM-INT
+    planned_path: bin/outbe-ocomp/src/worker_transport.rs
+    production_entrypoint: production Axum registration and ZeroMQ ROUTER/DEALER transport state
+    real_components:
+      - production_worker_registry
+      - production_axum_server
+      - production_zeromq_router
+      - production_lease_state_machine
+    substitutions: []
+    oracles:
+      - MODULE_STATE
+      - PROCESS_BOUNDARY
+    evidence:
+      - bounded_four_worker_registry
+      - cancelled_dispatch_and_ready_recovery
+      - lease_expiry_redelivery_and_stale_completion_rejection
+      - stalled_connection_does_not_block_health_or_status
+  OCM-WOBS-001:
+    status: planned
+    layer: MODULE
+    lane: OCM-INT
+    planned_path: bin/outbe-ocomp/src/worker_observability.rs
+    production_entrypoint: production Worker Salvo health and status endpoints
+    real_components:
+      - production_worker_observability_server
+      - production_worker_status_state
+      - real_loopback_http
     substitutions: []
     oracles:
       - PROCESS_BOUNDARY
       - RESOURCE_COUNTER
     evidence:
-      - frame_and_acl_matrix
-      - incompatible_bundle_readiness
-      - cap_plus_one_rejection
-      - oversized_response_returns_typed_limit_without_session_loss
+      - healthz_and_status_remain_available_while_worker_is_busy
   OCM-DET-001:
     status: planned
     layer: PROCESS
@@ -598,13 +606,14 @@ tests:
     status: planned
     layer: PROCESS
     lane: OCM-INT
-    planned_path: crates/blockchain/node/src/ocomp/tests/sign_once.rs
-    production_entrypoint: OcompAttestationGate and sign-once store
+    planned_path: bin/outbe-ocomp/tests/sign_once.rs
+    production_entrypoint: OCOMP Supervisor sign-once store
     real_components:
-      - production_attestation_gate
+      - production_supervisor
+      - production_sign_once_store
       - production_ocomp_key
       - real_filesystem
-      - restarted_node_process
+      - restarted_supervisor_process
     substitutions:
       - deterministic_fault_injection_at_named_persistence_boundaries
     substitution_justification: >
@@ -702,7 +711,7 @@ tests:
     status: planned
     layer: EXECUTION
     lane: OCM-PUBLIC
-    planned_path: testing/e2e-harness/features/ocomp_public_path.feature
+    planned_path: testing/e2e-harness/features/ocomp.feature
     production_entrypoint: Supervisor ResultVote submission through validator ZeroFee RPC, txpool, P2P, proposer, import and replay
     real_components:
       - four_nodes
@@ -731,7 +740,7 @@ tests:
     status: planned
     layer: EXECUTION
     lane: OCM-PUBLIC
-    planned_path: testing/e2e-harness/features/ocomp_public_path.feature
+    planned_path: testing/e2e-harness/features/ocomp.feature
     production_entrypoint: public submitLysisResult changed-binding rejection and exact non-quorum recovery
     real_components:
       - four_nodes
@@ -754,7 +763,7 @@ tests:
     status: planned
     layer: EXECUTION
     lane: OCM-PUBLIC
-    planned_path: testing/e2e-harness/features/ocomp_public_path.feature
+    planned_path: testing/e2e-harness/features/ocomp.feature
     production_entrypoint: begin-zone finality-plus-four open, full-result vote window, no-quorum expiry and terminal accountability
     real_components:
       - four_nodes
@@ -766,7 +775,7 @@ tests:
       - FINALIZED_PUBLIC_STATE
     evidence:
       - vote_included_before_deadline_is_timely
-      - vote_included_at_deadline_is_late
+      - vote_included_at_deadline_or_next_block_is_late
       - vote_at_finality_plus_three_rejects
       - vote_at_finality_plus_four_is_admissible
       - no_quorum_job_expires_at_deadline
@@ -777,7 +786,7 @@ tests:
     status: planned
     layer: EXECUTION
     lane: OCM-PUBLIC
-    planned_path: testing/e2e-harness/features/ocomp_public_path.feature
+    planned_path: testing/e2e-harness/features/ocomp.feature
     production_entrypoint: completed full-result vote replay
     real_components:
       - four_nodes
@@ -794,7 +803,7 @@ tests:
     status: planned
     layer: E2E
     lane: OCM-E2E
-    planned_path: testing/e2e-harness/features/ocomp_poc.feature
+    planned_path: testing/e2e-harness/features/ocomp.feature
     production_entrypoint: >
       one tracer public encrypted Tribute through the existing projection
       harness path, four compute domains and q=3 to certified Nod
@@ -887,12 +896,13 @@ tests:
     status: planned
     layer: E2E
     lane: OCM-E2E
-    planned_path: testing/e2e-harness/features/ocomp_poc.feature
-    production_entrypoint: incompatible supervisor handshake
+    planned_path: testing/e2e-harness/features/ocomp.feature
+    production_entrypoint: incompatible Worker registration
     real_components:
       - four_nodes
       - one_incompatible_supervisor_process
-      - real_uds
+      - real_axum_registration
+      - real_zeromq_tcp
     substitutions: []
     oracles:
       - PROCESS_BOUNDARY
@@ -904,7 +914,7 @@ tests:
     status: planned
     layer: E2E
     lane: OCM-E2E
-    planned_path: testing/e2e-harness/features/ocomp_poc.feature
+    planned_path: testing/e2e-harness/features/ocomp.feature
     production_entrypoint: finalized active generation restart and replay
     real_components:
       - four_nodes_with_preserved_datadirs
@@ -921,7 +931,7 @@ tests:
     status: planned
     layer: E2E
     lane: OCM-E2E
-    planned_path: testing/e2e-harness/features/ocomp_poc.feature
+    planned_path: testing/e2e-harness/features/ocomp.feature
     production_entrypoint: proposer, importer and historical replay block execution inside the OCM-E2E-001 tracer story
     real_components:
       - production_boundary_markers
@@ -947,9 +957,9 @@ task_ownership:
   OCM-08: [OCM-FSM-001, OCM-REQ-001, OCM-E2E-002]
   OCM-09: [OCM-FIN-001, OCM-PIN-001]
   OCM-10: []
-  OCM-11: [OCM-CTL-001]
-  OCM-12: [OCM-DIS-001]
-  OCM-13: [OCM-EXP-001, OCM-CAS-001, OCM-E2E-004]
+  OCM-11: [OCM-WRK-001, OCM-WTR-001, OCM-WOBS-001]
+  OCM-12: []
+  OCM-13: [OCM-CAS-001, OCM-E2E-004]
   OCM-14: [OCM-SEM-002, OCM-DET-001]
   OCM-15: [OCM-SIG-001]
   OCM-16: [OCM-VOT-001]
@@ -1066,7 +1076,7 @@ requirements:
       tests: [OCM-BND-002, OCM-REQ-001, OCM-TRC-001]
     "ADR-S-OCM-001/I-10":
       text: Local configuration or negotiation cannot choose consensus semantics.
-      tests: [OCM-CTL-001, OCM-E2E-007]
+      tests: [OCM-E2E-007]
     "ADR-S-OCM-001/I-11":
       text: Only the fork-pinned handler verifies and applies.
       tests: [OCM-BYT-002, OCM-BND-001, OCM-PUB-002]
@@ -1078,22 +1088,22 @@ requirements:
       tests: [OCM-BYT-001, OCM-BND-001]
     "ADR-S-OCM-002/I-01":
       text: Event, Mongo, path and CAS name do not establish job authority.
-      tests: [OCM-DIS-001, OCM-PIN-001, OCM-EXP-001, OCM-CAS-001]
+      tests: [OCM-PIN-001, OCM-CAS-001, OCM-E2E-001]
     "ADR-S-OCM-002/I-02":
       text: Every consumed body matches identity and committed CE leaf.
-      tests: [OCM-EXP-001, OCM-E2E-001]
+      tests: [OCM-CAS-001, OCM-E2E-001]
     "ADR-S-OCM-002/I-03":
       text: Traversal reconstructs exact root, count and nominal.
-      tests: [OCM-EXP-001, OCM-E2E-001]
+      tests: [OCM-DET-001, OCM-E2E-001]
     "ADR-S-OCM-002/I-04":
       text: Fidelity and Oracle values bind to job logical context.
-      tests: [OCM-EXP-001, OCM-SEM-001, OCM-TIM-001]
+      tests: [OCM-SEM-001, OCM-TIM-001, OCM-E2E-001]
     "ADR-S-OCM-002/I-05":
       text: Manifest names one JobId and one bundle.
-      tests: [OCM-BYT-001, OCM-EXP-001]
+      tests: [OCM-BYT-001, OCM-CAS-001, OCM-E2E-001]
     "ADR-S-OCM-002/I-06":
       text: Work-shard ranges are adjacent, non-overlapping and cover the exact manifest count.
-      tests: [OCM-EXP-001, OCM-SEM-002, OCM-DET-001]
+      tests: [OCM-SEM-002, OCM-DET-001, OCM-E2E-001]
     "ADR-S-OCM-002/I-07":
       text: Workers consume only digest-verified manifest members.
       tests: [OCM-CAS-001, OCM-DET-001]
@@ -1102,7 +1112,7 @@ requirements:
       tests: [OCM-PIN-001]
     "ADR-S-OCM-002/I-09":
       text: Export ambiguity abstains rather than reading best-effort live state.
-      tests: [OCM-EXP-001, OCM-CAS-001, OCM-E2E-001]
+      tests: [OCM-PIN-001, OCM-CAS-001, OCM-E2E-001, OCM-E2E-008]
     "ADR-S-OCM-003/I-01":
       text: Equal finalized inputs and bundle produce byte-identical units and result.
       tests: [OCM-SEM-002, OCM-DET-001, OCM-E2E-001]
@@ -1117,7 +1127,7 @@ requirements:
       tests: [OCM-VOT-001, OCM-E2E-001]
     "ADR-S-OCM-003/I-05":
       text: The OCOMP key is distinct from the consensus key and unavailable to compute processes.
-      tests: [OCM-CTL-001, OCM-SIG-001]
+      tests: [OCM-SIG-001]
     "ADR-S-OCM-003/I-06":
       text: Sign-once history is durable before signature release.
       tests: [OCM-SIG-001, OCM-E2E-001]
@@ -1141,7 +1151,7 @@ requirements:
       tests: [OCM-VOT-001, OCM-PUB-001, OCM-PUB-003]
     "ADR-S-OCM-003/I-13":
       text: Quorum evidence never replaces input completeness, data availability or independent semantics.
-      tests: [OCM-SEM-001, OCM-EXP-001, OCM-E2E-001]
+      tests: [OCM-SEM-001, OCM-CAS-001, OCM-E2E-001]
     "ADR-S-OCM-004/I-01":
       text: Request creation has no Lysis or owner effect.
       tests: [OCM-REQ-001, OCM-E2E-001]
@@ -1204,15 +1214,15 @@ requirements:
       tests: [OCM-FSM-001, OCM-E2E-001, OCM-TRC-001]
     "ADR-S-OCM-004/I-21":
       text: Local readiness and version cannot alter consensus validity.
-      tests: [OCM-CTL-001, OCM-E2E-007]
+      tests: [OCM-E2E-007]
 
   poc:
     POC-01: [OCM-SEM-001, OCM-E2E-001]
     POC-02: [OCM-REQ-001, OCM-E2E-001]
     POC-03: [OCM-BND-002, OCM-TRC-001]
     POC-04: [OCM-FIN-001, OCM-PIN-001]
-    POC-05: [OCM-DIS-001, OCM-E2E-001]
-    POC-06: [OCM-EXP-001, OCM-CAS-001, OCM-E2E-001]
+    POC-05: [OCM-E2E-001]
+    POC-06: [OCM-CAS-001, OCM-E2E-001, OCM-E2E-008]
     POC-07: [OCM-SEM-002]
     POC-08: [OCM-DET-001, OCM-E2E-001]
     POC-09: [OCM-E2E-001]
@@ -1226,13 +1236,13 @@ requirements:
     POC-17: [OCM-TIM-001, OCM-E2E-001]
     POC-18: [OCM-FSM-001, OCM-VOT-001, OCM-PUB-003]
     POC-19: [OCM-PUB-003]
-    POC-20: [OCM-BND-003, OCM-CAS-001, OCM-CTL-001]
+    POC-20: [OCM-BND-003, OCM-CAS-001, OCM-WRK-001, OCM-WTR-001, OCM-WOBS-001]
     POC-21: [OCM-CAP-001, OCM-PUB-001, OCM-PUB-002]
     POC-22: [OCM-E2E-001, OCM-E2E-008]
     POC-23: [OCM-PIN-001]
-    POC-24: [OCM-CTL-001, OCM-E2E-007]
+    POC-24: [OCM-WTR-001, OCM-E2E-007]
     POC-25: [OCM-PUB-004, OCM-E2E-008]
-    POC-26: [OCM-BYT-002, OCM-EXP-001, OCM-E2E-002, OCM-E2E-004]
+    POC-26: [OCM-BYT-002, OCM-CAS-001, OCM-E2E-001, OCM-E2E-002, OCM-E2E-004]
 
   pfs:
     PFS-002-01:
@@ -1250,10 +1260,10 @@ requirements:
         required an impossible READY state.
     PFS-002-04:
       status: required
-      tests: [OCM-EXP-001, OCM-E2E-001]
+      tests: [OCM-CAS-001, OCM-E2E-001, OCM-E2E-008]
     PFS-002-05:
       status: required
-      tests: [OCM-E2E-004, OCM-EXP-001]
+      tests: [OCM-E2E-004, OCM-CAS-001, OCM-E2E-001]
     PFS-002-06:
       status: required
       tests: [OCM-APL-002, OCM-E2E-006]
@@ -1265,7 +1275,7 @@ requirements:
       tests: []
     PFS-002-09:
       status: required
-      tests: [OCM-DIS-001, OCM-E2E-001]
+      tests: [OCM-E2E-001]
     PFS-002-10:
       status: required
       tests: [OCM-PIN-001]
@@ -1301,10 +1311,10 @@ requirements:
       tests: [OCM-FSM-001, OCM-PUB-003]
     PFS-002-21:
       status: required
-      tests: [OCM-CAP-001, OCM-BND-003, OCM-CAS-001, OCM-CTL-001, OCM-PUB-001, OCM-PUB-002]
+      tests: [OCM-CAP-001, OCM-BND-003, OCM-CAS-001, OCM-WRK-001, OCM-WTR-001, OCM-WOBS-001, OCM-PUB-001, OCM-PUB-002]
     PFS-002-22:
       status: required
-      tests: [OCM-CTL-001, OCM-E2E-007]
+      tests: [OCM-WTR-001, OCM-E2E-007]
     PFS-002-23:
       status: required
       tests: [OCM-E2E-008]
@@ -1329,7 +1339,7 @@ requirements:
       tests: [OCM-E2E-001]
       oracle: PROCESS_BOUNDARY
     "5":
-      tests: [OCM-E2E-001, OCM-EXP-001, OCM-DET-001]
+      tests: [OCM-E2E-001, OCM-CAS-001, OCM-DET-001]
       oracle: DIGESTED_ARTIFACT
     "6":
       tests: [OCM-E2E-001, OCM-VOT-001, OCM-PUB-001]

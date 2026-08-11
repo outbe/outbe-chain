@@ -387,9 +387,13 @@ fn validate_fixed_account(
         .ok_or_else(|| eyre!("genesis account 0x{address} must be an object"))?;
     match account.get("code").and_then(Value::as_str) {
         Some(code) if code.eq_ignore_ascii_case(marker) => {}
-        Some(_) => bail!("stablecoin reserved account 0x{address} has conflicting code"),
+        Some(_) => {
+            bail!("stablecoin reserved account 0x{address} has conflicting code");
+        }
         None if preseed => {}
-        None => bail!("stablecoin reserved account 0x{address} is missing marker code"),
+        None => {
+            bail!("stablecoin reserved account 0x{address} is missing marker code");
+        }
     }
     if account
         .get("storage")
@@ -478,6 +482,8 @@ fn marker_byte(value: &str) -> Result<u8> {
     let bytes = hex::decode(value).wrap_err("decode stablecoin marker")?;
     match bytes.as_slice() {
         [byte] => Ok(*byte),
-        _ => bail!("stablecoin marker must contain exactly one byte"),
+        _ => {
+            bail!("stablecoin marker must contain exactly one byte");
+        }
     }
 }

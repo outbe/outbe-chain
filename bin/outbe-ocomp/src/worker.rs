@@ -1,9 +1,11 @@
-//! One socket-activated process handles one immutable work-unit request.
+//! Axum-registered worker driven by an asynchronous TCP ZeroMQ command channel.
 
 use std::collections::BTreeMap;
-use std::os::fd::{FromRawFd, OwnedFd, RawFd};
-use std::os::unix::net::UnixStream;
+use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 
 use alloy_primitives::{B256, U256};
 use outbe_common::WorldwideDay;
@@ -55,35 +57,41 @@ use outbe_ocomp_protocol::{
 };
 use outbe_ocomp_protocol::{
     verify_ordered_list_membership, ListKind, ObjectKind, RunUnitV1, SchemaLimits,
-    UnitFinishedStatus, UnitFinishedV1, WorkerMessageKind,
+    UnitFinishedStatus, UnitFinishedV1,
 };
-use outbe_oracle::{evaluate_oracle_opening_v1, OracleOpeningEvaluationError};
+use outbe_oracle::{evaluate_oracle_opening_v1, OracleOcompError};
 use thiserror::Error;
+use zeromq::util::PeerIdentity;
+use zeromq::{DealerSocket, Socket, SocketOptions, SocketRecv, SocketSend, ZmqMessage};
 
 use crate::bundle::PinnedProtocolBundle;
 use crate::cas::{CasError, CasLimits, FilesystemCasReader};
-use crate::control::{
-    poc_schema_limits, require_effective_uid, ControlError, ControlServerSession, EndpointIdentity,
-    ServerPolicy,
-};
+use crate::control::{poc_schema_limits, ControlError, EndpointIdentity};
 use crate::inbox::{WorkerInbox, WorkerInboxError, WorkerInboxLimits};
 use crate::input_artifacts::{
     decode_fidelity_subject_key, decode_oracle_subject_key, decode_verified_input_chunk,
     derive_input_chunk_ref, InputArtifactError,
 };
 use crate::lysis_phase_replay::{replay_output_finalize_artifact, LysisPhaseReplayError};
+use crate::worker_observability::{WorkerObservabilityErrorV1, WorkerObservabilityServerV1};
+use crate::worker_transport::{
+    SupervisorCommandV1, WorkLeaseV1, WorkerCompletionV1, WorkerEventV1, WorkerLeaseRefV1,
+    WorkerRegistrationResponseV1, WorkerRegistrationV1,
+};
+
+const SUPERVISOR_RECONNECT_DELAY: Duration = Duration::from_secs(1);
+const WORKER_HTTP_TIMEOUT: Duration = Duration::from_secs(10);
+const WORKER_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Debug)]
 pub struct WorkerConfig {
-    pub expected_effective_uid: u32,
-    pub expected_supervisor_uid: u32,
     pub identity: EndpointIdentity,
-    pub session_generation: u64,
+    pub supervisor_address: SocketAddr,
+    pub observability_address: SocketAddr,
     pub cas_root: PathBuf,
     pub cas_limits: CasLimits,
     pub inbox_root: PathBuf,
     pub inbox_limits: WorkerInboxLimits,
-    pub connection_fd: RawFd,
     pub protocol_bundle: PinnedProtocolBundle,
 }
 
@@ -115,6 +123,7 @@ pub(crate) struct UnitExecutionAuthority<'a> {
     pub(crate) limits: &'a SchemaLimits,
     pub(crate) reader: &'a FilesystemCasReader,
     pub(crate) inbox: &'a WorkerInbox,
+    pub(crate) cancelled: Option<&'a AtomicBool>,
 }
 
 #[derive(Debug, Error)]
@@ -125,10 +134,18 @@ pub enum WorkerError {
     Cas(#[from] CasError),
     #[error("worker request is not valid OCOMP protocol: {0}")]
     Protocol(#[from] outbe_ocomp_protocol::ProtocolError),
-    #[error("worker inherited descriptor {0} is not a valid connected socket")]
-    InvalidInheritedDescriptor(RawFd),
-    #[error("worker received message kind {actual:#06x}, expected RunUnitV1")]
-    UnexpectedMessage { actual: u16 },
+    #[error("worker Supervisor address {0} is not a nonzero loopback registration endpoint")]
+    InvalidSupervisorAddress(SocketAddr),
+    #[error("worker HTTP request failed: {0}")]
+    Http(#[from] reqwest::Error),
+    #[error("Supervisor worker HTTP endpoint returned {status}: {body}")]
+    SupervisorHttp { status: u16, body: String },
+    #[error("worker TCP ZeroMQ transport failed: {0}")]
+    MessageTransport(String),
+    #[error(transparent)]
+    Observability(#[from] WorkerObservabilityErrorV1),
+    #[error("Supervisor cancelled or expired the active worker lease")]
+    LeaseCancelled,
     #[error("worker request binding does not match its canonical UnitSpecV1")]
     UnitBindingMismatch,
     #[error("worker request carries the reserved zero plan hash")]
@@ -146,39 +163,357 @@ pub enum WorkerError {
     #[error(transparent)]
     CanonicalBody(#[from] CanonicalBodyError),
     #[error(transparent)]
-    OracleOpening(#[from] OracleOpeningEvaluationError),
+    OracleOpening(#[from] OracleOcompError),
     #[error(transparent)]
     LysisPhaseReplay(#[from] LysisPhaseReplayError),
     #[error("worker does not yet implement Lysis phase {0:?}")]
     UnsupportedPhase(UnitPhase),
 }
 
-pub fn run_one_from_inherited_fd(config: WorkerConfig) -> Result<WorkerOutcome, WorkerError> {
-    require_effective_uid(config.expected_effective_uid)?;
+pub fn run_worker(config: WorkerConfig) -> Result<(), WorkerError> {
     if config.protocol_bundle.hash() != config.identity.protocol_bundle_hash {
         return Err(WorkerError::BundleIdentityMismatch);
     }
-    let stream = duplicate_connected_stream(config.connection_fd)?;
+    if !config.supervisor_address.ip().is_loopback() || config.supervisor_address.port() == 0 {
+        return Err(WorkerError::InvalidSupervisorAddress(
+            config.supervisor_address,
+        ));
+    }
+    let client = reqwest::blocking::Client::builder()
+        .timeout(WORKER_HTTP_TIMEOUT)
+        .build()?;
+    let observability = WorkerObservabilityServerV1::start(config.observability_address)?;
+    loop {
+        observability.registering();
+        if let Err(error) = run_registered_message_loop(&config, &client, &observability) {
+            observability.disconnected();
+            eprintln!("OCOMP worker registration/message channel retry: {error}");
+        }
+        std::thread::sleep(SUPERVISOR_RECONNECT_DELAY);
+    }
+}
+
+fn run_registered_message_loop(
+    config: &WorkerConfig,
+    client: &reqwest::blocking::Client,
+    observability: &WorkerObservabilityServerV1,
+) -> Result<(), WorkerError> {
+    let limits = poc_schema_limits();
+    let base_url = format!("http://{}", config.supervisor_address);
+    let registration: WorkerRegistrationResponseV1 = decode_success(
+        client
+            .post(format!("{base_url}/v1/workers/register"))
+            .json(&WorkerRegistrationV1::from_identity(
+                config.identity,
+                limits,
+            ))
+            .send()?,
+    )?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| WorkerError::MessageTransport(error.to_string()))?;
+    runtime.block_on(run_registered_message_channel(
+        config.clone(),
+        registration,
+        limits,
+        observability,
+    ))
+}
+
+struct ActiveWorkerLease {
+    reference: WorkerLeaseRefV1,
+    cancelled: Arc<AtomicBool>,
+    cancel_on_drop: bool,
+}
+
+impl Drop for ActiveWorkerLease {
+    fn drop(&mut self) {
+        if self.cancel_on_drop {
+            self.cancelled.store(true, Ordering::Release);
+        }
+    }
+}
+
+struct WorkerExecutionResult {
+    reference: WorkerLeaseRefV1,
+    finished: UnitFinishedV1,
+    cancelled: Arc<AtomicBool>,
+}
+
+async fn run_registered_message_channel(
+    config: WorkerConfig,
+    registration: WorkerRegistrationResponseV1,
+    limits: SchemaLimits,
+    observability: &WorkerObservabilityServerV1,
+) -> Result<(), WorkerError> {
+    let peer: PeerIdentity = registration
+        .worker_id
+        .parse()
+        .map_err(|error: zeromq::ZmqError| WorkerError::MessageTransport(error.to_string()))?;
+    let mut options = SocketOptions::default();
+    options.peer_identity(peer);
+    let mut socket = DealerSocket::with_options(options);
+    socket
+        .connect(&registration.message_endpoint)
+        .await
+        .map_err(|error| WorkerError::MessageTransport(error.to_string()))?;
+    let (mut sender, mut receiver) = socket.split();
+    send_worker_event(
+        &mut sender,
+        &WorkerEventV1::Ready {
+            worker_id: registration.worker_id.clone(),
+            registry_generation: registration.registry_generation,
+        },
+    )
+    .await?;
+    observability.idle(
+        registration.worker_id.clone(),
+        registration.registry_generation,
+    );
+
+    let (result_tx, mut result_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut active: Option<ActiveWorkerLease> = None;
+    let mut heartbeat = tokio::time::interval(WORKER_HEARTBEAT_INTERVAL);
+    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        tokio::select! {
+            command = receiver.recv() => {
+                let command = command
+                    .map_err(|error| WorkerError::MessageTransport(error.to_string()))
+                    .and_then(decode_supervisor_command)?;
+                observability.touch();
+                match command {
+                    SupervisorCommandV1::Work { lease, registry_generation } => {
+                        require_registration_binding(&registration, &lease.worker_id, registry_generation)?;
+                        let reference = lease_reference(&lease);
+                        if let Some(current) = active.as_ref() {
+                            if current.reference.lease_id == reference.lease_id
+                                && current.reference.unit_id == reference.unit_id
+                            {
+                                send_worker_event(
+                                    &mut sender,
+                                    &WorkerEventV1::Accepted {
+                                        lease: reference,
+                                        registry_generation,
+                                    },
+                                ).await?;
+                            }
+                            continue;
+                        }
+                        let body = hex::decode(&lease.run_unit_body_hex)
+                            .map_err(|_| WorkerError::UnitBindingMismatch)?;
+                        let request = RunUnitV1::decode_body(&body, &limits)?;
+                        let unit_id = lease.unit_id.parse::<B256>()
+                            .map_err(|_| WorkerError::UnitBindingMismatch)?;
+                        send_worker_event(
+                            &mut sender,
+                            &WorkerEventV1::Accepted {
+                                lease: reference.clone(),
+                                registry_generation,
+                            },
+                        ).await?;
+                        observability.working(
+                            registration.worker_id.clone(),
+                            registry_generation,
+                            reference.lease_id.clone(),
+                            reference.unit_id.clone(),
+                        );
+                        let cancelled = Arc::new(AtomicBool::new(false));
+                        active = Some(ActiveWorkerLease {
+                            reference: reference.clone(),
+                            cancelled: Arc::clone(&cancelled),
+                            cancel_on_drop: true,
+                        });
+                        let execution_config = config.clone();
+                        let execution_reference = reference;
+                        let execution_cancelled = Arc::clone(&cancelled);
+                        let execution_tx = result_tx.clone();
+                        tokio::task::spawn_blocking(move || {
+                            let result = execute_claimed_unit(
+                                &execution_config,
+                                &request,
+                                Some(execution_cancelled.as_ref()),
+                            );
+                            let finished = terminal_completion(unit_id, &execution_reference.lease_id, result);
+                            let _ = execution_tx.send(WorkerExecutionResult {
+                                reference: execution_reference,
+                                finished,
+                                cancelled: execution_cancelled,
+                            });
+                        });
+                    }
+                    SupervisorCommandV1::Cancel { lease, registry_generation } => {
+                        require_registration_binding(&registration, &lease.worker_id, registry_generation)?;
+                        if let Some(current) = active.as_ref() {
+                            if current.reference.lease_id == lease.lease_id
+                                && current.reference.unit_id == lease.unit_id
+                            {
+                                current.cancelled.store(true, Ordering::Release);
+                                observability.cancelling();
+                            }
+                        }
+                    }
+                }
+            }
+            Some(result) = result_rx.recv() => {
+                let is_current = active.as_ref().is_some_and(|current| {
+                    current.reference.lease_id == result.reference.lease_id
+                        && current.reference.unit_id == result.reference.unit_id
+                });
+                if !is_current {
+                    continue;
+                }
+                if let Some(mut current) = active.take() {
+                    current.cancel_on_drop = false;
+                }
+                if result.cancelled.load(Ordering::Acquire) {
+                    send_worker_event(
+                        &mut sender,
+                        &WorkerEventV1::Ready {
+                            worker_id: registration.worker_id.clone(),
+                            registry_generation: registration.registry_generation,
+                        },
+                    ).await?;
+                    observability.idle(
+                        registration.worker_id.clone(),
+                        registration.registry_generation,
+                    );
+                    continue;
+                }
+                let finished_body = result.finished.encode_body(&limits)?;
+                send_worker_event(
+                    &mut sender,
+                    &WorkerEventV1::Completed {
+                        completion: WorkerCompletionV1 {
+                            worker_id: result.reference.worker_id,
+                            lease_id: result.reference.lease_id,
+                            unit_id: result.reference.unit_id,
+                            finished_body_hex: hex::encode(finished_body),
+                        },
+                        registry_generation: registration.registry_generation,
+                    },
+                ).await?;
+                observability.idle(
+                    registration.worker_id.clone(),
+                    registration.registry_generation,
+                );
+            }
+            _ = heartbeat.tick() => {
+                let event = match active.as_ref() {
+                    Some(current) => WorkerEventV1::Heartbeat {
+                        lease: current.reference.clone(),
+                        registry_generation: registration.registry_generation,
+                    },
+                    None => WorkerEventV1::Ready {
+                        worker_id: registration.worker_id.clone(),
+                        registry_generation: registration.registry_generation,
+                    },
+                };
+                send_worker_event(&mut sender, &event).await?;
+            }
+        }
+    }
+}
+
+fn failed_completion(unit_id: B256) -> UnitFinishedV1 {
+    UnitFinishedV1 {
+        unit_id,
+        status: UnitFinishedStatus::Failed,
+        exact_staged_bytes: 0,
+        transport_digest: B256::ZERO,
+    }
+}
+
+fn terminal_completion(
+    unit_id: B256,
+    lease_id: &str,
+    result: Result<UnitFinishedV1, WorkerError>,
+) -> UnitFinishedV1 {
+    match result {
+        Ok(finished) => finished,
+        Err(error) => {
+            eprintln!(
+                "OCOMP worker reports terminal failure for accepted lease {lease_id}: {error}"
+            );
+            failed_completion(unit_id)
+        }
+    }
+}
+
+fn lease_reference(lease: &WorkLeaseV1) -> WorkerLeaseRefV1 {
+    WorkerLeaseRefV1 {
+        worker_id: lease.worker_id.clone(),
+        lease_id: lease.lease_id.clone(),
+        unit_id: lease.unit_id.clone(),
+    }
+}
+
+fn require_registration_binding(
+    registration: &WorkerRegistrationResponseV1,
+    worker_id: &str,
+    registry_generation: u64,
+) -> Result<(), WorkerError> {
+    if worker_id == registration.worker_id
+        && registry_generation == registration.registry_generation
+    {
+        Ok(())
+    } else {
+        Err(WorkerError::UnitBindingMismatch)
+    }
+}
+
+fn decode_supervisor_command(message: ZmqMessage) -> Result<SupervisorCommandV1, WorkerError> {
+    let frames = message.into_vec();
+    if frames.len() != 1 {
+        return Err(WorkerError::MessageTransport(
+            "Supervisor ZeroMQ command must contain exactly one body frame".into(),
+        ));
+    }
+    serde_json::from_slice(&frames[0]).map_err(|_| WorkerError::UnitBindingMismatch)
+}
+
+async fn send_worker_event(
+    sender: &mut zeromq::DealerSendHalf,
+    event: &WorkerEventV1,
+) -> Result<(), WorkerError> {
+    let body = serde_json::to_vec(event).map_err(|_| WorkerError::UnitBindingMismatch)?;
+    sender
+        .send(body.into())
+        .await
+        .map_err(|error| WorkerError::MessageTransport(error.to_string()))
+}
+
+fn require_lease_active(cancelled: Option<&AtomicBool>) -> Result<(), WorkerError> {
+    if cancelled.is_some_and(|cancelled| cancelled.load(Ordering::Acquire)) {
+        Err(WorkerError::LeaseCancelled)
+    } else {
+        Ok(())
+    }
+}
+
+fn decode_success<T: serde::de::DeserializeOwned>(
+    response: reqwest::blocking::Response,
+) -> Result<T, WorkerError> {
+    let status = response.status();
+    if status.is_success() {
+        return Ok(response.json()?);
+    }
+    Err(WorkerError::SupervisorHttp {
+        status: status.as_u16(),
+        body: response.text().unwrap_or_default(),
+    })
+}
+
+fn execute_claimed_unit(
+    config: &WorkerConfig,
+    request: &RunUnitV1,
+    cancelled: Option<&AtomicBool>,
+) -> Result<UnitFinishedV1, WorkerError> {
+    require_lease_active(cancelled)?;
     let reader = FilesystemCasReader::open(&config.cas_root, config.cas_limits)?;
     let inbox = WorkerInbox::open(&config.inbox_root, config.inbox_limits)?;
     let limits = poc_schema_limits();
-    let mut session = ControlServerSession::accept(
-        stream,
-        ServerPolicy::worker(
-            config.expected_supervisor_uid,
-            config.identity,
-            config.session_generation,
-            limits,
-        ),
-    )?;
-    session.handshake()?;
-    let frame = session.receive_request()?;
-    if frame.message_kind != WorkerMessageKind::RunUnit as u16 {
-        return Err(WorkerError::UnexpectedMessage {
-            actual: frame.message_kind,
-        });
-    }
-    let request = RunUnitV1::decode_body(&frame.body, &limits)?;
     if request.protocol_bundle_hash != config.identity.protocol_bundle_hash {
         return Err(WorkerError::UnitBindingMismatch);
     }
@@ -239,6 +574,7 @@ pub fn run_one_from_inherited_fd(config: WorkerConfig) -> Result<WorkerOutcome, 
     let mut input_chunks = Vec::new();
     let mut producer_artifacts = Vec::new();
     for reference in &request.ordered_input_refs {
+        require_lease_active(cancelled)?;
         let object = reader.read_verified(reference)?;
         match reference.expected_ocb1_kind {
             Some(kind) if kind == ObjectKind::AuthenticatedInputChunkV1.tag() => {
@@ -261,6 +597,7 @@ pub fn run_one_from_inherited_fd(config: WorkerConfig) -> Result<WorkerOutcome, 
         }
     }
 
+    require_lease_active(cancelled)?;
     let finished = match execute_unit(
         &spec,
         UnitExecutionAuthority {
@@ -273,15 +610,19 @@ pub fn run_one_from_inherited_fd(config: WorkerConfig) -> Result<WorkerOutcome, 
             limits: &limits,
             reader: &reader,
             inbox: &inbox,
+            cancelled,
         },
     )
     .and_then(|artifact| {
+        require_lease_active(cancelled)?;
         artifact
             .encode_canonical(&limits)
             .map_err(WorkerError::from)
     })
-    .and_then(|bytes| inbox.adopt(unit_id, &bytes).map_err(WorkerError::from))
-    {
+    .and_then(|bytes| {
+        require_lease_active(cancelled)?;
+        inbox.adopt(unit_id, &bytes).map_err(WorkerError::from)
+    }) {
         Ok(staged) => {
             let reference = staged.reference();
             UnitFinishedV1 {
@@ -298,18 +639,14 @@ pub fn run_one_from_inherited_fd(config: WorkerConfig) -> Result<WorkerOutcome, 
             transport_digest: B256::ZERO,
         },
     };
-    session.send_response(
-        frame.request_id,
-        WorkerMessageKind::UnitFinished as u16,
-        finished.encode_body(&limits)?,
-    )?;
-    Ok(WorkerOutcome { unit_id })
+    Ok(finished)
 }
 
 pub(crate) fn execute_unit(
     spec: &UnitSpecV1,
     authority: UnitExecutionAuthority<'_>,
 ) -> Result<UnitArtifactV1, WorkerError> {
+    require_lease_active(authority.cancelled)?;
     match spec.phase {
         UnitPhase::Enumerate => execute_enumerate_unit(
             spec,
@@ -317,6 +654,7 @@ pub(crate) fn execute_unit(
             authority.input_chunks,
             authority.producer_artifacts,
             authority.limits,
+            authority.cancelled,
         ),
         UnitPhase::FidelityMap => execute_fidelity_map_unit(spec, authority),
         UnitPhase::FixedReduce => execute_fixed_reduce_unit(spec, authority),
@@ -335,6 +673,7 @@ fn execute_enumerate_unit(
     input_chunks: &[(InputChunkRefV1, AuthenticatedInputChunkV1)],
     producer_artifacts: &[UnitArtifactV1],
     limits: &SchemaLimits,
+    cancelled: Option<&AtomicBool>,
 ) -> Result<UnitArtifactV1, WorkerError> {
     if !producer_artifacts.is_empty() || input_chunks.len() != 1 {
         return Err(WorkerError::UnitBindingMismatch);
@@ -358,6 +697,7 @@ fn execute_enumerate_unit(
         .try_reserve_exact(chunk.canonical_records_or_openings.len())
         .map_err(|_| WorkerError::UnitBindingMismatch)?;
     for record in &chunk.canonical_records_or_openings {
+        require_lease_active(cancelled)?;
         let tribute = decode_tribute_v1(&record.0)?;
         let id = tribute.tribute_id.as_bytes();
         if id < &range.start.0 || range.end.is_some_and(|end| id >= &end.0) {
@@ -406,8 +746,10 @@ fn execute_fidelity_map_unit(
         producer_artifacts,
         bundle,
         limits,
+        cancelled,
         ..
     } = authority;
+    require_lease_active(cancelled)?;
     let shard_ordinal = unit_index
         .checked_sub(plan.primary_work_unit_count)
         .ok_or(WorkerError::UnitBindingMismatch)?;
@@ -453,6 +795,7 @@ fn execute_fidelity_map_unit(
     let mut fidelity_opening_count = 0_u32;
     let mut fidelity_encoded_bytes = 0_u64;
     for (reference, chunk) in input_chunks {
+        require_lease_active(cancelled)?;
         match chunk.kind {
             InputChunkKind::Tribute => {}
             InputChunkKind::Fidelity => {
@@ -460,6 +803,7 @@ fn execute_fidelity_map_unit(
                     .checked_add(reference.encoded_bytes)
                     .ok_or(WorkerError::UnitBindingMismatch)?;
                 for encoded in &chunk.canonical_records_or_openings {
+                    require_lease_active(cancelled)?;
                     fidelity_opening_count = fidelity_opening_count
                         .checked_add(1)
                         .ok_or(WorkerError::UnitBindingMismatch)?;
@@ -480,6 +824,7 @@ fn execute_fidelity_map_unit(
                         .map(|slot| (slot.slot, slot.value))
                         .collect::<BTreeMap<_, _>>();
                     for owner in &owners {
+                        require_lease_active(cancelled)?;
                         // Independently re-derive each owner's snapshot slot rather
                         // than trusting slot order; the MPT-proven value is the
                         // on-chain league Metadosis committed for this day at
@@ -515,6 +860,7 @@ fn execute_fidelity_map_unit(
         .try_reserve_exact(enumerated.ordered_records.len())
         .map_err(|_| WorkerError::UnitBindingMismatch)?;
     for record in &enumerated.ordered_records {
+        require_lease_active(cancelled)?;
         let league = leagues
             .get(&record.tribute.owner)
             .copied()
@@ -564,8 +910,10 @@ fn execute_fixed_reduce_unit(
         producer_artifacts,
         bundle,
         limits,
+        cancelled,
         ..
     } = authority;
+    require_lease_active(cancelled)?;
     if !input_chunks.is_empty() {
         return Err(WorkerError::UnitBindingMismatch);
     }
@@ -614,6 +962,7 @@ fn execute_fixed_reduce_unit(
     let mut artifacts = producer_artifacts.iter();
     let mut decoded_inputs = Vec::with_capacity(2);
     for (expected, input) in expected_producers.into_iter().zip(reducer_inputs) {
+        require_lease_active(cancelled)?;
         match expected {
             PlannedProducerV1::CanonicalEmpty {
                 purpose: InputPurpose::FidelityPartials,
@@ -814,8 +1163,10 @@ fn execute_amount_map_unit(
         producer_artifacts,
         bundle,
         limits,
+        cancelled,
         ..
     } = authority;
+    require_lease_active(cancelled)?;
     if producer_artifacts.len() != 3 {
         return Err(WorkerError::UnitBindingMismatch);
     }
@@ -947,8 +1298,7 @@ fn execute_amount_map_unit(
         return Err(WorkerError::UnitBindingMismatch);
     }
     opening.validate_against_bundle(bundle, limits)?;
-    let (oracle_wwd, settlement_isos) =
-        decode_oracle_subject_key(&opening.canonical_subject_key.0)?;
+    let (oracle_wwd, reference_isos) = decode_oracle_subject_key(&opening.canonical_subject_key.0)?;
     if oracle_wwd != manifest.wwd {
         return Err(WorkerError::UnitBindingMismatch);
     }
@@ -959,11 +1309,8 @@ fn execute_amount_map_unit(
         .iter()
         .map(|slot| (slot.slot, slot.value))
         .collect::<Vec<_>>();
-    let oracle = evaluate_oracle_opening_v1(
-        WorldwideDay::new(manifest.wwd),
-        &settlement_isos,
-        &raw_slots,
-    )?;
+    let oracle =
+        evaluate_oracle_opening_v1(WorldwideDay::new(manifest.wwd), &reference_isos, &raw_slots)?;
     let mandatory_entry_price = oracle
         .entry_price(840)
         .ok_or(WorkerError::UnitBindingMismatch)?;
@@ -977,6 +1324,7 @@ fn execute_amount_map_unit(
         .iter()
         .zip(&fidelity.observations)
     {
+        require_lease_active(cancelled)?;
         if record.raw_ordinal != fidelity.raw_ordinal
             || record.tribute.tribute_id != fidelity.tribute_id
         {
@@ -1032,8 +1380,10 @@ fn execute_gratis_prefix_unit(
         producer_artifacts,
         bundle,
         limits,
+        cancelled,
         ..
     } = authority;
+    require_lease_active(cancelled)?;
     if !input_chunks.is_empty() {
         return Err(WorkerError::UnitBindingMismatch);
     }
@@ -1113,6 +1463,7 @@ fn execute_gratis_prefix_unit(
         let mut values = [GratisSummaryValueV1::Empty, GratisSummaryValueV1::Empty];
         let mut child_coverage = [None, None];
         for (child_index, artifact) in resolved.into_iter().enumerate() {
+            require_lease_active(cancelled)?;
             let Some(artifact) = artifact else {
                 continue;
             };
@@ -1164,8 +1515,10 @@ fn execute_gratis_prefix_down_unit(
         producer_artifacts,
         bundle,
         limits,
+        cancelled,
         ..
     } = authority;
+    require_lease_active(cancelled)?;
     if !input_chunks.is_empty() {
         return Err(WorkerError::UnitBindingMismatch);
     }
@@ -1275,6 +1628,7 @@ fn execute_gratis_prefix_down_unit(
     let mut values = [GratisSummaryValueV1::Empty, GratisSummaryValueV1::Empty];
     let mut child_coverage = [None, None];
     for child_index in 0..2 {
+        require_lease_active(cancelled)?;
         let Some(artifact) = resolved
             .get(child_start + child_index)
             .and_then(|artifact| *artifact)
@@ -1349,8 +1703,10 @@ fn execute_output_finalize_unit(
         producer_artifacts,
         bundle,
         limits,
+        cancelled,
         ..
     } = authority;
+    require_lease_active(cancelled)?;
     if !input_chunks.is_empty() || producer_artifacts.len() != 2 {
         return Err(WorkerError::UnitBindingMismatch);
     }
@@ -1388,7 +1744,9 @@ fn execute_shuffle_unit(
         limits,
         reader,
         inbox,
+        cancelled,
     } = authority;
+    require_lease_active(cancelled)?;
     if !input_chunks.is_empty()
         || !matches!(
             spec.phase,
@@ -1544,6 +1902,9 @@ fn execute_shuffle_unit(
             return Err(WorkerError::UnitBindingMismatch);
         }
         let left_records = verified_shuffle_run_records(left, limits, |reference| {
+            require_lease_active(cancelled).map_err(|_| {
+                outbe_ocomp_protocol::ProtocolError::InvalidInvariant("cancelled shuffle lease")
+            })?;
             reader
                 .read_verified(reference)
                 .map(|object| object.bytes().to_vec())
@@ -1554,6 +1915,9 @@ fn execute_shuffle_unit(
                 })
         })?;
         let right_records = verified_shuffle_run_records(right, limits, |reference| {
+            require_lease_active(cancelled).map_err(|_| {
+                outbe_ocomp_protocol::ProtocolError::InvalidInvariant("cancelled shuffle lease")
+            })?;
             reader
                 .read_verified(reference)
                 .map(|object| object.bytes().to_vec())
@@ -1704,7 +2068,9 @@ fn execute_root_reduce_unit(
         limits,
         reader,
         inbox,
+        cancelled,
     } = authority;
+    require_lease_active(cancelled)?;
     if !input_chunks.is_empty() {
         return Err(WorkerError::UnitBindingMismatch);
     }
@@ -1763,6 +2129,7 @@ fn execute_root_reduce_unit(
             reader,
             inbox,
             limits,
+            cancelled,
         );
     }
     if resolved.len() != 2 {
@@ -1771,6 +2138,7 @@ fn execute_root_reduce_unit(
 
     let mut summaries = Vec::with_capacity(2);
     for (producer, artifact) in expected.into_iter().zip(resolved) {
+        require_lease_active(cancelled)?;
         match (producer, artifact) {
             (
                 position @ PlannedProducerV1::Unit(PlannedUnitPositionV1::TreeNode {
@@ -1825,7 +2193,9 @@ fn execute_root_reduce_leaf(
     reader: &FilesystemCasReader,
     inbox: &WorkerInbox,
     limits: &SchemaLimits,
+    cancelled: Option<&AtomicBool>,
 ) -> Result<UnitArtifactV1, WorkerError> {
+    require_lease_active(cancelled)?;
     let [finalized_position @ PlannedProducerV1::Unit(PlannedUnitPositionV1::Primary {
         phase: UnitPhase::OutputFinalize,
         ordinal,
@@ -2492,21 +2862,10 @@ fn require_authenticated_input(
     }
 }
 
-#[allow(unsafe_code)]
-fn duplicate_connected_stream(fd: RawFd) -> Result<UnixStream, WorkerError> {
-    // SAFETY: `fcntl(F_DUPFD_CLOEXEC)` does not take ownership of `fd`; on
-    // success it returns a fresh descriptor which is immediately wrapped.
-    let duplicated = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 3) };
-    if duplicated < 0 {
-        return Err(WorkerError::InvalidInheritedDescriptor(fd));
-    }
-    // SAFETY: `duplicated` is a fresh descriptor owned by this function.
-    let owned = unsafe { OwnedFd::from_raw_fd(duplicated) };
-    Ok(UnixStream::from(owned))
-}
-
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
     use alloy_primitives::{Address, B256, U256};
     use outbe_common::WorldwideDay;
     use outbe_compressed_entities::derive_poseidon_entity_id;
@@ -2516,10 +2875,35 @@ mod tests {
     use outbe_ocomp_protocol::unit::{PlanCommitmentV1, WorkOutputHeaderV1};
 
     use super::{
-        poc_schema_limits, require_complete_root_values, require_plan_binding,
-        require_root_reduce_finalized_binding, require_root_reduce_shuffle_population,
-        ExpectedPlanBindingsV1,
+        poc_schema_limits, require_complete_root_values, require_lease_active,
+        require_plan_binding, require_root_reduce_finalized_binding,
+        require_root_reduce_shuffle_population, terminal_completion, ExpectedPlanBindingsV1,
+        WorkerError,
     };
+
+    #[test]
+    fn zero_mq_cancel_command_stops_work_at_the_next_execution_checkpoint() {
+        let cancelled = AtomicBool::new(false);
+        cancelled.store(true, Ordering::Release);
+        assert!(matches!(
+            require_lease_active(Some(&cancelled)),
+            Err(WorkerError::LeaseCancelled)
+        ));
+    }
+
+    #[test]
+    fn accepted_lease_pre_execution_error_becomes_terminal_failure() {
+        let unit_id = B256::repeat_byte(0xA5);
+        let finished =
+            terminal_completion(unit_id, "test-lease", Err(WorkerError::UnitBindingMismatch));
+        assert_eq!(finished.unit_id, unit_id);
+        assert_eq!(
+            finished.status,
+            outbe_ocomp_protocol::UnitFinishedStatus::Failed
+        );
+        assert_eq!(finished.exact_staged_bytes, 0);
+        assert_eq!(finished.transport_digest, B256::ZERO);
+    }
 
     fn plan() -> PlanCommitmentV1 {
         PlanCommitmentV1 {

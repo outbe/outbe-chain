@@ -68,7 +68,7 @@ use outbe_ocomp_protocol::{
 };
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
-use outbe_oracle::contract::OracleContract;
+use outbe_oracle::schema::OracleContract;
 use outbe_primitives::{
     addresses::{
         COMPRESSED_ENTITIES_ADDRESS, METADOSIS_ADDRESS, REWARDS_ADDRESS, TRIBUTE_FACTORY_ADDRESS,
@@ -81,14 +81,15 @@ use outbe_primitives::{
         decode_outbe_block_artifacts, encode_outbe_block_artifacts, CompressedEntitiesRootArtifact,
         ExecutionSummaryArtifact, OutbeBlockArtifacts,
     },
-    storage::{direct::DirectStorageProvider, hashmap::HashMapStorageProvider, StorageHandle},
+    storage::{
+        direct::DirectStorageProvider, hashmap::HashMapStorageProvider,
+        MetadosisMutationPurposeTag, StorageHandle,
+    },
     OutbeHeader, OutbePayloadAttributes, OutbePrimitives,
 };
 use outbe_tribute::{TributeContract, TributeData};
-use outbe_update::{
-    schema::{ScheduledUpdateStatus, Update},
-    ProtocolVersion,
-};
+use outbe_txpool::OutbeTransactionOrdering;
+use outbe_update::{schema::Update, ProtocolVersion};
 use outbe_validatorset::{
     committee_snapshot_key, contract::ValidatorSet, read_committee_snapshot,
     write_committee_snapshot, CommitteeSnapshot as StoredCommitteeSnapshot,
@@ -112,8 +113,8 @@ use reth_provider::{
 };
 use reth_revm::database::StateProviderDatabase;
 use reth_transaction_pool::{
-    blobstore::InMemoryBlobStore, noop::MockTransactionValidator, CoinbaseTipOrdering,
-    EthPooledTransaction, Pool, PoolConfig, PoolTransaction, TransactionOrigin, TransactionPool,
+    blobstore::InMemoryBlobStore, noop::MockTransactionValidator, EthPooledTransaction, Pool,
+    PoolConfig, PoolTransaction, TransactionOrigin, TransactionPool,
 };
 use reth_trie::{
     test_utils::{state_root_prehashed, storage_root_prehashed},
@@ -132,13 +133,13 @@ const FINALIZED_VIEW: u64 = 100;
 const PARENT_VIEW: u64 = 99;
 const VRF_MATERIAL_VERSION: u64 = 5;
 const VALIDATOR_OWNER: Address = address!("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
-const TEST_CONSENSUS_PUBLIC_KEY: [u8; 48] = [0x11; 48];
-const OCOMP_UPDATE_PROPOSAL_ID: u64 = 1;
-const OCOMP_PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::from_raw(1);
+const SATURATED_USER_TRANSACTION_COUNT: u64 = 40;
+const SATURATED_USER_TRANSACTION_GAS: u64 = 1_000_000;
+const BURNER_ADDRESS: Address = address!("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
 
 type TestPool = Pool<
     MockTransactionValidator<EthPooledTransaction>,
-    CoinbaseTipOrdering<EthPooledTransaction>,
+    OutbeTransactionOrdering<EthPooledTransaction>,
     InMemoryBlobStore,
 >;
 type InnerTestProvider = MockEthProvider<OutbePrimitives, ChainSpec<OutbeHeader>>;
@@ -147,7 +148,7 @@ type HashedAccountState = BTreeMap<B256, (Account, BTreeMap<B256, U256>)>;
 fn test_pool(transactions: Vec<EthPooledTransaction>) -> TestPool {
     let pool = Pool::new(
         MockTransactionValidator::default(),
-        CoinbaseTipOrdering::default(),
+        OutbeTransactionOrdering::default(),
         InMemoryBlobStore::default(),
         PoolConfig::default(),
     );
@@ -158,21 +159,34 @@ fn test_pool(transactions: Vec<EthPooledTransaction>) -> TestPool {
     pool
 }
 
-fn pooled_vote_transaction(input: Bytes, nonce: u64) -> EthPooledTransaction {
+fn validator_secret(validator_index: u8) -> B256 {
+    B256::repeat_byte(validator_index.saturating_add(1))
+}
+
+fn validator_sender(validator_index: u8) -> Address {
+    OutbeEvmSigner::from_secret_bytes(validator_secret(validator_index).0)
+        .expect("fixture validator EVM key is valid")
+        .address()
+}
+
+fn pooled_vote_transaction(input: Bytes, validator_index: u8) -> EthPooledTransaction {
     let transaction: Transaction = TxEip1559 {
         chain_id: CHAIN_ID,
-        nonce,
-        gas_limit: 9_000_000,
-        max_fee_per_gas: 2_000_000_000,
-        max_priority_fee_per_gas: 1_000_000_000,
+        nonce: 0,
+        gas_limit: 30_000,
+        max_fee_per_gas: 1_000_000_000,
+        max_priority_fee_per_gas: 0,
         to: TxKind::Call(METADOSIS_ADDRESS),
         value: U256::ZERO,
         access_list: Default::default(),
         input,
     }
     .into();
-    let signature = sign_secp256k1_message(B256::repeat_byte(0x66), transaction.signature_hash())
-        .expect("fixture EVM vote signer");
+    let signature = sign_secp256k1_message(
+        validator_secret(validator_index),
+        transaction.signature_hash(),
+    )
+    .expect("fixture EVM vote signer");
     let signed = TransactionSigned::new_unhashed(transaction, signature);
     EthPooledTransaction::try_from_consensus(
         signed
@@ -182,12 +196,42 @@ fn pooled_vote_transaction(input: Bytes, nonce: u64) -> EthPooledTransaction {
     .expect("fixture EVM vote converts to pooled transaction")
 }
 
-fn vote_sender() -> Address {
-    pooled_vote_transaction(Bytes::new(), 0).sender()
-}
-
 fn vote_sender_balance() -> U256 {
     U256::from(100_000_000_000_000_000_000u128)
+}
+
+fn saturated_user_secret() -> B256 {
+    B256::repeat_byte(0xE1)
+}
+
+fn saturated_user_sender() -> Address {
+    OutbeEvmSigner::from_secret_bytes(saturated_user_secret().0)
+        .expect("fixture saturated-user key is valid")
+        .address()
+}
+
+fn pooled_saturated_user_transaction(nonce: u64) -> EthPooledTransaction {
+    let transaction: Transaction = TxEip1559 {
+        chain_id: CHAIN_ID,
+        nonce,
+        gas_limit: SATURATED_USER_TRANSACTION_GAS,
+        max_fee_per_gas: 2_000_000_000,
+        max_priority_fee_per_gas: 1_000_000_000,
+        to: TxKind::Call(BURNER_ADDRESS),
+        value: U256::ZERO,
+        access_list: Default::default(),
+        input: Bytes::new(),
+    }
+    .into();
+    let signature = sign_secp256k1_message(saturated_user_secret(), transaction.signature_hash())
+        .expect("fixture saturated-user signer");
+    let signed = TransactionSigned::new_unhashed(transaction, signature);
+    EthPooledTransaction::try_from_consensus(
+        signed
+            .try_into_recovered()
+            .expect("fixture saturated-user sender recovers"),
+    )
+    .expect("fixture saturated-user transaction converts to pooled transaction")
 }
 
 #[derive(Clone, Debug)]
@@ -418,7 +462,7 @@ struct PreparedParent {
 }
 
 #[test]
-fn real_payload_builder_commits_atomic_request_after_ce_seal_without_lysis_effects() {
+fn real_payload_builder_commits_atomic_request_between_ce_preview_and_final_seal() {
     let chain_spec: Arc<ChainSpec<OutbeHeader>> = ChainSpecBuilder::mainnet()
         .reset()
         .paris_activated()
@@ -431,12 +475,19 @@ fn real_payload_builder_commits_atomic_request_after_ce_seal_without_lysis_effec
     let proposer = signer.address();
     let dkg = build_dkg();
     let snapshot = build_snapshot(&dkg);
-    let prepared = prepare_parent(proposer, &snapshot);
-    let fork_install = Arc::new(
-        ForkInstallScenario::measurement_at(REQUEST_HEIGHT, CHAIN_ID, B256::repeat_byte(0x11))
-            .unwrap()
-            .into_install(),
-    );
+    let genesis_hash = chain_spec.genesis_hash();
+    let founder_validators = snapshot
+        .committee
+        .iter()
+        .map(|entry| (entry.address, entry.consensus_pubkey))
+        .collect::<Vec<_>>();
+    let fork_install = ForkInstallScenario::measurement_at(PARENT_HEIGHT, CHAIN_ID, genesis_hash)
+        .unwrap()
+        .with_founder_validators(&founder_validators)
+        .unwrap()
+        .into_install();
+    let prepared = prepare_parent(&snapshot, genesis_hash, &fork_install);
+    let fork_install = Arc::new(fork_install);
     let metadata =
         finalized_parent_metadata(&dkg, &snapshot, PARENT_HEIGHT, prepared.parent.hash());
     let provider = mock_provider(&chain_spec, &prepared.parent_storage);
@@ -450,7 +501,7 @@ fn real_payload_builder_commits_atomic_request_after_ce_seal_without_lysis_effec
         &snapshot,
         metadata.committee_set_hash,
     );
-    assert_provider_pre_fork_ocomp_inputs(&provider, prepared.wwd, prepared.nominal);
+    assert_provider_activated_ocomp_inputs(&provider, prepared.wwd, prepared.nominal);
     let body_storage: StorageReaderHandle = Arc::new(MemoryStorage::new());
     let runtime_body_readers = RuntimeBodyReaders::new(body_storage);
     let evm_config = OutbeEvmConfig::new_with_provider_and_runtime_body_readers(
@@ -463,7 +514,7 @@ fn real_payload_builder_commits_atomic_request_after_ce_seal_without_lysis_effec
     )
     .with_evm_signer(signer.clone())
     .with_compressed_tree_service(prepared.tree_service.clone())
-    .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(REQUEST_HEIGHT))
+    .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(PARENT_HEIGHT))
     .with_ocomp_fork_install(fork_install.clone());
     let phase1 = evm_config
         .build_signed_phase1_tx(
@@ -612,17 +663,12 @@ fn real_payload_builder_commits_atomic_request_after_ce_seal_without_lysis_effec
     apply_bundle(&mut post_state, executed.execution_output.state.state());
     StorageHandle::enter(&mut post_state, |storage| {
         let update = Update::new(storage.clone());
-        assert_eq!(update.get_active_version().unwrap(), OCOMP_PROTOCOL_VERSION);
-        assert_eq!(update.get_active_version_height().unwrap(), REQUEST_HEIGHT);
+        assert_eq!(update.get_active_version().unwrap(), ProtocolVersion::ZERO);
+        assert_eq!(update.get_active_version_height().unwrap(), 0);
         assert_eq!(
             update.version_at_height(REQUEST_HEIGHT).unwrap(),
-            OCOMP_PROTOCOL_VERSION
+            ProtocolVersion::ZERO
         );
-        let scheduled = update
-            .read_scheduled_update(U256::from(OCOMP_UPDATE_PROPOSAL_ID))
-            .unwrap()
-            .expect("genesis-scheduled OCOMP update remains publicly readable");
-        assert_eq!(scheduled.status, ScheduledUpdateStatus::Activated);
 
         assert!(
             outbe_metadosis::api::is_active_ocomp_fork_install(storage.clone(), &fork_install,)
@@ -840,15 +886,7 @@ fn real_payload_builder_commits_atomic_request_after_ce_seal_without_lysis_effec
         canonical_storage = built.storage;
     }
 
-    let vote_transactions = (0_u8..3)
-        .map(|validator_index| {
-            let vote = voting.signed_vote(validator_index);
-            let calldata = encode_submit_lysis_result_calldata(&vote, &poc_schema_limits())
-                .expect("canonical q-forming vote calldata");
-            pooled_vote_transaction(Bytes::from(calldata), u64::from(validator_index))
-        })
-        .collect::<Vec<_>>();
-    let q_forming = build_canonical_ocomp_successor(
+    let voting_open = build_canonical_ocomp_successor(
         &chain_spec,
         &prepared.tree_service,
         &signer,
@@ -862,9 +900,93 @@ fn real_payload_builder_commits_atomic_request_after_ce_seal_without_lysis_effec
         open_height,
         prepared.request_time + (open_height - REQUEST_HEIGHT),
         requested.data.intentId,
-        vote_transactions,
+        Vec::new(),
     );
-    assert_eq!(q_forming.user_transaction_count, 3);
+    assert_eq!(voting_open.record.status, OcompJobStatus::VotingOpen);
+
+    let signed_votes = (0_u8..3)
+        .map(|validator_index| (validator_index, voting.signed_vote(validator_index)))
+        .collect::<Vec<_>>();
+    let mut voting_open_state = HashMapStorageProvider::new(CHAIN_ID);
+    voting_open_state.storage = voting_open.storage.clone();
+    StorageHandle::enter(&mut voting_open_state, |storage| {
+        for (validator_index, vote) in &signed_votes {
+            let prefix = vote.prefix();
+            assert_eq!(
+                outbe_metadosis::resolve_historical_result_vote_participant(
+                    storage.clone(),
+                    &prefix,
+                    &poc_schema_limits(),
+                )
+                .expect("historical OCOMP vote participant resolution"),
+                Some(validator_sender(*validator_index)),
+            );
+        }
+    });
+    let vote_transactions = signed_votes
+        .into_iter()
+        .map(|(validator_index, vote)| {
+            let calldata = encode_submit_lysis_result_calldata(&vote, &poc_schema_limits())
+                .expect("canonical q-forming vote calldata");
+            pooled_vote_transaction(Bytes::from(calldata), validator_index)
+        })
+        .collect::<Vec<_>>();
+    let vote_hashes = vote_transactions
+        .iter()
+        .map(PoolTransaction::hash)
+        .copied()
+        .collect::<Vec<_>>();
+    let mut saturated_transactions = (0..SATURATED_USER_TRANSACTION_COUNT)
+        .map(pooled_saturated_user_transaction)
+        .collect::<Vec<_>>();
+    // Deliberately insert the higher-tip user workload first. Production
+    // OutbeTransactionOrdering must still select every OCOMP carrier ahead of it.
+    saturated_transactions.extend(vote_transactions);
+    let q_forming = build_canonical_ocomp_successor(
+        &chain_spec,
+        &prepared.tree_service,
+        &signer,
+        &runtime_body_readers,
+        &fork_install,
+        &dkg,
+        &snapshot,
+        proposer,
+        voting_open.header,
+        &voting_open.storage,
+        open_height + 1,
+        prepared.request_time + (open_height + 1 - REQUEST_HEIGHT),
+        requested.data.intentId,
+        saturated_transactions,
+    );
+    assert!(
+        q_forming.user_transaction_count > vote_hashes.len(),
+        "saturated block must contain the OCOMP carriers plus ordinary user work"
+    );
+    assert!(
+        q_forming.user_transaction_count
+            < usize::try_from(SATURATED_USER_TRANSACTION_COUNT).unwrap() + vote_hashes.len(),
+        "offered user gas must exceed the block budget so priority is observable"
+    );
+    assert!(
+        q_forming.user_transaction_hashes[..vote_hashes.len()]
+            .iter()
+            .all(|hash| vote_hashes.contains(hash)),
+        "all OCOMP carriers must be selected before higher-tip ordinary transactions"
+    );
+    assert!(q_forming.user_receipt_successes[..vote_hashes.len()]
+        .iter()
+        .all(|success| *success));
+    assert!(q_forming.user_receipt_successes[vote_hashes.len()..]
+        .iter()
+        .all(|success| !*success));
+    assert!(q_forming.user_receipt_cumulative_gas[..vote_hashes.len()]
+        .windows(2)
+        .all(|window| window[0] == window[1]));
+    assert!(
+        q_forming.user_receipt_cumulative_gas.last().unwrap()
+            > &q_forming.user_receipt_cumulative_gas[vote_hashes.len() - 1],
+        "ordinary saturated transactions, unlike OCOMP carriers, consume user-lane gas"
+    );
     assert_eq!(q_forming.record.status, OcompJobStatus::Completed);
     let completed = q_forming
         .record
@@ -884,7 +1006,7 @@ fn real_payload_builder_commits_atomic_request_after_ce_seal_without_lysis_effec
         quorum.result_digest,
         voting_result.result_digest(&poc_schema_limits()).unwrap()
     );
-    assert_eq!(quorum.signer_bitmap, 0b0111);
+    assert_eq!(quorum.signer_bitmap, vec![0b0111]);
     assert_eq!(completed.quorum_evidence_hash, quorum.evidence_hash);
 
     let mut completed_state = HashMapStorageProvider::new(CHAIN_ID);
@@ -958,6 +1080,9 @@ struct CanonicalOcompSuccessor {
     record: OcompJobRecordV1,
     requested_intents: Vec<B256>,
     user_transaction_count: usize,
+    user_transaction_hashes: Vec<B256>,
+    user_receipt_successes: Vec<bool>,
+    user_receipt_cumulative_gas: Vec<u64>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -993,7 +1118,7 @@ fn build_canonical_ocomp_successor(
     )
     .with_evm_signer(signer.clone())
     .with_compressed_tree_service(tree_service.clone())
-    .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(REQUEST_HEIGHT))
+    .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(PARENT_HEIGHT))
     .with_ocomp_fork_install(fork_install.clone());
     let metadata = finalized_parent_metadata(dkg, snapshot, height - 1, parent.hash());
     let user_transaction_count = user_transactions.len();
@@ -1054,36 +1179,53 @@ fn build_canonical_ocomp_successor(
         .begin_block_kinds()
         .expect("canonical OCOMP model begin zone decodes")
         .contains(&SystemTxKind::OcompLifecycleBegin));
-    assert_eq!(
-        layout.user.len(),
-        user_transaction_count,
-        "canonical OCOMP block must include every supplied public vote; \
-         block_gas_limit={} block_gas_used={} transaction_gas_limits={:?}",
-        payload.block().header().gas_limit(),
-        payload.block().header().gas_used(),
-        payload
-            .block()
-            .body()
-            .transactions
-            .iter()
-            .map(TransactionSigned::gas_limit)
-            .collect::<Vec<_>>()
+    assert!(
+        layout.user.len() <= user_transaction_count,
+        "payload cannot include more public transactions than the supplied pool"
     );
     let executed = payload
         .executed_block()
         .expect("canonical OCOMP model block exposes execution");
-    if user_transaction_count > 0 {
-        let user_receipts = &executed.execution_output.result.receipts
-            [layout.begin.len()..layout.begin.len() + layout.user.len()];
-        assert!(
-            user_receipts.iter().all(|receipt| receipt.success),
-            "q-forming canonical block must commit only successful receipts: {:?}",
-            user_receipts
-                .iter()
-                .map(|receipt| (receipt.success, receipt.cumulative_gas_used))
-                .collect::<Vec<_>>()
-        );
-    }
+    let (user_transaction_hashes, user_receipt_successes, user_receipt_cumulative_gas) =
+        if !layout.user.is_empty() {
+            let user_receipts = &executed.execution_output.result.receipts
+                [layout.begin.len()..layout.begin.len() + layout.user.len()];
+            let mut prior_cumulative_gas = executed.execution_output.result.receipts
+                [layout.begin.len().saturating_sub(1)]
+            .cumulative_gas_used;
+            for (transaction, receipt) in layout.user.iter().zip(user_receipts) {
+                let transaction = *transaction;
+                if transaction.to() == Some(METADOSIS_ADDRESS) {
+                    assert_eq!(
+                        TransactionSigned::gas_limit(transaction),
+                        30_000,
+                        "every OCOMP system carrier preserves the canonical signed gas limit"
+                    );
+                    assert_eq!(
+                        receipt.cumulative_gas_used, prior_cumulative_gas,
+                        "OCOMP system carrier must not consume ordinary user-lane gas"
+                    );
+                }
+                prior_cumulative_gas = receipt.cumulative_gas_used;
+            }
+            (
+                layout
+                    .user
+                    .iter()
+                    .map(|transaction| *(*transaction).tx_hash())
+                    .collect(),
+                user_receipts
+                    .iter()
+                    .map(|receipt| receipt.success)
+                    .collect(),
+                user_receipts
+                    .iter()
+                    .map(|receipt| receipt.cumulative_gas_used)
+                    .collect(),
+            )
+        } else {
+            (Vec::new(), Vec::new(), Vec::new())
+        };
     let import = evm_config
         .executor(StateProviderDatabase::new(&provider))
         .execute(executed.recovered_block.as_ref())
@@ -1141,13 +1283,19 @@ fn build_canonical_ocomp_successor(
         storage: state.storage,
         record,
         requested_intents,
-        user_transaction_count,
+        user_transaction_count: layout.user.len(),
+        user_transaction_hashes,
+        user_receipt_successes,
+        user_receipt_cumulative_gas,
     }
 }
 
-fn prepare_parent(proposer: Address, snapshot: &StoredCommitteeSnapshot) -> PreparedParent {
+fn prepare_parent(
+    snapshot: &StoredCommitteeSnapshot,
+    genesis_hash: B256,
+    fork_install: &outbe_metadosis::config::OcompForkInstallV1,
+) -> PreparedParent {
     let directory = tempfile::tempdir().unwrap();
-    let genesis_hash = B256::repeat_byte(0x11);
     let db = CeMdbx::open(
         directory.path(),
         EnvironmentIdentity {
@@ -1189,8 +1337,9 @@ fn prepare_parent(proposer: Address, snapshot: &StoredCommitteeSnapshot) -> Prep
         })
         .unwrap();
     let scope = ExecutionScope::with_parent_tree(parent_tree, CeWorkConfig::new(0, 0, u64::MAX));
-    let mut seed = HashMapStorageProvider::new(CHAIN_ID);
+    let mut seed = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, genesis_hash);
     seed.set_block_number(PARENT_HEIGHT);
+    seed.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::ForkProfile);
     let wwd = WorldwideDay::new(2026_0710);
     let parent_time = wwd.start_timestamp();
     let request_time = parent_time
@@ -1202,41 +1351,55 @@ fn prepare_parent(proposer: Address, snapshot: &StoredCommitteeSnapshot) -> Prep
     let owner = address!("7300000000000000000000000000000000000073");
     let seal = StorageHandle::enter(&mut seed, |storage| {
         seed_ce_genesis(&storage);
+        for (slot, value) in
+            outbe_chain_constants::GenesisProtocolParametersV1::default().genesis_storage_words()
+        {
+            storage
+                .sstore(outbe_chain_constants::CHAIN_CONSTANTS_ADDRESS, slot, value)
+                .unwrap();
+        }
         begin_block(storage.clone(), &scope).unwrap();
 
         let mut validators = ValidatorSet::new(storage.clone());
         validators.config_owner.write(VALIDATOR_OWNER).unwrap();
-        validators.config_max_validators.write(128).unwrap();
+        validators.set_config_max_validators(128).unwrap();
         validators.config_epoch_length_blocks.write(60).unwrap();
         validators.config_is_initialized.write(true).unwrap();
-        for entry in &snapshot.committee {
+        for (entry, registration) in snapshot
+            .committee
+            .iter()
+            .zip(&fork_install.founder_registrations)
+        {
             validators
                 .register_validator(VALIDATOR_OWNER, entry.address, &entry.consensus_pubkey)
                 .unwrap();
+            validators.mark_pending(entry.address).unwrap();
+            validators
+                .confirm_validator_ready(
+                    entry.address,
+                    &registration.encode_canonical(&poc_schema_limits()).unwrap(),
+                )
+                .unwrap();
+            validators
+                .activate_validator_via_boundary_for_test(entry.address)
+                .unwrap();
         }
-        validators
-            .register_validator(VALIDATOR_OWNER, proposer, &TEST_CONSENSUS_PUBLIC_KEY)
-            .unwrap();
-        validators
-            .activate_reshared_set(&[proposer], B256::ZERO)
-            .unwrap();
         write_committee_snapshot(storage.clone(), FINALIZED_EPOCH, snapshot).unwrap();
 
         let mut oracle = OracleContract::new(storage.clone());
-        let mut oracle_genesis = outbe_oracle::logic::OracleGenesisConfig::default_config();
+        let mut oracle_genesis = outbe_oracle::genesis::OracleGenesisConfig::default_config();
         oracle_genesis.initial_rates.push((
-            "COEN".to_owned(),
-            "0xUSD".to_owned(),
+            outbe_oracle::api::COEN_ASSET,
+            outbe_oracle::api::currency_address(840),
             U256::from(2_000_000_000_000_000_000u128),
         ));
-        oracle_genesis.settlement_currencies.push((
-            840,
-            "0xUSD".to_owned(),
-            "COEN".to_owned(),
-            "0xUSD".to_owned(),
-        ));
-        outbe_oracle::logic::init_from_genesis(&mut oracle, &oracle_genesis).unwrap();
-        outbe_oracle::api::initialize_fresh_ocomp_profile(storage.clone()).unwrap();
+        outbe_oracle::genesis::init_from_genesis(&mut oracle, &oracle_genesis).unwrap();
+
+        let activation_ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(PARENT_HEIGHT, parent_time, CHAIN_ID),
+            storage.clone(),
+        );
+        outbe_metadosis::commands::install_fork_profile(&activation_ctx, fork_install).unwrap();
 
         let forming_start = wwd.start_timestamp();
         let forming_end = forming_start + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR;
@@ -1259,7 +1422,6 @@ fn prepare_parent(proposer: Address, snapshot: &StoredCommitteeSnapshot) -> Prep
             .apply(storage.clone())
             .unwrap();
         let mut tribute = TributeContract::new(storage.clone());
-        tribute.initialize_fresh_ocomp_profile().unwrap();
         tribute.unseal_day(wwd).unwrap();
         tribute
             .issue(
@@ -1279,15 +1441,6 @@ fn prepare_parent(proposer: Address, snapshot: &StoredCommitteeSnapshot) -> Prep
             )
             .unwrap();
         tribute.seal_day(wwd).unwrap();
-
-        Update::new(storage.clone())
-            .write_scheduled_update(
-                U256::from(OCOMP_UPDATE_PROPOSAL_ID),
-                OCOMP_PROTOCOL_VERSION,
-                REQUEST_HEIGHT,
-                "OCOMP PoC production-path integration fixture",
-            )
-            .unwrap();
 
         let parent_ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(PARENT_HEIGHT, parent_time, CHAIN_ID),
@@ -1389,9 +1542,20 @@ fn mock_provider(
                 .extend_storage(account_storage),
         );
     }
+    for validator_index in 0_u8..4 {
+        inner.add_account(
+            validator_sender(validator_index),
+            ExtendedAccount::new(0, vote_sender_balance()),
+        );
+    }
     inner.add_account(
-        vote_sender(),
+        saturated_user_sender(),
         ExtendedAccount::new(0, vote_sender_balance()),
+    );
+    inner.add_account(
+        BURNER_ADDRESS,
+        ExtendedAccount::new(0, U256::ZERO)
+            .with_bytecode(Bytes::from_static(&[0x5b, 0x60, 0x00, 0x56])),
     );
     TestProvider {
         inner,
@@ -1402,13 +1566,37 @@ fn mock_provider(
 fn hashed_marker_state(storage: &HashMap<(Address, U256), U256>) -> HashedAccountState {
     let marker_code_hash = keccak256([0xef]);
     let mut accounts = HashedAccountState::new();
+    for validator_index in 0_u8..4 {
+        accounts.insert(
+            keccak256(validator_sender(validator_index)),
+            (
+                Account {
+                    nonce: 0,
+                    balance: vote_sender_balance(),
+                    bytecode_hash: None,
+                },
+                BTreeMap::new(),
+            ),
+        );
+    }
     accounts.insert(
-        keccak256(vote_sender()),
+        keccak256(saturated_user_sender()),
         (
             Account {
                 nonce: 0,
                 balance: vote_sender_balance(),
                 bytecode_hash: None,
+            },
+            BTreeMap::new(),
+        ),
+    );
+    accounts.insert(
+        keccak256(BURNER_ADDRESS),
+        (
+            Account {
+                nonce: 0,
+                balance: U256::ZERO,
+                bytecode_hash: Some(keccak256([0x5b, 0x60, 0x00, 0x56])),
             },
             BTreeMap::new(),
         ),
@@ -1490,7 +1678,7 @@ fn mutate_one_storage_value(mut post_state: HashedPostState) -> HashedPostState 
 
 fn apply_bundle(
     target: &mut HashMapStorageProvider,
-    state: &revm::primitives::AddressMap<revm::database::smartAccount>,
+    state: &revm::primitives::AddressMap<revm::database::states::BundleAccount>,
 ) {
     for (address, account) in state {
         for (slot, value) in &account.storage {
@@ -1545,7 +1733,7 @@ fn assert_provider_snapshot(
     );
 }
 
-fn assert_provider_pre_fork_ocomp_inputs(
+fn assert_provider_activated_ocomp_inputs(
     provider: &TestProvider,
     wwd: WorldwideDay,
     expected_nominal: U256,
@@ -1560,15 +1748,9 @@ fn assert_provider_pre_fork_ocomp_inputs(
     let storage = StorageHandle::new(&mut direct);
     let update = Update::new(storage.clone());
     assert_eq!(update.get_active_version().unwrap(), ProtocolVersion::ZERO);
-    let scheduled = update
-        .read_scheduled_update(U256::from(OCOMP_UPDATE_PROPOSAL_ID))
-        .unwrap()
-        .expect("parent carries the scheduled OCOMP update");
-    assert_eq!(scheduled.version, OCOMP_PROTOCOL_VERSION);
-    assert_eq!(scheduled.activation_height, REQUEST_HEIGHT);
-    assert_eq!(scheduled.status, ScheduledUpdateStatus::Scheduled);
+    assert_eq!(update.get_active_version_height().unwrap(), 0);
 
-    assert!(!outbe_metadosis::api::has_active_ocomp_profile(storage.clone()).unwrap());
+    assert!(outbe_metadosis::api::has_active_ocomp_profile(storage.clone()).unwrap());
     let days = outbe_metadosis::api::worldwide_days(storage.clone()).unwrap();
     assert_eq!(days.len(), 1);
     let projection = outbe_metadosis::api::worldwide_day(storage.clone(), wwd)
@@ -1623,16 +1805,19 @@ fn build_dkg() -> Dkg {
 }
 
 fn build_snapshot(dkg: &Dkg) -> CommitteeSnapshot {
+    let mut public_keys = dkg.public_keys.iter().collect::<Vec<_>>();
+    public_keys.sort_by_key(|public_key| public_key.encode().to_vec());
     CommitteeSnapshot {
-        committee: dkg
-            .public_keys
-            .iter()
+        committee: public_keys
+            .into_iter()
             .enumerate()
             .map(|(index, public_key)| {
                 let mut consensus_pubkey = [0u8; 48];
                 consensus_pubkey.copy_from_slice(public_key.encode().as_ref());
                 CommitteeEntry {
-                    address: Address::with_last_byte((index + 1) as u8),
+                    address: validator_sender(
+                        u8::try_from(index).expect("fixture validator index fits u8"),
+                    ),
                     consensus_pubkey,
                 }
             })

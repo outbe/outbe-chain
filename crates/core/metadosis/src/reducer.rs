@@ -147,7 +147,9 @@ pub(crate) fn reduce_outer_wwd(
     }
 
     let current = current.ok_or_else(|| {
-        PrecompileError::Fatal("Metadosis outer WWD event requires a persisted day".into())
+        crate::errors::storage_corruption(
+            "Metadosis outer WWD event requires a persisted day".into(),
+        )
     })?;
     let transition = match event {
         OuterWwdEvent::CreateDay => unreachable!("handled above"),
@@ -157,7 +159,7 @@ pub(crate) fn reduce_outer_wwd(
             admission_available,
         } => {
             if retained_count > MAX_RETAINED_WWDS {
-                return Err(PrecompileError::Fatal(format!(
+                return Err(crate::errors::storage_corruption(format!(
                     "Metadosis retained WWD count {retained_count} exceeds cap {MAX_RETAINED_WWDS}"
                 )));
             }
@@ -270,7 +272,7 @@ pub(crate) fn reduce_outer_wwd(
             OuterWwdTransitionKind::Noop,
         ),
         event => {
-            return Err(PrecompileError::Fatal(format!(
+            return Err(crate::errors::storage_corruption(format!(
                 "Metadosis outer WWD event {event:?} is invalid from {:?}",
                 current.status
             )));
@@ -371,7 +373,7 @@ pub(crate) fn plan_wwd_advance(
 }
 
 fn backward_time(current: &WwdProjection, block_time: u64) -> PrecompileError {
-    PrecompileError::Fatal(format!(
+    crate::errors::storage_corruption(format!(
         "Metadosis WWD {} status {:?} is ahead of block timestamp {}",
         current.worldwide_day, current.status, block_time
     ))

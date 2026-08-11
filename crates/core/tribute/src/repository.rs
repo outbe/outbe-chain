@@ -573,10 +573,12 @@ fn map_parent_source_error(error: TributeRepositoryError) -> ParentBodySourceErr
     let message = error.to_string();
     match &error {
         TributeRepositoryError::Storage(storage)
-            if matches!(
-                storage.kind(),
-                StorageErrorKind::Unavailable | StorageErrorKind::RequestDeadline
-            ) =>
+            if storage.kind() == StorageErrorKind::RequestDeadline =>
+        {
+            ParentBodySourceError::RequestDeadline(message)
+        }
+        TributeRepositoryError::Storage(storage)
+            if storage.kind() == StorageErrorKind::Unavailable =>
         {
             ParentBodySourceError::Unavailable(message)
         }

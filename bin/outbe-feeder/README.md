@@ -40,7 +40,7 @@ bind_address = "0.0.0.0:9002"
 
 [[currency_pairs]]
 base = "COEN"
-quote = "0xUSD"
+quote = "840"
 providers = ["mock"]
 
 [[provider_endpoints]]

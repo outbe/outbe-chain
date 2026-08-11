@@ -1,6 +1,7 @@
-use alloy_primitives::{address, keccak256, Address, B256, U256};
+use alloy_primitives::{address, keccak256, Address, U256};
 use alloy_sol_types::SolCall;
-use outbe_oracle::contract::OracleContract;
+use outbe_oracle::api::AddressPair;
+use outbe_oracle::schema::OracleContract;
 use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
@@ -8,9 +9,7 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key};
 
 use crate::called;
-use crate::constants::{
-    CALL_PRICE_NUM, FLOOR_PRICE_NUM, MATURITY_PERIOD_SECONDS, QUALIFIER_REFERENCE_ISO,
-};
+use crate::constants::{CALL_RATE, FLOOR_RATE, QUALIFICATION_PERIOD, QUALIFIER_REFERENCE_ISO};
 use crate::precompile::{self, IIntexFactory};
 use crate::qualified;
 use crate::runtime;
@@ -22,10 +21,14 @@ fn holder() -> Address {
     address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
 }
 
+fn payment_token() -> Address {
+    address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC")
+}
+
 const CHAIN_ID: u64 = 1;
 const ISSUED_AT: u32 = 1_700_000_000;
 const PROMIS_LOAD_MINOR: u128 = 1_000_000_000_000_000_000; // 1e18
-const CALL_PERIOD: u32 = 7 * 24 * 60 * 60;
+const CALL_NOTICE_PERIOD: u32 = 7 * 24 * 60 * 60;
 
 // COEN clearing price and the floor/trigger derived from it at issuance.
 const ENTRY_PRICE: u64 = 1_000_000;
@@ -78,15 +81,15 @@ fn issue_creates_series_in_registry() {
         // Floor and trigger are derived from the clearing price at issuance.
         assert_eq!(r.floor_price_minor, U256::from(EXPECTED_FLOOR));
         assert_eq!(r.issued_intex_count, 100);
-        assert_eq!(r.intex_call_period, CALL_PERIOD);
+        assert_eq!(r.call_notice_period, CALL_NOTICE_PERIOD);
         // Window/threshold/call-period are IntexFactory protocol constants now.
         assert_eq!(r.call_price_minor, U256::from(EXPECTED_TRIGGER));
         assert_eq!(
             r.call_trigger(),
             outbe_intex::IntexCallTrigger {
-                window_days: 30,
-                threshold_days: 21,
-                intex_call_period: CALL_PERIOD,
+                call_window: 28 * DAY as u32,
+                call_threshold: 21 * DAY as u32,
+                call_notice_period: CALL_NOTICE_PERIOD,
             }
         );
         // Born Issued; issued_at is the block timestamp.
@@ -153,20 +156,150 @@ fn issue_enrolls_series_in_dense_enumeration() {
 
 #[test]
 fn floor_and_call_derivation() {
-    let floor = runtime::derived_floor(U256::from(ENTRY_PRICE), FLOOR_PRICE_NUM).unwrap();
-    let call = runtime::derived_call_price(U256::from(ENTRY_PRICE), CALL_PRICE_NUM).unwrap();
+    let floor = runtime::marked_up(U256::from(ENTRY_PRICE), FLOOR_RATE).unwrap();
+    let call = runtime::marked_up(U256::from(ENTRY_PRICE), CALL_RATE).unwrap();
     assert_eq!(floor, U256::from(EXPECTED_FLOOR));
     assert_eq!(call, U256::from(EXPECTED_TRIGGER));
 
     let one = U256::from(1_000_000_000_000_000_000u64);
     assert_eq!(
-        runtime::derived_floor(one, FLOOR_PRICE_NUM).unwrap(),
+        runtime::marked_up(one, FLOOR_RATE).unwrap(),
         U256::from(1_080_000_000_000_000_000u64)
     );
     assert_eq!(
-        runtime::derived_call_price(one, CALL_PRICE_NUM).unwrap(),
+        runtime::marked_up(one, CALL_RATE).unwrap(),
         U256::from(2_280_000_000_000_000_000u64)
     );
+}
+
+// ---------------------------------------------------------------------
+// settlement cost scaling
+// ---------------------------------------------------------------------
+
+fn entry_price() -> U256 {
+    U256::from(5u64) * U256::from(10u64).pow(U256::from(17u64))
+}
+
+fn load_minor() -> U256 {
+    U256::from(100_000u64) * U256::from(10u64).pow(U256::from(18u64))
+}
+
+#[test]
+fn cost_amount_six_decimals() {
+    let cost = runtime::derived_cost_amount(entry_price(), load_minor(), 6).unwrap();
+    assert_eq!(cost, U256::from(50_000_000_000u64));
+}
+
+#[test]
+fn cost_amount_eighteen_decimals_is_1e12_larger() {
+    let six = runtime::derived_cost_amount(entry_price(), load_minor(), 6).unwrap();
+    let eighteen = runtime::derived_cost_amount(entry_price(), load_minor(), 18).unwrap();
+    assert_eq!(eighteen, six * U256::from(10u64).pow(U256::from(12u64)));
+}
+
+#[test]
+fn cost_amount_zero_decimals() {
+    let cost = runtime::derived_cost_amount(entry_price(), load_minor(), 0).unwrap();
+    assert_eq!(cost, U256::from(50_000u64));
+}
+
+#[test]
+fn cost_amount_rejects_decimals_above_the_product_scale() {
+    let err = runtime::derived_cost_amount(entry_price(), load_minor(), 37).unwrap_err();
+    assert!(err.to_string().contains("unsupported decimals"), "{err}");
+}
+
+fn word(value: u64) -> alloy_primitives::Bytes {
+    alloy_primitives::Bytes::from(U256::from(value).to_be_bytes::<32>().to_vec())
+}
+
+/// Storage with an issued series 7 and a payment token the router reports
+/// `vaults` vaults for, reporting `iso` and `decimals`.
+fn with_payment_token<R>(
+    vaults: u64,
+    iso: u64,
+    decimals: u64,
+    f: impl FnOnce(StorageHandle) -> R,
+) -> R {
+    use crate::sol_ext::{IReferenceCurrency, IERC20};
+    use outbe_vaultrouter::api::IVaultRouter;
+
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(ISSUED_AT as u64));
+    storage.stub_sub_call_at(crate::constants::INTEX_NFT1155_ADDRESS, word(0));
+    storage.stub_sub_call_at(crate::constants::ORIGIN_ROUTER_ADDRESS, word(0));
+    storage.stub_sub_call_at_selector(
+        outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
+        IVaultRouter::assetVaultsCountCall::SELECTOR,
+        word(vaults),
+    );
+    storage.stub_sub_call_at_selector(
+        payment_token(),
+        IReferenceCurrency::isoCodeCall::SELECTOR,
+        word(iso),
+    );
+    storage.stub_sub_call_at_selector(
+        payment_token(),
+        IERC20::decimalsCall::SELECTOR,
+        word(decimals),
+    );
+
+    StorageHandle::enter(&mut storage, |s| {
+        runtime::issue(&s, sample(7)).unwrap();
+        f(s)
+    })
+}
+
+#[test]
+fn cost_amount_prices_an_accepted_token() {
+    with_payment_token(1, 840, 18, |s| {
+        let cost = runtime::quote_cost_amount(&s, 7, payment_token()).unwrap();
+        assert_eq!(cost, U256::from(1_000_000u64));
+    });
+}
+
+#[test]
+fn cost_amount_rejects_an_unregistered_token() {
+    with_payment_token(0, 840, 18, |s| {
+        let err = runtime::quote_cost_amount(&s, 7, payment_token()).unwrap_err();
+        assert!(err.to_string().contains("no registered vault"), "{err}");
+    });
+}
+
+#[test]
+fn cost_amount_rejects_a_foreign_currency() {
+    with_payment_token(1, 978, 18, |s| {
+        let err = runtime::quote_cost_amount(&s, 7, payment_token()).unwrap_err();
+        assert!(err.to_string().contains("does not match"), "{err}");
+    });
+}
+
+#[test]
+fn cost_amount_rejects_missing_series() {
+    with_factory(|s| {
+        assert!(runtime::quote_cost_amount(&s, 7, payment_token()).is_err());
+    });
+}
+
+#[test]
+fn cost_amount_dispatch() {
+    with_payment_token(1, 840, 18, |s| {
+        let out = precompile::dispatch(
+            s.clone(),
+            &IIntexFactory::quoteCostAmountCall {
+                seriesId: 7,
+                paymentToken: payment_token(),
+            }
+            .abi_encode(),
+            holder(),
+            U256::ZERO,
+        )
+        .unwrap();
+        assert_eq!(
+            IIntexFactory::quoteCostAmountCall::abi_decode_returns(&out).unwrap(),
+            U256::from(1_000_000u64)
+        );
+    });
 }
 
 // ---------------------------------------------------------------------
@@ -176,14 +309,16 @@ fn floor_and_call_derivation() {
 #[test]
 fn settle_rejects_zero_amount() {
     with_factory(|s| {
-        assert!(runtime::settle(&s, 7, holder(), holder(), U256::ZERO).is_err());
+        assert!(runtime::settle(&s, 7, holder(), holder(), U256::ZERO, payment_token()).is_err());
     });
 }
 
 #[test]
 fn settle_rejects_missing_series() {
     with_factory(|s| {
-        assert!(runtime::settle(&s, 7, holder(), holder(), U256::from(1)).is_err());
+        assert!(
+            runtime::settle(&s, 7, holder(), holder(), U256::from(1), payment_token()).is_err()
+        );
     });
 }
 
@@ -192,7 +327,8 @@ fn settle_rejects_wrong_state_issued() {
     with_factory(|s| {
         // Born Issued; settlement is only valid in Qualified/Called.
         runtime::issue(&s, sample(7)).unwrap();
-        let err = runtime::settle(&s, 7, holder(), holder(), U256::from(1)).unwrap_err();
+        let err =
+            runtime::settle(&s, 7, holder(), holder(), U256::from(1), payment_token()).unwrap_err();
         assert!(err.to_string().to_lowercase().contains("settleable"));
     });
 }
@@ -200,7 +336,7 @@ fn settle_rejects_wrong_state_issued() {
 #[test]
 fn settle_rejects_expired_deadline() {
     // Late block timestamp so the Called deadline is already in the past.
-    let now = (ISSUED_AT as u64) + (CALL_PERIOD as u64) + 1_000;
+    let now = (ISSUED_AT as u64) + (CALL_NOTICE_PERIOD as u64) + 1_000;
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(now));
     storage.stub_sub_call_at(
@@ -214,9 +350,10 @@ fn settle_rejects_expired_deadline() {
     );
     StorageHandle::enter(&mut storage, |s| {
         runtime::issue(&s, sample(7)).unwrap();
-        // deadline = ISSUED_AT + CALL_PERIOD < now
+        // deadline = ISSUED_AT + CALL_NOTICE_PERIOD < now
         outbe_intex::api::mark_called(&s, 7, ISSUED_AT).unwrap();
-        let err = runtime::settle(&s, 7, holder(), holder(), U256::from(1)).unwrap_err();
+        let err =
+            runtime::settle(&s, 7, holder(), holder(), U256::from(1), payment_token()).unwrap_err();
         assert!(err.to_string().to_lowercase().contains("deadline"));
     });
 }
@@ -373,7 +510,7 @@ fn insert_remove_unqualified_roundtrip() {
 }
 
 #[test]
-fn try_qualify_gates_maturity_floor_and_latches() {
+fn try_qualify_gates_qualification_floor_and_latches() {
     with_factory(|s| {
         runtime::issue(&s, sample(7)).unwrap();
         let mut f = IntexFactoryContract::new(s.clone());
@@ -386,21 +523,21 @@ fn try_qualify_gates_maturity_floor_and_latches() {
             &s,
             &mut f,
             7,
-            MATURITY_PERIOD_SECONDS,
+            QUALIFICATION_PERIOD,
             immature,
             floor + U256::from(1)
         )
         .unwrap());
         // Mature but rate == floor (strict >) -> false.
         assert!(
-            !qualified::try_qualify(&s, &mut f, 7, MATURITY_PERIOD_SECONDS, mature, floor).unwrap()
+            !qualified::try_qualify(&s, &mut f, 7, QUALIFICATION_PERIOD, mature, floor).unwrap()
         );
         // Mature + rate > floor -> qualifies, latched, removed from bin.
         assert!(qualified::try_qualify(
             &s,
             &mut f,
             7,
-            MATURITY_PERIOD_SECONDS,
+            QUALIFICATION_PERIOD,
             mature,
             floor + U256::from(1)
         )
@@ -419,7 +556,7 @@ fn try_qualify_gates_maturity_floor_and_latches() {
             &s,
             &mut f,
             7,
-            MATURITY_PERIOD_SECONDS,
+            QUALIFICATION_PERIOD,
             mature,
             floor + U256::from(1)
         )
@@ -493,7 +630,7 @@ fn qualify_series<'a>(
         s,
         &mut f,
         id,
-        MATURITY_PERIOD_SECONDS,
+        QUALIFICATION_PERIOD,
         mature,
         floor + U256::from(1)
     )
@@ -501,33 +638,30 @@ fn qualify_series<'a>(
     f
 }
 
-fn setup_pair(oracle: &OracleContract) -> u32 {
-    let pair_hash = B256::repeat_byte(0x11);
-    let pair_id = 1u32;
-    oracle
-        .settlement_iso_to_pair
-        .write(&QUALIFIER_REFERENCE_ISO, pair_hash)
-        .unwrap();
-    oracle.pair_hash_to_id.write(&pair_hash, pair_id).unwrap();
+/// Registry index the fixtures register the qualifier pair at; the rate
+/// columns are keyed by it.
+const PAIR_ID: u32 = 1;
+
+fn setup_pair(oracle: &OracleContract) -> AddressPair {
+    let pair = outbe_oracle::api::AddressPair::new_coen_to(QUALIFIER_REFERENCE_ISO);
+    let pair_id = PAIR_ID;
+    oracle.pair_to_index.write(&pair, pair_id).unwrap();
     // Full registry entry so the production VWAP paths (calculate_vwaps
-    // iterating registered vote-target pairs) see the pair too.
+    // iterating registered vote-target pairs) see the pair too. `pair_at` reads
+    // the reverse column.
     oracle.pair_count.write(pair_id).unwrap();
-    oracle.pair_id_to_hash.write(&pair_id, pair_hash).unwrap();
-    oracle.vote_target.write(&pair_hash, true).unwrap();
-    pair_id
+    oracle.pair_by_index.write_pair(&pair_id, pair).unwrap();
+    oracle.vote_target.write(&pair, true).unwrap();
+    pair
 }
 
-fn set_vwap(oracle: &OracleContract, utc_day: u32, pair_id: u32, value: U256) {
-    oracle.utc_day_vwap_pair_count.write(&utc_day, 1).unwrap();
-    oracle
-        .utc_day_vwap_pair_id
-        .get_nested(&utc_day)
-        .write(&0, pair_id)
-        .unwrap();
+fn set_vwap(oracle: &OracleContract, utc_day: u32, pair: AddressPair, value: U256) {
+    // The value column is keyed by the pair's registry index.
+    let pair_id = oracle.pair_index_of(pair).unwrap();
     oracle
         .utc_day_vwap_value
         .get_nested(&utc_day)
-        .write(&0, value)
+        .write(&pair_id, value)
         .unwrap();
     // Mirror the begin-block hook: the watermark covers every seeded day.
     if oracle.utc_day_vwap_last_finalized.read().unwrap() < utc_day {
@@ -536,10 +670,10 @@ fn set_vwap(oracle: &OracleContract, utc_day: u32, pair_id: u32, value: U256) {
 }
 
 /// Set `days` consecutive closed UTC days ending at `latest` to `value`.
-fn fill_days(oracle: &OracleContract, latest: u32, pair_id: u32, days: u32, value: U256) {
+fn fill_days(oracle: &OracleContract, latest: u32, pair: AddressPair, days: u32, value: U256) {
     let mut d = latest;
     for _ in 0..days {
-        set_vwap(oracle, d, pair_id, value);
+        set_vwap(oracle, d, pair, value);
         d = previous_date_key(d);
     }
 }
@@ -577,16 +711,23 @@ fn try_call_marks_called_when_threshold_met() {
     with_factory(|s| {
         let mut f = qualify_series(&s, 7, sample(7));
         let oracle = OracleContract::new(s.clone());
-        let pair_id = setup_pair(&oracle);
+        let pair = setup_pair(&oracle);
         // All 30 window days above the trigger (threshold is 21).
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;
         let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
         let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
-        fill_days(&oracle, last_closed_day, pair_id, 30, breach);
+        fill_days(&oracle, last_closed_day, pair, 30, breach);
 
-        assert!(
-            called::try_call(&s, &mut f, &oracle, 7, pair_id, last_closed_day, scan_ts).unwrap()
-        );
+        assert!(called::try_call(
+            &s,
+            &mut f,
+            &oracle,
+            &mut called::DayVwaps::new(oracle.pair_index_of(pair).unwrap()),
+            7,
+            last_closed_day,
+            scan_ts
+        )
+        .unwrap());
         assert_eq!(
             outbe_intex::api::read_series(&s, 7)
                 .unwrap()
@@ -604,7 +745,7 @@ fn try_call_skips_when_below_threshold() {
     with_factory(|s| {
         let mut f = qualify_series(&s, 7, sample(7));
         let oracle = OracleContract::new(s.clone());
-        let pair_id = setup_pair(&oracle);
+        let pair = setup_pair(&oracle);
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;
         let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
         let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
@@ -612,17 +753,24 @@ fn try_call_skips_when_below_threshold() {
                                                  // 20 breach days + 10 calm days; threshold is 21.
         let mut d = last_closed_day;
         for _ in 0..20 {
-            set_vwap(&oracle, d, pair_id, breach);
+            set_vwap(&oracle, d, pair, breach);
             d = previous_date_key(d);
         }
         for _ in 0..10 {
-            set_vwap(&oracle, d, pair_id, calm);
+            set_vwap(&oracle, d, pair, calm);
             d = previous_date_key(d);
         }
 
-        assert!(
-            !called::try_call(&s, &mut f, &oracle, 7, pair_id, last_closed_day, scan_ts).unwrap()
-        );
+        assert!(!called::try_call(
+            &s,
+            &mut f,
+            &oracle,
+            &mut called::DayVwaps::new(oracle.pair_index_of(pair).unwrap()),
+            7,
+            last_closed_day,
+            scan_ts
+        )
+        .unwrap());
         assert_eq!(
             outbe_intex::api::read_series(&s, 7)
                 .unwrap()
@@ -637,8 +785,8 @@ fn try_call_skips_when_below_threshold() {
 fn try_call_excludes_pre_issuance_days() {
     with_factory(|s| {
         // window 30, threshold 27: only days from issuance onward may count.
-        // Seed the series directly with threshold 27 (above the 21d maturity),
-        // since the protocol default (21) does not exceed maturity and a
+        // Seed the series directly with threshold 27 (above the 21d qualification
+        // period), since the protocol default (21) does not exceed it and a
         // qualified series would always have >= 21 completed post-issuance days.
         outbe_intex::api::create_series(
             &s,
@@ -651,9 +799,9 @@ fn try_call_excludes_pre_issuance_days() {
                 floor_price_minor: U256::from(EXPECTED_FLOOR),
                 call_price_minor: U256::from(EXPECTED_TRIGGER),
                 call_trigger: outbe_intex::IntexCallTrigger {
-                    window_days: 30,
-                    threshold_days: 27,
-                    intex_call_period: CALL_PERIOD,
+                    call_window: 30 * DAY as u32,
+                    call_threshold: 27 * DAY as u32,
+                    call_notice_period: CALL_NOTICE_PERIOD,
                 },
                 issued_at: ISSUED_AT,
                 issuance_currency: 840,
@@ -664,17 +812,24 @@ fn try_call_excludes_pre_issuance_days() {
         outbe_intex::api::mark_qualified(&s, 8).unwrap();
         let mut f = IntexFactoryContract::new(s.clone());
         let oracle = OracleContract::new(s.clone());
-        let pair_id = setup_pair(&oracle);
+        let pair = setup_pair(&oracle);
         // Scan only ~23 days after issuance, but set all 30 window days as
         // breaches: the ~7 pre-issuance days must not count, so 23 < 27.
         let scan_ts = ISSUED_AT as u64 + 23 * DAY;
         let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
         let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
-        fill_days(&oracle, last_closed_day, pair_id, 30, breach);
+        fill_days(&oracle, last_closed_day, pair, 30, breach);
 
-        assert!(
-            !called::try_call(&s, &mut f, &oracle, 8, pair_id, last_closed_day, scan_ts).unwrap()
-        );
+        assert!(!called::try_call(
+            &s,
+            &mut f,
+            &oracle,
+            &mut called::DayVwaps::new(oracle.pair_index_of(pair).unwrap()),
+            8,
+            last_closed_day,
+            scan_ts
+        )
+        .unwrap());
         assert_eq!(
             outbe_intex::api::read_series(&s, 8)
                 .unwrap()
@@ -703,9 +858,9 @@ fn seed_issued(s: &StorageHandle<'_>, id: u32) {
             floor_price_minor: U256::from(EXPECTED_FLOOR),
             call_price_minor: U256::from(EXPECTED_TRIGGER),
             call_trigger: outbe_intex::IntexCallTrigger {
-                window_days: 30,
-                threshold_days: 21,
-                intex_call_period: CALL_PERIOD,
+                call_window: 30 * DAY as u32,
+                call_threshold: 21 * DAY as u32,
+                call_notice_period: CALL_NOTICE_PERIOD,
             },
             issued_at: ISSUED_AT,
             issuance_currency: 840,
@@ -736,7 +891,7 @@ fn qualify_survives_router_failure() {
             &s,
             &mut f,
             7,
-            MATURITY_PERIOD_SECONDS,
+            QUALIFICATION_PERIOD,
             mature,
             U256::from(EXPECTED_FLOOR) + U256::from(1)
         )
@@ -768,20 +923,27 @@ fn call_survives_router_failure() {
         f.insert_qualified(7, U256::from(EXPECTED_TRIGGER)).unwrap();
 
         let oracle = OracleContract::new(s.clone());
-        let pair_id = setup_pair(&oracle);
+        let pair = setup_pair(&oracle);
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;
         let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
         fill_days(
             &oracle,
             last_closed_day,
-            pair_id,
+            pair,
             30,
             U256::from(EXPECTED_TRIGGER) + U256::from(1),
         );
 
-        assert!(
-            called::try_call(&s, &mut f, &oracle, 7, pair_id, last_closed_day, scan_ts).unwrap()
-        );
+        assert!(called::try_call(
+            &s,
+            &mut f,
+            &oracle,
+            &mut called::DayVwaps::new(oracle.pair_index_of(pair).unwrap()),
+            7,
+            last_closed_day,
+            scan_ts
+        )
+        .unwrap());
         assert_eq!(
             outbe_intex::api::read_series(&s, 7)
                 .unwrap()
@@ -797,19 +959,18 @@ fn call_survives_router_failure() {
 // ---------------------------------------------------------------------
 
 #[test]
-fn scan_and_qualify_promotes_matured_series() {
+fn scan_and_qualify_promotes_aged_series() {
     with_factory(|s| {
         runtime::issue(&s, sample(7)).unwrap();
         // Qualifier pair live rate above the floor.
         let oracle = OracleContract::new(s.clone());
-        let pair_hash = B256::repeat_byte(0x11);
-        oracle
-            .settlement_iso_to_pair
-            .write(&QUALIFIER_REFERENCE_ISO, pair_hash)
-            .unwrap();
+        let pair = outbe_oracle::api::AddressPair::new_coen_to(QUALIFIER_REFERENCE_ISO);
+        // The ISO resolves through the pair registry, so the pair must exist
+        // and the rate columns are keyed by its index.
+        oracle.pair_to_index.write(&pair, PAIR_ID).unwrap();
         oracle
             .exchange_rate
-            .write(&pair_hash, U256::from(EXPECTED_FLOOR) + U256::from(1))
+            .write(&PAIR_ID, U256::from(EXPECTED_FLOOR) + U256::from(1))
             .unwrap();
 
         let mature_ts = ISSUED_AT as u64 + 21 * DAY + 1;
@@ -835,11 +996,11 @@ fn scan_and_call_force_calls_breached_series() {
     with_factory(|s| {
         let _f = qualify_series(&s, 7, sample(7));
         let oracle = OracleContract::new(s.clone());
-        let pair_id = setup_pair(&oracle);
+        let pair = setup_pair(&oracle);
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;
         let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
         let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
-        fill_days(&oracle, last_closed_day, pair_id, 30, breach);
+        fill_days(&oracle, last_closed_day, pair, 30, breach);
 
         let ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID),
@@ -868,8 +1029,8 @@ fn scan_and_call_reads_daily_vwap_at_midnight() {
     with_factory(|s| {
         let _f = qualify_series(&s, 7, sample(7));
         let mut oracle = OracleContract::new(s.clone());
-        let pair_id = setup_pair(&oracle);
-        // Exact midnight UTC, well past maturity.
+        setup_pair(&oracle);
+        // Exact midnight UTC, well past the qualification period.
         let scan_ts = (ISSUED_AT as u64 / DAY + 60) * DAY;
         let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
         let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
@@ -884,7 +1045,14 @@ fn scan_and_call_reads_daily_vwap_at_midnight() {
         for day in days {
             let noon = date_key_to_utc_timestamp(day) + DAY / 2;
             oracle
-                .write_snapshot(noon, &[(pair_id, breach, U256::from(1))])
+                .write_snapshot(
+                    noon,
+                    &[(
+                        outbe_oracle::api::AddressPair::new_coen_to(QUALIFIER_REFERENCE_ISO),
+                        breach,
+                        U256::from(1),
+                    )],
+                )
                 .unwrap();
             oracle.finalize_utc_day_vwap(day).unwrap();
         }
@@ -918,13 +1086,10 @@ fn scan_does_not_halt_on_overflow_rate() {
     with_factory(|s| {
         runtime::issue(&s, sample(7)).unwrap();
         let oracle = OracleContract::new(s.clone());
-        let pair_hash = B256::repeat_byte(0x11);
-        oracle
-            .settlement_iso_to_pair
-            .write(&QUALIFIER_REFERENCE_ISO, pair_hash)
-            .unwrap();
+        let pair = outbe_oracle::api::AddressPair::new_coen_to(QUALIFIER_REFERENCE_ISO);
+        oracle.pair_to_index.write(&pair, PAIR_ID).unwrap();
         // Out-of-range rate: price_to_bin overflows.
-        oracle.exchange_rate.write(&pair_hash, U256::MAX).unwrap();
+        oracle.exchange_rate.write(&PAIR_ID, U256::MAX).unwrap();
 
         let mature_ts = ISSUED_AT as u64 + 21 * DAY + 1;
         let ctx = BlockRuntimeContext::new(
@@ -954,14 +1119,13 @@ fn scan_isolates_bad_series() {
             .unwrap();
 
         let oracle = OracleContract::new(s.clone());
-        let pair_hash = B256::repeat_byte(0x11);
-        oracle
-            .settlement_iso_to_pair
-            .write(&QUALIFIER_REFERENCE_ISO, pair_hash)
-            .unwrap();
+        let pair = outbe_oracle::api::AddressPair::new_coen_to(QUALIFIER_REFERENCE_ISO);
+        // The ISO resolves through the pair registry, so the pair must exist
+        // and the rate columns are keyed by its index.
+        oracle.pair_to_index.write(&pair, PAIR_ID).unwrap();
         oracle
             .exchange_rate
-            .write(&pair_hash, U256::from(EXPECTED_FLOOR) + U256::from(1))
+            .write(&PAIR_ID, U256::from(EXPECTED_FLOOR) + U256::from(1))
             .unwrap();
 
         let mature_ts = ISSUED_AT as u64 + 21 * DAY + 1;
@@ -986,11 +1150,11 @@ fn call_scan_does_not_halt_on_overflow_vwap() {
     with_factory(|s| {
         let _f = qualify_series(&s, 7, sample(7));
         let oracle = OracleContract::new(s.clone());
-        let pair_id = setup_pair(&oracle);
+        let pair = setup_pair(&oracle);
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;
         let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
         // Out-of-range VWAP for the completed day: price_to_bin overflows.
-        fill_days(&oracle, last_closed_day, pair_id, 1, U256::MAX);
+        fill_days(&oracle, last_closed_day, pair, 1, U256::MAX);
 
         let ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID),
@@ -1012,15 +1176,14 @@ fn call_scan_does_not_halt_on_overflow_vwap() {
 fn scan_caps_work_per_block_and_resumes_via_cursor() {
     with_factory(|s| {
         let oracle = OracleContract::new(s.clone());
-        let pair_hash = B256::repeat_byte(0x11);
-        oracle
-            .settlement_iso_to_pair
-            .write(&QUALIFIER_REFERENCE_ISO, pair_hash)
-            .unwrap();
+        let pair = outbe_oracle::api::AddressPair::new_coen_to(QUALIFIER_REFERENCE_ISO);
+        // The ISO resolves through the pair registry, so the pair must exist
+        // and the rate columns are keyed by its index.
+        oracle.pair_to_index.write(&pair, PAIR_ID).unwrap();
         // Rate well above both floors so both bins are eligible.
         oracle
             .exchange_rate
-            .write(&pair_hash, U256::from(EXPECTED_FLOOR) * U256::from(1000))
+            .write(&PAIR_ID, U256::from(EXPECTED_FLOOR) * U256::from(1000))
             .unwrap();
 
         // Two distinct bins: the first holds exactly MAX_SERIES_PER_BLOCK entries, the second a few.
@@ -1086,7 +1249,7 @@ fn config_defaults_to_prod_when_unset() {
 }
 
 #[test]
-fn config_dev_profile_drives_issuance_and_maturity() {
+fn config_dev_profile_drives_issuance_and_qualification() {
     with_factory(|s| {
         let mut f = IntexFactoryContract::new(s.clone());
         // Select the dev profile through the single selector byte.
@@ -1101,33 +1264,33 @@ fn config_dev_profile_drives_issuance_and_maturity() {
         // Issuance captures the dev call-trigger and dev-derived prices.
         let dev = crate::config::IntexParams::DEV;
         let r = outbe_intex::api::read_series(&s, 7).unwrap();
-        assert_eq!(r.intex_call_period, dev.intex_call_period_secs);
+        assert_eq!(r.call_notice_period, dev.call_notice_period);
         assert_eq!(
             r.floor_price_minor,
-            U256::from(ENTRY_PRICE * dev.floor_price_num / 100)
+            U256::from(ENTRY_PRICE * u64::from(100 + dev.floor_rate) / 100)
         );
         assert_eq!(
             r.call_price_minor,
-            U256::from(ENTRY_PRICE * dev.call_price_num / 100)
+            U256::from(ENTRY_PRICE * u64::from(100 + dev.call_rate) / 100)
         );
         assert_eq!(
             r.call_trigger(),
             outbe_intex::IntexCallTrigger {
-                window_days: dev.call_window_days,
-                threshold_days: dev.call_threshold_days,
-                intex_call_period: dev.intex_call_period_secs,
+                call_window: dev.call_window,
+                call_threshold: dev.call_threshold,
+                call_notice_period: dev.call_notice_period,
             }
         );
 
-        // Dev maturity qualifies long before the 21-day prod maturity.
+        // The dev qualification period elapses long before the 21-day prod one.
         let rate = r.floor_price_minor + U256::from(1);
-        let after_maturity = ISSUED_AT as u64 + dev.maturity_period_secs + 1;
+        let after_qualification = ISSUED_AT as u64 + u64::from(dev.qualification_period) + 1;
         assert!(qualified::try_qualify(
             &s,
             &mut f,
             7,
-            dev.maturity_period_secs,
-            after_maturity,
+            dev.qualification_period,
+            after_qualification,
             rate
         )
         .unwrap());
@@ -1576,6 +1739,7 @@ fn unpublished_selectors_refuse_native_value() {
             seriesId: 0u32,
             intexHolder: Address::ZERO,
             amount: U256::ZERO,
+            paymentToken: Address::ZERO,
         }
         .abi_encode(),
         IIntexFactory::setAuthorizedSettlerCall {

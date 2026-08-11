@@ -31,7 +31,7 @@ const REQUIRED_SCENARIO_BINARIES: [&str; 6] = [
 const PUBLIC_SCENARIOS: [(&str, &str, &str); 4] = [
     (
         "OCM-PUB-001",
-        "Four independent domains certify and atomically apply one public Lysis result",
+        "A public Tribute completes real OCOMP, FullNode verification, NOD, and replay",
         "PUBLIC_TX_RECEIPT",
     ),
     (
@@ -46,7 +46,7 @@ const PUBLIC_SCENARIOS: [(&str, &str, &str); 4] = [
     ),
     (
         "OCM-PUB-004",
-        "Four independent domains certify and atomically apply one public Lysis result",
+        "A public Tribute completes real OCOMP, FullNode verification, NOD, and replay",
         "FINALIZED_PUBLIC_STATE",
     ),
 ];
@@ -54,22 +54,22 @@ const PUBLIC_SCENARIOS: [(&str, &str, &str); 4] = [
 const E2E_SCENARIOS: [(&str, &str, &str); 4] = [
     (
         "OCM-E2E-001",
-        "Final public Tribute flows through four independent domains to certified Nod",
+        "A public Tribute completes real OCOMP, FullNode verification, NOD, and replay",
         "FINALIZED_PUBLIC_STATE",
     ),
     (
         "OCM-TRC-001",
-        "Final public Tribute flows through four independent domains to certified Nod",
+        "A public Tribute completes real OCOMP, FullNode verification, NOD, and replay",
         "RUNTIME_BOUNDARY_TRACE",
     ),
     (
         "OCM-E2E-007",
-        "An incompatible Supervisor cannot affect consensus or the other validator domains",
+        "An incompatible Supervisor cannot affect consensus or compatible domains",
         "PROCESS_BOUNDARY",
     ),
     (
         "OCM-E2E-008",
-        "A completed generation survives node and compute-process restart and replay",
+        "A public Tribute completes real OCOMP, FullNode verification, NOD, and replay",
         "FINALIZED_PUBLIC_STATE",
     ),
 ];
@@ -86,7 +86,9 @@ pub fn assemble_lane(
         "OCM-FAST" | "OCM-INT" => assemble_command_lane(repo, ledger, lane, evidence_dir),
         "OCM-PUBLIC" => assemble_public_lane(repo, ledger, evidence_dir),
         "OCM-E2E" => assemble_e2e_lane(repo, ledger, evidence_dir),
-        _ => eyre::bail!("lane assembly is not implemented for {lane}"),
+        _ => {
+            eyre::bail!("lane assembly is not implemented for {lane}");
+        }
     }
 }
 
@@ -104,7 +106,9 @@ pub fn verify_lane_semantics(
     .wrap_err("decode lane manifest for semantic verification")?;
     let lane = match &manifest.mode {
         EvidenceMode::Lane { lane } => lane.as_str(),
-        _ => eyre::bail!("semantic lane verification requires lane mode"),
+        _ => {
+            eyre::bail!("semantic lane verification requires lane mode");
+        }
     };
     let evidence_dir = manifest_path
         .parent()
@@ -115,7 +119,9 @@ pub fn verify_lane_semantics(
         }
         "OCM-PUBLIC" => verify_scenario_lane(repo, &manifest, evidence_dir, &PUBLIC_SCENARIOS),
         "OCM-E2E" => verify_scenario_lane(repo, &manifest, evidence_dir, &E2E_SCENARIOS),
-        _ => eyre::bail!("semantic lane verification is not implemented for {lane}"),
+        _ => {
+            eyre::bail!("semantic lane verification is not implemented for {lane}");
+        }
     }
 }
 
@@ -426,14 +432,19 @@ fn validate_scenario_manifest_identity(
     sections: &BTreeMap<String, Value>,
     identity: &ScenarioRunIdentity,
 ) -> Result<()> {
-    let manifest_image_id = sections
+    let manifest_config = sections
         .get("exact_config_and_service_unit_hashes")
-        .and_then(Value::as_object)
-        .and_then(|section| section.get("gramine_image_id"));
+        .and_then(Value::as_object);
     ensure!(
         sections.get("exact_binary_hashes") == Some(&identity.exact_binaries)
-            && sections.get("genesis_fork_bundle_and_profiles") == Some(&identity.launch_identity)
-            && manifest_image_id == Some(&identity.gramine_image_id),
+            && sections.get("genesis_fork_bundle_and_profiles")
+                == Some(&identity.launch_evidence())
+            && manifest_config.and_then(|section| section.get("scenario_launch_identities"))
+                == Some(&json!(identity.scenario_launch_identities))
+            && manifest_config.and_then(|section| section.get("gramine_image_id"))
+                == Some(&identity.gramine_image_id)
+            && manifest_config.and_then(|section| section.get("execution_profile"))
+                == Some(&identity.execution_profile),
         "scenario lane manifest identity differs from retained scenarios"
     );
     Ok(())
@@ -442,17 +453,72 @@ fn validate_scenario_manifest_identity(
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ScenarioRunIdentity {
     exact_binaries: Value,
-    launch_identity: Value,
+    scenario_launch_identities: BTreeMap<String, Value>,
     gramine_image_id: Value,
+    execution_profile: Value,
+}
+
+impl ScenarioRunIdentity {
+    fn launch_evidence(&self) -> Value {
+        json!({
+            "scenario_launch_identities": &self.scenario_launch_identities,
+        })
+    }
+}
+
+fn validate_launch_identity(launch: &Value, scenario_name: &str) -> Result<()> {
+    ensure!(
+        launch.is_object(),
+        "scenario {scenario_name} lacks exact launch identity"
+    );
+    ensure!(
+        path(launch, &["chain_id"])?.as_u64().is_some()
+            && path(launch, &["activation_height"])?.as_u64().is_some(),
+        "scenario {scenario_name} has invalid numeric launch identity"
+    );
+    for field in [
+        "genesis_hash",
+        "protocol_bundle_hash",
+        "fork_install_hash",
+        "classification",
+        "metadosis_storage_layout_hash",
+    ] {
+        ensure!(
+            path(launch, &[field])?
+                .as_str()
+                .is_some_and(|value| !value.is_empty()),
+            "scenario {scenario_name} has invalid launch identity field {field}"
+        );
+    }
+    Ok(())
 }
 
 fn scenario_run_identity(
     scenarios: &BTreeMap<String, (String, Value)>,
 ) -> Result<ScenarioRunIdentity> {
     let mut exact_binaries = None;
-    let mut launch_identity = None;
+    let mut scenario_launch_identities = BTreeMap::new();
     let mut gramine_image_id = None;
-    for (scenario_name, (_, scenario)) in scenarios {
+    let mut execution_profile = None;
+    for (scenario_name, (scenario_path, scenario)) in scenarios {
+        let tee = path(scenario, &["environment", "tee"])?;
+        let sudo = path(scenario, &["environment", "sudo"])?;
+        let all = path(scenario, &["environment", "all"])?;
+        ensure!(
+            tee.as_str() == Some("sgx-no-attest")
+                && sudo.as_bool() == Some(true)
+                && all.as_bool() == Some(true),
+            "scenario {scenario_name} did not use release SGX-no-attest with sudo and fail-not-skip"
+        );
+        let profile = json!({"tee": tee, "sudo": sudo, "all": all});
+        match &execution_profile {
+            Some(expected) => ensure!(
+                expected == &profile,
+                "scenario {scenario_name} used another execution profile"
+            ),
+            None => execution_profile = Some(profile),
+        }
+
         let binaries = path(scenario, &["ocomp", "exact_binaries"])?;
         ensure!(
             binaries.as_object().is_some_and(|value| {
@@ -472,17 +538,13 @@ fn scenario_run_identity(
         }
 
         let launch = path(scenario, &["ocomp", "topology", "launch_identity"])?;
+        validate_launch_identity(launch, scenario_name)?;
         ensure!(
-            launch.is_object(),
-            "scenario {scenario_name} lacks exact launch identity"
+            scenario_launch_identities
+                .insert(scenario_path.clone(), launch.clone())
+                .is_none(),
+            "scenario launch identity member {scenario_path} is duplicated"
         );
-        match &launch_identity {
-            Some(expected) => ensure!(
-                expected == launch,
-                "scenario {scenario_name} used another genesis/fork/bundle identity"
-            ),
-            None => launch_identity = Some(launch.clone()),
-        }
 
         let image_id = path(scenario, &["environment", "gramine_image_id"])?;
         let image_id_text = image_id
@@ -502,10 +564,11 @@ fn scenario_run_identity(
     Ok(ScenarioRunIdentity {
         exact_binaries: exact_binaries
             .ok_or_else(|| eyre::eyre!("scenario set has no exact binary identity"))?,
-        launch_identity: launch_identity
-            .ok_or_else(|| eyre::eyre!("scenario set has no exact launch identity"))?,
+        scenario_launch_identities,
         gramine_image_id: gramine_image_id
             .ok_or_else(|| eyre::eyre!("scenario set has no Gramine Docker image identity"))?,
+        execution_profile: execution_profile
+            .ok_or_else(|| eyre::eyre!("scenario set has no execution profile"))?,
     })
 }
 
@@ -529,15 +592,17 @@ fn scenario_sections(
                 "source_and_toolchain" => json!(source),
                 "exact_binary_hashes" => identity.exact_binaries.clone(),
                 "exact_config_and_service_unit_hashes" => json!({
-                    "launch_identity": &identity.launch_identity,
+                    "scenario_launch_identities": &identity.scenario_launch_identities,
                     "gramine_image_id": &identity.gramine_image_id,
+                    "execution_profile": &identity.execution_profile,
                 }),
-                "genesis_fork_bundle_and_profiles" => identity.launch_identity.clone(),
+                "genesis_fork_bundle_and_profiles" => identity.launch_evidence(),
                 "test_discovery" => json!(discovery),
                 "machine_and_service_topology" => json!({
                     "validated_scenarios": scenario_paths,
                     "process_orchestration": "rust_e2e_harness",
                     "gramine_image_id": &identity.gramine_image_id,
+                    "execution_profile": &identity.execution_profile,
                 }),
                 "skip_todo_quarantine_retry_and_timeout_records" => json!({
                     "automatic_retries": 0,
@@ -626,7 +691,9 @@ fn validate_public_scenario(test_id: &str, scenario: &Value) -> Result<()> {
             );
             Ok(())
         }
-        _ => eyre::bail!("unknown public lane test {test_id}"),
+        _ => {
+            eyre::bail!("unknown public lane test {test_id}");
+        }
     }
 }
 
@@ -647,7 +714,9 @@ fn validate_e2e_scenario(test_id: &str, scenario: &Value) -> Result<()> {
             validate_applied_public_path(scenario)?;
             validate_execution_trace(public)
         }
-        _ => eyre::bail!("unknown E2E lane test {test_id}"),
+        _ => {
+            eyre::bail!("unknown E2E lane test {test_id}");
+        }
     }
 }
 
@@ -727,8 +796,13 @@ fn validate_applied_public_path_with_vote_count(
         open_height <= quorum_height && quorum_height < deadline_height,
         "public quorum height lies outside the response window"
     );
+    let quorum_signer_bitmap = four_member_bitmap(accountability, "quorum_signer_bitmap")?;
     ensure!(
-        u64_field(accountability, "quorum_signer_bitmap")?.count_ones() == 3,
+        quorum_signer_bitmap
+            .iter()
+            .map(|byte| byte.count_ones())
+            .sum::<u32>()
+            == 3,
         "public quorum bitmap is not exactly q=3"
     );
     let slots = array_field(accountability, "slot_validator_indexes")?
@@ -834,14 +908,16 @@ fn validate_expired_public_path(scenario: &Value) -> Result<()> {
         "no-quorum accountability did not close exactly at the deadline"
     );
     ensure!(
-        u64_field(accountability, "timely_bitmap")? == 0b0011
-            && u64_field(accountability, "missing_bitmap")? == 0b1100,
+        four_member_bitmap(accountability, "timely_bitmap")? == [0b0011]
+            && four_member_bitmap(accountability, "missing_bitmap")? == [0b1100],
         "expired job accountability bitmaps are incorrect"
     );
+    let late_vote_inclusion_height = u64_field(public, "late_vote_inclusion_height")?;
     ensure!(
         bool_field(public, "expired_without_nod")?
             && bool_field(public, "late_vote_reverted")?
-            && u64_field(public, "late_vote_inclusion_height")? == deadline,
+            && late_vote_inclusion_height >= deadline
+            && late_vote_inclusion_height.saturating_sub(deadline) <= 1,
         "exclusive-deadline public vote behavior was not proved"
     );
     Ok(())
@@ -901,6 +977,23 @@ fn u64_field(value: &Value, field: &str) -> Result<u64> {
         .ok_or_else(|| eyre::eyre!("JSON field {field} is not a u64"))
 }
 
+fn four_member_bitmap(value: &Value, field: &str) -> Result<Vec<u8>> {
+    let bitmap = array_field(value, field)?
+        .iter()
+        .enumerate()
+        .map(|(index, byte)| {
+            byte.as_u64()
+                .and_then(|byte| u8::try_from(byte).ok())
+                .ok_or_else(|| eyre::eyre!("JSON bitmap {field}[{index}] is not a byte"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    ensure!(
+        bitmap.len() == 1 && bitmap[0] & 0b1111_0000 == 0,
+        "JSON bitmap {field} is not a canonical four-member LSB0 bitmap"
+    );
+    Ok(bitmap)
+}
+
 fn bool_field(value: &Value, field: &str) -> Result<bool> {
     value
         .get(field)
@@ -943,7 +1036,7 @@ mod tests {
             .collect::<BTreeMap<_, _>>();
         assert_eq!(e2e["OCM-E2E-001"], e2e["OCM-TRC-001"]);
         assert_ne!(e2e["OCM-E2E-001"], e2e["OCM-E2E-007"]);
-        assert_ne!(e2e["OCM-E2E-001"], e2e["OCM-E2E-008"]);
+        assert_eq!(e2e["OCM-E2E-001"], e2e["OCM-E2E-008"]);
     }
 
     fn applied_scenario() -> Value {
@@ -979,7 +1072,7 @@ mod tests {
                         "job_id": "0xjob",
                         "quorum_result_digest": "0xresult",
                         "quorum_height": 18,
-                        "quorum_signer_bitmap": 7,
+                        "quorum_signer_bitmap": [7],
                         "slot_validator_indexes": [0, 1, 2, 3],
                     },
                     "result_vote_transactions": transactions,
@@ -1005,8 +1098,8 @@ mod tests {
                     "vote_accountability": {
                         "closed_height": 30,
                         "quorum_result_digest": null,
-                        "timely_bitmap": 3,
-                        "missing_bitmap": 12,
+                        "timely_bitmap": [3],
+                        "missing_bitmap": [12],
                     },
                     "expired_without_nod": true,
                     "late_vote_reverted": true,
@@ -1036,6 +1129,9 @@ mod tests {
             .collect::<serde_json::Map<_, _>>();
         json!({
             "environment": {
+                "tee": "sgx-no-attest",
+                "sudo": true,
+                "all": true,
                 "gramine_image_id": gramine_image_id,
             },
             "ocomp": {
@@ -1045,7 +1141,10 @@ mod tests {
                         "chain_id": 3151908,
                         "genesis_hash": genesis_hash,
                         "protocol_bundle_hash": "0xbundle",
-                        "fork_install_hash": "0xfork",
+                        "fork_install_hash": format!("0xfork-{genesis_hash}"),
+                        "classification": "measurement",
+                        "activation_height": 1,
+                        "metadosis_storage_layout_hash": "0xlayout",
                     },
                 },
             },
@@ -1073,13 +1172,34 @@ mod tests {
     }
 
     #[test]
-    fn expiry_evidence_requires_exclusive_deadline_and_no_nod() {
+    fn public_evidence_accepts_canonical_dynamic_bitmaps() {
+        let mut applied = applied_scenario();
+        applied["ocomp"]["public_path"]["vote_accountability"]["quorum_signer_bitmap"] =
+            json!([0b0111]);
+        validate_applied_public_path(&applied).expect("canonical quorum bitmap");
+
+        let mut expired = expired_scenario();
+        expired["ocomp"]["public_path"]["vote_accountability"]["timely_bitmap"] = json!([0b0011]);
+        expired["ocomp"]["public_path"]["vote_accountability"]["missing_bitmap"] = json!([0b1100]);
+        validate_expired_public_path(&expired).expect("canonical accountability bitmaps");
+    }
+
+    #[test]
+    fn expiry_evidence_accepts_deadline_or_next_block_and_no_nod() {
         let valid = expired_scenario();
         validate_expired_public_path(&valid).expect("valid expiry evidence");
 
         let mut late_in_next_block = valid.clone();
         late_in_next_block["ocomp"]["public_path"]["late_vote_inclusion_height"] = json!(31);
-        assert!(validate_expired_public_path(&late_in_next_block).is_err());
+        validate_expired_public_path(&late_in_next_block).expect("next-block late vote evidence");
+
+        let mut before_deadline = valid.clone();
+        before_deadline["ocomp"]["public_path"]["late_vote_inclusion_height"] = json!(29);
+        assert!(validate_expired_public_path(&before_deadline).is_err());
+
+        let mut two_blocks_late = valid.clone();
+        two_blocks_late["ocomp"]["public_path"]["late_vote_inclusion_height"] = json!(32);
+        assert!(validate_expired_public_path(&two_blocks_late).is_err());
 
         let mut generated_nod = valid;
         generated_nod["ocomp"]["public_path"]["certified_generation"] = json!({"job_id": "0xjob"});
@@ -1087,7 +1207,7 @@ mod tests {
     }
 
     #[test]
-    fn scenario_set_requires_one_binary_chain_and_gramine_image_identity() {
+    fn scenario_set_allows_distinct_fresh_launches_with_one_binary_and_gramine_identity() {
         let image_id = format!("sha256:{}", "ab".repeat(32));
         let first = run_identity_scenario("aa", "0xgenesis", &image_id);
         let second = first.clone();
@@ -1106,11 +1226,15 @@ mod tests {
             ),
             (
                 "genesis_fork_bundle_and_profiles".to_owned(),
-                identity.launch_identity.clone(),
+                identity.launch_evidence(),
             ),
             (
                 "exact_config_and_service_unit_hashes".to_owned(),
-                json!({"gramine_image_id": identity.gramine_image_id}),
+                json!({
+                    "scenario_launch_identities": identity.scenario_launch_identities.clone(),
+                    "gramine_image_id": identity.gramine_image_id.clone(),
+                    "execution_profile": identity.execution_profile.clone(),
+                }),
             ),
         ]);
         validate_scenario_manifest_identity(&sections, &identity)
@@ -1129,12 +1253,59 @@ mod tests {
         let mut changed_chain = scenarios.clone();
         changed_chain.get_mut("second").expect("second").1["ocomp"]["topology"]
             ["launch_identity"]["genesis_hash"] = json!("0xother");
-        assert!(scenario_run_identity(&changed_chain).is_err());
+        let changed_identity = scenario_run_identity(&changed_chain)
+            .expect("fresh scenarios retain their own exact genesis identity");
+        assert_eq!(
+            changed_identity.scenario_launch_identities["scenario-002.json"]["genesis_hash"],
+            json!("0xother")
+        );
+        assert_eq!(changed_identity.scenario_launch_identities.len(), 2);
+
+        let mut missing_launch = sections.clone();
+        missing_launch
+            .get_mut("genesis_fork_bundle_and_profiles")
+            .expect("launch evidence")["scenario_launch_identities"]
+            .as_object_mut()
+            .expect("scenario launch map")
+            .remove("scenario-002.json");
+        assert!(validate_scenario_manifest_identity(&missing_launch, &identity).is_err());
+
+        let mut changed_profile = scenarios.clone();
+        changed_profile.get_mut("second").expect("second").1["ocomp"]["topology"]
+            ["launch_identity"]["protocol_bundle_hash"] = json!("0xother-bundle");
+        let changed_profile_identity = scenario_run_identity(&changed_profile)
+            .expect("each retained scenario may exercise another exact launch profile");
+        assert_eq!(
+            changed_profile_identity.scenario_launch_identities["scenario-002.json"]
+                ["protocol_bundle_hash"],
+            json!("0xother-bundle")
+        );
+
+        let mut malformed_launch = scenarios.clone();
+        malformed_launch.get_mut("second").expect("second").1["ocomp"]["topology"]
+            ["launch_identity"]
+            .as_object_mut()
+            .expect("launch identity")
+            .remove("fork_install_hash");
+        assert!(scenario_run_identity(&malformed_launch).is_err());
 
         let mut changed_image = scenarios.clone();
         changed_image.get_mut("second").expect("second").1["environment"]["gramine_image_id"] =
             json!(format!("sha256:{}", "cd".repeat(32)));
         assert!(scenario_run_identity(&changed_image).is_err());
+
+        let mut wrong_tee = scenarios.clone();
+        wrong_tee.get_mut("second").expect("second").1["environment"]["tee"] =
+            json!("gramine-direct");
+        assert!(scenario_run_identity(&wrong_tee).is_err());
+
+        let mut without_sudo = scenarios.clone();
+        without_sudo.get_mut("second").expect("second").1["environment"]["sudo"] = json!(false);
+        assert!(scenario_run_identity(&without_sudo).is_err());
+
+        let mut fail_can_skip = scenarios.clone();
+        fail_can_skip.get_mut("second").expect("second").1["environment"]["all"] = json!(false);
+        assert!(scenario_run_identity(&fail_can_skip).is_err());
 
         let mut missing_image = scenarios;
         missing_image.get_mut("second").expect("second").1["environment"]

@@ -222,3 +222,12 @@ impl StorageKey for alloy_primitives::B256 {
         self.as_slice().to_vec()
     }
 }
+
+use crate::address_pair::AddressPair;
+
+/// Two words wide, which is exactly why there is no `Storable` impl: 40 bytes
+/// cannot round-trip through a single one. As a mapping value it goes through
+/// the `Mapping<K, AddressPair>` accessors instead.
+impl StorableType for AddressPair {
+    const SLOTS: usize = 2;
+}

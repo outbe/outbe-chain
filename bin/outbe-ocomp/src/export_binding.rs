@@ -1,9 +1,9 @@
-//! Durable supervisor authority for one node-committed input manifest.
+//! Durable supervisor authority for one published input manifest.
 //!
 //! The exporter may construct CAS objects, but they do not become computation
 //! authority by existing on disk. This store binds the exact finalized job
-//! journal record, snapshot lease, closed manifest/catalog and node-owned
-//! export commit into one content-addressed record. A cold restart must reload
+//! journal record, local reconstruction lease, closed manifest/catalog and
+//! publication receipt into one content-addressed record. A cold restart must reload
 //! and revalidate the same bytes before planning or finalization.
 
 use std::fs::{self, File, OpenOptions};
@@ -399,10 +399,11 @@ fn validate_binding_authority(
     limits: &SchemaLimits,
 ) -> Result<(), ExportBindingError> {
     let intent = JobIntentV1::decode_canonical(&discovery.spec.canonical_job_intent.0, limits)?;
-    require(
-        binding.discovery_generation == discovery.generation,
-        "discovery generation",
-    )?;
+    // `discovery_generation` belongs to the legacy single-current local
+    // journal. It is retained for decoding old local artifacts, but it is not
+    // authority in the embedded multi-job path. The exact finalized cursor and
+    // full spec hash below bind this receipt more strongly and independently of
+    // local discovery order.
     require(
         binding.finalized_cursor == discovery.cursor,
         "finalized cursor",

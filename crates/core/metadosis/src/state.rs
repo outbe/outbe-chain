@@ -7,7 +7,7 @@ use crate::schema::{
 };
 use alloy_primitives::U256;
 use outbe_common::WorldwideDay as WorldwideDayKey;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct OcompDayLimitFormation {
@@ -33,15 +33,15 @@ impl MetadosisContract<'_> {
         &mut self,
         _permit: &crate::commit::CommitPermit<'_>,
         wwd: WorldwideDayKey,
-        forming_start: u64,
-        lookback_delay_hours: u64,
-        offering_period_hours: u64,
+        schedule: crate::commit::NewWwdSchedule,
     ) -> Result<()> {
         self.create_worldwide_day_raw(
             wwd,
-            forming_start,
-            lookback_delay_hours,
-            offering_period_hours,
+            schedule.forming_start,
+            schedule.forming_period_seconds,
+            schedule.lookback_delay_seconds,
+            schedule.offering_period_seconds,
+            schedule.waiting_period_seconds,
         )
     }
 
@@ -75,8 +75,8 @@ impl MetadosisContract<'_> {
                 .formed()
                 .read()?
         {
-            return Err(PrecompileError::Revert(
-                "formed OCOMP day limit is immutable".into(),
+            return Err(crate::errors::caller_rejection(
+                "formed OCOMP day limit is immutable",
             ));
         }
         self.worldwide_days
@@ -125,26 +125,23 @@ impl MetadosisContract<'_> {
         &mut self,
         wwd: WorldwideDayKey,
         forming_start: u64,
-        lookback_delay_hours: u64,
-        offering_period_hours: u64,
+        forming_period_seconds: u64,
+        lookback_delay_seconds: u64,
+        offering_period_seconds: u64,
+        waiting_period_seconds: u64,
     ) -> Result<()> {
-        let hours_to_seconds = |hours: u64, label: &str| {
-            hours.checked_mul(SECONDS_PER_HOUR).ok_or_else(|| {
-                PrecompileError::Revert(format!("Metadosis {label} duration overflow"))
-            })
-        };
         let forming_end = forming_start
-            .checked_add(hours_to_seconds(FORMING_PERIOD_HOURS, "forming")?)
-            .ok_or_else(|| PrecompileError::Revert("Metadosis forming window overflow".into()))?;
+            .checked_add(forming_period_seconds)
+            .ok_or_else(|| crate::errors::caller_rejection("Metadosis forming window overflow"))?;
         let lookback_end = forming_end
-            .checked_add(hours_to_seconds(lookback_delay_hours, "lookback")?)
-            .ok_or_else(|| PrecompileError::Revert("Metadosis lookback window overflow".into()))?;
+            .checked_add(lookback_delay_seconds)
+            .ok_or_else(|| crate::errors::caller_rejection("Metadosis lookback window overflow"))?;
         let offering_end = lookback_end
-            .checked_add(hours_to_seconds(offering_period_hours, "offering")?)
-            .ok_or_else(|| PrecompileError::Revert("Metadosis offering window overflow".into()))?;
+            .checked_add(offering_period_seconds)
+            .ok_or_else(|| crate::errors::caller_rejection("Metadosis offering window overflow"))?;
         let scheduled_process_time = offering_end
-            .checked_add(hours_to_seconds(WAITING_PERIOD_HOURS, "waiting")?)
-            .ok_or_else(|| PrecompileError::Revert("Metadosis waiting window overflow".into()))?;
+            .checked_add(waiting_period_seconds)
+            .ok_or_else(|| crate::errors::caller_rejection("Metadosis waiting window overflow"))?;
 
         self.worldwide_days.create(&WorldwideDay {
             wwd,
@@ -169,7 +166,7 @@ impl MetadosisContract<'_> {
         let receipt = self.day_limit_formation_receipts.entry(wwd_key);
         if !receipt.formed().read()? {
             if legacy.formed().read()? {
-                return Err(PrecompileError::Fatal(
+                return Err(crate::errors::storage_corruption(
                     "legacy OCOMP day-limit marker has no semantic replay receipt".into(),
                 ));
             }
@@ -193,7 +190,7 @@ impl MetadosisContract<'_> {
             || legacy.carry_over_taken().read()? != carry_over_taken
             || block_number == 0
         {
-            return Err(PrecompileError::Fatal(
+            return Err(crate::errors::storage_corruption(
                 "formed OCOMP day-limit receipt is inconsistent".into(),
             ));
         }
@@ -305,7 +302,7 @@ impl MetadosisContract<'_> {
             return Ok(());
         }
         if active.len() >= MAX_ACTIVE_WWDS {
-            return Err(PrecompileError::Fatal(format!(
+            return Err(crate::errors::storage_corruption(format!(
                 "Metadosis active WWD cap {MAX_ACTIVE_WWDS} reached before inserting {wwd_key}"
             )));
         }

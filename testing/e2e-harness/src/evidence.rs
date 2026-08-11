@@ -8,7 +8,6 @@ use eyre::{Result, WrapErr};
 use serde_json::json;
 
 use crate::env::Environment;
-use crate::metadosis_p0::canonical_final_fixture_sha256;
 use crate::ocomp_evidence::{hash_file, publish_member};
 use crate::world::localnet::LogAudit;
 use crate::world::ocomp::OcompScenarioTopologyV1;
@@ -81,8 +80,6 @@ pub(crate) fn write_scenario(input: ScenarioEvidence<'_>) -> Result<()> {
                 "environment": environment,
                 "genesis": hash_file(&input.scenario_dir.join("genesis.json"))
                     .wrap_err("hash Metadosis P0 canonical genesis")?,
-                "canonical_final_fixture_sha256":
-                    canonical_final_fixture_sha256(&input.env.repo)?,
             }))
         })
         .transpose()?;
@@ -104,6 +101,7 @@ pub(crate) fn write_scenario(input: ScenarioEvidence<'_>) -> Result<()> {
         "environment": {
             "validators": input.env.validators,
             "tee": input.env.tee_mode.evidence_name(),
+            "sudo": input.env.sudo,
             "all": input.env.all,
             "gramine_image_id": input.gramine_image_id,
         },

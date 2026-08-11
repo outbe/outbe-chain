@@ -781,7 +781,6 @@ CapacityProfileV1 {
   profile_id: Hash,
   max_tributes_per_work_shard: u32,
   max_workers_per_domain: u8,
-  max_pending_jobs: u8,
   max_intents_per_block: u8,
   max_activations_per_block: u8,
   max_ready_inspections_per_block: u8,
@@ -2317,12 +2316,14 @@ runtime does not grant.
 
 The capacity command creates the measurement cgroup through the system systemd
 manager and sets the transient service `User`/`Group` to the invoking
-unprivileged account. This is an evidence-runner privilege only: the E2E command
-and every node/OCOMP child remain unprivileged and run with `--no-sudo`. A
-user-manager service is not sufficient because a valid host may omit the
-`io` controller from `user.slice`; accepting such a service would silently lose
-the required kernel `io.stat` evidence. Passwordless permission to create this
-single bounded transient service is therefore a machine precondition.
+unprivileged account. The E2E runner keeps sudo enabled so its production
+Gramine container can receive the real SGX devices while using
+`sgx-no-attest`; `--no-sudo` and non-SGX `gramine-direct` are not accepted
+capacity evidence. A user-manager service is not sufficient because a valid
+host may omit the `io` controller from `user.slice`; accepting such a service
+would silently lose the required kernel `io.stat` evidence. Passwordless sudo
+for the bounded transient service and SGX container setup is therefore a
+machine precondition.
 
 ### 8.3 Required generated fields
 
@@ -2455,7 +2456,7 @@ closure. Runtime code reads generated registries and compile ceilings; it must
 not hardcode a provisional genesis hash, bundle hash, committee or final
 capacity value.
 
-After the complete public four-node vertical slice exists,
+After the complete public fresh-network vertical slice exists,
 `P1-POC-CAPACITY-AND-ARMING` runs the section 8.3 algorithm and checks in:
 
 ```text
@@ -2463,8 +2464,8 @@ generated capacity profile
 ProtocolBundleV1 bytes and ProtocolBundleHash
 fresh-devnet base genesis and genesis hash
 network-binding artifact
-four-member OCOMP committee/key-registration public artifacts
-final chain manifest binding fork height, bundle and committee snapshot
+founder OCOMP key-registration public artifacts for every genesis ACTIVE validator
+final chain manifest binding fork height, bundle and dynamic ACTIVE ValidatorSet snapshot
 final cap-1/cap positive vectors and cap+1 negative vectors
 all final chain/bundle-bound positive and negative golden vectors
 benchmark/environment/evidence manifest

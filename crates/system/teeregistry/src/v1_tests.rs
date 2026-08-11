@@ -2392,7 +2392,7 @@ fn candidate_generated_quote_intent_reaches_registry_replacement_exactly() {
     let node_data_dir = root.path().join("node-data");
     std::fs::create_dir(&node_data_dir).unwrap();
     drop(
-        connect_or_initialize_validator_enclave(&endpoint_a, &node_data_dir, identity, &sign)
+        connect_or_initialize_validator_enclave(&endpoint_a, &node_data_dir, identity, sign)
             .unwrap(),
     );
     let active_manifest_bytes = std::fs::read(
@@ -2432,7 +2432,7 @@ fn candidate_generated_quote_intent_reaches_registry_replacement_exactly() {
         &endpoint_b,
         &node_data_dir,
         identity,
-        &sign,
+        sign,
     )
     .unwrap();
     let candidate_manifest = candidate.manifest().clone();

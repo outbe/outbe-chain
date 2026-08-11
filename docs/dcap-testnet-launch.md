@@ -63,7 +63,10 @@ python3 scripts/prepare_network.py \
 The command fails unless it can generate and re-parse the complete OCOMP and
 TEE ChainSpec. It also creates fresh OCOMP keys and PoP registrations, the
 founding consensus material, unique endpoints, and matching enclave/node
-scripts. OCOMP V1 requires exactly four founders with threshold 3.
+scripts. OCOMP membership is the ordered ACTIVE ValidatorSet. The four-founder
+topology therefore starts with `N=4` and quorum `3`; later ACTIVE validators are
+included automatically in new jobs, while existing jobs keep their pinned
+historical snapshot.
 
 ## 3. Copy each validator's files
 
@@ -202,6 +205,7 @@ Only after `tee join` succeeds, start it:
 /usr/local/bin/outbe-chain node \
   --chain /var/lib/outbe/testnet/genesis.json \
   --datadir /var/lib/outbe/testnet/fullnode/data \
+  --consensus.storage-dir /var/lib/outbe/testnet/fullnode/consensus \
   --engine.persistence-threshold 0 \
   --engine.memory-block-buffer-target 0 \
   --p2p-secret-key-hex "$(tr -d '[:space:]' < \
@@ -212,7 +216,17 @@ Only after `tee join` succeeds, start it:
   --http.api eth,net,web3,outbe \
   --projection.mongodb-uri "$OUTBE_PROJECTION_MONGODB_URI" \
   --projection.mongodb-database outbe_testnet_fullnode_0 \
+  --ocomp.supervisor-socket /opt/outbe-chain/ocomp/run/node-supervisor.sock \
+  --ocomp.snapshot-exporter-socket /opt/outbe-chain/ocomp/run/node-snapshot-exporter.sock \
+  --ocomp.protocol-bundle-hash <0x-protocol-bundle-hash> \
+  --ocomp.boot-nonce <nonzero-0x32-byte-boot-nonce> \
   --tee-enclave-socket 127.0.0.1:17000
 ```
 
-A FullNode never receives a founding signing share.
+A FullNode never receives a founding consensus share or an OCOMP signing key.
+It must run the same SnapshotExporter/worker services as a validator and the
+keyless `outbe-ocomp follower` role under the matching deployment identity. The
+follower independently executes Lysis and commits its canonical result locally;
+it does not read `OUTBE_OCOMP_RPC_URL` and cannot submit a vote. At the first
+quorum-forming vote, the node waits for that durable result and fails closed on
+any digest/root/manifest mismatch.

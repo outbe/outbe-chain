@@ -7,9 +7,11 @@
 
 use super::*;
 use crate::fixture_kernel::ActivationFixture;
-use crate::ocomp::vote::{dispatch_public_result_vote, REJECT_LIFECYCLE_INACTIVE};
 use crate::schema::{terminal_outcome, terminal_retirement, WorldwideDayTerminalReceiptState};
 use crate::terminal::{CapacityForfeitureReceipt, MissedOfferingReceipt};
+use crate::{
+    errors::vote_rejection_code::LIFECYCLE_INACTIVE, ocomp::vote::dispatch_public_result_vote,
+};
 use outbe_common::WorldwideDay as WwdKey;
 use outbe_compressed_entities::RetirementOutcome;
 use outbe_ocomp_protocol::abi::OCOMP_RESULT_VOTE_REJECTED_SELECTOR;
@@ -27,7 +29,7 @@ fn reject_bytes(code: u16) -> alloy_primitives::Bytes {
 #[test]
 fn submit_lysis_result_reverts_when_ocomp_lifecycle_is_inactive() {
     // The rejection code is part of the external ABI surface; pin its value.
-    assert_eq!(REJECT_LIFECYCLE_INACTIVE, 5);
+    assert_eq!(LIFECYCLE_INACTIVE, 5);
 
     with_storage(|storage| {
         let call = IMetadosis::submitLysisResultCall {
@@ -41,7 +43,7 @@ fn submit_lysis_result_reverts_when_ocomp_lifecycle_is_inactive() {
         );
         match err {
             PrecompileError::RevertBytes(bytes) => {
-                assert_eq!(bytes, reject_bytes(REJECT_LIFECYCLE_INACTIVE));
+                assert_eq!(bytes, reject_bytes(LIFECYCLE_INACTIVE));
             }
             other => panic!("expected RevertBytes rejection, got {other:?}"),
         }
@@ -62,7 +64,7 @@ fn active_lifecycle_still_routes_lysis_vote_to_the_command_path() {
     .expect_err("view dispatcher must not execute votes");
     match view_err {
         PrecompileError::RevertBytes(bytes) => {
-            assert_eq!(bytes, reject_bytes(REJECT_LIFECYCLE_INACTIVE));
+            assert_eq!(bytes, reject_bytes(LIFECYCLE_INACTIVE));
         }
         other => panic!("expected RevertBytes rejection, got {other:?}"),
     }
@@ -83,7 +85,7 @@ fn static_or_valued_lysis_call_rejects_with_call_mode_code_when_active() {
                     // Call-mode rejection keeps its own code; it must not
                     // collide with the lifecycle-inactive code.
                     assert_eq!(bytes, reject_bytes(REJECT_CALL_MODE_CODE));
-                    assert_ne!(REJECT_CALL_MODE_CODE, REJECT_LIFECYCLE_INACTIVE);
+                    assert_ne!(REJECT_CALL_MODE_CODE, LIFECYCLE_INACTIVE);
                 }
                 other => panic!("expected RevertBytes rejection, got {other:?}"),
             }

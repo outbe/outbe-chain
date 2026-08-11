@@ -245,6 +245,9 @@ mod tests {
 
     use alloy_evm::{block::CommitChanges, RecoveredTx};
     use alloy_primitives::{address, Address, Bytes, StorageKey, StorageValue, B256, U256};
+    use outbe_chain_constants::{
+        GenesisProtocolParametersV1, CHAIN_CONSTANTS_ADDRESS, CHAIN_CONSTANTS_MARKER_CODE,
+    };
     use outbe_compressed_entities::{
         CandidateCacheLimits, CeMdbx, CompressedTreeService, EnvironmentIdentity, FinalizedMarker,
         ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
@@ -638,34 +641,42 @@ mod tests {
 
     type TestDb = CacheDB<EmptyDBTyped<ProviderError>>;
 
+    fn seed_default_chain_constants(storage: StorageHandle<'_>) {
+        for (slot, value) in GenesisProtocolParametersV1::default().genesis_storage_words() {
+            storage
+                .sstore(CHAIN_CONSTANTS_ADDRESS, slot, value)
+                .expect("test chain constants seed succeeds");
+        }
+    }
+
     fn seed_active_validators(db: &mut TestDb, validators: &[Address]) {
         let chain_spec = test_chain_spec();
+        let founders = validators
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(idx, validator)| {
+                let mut consensus_key = [0u8; 48];
+                consensus_key[0] = idx as u8 + 1;
+                (validator, consensus_key)
+            })
+            .collect::<Vec<_>>();
         let install = outbe_metadosis::test_support::ForkInstallScenario::measurement_at(
             1,
             chain_spec.chain().id(),
             chain_spec.genesis_hash(),
         )
         .unwrap()
+        .with_founder_validators(&founders)
+        .unwrap()
         .into_install();
-        let mut metadosis_genesis = HashMapStorageProvider::new(chain_spec.chain().id());
-        metadosis_genesis.set_block_number(1);
-        metadosis_genesis.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::ForkProfile);
-        metadosis_genesis.enter(|storage| {
-            let ctx = BlockRuntimeContext::new(
-                BlockContext::empty_for_tests(1, 1_700_000_001, chain_spec.chain().id()),
-                storage,
-            );
-            outbe_metadosis::commands::install_fork_profile(&ctx, &install).unwrap();
-        });
-        let ctx = BlockContext::new(
-            0,
-            0,
-            MAINNET.chain().id(),
-            GENESIS_OWNER,
-            validators.to_vec(),
+        let mut metadosis_genesis = HashMapStorageProvider::new_with_chain_identity(
+            chain_spec.chain().id(),
+            chain_spec.genesis_hash(),
         );
-        let mut provider = DirectStorageProvider::new(db, ctx);
-        StorageHandle::enter(&mut provider, |storage| {
+        metadosis_genesis.set_block_number(1);
+        metadosis_genesis.enter(|storage| {
+            seed_default_chain_constants(storage.clone());
             let root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
             storage
                 .sstore(
@@ -681,44 +692,73 @@ mod tests {
                     U256::from_be_slice(root.as_slice()),
                 )
                 .unwrap();
+            // Production reads these from the genesis alloc; the block hooks
+            // treat their absence as fatal.
+            for (slot, value) in outbe_chain_constants::GenesisProtocolParametersV1::default()
+                .genesis_storage_words()
+            {
+                storage
+                    .sstore(outbe_chain_constants::CHAIN_CONSTANTS_ADDRESS, slot, value)
+                    .unwrap();
+            }
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(Address::ZERO).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_epoch_length_blocks.write(60).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
-            for (idx, validator) in validators.iter().copied().enumerate() {
-                let mut pk = [0u8; 48];
-                pk[0] = idx as u8 + 1;
-                vs.register_validator(Address::ZERO, validator, &pk)
+            for ((validator, consensus_key), registration) in
+                founders.iter().zip(&install.founder_registrations)
+            {
+                vs.register_validator(Address::ZERO, *validator, consensus_key)
+                    .unwrap();
+                vs.mark_pending(*validator).unwrap();
+                let encoded = registration
+                    .encode_canonical(&outbe_metadosis::config::poc_schema_limits())
+                    .unwrap();
+                vs.confirm_validator_ready(*validator, &encoded).unwrap();
+                vs.activate_validator_via_boundary_for_test(*validator)
                     .unwrap();
             }
-            vs.activate_reshared_set(validators, B256::repeat_byte(0xBB))
+            // Seed the COEN/840 oracle pair + a 1.0 rate so begin-block
+            // NOD/GEM/INTEX floor-price promotion resolves a live rate instead
+            // of soft-skipping the scan. The qualifiers derive the pair from the
+            // ISO code, so registering the pair is sufficient.
+            outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
                 .unwrap();
-            // Seed the COEN/0xUSD oracle pair + a 1.0 rate so begin-block NOD/GEM/INTEX
-            // floor-price promotion reads a registered pair instead of reverting
-            // "pair not registered".
-            let mut oracle = outbe_oracle::contract::OracleContract::new(storage.clone());
-            oracle.register_pair("COEN", "0xUSD").unwrap();
-            oracle
-                .set_exchange_rate(
-                    Address::ZERO,
-                    "COEN",
-                    "0xUSD",
-                    U256::from(1_000_000_000_000_000_000u128),
-                    0,
-                    0,
-                )
-                .unwrap();
+            outbe_oracle::api::set_exchange_rate(
+                storage.clone(),
+                Address::ZERO,
+                outbe_oracle::api::DAY_TYPE_PAIR,
+                U256::from(1_000_000_000_000_000_000u128),
+                0,
+                0,
+            )
+            .unwrap();
         });
-        provider.flush().expect("validator seed flush must succeed");
-        drop(provider);
+        metadosis_genesis.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::ForkProfile);
+        metadosis_genesis.enter(|storage| {
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(1, 1_700_000_001, chain_spec.chain().id()),
+                storage,
+            );
+            outbe_metadosis::commands::install_fork_profile(&ctx, &install).unwrap();
+        });
         for ((address, slot), value) in metadosis_genesis.storage {
             db.insert_account_storage(address, slot, value)
-                .expect("Metadosis production-route genesis seed must install");
+                .expect("production-route genesis seed must install");
         }
 
         let marker_code = RevmBytecode::new_legacy([0xef].into());
+        let constants_marker_code = RevmBytecode::new_legacy(CHAIN_CONSTANTS_MARKER_CODE.into());
+        db.insert_account_info(
+            CHAIN_CONSTANTS_ADDRESS,
+            AccountInfo {
+                code_hash: constants_marker_code.hash_slow(),
+                code: Some(constants_marker_code),
+                ..Default::default()
+            },
+        );
         db.insert_account_info(
             outbe_primitives::addresses::VALIDATOR_SET_ADDRESS,
             AccountInfo {
@@ -745,6 +785,15 @@ mod tests {
         );
         db.insert_account_info(
             outbe_primitives::addresses::METADOSIS_ADDRESS,
+            AccountInfo {
+                code_hash: marker_code.hash_slow(),
+                code: Some(marker_code.clone()),
+                ..Default::default()
+            },
+        );
+        // Without an account the seeded constant slots read back as zero.
+        db.insert_account_info(
+            outbe_chain_constants::CHAIN_CONSTANTS_ADDRESS,
             AccountInfo {
                 code_hash: marker_code.hash_slow(),
                 code: Some(marker_code),

@@ -8,6 +8,14 @@ implementation and records its merge gates. Production surfaces and
 task-local tests exist on the feature branch; only a successful exact-revision
 public/E2E evidence bundle may close OCM-27.
 
+Evidence topology correction accepted on 2026-08-10: the deleted Unix-control
+and retained CE-MDBX/openings PROCESS tests are not part of the current
+acceptance contract. `OCM-DIS-001`, `OCM-EXP-001` and `OCM-CTL-001` are retired
+tombstones. Current public-RPC discovery/export is proved by the mandatory
+production E2E and prepared-only restart scenarios; current Worker process,
+HTTP/ZeroMQ transport and observability use `OCM-WRK-001`, `OCM-WTR-001` and
+`OCM-WOBS-001`.
+
 Authoritative inputs:
 
 - [`off-chain-computation.md`](../off-chain-computation.md);
@@ -308,10 +316,10 @@ Parallelizable groups:
 | `OCM-07` | begin/end SystemTx lifecycle | `04` | contributes `OCM-REQ/PUB` |
 | `OCM-08` | Job FSM/request/expiry | `05,06,07` | `OCM-FSM-001`, `OCM-REQ-001`, `OCM-E2E-002` (stable ID, integration lane) |
 | `OCM-09` | finalized proof and durable pin | `04,08` | `OCM-FIN-001`, `OCM-PIN-001` |
-| `OCM-10` | retained CE/Reth/Mongo/openings handoff | `06,09` | contributes `OCM-EXP-001` |
-| `OCM-11` | process/control/CAS base | `04` | `OCM-CTL-001` |
-| `OCM-12` | finalized cursor discovery | `08,09,11` | `OCM-DIS-001` |
-| `OCM-13` | authenticated exporter and CAS closure | `10,11,12` | `OCM-EXP-001`, `OCM-CAS-001`, `OCM-E2E-004` (stable ID, integration lane) |
+| `OCM-10` | finalized public-RPC input materialization | `06,09` | contributes `OCM-E2E-001`, `OCM-E2E-008` |
+| `OCM-11` | Worker process/HTTP/ZeroMQ/CAS base | `04` | `OCM-WRK-001`, `OCM-WTR-001`, `OCM-WOBS-001` |
+| `OCM-12` | finalized public-RPC discovery | `08,09,11` | discharged by `OCM-E2E-001` |
+| `OCM-13` | authenticated public-RPC exporter and CAS closure | `10,11,12` | `OCM-CAS-001`, `OCM-E2E-001`, `OCM-E2E-008` |
 | `OCM-14` | deterministic plan/work/reduce | `01,04,11,13` | `OCM-SEM-002`, `OCM-DET-001` |
 | `OCM-15` | node attestation and sign-once | `04,09,14` | `OCM-SIG-001` |
 | `OCM-16` | Supervisor zero-fee result votes, q=3 and accountability | `04,08,09,15` | `OCM-VOT-001` |
@@ -690,10 +698,11 @@ state. Do not cache Tribute bodies, leagues or computed Lysis outputs on-chain.
 
 **Task-local tests:** randomized incremental totals versus independent full fold,
 auction source selection, cap boundaries, overflow rollback and seal immutability.
-Contributes `OCM-REQ-001`, `OCM-EXP-001`, `OCM-TIM-001`.
+Contributes `OCM-REQ-001`, `OCM-CAS-001`, `OCM-TIM-001` and the input
+correlation asserted by `OCM-E2E-001`.
 
 **Evidence/CI:** `OCM-FAST`; envelope/hash vectors and incremental/full-fold
-comparison. Later `OCM-EXP-001` discharges storage authority.
+comparison. `OCM-CAS-001` and the production E2E discharge storage authority.
 
 **Observable acceptance:** terminal code can make the complete pre-admission
 decision from bounded state reads whose final envelope matches an independent
@@ -902,67 +911,60 @@ abstain locally.
 **DoD:** finality vectors and durable pin FSM pass, source identity is exact and
 no event/live-state shortcut exists.
 
-### OCM-10 — Add the bounded finalized checkpoint/opening handoff
+### OCM-10 — Materialize finalized input through public RPC
 
 **Depends on:** `OCM-06`, `OCM-09`.
 
-**Outcome:** an exporter UID can open one exact finalized CE/Reth/Mongo source
-window without receiving writer or arbitrary query authority.
+**Outcome:** the production SnapshotExporter reads the exact finalized
+`JobIntent` and its canonical inputs through the node public-RPC surface and
+publishes immutable CAS artifacts. No process-local path or current-head
+fallback establishes authority.
 
 **Files/symbols:**
 
-- CE MDBX `FinalizedMarker` read-only open/next-apply lease seam;
-- node `FinalizedInputProofSource`;
-- Tribute projection raw-body retention/pinned namespace;
-- Fidelity/Oracle historical opening builders;
-- Mongo projection checkpoint containment checks.
+- finalized OCOMP public-RPC discovery and exact job record reads;
+- Mongo-backed canonical Tribute projection reads;
+- SnapshotExporter input materialization and filesystem CAS;
+- durable discovery/export journals and prepared-only recovery.
 
-**Changes:** implement opaque lease generation, bounded open timeout, exact block
-hash/state/CE marker identity, typed raw proof set and terminal+64-finalized-block
-release ownership. Retained Tribute release is cursor/page bounded across the
-parent JobId; finding more than one worker shard continues GC and is not an
-invariant violation. The lease is created by the node finality worker at exact
-request finality and handed to the independently started exporter/Supervisor;
-late process startup never re-opens an historical snapshot from live state.
+**Changes:** bind discovery to the finalized request block and canonical job
+record, materialize the exact public-RPC/Mongo input set, publish it by digest
+and make empty/prepared/exact restart converge on the same receipt.
 
-**Invariants/failures:** CE marker ahead/missed lease, pruned state, Mongo lag,
-wrong containment/proof or opening cap makes that validator abstain; exporter
-cannot mutate source; worker/supervisor cannot release pins.
+**Invariants/failures:** non-final, identity-mismatched, incomplete or corrupt
+input is not exported; the exporter cannot mutate consensus state; restart
+cannot substitute the then-current job or input set.
 
 **Fork impact:** local availability only; no live-state fallback and no change
 to consensus validity.
 
-**Reuse/non-goals:** reuse CE snapshots, Reth exact-block reads, Mongo storage
-and current proof types. Do not add historical CE query service, second
-projection DB or long-horizon production recovery.
+**Reuse/non-goals:** reuse the current public OCOMP RPC, Mongo projection and
+filesystem CAS. Do not restore the deleted Unix control transport, retained
+CE-MDBX lease API or historical openings fixture.
 
-**Task-local tests:** lease generation/stale handle, marker race, finality-time
-pre-arm followed by late Supervisor start/restart, raw retention,
-multi-page release with `max_tributes_per_work_shard + 1` retained Tribute,
-Mongo behind/ahead containment and Fidelity/Oracle proof mutation. Contributes
-`OCM-EXP-001`.
+**Task-local tests:** CAS publish/consume/corruption closure in `OCM-CAS-001`.
+The full public-RPC materialization is exercised by `OCM-E2E-001`; prepared-only
+recovery is exercised by `OCM-E2E-008`.
 
-**Evidence/CI:** `OCM-INT` with real CE MDBX and Mongo; checkpoint identities,
-proofs and exact release-height records.
+**Evidence/CI:** `OCM-INT` for CAS closure and release `OCM-E2E` for the real
+public-RPC/Mongo/SnapshotExporter path.
 
-**Observable acceptance:** exporter can read each requested final JobId snapshot
-and no other height/path; simultaneous handoffs remain independently
-addressable; a retry may read its exact shared input lease while the predecessor
-evidence is retained; source ambiguity yields no manifest/signature while blocks
-continue.
+**Observable acceptance:** a chain-created finalized JobIntent reaches the
+production Supervisor/Workers and certified NOD without result injection;
+prepared-only restart yields the same input receipt and generation.
 
-**Risks:** holding the CE writer indefinitely. Mitigation: one bounded
-next-apply gate and local abstention on timeout.
+**Risks:** public-RPC or projection unavailability. Mitigation: local abstention
+or delayed processing without changing consensus authority.
 
-**DoD:** typed handoff and retention/release tests pass on real backends; no
-caller-selected path/query/writer capability is exposed.
+**DoD:** `OCM-CAS-001`, `OCM-E2E-001` and `OCM-E2E-008` pass on the current
+production construction path.
 
 ### OCM-11 — Implement the fixed process/control/CAS base
 
 **Depends on:** `OCM-04`.
 
 **Outcome:** one `outbe-ocomp` package runs only the three fixed roles over
-bounded UDS/CAS contracts. PoC orchestration belongs to the Rust E2E harness;
+public-RPC, bounded ZeroMQ/TCP and CAS contracts. PoC orchestration belongs to the Rust E2E harness;
 production service-manager integration is deferred to MVP hardening.
 
 **Files/symbols:**
@@ -988,8 +990,8 @@ process supervision vocabulary. Do not reuse TEE Noise semantics, add a CAS
 daemon, launch broker, one crate per role, systemd-specific PoC behavior or
 node lifecycle dependency.
 
-**Test first:** `OCM-CTL-001`; task-local CAS atomicity and worker-one-unit
-tests.
+**Test first:** `OCM-WRK-001`, `OCM-WTR-001` and `OCM-WOBS-001`; task-local CAS
+atomicity remains in `OCM-CAS-001`.
 
 **Evidence/CI:** `OCM-INT`; frame vectors, peer credentials, process exits,
 object hashes and owned-process lifecycle evidence.
@@ -1001,10 +1003,10 @@ exit.
 **Risks:** one executable accidentally grants all roles. Mitigation: startup
 checks effective UID/descriptors and role-specific method tables.
 
-**DoD:** exactly one new compute package, bounded protocols and CAS tests pass,
-and `OCM-CTL-001` is green.
+**DoD:** exactly one compute package remains; current Worker process,
+HTTP/ZeroMQ transport, observability and CAS tests are green.
 
-### OCM-12 — Discover finalized work by cursor, not event
+### OCM-12 — Discover finalized work from the public chain surface
 
 **Depends on:** `OCM-08`, `OCM-09`, `OCM-11`.
 
@@ -1018,9 +1020,10 @@ exactly once through the node control cursor.
 - `bin/outbe-ocomp` supervisor discovery/journal;
 - node readiness state and metrics.
 
-**Changes:** add bounded `ListFinalizedJobsV1`/exact job retrieval from the
-frozen control registry, durable `DISCOVERED` cursor/journal and event hint that
-only reduces latency.
+**Changes:** scan canonical finalized `OffchainJobRequested` logs, load the
+exact job record through public RPC, validate the durable finalized anchor and
+persist the discovery journal. The event is a locator; finalized state remains
+authority.
 
 **Invariants/failures:** lost/duplicate/reordered event cannot lose/duplicate
 work; cursor resumes after restart; incompatible bundle sets local
@@ -1028,24 +1031,23 @@ work; cursor resumes after restart; incompatible bundle sets local
 
 **Fork impact:** local readiness only.
 
-**Reuse/non-goals:** adapt existing finalized subscription/cursor and child
-process ownership. Do not add public job streaming, database scan, consensus
-`RUNNING` or event authority.
+**Reuse/non-goals:** reuse the public-RPC discovery implementation and durable
+journal. Do not restore the deleted node-to-process Unix control registry.
 
-**Test first:** `OCM-DIS-001` real UDS lost-event/restart/duplicate scenarios.
+**Test first:** the production discovery-to-NOD path is owned by
+`OCM-E2E-001`; restart identity is owned by `OCM-E2E-008`.
 
-**Evidence/CI:** `OCM-INT`; canonical job read, cursor/journal bytes, process
-restart and exactly-once assertion.
+**Evidence/CI:** release `OCM-E2E`; canonical job, request block, input
+artifacts, vote/quorum and NOD are correlated in one retained scenario record.
 
-**Observable acceptance:** dropping the complete request subscription still
-discovers the finalized job once; replaying the hint changes nothing.
+**Observable acceptance:** a chain-created finalized JobIntent is discovered
+without injected results and reaches its terminal certified generation.
 
-**Risks:** unbounded cursor backlog. Mitigation: the generated PoC profile
-admits at most two simultaneously live Jobs, advances at most one request per
-block and returns one bounded discovery response.
+**Risks:** RPC/projection lag. Mitigation: bounded reconciliation and local
+readiness without inventing alternative authority.
 
-**DoD:** supervisor uses only finalized cursor authority, discovery test passes
-with real processes and no direct node DB access exists.
+**DoD:** the production E2E proves finalized public-RPC discovery and no direct
+node DB or deleted control-transport shortcut exists.
 
 ### OCM-13 — Export and close the authenticated input manifest
 
@@ -1084,8 +1086,8 @@ consumed stream; restart is idempotent; no bad manifest reaches sign-once.
 verification. Do not let workers query Mongo/node or add streaming TargetLarge
 input.
 
-**Test first:** `OCM-EXP-001` real CE/Mongo/opening matrix and `OCM-CAS-001`
-publish/TOCTOU/corruption/quota matrix.
+**Test first:** `OCM-CAS-001` publish/TOCTOU/corruption/quota matrix plus
+`OCM-E2E-001` public-RPC export and `OCM-E2E-008` prepared-only recovery.
 
 **Evidence/CI:** `OCM-INT`; finality/checkpoint refs, exact manifest/chunk bytes,
 semantic/transport digests and unchanged sign journal on every negative case.
@@ -1096,8 +1098,9 @@ root independently; corrupt local transport produces no signature.
 **Risks:** check-then-reopen TOCTOU. Mitigation: hash/decode/use the same open
 descriptor and compare final metadata/EOF.
 
-**DoD:** exporter closes only complete authenticated inputs, both ledger tests
-pass with real backends and no trusted Mongo/CAS assertion exists.
+**DoD:** exporter closes only complete authenticated inputs, current focused
+CAS evidence and both production E2E scenarios pass, and no trusted Mongo/CAS
+assertion exists.
 
 ### OCM-14 — Implement deterministic planning, workers and reducers
 
@@ -1734,7 +1737,7 @@ can emit one hash-indexed multi-scenario evidence bundle.
   existing `Localnet` modules;
 - `testing/e2e-harness/src/features/ocomp.rs`, registered by
   `src/features/mod.rs`;
-- the existing `features/tribute_projection.feature` and
+- the responsibility-owned `features/tribute.feature` and
   `src/features/tribute_projection.rs` as the executable public-Tribute
   baseline;
 - OCOMP process/CAS guards, event drop/corruption/schedule/bundle/failpoint
@@ -1770,7 +1773,7 @@ replica set, CE proof verifier, ChildGuard and per-scenario data/evidence. Do
 not create another harness or production deployment controller.
 
 **Mandatory public-Tribute fixture contract:** `OCM-E2E-001` starts with the
-same production path exercised by `tribute_projection.feature`, while that
+same production path exercised by `tribute.feature`, while that
 existing feature remains an independent regression test and does not acquire
 an OCOMP dependency. Before the scenario may observe a `JobIntent`, retained
 evidence must prove, in order:
@@ -1802,7 +1805,7 @@ feature is registered once and has no direct job/result/state injection hook.
 `OCM-PUB/E2E/ISO/TRC` IDs.
 
 **Observable acceptance:** an unprivileged development run starts four nodes
-and four OCOMP domains with real UDS/Mongo/CE, records a healthy `4/4` vote
+and four OCOMP domains with real public RPC/ZeroMQ/Mongo/CE, records a healthy `4/4` vote
 window, then stops only a supervisor while finality advances and a fresh job
 reaches `3/4`.
 
@@ -1827,7 +1830,7 @@ capacity generation.
 - `bin/outbe-ocomp/src/{supervisor_job,vote_submitter}.rs`;
 - `crates/blockchain/node/src/ocomp/control.rs` restricted inner attestation seam;
 - `xtask/src/ocomp/task.rs` public-path task runner and exact PUB-ID gate;
-- `testing/e2e-harness/features/ocomp_public_path.feature`;
+- `testing/e2e-harness/features/ocomp.feature`;
 - OCOMP step definitions and exact block/state proof collectors;
 - `mise run ocomp-poc-public-path`;
 - measurement-only network/profile generator inputs.
@@ -1915,9 +1918,11 @@ It does not regenerate DKG/validator identity or mutate final genesis.
 The cold runner first snapshots every executed binary into a new read-only
 artifact-set directory and all five scenarios bind those paths and hashes;
 later builds cannot invalidate an existing run by replacing `target/` files.
-Before any `gramine-direct` container starts, the harness resolves the local
-test image tag to its canonical Docker `sha256:` image ID, launches by that ID
-and binds it into every scenario plus the capacity artifact-set hash.
+Before any `sgx-no-attest` container starts, the harness resolves the local
+Gramine image tag to its canonical Docker `sha256:` image ID, launches the
+release production enclave with real SGX devices through sudo, and binds the
+image into every scenario plus the capacity artifact-set hash. Debug binaries,
+`--no-sudo` and non-SGX `gramine-direct` evidence are rejected.
 Finality latency is the maximum positive validator observation from canonical
 q-forming block application to finalization acknowledgement. Any binary change
 requires a new artifact set and five new runs rather than mutation of old
@@ -1967,7 +1972,7 @@ verification.
 
 **Files/symbols:**
 
-- `testing/e2e-harness/features/ocomp_poc.feature`;
+- `testing/e2e-harness/features/ocomp.feature`;
 - `testing/e2e-harness/src/features/ocomp.rs` and its single
   `src/features/mod.rs` registration;
 - OCOMP scenario steps and evidence correlation, including the mandatory
@@ -1984,7 +1989,7 @@ admission/export containment and q-forming owner rollback run in `OCM-INT`
 against their production Rust seams. Mongo/CAS mutation, worker schedule,
 logical-time and vote matrices remain in their focused mandatory lanes.
 
-**Invariants/failures:** real four node/OCOMP domains; real UDS/Mongo/CE/
+**Invariants/failures:** real four node/OCOMP domains; real public RPC/ZeroMQ/Mongo/CE/
 checkpoints/public path; no central calculator, direct state/handler injection,
 trusted local outcome or synchronous fallback; `--all` plus exact discovery;
 automatic retries zero. `OCM-E2E-001` cannot advance to `JobIntent` evidence
@@ -1997,8 +2002,8 @@ constructed by a step.
 `OCM-26`; no other network changes.
 
 **Reuse/non-goals:** reuse existing localnet/Mongo/Gramine/process/evidence
-harness. Do not add real-SGX claims, exhaustive CE crash matrix, backlog policy,
-production release gate, TargetLarge or second program.
+harness and its release `sgx-no-attest` profile. Do not add native DCAP claims,
+an exhaustive CE crash matrix, backlog policy, TargetLarge or a second program.
 
 **Test first/owned IDs:**
 

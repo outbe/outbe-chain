@@ -28,7 +28,7 @@ mod tree_service;
 pub mod bench_support;
 
 pub use api::{
-    begin_block, delete, end_block, list, mint, read, retire_partition, update,
+    begin_block, delete, end_block, list, mint, preview_end_block, read, retire_partition, update,
     AuthenticatedParentTree, AuthenticatedParentTreeFactory, BodyInput, CeWorkCheckpoint,
     CeWorkConfig, EntityRef, ExecutionScope, ExplicitGasCheckpoint, ExplicitGasWindow,
     FinalLeafMutation, IdPage, IdPageRequest, ParentBodySource, ParentBodySourceRef, PartitionRef,
@@ -37,8 +37,8 @@ pub use api::{
 };
 
 pub use collection::{
-    collection_key, collection_root, partition_collection_key, sealed_root, CeDomain, CeTopologyV1,
-    CollectionKey, K_PROVISIONAL,
+    collection_key, collection_root, partition_collection_key, sealed_root,
+    tribute_partition_root_from_leaves, CeDomain, CeTopologyV1, CollectionKey, K_PROVISIONAL,
 };
 pub use commitment::{
     body_commitment, derive_poseidon_entity_id, identity_field, pbytes, Commitment,
@@ -49,7 +49,10 @@ pub use commitment::{
 pub use errors::ParentBodySourceError;
 pub use export_view::{AuthenticatedExportView, AuthenticatedTributePartition, ExportViewError};
 pub use identity::{EntityId36, EntityIdError};
-pub use lifecycle::{CompressedEntitiesLifecycle, CompressedEntitiesLifecycleContext, SealOutput};
+pub use lifecycle::{
+    preview_end_block as preview_lifecycle_end_block, CompressedEntitiesLifecycle,
+    CompressedEntitiesLifecycleContext, SealOutput,
+};
 pub use persistence::{
     classify_restart, ApplyOutcome, CeMdbx, CeMdbxReadOnly, CeRetentionCursor,
     DurableFinalizedCheckpoint, EnvironmentIdentity, ExactParentIdentity, FinalizationStage,

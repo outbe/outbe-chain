@@ -21,6 +21,7 @@ use alloy_primitives::hex;
 use eyre::{bail, eyre, Result, WrapErr};
 
 const TEST_ENCLAVE_IMAGE: &str = "outbe-tee-enclave-gramine-test";
+const TEST_ENCLAVE_IMAGE_BUILD_ARGS: &[&str] = &["build", "--provenance=false", "-f"];
 const PINNED_QVL_RUNTIME_FILES: &[(&str, &str)] = &[
     (
         "/usr/lib/x86_64-linux-gnu/libsgx_dcap_quoteverify.so.1.13.103.0",
@@ -181,6 +182,25 @@ pub(crate) struct SealSpec {
     pub chain_id_hex: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TestRemoteAttestation {
+    None,
+    Dcap,
+}
+
+impl TestRemoteAttestation {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Dcap => "dcap",
+        }
+    }
+
+    const fn requires_qvl(self) -> bool {
+        matches!(self, Self::Dcap)
+    }
+}
+
 /// Everything needed to launch one enclave container (mirrors `run-testnet.sh:215-293`).
 pub(crate) struct EnclaveSpec {
     pub name: String,
@@ -195,6 +215,9 @@ pub(crate) struct EnclaveSpec {
     pub sudo: bool,
     /// Pass real SGX device nodes through when the host exposes them.
     pub pass_sgx_devices: bool,
+    /// Explicit Gramine remote-attestation mode. SGX device availability selects
+    /// the runtime, not whether DCAP is enabled.
+    pub remote_attestation: TestRemoteAttestation,
     /// `--dkg-seed <hex>` for the container, or `None` (real+seal self-generates).
     pub dkg_seed: Option<String>,
     pub seal: Option<SealSpec>,
@@ -310,11 +333,10 @@ pub(crate) fn ensure_enclave_image(
     sudo: bool,
     signing_key: &Path,
 ) -> Result<DockerImageId> {
-    // The first setup call creates the scenario signing key and freezes the
-    // mutable image tag. Join/restart calls must inspect that same tag instead
-    // of rebuilding it: a rebuild can produce a new image ID and would no
-    // longer match the SIGSTRUCT already bound into genesis. A fresh scenario
-    // has no key and therefore always rebuilds from the current worktree.
+    // The scenario's first setup call creates its signing key and freezes the
+    // mutable image tag to one immutable image ID. All later starts must use
+    // that retained ID: another concurrent E2E run may legitimately retag the
+    // process-global test image without changing this scenario's SIGSTRUCT.
     if signing_key.exists() {
         let metadata = fs::symlink_metadata(signing_key)?;
         if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
@@ -335,7 +357,12 @@ pub(crate) fn ensure_enclave_image(
     let ctx = repo.join("bin/outbe-tee-enclave/gramine");
     let dockerfile = ctx.join("Dockerfile.test");
     let status = base_cmd("docker", sudo)
-        .args(["build", "-f"])
+        // BuildKit's default provenance attestation changes the top-level
+        // manifest-list digest on every otherwise identical build. The exact
+        // E2E artifact contract requires one stable immutable image ID across
+        // independently launched scenarios, so the test adapter publishes the
+        // deterministic platform manifest instead.
+        .args(TEST_ENCLAVE_IMAGE_BUILD_ARGS)
         .arg(&dockerfile)
         .args(["-t", TEST_ENCLAVE_IMAGE])
         .arg(&ctx)
@@ -395,6 +422,10 @@ fn inspect_enclave_image_id(sudo: bool) -> Result<DockerImageId> {
 
 fn build_enclave_command(spec: &EnclaveSpec) -> Result<Command> {
     let mut cmd = base_cmd("docker", spec.sudo);
+    cmd.env(
+        "OUTBE_TEST_REMOTE_ATTESTATION",
+        spec.remote_attestation.as_str(),
+    );
     cmd.args([
         "run",
         "--name",
@@ -423,7 +454,9 @@ fn build_enclave_command(spec: &EnclaveSpec) -> Result<Command> {
                 "/var/run/aesmd/aesm.socket:/var/run/aesmd/aesm.socket",
             ]);
         }
-        cmd.args(pinned_qvl_mount_args()?);
+        if spec.remote_attestation.requires_qvl() {
+            cmd.args(pinned_qvl_mount_args()?);
+        }
     }
 
     // Sealed-restart persistent mount.
@@ -536,7 +569,7 @@ fn select_sgx_enclave_device(
     if modern_exists {
         return Ok(Some("/dev/sgx/enclave"));
     }
-    bail!("real SGX mode requires /dev/sgx_enclave or /dev/sgx/enclave")
+    bail!("real SGX mode requires /dev/sgx_enclave or /dev/sgx/enclave");
 }
 
 /// A `Command` for `program`, `sudo`-wrapped when requested.
@@ -683,6 +716,14 @@ mod tests {
     }
 
     #[test]
+    fn test_enclave_image_build_disables_nondeterministic_provenance() {
+        assert_eq!(
+            TEST_ENCLAVE_IMAGE_BUILD_ARGS,
+            ["build", "--provenance=false", "-f"]
+        );
+    }
+
+    #[test]
     fn enclave_command_uses_the_pinned_image_id_instead_of_the_mutable_tag() {
         let root = tempfile::tempdir().expect("temporary enclave command inputs");
         let enclave_bin = root.path().join("outbe-tee-enclave");
@@ -699,6 +740,7 @@ mod tests {
             image_id: image_id.clone(),
             sudo: false,
             pass_sgx_devices: false,
+            remote_attestation: TestRemoteAttestation::None,
             dkg_seed: None,
             seal: None,
             log_path: root.path().join("enclave.log"),
@@ -716,6 +758,16 @@ mod tests {
         assert!(!arguments
             .iter()
             .any(|argument| argument == TEST_ENCLAVE_IMAGE));
+        assert!(command.get_envs().any(|(key, value)| {
+            key == "OUTBE_TEST_REMOTE_ATTESTATION" && value.is_some_and(|value| value == "none")
+        }));
+        assert!(!arguments.iter().any(|argument| argument.contains("/qvl/")));
+    }
+
+    #[test]
+    fn only_explicit_dcap_remote_attestation_requires_qvl() {
+        assert!(!TestRemoteAttestation::None.requires_qvl());
+        assert!(TestRemoteAttestation::Dcap.requires_qvl());
     }
 
     #[test]

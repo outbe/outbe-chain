@@ -291,11 +291,13 @@ pub fn run(opts: RunOpts) -> i32 {
 /// seed or creates and durably seals one on the first boot. Existing unreadable
 /// state is never overwritten. If node authorization exists but the identity is
 /// missing, startup fails: there is no recovery or implicit identity rotation.
+type EnclaveIdentitySeedResolution = (Option<Zeroizing<[u8; 32]>>, &'static str);
+
 fn resolve_enclave_identity_seed(
     args: &[String],
     cli_seed: Option<[u8; 32]>,
     development: bool,
-) -> Result<(Option<Zeroizing<[u8; 32]>>, &'static str), String> {
+) -> Result<EnclaveIdentitySeedResolution, String> {
     #[cfg(feature = "mock")]
     if development {
         return Ok(match cli_seed {

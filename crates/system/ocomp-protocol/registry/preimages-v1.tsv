@@ -22,12 +22,11 @@ OUTBE_OCOMP_SHUFFLE_SOURCE_COVERAGE_V1	u8(leaf_or_node)||canonical(run_span)||le
 OUTBE_OCOMP_SHUFFLE_RUN_NODE_V1	canonical(kind,page_span,first_record_ordinal,record_count,left_ordered_record_root,right_ordered_record_root)
 OUTBE_OCOMP_RESULT_CHUNK_V1	canonical(ResultChunkV1)
 OUTBE_OCOMP_RESULT_V1	canonical(LysisResultV1)
-OUTBE_OCOMP_RESULT_VOTE_SUBJECT_V1	chain_id||genesis_hash||fork_id||protocol_bundle_hash||JobId||attempt||result_committee_snapshot_hash||validator_index||key_epoch||u8(RESULT_SIGNATURE=1)||ResultDigest
-OUTBE_OCOMP_QUORUM_EVIDENCE_V1	JobId||result_committee_snapshot_hash||ResultDigest||quorum_height||signer_bitmap||for_each_set_bit_in_validator_order(validator_index||first_ResultDigest||key_epoch||first_signature_rs||submitted_height)
+OUTBE_OCOMP_RESULT_VOTE_SUBJECT_V1	chain_id||genesis_hash||fork_id||protocol_bundle_hash||JobId||attempt||result_validator_set_epoch||result_committee_set_hash||result_ocomp_binding_hash||ocomp_key_hash||key_epoch||u8(RESULT_SIGNATURE=1)||ResultDigest
+OUTBE_OCOMP_QUORUM_EVIDENCE_V1	JobId||result_validator_set_epoch||result_committee_set_hash||result_ocomp_binding_hash||u16_be(member_count)||u16_be(quorum_threshold)||ResultDigest||quorum_height||signer_bitmap_lsb0||for_each_set_bit_in_validator_order(u16_be(validator_index)||first_ResultDigest||key_epoch||first_signature_rs||submitted_height)
 OUTBE_OCOMP_VOTE_ACCOUNTABILITY_V1	canonical(OcompVoteAccountabilityV1)
 OUTBE_OCOMP_LYSIS_TERMINAL_V1	canonical(LysisTerminalV1)
-OUTBE_OCOMP_VALIDATOR_IDENTITY_V1	validator_index||validator_address20||len||consensus_public_key
-OUTBE_OCOMP_COMMITTEE_V1	canonical(OcompCommitteeSnapshotV1)
+OUTBE_OCOMP_VALIDATOR_IDENTITY_V1	validator_address20||consensus_bls_min_pk_48
 OUTBE_OCOMP_KEY_POP_V1	canonical_nested(OcompKeyRegistrationCoreV1)
 OUTBE_OCOMP_SIGN_ONCE_SLOT_V1	chain_id||purpose||JobId||attempt
 OUTBE_OCOMP_ACTIVATION_CALL_V1	canonical(ActivationCallCoreV1)

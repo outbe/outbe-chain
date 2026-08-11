@@ -26,14 +26,24 @@ use proptest::{
 };
 
 use super::{
-    poc_schema_limits, prepare_request_fixture, prepare_request_fixture_with_day_type,
-    prepare_two_ready_days_fixture, DayPhase, IMetadosis,
+    poc_schema_limits, prepare_ready_days_fixture, prepare_request_fixture,
+    prepare_request_fixture_with_day_type, DayPhase, IMetadosis,
 };
 use crate::{
-    api, commands,
+    api,
     fixture_kernel::{ActivationFixture, TEST_WWD},
+    schema::{terminal_outcome, terminal_retirement},
     WwdDayType, WwdMembership, WwdStatus,
 };
+
+mod commands {
+    pub(crate) use crate::commands::{
+        record_certified_parent_finality, run_ocomp_lifecycle_begin,
+        run_ocomp_lifecycle_begin_with_scope,
+        run_ocomp_terminal_request_with_completed_fixture as run_ocomp_terminal_request,
+        submit_verified_result_vote,
+    };
+}
 
 const OCOMP_ADAPTER_SEED: [u8; 32] = *b"metadosis-ocomp-adapter-model!!!";
 const GENERATED_CASES: u32 = 64;
@@ -456,9 +466,11 @@ fn prepare_expiring_production_fixture(
             .expect("seeded pre-state passes production aggregate validation");
         seeded
     });
+    let recovery_scope =
+        super::fatal_recovery::begin_recovery_scope(provider, &fixture, deadline_height);
 
     ExpiringProductionFixture {
-        scope: fixture.scope,
+        scope: recovery_scope,
         wwd: fixture.wwd,
         intent_id,
         deadline_height,
@@ -511,11 +523,24 @@ fn assert_exhausted_production_state(
                 .unwrap(),
             carry_over_before + fixture.retained_lysis_budget
         );
+        let receipt = metadosis
+            .worldwide_day_terminal_receipts
+            .get(fixture.wwd)
+            .unwrap()
+            .expect("attempts-exhausted WWD retains one failure receipt");
+        assert_eq!(receipt.outcome, terminal_outcome::METADOSIS_FAILURE);
+        assert_eq!(receipt.value_routed, fixture.retained_lysis_budget);
+        assert_eq!(receipt.carry_over_before, carry_over_before);
+        assert_eq!(
+            receipt.carry_over_after,
+            carry_over_before + fixture.retained_lysis_budget
+        );
+        assert_eq!(receipt.retirement, terminal_retirement::REQUESTED);
         assert_eq!(
             outbe_tribute::TributeContract::new(storage)
                 .total_supply()
                 .unwrap(),
-            1
+            0
         );
     });
 }
@@ -1286,7 +1311,7 @@ fn production_voting_open_rolls_back_every_mutation_and_retries_exactly() {
             MetadosisMutationPurposeTag::OcompLifecycle,
             open_height,
             fixture.block_time + 3,
-            commands::run_ocomp_lifecycle_begin,
+            |ctx| commands::run_ocomp_lifecycle_begin_with_scope(ctx, &fixture.scope),
         )
         .expect("exact production voting-open retry");
         assert_eq!(checkpoint(&provider, &fixture.scope), clean_after);
@@ -1303,7 +1328,7 @@ fn production_retryable_expiry_rolls_back_every_mutation_then_retries_exactly() 
         MetadosisMutationPurposeTag::OcompLifecycle,
         control_fixture.deadline_height,
         control_fixture.command_time,
-        commands::run_ocomp_lifecycle_begin,
+        |ctx| commands::run_ocomp_lifecycle_begin_with_scope(ctx, &control_fixture.scope),
     )
     .expect("clean retryable expiry");
     let mutation_count = control.clear_mutation_failure();
@@ -1324,7 +1349,7 @@ fn production_retryable_expiry_rolls_back_every_mutation_then_retries_exactly() 
             MetadosisMutationPurposeTag::OcompLifecycle,
             fixture.deadline_height,
             fixture.command_time,
-            commands::run_ocomp_lifecycle_begin,
+            |ctx| commands::run_ocomp_lifecycle_begin_with_scope(ctx, &fixture.scope),
         )
         .expect_err("every retryable-expiry mutation failure must propagate");
         assert!(matches!(
@@ -1373,7 +1398,7 @@ fn production_response_window_close_and_final_expiry_roll_back_every_mutation_th
         MetadosisMutationPurposeTag::OcompLifecycle,
         control_fixture.deadline_height,
         control_fixture.command_time,
-        commands::run_ocomp_lifecycle_begin,
+        |ctx| commands::run_ocomp_lifecycle_begin_with_scope(ctx, &control_fixture.scope),
     )
     .expect("clean production final expiry");
     let mutation_count = control.clear_mutation_failure();
@@ -1416,7 +1441,7 @@ fn production_response_window_close_and_final_expiry_roll_back_every_mutation_th
             MetadosisMutationPurposeTag::OcompLifecycle,
             fixture.deadline_height,
             fixture.command_time,
-            commands::run_ocomp_lifecycle_begin,
+            |ctx| commands::run_ocomp_lifecycle_begin_with_scope(ctx, &fixture.scope),
         )
         .expect_err("every response-close/final-expiry mutation failure must propagate");
         assert!(matches!(
@@ -1439,7 +1464,7 @@ fn production_response_window_close_and_final_expiry_roll_back_every_mutation_th
             MetadosisMutationPurposeTag::OcompLifecycle,
             fixture.deadline_height,
             fixture.command_time,
-            commands::run_ocomp_lifecycle_begin,
+            |ctx| commands::run_ocomp_lifecycle_begin_with_scope(ctx, &fixture.scope),
         )
         .expect("exact response-close/final-expiry retry");
         assert_eq!(
@@ -1545,7 +1570,7 @@ fn seed_near_cap_history(
 #[test]
 fn terminal_cap_is_per_worldwide_day_not_global() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
-    let fixture = prepare_two_ready_days_fixture(&mut provider, true);
+    let fixture = prepare_ready_days_fixture(&mut provider, true);
     let limits = poc_schema_limits();
     let fsm_limits = crate::ocomp::state::JobFsmLimits {
         max_terminal_records: 365,
@@ -1572,12 +1597,18 @@ fn terminal_cap_is_per_worldwide_day_not_global() {
             projection.deadline_height.expect("seeded live deadline"),
         )
     });
+    let recovery_scope = super::fatal_recovery::begin_recovery_scope_for_wwd(
+        &mut provider,
+        &fixture.scope,
+        fixture.first_wwd,
+        first_deadline,
+    );
     runtime_command(
         &mut provider,
         MetadosisMutationPurposeTag::OcompLifecycle,
         first_deadline,
         fixture.block_time + 3,
-        commands::run_ocomp_lifecycle_begin,
+        |ctx| commands::run_ocomp_lifecycle_begin_with_scope(ctx, &recovery_scope),
     )
     .expect("first-day final expiry fails the day gracefully, not the block");
 
@@ -1647,7 +1678,7 @@ fn terminal_cap_is_per_worldwide_day_not_global() {
 #[test]
 fn two_concurrent_live_days_do_not_share_terminal_budget() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
-    let fixture = prepare_two_ready_days_fixture(&mut provider, true);
+    let fixture = prepare_ready_days_fixture(&mut provider, true);
     let limits = poc_schema_limits();
     let fsm_limits = crate::ocomp::state::JobFsmLimits {
         max_terminal_records: 365,
@@ -1665,7 +1696,7 @@ fn two_concurrent_live_days_do_not_share_terminal_budget() {
         &mut provider,
         &fixture.scope,
         fixture.later_wwd,
-        // Stay well inside the first day's response window (open + 64 blocks):
+        // Stay well inside the first day's exact compute-and-vote response window:
         // the begin-zone enforces exact response-deadline heights.
         fixture.block_number + 5,
         fixture.block_time + 4,

@@ -32,7 +32,7 @@ use std::{
 use tracing::debug;
 
 /// Maximum number of validators supported (used as upper bound for codec deserialization).
-pub(crate) const MAX_VALIDATORS: u32 = 256;
+pub const MAX_VALIDATORS: u32 = 256;
 static SECRET_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 // ---------------------------------------------------------------------------

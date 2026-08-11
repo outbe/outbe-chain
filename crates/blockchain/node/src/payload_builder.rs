@@ -715,6 +715,7 @@ mod tests {
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{address, keccak256, Bytes, Signature, TxKind};
     use alloy_rpc_types_engine::PayloadId;
+    use outbe_chain_constants::GenesisProtocolParametersV1;
     use outbe_compressed_entities::{
         CandidateCacheLimits, CeMdbx, CompressedTreeService, EnvironmentIdentity,
         ExactParentIdentity, FinalizedMarker, ACTIVE_COMMITMENT_SCHEME,
@@ -882,24 +883,16 @@ mod tests {
         const OWNER: alloy_primitives::Address =
             address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
 
-        let mut seed = HashMapStorageProvider::new(chain_spec.chain().id());
+        let mut seed =
+            HashMapStorageProvider::new_with_chain_identity(chain_spec.chain().id(), genesis_hash);
         seed.set_block_number(1);
         seed.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::ForkProfile);
         StorageHandle::enter(&mut seed, |storage| {
-            let install =
-                ForkInstallScenario::measurement_at(1, chain_spec.chain().id(), genesis_hash)
-                    .expect("fresh-devnet OCOMP install fixture is canonical");
-            let install_ctx = BlockRuntimeContext::new(
-                BlockContext::empty_for_tests(
-                    1,
-                    ACTIVE_PAYLOAD_BLOCK_TIMESTAMP,
-                    chain_spec.chain().id(),
-                ),
-                storage.clone(),
-            );
-            outbe_metadosis::commands::install_fork_profile(&install_ctx, install.install())
-                .expect("fresh-devnet OCOMP profile installs through the production command");
-
+            for (slot, value) in GenesisProtocolParametersV1::default().genesis_storage_words() {
+                storage
+                    .sstore(outbe_chain_constants::CHAIN_CONSTANTS_ADDRESS, slot, value)
+                    .expect("test chain constants seed succeeds");
+            }
             let root = outbe_compressed_entities::sealed_root(B256::ZERO)
                 .expect("CE genesis root is deterministic");
             storage
@@ -934,23 +927,40 @@ mod tests {
                 .register_validator(OWNER, proposer, &TEST_CONSENSUS_PUBLIC_KEY)
                 .expect("proposer registration seed succeeds");
             validators
-                .activate_reshared_set(&[proposer], B256::ZERO)
-                .expect("active proposer seed succeeds");
+                .activate_validator_via_boundary_for_test(proposer)
+                .expect("active proposer reaches production boundary activation");
+            let founder_registration = validators
+                .ocomp_registration(proposer)
+                .expect("active proposer OCOMP registration is readable")
+                .expect("active proposer has OCOMP registration");
 
-            let mut oracle = outbe_oracle::contract::OracleContract::new(storage);
-            oracle
-                .register_pair("COEN", "0xUSD")
+            let mut install =
+                ForkInstallScenario::measurement_at(1, chain_spec.chain().id(), genesis_hash)
+                    .expect("fresh-devnet OCOMP install fixture is canonical")
+                    .into_install();
+            install.founder_registrations = vec![founder_registration];
+            let install_ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(
+                    1,
+                    ACTIVE_PAYLOAD_BLOCK_TIMESTAMP,
+                    chain_spec.chain().id(),
+                ),
+                storage.clone(),
+            );
+            outbe_metadosis::commands::install_fork_profile(&install_ctx, &install)
+                .expect("fresh-devnet OCOMP profile installs through the production command");
+
+            outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
                 .expect("oracle pair seed succeeds");
-            oracle
-                .set_exchange_rate(
-                    alloy_primitives::Address::ZERO,
-                    "COEN",
-                    "0xUSD",
-                    U256::from(1_000_000_000_000_000_000u128),
-                    0,
-                    0,
-                )
-                .expect("oracle rate seed succeeds");
+            outbe_oracle::api::set_exchange_rate(
+                storage,
+                alloy_primitives::Address::ZERO,
+                outbe_oracle::api::DAY_TYPE_PAIR,
+                U256::from(1_000_000_000_000_000_000u128),
+                0,
+                0,
+            )
+            .expect("oracle rate seed succeeds");
         });
 
         let provider =

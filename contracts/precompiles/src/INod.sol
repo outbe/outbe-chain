@@ -81,8 +81,5 @@ interface INod {
 
     // outbe-specific
     function nodData(bytes calldata nodId) external view returns (NodData memory);
-    function certifiedGeneration(uint32 worldwideDay)
-        external
-        view
-        returns (CertifiedGenerationData memory);
+    function certifiedGeneration(uint32 worldwideDay) external view returns (CertifiedGenerationData memory);
 }

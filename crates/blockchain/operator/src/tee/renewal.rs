@@ -250,7 +250,9 @@ fn validate_identity(
             NodeBindingSelectorV1::FullNode(public),
             outbe_primitives::tee_attestation_v1::NodeIdV1::FullNode { reth_p2p_public },
         ) if public == reth_p2p_public => {}
-        _ => eyre::bail!("renewal selector does not match the committed node identity"),
+        _ => {
+            eyre::bail!("renewal selector does not match the committed node identity");
+        }
     }
     Ok(())
 }
@@ -482,7 +484,7 @@ fn finalize(
 ) -> Result<RenewalOutcomeV1> {
     journal.store(RenewalJournalSnapshotV1::new(
         RenewalJournalStateV1::Finalized {
-            attempt,
+            attempt: Box::new(attempt),
             finalized_binding: view.binding.clone(),
             finalized_height: view.schedule.finalized_height,
             finalized_hash: view.schedule.finalized_hash,

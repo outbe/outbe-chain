@@ -10,7 +10,6 @@ use alloy_primitives::{B256, U256};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    committee::POC_COMMITTEE_SIZE,
     generated_shape::{
         OCOMP_POC_CANDIDATE_LIMITS_V1, OCOMP_POC_DEVNET_MACHINE_V1, OCOMP_POC_HEADROOM_POLICY_V1,
     },
@@ -134,7 +133,7 @@ pub struct ObservedMachineFactsV1 {
     pub pid1_is_systemd: bool,
     pub unified_cgroup_v2: bool,
     pub writable_resource_cgroup: bool,
-    pub production_enclave_gramine_direct: bool,
+    pub production_enclave_sgx_no_attest: bool,
 }
 
 impl ObservedMachineFactsV1 {
@@ -176,8 +175,8 @@ impl ObservedMachineFactsV1 {
         require_machine(self.unified_cgroup_v2, "unified cgroup v2")?;
         require_machine(self.writable_resource_cgroup, "writable resource cgroup")?;
         require_machine(
-            self.production_enclave_gramine_direct,
-            "production enclave under gramine-direct",
+            self.production_enclave_sgx_no_attest,
+            "production enclave under real SGX without attestation",
         )?;
         Ok(())
     }
@@ -187,7 +186,7 @@ impl ObservedMachineFactsV1 {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CapacityValidatorBlockProcessingV1 {
-    pub validator_index: u8,
+    pub validator_index: u16,
     pub block_number: u64,
     pub block_hash: B256,
     pub elapsed_micros: u64,
@@ -219,7 +218,7 @@ pub struct CapacityRecoveredGenerationBindingV1 {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CapacityHistoricalReplayBindingV1 {
-    pub validator_index: u8,
+    pub validator_index: u16,
     pub first_missing_block_number: u64,
     pub target_block_number: u64,
     pub target_block_hash: B256,
@@ -236,7 +235,7 @@ impl CapacityHistoricalReplayBindingV1 {
             .checked_sub(self.first_missing_block_number)
             .and_then(|span| span.checked_add(1));
         let generation = &self.recovered_generation;
-        if usize::from(self.validator_index) >= POC_COMMITTEE_SIZE
+        if usize::from(self.validator_index) >= run.validator_block_processing.len()
             || self.first_missing_block_number == 0
             || self.first_missing_block_number > run.q_forming_block_number
             || self.target_block_number < run.finalized_block_number
@@ -281,7 +280,7 @@ pub struct CapacityRunBindingV1 {
     pub tribute_count: u64,
     pub nod_count: u64,
     pub worker_shard_count: u64,
-    pub validator_block_processing: [CapacityValidatorBlockProcessingV1; POC_COMMITTEE_SIZE],
+    pub validator_block_processing: Vec<CapacityValidatorBlockProcessingV1>,
     pub historical_replay: CapacityHistoricalReplayBindingV1,
 }
 
@@ -302,6 +301,7 @@ impl CapacityRunBindingV1 {
         }
         if self.q_forming_block_number == 0
             || self.finalized_block_number < self.q_forming_block_number
+            || self.validator_block_processing.is_empty()
             || self
                 .validator_block_processing
                 .iter()
@@ -477,8 +477,12 @@ impl VerifiedCapacityEvidenceV1 {
         &self,
         profile_id: B256,
         generated_limits_manifest_hash: B256,
+        result_deadline_blocks: u64,
     ) -> Result<CapacityProfileV1, CapacityEvidenceError> {
-        if profile_id.is_zero() || generated_limits_manifest_hash.is_zero() {
+        if profile_id.is_zero()
+            || generated_limits_manifest_hash.is_zero()
+            || result_deadline_blocks == 0
+        {
             return Err(CapacityEvidenceError::MissingIdentity);
         }
         let candidate = OCOMP_POC_CANDIDATE_LIMITS_V1;
@@ -487,9 +491,6 @@ impl VerifiedCapacityEvidenceV1 {
             max_tributes_per_work_shard: u32::try_from(candidate.max_tributes_per_work_shard)
                 .map_err(|_| CapacityEvidenceError::GeneratedLimitOverflow)?,
             max_workers_per_domain: 4,
-            // Two is the smallest bounded profile that proves independent
-            // concurrent Job progress without widening any per-block work cap.
-            max_pending_jobs: 2,
             max_intents_per_block: 1,
             max_activations_per_block: 1,
             max_ready_inspections_per_block: 1,
@@ -501,7 +502,7 @@ impl VerifiedCapacityEvidenceV1 {
                 .map_err(|_| CapacityEvidenceError::GeneratedLimitOverflow)?,
             max_active_scurve_entries: u32::try_from(candidate.max_active_scurve_entries)
                 .map_err(|_| CapacityEvidenceError::GeneratedLimitOverflow)?,
-            result_deadline_blocks: 64,
+            result_deadline_blocks,
             source_retention_after_terminal_blocks: candidate
                 .source_retention_after_terminal_blocks,
             generated_limits_manifest_hash,

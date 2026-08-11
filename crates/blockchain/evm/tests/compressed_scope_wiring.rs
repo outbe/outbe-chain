@@ -43,7 +43,7 @@ fn execution_db(proposer: Address, parent_root: B256) -> CacheDB<EmptyDBTyped<Pr
         let owner = Address::repeat_byte(0x11);
         let mut validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         validators.config_owner.write(owner).unwrap();
-        validators.config_max_validators.write(128).unwrap();
+        validators.set_config_max_validators(128).unwrap();
         validators.config_epoch_length_blocks.write(60).unwrap();
         validators.config_is_initialized.write(true).unwrap();
         let mut public_key = [0_u8; 48];
@@ -52,21 +52,20 @@ fn execution_db(proposer: Address, parent_root: B256) -> CacheDB<EmptyDBTyped<Pr
             .register_validator(owner, proposer, &public_key)
             .unwrap();
         validators
-            .activate_reshared_set(&[proposer], B256::ZERO)
+            .activate_validator_via_boundary_for_test(proposer)
             .unwrap();
 
-        let mut oracle = outbe_oracle::contract::OracleContract::new(storage);
-        oracle.register_pair("COEN", "0xUSD").unwrap();
-        oracle
-            .set_exchange_rate(
-                Address::ZERO,
-                "COEN",
-                "0xUSD",
-                U256::from(1_000_000_000_000_000_000_u128),
-                0,
-                0,
-            )
+        outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
+        outbe_oracle::api::set_exchange_rate(
+            storage,
+            Address::ZERO,
+            outbe_oracle::api::DAY_TYPE_PAIR,
+            U256::from(1_000_000_000_000_000_000_u128),
+            0,
+            0,
+        )
+        .unwrap();
     });
 
     let mut db = CacheDB::<EmptyDBTyped<ProviderError>>::default();

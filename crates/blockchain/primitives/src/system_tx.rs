@@ -210,7 +210,10 @@ impl SystemTxKind {
 
     /// Whether a non-success EVM result (`Revert` / `Halt`) executing this
     /// begin-zone phase must fail the whole block instead of being recorded as a
-    /// soft `status = 0` receipt and skipped.
+    /// soft `status = 0` receipt and skipped. This classification applies only
+    /// while the result fits the aggregate internal-work budget. An OOG consumes
+    /// the full system-call gas limit; aggregate budget exhaustion always fails
+    /// atomically before a receipt, including for a phase classified as soft.
     ///
     /// Consensus- and economic-critical phases are one-shot: their work cannot
     /// be retried by a later block, so a swallowed revert permanently loses it —

@@ -114,11 +114,19 @@ production availability, isolation, authentication, capacity or backup guarantee
 ## Production-interface verification evidence
 
 Inspected `deploy/systemd/outbe-chain.service`, `outbe-validator.service`, environment
-examples, `deploy/monitoring`, `mise.toml`, `scripts/localnet-stack.sh`,
-`scripts/run-testnet.sh` and validator operations documentation. Current localnet startup
-checks Mongo reachability/primary election and uses distinct validator databases. Current
-stop preserves chain data while clean removes the stack, but the contract is implemented
-across shell conventions rather than one machine-checked profile.
+examples, `deploy/monitoring`, `mise.toml`, the Rust E2E harness, and validator operations
+documentation. The canonical dev `localnet-bootstrap/start/status/stop` lifecycle is owned
+by one persistent Rust-harness process: it checks Mongo reachability/primary election,
+starts the full mock-enclave cohort before validators, uses distinct validator databases,
+persists one resolved all-service port layout across bootstrap/start, then starts one OCOMP
+Supervisor, SnapshotExporter and Worker-0 per validator. Running readiness requires advancing
+RPCs and exact Worker registration/connection at every Supervisor, and is published in an atomic
+owner/RPC/OCOMP state record. Stop verifies the exact owner process before
+signalling it and preserves chain data; clean clears validator runtime data inside the
+dedicated LocalNet directory while preserving bootstrap inputs and receipts.
+The separate Tribute demo stack remains a scoped demonstration workflow, not the canonical
+operator lifecycle. The real-SGX LocalNet lane is explicitly deferred and cannot fall back
+to the mock `GramineDirectDev` profile.
 
 ## Consequences
 

@@ -97,7 +97,7 @@ commitments and remains a blocking debt.
 | PFS-003-08 | restart at transaction boundaries | committed pledge/request/payment/reclaim checkpoints | restart after each boundary | reads, roots, nullifiers, balances and cursor reconstruct identically | documentation-only: persistent fixture absent |
 | PFS-003-09 | zero settlement asset | valid proof/bundle but zero asset | request Credis | revert; no nullifier/position mutation | in-process `request_credis_rejects_zero_asset` |
 | PFS-003-10 | zero smart account | valid proof/asset but zero bundle | request Credis | revert; no nullifier/position mutation | in-process `request_credis_rejects_zero_smart_account` |
-| PFS-003-11 | unauthorized installment payer | live position owned by another bundle | non-owner pays installment | revert; cursor/debt/root unchanged | in-process `pay_anadosis_rejects_non_owner_caller` |
+| PFS-003-11 | third-party installment payer | live position owned by another bundle | non-owner pays installment | accepted; debt pulled from the payer, cursor advances, freed collateral released to the original pledger | in-process `pay_anadosis_accepts_third_party_payer` |
 | PFS-003-12 | zero reclaim commitment | due installment and owner caller | pay with zero commitment | revert; cursor/debt/root unchanged | in-process `pay_anadosis_rejects_zero_reclaim_commitment` |
 
 ## Open questions and technical debt

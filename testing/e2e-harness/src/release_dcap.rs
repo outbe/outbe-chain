@@ -349,7 +349,7 @@ fn run(cli: Cli) -> Result<()> {
         intent: intent.clone(),
         quote: generated.quote_body.clone(),
         components,
-        transition_key_ready_proof: generated.transition_key_ready_proof.clone(),
+        transition_key_ready_proof: generated.transition_key_ready_proof,
     });
     let evidence_bytes = evidence
         .encode_canonical()
@@ -367,7 +367,7 @@ fn run(cli: Cli) -> Result<()> {
             bail!(
                 "public enclave verifier rejected fresh evidence with {:#06x}",
                 code.code()
-            )
+            );
         }
     };
     ensure!(
@@ -648,7 +648,7 @@ fn sgx_devices() -> Result<(String, String)> {
             return Ok((enclave.to_owned(), provision.to_owned()));
         }
     }
-    bail!("required SGX enclave and provision devices are absent")
+    bail!("required SGX enclave and provision devices are absent");
 }
 
 fn start_enclave(
@@ -714,7 +714,7 @@ fn random_node_signer() -> Result<PrivateKeySigner> {
             return Ok(signer);
         }
     }
-    bail!("failed to generate a valid ephemeral node signer")
+    bail!("failed to generate a valid ephemeral node signer");
 }
 
 fn node_signature(signer: &PrivateKeySigner, hash: B256) -> Result<[u8; 65], String> {
@@ -745,7 +745,7 @@ fn random_nonzero_b256() -> Result<B256> {
             return Ok(B256::from(bytes));
         }
     }
-    bail!("OS RNG repeatedly returned a zero binding ID")
+    bail!("OS RNG repeatedly returned a zero binding ID");
 }
 
 #[derive(Serialize)]

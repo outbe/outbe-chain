@@ -12,6 +12,9 @@ const MANAGED_MONGO_IMAGE: &str = "mongo:7.0";
 #[derive(Debug)]
 pub struct ManagedMongoReplicaSet {
     uri: String,
+    name: String,
+    port: u16,
+    sudo: bool,
     #[allow(dead_code)]
     guard: DockerGuard,
 }
@@ -37,19 +40,23 @@ impl ManagedMongoReplicaSet {
         let port = free_tcp_port()?;
         docker_rm(name, sudo);
 
+        // Publish the port instead of `--network host`: host networking does not
+        // reach the host loopback on Docker Desktop (Linux VM), so the fixture must
+        // work whether the daemon is native Linux or a VM. `--bind_ip_all` lets the
+        // docker port proxy reach mongod on the container interface.
+        let publish = format!("127.0.0.1:{port}:{port}");
         let output = base_cmd("docker", sudo)
             .args([
                 "run",
                 "-d",
                 "--name",
                 name,
-                "--network",
-                "host",
+                "-p",
+                &publish,
                 MANAGED_MONGO_IMAGE,
                 "--replSet",
                 "rs0",
-                "--bind_ip",
-                "127.0.0.1",
+                "--bind_ip_all",
                 "--port",
                 &port.to_string(),
             ])
@@ -66,8 +73,13 @@ impl ManagedMongoReplicaSet {
             bail!("managed MongoDB did not listen on 127.0.0.1:{port}");
         }
 
-        let init =
-            format!("rs.initiate({{_id:'rs0',members:[{{_id:0,host:'127.0.0.1:{port}'}}]}})");
+        // Initiate the set (ignore "already initialized" on retries) and only
+        // report ready once the node has actually won its election — rs.initiate
+        // returns ok:1 before the member transitions to PRIMARY, so writing early
+        // races into NotWritablePrimary.
+        let init = format!(
+            "try {{ rs.initiate({{_id:'rs0',members:[{{_id:0,host:'127.0.0.1:{port}'}}]}}) }} catch (e) {{}} if (!db.hello().isWritablePrimary) {{ quit(1) }}"
+        );
         let mut ready = false;
         for _ in 0..60 {
             let status = base_cmd("docker", sudo)
@@ -96,6 +108,9 @@ impl ManagedMongoReplicaSet {
 
         Ok(Self {
             uri: format!("mongodb://127.0.0.1:{port}/?replicaSet=rs0&directConnection=true"),
+            name: name.to_owned(),
+            port,
+            sudo,
             guard,
         })
     }
@@ -104,6 +119,62 @@ impl ManagedMongoReplicaSet {
     #[must_use]
     pub fn uri(&self) -> &str {
         &self.uri
+    }
+
+    /// Pause the managed replica set without changing its identity or data.
+    pub fn pause(&self) -> Result<()> {
+        self.docker_control("pause")
+    }
+
+    /// Resume the same replica set and wait until it is writable again.
+    pub fn resume(&self) -> Result<()> {
+        self.docker_control("unpause")?;
+        if !wait_tcp(self.port, 200) {
+            bail!(
+                "resumed managed MongoDB did not listen on 127.0.0.1:{}",
+                self.port
+            );
+        }
+        let mut ready = false;
+        for _ in 0..60 {
+            let status = base_cmd("docker", self.sudo)
+                .args([
+                    "exec",
+                    self.name.as_str(),
+                    "mongosh",
+                    "--quiet",
+                    "--port",
+                    &self.port.to_string(),
+                    "--eval",
+                    "if (!db.hello().isWritablePrimary) { quit(1) }",
+                ])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+            if status.is_ok_and(|status| status.success()) {
+                ready = true;
+                break;
+            }
+            sleep(Duration::from_millis(250));
+        }
+        if !ready {
+            bail!("resumed managed MongoDB replica set did not become writable");
+        }
+        Ok(())
+    }
+
+    fn docker_control(&self, operation: &str) -> Result<()> {
+        let output = base_cmd("docker", self.sudo)
+            .args([operation, self.name.as_str()])
+            .output()
+            .wrap_err_with(|| format!("{operation} managed MongoDB container"))?;
+        if !output.status.success() {
+            bail!(
+                "{operation} managed MongoDB container: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
+        Ok(())
     }
 }
 

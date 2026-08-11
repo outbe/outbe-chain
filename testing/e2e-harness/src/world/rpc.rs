@@ -32,7 +32,7 @@ use outbe_primitives::reshare_artifact::decode_outbe_block_artifacts;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "ocomp-integration")]
-use crate::internal::eth::{IDesis, IMetadosis};
+use crate::internal::eth::{IDesis, IMetadosis, IPromisLimit};
 use crate::internal::{
     addresses,
     config::Config,
@@ -107,6 +107,16 @@ pub struct MetadosisWorldwideDayStatusChangeV1 {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct MetadosisWorldwideDayTerminalReceiptV1 {
+    pub outcome: u8,
+    pub value_routed: U256,
+    pub carry_over_before: U256,
+    pub carry_over_after: U256,
+    pub retirement_outcome: u8,
+    pub block_number: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct OcompPublicJobRequestV1 {
     pub intent_id: B256,
     pub worldwide_day: u32,
@@ -156,17 +166,22 @@ pub struct OcompPublicResultVoteTransactionV1 {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct OcompPublicVoteAccountabilityV1 {
     pub job_id: B256,
-    pub result_committee_snapshot_hash: B256,
-    pub slot_validator_indexes: Vec<u8>,
+    pub result_validator_set_epoch: u64,
+    pub result_committee_set_hash: B256,
+    pub result_ocomp_binding_hash: B256,
+    pub member_count: u16,
+    pub quorum_threshold: u16,
+    pub slot_validator_indexes: Vec<u16>,
+    pub slot_first_signatures: Vec<(u16, Vec<u8>)>,
     pub quorum_result_digest: Option<B256>,
     pub quorum_height: Option<u64>,
-    pub quorum_signer_bitmap: Option<u8>,
+    pub quorum_signer_bitmap: Option<Vec<u8>>,
     pub closed_height: Option<u64>,
-    pub timely_bitmap: Option<u8>,
-    pub matching_bitmap: Option<u8>,
-    pub divergent_bitmap: Option<u8>,
-    pub missing_bitmap: Option<u8>,
-    pub equivocation_bitmap: Option<u8>,
+    pub timely_bitmap: Option<Vec<u8>>,
+    pub matching_bitmap: Option<Vec<u8>>,
+    pub divergent_bitmap: Option<Vec<u8>>,
+    pub missing_bitmap: Option<Vec<u8>>,
+    pub equivocation_bitmap: Option<Vec<u8>>,
 }
 
 /// Finalized, cross-owner authority for one proof-backed Nod generation.
@@ -1011,6 +1026,36 @@ impl Rpc {
     }
 
     #[cfg(feature = "ocomp-integration")]
+    pub fn metadosis_terminal_receipt_on(
+        &self,
+        port: u16,
+        day: u32,
+    ) -> Option<MetadosisWorldwideDayTerminalReceiptV1> {
+        let receipt = eth::read_call(
+            &self.url(port),
+            addresses::WWD_ADDR,
+            &IMetadosis::getWorldwideDayTerminalReceiptCall { wwd: day },
+        )?;
+        Some(MetadosisWorldwideDayTerminalReceiptV1 {
+            outcome: receipt.outcome,
+            value_routed: receipt.valueRouted,
+            carry_over_before: receipt.carryOverBefore,
+            carry_over_after: receipt.carryOverAfter,
+            retirement_outcome: receipt.retirementOutcome,
+            block_number: receipt.blockNumber,
+        })
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    pub fn promis_limit_total_unallocated_on(&self, port: u16) -> Option<U256> {
+        eth::read_call(
+            &self.url(port),
+            addresses::PROMIS_LIMIT_ADDR,
+            &IPromisLimit::totalUnallocatedCall {},
+        )
+    }
+
+    #[cfg(feature = "ocomp-integration")]
     pub fn metadosis_wwd_state_at(
         &self,
         port: u16,
@@ -1147,6 +1192,27 @@ impl Rpc {
         eth::address_of(key).map(|a| format!("{a:#x}"))
     }
 
+    /// Create one Tribute for the currently OFFERING WorldwideDay.
+    pub fn create_tribute(&self, key: &str) -> Option<String> {
+        const OFFERING: u8 = 2;
+
+        let days: Vec<u32> = eth::read_call(
+            &self.cfg.rpc0,
+            addresses::WWD_ADDR,
+            &IWorldwideDay::getWorldwideDaysByStatusCall { status: OFFERING },
+        )?;
+        let worldwide_day = *days.first()?;
+        if days.len() > 1 {
+            eprintln!(
+                "multiple OFFERING WorldwideDays {days:?}; creating Tribute for {worldwide_day}"
+            );
+        }
+
+        let tx_hash = self.tribute_offer(key, &worldwide_day.to_string())?;
+        self.wait_successful_receipt(&tx_hash, 240)
+            .then_some(tx_hash)
+    }
+
     /// Submit a tribute offer for worldwide-day `wwd` from `key`; returns tx hash if any.
     pub fn tribute_offer(&self, key: &str, wwd: &str) -> Option<String> {
         self.tribute_offer_with_params(key, wwd, "100", 840, false)
@@ -1276,7 +1342,7 @@ impl Rpc {
     /// the canonical block independently read from the same validator.
     #[cfg(feature = "ocomp-integration")]
     pub fn finalized_ocomp_job_request(&self, from_height: u64) -> Option<OcompPublicJobRequestV1> {
-        self.finalized_ocomp_job_request_on_url(&self.cfg.rpc0, from_height)
+        self.finalized_ocomp_job_request_on_url(&self.cfg.rpc0, from_height, None)
     }
 
     /// Observe the same finalized OCOMP request on one named validator.
@@ -1286,7 +1352,19 @@ impl Rpc {
         port: u16,
         from_height: u64,
     ) -> Option<OcompPublicJobRequestV1> {
-        self.finalized_ocomp_job_request_on_url(&self.url(port), from_height)
+        self.finalized_ocomp_job_request_on_url(&self.url(port), from_height, None)
+    }
+
+    /// Observe the latest finalized OCOMP request for one exact WorldwideDay.
+    /// Later retry-chain events for another day cannot hide the requested job.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn finalized_ocomp_job_request_for_worldwide_day_on(
+        &self,
+        port: u16,
+        from_height: u64,
+        worldwide_day: u32,
+    ) -> Option<OcompPublicJobRequestV1> {
+        self.finalized_ocomp_job_request_on_url(&self.url(port), from_height, Some(worldwide_day))
     }
 
     #[cfg(feature = "ocomp-integration")]
@@ -1294,6 +1372,7 @@ impl Rpc {
         &self,
         rpc_url: &str,
         from_height: u64,
+        worldwide_day: Option<u32>,
     ) -> Option<OcompPublicJobRequestV1> {
         const EVENT_SIGNATURE: &str = "OffchainJobRequested(bytes32,uint32,uint64,uint32,bytes32)";
         let finalized_height = eth::finalized_number(rpc_url)?;
@@ -1312,7 +1391,7 @@ impl Rpc {
             }]),
         )?;
         let logs = logs.as_array()?;
-        let log = logs.last()?;
+        let log = select_ocomp_job_request_log(logs, worldwide_day)?;
         let topics = log.get("topics")?.as_array()?;
         if topics.len() != 3 || topics[0].as_str()? != format!("{topic0:#x}") {
             return None;
@@ -1424,22 +1503,32 @@ impl Rpc {
         let closed = accountability.closed_summary.as_ref();
         Some(OcompPublicVoteAccountabilityV1 {
             job_id: accountability.job_id,
-            result_committee_snapshot_hash: accountability.result_committee_snapshot_hash,
+            result_validator_set_epoch: accountability.result_validator_set_epoch,
+            result_committee_set_hash: accountability.result_committee_set_hash,
+            result_ocomp_binding_hash: accountability.result_ocomp_binding_hash,
+            member_count: accountability.member_count,
+            quorum_threshold: accountability.quorum_threshold,
             slot_validator_indexes: accountability
                 .slots
                 .iter()
                 .flatten()
                 .map(|slot| slot.validator_index)
                 .collect(),
+            slot_first_signatures: accountability
+                .slots
+                .iter()
+                .flatten()
+                .map(|slot| (slot.validator_index, slot.first_signature_rs.to_vec()))
+                .collect(),
             quorum_result_digest: quorum.map(|value| value.result_digest),
             quorum_height: quorum.map(|value| value.quorum_height),
-            quorum_signer_bitmap: quorum.map(|value| value.signer_bitmap),
+            quorum_signer_bitmap: quorum.map(|value| value.signer_bitmap.clone()),
             closed_height: closed.map(|value| value.closed_height),
-            timely_bitmap: closed.map(|value| value.timely_bitmap),
-            matching_bitmap: closed.map(|value| value.matching_bitmap),
-            divergent_bitmap: closed.map(|value| value.divergent_bitmap),
-            missing_bitmap: closed.map(|value| value.missing_bitmap),
-            equivocation_bitmap: closed.map(|value| value.equivocation_bitmap),
+            timely_bitmap: closed.map(|value| value.timely_bitmap.clone()),
+            matching_bitmap: closed.map(|value| value.matching_bitmap.clone()),
+            divergent_bitmap: closed.map(|value| value.divergent_bitmap.clone()),
+            missing_bitmap: closed.map(|value| value.missing_bitmap.clone()),
+            equivocation_bitmap: closed.map(|value| value.equivocation_bitmap.clone()),
         })
     }
 
@@ -1566,7 +1655,7 @@ impl Rpc {
     pub fn submit_ocomp_result_vote_bytes(
         &self,
         port: u16,
-        validator: &Validator,
+        signer_key: &str,
         vote_bytes: Vec<u8>,
     ) -> Result<String> {
         let calldata = IMetadosis::submitLysisResultCall {
@@ -1576,9 +1665,9 @@ impl Rpc {
         eth::send_calldata(
             &self.url(port),
             addresses::WWD_ADDR,
-            &validator.evm_key()?,
+            signer_key,
             calldata,
-            outbe_ocomp_protocol::generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1.max_activation_gas,
+            outbe_ocomp_protocol::system_carrier::OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
         )
     }
 
@@ -1850,6 +1939,10 @@ impl Rpc {
 
     /// Confirm a PENDING joiner is synced/ready (stale-join guard).
     pub fn confirm_ready(&self, key: &str) -> Result<String> {
+        let registration = self
+            .cfg
+            .validator_dir(self.cfg.validators)
+            .join("ocomp-registration-v1.ocb1");
         let out = self.sh().cli([
             "--private-key",
             key,
@@ -1857,6 +1950,8 @@ impl Rpc {
             self.cfg.rpc0.as_str(),
             "validator",
             "confirm-ready",
+            "--registration",
+            &registration.display().to_string(),
         ])?;
         let tx_hash = parse::extract_tx_hash(&out)
             .ok_or_else(|| eyre!("no tx hash in confirm-ready output:\n{out}"))?;
@@ -2577,6 +2672,24 @@ fn parse_rpc_word(encoded: &str) -> Option<U256> {
 }
 
 #[cfg(feature = "ocomp-integration")]
+fn select_ocomp_job_request_log(
+    logs: &[serde_json::Value],
+    worldwide_day: Option<u32>,
+) -> Option<&serde_json::Value> {
+    logs.iter().rev().find(|log| {
+        worldwide_day.is_none_or(|expected| {
+            log.get("topics")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|topics| topics.get(2))
+                .and_then(serde_json::Value::as_str)
+                .and_then(parse_rpc_word)
+                .and_then(|word| u32::try_from(word).ok())
+                == Some(expected)
+        })
+    })
+}
+
+#[cfg(feature = "ocomp-integration")]
 fn decode_rpc_data_words(log: &serde_json::Value, expected: usize) -> Option<Vec<U256>> {
     let bytes = hex::decode(log.get("data")?.as_str()?.trim_start_matches("0x")).ok()?;
     if bytes.len() != expected.checked_mul(32)? {
@@ -2699,5 +2812,27 @@ mod ocomp_tests {
         };
 
         assert!(package.evidence_identity().is_err());
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
+    fn job_request_selection_keeps_the_requested_day_visible_after_later_retries() {
+        let day = |worldwide_day: u32| {
+            serde_json::json!({
+                "topics": [
+                    "0x00",
+                    "0x00",
+                    format!("0x{worldwide_day:064x}")
+                ]
+            })
+        };
+        let requested = day(20260807);
+        let later_retry = day(20260806);
+        let logs = vec![requested.clone(), later_retry];
+
+        assert_eq!(
+            select_ocomp_job_request_log(&logs, Some(20260807)),
+            Some(&requested)
+        );
     }
 }

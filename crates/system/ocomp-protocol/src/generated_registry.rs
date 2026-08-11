@@ -18,7 +18,6 @@ pub enum ObjectKind {
     ResultChunkV1 = 0x000c,
     LysisResultV1 = 0x000d,
     ActivationPayloadV1 = 0x000e,
-    OcompCommitteeSnapshotV1 = 0x000f,
     OcompKeyRegistrationV1 = 0x0010,
     ActiveGenerationV1 = 0x0013,
     AggregateActivationReceiptV1 = 0x0014,
@@ -57,7 +56,6 @@ impl ObjectKind {
         Self::ResultChunkV1,
         Self::LysisResultV1,
         Self::ActivationPayloadV1,
-        Self::OcompCommitteeSnapshotV1,
         Self::OcompKeyRegistrationV1,
         Self::ActiveGenerationV1,
         Self::AggregateActivationReceiptV1,
@@ -102,7 +100,6 @@ impl ObjectKind {
             Self::ResultChunkV1 => "ResultChunkV1",
             Self::LysisResultV1 => "LysisResultV1",
             Self::ActivationPayloadV1 => "ActivationPayloadV1",
-            Self::OcompCommitteeSnapshotV1 => "OcompCommitteeSnapshotV1",
             Self::OcompKeyRegistrationV1 => "OcompKeyRegistrationV1",
             Self::ActiveGenerationV1 => "ActiveGenerationV1",
             Self::AggregateActivationReceiptV1 => "AggregateActivationReceiptV1",
@@ -146,7 +143,6 @@ impl TryFrom<u16> for ObjectKind {
             0x000c => Ok(Self::ResultChunkV1),
             0x000d => Ok(Self::LysisResultV1),
             0x000e => Ok(Self::ActivationPayloadV1),
-            0x000f => Ok(Self::OcompCommitteeSnapshotV1),
             0x0010 => Ok(Self::OcompKeyRegistrationV1),
             0x0013 => Ok(Self::ActiveGenerationV1),
             0x0014 => Ok(Self::AggregateActivationReceiptV1),
@@ -201,7 +197,6 @@ pub enum HashDomain {
     VoteAccountability,
     LysisTerminal,
     ValidatorIdentity,
-    Committee,
     KeyPop,
     SignOnceSlot,
     ActivationCall,
@@ -256,7 +251,6 @@ impl HashDomain {
         Self::VoteAccountability,
         Self::LysisTerminal,
         Self::ValidatorIdentity,
-        Self::Committee,
         Self::KeyPop,
         Self::SignOnceSlot,
         Self::ActivationCall,
@@ -312,7 +306,6 @@ impl HashDomain {
             Self::VoteAccountability => "OUTBE_OCOMP_VOTE_ACCOUNTABILITY_V1",
             Self::LysisTerminal => "OUTBE_OCOMP_LYSIS_TERMINAL_V1",
             Self::ValidatorIdentity => "OUTBE_OCOMP_VALIDATOR_IDENTITY_V1",
-            Self::Committee => "OUTBE_OCOMP_COMMITTEE_V1",
             Self::KeyPop => "OUTBE_OCOMP_KEY_POP_V1",
             Self::SignOnceSlot => "OUTBE_OCOMP_SIGN_ONCE_SLOT_V1",
             Self::ActivationCall => "OUTBE_OCOMP_ACTIVATION_CALL_V1",
@@ -428,7 +421,7 @@ pub const TRIBUTE_BODY_CODEC_ID: alloy_primitives::B256 = alloy_primitives::B256
 pub const FIDELITY_OPENING_CODEC_DESCRIPTOR: &str = "role=FIDELITY_OPENING;version=1;record=AuthenticatedOpeningV1(source_kind=1,subject,value,codec_id,opening);subject=u32_be(owner_count)||address20*;owner_count=1..256;owners=strict-ascending-unique;value=u32_be(slot_count)||(slot:B256||value:U256_be)*;slots=fidelity_slot_plan_v1(qualified_start_base=0,active_count_base=1,active_cohorts_base=2,sold_count_base=4,sold_cohorts_base=5,first_qualified_start=8,mapping=keccak256(key||slot32),active_count<=64,sold_count<=64);opening=address20||state_root:B256||u32_be(slot_count)||(slot:B256||value:U256_be)*||u32_be(account_proof_len)||account_proof||u32_be(storage_proof_len)||storage_proof;proof=RETH_ETHEREUM_ACCOUNT_STORAGE_MPT_V1;rules=state_root_equals_checkpoint,exact-contract,exact-slot-plan,strict-decode-reencode";
 pub const FIDELITY_OPENING_CODEC_ID: alloy_primitives::B256 = alloy_primitives::B256::new([61, 58, 197, 129, 143, 184, 46, 81, 195, 4, 30, 36, 233, 255, 54, 204, 95, 220, 232, 219, 219, 116, 218, 31, 191, 57, 120, 255, 14, 25, 222, 26]);
 
-pub const ORACLE_OPENING_CODEC_DESCRIPTOR: &str = "role=ORACLE_OPENING;version=1;record=AuthenticatedOpeningV1(source_kind=2,subject,value,codec_id,opening);subject=u32_be(wwd)||u16_be(iso_count)||u16_be(iso)*;isos=strict-ascending-unique-and-contains-840;value=u32_be(slot_count)||(slot:B256||value:U256_be)*;slots=oracle_slot_plan_v1(pair_hash_to_id=10,scurve_count=34,scurve_pair_id=35,scurve_peak_day=36,scurve_peak_price=37,scurve_oldest=38,settlement_iso_to_denom=41,settlement_iso_to_pair=42,wwd_vwap_exists=47,wwd_vwap_pair_count=50,wwd_vwap_pair_id=51,wwd_vwap_value=52,mapping=keccak256(key||slot32),wwd_pairs<=256,active_scurve<=256,isos<=256);opening=address20||state_root:B256||u32_be(slot_count)||(slot:B256||value:U256_be)*||u32_be(account_proof_len)||account_proof||u32_be(storage_proof_len)||storage_proof;proof=RETH_ETHEREUM_ACCOUNT_STORAGE_MPT_V1;rules=state_root_equals_checkpoint,exact-contract,exact-slot-plan,strict-decode-reencode";
-pub const ORACLE_OPENING_CODEC_ID: alloy_primitives::B256 = alloy_primitives::B256::new([27, 40, 5, 164, 9, 109, 41, 32, 10, 134, 247, 191, 197, 57, 75, 27, 17, 141, 102, 80, 132, 182, 203, 254, 249, 236, 65, 21, 94, 148, 151, 38]);
+pub const ORACLE_OPENING_CODEC_DESCRIPTOR: &str = "role=ORACLE_OPENING;version=1;record=AuthenticatedOpeningV1(source_kind=2,subject,value,codec_id,opening);subject=u32_be(wwd)||u16_be(iso_count)||u16_be(iso)*;isos=strict-ascending-unique-and-contains-840-and-subset-of-reference-currencies;value=u32_be(slot_count)||(slot:B256||value:U256_be)*;slots=oracle_slot_plan_v1(pair_index=10,scurve_count=34,scurve_pair=35,scurve_peak_day=36,scurve_peak_price=37,scurve_oldest=38,wwd_vwap_exists=47,wwd_vwap_pair_count=50,wwd_vwap_pair=51,wwd_vwap_value=52,reference_currencies=55,mapping=keccak256(key||slot32),vec=keccak256(slot32)+index,pair_key=sorted_concat(address20(coen=0x00*20),address20(iso=0x000cc||bcd3(iso))),pair_value=address20(base)@slot||address20(quote)@slot+1,wwd_pairs<=256,active_scurve<=256,reference_currencies<=256,isos<=256);opening=address20||state_root:B256||u32_be(slot_count)||(slot:B256||value:U256_be)*||u32_be(account_proof_len)||account_proof||u32_be(storage_proof_len)||storage_proof;proof=RETH_ETHEREUM_ACCOUNT_STORAGE_MPT_V1;rules=state_root_equals_checkpoint,exact-contract,exact-slot-plan,strict-decode-reencode";
+pub const ORACLE_OPENING_CODEC_ID: alloy_primitives::B256 = alloy_primitives::B256::new([66, 239, 224, 201, 72, 42, 112, 165, 100, 211, 70, 148, 50, 133, 181, 245, 72, 234, 33, 100, 69, 10, 159, 118, 93, 219, 114, 224, 46, 189, 169, 209]);
 
-pub const OPENING_CODEC_REGISTRY_HASH: alloy_primitives::B256 = alloy_primitives::B256::new([72, 115, 102, 133, 156, 61, 69, 128, 204, 254, 138, 101, 72, 24, 213, 231, 176, 20, 135, 109, 142, 145, 191, 122, 60, 226, 230, 145, 131, 101, 46, 72]);
+pub const OPENING_CODEC_REGISTRY_HASH: alloy_primitives::B256 = alloy_primitives::B256::new([147, 21, 214, 144, 198, 222, 62, 99, 102, 34, 220, 199, 17, 28, 181, 118, 110, 54, 185, 177, 77, 87, 168, 111, 15, 209, 30, 55, 78, 81, 84, 169]);

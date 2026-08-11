@@ -1,9 +1,9 @@
 use outbe_common::WorldwideDay;
 use outbe_ocomp_protocol::{intent::PreAdmissionEnvelopeV1, SchemaLimits};
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 
-use crate::aggregate::WwdStatus;
 use crate::schema::{MetadosisContract, WorldwideDayEntryExt};
+use crate::{aggregate::WwdStatus, errors::storage_corruption_message};
 
 use super::state::{JobFsmCommand, JobFsmLimits, JobFsmState};
 
@@ -30,7 +30,7 @@ impl MetadosisContract<'_> {
             let status_value =
                 WwdStatus::try_from(self.worldwide_days.entry(wwd).status().read()?)?;
             if status_value != WwdStatus::Ready {
-                return Err(fatal(format!(
+                return Err(storage_corruption_message(format!(
                     "cannot enqueue OCOMP WWD {wwd} from status {status_value:?}"
                 )));
             }
@@ -38,7 +38,7 @@ impl MetadosisContract<'_> {
                 let state = JobFsmState::initial_ready(wwd, next_check_height);
                 state
                     .validate(limits)
-                    .map_err(|error| fatal(error.to_string()))?;
+                    .map_err(|error| storage_corruption_message(error.to_string()))?;
                 let key = ReadyIndexKey::from_projection(state.projection())?;
                 let mut index = self.read_ready_index()?;
                 insert_ready_key(&mut index, key)?;
@@ -49,14 +49,20 @@ impl MetadosisContract<'_> {
             let existing = self.ocomp_fsm_state(wwd, &poc_schema_limits(), limits)?;
             let projection = existing.projection();
             if projection.phase != super::state::DayPhase::Ready {
-                return Err(fatal("cannot enqueue a WWD while its OCOMP intent is live"));
+                return Err(storage_corruption_message(
+                    "cannot enqueue a WWD while its OCOMP intent is live",
+                ));
             }
             let key = ReadyIndexKey::from_projection(projection)?;
             if key.next_check_height != next_check_height {
-                return Err(fatal("idempotent OCOMP enqueue changed the due height"));
+                return Err(storage_corruption_message(
+                    "idempotent OCOMP enqueue changed the due height",
+                ));
             }
             if self.read_ready_index()?.binary_search(&key).is_err() {
-                return Err(fatal("OCOMP READY state has no exact due-index key"));
+                return Err(storage_corruption_message(
+                    "OCOMP READY state has no exact due-index key",
+                ));
             }
             Ok(())
         })()
@@ -82,7 +88,7 @@ impl MetadosisContract<'_> {
                     },
                     fsm_limits,
                 )
-                .map_err(|error| fatal(error.to_string()))?;
+                .map_err(|error| storage_corruption_message(error.to_string()))?;
             let new_key = ReadyIndexKey::from_projection(state.projection())?;
             let mut index = self.read_ready_index()?;
             remove_ready_key(&mut index, old_key)?;
@@ -108,7 +114,9 @@ impl MetadosisContract<'_> {
             .ocomp_fsm_state(key.worldwide_day, schema_limits, fsm_limits)?
             .projection();
         if ReadyIndexKey::from_projection(projection)? != key {
-            return Err(fatal("OCOMP READY index/FSM key mismatch"));
+            return Err(storage_corruption_message(
+                "OCOMP READY index/FSM key mismatch",
+            ));
         }
         Ok(Some(projection))
     }
@@ -123,12 +131,12 @@ impl MetadosisContract<'_> {
         limits: &SchemaLimits,
     ) -> Result<crate::MetadosisPreAdmissionProjection> {
         (|| {
-            let encoded = envelope
-                .encode_canonical(limits)
-                .map_err(|error| fatal(format!("encode OCOMP pre-admission envelope: {error}")))?;
-            let expected_hash = envelope
-                .envelope_hash(limits)
-                .map_err(|error| fatal(format!("hash OCOMP pre-admission envelope: {error}")))?;
+            let encoded = envelope.encode_canonical(limits).map_err(|error| {
+                storage_corruption_message(format!("encode OCOMP pre-admission envelope: {error}"))
+            })?;
+            let expected_hash = envelope.envelope_hash(limits).map_err(|error| {
+                storage_corruption_message(format!("hash OCOMP pre-admission envelope: {error}"))
+            })?;
             let existing = self.read_pre_admission_envelope(wwd, limits)?;
             let projection = self.ocomp_pre_admission_projection(wwd)?;
 
@@ -136,13 +144,17 @@ impl MetadosisContract<'_> {
                 (None, true) => {
                     let sealed = self.seal_pre_admission_envelope(wwd, envelope, limits)?;
                     if sealed.envelope_hash != expected_hash {
-                        return Err(fatal("OCOMP pre-admission seal/hash mismatch"));
+                        return Err(storage_corruption_message(
+                            "OCOMP pre-admission seal/hash mismatch",
+                        ));
                     }
                     self.ocomp_pre_admission_envelopes
                         .get_bytes(&wwd)
                         .write(&encoded)?;
                     if self.read_pre_admission_envelope(wwd, limits)?.as_ref() != Some(envelope) {
-                        return Err(fatal("OCOMP pre-admission envelope write/read mismatch"));
+                        return Err(storage_corruption_message(
+                            "OCOMP pre-admission envelope write/read mismatch",
+                        ));
                     }
                     Ok(sealed)
                 }
@@ -151,7 +163,9 @@ impl MetadosisContract<'_> {
                 {
                     Ok(projection)
                 }
-                _ => Err(fatal("immutable OCOMP pre-admission envelope changed")),
+                _ => Err(storage_corruption_message(
+                    "immutable OCOMP pre-admission envelope changed",
+                )),
             }
         })()
     }
@@ -169,8 +183,4 @@ impl MetadosisContract<'_> {
             "OCOMP pre-admission envelope",
         )
     }
-}
-
-fn fatal(message: impl Into<String>) -> PrecompileError {
-    PrecompileError::Fatal(message.into())
 }

@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use eyre::{ensure, Result, WrapErr};
+use outbe_chain_constants::GenesisProtocolParametersV1;
 #[cfg(feature = "ocomp-integration")]
 use outbe_metadosis::config::{OcompForkInstallClassification, OcompForkInstallV1};
 #[cfg(all(feature = "ocomp-integration", test))]
@@ -25,8 +26,8 @@ use super::schema::{
     METADOSIS_RUN_RECEIPT_SCHEMA_VERSION,
 };
 use crate::metadosis_p0::{
-    canonical_final_fixture_sha256, capture_outbe_chain_feature_tree, verify_metadosis_p0_parity,
-    MetadosisP0Case, MetadosisP0CaseInput, METADOSIS_P0_SCENARIO,
+    capture_outbe_chain_feature_tree, verify_metadosis_p0_parity, MetadosisP0Case,
+    MetadosisP0CaseInput, METADOSIS_P0_SCENARIO,
 };
 use crate::verification_ledger::{
     verify_domain_evidence, verify_member_digests, verify_source_checkout, AssertionStatus,
@@ -361,9 +362,9 @@ fn verify_fresh_devnet_process(
         serde_json::from_slice(&std::fs::read(bundle_root.join(&scenarios[0]))?)
             .wrap_err("decode fresh-devnet scenario receipt")?;
     ensure!(
-        scenario["feature"] == "Off-chain computation public path"
+        scenario["feature"] == "Off-chain computation and Metadosis"
             && scenario["scenario"]
-                == "A fresh Metadosis day runs from Create through terminal OCOMP"
+                == "A public Tribute completes real OCOMP, FullNode verification, NOD, and replay"
             && scenario["result"] == "passed",
         "fresh-devnet scenario identity or verdict mismatch"
     );
@@ -394,7 +395,7 @@ fn verify_fresh_devnet_process(
                 .is_some_and(|hash| hash.len() == 66),
         "fresh-devnet launch identity is not Measurement@1 with the pinned Metadosis layout"
     );
-    verify_fresh_artifacts(bundle_root, &scenario, &members)?;
+    let protocol_parameters = verify_fresh_artifacts(bundle_root, &scenario, &members)?;
     let processes = scenario["ocomp"]["topology"]["processes"]
         .as_array()
         .ok_or_else(|| eyre::eyre!("fresh-devnet scenario has no process topology"))?;
@@ -443,11 +444,15 @@ fn verify_fresh_devnet_process(
         .as_u64()
         .ok_or_else(|| eyre::eyre!("fresh Metadosis lifecycle has no processing time"))?;
     ensure!(
-        forming_end.checked_sub(forming_start) == Some(50 * 3_600)
-            && lookback_end == forming_end
-            && offering_end.checked_sub(lookback_end) == Some(48 * 3_600)
-            && scheduled.checked_sub(offering_end) == Some(12 * 3_600),
-        "fresh Metadosis lifecycle changed canonical WWD phase durations"
+        forming_end.checked_sub(forming_start)
+            == Some(protocol_parameters.metadosis_forming_period_seconds)
+            && lookback_end.checked_sub(forming_end)
+                == Some(protocol_parameters.metadosis_lookback_delay_seconds)
+            && offering_end.checked_sub(lookback_end)
+                == Some(protocol_parameters.metadosis_offering_period_seconds)
+            && scheduled.checked_sub(offering_end)
+                == Some(protocol_parameters.metadosis_waiting_period_seconds),
+        "fresh Metadosis lifecycle differs from immutable genesis phase durations"
     );
     let initial_timestamp = lifecycle["initial_timestamp"]
         .as_u64()
@@ -556,7 +561,7 @@ fn verify_fresh_artifacts(
     bundle_root: &Path,
     scenario: &serde_json::Value,
     members: &[MemberDigestV1],
-) -> Result<()> {
+) -> Result<GenesisProtocolParametersV1> {
     let exact_binaries = scenario["ocomp"]["exact_binaries"]
         .as_object()
         .ok_or_else(|| eyre::eyre!("fresh-devnet scenario has no exact binary digests"))?;
@@ -605,6 +610,8 @@ fn verify_fresh_artifacts(
     let genesis_path = bundle_root.join(genesis_relative);
     let genesis: serde_json::Value = serde_json::from_slice(&std::fs::read(&genesis_path)?)
         .wrap_err("decode retained fresh genesis")?;
+    let protocol_parameters = GenesisProtocolParametersV1::from_materialized_genesis(&genesis)
+        .wrap_err("read immutable protocol parameters from retained fresh genesis")?;
     let chain_spec = reth_ethereum::cli::chainspec::chain_value_parser(
         genesis_path
             .to_str()
@@ -665,10 +672,6 @@ fn verify_fresh_artifacts(
                 .capacity_profile
                 .encode_canonical(&limits)?,
         ),
-        (
-            "fresh-devnet/artifacts/result-committee-v1.ocb1",
-            install.result_committee.encode_canonical(&limits)?,
-        ),
     ] {
         ensure!(
             members.iter().any(|member| member.path == relative)
@@ -676,7 +679,7 @@ fn verify_fresh_artifacts(
             "fresh-devnet retained profile member {relative} is missing or mismatched"
         );
     }
-    Ok(())
+    Ok(protocol_parameters)
 }
 
 #[cfg(not(feature = "ocomp-integration"))]
@@ -684,8 +687,8 @@ fn verify_fresh_artifacts(
     _bundle_root: &Path,
     _scenario: &serde_json::Value,
     _members: &[MemberDigestV1],
-) -> Result<()> {
-    eyre::bail!("fresh-devnet artifact verification requires the ocomp-integration feature")
+) -> Result<GenesisProtocolParametersV1> {
+    eyre::bail!("fresh-devnet artifact verification requires the ocomp-integration feature");
 }
 
 fn digest_like(value: &serde_json::Value) -> bool {
@@ -813,7 +816,6 @@ fn verify_p0_process(
         retained_feature_tree == exact_feature_tree,
         "retained P0 feature tree differs from the exact verifier command"
     );
-    let final_fixture_sha256 = canonical_final_fixture_sha256(repo)?;
     let cases = MetadosisP0Case::ALL
         .into_iter()
         .map(|case| MetadosisP0CaseInput {
@@ -826,7 +828,6 @@ fn verify_p0_process(
         &exact_feature_tree,
         &root.join("artifacts/outbe-chain-debug"),
         &root.join("artifacts/outbe-chain-release"),
-        &final_fixture_sha256,
         &cases,
     )?;
     let mut reconstructed_bytes = serde_json::to_vec_pretty(&reconstructed)?;
@@ -1058,6 +1059,40 @@ mod tests {
                 .unwrap(),
             )
             .unwrap();
+        genesis["config"]["outbeProtocol"] = serde_json::json!({
+            "schemaVersion": 1,
+            "metadosis": {
+                "formingPeriodSeconds": 57600,
+                "lookbackDelaySeconds": 0,
+                "offeringPeriodSeconds": 900,
+                "waitingPeriodSeconds": 30,
+                "bootstrapDurationSeconds": 300,
+                "advanceIntervalSeconds": 10
+            },
+            "ocomp": { "computeVoteWindowBlocks": 120 }
+        });
+        let protocol_parameters = GenesisProtocolParametersV1::resolve(
+            genesis["config"].get(outbe_chain_constants::GENESIS_CONFIG_KEY),
+        )
+        .unwrap();
+        let constants_storage = protocol_parameters
+            .genesis_storage_words()
+            .into_iter()
+            .map(|(slot, value)| {
+                (
+                    format!("{slot:#066x}"),
+                    serde_json::json!(format!("{value:#066x}")),
+                )
+            })
+            .collect::<serde_json::Map<_, _>>();
+        genesis["alloc"].as_object_mut().unwrap().insert(
+            format!("{:#x}", outbe_chain_constants::CHAIN_CONSTANTS_ADDRESS),
+            serde_json::json!({
+                "balance": "0x0",
+                "code": "0xef",
+                "storage": constants_storage
+            }),
+        );
         let genesis_path = artifacts.join("genesis.json");
         std::fs::write(&genesis_path, serde_json::to_vec_pretty(&genesis).unwrap()).unwrap();
         let base_spec =
@@ -1111,11 +1146,6 @@ mod tests {
                 .unwrap(),
         )
         .unwrap();
-        std::fs::write(
-            artifacts.join("result-committee-v1.ocb1"),
-            install.result_committee.encode_canonical(&limits).unwrap(),
-        )
-        .unwrap();
         let mut exact_binaries = serde_json::Map::new();
         for (identity, file_name) in [
             ("outbe_chain", "outbe-chain"),
@@ -1156,9 +1186,9 @@ mod tests {
         };
         let forming_start = 1_785_319_200_u64;
         let initial_timestamp = forming_start + 15 * 3_600;
-        let forming_end = forming_start + 50 * 3_600;
-        let offering_end = forming_end + 48 * 3_600;
-        let scheduled_process_time = offering_end + 12 * 3_600;
+        let forming_end = forming_start + 16 * 3_600;
+        let offering_end = forming_end + 900;
+        let scheduled_process_time = offering_end + 30;
         let first_target = forming_end + 1;
         let second_target = scheduled_process_time + 1;
         let before_first_restart = finalized_points(1, initial_timestamp, 0x44);
@@ -1174,8 +1204,8 @@ mod tests {
                 "tracked_dirty": false,
                 "untracked_dirty": false
             },
-            "feature": "Off-chain computation public path",
-            "scenario": "A fresh Metadosis day runs from Create through terminal OCOMP",
+            "feature": "Off-chain computation and Metadosis",
+            "scenario": "A public Tribute completes real OCOMP, FullNode verification, NOD, and replay",
             "result": "passed",
             "environment": {
                 "validators": 4,

@@ -28,7 +28,7 @@ pub fn worldwide_day(
         (true, false) => WwdMembership::Active,
         (false, true) => WwdMembership::Closed,
         _ => {
-            return Err(outbe_primitives::error::PrecompileError::Fatal(
+            return Err(crate::errors::storage_corruption(
                 "Metadosis WWD membership is not exactly one of active/closed".into(),
             ))
         }
@@ -62,7 +62,7 @@ pub fn offering_worldwide_days(storage: StorageHandle<'_>) -> Result<Vec<Worldwi
     let mut result = Vec::new();
     for wwd in contract.active_wwd.read_all()? {
         let record = contract.worldwide_days.get(wwd)?.ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::Fatal(
+            crate::errors::storage_corruption(
                 "Metadosis active index points to a missing WWD".into(),
             )
         })?;
@@ -94,10 +94,7 @@ pub fn is_active_ocomp_fork_install(
     let profile = contract.read_ocomp_request_profile(&limits)?;
     let authority = contract.read_ocomp_activation_authority(&limits)?;
     Ok(profile.as_ref() == Some(&install.request_profile)
-        && authority.is_some_and(|authority| {
-            authority.bundle == install.protocol_bundle
-                && authority.result_committee == install.result_committee
-        }))
+        && authority.is_some_and(|authority| authority.bundle == install.protocol_bundle))
 }
 
 /// Reads the durable Metadosis-owned semantic result for one Cycle day-limit

@@ -62,9 +62,7 @@ sol! {
         function setP2pAddress(address validatorAddress, uint8 version, bytes calldata encoded) external;
         function getP2pAddress(address validatorAddress) external view returns (uint8 version, bytes memory encoded);
         function deactivateValidator(address validatorAddress) external;
-        function confirmValidatorReady() external;
-        function activateResharedSet(address[] calldata newActiveSet, bytes32 groupPublicKey) external;
-
+        function confirmValidatorReady(bytes calldata registration) external;
         event ValidatorRegistered(address indexed validator, uint64 index);
         event ValidatorActivated(address indexed validator);
         event ValidatorDeactivated(address indexed validator, uint64 atHeight);
@@ -215,37 +213,35 @@ sol! {
 
     #[derive(Debug)]
     interface IOracle {
-        function getExchangeRate(string base, string quote) external view returns (uint256 rate, uint64 lastBlock, uint64 lastTimestamp);
-        function getVwap(string base, string quote, uint64 lookbackSeconds) external view returns (uint256 vwap);
-        function getVwapForTimeRange(string base, string quote, uint64 startTime, uint64 endTime) external view returns (uint256 vwap);
-        function getScurveValue(string base, string quote, uint64 timestamp) external view returns (uint256 value);
+        function getExchangeRate(address base, address quote) external view returns (uint256 rate);
+        function getExchangeRateData(address base, address quote) external view returns (uint256 rate, uint64 lastBlock, uint64 lastTimestamp);
+        function getCoenExchangeRateFor(uint16 isoCode) external view returns (uint256 rate);
+        function getVwap(address base, address quote, uint64 lookbackSeconds) external view returns (uint256 vwap);
+        function getVwapForTimeRange(address base, address quote, uint64 startTime, uint64 endTime) external view returns (uint256 vwap);
+        function getScurveValue(address base, address quote, uint64 timestamp) external view returns (uint256 value);
         function getParams() external view returns (uint64 votePeriod, uint256 rewardBand, uint64 slashWindow, uint256 minValidPerWindow, uint256 slashFraction, uint64 lookbackDuration, bool enabled);
         function getVotePenaltyCounter(address validator) external view returns (uint64 success, uint64 abstain, uint64 miss);
         function getFeederDelegation(address validator) external view returns (address feeder);
-        function isVoteTarget(string base, string quote) external view returns (bool);
+        function isVoteTarget(address base, address quote) external view returns (bool);
         function getPairCount() external view returns (uint32 count);
-        function getExchangeRates() external view returns (uint256[] memory rates, uint64[] memory blocks, uint64[] memory timestamps);
-        function getVoteTargets() external view returns (uint32[] memory pairIds);
-        function getAggregateVote(address validator) external view returns (bool exists, uint32[] memory pairIds, uint256[] memory rates, uint256[] memory volumes);
+        function getPairByIndex(uint32 index) external view returns (address base, address quote);
+        function getVoteTargets() external view returns (address[] memory bases, address[] memory quotes);
+        function getAggregateVote(address validator) external view returns (bool exists, address[] memory bases, address[] memory quotes, uint256[] memory rates, uint256[] memory volumes);
         function getSlashWindowProgress(address validator) external view returns (uint64 success, uint64 abstain, uint64 miss, uint64 slashWindow);
-        function getPriceSnapshotHistory(string base, string quote, uint32 count) external view returns (uint64[] memory timestamps, uint256[] memory rates, uint256[] memory volumes);
-        function getAllPriceSnapshotHistory(uint32 count) external view returns (uint64[] memory snapshotIds, uint64[] memory timestamps, uint32[] memory pairIds, uint256[] memory rates, uint256[] memory volumes);
-        function getTwap(string base, string quote, uint64 lookbackSeconds) external view returns (uint256 twap);
-        function getTwaps(uint64 lookbackSeconds) external view returns (uint32[] memory pairIds, uint256[] memory twaps, uint64[] memory lookbackSeconds);
-        function getDayVwap(string base, string quote) external view returns (uint256 vwap);
-        function getUtcDayVwap(string base, string quote, uint32 utcDay) external view returns (uint256 vwap);
-        function getWorldwideDayVwap(uint64 startTime, uint64 endTime) external view returns (uint32[] memory pairIds, uint256[] memory vwaps, uint64[] memory lookbackSeconds);
-        function getWorldwideDayVwapSnapshot(uint32 worldwideDay) external view returns (uint64 startTime, uint64 endTime, uint32[] memory pairIds, uint256[] memory vwaps, uint64[] memory lookbackSeconds);
-        function getScurveEntries(string base, string quote) external view returns (uint64[] memory peakDays, uint256[] memory peakPrices, uint256[] memory currentValues);
-        function getScurveValues(string base, string quote, uint64 timestamp) external view returns (uint64 targetDay, uint64[] memory peakDays, uint256[] memory peakPrices, uint256[] memory values);
-        function getAllScurveData() external view returns (uint32[] memory pairIds, uint64[] memory peakDays, uint256[] memory peakPrices);
-        function getAllScurveDataForPair(string base, string quote) external view returns (uint64[] memory peakDays, uint256[] memory peakPrices);
-        function getPairs() external view returns (uint32[] memory pairIds, string[] memory bases, string[] memory quotes, bool[] memory isActive);
-        function getNominalPrice(string base, string quote, uint64 timestamp) external view returns (uint256 price);
-        function getNominalPriceComponents(string base, string quote, uint64 timestamp) external view returns (uint256 nominalPrice, uint256 vwap, uint256 maxScurve, string memory source);
-        function getSettlementCurrency(uint16 isoCode) external view returns (bytes32 denomHash, bytes32 pairHash);
-        function getSettlementCurrencies() external view returns (uint16[] memory isoCodes, string[] memory denoms, bytes32[] memory denomHashes, bytes32[] memory pairHashes);
-        function getSettlementCount() external view returns (uint32 count);
+        function getPriceSnapshotHistory(address base, address quote, uint32 count) external view returns (uint64[] memory timestamps, uint256[] memory rates, uint256[] memory volumes);
+        function getAllPriceSnapshotHistory(uint32 count) external view returns (uint64[] memory snapshotIds, uint64[] memory timestamps, address[] memory bases, address[] memory quotes, uint256[] memory rates, uint256[] memory volumes);
+        function getTwap(address base, address quote, uint64 lookbackSeconds) external view returns (uint256 twap);
+        function getTwaps(uint64 lookbackSeconds) external view returns (address[] memory bases, address[] memory quotes, uint256[] memory twaps, uint64[] memory lookbackSeconds);
+        function getDayVwap(address base, address quote) external view returns (uint256 vwap);
+        function getUtcDayVwap(address base, address quote, uint32 utcDay) external view returns (uint256 vwap);
+        function getWorldwideDayVwap(uint64 startTime, uint64 endTime) external view returns (address[] memory bases, address[] memory quotes, uint256[] memory vwaps, uint64[] memory lookbackSeconds);
+        function getWorldwideDayVwapSnapshot(uint32 worldwideDay) external view returns (uint64 startTime, uint64 endTime, address[] memory bases, address[] memory quotes, uint256[] memory vwaps, uint64[] memory lookbackSeconds);
+        function getScurveEntries(address base, address quote) external view returns (uint64[] memory peakDays, uint256[] memory peakPrices, uint256[] memory currentValues);
+        function getScurveValues(address base, address quote, uint64 timestamp) external view returns (uint64 targetDay, uint64[] memory peakDays, uint256[] memory peakPrices, uint256[] memory values);
+        function getAllScurveData() external view returns (address[] memory bases, address[] memory quotes, uint64[] memory peakDays, uint256[] memory peakPrices);
+        function getAllScurveDataForPair(address base, address quote) external view returns (uint64[] memory peakDays, uint256[] memory peakPrices);
+        function getNominalPrice(address base, address quote, uint64 timestamp) external view returns (uint256 price);
+        function getNominalPriceComponents(address base, address quote, uint64 timestamp) external view returns (uint256 nominalPrice, uint256 vwap, uint256 maxScurve, string memory source);
         function delegateFeederConsent(address feeder) external;
     }
 }

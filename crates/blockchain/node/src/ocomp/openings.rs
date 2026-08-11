@@ -10,15 +10,95 @@ use outbe_ocomp_protocol::{
     opening::{LysisOpeningsProofV1, OpeningSubjectsV1},
     SchemaLimits,
 };
-use outbe_oracle::{oracle_count_slot_plan_v1, oracle_opening_slot_plan_v1};
+use outbe_oracle::{oracle_count_slot_plan_v1, oracle_opening_slot_plan_v1, ORACLE_COUNT_SLOTS_V1};
 use outbe_primitives::addresses::{METADOSIS_ADDRESS, ORACLE_ADDRESS};
 use reth_provider::StateProviderFactory;
 use reth_storage_api::StateProvider;
 
 use super::{
-    finality::{build_verified_raw_contract_opening, verify_raw_contract_opening},
+    finality::{
+        build_verified_raw_contract_opening, build_verified_raw_contract_opening_from_public_proof,
+        verify_raw_contract_opening, PublicExactBlockProofSourceV1,
+    },
     retention::{CandidatePinV1, RetentionError},
 };
+
+/// Builds the exact Lysis openings exclusively from standard public
+/// `eth_getProof` data at the authenticated request block.
+///
+/// Oracle storage has a count-dependent shape, so construction deliberately
+/// uses two proof rounds: first the fixed count slots, then the complete slot
+/// plan derived from those locally verified values.
+pub fn build_public_lysis_openings<S>(
+    source: &S,
+    finalized: &VerifiedFinalizedIntentV1,
+    subjects: OpeningSubjectsV1,
+    limits: &SchemaLimits,
+) -> Result<LysisOpeningsProofV1, RetentionError>
+where
+    S: PublicExactBlockProofSourceV1,
+{
+    validate_subjects(&subjects)?;
+    let state_root = finalized.request.state_root;
+    let block_hash = finalized.request.block_hash;
+    let fidelity_slots =
+        fidelity_league_slots(&subjects, finalized.intent.wwd, limits.max_collection_items)?;
+    let fidelity_proof = source
+        .account_proof(METADOSIS_ADDRESS, &fidelity_slots, block_hash)
+        .map_err(|error| RetentionError::Source(format!("read public Fidelity proof: {error}")))?;
+    let fidelity = build_verified_raw_contract_opening_from_public_proof(
+        &fidelity_proof,
+        state_root,
+        METADOSIS_ADDRESS,
+        &fidelity_slots,
+        limits,
+    )
+    .map_err(|error| RetentionError::Source(error.to_string()))?;
+
+    let day = outbe_common::WorldwideDay::new(finalized.intent.wwd);
+    let count_slots = oracle_count_slot_plan_v1(day, &subjects.reference_isos)
+        .map_err(|error| RetentionError::Source(error.to_string()))?
+        .slots;
+    let count_proof = source
+        .account_proof(ORACLE_ADDRESS, &count_slots, block_hash)
+        .map_err(|error| {
+            RetentionError::Source(format!("read public Oracle count proof: {error}"))
+        })?;
+    let count_opening = build_verified_raw_contract_opening_from_public_proof(
+        &count_proof,
+        state_root,
+        ORACLE_ADDRESS,
+        &count_slots,
+        limits,
+    )
+    .map_err(|error| RetentionError::Source(error.to_string()))?;
+    let oracle_slots =
+        oracle_slots_from_authenticated_opening(&count_opening, finalized.intent.wwd, &subjects)?;
+    let oracle_proof = source
+        .account_proof(ORACLE_ADDRESS, &oracle_slots, block_hash)
+        .map_err(|error| RetentionError::Source(format!("read public Oracle proof: {error}")))?;
+    let oracle = build_verified_raw_contract_opening_from_public_proof(
+        &oracle_proof,
+        state_root,
+        ORACLE_ADDRESS,
+        &oracle_slots,
+        limits,
+    )
+    .map_err(|error| RetentionError::Source(error.to_string()))?;
+
+    let openings = LysisOpeningsProofV1 {
+        protocol_bundle_hash: finalized.intent.protocol_bundle_hash,
+        job_id: finalized.job_id,
+        finalized_block_hash: block_hash,
+        finalized_state_root: state_root,
+        wwd: finalized.intent.wwd,
+        subjects,
+        fidelity,
+        oracle,
+    };
+    verify_lysis_openings(&openings, finalized, &openings.subjects, limits)?;
+    Ok(openings)
+}
 
 pub fn build_lysis_openings<P>(
     provider: &P,
@@ -167,38 +247,23 @@ fn oracle_slots_from_authenticated_opening(
         .map(|raw| (raw.slot, raw.value))
         .collect::<BTreeMap<_, _>>();
     let day = outbe_common::WorldwideDay::new(wwd);
-    let counts = oracle_count_slot_plan_v1(day, &subjects.settlement_isos)
+    let counts = oracle_count_slot_plan_v1(day, &subjects.reference_isos)
         .map_err(|error| RetentionError::Source(error.to_string()))?;
-    let settlement_pairs = subjects
-        .settlement_isos
+    let reference_currency_count =
+        authenticated_u32(&values, counts.slots[0], "Oracle reference currency count")?;
+    let scurve_count = authenticated_u32(&values, counts.slots[2], "Oracle S-curve count")?;
+    let scurve_oldest = authenticated_u32(&values, counts.slots[3], "Oracle S-curve oldest")?;
+    // The trailing count-plan words are the subject pairs' registry indices,
+    // which address their day-VWAP value slots in round two.
+    let pair_indices = counts.slots[ORACLE_COUNT_SLOTS_V1..]
         .iter()
-        .enumerate()
-        .map(|(index, iso)| {
-            let pair_slot = counts.slots[index * 2 + 1];
-            authenticated_word(&values, pair_slot, "Oracle settlement pair")
-                .map(|word| (*iso, B256::new(word.to_be_bytes())))
-        })
+        .map(|slot| authenticated_u32(&values, *slot, "Oracle reference pair index"))
         .collect::<Result<Vec<_>, _>>()?;
-    let count_base = subjects.settlement_isos.len() * 2;
-    let worldwide_day_pair_count = authenticated_u32(
-        &values,
-        counts.slots[count_base + 1],
-        "Oracle WWD VWAP pair count",
-    )?;
-    let scurve_count = authenticated_u32(
-        &values,
-        counts.slots[count_base + 2],
-        "Oracle S-curve count",
-    )?;
-    let scurve_oldest = authenticated_u32(
-        &values,
-        counts.slots[count_base + 3],
-        "Oracle S-curve oldest",
-    )?;
     oracle_opening_slot_plan_v1(
         day,
-        &settlement_pairs,
-        worldwide_day_pair_count,
+        &subjects.reference_isos,
+        reference_currency_count,
+        &pair_indices,
         scurve_count,
         scurve_oldest,
     )
@@ -275,41 +340,37 @@ fn oracle_slots(
     subjects: &OpeningSubjectsV1,
 ) -> Result<Vec<B256>, RetentionError> {
     let day = outbe_common::WorldwideDay::new(candidate.wwd);
-    let counts = oracle_count_slot_plan_v1(day, &subjects.settlement_isos)
+    let counts = oracle_count_slot_plan_v1(day, &subjects.reference_isos)
         .map_err(|error| RetentionError::Source(error.to_string()))?;
-    let settlement_pairs = subjects
-        .settlement_isos
-        .iter()
-        .enumerate()
-        .map(|(index, iso)| {
-            let pair_slot = counts.slots[index * 2 + 1];
-            read_word(state, ORACLE_ADDRESS, pair_slot, "Oracle settlement pair")
-                .map(|word| (*iso, B256::new(word.to_be_bytes())))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let count_base = subjects.settlement_isos.len() * 2;
-    let worldwide_day_pair_count = read_u32(
+    let reference_currency_count = read_u32(
         state,
         ORACLE_ADDRESS,
-        counts.slots[count_base + 1],
-        "Oracle WWD VWAP pair count",
+        counts.slots[0],
+        "Oracle reference currency count",
     )?;
     let scurve_count = read_u32(
         state,
         ORACLE_ADDRESS,
-        counts.slots[count_base + 2],
+        counts.slots[2],
         "Oracle S-curve count",
     )?;
     let scurve_oldest = read_u32(
         state,
         ORACLE_ADDRESS,
-        counts.slots[count_base + 3],
+        counts.slots[3],
         "Oracle S-curve oldest",
     )?;
+    // The trailing count-plan words are the subject pairs' registry indices,
+    // which address their day-VWAP value slots in round two.
+    let pair_indices = counts.slots[ORACLE_COUNT_SLOTS_V1..]
+        .iter()
+        .map(|slot| read_u32(state, ORACLE_ADDRESS, *slot, "Oracle reference pair index"))
+        .collect::<Result<Vec<_>, _>>()?;
     oracle_opening_slot_plan_v1(
         day,
-        &settlement_pairs,
-        worldwide_day_pair_count,
+        &subjects.reference_isos,
+        reference_currency_count,
+        &pair_indices,
         scurve_count,
         scurve_oldest,
     )

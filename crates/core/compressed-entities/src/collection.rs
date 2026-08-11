@@ -117,6 +117,12 @@ pub enum CollectionError {
     UnknownDomain(u16),
     #[error("invalid canonical Tribute WWD partition {0}")]
     InvalidTributeWwd(u32),
+    #[error("Tribute leaf belongs to WWD {actual}, expected {expected}")]
+    TributeDayMismatch { expected: u32, actual: u32 },
+    #[error("duplicate Tribute tree key in partition reconstruction")]
+    DuplicateTributeKey,
+    #[error("Tribute partition tree reconstruction failed: {0}")]
+    Tree(String),
 }
 
 pub fn collection_key(
@@ -195,6 +201,62 @@ pub fn collection_root(
         return Err(CollectionError::ZeroCollectionRoot);
     }
     Ok(root)
+}
+
+/// Reconstructs one independently sealed WWD Tribute collection root from its
+/// exact `(entity id, body commitment)` leaves.
+///
+/// This is the public-RPC verification seam used by OCOMP: receipt payloads
+/// supply bodies, but they are accepted only when their recomputed leaves close
+/// to the collection root committed by the finalized `JobIntent`.
+pub fn tribute_partition_root_from_leaves(
+    day: outbe_common::WorldwideDay,
+    leaves: impl IntoIterator<Item = (EntityId36, crate::Commitment)>,
+) -> Result<B256, CollectionError> {
+    use crate::{
+        schema::Collection,
+        sharding::{aggregate_b256_shard_roots, shard_index},
+        smt::{derive_tree_key, PoseidonSmt, TreeLeaf},
+    };
+    use std::collections::{BTreeMap, BTreeSet};
+
+    if !day.is_valid() {
+        return Err(CollectionError::InvalidTributeWwd(day.value()));
+    }
+    let mut by_shard = BTreeMap::<u32, Vec<_>>::new();
+    let mut seen = BTreeSet::new();
+    for (entity_id, commitment) in leaves {
+        if entity_id.worldwide_day() != day {
+            return Err(CollectionError::TributeDayMismatch {
+                expected: day.value(),
+                actual: entity_id.worldwide_day().value(),
+            });
+        }
+        let key = derive_tree_key(Collection::Tribute, entity_id)
+            .map_err(|error| CollectionError::Tree(error.to_string()))?;
+        if !seen.insert(key) {
+            return Err(CollectionError::DuplicateTributeKey);
+        }
+        let shard = shard_index(key, CeDomain::Tribute.shard_count())
+            .map_err(|error| CollectionError::Tree(error.to_string()))?;
+        let leaf = TreeLeaf::from_be_bytes(*commitment.as_bytes())
+            .map_err(|error| CollectionError::Tree(error.to_string()))?;
+        by_shard.entry(shard).or_default().push((key, leaf));
+    }
+
+    let mut roots = vec![B256::ZERO; CeDomain::Tribute.shard_count() as usize];
+    for (shard, updates) in by_shard {
+        let mut tree = PoseidonSmt::empty();
+        roots[shard as usize] = B256::from(
+            tree.update_all(updates)
+                .map_err(|error| CollectionError::Tree(error.to_string()))?
+                .as_bytes(),
+        );
+    }
+    let top = aggregate_b256_shard_roots(&roots)
+        .map_err(|error| CollectionError::Tree(error.to_string()))?;
+    let (_, key) = partition_collection_key(PartitionRef::TributeWwd(day))?;
+    collection_root(CeDomain::Tribute, key, top)
 }
 
 pub fn sealed_root(catalog_root: B256) -> Result<B256, CollectionError> {

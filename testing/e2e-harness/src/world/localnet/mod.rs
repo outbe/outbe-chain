@@ -33,13 +33,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use eyre::{bail, Result, WrapErr};
 
 use crate::internal::config::Config;
-use crate::internal::proc::{args, redact_args_for_log, ChildGuard, DockerImageId, EnclaveGuard};
+use crate::internal::proc::{
+    self, args, redact_args_for_log, ChildGuard, DockerImageId, EnclaveGuard,
+};
 use crate::internal::shell::Sh;
 
-/// Per-node execution cache for the four validators co-located by the PoC
-/// devnet harness. The upstream 4 GiB default is a single-node deployment
-/// default; applying it four times would consume the declared 12 GiB process
-/// budget before OCOMP begins.
+/// Per-node execution cache for validators co-located by the devnet harness.
+/// The upstream 4 GiB default is a single-node deployment default; applying it
+/// to every local validator would consume the process budget before OCOMP begins.
 const CO_LOCATED_DEVNET_CROSS_BLOCK_CACHE_MIB: u64 = 512;
 
 /// Test-provided knobs for a localnet start. The **enclave mode** is NOT here —
@@ -56,9 +57,6 @@ pub struct StartOpts {
     /// immutable manifest binding from it. Nodes still receive the clock
     /// offset, but the common start path must not shift genesis a second time.
     pub genesis_timestamp_pre_shifted: bool,
-    /// Bundle identity already pinned by the measurement chain manifest; used
-    /// only for the node-local OCOMP UDS handshake.
-    pub ocomp_protocol_bundle_hash: Option<String>,
 }
 
 impl StartOpts {
@@ -68,7 +66,6 @@ impl StartOpts {
             voting_window: Some(window),
             unix_time_offset_secs: None,
             genesis_timestamp_pre_shifted: false,
-            ocomp_protocol_bundle_hash: None,
         }
     }
 
@@ -93,15 +90,6 @@ impl StartOpts {
             voting_window: Some(window),
             unix_time_offset_secs: Some(target as i64 - now_secs as i64),
             genesis_timestamp_pre_shifted: false,
-            ocomp_protocol_bundle_hash: None,
-        }
-    }
-
-    /// Enable node-local OCOMP UDS for an already-armed measurement manifest.
-    pub fn with_ocomp_measurement_bundle(protocol_bundle_hash: String) -> Self {
-        Self {
-            ocomp_protocol_bundle_hash: Some(protocol_bundle_hash),
-            ..Self::default()
         }
     }
 }
@@ -142,7 +130,7 @@ impl Localnet {
     fn retain_enclave_image_id(&mut self, image_id: DockerImageId) -> Result<()> {
         match &self.enclave_image_id {
             Some(established) if established != &image_id => {
-                bail!("Gramine Docker image identity changed during the scenario")
+                bail!("Gramine Docker image identity changed during the scenario");
             }
             Some(_) => Ok(()),
             None => {
@@ -150,6 +138,25 @@ impl Localnet {
                 Ok(())
             }
         }
+    }
+
+    fn ensure_enclave_image_once_with<F>(&mut self, resolve: F) -> Result<()>
+    where
+        F: FnOnce() -> Result<DockerImageId>,
+    {
+        if self.enclave_image_id.is_some() {
+            return Ok(());
+        }
+        self.retain_enclave_image_id(resolve()?)
+    }
+
+    fn ensure_enclave_image_once(&mut self) -> Result<()> {
+        let repo = self.cfg.repo.clone();
+        let sudo = self.cfg.sudo;
+        let signing_key = self.cfg.dir.join("test-sgx-signing-key.pem");
+        self.ensure_enclave_image_once_with(|| {
+            proc::ensure_enclave_image(&repo, sudo, &signing_key)
+        })
     }
 
     pub(crate) fn enclave_image_id(&self) -> Option<&str> {
@@ -173,6 +180,19 @@ impl Localnet {
     /// Every reachable harness mode runs an enclave.
     pub fn tee_enabled(&self) -> bool {
         self.cfg.tee_mode.enabled()
+    }
+
+    /// Canonical ValidatorSet epoch length authored into this scenario's
+    /// ChainSpec. Admission scheduling must derive its boundary window from
+    /// this value rather than duplicating a devnet literal.
+    pub fn epoch_length_blocks(&self) -> Result<u64> {
+        let genesis: serde_json::Value =
+            serde_json::from_slice(&fs::read(self.cfg.dir.join("genesis.json"))?)?;
+        genesis
+            .pointer("/config/epochLengthBlocks")
+            .and_then(serde_json::Value::as_u64)
+            .filter(|epoch| *epoch > 0)
+            .ok_or_else(|| eyre::eyre!("genesis config has no positive epochLengthBlocks"))
     }
 
     /// Five-second RPC polls allowed for block-1 TEE bootstrap. Consecutive
@@ -200,7 +220,7 @@ impl Localnet {
     /// node's production/testnet default remains unchanged and must be chosen
     /// for the deployment topology by its operator.
     fn extend_real_sgx_startup_timeout(&self, args: &mut Vec<String>) {
-        if matches!(self.cfg.tee_mode, crate::env::TeeMode::Real) {
+        if self.cfg.tee_mode.passes_sgx_devices() {
             args.extend(args!["--tee-bootstrap-timeout-secs", "180"]);
         }
     }
@@ -215,7 +235,7 @@ impl Localnet {
             .get(&i)
             .cloned()
             .unwrap_or_else(|| self.cfg.dir.join("genesis.json"));
-        args![
+        let mut args = args![
             "node",
             "--chain",
             chain_manifest.display(),
@@ -228,6 +248,8 @@ impl Localnet {
             self.cfg.http_port(i),
             "--http.api",
             "eth,net,web3,outbe,debug",
+            "--rpc.eth-proof-window",
+            1868,
             "--port",
             self.cfg.p2p_port(i),
             "--discovery.port",
@@ -246,7 +268,11 @@ impl Localnet {
             CO_LOCATED_DEVNET_CROSS_BLOCK_CACHE_MIB,
             "--log.file.directory",
             node_dir.join("logs").display(),
-        ]
+        ];
+        if matches!(self.cfg.tee_mode, crate::env::TeeMode::SgxNoAttest) {
+            args.extend(args!["--tee-session-mode", "production-node-host"]);
+        }
+        args
     }
 
     /// Comma-joined reth bootnodes from `reth-bootnodes.txt` (comments stripped).
@@ -383,7 +409,7 @@ impl Localnet {
 /// result. Widen only the hardware E2E lane; production/testnet retain their
 /// explicit operator-selected/default deadline.
 fn extend_real_sgx_process_environment(mode: crate::env::TeeMode, cmd: &mut Command) {
-    if matches!(mode, crate::env::TeeMode::Real) {
+    if mode.passes_sgx_devices() {
         cmd.env("OUTBE_TEE_IO_TIMEOUT_SECS", "300");
     }
 }
@@ -468,8 +494,29 @@ mod tests {
         use crate::env::TeeMode;
 
         assert_eq!(configured_timeout(TeeMode::Real).as_deref(), Some("300"));
+        assert_eq!(
+            configured_timeout(TeeMode::SgxNoAttest).as_deref(),
+            Some("300")
+        );
         assert_eq!(configured_timeout(TeeMode::Mock), None);
         assert_eq!(configured_timeout(TeeMode::GramineDirect), None);
+    }
+
+    #[test]
+    fn sgx_no_attest_selects_production_node_host_session() {
+        let env = Environment {
+            tee_mode: crate::env::TeeMode::SgxNoAttest,
+            ..Environment::default()
+        };
+        env.ports
+            .start_scenario(env.validators)
+            .expect("allocate deterministic scenario ports");
+        let localnet = Localnet::new(Config::for_scenario(&env, 1));
+        let args = localnet.reth_base_args(Path::new("/tmp/outbe-e2e-node"), 0);
+
+        assert!(args
+            .windows(2)
+            .any(|pair| { pair[0] == "--tee-session-mode" && pair[1] == "production-node-host" }));
     }
 
     #[test]
@@ -486,6 +533,22 @@ mod tests {
             .map(|pair| pair[1].as_str());
 
         assert_eq!(cache_size, Some("512"));
+    }
+
+    #[test]
+    fn every_localnet_node_retains_the_ocomp_exact_state_proof_window() {
+        let env = Environment::default();
+        env.ports
+            .start_scenario(env.validators)
+            .expect("allocate deterministic scenario ports");
+        let localnet = Localnet::new(Config::for_scenario(&env, 1));
+        let args = localnet.reth_base_args(Path::new("/tmp/outbe-e2e-node"), 0);
+        let proof_window = args
+            .windows(2)
+            .find(|pair| pair[0] == "--rpc.eth-proof-window")
+            .map(|pair| pair[1].as_str());
+
+        assert_eq!(proof_window, Some("1868"));
     }
 
     /// Both layouts, and nothing else — in particular not `validator-*/data`.

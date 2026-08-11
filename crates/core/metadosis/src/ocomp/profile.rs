@@ -1,16 +1,17 @@
 use alloy_primitives::B256;
+use outbe_chain_constants::DEFAULT_OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS;
 use outbe_ocomp_protocol::{
     generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1, profile::CapacityProfileV1, SchemaLimits,
 };
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 
-use crate::schema::MetadosisContract;
+use crate::{errors::storage_corruption_message, schema::MetadosisContract};
 
 use super::state::JobFsmLimits;
 
 const REQUEST_PROFILE_MAGIC: [u8; 4] = *b"OMRP";
 const REQUEST_PROFILE_VERSION: u16 = 1;
-const REQUEST_PROFILE_FIXED_LEN: usize = 4 + 2 + 8 + 32 * 6 + 4;
+const REQUEST_PROFILE_FIXED_LEN: usize = 4 + 2 + 8 + 32 * 5 + 4;
 
 /// Fork-installed authority needed to assemble `JobIntentV1`.
 ///
@@ -26,7 +27,6 @@ pub struct OcompRequestProfile {
     pub correctness_profile_id: B256,
     pub capacity_profile: CapacityProfileV1,
     pub source_availability_policy_id: B256,
-    pub result_committee_snapshot_hash: B256,
 }
 
 impl OcompRequestProfile {
@@ -70,16 +70,22 @@ impl MetadosisContract<'_> {
         (|| {
             validate_request_profile(profile)?;
             if storage.chain_id()? != profile.chain_id {
-                return Err(fatal("OCOMP request profile chain id mismatch"));
+                return Err(storage_corruption_message(
+                    "OCOMP request profile chain id mismatch",
+                ));
             }
             match self.read_ocomp_request_profile(limits)? {
                 Some(existing) if existing == *profile => Ok(()),
-                Some(_) => Err(fatal("OCOMP request profile is immutable")),
+                Some(_) => Err(storage_corruption_message(
+                    "OCOMP request profile is immutable",
+                )),
                 None => {
                     let encoded = encode_request_profile(profile, limits)?;
                     self.ocomp_request_profile.write(&encoded)?;
                     if self.read_ocomp_request_profile(limits)? != Some(profile.clone()) {
-                        return Err(fatal("OCOMP request profile write/read mismatch"));
+                        return Err(storage_corruption_message(
+                            "OCOMP request profile write/read mismatch",
+                        ));
                     }
                     Ok(())
                 }
@@ -98,9 +104,11 @@ impl MetadosisContract<'_> {
         let max = REQUEST_PROFILE_FIXED_LEN
             .checked_add(limits.codec.max_body_bytes)
             .and_then(|value| value.checked_add(outbe_ocomp_protocol::OCB1_HEADER_LEN))
-            .ok_or_else(|| fatal("OCOMP request profile byte cap overflow"))?;
+            .ok_or_else(|| storage_corruption_message("OCOMP request profile byte cap overflow"))?;
         if len > max {
-            return Err(fatal("OCOMP request profile exceeds byte cap"));
+            return Err(storage_corruption_message(
+                "OCOMP request profile exceeds byte cap",
+            ));
         }
         decode_request_profile(&self.ocomp_request_profile.read()?, limits).map(Some)
     }
@@ -114,28 +122,26 @@ pub(super) fn validate_request_profile(profile: &OcompRequestProfile) -> Result<
         || profile.protocol_bundle_hash.is_zero()
         || profile.correctness_profile_id.is_zero()
         || profile.source_availability_policy_id.is_zero()
-        || profile.result_committee_snapshot_hash.is_zero()
         || capacity.profile_id.is_zero()
         || capacity.generated_limits_manifest_hash.is_zero()
     {
-        return Err(fatal(
+        return Err(storage_corruption_message(
             "OCOMP request profile contains a reserved zero identity",
         ));
     }
 
     let candidate = OCOMP_POC_CANDIDATE_LIMITS_V1;
     let max_tributes_per_work_shard = u32::try_from(candidate.max_tributes_per_work_shard)
-        .map_err(|_| fatal("generated unit size exceeds u32"))?;
+        .map_err(|_| storage_corruption_message("generated unit size exceeds u32"))?;
     let max_reference_currencies = u16::try_from(candidate.max_oracle_openings)
-        .map_err(|_| fatal("generated reference-currency cap exceeds u16"))?;
+        .map_err(|_| storage_corruption_message("generated reference-currency cap exceeds u16"))?;
     let max_oracle_entries = u32::try_from(candidate.max_oracle_wwd_pair_entries)
-        .map_err(|_| fatal("generated Oracle entry cap exceeds u32"))?;
+        .map_err(|_| storage_corruption_message("generated Oracle entry cap exceeds u32"))?;
     let max_active_scurve_entries = u32::try_from(candidate.max_active_scurve_entries)
-        .map_err(|_| fatal("generated S-curve entry cap exceeds u32"))?;
+        .map_err(|_| storage_corruption_message("generated S-curve entry cap exceeds u32"))?;
 
     if capacity.max_tributes_per_work_shard != max_tributes_per_work_shard
         || capacity.max_workers_per_domain != 4
-        || capacity.max_pending_jobs != 2
         || capacity.max_intents_per_block != 1
         || capacity.max_activations_per_block != 1
         || capacity.max_ready_inspections_per_block != 1
@@ -148,11 +154,14 @@ pub(super) fn validate_request_profile(profile: &OcompRequestProfile) -> Result<
         || capacity.max_oracle_wwd_pair_entries > max_oracle_entries
         || capacity.max_active_scurve_entries == 0
         || capacity.max_active_scurve_entries > max_active_scurve_entries
-        || capacity.result_deadline_blocks != 64
+        || capacity.result_deadline_blocks == 0
+        || capacity.result_deadline_blocks > DEFAULT_OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS
         || capacity.source_retention_after_terminal_blocks
             != candidate.source_retention_after_terminal_blocks
     {
-        return Err(fatal("OCOMP request profile violates frozen PoC bounds"));
+        return Err(storage_corruption_message(
+            "OCOMP request profile violates frozen PoC bounds",
+        ));
     }
     Ok(())
 }
@@ -162,16 +171,18 @@ fn encode_request_profile(profile: &OcompRequestProfile, limits: &SchemaLimits) 
     let capacity = profile
         .capacity_profile
         .encode_canonical(limits)
-        .map_err(|error| fatal(format!("encode OCOMP capacity profile: {error}")))?;
-    let capacity_len =
-        u32::try_from(capacity.len()).map_err(|_| fatal("capacity profile length exceeds u32"))?;
+        .map_err(|error| {
+            storage_corruption_message(format!("encode OCOMP capacity profile: {error}"))
+        })?;
+    let capacity_len = u32::try_from(capacity.len())
+        .map_err(|_| storage_corruption_message("capacity profile length exceeds u32"))?;
     let total = REQUEST_PROFILE_FIXED_LEN
         .checked_add(capacity.len())
-        .ok_or_else(|| fatal("OCOMP request profile length overflow"))?;
+        .ok_or_else(|| storage_corruption_message("OCOMP request profile length overflow"))?;
     let mut encoded = Vec::new();
     encoded
         .try_reserve_exact(total)
-        .map_err(|_| fatal("allocate OCOMP request profile"))?;
+        .map_err(|_| storage_corruption_message("allocate OCOMP request profile"))?;
     encoded.extend_from_slice(&REQUEST_PROFILE_MAGIC);
     encoded.extend_from_slice(&REQUEST_PROFILE_VERSION.to_be_bytes());
     encoded.extend_from_slice(&profile.chain_id.to_be_bytes());
@@ -180,24 +191,29 @@ fn encode_request_profile(profile: &OcompRequestProfile, limits: &SchemaLimits) 
     encoded.extend_from_slice(profile.protocol_bundle_hash.as_slice());
     encoded.extend_from_slice(profile.correctness_profile_id.as_slice());
     encoded.extend_from_slice(profile.source_availability_policy_id.as_slice());
-    encoded.extend_from_slice(profile.result_committee_snapshot_hash.as_slice());
     encoded.extend_from_slice(&capacity_len.to_be_bytes());
     encoded.extend_from_slice(&capacity);
     if encoded.len() != total {
-        return Err(fatal("OCOMP request profile encoded length mismatch"));
+        return Err(storage_corruption_message(
+            "OCOMP request profile encoded length mismatch",
+        ));
     }
     Ok(encoded)
 }
 
 fn decode_request_profile(encoded: &[u8], limits: &SchemaLimits) -> Result<OcompRequestProfile> {
     if encoded.len() < REQUEST_PROFILE_FIXED_LEN {
-        return Err(fatal("truncated OCOMP request profile"));
+        return Err(storage_corruption_message(
+            "truncated OCOMP request profile",
+        ));
     }
     let mut reader = ProfileReader::new(encoded);
     if reader.take::<4>()? != REQUEST_PROFILE_MAGIC
         || u16::from_be_bytes(reader.take::<2>()?) != REQUEST_PROFILE_VERSION
     {
-        return Err(fatal("OCOMP request profile magic/version mismatch"));
+        return Err(storage_corruption_message(
+            "OCOMP request profile magic/version mismatch",
+        ));
     }
     let chain_id = reader.u64()?;
     let genesis_hash = B256::from(reader.take::<32>()?);
@@ -205,16 +221,19 @@ fn decode_request_profile(encoded: &[u8], limits: &SchemaLimits) -> Result<Ocomp
     let protocol_bundle_hash = B256::from(reader.take::<32>()?);
     let correctness_profile_id = B256::from(reader.take::<32>()?);
     let source_availability_policy_id = B256::from(reader.take::<32>()?);
-    let result_committee_snapshot_hash = B256::from(reader.take::<32>()?);
     let capacity_len = usize::try_from(reader.u32()?)
-        .map_err(|_| fatal("OCOMP capacity profile length exceeds usize"))?;
+        .map_err(|_| storage_corruption_message("OCOMP capacity profile length exceeds usize"))?;
     if capacity_len != reader.remaining() {
-        return Err(fatal("OCOMP capacity profile length mismatch"));
+        return Err(storage_corruption_message(
+            "OCOMP capacity profile length mismatch",
+        ));
     }
     let capacity_encoded = reader.take_dynamic(capacity_len)?;
     reader.finish()?;
-    let capacity_profile = CapacityProfileV1::decode_canonical(capacity_encoded, limits)
-        .map_err(|error| fatal(format!("decode OCOMP capacity profile: {error}")))?;
+    let capacity_profile =
+        CapacityProfileV1::decode_canonical(capacity_encoded, limits).map_err(|error| {
+            storage_corruption_message(format!("decode OCOMP capacity profile: {error}"))
+        })?;
     let profile = OcompRequestProfile {
         chain_id,
         genesis_hash,
@@ -223,11 +242,12 @@ fn decode_request_profile(encoded: &[u8], limits: &SchemaLimits) -> Result<Ocomp
         correctness_profile_id,
         capacity_profile,
         source_availability_policy_id,
-        result_committee_snapshot_hash,
     };
     validate_request_profile(&profile)?;
     if encode_request_profile(&profile, limits)? != encoded {
-        return Err(fatal("non-canonical OCOMP request profile encoding"));
+        return Err(storage_corruption_message(
+            "non-canonical OCOMP request profile encoding",
+        ));
     }
     Ok(profile)
 }
@@ -246,15 +266,15 @@ impl<'a> ProfileReader<'a> {
         let end = self
             .offset
             .checked_add(N)
-            .ok_or_else(|| fatal("OCOMP request profile offset overflow"))?;
+            .ok_or_else(|| storage_corruption_message("OCOMP request profile offset overflow"))?;
         let bytes = self
             .encoded
             .get(self.offset..end)
-            .ok_or_else(|| fatal("truncated OCOMP request profile"))?;
+            .ok_or_else(|| storage_corruption_message("truncated OCOMP request profile"))?;
         self.offset = end;
         bytes
             .try_into()
-            .map_err(|_| fatal("invalid OCOMP request profile field width"))
+            .map_err(|_| storage_corruption_message("invalid OCOMP request profile field width"))
     }
 
     fn u32(&mut self) -> Result<u32> {
@@ -273,11 +293,11 @@ impl<'a> ProfileReader<'a> {
         let end = self
             .offset
             .checked_add(len)
-            .ok_or_else(|| fatal("OCOMP request profile offset overflow"))?;
+            .ok_or_else(|| storage_corruption_message("OCOMP request profile offset overflow"))?;
         let bytes = self
             .encoded
             .get(self.offset..end)
-            .ok_or_else(|| fatal("truncated OCOMP request profile field"))?;
+            .ok_or_else(|| storage_corruption_message("truncated OCOMP request profile field"))?;
         self.offset = end;
         Ok(bytes)
     }
@@ -286,11 +306,9 @@ impl<'a> ProfileReader<'a> {
         if self.offset == self.encoded.len() {
             Ok(())
         } else {
-            Err(fatal("OCOMP request profile has trailing bytes"))
+            Err(storage_corruption_message(
+                "OCOMP request profile has trailing bytes",
+            ))
         }
     }
-}
-
-fn fatal(message: impl Into<String>) -> PrecompileError {
-    PrecompileError::Fatal(message.into())
 }

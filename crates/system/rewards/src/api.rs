@@ -218,21 +218,23 @@ mod tests {
             .unwrap();
     }
 
-    /// Seeds COEN/0xUSD oracle pair at `rate_1e18`. Required because
+    /// Seeds COEN/840 oracle pair at `rate_1e18`. Required because
     /// `add_topup_for_voters` → `mint_gem` resolves `coen_rate` for floor
     /// price + entry_price at mint time.
     fn seed_oracle(ctx: &BlockRuntimeContext, rate_1e18: U256) {
-        let mut oracle = outbe_oracle::contract::OracleContract::new(ctx.storage.clone());
-        oracle.register_pair("COEN", "0xUSD").unwrap();
-        oracle
-            .set_exchange_rate(Address::ZERO, "COEN", "0xUSD", rate_1e18, 0, 0)
+        outbe_oracle::api::register_pair(ctx.storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
+        outbe_oracle::api::set_exchange_rate(
+            ctx.storage.clone(),
+            Address::ZERO,
+            outbe_oracle::api::DAY_TYPE_PAIR,
+            rate_1e18,
+            0,
+            0,
+        )
+        .unwrap();
         // Register ISO 840 (USD) so mint_gem currency-validation passes.
-        let pair_hash = outbe_oracle::contract::OracleContract::pair_hash("COEN", "0xUSD");
-        oracle
-            .settlement_iso_to_pair
-            .write(&840u16, pair_hash)
-            .unwrap();
+        let oracle = outbe_oracle::schema::OracleContract::new(ctx.storage.clone());
         oracle.reference_currencies.push(840u16).unwrap();
     }
 
@@ -251,7 +253,7 @@ mod tests {
                 outbe_gem::api::get_gem(&ctx.storage, gem_id)
                     .unwrap()
                     .unwrap()
-                    .gem_load
+                    .gem_load_minor
             })
             .collect()
     }

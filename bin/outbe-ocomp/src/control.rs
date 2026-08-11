@@ -1,3 +1,3 @@
-//! Compatibility re-export for the shared bounded local control transport.
+//! Compatibility re-export for local OCOMP identity and file-owner checks.
 
 pub use outbe_ocomp_protocol::local_control::*;

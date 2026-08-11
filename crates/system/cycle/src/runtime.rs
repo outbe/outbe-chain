@@ -1,7 +1,8 @@
 //! Per-block trigger dispatch loop.
 //!
 //! Runs from [`crate::lifecycle::CycleLifecycle::begin_block`] on every
-//! block during the begin-zone CycleTick phase. Iterates [`crate::triggers::ACTIVE_TRIGGERS`]
+//! block during the begin-zone CycleTick phase. Iterates the genesis-resolved
+//! trigger table
 //! and fires any trigger whose next slot has been reached.
 
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
@@ -9,7 +10,7 @@ use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 
 use crate::schema::Cycle;
 use crate::state::{accounting_gate_blocks, EvmAccountingProgress};
-use crate::triggers::{next_fire_at, ACTIVE_TRIGGERS};
+use crate::triggers::{active_triggers, next_fire_at};
 use crate::ICycle;
 
 /// Dispatches every active trigger whose `next_fire_at` is `<=
@@ -28,8 +29,10 @@ pub fn dispatch_triggers(
 ) -> Result<()> {
     let block_ts = ctx.block.timestamp;
     let block_number = ctx.block.block_number;
+    let protocol_constants = outbe_chain_constants::load(ctx)?;
+    let triggers = active_triggers(protocol_constants.metadosis_advance_interval_seconds);
 
-    for spec in ACTIVE_TRIGGERS {
+    for spec in &triggers {
         let cycle: Cycle<'_> = ctx.storage.contract::<Cycle<'_>>();
         let last_executed_at = cycle.last_executed_at.read(&spec.id)?;
 

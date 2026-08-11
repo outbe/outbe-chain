@@ -1,4 +1,4 @@
-//! Crash-conservative bounded multi-job OCOMP retention journal.
+//! Crash-conservative wire-bounded multi-job OCOMP retention journal.
 //!
 //! Candidate discovery uses an event only as a bounded locator. The production
 //! source re-opens the exact execution-valid block state and authenticates the
@@ -33,10 +33,17 @@ use outbe_ocomp_protocol::{
 };
 use outbe_offchain_data::TributeRetentionSelector;
 use outbe_primitives::{
-    addresses::METADOSIS_ADDRESS, storage::types::StorageKey as _, OutbeHeader, OutbeReceipt,
+    addresses::METADOSIS_ADDRESS,
+    storage::{
+        readonly::{ReadOnlyStorageProvider, StorageReader},
+        types::StorageKey as _,
+        StorageHandle,
+    },
+    OutbeHeader, OutbeReceipt,
 };
 use outbe_tribute::{RetainedTributePin, RetainedTributeWriter};
 use reth_provider::{HeaderProvider, ReceiptProvider, StateProviderFactory};
+use reth_storage_api::StateProvider;
 
 use super::finality::RethFinalizedIntentProofBuilder;
 
@@ -45,8 +52,20 @@ const JOURNAL_VERSION: u16 = 5;
 const LEGACY_RECORD_VERSION: u16 = 3;
 const PIN_RECORD_VERSION: u16 = 4;
 const PIN_RECORD_MAX_BYTES: usize = 512;
-const MAX_TRACKED_JOBS: usize = 256;
-const JOURNAL_MAX_BYTES: usize = PIN_RECORD_MAX_BYTES * MAX_TRACKED_JOBS + 64;
+/// The registry has no OCOMP product count limit. Its only cardinality ceiling
+/// is the count width committed by the durable journal wire format.
+const JOURNAL_RECORD_COUNT_MAX: usize = u16::MAX as usize;
+const JOURNAL_RECORD_PRESSURE_WATERMARK: usize =
+    JOURNAL_RECORD_COUNT_MAX - JOURNAL_RECORD_COUNT_MAX / 4;
+const JOURNAL_MAX_BYTES: usize =
+    (PIN_RECORD_MAX_BYTES + B256::len_bytes() + std::mem::size_of::<u16>())
+        * JOURNAL_RECORD_COUNT_MAX
+        + 8
+        + std::mem::size_of::<u16>()
+        + std::mem::size_of::<u64>()
+        + B256::len_bytes()
+        + std::mem::size_of::<u16>()
+        + B256::len_bytes();
 const JOURNAL_FILENAME: &str = "pin.v1";
 const JOURNAL_TEMP_FILENAME: &str = "pin.v1.tmp";
 const RETAINED_EVIDENCE_WINDOW_BLOCKS: u64 = 64;
@@ -185,7 +204,7 @@ pub enum RetentionError {
     UnsupportedJournalVersion { actual: u16 },
     #[error("pin generation overflow")]
     GenerationOverflow,
-    #[error("OCOMP active-job registry reached its bounded capacity")]
+    #[error("OCOMP journal record count exceeds its u16 wire format")]
     RegistryCapacity,
     #[error("conflicting tentative candidate cannot replace the active pin")]
     ConflictingCandidate,
@@ -298,26 +317,7 @@ where
         block: &ConsensusBlock,
         intent_id: B256,
     ) -> Result<OcompJobRecordV1, RetentionError> {
-        let state = self
-            .provider
-            .state_by_block_hash(block.block_hash())
-            .map_err(|error| RetentionError::Source(format!("open exact block state: {error}")))?;
-        let logical_key = intent_storage_key(intent_id)
-            .map_err(|error| RetentionError::Source(format!("derive intent slot: {error}")))?;
-        let base = logical_key.mapping_slot(U256::from(OCOMP_JOB_RECORDS_BASE_SLOT));
-        let encoded = read_storage_bytes(state.as_ref(), base, self.limits.max_bounded_bytes)?;
-        let record = OcompJobRecordV1::decode_canonical(&encoded, &self.limits)
-            .map_err(|error| RetentionError::Source(format!("decode typed job record: {error}")))?;
-        let decoded_id = record
-            .intent
-            .intent_id(&self.limits)
-            .map_err(|error| RetentionError::Source(format!("hash typed job record: {error}")))?;
-        if decoded_id != intent_id {
-            return Err(RetentionError::Source(
-                "storage key does not open the exact typed JobIntent".to_owned(),
-            ));
-        }
-        Ok(record)
+        read_ocomp_job_record_at(&self.provider, block.block_hash(), intent_id, &self.limits)
     }
 
     fn pending_record(
@@ -332,6 +332,121 @@ where
             ));
         }
         Ok(record)
+    }
+}
+
+/// Read one exact typed OCOMP job record from canonical state at `block_hash`.
+///
+/// Events are locators only. Embedded Supervisor and retention both use this
+/// single state decoder so neither can accidentally trust event payloads as the
+/// job authority.
+pub fn read_ocomp_job_record_at<P>(
+    provider: &P,
+    block_hash: B256,
+    intent_id: B256,
+    limits: &SchemaLimits,
+) -> Result<OcompJobRecordV1, RetentionError>
+where
+    P: StateProviderFactory,
+{
+    let state = provider
+        .state_by_block_hash(block_hash)
+        .map_err(|error| RetentionError::Source(format!("open exact block state: {error}")))?;
+    let logical_key = intent_storage_key(intent_id)
+        .map_err(|error| RetentionError::Source(format!("derive intent slot: {error}")))?;
+    let base = logical_key.mapping_slot(U256::from(OCOMP_JOB_RECORDS_BASE_SLOT));
+    let encoded = read_storage_bytes(state.as_ref(), base, limits.max_bounded_bytes)?;
+    let record = OcompJobRecordV1::decode_canonical(&encoded, limits)
+        .map_err(|error| RetentionError::Source(format!("decode typed job record: {error}")))?;
+    let decoded_id = record
+        .intent
+        .intent_id(limits)
+        .map_err(|error| RetentionError::Source(format!("hash typed job record: {error}")))?;
+    if decoded_id != intent_id {
+        return Err(RetentionError::Source(
+            "storage key does not open the exact typed JobIntent".to_owned(),
+        ));
+    }
+    Ok(record)
+}
+
+/// Resolve whether one local OCOMP key belongs to the job's exact historical
+/// ValidatorSet snapshot at the request block. A promoted or re-entered
+/// Validator must not submit a vote for a job whose pinned snapshot predates
+/// that membership.
+pub fn ocomp_snapshot_contains_key_at<P>(
+    provider: &P,
+    block_hash: B256,
+    intent: &JobIntentV1,
+    ocomp_key_hash: B256,
+) -> Result<bool, RetentionError>
+where
+    P: StateProviderFactory,
+{
+    if ocomp_key_hash.is_zero() {
+        return Err(RetentionError::Source(
+            "local OCOMP key hash is zero".to_owned(),
+        ));
+    }
+    let state = provider
+        .state_by_block_hash(block_hash)
+        .map_err(|error| RetentionError::Source(format!("open exact snapshot state: {error}")))?;
+    let reader = OcompSnapshotStateReader {
+        state: state.as_ref(),
+    };
+    let mut readonly = ReadOnlyStorageProvider::new(reader);
+    let storage = StorageHandle::new(&mut readonly);
+    let extension = outbe_validatorset::read_ocomp_snapshot_extension_for_binding(
+        storage.clone(),
+        intent.result_validator_set_epoch,
+        intent.result_committee_set_hash,
+        intent.result_ocomp_binding_hash,
+    )
+    .map_err(|error| RetentionError::Source(format!("read pinned OCOMP snapshot: {error}")))?
+    .ok_or_else(|| RetentionError::Source("pinned OCOMP snapshot is missing".to_owned()))?;
+    if extension.member_count != intent.result_member_count {
+        return Err(RetentionError::Source(
+            "pinned OCOMP snapshot member count disagrees with JobIntent".to_owned(),
+        ));
+    }
+    let snapshot_key = outbe_validatorset::committee_snapshot_key(
+        intent.result_validator_set_epoch,
+        intent.result_committee_set_hash,
+    );
+    for index in 0..extension.member_count {
+        let member =
+            outbe_validatorset::read_ocomp_snapshot_member_at(storage.clone(), snapshot_key, index)
+                .map_err(|error| {
+                    RetentionError::Source(format!("read pinned OCOMP member: {error}"))
+                })?
+                .ok_or_else(|| {
+                    RetentionError::Source("pinned OCOMP member is missing".to_owned())
+                })?;
+        if keccak256(member.ocomp_public_key_sec1) == ocomp_key_hash {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+struct OcompSnapshotStateReader<'a> {
+    state: &'a dyn StateProvider,
+}
+
+impl StorageReader for OcompSnapshotStateReader<'_> {
+    fn read_storage(
+        &self,
+        address: alloy_primitives::Address,
+        key: B256,
+    ) -> outbe_primitives::error::Result<U256> {
+        self.state
+            .storage(address, key)
+            .map(|value| value.unwrap_or_default())
+            .map_err(|error| {
+                outbe_primitives::error::PrecompileError::Storage(format!(
+                    "pinned OCOMP snapshot state read failed: {error}"
+                ))
+            })
     }
 }
 
@@ -554,7 +669,12 @@ where
                         "terminal Job binding differs from retained finalized Job".to_owned(),
                     ));
                 }
-                Ok(Some(terminal.terminal_height))
+                retention_terminal_height_for_status(
+                    record.status,
+                    block.number(),
+                    finalized.deadline_height,
+                    terminal.terminal_height,
+                )
             }
         }
     }
@@ -793,7 +913,7 @@ struct CoordinatorInner {
     registry: Option<JobRegistryV1>,
 }
 
-/// Node-owned bounded multi-job PoC pin coordinator.
+/// Node-owned independently keyed multi-job OCOMP pin coordinator.
 pub struct OcompRetentionCoordinator {
     store: JournalStore,
     inner: Mutex<CoordinatorInner>,
@@ -802,8 +922,8 @@ pub struct OcompRetentionCoordinator {
 }
 
 const FINALITY_NOTIFICATION_CAPACITY: usize = 256;
-const FINALITY_RECONCILIATION_MAX_ATTEMPTS: usize = 8;
 const FINALITY_RECONCILIATION_INITIAL_BACKOFF_MS: u64 = 25;
+const FINALITY_RECONCILIATION_MAX_BACKOFF_MS: u64 = 800;
 
 /// Bounded, ordered node-owned worker for finalized-block reconciliation.
 ///
@@ -816,6 +936,7 @@ pub struct OcompRetentionService {
     coordinator: Arc<OcompRetentionCoordinator>,
     snapshot_armer: Option<Arc<dyn FinalizedSnapshotArmer>>,
     finalized_rx: tokio::sync::mpsc::Receiver<ConsensusBlock>,
+    execution_ready_rx: tokio::sync::watch::Receiver<u64>,
 }
 
 /// Arms the exact finalized snapshot before later finalized blocks can advance
@@ -834,6 +955,14 @@ pub struct OcompRetentionHandle {
     finalized_tx: tokio::sync::mpsc::Sender<ConsensusBlock>,
 }
 
+/// Executor-facing notification that exact canonical receipts through `height`
+/// are locally readable. It carries no consensus authority: certified block
+/// identity still comes exclusively from [`OcompRetentionHandle`].
+#[derive(Clone)]
+pub struct OcompRetentionExecutionHandle {
+    execution_ready_tx: tokio::sync::watch::Sender<u64>,
+}
+
 impl OcompRetentionService {
     pub fn new(coordinator: Arc<OcompRetentionCoordinator>) -> (Self, OcompRetentionHandle) {
         Self::new_with_snapshot_armer(coordinator, None)
@@ -843,6 +972,34 @@ impl OcompRetentionService {
         coordinator: Arc<OcompRetentionCoordinator>,
         snapshot_armer: Option<Arc<dyn FinalizedSnapshotArmer>>,
     ) -> (Self, OcompRetentionHandle) {
+        let (execution_ready_tx, execution_ready_rx) = tokio::sync::watch::channel(u64::MAX);
+        drop(execution_ready_tx);
+        Self::new_inner(coordinator, snapshot_armer, execution_ready_rx)
+    }
+
+    /// Construct the production ordered join between certified finality and
+    /// exact local execution. `initial_execution_ready_height` is the executor
+    /// recovery anchor; later progress is supplied through the returned handle.
+    pub fn new_with_execution_readiness(
+        coordinator: Arc<OcompRetentionCoordinator>,
+        snapshot_armer: Option<Arc<dyn FinalizedSnapshotArmer>>,
+        initial_execution_ready_height: u64,
+    ) -> (Self, OcompRetentionHandle, OcompRetentionExecutionHandle) {
+        let (execution_ready_tx, execution_ready_rx) =
+            tokio::sync::watch::channel(initial_execution_ready_height);
+        let (service, handle) = Self::new_inner(coordinator, snapshot_armer, execution_ready_rx);
+        (
+            service,
+            handle,
+            OcompRetentionExecutionHandle { execution_ready_tx },
+        )
+    }
+
+    fn new_inner(
+        coordinator: Arc<OcompRetentionCoordinator>,
+        snapshot_armer: Option<Arc<dyn FinalizedSnapshotArmer>>,
+        execution_ready_rx: tokio::sync::watch::Receiver<u64>,
+    ) -> (Self, OcompRetentionHandle) {
         let (finalized_tx, finalized_rx) =
             tokio::sync::mpsc::channel(FINALITY_NOTIFICATION_CAPACITY);
         (
@@ -850,6 +1007,7 @@ impl OcompRetentionService {
                 coordinator: coordinator.clone(),
                 snapshot_armer,
                 finalized_rx,
+                execution_ready_rx,
             },
             OcompRetentionHandle {
                 coordinator,
@@ -862,7 +1020,21 @@ impl OcompRetentionService {
         while let Some(block) = self.finalized_rx.recv().await {
             let block_number = block.number();
             let block_hash = block.block_hash();
-            for attempt in 1..=FINALITY_RECONCILIATION_MAX_ATTEMPTS {
+            while block_number > *self.execution_ready_rx.borrow_and_update() {
+                if self.execution_ready_rx.changed().await.is_err() {
+                    tracing::warn!(
+                        target: "outbe::ocomp",
+                        block_number,
+                        block_hash = %block_hash,
+                        execution_ready_height = *self.execution_ready_rx.borrow(),
+                        "OCOMP execution-readiness source closed with finalized work pending; marshal replay will recover it after restart"
+                    );
+                    return;
+                }
+            }
+
+            let mut attempt = 0_u64;
+            loop {
                 let coordinator = self.coordinator.clone();
                 let snapshot_armer = self.snapshot_armer.clone();
                 let finalized_block = block.clone();
@@ -883,44 +1055,71 @@ impl OcompRetentionService {
                 .await
                 {
                     Ok(Ok(())) => break,
-                    Ok(Err(error)) if attempt < FINALITY_RECONCILIATION_MAX_ATTEMPTS => {
+                    Ok(Err(error)) => {
+                        attempt = attempt.saturating_add(1);
                         let backoff_ms = FINALITY_RECONCILIATION_INITIAL_BACKOFF_MS
-                            .saturating_mul(1_u64 << (attempt - 1).min(5));
-                        tracing::debug!(
+                            .saturating_mul(1_u64 << attempt.saturating_sub(1).min(5))
+                            .min(FINALITY_RECONCILIATION_MAX_BACKOFF_MS);
+                        if attempt == 1 || attempt.is_multiple_of(64) {
+                            tracing::warn!(
+                                target: "outbe::ocomp",
+                                block_number,
+                                block_hash = %block_hash,
+                                attempt,
+                                backoff_ms,
+                                %error,
+                                "OCOMP pin reconciliation is stalled; retaining the exact finalized block"
+                            );
+                        } else {
+                            tracing::debug!(
+                                target: "outbe::ocomp",
+                                block_number,
+                                block_hash = %block_hash,
+                                attempt,
+                                backoff_ms,
+                                %error,
+                                "OCOMP pin reconciliation will retry the same exact finalized block"
+                            );
+                        }
+                        tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                    }
+                    Err(error) => {
+                        attempt = attempt.saturating_add(1);
+                        tracing::warn!(
                             target: "outbe::ocomp",
                             block_number,
                             block_hash = %block_hash,
                             attempt,
-                            backoff_ms,
                             %error,
-                            "OCOMP pin reconciliation will retry after a transient local failure"
+                            "OCOMP pin reconciliation task failed; retaining the exact finalized block"
                         );
-                        tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
-                    }
-                    Ok(Err(error)) => {
-                        tracing::warn!(
-                            target: "outbe::ocomp",
-                            block_number,
-                            block_hash = %block_hash,
-                            attempts = attempt,
-                            %error,
-                            "OCOMP pin reconciliation failed in node-owned worker"
-                        );
-                        break;
-                    }
-                    Err(error) => {
-                        tracing::warn!(
-                            target: "outbe::ocomp",
-                            block_number,
-                            block_hash = %block_hash,
-                            %error,
-                            "OCOMP pin reconciliation worker task failed"
-                        );
-                        break;
+                        tokio::time::sleep(Duration::from_millis(
+                            FINALITY_RECONCILIATION_MAX_BACKOFF_MS,
+                        ))
+                        .await;
                     }
                 }
             }
         }
+    }
+}
+
+impl OcompRetentionExecutionHandle {
+    pub fn notify_execution_finalized(&self, height: u64) -> Result<(), OcompRetentionHookError> {
+        if self.execution_ready_tx.receiver_count() == 0 {
+            return Err(OcompRetentionHookError::new(
+                "OCOMP retention execution-readiness worker is unavailable",
+            ));
+        }
+        self.execution_ready_tx.send_if_modified(|current| {
+            if height > *current {
+                *current = height;
+                true
+            } else {
+                false
+            }
+        });
+        Ok(())
     }
 }
 
@@ -1068,6 +1267,28 @@ impl OcompRetentionCoordinator {
         }
     }
 
+    /// Returns the exact live `Exported` record addressed by `JobId`.
+    ///
+    /// This deliberately consults the durable multi-job registry rather than
+    /// [`Self::status`], whose single operational summary may describe a newer
+    /// job. Callers must not substitute another live job.
+    #[cfg(test)]
+    pub(crate) fn exported_job_record(&self, job_id: B256) -> Result<PinRecordV1, RetentionError> {
+        let inner = self.lock()?;
+        if let RetentionStatus::Quarantined { ref reason } = inner.status {
+            return Err(RetentionError::Quarantined(reason.clone()));
+        }
+        let (_, record) = record_for_job(&inner, job_id)?;
+        match record.state {
+            PinStateV1::Exported {
+                job_id: current, ..
+            } if current == job_id => Ok(record),
+            _ => Err(RetentionError::InvalidTransition(
+                "attestation requires the exact exported Job",
+            )),
+        }
+    }
+
     pub fn prepare_candidate(&self, block: &ConsensusBlock) -> Result<(), OcompRetentionHookError> {
         let candidate = self.source.candidate_for_block(block).map_err(hook_error)?;
         if let Some(candidate) = candidate {
@@ -1147,13 +1368,11 @@ impl OcompRetentionCoordinator {
                     .map_err(hook_error)?;
             }
         }
-        if self.retained_tributes.is_some() {
-            while self
-                .release_due(block.number())
-                .map_err(hook_error)?
-                .is_some()
-            {}
-        }
+        while self
+            .release_due(block.number())
+            .map_err(hook_error)?
+            .is_some()
+        {}
         Ok(())
     }
 
@@ -1190,7 +1409,7 @@ impl OcompRetentionCoordinator {
                 .values()
                 .filter(|record| !matches!(record.state, PinStateV1::Released { .. }))
                 .count()
-                >= MAX_TRACKED_JOBS
+                >= JOURNAL_RECORD_COUNT_MAX
         }) {
             return Err(RetentionError::RegistryCapacity);
         }
@@ -1260,7 +1479,7 @@ impl OcompRetentionCoordinator {
         )
     }
 
-    pub(crate) fn replay_exported(
+    pub fn replay_exported(
         &self,
         job_id: B256,
         source_generation: u64,
@@ -1437,12 +1656,12 @@ impl OcompRetentionCoordinator {
         }
         let complete = if lease_has_other_references(&inner, key, candidate.input_lease_id) {
             true
-        } else {
-            self.retained_tributes
-                .as_ref()
-                .ok_or(RetentionError::RetainedTributeStorageUnavailable)?
+        } else if let Some(retained_tributes) = self.retained_tributes.as_ref() {
+            retained_tributes
                 .release_input_lease_page(candidate.input_lease_id)
                 .map_err(|error| RetentionError::RetainedTributeGc(error.to_string()))?
+        } else {
+            true
         };
         if !complete {
             return Ok(None);
@@ -1641,7 +1860,9 @@ impl OcompRetentionCoordinator {
             last_updated: key,
             records: BTreeMap::new(),
         });
-        if !registry.records.contains_key(&key) && registry.records.len() >= MAX_TRACKED_JOBS {
+        if !registry.records.contains_key(&key)
+            && registry.records.len() >= JOURNAL_RECORD_PRESSURE_WATERMARK
+        {
             registry
                 .records
                 .retain(|_, existing| !matches!(existing.state, PinStateV1::Released { .. }));
@@ -1861,6 +2082,26 @@ fn candidate_job_id(candidate: CandidatePinV1) -> Result<B256, RetentionError> {
     .map_err(|error| RetentionError::Source(format!("derive tentative JobId: {error}")))
 }
 
+pub(super) fn retention_terminal_height_for_status(
+    status: OcompJobStatus,
+    observed_height: u64,
+    deadline_height: u64,
+    terminal_height: u64,
+) -> Result<Option<u64>, RetentionError> {
+    match status {
+        OcompJobStatus::AwaitingFinality | OcompJobStatus::VotingOpen => Ok(None),
+        OcompJobStatus::Completed | OcompJobStatus::Conflicted => {
+            if terminal_height >= deadline_height {
+                return Err(RetentionError::Source(
+                    "OCOMP quorum terminal height is outside its response window".to_owned(),
+                ));
+            }
+            Ok((observed_height >= deadline_height).then_some(deadline_height))
+        }
+        OcompJobStatus::Expired | OcompJobStatus::Canceled => Ok(Some(terminal_height)),
+    }
+}
+
 fn legacy_candidate_input_lease_id(candidate: CandidatePinV1) -> B256 {
     let mut preimage = Vec::with_capacity(26 + 4 + 32 * 2);
     preimage.extend_from_slice(b"OUTBE_OCOMP_INPUT_LEASE_V1");
@@ -1879,7 +2120,7 @@ fn encode_registry(registry: &JobRegistryV1) -> Vec<u8> {
     encoded.extend_from_slice(registry.last_updated.as_slice());
     encoded.extend_from_slice(
         &u16::try_from(registry.records.len())
-            .expect("bounded registry length fits u16")
+            .expect("journal registry length fits its u16 wire count")
             .to_be_bytes(),
     );
     for (key, record) in &registry.records {
@@ -1942,9 +2183,9 @@ fn decode_registry(encoded: &[u8]) -> Result<JobRegistryV1, RetentionError> {
     }
     let last_updated = B256::new(reader.take::<32>()?);
     let count = usize::from(u16::from_be_bytes(reader.take::<2>()?));
-    if count == 0 || count > MAX_TRACKED_JOBS {
+    if count == 0 {
         return Err(RetentionError::MalformedJournal(
-            "registry count is outside its bound",
+            "registry must use an absent file for zero records",
         ));
     }
     let mut records = BTreeMap::new();
@@ -2026,6 +2267,48 @@ pub fn inspect_retention_journal(
         last_updated: registry.last_updated,
         records: registry.records.into_iter().collect(),
     })
+}
+
+#[cfg(test)]
+pub(crate) const fn retention_pressure_watermark_for_test() -> usize {
+    JOURNAL_RECORD_PRESSURE_WATERMARK
+}
+
+#[cfg(test)]
+pub(crate) fn seed_retention_journal_for_test(
+    root: impl AsRef<Path>,
+    generation: u64,
+    last_updated: B256,
+    records: Vec<(B256, PinRecordV1)>,
+) -> Result<(), RetentionError> {
+    let record_count = records.len();
+    let records = records.into_iter().collect::<BTreeMap<_, _>>();
+    if records.is_empty()
+        || records.len() != record_count
+        || records.len() > JOURNAL_RECORD_COUNT_MAX
+        || !records.contains_key(&last_updated)
+        || records.values().map(|record| record.generation).max() != Some(generation)
+    {
+        return Err(RetentionError::MalformedJournal(
+            "invalid canonical test seed registry",
+        ));
+    }
+    let changed = *records
+        .get(&last_updated)
+        .expect("validated last-updated test record");
+    let registry = JobRegistryV1 {
+        generation,
+        last_updated,
+        records,
+    };
+    let store = JournalStore::new(root.as_ref().to_path_buf(), Arc::new(OsJournalDurability));
+    if store.initialize()?.is_some() {
+        return Err(RetentionError::InvalidTransition(
+            "test seed journal already exists",
+        ));
+    }
+    store.persist(&registry, changed)?;
+    Ok(())
 }
 
 fn encode_record(record: PinRecordV1) -> Vec<u8> {

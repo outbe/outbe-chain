@@ -2,19 +2,17 @@
 //! enclaves (ported `run-testnet.sh` start), owned as Rust child processes.
 
 use std::fs;
-use std::os::unix::fs::{FileTypeExt as _, MetadataExt as _};
 #[cfg(any(test, feature = "ocomp-integration"))]
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 use std::thread::sleep;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 #[cfg(any(test, feature = "ocomp-integration"))]
 use eyre::ensure;
 use eyre::{bail, Result, WrapErr};
 
-use crate::internal::config::Config;
 use crate::internal::proc::{self, args, attach_log, read_trimmed, wait_tcp, SealSpec};
 
 use super::{Localnet, StartOpts};
@@ -23,66 +21,27 @@ fn unix_time_offset_arg(offset: i64) -> String {
     format!("--testnet.unix-time-offset-secs={offset}")
 }
 
-fn reclaim_stale_ocomp_sockets(cfg: &Config, validator_index: usize) -> Result<()> {
-    for path in [
-        cfg.ocomp_supervisor_socket(validator_index),
-        cfg.ocomp_snapshot_exporter_socket(validator_index),
-    ] {
-        let metadata = match fs::symlink_metadata(&path) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(error) => {
-                return Err(error)
-                    .wrap_err_with(|| format!("inspect stale OCOMP socket {}", path.display()))
-            }
-        };
-        if !metadata.file_type().is_socket() {
-            bail!(
-                "refusing to remove non-socket OCOMP runtime entry {}",
-                path.display()
-            );
-        }
-        fs::remove_file(&path)
-            .wrap_err_with(|| format!("remove stale OCOMP socket {}", path.display()))?;
-    }
-    Ok(())
+fn committee_signal_args(pids: &[u32], signal: &str) -> Vec<String> {
+    std::iter::once(format!("-{signal}"))
+        .chain(std::iter::once("--".to_owned()))
+        .chain(pids.iter().map(u32::to_string))
+        .collect()
 }
 
-fn wait_for_ocomp_runtime_sockets(
-    cfg: &Config,
-    validator_index: usize,
-    timeout: Duration,
-) -> Result<()> {
-    let paths = [
-        cfg.ocomp_supervisor_socket(validator_index),
-        cfg.ocomp_snapshot_exporter_socket(validator_index),
-    ];
-    let deadline = Instant::now() + timeout;
-    loop {
-        let mut ready = true;
-        for path in &paths {
-            match fs::symlink_metadata(path) {
-                Ok(metadata) if metadata.file_type().is_socket() => {}
-                Ok(_) => bail!(
-                    "OCOMP runtime path is not a Unix socket: {}",
-                    path.display()
-                ),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => ready = false,
-                Err(error) => {
-                    return Err(error).wrap_err_with(|| {
-                        format!("inspect OCOMP runtime socket {}", path.display())
-                    })
-                }
-            }
-        }
-        if ready {
-            return Ok(());
-        }
-        if Instant::now() >= deadline {
-            bail!("timed out waiting for validator-{validator_index} OCOMP runtime sockets");
-        }
-        sleep(Duration::from_millis(50));
+fn signal_committee(pids: &[u32], signal: &str) -> Result<()> {
+    let status = Command::new("kill")
+        .args(committee_signal_args(pids, signal))
+        .status()
+        .wrap_err_with(|| format!("signal validator committee with SIG{signal}"))?;
+    if !status.success() {
+        // A partially delivered STOP would leave an owned test process frozen.
+        // Best-effort resume the complete cohort before surfacing the failure.
+        let _ = Command::new("kill")
+            .args(committee_signal_args(pids, "CONT"))
+            .status();
+        bail!("failed to signal validator committee with SIG{signal}");
     }
+    Ok(())
 }
 
 impl Localnet {
@@ -93,12 +52,7 @@ impl Localnet {
         self.start_opts = opts.clone();
         let n = self.committee_size();
         if self.tee_enabled() {
-            let image_id = proc::ensure_enclave_image(
-                &self.cfg.repo,
-                self.cfg.sudo,
-                &self.cfg.dir.join("test-sgx-signing-key.pem"),
-            )?;
-            self.retain_enclave_image_id(image_id)?;
+            self.ensure_enclave_image_once()?;
         }
         let bootnodes = self.bootnodes();
         let chain_id_hex = if self.tee_enabled() {
@@ -113,12 +67,20 @@ impl Localnet {
                 continue; // already running
             }
             self.validators.remove(&i); // clear a dead handle if present
+            launched.push(i);
+        }
 
+        // Bring the complete enclave cohort up before the first validator can
+        // enter genesis DKG. Starting enclave→validator per index gave the first
+        // nodes several seconds' head start and made them finalize before the
+        // last dealings existed (`MissingPlayerDealing`).
+        for &i in &launched {
             if self.tee_enabled() && !self.enclaves.contains_key(&i) {
                 self.start_enclave(i, chain_id_hex.as_deref().unwrap_or_default())?;
             }
+        }
+        for &i in &launched {
             self.launch_validator(i, opts, bootnodes.as_deref())?;
-            launched.push(i);
         }
 
         // Survival check: a node that dies in the first couple seconds is a
@@ -134,6 +96,24 @@ impl Localnet {
         Ok(())
     }
 
+    /// Require that every process owned as a committee validator is still alive.
+    ///
+    /// RPC reachability alone cannot establish ownership: another local run may
+    /// be listening on the same static port. The persistent LocalNet driver calls
+    /// this throughout readiness and only accepts heights from this live cohort.
+    pub fn ensure_committee_alive(&mut self) -> Result<()> {
+        for index in 0..self.committee_size() {
+            let Some(guard) = self.validators.get_mut(&index) else {
+                bail!("validator-{index} has no owned process");
+            };
+            if guard.exited() {
+                let tail = self.tail_log(index, 20);
+                bail!("validator-{index} exited during readiness:\n{tail}");
+            }
+        }
+        Ok(())
+    }
+
     /// Relaunch any committee validator whose node died (e.g. one killed in the
     /// DKG-failure recovery), reusing the last start's options. Live nodes and
     /// still-running enclaves are left in place.
@@ -144,9 +124,24 @@ impl Localnet {
 
     /// Stop the complete validator committee before changing the shared
     /// testnet-only logical clock, then relaunch every validator with preserved
-    /// datadirs and enclaves. Clearing all owned guards is the stop barrier:
-    /// this method never runs a mixed-offset voting committee.
+    /// datadirs and enclaves. Freeze the whole cohort with one signal before
+    /// dropping any child guard: stopping validators one by one leaves a live
+    /// quorum long enough to certify a new block between process exits, which
+    /// is not a valid quiescent barrier for a test-only clock change.
     pub fn restart_committee_at_unix_time_offset(&mut self, offset_secs: i64) -> Result<()> {
+        let validator_pids = self
+            .validators
+            .values()
+            .map(proc::ChildGuard::pid)
+            .collect::<Vec<_>>();
+        if validator_pids.len() != self.committee_size() {
+            bail!(
+                "committee clock restart requires {} live validators, found {}",
+                self.committee_size(),
+                validator_pids.len()
+            );
+        }
+        signal_committee(&validator_pids, "STOP")?;
         self.validators.clear();
         if !self.validators.is_empty() {
             bail!("committee stop barrier retained a validator process");
@@ -193,14 +188,10 @@ impl Localnet {
     }
 
     /// Stop and relaunch one committee validator while preserving its running
-    /// enclave and persisted node data. When OCOMP is enabled, return only
-    /// after the relaunched node has rebound both node-facing runtime sockets.
+    /// enclave and persisted node data.
     pub fn restart_validator_preserving_enclave(&mut self, i: usize) -> Result<()> {
         self.kill_validator(i)?;
         self.restart_validator(i)?;
-        if self.start_opts.ocomp_protocol_bundle_hash.is_some() {
-            wait_for_ocomp_runtime_sockets(&self.cfg, i, Duration::from_secs(60))?;
-        }
         Ok(())
     }
 
@@ -311,9 +302,6 @@ impl Localnet {
         self.kill_validator(i)?;
         self.enclaves.remove(&i);
         self.restart()?;
-        if self.start_opts.ocomp_protocol_bundle_hash.is_some() {
-            wait_for_ocomp_runtime_sockets(&self.cfg, i, Duration::from_secs(60))?;
-        }
         Ok(())
     }
 
@@ -345,9 +333,6 @@ impl Localnet {
         // Backstop in case the owned handle was ever lost.
         let pat = format!("outbe-chain node.*validator-{i}/data");
         self.sh().sudo_best_effort("pkill", &["-9", "-f", &pat]);
-        if self.start_opts.ocomp_protocol_bundle_hash.is_some() {
-            reclaim_stale_ocomp_sockets(&self.cfg, i)?;
-        }
         Ok(())
     }
 
@@ -431,33 +416,6 @@ impl Localnet {
         if let Some(offset) = opts.unix_time_offset_secs {
             a.push(unix_time_offset_arg(offset));
         }
-        if let Some(protocol_bundle_hash) = opts.ocomp_protocol_bundle_hash.as_deref() {
-            let domain = vd.join("ocomp").join("domain-v1");
-            fs::create_dir_all(&domain)?;
-            fs::create_dir_all(self.cfg.ocomp_socket_dir(i))?;
-            let effective_uid = fs::metadata("/proc/self")?.uid();
-            let boot_nonce = format!("0x{}", hex::encode([u8::try_from(i + 1)?; 32]));
-            a.extend(args![
-                "--ocomp.supervisor-socket",
-                self.cfg.ocomp_supervisor_socket(i).display(),
-                "--ocomp.snapshot-exporter-socket",
-                self.cfg.ocomp_snapshot_exporter_socket(i).display(),
-                "--ocomp.supervisor-uid",
-                effective_uid,
-                "--ocomp.snapshot-exporter-uid",
-                effective_uid,
-                "--ocomp.protocol-bundle-hash",
-                protocol_bundle_hash,
-                "--ocomp.boot-nonce",
-                boot_nonce,
-                "--ocomp.session-generation",
-                1_u64,
-                "--ocomp.key",
-                domain.join("ocomp-key-v1.hex").display(),
-                "--ocomp.validator-index",
-                i,
-            ]);
-        }
         cmd.args(&a);
         attach_log(&mut cmd, &vd)?;
         let guard = self.spawn_node(&format!("validator-{i}"), &vd, cmd)?;
@@ -499,6 +457,12 @@ impl Localnet {
                 .ok_or_else(|| eyre::eyre!("Gramine Docker image identity was not resolved"))?,
             sudo: self.cfg.sudo,
             pass_sgx_devices: self.cfg.tee_mode.passes_sgx_devices(),
+            remote_attestation: match self.cfg.tee_mode {
+                crate::env::TeeMode::Real => proc::TestRemoteAttestation::Dcap,
+                crate::env::TeeMode::SgxNoAttest
+                | crate::env::TeeMode::GramineDirect
+                | crate::env::TeeMode::Mock => proc::TestRemoteAttestation::None,
+            },
             dkg_seed,
             seal,
             log_path: vd.join("enclave.log"),
@@ -540,6 +504,70 @@ impl Localnet {
         let s = fs::read_to_string(self.cfg.validator_dir(i).join("node.log")).unwrap_or_default();
         let lines: Vec<&str> = s.lines().collect();
         lines[lines.len().saturating_sub(n)..].join("\n")
+    }
+}
+
+#[cfg(test)]
+mod owned_committee_tests {
+    use std::process::Command;
+    use std::thread::sleep;
+    use std::time::Duration;
+
+    use crate::env::Environment;
+    use crate::internal::config::Config;
+    use crate::internal::proc::{ChildGuard, DockerImageId};
+
+    use super::Localnet;
+
+    #[test]
+    fn readiness_rejects_an_owned_validator_that_exited() {
+        let env = Environment {
+            validators: 1,
+            data_dir: tempfile::tempdir().unwrap().keep(),
+            ..Environment::default()
+        };
+        env.ports.start_scenario(1).unwrap();
+        let mut localnet = Localnet::new(Config::resolve(&env));
+
+        let mut command = Command::new("sh");
+        command.args(["-c", "exit 23"]);
+        let guard = ChildGuard::spawn("validator-0-test", command).unwrap();
+        localnet.validators.insert(0, guard);
+        sleep(Duration::from_millis(50));
+
+        let error = localnet
+            .ensure_committee_alive()
+            .expect_err("an exited owned validator must fail readiness");
+        assert!(error.to_string().contains("validator-0 exited"));
+    }
+
+    #[test]
+    fn pinned_enclave_image_is_not_resolved_again_on_committee_restart() {
+        let env = Environment {
+            validators: 1,
+            data_dir: tempfile::tempdir().unwrap().keep(),
+            ..Environment::default()
+        };
+        env.ports.start_scenario(1).unwrap();
+        let mut localnet = Localnet::new(Config::resolve(&env));
+        let mut resolutions = 0;
+        let expected = format!("sha256:{}", "1".repeat(64));
+
+        localnet
+            .ensure_enclave_image_once_with(|| {
+                resolutions += 1;
+                DockerImageId::from_inspect_output(&expected)
+            })
+            .unwrap();
+        localnet
+            .ensure_enclave_image_once_with(|| {
+                resolutions += 1;
+                DockerImageId::from_inspect_output(&format!("sha256:{}", "2".repeat(64)))
+            })
+            .unwrap();
+
+        assert_eq!(resolutions, 1);
+        assert_eq!(localnet.enclave_image_id(), Some(expected.as_str()));
     }
 }
 
@@ -646,8 +674,9 @@ fn verified_compressed_entities_reconstruction_path(
 #[cfg(test)]
 mod tests {
     use super::{
-        cargo_package_version, compressed_entities_reconstruction_path, rewrite_workspace_version,
-        unix_time_offset_arg, verified_compressed_entities_reconstruction_path,
+        cargo_package_version, committee_signal_args, compressed_entities_reconstruction_path,
+        rewrite_workspace_version, unix_time_offset_arg,
+        verified_compressed_entities_reconstruction_path,
     };
     use clap::Parser;
 
@@ -664,6 +693,14 @@ mod tests {
             .expect("negative clock offset must remain the option value");
 
         assert_eq!(parsed.unix_time_offset_secs, Some(-3));
+    }
+
+    #[test]
+    fn committee_freeze_is_one_noninteractive_signal_for_the_complete_cohort() {
+        assert_eq!(
+            committee_signal_args(&[101, 202, 303, 404], "STOP"),
+            ["-STOP", "--", "101", "202", "303", "404"]
+        );
     }
 
     #[test]
@@ -722,99 +759,5 @@ example = { version = "9.9.9" }
             verified_compressed_entities_reconstruction_path(&scenario, 4, 0).unwrap(),
             scenario.join("validator-0/data/compressed_entities")
         );
-    }
-
-    #[test]
-    fn stopped_validator_reclaims_only_its_ocomp_socket_entries() {
-        use std::os::unix::net::UnixListener;
-
-        use crate::env::Environment;
-        use crate::internal::config::Config;
-
-        let root = tempfile::tempdir().unwrap();
-        let env = Environment {
-            data_dir: root.path().to_path_buf(),
-            ..Environment::default()
-        };
-        env.ports.start_scenario(env.validators).unwrap();
-        let cfg = Config::for_scenario(&env, 1);
-        let socket_dir = cfg.ocomp_socket_dir(0);
-        std::fs::create_dir_all(&socket_dir).unwrap();
-
-        let supervisor = cfg.ocomp_supervisor_socket(0);
-        let exporter = cfg.ocomp_snapshot_exporter_socket(0);
-        let unrelated = socket_dir.join("keep.txt");
-        drop(UnixListener::bind(&supervisor).unwrap());
-        drop(UnixListener::bind(&exporter).unwrap());
-        std::fs::write(&unrelated, b"scenario evidence").unwrap();
-
-        super::reclaim_stale_ocomp_sockets(&cfg, 0).unwrap();
-
-        assert!(!supervisor.exists());
-        assert!(!exporter.exists());
-        assert_eq!(std::fs::read(&unrelated).unwrap(), b"scenario evidence");
-        std::fs::remove_dir_all(socket_dir).unwrap();
-    }
-
-    #[test]
-    fn stopped_validator_never_reclaims_a_non_socket_runtime_entry() {
-        use crate::env::Environment;
-        use crate::internal::config::Config;
-
-        let root = tempfile::tempdir().unwrap();
-        let env = Environment {
-            data_dir: root.path().to_path_buf(),
-            ..Environment::default()
-        };
-        env.ports.start_scenario(env.validators).unwrap();
-        let cfg = Config::for_scenario(&env, 1);
-        let socket_dir = cfg.ocomp_socket_dir(0);
-        std::fs::create_dir_all(&socket_dir).unwrap();
-
-        let supervisor = cfg.ocomp_supervisor_socket(0);
-        std::fs::write(&supervisor, b"not a socket").unwrap();
-
-        assert!(super::reclaim_stale_ocomp_sockets(&cfg, 0).is_err());
-        assert_eq!(std::fs::read(&supervisor).unwrap(), b"not a socket");
-        std::fs::remove_dir_all(socket_dir).unwrap();
-    }
-
-    #[test]
-    fn restarted_validator_waits_for_both_node_owned_ocomp_sockets() {
-        use std::os::unix::net::UnixListener;
-        use std::time::Duration;
-
-        use crate::env::Environment;
-        use crate::internal::config::Config;
-
-        let root = tempfile::tempdir().unwrap();
-        let env = Environment {
-            data_dir: root.path().to_path_buf(),
-            ..Environment::default()
-        };
-        env.ports.start_scenario(env.validators).unwrap();
-        let cfg = Config::for_scenario(&env, 1);
-        let socket_dir = cfg.ocomp_socket_dir(0);
-        let supervisor = cfg.ocomp_supervisor_socket(0);
-        let exporter = cfg.ocomp_snapshot_exporter_socket(0);
-
-        let creator = std::thread::spawn({
-            let socket_dir = socket_dir.clone();
-            let supervisor = supervisor.clone();
-            let exporter = exporter.clone();
-            move || {
-                std::thread::sleep(Duration::from_millis(25));
-                std::fs::create_dir_all(socket_dir).unwrap();
-                drop(UnixListener::bind(supervisor).unwrap());
-                std::thread::sleep(Duration::from_millis(25));
-                drop(UnixListener::bind(exporter).unwrap());
-            }
-        });
-
-        super::wait_for_ocomp_runtime_sockets(&cfg, 0, Duration::from_secs(1)).unwrap();
-        creator.join().unwrap();
-        assert!(supervisor.exists());
-        assert!(exporter.exists());
-        std::fs::remove_dir_all(socket_dir).unwrap();
     }
 }

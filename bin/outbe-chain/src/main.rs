@@ -44,18 +44,22 @@ use outbe_operator::{
     },
     tx::RelaySignerV1,
 };
-use outbe_primitives::projection::ProjectionReadinessHandle;
+use outbe_primitives::projection::{
+    projection_readiness, ProjectionCheckpoint, ProjectionReadinessHandle, ProjectionStatus,
+};
 use outbe_primitives::OutbeHeader;
 use reth_chainspec::ChainSpec;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_ethereum::cli::interface::Cli;
 use reth_node_builder::NodeHandle;
-use reth_provider::{HeaderProvider, StateProviderFactory};
+use reth_provider::{BlockIdReader, HeaderProvider, StateProviderFactory};
 use reth_rpc_server_types::{RethRpcModule, RpcModuleSelection, RpcModuleValidator};
 use std::{path::PathBuf, sync::Arc, thread};
 use tokio::sync::oneshot;
 use tracing::info;
 
+mod constants_genesis;
+mod ocomp_exex;
 mod ocomp_genesis;
 mod tee_genesis;
 
@@ -205,8 +209,7 @@ async fn run_renewal_worker_v1(
     }
 }
 
-async fn run_upgrade_promotion_worker_v1<P>(
-    provider: P,
+struct UpgradePromotionWorkerConfigV1 {
     chain_id: u64,
     genesis_hash: alloy_primitives::B256,
     node_data_dir: PathBuf,
@@ -214,9 +217,21 @@ async fn run_upgrade_promotion_worker_v1<P>(
     warning_blocks: u64,
     critical_blocks: u64,
     promoted: Arc<tokio::sync::Notify>,
-) where
+}
+
+async fn run_upgrade_promotion_worker_v1<P>(provider: P, config: UpgradePromotionWorkerConfigV1)
+where
     P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory + Send + Sync + 'static,
 {
+    let UpgradePromotionWorkerConfigV1 {
+        chain_id,
+        genesis_hash,
+        node_data_dir,
+        poll_secs,
+        warning_blocks,
+        critical_blocks,
+        promoted,
+    } = config;
     loop {
         let snapshot = match inspect_upgrade_journal_v1(&node_data_dir) {
             Ok(Some(snapshot)) => snapshot,
@@ -588,6 +603,9 @@ fn main() -> eyre::Result<()> {
     if args.len() > 1 && args[1] == "tee" {
         return tee_genesis::run(&args);
     }
+    if args.len() > 1 && args[1] == "constants" {
+        return constants_genesis::run(&args);
+    }
     if args.len() > 1 && args[1] == "ocomp" {
         return ocomp_genesis::run(&args);
     }
@@ -743,9 +761,9 @@ fn run_node() -> eyre::Result<()> {
         OutbeFullNode,
         ConsensusArgs,
         ProjectionReadinessHandle,
+        Option<ProjectionReadinessHandle>,
         Arc<dyn FinalizedCeCommitter>,
         Arc<dyn CeStartupRecovery>,
-        Arc<CompressedTreeService>,
     )>();
     let (consensus_dead_tx, mut consensus_dead_rx) = oneshot::channel::<()>();
     let shutdown_token = tokio_util::sync::CancellationToken::new();
@@ -759,9 +777,9 @@ fn run_node() -> eyre::Result<()> {
             node,
             mut args,
             projection_readiness,
+            ocomp_readiness,
             finalized_ce_committer,
             ce_startup_recovery,
-            compressed_tree_service,
         ) = match node_rx.blocking_recv() {
             Ok(v) => v,
             Err(_) => return Ok(()),
@@ -845,12 +863,18 @@ fn run_node() -> eyre::Result<()> {
                     args,
                     node,
                     bridge_for_consensus,
-                    outbe_engine::ConsensusStackServices::new(
+                    match ocomp_readiness {
+                        Some(readiness) => outbe_engine::ConsensusStackServices::new(
+                            projection_readiness,
+                            finalized_ce_committer,
+                            ce_startup_recovery,
+                        ).with_ocomp_readiness(readiness),
+                        None => outbe_engine::ConsensusStackServices::new(
                         projection_readiness,
                         finalized_ce_committer,
                         ce_startup_recovery,
-                        compressed_tree_service,
-                    ),
+                        ),
+                    },
                 ) => {
                     if let Err(e) = &result {
                         tracing::error!(%e, "consensus stack failed");
@@ -933,12 +957,12 @@ fn run_node() -> eyre::Result<()> {
             outbe_node::ocomp::fork::require_startup_ocomp_fork_install(
                 builder.config().chain.as_ref(),
             )?;
+        let ocomp_limits = outbe_ocomp_protocol::profile::poc_schema_limits();
+        let ocomp_install_hash = ocomp_fork_install.install_hash(&ocomp_limits)?;
         info!(
             activation_height = ocomp_fork_install.activation_height,
             classification = ?ocomp_fork_install.classification,
-            install_hash = %ocomp_fork_install.install_hash(
-                &outbe_ocomp_protocol::profile::poc_schema_limits()
-            )?,
+            install_hash = %ocomp_install_hash,
             "validated genesis-active immutable OCOMP chain-manifest install"
         );
 
@@ -970,6 +994,71 @@ fn run_node() -> eyre::Result<()> {
             ))
             .data_dir()
             .to_path_buf();
+        let ocomp_domain_root = node_data_dir
+            .parent()
+            .ok_or_else(|| eyre::eyre!("node data directory has no OCOMP domain parent"))?
+            .join("ocomp")
+            .join("domain-v1");
+        let ocomp_bundle_bytes = ocomp_fork_install
+            .protocol_bundle
+            .encode_canonical(&ocomp_limits)?;
+        let ocomp_bundle = outbe_ocomp::bundle::PinnedProtocolBundle::decode(
+            &ocomp_bundle_bytes,
+            ocomp_fork_install.request_profile.protocol_bundle_hash,
+            &ocomp_limits,
+        )?;
+        let ocomp_worker_port = args
+            .listen_address
+            .port()
+            .checked_add(1)
+            .ok_or_else(|| eyre::eyre!("consensus port leaves no OCOMP Worker endpoint port"))?;
+        let ocomp_worker_address = std::net::SocketAddr::new(
+            std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+            ocomp_worker_port,
+        );
+        let ocomp_policy = if args.is_validator {
+            outbe_ocomp::embedded_runtime::EmbeddedNodePolicyV1::Validator
+        } else {
+            outbe_ocomp::embedded_runtime::EmbeddedNodePolicyV1::FullNode
+        };
+        let ocomp_validator_rpc_url = if args.is_validator {
+            if !builder.config().rpc.http {
+                eyre::bail!("validator OCOMP requires the local HTTP RPC server");
+            }
+            Some(format!(
+                "http://127.0.0.1:{}",
+                builder.config().rpc.http_port
+            ))
+        } else {
+            None
+        };
+        let ocomp_exex_config = ocomp_exex::OcompExExConfigV1 {
+            domain_root: ocomp_domain_root,
+            worker_address: ocomp_worker_address,
+            identity: outbe_ocomp_protocol::local_control::EndpointIdentity {
+                chain_id: builder.config().chain.chain().id(),
+                genesis_hash: builder.config().chain.genesis_hash(),
+                boot_nonce: ocomp_install_hash,
+                protocol_bundle_hash: ocomp_fork_install.request_profile.protocol_bundle_hash,
+            },
+            protocol_bundle: ocomp_bundle,
+            policy: ocomp_policy,
+            validator_rpc_url: ocomp_validator_rpc_url,
+            genesis_hash: builder.config().chain.genesis_hash(),
+        };
+        let ocomp_baseline = ProjectionCheckpoint {
+            block_number: 0,
+            block_hash: builder.config().chain.genesis_hash(),
+        };
+        let (ocomp_readiness_publisher, ocomp_readiness) = projection_readiness(
+            ocomp_baseline,
+            ProjectionStatus::Ready {
+                checkpoint: ocomp_baseline,
+            },
+        );
+        let ocomp_readiness_for_consensus =
+            args.upstream.is_some().then(|| ocomp_readiness.clone());
+        let (ocomp_exit_tx, mut ocomp_exit_rx) = tokio::sync::mpsc::unbounded_channel();
         let evm_signer = if args.is_validator {
             let evm_key_path = args
                 .effective_validator_evm_key()?
@@ -993,10 +1082,10 @@ fn run_node() -> eyre::Result<()> {
         let renewal_validator_authority = evm_signer.clone();
         let mut renewal_full_node_authority = None;
 
-        // Every network declares exactly one TEE mode in genesis and every node
-        // must connect to the corresponding enclave transport before execution
-        // or consensus starts. GramineDirectDev is a separate network mode, not
-        // a fallback when production initialization or DCAP fails.
+        // Every network declares exactly one attestation policy in genesis. The
+        // local session protocol is an independent, explicit operator choice:
+        // GramineDirectDev may use either the development transport or a real
+        // SGX, production NodeHost session. There is no connection fallback.
         let socket = args.tee_enclave_socket.clone().ok_or_else(|| {
             eyre::eyre!(
                 "mandatory {:?} ChainSpec requires --tee-enclave-socket before node startup",
@@ -1006,8 +1095,12 @@ fn run_node() -> eyre::Result<()> {
         let endpoint = socket
             .to_str()
             .ok_or_else(|| eyre::eyre!("TEE enclave endpoint is not valid UTF-8"))?;
-        match initial_tee_policy.attestation_mode {
-            outbe_primitives::tee_attestation_v1::AttestationMode::DcapRequired => {
+        let tee_session = args
+            .tee_session_mode
+            .resolve(initial_tee_policy.attestation_mode)
+            .map_err(eyre::Report::msg)?;
+        match tee_session {
+            outbe_engine::args::ResolvedTeeSession::ProductionNodeHost => {
                 if args.is_validator {
                 let signing_key_path = args.signing_key.as_deref().ok_or_else(|| {
                     eyre::eyre!("validator TEE initialization requires --consensus.signing-key")
@@ -1074,11 +1167,9 @@ fn run_node() -> eyre::Result<()> {
                         .map_err(eyre::Report::msg)?;
                 }
             }
-            outbe_primitives::tee_attestation_v1::AttestationMode::GramineDirectDev => {
+            outbe_engine::args::ResolvedTeeSession::Development => {
                 let client = outbe_tee::EnclaveClient::connect_endpoint(endpoint)
-                .wrap_err(
-                    "GramineDirectDev enclave connection failed; production transport is not a fallback",
-                )?;
+                    .wrap_err("development enclave connection failed")?;
                 outbe_tee::install_enclave_client(client).map_err(eyre::Report::msg)?;
             }
         }
@@ -1086,6 +1177,7 @@ fn run_node() -> eyre::Result<()> {
             socket = %socket.display(),
             validator_node_host = args.is_validator,
             attestation_mode = ?initial_tee_policy.attestation_mode,
+            session_mode = ?tee_session,
             "mandatory TEE enclave sidecar connected before execution launch",
         );
 
@@ -1156,9 +1248,11 @@ fn run_node() -> eyre::Result<()> {
                             })?,
                         ),
                     ),
-                    _ => eyre::bail!(
-                        "committed NodeHost manifest profile does not match the node role"
-                    ),
+                    _ => {
+                        eyre::bail!(
+                            "committed NodeHost manifest profile does not match the node role"
+                        );
+                    }
                 };
                 Some(RenewalWorkerV1 {
                     rpc_url: args.tee_renewal_rpc_url.clone(),
@@ -1270,6 +1364,12 @@ fn run_node() -> eyre::Result<()> {
                     projection_exit_tx,
                 ))
             })
+            .install_exex("outbe-ocomp", move |ctx| {
+                let config = ocomp_exex_config.clone();
+                let readiness = ocomp_readiness_publisher.clone();
+                let exit = ocomp_exit_tx.clone();
+                async move { Ok(ocomp_exex::run_ocomp_exex(ctx, config, readiness, exit)) }
+            })
             .apply(|mut builder| {
                 configure_outbe_engine_args(&mut builder.config_mut().engine);
                 let discovery = &mut builder.config_mut().network.discovery;
@@ -1299,18 +1399,21 @@ fn run_node() -> eyre::Result<()> {
                     // that exposes only the finalization-serving capability.
                     let outbe_api = (if is_validator {
                         outbe_rpc::OutbeApiHandler::with_bridge(
-                            provider,
+                            Arc::clone(&provider),
                             bridge,
                             projection_readiness.clone(),
                         )
                     } else if is_follower {
                         outbe_rpc::OutbeApiHandler::with_follower_bridge(
-                            provider,
+                            Arc::clone(&provider),
                             bridge,
                             projection_readiness.clone(),
                         )
                     } else {
-                        outbe_rpc::OutbeApiHandler::new(provider, projection_readiness.clone())
+                        outbe_rpc::OutbeApiHandler::new(
+                            Arc::clone(&provider),
+                            projection_readiness.clone(),
+                        )
                     })
                     .with_point_reads(
                         compressed_tree_service.clone(),
@@ -1320,7 +1423,69 @@ fn run_node() -> eyre::Result<()> {
                     .with_tee_renewal_schedule(
                         dkg_prepare_window_blocks,
                         minimum_block_time_millis,
-                    );
+                    )
+                    .with_ocomp_lysis_openings(outbe_rpc::OcompLysisOpeningsRuntimeV1::new({
+                        let provider = Arc::clone(&provider);
+                        move |intent_id, canonical_request| {
+                            let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
+                            let request = outbe_ocomp_protocol::control::BuildLysisOpeningsV1::decode_body(
+                                canonical_request.as_ref(),
+                                &limits,
+                            )
+                            .map_err(|error| format!("decode OCOMP openings request: {error}"))?;
+                            let finalized_head = provider
+                                .finalized_block_num_hash()
+                                .map_err(|error| format!("read finalized head: {error}"))?
+                                .ok_or_else(|| "finalized head is unavailable".to_owned())?;
+                            let record = outbe_node::ocomp::retention::read_ocomp_job_record_at(
+                                provider.as_ref(),
+                                finalized_head.hash,
+                                intent_id,
+                                &limits,
+                            )
+                            .map_err(|error| format!("read finalized OCOMP job: {error}"))?;
+                            let finalized = record
+                                .finalized
+                                .as_ref()
+                                .ok_or_else(|| "OCOMP job is not finalized".to_owned())?;
+                            if !ocomp_job_available_for_calculation(record.status) {
+                                return Err(
+                                    "OCOMP job is not available for calculation or replay"
+                                        .to_owned(),
+                                );
+                            }
+                            if request.job_id != finalized.job_id {
+                                return Err("OCOMP openings request JobId mismatch".to_owned());
+                            }
+                            let candidate = outbe_node::ocomp::retention::CandidatePinV1 {
+                                block_number: record.intent_height,
+                                block_hash: finalized.finalized_request_block_hash,
+                                state_root: finalized.finalized_request_state_root,
+                                intent_id,
+                                wwd: record.intent.wwd,
+                                ce_sealed_root: record.intent.ce_sealed_root,
+                                protocol_bundle_hash: record.intent.protocol_bundle_hash,
+                                input_lease_id: record
+                                    .intent
+                                    .input_lease_id()
+                                    .map_err(|error| format!("derive input lease: {error}"))?,
+                            };
+                            let openings = outbe_node::ocomp::build_lysis_openings(
+                                provider.as_ref(),
+                                &limits,
+                                candidate,
+                                request.subjects,
+                            )
+                            .map_err(|error| format!("build exact OCOMP openings: {error}"))?;
+                            if openings.job_id != finalized.job_id {
+                                return Err("OCOMP openings JobId mismatch".to_owned());
+                            }
+                            openings
+                                .encode_body(&limits)
+                                .map(alloy_primitives::Bytes::from)
+                                .map_err(|error| format!("encode OCOMP openings: {error}"))
+                        }
+                    }));
                     ctx.modules.merge_if_module_configured(
                         RethRpcModule::Other("outbe".to_owned()),
                         outbe_api.into_rpc(),
@@ -1344,13 +1509,15 @@ fn run_node() -> eyre::Result<()> {
             let promoted = upgrade_promotion.clone();
             Some(tokio::spawn(run_upgrade_promotion_worker_v1(
                 provider,
-                proof_chain_id,
-                genesis_hash,
-                node_data_dir.clone(),
-                args.tee_renewal_poll_secs,
-                args.tee_renewal_warning_blocks,
-                args.tee_renewal_critical_blocks,
-                promoted,
+                UpgradePromotionWorkerConfigV1 {
+                    chain_id: proof_chain_id,
+                    genesis_hash,
+                    node_data_dir: node_data_dir.clone(),
+                    poll_secs: args.tee_renewal_poll_secs,
+                    warning_blocks: args.tee_renewal_warning_blocks,
+                    critical_blocks: args.tee_renewal_critical_blocks,
+                    promoted,
+                },
             )))
         } else {
             None
@@ -1389,9 +1556,9 @@ fn run_node() -> eyre::Result<()> {
                 node,
                 args,
                 projection_readiness,
+                ocomp_readiness_for_consensus,
                 finalized_ce_committer,
                 ce_startup_recovery,
-                compressed_tree_service,
             ));
 
             tokio::select! {
@@ -1407,6 +1574,18 @@ fn run_node() -> eyre::Result<()> {
                             failure_class = ?exit.failure.class,
                             failure = %exit.failure.message,
                             "mandatory offchain-data projection requested node shutdown"
+                        );
+                    }
+                    if let Some(done) = shutdown.shutdown() {
+                        let _ = done.await;
+                    }
+                }
+                exit = ocomp_exit_rx.recv() => {
+                    if let Some(exit) = exit {
+                        tracing::error!(
+                            failure_class = ?exit.failure.class,
+                            failure = %exit.failure.message,
+                            "embedded OCOMP requested node shutdown"
                         );
                     }
                     if let Some(done) = shutdown.shutdown() {
@@ -1450,6 +1629,18 @@ fn run_node() -> eyre::Result<()> {
                         let _ = done.await;
                     }
                 }
+                exit = ocomp_exit_rx.recv() => {
+                    if let Some(exit) = exit {
+                        tracing::error!(
+                            failure_class = ?exit.failure.class,
+                            failure = %exit.failure.message,
+                            "embedded OCOMP requested node shutdown"
+                        );
+                    }
+                    if let Some(done) = shutdown.shutdown() {
+                        let _ = done.await;
+                    }
+                }
                 () = upgrade_promotion.notified() => {
                     info!("finalized enclave upgrade requested execution restart");
                     if let Some(done) = shutdown.shutdown() {
@@ -1481,6 +1672,16 @@ fn run_node() -> eyre::Result<()> {
     Ok(())
 }
 
+fn ocomp_job_available_for_calculation(
+    status: outbe_ocomp_protocol::state::OcompJobStatus,
+) -> bool {
+    matches!(
+        status,
+        outbe_ocomp_protocol::state::OcompJobStatus::VotingOpen
+            | outbe_ocomp_protocol::state::OcompJobStatus::Completed
+    )
+}
+
 /// Configure Reth's engine tree for Outbe's pre-finalization parent switches.
 ///
 /// Ethereum's Engine API permits an execution client to skip payload building when
@@ -1496,6 +1697,26 @@ fn configure_outbe_engine_args(engine: &mut reth_node_core::args::EngineArgs) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ocomp_openings_remain_available_for_completed_full_node_replay() {
+        use outbe_ocomp_protocol::state::OcompJobStatus;
+
+        assert!(super::ocomp_job_available_for_calculation(
+            OcompJobStatus::VotingOpen
+        ));
+        assert!(super::ocomp_job_available_for_calculation(
+            OcompJobStatus::Completed
+        ));
+        for unavailable in [
+            OcompJobStatus::AwaitingFinality,
+            OcompJobStatus::Expired,
+            OcompJobStatus::Conflicted,
+            OcompJobStatus::Canceled,
+        ] {
+            assert!(!super::ocomp_job_available_for_calculation(unavailable));
+        }
+    }
+
     #[test]
     fn engine_builds_payloads_after_prefinalization_parent_switches() {
         let mut engine = reth_node_core::args::EngineArgs::default();
@@ -1516,8 +1737,10 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let explicit_secret = root.path().join("operator-p2p.key");
         let unused_default = root.path().join("default-discovery-secret");
-        let mut network = reth_node_core::args::NetworkArgs::default();
-        network.p2p_secret_key = Some(explicit_secret.clone());
+        let network = reth_node_core::args::NetworkArgs {
+            p2p_secret_key: Some(explicit_secret.clone()),
+            ..Default::default()
+        };
 
         let (first_signer, first_public) =
             super::load_reth_p2p_node_host_signer(&network, unused_default.clone()).unwrap();

@@ -7,12 +7,12 @@ import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
-import {MockERC20} from "@test-mocks/MockERC20.sol";
+import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 
 contract EscrowAdapterOptionDTest is Test {
     EscrowAdapter escrow;
     MockTheCompact compact;
-    MockERC20 paymentToken;
+    MockWCOEN paymentToken;
 
     address admin = address(1);
     address bridger = address(2);
@@ -25,7 +25,7 @@ contract EscrowAdapterOptionDTest is Test {
     function setUp() public {
         escrow = DeployProxy.escrowAdapter(admin, bridger);
         compact = new MockTheCompact();
-        paymentToken = new MockERC20("USD Coin", "USDC", 18);
+        paymentToken = new MockWCOEN();
 
         vm.prank(admin);
         escrow.wire(auction, address(compact), address(paymentToken));
@@ -46,10 +46,10 @@ contract EscrowAdapterOptionDTest is Test {
         uint256 liveBalance = IERC6909(address(compact)).balanceOf(address(escrow), escrow.lockId());
         assertEq(liveBalance, LOCK_AMOUNT, "precondition: ERC6909 balance equals locked amount");
 
-        MockERC20 usdt = new MockERC20("Tether", "USDT", 6);
+        MockWCOEN rotated = new MockWCOEN();
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.LiveLocksOutstanding.selector, uint256(LOCK_AMOUNT)));
         vm.prank(admin);
-        escrow.wire(auction, address(compact), address(usdt));
+        escrow.wire(auction, address(compact), address(rotated));
     }
 
     /// @dev Fresh adapter (lockId == 0) must short-circuit the ERC6909 balance read in the
@@ -60,11 +60,11 @@ contract EscrowAdapterOptionDTest is Test {
 
         compact.setBalance(0, address(escrow), 999);
 
-        MockERC20 usdt = new MockERC20("Tether", "USDT", 6);
+        MockWCOEN rotated = new MockWCOEN();
         vm.prank(admin);
-        escrow.wire(auction, address(compact), address(usdt));
+        escrow.wire(auction, address(compact), address(rotated));
 
-        assertEq(address(escrow.paymentToken()), address(usdt), "rotation must succeed despite poisoned balance");
+        assertEq(address(escrow.paymentToken()), address(rotated), "rotation must succeed despite poisoned balance");
     }
 
     /// @dev Rotation guard must trigger when `_compact` (not `_paymentToken`) rotates while

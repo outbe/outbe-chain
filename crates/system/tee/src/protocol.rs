@@ -158,18 +158,23 @@ pub enum GratisOp {
     Mint,
     /// Burn `amount` from `account` (debit balance; `total_supply -= amount`).
     Burn,
-    /// Lock `amount` of `account`'s balance into a new `PledgeLockTicket` pending a
-    /// credis request (debit balance; `pledged_total_supply += amount`). The amount
-    /// is parked in the ticket, NOT yet credited to the account's pledged ledger.
+    /// Lock the gratis that covers `amount` stablecoin minor units into a new
+    /// `PledgeLockTicket` pending a credis request. `amount` is the STABLES figure
+    /// the pledger signed; the gratis actually debited comes from
+    /// [`GratisOpRequest::pledge_terms`] (derived host-side from the oracle rate) and
+    /// is what moves the balance and `pledged_total_supply`. The gratis is parked in
+    /// the ticket, NOT yet credited to the account's pledged ledger.
     Pledge,
     /// Return a still-pending pledge (e.g. credis rejected): read the ticket, credit
-    /// `amount` back to `account`'s balance, and delete the ticket
-    /// (`pledged_total_supply -= amount`).
+    /// its gratis back to `account`'s balance, and delete it
+    /// (`pledged_total_supply -= ticket.gratis_amount`). `amount` is the STABLES
+    /// figure, cross-checked against the ticket.
     Unpledge,
     /// Consume a `PledgeLockTicket` for a credis request: verify `spend_auth` binds
-    /// it to `smart_account`, credit the ticket `amount` into the EOA's own pledged
+    /// it to `smart_account`, credit the ticket gratis into the EOA's own pledged
     /// ledger, and delete the ticket (no aggregate change — it stays pledged). Returns
-    /// `gratis_amount` so credis can size the position.
+    /// the sealed [`PledgeTerms`] so credis can size the position from the quote the
+    /// pledger accepted.
     ConsumePledge,
     /// Release `amount` of collateral from the EOA's own pledged ledger back to its
     /// balance (`pledged_total_supply -= amount`). Amount-based (no ticket); the
@@ -201,6 +206,25 @@ pub struct ModifyAuth {
     pub op_nonce: u64,
 }
 
+/// Loan terms quoted at pledge time and sealed into the `PledgeLockTicket`, so
+/// `requestCredis` sizes the position from the price the pledger accepted instead of
+/// re-quoting the oracle a transaction later. Supplied by the host on a `Pledge` and
+/// handed back verbatim on the matching `ConsumePledge`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PledgeTerms {
+    /// Stablecoin minor units the pledge covers — equals `GratisOpRequest::amount` on
+    /// a `Pledge` (the enclave cross-checks it, since that is the MAC-bound figure).
+    pub stables_amount: U256,
+    /// Gratis debited from the pledger's balance, derived host-side from the oracle
+    /// rate and capped by the caller's `maxGratis`.
+    pub gratis_amount: U256,
+    /// The stablecoin the credis is disbursed in.
+    pub asset: Address,
+    /// COEN/stablecoin rate (1e18) the conversion used; pinned as the Credis
+    /// position's `entry_price_minor`.
+    pub entry_rate: U256,
+}
+
 /// Inputs for a single `ApplyGratisOp`. The host reads the current ciphertext
 /// blobs + versions from committed storage and forwards them verbatim; the
 /// enclave decrypts, enforces invariants, and re-encrypts deterministically.
@@ -215,6 +239,9 @@ pub struct GratisOpRequest {
     /// `ConsumePledge` the enclave still cross-checks it against `ticket.owner`. Ignored for
     /// `RevealOwner` itself.
     pub account: Address,
+    /// The MAC-bound amount: gratis for Mint/Burn/ReleaseToEoa/BurnPledged, but
+    /// STABLECOIN minor units for `Pledge`/`Unpledge` (there the gratis figure travels
+    /// in [`Self::pledge_terms`] / the ticket).
     // TODO(privacy): `amount` is a plaintext write input, so per-tx amounts are
     // visible in calldata (only cumulative balances are encrypted). To also hide
     // amounts, carry a client-encrypted amount blob here (like `EncryptedTributeOffer`)
@@ -238,6 +265,10 @@ pub struct GratisOpRequest {
     /// Spend authorization binding the pledge to `smart_account`
     /// (`spend_auth_mac(pledge_secret, smart_account)`), set for `ConsumePledge`.
     pub spend_auth: Option<[u8; 32]>,
+    /// The oracle-derived loan terms to seal into the new ticket. Required for
+    /// `Pledge`, `None` for every other op.
+    #[serde(default)]
+    pub pledge_terms: Option<PledgeTerms>,
     /// Optional co-located Fidelity cohort update/probe, applied atomically with
     /// the Gratis op in the SAME enclave round-trip (Mint → `In`, Burn/BurnPledged
     /// → `Out`, Pledge → `Probe` for the eligibility gate). A failing section
@@ -341,8 +372,12 @@ pub struct GratisOpResult {
     pub new_pledge_record: Vec<u8>,
     /// Deterministic pledge handle for a `Pledge` (zero otherwise).
     pub pledge_handle: B256,
-    /// Pledged amount surfaced for credis (`ConsumePledge`); zero otherwise.
+    /// Pledged gratis surfaced for credis (`ConsumePledge`); zero otherwise.
     pub gratis_amount: U256,
+    /// The loan terms sealed in the consumed ticket (`ConsumePledge`); `None`
+    /// otherwise. Lets credis size the position from the pledge-time quote.
+    #[serde(default)]
+    pub pledge_terms: Option<PledgeTerms>,
     /// Plaintext EOA recovered by a `RevealOwner` op (zero otherwise). Lets the host key the
     /// per-account pledged/balance ledgers without the EOA ever appearing in calldata or state.
     pub revealed_owner: Address,
@@ -564,8 +599,10 @@ pub enum EnclaveRequest {
     /// proof that this enclave has the permanent offer key resident.
     GenerateDcapQuote { intent: Vec<u8> },
     /// Sign one exact GramineDirectDev registration intent inside the enclave.
-    /// This command is accepted only by the separate development transport and
-    /// never returns an SGX quote or hardware-attestation claim.
+    /// This command is accepted by the development transport, or by an
+    /// authenticated production NodeHost session when the enclave itself
+    /// detects SGX with remote attestation disabled. It never returns an SGX
+    /// quote or hardware-attestation claim.
     SignRegistrationIntentDevV1 { intent: Vec<u8> },
 
     /// Start one bounded, request-committed DCAP verification upload. Evidence
@@ -1102,6 +1139,16 @@ pub fn gratis_op_canonical_hash(req: &GratisOpRequest) -> B256 {
         Some(s) => {
             buf.push(1);
             buf.extend_from_slice(&s);
+        }
+        None => buf.push(0),
+    }
+    match req.pledge_terms {
+        Some(t) => {
+            buf.push(1);
+            buf.extend_from_slice(&t.stables_amount.to_be_bytes::<32>());
+            buf.extend_from_slice(&t.gratis_amount.to_be_bytes::<32>());
+            buf.extend_from_slice(t.asset.as_slice());
+            buf.extend_from_slice(&t.entry_rate.to_be_bytes::<32>());
         }
         None => buf.push(0),
     }

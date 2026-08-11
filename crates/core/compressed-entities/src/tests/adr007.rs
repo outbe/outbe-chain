@@ -553,7 +553,19 @@ fn completed_seal_projection_is_unavailable_before_end_and_exact_after_end() {
             .completed_partition_root(PartitionRef::TributeWwd(day))
             .is_err());
 
+        let preview = crate::preview_end_block(storage.clone(), &scope).unwrap();
+        assert_eq!(scope.provisional_sealed_root().unwrap(), preview.new_root);
+        let provisional_collection = scope
+            .provisional_partition_root(PartitionRef::TributeWwd(day))
+            .unwrap();
+        assert_eq!(
+            provisional_collection.partition(),
+            PartitionRef::TributeWwd(day)
+        );
+        assert!(!provisional_collection.root().is_zero());
+
         let seal = end_block(storage, &scope).unwrap();
+        assert_eq!(seal, preview);
         assert_eq!(scope.completed_sealed_root().unwrap(), seal.new_root);
         let collection = scope
             .completed_partition_root(PartitionRef::TributeWwd(day))
@@ -565,6 +577,20 @@ fn completed_seal_projection_is_unavailable_before_end_and_exact_after_end() {
             scope
                 .sealed_collection_root(&seal, PartitionRef::TributeWwd(day))
                 .unwrap()
+        );
+        assert_eq!(collection, provisional_collection);
+        let payload = crate::encode_tribute_v1(&body).unwrap();
+        let commitment = crate::body_commitment(
+            crate::ACTIVE_COMMITMENT_SCHEME,
+            crate::BODY_SCHEMA_V1,
+            body.tribute_id,
+            &payload,
+        )
+        .unwrap();
+        assert_eq!(
+            crate::tribute_partition_root_from_leaves(day, [(body.tribute_id, commitment)],)
+                .unwrap(),
+            collection.root(),
         );
     });
 }
@@ -1776,10 +1802,14 @@ fn every_cleanup_write_boundary_rolls_back_the_complete_end_block_cleanup() {
     let mut baseline = HashMapStorageProvider::new(1);
     let baseline_scope = ExecutionScope::new();
     populate_cleanup_fixture(&mut baseline, &baseline_scope, &fixtures);
-    baseline.clear_mutation_failure();
-    StorageHandle::enter(&mut baseline, |storage| {
-        end_block(storage, &baseline_scope).unwrap();
+    let baseline_preview = StorageHandle::enter(&mut baseline, |storage| {
+        crate::preview_end_block(storage, &baseline_scope).unwrap()
     });
+    baseline.clear_mutation_failure();
+    let baseline_seal = StorageHandle::enter(&mut baseline, |storage| {
+        end_block(storage, &baseline_scope).unwrap()
+    });
+    assert_eq!(baseline_seal, baseline_preview);
     let cleanup_operations = baseline.clear_mutation_failure();
     assert!(cleanup_operations > 0);
 
@@ -1788,6 +1818,9 @@ fn every_cleanup_write_boundary_rolls_back_the_complete_end_block_cleanup() {
             let mut provider = HashMapStorageProvider::new(1);
             let scope = ExecutionScope::new();
             populate_cleanup_fixture(&mut provider, &scope, &fixtures);
+            let preview = StorageHandle::enter(&mut provider, |storage| {
+                crate::preview_end_block(storage, &scope).unwrap()
+            });
             let storage_before = provider.storage.clone();
             let events_before = provider.get_ordered_events().to_vec();
             provider.clear_mutation_failure();
@@ -1806,6 +1839,9 @@ fn every_cleanup_write_boundary_rolls_back_the_complete_end_block_cleanup() {
                 assert_eq!(schema.touched.len().unwrap(), 3);
                 assert_eq!(schema.touched_index_deltas.len().unwrap(), 4);
             });
+            let retry =
+                StorageHandle::enter(&mut provider, |storage| end_block(storage, &scope).unwrap());
+            assert_eq!(retry, preview);
         }
     }
 }

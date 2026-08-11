@@ -100,7 +100,7 @@ contract IntexNFT1155Test is Test {
         assertEq(data.totalSupply, 0);
         assertEq(data.issuedIntexCount, ISSUED_INTEX_COUNT);
         // callPeriod is stored verbatim; defaulting/bounding is the caller's (intexfactory) responsibility.
-        assertEq(data.callTrigger.intexCallPeriod, callPeriod);
+        assertEq(data.callTrigger.callNoticePeriod, callPeriod);
     }
 
     function test_OnlyBridgeCanCreateSeries() public {
@@ -228,8 +228,8 @@ contract IntexNFT1155Test is Test {
         IIntexNFT1155.SeriesData memory data = nft.readData(SERIES_ID_1);
         assertEq(uint8(data.state), uint8(IIntexNFT1155.IntexState.Called));
         assertEq(data.calledAt, calledAt);
-        assertEq(data.callTrigger.intexCallPeriod, customCallPeriod);
-        assertEq(data.calledAt + data.callTrigger.intexCallPeriod, calledAt + customCallPeriod);
+        assertEq(data.callTrigger.callNoticePeriod, customCallPeriod);
+        assertEq(data.calledAt + data.callTrigger.callNoticePeriod, calledAt + customCallPeriod);
     }
 
     function test_OnlyBridgeCanMarkCalled() public {
@@ -816,9 +816,9 @@ contract IntexNFT1155Test is Test {
         assertEq(nft.balanceOf(user, nft.settledTokenId(SERIES_ID_1)), 0);
     }
 
-    // --- Tests for parkForGems (Gem Factory parking) ---
+    // --- Tests for parkIntex (Gem Factory parking) ---
 
-    function test_ParkForGems_BurnsIssued() public {
+    function test_ParkIntex_BurnsIssued() public {
         _createSeries(SERIES_ID_1, 0);
         vm.prank(bridger);
         nft.mint(user, 10, SERIES_ID_1);
@@ -826,13 +826,13 @@ contract IntexNFT1155Test is Test {
 
         vm.expectEmit(true, true, false, true);
         emit IIntexNFT1155.IntexParked(SERIES_ID_1, user, 4);
-        nft.parkForGems(user, SERIES_ID_1, 4);
+        nft.parkIntex(user, SERIES_ID_1, 4);
 
         assertEq(nft.balanceOf(user, TOKEN_ID_1), 6);
         assertEq(nft.totalSupply(TOKEN_ID_1), 6);
     }
 
-    function test_ParkForGems_AllowedInQualified() public {
+    function test_ParkIntex_AllowedInQualified() public {
         _createSeries(SERIES_ID_1, 0);
         vm.startPrank(bridger);
         nft.mint(user, 10, SERIES_ID_1);
@@ -840,23 +840,23 @@ contract IntexNFT1155Test is Test {
         vm.stopPrank();
         _grantGemRole(address(this));
 
-        nft.parkForGems(user, SERIES_ID_1, 10);
+        nft.parkIntex(user, SERIES_ID_1, 10);
 
         assertEq(nft.balanceOf(user, TOKEN_ID_1), 0);
         assertEq(nft.totalSupply(TOKEN_ID_1), 0);
     }
 
-    function test_ParkForGems_OnlyGemRole() public {
+    function test_ParkIntex_OnlyGemRole() public {
         _createSeries(SERIES_ID_1, 0);
         vm.prank(bridger);
         nft.mint(user, 10, SERIES_ID_1);
 
         vm.prank(bridger);
         vm.expectRevert();
-        nft.parkForGems(user, SERIES_ID_1, 1);
+        nft.parkIntex(user, SERIES_ID_1, 1);
     }
 
-    function test_ParkForGems_RevertsWhenCalled() public {
+    function test_ParkIntex_RevertsWhenCalled() public {
         _createSeries(SERIES_ID_1, 0);
         vm.startPrank(bridger);
         nft.mint(user, 10, SERIES_ID_1);
@@ -871,30 +871,30 @@ contract IntexNFT1155Test is Test {
                 uint8(IIntexNFT1155.IntexState.Called)
             )
         );
-        nft.parkForGems(user, SERIES_ID_1, 1);
+        nft.parkIntex(user, SERIES_ID_1, 1);
     }
 
-    function test_ParkForGems_RevertsOnNonexistentSeries() public {
+    function test_ParkIntex_RevertsOnNonexistentSeries() public {
         _grantGemRole(address(this));
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.NonexistentToken.selector, TOKEN_ID_1));
-        nft.parkForGems(user, SERIES_ID_1, 1);
+        nft.parkIntex(user, SERIES_ID_1, 1);
     }
 
-    function test_ParkForGems_RevertsOnZeroAmount() public {
+    function test_ParkIntex_RevertsOnZeroAmount() public {
         _createSeries(SERIES_ID_1, 0);
         _grantGemRole(address(this));
         vm.expectRevert(IIntexNFT1155.ZeroAmount.selector);
-        nft.parkForGems(user, SERIES_ID_1, 0);
+        nft.parkIntex(user, SERIES_ID_1, 0);
     }
 
-    function test_ParkForGems_RevertsOnZeroHolder() public {
+    function test_ParkIntex_RevertsOnZeroHolder() public {
         _createSeries(SERIES_ID_1, 0);
         _grantGemRole(address(this));
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.ZeroAddress.selector, "holder", address(0)));
-        nft.parkForGems(address(0), SERIES_ID_1, 1);
+        nft.parkIntex(address(0), SERIES_ID_1, 1);
     }
 
-    function test_ParkForGems_RevertsAboveBalance() public {
+    function test_ParkIntex_RevertsAboveBalance() public {
         _createSeries(SERIES_ID_1, 0);
         vm.startPrank(bridger);
         nft.mint(user, 5, SERIES_ID_1);
@@ -904,10 +904,10 @@ contract IntexNFT1155Test is Test {
 
         // amount <= totalSupply but > holder balance
         vm.expectRevert();
-        nft.parkForGems(user, SERIES_ID_1, 6);
+        nft.parkIntex(user, SERIES_ID_1, 6);
     }
 
-    function test_ParkForGems_DoesNotTouchSettled() public {
+    function test_ParkIntex_DoesNotTouchSettled() public {
         _createSeries(SERIES_ID_1, 0);
         vm.startPrank(bridger);
         nft.mint(user, 10, SERIES_ID_1);
@@ -917,7 +917,7 @@ contract IntexNFT1155Test is Test {
         nft.settle(SERIES_ID_1, user, user, 4);
         _grantGemRole(address(this));
 
-        nft.parkForGems(user, SERIES_ID_1, 6);
+        nft.parkIntex(user, SERIES_ID_1, 6);
 
         (uint256 issued, uint256 settled) = nft.tokenIds(SERIES_ID_1);
         assertEq(nft.balanceOf(user, issued), 0);
@@ -925,7 +925,7 @@ contract IntexNFT1155Test is Test {
         assertEq(nft.totalSupply(settled), 4);
     }
 
-    function test_ParkForGems_FreesCapRoom() public {
+    function test_ParkIntex_FreesCapRoom() public {
         uint32 cap = 10;
         vm.startPrank(bridger);
         nft.createSeries(CreateSeriesLib.params(SERIES_ID_1, cap, 0));
@@ -933,7 +933,7 @@ contract IntexNFT1155Test is Test {
         vm.stopPrank();
         _grantGemRole(address(this));
 
-        nft.parkForGems(user, SERIES_ID_1, 4);
+        nft.parkIntex(user, SERIES_ID_1, 4);
 
         // Deliberate: the cap is enforced against live totalSupply, so parking frees mint room.
         vm.prank(bridger);

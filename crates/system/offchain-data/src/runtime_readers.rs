@@ -356,9 +356,8 @@ impl ParentBodySource for RuntimeBodyReaders {
 
 fn map_storage_parent_error(kind: StorageErrorKind, message: String) -> ParentBodySourceError {
     match kind {
-        StorageErrorKind::Unavailable | StorageErrorKind::RequestDeadline => {
-            ParentBodySourceError::Unavailable(message)
-        }
+        StorageErrorKind::RequestDeadline => ParentBodySourceError::RequestDeadline(message),
+        StorageErrorKind::Unavailable => ParentBodySourceError::Unavailable(message),
         StorageErrorKind::InvalidArgument
         | StorageErrorKind::Corruption
         | StorageErrorKind::Backend

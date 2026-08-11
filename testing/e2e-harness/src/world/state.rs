@@ -125,6 +125,9 @@ pub struct OcompPublicScenarioEvidenceV1 {
     pub non_quorum_changed_binding_reverted: Option<bool>,
     pub non_quorum_state_unchanged: Option<bool>,
     pub expired_without_nod: Option<bool>,
+    pub failed_terminal_receipt: Option<crate::world::rpc::MetadosisWorldwideDayTerminalReceiptV1>,
+    pub failed_promis_limit: Option<alloy_primitives::U256>,
+    pub failed_terminal_commitment: Option<crate::world::rpc::BlockCommitmentV1>,
     pub held_late_vote_hash: Option<alloy_primitives::B256>,
     pub late_vote_reverted: Option<bool>,
     pub late_vote_inclusion_height: Option<u64>,
@@ -199,12 +202,25 @@ pub struct FixtureState {
         Option<crate::world::mongodb::TributeProjectionSnapshot>,
     /// Finalized height immediately before one typed OCOMP process fault.
     pub ocomp_finality_before_fault: Option<u64>,
+    /// Finalized height immediately before the managed projection database is
+    /// paused in the dirty-operations acceptance lane.
+    pub projection_outage_finalized_before: Option<u64>,
     /// Immutable activation height loaded from the scenario's prepared genesis
-    /// install. Fresh Measurement uses block 1; the frozen Final fixture uses 32.
+    /// install. Fresh Measurement activates at block 1.
     pub ocomp_activation_height: Option<u64>,
-    /// Public, finalized Metadosis request observed identically on all four
-    /// validators. This is evidence only; the harness cannot create the job.
+    /// Public, finalized Metadosis request observed identically on every
+    /// validator. This is evidence only; the harness cannot create the job.
     pub ocomp_job_request: Option<crate::world::rpc::OcompPublicJobRequestV1>,
+    /// The two independently scheduled WWDs and processing timestamps used by
+    /// the dynamic-membership overlap scenario.
+    pub ocomp_dynamic_worldwide_days: Vec<u32>,
+    pub ocomp_dynamic_processing_times: Vec<u64>,
+    /// Public Tribute transaction hashes for those WWDs, in schedule order.
+    pub ocomp_dynamic_tribute_tx_hashes: Vec<String>,
+    /// Public finalized requests for job A and job B, in that order.
+    pub ocomp_dynamic_job_requests: Vec<crate::world::rpc::OcompPublicJobRequestV1>,
+    /// Canonical accountability slots populated for job A and job B.
+    pub ocomp_dynamic_vote_slots: Vec<Vec<u16>>,
     /// Public activation event observed identically on all validators.
     pub ocomp_activation: Option<crate::world::rpc::OcompPublicActivationV1>,
     /// Cross-owner proof authority read at the exact finalized activation block.
@@ -228,6 +244,12 @@ pub struct FixtureState {
     pub ocomp_non_quorum_changed_binding_reverted: Option<bool>,
     pub ocomp_non_quorum_state_unchanged: Option<bool>,
     pub ocomp_expired_without_nod: Option<bool>,
+    /// Canonical FAILED outcome captured after the bounded OCOMP attempt budget
+    /// is exhausted. These values are replay assertions, never control input.
+    pub ocomp_failed_terminal_receipt:
+        Option<crate::world::rpc::MetadosisWorldwideDayTerminalReceiptV1>,
+    pub ocomp_failed_promis_limit: Option<alloy_primitives::U256>,
+    pub ocomp_failed_terminal_commitment: Option<crate::world::rpc::BlockCommitmentV1>,
     /// A locally signed OCOMP transaction held by the deadline scenario until the
     /// exclusive boundary. Raw bytes are never published as scenario evidence.
     pub ocomp_held_late_vote_raw: Option<Vec<u8>>,
@@ -344,8 +366,14 @@ impl Default for FixtureState {
             duplicate_tribute_tx_hash: None,
             tribute_projection_before_duplicate: None,
             ocomp_finality_before_fault: None,
+            projection_outage_finalized_before: None,
             ocomp_activation_height: None,
             ocomp_job_request: None,
+            ocomp_dynamic_worldwide_days: Vec::new(),
+            ocomp_dynamic_processing_times: Vec::new(),
+            ocomp_dynamic_tribute_tx_hashes: Vec::new(),
+            ocomp_dynamic_job_requests: Vec::new(),
+            ocomp_dynamic_vote_slots: Vec::new(),
             ocomp_activation: None,
             ocomp_certified_generation: None,
             ocomp_result_vote_transactions: Vec::new(),
@@ -359,6 +387,9 @@ impl Default for FixtureState {
             ocomp_non_quorum_changed_binding_reverted: None,
             ocomp_non_quorum_state_unchanged: None,
             ocomp_expired_without_nod: None,
+            ocomp_failed_terminal_receipt: None,
+            ocomp_failed_promis_limit: None,
+            ocomp_failed_terminal_commitment: None,
             ocomp_held_late_vote_raw: None,
             ocomp_held_late_vote_hash: None,
             ocomp_late_vote_reverted: None,
@@ -424,6 +455,9 @@ impl FixtureState {
             non_quorum_changed_binding_reverted: self.ocomp_non_quorum_changed_binding_reverted,
             non_quorum_state_unchanged: self.ocomp_non_quorum_state_unchanged,
             expired_without_nod: self.ocomp_expired_without_nod,
+            failed_terminal_receipt: self.ocomp_failed_terminal_receipt.clone(),
+            failed_promis_limit: self.ocomp_failed_promis_limit,
+            failed_terminal_commitment: self.ocomp_failed_terminal_commitment.clone(),
             held_late_vote_hash: self.ocomp_held_late_vote_hash,
             late_vote_reverted: self.ocomp_late_vote_reverted,
             late_vote_inclusion_height: self.ocomp_late_vote_inclusion_height,

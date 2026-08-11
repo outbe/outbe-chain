@@ -69,7 +69,7 @@ impl PreparedRenewalV1 {
         let evidence_intent = match &evidence {
             AttestationEvidenceV1::Dcap(value) => &value.intent,
             AttestationEvidenceV1::GramineDirectDev(_) => {
-                eyre::bail!("automatic renewal journal contains non-DCAP evidence")
+                eyre::bail!("automatic renewal journal contains non-DCAP evidence");
             }
         };
         let evidence_hash = dcap_evidence_hash_v1(&self.evidence)
@@ -109,6 +109,7 @@ impl PreparedRenewalV1 {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "camelCase", deny_unknown_fields)]
+#[allow(clippy::large_enum_variant)]
 pub enum RenewalJournalStateV1 {
     Prepared {
         attempt: PreparedRenewalV1,
@@ -119,7 +120,7 @@ pub enum RenewalJournalStateV1 {
         transaction_hashes: Vec<B256>,
     },
     Finalized {
-        attempt: PreparedRenewalV1,
+        attempt: Box<PreparedRenewalV1>,
         finalized_binding: RenewalBindingV1,
         finalized_height: u64,
         finalized_hash: B256,
@@ -136,8 +137,8 @@ impl RenewalJournalStateV1 {
         match self {
             Self::Prepared { attempt }
             | Self::Submitted { attempt, .. }
-            | Self::Finalized { attempt, .. }
             | Self::Abandoned { attempt, .. } => attempt,
+            Self::Finalized { attempt, .. } => attempt.as_ref(),
         }
     }
 

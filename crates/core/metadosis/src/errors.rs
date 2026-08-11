@@ -1,5 +1,8 @@
-use alloy_primitives::{B256, U256};
+use alloy_primitives::{Bytes, B256, U256};
 use outbe_common::WorldwideDay;
+use outbe_ocomp_protocol::abi::{
+    OCOMP_ACTIVATION_REJECTED_SELECTOR, OCOMP_RESULT_VOTE_REJECTED_SELECTOR,
+};
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
@@ -70,21 +73,12 @@ impl From<MetadosisError> for PrecompileError {
     fn from(value: MetadosisError) -> Self {
         let message = value.to_string();
         match value {
-            // No `MetadosisError` variant has a production caller-controlled
-            // ingress: they all describe persisted-state, cross-module,
-            // fixture, or private transition invariant failures.
-            //
-            // Crate-wide rule: a `precompile.rs` dispatch arm reachable from
-            // arbitrary calldata must never return `Fatal`; `Fatal` is reserved
-            // for persisted-state corruption. Caller-supplied bytes map to
-            // `Revert`/`RevertBytes` (see `precompile.rs` `getWorldwideDaysByStatus`),
-            // persisted tags map to `Fatal` (see `precompile.rs` `getWorldwideDay`).
             MetadosisError::UnknownWorldwideDayType
             | MetadosisError::VwapMustBeNonZero
             | MetadosisError::InvalidOcompBudgetSplit { .. }
-            | MetadosisError::OcompBudgetEffectFromFuture { .. }
+            | MetadosisError::OcompDesisBriefHashMismatch => business_failure(message),
+            MetadosisError::OcompBudgetEffectFromFuture { .. }
             | MetadosisError::OcompBudgetReceiptMismatch
-            | MetadosisError::OcompDesisBriefHashMismatch
             | MetadosisError::OcompPreAdmissionNotInitialized { .. }
             | MetadosisError::OcompPreAdmissionAlreadySealed { .. }
             | MetadosisError::OcompPreAdmissionWwdMismatch { .. }
@@ -93,12 +87,67 @@ impl From<MetadosisError> for PrecompileError {
             | MetadosisError::OcompStateVersionOverflow { .. }
             | MetadosisError::CorruptOcompPreAdmissionState { .. }
             | MetadosisError::InvalidTransitionToCompleted { .. }
-            | MetadosisError::InvalidTransitionToFailed { .. } => PrecompileError::Fatal(message),
+            | MetadosisError::InvalidTransitionToFailed { .. } => storage_corruption(message),
         }
     }
 }
 
 pub type MetadosisResult<T> = std::result::Result<T, MetadosisError>;
+
+/// Sole constructor for fatal Metadosis failures. Callers must use it only
+/// when authenticated persisted state cannot satisfy its storage invariants.
+pub(crate) fn storage_corruption(message: String) -> PrecompileError {
+    PrecompileError::Fatal(message)
+}
+
+pub(crate) fn storage_corruption_message(message: impl Into<String>) -> PrecompileError {
+    storage_corruption(message.into())
+}
+
+pub(crate) fn caller_rejection(message: impl Into<String>) -> PrecompileError {
+    PrecompileError::Revert(message.into())
+}
+
+pub(crate) fn business_failure(message: impl Into<String>) -> PrecompileError {
+    PrecompileError::Revert(format!("Metadosis business failure: {}", message.into()))
+}
+
+pub(crate) fn is_business_failure(error: &PrecompileError) -> bool {
+    matches!(error, PrecompileError::Revert(message) if message.starts_with("Metadosis business failure: "))
+}
+
+pub(crate) fn activation_rejection(code: u16) -> PrecompileError {
+    encoded_rejection(OCOMP_ACTIVATION_REJECTED_SELECTOR, code)
+}
+
+pub(crate) fn result_vote_rejection(code: u16) -> PrecompileError {
+    encoded_rejection(OCOMP_RESULT_VOTE_REJECTED_SELECTOR, code)
+}
+
+fn encoded_rejection(selector: [u8; 4], code: u16) -> PrecompileError {
+    let mut encoded = Vec::with_capacity(36);
+    encoded.extend_from_slice(&selector);
+    encoded.extend_from_slice(&U256::from(code).to_be_bytes::<32>());
+    PrecompileError::RevertBytes(Bytes::from(encoded))
+}
+
+pub(crate) mod activation_rejection_code {
+    pub const LIMIT_EXCEEDED: u16 = 2;
+    pub const FORK_OR_BUNDLE_MISMATCH: u16 = 3;
+    pub const JOB_BINDING_INVALID: u16 = 9;
+    pub const COMMITTEE_SNAPSHOT_INVALID: u16 = 10;
+    pub const RESULT_DIGEST_MISMATCH: u16 = 12;
+    pub const RESULT_STRUCTURE_INVALID: u16 = 13;
+}
+
+pub(crate) mod vote_rejection_code {
+    pub const MALFORMED_ENCODING: u16 = 1;
+    pub const LIMIT_EXCEEDED: u16 = 2;
+    pub const CALL_MODE: u16 = 3;
+    pub const PROTOCOL_VOTE: u16 = 4;
+    pub const LIFECYCLE_INACTIVE: u16 = 5;
+    pub const DEADLINE_PASSED: u16 = 6;
+}
 
 #[cfg(test)]
 mod tests {
@@ -116,11 +165,10 @@ mod tests {
     }
 
     #[test]
-    fn durable_and_cross_module_invariant_errors_are_fatal() {
+    fn durable_invariant_errors_are_fatal() {
         let wwd = WorldwideDay::new(2026_0731);
         let errors = [
             MetadosisError::OcompBudgetReceiptMismatch,
-            MetadosisError::OcompDesisBriefHashMismatch,
             MetadosisError::OcompStateVersionOverflow { wwd },
             MetadosisError::CorruptOcompPreAdmissionState {
                 wwd,
@@ -137,9 +185,9 @@ mod tests {
     }
 
     #[test]
-    fn fixture_only_vwap_error_is_fatal() {
+    fn deterministic_calculation_errors_are_business_failures() {
         let error: PrecompileError = MetadosisError::VwapMustBeNonZero.into();
 
-        assert!(matches!(error, PrecompileError::Fatal(_)));
+        assert!(matches!(error, PrecompileError::Revert(_)));
     }
 }

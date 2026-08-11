@@ -2,10 +2,10 @@
 //! `FinalizationActor`.
 //!
 //! [`FinalizationView`] holds the small set of fields that the
-//! application's `build_block` path needs (`prev_randao`,
-//! `last_timestamp_millis`) plus the canonical view of the last
-//! finalized block (`last_finalized_number`, `last_finalized_round`,
-//! `forkchoice`).
+//! application's `build_block` path needs (`prev_randao`) plus the canonical
+//! view of the last finalized block (`last_finalized_number`,
+//! `last_finalized_round`, `forkchoice`) and the latest observed canonical
+//! timestamp.
 //!
 //! The `FinalizationActor` is the full-state writer (it replaces every
 //! field on finalization) and owns the struct directly. The application
@@ -45,10 +45,10 @@ pub struct FinalizationView {
     /// `header.prev_randao`.
     pub prev_randao: B256,
 
-    /// Monotonic clock floor for block building. Updated when the
-    /// finalization actor sees a block with a later timestamp; read
-    /// by `build_block` to guarantee the new block's timestamp is
-    /// strictly greater than the previous one.
+    /// Latest observed canonical timestamp. Updated when finalization or
+    /// execution accepts a block with a later timestamp. Proposal timestamp
+    /// selection uses the exact resolved parent header instead of this
+    /// process-local observation.
     pub last_timestamp_millis: u64,
 }
 
@@ -128,14 +128,12 @@ pub trait FinalizationViewAccess {
     /// Current monotonic block-timestamp floor (`last_timestamp_millis`).
     fn timestamp_floor(&self) -> u64;
 
+    /// Current finalized VRF seed used for the next proposal.
+    fn prev_randao(&self) -> B256;
+
     /// Raise the timestamp floor to at least `candidate_millis` and return the
     /// resulting floor. Monotonic: never lowers the stored value.
     fn advance_timestamp_floor(&self, candidate_millis: u64) -> u64;
-
-    /// Raise the timestamp floor to at least `candidate_millis` and return the
-    /// current `prev_randao`, both under a single write guard so the floor
-    /// advance and the seed read observe one consistent state.
-    fn advance_floor_and_read_prev_randao(&self, candidate_millis: u64) -> B256;
 }
 
 impl FinalizationViewAccess for FinalizationViewHandle {
@@ -152,16 +150,14 @@ impl FinalizationViewAccess for FinalizationViewHandle {
         self.read().last_timestamp_millis
     }
 
+    fn prev_randao(&self) -> B256 {
+        self.read().prev_randao
+    }
+
     fn advance_timestamp_floor(&self, candidate_millis: u64) -> u64 {
         let mut view = self.write();
         view.last_timestamp_millis = std::cmp::max(view.last_timestamp_millis, candidate_millis);
         view.last_timestamp_millis
-    }
-
-    fn advance_floor_and_read_prev_randao(&self, candidate_millis: u64) -> B256 {
-        let mut view = self.write();
-        view.last_timestamp_millis = std::cmp::max(view.last_timestamp_millis, candidate_millis);
-        view.prev_randao
     }
 }
 
@@ -239,24 +235,14 @@ mod tests {
     }
 
     #[test]
-    fn advance_floor_and_read_prev_randao_advances_and_returns_seed() {
+    fn reading_prev_randao_does_not_advance_timestamp_floor() {
         let h = new_finalization_view(B256::ZERO, 0, None);
         {
             let mut w = h.write();
             w.prev_randao = B256::with_last_byte(0x42);
             w.last_timestamp_millis = 200;
         }
-        // Lower candidate keeps the floor; returns the current seed.
-        assert_eq!(
-            h.advance_floor_and_read_prev_randao(100),
-            B256::with_last_byte(0x42)
-        );
+        assert_eq!(h.prev_randao(), B256::with_last_byte(0x42));
         assert_eq!(h.timestamp_floor(), 200);
-        // Higher candidate advances the floor.
-        assert_eq!(
-            h.advance_floor_and_read_prev_randao(300),
-            B256::with_last_byte(0x42)
-        );
-        assert_eq!(h.timestamp_floor(), 300);
     }
 }

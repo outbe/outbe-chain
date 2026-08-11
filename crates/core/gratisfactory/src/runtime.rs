@@ -8,50 +8,128 @@
 //! `pledge_gratis` a read-only league `Probe` for the eligibility gate. The
 //! factory persists the returned fidelity outcome. `mine_from_promis` burns
 //! public promis and reuses `mine` (promis itself is fidelity-neutral).
+//!
+//! The credis loan is priced HERE, at pledge time: the pledger names the stablecoin
+//! credit they want and this module derives the gratis it costs, sealing both plus
+//! the asset and the rate into the ticket. `requestCredis` then reads that quote back
+//! out instead of re-pricing the collateral a transaction later.
 
 use alloy_primitives::{Address, B256, U256};
-use alloy_sol_types::SolEvent;
+use alloy_sol_types::{SolCall, SolEvent};
 
 use crate::errors::GratisFactoryError;
 use crate::precompile::IGratisFactory;
 use outbe_fidelity::api::FidelityCohortOp;
-use outbe_gratis::api::{self as gratis, ModifyAuth};
+use outbe_gratis::api::{self as gratis, ModifyAuth, PledgeTerms};
+use outbe_oracle::api::coen_rate_for;
 use outbe_primitives::addresses::GRATIS_FACTORY_ADDRESS;
-use outbe_primitives::error::Result;
+use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::reference_currency_abi::IReferenceCurrency;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::units::SCALE_1E18;
 
-/// Pledge `amount` gratis from `caller` into a pending pledge-lock ticket (authorized
-/// by the caller's modify key). Returns the confidential pledge handle to present at
+/// Decimal-gap factor between COEN (10^18) and stablecoin (10^6). Cosmos:
+/// `decimalsDiff = sdk.NewIntWithDecimal(1, 12)`.
+fn decimals_diff() -> U256 {
+    U256::from(1_000_000_000_000u128)
+}
+
+/// Reads the pledged asset's ISO 4217 currency code via a static
+/// `IReferenceCurrency.isoCode()` sub-call, mirroring credisfactory's
+/// `read_iso_code`. The pledge is then priced against COEN/<that currency>
+/// rather than a hardcoded pair, so it cannot be quoted in one currency while
+/// the Credis position opens against another.
+fn read_iso_code(storage: &StorageHandle<'_>, asset: Address) -> Result<u16> {
+    let ret = storage.staticcall(
+        asset,
+        IReferenceCurrency::isoCodeCall {}.abi_encode().into(),
+    )?;
+    IReferenceCurrency::isoCodeCall::abi_decode_returns(&ret)
+        .map_err(|_| GratisFactoryError::AssetIsoUndecodable.into())
+}
+
+/// Inverse of the credis issuance formula
+/// (`stables = gratis * rate / (decimalsDiff * 1e18)`), rounded **up** so the pledged
+/// collateral always covers the requested credit rather than falling a wei short.
+/// Gratis is priced at the COEN price because `mine_coen` converts the two 1:1.
+/// Returns `(gratis_cost, rate)`.
+fn convert_stables_to_gratis(
+    storage: StorageHandle<'_>,
+    amount_stables: U256,
+    asset: Address,
+) -> Result<(U256, U256)> {
+    let iso_code = read_iso_code(&storage, asset)?;
+    let rate = coen_rate_for(storage, iso_code)?;
+    let numerator = amount_stables
+        .checked_mul(decimals_diff())
+        .and_then(|v| v.checked_mul(SCALE_1E18))
+        .ok_or_else(|| -> PrecompileError {
+            GratisFactoryError::OracleConversionOverflow.into()
+        })?;
+    Ok((numerator.div_ceil(rate), rate))
+}
+
+/// Pledge the gratis that collateralizes `amount_stables` of credit in `asset` into a
+/// pending pledge-lock ticket (authorized by the caller's modify key, which binds the
+/// STABLES figure). The gratis cost is derived from the oracle rate and rejected if it
+/// exceeds `max_gratis` — that cap is the pledger's slippage protection, authenticated
+/// by their transaction signature rather than the MAC. Returns
+/// `(pledge_handle, gratis_cost)`; the handle is what the CCA presents at
 /// `requestCredis`. The anadosis installment count lives on the Credis position, not
 /// the pledge.
 pub fn pledge_gratis(
     storage: StorageHandle<'_>,
     caller: Address,
-    amount: U256,
+    amount_stables: U256,
+    asset: Address,
+    max_gratis: U256,
     auth: ModifyAuth,
-) -> Result<B256> {
+) -> Result<(B256, U256)> {
+    // todo add asset validation and check if it is enought liquidity in the vaults
+    if asset.is_zero() {
+        return Err(GratisFactoryError::InvalidAsset.into());
+    }
+    if amount_stables.is_zero() {
+        return Err(GratisFactoryError::InvalidAmount.into());
+    }
+
+    let (gratis_amount, entry_rate) =
+        convert_stables_to_gratis(storage.clone(), amount_stables, asset)?;
+    if gratis_amount > max_gratis {
+        return Err(GratisFactoryError::GratisCapExceeded.into());
+    }
+    let terms = PledgeTerms {
+        stables_amount: amount_stables,
+        gratis_amount,
+        asset,
+        entry_rate,
+    };
+
     // Fold a read-only league probe into the pledge round-trip (no separate
     // fidelity call): the pledge op returns the caller's current league.
     let now = storage.timestamp()?.to::<u64>();
     let section =
         outbe_fidelity::api::cohort_section(storage.clone(), caller, FidelityCohortOp::Probe, now)?;
-    let (handle, outcome) = gratis::pledge_with_fidelity(storage, caller, amount, auth, section)?;
+    let (handle, outcome) =
+        gratis::pledge_with_fidelity(storage, caller, amount_stables, terms, auth, section)?;
     // todo implement correct fidelity eligibility check on `outcome.league`
     if outcome.league == u16::MAX {
         return Err(GratisFactoryError::FidelityNotEligible.into());
     }
-    Ok(handle)
+    Ok((handle, gratis_amount))
 }
 
 /// Directly unpledge an unspent pledge back to `caller` (e.g. credis rejected).
+/// `amount_stables` is the figure the pledge was quoted for; returns the gratis
+/// collateral credited back.
 pub fn unpledge_gratis(
     storage: StorageHandle<'_>,
     caller: Address,
-    amount: U256,
+    amount_stables: U256,
     pledge_handle: B256,
     auth: ModifyAuth,
-) -> Result<()> {
-    gratis::unpledge(storage, caller, amount, pledge_handle, auth)
+) -> Result<U256> {
+    gratis::unpledge(storage, caller, amount_stables, pledge_handle, auth)
 }
 
 /// Mint `amount` gratis to `account` (authorized by the account owner's modify

@@ -11,6 +11,9 @@ use alloy_genesis::Genesis;
 use alloy_primitives::{keccak256, Address, Bytes, B256};
 use alloy_provider::{Provider, ProviderBuilder};
 use eyre::{bail, Context};
+use outbe_chain_constants::{
+    GenesisProtocolParametersV1, CHAIN_CONSTANTS_ADDRESS, CHAIN_CONSTANTS_MARKER_CODE,
+};
 use outbe_compressed_entities::{
     CandidateCacheLimits, CeMdbx, CompressedTreeService, EnvironmentIdentity, FinalizedMarker,
     ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
@@ -23,11 +26,15 @@ use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::{
     addresses::REWARDS_ADDRESS,
     chain::DEVNET_CHAIN_ID,
-    consensus::{DkgBoundaryArtifact, ReshareResult},
+    consensus::{ConsensusExecutionBridge, DkgBoundaryArtifact, ReshareResult},
     reshare_artifact::{
         encode_outbe_block_artifacts, ConsensusHeaderArtifact, OutbeBlockArtifacts,
     },
     system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT,
+    tee_test_utils::{
+        gramine_direct_bootstrap_v2, gramine_direct_policy_v1, tee_attestation_v1_extra_field,
+        DevValidatorV1,
+    },
     OutbeHeader, OutbePayloadAttributes,
 };
 use reth_chainspec::{Chain, ChainSpec, ChainSpecBuilder};
@@ -43,6 +50,11 @@ use reth_tasks::Runtime;
 
 const GENESIS_VALIDATOR_PUBKEY: &str =
     "111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111";
+
+/// Block-1 timestamp the reth payload harness generates: it starts at the
+/// genesis timestamp (`0x65f1b057`) and increments by one per block, so the
+/// first post-genesis block is `genesis + 1`. The OST3 lease is anchored to it.
+const BLOCK_ONE_TIMESTAMP_SECS: u64 = 0x65f1_b057 + 1;
 
 fn workspace_root() -> PathBuf {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -69,7 +81,7 @@ fn seed_single_validator_genesis(signer: &OutbeEvmSigner) -> eyre::Result<Genesi
             }}"#
         ),
     )?;
-    // Seed the COEN/0xUSD oracle pair + a 1.0 rate (1e18) so the begin-block
+    // Seed the COEN/840 oracle pair + a 1.0 rate (1e18) so the begin-block
     // NOD/GEM/INTEX floor-price promotion reads a registered pair instead of
     // reverting "pair not registered" (which would abort pre-execution and leave
     // every payload empty). Production genesis always seeds oracle pairs; the
@@ -81,7 +93,7 @@ fn seed_single_validator_genesis(signer: &OutbeEvmSigner) -> eyre::Result<Genesi
           "oracle": {
             "config": { "initialized": false },
             "pairs": [
-              { "base": "COEN", "quote": "0xUSD", "initial_rate": "1000000000000000000" }
+              { "base": "COEN", "quote": "840", "initial_rate": "1000000000000000000" }
             ]
           }
         }"#,
@@ -112,7 +124,33 @@ fn seed_single_validator_genesis(signer: &OutbeEvmSigner) -> eyre::Result<Genesi
     }
 
     let raw = std::fs::read_to_string(&output_path).wrap_err("read seeded genesis")?;
-    serde_json::from_str(&raw).wrap_err("parse seeded genesis")
+    let mut materialized: serde_json::Value =
+        serde_json::from_str(&raw).wrap_err("parse seeded genesis JSON")?;
+    let storage = GenesisProtocolParametersV1::default()
+        .genesis_storage_words()
+        .into_iter()
+        .map(|(slot, value)| {
+            (
+                format!("{slot:#066x}"),
+                serde_json::json!(format!("{value:#066x}")),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
+    materialized
+        .get_mut("alloc")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| eyre::eyre!("seeded genesis alloc must be an object"))?
+        .insert(
+            format!("{CHAIN_CONSTANTS_ADDRESS:#x}"),
+            serde_json::json!({
+                "balance": "0x0",
+                "code": format!("0x{}", hex::encode(CHAIN_CONSTANTS_MARKER_CODE)),
+                "storage": storage,
+            }),
+        );
+    GenesisProtocolParametersV1::from_materialized_genesis(&materialized)
+        .wrap_err("validate materialized test chain constants")?;
+    serde_json::from_value(materialized).wrap_err("decode materialized seeded genesis")
 }
 
 fn chain_spec_with_genesis(genesis: Genesis) -> Arc<ChainSpec<OutbeHeader>> {
@@ -207,12 +245,47 @@ async fn gas_14_rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
 
     let signer = Arc::new(OutbeEvmSigner::from_secret_bytes([1u8; 32])?);
     let proposer = signer.address();
-    let chain_spec = chain_spec_with_genesis(seed_single_validator_genesis(&signer)?);
+
+    // Block 1 now mandates the canonical OST3 TEE-bootstrap system tx. The genesis
+    // config must carry the GramineDirectDev `teeAttestationV1` activation manifest
+    // (the ChainSpec authority the executor checks the payload's policy against),
+    // and the proposer must inject the bootstrap payload via the consensus bridge.
+    // Adding the config field does not change the genesis block hash, so the policy
+    // can bind the hash computed from the seeded genesis alloc.
+    let mut genesis = seed_single_validator_genesis(&signer)?;
+    let genesis_hash = chain_spec_with_genesis(genesis.clone()).genesis_hash();
+    let tee_policy = gramine_direct_policy_v1(DEVNET_CHAIN_ID, genesis_hash)
+        .expect("GramineDirectDev devnet TEE policy is canonical");
+    genesis.config.extra_fields.insert(
+        "teeAttestationV1".to_owned(),
+        tee_attestation_v1_extra_field(&tee_policy)
+            .expect("GramineDirectDev TEE activation manifest is canonical"),
+    );
+    let chain_spec = chain_spec_with_genesis(genesis);
     let ce_directory = tempfile::tempdir()?;
-    let genesis_hash = chain_spec.genesis_hash();
+
+    // The OST3 payload binds the epoch-0 committee snapshot that the block-1
+    // BoundaryOutcome writes before TeeBootstrap runs — the same hash the boundary
+    // artifact carries — and is signed by the single genesis validator.
+    let bridge = ConsensusExecutionBridge::new();
+    bridge.set_pending_tee_bootstrap(
+        gramine_direct_bootstrap_v2(
+            tee_policy,
+            boundary_for_single_validator(proposer).committee_set_hash,
+            1,
+            BLOCK_ONE_TIMESTAMP_SECS + 3_600,
+            &[DevValidatorV1 {
+                evm_secret: [1u8; 32],
+                bls_minpk_public: genesis_validator_pubkey(),
+            }],
+        )
+        .expect("GramineDirectDev OST3 bootstrap payload is canonical"),
+    );
     let ocomp_fork_install = Arc::new(
         ForkInstallScenario::measurement_at(1, DEVNET_CHAIN_ID, genesis_hash)
             .expect("fresh-devnet OCOMP install fixture is canonical")
+            .with_founder_validators(&[(proposer, genesis_validator_pubkey())])
+            .expect("OCOMP founder registration matches the seeded validator")
             .into_install(),
     );
     let ce_db = CeMdbx::open(
@@ -263,7 +336,7 @@ async fn gas_14_rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
         .set_dev(true);
 
     let outbe_node = OutbeNode {
-        bridge: None,
+        bridge: Some(bridge),
         evm_signer: Some(signer),
         runtime_body_readers: RuntimeBodyReaders::new(Arc::new(MemoryStorage::new())),
         compressed_tree_service,

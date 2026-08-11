@@ -16,8 +16,8 @@ use k256::ecdsa::{signature::hazmat::PrehashSigner as _, Signature, SigningKey};
 use outbe_consensus::bls::{self, KeyBackend};
 use outbe_ocomp_protocol::{
     committee::{
-        OcompKeyRegistrationCoreV1, OcompKeyRegistrationV1, POC_KEY_EPOCH,
-        RESULT_SIGNATURE_PURPOSE_BITMAP,
+        validator_identity_hash_v1, OcompKeyRegistrationCoreV1, OcompKeyRegistrationV1,
+        POC_KEY_EPOCH, RESULT_SIGNATURE_PURPOSE_BITMAP,
     },
     profile::poc_schema_limits,
 };
@@ -125,18 +125,12 @@ enum Commands {
         chain_id: u64,
         #[arg(long)]
         genesis_hash: B256,
+        /// Validator EVM address used by the canonical identity preimage.
         #[arg(long)]
-        fork_id: B256,
-        #[arg(long)]
-        protocol_bundle_hash: B256,
-        #[arg(long)]
-        validator_index: u8,
-        #[arg(long)]
-        validator_identity_hash: B256,
-        #[arg(long)]
-        valid_from_height: u64,
-        #[arg(long)]
-        valid_until_height_exclusive: u64,
+        validator_address: Address,
+        /// Exact 48-byte consensus BLS MinPk public key, encoded as hex.
+        #[arg(long, value_parser = parse_consensus_bls_min_pk)]
+        consensus_bls_min_pk: [u8; 48],
     },
 }
 
@@ -157,23 +151,15 @@ fn main() -> Result<()> {
             output_dir,
             chain_id,
             genesis_hash,
-            fork_id,
-            protocol_bundle_hash,
-            validator_index,
-            validator_identity_hash,
-            valid_from_height,
-            valid_until_height_exclusive,
+            validator_address,
+            consensus_bls_min_pk,
         } => cmd_ocomp(
             output_dir,
             OcompRegistrationArgs {
                 chain_id,
                 genesis_hash,
-                fork_id,
-                protocol_bundle_hash,
-                validator_index,
-                validator_identity_hash,
-                valid_from_height,
-                valid_until_height_exclusive,
+                validator_address,
+                consensus_bls_min_pk,
             },
         ),
     }
@@ -183,12 +169,17 @@ fn main() -> Result<()> {
 struct OcompRegistrationArgs {
     chain_id: u64,
     genesis_hash: B256,
-    fork_id: B256,
-    protocol_bundle_hash: B256,
-    validator_index: u8,
-    validator_identity_hash: B256,
-    valid_from_height: u64,
-    valid_until_height_exclusive: u64,
+    validator_address: Address,
+    consensus_bls_min_pk: [u8; 48],
+}
+
+fn parse_consensus_bls_min_pk(value: &str) -> std::result::Result<[u8; 48], String> {
+    let value = value.strip_prefix("0x").unwrap_or(value);
+    let mut public_key = [0u8; 48];
+    hex::decode_to_slice(value, &mut public_key).map_err(|error| {
+        format!("consensus BLS MinPk key must be exactly 48 bytes of hex: {error}")
+    })?;
+    Ok(public_key)
 }
 
 /// Resolve the CLI args into a [`KeyBackend`].
@@ -342,9 +333,6 @@ fn cmd_hybrid(output_dir: PathBuf, backend: &KeyBackend) -> Result<()> {
 }
 
 fn cmd_ocomp(output_dir: PathBuf, args: OcompRegistrationArgs) -> Result<()> {
-    if args.valid_from_height >= args.valid_until_height_exclusive {
-        eyre::bail!("OCOMP key validity range is empty");
-    }
     std::fs::create_dir_all(&output_dir)
         .wrap_err_with(|| format!("failed to create output dir: {}", output_dir.display()))?;
     let directory_metadata = std::fs::symlink_metadata(&output_dir)
@@ -360,7 +348,9 @@ fn cmd_ocomp(output_dir: PathBuf, args: OcompRegistrationArgs) -> Result<()> {
     for path in [&key_path, &registration_path] {
         match std::fs::symlink_metadata(path) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Ok(_) => eyre::bail!("OCOMP artifact already exists: {}", path.display()),
+            Ok(_) => {
+                eyre::bail!("OCOMP artifact already exists: {}", path.display());
+            }
             Err(error) => {
                 return Err(error).wrap_err_with(|| {
                     format!("failed to inspect OCOMP artifact path: {}", path.display())
@@ -378,15 +368,13 @@ fn cmd_ocomp(output_dir: PathBuf, args: OcompRegistrationArgs) -> Result<()> {
     let core = OcompKeyRegistrationCoreV1 {
         chain_id: args.chain_id,
         genesis_hash: args.genesis_hash,
-        fork_id: args.fork_id,
-        protocol_bundle_hash: args.protocol_bundle_hash,
-        validator_index: args.validator_index,
-        validator_identity_hash: args.validator_identity_hash,
+        validator_identity_hash: validator_identity_hash_v1(
+            args.validator_address,
+            &args.consensus_bls_min_pk,
+        )?,
         ocomp_public_key_sec1: public_key_sec1,
         key_epoch: POC_KEY_EPOCH,
         allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
-        valid_from_height: args.valid_from_height,
-        valid_until_height_exclusive: args.valid_until_height_exclusive,
     };
     let limits = poc_schema_limits();
     let mut registration = OcompKeyRegistrationV1 {
@@ -709,22 +697,21 @@ mod tests {
     fn ocm_sig_001_ocomp_command_writes_immutable_key_and_valid_pop_registration() {
         use std::os::unix::fs::PermissionsExt as _;
 
-        use alloy_primitives::B256;
+        use alloy_primitives::{Address, B256};
         use outbe_ocomp_protocol::committee::{
-            OcompKeyRegistrationV1, POC_KEY_EPOCH, RESULT_SIGNATURE_PURPOSE_BITMAP,
+            validator_identity_hash_v1, OcompKeyRegistrationV1, POC_KEY_EPOCH,
+            RESULT_SIGNATURE_PURPOSE_BITMAP,
         };
         use outbe_ocomp_protocol::profile::poc_schema_limits;
 
         let directory = tempfile::tempdir().unwrap();
+        let validator_address = Address::repeat_byte(0x44);
+        let consensus_bls_min_pk = [0x55; 48];
         let args = OcompRegistrationArgs {
             chain_id: 42,
             genesis_hash: B256::repeat_byte(0x11),
-            fork_id: B256::repeat_byte(0x22),
-            protocol_bundle_hash: B256::repeat_byte(0x33),
-            validator_index: 2,
-            validator_identity_hash: B256::repeat_byte(0x44),
-            valid_from_height: 100,
-            valid_until_height_exclusive: 1_000,
+            validator_address,
+            consensus_bls_min_pk,
         };
 
         cmd_ocomp(directory.path().to_path_buf(), args).expect("generate OCOMP artifacts");
@@ -758,7 +745,11 @@ mod tests {
             registration.core.allowed_purpose_bitmap,
             RESULT_SIGNATURE_PURPOSE_BITMAP
         );
-        assert_eq!(registration.core.validator_index, 2);
+        assert_eq!(
+            registration.core.validator_identity_hash,
+            validator_identity_hash_v1(validator_address, &consensus_bls_min_pk)
+                .expect("validator identity")
+        );
 
         let original_secret = secret;
         assert!(cmd_ocomp(directory.path().to_path_buf(), args).is_err());

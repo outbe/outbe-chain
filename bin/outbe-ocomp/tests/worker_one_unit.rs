@@ -1,10 +1,11 @@
+// OCOMP-TEST-ID: OCM-WRK-001
 mod support;
 
 use std::env;
-use std::os::fd::OwnedFd;
-use std::os::unix::net::UnixStream;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
 
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_common::WorldwideDay;
@@ -32,10 +33,7 @@ use outbe_ocomp::admission_catalog::{
 };
 use outbe_ocomp::bundle::PinnedProtocolBundle;
 use outbe_ocomp::cas::{CasLimits, CasWriterRole, FilesystemCas, FilesystemCasReader};
-use outbe_ocomp::control::{
-    effective_uid, effective_user_name, poc_schema_limits, ClientPolicy, ControlClientSession,
-    EndpointIdentity,
-};
+use outbe_ocomp::control::{poc_schema_limits, EndpointIdentity};
 use outbe_ocomp::inbox::{WorkerInbox, WorkerInboxLimits};
 use outbe_ocomp::input_artifacts::{
     decode_verified_input_chunk, derive_input_chunk_ref, poc_input_list_limits,
@@ -50,7 +48,8 @@ use outbe_ocomp::lysis_scheduler::admit_reported_lysis_unit_v1;
 use outbe_ocomp::lysis_shuffle_adoption::{
     adopt_lysis_shuffle_descendants, verify_lysis_shuffle_phase_replay,
 };
-use outbe_ocomp::worker::{run_one_from_inherited_fd, WorkerConfig};
+use outbe_ocomp::worker::{run_worker, WorkerConfig};
+use outbe_ocomp::worker_transport::{SupervisorWorkerDispatcherV1, SupervisorWorkerServerV1};
 use outbe_ocomp_protocol::common::{BoundedBytes, ProofBytes};
 use outbe_ocomp_protocol::input::{
     materialize_authenticated_openings, CheckpointIdentityV1, Compression, InputChunkKind,
@@ -75,28 +74,88 @@ use outbe_ocomp_protocol::unit::{
 };
 use outbe_ocomp_protocol::{
     ordered_list_root, CasObjectRefV1, ListKind, ObjectKind, OrderedListLimits, RunUnitV1,
-    SchemaLimits, UnitFinishedStatus, UnitFinishedV1, WorkerMessageKind,
+    SchemaLimits, UnitFinishedStatus, UnitFinishedV1,
 };
 use outbe_oracle::oracle_opening_slot_plan_v1;
 use tempfile::tempdir;
 
 struct RunningWorker {
     child: Child,
-    client: ControlClientSession,
+    client: TestWorkerDispatch,
     unit_id: B256,
 }
 
+struct TestWorkerDispatch {
+    dispatcher: SupervisorWorkerDispatcherV1,
+    pending: Option<mpsc::Receiver<Result<UnitFinishedV1, String>>>,
+}
+
 const CHILD_MODE: &str = "OUTBE_OCOMP_TEST_WORKER_CHILD";
-const CHILD_USER: &str = "OUTBE_OCOMP_TEST_WORKER_USER";
 const CHILD_CHAIN_ID: &str = "OUTBE_OCOMP_TEST_CHAIN_ID";
 const CHILD_GENESIS: &str = "OUTBE_OCOMP_TEST_GENESIS";
 const CHILD_BOOT_NONCE: &str = "OUTBE_OCOMP_TEST_BOOT_NONCE";
 const CHILD_BUNDLE: &str = "OUTBE_OCOMP_TEST_BUNDLE";
-const CHILD_GENERATION: &str = "OUTBE_OCOMP_TEST_GENERATION";
 const CHILD_CAS_ROOT: &str = "OUTBE_OCOMP_TEST_CAS_ROOT";
 const CHILD_CAS_OBJECT_CAP: &str = "OUTBE_OCOMP_TEST_CAS_OBJECT_CAP";
 const CHILD_CAS_TOTAL_CAP: &str = "OUTBE_OCOMP_TEST_CAS_TOTAL_CAP";
 const CHILD_INBOX_ROOT: &str = "OUTBE_OCOMP_TEST_INBOX_ROOT";
+const CHILD_SUPERVISOR_ADDRESS: &str = "OUTBE_OCOMP_TEST_SUPERVISOR_ADDRESS";
+
+fn supervisor_listener() -> (SupervisorWorkerServerV1, SocketAddr) {
+    let server = SupervisorWorkerServerV1::start(
+        "127.0.0.1:0".parse().unwrap(),
+        identity(0xB0),
+        1,
+        poc_schema_limits(),
+    )
+    .expect("start test Supervisor worker transport");
+    let address = server.address();
+    (server, address)
+}
+
+fn accept_registered_worker(
+    server: &SupervisorWorkerServerV1,
+    _supervisor_identity: EndpointIdentity,
+    _generation: u64,
+    _limits: SchemaLimits,
+) -> TestWorkerDispatch {
+    TestWorkerDispatch {
+        dispatcher: server.dispatcher(),
+        pending: None,
+    }
+}
+
+impl TestWorkerDispatch {
+    fn dispatch_encoded(&mut self, body: Vec<u8>) -> Result<(), String> {
+        if self.pending.is_some() {
+            return Err("invalid test worker dispatch".to_owned());
+        }
+        let limits = poc_schema_limits();
+        let request = RunUnitV1::decode_body(&body, &limits).map_err(|error| error.to_string())?;
+        let dispatcher = self.dispatcher.clone();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let result = dispatcher
+                .dispatch(&request)
+                .map_err(|error| error.to_string());
+            let _ = tx.send(result);
+        });
+        self.pending = Some(rx);
+        Ok(())
+    }
+
+    fn receive_finished(&mut self) -> Result<UnitFinishedV1, String> {
+        self.pending
+            .take()
+            .ok_or("missing test worker result")?
+            .recv()
+            .map_err(|error| error.to_string())?
+    }
+}
+
+fn receive_finished(dispatch: &mut TestWorkerDispatch, _limits: &SchemaLimits) -> UnitFinishedV1 {
+    dispatch.receive_finished().expect("worker completion")
+}
 
 fn identity(boot: u8) -> EndpointIdentity {
     let limits = poc_schema_limits();
@@ -158,27 +217,21 @@ fn real_worker_processes_execute_through_output_finalize() {
         account_proof: ProofBytes(vec![0xa1]),
         storage_proof: ProofBytes(vec![0xb1]),
     };
-    let usd_pair = keccak256(b"USD/COEN");
-    let eur_pair = keccak256(b"EUR/COEN");
-    let oracle_plan =
-        oracle_opening_slot_plan_v1(day, &[(840, usd_pair), (978, eur_pair)], 2, 0, 0)
-            .expect("fixture Oracle slot plan");
+    let oracle_plan = oracle_opening_slot_plan_v1(day, &[840, 978], 2, &[1, 2], 0, 0)
+        .expect("fixture Oracle slot plan");
     let scale = U256::from(1_000_000_000_000_000_000_u64);
     let oracle_values = [
-        U256::from_be_bytes(keccak256(b"USD").0),
-        U256::from_be_bytes(usd_pair.0),
-        U256::from(1),
-        U256::from_be_bytes(keccak256(b"EUR").0),
-        U256::from_be_bytes(eur_pair.0),
-        U256::from(2),
-        U256::from(1),
-        U256::from(2),
-        U256::from(1),
-        scale,
-        U256::from(2),
-        scale * U256::from(2),
-        U256::ZERO,
-        U256::ZERO,
+        U256::from(2),   // reference_currencies length
+        U256::from(840), // reference_currencies[0]
+        U256::from(978), // reference_currencies[1]
+        U256::from(1),   // pair_index[COEN/840]
+        U256::from(2),   // pair_index[COEN/978]
+        U256::from(1),   // wwd_vwap_exists
+        // One value word per subject pair, at its registry index.
+        scale,                 // wwd_vwap_value[1]
+        scale * U256::from(2), // wwd_vwap_value[2]
+        U256::ZERO,            // scurve_count
+        U256::ZERO,            // scurve_oldest
     ];
     assert_eq!(oracle_plan.slots.len(), oracle_values.len());
     let oracle_raw = RawContractOpeningProofV1 {
@@ -204,7 +257,7 @@ fn real_worker_processes_execute_through_output_finalize() {
             wwd: day.value(),
             subjects: OpeningSubjectsV1 {
                 owners: vec![owner],
-                settlement_isos: vec![840, 978],
+                reference_isos: vec![840, 978],
             },
             fidelity: fidelity_raw,
             oracle: oracle_raw,
@@ -325,13 +378,10 @@ fn real_worker_processes_execute_through_output_finalize() {
                 .expect("canonical plan commitment"),
         )
         .expect("plan object");
-    let user = effective_user_name().expect("effective user");
-    let uid = effective_uid().expect("effective uid");
-
+    let (listener, supervisor_address) = supervisor_listener();
+    let supervisor_identity = identity(0xB0);
     let mut workers = Vec::new();
     for index in 0_u8..4 {
-        let (parent_stream, child_stream) = UnixStream::pair().expect("worker socket pair");
-        let child_fd: OwnedFd = child_stream.into();
         let worker_identity = identity(0xA0 + index);
         let mut command = Command::new(env::current_exe().expect("current Rust test binary"));
         command
@@ -341,7 +391,6 @@ fn real_worker_processes_execute_through_output_finalize() {
                 "--nocapture",
             ])
             .env(CHILD_MODE, "1")
-            .env(CHILD_USER, &user)
             .env(CHILD_CHAIN_ID, worker_identity.chain_id.to_string())
             .env(
                 CHILD_GENESIS,
@@ -355,7 +404,6 @@ fn real_worker_processes_execute_through_output_finalize() {
                 CHILD_BUNDLE,
                 format!("{:#x}", worker_identity.protocol_bundle_hash),
             )
-            .env(CHILD_GENERATION, (100_u64 + u64::from(index)).to_string())
             .env(CHILD_CAS_ROOT, directory.path())
             .env(
                 CHILD_CAS_OBJECT_CAP,
@@ -363,21 +411,12 @@ fn real_worker_processes_execute_through_output_finalize() {
             )
             .env(CHILD_CAS_TOTAL_CAP, cas_limits.max_total_bytes.to_string())
             .env(CHILD_INBOX_ROOT, &inbox_root)
-            .stdin(Stdio::from(child_fd))
+            .env(CHILD_SUPERVISOR_ADDRESS, supervisor_address.to_string())
             .stdout(Stdio::null())
             .stderr(Stdio::piped());
         let child = command.spawn().expect("spawn production worker");
 
-        let client_identity = EndpointIdentity {
-            boot_nonce: B256::repeat_byte(0xB0 + index),
-            ..worker_identity
-        };
-        let mut client = ControlClientSession::connect(
-            parent_stream,
-            ClientPolicy::supervisor_to_worker(uid, client_identity, limits),
-        )
-        .expect("worker client");
-        client.handshake().expect("worker handshake");
+        let mut client = accept_registered_worker(&listener, supervisor_identity, 100, limits);
 
         let unit_id = spec.unit_id(&limits).expect("unit id");
         let request = RunUnitV1 {
@@ -393,10 +432,7 @@ fn real_worker_processes_execute_through_output_finalize() {
             ordered_input_refs: vec![tribute_ref.clone()],
         };
         client
-            .send_request(
-                WorkerMessageKind::RunUnit as u16,
-                request.encode_body(&limits).expect("run unit body"),
-            )
+            .dispatch_encoded(request.encode_body(&limits).expect("run unit body"))
             .expect("send exact unit");
         workers.push(RunningWorker {
             child,
@@ -405,22 +441,30 @@ fn real_worker_processes_execute_through_output_finalize() {
         });
     }
 
+    let registry_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let registry_status = loop {
+        let status = listener.status().expect("read four-worker registry");
+        if status.registered_workers == 4 && status.connected_workers == 4 {
+            break status;
+        }
+        assert!(
+            std::time::Instant::now() < registry_deadline,
+            "four distinct workers did not register: {status:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+    assert_eq!(registry_status.max_workers, 4);
+
     let mut finished_reports = Vec::new();
     for mut worker in workers {
-        let frame = worker.client.receive_response().expect("worker response");
-        assert_eq!(frame.message_kind, WorkerMessageKind::UnitFinished as u16);
-        let finished = UnitFinishedV1::decode_body(&frame.body, &limits).expect("finished body");
+        let finished = receive_finished(&mut worker.client, &limits);
         assert_eq!(finished.unit_id, worker.unit_id);
         assert_eq!(finished.status, UnitFinishedStatus::Success);
         assert!(finished.exact_staged_bytes > 0);
         assert_ne!(finished.transport_digest, B256::ZERO);
         finished_reports.push(finished);
-        let output = worker.child.wait_with_output().expect("worker exit");
-        assert!(
-            output.status.success(),
-            "worker failed: {} (expected peer uid {uid})",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        worker.child.kill().expect("stop worker listener");
+        worker.child.wait().expect("reap worker listener");
     }
     assert!(finished_reports.windows(2).all(|pair| pair[0] == pair[1]));
     let inbox = WorkerInbox::open(&inbox_root, inbox_limits).expect("open worker inbox");
@@ -534,8 +578,7 @@ fn real_worker_processes_execute_through_output_finalize() {
         .fidelity_map_unit_at(0, artifact.unit_id, &limits)
         .expect("derive Fidelity unit");
     let fidelity_unit_id = fidelity_spec.unit_id(&limits).expect("Fidelity UnitId");
-    let (parent_stream, child_stream) = UnixStream::pair().expect("Fidelity worker socket pair");
-    let child_fd: OwnedFd = child_stream.into();
+    let (listener, supervisor_address) = supervisor_listener();
     let worker_identity = identity(0xD0);
     let mut command = Command::new(env::current_exe().expect("current Rust test binary"));
     command
@@ -545,7 +588,6 @@ fn real_worker_processes_execute_through_output_finalize() {
             "--nocapture",
         ])
         .env(CHILD_MODE, "1")
-        .env(CHILD_USER, &user)
         .env(CHILD_CHAIN_ID, worker_identity.chain_id.to_string())
         .env(
             CHILD_GENESIS,
@@ -559,7 +601,6 @@ fn real_worker_processes_execute_through_output_finalize() {
             CHILD_BUNDLE,
             format!("{:#x}", worker_identity.protocol_bundle_hash),
         )
-        .env(CHILD_GENERATION, "200")
         .env(CHILD_CAS_ROOT, directory.path())
         .env(
             CHILD_CAS_OBJECT_CAP,
@@ -567,7 +608,7 @@ fn real_worker_processes_execute_through_output_finalize() {
         )
         .env(CHILD_CAS_TOTAL_CAP, cas_limits.max_total_bytes.to_string())
         .env(CHILD_INBOX_ROOT, &inbox_root)
-        .stdin(Stdio::from(child_fd))
+        .env(CHILD_SUPERVISOR_ADDRESS, supervisor_address.to_string())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
     let child = command.spawn().expect("spawn Fidelity worker");
@@ -576,15 +617,9 @@ fn real_worker_processes_execute_through_output_finalize() {
         boot_nonce: B256::repeat_byte(0xD1),
         ..worker_identity
     };
-    let mut client = ControlClientSession::connect(
-        parent_stream,
-        ClientPolicy::supervisor_to_worker(uid, client_identity, limits),
-    )
-    .expect("Fidelity worker client");
-    client.handshake().expect("Fidelity worker handshake");
+    let mut client = accept_registered_worker(&listener, client_identity, 200, limits);
     client
-        .send_request(
-            WorkerMessageKind::RunUnit as u16,
+        .dispatch_encoded(
             RunUnitV1 {
                 protocol_bundle_hash,
                 job_id,
@@ -609,15 +644,10 @@ fn real_worker_processes_execute_through_output_finalize() {
             .expect("Fidelity RunUnit body"),
         )
         .expect("send Fidelity unit");
-    let output = child.wait_with_output().expect("Fidelity worker exit");
-    assert!(
-        output.status.success(),
-        "Fidelity worker failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let frame = client.receive_response().expect("Fidelity worker response");
-    let finished =
-        UnitFinishedV1::decode_body(&frame.body, &limits).expect("Fidelity finished body");
+    let finished = receive_finished(&mut client, &limits);
+    let mut child = child;
+    child.kill().expect("stop Fidelity worker listener");
+    child.wait().expect("reap Fidelity worker listener");
     assert_eq!(finished.status, UnitFinishedStatus::Success);
     assert_eq!(finished.unit_id, fidelity_unit_id);
     let fidelity_artifact = UnitArtifactV1::decode_canonical(
@@ -673,8 +703,7 @@ fn real_worker_processes_execute_through_output_finalize() {
         .fixed_reduce_unit_at(0, [Some(fidelity_artifact.unit_id), None], &limits)
         .expect("derive FixedReduce unit");
     let reduce_unit_id = reduce_spec.unit_id(&limits).expect("FixedReduce UnitId");
-    let (parent_stream, child_stream) = UnixStream::pair().expect("FixedReduce worker socket pair");
-    let child_fd: OwnedFd = child_stream.into();
+    let (listener, supervisor_address) = supervisor_listener();
     let worker_identity = identity(0xE0);
     let mut command = Command::new(env::current_exe().expect("current Rust test binary"));
     command
@@ -684,7 +713,6 @@ fn real_worker_processes_execute_through_output_finalize() {
             "--nocapture",
         ])
         .env(CHILD_MODE, "1")
-        .env(CHILD_USER, &user)
         .env(CHILD_CHAIN_ID, worker_identity.chain_id.to_string())
         .env(
             CHILD_GENESIS,
@@ -698,7 +726,6 @@ fn real_worker_processes_execute_through_output_finalize() {
             CHILD_BUNDLE,
             format!("{:#x}", worker_identity.protocol_bundle_hash),
         )
-        .env(CHILD_GENERATION, "300")
         .env(CHILD_CAS_ROOT, directory.path())
         .env(
             CHILD_CAS_OBJECT_CAP,
@@ -706,7 +733,7 @@ fn real_worker_processes_execute_through_output_finalize() {
         )
         .env(CHILD_CAS_TOTAL_CAP, cas_limits.max_total_bytes.to_string())
         .env(CHILD_INBOX_ROOT, &inbox_root)
-        .stdin(Stdio::from(child_fd))
+        .env(CHILD_SUPERVISOR_ADDRESS, supervisor_address.to_string())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
     let child = command.spawn().expect("spawn FixedReduce worker");
@@ -715,15 +742,9 @@ fn real_worker_processes_execute_through_output_finalize() {
         boot_nonce: B256::repeat_byte(0xE1),
         ..worker_identity
     };
-    let mut client = ControlClientSession::connect(
-        parent_stream,
-        ClientPolicy::supervisor_to_worker(uid, client_identity, limits),
-    )
-    .expect("FixedReduce worker client");
-    client.handshake().expect("FixedReduce worker handshake");
+    let mut client = accept_registered_worker(&listener, client_identity, 300, limits);
     client
-        .send_request(
-            WorkerMessageKind::RunUnit as u16,
+        .dispatch_encoded(
             RunUnitV1 {
                 protocol_bundle_hash,
                 job_id,
@@ -744,17 +765,10 @@ fn real_worker_processes_execute_through_output_finalize() {
             .expect("FixedReduce RunUnit body"),
         )
         .expect("send FixedReduce unit");
-    let output = child.wait_with_output().expect("FixedReduce worker exit");
-    assert!(
-        output.status.success(),
-        "FixedReduce worker failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let frame = client
-        .receive_response()
-        .expect("FixedReduce worker response");
-    let finished =
-        UnitFinishedV1::decode_body(&frame.body, &limits).expect("FixedReduce finished body");
+    let finished = receive_finished(&mut client, &limits);
+    let mut child = child;
+    child.kill().expect("stop FixedReduce worker listener");
+    child.wait().expect("reap FixedReduce worker listener");
     assert_eq!(finished.status, UnitFinishedStatus::Success);
     assert_eq!(finished.unit_id, reduce_unit_id);
     let reduce_artifact = UnitArtifactV1::decode_canonical(
@@ -821,8 +835,7 @@ fn real_worker_processes_execute_through_output_finalize() {
         })
         .cloned()
         .expect("fixture Oracle input reference");
-    let (parent_stream, child_stream) = UnixStream::pair().expect("AmountMap worker socket pair");
-    let child_fd: OwnedFd = child_stream.into();
+    let (listener, supervisor_address) = supervisor_listener();
     let worker_identity = identity(0xF0);
     let mut command = Command::new(env::current_exe().expect("current Rust test binary"));
     command
@@ -832,7 +845,6 @@ fn real_worker_processes_execute_through_output_finalize() {
             "--nocapture",
         ])
         .env(CHILD_MODE, "1")
-        .env(CHILD_USER, &user)
         .env(CHILD_CHAIN_ID, worker_identity.chain_id.to_string())
         .env(
             CHILD_GENESIS,
@@ -846,7 +858,6 @@ fn real_worker_processes_execute_through_output_finalize() {
             CHILD_BUNDLE,
             format!("{:#x}", worker_identity.protocol_bundle_hash),
         )
-        .env(CHILD_GENERATION, "400")
         .env(CHILD_CAS_ROOT, directory.path())
         .env(
             CHILD_CAS_OBJECT_CAP,
@@ -854,7 +865,7 @@ fn real_worker_processes_execute_through_output_finalize() {
         )
         .env(CHILD_CAS_TOTAL_CAP, cas_limits.max_total_bytes.to_string())
         .env(CHILD_INBOX_ROOT, &inbox_root)
-        .stdin(Stdio::from(child_fd))
+        .env(CHILD_SUPERVISOR_ADDRESS, supervisor_address.to_string())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
     let child = command.spawn().expect("spawn AmountMap worker");
@@ -863,15 +874,9 @@ fn real_worker_processes_execute_through_output_finalize() {
         boot_nonce: B256::repeat_byte(0xF1),
         ..worker_identity
     };
-    let mut client = ControlClientSession::connect(
-        parent_stream,
-        ClientPolicy::supervisor_to_worker(uid, client_identity, limits),
-    )
-    .expect("AmountMap worker client");
-    client.handshake().expect("AmountMap worker handshake");
+    let mut client = accept_registered_worker(&listener, client_identity, 400, limits);
     client
-        .send_request(
-            WorkerMessageKind::RunUnit as u16,
+        .dispatch_encoded(
             RunUnitV1 {
                 protocol_bundle_hash,
                 job_id,
@@ -898,17 +903,10 @@ fn real_worker_processes_execute_through_output_finalize() {
             .expect("AmountMap RunUnit body"),
         )
         .expect("send AmountMap unit");
-    let output = child.wait_with_output().expect("AmountMap worker exit");
-    assert!(
-        output.status.success(),
-        "AmountMap worker failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let frame = client
-        .receive_response()
-        .expect("AmountMap worker response");
-    let finished =
-        UnitFinishedV1::decode_body(&frame.body, &limits).expect("AmountMap finished body");
+    let finished = receive_finished(&mut client, &limits);
+    let mut child = child;
+    child.kill().expect("stop AmountMap worker listener");
+    child.wait().expect("reap AmountMap worker listener");
     assert_eq!(finished.status, UnitFinishedStatus::Success);
     assert_eq!(finished.unit_id, amount_unit_id);
     let amount_artifact = UnitArtifactV1::decode_canonical(
@@ -988,8 +986,6 @@ fn real_worker_processes_execute_through_output_finalize() {
     let prefix_leaf_artifact = execute_real_worker_unit(
         500,
         0x91,
-        &user,
-        uid,
         directory.path(),
         cas_limits,
         &inbox_root,
@@ -1043,8 +1039,6 @@ fn real_worker_processes_execute_through_output_finalize() {
     let prefix_root_artifact = execute_real_worker_unit(
         501,
         0x93,
-        &user,
-        uid,
         directory.path(),
         cas_limits,
         &inbox_root,
@@ -1089,8 +1083,6 @@ fn real_worker_processes_execute_through_output_finalize() {
     let prefix_down_root_artifact = execute_real_worker_unit(
         502,
         0x95,
-        &user,
-        uid,
         directory.path(),
         cas_limits,
         &inbox_root,
@@ -1150,8 +1142,6 @@ fn real_worker_processes_execute_through_output_finalize() {
     let prefix_down_leaf_artifact = execute_real_worker_unit(
         503,
         0x97,
-        &user,
-        uid,
         directory.path(),
         cas_limits,
         &inbox_root,
@@ -1223,8 +1213,6 @@ fn real_worker_processes_execute_through_output_finalize() {
     let output_finalize_artifact = execute_real_worker_unit(
         504,
         0x99,
-        &user,
-        uid,
         directory.path(),
         cas_limits,
         &inbox_root,
@@ -1411,8 +1399,6 @@ fn real_worker_processes_execute_through_output_finalize() {
     let owner_artifact = execute_real_worker_unit(
         505,
         0x9A,
-        &user,
-        uid,
         directory.path(),
         cas_limits,
         &inbox_root,
@@ -1468,8 +1454,6 @@ fn real_worker_processes_execute_through_output_finalize() {
     let bucket_artifact = execute_real_worker_unit(
         506,
         0x9B,
-        &user,
-        uid,
         directory.path(),
         cas_limits,
         &inbox_root,
@@ -1544,8 +1528,6 @@ fn real_worker_processes_execute_through_output_finalize() {
     let root_reduce_artifact = execute_real_worker_unit(
         507,
         0x9c,
-        &user,
-        uid,
         directory.path(),
         cas_limits,
         &inbox_root,
@@ -1707,7 +1689,11 @@ fn real_worker_processes_execute_through_output_finalize() {
                 state_version: 1,
             },
         },
-        result_committee_snapshot_hash: B256::repeat_byte(0x47),
+        result_validator_set_epoch: 7,
+        result_committee_set_hash: B256::repeat_byte(0x47),
+        result_ocomp_binding_hash: B256::repeat_byte(0x48),
+        result_member_count: 4,
+        result_quorum_threshold: 3,
         custody_committee_epoch_hash: None,
     };
     let ordered_artifacts = vec![
@@ -2076,8 +2062,6 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
         finalized_artifacts.push(output_artifact);
     }
 
-    let user = effective_user_name().expect("effective user");
-    let uid = effective_uid().expect("effective uid");
     let output_finalize_offset = topology
         .phase_unit_count(UnitPhase::Enumerate)
         .checked_add(topology.phase_unit_count(UnitPhase::FidelityMap))
@@ -2110,8 +2094,6 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
         let artifact = execute_real_worker_unit(
             700 + u64::try_from(ordinal).expect("merge generation"),
             0xa0 + u8::try_from(ordinal).expect("merge boot"),
-            &user,
-            uid,
             directory.path(),
             cas_limits,
             &inbox_root,
@@ -2153,8 +2135,6 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
     let merged_artifact = execute_real_worker_unit(
         702,
         0xa2,
-        &user,
-        uid,
         directory.path(),
         cas_limits,
         &inbox_root,
@@ -2223,8 +2203,6 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
         let artifact = execute_real_worker_unit(
             703 + u64::try_from(ordinal).expect("bucket generation"),
             0xa3 + u8::try_from(ordinal).expect("bucket boot"),
-            &user,
-            uid,
             directory.path(),
             cas_limits,
             &inbox_root,
@@ -2266,8 +2244,6 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
     let merged_bucket_artifact = execute_real_worker_unit(
         705,
         0xa5,
-        &user,
-        uid,
         directory.path(),
         cas_limits,
         &inbox_root,
@@ -2356,8 +2332,6 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
         let artifact = execute_real_worker_unit(
             707 + u64::from(ordinal),
             0xa7 + u8::try_from(ordinal).expect("root reduce boot"),
-            &user,
-            uid,
             directory.path(),
             cas_limits,
             &inbox_root,
@@ -2440,8 +2414,6 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
     let root_reduce_artifact = execute_real_worker_unit(
         709,
         0xa9,
-        &user,
-        uid,
         directory.path(),
         cas_limits,
         &inbox_root,
@@ -2480,8 +2452,6 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
 fn execute_real_worker_unit(
     generation: u64,
     boot: u8,
-    user: &str,
-    uid: u32,
     cas_root: &std::path::Path,
     cas_limits: CasLimits,
     inbox_root: &std::path::Path,
@@ -2494,8 +2464,7 @@ fn execute_real_worker_unit(
     input_manifest_ref: CasObjectRefV1,
     ordered_input_refs: Vec<CasObjectRefV1>,
 ) -> UnitArtifactV1 {
-    let (parent_stream, child_stream) = UnixStream::pair().expect("worker socket pair");
-    let child_fd: OwnedFd = child_stream.into();
+    let (listener, supervisor_address) = supervisor_listener();
     let worker_identity = identity(boot);
     let mut command = Command::new(env::current_exe().expect("current Rust test binary"));
     command
@@ -2505,7 +2474,6 @@ fn execute_real_worker_unit(
             "--nocapture",
         ])
         .env(CHILD_MODE, "1")
-        .env(CHILD_USER, user)
         .env(CHILD_CHAIN_ID, worker_identity.chain_id.to_string())
         .env(
             CHILD_GENESIS,
@@ -2519,7 +2487,6 @@ fn execute_real_worker_unit(
             CHILD_BUNDLE,
             format!("{:#x}", worker_identity.protocol_bundle_hash),
         )
-        .env(CHILD_GENERATION, generation.to_string())
         .env(CHILD_CAS_ROOT, cas_root)
         .env(
             CHILD_CAS_OBJECT_CAP,
@@ -2527,7 +2494,7 @@ fn execute_real_worker_unit(
         )
         .env(CHILD_CAS_TOTAL_CAP, cas_limits.max_total_bytes.to_string())
         .env(CHILD_INBOX_ROOT, inbox_root)
-        .stdin(Stdio::from(child_fd))
+        .env(CHILD_SUPERVISOR_ADDRESS, supervisor_address.to_string())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
     let child = command.spawn().expect("spawn production worker");
@@ -2537,15 +2504,9 @@ fn execute_real_worker_unit(
         boot_nonce: B256::repeat_byte(boot.wrapping_add(1)),
         ..worker_identity
     };
-    let mut client = ControlClientSession::connect(
-        parent_stream,
-        ClientPolicy::supervisor_to_worker(uid, client_identity, limits),
-    )
-    .expect("worker client");
-    client.handshake().expect("worker handshake");
+    let mut client = accept_registered_worker(&listener, client_identity, generation, limits);
     client
-        .send_request(
-            WorkerMessageKind::RunUnit as u16,
+        .dispatch_encoded(
             RunUnitV1 {
                 protocol_bundle_hash: spec.protocol_bundle_hash,
                 job_id: spec.job_id,
@@ -2565,14 +2526,10 @@ fn execute_real_worker_unit(
             .expect("worker RunUnit body"),
         )
         .expect("send worker unit");
-    let output = child.wait_with_output().expect("worker exit");
-    assert!(
-        output.status.success(),
-        "worker failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let frame = client.receive_response().expect("worker response");
-    let finished = UnitFinishedV1::decode_body(&frame.body, &limits).expect("worker finished body");
+    let finished = receive_finished(&mut client, &limits);
+    let mut child = child;
+    child.kill().expect("stop worker listener");
+    let output = child.wait_with_output().expect("reap worker listener");
     assert_eq!(
         finished.status,
         UnitFinishedStatus::Success,
@@ -2612,23 +2569,23 @@ fn run_child_worker() {
             .parse::<B256>()
             .unwrap_or_else(|_| panic!("invalid {name}"))
     };
-    let user = env::var(CHILD_USER).expect("worker child user");
-    let uid = outbe_ocomp::control::uid_for_user(&user).expect("worker child uid");
     let limits = poc_schema_limits();
     let expected_bundle_hash = parse_b256(CHILD_BUNDLE);
     let canonical_bundle = support::protocol_bundle()
         .encode_canonical(&limits)
         .expect("canonical child protocol bundle");
-    run_one_from_inherited_fd(WorkerConfig {
-        expected_effective_uid: uid,
-        expected_supervisor_uid: uid,
+    run_worker(WorkerConfig {
         identity: EndpointIdentity {
             chain_id: parse_u64(CHILD_CHAIN_ID),
             genesis_hash: parse_b256(CHILD_GENESIS),
             boot_nonce: parse_b256(CHILD_BOOT_NONCE),
             protocol_bundle_hash: expected_bundle_hash,
         },
-        session_generation: parse_u64(CHILD_GENERATION),
+        supervisor_address: env::var(CHILD_SUPERVISOR_ADDRESS)
+            .expect("worker child Supervisor address")
+            .parse()
+            .expect("valid worker child Supervisor address"),
+        observability_address: "127.0.0.1:0".parse().unwrap(),
         cas_root: PathBuf::from(env::var_os(CHILD_CAS_ROOT).expect("worker child CAS root")),
         cas_limits: CasLimits {
             max_object_bytes: parse_u64(CHILD_CAS_OBJECT_CAP),
@@ -2639,7 +2596,6 @@ fn run_child_worker() {
             max_artifact_bytes: 1024 * 1024,
             max_total_bytes: 4 * 1024 * 1024,
         },
-        connection_fd: 0,
         protocol_bundle: PinnedProtocolBundle::decode(
             &canonical_bundle,
             expected_bundle_hash,

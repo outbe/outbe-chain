@@ -1,8 +1,8 @@
 //! Genesis-fixed authority for V1 TEE attestation.
 //!
-//! Every runnable chain must carry this field. Testnet selects `DcapRequired`;
-//! devnet selects `GramineDirectDev` under a different chain ID/genesis. Both
-//! use OST3, and neither can fall back at runtime.
+//! Every runnable chain must carry this field. Testnet may explicitly select
+//! `DcapRequired` or `GramineDirectDev`; devnet selects `GramineDirectDev`.
+//! Both use OST3, and neither can fall back at runtime.
 
 use std::sync::Arc;
 
@@ -15,8 +15,8 @@ use outbe_primitives::{
         MAX_TEE_POLICY_SCHEDULE_BYTES,
     },
     tee_genesis_v1::{
-        initial_tee_policy_v1, InitialTeeProfileV1, ProductionSgxMeasurementV1,
-        GRAMINE_DIRECT_DEV_CHAIN_ID,
+        initial_tee_policy_v1, is_gramine_direct_dev_chain_id, InitialTeeProfileV1,
+        ProductionSgxMeasurementV1, GRAMINE_DIRECT_DEV_CHAIN_ID,
     },
     OutbeHeader,
 };
@@ -167,17 +167,12 @@ impl DcapTestnetChainSpecBindingV1 {
 
 /// Parsing never falls open. Constructors that cannot return a Result retain an
 /// Invalid state and make block construction/execution fail before mutation.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum TeeAttestationChainSpecStateV1 {
+    #[default]
     Unbound,
     Active(Arc<TeeAttestationActivationV1>),
     Invalid(Arc<str>),
-}
-
-impl Default for TeeAttestationChainSpecStateV1 {
-    fn default() -> Self {
-        Self::Unbound
-    }
 }
 
 impl TeeAttestationChainSpecStateV1 {
@@ -270,9 +265,9 @@ fn validate_activation(
                 "DcapRequired requires testnet chain ID {TESTNET_CHAIN_ID}"
             ));
         }
-        AttestationMode::GramineDirectDev if chain_id != GRAMINE_DIRECT_DEV_CHAIN_ID => {
+        AttestationMode::GramineDirectDev if !is_gramine_direct_dev_chain_id(chain_id) => {
             return Err(format!(
-                "GramineDirectDev requires reserved chain ID {GRAMINE_DIRECT_DEV_CHAIN_ID}"
+                "GramineDirectDev requires devnet or testnet chain ID ({GRAMINE_DIRECT_DEV_CHAIN_ID} or {TESTNET_CHAIN_ID})"
             ));
         }
         AttestationMode::DcapRequired | AttestationMode::GramineDirectDev => {}
@@ -564,7 +559,7 @@ mod tests {
     }
 
     #[test]
-    fn dev_mode_is_valid_only_inside_its_own_chain_identity() {
+    fn dev_mode_is_valid_for_devnet_and_testnet_but_not_unknown_identities() {
         let dev_chain_id = GRAMINE_DIRECT_DEV_CHAIN_ID;
         let dev_genesis_hash = B256::repeat_byte(0x66);
         let dev = validate_activation(
@@ -581,17 +576,33 @@ mod tests {
             dev.policy_at(1).unwrap().attestation_mode,
             AttestationMode::GramineDirectDev
         );
-        assert!(validate_activation(
+        let testnet = validate_activation(
             activation(
-                dev_chain_id + 1,
+                TESTNET_CHAIN_ID,
                 dev_genesis_hash,
                 AttestationMode::GramineDirectDev,
             ),
-            dev_chain_id + 1,
+            TESTNET_CHAIN_ID,
+            dev_genesis_hash,
+        )
+        .unwrap();
+        assert_eq!(
+            testnet.policy_at(1).unwrap().attestation_mode,
+            AttestationMode::GramineDirectDev
+        );
+
+        let unknown_chain_id = TESTNET_CHAIN_ID + 1;
+        assert!(validate_activation(
+            activation(
+                unknown_chain_id,
+                dev_genesis_hash,
+                AttestationMode::GramineDirectDev,
+            ),
+            unknown_chain_id,
             dev_genesis_hash,
         )
         .unwrap_err()
-        .contains("requires reserved chain ID"));
+        .contains("devnet or testnet chain ID"));
 
         assert!(validate_activation(
             activation(
@@ -605,7 +616,6 @@ mod tests {
         .unwrap_err()
         .contains("may not use reserved GramineDirectDev chain ID"));
 
-        let unknown_chain_id = dev_chain_id + 1;
         assert!(validate_activation(
             activation(
                 unknown_chain_id,

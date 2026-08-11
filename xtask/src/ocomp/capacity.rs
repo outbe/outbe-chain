@@ -12,6 +12,7 @@ use std::process::{Command, Stdio};
 
 use alloy_primitives::B256;
 use eyre::{ensure, Context, Result};
+use outbe_chain_constants::DEFAULT_OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS as OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS;
 use outbe_consensus::{
     config::MAX_P2P_MESSAGE_SIZE,
     timing::{DEFAULT_CERTIFICATION_TIMEOUT_MS, DEFAULT_LEADER_TIMEOUT_MS},
@@ -34,9 +35,7 @@ const GENERATED_CAPACITY_SCHEMA_VERSION: u16 = 1;
 const GENERATED_CAPACITY_KIND: &str = "outbe-ocomp-generated-capacity-v1";
 const CAPACITY_MEMORY_MAX_BYTES: u64 = OCOMP_POC_DEVNET_MACHINE_V1.minimum_process_memory_bytes;
 const CAPACITY_CPU_QUOTA_PERCENT: u16 = 400;
-const OCOMP_POC_COMMITTEE_MEMBERS: u64 = 4;
 const OCOMP_POC_BLOCK_GAS_LIMIT: u64 = 30_000_000;
-const OCOMP_POC_RESULT_DEADLINE_BLOCKS: u64 = 64;
 
 #[derive(Debug, Serialize)]
 struct GeneratedCapacityManifestV1 {
@@ -58,7 +57,6 @@ struct CapacityProfileDocumentV1 {
     profile_id: B256,
     max_tributes_per_work_shard: u32,
     max_workers_per_domain: u8,
-    max_pending_jobs: u8,
     max_intents_per_block: u8,
     max_activations_per_block: u8,
     max_ready_inspections_per_block: u8,
@@ -79,7 +77,6 @@ impl From<CapacityProfileV1> for CapacityProfileDocumentV1 {
             profile_id: profile.profile_id,
             max_tributes_per_work_shard: profile.max_tributes_per_work_shard,
             max_workers_per_domain: profile.max_workers_per_domain,
-            max_pending_jobs: profile.max_pending_jobs,
             max_intents_per_block: profile.max_intents_per_block,
             max_activations_per_block: profile.max_activations_per_block,
             max_ready_inspections_per_block: profile.max_ready_inspections_per_block,
@@ -272,10 +269,11 @@ fn append_capacity_scenarios(command: &mut Command, scenario_paths: &[PathBuf]) 
 }
 
 fn build_capacity_binaries(repository_root: &Path) -> Result<()> {
-    let mut debug = Command::new("cargo");
-    debug.current_dir(repository_root).args([
+    let mut release = Command::new("cargo");
+    release.current_dir(repository_root).args([
         "build",
         "--locked",
+        "--release",
         "-p",
         "outbe-chain",
         "--bin",
@@ -298,7 +296,7 @@ fn build_capacity_binaries(repository_root: &Path) -> Result<()> {
         "ocomp-integration",
         "--bins",
     ]);
-    run_checked(&mut debug, "build exact debug OCOMP capacity binaries")?;
+    run_checked(&mut release, "build exact release OCOMP capacity binaries")?;
 
     let mut enclave = Command::new("cargo");
     enclave.current_dir(repository_root).args([
@@ -321,7 +319,7 @@ fn frozen_capacity_budget() -> Result<CapacityBudgetV1> {
         validation_window_ms > 0,
         "OCOMP PoC validation window must be positive"
     );
-    let finality_latency_micros = OCOMP_POC_RESULT_DEADLINE_BLOCKS
+    let finality_latency_micros = OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS
         .checked_mul(DEFAULT_CERTIFICATION_TIMEOUT_MS)
         .and_then(|value| value.checked_mul(1_000))
         .ok_or_else(|| eyre::eyre!("OCOMP PoC finality budget overflows"))?;
@@ -329,12 +327,13 @@ fn frozen_capacity_budget() -> Result<CapacityBudgetV1> {
         .logical_cpu_count
         .checked_mul(finality_latency_micros)
         .ok_or_else(|| eyre::eyre!("OCOMP PoC CPU budget overflows"))?;
-    let directed_committee_edges = OCOMP_POC_COMMITTEE_MEMBERS
-        .checked_mul(OCOMP_POC_COMMITTEE_MEMBERS.saturating_sub(1))
-        .ok_or_else(|| eyre::eyre!("OCOMP PoC committee edge count overflows"))?;
+    let validator_count = u64::from(outbe_consensus::bls::MAX_VALIDATORS);
+    let directed_committee_edges = validator_count
+        .checked_mul(validator_count.saturating_sub(1))
+        .ok_or_else(|| eyre::eyre!("consensus validator edge count overflows"))?;
     let network_bytes = u64::from(MAX_P2P_MESSAGE_SIZE)
         .checked_mul(directed_committee_edges)
-        .and_then(|value| value.checked_mul(OCOMP_POC_RESULT_DEADLINE_BLOCKS))
+        .and_then(|value| value.checked_mul(OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS))
         .ok_or_else(|| eyre::eyre!("OCOMP PoC network budget overflows"))?;
     Ok(CapacityBudgetV1 {
         transaction_bytes: u64::try_from(OUTBE_MAX_BLOCK_SIZE)
@@ -369,12 +368,12 @@ struct CapacityBinariesV1 {
 impl CapacityBinariesV1 {
     fn from_repository(repository_root: &Path) -> Result<Self> {
         Ok(Self {
-            chain: repository_root.join("target/debug/outbe-chain"),
-            ocomp: repository_root.join("target/debug/outbe-ocomp"),
-            cli: repository_root.join("target/debug/outbe-cli"),
-            keygen: repository_root.join("target/debug/outbe-keygen"),
-            e2e: repository_root.join("target/debug/outbe-e2e"),
-            evidence: repository_root.join("target/debug/outbe-e2e-evidence"),
+            chain: repository_root.join("target/release/outbe-chain"),
+            ocomp: repository_root.join("target/release/outbe-ocomp"),
+            cli: repository_root.join("target/release/outbe-cli"),
+            keygen: repository_root.join("target/release/outbe-keygen"),
+            e2e: repository_root.join("target/release/outbe-e2e"),
+            evidence: repository_root.join("target/release/outbe-e2e-evidence"),
             enclave: repository_root.join("target/release/outbe-tee-enclave"),
         })
     }
@@ -494,9 +493,8 @@ fn capacity_systemd_command(
         .arg("--concurrency")
         .arg("1")
         .arg("--no-resolve-ports")
-        .arg("--no-sudo")
         .arg("--tee")
-        .arg("gramine-direct")
+        .arg("sgx-no-attest")
         .arg("--all")
         .arg("--no-cleanup")
         .arg("--repo")
@@ -679,8 +677,11 @@ fn generate(
     let generated_limits_manifest_sha256 = sha256(limits_manifest_bytes);
     let capacity_profile_id = parse_b256(OCOMP_CAPACITY_PROFILE_ID_HEX)
         .wrap_err("parse generated capacity profile id")?;
-    let profile =
-        verified.capacity_profile(capacity_profile_id, generated_limits_manifest_sha256)?;
+    let profile = verified.capacity_profile(
+        capacity_profile_id,
+        generated_limits_manifest_sha256,
+        OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS,
+    )?;
     let canonical = profile
         .encode_canonical(&poc_schema_limits())
         .wrap_err("encode canonical capacity profile")?;
@@ -820,6 +821,26 @@ mod tests {
     }
 
     #[test]
+    fn capacity_binary_sources_are_all_release_artifacts() {
+        let binaries = CapacityBinariesV1::from_repository(Path::new("/repo")).unwrap();
+        for path in [
+            binaries.chain,
+            binaries.ocomp,
+            binaries.cli,
+            binaries.keygen,
+            binaries.e2e,
+            binaries.evidence,
+            binaries.enclave,
+        ] {
+            assert!(
+                path.starts_with("/repo/target/release"),
+                "capacity source is not a release artifact: {}",
+                path.display()
+            );
+        }
+    }
+
+    #[test]
     fn ocm_cap_001_generation_is_deterministic_and_bound_to_exact_inputs() {
         let evidence = evidence();
         let evidence_bytes = serde_json::to_vec_pretty(&evidence).unwrap();
@@ -841,9 +862,11 @@ mod tests {
             document["capacity_profile"]["max_tributes_per_work_shard"],
             256
         );
-        assert_eq!(
-            document["capacity_profile"]["max_pending_jobs"], 2,
-            "capacity profile must retain concurrent independent Job progress"
+        assert!(
+            document["capacity_profile"]
+                .get("max_pending_jobs")
+                .is_none(),
+            "capacity artifacts must not publish an OCOMP-specific live-job limit"
         );
         assert_eq!(
             document["capacity_profile_ocb1_hex"]
@@ -859,12 +882,12 @@ mod tests {
     fn ocm_cap_001_cold_runner_builds_one_dedicated_non_retrying_public_command() {
         let root = Path::new("/repo");
         let binaries = CapacityBinariesV1 {
-            chain: root.join("target/debug/outbe-chain"),
-            ocomp: root.join("target/debug/outbe-ocomp"),
-            cli: root.join("target/debug/outbe-cli"),
-            keygen: root.join("target/debug/outbe-keygen"),
-            e2e: root.join("target/debug/outbe-e2e"),
-            evidence: root.join("target/debug/outbe-e2e-evidence"),
+            chain: root.join("target/release/outbe-chain"),
+            ocomp: root.join("target/release/outbe-ocomp"),
+            cli: root.join("target/release/outbe-cli"),
+            keygen: root.join("target/release/outbe-keygen"),
+            e2e: root.join("target/release/outbe-e2e"),
+            evidence: root.join("target/release/outbe-e2e-evidence"),
             enclave: root.join("target/release/outbe-tee-enclave"),
         };
         let command = capacity_systemd_command(
@@ -895,17 +918,18 @@ mod tests {
         assert!(arguments.contains(&format!("--property=MemoryMax={CAPACITY_MEMORY_MAX_BYTES}")));
         assert!(arguments
             .windows(2)
-            .any(|pair| pair == ["--cli-bin", "/repo/target/debug/outbe-cli"]));
+            .any(|pair| pair == ["--cli-bin", "/repo/target/release/outbe-cli"]));
         assert!(arguments
             .windows(2)
-            .any(|pair| pair == ["--keygen-bin", "/repo/target/debug/outbe-keygen"]));
+            .any(|pair| pair == ["--keygen-bin", "/repo/target/release/outbe-keygen"]));
         assert!(arguments
             .windows(2)
-            .any(|pair| pair == ["--tee", "gramine-direct"]));
+            .any(|pair| pair == ["--tee", "sgx-no-attest"]));
         assert!(arguments
             .windows(2)
             .any(|pair| { pair == ["--enclave-bin", "/repo/target/release/outbe-tee-enclave",] }));
         assert!(!arguments.iter().any(|argument| argument == "--mock-bin"));
+        assert!(!arguments.iter().any(|argument| argument == "--no-sudo"));
         assert_eq!(
             arguments
                 .iter()
@@ -936,8 +960,20 @@ mod tests {
             budget.internal_work,
             OCOMP_POC_CANDIDATE_LIMITS_V1.max_activation_internal_work
         );
-        assert_eq!(budget.cpu_micros, 2_048_000_000);
-        assert_eq!(budget.network_bytes, 1_610_612_736);
+        let expected_finality_latency_micros =
+            OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS * DEFAULT_CERTIFICATION_TIMEOUT_MS * 1_000;
+        assert_eq!(
+            budget.cpu_micros,
+            OCOMP_POC_DEVNET_MACHINE_V1.logical_cpu_count * expected_finality_latency_micros
+        );
+        let validator_count = u64::from(outbe_consensus::bls::MAX_VALIDATORS);
+        assert_eq!(
+            budget.network_bytes,
+            u64::from(MAX_P2P_MESSAGE_SIZE)
+                * validator_count
+                * (validator_count - 1)
+                * OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS
+        );
         assert_eq!(
             budget.assigned_memory_bytes,
             OCOMP_POC_DEVNET_MACHINE_V1.minimum_process_memory_bytes
@@ -948,7 +984,10 @@ mod tests {
         );
         assert_eq!(budget.cas_bytes, OCOMP_POC_CAS_QUOTA_BYTES);
         assert_eq!(budget.block_processing_micros, 4_000_000);
-        assert_eq!(budget.finality_latency_micros, 512_000_000);
+        assert_eq!(
+            budget.finality_latency_micros,
+            expected_finality_latency_micros
+        );
         assert_eq!(
             CAPACITY_CPU_QUOTA_PERCENT,
             u16::try_from(OCOMP_POC_DEVNET_MACHINE_V1.logical_cpu_count * 100).unwrap()
@@ -1000,14 +1039,14 @@ mod tests {
                     tribute_count: 257,
                     nod_count: 257,
                     worker_shard_count: 2,
-                    validator_block_processing: std::array::from_fn(|validator_index| {
-                        CapacityValidatorBlockProcessingV1 {
-                            validator_index: u8::try_from(validator_index).unwrap(),
+                    validator_block_processing: (0_u16..5)
+                        .map(|validator_index| CapacityValidatorBlockProcessingV1 {
+                            validator_index,
                             block_number: 40,
                             block_hash: B256::repeat_byte(6),
                             elapsed_micros: if validator_index == 3 { 800 } else { 100 },
-                        }
-                    }),
+                        })
+                        .collect(),
                     historical_replay:
                         outbe_ocomp_protocol::capacity::CapacityHistoricalReplayBindingV1 {
                             validator_index: 0,
@@ -1057,7 +1096,7 @@ mod tests {
                 pid1_is_systemd: true,
                 unified_cgroup_v2: true,
                 writable_resource_cgroup: true,
-                production_enclave_gramine_direct: true,
+                production_enclave_sgx_no_attest: true,
             },
             budget,
             runs,

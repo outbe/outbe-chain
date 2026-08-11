@@ -1,6 +1,6 @@
 //! Outbe RPC API trait definition.
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, Bytes, B256, U256};
 use jsonrpsee::proc_macros::rpc;
 use outbe_primitives::consensus::RandomnessStatus;
 use outbe_primitives::tee_operator_v1::TeeRenewalScheduleV1;
@@ -205,6 +205,16 @@ pub trait OutbeApi {
         &self,
         request: outbe_compressed_entities::PointReadRequestV1,
     ) -> jsonrpsee::core::RpcResult<outbe_compressed_entities::PointReadResultV1>;
+
+    /// Builds the exact Fidelity/Oracle openings for one finalized OCOMP
+    /// `JobIntent`. The event supplies only `intent_id`; the node resolves the
+    /// authoritative finalized record and exact request state locally.
+    #[method(name = "getOcompLysisOpeningsV1")]
+    async fn get_ocomp_lysis_openings_v1(
+        &self,
+        intent_id: B256,
+        canonical_request: Bytes,
+    ) -> jsonrpsee::core::RpcResult<Bytes>;
 
     /// Returns information about all active validators.
     #[method(name = "getValidators")]

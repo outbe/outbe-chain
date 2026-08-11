@@ -972,6 +972,64 @@ async fn verify_preannounce_outcome_matches_only_local_dkg_output() {
 }
 
 #[tokio::test]
+async fn pending_next_epoch_artifact_is_distinct_from_current_activation_boundary() {
+    let (keys, _participants, output, _polynomial, _local_log) = run_test_dkg_complete();
+    let validator_set = ValidatorSet {
+        public_keys: keys.iter().map(|key| key.public_key()).collect(),
+        addresses: vec![
+            address!("0x1111111111111111111111111111111111111111"),
+            address!("0x2222222222222222222222222222222222222222"),
+            address!("0x3333333333333333333333333333333333333333"),
+        ],
+        p2p_addresses: vec![crate::validators::ValidatorP2pAddress::Missing; 3],
+    };
+    let next_epoch_artifact = build_boundary_artifact(BoundaryArtifactInput {
+        epoch: Epoch::new(1),
+        validator_set: &validator_set,
+        output: &output,
+        is_full_dkg: false,
+        dkg_cycle: 1,
+        freeze_height: 10,
+        planned_activation_height: 20,
+        vrf_material_version: 1,
+        is_validator_set_change: true,
+        tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
+    })
+    .unwrap();
+
+    let manager = Mailbox::new();
+    manager.note_ceremony_completed(next_epoch_artifact.clone());
+
+    assert!(
+        manager
+            .pending_boundary_artifact(Epoch::new(0))
+            .await
+            .is_none(),
+        "an epoch-1 artifact must not be exposed as the epoch-0 activation boundary"
+    );
+    assert_eq!(
+        manager.pending_next_epoch_artifact(Epoch::new(0)).await,
+        Some(next_epoch_artifact.clone()),
+        "an epoch-1 artifact must be available for pre-announcement during epoch 0"
+    );
+    assert!(
+        manager
+            .pending_next_epoch_artifact(Epoch::new(1))
+            .await
+            .is_none(),
+        "the same artifact must not be reused as an epoch-2 pre-announcement"
+    );
+    assert!(
+        manager
+            .pending_next_epoch_artifact(Epoch::new(u64::MAX))
+            .await
+            .is_none(),
+        "epoch overflow must fail closed"
+    );
+}
+
+#[tokio::test]
 async fn verify_boundary_succeeds_after_finalize() {
     let (keys, _participants, output, _polynomial, _local_log) = run_test_dkg_complete();
     let validator_set = ValidatorSet {

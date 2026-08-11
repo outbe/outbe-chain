@@ -8,6 +8,43 @@ The harness owns validator processes, docker/Gramine TEE enclaves, and optional
 MongoDB containers. DKG bootstrap and genesis seeding remain one-shot
 subprocesses.
 
+## Persistent dev LocalNet
+
+The same Rust implementation owns the documented operator lifecycle. Unlike a
+Cucumber scenario, the `start` command launches one persistent owner process;
+that process keeps MongoDB, all mock enclaves, all validator guards, and each
+validator's OCOMP Supervisor, SnapshotExporter and Worker-0 alive until `stop`
+signals that exact owner.
+
+```sh
+mise run build
+mise run localnet-bootstrap
+mise run localnet-start
+mise run localnet-status
+mise run localnet-stop
+```
+
+Bootstrap runs `outbe-chain dkg bootstrap`, `scripts/seed_genesis.py`, current
+dynamic OCOMP founder registration for the complete genesis ValidatorSet, and
+`tee genesis --mode gramine-direct-dev`. Start brings every mock enclave to
+socket readiness before launching the validator cohort, then returns only after
+all validator RPC heights have advanced beyond genesis. Runtime ownership is
+not declared ready at that point alone: the harness installs the OCOMP delegate
+bindings, starts one Supervisor and one SnapshotExporter per validator, starts
+Worker-0, and requires every Supervisor to report exactly one registered and
+connected Worker. `status` repeats the RPC and Supervisor probes.
+Runtime ownership is recorded atomically in
+`<OUT_DIR>/localnet-state-v1.json`; stale or PID-reused
+records are never treated as a live network. Bootstrap scans for free complete
+service-port blocks and stores them in `<OUT_DIR>/localnet-bootstrap-v1.json`;
+the persistent owner restores that exact layout, including genesis-baked P2P
+and consensus endpoints.
+
+The `outbe-e2e localnet-sgx` / `mise run localnet-sgx-*` surface is deliberately
+fail-closed pending `outbe-chain-8lp`. A real-SGX network needs its own
+`DcapRequired` genesis and hardware evidence; it must never reuse or fall back to
+this mock `GramineDirectDev` lane.
+
 ## Model: environment (CLI) vs. requirements (tags)
 
 The **CLI defines the environment** — how many validators to bootstrap, the TEE
@@ -28,7 +65,7 @@ to Cucumber's `--tags` filter. Current live-node mappings are:
 | PFS examples | Feature coverage |
 |---|---|
 | `PFS-001-01`, `-02`, `-03`, `-05` | Tribute creation/projection/proof, two absence scopes and duplicate logical offer rejection |
-| `PFS-002-01` through `-24` | OCOMP implementation and focused production-adapter tests exist; `-07`/`-08` remain deferred and exact-revision Linux four-domain closure evidence is pending |
+| `PFS-002-01` through `-24` | Dynamic OCOMP membership, the validator system-vote lane, deadline accountability and independent FullNode Lysis following; the 4→5 process is the current reachable acceptance lane |
 | `PFS-005-01`, `-09` plus named recovery/rejection tags | Vote approval/activation, restart boundaries, rejection paths, unsupported-version stall and operator binary replacement |
 | `PFS-006-01`, `-02`, `-03`, `-04`, `-06`, `-09` | Join/exit/claim accounting, stale join, DKG recovery, slash idempotency, checkpoint restarts and full-committee sealed TEE recovery |
 | `PFS-007-01` through `-12` | Pectra/ZeroFee readiness, native EIP-7702 delegation, quota/fallback, exact replay, restart persistence, invalid authorization and day reset |
@@ -41,13 +78,13 @@ coverage of assertions that the row explicitly marks as a gap.
 
 ## Layout
 
-- `features/` — Gherkin fixtures. `update_operator.feature` is wired end-to-end;
-  `tribute_projection.feature` covers encrypted-offer projection plus compressed
-  entity presence and absence proofs; `stablecoin_factory_v1.feature` covers the
-  fresh-genesis Factory product flow and full-committee restart.
-  `ocomp_public_path.feature` includes the Linux-only fresh Metadosis path:
-  finalized runtime block-1 `Create`, two whole-committee logical-time restart
-  barriers with canonical phase durations, and terminal OCOMP on the same WWD.
+- `features/` — eight responsibility-owned Gherkin suites: `tribute`,
+  `validator_lifecycle`, `fullnode`, `ocomp`, `governance`, `zerofee`,
+  `products`, and `tee_onboarding`. Shared prerequisites are steps inside the
+  owning behavior, not standalone scenarios that repeat a shorter prefix.
+  `ocomp.feature` owns the Linux-only fresh Metadosis path from finalized
+  block-1 `Create` through terminal OCOMP, FullNode verification, NOD, and
+  restart/replay on the same WWD.
 - `release-features/` — the separate exact-artifact hardware-SGX acceptance scenario.
   It does not bootstrap a localnet or MongoDB and never rebuilds the release image.
 - `src/env.rs` — `TeeMode`, the `EnvCli` clap flags, `Environment`, and the
@@ -64,13 +101,16 @@ The entrypoint is the `outbe-e2e` binary. **All configuration is via CLI flags �
 the harness reads no configuration from the environment.** Flags:
 
 - `--validators <N>` — committee size to bootstrap (default 4).
-- `--tee <real|gramine-direct|mock>` — mandatory enclave mode (default `mock`);
-  `gramine-direct` uses the production enclave binary without SGX. Both non-SGX
-  modes run only on the isolated `GramineDirectDev` chain and are not hardware
-  evidence.
+- `--tee <real|sgx-no-attest|gramine-direct|mock>` — mandatory enclave mode
+  (default `mock`). `sgx-no-attest` runs the production enclave under real
+  `gramine-sgx`, uses EGETKEY sealing and the production NodeHost session, but
+  deliberately disables DCAP, does not mount QVL, and submits only
+  `GramineDirectDev` evidence.
+  `gramine-direct` uses the production enclave binary without SGX. `mock` is
+  test-only. None of the development-evidence modes proves remote attestation.
 - `--no-sudo` — run scripts/docker without `sudo`.
 - `--all` — treat an unsatisfiable scenario as a failure instead of skipping it.
-- `--debug` — stream localnet setup output (bootstrap / run-testnet / docker) live;
+- `--debug` — stream localnet setup output (bootstrap / process / docker) live;
   off by default (that output is captured and shown only if a step fails).
 - `--projection-mongodb-uri <URI>` — optional transaction-capable MongoDB replica set or sharded
   cluster. When omitted, the harness starts and owns a temporary `mongo:7.0`
@@ -92,6 +132,38 @@ the harness reads no configuration from the environment.** Flags:
   the worktree after the build.
 - plus cucumber's own `--tags`, `--name`, `--input`.
 
+## Dynamic OCOMP membership scenario
+
+The OCOMP acceptance lane does not configure a result committee. It starts with
+four ACTIVE validators only to create a visible membership transition, opens job
+A (`N=4`, quorum `3`), synchronizes node 5 as a real FullNode and requires it to
+materialize job A without voting, then restarts it in validator mode and drives
+registration, stake, `PENDING`, delegation,
+`confirmValidatorReady` and the certified DKG/reshare boundary. Job B must then
+pin `N=5`, quorum `4`; node 5 may vote in B and must not vote in A, while A keeps
+its original snapshot. Validator 2 completes both quorums; validator 3 remains
+absent so both deadline summaries exercise the same missing participant before
+and after its first `ACTIVE -> JAILED` transition.
+
+Each finalized attempt gives its pinned participants exactly 1,800 blocks to
+compute and submit a valid vote. Quorum may apply the result earlier, but it does
+not close the remaining vote slots. At the exclusive deadline the deterministic
+deadline transition records every pinned participant without a timely included
+vote and jails only one whose current ValidatorSet status is still `ACTIVE`.
+Votes use the canonical validator-authenticated OCOMP system carrier with
+visible `gas_limit = 30_000`; its bounded internal work does not consume the
+ordinary user-transaction gas lane.
+
+The FullNode phase is not only a synchronization prelude. A FullNode has no OCOMP
+signing key and never votes, but independently runs the same canonical Lysis,
+retains its local result data, and refuses activation unless digest, roots and
+manifest match the finalized quorum result. The process scenario must cover
+matching, unavailable-input/mismatch fail-closed behavior and restart recovery.
+
+Those counts are scenario inputs, not OCOMP constants. Fixture generation reads
+the ordered validator manifest, produces one founder registration per genesis
+validator and contains no static committee or threshold artifact.
+
 Actually executing a scenario needs a Linux box with `sudo` + `docker` + `gramine`
 (same prerequisites as `mise run e2e`). First build the binaries the steps call:
 
@@ -112,6 +184,25 @@ cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
 # a fully-capable box: everything must run (unmet ⇒ fail, not skip)
 cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
   --tee mock --validators 4 --all
+```
+
+Compile the dynamic OCOMP acceptance source without starting processes:
+
+```sh
+cargo test --locked -p outbe-e2e-harness \
+  --features ocomp-integration --no-run
+```
+
+After integration with the current node/Supervisor/worker transport, run the
+focused process lanes:
+
+```sh
+cargo run --locked -p outbe-e2e-harness --features ocomp-integration \
+  --bin outbe-e2e -- --tee mock --validators 4 --all \
+  --tags '@ocomp-dynamic-admission'
+cargo run --locked -p outbe-e2e-harness --features ocomp-integration \
+  --bin outbe-e2e -- --tee mock --validators 4 --all \
+  --tags '@ocomp-dynamic-overlap'
 ```
 
 The Metadosis P0 env-independence closure is a separate Ubuntu 24.04 x86_64
@@ -277,7 +368,7 @@ Run the complete Tribute compressed-entity feature (happy path and edge cases):
 cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
   --tee gramine-direct \
   --validators 4 \
-  --input 'testing/e2e-harness/features/tribute_projection.feature'
+  --input 'testing/e2e-harness/features/tribute.feature'
 ```
 
 Run only the creation happy path:
@@ -286,7 +377,7 @@ Run only the creation happy path:
 cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
   --tee gramine-direct \
   --validators 4 \
-  --name "A successful tribute is persisted by every validator"
+  --name "One public Tribute has complete projection and duplicate protection"
 ```
 
 The scenario performs the complete product flow:

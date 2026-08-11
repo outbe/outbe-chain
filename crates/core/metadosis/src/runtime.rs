@@ -14,12 +14,6 @@ use crate::{
     settlement::process_ocomp_ready_candidate,
 };
 
-/// Returns effective lookback and offering hours based on chain identity.
-#[cfg(test)]
-pub(crate) fn effective_hours(chain_id: u64) -> (u64, u64) {
-    lifecycle::effective_hours(chain_id)
-}
-
 /// Converts a unix timestamp to a yyyymmdd date key (UTC).
 #[cfg(test)]
 pub fn timestamp_to_date_key(timestamp: u64) -> u32 {

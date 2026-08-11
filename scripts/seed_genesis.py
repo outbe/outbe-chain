@@ -213,6 +213,9 @@ TEE_REGISTRY_ADDRESS = "000000000000000000000000000000000000ee0a"
 # before production dispatch activates.
 STABLECOIN_FACTORY_ADDRESS = "000000000000000000000000000000000000ee0f"
 STABLECOIN_POLICY_REGISTRY_ADDRESS = "000000000000000000000000000000000000ee10"
+# Immutable protocol timing record. Python may author config.outbeProtocol, but
+# only `outbe-chain constants genesis` owns this account's Rust storage layout.
+CHAIN_CONSTANTS_ADDRESS = "000000000000000000000000000000000000ee11"
 STABLECOIN_ADDRESS_PREFIX = "53c0"
 OUTBE_SYSTEM_TX_ADDRESS = "ff00000000000000000000000000000000000001"
 
@@ -243,9 +246,17 @@ ALL_PRECOMPILE_ADDRESSES = [
 
 # Protocol-owned balance accumulators without precompile dispatch. They are
 # collision-protected for genesis tooling but do not receive marker bytecode.
-PROTOCOL_ACCUMULATOR_ADDRESSES = [CCA_ADDRESS, MERCHANT_ADDRESS]
+PROTOCOL_ACCUMULATOR_ADDRESSES = [
+    CCA_ADDRESS,
+    MERCHANT_ADDRESS,
+]
+IMMUTABLE_PROTOCOL_ADDRESSES = [CHAIN_CONSTANTS_ADDRESS]
 
-PROTECTED_PROTOCOL_ADDRESSES = set(ALL_PRECOMPILE_ADDRESSES + PROTOCOL_ACCUMULATOR_ADDRESSES)
+PROTECTED_PROTOCOL_ADDRESSES = set(
+    ALL_PRECOMPILE_ADDRESSES
+    + PROTOCOL_ACCUMULATOR_ADDRESSES
+    + IMMUTABLE_PROTOCOL_ADDRESSES
+)
 
 # Marker bytecode for precompile accounts (prevents EIP-161 empty account removal)
 MARKER_CODE = "0xef"
@@ -492,6 +503,19 @@ class StorageBuilder:
         k = mapping_key(key_bytes, base_slot)
         self.entries[k] = "0x" + value_bytes.hex()
 
+    def set_mapping_pair(self, base_slot: int, key_bytes: bytes, base: str, quote: str):
+        """
+        Set a two-word `Mapping<K, AddressPair>` entry.
+
+        An oracle pair is 40 bytes and a storage word is 32, so the value spans
+        the key's mapping slot and the one after it — base then quote, the same
+        layout Solidity gives `mapping(K => struct { address; address; })`.
+        Callers pass the pair already canonical; nothing here sorts it.
+        """
+        slot = int(mapping_key(key_bytes, base_slot), 16)
+        self.set_raw_slot(slot, int.from_bytes(asset_address(base), "big"))
+        self.set_raw_slot(slot + 1, int.from_bytes(asset_address(quote), "big"))
+
 
 def data_slot(base_slot: int) -> int:
     """Solidity dynamic bytes/string data slot: keccak256(base_slot)."""
@@ -626,13 +650,47 @@ def encode_p2p_address_payload(value) -> tuple[int, bytes] | None:
     return P2P_ADDRESS_VERSION_V1, payload
 
 
-def pair_hash(base: str, quote: str) -> bytes:
-    """Oracle pair hash: keccak256('BASE/QUOTE')."""
-    if not base or not quote:
-        raise ValueError("oracle pair base/quote must not be empty")
-    if "/" in base or "/" in quote:
-        raise ValueError("oracle pair base/quote must not contain '/'")
-    return keccak256(f"{base}/{quote}".encode())
+# Marker nibbles every ISO currency address carries, keeping the reserved range
+# clear of low-numbered token addresses. Mirrors ISO_MARKER in
+# crates/blockchain/primitives/src/asset_type.rs.
+ISO_MARKER = 0xCC000
+
+
+def asset_address(spec: str) -> bytes:
+    """
+    An oracle asset as its 20-byte address.
+
+    Accepts "COEN"/"native" for the native asset (the zero address), a decimal
+    ISO 4217 numeric code, or an explicit 0x-prefixed ERC20 address. Mirrors
+    `AssetType` in crates/blockchain/primitives/src/asset_type.rs.
+    """
+    text = str(spec).strip()
+    if text.upper() in ("COEN", "NATIVE"):
+        return bytes(20)
+    if text.lower().startswith("0x"):
+        return address_bytes(text)
+    if text.isdigit():
+        code = int(text)
+        if not 1 <= code <= 999:
+            raise ValueError(f"ISO 4217 code out of range: {text}")
+        # One decimal digit per nibble, behind the marker: 840 -> 0x0cc840.
+        return (ISO_MARKER | int(f"{code:04d}", 16)).to_bytes(20, "big")
+    raise ValueError(
+        f"oracle asset must be COEN, an ISO 4217 numeric code or a 0x address: {spec!r}"
+    )
+
+
+def address_pair(base: str, quote: str) -> bytes:
+    """
+    Oracle pair storage key: both asset addresses concatenated ascending.
+
+    Order-independent, so `COEN/840` and `840/COEN` are one key. `mapping_key`
+    needs no special case: it left-pads with `rjust(32)`, which never truncates,
+    so a 40-byte key falls through unpadded and yields the same slot as the Rust
+    `StorageKey for AddressPair` override.
+    """
+    low, high = sorted((asset_address(base), asset_address(quote)))
+    return low + high
 
 
 # --- Seeders ---
@@ -647,7 +705,7 @@ GEM_TYPE_WALLET = 3
 
 
 def gem_id_gen(owner: str, gem_load: int, index: int) -> bytes:
-    """Genesis gem id = keccak256("gem" ++ owner_20B ++ gem_load_be32 ++ index_be8).
+    """Genesis gem id = keccak256("gem" ++ owner_20B ++ promis_load_be32 ++ index_be8).
 
     Mirrors the shape of `GemContract::generate_gem_id` (which uses the issuing
     block number); `index` disambiguates multiple genesis gems for one owner.
@@ -672,18 +730,21 @@ def seed_gems(storage: StorageBuilder, gems: list):
     test in `crates/core/gem/src/tests.rs`:
 
       slot 0:      total_supply (u64)
-      slots 1-10:  gem_items Map<U256, GemData> record fields keyed by gem_id:
-                     1 owner              2 gem_type           3 gem_load
-                     4 entry_price        5 cost_amount        6 floor_price
+      slots 1-18:  gem_items Map<U256, GemData> record fields keyed by gem_id:
+                     1 owner              2 gem_type           3 gem_load_minor
+                     4 entry_price_minor  5 cost_amount_minor  6 floor_price_minor
                      7 issuance_currency  8 reference_currency 9 state
-                     10 issued_at
-      slot 11:     owner_gem_counts Map<Address, u32>
-      slot 12:     owner_gem_ids    Map<B256, U256>  (key = owner_index_key)
-      slot 13:     all_gem_ids      List<U256>  (len @ slot 13, data @ keccak(13)+i)
-      slot 14:     gem_index        Map<U256, u32>
+                     10 issued_at         11 call_price_minor   12 called_at
+                     13 call_notice_period 14 call_rate         15 call_window
+                     16 call_threshold 17 qualified_at     18 settled_at
+      slot 19:     owner_gem_counts Map<Address, u32>
+      slot 20:     owner_gem_ids    Map<B256, U256>  (key = owner_index_key)
+      slot 21:     all_gem_ids      List<U256>  (len @ slot 21, data @ keccak(21)+i)
+      slot 22:     gem_index        Map<U256, u32>
 
-    Settled gems are NOT parked in the unqualified bin-tree index (slots 15+), so
-    those slots are intentionally left empty (add_gem only indexes Issued gems).
+    Settled gems are NOT parked in the unqualified bin-tree index (slots 23+) nor
+    the callable-gem index, so those slots are intentionally left empty (add_gem
+    only indexes Issued gems; the callable index only holds Qualified/Called).
     """
     owner_counts: dict[str, int] = {}
     for i, gem in enumerate(gems):
@@ -697,7 +758,7 @@ def seed_gems(storage: StorageBuilder, gems: list):
             )
         gem_id = gem_id_gen(owner, gem_load, i)
 
-        # gem_items record (slots 1-10, keyed by gem_id).
+        # gem_items record (slots 1-18, keyed by gem_id).
         storage.set_mapping(1, gem_id, address_as_u256(owner))
         storage.set_mapping(2, gem_id, parse_int(gem.get("gem_type", GEM_TYPE_WALLET)))
         storage.set_mapping(3, gem_id, gem_load)
@@ -707,23 +768,38 @@ def seed_gems(storage: StorageBuilder, gems: list):
         storage.set_mapping(7, gem_id, parse_int(gem.get("issuance_currency", 840)))
         storage.set_mapping(8, gem_id, parse_int(gem.get("reference_currency", 840)))
         storage.set_mapping(9, gem_id, state)
-        storage.set_mapping(10, gem_id, parse_int(gem.get("issued_at", 0)))
+        issued_at = parse_int(gem.get("issued_at", 0))
+        storage.set_mapping(10, gem_id, issued_at)
+        storage.set_mapping(11, gem_id, parse_int(gem.get("call_price_minor", "0")))
+        storage.set_mapping(12, gem_id, parse_int(gem.get("called_at", 0)))
+        # call_notice_period: add_gem snapshots CALL_NOTICE_PERIOD (7 days, in seconds).
+        storage.set_mapping(13, gem_id, parse_int(gem.get("call_notice_period", 7 * 24 * 3600)))
+        # call_rate: add_gem snapshots GEM_CALL_MARKUP_PERCENT (228).
+        storage.set_mapping(14, gem_id, parse_int(gem.get("call_rate", 228)))
+        # call_window: add_gem snapshots CALL_WINDOW (28 days, in seconds).
+        storage.set_mapping(15, gem_id, parse_int(gem.get("call_window", 28 * 24 * 3600)))
+        # call_threshold: add_gem snapshots CALL_THRESHOLD (21 days, in seconds).
+        storage.set_mapping(16, gem_id, parse_int(gem.get("call_threshold", 21 * 24 * 3600)))
+        # qualified_at / settled_at: seeded gems are Settled, so both default to
+        # issued_at (the gem reached those states at issuance).
+        storage.set_mapping(17, gem_id, parse_int(gem.get("qualified_at", issued_at)))
+        storage.set_mapping(18, gem_id, parse_int(gem.get("settled_at", issued_at)))
 
-        # owner_gem_ids index (slot 12) + swap-and-pop counter (slot 11 below).
+        # owner_gem_ids index (slot 20) + swap-and-pop counter (slot 19 below).
         oi = owner_counts.get(owner.lower(), 0)
-        storage.set_mapping(12, gem_owner_index_key(owner, oi), int.from_bytes(gem_id, "big"))
+        storage.set_mapping(20, gem_owner_index_key(owner, oi), int.from_bytes(gem_id, "big"))
         owner_counts[owner.lower()] = oi + 1
 
-        # all_gem_ids List element i (slot 13 data region) + gem_index (slot 14).
-        storage.set_raw_slot(data_slot(13) + i, int.from_bytes(gem_id, "big"))
-        storage.set_mapping(14, gem_id, i)
+        # all_gem_ids List element i (slot 21 data region) + gem_index (slot 22).
+        storage.set_raw_slot(data_slot(21) + i, int.from_bytes(gem_id, "big"))
+        storage.set_mapping(22, gem_id, i)
 
     for owner, count in owner_counts.items():
-        storage.set_mapping(11, address_bytes(owner), count)
+        storage.set_mapping(19, address_bytes(owner), count)
 
-    # total_supply (slot 0) and all_gem_ids length (slot 13).
+    # total_supply (slot 0) and all_gem_ids length (slot 21).
     storage.set_slot(0, len(gems))
-    storage.set_slot(13, len(gems))
+    storage.set_slot(21, len(gems))
 
 
 def seed_coen(alloc: dict, balances: dict):
@@ -1318,14 +1394,17 @@ def seed_oracle(storage: StorageBuilder, config: dict):
     Oracle storage layout:
       slots 0-7: config
       slot 8: pair_count
-      slot 9: mapping(pair_id => pair_hash)
-      slot 10: mapping(pair_hash => pair_id)
-      slot 11: mapping(pair_hash => is_vote_target)
-      slots 12-14: exchange_rate / block / timestamp
+      slot 9: retired hole (was mapping(pair_id => pair_hash))
+      slot 10: mapping(pair => ordinal)
+      slot 11: mapping(pair => is_vote_target)
+      slots 12-14: exchange_rate / block / timestamp, keyed by pair_index
+        (the 1-based ordinal from slot 10), not by the pair itself
       slot 15: feeder delegations
-      slots 33-34: protected validators
-      slots 41-43: settlement currency runtime mappings
-      slots 44-47: reversible pair/settlement metadata
+      slots 32-33: protected validators
+      slot 43: mapping(pair_index => AddressPair), a two-word value and the only
+        way to enumerate the registry (40-42, 44, 45 and 46 are retired
+        settlement holes; the settlement pair is derived as
+        address_pair("COEN", "<iso>"))
       slot 55: reference_currencies (StorageVec<u16>)
     """
     cfg = config.get("config", {})
@@ -1345,7 +1424,7 @@ def seed_oracle(storage: StorageBuilder, config: dict):
     storage.set_slot(6, 1 if cfg.get("enabled", True) else 0)
     storage.set_slot(7, 1 if cfg.get("initialized", True) else 0)
 
-    pair_hashes: dict[tuple[str, str], bytes] = {}
+    pair_keys: dict[tuple[str, str], bytes] = {}
     pair_ids: dict[tuple[str, str], int] = {}
     pairs = config.get("pairs", [])
     storage.set_slot(8, len(pairs))
@@ -1353,34 +1432,44 @@ def seed_oracle(storage: StorageBuilder, config: dict):
     for idx, pair in enumerate(pairs, start=1):
         base = pair["base"]
         quote = pair["quote"]
-        h = pair_hash(base, quote)
+        h = address_pair(base, quote)
         key = (base, quote)
-        if key in pair_hashes:
+        if key in pair_keys:
             raise ValueError(f"duplicate oracle pair: {base}/{quote}")
-        pair_hashes[key] = h
+        # The key is order-independent, so the inverse is the same pair.
+        if h in pair_keys.values():
+            raise ValueError(f"oracle pair already registered inverted: {base}/{quote}")
+        # This seeder writes slot 43 directly, bypassing `register_pair`, so it
+        # owes the same invariant: only the canonical orientation is stored, and
+        # `require_pair` relies on that rather than re-reading the entry.
+        if asset_address(base) > asset_address(quote):
+            raise ValueError(
+                f"oracle pair must be canonical (base <= quote): {base}/{quote}"
+            )
+        pair_keys[key] = h
         pair_ids[key] = idx
 
-        storage.set_mapping_b256(9, u32_bytes(idx), h)
         storage.set_mapping(10, h, idx)
         storage.set_mapping(11, h, 1 if pair.get("vote_target", True) else 0)
-        # pair_id_to_base / pair_id_to_quote (macro slots 43/44).
-        write_mapping_string(storage, 43, u32_bytes(idx), base)
-        write_mapping_string(storage, 44, u32_bytes(idx), quote)
+        # pair_by_index (macro slot 43), canonical orientation.
+        storage.set_mapping_pair(43, u32_bytes(idx), base, quote)
 
         rate = parse_int(pair.get("initial_rate", "0"))
         if rate:
-            storage.set_mapping(12, h, rate)
-            storage.set_mapping(13, h, parse_int(pair.get("initial_block", 0)))
-            storage.set_mapping(14, h, parse_int(pair.get("initial_timestamp", 0)))
+            storage.set_mapping(12, u32_bytes(idx), rate)
+            storage.set_mapping(13, u32_bytes(idx), parse_int(pair.get("initial_block", 0)))
+            storage.set_mapping(
+                14, u32_bytes(idx), parse_int(pair.get("initial_timestamp", 0))
+            )
 
     for rate_entry in config.get("initial_rates", []):
         key = (rate_entry["base"], rate_entry["quote"])
-        h = pair_hashes.get(key)
-        if h is None:
+        idx = pair_ids.get(key)
+        if idx is None:
             raise ValueError(f"initial rate pair is not registered: {key[0]}/{key[1]}")
-        storage.set_mapping(12, h, parse_int(rate_entry["rate"]))
-        storage.set_mapping(13, h, parse_int(rate_entry.get("block", 0)))
-        storage.set_mapping(14, h, parse_int(rate_entry.get("timestamp", 0)))
+        storage.set_mapping(12, u32_bytes(idx), parse_int(rate_entry["rate"]))
+        storage.set_mapping(13, u32_bytes(idx), parse_int(rate_entry.get("block", 0)))
+        storage.set_mapping(14, u32_bytes(idx), parse_int(rate_entry.get("timestamp", 0)))
 
     for delegation in config.get("feeder_delegations", []):
         validator = delegation["validator"]
@@ -1394,32 +1483,11 @@ def seed_oracle(storage: StorageBuilder, config: dict):
         for validator in protected:
             storage.set_mapping(32, address_bytes(validator), 1)
 
-    settlements = config.get("settlement_currencies", [])
-    seen_iso: set[int] = set()
-    # settlement_count (macro slot 40).
-    storage.set_slot(40, len(settlements))
-    for idx, settlement in enumerate(settlements):
-        iso_code = parse_int(settlement["iso_code"])
-        if iso_code == 0:
-            raise ValueError("oracle settlement iso_code must be non-zero")
-        if iso_code in seen_iso:
-            raise ValueError(f"duplicate oracle settlement iso_code: {iso_code}")
-        seen_iso.add(iso_code)
-
-        denom = settlement["denom"]
-        pair_base = settlement["pair_base"]
-        pair_quote = settlement["pair_quote"]
-        pair = (pair_base, pair_quote)
-        h = pair_hashes.get(pair)
-        if h is None:
-            raise ValueError(f"settlement pair is not registered: {pair_base}/{pair_quote}")
-
-        # settlement_iso_to_denom (41) / settlement_iso_to_pair (42) /
-        # settlement_index_to_iso (45) / settlement_iso_to_denom_string (46).
-        storage.set_mapping_b256(41, u32_bytes(iso_code), keccak256(denom.encode()))
-        storage.set_mapping_b256(42, u32_bytes(iso_code), h)
-        storage.set_mapping(45, u32_bytes(idx), iso_code)
-        write_mapping_string(storage, 46, u32_bytes(iso_code), denom)
+    if config.get("settlement_currencies"):
+        raise ValueError(
+            "oracle.settlement_currencies was removed: register the COEN/<iso> "
+            "pair instead, and list the ISO under oracle.reference_currencies"
+        )
 
     # S-curve genesis seeds (macro slots 34-38). `resolve_tribute_price` reads
     # `max(per-day VWAP, S-curve)`; pre-seeded OFFERING days have no runtime-
@@ -1432,13 +1500,13 @@ def seed_oracle(storage: StorageBuilder, config: dict):
         storage.set_slot(38, 0)  # scurve_oldest_idx
         for idx, sc in enumerate(scurve_seeds):
             pair = (sc["pair_base"], sc["pair_quote"])
-            pid = pair_ids.get(pair)
-            if pid is None:
+            if pair_ids.get(pair) is None:
                 raise ValueError(
                     f"scurve seed pair is not registered: {pair[0]}/{pair[1]}"
                 )
             peak_day_ts = wwd_to_day_timestamp(parse_int(sc["peak_day"]))
-            storage.set_mapping(35, u32_bytes(idx), pid)  # scurve_pair_id
+            # scurve_pair (35): a two-word pair value, base then base+1.
+            storage.set_mapping_pair(35, u32_bytes(idx), pair[0], pair[1])
             storage.set_mapping(36, u32_bytes(idx), peak_day_ts)  # scurve_peak_day
             storage.set_mapping(
                 37, u32_bytes(idx), parse_int(sc["peak_price"])
@@ -1540,6 +1608,38 @@ def seed_external_contracts(alloc, contracts_list, contracts_dir):
 
 # --- Main ---
 
+def seed_protocol_constants(genesis: dict, seed: dict) -> None:
+    """Copy optional protocol timing overrides into genesis config.
+
+    Rust resolves defaults, validates the complete record, and materializes its
+    storage later. Keeping that layout out of Python preserves one owner for the
+    consensus-visible schema.
+    """
+    profile = seed.get("protocol_constants")
+    if profile is None:
+        return
+    if not isinstance(profile, dict):
+        raise ValueError("seed protocol_constants must be a JSON object")
+    config = genesis.setdefault("config", {})
+    if not isinstance(config, dict):
+        raise ValueError("genesis config must be a JSON object")
+    existing = config.get("outbeProtocol")
+    if existing is not None and existing != profile:
+        raise ValueError(
+            "seed protocol_constants conflicts with genesis config.outbeProtocol"
+        )
+    config["outbeProtocol"] = json.loads(json.dumps(profile))
+
+
+def clear_seeded_metadosis_days(seed: dict) -> None:
+    """Let block-1 create the first WorldwideDay from protocol timings."""
+    metadosis = seed.get("metadosis")
+    if metadosis is None:
+        return
+    if not isinstance(metadosis, dict):
+        raise ValueError("seed metadosis must be a JSON object")
+    metadosis["worldwide_days"] = []
+
 def override_worldwide_day(seed: dict, day: int) -> None:
     """Retarget every worldwide-day reference in a seed to `day` (YYYYMMDD), in
     place: metadosis worldwide_days[].wwd, oracle scurve_seeds[].peak_day, and
@@ -1590,6 +1690,12 @@ def main():
              "hardcoded day desyncs from the per-block "
              "WorldwideDay::from_timestamp(block) and wedges metadosis processing.",
     )
+    parser.add_argument(
+        "--fresh-metadosis",
+        action="store_true",
+        help="Do not seed an already-OFFERING WorldwideDay; block 1 creates it "
+             "from config.outbeProtocol timings. Intended for production-shaped E2E.",
+    )
     args = parser.parse_args()
 
     with open(args.genesis) as f:
@@ -1598,11 +1704,15 @@ def main():
     with open(args.seed) as f:
         seed = json.load(f)
 
+    seed_protocol_constants(genesis, seed)
+
     # Retarget the seeded worldwide-day to the genesis (current) date when asked,
     # before any seeder consumes `seed`, so metadosis, the oracle S-curve, the
     # tribute day_totals init, and the NODs all agree on the same active day.
     if args.worldwide_day is not None:
         override_worldwide_day(seed, args.worldwide_day)
+    if args.fresh_metadosis:
+        clear_seeded_metadosis_days(seed)
 
     validators = []
     if args.validators:
@@ -1836,8 +1946,7 @@ def main():
         entry = alloc[ORACLE_ADDRESS]
         entry.setdefault("storage", {}).update(oracle_storage.entries)
         pairs = seed["oracle"].get("pairs", [])
-        settlements = seed["oracle"].get("settlement_currencies", [])
-        print(f"  Oracle: {len(pairs)} pairs, {len(settlements)} settlements, "
+        print(f"  Oracle: {len(pairs)} pairs, "
               f"{len(oracle_storage.entries)} storage entries")
 
     # Seed IntexFactory profile selector (prod seeds nothing).

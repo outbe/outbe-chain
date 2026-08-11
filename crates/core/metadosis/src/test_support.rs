@@ -5,7 +5,7 @@
 //! detail of the crate-private fixture kernel while actions under test cross a
 //! production command seam.
 
-use alloy_primitives::{Bytes, B256};
+use alloy_primitives::{Address, Bytes, B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_ocomp_protocol::{
     intent::JobIntentV1, receipts::ActivationOutcome, result::LysisResultV1, vote::ResultVoteV1,
@@ -15,6 +15,34 @@ use outbe_primitives::{error::Result, storage::StorageHandle};
 use std::fmt;
 
 use crate::OcompForkInstallV1;
+
+/// Seeds an exact retained READY population for cross-crate capacity tests.
+///
+/// The helper owns only predecessor construction. The capacity decision under
+/// test must still enter through the production lifecycle command.
+pub fn seed_ready_worldwide_days_for_capacity(
+    storage: StorageHandle<'_>,
+    worldwide_days: &[WorldwideDay],
+) -> Result<()> {
+    use crate::fixture_kernel::FixtureKernelExt;
+
+    if worldwide_days.len() > crate::constants::MAX_RETAINED_WWDS {
+        return Err(outbe_primitives::error::PrecompileError::Fatal(
+            "capacity fixture exceeds MAX_RETAINED_WWDS".into(),
+        ));
+    }
+    let mut contract = crate::schema::MetadosisContract::new(storage);
+    for worldwide_day in worldwide_days {
+        if !worldwide_day.is_valid() {
+            return Err(outbe_primitives::error::PrecompileError::Fatal(
+                "capacity fixture contains an invalid WorldwideDay".into(),
+            ));
+        }
+        contract.fixture_create_ready_day(*worldwide_day, U256::ZERO, U256::ZERO, U256::ZERO)?;
+        contract.add_active_wwd(*worldwide_day)?;
+    }
+    Ok(())
+}
 
 /// Test/evidence-only sentinel probe for a fresh-devnet genesis snapshot.
 ///
@@ -61,11 +89,11 @@ pub fn fresh_devnet_sentinel_is_pristine(
 }
 
 mod kernel {
-    use alloy_primitives::{Bytes, B256};
+    use alloy_primitives::{Address, Bytes, B256};
     use outbe_common::WorldwideDay;
     use outbe_ocomp_protocol::{
-        intent::JobIntentV1, receipts::ActivationOutcome, result::LysisResultV1,
-        vote::ResultVoteV1, SchemaLimits,
+        committee::OcompKeyRegistrationV1, intent::JobIntentV1, receipts::ActivationOutcome,
+        result::LysisResultV1, vote::ResultVoteV1, SchemaLimits,
     };
     use outbe_primitives::{
         error::{PrecompileError, Result},
@@ -170,6 +198,19 @@ mod kernel {
             fork_install_fixture(classification, activation_height, chain_id, genesis_hash);
         install.validate_for_chain(chain_id, genesis_hash, &poc_schema_limits())?;
         Ok(install)
+    }
+
+    pub(super) fn founder_registrations(
+        validators: &[(Address, [u8; 48])],
+        chain_id: u64,
+        genesis_hash: B256,
+    ) -> Result<Vec<OcompKeyRegistrationV1>> {
+        crate::fixture_kernel::founder_registrations_for_validators(
+            validators,
+            chain_id,
+            genesis_hash,
+            &poc_schema_limits(),
+        )
     }
 
     pub(super) fn result_for_intent(
@@ -281,6 +322,24 @@ impl ForkInstallScenario {
                 genesis_hash,
             )?,
         })
+    }
+
+    /// Rebinds the test artifact to the exact ordered validator snapshot used
+    /// by [`ResultVotingScenario`]. The registration keys and result-vote keys
+    /// share one deterministic index mapping, so cross-crate fixtures exercise
+    /// real signature verification rather than a bypass.
+    pub fn with_founder_validators(mut self, validators: &[(Address, [u8; 48])]) -> Result<Self> {
+        self.install.founder_registrations = kernel::founder_registrations(
+            validators,
+            self.install.request_profile.chain_id,
+            self.install.request_profile.genesis_hash,
+        )?;
+        self.install.validate_for_chain(
+            self.install.request_profile.chain_id,
+            self.install.request_profile.genesis_hash,
+            &crate::ocomp::schema::poc_schema_limits(),
+        )?;
+        Ok(self)
     }
 
     /// Borrows the immutable artifact consumed by production genesis/config

@@ -10,7 +10,6 @@ use outbe_ocomp_protocol::capacity::{
     CapacityRecoveredGenerationBindingV1, CapacityRunBindingV1, CapacityValidatorBlockProcessingV1,
     CapacityWorkBillV1, ObservedMachineFactsV1, VerifiedCapacityEvidenceV1,
 };
-use outbe_ocomp_protocol::committee::POC_COMMITTEE_SIZE;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -55,6 +54,7 @@ struct ScenarioSourceV1 {
 struct ScenarioEnvironmentV1 {
     validators: u64,
     tee: String,
+    sudo: bool,
     all: bool,
     gramine_image_id: String,
 }
@@ -107,21 +107,21 @@ struct CapacityPublicObservationV1 {
     q_forming_transaction_hash: B256,
     q_forming_block_number: u64,
     q_forming_block_hash: B256,
-    #[serde(default)]
+    #[serde(default, rename = "q_forming_receipt_success")]
     _q_forming_receipt_success: Option<bool>,
-    #[serde(default)]
+    #[serde(default, rename = "q_forming_receipt_sha256")]
     _q_forming_receipt_sha256: Option<String>,
-    #[serde(default)]
+    #[serde(default, rename = "q_forming_validator_receipt_sha256")]
     _q_forming_validator_receipt_sha256: Option<Vec<String>>,
-    #[serde(default)]
+    #[serde(default, rename = "q_forming_state_root")]
     _q_forming_state_root: Option<B256>,
-    #[serde(default)]
+    #[serde(default, rename = "q_forming_ce_root")]
     _q_forming_ce_root: Option<B256>,
-    #[serde(default)]
+    #[serde(default, rename = "q_forming_validator_commitments")]
     _q_forming_validator_commitments: Option<Vec<crate::world::rpc::BlockCommitmentV1>>,
-    #[serde(default)]
+    #[serde(default, rename = "canonical_import_validator_count")]
     _canonical_import_validator_count: Option<u8>,
-    #[serde(default)]
+    #[serde(default, rename = "canonical_import_verified")]
     _canonical_import_verified: Option<bool>,
     finalized_block_number: u64,
     finalized_block_hash: B256,
@@ -196,9 +196,10 @@ pub fn assemble_capacity_run(ordinal: u8, scenario_path: &Path) -> Result<Capaci
     );
     ensure!(
         scenario.environment.validators == 4
-            && scenario.environment.tee == "gramine-direct"
+            && scenario.environment.tee == "sgx-no-attest"
+            && scenario.environment.sudo
             && scenario.environment.all,
-        "capacity scenario did not use four validators, the production enclave under gramine-direct and --all"
+        "capacity scenario did not use four validators, release SGX-no-attest, sudo and --all"
     );
     let revision = hex::decode(&scenario.source.sha).wrap_err("decode source revision")?;
     ensure!(
@@ -245,7 +246,7 @@ pub fn assemble_capacity_run(ordinal: u8, scenario_path: &Path) -> Result<Capaci
                 .copied()
                 .max()
                 == Some(public.block_processing_micros),
-        "capacity block-processing maximum is not bound to four live validator observations"
+        "capacity block-processing maximum is not bound to live validator observations"
     );
     ensure!(
         historical_replay.recovered_generation.job_id == public.job_id
@@ -257,16 +258,7 @@ pub fn assemble_capacity_run(ordinal: u8, scenario_path: &Path) -> Result<Capaci
             && historical_replay.recovered_generation.block_hash == public.q_forming_block_hash,
         "historical CE replay did not recover the exact certified public generation"
     );
-    let validator_timings: [u64; POC_COMMITTEE_SIZE] = public
-        .block_processing_micros_by_validator
-        .try_into()
-        .map_err(|values: Vec<u64>| {
-            eyre::eyre!(
-                "capacity block-processing observation count is {}, expected {}",
-                values.len(),
-                POC_COMMITTEE_SIZE
-            )
-        })?;
+    let validator_timings = &public.block_processing_micros_by_validator;
 
     Ok(CapacityColdRunV1 {
         ordinal,
@@ -288,17 +280,22 @@ pub fn assemble_capacity_run(ordinal: u8, scenario_path: &Path) -> Result<Capaci
             tribute_count: public.tribute_count,
             nod_count: public.nod_count,
             worker_shard_count: public.worker_shard_count,
-            validator_block_processing: std::array::from_fn(|validator_index| {
-                CapacityValidatorBlockProcessingV1 {
-                    validator_index: u8::try_from(validator_index)
-                        .expect("fixed PoC committee index fits u8"),
-                    block_number: public.q_forming_block_number,
-                    block_hash: public.q_forming_block_hash,
-                    elapsed_micros: validator_timings[validator_index],
-                }
-            }),
+            validator_block_processing: validator_timings
+                .iter()
+                .copied()
+                .enumerate()
+                .map(
+                    |(validator_index, elapsed_micros)| CapacityValidatorBlockProcessingV1 {
+                        validator_index: u16::try_from(validator_index)
+                            .expect("consensus validator index fits u16"),
+                        block_number: public.q_forming_block_number,
+                        block_hash: public.q_forming_block_hash,
+                        elapsed_micros,
+                    },
+                )
+                .collect(),
             historical_replay: CapacityHistoricalReplayBindingV1 {
-                validator_index: historical_replay.recovery.validator_index,
+                validator_index: u16::from(historical_replay.recovery.validator_index),
                 first_missing_block_number: historical_replay.recovery.first_missing_block_number,
                 target_block_number: historical_replay.recovery.target_block_number,
                 target_block_hash: historical_replay.recovery.target_block_hash,
@@ -376,7 +373,7 @@ pub fn assemble_capacity_evidence(
         "capacity assembly requires exactly five scenario records"
     );
     let mut process_memory_limit_bytes = None;
-    let mut production_enclave_gramine_direct = true;
+    let mut production_enclave_sgx_no_attest = true;
     let mut writable_resource_cgroup = true;
     for path in scenario_paths {
         let bytes = std::fs::read(path.as_ref()).wrap_err_with(|| {
@@ -408,7 +405,8 @@ pub fn assemble_capacity_evidence(
                 Some(expected)
             }
         };
-        production_enclave_gramine_direct &= scenario.environment.tee == "gramine-direct";
+        production_enclave_sgx_no_attest &=
+            scenario.environment.tee == "sgx-no-attest" && scenario.environment.sudo;
         writable_resource_cgroup &= scenario
             .ocomp
             .public_path
@@ -429,7 +427,7 @@ pub fn assemble_capacity_evidence(
         pid1_is_systemd: host.pid1_is_systemd,
         unified_cgroup_v2: host.unified_cgroup_v2,
         writable_resource_cgroup,
-        production_enclave_gramine_direct,
+        production_enclave_sgx_no_attest,
     };
     let runs = scenario_paths
         .iter()
@@ -545,7 +543,8 @@ mod tests {
             "result": "passed",
             "environment": {
                 "validators": 4,
-                "tee": "gramine-direct",
+                "tee": "sgx-no-attest",
+                "sudo": true,
                 "all": true,
                 "gramine_image_id": format!("sha256:{}", "ab".repeat(32)),
             },
@@ -580,6 +579,14 @@ mod tests {
                         "q_forming_transaction_hash": B256::repeat_byte(3),
                         "q_forming_block_number": 40,
                         "q_forming_block_hash": B256::repeat_byte(4),
+                        "q_forming_receipt_success": true,
+                        "q_forming_receipt_sha256": "11".repeat(32),
+                        "q_forming_validator_receipt_sha256": vec!["11".repeat(32); 4],
+                        "q_forming_state_root": B256::repeat_byte(12),
+                        "q_forming_ce_root": B256::repeat_byte(13),
+                        "q_forming_validator_commitments": [],
+                        "canonical_import_validator_count": 4,
+                        "canonical_import_verified": true,
                         "finalized_block_number": 42,
                         "finalized_block_hash": B256::repeat_byte(5),
                         "tribute_count": 257,
@@ -646,6 +653,16 @@ mod tests {
         fs::write(&path, serde_json::to_vec_pretty(&another_image).unwrap()).unwrap();
         let another_image_run = assemble_capacity_run(1, &path).unwrap();
         assert_ne!(run.artifact_set_hash, another_image_run.artifact_set_hash);
+
+        let mut wrong_tee = scenario.clone();
+        wrong_tee["environment"]["tee"] = json!("gramine-direct");
+        fs::write(&path, serde_json::to_vec_pretty(&wrong_tee).unwrap()).unwrap();
+        assert!(assemble_capacity_run(1, &path).is_err());
+
+        let mut without_sudo = scenario.clone();
+        without_sudo["environment"]["sudo"] = json!(false);
+        fs::write(&path, serde_json::to_vec_pretty(&without_sudo).unwrap()).unwrap();
+        assert!(assemble_capacity_run(1, &path).is_err());
 
         let mut dirty = scenario;
         dirty["source"]["dirty"] = json!(true);

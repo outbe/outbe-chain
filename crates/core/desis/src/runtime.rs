@@ -8,9 +8,7 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_promislimit::PromisLimitContract;
 
-use outbe_intexfactory::constants::{
-    CALL_PRICE_DEN, FLOOR_PRICE_DEN, QUALIFIER_ISSUANCE_ISO, QUALIFIER_REFERENCE_ISO,
-};
+use outbe_intexfactory::constants::{QUALIFIER_ISSUANCE_ISO, QUALIFIER_REFERENCE_ISO};
 
 use crate::constants::{
     BIDS_FANIN_TIMEOUT_SECS, BID_QUANTITY_FLOOR_BPS, COMMIT_WINDOW_SECONDS, DAY_STATE_GREEN,
@@ -123,9 +121,9 @@ fn fold_profile(
     let iparams = outbe_intexfactory::read_params(storage)?;
     config.min_intex_bid_quantity = min_bid_qty;
     config.call_trigger = crate::schema::IntexCallTrigger {
-        window_days: iparams.call_window_days,
-        threshold_days: iparams.call_threshold_days,
-        intex_call_period: iparams.intex_call_period_secs,
+        call_window: iparams.call_window,
+        call_threshold: iparams.call_threshold,
+        call_notice_period: iparams.call_notice_period,
     };
     config.commit_bond_minor = iparams.commit_bond_minor;
     Ok(iparams)
@@ -143,16 +141,8 @@ fn send_stage_start(
     issuance_end: u32,
     day_state: u8,
 ) -> Result<()> {
-    let floor_price = config
-        .entry_price_minor
-        .checked_mul(U256::from(iparams.floor_price_num))
-        .map(|v| v / U256::from(FLOOR_PRICE_DEN))
-        .ok_or_else(|| PrecompileError::Revert("entry floor overflow".into()))?;
-    let call_price = config
-        .entry_price_minor
-        .checked_mul(U256::from(iparams.call_price_num))
-        .map(|v| v / U256::from(CALL_PRICE_DEN))
-        .ok_or_else(|| PrecompileError::Revert("entry call overflow".into()))?;
+    let floor_price = outbe_intexfactory::marked_up(config.entry_price_minor, iparams.floor_rate)?;
+    let call_price = outbe_intexfactory::marked_up(config.entry_price_minor, iparams.call_rate)?;
     let entry_price_u64 = u64::try_from(config.entry_price_minor)
         .map_err(|_| PrecompileError::Revert("entry price exceeds u64".into()))?;
     let floor_price_u64 = u64::try_from(floor_price)
@@ -171,9 +161,9 @@ fn send_stage_start(
         entryPrice: entry_price_u64,
         floorPriceMinor: floor_price_u64,
         callPriceMinor: call_price_u64,
-        intexCallPeriod: iparams.intex_call_period_secs,
-        callWindowDays: iparams.call_window_days,
-        callThresholdDays: iparams.call_threshold_days,
+        callNoticePeriod: iparams.call_notice_period,
+        callWindow: iparams.call_window,
+        callThreshold: iparams.call_threshold,
         minIntexBidQuantity: config.min_intex_bid_quantity,
         commitBondMinor: config.commit_bond_minor,
         dayState: day_state,

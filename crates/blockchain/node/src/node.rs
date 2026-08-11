@@ -161,7 +161,6 @@ where
             Some(install) => executor.with_ocomp_fork_install(install.clone()),
             None => executor,
         };
-
         ComponentsBuilder::default()
             .node_types::<N>()
             .pool(OutbePoolBuilder::default().with_ocomp_lifecycle_activation(ocomp_activation))

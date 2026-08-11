@@ -3,10 +3,8 @@
 //! Every node owns one **contiguous block** of ports, one per service:
 //!
 //! ```text
-//! offset:    0      1      2       3        4        5         6
-//!          http    tee    p2p   discv5  authrpc  metrics  consensus
-//! node 0: 18545  18546  18547   18548    18549    18550     18551
-//! node 1: 18552  18553  18554   18555    18556    18557     18558
+//! OCOMP reserves six consecutive TCP slots at the end of each node block:
+//! Supervisor registration, Supervisor ZeroMQ, and four Worker observability ports.
 //! ```
 //!
 //! Blocks are handed out from a cursor that only ever moves forward, so they are
@@ -62,11 +60,17 @@ pub(crate) enum Service {
     Authrpc,
     Metrics,
     Consensus,
+    OcompSupervisor,
+    OcompMessage,
+    OcompWorker0,
+    OcompWorker1,
+    OcompWorker2,
+    OcompWorker3,
 }
 
 impl Service {
     /// Block order. Adding a service widens [`BLOCK`] and renumbers every node.
-    const ALL: [Service; 7] = [
+    const ALL: [Service; 13] = [
         Self::Http,
         Self::Tee,
         Self::P2p,
@@ -74,6 +78,12 @@ impl Service {
         Self::Authrpc,
         Self::Metrics,
         Self::Consensus,
+        Self::OcompSupervisor,
+        Self::OcompMessage,
+        Self::OcompWorker0,
+        Self::OcompWorker1,
+        Self::OcompWorker2,
+        Self::OcompWorker3,
     ];
 
     /// This service's slot within a node's block.
@@ -86,6 +96,12 @@ impl Service {
             Self::Authrpc => 4,
             Self::Metrics => 5,
             Self::Consensus => 6,
+            Self::OcompSupervisor => 7,
+            Self::OcompMessage => 8,
+            Self::OcompWorker0 => 9,
+            Self::OcompWorker1 => 10,
+            Self::OcompWorker2 => 11,
+            Self::OcompWorker3 => 12,
         }
     }
 
@@ -137,6 +153,37 @@ impl Ports {
         }
     }
 
+    /// Reconstruct a previously resolved validator→service layout.
+    ///
+    /// The order is validator order. Each entry is the first port of that
+    /// validator's complete [`BLOCK`]-wide service block.
+    pub(crate) fn from_block_starts(starts: &[u16]) -> Result<Self> {
+        for (index, &start) in starts.iter().enumerate() {
+            fits(u64::from(start))?;
+            let end = start + BLOCK - 1;
+            for (previous_index, &previous) in starts[..index].iter().enumerate() {
+                let previous_end = previous + BLOCK - 1;
+                if start <= previous_end && previous <= end {
+                    bail!(
+                        "persisted validator-{index} port block {start}..={end} overlaps validator-{previous_index} block {previous}..={previous_end}"
+                    );
+                }
+            }
+        }
+        let cursor = starts
+            .iter()
+            .copied()
+            .max()
+            .map_or(NODE_BASE, |start| start.saturating_add(BLOCK));
+        Ok(Self {
+            inner: Arc::new(Mutex::new(Resolver {
+                blocks: starts.iter().copied().enumerate().collect(),
+                cursor,
+                scan: false,
+            })),
+        })
+    }
+
     /// Begin a scenario: forget the previous one's node→block map, then allocate
     /// the committee's blocks (`0..n`) so their consensus/p2p ports are fixed
     /// before bootstrap bakes them into genesis.
@@ -149,6 +196,15 @@ impl Ports {
         (0..n).try_for_each(|i| r.block_start(i).map(drop))
     }
 
+    /// Return the complete ordered block layout for durable handoff to another
+    /// harness process, allocating any missing committee blocks first.
+    pub(crate) fn block_starts(&self, nodes: usize) -> Result<Vec<u16>> {
+        let mut resolver = lock(&self.inner);
+        (0..nodes)
+            .map(|index| resolver.block_start(index))
+            .collect()
+    }
+
     /// The port node `i` uses for `svc`, allocating its block on first use.
     ///
     /// Panics only when the port space above the cursor is exhausted — an
@@ -158,6 +214,28 @@ impl Ports {
             .block_start(i)
             .unwrap_or_else(|e| panic!("e2e ports: {e}"));
         start + svc.offset()
+    }
+
+    /// Prove that every configured service port for `0..nodes` is still free.
+    ///
+    /// Persistent LocalNet restores bootstrap's resolved layout so genesis and
+    /// the later owner process use identical ports. This preflight prevents an
+    /// old or unrelated process from being mistaken for a newly owned node.
+    #[cfg_attr(not(feature = "ocomp-integration"), allow(dead_code))]
+    pub(crate) fn ensure_available(&self, nodes: usize) -> Result<()> {
+        let mut resolver = lock(&self.inner);
+        for index in 0..nodes {
+            let start = resolver.block_start(index)?;
+            for service in Service::ALL {
+                let port = start + service.offset();
+                if !is_free(port, service.proto()) {
+                    bail!(
+                        "LocalNet port preflight failed: validator-{index} {service:?} port {port} is already in use"
+                    );
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -225,6 +303,7 @@ fn is_free(port: u16, proto: Proto) -> bool {
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
+    use std::path::Path;
 
     use super::Service::*;
     use super::*;
@@ -244,8 +323,35 @@ mod tests {
         assert_eq!(p.port(Http, 0), 18545);
         assert_eq!(p.port(Tee, 0), 18546);
         assert_eq!(p.port(Consensus, 0), 18551);
-        assert_eq!(p.port(Http, 1), 18552);
-        assert_eq!(p.port(Tee, 1), 18553);
+        assert_eq!(p.port(OcompSupervisor, 0), 18552);
+        assert_eq!(p.port(Http, 1), NODE_BASE + BLOCK);
+        assert_eq!(p.port(Tee, 1), NODE_BASE + BLOCK + 1);
+    }
+
+    #[test]
+    fn canonical_ocomp_fixture_uses_the_current_static_consensus_ports() {
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("fixtures/ocomp-final-v1/base/validators.json");
+        let validators: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(fixture).expect("canonical validators fixture"))
+                .expect("canonical validators JSON");
+        let validators = validators.as_array().expect("validators array");
+        let ports = static_ports(validators.len());
+
+        for (index, validator) in validators.iter().enumerate() {
+            let address = validator["p2p_address"]
+                .as_str()
+                .expect("validator p2p_address");
+            let fixture_port = address
+                .rsplit_once(':')
+                .and_then(|(_, port)| port.parse::<u16>().ok())
+                .expect("validator p2p port");
+            assert_eq!(
+                fixture_port,
+                ports.port(Consensus, index),
+                "canonical validator-{index} consensus port drifted from the harness layout"
+            );
+        }
     }
 
     /// The reported bug: a node index past the committee used to panic. Blocks
@@ -253,9 +359,9 @@ mod tests {
     #[test]
     fn grown_index_does_not_panic() {
         let p = static_ports(4);
-        assert_eq!(p.port(Http, 4), 18573, "joiner");
-        assert_eq!(p.port(Http, 14), 18580, "follower1");
-        assert_eq!(p.port(Tee, 15), 18588, "follower2");
+        assert_eq!(p.port(Http, 4), NODE_BASE + 4 * BLOCK, "joiner");
+        assert_eq!(p.port(Http, 14), NODE_BASE + 5 * BLOCK, "follower1");
+        assert_eq!(p.port(Tee, 15), NODE_BASE + 6 * BLOCK + 1, "follower2");
     }
 
     /// A scenario never lands on a port the previous one used, however many nodes
@@ -316,6 +422,47 @@ mod tests {
         assert_eq!(p.port(Http, 9), p.port(Http, 9));
     }
 
+    #[test]
+    fn static_layout_preflight_rejects_an_occupied_service_port() {
+        let Ok(_held) = TcpListener::bind(("127.0.0.1", NODE_BASE)) else {
+            // Some restricted test sandboxes deny loopback bind entirely. The
+            // production command still performs the same OS-level preflight.
+            return;
+        };
+        let p = static_ports(1);
+        let error = p
+            .ensure_available(1)
+            .expect_err("occupied validator-0 HTTP port must fail preflight");
+        let message = error.to_string();
+        assert!(message.contains("validator-0"));
+        assert!(message.contains("Http"));
+        assert!(message.contains(&NODE_BASE.to_string()));
+    }
+
+    #[test]
+    fn persisted_block_layout_round_trips_every_service_port() {
+        let original = static_ports(3);
+        let starts = original.block_starts(3).unwrap();
+        let restored = Ports::from_block_starts(&starts).unwrap();
+
+        for index in 0..3 {
+            for service in Service::ALL {
+                assert_eq!(
+                    restored.port(service, index),
+                    original.port(service, index),
+                    "validator-{index} {service:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn persisted_block_layout_rejects_overlapping_blocks() {
+        let error = Ports::from_block_starts(&[NODE_BASE, NODE_BASE + BLOCK - 1])
+            .expect_err("overlapping blocks must be rejected");
+        assert!(error.to_string().contains("overlap"));
+    }
+
     /// A busy port shifts only the block that hits it; later blocks follow the
     /// cursor, so they never skew relative to each other.
     #[test]
@@ -324,13 +471,17 @@ mod tests {
         if held.is_ok() {
             let p = Ports::new(true);
             p.start_scenario(2).expect("scan");
-            assert_ne!(p.port(Http, 0), NODE_BASE, "should skip the held port");
+            let first = p.port(Http, 0);
+            assert_ne!(first, NODE_BASE, "should skip the held port");
+            for service in Service::ALL {
+                assert_eq!(
+                    p.port(service, 0),
+                    first + service.offset(),
+                    "block must stay contiguous at {service:?}"
+                );
+            }
             assert!(
-                p.port(Consensus, 0) - p.port(Http, 0) >= BLOCK - 1,
-                "block must stay contiguous"
-            );
-            assert!(
-                p.port(Http, 1) - p.port(Http, 0) >= BLOCK,
+                p.port(Http, 1) - first >= BLOCK,
                 "the next block follows the cursor"
             );
         }

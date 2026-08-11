@@ -56,9 +56,12 @@ const OST3_SCOPE_DOMAIN: &[u8] = b"outbe/tee/bootstrap-v2-gossip/v1";
 const OST3_DEV_NODE_HOST_DOMAIN: &[u8] = b"outbe/tee/dev-node-host/v1";
 const OST3_BINDING_ID_DOMAIN: &[u8] = b"outbe/tee/bootstrap-binding/v1";
 
+// Bootstrap-only gossip message, built and consumed immediately during node
+// join (not a steady-state hot path), so boxing the larger variant buys nothing.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Ost3WireMessage {
-    Submission(TeeBootstrapParticipantSubmissionV2),
+    Submission(Box<TeeBootstrapParticipantSubmissionV2>),
     Signature {
         signing_hash: B256,
         validator: Address,
@@ -123,11 +126,13 @@ impl Ost3WireMessage {
                     .get(evidence_end.checked_add(65)?..)?
                     .try_into()
                     .ok()?;
-                Some(Self::Submission(TeeBootstrapParticipantSubmissionV2 {
-                    evidence,
-                    node_signature,
-                    enclave_signature,
-                }))
+                Some(Self::Submission(Box::new(
+                    TeeBootstrapParticipantSubmissionV2 {
+                        evidence,
+                        node_signature,
+                        enclave_signature,
+                    },
+                )))
             }
             OST3_SIGNATURE if input.len() == OST3_SIGNATURE_BYTES => {
                 let signing_hash = B256::from_slice(input.get(1..33)?);
@@ -148,6 +153,25 @@ fn evidence_intent(evidence: &AttestationEvidenceV1) -> &RegistrationIntentV1 {
     match evidence {
         AttestationEvidenceV1::Dcap(value) => &value.intent,
         AttestationEvidenceV1::GramineDirectDev(value) => &value.intent,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BootstrapEvidenceKind {
+    Dcap,
+    GramineDirectDev,
+}
+
+fn bootstrap_evidence_kind(
+    policy: AttestationMode,
+    production_session: bool,
+) -> eyre::Result<BootstrapEvidenceKind> {
+    match (policy, production_session) {
+        (AttestationMode::DcapRequired, true) => Ok(BootstrapEvidenceKind::Dcap),
+        (AttestationMode::DcapRequired, false) => Err(eyre::eyre!(
+            "DcapRequired genesis policy cannot use a development enclave session"
+        )),
+        (AttestationMode::GramineDirectDev, _) => Ok(BootstrapEvidenceKind::GramineDirectDev),
     }
 }
 
@@ -232,9 +256,12 @@ pub fn build_local_tee_bootstrap_submission_v2(
         enclave_id,
         node_host_authorization_hash,
     ) = match (policy.attestation_mode, &mut *client) {
-        (AttestationMode::DcapRequired, RuntimeEnclaveClient::Production(_)) => {
+        (
+            AttestationMode::DcapRequired | AttestationMode::GramineDirectDev,
+            RuntimeEnclaveClient::Production(_),
+        ) => {
             let manifest = production_manifest.ok_or_else(|| {
-                eyre::eyre!("DcapRequired OST3 requires one committed NodeHost manifest")
+                eyre::eyre!("production OST3 requires one committed NodeHost manifest")
             })?;
             if manifest.chain_id != policy.chain_id
                 || manifest.genesis_hash != policy.genesis_hash
@@ -306,11 +333,6 @@ pub fn build_local_tee_bootstrap_submission_v2(
                 "DcapRequired genesis policy cannot use a development enclave session"
             ));
         }
-        (AttestationMode::GramineDirectDev, RuntimeEnclaveClient::Production(_)) => {
-            return Err(eyre::eyre!(
-                "GramineDirectDev genesis policy cannot use a production enclave session"
-            ));
-        }
     };
 
     let node_id_hash = node_id
@@ -351,8 +373,12 @@ pub fn build_local_tee_bootstrap_submission_v2(
         .sign_hash(&intent_hash)
         .map_err(|error| eyre::eyre!("cannot sign OST3 registration intent: {error}"))?;
 
-    let (evidence, enclave_signature) = match client {
-        RuntimeEnclaveClient::Production(production) => {
+    let evidence_kind = bootstrap_evidence_kind(
+        policy.attestation_mode,
+        matches!(client, RuntimeEnclaveClient::Production(_)),
+    )?;
+    let (evidence, enclave_signature) = match (evidence_kind, client) {
+        (BootstrapEvidenceKind::Dcap, RuntimeEnclaveClient::Production(production)) => {
             let generated = production
                 .generate_dcap_quote(&intent)
                 .map_err(|error| eyre::eyre!("production OST3 quote generation failed: {error}"))?;
@@ -371,7 +397,30 @@ pub fn build_local_tee_bootstrap_submission_v2(
                 enclave_signature,
             )
         }
-        RuntimeEnclaveClient::Development(development) => {
+        (BootstrapEvidenceKind::Dcap, RuntimeEnclaveClient::Development(_)) => {
+            return Err(eyre::eyre!(
+                "DcapRequired genesis policy cannot use a development enclave session"
+            ));
+        }
+        (BootstrapEvidenceKind::GramineDirectDev, RuntimeEnclaveClient::Production(production)) => {
+            let enclave_signature = production
+                .sign_registration_intent_dev_v1(&intent)
+                .map_err(|error| {
+                    eyre::eyre!("production SGX-no-attest OST3 intent signing failed: {error}")
+                })?;
+            (
+                AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
+                    intent,
+                    dev_attestation_public: attestation_ed25519,
+                    dev_signature: enclave_signature,
+                }),
+                enclave_signature,
+            )
+        }
+        (
+            BootstrapEvidenceKind::GramineDirectDev,
+            RuntimeEnclaveClient::Development(development),
+        ) => {
             let enclave_signature = development
                 .sign_registration_intent_dev_v1(&intent)
                 .map_err(|error| eyre::eyre!("development OST3 intent signing failed: {error}"))?;
@@ -435,7 +484,7 @@ pub async fn coordinate_tee_bootstrap_v2<G: BootstrapGossip>(
     }
 
     gossip
-        .broadcast(Ost3WireMessage::Submission(local_submission.clone()).encode()?)
+        .broadcast(Ost3WireMessage::Submission(Box::new(local_submission.clone())).encode()?)
         .await
         .map_err(|error| eyre::eyre!("OST3 submission broadcast failed: {error}"))?;
     let mut submissions = BTreeMap::new();
@@ -454,7 +503,7 @@ pub async fn coordinate_tee_bootstrap_v2<G: BootstrapGossip>(
         match Ost3WireMessage::decode(&bytes) {
             Some(Ost3WireMessage::Submission(submission)) => {
                 if validate_submission(&submission, &authority.policy, committee).is_ok() {
-                    insert_submission(&mut submissions, submission, &authority.policy, committee)?;
+                    insert_submission(&mut submissions, *submission, &authority.policy, committee)?;
                 }
             }
             Some(signature @ Ost3WireMessage::Signature { .. }) => {
@@ -1236,10 +1285,28 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::DeliveryTracker;
+    use super::{bootstrap_evidence_kind, BootstrapEvidenceKind, DeliveryTracker};
     use alloy_primitives::B256;
     use commonware_cryptography::{bls12381, Signer as _};
     use commonware_p2p::Recipients;
+    use outbe_primitives::tee_attestation_v1::AttestationMode;
+
+    #[test]
+    fn bootstrap_evidence_depends_on_policy_not_local_session_security() {
+        assert_eq!(
+            bootstrap_evidence_kind(AttestationMode::DcapRequired, true).unwrap(),
+            BootstrapEvidenceKind::Dcap
+        );
+        assert_eq!(
+            bootstrap_evidence_kind(AttestationMode::GramineDirectDev, true).unwrap(),
+            BootstrapEvidenceKind::GramineDirectDev
+        );
+        assert_eq!(
+            bootstrap_evidence_kind(AttestationMode::GramineDirectDev, false).unwrap(),
+            BootstrapEvidenceKind::GramineDirectDev
+        );
+        assert!(bootstrap_evidence_kind(AttestationMode::DcapRequired, false).is_err());
+    }
 
     #[test]
     fn delivery_tracker_retries_only_unacknowledged_peers() {

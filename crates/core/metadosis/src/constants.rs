@@ -1,14 +1,20 @@
-/// Forming period: 50 hours (UTC-12 to UTC+14 = 50h span).
-pub const FORMING_PERIOD_HOURS: u64 = 50;
+use outbe_chain_constants::{
+    DEFAULT_METADOSIS_BOOTSTRAP_DURATION_SECONDS, DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS,
+    DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS, DEFAULT_METADOSIS_OFFERING_PERIOD_SECONDS,
+    DEFAULT_METADOSIS_WAITING_PERIOD_SECONDS,
+};
+
+/// Compatibility aliases for capacity proofs and canonical-default tests.
+pub const FORMING_PERIOD_HOURS: u64 = DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS / SECONDS_PER_HOUR;
 
 /// lookback delay: 502 hours (~21 days).
-pub const LOOKBACK_DELAY_HOURS: u64 = 502;
+pub const LOOKBACK_DELAY_HOURS: u64 = DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS / SECONDS_PER_HOUR;
 
 /// offering period: 50 hours.
-pub const OFFERING_PERIOD_HOURS: u64 = 50;
+pub const OFFERING_PERIOD_HOURS: u64 = DEFAULT_METADOSIS_OFFERING_PERIOD_SECONDS / SECONDS_PER_HOUR;
 
 /// Waiting period before processing: 12 hours.
-pub const WAITING_PERIOD_HOURS: u64 = 12;
+pub const WAITING_PERIOD_HOURS: u64 = DEFAULT_METADOSIS_WAITING_PERIOD_SECONDS / SECONDS_PER_HOUR;
 
 /// Fresh-devnet production creates at most one WorldwideDay per UTC day.
 pub const WWD_CREATION_CADENCE_HOURS: u64 = 24;
@@ -24,7 +30,8 @@ pub const SYMBOLIC_RATE: u64 = 32;
 pub const RED_DAY_REDUCTION_COEF: u64 = 8;
 
 /// Bootstrap duration (hours) for dev/testnet.
-pub const BOOTSTRAP_DURATION_HOURS: u64 = 504;
+pub const BOOTSTRAP_DURATION_HOURS: u64 =
+    DEFAULT_METADOSIS_BOOTSTRAP_DURATION_SECONDS / SECONDS_PER_HOUR;
 
 /// Bootstrap lookback delay: 0 hours.
 pub const BOOTSTRAP_LOOKBACK_DELAY_HOURS: u64 = 0;
@@ -56,9 +63,14 @@ pub const MAX_PIPELINE_WWDS: usize = if NORMAL_PIPELINE_WWDS > BOOTSTRAP_PIPELIN
     BOOTSTRAP_PIPELINE_WWDS + 1
 };
 
-/// Retained READY/OFFCHAIN_PENDING work admitted by the genesis-pinned OCOMP
-/// capacity profile (`max_pending_jobs = 2`).
-pub const MAX_RETAINED_WWDS: usize = 2;
+/// Maximum WWD records kept. This is the canonical historical retention bound,
+/// not a concurrent OCOMP job admission limit.
+pub const MAX_RECORDS_KEPT: usize = 365;
+
+/// READY/OFFCHAIN_PENDING work can use the same population already bounded by
+/// the canonical WWD record-retention policy. OCOMP does not impose a smaller
+/// concurrent live-job cap.
+pub const MAX_RETAINED_WWDS: usize = MAX_RECORDS_KEPT;
 
 /// Exact bound for every scan of the active WorldwideDay aggregate.
 pub const MAX_ACTIVE_WWDS: usize = MAX_PIPELINE_WWDS + MAX_RETAINED_WWDS;
@@ -68,9 +80,6 @@ pub const MAX_ACTIVE_WWDS: usize = MAX_PIPELINE_WWDS + MAX_RETAINED_WWDS;
 pub const MAX_ADMISSION_WAIT_TICKS: usize = MAX_PIPELINE_WWDS;
 pub const MAX_ADMISSION_WAIT_HOURS: u64 =
     MAX_ADMISSION_WAIT_TICKS as u64 * WWD_ADVANCE_TICK_CADENCE_HOURS;
-
-/// Maximum wwd records kept.
-pub const MAX_RECORDS_KEPT: usize = 365;
 
 /// UTC+14 offset in seconds (14 * 3600).
 pub const UTC_PLUS_14_OFFSET: u64 = 50_400;

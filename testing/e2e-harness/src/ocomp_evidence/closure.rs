@@ -65,7 +65,7 @@ pub fn assemble_closure(
     let mut started_at = u64::MAX;
     let mut finished_at = 0_u64;
     let mut exact_binary_identity = None;
-    let mut launch_identity = None;
+    let mut scenario_launch_identities_by_lane = BTreeMap::new();
     let mut gramine_image_identity = None;
 
     for lane in required_lanes {
@@ -99,18 +99,11 @@ pub fn assemble_closure(
             None => exact_binary_identity = Some(lane_binaries.clone()),
         }
         if matches!(lane.as_str(), "OCM-PUBLIC" | "OCM-E2E") {
-            let lane_launch = manifest
-                .sections
-                .get("genesis_fork_bundle_and_profiles")
-                .filter(|value| value.is_object())
-                .ok_or_else(|| eyre::eyre!("lane {lane} lacks exact launch identity"))?;
-            match &launch_identity {
-                Some(expected) => ensure!(
-                    expected == lane_launch,
-                    "lane {lane} used another genesis/fork/bundle identity"
-                ),
-                None => launch_identity = Some(lane_launch.clone()),
-            }
+            retain_scenario_launch_evidence(
+                &mut scenario_launch_identities_by_lane,
+                &lane,
+                &manifest.sections,
+            )?;
             retain_scenario_image_identity(&mut gramine_image_identity, &lane, &manifest.sections)?;
         }
 
@@ -194,8 +187,7 @@ pub fn assemble_closure(
     let discovery = discover(repo, ledger)?;
     let exact_binary_identity = exact_binary_identity
         .ok_or_else(|| eyre::eyre!("closure has no exact binary artifact identity"))?;
-    let launch_identity =
-        launch_identity.ok_or_else(|| eyre::eyre!("closure has no exact launch identity"))?;
+    let launch_identity = closure_launch_evidence(scenario_launch_identities_by_lane);
     let gramine_image_identity = gramine_image_identity
         .ok_or_else(|| eyre::eyre!("closure has no Gramine Docker image identity"))?;
     let sections = closure_sections(
@@ -252,7 +244,7 @@ pub fn verify_closure_semantics(
     let mut lane_index = BTreeMap::new();
     let mut all_test_ids = BTreeSet::new();
     let mut exact_binary_identity = None;
-    let mut launch_identity = None;
+    let mut scenario_launch_identities_by_lane = BTreeMap::new();
     let mut gramine_image_identity = None;
     let mut minimum_started_at = u64::MAX;
     let mut maximum_finished_at = 0_u64;
@@ -308,18 +300,11 @@ pub fn verify_closure_semantics(
             None => exact_binary_identity = Some(lane_binaries.clone()),
         }
         if matches!(lane.as_str(), "OCM-PUBLIC" | "OCM-E2E") {
-            let lane_launch = embedded
-                .sections
-                .get("genesis_fork_bundle_and_profiles")
-                .filter(|value| value.is_object())
-                .ok_or_else(|| eyre::eyre!("embedded lane {lane} lacks launch identity"))?;
-            match &launch_identity {
-                Some(expected) => ensure!(
-                    expected == lane_launch,
-                    "embedded lane {lane} used another launch identity"
-                ),
-                None => launch_identity = Some(lane_launch.clone()),
-            }
+            retain_scenario_launch_evidence(
+                &mut scenario_launch_identities_by_lane,
+                &lane,
+                &embedded.sections,
+            )?;
             retain_scenario_image_identity(&mut gramine_image_identity, &lane, &embedded.sections)?;
         }
 
@@ -357,8 +342,7 @@ pub fn verify_closure_semantics(
 
     let exact_binary_identity = exact_binary_identity
         .ok_or_else(|| eyre::eyre!("retained closure has no binary identity"))?;
-    let launch_identity =
-        launch_identity.ok_or_else(|| eyre::eyre!("retained closure has no launch identity"))?;
+    let launch_identity = closure_launch_evidence(scenario_launch_identities_by_lane);
     let gramine_image_identity = gramine_image_identity
         .ok_or_else(|| eyre::eyre!("retained closure has no Gramine Docker image identity"))?;
     let expected_sections = closure_sections(
@@ -391,7 +375,7 @@ pub fn verify_retained_semantics(
         EvidenceMode::Lane { .. } => verify_lane_semantics(repo, ledger, manifest_path),
         EvidenceMode::PocClosure => verify_closure_semantics(repo, ledger, manifest_path),
         EvidenceMode::TaskProgress { .. } => {
-            eyre::bail!("task_progress is a report mode, not a retained evidence bundle")
+            eyre::bail!("task_progress is a report mode, not a retained evidence bundle");
         }
     }
 }
@@ -485,15 +469,50 @@ fn rewrite_assertions(
         .collect()
 }
 
+fn retain_scenario_launch_evidence(
+    retained_by_lane: &mut BTreeMap<String, Value>,
+    lane: &str,
+    sections: &BTreeMap<String, Value>,
+) -> Result<()> {
+    let launch = sections
+        .get("genesis_fork_bundle_and_profiles")
+        .and_then(Value::as_object)
+        .ok_or_else(|| eyre::eyre!("lane {lane} lacks exact launch evidence"))?;
+    let scenario_identities = launch
+        .get("scenario_launch_identities")
+        .filter(|value| value.as_object().is_some_and(|entries| !entries.is_empty()))
+        .ok_or_else(|| eyre::eyre!("lane {lane} lacks scenario launch identities"))?;
+    ensure!(
+        retained_by_lane
+            .insert(lane.to_owned(), scenario_identities.clone())
+            .is_none(),
+        "lane {lane} repeats scenario launch evidence"
+    );
+    Ok(())
+}
+
+fn closure_launch_evidence(scenario_launch_identities_by_lane: BTreeMap<String, Value>) -> Value {
+    json!({
+        "scenario_launch_identities_by_lane": scenario_launch_identities_by_lane,
+    })
+}
+
 fn retain_scenario_image_identity(
     retained: &mut Option<Value>,
     lane: &str,
     sections: &BTreeMap<String, Value>,
 ) -> Result<()> {
-    let identity = sections
+    let config = sections
         .get("exact_config_and_service_unit_hashes")
         .and_then(Value::as_object)
-        .and_then(|section| section.get("gramine_image_id"))
+        .ok_or_else(|| eyre::eyre!("lane {lane} lacks exact execution identity"))?;
+    ensure!(
+        config.get("execution_profile")
+            == Some(&json!({"tee": "sgx-no-attest", "sudo": true, "all": true})),
+        "lane {lane} did not use release SGX-no-attest with sudo and fail-not-skip"
+    );
+    let identity = config
+        .get("gramine_image_id")
         .and_then(Value::as_str)
         .ok_or_else(|| eyre::eyre!("lane {lane} lacks Gramine Docker image identity"))?;
     crate::internal::proc::DockerImageId::from_inspect_output(identity)
@@ -533,8 +552,9 @@ fn closure_sections(
                 "source_and_toolchain" => json!(source),
                 "exact_binary_hashes" => identity.exact_binaries.clone(),
                 "exact_config_and_service_unit_hashes" => json!({
-                    "launch_identity": identity.launch,
+                    "launch_evidence": identity.launch,
                     "gramine_image_id": identity.gramine_image,
+                    "execution_profile": {"tee": "sgx-no-attest", "sudo": true, "all": true},
                     "verified_lane_manifests": lane_index,
                 }),
                 "genesis_fork_bundle_and_profiles" => identity.launch.clone(),
@@ -571,7 +591,10 @@ fn unix_millis() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{required_execution_lanes, retain_scenario_image_identity, rewrite_assertions};
+    use super::{
+        closure_launch_evidence, required_execution_lanes, retain_scenario_image_identity,
+        retain_scenario_launch_evidence, rewrite_assertions,
+    };
     use crate::ocomp_evidence::{AssertionRecordV1, AssertionStatus, PlanningLedger};
     use serde_json::json;
     use std::collections::BTreeMap;
@@ -593,26 +616,106 @@ mod tests {
 
     #[test]
     fn closure_requires_one_immutable_gramine_image_across_scenario_lanes() {
-        let sections = |image_id: &str| {
+        let sections = |image_id: &str, tee: &str, sudo: bool| {
             BTreeMap::from([(
                 "exact_config_and_service_unit_hashes".to_owned(),
-                json!({"gramine_image_id": image_id}),
+                json!({
+                    "gramine_image_id": image_id,
+                    "execution_profile": {"tee": tee, "sudo": sudo, "all": true},
+                }),
             )])
         };
         let first = format!("sha256:{}", "ab".repeat(32));
         let second = format!("sha256:{}", "cd".repeat(32));
         let mut retained = None;
 
-        retain_scenario_image_identity(&mut retained, "OCM-PUBLIC", &sections(&first))
-            .expect("first scenario lane establishes image identity");
-        retain_scenario_image_identity(&mut retained, "OCM-E2E", &sections(&first))
-            .expect("same image identity is accepted");
-        assert!(
-            retain_scenario_image_identity(&mut retained, "OCM-E2E", &sections(&second)).is_err()
-        );
+        retain_scenario_image_identity(
+            &mut retained,
+            "OCM-PUBLIC",
+            &sections(&first, "sgx-no-attest", true),
+        )
+        .expect("first scenario lane establishes image identity");
+        retain_scenario_image_identity(
+            &mut retained,
+            "OCM-E2E",
+            &sections(&first, "sgx-no-attest", true),
+        )
+        .expect("same image identity is accepted");
+        assert!(retain_scenario_image_identity(
+            &mut retained,
+            "OCM-E2E",
+            &sections(&second, "sgx-no-attest", true),
+        )
+        .is_err());
+        assert!(retain_scenario_image_identity(
+            &mut retained,
+            "OCM-E2E",
+            &sections(&first, "gramine-direct", false),
+        )
+        .is_err());
         assert!(
             retain_scenario_image_identity(&mut retained, "OCM-E2E", &BTreeMap::new()).is_err()
         );
+    }
+
+    #[test]
+    fn closure_retains_distinct_scenario_launch_profiles_by_lane() {
+        let sections = |scenario: &str, genesis: &str, classification: &str| {
+            BTreeMap::from([(
+                "genesis_fork_bundle_and_profiles".to_owned(),
+                json!({
+                    "scenario_launch_identities": {
+                        scenario: {
+                            "chain_id": if classification == "final" { 54322345 } else { 424242 },
+                            "genesis_hash": genesis,
+                            "protocol_bundle_hash": format!("0xbundle-{classification}"),
+                            "fork_install_hash": format!("0xfork-{genesis}"),
+                            "classification": classification,
+                            "activation_height": if classification == "final" { 32 } else { 1 },
+                            "metadosis_storage_layout_hash": "0xlayout",
+                        },
+                    },
+                }),
+            )])
+        };
+        let mut retained_by_lane = BTreeMap::new();
+        retain_scenario_launch_evidence(
+            &mut retained_by_lane,
+            "OCM-PUBLIC",
+            &sections("scenario-001.json", "0xpublic", "measurement"),
+        )
+        .expect("public lane retains its exact launch identity");
+        retain_scenario_launch_evidence(
+            &mut retained_by_lane,
+            "OCM-E2E",
+            &sections("scenario-001.json", "0xe2e", "final"),
+        )
+        .expect("E2E lane may use another isolated profile and genesis");
+
+        let retained = closure_launch_evidence(retained_by_lane);
+        assert_eq!(
+            retained["scenario_launch_identities_by_lane"]["OCM-PUBLIC"]["scenario-001.json"]
+                ["genesis_hash"],
+            json!("0xpublic")
+        );
+        assert_eq!(
+            retained["scenario_launch_identities_by_lane"]["OCM-E2E"]["scenario-001.json"]
+                ["genesis_hash"],
+            json!("0xe2e")
+        );
+        assert_eq!(
+            retained["scenario_launch_identities_by_lane"]["OCM-E2E"]["scenario-001.json"]
+                ["classification"],
+            json!("final")
+        );
+
+        let mut retained_by_lane = BTreeMap::new();
+        assert!(retain_scenario_launch_evidence(
+            &mut retained_by_lane,
+            "OCM-E2E",
+            &BTreeMap::new(),
+        )
+        .is_err());
     }
 
     #[test]

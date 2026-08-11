@@ -11,24 +11,25 @@ use outbe_ocomp_protocol::{
     vote::OcompVoteAccountabilityV1,
     SchemaLimits,
 };
-use outbe_primitives::error::{PrecompileError, Result};
-use outbe_promislimit::{ocomp_budget::CarryOverCredit, schema::PromisLimitContract};
+use outbe_primitives::error::Result;
 
 use crate::{
     aggregate::WwdStatus,
     commit::commit_outer_transition,
+    errors::storage_corruption_message,
     precompile::IMetadosis,
     reducer::{OcompRetryCause, OuterWwdTransition, OuterWwdTransitionKind},
     schema::{MetadosisContract, WorldwideDayEntryExt},
 };
 
 use super::{
-    codec::{decode_live_scheduler_index, MAX_LIVE_JOBS},
     index::{
-        insert_ready_key, insert_response_deadline_key, remove_ready_key, ReadyIndexKey,
-        ResponseDeadlineKey,
+        insert_ready_key, insert_response_deadline_key, remove_ready_key,
+        remove_response_deadline_key, ReadyIndexKey, ResponseDeadlineKey,
     },
-    state::{JobFsmCommand, JobFsmLimits, RetryTerminalOutcome},
+    state::{
+        JobFsmCommand, JobFsmLimits, RetryTerminalOutcome, OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS,
+    },
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -38,11 +39,92 @@ pub(crate) enum OcompExpiryDisposition {
     },
     TerminalNoRetry {
         next_pending_nonce: u64,
-        carry_over: CarryOverCredit,
+        retained_lysis_budget: U256,
     },
 }
 
 impl MetadosisContract<'_> {
+    /// Converts the current live/ready OCOMP attempt into immutable canceled
+    /// evidence and removes only the scheduler state that could execute it.
+    pub(crate) fn cancel_ocomp_for_failed_day(
+        &mut self,
+        wwd: WorldwideDay,
+        at_height: u64,
+        at_time: u64,
+        schema_limits: &SchemaLimits,
+        fsm_limits: JobFsmLimits,
+    ) -> Result<()> {
+        if self.ocomp_fsm_states.get_bytes(&wwd).is_empty()? {
+            return Ok(());
+        }
+        let state = self.ocomp_fsm_state(wwd, schema_limits, fsm_limits)?;
+        let projection = state.projection();
+        if let Some(intent_id) = projection.live_intent_id {
+            let mut record = self
+                .ocomp_job_record(intent_id, schema_limits)?
+                .ok_or_else(|| {
+                    storage_corruption_message("OCOMP failed-day live job is missing")
+                })?;
+            if record.status == OcompJobStatus::VotingOpen {
+                let finalized = record.finalized.as_ref().ok_or_else(|| {
+                    storage_corruption_message("OCOMP failed-day voting job is not finalized")
+                })?;
+                let mut accountability = self
+                    .result_vote_accountability(finalized.job_id, schema_limits)?
+                    .ok_or_else(|| {
+                        storage_corruption_message(
+                            "OCOMP failed-day vote accountability is missing",
+                        )
+                    })?;
+                accountability
+                    .close(at_height, schema_limits)
+                    .map_err(|error| {
+                        storage_corruption_message(format!(
+                            "close canceled OCOMP accountability: {error}"
+                        ))
+                    })?;
+                self.write_result_vote_accountability(&accountability, schema_limits)?;
+                let mut response_index = self.read_response_deadline_index()?;
+                remove_response_deadline_key(
+                    &mut response_index,
+                    ResponseDeadlineKey {
+                        deadline_height: finalized.deadline_height,
+                        job_id: finalized.job_id,
+                        intent_id,
+                    },
+                )?;
+                self.write_response_deadline_index(&response_index)?;
+            } else if record.status != OcompJobStatus::AwaitingFinality {
+                return Err(storage_corruption_message(
+                    "OCOMP failed-day job is already terminal",
+                ));
+            }
+
+            if self.terminal_intent_count(wwd)? != projection.terminal_records {
+                return Err(storage_corruption_message(
+                    "OCOMP failed-day terminal index/FSM count mismatch",
+                ));
+            }
+            record.status = OcompJobStatus::Canceled;
+            record.terminal = Some(LysisTerminalV1 {
+                outcome: OcompTerminalOutcome::Canceled,
+                terminal_height: at_height,
+                terminal_time: at_time,
+                next_pending_nonce: None,
+                completed_binding: None,
+            });
+            self.write_ocomp_job_record(intent_id, &record, schema_limits)?;
+            self.push_terminal_intent(wwd, intent_id, fsm_limits.max_terminal_records)?;
+            self.remove_live_scheduler(intent_id)?;
+        } else {
+            let ready_key = ReadyIndexKey::from_projection(projection)?;
+            let mut ready_index = self.read_ready_index()?;
+            remove_ready_key(&mut ready_index, ready_key)?;
+            self.write_ready_index(&ready_index)?;
+        }
+        self.ocomp_fsm_states.get_bytes(&wwd).clear()
+    }
+
     /// Commits one canonical live job and all Metadosis-owned indexes.
     ///
     /// The caller has already applied or replay-validated the owner budget
@@ -57,30 +139,33 @@ impl MetadosisContract<'_> {
         fsm_limits: JobFsmLimits,
     ) -> Result<()> {
         (|| {
+            super::authority::require_current_ocomp_attempt_snapshot(self.storage.clone(), intent)?;
             if !matches!(
                 outer_transition.kind(),
                 OuterWwdTransitionKind::OcompRequestCommitted
             ) {
-                return Err(fatal(
+                return Err(storage_corruption_message(
                     "OCOMP request requires the typed outer request transition",
                 ));
             }
-            intent
-                .validate_semantics()
-                .map_err(|error| fatal(format!("invalid OCOMP intent: {error}")))?;
-            receipt
-                .validate_semantics()
-                .map_err(|error| fatal(format!("invalid OCOMP request receipt: {error}")))?;
+            intent.validate_semantics().map_err(|error| {
+                storage_corruption_message(format!("invalid OCOMP intent: {error}"))
+            })?;
+            receipt.validate_semantics().map_err(|error| {
+                storage_corruption_message(format!("invalid OCOMP request receipt: {error}"))
+            })?;
             let wwd = WorldwideDay::new(intent.wwd);
             if WwdStatus::try_from(self.worldwide_days.entry(wwd).status().read()?)?
                 != WwdStatus::Ready
             {
-                return Err(fatal("OCOMP request requires READY WorldwideDay"));
+                return Err(storage_corruption_message(
+                    "OCOMP request requires READY WorldwideDay",
+                ));
             }
 
-            let receipt_hash = receipt
-                .receipt_hash(schema_limits)
-                .map_err(|error| fatal(format!("hash OCOMP request receipt: {error}")))?;
+            let receipt_hash = receipt.receipt_hash(schema_limits).map_err(|error| {
+                storage_corruption_message(format!("hash OCOMP request receipt: {error}"))
+            })?;
             if receipt_hash
                 != intent
                     .frozen_metadosis_values
@@ -90,42 +175,53 @@ impl MetadosisContract<'_> {
                 || receipt.protocol_bundle_hash != intent.protocol_bundle_hash
                 || receipt.lysis_budget != intent.frozen_metadosis_values.lysis_budget
             {
-                return Err(fatal("OCOMP intent/request receipt binding mismatch"));
-            }
-            if decode_live_scheduler_index(&self.ocomp_scheduler.read()?)?.len() >= MAX_LIVE_JOBS {
-                return Err(fatal("OCOMP live Job capacity exhausted"));
+                return Err(storage_corruption_message(
+                    "OCOMP intent/request receipt binding mismatch",
+                ));
             }
             let mut state = self.ocomp_fsm_state(wwd, schema_limits, fsm_limits)?;
             let ready_key = ReadyIndexKey::from_projection(state.projection())?;
             let existing_receipt = self.request_budget_receipt(wwd, schema_limits)?;
             if matches!(existing_receipt, Some(ref existing) if existing != receipt) {
-                return Err(fatal("immutable OCOMP request receipt changed"));
+                return Err(storage_corruption_message(
+                    "immutable OCOMP request receipt changed",
+                ));
             }
-            let intent_id = intent
-                .intent_id(schema_limits)
-                .map_err(|error| fatal(format!("hash OCOMP intent: {error}")))?;
-            let storage_key = intent_storage_key(intent_id)
-                .map_err(|error| fatal(format!("derive OCOMP intent storage key: {error}")))?;
+            let intent_id = intent.intent_id(schema_limits).map_err(|error| {
+                storage_corruption_message(format!("hash OCOMP intent: {error}"))
+            })?;
+            let awaiting_finality_deadline = intent
+                .logical_evaluation_height
+                .checked_add(OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS)
+                .ok_or_else(|| {
+                    storage_corruption_message("OCOMP awaiting-finality deadline overflow")
+                })?;
+            let storage_key = intent_storage_key(intent_id).map_err(|error| {
+                storage_corruption_message(format!("derive OCOMP intent storage key: {error}"))
+            })?;
             if !self.ocomp_job_records.get_bytes(&storage_key).is_empty()? {
-                return Err(fatal("OCOMP IntentId already has a job record"));
+                return Err(storage_corruption_message(
+                    "OCOMP IntentId already has a job record",
+                ));
             }
             state
                 .apply(
                     JobFsmCommand::Request {
                         at_height: intent.logical_evaluation_height,
+                        deadline_height: awaiting_finality_deadline,
                         intent_id,
                         lysis_budget: intent.frozen_metadosis_values.lysis_budget,
                         request_budget_receipt_hash: receipt_hash,
                     },
                     fsm_limits,
                 )
-                .map_err(|error| fatal(error.to_string()))?;
+                .map_err(|error| storage_corruption_message(error.to_string()))?;
 
             if existing_receipt.is_none() {
                 self.ocomp_request_budget_receipts.get_bytes(&wwd).write(
-                    &receipt
-                        .encode_canonical(schema_limits)
-                        .map_err(|error| fatal(format!("encode request receipt: {error}")))?,
+                    &receipt.encode_canonical(schema_limits).map_err(|error| {
+                        storage_corruption_message(format!("encode request receipt: {error}"))
+                    })?,
                 )?;
             }
             let record = OcompJobRecordV1 {
@@ -164,19 +260,39 @@ impl MetadosisContract<'_> {
         (|| {
             let mut record = self
                 .ocomp_job_record(intent_id, schema_limits)?
-                .ok_or_else(|| fatal("OCOMP finality record has no matching intent"))?;
+                .ok_or_else(|| {
+                    storage_corruption_message("OCOMP finality record has no matching intent")
+                })?;
             if record.status != OcompJobStatus::AwaitingFinality || record.terminal.is_some() {
-                return Err(fatal("OCOMP finality requires AWAITING_FINALITY"));
+                return Err(storage_corruption_message(
+                    "OCOMP finality requires AWAITING_FINALITY",
+                ));
             }
-            if finality_recorded_height < record.intent_height || response_window_blocks == 0 {
-                return Err(fatal("OCOMP finality/window height is invalid"));
+            let awaiting_finality_deadline = record
+                .intent_height
+                .checked_add(OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS)
+                .ok_or_else(|| {
+                    storage_corruption_message("OCOMP awaiting-finality deadline overflow")
+                })?;
+            let profile = self
+                .read_ocomp_request_profile(schema_limits)?
+                .ok_or_else(|| {
+                    storage_corruption_message("OCOMP finality has no request profile")
+                })?;
+            if finality_recorded_height < record.intent_height
+                || finality_recorded_height > awaiting_finality_deadline
+                || response_window_blocks != profile.capacity_profile.result_deadline_blocks
+            {
+                return Err(storage_corruption_message(
+                    "OCOMP finality/window height is invalid",
+                ));
             }
             let open_height = finality_recorded_height
                 .checked_add(RESULT_VOTE_MIN_FINALITY_DEPTH)
-                .ok_or_else(|| fatal("OCOMP voting open height overflow"))?;
+                .ok_or_else(|| storage_corruption_message("OCOMP voting open height overflow"))?;
             let deadline_height = open_height
                 .checked_add(response_window_blocks)
-                .ok_or_else(|| fatal("OCOMP response deadline overflow"))?;
+                .ok_or_else(|| storage_corruption_message("OCOMP response deadline overflow"))?;
             let finalized = OcompFinalizedJobV1 {
                 job_id: record
                     .intent
@@ -185,7 +301,9 @@ impl MetadosisContract<'_> {
                         finalized_request_state_root,
                         schema_limits,
                     )
-                    .map_err(|error| fatal(format!("derive finalized OCOMP JobId: {error}")))?,
+                    .map_err(|error| {
+                        storage_corruption_message(format!("derive finalized OCOMP JobId: {error}"))
+                    })?,
                 finalized_request_block_hash,
                 finalized_request_state_root,
                 finality_recorded_height,
@@ -193,14 +311,14 @@ impl MetadosisContract<'_> {
                 deadline_height,
                 quorum: None,
             };
-            finalized
-                .validate_semantics()
-                .map_err(|error| fatal(format!("invalid finalized OCOMP job: {error}")))?;
+            finalized.validate_semantics().map_err(|error| {
+                storage_corruption_message(format!("invalid finalized OCOMP job: {error}"))
+            })?;
             if let Some(existing) = &record.finalized {
                 if existing == &finalized {
                     return Ok(existing.clone());
                 }
-                return Err(fatal("OCOMP finality binding changed"));
+                return Err(storage_corruption_message("OCOMP finality binding changed"));
             }
             record.finalized = Some(finalized.clone());
             self.write_ocomp_job_record(intent_id, &record, schema_limits)?;
@@ -219,13 +337,14 @@ impl MetadosisContract<'_> {
         (|| {
             let mut selected = None;
             for state in self.live_ocomp_fsm_states(schema_limits, fsm_limits)? {
-                let intent_id = state
-                    .projection()
-                    .live_intent_id
-                    .ok_or_else(|| fatal("OCOMP live scheduler has no IntentId"))?;
+                let intent_id = state.projection().live_intent_id.ok_or_else(|| {
+                    storage_corruption_message("OCOMP live scheduler has no IntentId")
+                })?;
                 let record = self
                     .ocomp_job_record(intent_id, schema_limits)?
-                    .ok_or_else(|| fatal("OCOMP live scheduler job is missing"))?;
+                    .ok_or_else(|| {
+                        storage_corruption_message("OCOMP live scheduler job is missing")
+                    })?;
                 if record.status != OcompJobStatus::AwaitingFinality {
                     continue;
                 }
@@ -236,7 +355,7 @@ impl MetadosisContract<'_> {
                     continue;
                 }
                 if at_height > finalized.open_height {
-                    return Err(fatal(
+                    return Err(storage_corruption_message(
                         "OCOMP consensus skipped the exact voting-open height",
                     ));
                 }
@@ -244,7 +363,7 @@ impl MetadosisContract<'_> {
                     .replace((state, intent_id, record, finalized))
                     .is_some()
                 {
-                    return Err(fatal(
+                    return Err(storage_corruption_message(
                         "multiple OCOMP jobs are due at one bounded open height",
                     ));
                 }
@@ -260,20 +379,30 @@ impl MetadosisContract<'_> {
                     },
                     fsm_limits,
                 )
-                .map_err(|error| fatal(error.to_string()))?;
+                .map_err(|error| storage_corruption_message(error.to_string()))?;
             let accountability = OcompVoteAccountabilityV1::empty(
                 finalized.job_id,
-                record.intent.result_committee_snapshot_hash,
+                record.intent.result_validator_set_epoch,
+                record.intent.result_committee_set_hash,
+                record.intent.result_ocomp_binding_hash,
+                record.intent.result_member_count,
+                record.intent.result_quorum_threshold,
             )
-            .map_err(|error| fatal(format!("create OCOMP vote slots: {error}")))?;
+            .map_err(|error| {
+                storage_corruption_message(format!("create OCOMP vote slots: {error}"))
+            })?;
             let slot = self.ocomp_vote_accountability.get_bytes(&finalized.job_id);
             if !slot.is_empty()? {
-                return Err(fatal("OCOMP vote accountability already exists"));
+                return Err(storage_corruption_message(
+                    "OCOMP vote accountability already exists",
+                ));
             }
             slot.write(
                 &accountability
                     .encode_canonical(schema_limits)
-                    .map_err(|error| fatal(format!("encode OCOMP vote slots: {error}")))?,
+                    .map_err(|error| {
+                        storage_corruption_message(format!("encode OCOMP vote slots: {error}"))
+                    })?,
             )?;
             let mut response_index = self.read_response_deadline_index()?;
             insert_response_deadline_key(
@@ -310,52 +439,59 @@ impl MetadosisContract<'_> {
         (|| {
             let mut state = self
                 .live_ocomp_fsm_state_by_intent(intent_id, schema_limits, fsm_limits)?
-                .ok_or_else(|| fatal("OCOMP expiry index is empty"))?;
-            let live_intent_id = state
-                .projection()
-                .live_intent_id
-                .ok_or_else(|| fatal("OCOMP expiry index has no live intent"))?;
+                .ok_or_else(|| storage_corruption_message("OCOMP expiry index is empty"))?;
+            let live_intent_id = state.projection().live_intent_id.ok_or_else(|| {
+                storage_corruption_message("OCOMP expiry index has no live intent")
+            })?;
             if live_intent_id != intent_id {
-                return Err(fatal("OCOMP expiry selected a different live job"));
+                return Err(storage_corruption_message(
+                    "OCOMP expiry selected a different live job",
+                ));
             }
             let mut record = self
                 .ocomp_job_record(live_intent_id, schema_limits)?
-                .ok_or_else(|| fatal("OCOMP live index points to a missing job"))?;
+                .ok_or_else(|| {
+                    storage_corruption_message("OCOMP live index points to a missing job")
+                })?;
             let wwd = WorldwideDay::new(record.intent.wwd);
             let before_terminal = state.projection().terminal_records;
             state
                 .apply(JobFsmCommand::Expire { at_height, at_time }, fsm_limits)
-                .map_err(|error| fatal(error.to_string()))?;
-            let terminal = state
-                .terminal_attempts()
-                .last()
-                .copied()
-                .ok_or_else(|| fatal("OCOMP expiry produced no terminal evidence"))?;
+                .map_err(|error| storage_corruption_message(error.to_string()))?;
+            let terminal = state.terminal_attempts().last().copied().ok_or_else(|| {
+                storage_corruption_message("OCOMP expiry produced no terminal evidence")
+            })?;
             if terminal.intent_id != live_intent_id
                 || terminal.outcome != super::state::RetryTerminalOutcome::Expired
                 || state.projection().terminal_records != before_terminal.saturating_add(1)
             {
-                return Err(fatal("OCOMP terminal index/count mismatch"));
+                return Err(storage_corruption_message(
+                    "OCOMP terminal index/count mismatch",
+                ));
             }
             // Lockstep: the persisted index and the FSM snapshot are written
             // separately; the day's indexed count must equal the FSM's
             // pre-transition terminal count before this push extends either.
             let indexed_terminal = self.terminal_intent_count(wwd)?;
             if indexed_terminal != before_terminal {
-                return Err(fatal(
+                return Err(storage_corruption_message(
                     "OCOMP terminal index diverged from the FSM terminal count",
                 ));
             }
             if indexed_terminal >= fsm_limits.max_terminal_records {
-                return Err(fatal("OCOMP terminal record cap exhausted"));
+                return Err(storage_corruption_message(
+                    "OCOMP terminal record cap exhausted",
+                ));
             }
             let projection = state.projection();
             let next_pending_nonce = terminal.next_pending_nonce;
-            let retained_lysis_budget = projection
-                .retained_lysis_budget
-                .ok_or_else(|| fatal("expired OCOMP job has no retained Lysis budget"))?;
+            let retained_lysis_budget = projection.retained_lysis_budget.ok_or_else(|| {
+                storage_corruption_message("expired OCOMP job has no retained Lysis budget")
+            })?;
             if retained_lysis_budget != record.intent.frozen_metadosis_values.lysis_budget {
-                return Err(fatal("expired OCOMP job retained budget mismatch"));
+                return Err(storage_corruption_message(
+                    "expired OCOMP job retained budget mismatch",
+                ));
             }
 
             record.status = OcompJobStatus::Expired;
@@ -374,7 +510,7 @@ impl MetadosisContract<'_> {
                     outer_transition.kind(),
                     OuterWwdTransitionKind::OcompAttemptsExhausted
                 ) {
-                    return Err(fatal(
+                    return Err(storage_corruption_message(
                         "terminal OCOMP expiry requires the attempts-exhausted outer transition",
                     ));
                 }
@@ -383,18 +519,13 @@ impl MetadosisContract<'_> {
                     .iter()
                     .any(|key| key.worldwide_day == wwd)
                 {
-                    return Err(fatal(
+                    return Err(storage_corruption_message(
                         "terminal no-retry WWD unexpectedly remains in READY index",
                     ));
                 }
-                let carry_over = PromisLimitContract::new(self.storage.clone())
-                    .checked_add_carry_over(retained_lysis_budget)?;
-                commit_outer_transition(self, wwd, outer_transition, at_height)?;
-                self.ocomp_fsm_states.get_bytes(&wwd).clear()?;
-                self.remove_live_scheduler(live_intent_id)?;
                 return Ok(OcompExpiryDisposition::TerminalNoRetry {
                     next_pending_nonce,
-                    carry_over,
+                    retained_lysis_budget,
                 });
             }
 
@@ -402,7 +533,7 @@ impl MetadosisContract<'_> {
                 outer_transition.kind(),
                 OuterWwdTransitionKind::OcompRetryScheduled(OcompRetryCause::Expired)
             ) {
-                return Err(fatal(
+                return Err(storage_corruption_message(
                     "retryable OCOMP expiry requires the typed expired-retry outer transition",
                 ));
             }
@@ -434,22 +565,28 @@ impl MetadosisContract<'_> {
                 outer_transition.kind(),
                 OuterWwdTransitionKind::OcompRetryScheduled(OcompRetryCause::Conflicted)
             ) {
-                return Err(fatal(
+                return Err(storage_corruption_message(
                     "OCOMP conflict requires the typed conflicted-retry outer transition",
                 ));
             }
             let mut state = self
                 .live_ocomp_fsm_state_by_intent(intent_id, schema_limits, fsm_limits)?
-                .ok_or_else(|| fatal("OCOMP conflict has no live job"))?;
+                .ok_or_else(|| storage_corruption_message("OCOMP conflict has no live job"))?;
             if state.projection().live_intent_id != Some(intent_id) {
-                return Err(fatal("OCOMP conflict IntentId is not the live job"));
+                return Err(storage_corruption_message(
+                    "OCOMP conflict IntentId is not the live job",
+                ));
             }
             let mut record = self
                 .ocomp_job_record(intent_id, schema_limits)?
-                .ok_or_else(|| fatal("OCOMP conflict job record is missing"))?;
+                .ok_or_else(|| {
+                    storage_corruption_message("OCOMP conflict job record is missing")
+                })?;
             let wwd = WorldwideDay::new(record.intent.wwd);
             if record.status != OcompJobStatus::VotingOpen || record.terminal.is_some() {
-                return Err(fatal("OCOMP conflict requires a voting-open job"));
+                return Err(storage_corruption_message(
+                    "OCOMP conflict requires a voting-open job",
+                ));
             }
             if record
                 .finalized
@@ -457,18 +594,26 @@ impl MetadosisContract<'_> {
                 .and_then(|finalized| finalized.quorum.as_ref())
                 .is_some()
             {
-                return Err(fatal("OCOMP conflict job already has a quorum"));
+                return Err(storage_corruption_message(
+                    "OCOMP conflict job already has a quorum",
+                ));
             }
 
             completed_binding
                 .validate_semantics(quorum, schema_limits)
-                .map_err(|error| fatal(format!("invalid OCOMP conflict binding: {error}")))?;
+                .map_err(|error| {
+                    storage_corruption_message(format!("invalid OCOMP conflict binding: {error}"))
+                })?;
             let receipt = &completed_binding.terminal_receipt;
             let activation_preconditions_hash = record
                 .intent
                 .activation_preconditions
                 .activation_preconditions_hash(schema_limits)
-                .map_err(|error| fatal(format!("hash OCOMP activation preconditions: {error}")))?;
+                .map_err(|error| {
+                    storage_corruption_message(format!(
+                        "hash OCOMP activation preconditions: {error}"
+                    ))
+                })?;
             if receipt.outcome != ActivationOutcome::ConflictResolved
                 || receipt.binding.intent_id != intent_id
                 || receipt.binding.attempt != record.intent.attempt
@@ -482,40 +627,44 @@ impl MetadosisContract<'_> {
                 || receipt.activated_at_height != at_height
                 || receipt.activated_at_time != at_time
             {
-                return Err(fatal("OCOMP conflict receipt is not bound to the live job"));
+                return Err(storage_corruption_message(
+                    "OCOMP conflict receipt is not bound to the live job",
+                ));
             }
 
             let before_terminal = state.projection().terminal_records;
             state
                 .apply(JobFsmCommand::Conflict { at_height, at_time }, fsm_limits)
-                .map_err(|error| fatal(error.to_string()))?;
-            let terminal = state
-                .terminal_attempts()
-                .last()
-                .copied()
-                .ok_or_else(|| fatal("OCOMP conflict produced no terminal evidence"))?;
+                .map_err(|error| storage_corruption_message(error.to_string()))?;
+            let terminal = state.terminal_attempts().last().copied().ok_or_else(|| {
+                storage_corruption_message("OCOMP conflict produced no terminal evidence")
+            })?;
             if terminal.intent_id != intent_id
                 || terminal.outcome != RetryTerminalOutcome::Conflicted
                 || state.projection().terminal_records != before_terminal.saturating_add(1)
             {
-                return Err(fatal("OCOMP conflict terminal index/count mismatch"));
+                return Err(storage_corruption_message(
+                    "OCOMP conflict terminal index/count mismatch",
+                ));
             }
             // Lockstep with the persisted per-day index; see `expire_ocomp_job`.
             let indexed_terminal = self.terminal_intent_count(wwd)?;
             if indexed_terminal != before_terminal {
-                return Err(fatal(
+                return Err(storage_corruption_message(
                     "OCOMP terminal index diverged from the FSM terminal count",
                 ));
             }
             if indexed_terminal >= fsm_limits.max_terminal_records {
-                return Err(fatal("OCOMP terminal record cap exhausted"));
+                return Err(storage_corruption_message(
+                    "OCOMP terminal record cap exhausted",
+                ));
             }
 
             let projection = state.projection();
             record
                 .finalized
                 .as_mut()
-                .ok_or_else(|| fatal("OCOMP conflict job is not finalized"))?
+                .ok_or_else(|| storage_corruption_message("OCOMP conflict job is not finalized"))?
                 .quorum = Some(quorum.clone());
             record.status = OcompJobStatus::Conflicted;
             record.terminal = Some(LysisTerminalV1 {
@@ -565,22 +714,28 @@ impl MetadosisContract<'_> {
                 outer_transition.kind(),
                 OuterWwdTransitionKind::OcompCompleted
             ) {
-                return Err(fatal(
+                return Err(storage_corruption_message(
                     "OCOMP completion requires the typed completed outer transition",
                 ));
             }
             let state = self
                 .live_ocomp_fsm_state_by_intent(intent_id, schema_limits, fsm_limits)?
-                .ok_or_else(|| fatal("OCOMP completion has no live job"))?;
+                .ok_or_else(|| storage_corruption_message("OCOMP completion has no live job"))?;
             let projection = state.projection();
             if projection.live_intent_id != Some(intent_id) {
-                return Err(fatal("OCOMP completion IntentId is not the live job"));
+                return Err(storage_corruption_message(
+                    "OCOMP completion IntentId is not the live job",
+                ));
             }
             let mut record = self
                 .ocomp_job_record(intent_id, schema_limits)?
-                .ok_or_else(|| fatal("OCOMP completion job record is missing"))?;
+                .ok_or_else(|| {
+                    storage_corruption_message("OCOMP completion job record is missing")
+                })?;
             if record.status != OcompJobStatus::VotingOpen || record.terminal.is_some() {
-                return Err(fatal("OCOMP completion requires a voting-open job"));
+                return Err(storage_corruption_message(
+                    "OCOMP completion requires a voting-open job",
+                ));
             }
             if record
                 .finalized
@@ -588,25 +743,33 @@ impl MetadosisContract<'_> {
                 .and_then(|finalized| finalized.quorum.as_ref())
                 .is_some()
             {
-                return Err(fatal("OCOMP completion job already has a quorum"));
+                return Err(storage_corruption_message(
+                    "OCOMP completion job already has a quorum",
+                ));
             }
             // Lockstep with the persisted per-day index; see `expire_ocomp_job`.
             let wwd = WorldwideDay::new(record.intent.wwd);
             let indexed_terminal = self.terminal_intent_count(wwd)?;
             if indexed_terminal != projection.terminal_records {
-                return Err(fatal(
+                return Err(storage_corruption_message(
                     "OCOMP terminal index diverged from the FSM terminal count",
                 ));
             }
             if indexed_terminal >= fsm_limits.max_terminal_records {
-                return Err(fatal("OCOMP terminal record cap exhausted"));
+                return Err(storage_corruption_message(
+                    "OCOMP terminal record cap exhausted",
+                ));
             }
 
             let activation_preconditions_hash = record
                 .intent
                 .activation_preconditions
                 .activation_preconditions_hash(schema_limits)
-                .map_err(|error| fatal(format!("hash OCOMP activation preconditions: {error}")))?;
+                .map_err(|error| {
+                    storage_corruption_message(format!(
+                        "hash OCOMP activation preconditions: {error}"
+                    ))
+                })?;
             let binding = permit.binding().clone();
             if binding.intent_id != intent_id
                 || binding.job_id != active_generation.job_id
@@ -622,23 +785,31 @@ impl MetadosisContract<'_> {
                 || nod_gratis_consumed.checked_add(unused_lysis)
                     != Some(record.intent.frozen_metadosis_values.lysis_budget)
             {
-                return Err(fatal("OCOMP terminal permit is not bound to the live job"));
+                return Err(storage_corruption_message(
+                    "OCOMP terminal permit is not bound to the live job",
+                ));
             }
             if result_evidence_hash.is_zero() {
-                return Err(fatal("OCOMP result evidence hash is zero"));
+                return Err(storage_corruption_message(
+                    "OCOMP result evidence hash is zero",
+                ));
             }
             if active_generation.result_evidence_hash != result_evidence_hash {
-                return Err(fatal(
+                return Err(storage_corruption_message(
                     "active Lysis generation differs from result evidence",
                 ));
             }
 
             if self.active_lysis_generation(wwd, schema_limits)?.is_some() {
-                return Err(fatal("active Lysis generation cannot be overwritten"));
+                return Err(storage_corruption_message(
+                    "active Lysis generation cannot be overwritten",
+                ));
             }
             let active_generation_hash = active_generation
                 .active_generation_hash(schema_limits)
-                .map_err(|error| fatal(format!("hash active Lysis generation: {error}")))?;
+                .map_err(|error| {
+                    storage_corruption_message(format!("hash active Lysis generation: {error}"))
+                })?;
             let receipt = AggregateActivationReceiptV1 {
                 binding: binding.clone(),
                 outcome: ActivationOutcome::Applied,
@@ -653,18 +824,23 @@ impl MetadosisContract<'_> {
                 activated_at_height,
                 activated_at_time,
             };
-            receipt
-                .validate_semantics()
-                .map_err(|error| fatal(format!("invalid applied terminal receipt: {error}")))?;
-            let terminal_receipt_hash = receipt
-                .terminal_receipt_hash(schema_limits)
-                .map_err(|error| fatal(format!("hash applied terminal receipt: {error}")))?;
+            receipt.validate_semantics().map_err(|error| {
+                storage_corruption_message(format!("invalid applied terminal receipt: {error}"))
+            })?;
+            let terminal_receipt_hash =
+                receipt
+                    .terminal_receipt_hash(schema_limits)
+                    .map_err(|error| {
+                        storage_corruption_message(format!(
+                            "hash applied terminal receipt: {error}"
+                        ))
+                    })?;
             let completed_binding = OcompCompletedBindingV1 {
                 job_id: binding.job_id,
                 activation_call_id: permit.activation_call_id(),
                 result_digest: binding.result_digest,
                 quorum_height: quorum.quorum_height,
-                quorum_signer_bitmap: quorum.signer_bitmap,
+                quorum_signer_bitmap: quorum.signer_bitmap.clone(),
                 quorum_evidence_hash: quorum.evidence_hash,
                 result_evidence_hash,
                 terminal_receipt_hash,
@@ -672,17 +848,23 @@ impl MetadosisContract<'_> {
             };
             completed_binding
                 .validate_semantics(quorum, schema_limits)
-                .map_err(|error| fatal(format!("invalid OCOMP completed binding: {error}")))?;
+                .map_err(|error| {
+                    storage_corruption_message(format!("invalid OCOMP completed binding: {error}"))
+                })?;
 
             self.ocomp_active_lysis_generations.get_bytes(&wwd).write(
                 &active_generation
                     .encode_canonical(schema_limits)
-                    .map_err(|error| fatal(format!("encode active Lysis generation: {error}")))?,
+                    .map_err(|error| {
+                        storage_corruption_message(format!(
+                            "encode active Lysis generation: {error}"
+                        ))
+                    })?,
             )?;
             record
                 .finalized
                 .as_mut()
-                .ok_or_else(|| fatal("OCOMP completion job is not finalized"))?
+                .ok_or_else(|| storage_corruption_message("OCOMP completion job is not finalized"))?
                 .quorum = Some(quorum.clone());
             record.status = OcompJobStatus::Completed;
             record.terminal = Some(LysisTerminalV1 {
@@ -719,14 +901,10 @@ impl MetadosisContract<'_> {
                 terminalReceiptHash: terminal_receipt_hash,
                 wwd: record.intent.wwd,
             })?;
-            permit
-                .commit_terminal()
-                .map_err(|error| fatal(format!("commit Lysis terminal permit: {error}")))?;
+            permit.commit_terminal().map_err(|error| {
+                storage_corruption_message(format!("commit Lysis terminal permit: {error}"))
+            })?;
             Ok(completed_binding)
         })()
     }
-}
-
-fn fatal(message: impl Into<String>) -> PrecompileError {
-    PrecompileError::Fatal(message.into())
 }

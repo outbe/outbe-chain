@@ -28,17 +28,19 @@ duckdb = "latest"
 # Localnet harness knobs (override per-invocation, e.g. `OUT_DIR=/tmp/x mise run localnet`).
 OUT_DIR            = "/tmp/outbe-testnet"
 VALIDATORS         = "4"
-OUTBE_CHAIN_BINARY = "./target/release/outbe-chain"
 # SEED_FILE is optional; localnet-bootstrap branches on whether it is set.
-# The projection sink needs a transaction-capable Mongo; localnet-start brings up
-# a one-member rs0 replica set in Docker (scripts/localnet-mongo.sh) at this URI.
-OUTBE_PROJECTION_MONGODB_URI = "mongodb://127.0.0.1:27017/?replicaSet=rs0&directConnection=true"
+# The persistent Rust harness owns the MongoDB replica set, mock enclaves, and
+# validator processes for the complete localnet-start → localnet-stop lifetime.
 
 # ─── Build ──────────────────────────────────────────────────────────── #
 
 [tasks.build]
 description = "Build the workspace (debug, cargo auditable)"
-run = "cargo auditable build"
+run = [
+  "cargo auditable build",
+  "cargo auditable build -p outbe-tee-enclave --features mock --bin outbe-tee-enclave-mock",
+  "cargo auditable build -p outbe-e2e-harness --features ocomp-integration --bin outbe-e2e",
+]
 
 [tasks.build-release]
 description = "Build the workspace (release, cargo auditable)"
@@ -55,8 +57,16 @@ description = "Check formatting without writing changes"
 run = "cargo fmt --all --check"
 
 [tasks.lint]
-description = "Run clippy on all crates (-D warnings)"
-run = "cargo clippy --all-targets --all-features -- -D warnings"
+description = "Run clippy on all crates"
+# No --all-features: it would turn on outbe-tee's `native-dcap`, whose build.rs
+# links the pinned Intel SGX/DCAP toolchain (headers + .so) that only exists on
+# the gramine-sgx build. Lint native-dcap only where that toolchain is present.
+run = """
+cargo clippy --all-targets -- -D warnings
+if [ -f /usr/include/sgx_dcap_quoteverify.h ]; then
+  cargo clippy -p outbe-tee --all-targets --features native-dcap -- -D warnings
+fi
+"""
 
 [tasks.check]
 description = "Type-check the workspace"
@@ -88,12 +98,12 @@ run = "cargo install --locked cargo-nextest"
 [tasks.audit]
 description = "Audit debug binaries for known vulnerabilities"
 depends = ["build"]
-run = "find target/debug -maxdepth 1 -type f -perm +111 -name 'outbe-*' -exec cargo audit bin {} \\;"
+run = "find target/debug -maxdepth 1 -type f -perm +111 -name 'outbe-*' -exec cargo audit --db ~/.cargo/rustsec-audit-db --ignore RUSTSEC-2025-0055 --ignore RUSTSEC-2026-0118 --ignore RUSTSEC-2026-0119 bin {} \\;"
 
 [tasks.audit-release]
 description = "Audit release binaries for known vulnerabilities"
 depends = ["build-release"]
-run = "find target/release -maxdepth 1 -type f -perm +111 -name 'outbe-*' -exec cargo audit bin {} \\;"
+run = "find target/release -maxdepth 1 -type f -perm +111 -name 'outbe-*' -exec cargo audit --db ~/.cargo/rustsec-audit-db --ignore RUSTSEC-2025-0055 --ignore RUSTSEC-2026-0118 --ignore RUSTSEC-2026-0119 bin {} \\;"
 
 # ─── Audit toolchain (rust-module-audit skill entry points) ─────────── #
 
@@ -110,7 +120,7 @@ run = [
 [tasks.audit-quick]
 description = "Fast cycle: clippy -D warnings + cargo nextest run"
 run = [
-  "cargo clippy --all-targets --all-features -- -D warnings",
+  "cargo clippy --all-targets -- -D warnings",
   "cargo nextest run --workspace",
 ]
 
@@ -128,7 +138,11 @@ run = "cargo deny check"
 
 [tasks.audit-rustsec]
 description = "cargo audit (RustSec workspace dependency advisories)"
-run = "cargo audit"
+# Keep the adjudicated exceptions aligned with deny.toml and cve-scan.yml.
+# RUSTSEC-2026-0118/-0119 are not applicable because Outbe disables DNS
+# discovery and does not enable Hickory DNSSEC. cargo-deny uses a hashed
+# database layout under ~/.cargo/advisory-db, so cargo-audit needs its own path.
+run = "cargo audit --db ~/.cargo/rustsec-audit-db --ignore RUSTSEC-2025-0055 --ignore RUSTSEC-2026-0118 --ignore RUSTSEC-2026-0119"
 
 [tasks.audit-machete]
 description = "cargo machete (unused workspace dependencies)"
@@ -161,57 +175,38 @@ run = "cargo bench --workspace"
 # ─── Localnet ───────────────────────────────────────────────────────── #
 
 [tasks.localnet-bootstrap]
-description = "Clean OUT_DIR and bootstrap a local validator set"
+description = "Bootstrap a fresh dev/mock LocalNet through the canonical Rust E2E harness"
 run = """
-# Stop any localnet still running from a previous bootstrap FIRST. Bootstrap
-# wipes OUT_DIR (including pids/), so skipping this orphans the old node +
-# enclave processes — they keep holding the RPC/metrics/consensus ports and the
-# next `start` dies with "Address already in use". No-op when nothing is running.
-./scripts/run-testnet.sh stop "$OUT_DIR" 2>/dev/null || true
 if [ -z "${SEED_FILE:-}" ]; then
-  ./scripts/bootstrap-testnet.sh "$VALIDATORS" "$OUT_DIR"
+  ./target/debug/outbe-e2e localnet bootstrap --repo . --data-dir "$OUT_DIR" --validators "$VALIDATORS"
 else
-  ./scripts/bootstrap-testnet.sh "$VALIDATORS" "$OUT_DIR" "$SEED_FILE"
+  ./target/debug/outbe-e2e localnet bootstrap --repo . --data-dir "$OUT_DIR" --validators "$VALIDATORS" --seed "$SEED_FILE"
 fi
 """
 
 [tasks.localnet-start]
-description = "Start a bootstrapped localnet from OUT_DIR (brings up Docker MongoDB first)"
-run = """
-./scripts/localnet-mongo.sh start
-./scripts/run-testnet.sh start "$OUT_DIR"
-./scripts/run-testnet.sh status "$OUT_DIR"
-"""
+description = "Start the persistent dev/mock LocalNet owner and wait for all RPCs to advance"
+run = './target/debug/outbe-e2e localnet start --repo . --data-dir "$OUT_DIR" --validators "$VALIDATORS"'
 
 [tasks.localnet-stop]
-description = "Stop the localnet in OUT_DIR"
-run = './scripts/run-testnet.sh stop "$OUT_DIR"'
+description = "Stop the exact persistent LocalNet owner in OUT_DIR"
+run = './target/debug/outbe-e2e localnet stop --repo . --data-dir "$OUT_DIR" --validators "$VALIDATORS"'
 
 [tasks.localnet-status]
-description = "Show localnet process status for OUT_DIR"
-run = './scripts/run-testnet.sh status "$OUT_DIR"'
+description = "Show the owner and every validator RPC height"
+run = './target/debug/outbe-e2e localnet status --repo . --data-dir "$OUT_DIR" --validators "$VALIDATORS"'
 
 [tasks.localnet]
-description = "Build release + bootstrap + start localnet"
+description = "Build debug binaries, bootstrap, and start the dev/mock LocalNet"
 run = """
-mise run build-release
+mise run build
 mise run localnet-bootstrap
 mise run localnet-start
 """
 
 [tasks.localnet-tee]
-description = "Build + bootstrap + start localnet with a per-validator mock TEE enclave (bare, no SGX/Docker)"
-run = """
-# Local TEE run: mock enclave (no SGX) as a bare host process (no Gramine/Docker).
-# Bare is required on Apple Silicon — the amd64 Gramine image dies under QEMU.
-export OUTBE_TEE_ENCLAVE=1
-export OUTBE_TEE_ENCLAVE_MOCK=1
-export OUTBE_TEE_ENCLAVE_BARE=1
-mise run build-release
-cargo build --release -p outbe-tee-enclave --features mock --bin outbe-tee-enclave-mock
-mise run localnet-bootstrap
-mise run localnet-start
-"""
+description = "Alias for the canonical dev/mock LocalNet (TEE is mandatory)"
+depends = ["localnet"]
 
 [tasks.localnet-restart]
 description = "Stop and start the bootstrapped localnet"
@@ -221,15 +216,20 @@ mise run localnet-start
 """
 
 [tasks.localnet-clean]
-description = "Remove all validator-*/ and pids/ from OUT_DIR, and the Docker MongoDB"
+description = "Stop LocalNet and clear validator runtime data inside dedicated OUT_DIR"
 run = """
+mise run localnet-stop
 ./scripts/clean-testnet-data.sh "$OUT_DIR"
-./scripts/localnet-mongo.sh clean
 """
 
 [tasks.localnet-smoke]
-description = "4-validator multi-node consensus smoke (bootstrap → lockstep height → stop)"
-run = './scripts/localnet-smoke.sh'
+description = "Dev/mock consensus smoke through the canonical harness"
+run = """
+mise run localnet-bootstrap
+mise run localnet-start
+mise run localnet-status
+mise run localnet-stop
+"""
 
 [tasks.localnet-stack-start]
 description = "Start a fresh 4-validator localnet with mock TEE and managed MongoDB"
@@ -242,6 +242,22 @@ run = "bash ./scripts/localnet-stack.sh stop"
 [tasks.localnet-stack-clean]
 description = "Stop the managed localnet and MongoDB, then remove chain data"
 run = "bash ./scripts/localnet-stack.sh clean"
+
+[tasks.localnet-sgx-bootstrap]
+description = "Deferred real-SGX LocalNet bootstrap (tracked by outbe-chain-8lp)"
+run = './target/debug/outbe-e2e localnet-sgx bootstrap --repo . --data-dir "${OUT_DIR}-sgx" --validators "$VALIDATORS"'
+
+[tasks.localnet-sgx-start]
+description = "Deferred real-SGX LocalNet start (tracked by outbe-chain-8lp)"
+run = './target/debug/outbe-e2e localnet-sgx start --repo . --data-dir "${OUT_DIR}-sgx" --validators "$VALIDATORS"'
+
+[tasks.localnet-sgx-status]
+description = "Deferred real-SGX LocalNet status (tracked by outbe-chain-8lp)"
+run = './target/debug/outbe-e2e localnet-sgx status --repo . --data-dir "${OUT_DIR}-sgx" --validators "$VALIDATORS"'
+
+[tasks.localnet-sgx-stop]
+description = "Deferred real-SGX LocalNet stop (tracked by outbe-chain-8lp)"
+run = './target/debug/outbe-e2e localnet-sgx stop --repo . --data-dir "${OUT_DIR}-sgx" --validators "$VALIDATORS"'
 
 [tasks.tribute-offer]
 description = "Create one encrypted Tribute on the running managed localnet"

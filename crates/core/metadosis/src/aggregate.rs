@@ -10,7 +10,8 @@ use outbe_primitives::{
 
 use crate::{
     constants::{MAX_ACTIVE_WWDS, MAX_RECORDS_KEPT, MAX_RETAINED_WWDS},
-    ocomp::state::DayPhase,
+    errors::storage_corruption_message,
+    ocomp::state::{DayPhase, OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS},
     ocomp::{poc_schema_limits, ResponseDeadlineKey},
     schema::{day_type, status, terminal_outcome, MetadosisContract},
     terminal::{
@@ -54,13 +55,13 @@ impl TryFrom<u8> for WwdStatus {
             status::OFFERING => Ok(Self::Offering),
             status::WAITING => Ok(Self::Waiting),
             status::READY => Ok(Self::Ready),
-            status::RESERVED_IN_PROGRESS => Err(fatal(
+            status::RESERVED_IN_PROGRESS => Err(storage_corruption_message(
                 "Metadosis WWD status tag 5 is reserved and cannot be persisted",
             )),
             status::COMPLETED => Ok(Self::Completed),
             status::FAILED => Ok(Self::Failed),
             status::OFFCHAIN_PENDING => Ok(Self::OffchainPending),
-            other => Err(fatal(format!(
+            other => Err(storage_corruption_message(format!(
                 "Metadosis WWD has unknown status tag {other}"
             ))),
         }
@@ -89,7 +90,7 @@ impl TryFrom<u8> for WwdDayType {
             day_type::UNKNOWN => Ok(Self::Unknown),
             day_type::GREEN => Ok(Self::Green),
             day_type::RED => Ok(Self::Red),
-            other => Err(fatal(format!(
+            other => Err(storage_corruption_message(format!(
                 "Metadosis WWD has unknown day-type tag {other}"
             ))),
         }
@@ -199,7 +200,7 @@ impl ValidatedWwdAggregate {
             matches!(record.status, WwdStatus::Ready | WwdStatus::OffchainPending)
                 && (record.scheduled_process_time, record.worldwide_day) > victim_key
         }) {
-            return Err(fatal(
+            return Err(storage_corruption_message(
                 "CapacityForfeiture candidate is older than retained OCOMP work",
             ));
         }
@@ -208,12 +209,12 @@ impl ValidatedWwdAggregate {
 
     pub(crate) fn ensure_can_insert_active(&self, wwd: WorldwideDay) -> Result<()> {
         if self.records.contains_key(&wwd) {
-            return Err(fatal(format!(
+            return Err(storage_corruption_message(format!(
                 "Metadosis WWD {wwd} already exists before active insertion"
             )));
         }
         if self.active_order.len() >= MAX_ACTIVE_WWDS {
-            return Err(fatal(format!(
+            return Err(storage_corruption_message(format!(
                 "Metadosis active WWD cap {MAX_ACTIVE_WWDS} reached before inserting {wwd}"
             )));
         }
@@ -232,7 +233,7 @@ impl ValidatedWwdAggregate {
         };
         let retained_count = aggregate.retained_count();
         if retained_count > MAX_RETAINED_WWDS {
-            return Err(fatal(format!(
+            return Err(storage_corruption_message(format!(
                 "Metadosis retained WWD population {retained_count} exceeds OCOMP cap {MAX_RETAINED_WWDS}"
             )));
         }
@@ -246,19 +247,19 @@ fn load_index_membership(
     let active_set = collect_unique("active", contract.active_wwd.read_all()?)?;
     let closed_set = collect_unique("closed", contract.closed_wwd.read_all()?)?;
     if active_set.len() > MAX_ACTIVE_WWDS {
-        return Err(fatal(format!(
+        return Err(storage_corruption_message(format!(
             "Metadosis active WWD population {} exceeds derived cap {MAX_ACTIVE_WWDS}",
             active_set.len()
         )));
     }
     if closed_set.len() > MAX_RECORDS_KEPT {
-        return Err(fatal(format!(
+        return Err(storage_corruption_message(format!(
             "Metadosis closed WWD population {} exceeds retention cap {MAX_RECORDS_KEPT}",
             closed_set.len()
         )));
     }
     if let Some(overlap) = active_set.intersection(&closed_set).next() {
-        return Err(fatal(format!(
+        return Err(storage_corruption_message(format!(
             "Metadosis WWD {overlap} is both active and closed"
         )));
     }
@@ -277,7 +278,7 @@ fn load_records(
     ] {
         for wwd in indexed {
             let record = contract.worldwide_days.get(*wwd)?.ok_or_else(|| {
-                fatal(format!(
+                storage_corruption_message(format!(
                     "Metadosis {membership:?} index points to missing WWD {wwd}"
                 ))
             })?;
@@ -302,7 +303,7 @@ fn validate_record_shape(
     record: &crate::schema::WorldwideDay,
 ) -> Result<()> {
     if status.is_terminal() != matches!(membership, WwdMembership::Closed) {
-        return Err(fatal(format!(
+        return Err(storage_corruption_message(format!(
             "Metadosis WWD {wwd} status/membership mismatch"
         )));
     }
@@ -311,7 +312,7 @@ fn validate_record_shape(
         && record.lookback_end <= record.offering_end
         && record.offering_end <= record.scheduled_process_time)
     {
-        return Err(fatal(format!(
+        return Err(storage_corruption_message(format!(
             "Metadosis WWD {wwd} has non-monotonic phase boundaries"
         )));
     }
@@ -329,7 +330,7 @@ fn validate_terminal_state(
     let capacity_receipt = contract.capacity_forfeiture_receipts.get(wwd)?;
     let Some(receipt) = generic_receipt else {
         if capacity_receipt.is_some() {
-            return Err(fatal(format!(
+            return Err(storage_corruption_message(format!(
                 "Metadosis WWD {wwd} has capacity detail without terminal receipt"
             )));
         }
@@ -344,7 +345,7 @@ fn validate_terminal_state(
     let receipt_validation = match receipt.outcome {
         terminal_outcome::MISSED_OFFERING => {
             if capacity_receipt.is_some() {
-                Err(fatal(format!(
+                Err(storage_corruption_message(format!(
                     "Metadosis WWD {wwd} has an invalid terminal receipt"
                 )))
             } else {
@@ -357,18 +358,41 @@ fn validate_terminal_state(
         }
         terminal_outcome::CAPACITY_FORFEITURE => {
             let detail = capacity_receipt.as_ref().ok_or_else(|| {
-                fatal(format!(
+                storage_corruption_message(format!(
                     "Metadosis WWD {wwd} has an invalid terminal receipt"
                 ))
             })?;
             validate_capacity_forfeiture_detail(&receipt, detail, context)
         }
-        _ => Err(fatal(format!(
+        terminal_outcome::METADOSIS_FAILURE => {
+            if capacity_receipt.is_some() {
+                Err(storage_corruption_message(format!(
+                    "Metadosis WWD {wwd} has an invalid terminal receipt"
+                )))
+            } else {
+                let expected_value_routed = contract
+                    .request_budget_receipt(wwd, &poc_schema_limits())?
+                    .map_or(record.metadosis_limit_amount, |receipt| {
+                        receipt.lysis_budget
+                    });
+                validate_terminal_receipt_state(
+                    &receipt,
+                    terminal_outcome::METADOSIS_FAILURE,
+                    TerminalReceiptValidationContext::new(
+                        status.as_u8(),
+                        usize::from(membership == WwdMembership::Active),
+                        usize::from(membership == WwdMembership::Closed),
+                        expected_value_routed,
+                    ),
+                )
+            }
+        }
+        _ => Err(storage_corruption_message(format!(
             "Metadosis WWD {wwd} has an invalid terminal receipt"
         ))),
     };
     receipt_validation.map_err(|_| {
-        fatal(format!(
+        storage_corruption_message(format!(
             "Metadosis WWD {wwd} has an invalid terminal receipt"
         ))
     })
@@ -382,12 +406,12 @@ fn validate_record_ocomp_presence(
 ) -> Result<()> {
     let has_ocomp_state = !contract.ocomp_fsm_states.get_bytes(&wwd).is_empty()?;
     if status == WwdStatus::OffchainPending && !has_ocomp_state {
-        return Err(fatal(format!(
+        return Err(storage_corruption_message(format!(
             "Metadosis OFFCHAIN_PENDING WWD {wwd} has no OCOMP FSM"
         )));
     }
     if matches!(membership, WwdMembership::Closed) && has_ocomp_state {
-        return Err(fatal(format!(
+        return Err(storage_corruption_message(format!(
             "Metadosis closed WWD {wwd} retains a live OCOMP FSM"
         )));
     }
@@ -409,7 +433,7 @@ fn validate_ocomp_index_equivalence(
             || !contract.ocomp_scheduler.is_empty()?
             || !contract.read_response_deadline_index()?.is_empty()
         {
-            return Err(fatal(
+            return Err(storage_corruption_message(
                 "Metadosis OCOMP state exists without an active profile",
             ));
         }
@@ -435,56 +459,83 @@ fn validate_ocomp_index_equivalence(
     for live in contract.live_ocomp_fsm_states(&schema_limits, limits)? {
         let projection = live.projection();
         if !active_set.contains(&projection.worldwide_day) {
-            return Err(fatal(
+            return Err(storage_corruption_message(
                 "OCOMP live scheduler points outside active WWD index",
             ));
         }
         if !live_scheduler_wwds.insert(projection.worldwide_day) {
-            return Err(fatal("OCOMP live scheduler contains a duplicate WWD"));
+            return Err(storage_corruption_message(
+                "OCOMP live scheduler contains a duplicate WWD",
+            ));
         }
-        if let Some(deadline_height) = projection.deadline_height {
-            let intent_id = projection
-                .live_intent_id
-                .ok_or_else(|| fatal("OCOMP voting FSM has no live intent"))?;
-            let record = contract
-                .ocomp_job_record(intent_id, &schema_limits)?
-                .ok_or_else(|| fatal("OCOMP voting FSM has no job record"))?;
-            let finalized = record
-                .finalized
-                .as_ref()
-                .ok_or_else(|| fatal("OCOMP voting FSM job is not finalized"))?;
-            if record.status != OcompJobStatus::VotingOpen
-                || finalized.deadline_height != deadline_height
-            {
-                return Err(fatal("OCOMP voting FSM/job deadline mismatch"));
+        let deadline_height = projection
+            .deadline_height
+            .ok_or_else(|| storage_corruption_message("OCOMP live FSM has no deadline"))?;
+        let intent_id = projection
+            .live_intent_id
+            .ok_or_else(|| storage_corruption_message("OCOMP live FSM has no live intent"))?;
+        let record = contract
+            .ocomp_job_record(intent_id, &schema_limits)?
+            .ok_or_else(|| storage_corruption_message("OCOMP live FSM has no job record"))?;
+        match record.status {
+            OcompJobStatus::AwaitingFinality => {
+                let expected = record
+                    .intent_height
+                    .checked_add(OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS)
+                    .ok_or_else(|| {
+                        storage_corruption_message("OCOMP awaiting-finality deadline overflow")
+                    })?;
+                if deadline_height != expected {
+                    return Err(storage_corruption_message(
+                        "OCOMP awaiting-finality FSM/job deadline mismatch",
+                    ));
+                }
             }
-            unmatched_voting_windows.insert(ResponseDeadlineKey {
-                deadline_height,
-                job_id: finalized.job_id,
-                intent_id,
-            });
+            OcompJobStatus::VotingOpen => {
+                let finalized = record.finalized.as_ref().ok_or_else(|| {
+                    storage_corruption_message("OCOMP voting FSM job is not finalized")
+                })?;
+                if finalized.deadline_height != deadline_height {
+                    return Err(storage_corruption_message(
+                        "OCOMP voting FSM/job deadline mismatch",
+                    ));
+                }
+                unmatched_voting_windows.insert(ResponseDeadlineKey {
+                    deadline_height,
+                    job_id: finalized.job_id,
+                    intent_id,
+                });
+            }
+            _ => {
+                return Err(storage_corruption_message(
+                    "terminal OCOMP job remains in the live scheduler",
+                ))
+            }
         }
     }
     if live_scheduler_wwds != pending_fsm_wwds {
-        return Err(fatal(
+        return Err(storage_corruption_message(
             "OCOMP pending FSM membership does not exactly match the live scheduler",
         ));
     }
     for key in contract.read_response_deadline_index()? {
         let record = contract
             .ocomp_job_record(key.intent_id, &schema_limits)?
-            .ok_or_else(|| fatal("OCOMP response index points to a missing job"))?;
-        let finalized = record
-            .finalized
-            .as_ref()
-            .ok_or_else(|| fatal("OCOMP response index job is not finalized"))?;
+            .ok_or_else(|| {
+                storage_corruption_message("OCOMP response index points to a missing job")
+            })?;
+        let finalized = record.finalized.as_ref().ok_or_else(|| {
+            storage_corruption_message("OCOMP response index job is not finalized")
+        })?;
         if finalized.job_id != key.job_id || finalized.deadline_height != key.deadline_height {
-            return Err(fatal("OCOMP response index/job deadline mismatch"));
+            return Err(storage_corruption_message(
+                "OCOMP response index/job deadline mismatch",
+            ));
         }
         match record.status {
             OcompJobStatus::VotingOpen => {
                 if !unmatched_voting_windows.remove(&key) {
-                    return Err(fatal(
+                    return Err(storage_corruption_message(
                         "OCOMP response index has no matching live voting FSM",
                     ));
                 }
@@ -492,27 +543,31 @@ fn validate_ocomp_index_equivalence(
             OcompJobStatus::Completed | OcompJobStatus::Conflicted
                 if finalized.quorum.is_some() => {}
             _ => {
-                return Err(fatal(
+                return Err(storage_corruption_message(
                     "OCOMP response index points to a job without an open window",
                 ));
             }
         }
     }
     if !unmatched_voting_windows.is_empty() {
-        return Err(fatal(
+        return Err(storage_corruption_message(
             "OCOMP live voting FSM has no exact response deadline key",
         ));
     }
     for ready in contract.read_ready_index()? {
         if !active_set.contains(&ready.worldwide_day) {
-            return Err(fatal("OCOMP READY index points outside active WWD index"));
+            return Err(storage_corruption_message(
+                "OCOMP READY index points outside active WWD index",
+            ));
         }
         if contract
             .ocomp_fsm_states
             .get_bytes(&ready.worldwide_day)
             .is_empty()?
         {
-            return Err(fatal("OCOMP READY index points to a missing FSM"));
+            return Err(storage_corruption_message(
+                "OCOMP READY index points to a missing FSM",
+            ));
         }
         let state = contract.ocomp_fsm_state(ready.worldwide_day, &schema_limits, limits)?;
         let projection = state.projection();
@@ -520,7 +575,9 @@ fn validate_ocomp_index_equivalence(
             || projection.next_check_height != Some(ready.next_check_height)
             || projection.pending_nonce != ready.pending_nonce
         {
-            return Err(fatal("OCOMP READY index does not match its FSM"));
+            return Err(storage_corruption_message(
+                "OCOMP READY index does not match its FSM",
+            ));
         }
     }
     Ok(())
@@ -542,14 +599,10 @@ fn collect_unique(label: &str, values: Vec<WorldwideDay>) -> Result<BTreeSet<Wor
     let mut set = BTreeSet::new();
     for value in values {
         if !set.insert(value) {
-            return Err(fatal(format!(
+            return Err(storage_corruption_message(format!(
                 "Metadosis {label} WWD index contains duplicate {value}"
             )));
         }
     }
     Ok(set)
-}
-
-fn fatal(message: impl Into<String>) -> PrecompileError {
-    PrecompileError::Fatal(message.into())
 }

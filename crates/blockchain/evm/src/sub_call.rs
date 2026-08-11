@@ -135,13 +135,14 @@ where
         EthInstructions::<EthInterpreter, &mut EthEvmContext<DB>>::new_mainnet_with_spec(spec);
     crate::create_guard::install(&mut instructions);
     let precompiles = crate::precompiles::OutbeSubCallPrecompiles::<DB>::new(
-        spec,
-        genesis_hash,
-        runtime_body_readers,
-        execution_scope,
-        ocomp_finality_authority,
+        crate::precompiles::OutbePrecompileExecutionContext::new(spec, genesis_hash),
+        crate::precompiles::OutbePrecompileRuntime::new(
+            runtime_body_readers,
+            execution_scope,
+            ocomp_finality_authority,
+            ocomp_lifecycle_active,
+        ),
         ocomp_activation_block_meter,
-        ocomp_lifecycle_active,
     );
     #[allow(clippy::type_complexity)]
     let mut evm: Evm<

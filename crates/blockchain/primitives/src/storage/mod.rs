@@ -237,8 +237,8 @@ pub trait PrecompileStorageProvider {
 
     /// Closes a previously granted Lysis activation lease.
     ///
-    /// `completed` is true only after the fixed Nod, contributor, Tribute,
-    /// carry-over and terminal cursor has been consumed in order.
+    /// `completed` is true only after the fixed Nod, contributor, carry-over,
+    /// Tribute and terminal cursor has been consumed in order.
     fn finish_lysis_activation_frame(
         &mut self,
         _activation_call_id: B256,

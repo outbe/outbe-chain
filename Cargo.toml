@@ -3,6 +3,7 @@ members = [
     "xtask",
     # blockchain
     "crates/blockchain/macros",
+    "crates/blockchain/constants",
     "crates/blockchain/primitives",
     "crates/blockchain/evm",
     "crates/blockchain/consensus",
@@ -96,6 +97,7 @@ undocumented_unsafe_blocks = "deny"
 [workspace.dependencies]
 # Internal — blockchain
 outbe-macros = { path = "crates/blockchain/macros" }
+outbe-chain-constants = { path = "crates/blockchain/constants" }
 outbe-primitives = { path = "crates/blockchain/primitives" }
 outbe-evm = { path = "crates/blockchain/evm" }
 outbe-consensus = { path = "crates/blockchain/consensus" }
@@ -161,6 +163,7 @@ alloy-primitives = { version = "=1.5.7", default-features = false }
 alloy-sol-types = { version = "=1.5.7", default-features = false }
 alloy-rlp = { version = "0.3.13", default-features = false }
 alloy-trie = { version = "0.9.5" }
+axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
 
 # Alloy — high-level (alloy-rs/alloy): 2.0.x, pinned to match reth v2.2.0
 alloy-consensus = { version = "2.0.4", default-features = false }
@@ -306,6 +309,7 @@ eyre = "0.6"
 hex = "0.4"
 libc = "0.2"
 rustix = { version = "1.1.4", features = ["fs", "process"] }
+salvo = { version = "0.95.1", default-features = false, features = ["server", "server-handle", "http1", "affix-state", "size-limiter", "timeout", "request-id"] }
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 parking_lot = "0.12"
@@ -317,6 +321,7 @@ sha2 = "0.10"
 sha3 = "0.10"
 walkdir = "2"
 tar = "0.4"
+zeromq = { version = "0.6.0", default-features = false, features = ["tokio-runtime", "tcp-transport"] }
 
 [profile.dev]
 debug = "line-tables-only"

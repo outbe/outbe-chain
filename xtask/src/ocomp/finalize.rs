@@ -1,10 +1,11 @@
-//! Deterministic OCM-26 final bundle, committee and chain-manifest generation.
+//! Deterministic OCM-26 final bundle and chain-manifest generation.
 //!
 //! Capacity is measured first. This module then binds that exact profile to
-//! implementation semantic digests, a fresh base genesis, four public
-//! validator identities and a static q=3 result committee. It never generates
-//! production secrets: the four fixed OCOMP keys are a reference-E2E fixture
-//! used only by this xtask/harness path.
+//! implementation semantic digests, a fresh base genesis and one public OCOMP
+//! registration for every ordered genesis validator. Registrations bootstrap
+//! keys only; runtime voting membership comes exclusively from ValidatorSet
+//! snapshots. Deterministic keys generated without `--registrations-dir` are
+//! reference-E2E fixture material, never production secrets.
 
 use std::{
     collections::BTreeMap,
@@ -23,19 +24,16 @@ use outbe_metadosis::config::{
 };
 use outbe_ocomp_protocol::{
     committee::{
-        OcompCommitteeSnapshotV1, OcompKeyRegistrationCoreV1, OcompKeyRegistrationV1,
-        OcompMemberV1, RESULT_SIGNATURE_PURPOSE_BITMAP,
+        validator_identity_hash_v1, OcompKeyRegistrationCoreV1, OcompKeyRegistrationV1,
+        POC_KEY_EPOCH, RESULT_SIGNATURE_PURPOSE_BITMAP,
     },
     generated_shape::{
         OCOMP_CAPACITY_PROFILE_ID_HEX, OCOMP_CORRECTNESS_PROFILE_ID_HEX, OCOMP_POC_FORK_ID_HEX,
     },
-    hash::hash_framed,
     profile::{
         poc_schema_limits, CapacityProfileV1, CorrectnessProfileV1, ProgramId, ProtocolBundleV1,
     },
-    registry::{
-        HashDomain, FIDELITY_OPENING_CODEC_ID, ORACLE_OPENING_CODEC_ID, TRIBUTE_BODY_CODEC_ID,
-    },
+    registry::{FIDELITY_OPENING_CODEC_ID, ORACLE_OPENING_CODEC_ID, TRIBUTE_BODY_CODEC_ID},
 };
 use outbe_primitives::OutbeHeader;
 use reth_chainspec::ChainSpec;
@@ -72,12 +70,10 @@ const CAPACITY_FILE: &str = "capacity-profile-v1.ocb1";
 const GENERATED_CAPACITY_FILE: &str = "generated-capacity-v1.json";
 const CORRECTNESS_FILE: &str = "correctness-profile-v1.ocb1";
 const BUNDLE_FILE: &str = "protocol-bundle-v1.ocb1";
-const COMMITTEE_FILE: &str = "result-committee-v1.ocb1";
 const INSTALL_FILE: &str = "fork-install-v1.ocb1";
 const CHAIN_MANIFEST_FILE: &str = "genesis-final.json";
 const NETWORK_MANIFEST_FILE: &str = "network-binding-v1.json";
 const SEMANTICS_MANIFEST_FILE: &str = "semantic-artifacts-v1.json";
-const COMMITTEE_MANIFEST_FILE: &str = "result-committee-public-v1.json";
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FinalArtifactOverrides<'a> {
@@ -159,31 +155,6 @@ struct SemanticArtifactsDocumentV1 {
 }
 
 #[derive(Debug, Serialize)]
-struct CommitteeMemberDocumentV1 {
-    validator_index: u8,
-    validator_identity_hash: B256,
-    ocomp_public_key_sec1_hex: String,
-    key_epoch: u64,
-    allowed_purpose_bitmap: u32,
-    valid_from_height: u64,
-    valid_until_height_exclusive: u64,
-    proof_of_possession_hex: String,
-}
-
-#[derive(Debug, Serialize)]
-struct CommitteeDocumentV1 {
-    schema_version: u16,
-    chain_id: u64,
-    genesis_hash: B256,
-    fork_id: B256,
-    protocol_bundle_hash: B256,
-    snapshot_hash: B256,
-    snapshot_epoch: u64,
-    threshold: u8,
-    ordered_members: Vec<CommitteeMemberDocumentV1>,
-}
-
-#[derive(Debug, Serialize)]
 struct NetworkBindingDocumentV1 {
     schema_version: u16,
     kind: &'static str,
@@ -206,13 +177,11 @@ struct NetworkBindingDocumentV1 {
     capacity_profile_ocb1_sha256: B256,
     protocol_bundle_hash: B256,
     protocol_bundle_ocb1_sha256: B256,
-    result_committee_snapshot_hash: B256,
-    result_committee_ocb1_sha256: B256,
+    founder_registration_count: u16,
     fork_install_hash: B256,
     fork_install_ocb1_sha256: B256,
     chain_manifest_sha256: B256,
     semantic_artifacts_sha256: B256,
-    committee_public_manifest_sha256: B256,
 }
 
 pub fn run(
@@ -329,25 +298,17 @@ pub fn run(
     let chain_id = base_spec.chain().id();
     let genesis_hash = base_spec.genesis_hash();
     let validator_identities = validator_identities(&validators_path)?;
-    let registrations = registrations_dir
+    let supplied_registrations = registrations_dir
         .as_deref()
-        .map(|directory| load_registrations(directory, &limits))
+        .map(|directory| load_registrations(directory, validator_identities.len(), &limits))
         .transpose()?;
-    let result_committee = result_committee(
+    let founder_registrations = founder_registrations(
         chain_id,
         genesis_hash,
-        fork_id,
-        protocol_bundle_hash,
         validator_identities,
-        registrations.as_ref(),
+        supplied_registrations.as_deref(),
         &limits,
     )?;
-    let committee_bytes = result_committee
-        .encode_canonical(&limits)
-        .wrap_err("encode final result committee")?;
-    let result_committee_snapshot_hash = result_committee
-        .snapshot_hash(&limits)
-        .wrap_err("hash final result committee")?;
     let install = OcompForkInstallV1 {
         classification: OcompForkInstallClassification::Final,
         activation_height: OCOMP_POC_FINAL_ACTIVATION_HEIGHT,
@@ -359,10 +320,9 @@ pub fn run(
             correctness_profile_id,
             capacity_profile,
             source_availability_policy_id,
-            result_committee_snapshot_hash,
         },
         protocol_bundle,
-        result_committee,
+        founder_registrations,
     };
     install
         .validate_for_chain(chain_id, genesis_hash, &limits)
@@ -388,9 +348,6 @@ pub fn run(
     let chain_manifest_bytes = pretty_json(&chain_manifest)?;
     validate_armed_manifest(&chain_manifest_bytes, genesis_hash, &install)?;
 
-    let committee_document =
-        committee_document(&install.result_committee, result_committee_snapshot_hash);
-    let committee_document_bytes = pretty_json(&committee_document)?;
     let network_document = NetworkBindingDocumentV1 {
         schema_version: FINAL_ARTIFACT_SCHEMA_VERSION,
         kind: FINAL_ARTIFACT_KIND,
@@ -415,13 +372,11 @@ pub fn run(
         capacity_profile_ocb1_sha256: sha256(&capacity_bytes),
         protocol_bundle_hash,
         protocol_bundle_ocb1_sha256: sha256(&protocol_bundle_bytes),
-        result_committee_snapshot_hash,
-        result_committee_ocb1_sha256: sha256(&committee_bytes),
+        founder_registration_count: u16::try_from(install.founder_registrations.len())?,
         fork_install_hash: install_hash,
         fork_install_ocb1_sha256: sha256(&install_bytes),
         chain_manifest_sha256: sha256(&chain_manifest_bytes),
         semantic_artifacts_sha256: sha256(&semantic_bytes),
-        committee_public_manifest_sha256: sha256(&committee_document_bytes),
     };
     let network_bytes = pretty_json(&network_document)?;
 
@@ -430,12 +385,10 @@ pub fn run(
         (GENERATED_CAPACITY_FILE, capacity_input_bytes.as_slice()),
         (CORRECTNESS_FILE, correctness_bytes.as_slice()),
         (BUNDLE_FILE, protocol_bundle_bytes.as_slice()),
-        (COMMITTEE_FILE, committee_bytes.as_slice()),
         (INSTALL_FILE, install_bytes.as_slice()),
         (CHAIN_MANIFEST_FILE, chain_manifest_bytes.as_slice()),
         (NETWORK_MANIFEST_FILE, network_bytes.as_slice()),
         (SEMANTICS_MANIFEST_FILE, semantic_bytes.as_slice()),
-        (COMMITTEE_MANIFEST_FILE, committee_document_bytes.as_slice()),
     ] {
         update_or_check(&output_dir.join(name), bytes, check)?;
     }
@@ -727,18 +680,22 @@ fn protocol_bundle(
     }
 }
 
-pub fn validator_identities(path: &Path) -> Result<[B256; 4]> {
+pub fn validator_identities(path: &Path) -> Result<Vec<B256>> {
     let validators: serde_json::Value =
         serde_json::from_slice(&fs::read(path).wrap_err("read validators manifest")?)
             .wrap_err("decode validators manifest")?;
     let validators = validators
         .as_array()
         .ok_or_else(|| eyre::eyre!("validators manifest is not an array"))?;
+    let max_validators = usize::try_from(outbe_consensus::bls::MAX_VALIDATORS)
+        .map_err(|_| eyre::eyre!("consensus validator bound does not fit usize"))?;
+    ensure!(!validators.is_empty(), "validators manifest is empty");
     ensure!(
-        validators.len() == 4,
-        "final OCOMP devnet requires exactly four validators"
+        validators.len() <= max_validators,
+        "validators manifest contains {} entries, above consensus bound {max_validators}",
+        validators.len()
     );
-    let mut identities = [B256::ZERO; 4];
+    let mut identities = Vec::with_capacity(validators.len());
     for (index, validator) in validators.iter().enumerate() {
         let address = validator
             .get("address")
@@ -754,12 +711,13 @@ pub fn validator_identities(path: &Path) -> Result<[B256; 4]> {
             public_key.len() == 48,
             "validator-{index} consensus public key is not 48 bytes"
         );
-        let mut payload = Vec::with_capacity(1 + 20 + 4 + public_key.len());
-        payload.push(u8::try_from(index)?);
-        payload.extend_from_slice(address.as_slice());
-        payload.extend_from_slice(&u32::try_from(public_key.len())?.to_be_bytes());
-        payload.extend_from_slice(&public_key);
-        identities[index] = hash_framed(HashDomain::ValidatorIdentity, &payload)?;
+        let public_key: [u8; 48] = public_key.try_into().map_err(|value: Vec<u8>| {
+            eyre::eyre!(
+                "validator-{index} consensus public key is not 48 bytes: got {}",
+                value.len()
+            )
+        })?;
+        identities.push(validator_identity_hash_v1(address, &public_key)?);
     }
     ensure!(
         identities.iter().all(|identity| !identity.is_zero()),
@@ -768,22 +726,26 @@ pub fn validator_identities(path: &Path) -> Result<[B256; 4]> {
     Ok(identities)
 }
 
-fn result_committee(
+fn founder_registrations(
     chain_id: u64,
     genesis_hash: B256,
-    fork_id: B256,
-    protocol_bundle_hash: B256,
-    validator_identities: [B256; 4],
-    registrations: Option<&[OcompKeyRegistrationV1; 4]>,
+    validator_identities: Vec<B256>,
+    registrations: Option<&[OcompKeyRegistrationV1]>,
     limits: &outbe_ocomp_protocol::SchemaLimits,
-) -> Result<OcompCommitteeSnapshotV1> {
-    let mut ordered_members = Vec::with_capacity(4);
+) -> Result<Vec<OcompKeyRegistrationV1>> {
+    if let Some(registrations) = registrations {
+        ensure!(
+            registrations.len() == validator_identities.len(),
+            "founder registration count does not match validators manifest"
+        );
+    }
+    let mut founders = Vec::with_capacity(validator_identities.len());
     for (index, validator_identity_hash) in validator_identities.into_iter().enumerate() {
-        let validator_index = u8::try_from(index)?;
+        let signing_key_index = u8::try_from(index)?;
         let registration = if let Some(registrations) = registrations {
             registrations[index].clone()
         } else {
-            let key = reference_signing_key(validator_index);
+            let key = reference_signing_key(signing_key_index);
             let public_key: [u8; 33] = key
                 .verifying_key()
                 .to_encoded_point(true)
@@ -793,15 +755,10 @@ fn result_committee(
                 core: OcompKeyRegistrationCoreV1 {
                     chain_id,
                     genesis_hash,
-                    fork_id,
-                    protocol_bundle_hash,
-                    validator_index,
                     validator_identity_hash,
                     ocomp_public_key_sec1: public_key,
-                    key_epoch: 1,
+                    key_epoch: POC_KEY_EPOCH,
                     allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
-                    valid_from_height: OCOMP_POC_FINAL_ACTIVATION_HEIGHT,
-                    valid_until_height_exclusive: u64::MAX,
                 },
                 proof_of_possession: [0; 64],
             };
@@ -816,51 +773,26 @@ fn result_committee(
         ensure!(
             registration.core.chain_id == chain_id
                 && registration.core.genesis_hash == genesis_hash
-                && registration.core.fork_id == fork_id
-                && registration.core.protocol_bundle_hash == protocol_bundle_hash
-                && registration.core.validator_index == validator_index
                 && registration.core.validator_identity_hash == validator_identity_hash
-                && registration.core.key_epoch == 1
-                && registration.core.allowed_purpose_bitmap == RESULT_SIGNATURE_PURPOSE_BITMAP
-                && registration.core.valid_from_height == OCOMP_POC_FINAL_ACTIVATION_HEIGHT
-                && registration.core.valid_until_height_exclusive == u64::MAX,
-            "validator-{validator_index} OCOMP registration does not match the requested chain binding"
+                && registration.core.key_epoch == POC_KEY_EPOCH
+                && registration.core.allowed_purpose_bitmap == RESULT_SIGNATURE_PURPOSE_BITMAP,
+            "validator-{index} OCOMP registration does not match the requested chain binding"
         );
         registration
             .validate_proof_of_possession(limits)
             .wrap_err("verify OCOMP proof of possession")?;
-        ordered_members.push(OcompMemberV1 {
-            validator_index: registration.core.validator_index,
-            validator_identity_hash: registration.core.validator_identity_hash,
-            ocomp_public_key_sec1: registration.core.ocomp_public_key_sec1,
-            key_epoch: registration.core.key_epoch,
-            allowed_purpose_bitmap: registration.core.allowed_purpose_bitmap,
-            valid_from_height: registration.core.valid_from_height,
-            valid_until_height_exclusive: registration.core.valid_until_height_exclusive,
-            proof_of_possession: registration.proof_of_possession,
-        });
+        founders.push(registration);
     }
-    let committee = OcompCommitteeSnapshotV1 {
-        chain_id,
-        genesis_hash,
-        fork_id,
-        protocol_bundle_hash,
-        snapshot_epoch: 1,
-        threshold: 3,
-        ordered_members,
-    };
-    committee
-        .validate_semantics(limits)
-        .wrap_err("validate generated final OCOMP committee")?;
-    Ok(committee)
+    Ok(founders)
 }
 
 fn load_registrations(
     directory: &Path,
+    count: usize,
     limits: &outbe_ocomp_protocol::SchemaLimits,
-) -> Result<[OcompKeyRegistrationV1; 4]> {
-    let mut registrations = Vec::with_capacity(4);
-    for index in 0..4 {
+) -> Result<Vec<OcompKeyRegistrationV1>> {
+    let mut registrations = Vec::with_capacity(count);
+    for index in 0..count {
         let path = directory
             .join(format!("validator-{index}"))
             .join("ocomp-registration-v1.ocb1");
@@ -871,14 +803,12 @@ fn load_registrations(
                 .wrap_err_with(|| format!("decode OCOMP registration {}", path.display()))?,
         );
     }
-    registrations
-        .try_into()
-        .map_err(|_| eyre::eyre!("expected exactly four OCOMP registrations"))
+    Ok(registrations)
 }
 
 fn reference_signing_key(validator_index: u8) -> SigningKey {
     SigningKey::from_bytes((&[validator_index.saturating_add(1); 32]).into())
-        .expect("four reference validator indexes produce valid fixed scalars")
+        .expect("consensus-bounded reference validator index produces a valid scalar")
 }
 
 fn sign_digest(key: &SigningKey, digest: B256) -> Result<[u8; 64]> {
@@ -888,36 +818,6 @@ fn sign_digest(key: &SigningKey, digest: B256) -> Result<[u8; 64]> {
         .unwrap_or(signature)
         .to_bytes()
         .into())
-}
-
-fn committee_document(
-    committee: &OcompCommitteeSnapshotV1,
-    snapshot_hash: B256,
-) -> CommitteeDocumentV1 {
-    CommitteeDocumentV1 {
-        schema_version: FINAL_ARTIFACT_SCHEMA_VERSION,
-        chain_id: committee.chain_id,
-        genesis_hash: committee.genesis_hash,
-        fork_id: committee.fork_id,
-        protocol_bundle_hash: committee.protocol_bundle_hash,
-        snapshot_hash,
-        snapshot_epoch: committee.snapshot_epoch,
-        threshold: committee.threshold,
-        ordered_members: committee
-            .ordered_members
-            .iter()
-            .map(|member| CommitteeMemberDocumentV1 {
-                validator_index: member.validator_index,
-                validator_identity_hash: member.validator_identity_hash,
-                ocomp_public_key_sec1_hex: hex::encode(member.ocomp_public_key_sec1),
-                key_epoch: member.key_epoch,
-                allowed_purpose_bitmap: member.allowed_purpose_bitmap,
-                valid_from_height: member.valid_from_height,
-                valid_until_height_exclusive: member.valid_until_height_exclusive,
-                proof_of_possession_hex: hex::encode(member.proof_of_possession),
-            })
-            .collect(),
-    }
 }
 
 fn validate_armed_manifest(
@@ -1137,7 +1037,6 @@ mod tests {
             profile_id: parse_b256(OCOMP_CAPACITY_PROFILE_ID_HEX).unwrap(),
             max_tributes_per_work_shard: 256,
             max_workers_per_domain: 4,
-            max_pending_jobs: 2,
             max_intents_per_block: 1,
             max_activations_per_block: 1,
             max_ready_inspections_per_block: 1,
@@ -1147,7 +1046,7 @@ mod tests {
             max_reference_currencies: 256,
             max_oracle_wwd_pair_entries: 256,
             max_active_scurve_entries: 256,
-            result_deadline_blocks: 64,
+            result_deadline_blocks: outbe_chain_constants::DEFAULT_OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS,
             source_retention_after_terminal_blocks: 64,
             generated_limits_manifest_hash: B256::repeat_byte(0x31),
         };
@@ -1166,8 +1065,8 @@ mod tests {
         .unwrap()
     }
 
-    fn validators_manifest() -> Vec<u8> {
-        let validators = (0_u8..4)
+    fn validators_manifest(count: u8) -> Vec<u8> {
+        let validators = (0_u8..count)
             .map(|index| {
                 serde_json::json!({
                     "address": format!("0x{:040x}", u64::from(index) + 1),
@@ -1182,9 +1081,7 @@ mod tests {
         directory: &Path,
         chain_id: u64,
         genesis_hash: B256,
-        fork_id: B256,
-        protocol_bundle_hash: B256,
-        validator_identities: [B256; 4],
+        validator_identities: Vec<B256>,
     ) {
         let limits = poc_schema_limits();
         for (index, validator_identity_hash) in validator_identities.into_iter().enumerate() {
@@ -1200,15 +1097,10 @@ mod tests {
                 core: OcompKeyRegistrationCoreV1 {
                     chain_id,
                     genesis_hash,
-                    fork_id,
-                    protocol_bundle_hash,
-                    validator_index,
                     validator_identity_hash,
                     ocomp_public_key_sec1: public_key,
-                    key_epoch: 1,
+                    key_epoch: POC_KEY_EPOCH,
                     allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
-                    valid_from_height: OCOMP_POC_FINAL_ACTIVATION_HEIGHT,
-                    valid_until_height_exclusive: u64::MAX,
                 },
                 proof_of_possession: [0; 64],
             };
@@ -1249,8 +1141,6 @@ mod tests {
             &registrations,
             chain_spec.chain().id(),
             chain_spec.genesis_hash(),
-            bundle.fork_id,
-            bundle.protocol_bundle_hash(&limits).unwrap(),
             validator_identities(&validators).unwrap(),
         );
 
@@ -1271,7 +1161,7 @@ mod tests {
         let install = outbe_node::ocomp::fork::load_ocomp_fork_install(&generated_spec)
             .unwrap()
             .unwrap();
-        assert_eq!(install.result_committee.ordered_members.len(), 4);
+        assert_eq!(install.founder_registrations.len(), 4);
         assert_eq!(
             install.request_profile.protocol_bundle_hash,
             bundle.protocol_bundle_hash(&limits).unwrap()
@@ -1316,7 +1206,7 @@ mod tests {
         let validators = temporary.path().join("validators.json");
         let output = temporary.path().join("final");
         fs::write(&capacity, capacity_manifest()).unwrap();
-        fs::write(&validators, validators_manifest()).unwrap();
+        fs::write(&validators, validators_manifest(5)).unwrap();
         let base_genesis = repository_root.join("crates/blockchain/node/tests/assets/genesis.json");
 
         run(
@@ -1349,9 +1239,9 @@ mod tests {
             OcompForkInstallClassification::Final
         );
         assert_eq!(install.activation_height, OCOMP_POC_FINAL_ACTIVATION_HEIGHT);
-        assert_eq!(install.result_committee.ordered_members.len(), 4);
-        assert_eq!(install.result_committee.threshold, 3);
-        assert_eq!(install.request_profile.capacity_profile.max_pending_jobs, 2);
+        assert_eq!(install.founder_registrations.len(), 5);
+        assert!(!output.join("result-committee-v1.ocb1").exists());
+        assert!(!output.join("result-committee-public-v1.json").exists());
         assert_eq!(
             install
                 .request_profile

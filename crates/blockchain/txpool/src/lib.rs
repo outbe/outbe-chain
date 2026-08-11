@@ -5,6 +5,10 @@
 
 use alloy_eips::{eip7840::BlobParams, merge::EPOCH_SLOTS};
 use alloy_primitives::{Address, B256, U256};
+use outbe_ocomp_protocol::system_carrier::{
+    classify_ocomp_system_carrier, OcompSystemCarrierCandidate, OcompSystemCarrierError,
+    OcompSystemCarrierView,
+};
 use outbe_primitives::{
     addresses::OUTBE_SYSTEM_TX_ADDRESS,
     storage::{
@@ -15,13 +19,14 @@ use outbe_primitives::{
     OutbePrimitives,
 };
 use outbe_zerofee::{ZeroFeeHookId, ZeroFeeTransaction};
-use reth_chainspec::{EthChainSpec, EthereumHardforks};
+use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks};
 use reth_evm::ConfigureEvm;
 use reth_node_builder::{
     components::{PoolBuilder, TxPoolBuilder},
     node::{FullNodeTypes, NodeTypes},
     BuilderContext,
 };
+use reth_primitives_traits::transaction::error::InvalidTransactionError;
 use reth_storage_api::{BlockNumReader, StateProvider, StateProviderFactory};
 use reth_transaction_pool::{
     blobstore::DiskFileBlobStore,
@@ -55,13 +60,32 @@ where
     }
 }
 
+fn classify_ocomp_carrier<T>(
+    tx: &T,
+) -> Result<Option<OcompSystemCarrierCandidate>, OcompSystemCarrierError>
+where
+    T: alloy_consensus::Transaction + ?Sized,
+{
+    classify_ocomp_system_carrier(
+        OcompSystemCarrierView {
+            is_eip1559: tx.ty() == alloy_consensus::TxType::Eip1559 as u8,
+            to: tx.to(),
+            value: tx.value(),
+            input: tx.input().as_ref(),
+            gas_limit: tx.gas_limit(),
+            max_fee_per_gas: tx.max_fee_per_gas(),
+            max_priority_fee_per_gas: tx.max_priority_fee_per_gas(),
+        },
+        &outbe_ocomp_protocol::profile::poc_schema_limits(),
+    )
+}
+
 /// Returns a reserved priority class for zero-fee hooks that must outrank the
 /// normal tip market. Keep this match exhaustive so every new hook makes an
 /// explicit ordering decision.
 fn zero_fee_priority_class(hook: ZeroFeeHookId) -> Option<u8> {
     match hook {
         ZeroFeeHookId::OracleSubmitVote => Some(1),
-        ZeroFeeHookId::OcompSubmitResultVote => Some(1),
     }
 }
 
@@ -110,6 +134,12 @@ where
                 .map(|tip| (0, tip))
                 .into()
         };
+
+        match classify_ocomp_carrier(transaction) {
+            Ok(Some(_)) => return Priority::Value((2, 0)),
+            Err(_) => return Priority::None,
+            Ok(None) => {}
+        }
 
         match outbe_zerofee::registry().classify(&zero_fee_tx) {
             Ok(Some(candidate)) => zero_fee_priority_class(candidate.hook)
@@ -327,8 +357,11 @@ where
 impl<Client, Tx, Evm> TransactionValidator for OutbeTransactionValidator<Client, Tx, Evm>
 where
     EthTransactionValidator<Client, Tx, Evm>: TransactionValidator<Transaction = Tx>,
-    Client: StateProviderFactory + BlockNumReader,
+    Client: StateProviderFactory
+        + BlockNumReader
+        + ChainSpecProvider<ChainSpec: EthChainSpec + EthereumHardforks>,
     Tx: EthPoolTransaction + alloy_consensus::Transaction,
+    Evm: ConfigureEvm,
 {
     type Transaction = Tx;
     type Block = <EthTransactionValidator<Client, Tx, Evm> as TransactionValidator>::Block;
@@ -338,6 +371,20 @@ where
         origin: TransactionOrigin,
         transaction: Self::Transaction,
     ) -> TransactionValidationOutcome<Self::Transaction> {
+        match classify_ocomp_carrier(&transaction) {
+            Ok(Some(candidate)) => {
+                return self.validate_ocomp_system_carrier(origin, transaction, candidate)
+            }
+            Err(error) => {
+                return TransactionValidationOutcome::Invalid(
+                    transaction,
+                    InvalidPoolTransactionError::other(OutbeOcompSystemCarrierPoolError(
+                        error.to_string(),
+                    )),
+                )
+            }
+            Ok(None) => {}
+        }
         let outcome = self.inner.validate_transaction(origin, transaction).await;
         self.apply_outbe_policy(outcome)
     }
@@ -349,9 +396,172 @@ where
 
 impl<Client, Tx, Evm> OutbeTransactionValidator<Client, Tx, Evm>
 where
-    Client: StateProviderFactory + BlockNumReader,
+    Client: StateProviderFactory
+        + BlockNumReader
+        + ChainSpecProvider<ChainSpec: EthChainSpec + EthereumHardforks>,
     Tx: EthPoolTransaction + alloy_consensus::Transaction,
+    Evm: ConfigureEvm,
 {
+    fn validate_ocomp_system_carrier(
+        &self,
+        origin: TransactionOrigin,
+        transaction: Tx,
+        candidate: OcompSystemCarrierCandidate,
+    ) -> TransactionValidationOutcome<Tx> {
+        let invalid = |transaction, reason: String| {
+            TransactionValidationOutcome::Invalid(
+                transaction,
+                InvalidPoolTransactionError::other(OutbeOcompSystemCarrierPoolError(reason)),
+            )
+        };
+        let best_block = match self.inner.client().best_block_number() {
+            Ok(number) => number,
+            Err(error) => {
+                return TransactionValidationOutcome::Error(*transaction.hash(), Box::new(error))
+            }
+        };
+        let Some(next_block) = best_block.checked_add(1) else {
+            return invalid(
+                transaction,
+                "OCOMP carrier next block height overflow".to_owned(),
+            );
+        };
+        if !self.ocomp_lifecycle_activation.is_active_at(next_block) {
+            return invalid(
+                transaction,
+                format!("OCOMP system carrier is not active at next block {next_block}"),
+            );
+        }
+        if !self.inner.eip1559() {
+            return invalid(
+                transaction,
+                "EIP-1559 is not active for the OCOMP system carrier".to_owned(),
+            );
+        }
+        if transaction.nonce() == u64::MAX {
+            return TransactionValidationOutcome::Invalid(
+                transaction,
+                InvalidPoolTransactionError::Eip2681,
+            );
+        }
+        let encoded_length = transaction.encoded_length();
+        if encoded_length > self.inner.max_tx_input_bytes() {
+            return TransactionValidationOutcome::Invalid(
+                transaction,
+                InvalidPoolTransactionError::OversizedData {
+                    size: encoded_length,
+                    limit: self.inner.max_tx_input_bytes(),
+                },
+            );
+        }
+        let gas_limit = transaction.gas_limit();
+        if gas_limit > self.inner.block_gas_limit() {
+            return TransactionValidationOutcome::Invalid(
+                transaction,
+                InvalidPoolTransactionError::ExceedsGasLimit(
+                    gas_limit,
+                    self.inner.block_gas_limit(),
+                ),
+            );
+        }
+        if transaction.chain_id() != Some(self.inner.chain_id()) {
+            return TransactionValidationOutcome::Invalid(
+                transaction,
+                InvalidTransactionError::ChainIdMismatch.into(),
+            );
+        }
+        let is_local = self
+            .inner
+            .local_transactions_config()
+            .is_local(origin, transaction.sender_ref());
+        if is_local {
+            if let Some(tx_fee_cap_wei) = *self.inner.tx_fee_cap() {
+                if tx_fee_cap_wei != 0 {
+                    let max_tx_fee_wei = transaction.cost().saturating_sub(transaction.value());
+                    if max_tx_fee_wei > tx_fee_cap_wei {
+                        return TransactionValidationOutcome::Invalid(
+                            transaction,
+                            InvalidPoolTransactionError::ExceedsFeeCap {
+                                max_tx_fee_wei: max_tx_fee_wei.saturating_to(),
+                                tx_fee_cap_wei,
+                            },
+                        );
+                    }
+                }
+            }
+        }
+
+        let state = match self.inner.client().latest() {
+            Ok(state) => state,
+            Err(error) => {
+                return TransactionValidationOutcome::Error(*transaction.hash(), Box::new(error))
+            }
+        };
+        let account = match state.basic_account(transaction.sender_ref()) {
+            Ok(account) => account.unwrap_or_default(),
+            Err(error) => {
+                return TransactionValidationOutcome::Error(*transaction.hash(), Box::new(error))
+            }
+        };
+        match self
+            .inner
+            .validate_sender_bytecode(&transaction, &account, &state)
+        {
+            Err(outcome) => return outcome,
+            Ok(Err(error)) => return TransactionValidationOutcome::Invalid(transaction, error),
+            Ok(Ok(())) => {}
+        }
+        if transaction.requires_nonce_check() {
+            if let Err(error) = self.inner.validate_sender_nonce(&transaction, &account) {
+                return TransactionValidationOutcome::Invalid(transaction, error);
+            }
+        }
+
+        let authorization = {
+            let reader = RethStateReader { state: &state };
+            let mut provider = ReadOnlyStorageProvider::new(reader);
+            let storage = StorageHandle::new(&mut provider);
+            outbe_metadosis::resolve_historical_result_vote_carrier_signer(
+                storage,
+                &candidate.prefix,
+                transaction.sender(),
+                &outbe_ocomp_protocol::profile::poc_schema_limits(),
+            )
+        };
+        match authorization {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                return invalid(
+                    transaction,
+                    "OCOMP carrier signer is not authorized by its pinned snapshot".to_owned(),
+                )
+            }
+            Err(error) => {
+                return invalid(
+                    transaction,
+                    format!("OCOMP carrier authorization failed: {error}"),
+                )
+            }
+        }
+
+        TransactionValidationOutcome::Valid {
+            balance: U256::MAX,
+            state_nonce: account.nonce,
+            bytecode_hash: account.bytecode_hash,
+            transaction: ValidTransaction::new(transaction, None),
+            propagate: match origin {
+                TransactionOrigin::External => true,
+                TransactionOrigin::Local => {
+                    self.inner
+                        .local_transactions_config()
+                        .propagate_local_transactions
+                }
+                TransactionOrigin::Private => false,
+            },
+            authorities: None,
+        }
+    }
+
     fn apply_outbe_policy(
         &self,
         outcome: TransactionValidationOutcome<Tx>,
@@ -590,12 +800,26 @@ impl PoolTransactionError for OutbeZeroFeePoolError {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("OCOMP system carrier rejected: {0}")]
+struct OutbeOcompSystemCarrierPoolError(String);
+
+impl PoolTransactionError for OutbeOcompSystemCarrierPoolError {
+    fn is_bad_transaction(&self) -> bool {
+        true
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_consensus::{SignableTransaction as _, TxEip1559};
+    use alloy_consensus::{SignableTransaction as _, Transaction as _, TxEip1559};
     use alloy_eips::{eip1559::MIN_PROTOCOL_BASE_FEE, eip2718::Encodable2718 as _};
-    use alloy_primitives::{Bytes, Signature, TxKind};
+    use alloy_primitives::{Bytes, Signature, TxKind, B256};
     use alloy_sol_types::SolCall;
     use outbe_primitives::addresses::{ORACLE_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS};
     use reth_ethereum::TransactionSigned;
@@ -609,10 +833,26 @@ mod tests {
         max_fee_per_gas: u128,
         max_priority_fee_per_gas: u128,
     ) -> EthPooledTransaction {
+        pooled_tx_with_gas(
+            to,
+            input,
+            max_fee_per_gas,
+            max_priority_fee_per_gas,
+            1_000_000,
+        )
+    }
+
+    fn pooled_tx_with_gas(
+        to: Address,
+        input: Bytes,
+        max_fee_per_gas: u128,
+        max_priority_fee_per_gas: u128,
+        gas_limit: u64,
+    ) -> EthPooledTransaction {
         let tx: TransactionSigned = TxEip1559 {
             chain_id: CHAIN_ID,
             nonce: 0,
-            gas_limit: 1_000_000,
+            gas_limit,
             max_fee_per_gas,
             max_priority_fee_per_gas,
             to: TxKind::Call(to),
@@ -634,14 +874,53 @@ mod tests {
     fn oracle_submit_vote_input() -> Bytes {
         outbe_oracle::precompile::IOracle::submitVoteCall {
             tuples: vec![outbe_oracle::precompile::IOracle::ExchangeRateTuple {
-                base: "COEN".to_string(),
-                quote: "0xUSD".to_string(),
+                base: outbe_oracle::api::COEN_ASSET,
+                quote: outbe_oracle::api::currency_address(840),
                 exchangeRate: U256::from(1_000_000_000_000_000_000u128),
                 volume: U256::from(10_000_000_000_000_000_000_000u128),
             }],
         }
         .abi_encode()
         .into()
+    }
+
+    fn ocomp_submit_result_vote_input() -> Bytes {
+        use outbe_ocomp_protocol::{
+            abi::SUBMIT_LYSIS_RESULT_SELECTOR, encode_envelope, profile::poc_schema_limits,
+            registry::ObjectKind, vote::ResultVotePrefixV1, OCB1_HEADER_LEN,
+        };
+
+        let prefix = ResultVotePrefixV1 {
+            protocol_bundle_hash: B256::repeat_byte(0x31),
+            job_id: B256::repeat_byte(0x32),
+            attempt: 3,
+            result_validator_set_epoch: 7,
+            result_committee_set_hash: B256::repeat_byte(0x33),
+            result_ocomp_binding_hash: B256::repeat_byte(0x34),
+            ocomp_key_hash: B256::repeat_byte(0x35),
+            key_epoch: 1,
+        };
+        let mut body = Vec::new();
+        body.extend_from_slice(prefix.protocol_bundle_hash.as_slice());
+        body.extend_from_slice(prefix.job_id.as_slice());
+        body.extend_from_slice(&prefix.attempt.to_be_bytes());
+        body.extend_from_slice(&prefix.result_validator_set_epoch.to_be_bytes());
+        body.extend_from_slice(prefix.result_committee_set_hash.as_slice());
+        body.extend_from_slice(prefix.result_ocomp_binding_hash.as_slice());
+        body.extend_from_slice(prefix.ocomp_key_hash.as_slice());
+        body.extend_from_slice(&prefix.key_epoch.to_be_bytes());
+        body.resize(180, 0);
+        let payload = encode_envelope(ObjectKind::ResultVoteV1, &body, poc_schema_limits().codec)
+            .expect("canonical OCOMP vote prefix must encode");
+        assert_eq!(payload.len(), OCB1_HEADER_LEN + body.len());
+
+        let padded_len = (payload.len() + 31) & !31;
+        let mut input = vec![0_u8; 68 + padded_len];
+        input[..4].copy_from_slice(&SUBMIT_LYSIS_RESULT_SELECTOR);
+        input[4..36].copy_from_slice(&U256::from(32).to_be_bytes::<32>());
+        input[36..68].copy_from_slice(&U256::from(payload.len()).to_be_bytes::<32>());
+        input[68..68 + payload.len()].copy_from_slice(&payload);
+        input.into()
     }
 
     #[test]
@@ -664,6 +943,75 @@ mod tests {
         let expensive_normal_tx = pooled_tx(Address::ZERO, Bytes::new(), u128::MAX, u128::MAX);
 
         assert!(ordering.priority(&zero_fee_vote, 0) > ordering.priority(&expensive_normal_tx, 0));
+    }
+
+    #[test]
+    fn canonical_ocomp_system_carrier_has_reserved_priority() {
+        let ordering = OutbeTransactionOrdering::<EthPooledTransaction>::default();
+        let system_carrier = pooled_tx_with_gas(
+            outbe_ocomp_protocol::abi::METADOSIS_ADDRESS,
+            ocomp_submit_result_vote_input(),
+            MIN_PROTOCOL_BASE_FEE as u128,
+            0,
+            outbe_ocomp_protocol::system_carrier::OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
+        );
+        let expensive_normal_tx = pooled_tx(Address::ZERO, Bytes::new(), u128::MAX, u128::MAX);
+
+        assert!(ordering.priority(&system_carrier, 0) > ordering.priority(&expensive_normal_tx, 0));
+    }
+
+    #[test]
+    fn truncated_ocomp_vote_gets_no_pool_priority() {
+        let ordering = OutbeTransactionOrdering::<EthPooledTransaction>::default();
+        let malformed_vote = pooled_tx_with_gas(
+            outbe_ocomp_protocol::abi::METADOSIS_ADDRESS,
+            Bytes::copy_from_slice(&outbe_ocomp_protocol::abi::SUBMIT_LYSIS_RESULT_SELECTOR),
+            MIN_PROTOCOL_BASE_FEE as u128,
+            0,
+            outbe_ocomp_protocol::system_carrier::OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
+        );
+
+        assert_eq!(ordering.priority(&malformed_vote, 0), Priority::None);
+    }
+
+    #[test]
+    fn pool_classifies_ocomp_carrier_before_ordinary_intrinsic_gas() {
+        use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
+        use reth_transaction_pool::{
+            blobstore::InMemoryBlobStore, validate::EthTransactionValidatorBuilder,
+        };
+
+        let carrier = pooled_tx_with_gas(
+            outbe_ocomp_protocol::abi::METADOSIS_ADDRESS,
+            ocomp_submit_result_vote_input(),
+            MIN_PROTOCOL_BASE_FEE as u128,
+            0,
+            outbe_ocomp_protocol::system_carrier::OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
+        );
+        let provider = MockEthProvider::default().with_genesis_block();
+        provider.add_account(
+            carrier.sender(),
+            ExtendedAccount::new(carrier.nonce(), U256::MAX),
+        );
+        let inner = EthTransactionValidatorBuilder::new(
+            provider,
+            reth_ethereum::evm::EthEvmConfig::mainnet(),
+        )
+        .build(InMemoryBlobStore::default());
+        let validator =
+            OutbeTransactionValidator::new(inner, OcompLifecycleActivation::at_block(1));
+
+        let outcome = futures::executor::block_on(
+            validator.validate_transaction(TransactionOrigin::External, carrier),
+        );
+        let TransactionValidationOutcome::Invalid(_, error) = outcome else {
+            panic!("carrier without pinned state must be rejected, got {outcome:?}");
+        };
+        assert!(
+            error.to_string().contains("pinned snapshot"),
+            "state authorization must run before ordinary intrinsic gas: {error}"
+        );
+        assert!(!error.to_string().contains("intrinsic"));
     }
 
     #[test]

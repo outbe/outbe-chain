@@ -147,13 +147,13 @@ async function main() {
   // Step 2 — Promis → Gratis: burn `amount` Promis and mint `amount` Gratis. Both
   // ledgers are confidential, so mineFromPromis takes TWO modify authorizations,
   // each bound to its own ledger's current op-nonce: the Gratis MINT auth
-  // (GratisOp.Mine) and the Promis BURN auth (PromisOp.Burn). The Promis op-nonce
+  // (GratisOp.Mint) and the Promis BURN auth (PromisOp.Burn). The Promis op-nonce
   // has advanced to 1 after the mint above.
   const gratisMintNonce = await gratis.opNonceOf(userAddress);
   const gratisMintMac = modifyMac(
     gratisKeys.modifyKey,
     userAddress,
-    GratisOp.Mine,
+    GratisOp.Mint,
     amount,
     gratisMintNonce,
     chainId,

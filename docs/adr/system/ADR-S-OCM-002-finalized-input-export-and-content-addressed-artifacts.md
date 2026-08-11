@@ -107,7 +107,7 @@ The node performs an O(1) handoff of a bounded opaque read-only checkpoint/lease
 capability to the exporter UID. The handoff names both the exact `JobId` and its
 `InputLeaseId`; resolving a Job never changes either identity. It does not
 expose a live MDBX/Reth writer, accept a caller-selected filesystem path or
-stream bulk bodies through `OcompControlV1`.
+stream bulk bodies through the Worker command channel.
 
 ### Authenticated input bundle
 
@@ -137,12 +137,25 @@ checks the expected digest, canonical length and manifest membership. A
 separate “check then reopen” is insufficient because it creates a
 time-of-check/time-of-use gap.
 
-The supervisor receives the canonical finalized `JobIntentV1` through the
-existing finalized-job control response and journals the complete
-`FinalizedJobSpecV1` before planning. The Lysis finalizer may consume only that
-durable, revalidated intent and the exact exported-manifest binding. A CAS
-object, local path or caller-provided scalar never substitutes for finalized
-job authority.
+`OffchainJobRequested` is a locator only. The supervisor reads the canonical
+`OcompJobRecordV1` from the node at one exact finalized block hash, binds its
+typed `JobIntentV1` to the canonical request block, and journals the complete
+`FinalizedJobSpecV1` before planning. It does not reconstruct finality or the
+historical ValidatorSet through `eth_getProof`. The Lysis finalizer may consume
+only that durable, restart-revalidated intent and the exact exported-manifest
+binding. A CAS object, local path or caller-provided scalar never substitutes
+for finalized job authority.
+
+Discovery has two explicit purposes. `VotingAuthority` exposes only
+`VotingOpen` jobs while the finalized head is inside the response window.
+`InputReplay` exposes `VotingOpen` and `Completed` jobs, because a FullNode may
+reach or restart beyond the deadline before its local calculation is ready and
+must still reproduce the exact request-bound inputs before comparing its result
+with the canonical quorum result. Vote admission remains the sole owner of the
+deadline. `AwaitingFinality`, `Expired`, `Conflicted` and `Canceled` are never
+input-replay authority. On every restart the durable journal is rebuilt from
+the job record at the exact finalized-head hash plus the canonical request
+block; any mismatch hides the journal record and aborts reconciliation.
 
 `InputManifestV1.tribute_nominal_total` is the authenticated global
 conservation authority. Bounded execution may carry checked per-shard
@@ -159,9 +172,12 @@ one rather than being rejected.
 
 Fidelity opening transport is also population-independent and deterministic.
 The exporter first partitions the complete sorted owner set into consecutive
-batches of at most 256. If the node's canonical proof for one such batch does
-not fit the fork-pinned local-control body cap, the node returns typed
-`LimitExceeded` without closing the authenticated session. The exporter then
+batches of at most 256. For each batch it asks the same node for one
+purpose-bound Fidelity/Oracle opening built from the request block named by the
+durable finalized intent, then independently verifies the returned opening
+against that intent's exact state root. If one response does not fit the
+fork-pinned response cap, the exporter rejects it without accepting partial
+authority. The exporter then
 bisects only that batch at `floor(len / 2)`, left half first, and repeats until
 every proof fits. Settlement ISO subjects remain byte-identical in every
 sub-batch. An individual owner whose proof cannot fit is a local abstention;
@@ -173,7 +189,7 @@ the same opening sequence and manifest commitment.
 
 | Responsibility | Authority |
 |---|---|
-| job/input identity | finalized `JobIntentV1` and finality proof |
+| job/input identity | typed `OcompJobRecordV1` at an exact finalized block hash plus its canonical request block |
 | complete Tribute enumeration | authenticated CE collection traversal |
 | raw body transport | Mongo/body store, explicitly untrusted |
 | immutable chain/opening view | retained finalized checkpoint capability |

@@ -21,10 +21,11 @@
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
 
+use alloy_consensus::BlockHeader as _;
 use commonware_consensus::marshal::resolver::handler;
-use commonware_consensus::types::{Epoch, Epocher};
+use commonware_consensus::types::{Epoch, Epocher, Height};
 use commonware_runtime::{BufferPooler, Clock, Metrics, Spawner, Storage};
-use eyre::{eyre, Result};
+use eyre::{ensure, eyre, Result};
 use rand::{CryptoRng, RngCore};
 use tracing::info;
 
@@ -55,6 +56,11 @@ where
     pub marshal_actor: FollowMarshalActor<E>,
     /// The marshal mailbox (for the driver's `hint_finalized`).
     pub marshal_mailbox: MarshalMailbox,
+    /// Exact durable height recovered by `marshal::Actor::init`.
+    ///
+    /// This is supplied by the caller because the marshal actor has not been
+    /// started yet. Querying its mailbox before `start` would wait forever.
+    pub recovered_height: Height,
     /// The executor mailbox, used as the marshal's application reporter. It must
     /// implement `Reporter<Activity = MarshalUpdate>` (the outbe executor does).
     pub executor_reporter: R,
@@ -104,6 +110,7 @@ where
     let FollowEngineConfig {
         marshal_actor,
         marshal_mailbox,
+        recovered_height,
         executor_reporter,
         upstream,
         local,
@@ -114,8 +121,9 @@ where
         mailbox_size,
     } = config;
 
-    // ── 1. Bootstrap the committee chain at the anchor epoch ────────────────
-    bootstrap_anchor(&chain, &upstream, &epocher, anchor_epoch).await?;
+    // ── 1. Rebuild the authenticated committee chain through the durable
+    //        marshal floor before any new certificate is admitted. ──────────
+    prepare_committee_chain(&chain, &upstream, &epocher, anchor_epoch, recovered_height).await?;
 
     // ── 2. Build the marshal resolver handler pair + follow resolver ────────
     let (handler_receiver, handler): (handler::Receiver<Digest>, handler::Handler<Digest>) =
@@ -127,6 +135,7 @@ where
         upstream.clone(),
         local,
         chain.clone(),
+        epocher.clone(),
     );
     let _resolver_handle = resolver_actor.start();
 
@@ -146,11 +155,8 @@ where
         context.child("follow_driver"),
         driver::Config {
             marshal: marshal_mailbox,
-            chain,
-            upstream,
             tip,
             epocher,
-            anchor_epoch,
         },
     );
     let _driver_handle = driver.start();
@@ -164,12 +170,306 @@ where
     Err(eyre!("follower marshal exited unexpectedly"))
 }
 
-/// Fetch the anchor epoch's first block from the upstream and register its
-/// committee, running the anchor group-key trust check. The anchor epoch's
-/// first block is `epocher.first(anchor_epoch)` and carries that epoch's
-/// boundary outcome (for epoch 0 that is BLOCK 1, since genesis `extra_data` is
-/// empty — but the epocher's `first(0)` resolves to the boundary-carrying block
-/// the same way the live stack commits it).
+/// Rebuild the authenticated follower committee chain from the trusted anchor
+/// through the exact epoch of `recovered_height`.
+///
+/// The recovered certificate's epoch is only a target hint. Every intermediate
+/// committee is authenticated by an E-1-finalized pre-announce, every activating
+/// height by the corresponding E-finalized boundary, and the recovered
+/// certificate is verified again after reconstruction.
+pub async fn prepare_committee_chain<F>(
+    chain: &Arc<Mutex<CommitteeChain>>,
+    source: &F,
+    epocher: &FollowerEpocher,
+    anchor_epoch: Epoch,
+    recovered_height: Height,
+) -> Result<Epoch>
+where
+    F: FinalizedSource,
+{
+    bootstrap_anchor(chain, source, epocher, anchor_epoch).await?;
+
+    if recovered_height.get() == 0 {
+        return Ok(anchor_epoch);
+    }
+    let recovered = source
+        .get_finalization(recovered_height)
+        .await
+        .ok_or_else(|| {
+            eyre!(
+                "upstream did not return recovered finalized height {}",
+                recovered_height.get()
+            )
+        })?;
+    validate_certified_envelope(&recovered, recovered_height)?;
+    let target_epoch = recovered.finalization.proposal.round.epoch();
+    ensure!(
+        target_epoch >= anchor_epoch,
+        "recovered epoch {} precedes follower anchor epoch {}",
+        target_epoch.get(),
+        anchor_epoch.get(),
+    );
+
+    let mut epoch = Epoch::new(anchor_epoch.get().saturating_add(1));
+    while epoch <= target_epoch {
+        let already_registered = chain
+            .lock()
+            .expect("committee chain mutex poisoned")
+            .highest_registered()
+            .is_some_and(|highest| highest >= epoch);
+        if already_registered {
+            epoch = Epoch::new(epoch.get().saturating_add(1));
+            continue;
+        }
+
+        rebuild_epoch_boundary(chain, source, epocher, epoch, recovered_height).await?;
+        epoch = Epoch::new(epoch.get().saturating_add(1));
+    }
+
+    {
+        let guard = chain.lock().expect("committee chain mutex poisoned");
+        guard.verify_finalization(target_epoch, &recovered.finalization)?;
+    }
+    ensure!(
+        epocher
+            .containing(recovered_height)
+            .is_some_and(|info| info.epoch() == target_epoch),
+        "reconstructed follower epoch does not contain recovered height {}",
+        recovered_height.get()
+    );
+    Ok(target_epoch)
+}
+
+fn validate_certified_envelope(
+    certified: &crate::follow::upstream::CertifiedFinalizedBlock,
+    expected_height: Height,
+) -> Result<()> {
+    ensure!(
+        certified.block.number() == expected_height.get(),
+        "certified block reports height {}, expected {}",
+        certified.block.number(),
+        expected_height.get(),
+    );
+    ensure!(
+        certified.finalization.proposal.payload == certified.block.digest(),
+        "finalization payload differs from block at height {}",
+        expected_height.get(),
+    );
+    Ok(())
+}
+
+/// Authenticate one live finalized delivery and advance only follower-local
+/// committee/boundary state. The marshal verifies the same certificate again;
+/// this lead-in exists solely to break the boundary verifier-routing cycle.
+pub(super) fn authenticate_live_finalized(
+    chain: &Arc<Mutex<CommitteeChain>>,
+    epocher: &FollowerEpocher,
+    expected_height: Height,
+    certified: &crate::follow::upstream::CertifiedFinalizedBlock,
+) -> Result<()> {
+    use outbe_primitives::reshare_artifact::ConsensusHeaderArtifact as CHA;
+
+    validate_certified_envelope(certified, expected_height)?;
+    let certified_epoch = certified.finalization.proposal.round.epoch();
+    let routed_epoch = epocher
+        .containing(expected_height)
+        .ok_or_else(|| {
+            eyre!(
+                "height {} is outside the observed follower epoch window",
+                expected_height.get()
+            )
+        })?
+        .epoch();
+    ensure!(
+        certified_epoch == routed_epoch
+            || certified_epoch.get() == routed_epoch.get().saturating_add(1),
+        "certified epoch {} is neither routed epoch {} nor its successor at height {}",
+        certified_epoch.get(),
+        routed_epoch.get(),
+        expected_height.get()
+    );
+    {
+        let guard = chain.lock().expect("committee chain mutex poisoned");
+        guard.verify_finalization(certified_epoch, &certified.finalization)?;
+    }
+
+    let artifacts = outbe_primitives::reshare_artifact::decode_outbe_block_artifacts(
+        certified.block.header().extra_data().as_ref(),
+    )
+    .map_err(|error| {
+        eyre!(
+            "failed to decode authenticated block {} artifacts: {error:?}",
+            expected_height.get()
+        )
+    })?;
+
+    if certified_epoch != routed_epoch {
+        ensure!(
+            matches!(
+                artifacts.consensus_header_artifact,
+                Some(CHA::BoundaryOutcome(ref boundary))
+                    if boundary.epoch == certified_epoch.get()
+            ),
+            "epoch changes from {} to {} at height {} without its BoundaryOutcome",
+            routed_epoch.get(),
+            certified_epoch.get(),
+            expected_height.get()
+        );
+    }
+
+    match artifacts.consensus_header_artifact {
+        Some(CHA::CommitteePreAnnounce { epoch, outcome }) => {
+            ensure!(
+                epoch == certified_epoch.get().saturating_add(1),
+                "authenticated epoch {} block pre-announces non-successor epoch {}",
+                certified_epoch.get(),
+                epoch
+            );
+            chain
+                .lock()
+                .expect("committee chain mutex poisoned")
+                .register_epoch_from_outcome(Epoch::new(epoch), &outcome)?;
+        }
+        Some(CHA::BoundaryOutcome(boundary)) => {
+            ensure!(
+                boundary.epoch == certified_epoch.get(),
+                "boundary artifact epoch {} differs from certificate epoch {}",
+                boundary.epoch,
+                certified_epoch.get()
+            );
+            epocher.observe_boundary(certified_epoch, expected_height)?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+async fn rebuild_epoch_boundary<F>(
+    chain: &Arc<Mutex<CommitteeChain>>,
+    source: &F,
+    epocher: &FollowerEpocher,
+    epoch: Epoch,
+    recovered_height: Height,
+) -> Result<()>
+where
+    F: FinalizedSource,
+{
+    use outbe_primitives::reshare_artifact::ConsensusHeaderArtifact as CHA;
+
+    let previous_epoch = Epoch::new(epoch.get().saturating_sub(1));
+    let (earliest, latest) = epocher
+        .next_boundary_window(previous_epoch)
+        .ok_or_else(|| {
+            eyre!(
+                "missing observed activation for prior epoch {}",
+                previous_epoch.get()
+            )
+        })?;
+    let scan_end = latest.get().min(recovered_height.get());
+    ensure!(
+        scan_end >= earliest.get(),
+        "recovered height {} precedes activation window {}..={} for epoch {}",
+        recovered_height.get(),
+        earliest.get(),
+        latest.get(),
+        epoch.get()
+    );
+
+    let mut boundary = None;
+    for height in (earliest.get()..=scan_end).rev() {
+        let Some(candidate) = source.get_finalization(Height::new(height)).await else {
+            continue;
+        };
+        validate_certified_envelope(&candidate, Height::new(height))?;
+        let artifacts = outbe_primitives::reshare_artifact::decode_outbe_block_artifacts(
+            candidate.block.header().extra_data().as_ref(),
+        )
+        .map_err(|error| eyre!("failed to decode boundary candidate at {height}: {error:?}"))?;
+        if matches!(
+            artifacts.consensus_header_artifact,
+            Some(CHA::BoundaryOutcome(ref value)) if value.epoch == epoch.get()
+        ) {
+            ensure!(
+                candidate.finalization.proposal.round.epoch() == epoch,
+                "epoch {} boundary candidate at height {} is finalized by epoch {}",
+                epoch.get(),
+                height,
+                candidate.finalization.proposal.round.epoch().get()
+            );
+            boundary = Some((Height::new(height), candidate));
+            break;
+        }
+    }
+    let (boundary_height, boundary) = boundary.ok_or_else(|| {
+        eyre!(
+            "no BoundaryOutcome for epoch {} in authenticated search window {}..={}",
+            epoch.get(),
+            earliest.get(),
+            scan_end
+        )
+    })?;
+
+    let previous_activation = epocher
+        .activation_height(previous_epoch)
+        .ok_or_else(|| eyre!("missing prior activation height"))?
+        .get();
+    let mut carrier_height = None;
+    for height in (previous_activation..boundary_height.get()).rev() {
+        let Some(candidate) = source.get_finalization(Height::new(height)).await else {
+            continue;
+        };
+        validate_certified_envelope(&candidate, Height::new(height))?;
+        if candidate.finalization.proposal.round.epoch() != previous_epoch {
+            continue;
+        }
+        {
+            let guard = chain.lock().expect("committee chain mutex poisoned");
+            guard.verify_finalization(previous_epoch, &candidate.finalization)?;
+        }
+        let artifacts = outbe_primitives::reshare_artifact::decode_outbe_block_artifacts(
+            candidate.block.header().extra_data().as_ref(),
+        )
+        .map_err(|error| eyre!("failed to decode pre-announce candidate at {height}: {error:?}"))?;
+        let Some(CHA::CommitteePreAnnounce {
+            epoch: announced,
+            outcome,
+        }) = artifacts.consensus_header_artifact
+        else {
+            continue;
+        };
+        if announced != epoch.get() {
+            continue;
+        }
+        chain
+            .lock()
+            .expect("committee chain mutex poisoned")
+            .register_epoch_from_outcome(epoch, &outcome)?;
+        carrier_height = Some(height);
+        break;
+    }
+    let carrier_height = carrier_height.ok_or_else(|| {
+        eyre!(
+            "no prior-epoch-authenticated CommitteePreAnnounce for epoch {} before boundary {}",
+            epoch.get(),
+            boundary_height.get()
+        )
+    })?;
+
+    {
+        let guard = chain.lock().expect("committee chain mutex poisoned");
+        guard.verify_finalization(epoch, &boundary.finalization)?;
+    }
+    epocher.observe_boundary(epoch, boundary_height)?;
+    info!(
+        epoch = epoch.get(),
+        previous_epoch = previous_epoch.get(),
+        carrier_height,
+        boundary_height = boundary_height.get(),
+        "reconstructed authenticated follower epoch boundary"
+    );
+    Ok(())
+}
+
 async fn bootstrap_anchor<F>(
     chain: &Arc<Mutex<CommitteeChain>>,
     upstream: &F,
@@ -181,19 +481,18 @@ where
 {
     use alloy_consensus::BlockHeader as _;
 
-    let first = epocher
-        .first(anchor_epoch)
-        .ok_or_else(|| eyre!("epocher has no first height for anchor epoch {anchor_epoch}"))?;
+    if chain
+        .lock()
+        .expect("committee chain mutex poisoned")
+        .highest_registered()
+        .is_some_and(|highest| highest >= anchor_epoch)
+    {
+        return Ok(());
+    }
 
-    // For epoch 0 the boundary outcome rides BLOCK 1, not genesis (genesis
-    // extra_data is empty in outbe). `epocher.first(0)` is height 0 (genesis),
-    // so for the anchor-0 case we look at height 1; for any other anchor epoch
-    // the first height already carries the boundary outcome.
-    let candidate = if anchor_epoch.get() == 0 && first.get() == 0 {
-        commonware_consensus::types::Height::new(1)
-    } else {
-        first
-    };
+    let candidate = epocher
+        .activation_height(anchor_epoch)
+        .ok_or_else(|| eyre!("epocher has no activation carrier for anchor epoch"))?;
 
     let certified = upstream.get_finalization(candidate).await.ok_or_else(|| {
         eyre!(
@@ -202,17 +501,40 @@ where
         )
     })?;
 
+    ensure!(
+        certified.block.number() == candidate.get(),
+        "anchor boundary block reports height {}, expected {}",
+        certified.block.number(),
+        candidate.get(),
+    );
+    ensure!(
+        certified.finalization.proposal.payload == certified.block.digest(),
+        "anchor finalization payload differs from boundary block at height {}",
+        candidate.get(),
+    );
+
+    validate_certified_envelope(&certified, candidate)?;
     let extra = certified.block.header().extra_data().clone();
-    let registered = chain
-        .lock()
-        .expect("committee chain mutex poisoned")
-        .advance_from_block_extra_data(extra.as_ref())?
-        .ok_or_else(|| {
-            eyre!(
-                "anchor epoch {anchor_epoch}'s first block at height {candidate} carried no \
+    let registered = {
+        let mut guard = chain.lock().expect("committee chain mutex poisoned");
+        let registered = guard
+            .advance_from_block_extra_data(extra.as_ref())?
+            .ok_or_else(|| {
+                eyre!(
+                    "anchor epoch {anchor_epoch}'s first block at height {candidate} carried no \
                  boundary outcome; cannot establish the trust root"
-            )
-        })?;
+                )
+            })?;
+        guard.verify_finalization(anchor_epoch, &certified.finalization)?;
+        registered
+    };
+    ensure!(
+        registered == anchor_epoch,
+        "anchor carrier registered epoch {}, expected {}",
+        registered.get(),
+        anchor_epoch.get()
+    );
+    epocher.observe_boundary(anchor_epoch, candidate)?;
 
     info!(
         anchor_epoch = anchor_epoch.get(),

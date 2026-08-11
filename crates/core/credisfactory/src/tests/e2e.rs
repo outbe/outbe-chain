@@ -13,7 +13,7 @@ use outbe_credis::{CredisContract, NUMBER_OF_ANADOSIS, SECONDS_PER_MONTH};
 use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_gratisfactory::runtime as gf;
-use outbe_oracle::contract::OracleContract;
+use outbe_oracle::schema::OracleContract;
 use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
@@ -40,20 +40,69 @@ fn one_e18() -> U256 {
     U256::from(10u64).pow(U256::from(18u64))
 }
 
+/// COEN/840 rate these tests seed: 2.0, 1e18-scaled.
+fn oracle_rate() -> U256 {
+    U256::from(2u64) * one_e18()
+}
+
+/// Credit a pledge asks for: $2.00 in 6-decimal minor units. At [`oracle_rate`] that
+/// costs exactly [`pledge_cost`] gratis.
+fn pledge_stables() -> U256 {
+    U256::from(2_000_000u64)
+}
+
+/// Gratis collateral [`pledge_stables`] costs: `2e6 * 1e12 * 1e18 / 2e18 = 1e18`.
+fn pledge_cost() -> U256 {
+    one_e18()
+}
+
+/// Pledge [`pledge_stables`] of credit for `who` at op-nonce `nonce` (uncapped), and
+/// return the resulting handle. The gratis it costs is derived from the seeded rate.
+fn pledge(storage: &StorageHandle<'_>, who: Address, nonce: u64) -> B256 {
+    let (handle, gratis_cost) = gf::pledge_gratis(
+        storage.clone(),
+        who,
+        pledge_stables(),
+        asset(),
+        U256::MAX,
+        auth(GratisOp::Pledge, who, pledge_stables(), nonce),
+    )
+    .unwrap();
+    assert_eq!(gratis_cost, pledge_cost(), "seeded rate drifted");
+    handle
+}
+
 fn chain_b256() -> B256 {
     B256::from(U256::from(CHAIN_ID))
 }
 
 fn seed_oracle(storage: StorageHandle<'_>, rate_1e18: U256) {
-    let mut oracle = OracleContract::new(storage);
-    oracle.register_pair("COEN", "0xUSD").unwrap();
-    oracle
-        .set_exchange_rate(Address::ZERO, "COEN", "0xUSD", rate_1e18, 0, 0)
-        .unwrap();
+    outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
+    outbe_oracle::api::set_exchange_rate(
+        storage.clone(),
+        Address::ZERO,
+        outbe_oracle::api::DAY_TYPE_PAIR,
+        rate_1e18,
+        0,
+        0,
+    )
+    .unwrap();
+    let oracle = OracleContract::new(storage);
     oracle
         .reference_currency_rate
         .write(&ISSUANCE_ISO, refi_rate())
         .unwrap();
+}
+
+/// Pays exactly what the position's next installment still owes, and returns the
+/// amount actually pulled.
+fn pay_next_installment(storage: &StorageHandle<'_>, caller: Address, position_id: U256) -> U256 {
+    let owed = CredisContract::new(storage.clone())
+        .get_next_anadosis(position_id)
+        .unwrap()
+        .unwrap()
+        .unpaid_amount;
+    runtime::pay_anadosis(storage.clone(), caller, position_id, owed).unwrap()
 }
 
 /// ABI-encoded `uint16` return for the asset's `isoCode()` static sub-call.
@@ -142,14 +191,8 @@ fn full_pledge_request_pay_unlock_flow() {
         )
         .unwrap();
         seed_fidelity(storage.clone(), alice());
-        seed_oracle(storage.clone(), U256::from(2u64) * one_e18());
-        let handle = gf::pledge_gratis(
-            storage.clone(),
-            alice(),
-            pledge_amount,
-            auth(GratisOp::Pledge, alice(), pledge_amount, 1),
-        )
-        .unwrap();
+        seed_oracle(storage.clone(), oracle_rate());
+        let handle = pledge(&storage, alice(), 1);
         // Pledge parks the amount in the ticket: balance drained, pledged ledger 0.
         assert_eq!(view_balance(&storage, alice()), U256::ZERO);
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
@@ -158,14 +201,11 @@ fn full_pledge_request_pay_unlock_flow() {
         // EOA. The collateral is credited into alice's OWN pledged ledger.
         let spend = credis_spend_auth(alice(), handle, alice());
         let (position_id, amount_stables) =
-            runtime::request_credis(storage.clone(), alice(), asset(), alice(), handle, spend)
-                .unwrap();
+            runtime::request_credis(storage.clone(), alice(), alice(), handle, spend).unwrap();
         assert_eq!(view_pledged(&storage, alice()), pledge_amount);
 
-        // amount_stables = pledge_amount * 2e18 / (1e12 * 1e18) for rate 2.0.
-        let expected_stables = pledge_amount * U256::from(2u64) * one_e18()
-            / (U256::from(1_000_000_000_000u128) * one_e18());
-        assert_eq!(amount_stables, expected_stables);
+        // The loan is exactly what the pledger asked for — credis does not re-price it.
+        assert_eq!(amount_stables, pledge_stables());
 
         let credis = CredisContract::new(storage.clone());
         let position = credis.get_position(position_id).unwrap();
@@ -178,6 +218,8 @@ fn full_pledge_request_pay_unlock_flow() {
             alice()
         );
         assert_eq!(position.credis_principal, amount_stables);
+        // The entry price is the rate the PLEDGE was quoted at, not a later read.
+        assert_eq!(position.entry_price_minor, oracle_rate());
         assert_eq!(position.currency_rate, refi_rate());
         assert_eq!(position.issuance_currency, ISSUANCE_ISO);
         let multiplier =
@@ -194,7 +236,7 @@ fn full_pledge_request_pay_unlock_flow() {
             storage
                 .set_block_timestamp(U256::from(CREATED_AT + n as u64 * SECONDS_PER_MONTH))
                 .unwrap();
-            runtime::pay_anadosis(storage.clone(), alice(), position_id).unwrap();
+            pay_next_installment(&storage, alice(), position_id);
 
             let unlocked = U256::from(n) * installment;
             assert_eq!(view_balance(&storage, alice()), unlocked, "installment {n}");
@@ -228,29 +270,102 @@ fn pay_anadosis_unlocks_one_installment() {
         )
         .unwrap();
         seed_fidelity(storage.clone(), alice());
-        seed_oracle(storage.clone(), U256::from(2u64) * one_e18());
-        let handle = gf::pledge_gratis(
-            storage.clone(),
-            alice(),
-            pledge_amount,
-            auth(GratisOp::Pledge, alice(), pledge_amount, 1),
-        )
-        .unwrap();
+        seed_oracle(storage.clone(), oracle_rate());
+        let handle = pledge(&storage, alice(), 1);
 
         let spend = credis_spend_auth(alice(), handle, alice());
         let (position_id, _) =
-            runtime::request_credis(storage.clone(), alice(), asset(), alice(), handle, spend)
-                .unwrap();
+            runtime::request_credis(storage.clone(), alice(), alice(), handle, spend).unwrap();
 
         // Pay a single installment: releases exactly pledge/10 from alice's pledged
         // ledger right away, without waiting for the loan to complete.
         storage
             .set_block_timestamp(U256::from(CREATED_AT + SECONDS_PER_MONTH))
             .unwrap();
-        runtime::pay_anadosis(storage.clone(), alice(), position_id).unwrap();
+        pay_next_installment(&storage, alice(), position_id);
 
         assert_eq!(view_balance(&storage, alice()), installment);
         assert_eq!(view_pledged(&storage, alice()), pledge_amount - installment);
+    });
+    fidelity_enclave::uninstall();
+    test_enclave::uninstall();
+}
+
+#[test]
+fn pay_anadosis_spans_installments_and_caps_at_outstanding() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        let pledge_amount = one_e18();
+
+        outbe_gratis::api::mint(
+            storage.clone(),
+            alice(),
+            pledge_amount,
+            auth(GratisOp::Mint, alice(), pledge_amount, 0),
+        )
+        .unwrap();
+        seed_fidelity(storage.clone(), alice());
+        seed_oracle(storage.clone(), oracle_rate());
+        let handle = pledge(&storage, alice(), 1);
+
+        let spend = credis_spend_auth(alice(), handle, alice());
+        let (position_id, _) =
+            runtime::request_credis(storage.clone(), alice(), alice(), handle, spend).unwrap();
+
+        let total_debt = CredisContract::new(storage.clone())
+            .get_position(position_id)
+            .unwrap()
+            .total_anadosis_amount;
+        let per_installment = total_debt / U256::from(NUMBER_OF_ANADOSIS);
+
+        storage
+            .set_block_timestamp(U256::from(CREATED_AT + SECONDS_PER_MONTH))
+            .unwrap();
+
+        // 2.5 installments in one call: #1 and #2 settle, #3 keeps half owed.
+        let amount = per_installment * U256::from(2u64) + per_installment / U256::from(2u64);
+        let paid = runtime::pay_anadosis(storage.clone(), alice(), position_id, amount).unwrap();
+        assert_eq!(paid, amount, "whole budget consumed — schedule had room");
+
+        let credis = CredisContract::new(storage.clone());
+        assert_eq!(
+            credis
+                .get_position(position_id)
+                .unwrap()
+                .next_anadosis_number,
+            3
+        );
+        let third = credis.get_anadosis(position_id, 3).unwrap();
+        assert_eq!(
+            third.unpaid_amount,
+            third.anadosis_amount - per_installment / U256::from(2u64)
+        );
+        assert_eq!(third.paid_at, 0, "partially paid installment stays open");
+
+        // Collateral released tracks the debt paid down, and the two ledgers stay
+        // complementary (nothing minted, nothing stranded).
+        let released = view_balance(&storage, alice());
+        assert_eq!(view_pledged(&storage, alice()), pledge_amount - released);
+        assert!(released > U256::ZERO && released < pledge_amount);
+
+        // Overpaying the rest takes only what is outstanding and closes the position,
+        // returning the full pledge to alice's liquid balance.
+        let outstanding = credis
+            .get_position(position_id)
+            .unwrap()
+            .outstanding_anadosis_amount;
+        let rest = runtime::pay_anadosis(
+            storage.clone(),
+            alice(),
+            position_id,
+            outstanding * U256::from(1_000u64),
+        )
+        .unwrap();
+        assert_eq!(rest, outstanding, "only the required amount is used");
+        assert_eq!(paid + rest, total_debt, "never more than the total debt");
+
+        assert_eq!(view_balance(&storage, alice()), pledge_amount);
+        assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
     });
     fidelity_enclave::uninstall();
     test_enclave::uninstall();
@@ -269,57 +384,31 @@ fn request_credis_rejects_overdue_anadosis() {
         )
         .unwrap();
         seed_fidelity(storage.clone(), alice());
-        seed_oracle(storage.clone(), U256::from(2u64) * one_e18());
+        seed_oracle(storage.clone(), oracle_rate());
 
         // First pledge + request.
-        let h1 = gf::pledge_gratis(
-            storage.clone(),
-            alice(),
-            amount,
-            auth(GratisOp::Pledge, alice(), amount, 1),
-        )
-        .unwrap();
+        let h1 = pledge(&storage, alice(), 1);
         let spend1 = credis_spend_auth(alice(), h1, alice());
-        runtime::request_credis(storage.clone(), alice(), asset(), alice(), h1, spend1).unwrap();
+        runtime::request_credis(storage.clone(), alice(), alice(), h1, spend1).unwrap();
 
         // Second pledge — then attempt a second request once anadosis-1 is overdue
         // on the first position.
-        let h2 = gf::pledge_gratis(
-            storage.clone(),
-            alice(),
-            amount,
-            auth(GratisOp::Pledge, alice(), amount, 2),
-        )
-        .unwrap();
+        let h2 = pledge(&storage, alice(), 2);
         let spend2 = credis_spend_auth(alice(), h2, alice());
         storage
             .set_block_timestamp(U256::from(CREATED_AT + SECONDS_PER_MONTH + 1))
             .unwrap();
-        let err = runtime::request_credis(storage.clone(), alice(), asset(), alice(), h2, spend2)
-            .unwrap_err();
+        let err =
+            runtime::request_credis(storage.clone(), alice(), alice(), h2, spend2).unwrap_err();
         assert!(err.to_string().contains("overdue"), "got: {err}");
     });
     fidelity_enclave::uninstall();
     test_enclave::uninstall();
 }
 
-#[test]
-fn request_credis_rejects_zero_asset() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_timestamp(U256::from(CREATED_AT));
-    StorageHandle::enter(&mut storage, |storage| {
-        let err = runtime::request_credis(
-            storage.clone(),
-            alice(),
-            Address::ZERO,
-            alice(),
-            B256::ZERO,
-            [0u8; 32],
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains("asset"), "got: {err}");
-    });
-}
+// A zero asset can no longer reach requestCredis — it is rejected at pledge time now
+// that the asset travels in the ticket. See
+// `outbe_gratisfactory::tests::pledge_rejects_zero_asset`.
 
 #[test]
 fn request_credis_rejects_zero_smart_account() {
@@ -329,7 +418,6 @@ fn request_credis_rejects_zero_smart_account() {
         let err = runtime::request_credis(
             storage.clone(),
             alice(),
-            asset(),
             Address::ZERO,
             B256::ZERO,
             [0u8; 32],
@@ -340,34 +428,49 @@ fn request_credis_rejects_zero_smart_account() {
 }
 
 #[test]
-fn pay_anadosis_rejects_non_owner_caller() {
+fn pay_anadosis_accepts_third_party_payer() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
-        let amount = one_e18();
+        let pledge_amount = one_e18();
+        let installment = pledge_amount / U256::from(NUMBER_OF_ANADOSIS);
+
         outbe_gratis::api::mint(
             storage.clone(),
             alice(),
-            amount,
-            auth(GratisOp::Mint, alice(), amount, 0),
+            pledge_amount,
+            auth(GratisOp::Mint, alice(), pledge_amount, 0),
         )
         .unwrap();
         seed_fidelity(storage.clone(), alice());
-        seed_oracle(storage.clone(), U256::from(2u64) * one_e18());
-        let handle = gf::pledge_gratis(
-            storage.clone(),
-            alice(),
-            amount,
-            auth(GratisOp::Pledge, alice(), amount, 1),
-        )
-        .unwrap();
+        seed_oracle(storage.clone(), oracle_rate());
+        let handle = pledge(&storage, alice(), 1);
         let spend = credis_spend_auth(alice(), handle, alice());
         let (position_id, _) =
-            runtime::request_credis(storage.clone(), alice(), asset(), alice(), handle, spend)
-                .unwrap();
+            runtime::request_credis(storage.clone(), alice(), alice(), handle, spend).unwrap();
 
-        // bob is not the position's smart account.
-        let err = runtime::pay_anadosis(storage.clone(), bob(), position_id).unwrap_err();
-        assert!(err.to_string().contains("smartAccount"), "got: {err}");
+        // bob is not the position's smart account, but anyone may pay it down.
+        let owed = CredisContract::new(storage.clone())
+            .get_next_anadosis(position_id)
+            .unwrap()
+            .unwrap()
+            .unpaid_amount;
+        let paid = runtime::pay_anadosis(storage.clone(), bob(), position_id, owed).unwrap();
+        assert_eq!(paid, owed);
+        assert_eq!(
+            CredisContract::new(storage.clone())
+                .get_position(position_id)
+                .unwrap()
+                .next_anadosis_number,
+            2,
+            "third-party payment advances the schedule"
+        );
+
+        // The freed collateral goes to the ORIGINAL pledger, never to the payer — this
+        // is what makes an open payer safe without an access check.
+        assert_eq!(view_balance(&storage, alice()), installment);
+        assert_eq!(view_pledged(&storage, alice()), pledge_amount - installment);
+        assert_eq!(view_balance(&storage, bob()), U256::ZERO);
+        assert_eq!(view_pledged(&storage, bob()), U256::ZERO);
     });
     fidelity_enclave::uninstall();
     test_enclave::uninstall();
@@ -388,25 +491,18 @@ fn expiry_sweep_burns_outstanding_collateral() {
         )
         .unwrap();
         seed_fidelity(storage.clone(), alice());
-        seed_oracle(storage.clone(), U256::from(2u64) * one_e18());
-        let handle = gf::pledge_gratis(
-            storage.clone(),
-            alice(),
-            pledge_amount,
-            auth(GratisOp::Pledge, alice(), pledge_amount, 1),
-        )
-        .unwrap();
+        seed_oracle(storage.clone(), oracle_rate());
+        let handle = pledge(&storage, alice(), 1);
         let spend = credis_spend_auth(alice(), handle, alice());
         let (position_id, _) =
-            runtime::request_credis(storage.clone(), alice(), asset(), alice(), handle, spend)
-                .unwrap();
+            runtime::request_credis(storage.clone(), alice(), alice(), handle, spend).unwrap();
 
         // Pay 3 of 10 installments, leaving 7/10 of the collateral outstanding.
         for n in 1..=3u64 {
             storage
                 .set_block_timestamp(U256::from(CREATED_AT + n * SECONDS_PER_MONTH))
                 .unwrap();
-            runtime::pay_anadosis(storage.clone(), alice(), position_id).unwrap();
+            pay_next_installment(&storage, alice(), position_id);
         }
         let outstanding_gratis = pledge_amount - U256::from(3u64) * installment;
         assert_eq!(view_pledged(&storage, alice()), outstanding_gratis);

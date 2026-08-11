@@ -8,10 +8,7 @@ interface IFidelity {
     /// "outbe/fidelity/query-auth/v1" || chainId || account || expiry). The
     /// enclave verifies it (signer == account, chain-scoped, expiry >= block
     /// timestamp) before decrypting. Intended for `eth_call`.
-    function getFidelityIndex(address account, uint64 expiry, bytes calldata signature)
-        external
-        view
-        returns (uint256);
+    function getFidelityIndex(address account, uint64 expiry, bytes calldata signature) external view returns (uint256);
 
     /// Fidelity Index for `account` evaluated at `timestamp` (same
     /// authorization as `getFidelityIndex`; the curve is pure, so any

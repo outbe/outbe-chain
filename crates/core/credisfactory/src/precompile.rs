@@ -2,13 +2,14 @@
 //!
 //! `requestCredis` consumes a confidential Gratis pledge (pledge handle + spend
 //! authorization) and opens a credis position bound to `smartAccount`.
-//! `anadosis` advances the schedule and releases 1/N of the pledged collateral
-//! back to the original pledger's encrypted Gratis balance.
+//! `anadosis` applies an arbitrary amount to the schedule (whole installments in
+//! order, the last one possibly partial) and releases the matching share of the
+//! pledged collateral back to the original pledger's encrypted Gratis balance.
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};
 
-use outbe_primitives::dispatch::{dispatch_call, mutate, mutate_void, view};
+use outbe_primitives::dispatch::{dispatch_call, mutate, view};
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
@@ -39,7 +40,6 @@ pub fn dispatch(
                     let (position_id, amount_stables) = runtime::request_credis(
                         storage.clone(),
                         sender,
-                        c.asset,
                         c.smartAccount,
                         c.pledgeHandle,
                         c.spendAuth.0,
@@ -49,9 +49,8 @@ pub fn dispatch(
                         amountStables: amount_stables,
                     })
                 }),
-                anadosis(c) => mutate_void(c, caller, |sender, c| {
-                    runtime::pay_anadosis(storage.clone(), sender, c.positionId)?;
-                    Ok(())
+                anadosis(c) => mutate(c, caller, |sender, c| {
+                    runtime::pay_anadosis(storage.clone(), sender, c.positionId, c.amount)
                 }),
                 supportsInterface(c) => view(c, |c| {
                     let id: [u8; 4] = c.interfaceId.0;

@@ -149,16 +149,27 @@ pub fn dispatch_with_tee_attestation(
 
 /// Production dispatch with both finalized body readers and the immutable
 /// chain-manifest fork authority.
-pub fn dispatch_with_readers_and_ocomp_install(
+pub(crate) struct SystemTxRuntime<'a> {
+    pub(crate) scope: &'a outbe_compressed_entities::ExecutionScope,
+    pub(crate) parent: &'a outbe_offchain_data::RuntimeBodyReaders,
+    pub(crate) ocomp_fork_install: Option<&'a outbe_metadosis::config::OcompForkInstallV1>,
+    pub(crate) tee_attestation_v1:
+        &'a crate::tee_attestation_activation::TeeAttestationChainSpecStateV1,
+}
+
+pub(crate) fn dispatch_with_readers_and_ocomp_install(
     storage: StorageHandle,
-    scope: &outbe_compressed_entities::ExecutionScope,
-    parent: &outbe_offchain_data::RuntimeBodyReaders,
-    ocomp_fork_install: Option<&outbe_metadosis::config::OcompForkInstallV1>,
-    tee_attestation_v1: &crate::tee_attestation_activation::TeeAttestationChainSpecStateV1,
+    runtime: SystemTxRuntime<'_>,
     data: &[u8],
     caller: Address,
     value: U256,
 ) -> Result<Bytes> {
+    let SystemTxRuntime {
+        scope,
+        parent,
+        ocomp_fork_install,
+        tee_attestation_v1,
+    } = runtime;
     dispatch_inner(
         storage,
         data,
@@ -207,7 +218,12 @@ fn dispatch_inner(
         }
         SystemTxInputV2::OcompLifecycleBegin => {
             let ctx = block_runtime_context_from_storage(storage, false)?;
-            run_ocomp_lifecycle_begin(&ctx, ocomp_fork_install)?;
+            let (scope, _) = body_readers.ok_or_else(|| {
+                PrecompileError::Fatal(
+                    "OcompLifecycleBegin requires the active compressed-entity scope".into(),
+                )
+            })?;
+            run_ocomp_lifecycle_begin(&ctx, scope, ocomp_fork_install)?;
         }
         SystemTxInputV2::CycleTick => {
             let ctx = block_runtime_context_from_storage(storage, true)?;
@@ -647,7 +663,12 @@ pub(crate) fn run_boundary_outcome(
 ) -> Result<()> {
     let was_participant = outbe_validatorset::contract::ValidatorSet::new(ctx.storage.clone())
         .is_consensus_participant(ctx.block.proposer)?;
-    apply_boundary_outcome(ctx.storage.clone(), artifact)?;
+    apply_boundary_outcome(
+        ctx.storage.clone(),
+        artifact,
+        ctx.block.block_number,
+        ctx.block.timestamp,
+    )?;
     if !was_participant {
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(ctx.storage.clone());
         if vs.is_consensus_participant(ctx.block.proposer)? {
@@ -992,7 +1013,7 @@ fn record_window_close_absentees(ctx: &BlockRuntimeContext, block_number: u64) -
 /// OracleSlashWindow system tx: run Oracle slash-window penalties after any
 /// same-block boundary activation but before user transactions observe state.
 pub(crate) fn run_oracle_slash_window(ctx: &BlockRuntimeContext) -> Result<()> {
-    outbe_oracle::hooks::run_slash_window(ctx)
+    outbe_oracle::lifecycle::run_slash_window(ctx)
 }
 
 /// HookEvents system tx: no-op marker. Whitelisted pre-exec hook logs are
@@ -1005,6 +1026,7 @@ pub(crate) fn run_hook_events(_ctx: &BlockRuntimeContext) -> Result<()> {
 /// lifecycle handler into this already receipt-visible phase.
 pub(crate) fn run_ocomp_lifecycle_begin(
     ctx: &BlockRuntimeContext,
+    scope: &outbe_compressed_entities::ExecutionScope,
     fork_install: Option<&outbe_metadosis::config::OcompForkInstallV1>,
 ) -> Result<()> {
     if let Some(install) = fork_install {
@@ -1012,11 +1034,11 @@ pub(crate) fn run_ocomp_lifecycle_begin(
             outbe_metadosis::commands::install_fork_profile(ctx, install)?;
         }
     }
-    outbe_metadosis::commands::run_ocomp_lifecycle_begin(ctx)
+    outbe_metadosis::commands::run_ocomp_lifecycle_begin_with_scope(ctx, scope)
 }
 
-/// Reserved post-CE-seal request slot. OCM-08 wires bounded terminal request
-/// creation here without changing block ordering or the system-tx ABI.
+/// Reserved terminal request slot. It consumes executor-owned provisional CE
+/// roots while the scope remains active for terminal failure retirement.
 pub(crate) fn run_ocomp_terminal_request(
     ctx: &BlockRuntimeContext,
     scope: &outbe_compressed_entities::ExecutionScope,
@@ -1083,11 +1105,21 @@ fn u256_to_u64(name: &str, value: U256) -> Result<u64> {
 mod tests {
     use super::*;
     use alloy_primitives::{address, keccak256, B256};
+    use outbe_chain_constants::{GenesisProtocolParametersV1, CHAIN_CONSTANTS_ADDRESS};
     use outbe_primitives::{consensus::ReshareResult, storage::hashmap::HashMapStorageProvider};
 
     const CHAIN_ID: u64 = 2026;
+    const GENESIS_HASH: B256 = B256::repeat_byte(0x11);
     const OWNER: Address = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
     const VALIDATOR: Address = address!("0x1111111111111111111111111111111111111111");
+
+    fn seed_default_chain_constants(storage: StorageHandle<'_>) {
+        for (slot, value) in GenesisProtocolParametersV1::default().genesis_storage_words() {
+            storage
+                .sstore(CHAIN_CONSTANTS_ADDRESS, slot, value)
+                .expect("test chain constants seed succeeds");
+        }
+    }
 
     fn metadata() -> CertifiedParentAccountingMetadata {
         CertifiedParentAccountingMetadata {
@@ -1166,18 +1198,22 @@ mod tests {
     }
 
     fn configured_storage(block_number: u64, timestamp: u64) -> HashMapStorageProvider {
-        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        let consensus_key = [7u8; 48];
+        let mut provider = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, GENESIS_HASH);
         provider.set_block_number(block_number);
         provider.set_timestamp(U256::from(timestamp));
         provider.set_beneficiary(VALIDATOR);
         let install = outbe_metadosis::test_support::ForkInstallScenario::measurement_at(
             1,
             CHAIN_ID,
-            B256::repeat_byte(0x11),
+            GENESIS_HASH,
         )
+        .unwrap()
+        .with_founder_validators(&[(VALIDATOR, consensus_key)])
         .unwrap()
         .into_install();
         provider.enter(|storage| {
+            seed_default_chain_constants(storage.clone());
             let root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
             storage
                 .sstore(
@@ -1193,15 +1229,29 @@ mod tests {
                     U256::from_be_slice(root.as_slice()),
                 )
                 .unwrap();
+            for (slot, value) in outbe_chain_constants::GenesisProtocolParametersV1::default()
+                .genesis_storage_words()
+            {
+                storage
+                    .sstore(outbe_chain_constants::CHAIN_CONSTANTS_ADDRESS, slot, value)
+                    .unwrap();
+            }
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_epoch_length_blocks.write(10).unwrap();
-            vs.register_validator(OWNER, VALIDATOR, &[7u8; 48]).unwrap();
-            vs.activate_validator(VALIDATOR).unwrap();
-            vs.val_has_bls_share.write(&VALIDATOR, true).unwrap();
-            vs.active_consensus_set_hash
-                .write(active_set_hash(&[VALIDATOR]))
+            vs.register_validator(OWNER, VALIDATOR, &consensus_key)
+                .unwrap();
+            vs.mark_pending(VALIDATOR).unwrap();
+            let registration = install.founder_registrations[0]
+                .encode_canonical(&outbe_metadosis::config::poc_schema_limits())
+                .unwrap();
+            vs.confirm_validator_ready(VALIDATOR, &registration)
+                .unwrap();
+            vs.activate_validator_via_boundary_for_test(VALIDATOR)
+                .unwrap();
+
+            outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
                 .unwrap();
         });
         provider.set_block_number(1);
@@ -1224,7 +1274,7 @@ mod tests {
         timestamp: u64,
         storage: std::collections::HashMap<(Address, U256), U256>,
     ) -> HashMapStorageProvider {
-        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        let mut provider = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, GENESIS_HASH);
         provider.set_block_number(block_number);
         provider.set_timestamp(U256::from(timestamp));
         provider.set_beneficiary(VALIDATOR);
@@ -1638,14 +1688,15 @@ mod tests {
         provider.enter(|storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_epoch_length_blocks.write(10).unwrap();
             for (i, member) in members.iter().enumerate() {
                 // Distinct consensus pubkey per member (uniqueness is enforced).
                 let mut pubkey = [7u8; 48];
                 pubkey[0] = i as u8;
                 vs.register_validator(OWNER, *member, &pubkey).unwrap();
-                vs.activate_validator(*member).unwrap();
+                vs.activate_validator_via_boundary_for_test(*member)
+                    .unwrap();
                 vs.val_has_bls_share.write(member, true).unwrap();
             }
         });
@@ -2083,9 +2134,9 @@ mod tests {
             {
                 let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
                 vs.register_validator(OWNER, V0, &[0xB0; 48]).unwrap();
-                vs.activate_validator(V0).unwrap();
+                vs.activate_validator_via_boundary_for_test(V0).unwrap();
                 vs.register_validator(OWNER, V1, &[0xB1; 48]).unwrap();
-                vs.activate_validator(V1).unwrap();
+                vs.activate_validator_via_boundary_for_test(V1).unwrap();
             }
 
             // Committee snapshot [V0, V1] under (epoch, csh); escrow must bind csh.
@@ -2093,11 +2144,11 @@ mod tests {
                 committee: vec![
                     CommitteeEntry {
                         address: V0,
-                        consensus_pubkey: [0xC0; 48],
+                        consensus_pubkey: [0xB0; 48],
                     },
                     CommitteeEntry {
                         address: V1,
-                        consensus_pubkey: [0xC1; 48],
+                        consensus_pubkey: [0xB1; 48],
                     },
                 ],
                 vrf_material_version: 1,
@@ -2189,7 +2240,7 @@ mod tests {
                     for (i, a) in members.iter().enumerate() {
                         vs.register_validator(OWNER, *a, &[0xC0u8 + i as u8; 48])
                             .unwrap();
-                        vs.activate_validator(*a).unwrap();
+                        vs.activate_validator_via_boundary_for_test(*a).unwrap();
                     }
                 }
                 let snapshot = CommitteeSnapshot {
@@ -2198,7 +2249,7 @@ mod tests {
                         .enumerate()
                         .map(|(i, a)| CommitteeEntry {
                             address: *a,
-                            consensus_pubkey: [0xD0u8 + i as u8; 48],
+                            consensus_pubkey: [0xC0u8 + i as u8; 48],
                         })
                         .collect(),
                     vrf_material_version: 1,
@@ -2259,13 +2310,10 @@ mod tests {
         );
     }
 
-    /// Epoch-boundary ordering: the per-epoch reset runs in
-    /// `apply_pre_execution_changes` (pre-block hooks, executor.rs:2204) BEFORE the
-    /// begin-zone `LateFinalizeCredits` body tx (executor.rs: "begin-zone phases
-    /// execute when their body transaction reaches the loop"). This test mirrors
-    /// that order — reset, then window close — and proves the absentee's window-close
-    /// miss is recorded in the new epoch (NOT wiped); a prior epoch's accumulation is
-    /// reset first.
+    /// Boundary ordering: a block carrying certified `BoundaryOutcome` prepares
+    /// its per-epoch counter reset before the receipt-visible
+    /// `LateFinalizeCredits` body tx. The later BoundaryOutcome advances the
+    /// epoch/set/snapshot without resetting the freshly recorded absentee miss.
     #[test]
     fn window_close_miss_survives_epoch_boundary_reset() {
         use outbe_validatorset::{CommitteeEntry, CommitteeSnapshot};
@@ -2285,19 +2333,19 @@ mod tests {
             {
                 let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
                 vs.register_validator(OWNER, A, &[0xE0; 48]).unwrap();
-                vs.activate_validator(A).unwrap();
+                vs.activate_validator_via_boundary_for_test(A).unwrap();
                 vs.register_validator(OWNER, B, &[0xE1; 48]).unwrap();
-                vs.activate_validator(B).unwrap();
+                vs.activate_validator_via_boundary_for_test(B).unwrap();
             }
             let snapshot = CommitteeSnapshot {
                 committee: vec![
                     CommitteeEntry {
                         address: A,
-                        consensus_pubkey: [0xF0; 48],
+                        consensus_pubkey: [0xE0; 48],
                     },
                     CommitteeEntry {
                         address: B,
-                        consensus_pubkey: [0xF1; 48],
+                        consensus_pubkey: [0xE1; 48],
                     },
                 ],
                 vrf_material_version: 1,
@@ -2335,12 +2383,14 @@ mod tests {
                 si.voter_miss_count.write(&B, 5).unwrap();
             }
 
-            // Real begin-zone order at an epoch-boundary block: pre-block reset first…
-            {
-                let mut si =
-                    outbe_slashindicator::contract::SlashIndicator::new(ctx.storage.clone());
-                si.reset_epoch_counters(&[A, B]).unwrap();
-            }
+            // Real begin-zone order for a block that actually carries the
+            // certified boundary: boundary-conditioned pre-block reset first…
+            crate::executor::prepare_boundary_epoch_counters(
+                ctx.storage.clone(),
+                &boundary_noop(),
+                ctx.block.block_number,
+            )
+            .unwrap();
             // …then the begin-zone window-close increments.
             run_late_finalize_credits(&ctx, &LateFinalizeCreditsArtifact::default()).unwrap();
 

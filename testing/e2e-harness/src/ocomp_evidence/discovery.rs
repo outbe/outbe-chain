@@ -146,7 +146,9 @@ fn normalize_relative(value: &str) -> Result<PathBuf> {
     for component in path.components() {
         match component {
             std::path::Component::Normal(part) => normalized.push(part),
-            _ => bail!("planned path contains traversal or prefix: {value}"),
+            _ => {
+                bail!("planned path contains traversal or prefix: {value}");
+            }
         }
     }
     Ok(normalized)

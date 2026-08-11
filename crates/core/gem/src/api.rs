@@ -12,25 +12,43 @@ pub fn add_gem(storage: &StorageHandle<'_>, params: GemAddParams) -> Result<U256
 
     let mut gem = GemContract::new(storage.clone());
     let gem_id =
-        GemContract::generate_gem_id(params.owner, params.gem_load, storage.block_number()?);
+        GemContract::generate_gem_id(params.owner, params.gem_load_minor, storage.block_number()?);
+
+    // A gem born past Issued reached those states at issuance, so backfill the
+    // lifecycle timestamps from `issued_at` (the scan stamps them otherwise).
+    let (qualified_at, settled_at) = match params.initial_state {
+        GemState::Issued => (0u64, 0u64),
+        GemState::Qualified | GemState::Called => (params.issued_at, 0),
+        GemState::Settled => (params.issued_at, params.issued_at),
+    };
 
     let item = GemData {
         gem_id,
         owner: params.owner,
         gem_type: params.gem_type,
-        gem_load: params.gem_load,
-        entry_price: params.entry_price,
-        cost_amount: params.cost_amount,
-        floor_price: params.floor_price,
+        gem_load_minor: params.gem_load_minor,
+        entry_price_minor: params.entry_price_minor,
+        cost_amount_minor: params.cost_amount_minor,
+        floor_price_minor: params.floor_price_minor,
+        call_price_minor: params.call_price_minor,
+        call_rate: params.call_rate,
+        call_window: params.call_window,
+        call_threshold: params.call_threshold,
         issuance_currency: params.issuance_currency,
         reference_currency: params.reference_currency,
         state: params.initial_state as u8,
         issued_at: params.issued_at,
+        called_at: 0,
+        call_notice_period: crate::constants::CALL_NOTICE_PERIOD,
+        qualified_at,
+        settled_at,
     };
     gem.add_gem(&item)?;
     Ok(gem_id)
 }
 
+/// Burn a settled gem (promis mining). Forfeit burns of Called gems go through
+/// the internal `GemContract::burn` from the daily scan, not this entry point.
 pub fn burn(storage: &StorageHandle<'_>, gem_id: U256) -> Result<()> {
     let mut gem = GemContract::new(storage.clone());
     let item = gem.gem_items.get(gem_id)?.ok_or(GemError::GemNotFound)?;

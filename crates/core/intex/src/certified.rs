@@ -210,8 +210,8 @@ mod tests {
                             input,
                             &poc_schema_limits(),
                         )?;
-                        capability.authorize_tribute_retirement()?;
                         capability.authorize_carry_over_credit()?;
+                        capability.authorize_tribute_retirement()?;
                         capability.authorize_terminal_receipt()?;
                         Ok(receipt)
                     },
@@ -540,9 +540,9 @@ mod tests {
                     floor_price_minor: U256::from(1),
                     call_price_minor: U256::from(1),
                     call_trigger: crate::IntexCallTrigger {
-                        window_days: 1,
-                        threshold_days: 1,
-                        intex_call_period: 1,
+                        call_window: 24 * 60 * 60,
+                        call_threshold: 24 * 60 * 60,
+                        call_notice_period: 1,
                     },
                     issued_at: 1,
                     issuance_currency: 840,
@@ -595,9 +595,9 @@ mod tests {
                     floor_price_minor: U256::from(1),
                     call_price_minor: U256::from(1),
                     call_trigger: crate::IntexCallTrigger {
-                        window_days: 1,
-                        threshold_days: 1,
-                        intex_call_period: 1,
+                        call_window: 24 * 60 * 60,
+                        call_threshold: 24 * 60 * 60,
+                        call_notice_period: 1,
                     },
                     issued_at: 1,
                     issuance_currency: 840,
@@ -709,8 +709,8 @@ mod tests {
                     &value,
                     &poc_schema_limits(),
                 )?;
-                capability.authorize_tribute_retirement()?;
                 capability.authorize_carry_over_credit()?;
+                capability.authorize_tribute_retirement()?;
                 capability.authorize_terminal_receipt()?;
                 Ok(receipt)
             })

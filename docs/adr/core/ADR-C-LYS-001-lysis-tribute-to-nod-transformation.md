@@ -210,7 +210,8 @@ change. OCOMP can evolve operationally without owning its economics.
     raw Lysis/consume mutators.
 14. Freeze `UnitSpecV1`, planner/reducer semantics, typed result/action codecs and
     an independent reference corpus.
-15. Prove 1/2/4-worker byte equality, Supervisor-submitted validator-ZeroFee
-    result votes only after finality+4, public q=3 vote/quorum binding, separate
-    fourth-validator accountability and the full PFS-002 activation/output
-    path.
+15. Prove 1/2/4-worker byte equality, Supervisor-submitted authenticated system
+    result votes only after finality+4, snapshot-derived quorum binding,
+    job-pinned all-participant accountability (production default 1,800 blocks) with ACTIVE-only deadline jail
+    and non-ACTIVE non-mutation, independent FullNode recomputation and the full
+    PFS-002 activation/output path.

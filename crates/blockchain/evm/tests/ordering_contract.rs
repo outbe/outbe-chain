@@ -1,20 +1,15 @@
 //! — executor ordering contract.
 //!
 //! Pins the invariant that backs the slashindicator precompile's epoch-lag
-//! admissibility: the precompile reads
-//! `ValidatorSet.epoch_number` directly from storage and trusts that the
-//! value is post-bump for the current block because `transition_epoch`
-//! runs in the pre-execution hook chain BEFORE any user transaction.
+//! admissibility: `ValidatorSet.epoch_number` names the committee that was
+//! actually activated by a certified `BoundaryOutcome`, not the epoch whose
+//! nominal height has merely been reached.
 //!
 //! The behaviour test here drives `run_outbe_pre_execution_hooks`
-//! against a primed in-memory storage provider and asserts that, when
-//! the block height is exactly an epoch boundary, the hook bumps
-//! `ValidatorSet.epoch_number` AND `ValidatorSet.epoch_start_block` —
-//! and that these writes are visible to a fresh `ValidatorSet` facade
-//! attached to the same storage after the hook returns. Because the
-//! function returns control to the executor's tx-execution phase, the
-//! visible-after-return contract implies "visible before user tx
-//! phase".
+//! against a primed in-memory storage provider and asserts that reaching the
+//! nominal boundary without carrying a certified `BoundaryOutcome` leaves the
+//! activated epoch untouched. The receipt-visible BoundaryOutcome path owns
+//! the later atomic epoch/member/snapshot switch before user transactions.
 
 use alloy_primitives::{Address, U256};
 use outbe_evm::executor::run_outbe_pre_execution_hooks;
@@ -26,34 +21,32 @@ const CHAIN_ID: u64 = 1;
 const EPOCH_LENGTH: u32 = 10;
 const PROPOSER: Address = Address::ZERO;
 
-/// Seeds the minimum on-chain state the pre-exec hook chain needs to
-/// reach `is_epoch_boundary` + `transition_epoch`:
+/// Seeds the minimum on-chain state the pre-exec hook chain needs to reach a
+/// nominal epoch boundary:
 ///   * `config_epoch_length_blocks = EPOCH_LENGTH`
 ///   * `epoch_start_block = 0`
-///   * `epoch_number = 1` (we expect post-call value of 2)
+///   * `epoch_number = 1` (the currently activated epoch)
 fn seed_validator_set(storage: StorageHandle, initial_epoch: u64) {
     let vs = ValidatorSet::new(storage.clone());
     vs.config_epoch_length_blocks.write(EPOCH_LENGTH).unwrap();
     vs.epoch_start_block.write(0).unwrap();
     vs.epoch_number.write(U256::from(initial_epoch)).unwrap();
-    // Seed COEN/0xUSD pair + 1.0 rate so begin-block NOD/GEM/INTEX promotion
+    // Seed COEN/840 pair + 1.0 rate so begin-block NOD/GEM/INTEX promotion
     // reads a registered pair instead of reverting "pair not registered".
-    let mut oracle = outbe_oracle::contract::OracleContract::new(storage);
-    oracle.register_pair("COEN", "0xUSD").unwrap();
-    oracle
-        .set_exchange_rate(
-            Address::ZERO,
-            "COEN",
-            "0xUSD",
-            U256::from(1_000_000_000_000_000_000u128),
-            0,
-            0,
-        )
-        .unwrap();
+    outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
+    outbe_oracle::api::set_exchange_rate(
+        storage,
+        Address::ZERO,
+        outbe_oracle::api::DAY_TYPE_PAIR,
+        U256::from(1_000_000_000_000_000_000u128),
+        0,
+        0,
+    )
+    .unwrap();
 }
 
 #[test]
-fn transition_epoch_runs_in_pre_execution_before_user_txs() {
+fn nominal_epoch_boundary_without_certified_outcome_keeps_activated_epoch() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let boundary_block = EPOCH_LENGTH as u64;
     provider.set_block_number(boundary_block);
@@ -91,36 +84,25 @@ fn transition_epoch_runs_in_pre_execution_before_user_txs() {
         );
         run_outbe_pre_execution_hooks(&ctx, None).expect("pre-exec hook chain must succeed");
 
-        // (3) Fresh facade on the SAME storage — proves the bump landed
-        // in storage and is visible to anything that observes the
-        // storage handle after the hook returns. The executor calls
-        // this hook chain immediately before handing control to the
-        // tx-execution loop, so "visible after return" implies
-        // "visible before any user tx runs". This is the contract the
-        // slashindicator precompile relies on when it reads
-        // `epoch_number` directly via
-        // `ValidatorSet::new(storage).epoch_number.read()`.
+        // (3) The scheduled height is not activation authority. Until the
+        // receipt-visible BoundaryOutcome executes, every consumer — including
+        // OCOMP — must continue to observe the old epoch and its snapshot.
         let vs_after = ValidatorSet::new(storage);
         assert_eq!(
             vs_after.epoch_number.read().unwrap(),
-            U256::from(2u64),
-            "transition_epoch must have run inside pre-exec, bumping \
-             epoch_number 1 → 2",
+            U256::from(1u64),
+            "nominal boundary without certified outcome must not advance epoch",
         );
         assert_eq!(
             vs_after.epoch_start_block.read().unwrap(),
-            boundary_block,
-            "transition_epoch must have anchored epoch_start_block at \
-             the boundary block",
+            0,
+            "nominal boundary without certified outcome must not move epoch anchor",
         );
     });
 }
 
-/// Companion negative test: on a non-boundary block, `transition_epoch`
-/// must NOT fire. Pins the trigger half of the contract — without this,
-/// the positive test could pass against a runtime that calls
-/// `transition_epoch` unconditionally on every pre-exec invocation,
-/// which would corrupt the per-block stable-epoch assumption.
+/// Companion negative test: an ordinary mid-epoch block also leaves the
+/// activated epoch untouched.
 #[test]
 fn transition_epoch_does_not_fire_inside_an_epoch() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);

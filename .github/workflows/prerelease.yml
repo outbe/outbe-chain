@@ -55,7 +55,7 @@ jobs:
         run: |
           find target/release -maxdepth 1 -type f -executable -name 'outbe-*' | while read bin; do
             name=$(basename "$bin")
-            cargo audit --format sarif bin "$bin" > "audit-${name}.sarif"
+            cargo audit --db ~/.cargo/rustsec-audit-db --ignore RUSTSEC-2025-0055 --ignore RUSTSEC-2026-0118 --ignore RUSTSEC-2026-0119 --format sarif bin "$bin" > "audit-${name}.sarif"
           done
       - name: upload audit results
         uses: github/codeql-action/upload-sarif@v3

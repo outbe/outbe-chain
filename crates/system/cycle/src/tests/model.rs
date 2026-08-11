@@ -422,35 +422,13 @@ fn capacity_history(retained_before: usize, coverage: &mut Coverage) -> TestCase
             .unwrap();
     });
 
-    let retained = [WorldwideDay::new(20_260_701), WorldwideDay::new(20_260_801)];
-    let mut next_block = 2_u64;
-    for day in retained.into_iter().take(retained_before) {
-        storage.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
-        let projection = StorageHandle::enter(&mut storage, |handle| {
-            let ctx = RuntimeContext::new(
-                block_ctx(next_block, day.start_timestamp() + 2 * 3_600),
-                handle.clone(),
-            );
-            outbe_metadosis::commands::apply_cycle_day_limit(&ctx, day_limit).unwrap();
-            worldwide_day(handle, day).unwrap().unwrap()
-        });
-        next_block += 1;
-        for boundary in [
-            projection.forming_end,
-            projection.lookback_end,
-            projection.offering_end,
-            projection.scheduled_process_time,
-        ] {
-            advance_only(&mut storage, next_block, boundary).unwrap();
-            next_block += 1;
-        }
-        let projection = StorageHandle::enter(&mut storage, |handle| {
-            worldwide_day(handle, day).unwrap().unwrap()
-        });
-        prop_assert_eq!(projection.status, WwdStatus::Ready);
-        prop_assert_eq!(projection.membership, WwdMembership::Active);
-    }
+    let retained = super::retained_days_before(victim, retained_before);
+    StorageHandle::enter(&mut storage, |handle| {
+        outbe_metadosis::test_support::seed_ready_worldwide_days_for_capacity(handle, &retained)
+            .unwrap();
+    });
 
+    let mut next_block = 2_u64;
     storage.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
     let victim_projection = StorageHandle::enter(&mut storage, |handle| {
         let ctx = RuntimeContext::new(
@@ -537,20 +515,20 @@ fn generated_outer_wwd_histories_match_cycle_begin_block_model() {
     };
     let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &GENERATED_OUTER_WWD_SEED);
     let mut runner = TestRunner::new_with_rng(config, rng);
-    let strategy = (
-        outer_history_strategy(),
-        prop_oneof![Just(MAX_RETAINED_WWDS - 1), Just(MAX_RETAINED_WWDS),],
-    );
+    let strategy = outer_history_strategy();
     let distribution = Arc::new(Mutex::new(Coverage::default()));
     let observed = distribution.clone();
     runner
-        .run(&strategy, move |(history, retained_before)| {
+        .run(&strategy, move |history| {
             let mut coverage = Coverage::default();
             outer_history(history, &mut coverage)?;
-            capacity_history(retained_before, &mut coverage)?;
             observed.lock().unwrap().merge(&coverage);
             Ok(())
         })
         .unwrap();
+    let mut capacity_coverage = Coverage::default();
+    capacity_history(MAX_RETAINED_WWDS - 1, &mut capacity_coverage).unwrap();
+    capacity_history(MAX_RETAINED_WWDS, &mut capacity_coverage).unwrap();
+    distribution.lock().unwrap().merge(&capacity_coverage);
     distribution.lock().unwrap().assert_complete(64);
 }

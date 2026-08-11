@@ -10,15 +10,18 @@
 //! 1. anchors the START epoch's committee on the **genesis validator MinPk
 //!    set**, read from the follower's OWN genesis state — the trust root;
 //!    nothing the operator must provide;
-//! 2. reads each later epoch's committee from the finalized **boundary block**
-//!    that activates it, and trusts it transitively because that boundary block
-//!    was finalized by the already-trusted previous committee.
+//! 2. reads each later epoch's committee from a `CommitteePreAnnounce` in the
+//!    previous epoch's last finalized block, verifies that block with the already
+//!    trusted previous committee, and only then installs the next verifier.
 //!
 //! All inputs are public on-chain data carried in the boundary block
 //! `extra_data` (the full DKG [`Output`] — players + polynomial); the follower
 //! never holds any DKG secret. [`CommitteeChain`] implements this chaining; it
 //! is exercised by `phase0_spike_*` (the de-risk gate) and the tests below.
 
+use std::collections::BTreeMap;
+
+use alloy_primitives::{keccak256, B256};
 use commonware_consensus::{simplex::types::Finalization, types::Epoch};
 use commonware_cryptography::bls12381;
 use commonware_cryptography::bls12381::primitives::variant::MinSig;
@@ -27,7 +30,9 @@ use commonware_utils::ordered::Set;
 use eyre::{bail, Result};
 
 use crate::digest::Digest;
-use crate::hybrid::{bls_batch_verification_rng, HybridScheme, HybridSchemeProvider};
+use crate::hybrid::{
+    bls_batch_verification_rng, HybridScheme, HybridSchemeProvider, VrfMaterialProvider,
+};
 
 mod driver;
 pub mod engine;
@@ -63,6 +68,9 @@ pub struct CommitteeChain {
     scheme_provider: HybridSchemeProvider<MinSig>,
     /// Highest epoch whose committee verifier has been registered.
     highest_registered: Option<Epoch>,
+    /// Exact authenticated outcome hash by epoch. Repeated pre-announces are
+    /// idempotent; a conflicting outcome can never replace trusted material.
+    outcome_hashes: BTreeMap<u64, B256>,
 }
 
 impl CommitteeChain {
@@ -75,6 +83,7 @@ impl CommitteeChain {
             anchor_participants,
             scheme_provider: HybridSchemeProvider::new(),
             highest_registered: None,
+            outcome_hashes: BTreeMap::new(),
         }
     }
 
@@ -113,6 +122,34 @@ impl CommitteeChain {
             .ok_or_else(|| eyre::eyre!("boundary outcome is not a decodable full DKG output"))?;
         let participants = output.players().clone();
         let polynomial = output.public().clone();
+        let outcome_hash = keccak256(outcome);
+
+        if let Some(existing) = self.outcome_hashes.get(&epoch.get()) {
+            if *existing != outcome_hash {
+                bail!(
+                    "conflicting committee outcome replay for epoch {}",
+                    epoch.get()
+                );
+            }
+            return Ok(participants);
+        }
+
+        if let Some(highest) = self.highest_registered {
+            let expected = highest.get().saturating_add(1);
+            if epoch.get() != expected {
+                bail!(
+                    "committee epoch {} is not sequential after authenticated epoch {}",
+                    epoch.get(),
+                    highest.get()
+                );
+            }
+        } else if epoch != self.anchor_epoch {
+            bail!(
+                "first registered committee epoch {} is not anchor epoch {}",
+                epoch.get(),
+                self.anchor_epoch.get()
+            );
+        }
 
         // Trust root: the anchor epoch's committee MUST be the trusted genesis
         // validator set. Consensus finality is a multisig over these MinPk keys,
@@ -128,10 +165,17 @@ impl CommitteeChain {
             );
         }
 
-        let verifier = HybridScheme::<MinSig>::verifier(
+        // The follower is anchored at genesis epoch/version 0, and every
+        // successful DKG activation increments both counters exactly once.
+        // Restore the authenticated epoch's material version explicitly:
+        // `HybridScheme::verifier` defaults it to zero, which verifies the BLS
+        // certificate but produces a non-canonical committee_set_hash_v2 after
+        // epoch 0.
+        let vrf_materials = VrfMaterialProvider::new(epoch.get(), polynomial, None);
+        let verifier = HybridScheme::<MinSig>::verifier_with_vrf_provider(
             &crate::config::outbe_app_namespace(),
             participants.clone(),
-            polynomial,
+            vrf_materials,
         )
         .ok_or_else(|| {
             eyre::eyre!(
@@ -140,6 +184,7 @@ impl CommitteeChain {
             )
         })?;
         self.scheme_provider.register(epoch, verifier);
+        self.outcome_hashes.insert(epoch.get(), outcome_hash);
         self.highest_registered = Some(match self.highest_registered {
             Some(h) => h.max(epoch),
             None => epoch,
@@ -180,16 +225,13 @@ impl CommitteeChain {
             }
             Some(CHA::BoundaryOutcome(boundary)) => {
                 let epoch = Epoch::new(boundary.epoch);
-                if self
-                    .highest_registered
-                    .is_none_or(|h| epoch.get() > h.get())
-                {
+                if epoch == self.anchor_epoch && self.highest_registered.is_none() {
                     self.register_epoch_from_outcome(epoch, &boundary.outcome)?;
                     Ok(Some(epoch))
                 } else {
-                    // Already registered — via the E-1 pre-announce (the trusted
-                    // chaining path). The self-finalized boundary is a no-op here; it
-                    // must NOT override the chained committee (that would be D1).
+                    // Later boundaries are self-finalized and never install or
+                    // replace a committee. Their committee must already have been
+                    // chained from an E-1 pre-announce.
                     Ok(None)
                 }
             }
@@ -224,9 +266,12 @@ impl CommitteeChain {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{collections::BTreeMap, sync::Arc};
+
+    use alloy_primitives::Bytes;
     use commonware_codec::Encode as _;
     use commonware_consensus::simplex::types::{Finalization, Proposal, Subject};
-    use commonware_consensus::types::{Round, View};
+    use commonware_consensus::types::{Epocher as _, Height, Round, View};
     use commonware_cryptography::certificate::Scheme as _;
     use commonware_cryptography::{Hasher as _, Sha256, Signer as _};
     use commonware_utils::{
@@ -321,6 +366,17 @@ mod tests {
 
         /// A finalization for `epoch` signed by this committee.
         fn finalization(&self, epoch: Epoch) -> Finalization<HybridScheme<MinSig>, Digest> {
+            let digest = Digest::from(alloy_primitives::B256::from_slice(
+                Sha256::hash(format!("blk-{}", epoch.get()).as_bytes()).as_ref(),
+            ));
+            self.finalization_for(epoch, digest)
+        }
+
+        fn finalization_for(
+            &self,
+            epoch: Epoch,
+            digest: Digest,
+        ) -> Finalization<HybridScheme<MinSig>, Digest> {
             let ns = crate::config::outbe_app_namespace();
             let verifier = HybridScheme::<MinSig>::verifier(
                 &ns,
@@ -343,9 +399,6 @@ mod tests {
                     .unwrap()
                 })
                 .collect();
-            let digest = Digest::from(alloy_primitives::B256::from_slice(
-                Sha256::hash(format!("blk-{}", epoch.get()).as_bytes()).as_ref(),
-            ));
             let proposal = Proposal::new(Round::new(epoch, View::new(2)), View::new(1), digest);
             let subject = Subject::Finalize {
                 proposal: &proposal,
@@ -362,6 +415,241 @@ mod tests {
                 certificate,
             }
         }
+    }
+
+    #[derive(Clone, Default)]
+    struct ArchivedFinalizedSource {
+        by_height: Arc<BTreeMap<u64, CertifiedFinalizedBlock>>,
+    }
+
+    impl FinalizedSource for ArchivedFinalizedSource {
+        fn get_finalization(
+            &self,
+            height: Height,
+        ) -> impl std::future::Future<Output = Option<CertifiedFinalizedBlock>> + Send {
+            std::future::ready(self.by_height.get(&height.get()).cloned())
+        }
+    }
+
+    fn certified_block(
+        signer: &Committee,
+        epoch: Epoch,
+        height: u64,
+        extra_data: Vec<u8>,
+    ) -> CertifiedFinalizedBlock {
+        use reth_ethereum::{primitives::SealedBlock, Block};
+
+        let mut block = Block::default();
+        block.header.number = height;
+        block.header.extra_data = Bytes::from(extra_data);
+        let block = crate::block::ConsensusBlock::from_sealed(SealedBlock::seal_slow(
+            block.map_header(outbe_primitives::OutbeHeader::new),
+        ));
+        let finalization = signer.finalization_for(epoch, block.digest());
+        CertifiedFinalizedBlock {
+            finalization,
+            block,
+        }
+    }
+
+    #[test]
+    fn restart_rebuilds_every_committee_from_prior_epoch_finality_before_current_epoch() {
+        let c0 = committee(10);
+        let c1 = committee(30);
+        let c2 = committee(50);
+        let e0 = Epoch::new(0);
+        let e1 = Epoch::new(1);
+        let e2 = Epoch::new(2);
+        let epocher = FollowerEpocher::new(10, 0);
+        let source = ArchivedFinalizedSource {
+            by_height: Arc::new(BTreeMap::from([
+                (
+                    1,
+                    certified_block(&c0, e0, 1, c0.boundary_block_extra_data(e0)),
+                ),
+                (
+                    10,
+                    certified_block(&c0, e0, 10, c1.preannounce_block_extra_data(e1)),
+                ),
+                (
+                    11,
+                    certified_block(&c1, e1, 11, c1.boundary_block_extra_data(e1)),
+                ),
+                (
+                    20,
+                    certified_block(&c1, e1, 20, c2.preannounce_block_extra_data(e2)),
+                ),
+                (
+                    21,
+                    certified_block(&c2, e2, 21, c2.boundary_block_extra_data(e2)),
+                ),
+            ])),
+        };
+        let chain = Arc::new(std::sync::Mutex::new(CommitteeChain::new(
+            e0,
+            c0.participants.clone(),
+        )));
+
+        futures::executor::block_on(engine::prepare_committee_chain(
+            &chain,
+            &source,
+            &epocher,
+            e0,
+            Height::new(21),
+        ))
+        .expect("restart must rebuild the authenticated chain through the recovered epoch");
+
+        let guard = chain.lock().unwrap();
+        assert_eq!(guard.highest_registered(), Some(e2));
+        guard
+            .verify_finalization(e2, &c2.finalization(e2))
+            .expect("current epoch finality must verify after restart reconstruction");
+    }
+
+    #[test]
+    fn next_committee_preannounce_may_precede_prior_epoch_final_block() {
+        let c0 = committee(10);
+        let c1 = committee(30);
+        let e0 = Epoch::new(0);
+        let e1 = Epoch::new(1);
+        let epocher = FollowerEpocher::new(10, 0);
+        let source = ArchivedFinalizedSource {
+            by_height: Arc::new(BTreeMap::from([
+                (
+                    1,
+                    certified_block(&c0, e0, 1, c0.boundary_block_extra_data(e0)),
+                ),
+                (
+                    8,
+                    certified_block(&c0, e0, 8, c1.preannounce_block_extra_data(e1)),
+                ),
+                (10, certified_block(&c0, e0, 10, Vec::new())),
+                (
+                    11,
+                    certified_block(&c1, e1, 11, c1.boundary_block_extra_data(e1)),
+                ),
+            ])),
+        };
+        let chain = Arc::new(std::sync::Mutex::new(CommitteeChain::new(
+            e0,
+            c0.participants.clone(),
+        )));
+
+        futures::executor::block_on(engine::prepare_committee_chain(
+            &chain,
+            &source,
+            &epocher,
+            e0,
+            Height::new(11),
+        ))
+        .expect("trusted pre-announce before the epoch-final block must register epoch 1");
+
+        chain
+            .lock()
+            .unwrap()
+            .verify_finalization(e1, &c1.finalization(e1))
+            .expect("epoch 1 finality verifies through the prior-epoch carrier");
+    }
+
+    #[test]
+    fn restart_reconstructs_delayed_boundaries_and_ignores_a_later_preannounce_trap() {
+        let c0 = committee(10);
+        let c1 = committee(30);
+        let c2 = committee(50);
+        let c3 = committee(70);
+        let e0 = Epoch::new(0);
+        let e1 = Epoch::new(1);
+        let e2 = Epoch::new(2);
+        let e3 = Epoch::new(3);
+        let epocher = FollowerEpocher::new(10, 3);
+        let source = ArchivedFinalizedSource {
+            by_height: Arc::new(BTreeMap::from([
+                (
+                    1,
+                    certified_block(&c0, e0, 1, c0.boundary_block_extra_data(e0)),
+                ),
+                (
+                    12,
+                    certified_block(&c0, e0, 12, c1.preannounce_block_extra_data(e1)),
+                ),
+                (
+                    13,
+                    certified_block(&c1, e1, 13, c1.boundary_block_extra_data(e1)),
+                ),
+                (
+                    23,
+                    certified_block(&c1, e1, 23, c2.preannounce_block_extra_data(e2)),
+                ),
+                (
+                    25,
+                    certified_block(&c2, e2, 25, c3.preannounce_block_extra_data(e3)),
+                ),
+                (
+                    26,
+                    certified_block(&c2, e2, 26, c2.boundary_block_extra_data(e2)),
+                ),
+                (28, certified_block(&c2, e2, 28, Vec::new())),
+            ])),
+        };
+        let chain = Arc::new(std::sync::Mutex::new(CommitteeChain::new(
+            e0,
+            c0.participants.clone(),
+        )));
+
+        let recovered_epoch = futures::executor::block_on(engine::prepare_committee_chain(
+            &chain,
+            &source,
+            &epocher,
+            e0,
+            Height::new(28),
+        ))
+        .expect("restart must derive both delayed boundaries from authenticated history");
+
+        assert_eq!(recovered_epoch, e2);
+        assert_eq!(epocher.first(e1), Some(Height::new(13)));
+        assert_eq!(epocher.first(e2), Some(Height::new(26)));
+        assert_eq!(epocher.last(e1), Some(Height::new(25)));
+        assert_eq!(epocher.containing(Height::new(28)).unwrap().epoch(), e2);
+        assert_eq!(chain.lock().unwrap().highest_registered(), Some(e2));
+    }
+
+    #[test]
+    fn live_delivery_mutates_only_after_certificate_authentication() {
+        let c0 = committee(10);
+        let c1 = committee(30);
+        let e0 = Epoch::new(0);
+        let e1 = Epoch::new(1);
+        let epocher = FollowerEpocher::new(10, 3);
+        let chain = Arc::new(std::sync::Mutex::new(CommitteeChain::new(
+            e0,
+            c0.participants.clone(),
+        )));
+        chain
+            .lock()
+            .unwrap()
+            .register_epoch_from_outcome(e0, &c0.outcome(e0))
+            .unwrap();
+
+        let forged_carrier = certified_block(&c1, e0, 10, c1.preannounce_block_extra_data(e1));
+        assert!(engine::authenticate_live_finalized(
+            &chain,
+            &epocher,
+            Height::new(10),
+            &forged_carrier,
+        )
+        .is_err());
+        assert_eq!(chain.lock().unwrap().highest_registered(), Some(e0));
+        assert_eq!(epocher.first(e1), None);
+
+        let carrier = certified_block(&c0, e0, 12, c1.preannounce_block_extra_data(e1));
+        engine::authenticate_live_finalized(&chain, &epocher, Height::new(12), &carrier)
+            .expect("prior-committee-certified preannounce must register epoch one");
+        assert_eq!(chain.lock().unwrap().highest_registered(), Some(e1));
+
+        let boundary = certified_block(&c1, e1, 13, c1.boundary_block_extra_data(e1));
+        engine::authenticate_live_finalized(&chain, &epocher, Height::new(13), &boundary)
+            .expect("registered next committee must authenticate its delayed boundary");
+        assert_eq!(epocher.first(e1), Some(Height::new(13)));
     }
 
     #[test]
@@ -382,6 +670,14 @@ mod tests {
             .unwrap();
         chain.verify_finalization(e6, &c6.finalization(e6)).unwrap();
         assert_eq!(chain.highest_registered(), Some(e6));
+        let verifier =
+            commonware_cryptography::certificate::Provider::scoped(chain.scheme_provider(), e6)
+                .expect("epoch-6 verifier is registered");
+        assert_eq!(
+            verifier.active_vrf_material_version(),
+            e6.get(),
+            "the authenticated epoch must restore the canonical VRF material version"
+        );
 
         // A finalization can't be verified for an unregistered epoch.
         assert!(chain

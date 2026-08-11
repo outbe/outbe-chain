@@ -28,6 +28,19 @@ use crate::internal::shell::Sh;
 
 use super::Localnet;
 
+fn validator_slot_node_log_path(root: &Path, slot: usize) -> PathBuf {
+    root.join(format!("validator-{slot}")).join("node.log")
+}
+
+fn read_required_node_log(path: &Path, node: &str) -> Result<String> {
+    fs::read_to_string(path).wrap_err_with(|| {
+        format!(
+            "read OCOMP runtime trace for {node} from owned log {}",
+            path.display()
+        )
+    })
+}
+
 /// One successful testnet startup-recovery span observed from a validator.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct CeStartupReplayObservationV1 {
@@ -231,14 +244,29 @@ impl Localnet {
         });
         let mut expected_by_validator = vec![0_usize; self.cfg.validators];
         let mut expected_reveal_by_validator = vec![0_usize; self.cfg.validators];
+        let loaded_logs = logs
+            .into_iter()
+            .map(|path| {
+                let content = fs::read_to_string(&path)
+                    .wrap_err_with(|| format!("read E2E log {}", path.display()))?;
+                Ok((path, content))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let expected_request_deadlines =
+            expected_request_deadline_cancellations(&loaded_logs, self.cfg.validators);
         let mut counts = LogCounts {
-            runtime_log_files: logs.len(),
+            runtime_log_files: loaded_logs.len(),
+            expected_request_deadline_cancellation: expected_request_deadlines.cancellations,
             ..LogCounts::default()
         };
-        for path in logs {
-            let content = fs::read_to_string(&path)
-                .wrap_err_with(|| format!("read E2E log {}", path.display()))?;
+        for (path, content) in loaded_logs {
             for (index, line) in content.lines().enumerate() {
+                if expected_request_deadlines
+                    .accepted_fatal_records
+                    .contains(&(path.clone(), index))
+                {
+                    continue;
+                }
                 if expected_fragment.as_deref().is_some_and(|fragment| {
                     accept_expected_update_fatal(&path, line, fragment, &mut expected_by_validator)
                 }) {
@@ -480,14 +508,42 @@ impl Localnet {
         node: &str,
     ) -> Result<Vec<OcompRuntimeTraceMarkerV1>> {
         ensure!(
-            node == "follower"
-                || node
-                    .strip_prefix("validator-")
-                    .and_then(|index| index.parse::<usize>().ok())
-                    .is_some_and(|index| index < self.committee_size()),
+            node.strip_prefix("validator-")
+                .and_then(|index| index.parse::<usize>().ok())
+                .is_some_and(|index| index < self.committee_size()),
             "OCOMP trace probe refuses unknown node {node}"
         );
-        let log = self.node_log(node);
+        let path = self.cfg.dir.join(node).join("node.log");
+        self.ocomp_runtime_trace_markers_from_path(node, &path)
+    }
+
+    /// Parse OCOMP runtime markers for a named FullNode whose owned data lives
+    /// in one allocated validator slot rather than a directory named after the
+    /// process. The slot is the storage identity used by
+    /// `launch_dcap_full_node`; the display name only owns the child process.
+    pub fn ocomp_runtime_trace_markers_at_validator_slot(
+        &self,
+        node: &str,
+        slot: usize,
+    ) -> Result<Vec<OcompRuntimeTraceMarkerV1>> {
+        ensure!(
+            self.followers.contains_key(node),
+            "OCOMP trace probe refuses unowned follower {node}"
+        );
+        ensure!(
+            slot >= self.committee_size(),
+            "OCOMP follower trace slot {slot} overlaps the active committee"
+        );
+        let path = validator_slot_node_log_path(&self.cfg.dir, slot);
+        self.ocomp_runtime_trace_markers_from_path(node, &path)
+    }
+
+    fn ocomp_runtime_trace_markers_from_path(
+        &self,
+        node: &str,
+        path: &Path,
+    ) -> Result<Vec<OcompRuntimeTraceMarkerV1>> {
+        let log = read_required_node_log(path, node)?;
         let mut markers = Vec::new();
         for line in log.lines() {
             let Some(payload) = line.split_once("OCOMP_TRACE_V1 ").map(|(_, value)| value) else {
@@ -607,6 +663,7 @@ struct LogCounts {
     projection_fatal: usize,
     expected_update_fatal: usize,
     expected_dkg_reveal: usize,
+    expected_request_deadline_cancellation: usize,
 }
 
 impl LogCounts {
@@ -637,8 +694,163 @@ impl LogCounts {
             "projection_fatal": self.projection_fatal,
             "expected_update_fatal": self.expected_update_fatal,
             "expected_dkg_reveal": self.expected_dkg_reveal,
+            "expected_request_deadline_cancellation": self.expected_request_deadline_cancellation,
         })
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct RequestDeadlineIdentity {
+    validator: usize,
+    block_number: u64,
+    block_hash: B256,
+}
+
+#[derive(Debug, Default)]
+struct ExpectedRequestDeadlineCancellations {
+    cancellations: usize,
+    accepted_fatal_records: std::collections::BTreeSet<(PathBuf, usize)>,
+}
+
+/// Finds only complete, request-scoped speculative verification cancellations.
+///
+/// The authoritative proof is the Reth log for one concrete `newPayload`: its
+/// execution span must carry the typed `BodyReadRequestDeadline`, and its
+/// terminal response must say that the receiver was dropped because the request
+/// was cancelled. The returned line set suppresses only duplicate fatal text
+/// belonging to that proven episode; every unpaired or differently typed error
+/// remains visible to the ordinary strict audit.
+fn expected_request_deadline_cancellations(
+    logs: &[(PathBuf, String)],
+    validators: usize,
+) -> ExpectedRequestDeadlineCancellations {
+    let mut typed = std::collections::BTreeSet::new();
+    let mut terminal = std::collections::BTreeSet::new();
+
+    for (path, content) in logs {
+        if path.file_name().and_then(|name| name.to_str()) != Some("reth.log") {
+            continue;
+        }
+        let Some(validator) = validator_log_index(path, validators) else {
+            continue;
+        };
+        for line in content.lines() {
+            if line.contains("error=BodyReadRequestDeadline") {
+                if let Some(identity) = scoped_new_payload_identity(line, validator) {
+                    typed.insert(identity);
+                }
+            }
+            if exact_request_deadline_receiver_drop(line) {
+                if let Some(identity) = terminal_payload_identity(line, validator) {
+                    terminal.insert(identity);
+                }
+            }
+        }
+    }
+
+    let complete = typed
+        .intersection(&terminal)
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut accepted = std::collections::BTreeSet::new();
+
+    for (path, content) in logs {
+        let Some(validator) = validator_log_index(path, validators) else {
+            continue;
+        };
+        let lines = content.lines().collect::<Vec<_>>();
+        for (index, line) in lines.iter().copied().enumerate() {
+            if !exact_request_deadline_fatal(line) {
+                continue;
+            }
+            if let Some(identity) = scoped_new_payload_identity(line, validator)
+                .or_else(|| terminal_payload_identity(line, validator))
+            {
+                if complete.contains(&identity) {
+                    accepted.insert((path.clone(), index));
+                }
+                continue;
+            }
+
+            // `node.log` mirrors the executor's unscoped reason one or two
+            // records before Reth's terminal request identity. Pair only with
+            // that adjacent exact cancellation; never accept an orphan reason.
+            if path.file_name().and_then(|name| name.to_str()) == Some("node.log")
+                && line.contains("outbe::executor")
+                && lines
+                    .iter()
+                    .take(index.saturating_add(5))
+                    .skip(index + 1)
+                    .any(|candidate| {
+                        exact_request_deadline_receiver_drop(candidate)
+                            && terminal_payload_identity(candidate, validator)
+                                .is_some_and(|identity| complete.contains(&identity))
+                    })
+            {
+                accepted.insert((path.clone(), index));
+            }
+        }
+    }
+
+    ExpectedRequestDeadlineCancellations {
+        cancellations: complete.len(),
+        accepted_fatal_records: accepted,
+    }
+}
+
+fn validator_log_index(path: &Path, validators: usize) -> Option<usize> {
+    path.ancestors().find_map(|ancestor| {
+        let name = ancestor.file_name()?.to_str()?;
+        let index = name.strip_prefix("validator-")?.parse().ok()?;
+        (index < validators).then_some(index)
+    })
+}
+
+fn scoped_new_payload_identity(line: &str, validator: usize) -> Option<RequestDeadlineIdentity> {
+    let block_number = value_after(line, "block_num=")?.parse().ok()?;
+    let block_hash = value_after(line, "block_hash=")?.parse().ok()?;
+    Some(RequestDeadlineIdentity {
+        validator,
+        block_number,
+        block_hash,
+    })
+}
+
+fn terminal_payload_identity(line: &str, validator: usize) -> Option<RequestDeadlineIdentity> {
+    let payload = line.rsplit_once("NumHash {")?.1;
+    let block_number = value_after(payload, "number: ")?.parse().ok()?;
+    let block_hash = value_after(payload, "hash: ")?.parse().ok()?;
+    Some(RequestDeadlineIdentity {
+        validator,
+        block_number,
+        block_hash,
+    })
+}
+
+fn value_after<'a>(line: &'a str, marker: &str) -> Option<&'a str> {
+    line.split_once(marker)?
+        .1
+        .split([',', ' ', '}', ':'])
+        .next()
+}
+
+fn exact_request_deadline_receiver_drop(line: &str) -> bool {
+    line.contains("Failed to deliver newPayload response, receiver dropped (request cancelled)")
+        && line.contains("Err(Internal(BlockExecutionError(Other(")
+        && line.contains("fatal: body read request deadline exceeded")
+        && !line.contains("body read unavailable")
+        && !line.contains("BodyReadCorruption")
+        && !line.contains("StorageError::Backend")
+}
+
+fn exact_request_deadline_fatal(line: &str) -> bool {
+    line.matches("fatal: body read request deadline exceeded")
+        .count()
+        == 1
+        && !contains_nonfatal_alarm(&line.to_ascii_lowercase())
+        && !line.contains("body read unavailable")
+        && !line.contains("BodyReadCorruption")
+        && !line.contains("StorageError::Backend")
 }
 
 /// Structured result retained as scenario evidence before logs are removed.
@@ -1009,15 +1221,103 @@ fn parse_duration_micros_ceil(encoded: &str) -> Result<u64> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     use super::{
         accept_expected_dkg_reveal, accept_expected_update_fatal, exact_expected_dkg_reveal,
-        exact_expected_update_fatal, is_runtime_log, parse_canonical_block_observed_at_micros,
-        parse_canonical_block_processing_micros, parse_ce_startup_replay,
-        parse_finalized_block_observed_at_micros, unexpected_log_line,
-        CeStartupReplayObservationV1, LogCounts, RethLogTail,
+        exact_expected_update_fatal, expected_request_deadline_cancellations, is_runtime_log,
+        parse_canonical_block_observed_at_micros, parse_canonical_block_processing_micros,
+        parse_ce_startup_replay, parse_finalized_block_observed_at_micros, read_required_node_log,
+        unexpected_log_line, validator_slot_node_log_path, CeStartupReplayObservationV1, LogCounts,
+        RethLogTail,
     };
+
+    #[test]
+    fn follower_trace_path_uses_its_owned_validator_slot() {
+        let root = Path::new("/run/scenario-1");
+        assert_eq!(
+            validator_slot_node_log_path(root, 14),
+            root.join("validator-14/node.log")
+        );
+        assert_ne!(
+            validator_slot_node_log_path(root, 14),
+            root.join("follower/node.log")
+        );
+    }
+
+    #[test]
+    fn missing_owned_follower_trace_log_is_an_error() {
+        let root = tempfile::tempdir().unwrap();
+        let path = validator_slot_node_log_path(root.path(), 14);
+        let error = read_required_node_log(&path, "follower").unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("read OCOMP runtime trace for follower from owned log"));
+    }
+
+    fn deadline_log_bundle(hash: &str, terminal_hash: &str) -> Vec<(PathBuf, String)> {
+        let reth = format!(
+            "2026-08-09T10:48:40.683720Z ERROR on_new_payload{{block_hash={hash} block_num=323}}: outbe::cycle: cycle trigger handler failed error=BodyReadRequestDeadline\n\
+             2026-08-09T10:48:40.683766Z ERROR on_new_payload{{block_hash={hash} block_num=323}}: outbe::executor: reason=system tx CycleTick execution failed at body_index=3: fatal: body read request deadline exceeded\n\
+             2026-08-09T10:48:40.683853Z DEBUG on_new_payload{{block_hash={hash} block_num=323}}: engine::tree::payload_validator: Block execution failed execution_err=Execution(Internal(Other(\"system tx CycleTick execution failed at body_index=3: fatal: body read request deadline exceeded\"))) block=NumHash {{ number: 323, hash: {hash} }}\n\
+             2026-08-09T10:48:40.683953Z WARN engine::tree: Failed to deliver newPayload response, receiver dropped (request cancelled): Err(Internal(BlockExecutionError(Other(\"system tx CycleTick execution failed at body_index=3: fatal: body read request deadline exceeded\")))) payload=NumHash {{ number: 323, hash: {terminal_hash} }} elapsed=1.268s"
+        );
+        let node = format!(
+            "2026-08-09T10:48:40.683763Z ERROR outbe::executor: reason=system tx CycleTick execution failed at body_index=3: fatal: body read request deadline exceeded\n\
+             2026-08-09T10:48:40.683943Z WARN engine::tree: Failed to deliver newPayload response, receiver dropped (request cancelled): Err(Internal(BlockExecutionError(Other(\"system tx CycleTick execution failed at body_index=3: fatal: body read request deadline exceeded\")))) payload=NumHash {{ number: 323, hash: {terminal_hash} }} elapsed=1.268s"
+        );
+        vec![
+            (
+                PathBuf::from("scenario-1/validator-1/logs/424242/reth.log"),
+                reth,
+            ),
+            (PathBuf::from("scenario-1/validator-1/node.log"), node),
+        ]
+    }
+
+    #[test]
+    fn accepts_and_counts_only_a_complete_request_deadline_cancellation_bundle() {
+        let hash = "0x36aded35254849d7f72af50566e7ef7b799b8d970741319889c63b3ae292ce3a";
+        let audit = expected_request_deadline_cancellations(&deadline_log_bundle(hash, hash), 4);
+
+        assert_eq!(audit.cancellations, 1);
+        assert_eq!(audit.accepted_fatal_records.len(), 5);
+    }
+
+    #[test]
+    fn request_deadline_without_dropped_receiver_remains_fatal() {
+        let hash = "0x36aded35254849d7f72af50566e7ef7b799b8d970741319889c63b3ae292ce3a";
+        let mut logs = deadline_log_bundle(hash, hash);
+        logs[0].1 = logs[0].1.lines().take(3).collect::<Vec<_>>().join("\n");
+        logs[1].1 = logs[1].1.lines().take(1).collect::<Vec<_>>().join("\n");
+
+        let audit = expected_request_deadline_cancellations(&logs, 4);
+        assert_eq!(audit.cancellations, 0);
+        assert!(audit.accepted_fatal_records.is_empty());
+    }
+
+    #[test]
+    fn request_deadline_bundle_with_different_terminal_hash_remains_fatal() {
+        let hash = "0x36aded35254849d7f72af50566e7ef7b799b8d970741319889c63b3ae292ce3a";
+        let other = "0x46aded35254849d7f72af50566e7ef7b799b8d970741319889c63b3ae292ce3a";
+        let audit = expected_request_deadline_cancellations(&deadline_log_bundle(hash, other), 4);
+
+        assert_eq!(audit.cancellations, 0);
+        assert!(audit.accepted_fatal_records.is_empty());
+    }
+
+    #[test]
+    fn unavailable_body_read_is_never_a_request_cancellation() {
+        let path = PathBuf::from("scenario-1/validator-1/logs/424242/reth.log");
+        let logs = vec![(
+            path,
+            "2026-08-09T10:48:40Z ERROR on_new_payload{block_hash=0x36aded35254849d7f72af50566e7ef7b799b8d970741319889c63b3ae292ce3a block_num=323}: fatal: body read unavailable\n2026-08-09T10:48:40Z WARN engine::tree: Failed to deliver newPayload response, receiver dropped (request cancelled): Err(fatal: body read unavailable) payload=NumHash { number: 323, hash: 0x36aded35254849d7f72af50566e7ef7b799b8d970741319889c63b3ae292ce3a }".to_owned(),
+        )];
+
+        let audit = expected_request_deadline_cancellations(&logs, 4);
+        assert_eq!(audit.cancellations, 0);
+        assert!(audit.accepted_fatal_records.is_empty());
+    }
 
     #[test]
     fn audits_runtime_logs_without_reading_binary_database_logs() {
@@ -1064,6 +1364,7 @@ mod tests {
         assert_eq!(json["sgx_resource_exhaustion"], 0);
         assert_eq!(json["expected_update_fatal"], 0);
         assert_eq!(json["expected_dkg_reveal"], 0);
+        assert_eq!(json["expected_request_deadline_cancellation"], 0);
     }
 
     #[test]

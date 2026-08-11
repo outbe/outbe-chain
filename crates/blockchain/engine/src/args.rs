@@ -2,7 +2,45 @@
 
 use std::{fmt, net::SocketAddr, path::PathBuf};
 
-use alloy_primitives::B256;
+use outbe_primitives::tee_attestation_v1::AttestationMode;
+
+/// Local authorization protocol used between one node and its enclave.
+///
+/// This is deliberately independent from [`AttestationMode`]: a development
+/// network may run a production NodeHost-authorized enclave inside real SGX
+/// while publishing only `GramineDirectDev` evidence.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, clap::ValueEnum)]
+pub enum TeeSessionMode {
+    /// Preserve the historical policy defaults: DCAP uses NodeHost; the
+    /// hardware-free development lane uses its separate development transport.
+    #[default]
+    PolicyDefault,
+    /// Require the authenticated, sealed production NodeHost session.
+    ProductionNodeHost,
+    /// Require the separate development/mock transport.
+    Development,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ResolvedTeeSession {
+    ProductionNodeHost,
+    Development,
+}
+
+impl TeeSessionMode {
+    pub fn resolve(self, policy: AttestationMode) -> Result<ResolvedTeeSession, &'static str> {
+        match (self, policy) {
+            (Self::PolicyDefault, AttestationMode::DcapRequired)
+            | (Self::ProductionNodeHost, _) => Ok(ResolvedTeeSession::ProductionNodeHost),
+            (Self::PolicyDefault | Self::Development, AttestationMode::GramineDirectDev) => {
+                Ok(ResolvedTeeSession::Development)
+            }
+            (Self::Development, AttestationMode::DcapRequired) => {
+                Err("DcapRequired forbids the development enclave session")
+            }
+        }
+    }
+}
 
 /// Complete required configuration for finalized offchain-data projection into MongoDB.
 #[derive(Clone, Eq, PartialEq)]
@@ -13,146 +51,6 @@ pub struct OffchainDataArgs {
     pub mongodb_database: String,
     /// First block projected when the managed database has no checkpoint.
     pub start_block: u64,
-}
-
-/// Complete optional node-side OCOMP control-plane configuration.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OcompNodeControlConfig {
-    pub supervisor_socket: PathBuf,
-    pub snapshot_exporter_socket: PathBuf,
-    pub supervisor_uid: u32,
-    pub snapshot_exporter_uid: u32,
-    pub protocol_bundle_hash: B256,
-    pub boot_nonce: B256,
-    pub session_generation: u64,
-    pub key_path: PathBuf,
-    pub validator_index: u8,
-}
-
-/// Local process-boundary settings. Omitted as a whole until OCOMP is enabled.
-#[derive(Clone, Debug, clap::Args)]
-pub struct OcompArgs {
-    /// Node UDS serving the fixed Supervisor capability set.
-    #[arg(long = "ocomp.supervisor-socket", value_name = "PATH")]
-    pub supervisor_socket: Option<PathBuf>,
-
-    /// Separate node UDS serving the fixed SnapshotExporter capability set.
-    #[arg(long = "ocomp.snapshot-exporter-socket", value_name = "PATH")]
-    pub snapshot_exporter_socket: Option<PathBuf>,
-
-    /// Effective UID accepted on the Supervisor UDS via SO_PEERCRED.
-    #[arg(long = "ocomp.supervisor-uid", value_name = "UID")]
-    pub supervisor_uid: Option<u32>,
-
-    /// Effective UID accepted on the SnapshotExporter UDS via SO_PEERCRED.
-    #[arg(long = "ocomp.snapshot-exporter-uid", value_name = "UID")]
-    pub snapshot_exporter_uid: Option<u32>,
-
-    /// Exact pinned OCOMP protocol bundle identity.
-    #[arg(long = "ocomp.protocol-bundle-hash", value_name = "B256")]
-    pub protocol_bundle_hash: Option<B256>,
-
-    /// Per-node process boot nonce bound into every local-control handshake.
-    #[arg(long = "ocomp.boot-nonce", value_name = "B256")]
-    pub boot_nonce: Option<B256>,
-
-    /// Monotonic local-control session generation for this node boot.
-    #[arg(long = "ocomp.session-generation", default_value_t = 1)]
-    pub session_generation: u64,
-
-    /// Node-owned result-signing key registered in the chain manifest.
-    #[arg(long = "ocomp.key", value_name = "PATH")]
-    pub key_path: Option<PathBuf>,
-
-    /// This node's exact index in the four-member OCOMP result committee.
-    #[arg(long = "ocomp.validator-index", value_name = "INDEX")]
-    pub validator_index: Option<u8>,
-}
-
-impl Default for OcompArgs {
-    fn default() -> Self {
-        Self {
-            supervisor_socket: None,
-            snapshot_exporter_socket: None,
-            supervisor_uid: None,
-            snapshot_exporter_uid: None,
-            protocol_bundle_hash: None,
-            boot_nonce: None,
-            session_generation: 1,
-            key_path: None,
-            validator_index: None,
-        }
-    }
-}
-
-impl OcompArgs {
-    /// Returns a complete fixed-role configuration or rejects a partial profile.
-    pub fn node_control(&self) -> eyre::Result<Option<OcompNodeControlConfig>> {
-        let configured = [
-            self.supervisor_socket.is_some(),
-            self.snapshot_exporter_socket.is_some(),
-            self.supervisor_uid.is_some(),
-            self.snapshot_exporter_uid.is_some(),
-            self.protocol_bundle_hash.is_some(),
-            self.boot_nonce.is_some(),
-            self.key_path.is_some(),
-            self.validator_index.is_some(),
-        ];
-        if configured.iter().all(|value| !value) {
-            return Ok(None);
-        }
-        if !configured.iter().all(|value| *value) {
-            eyre::bail!(
-                "OCOMP node control requires both role sockets, both peer UIDs, \
-                 --ocomp.protocol-bundle-hash, --ocomp.boot-nonce, --ocomp.key \
-                 and --ocomp.validator-index"
-            );
-        }
-        if self.session_generation == 0 {
-            eyre::bail!("--ocomp.session-generation must be greater than zero");
-        }
-
-        let supervisor_socket = self
-            .supervisor_socket
-            .clone()
-            .expect("complete profile checked above");
-        let snapshot_exporter_socket = self
-            .snapshot_exporter_socket
-            .clone()
-            .expect("complete profile checked above");
-        if supervisor_socket == snapshot_exporter_socket {
-            eyre::bail!("OCOMP Supervisor and SnapshotExporter require distinct sockets");
-        }
-        let protocol_bundle_hash = self
-            .protocol_bundle_hash
-            .expect("complete profile checked above");
-        let boot_nonce = self.boot_nonce.expect("complete profile checked above");
-        if protocol_bundle_hash.is_zero() {
-            eyre::bail!("--ocomp.protocol-bundle-hash must not be zero");
-        }
-        if boot_nonce.is_zero() {
-            eyre::bail!("--ocomp.boot-nonce must not be zero");
-        }
-
-        Ok(Some(OcompNodeControlConfig {
-            supervisor_socket,
-            snapshot_exporter_socket,
-            supervisor_uid: self.supervisor_uid.expect("complete profile checked above"),
-            snapshot_exporter_uid: self
-                .snapshot_exporter_uid
-                .expect("complete profile checked above"),
-            protocol_bundle_hash,
-            boot_nonce,
-            session_generation: self.session_generation,
-            key_path: self
-                .key_path
-                .clone()
-                .expect("complete profile checked above"),
-            validator_index: self
-                .validator_index
-                .expect("complete profile checked above"),
-        }))
-    }
 }
 
 impl fmt::Debug for OffchainDataArgs {
@@ -275,12 +173,25 @@ pub struct ConsensusArgs {
     pub bls_passphrase: Option<String>,
 
     /// Path or `host:port` endpoint for the `outbe-tee-enclave` sidecar.
-    /// Every `teeAttestationV1` ChainSpec requires it. `DcapRequired` performs
-    /// NodeHost-authorized SGX initialization; `GramineDirectDev` connects only
-    /// on its separate development chain. Missing or rejected transport stops
-    /// startup and never selects an in-process stub or another attestation mode.
+    /// Every `teeAttestationV1` ChainSpec requires it. The local session is
+    /// selected independently from the genesis-fixed attestation policy:
+    /// `DcapRequired` always needs NodeHost, while `GramineDirectDev` can use
+    /// either the development transport or an explicitly selected production
+    /// NodeHost session. Missing or rejected transport stops startup and never
+    /// selects an in-process stub or another attestation mode.
     #[arg(long = "tee-enclave-socket", value_name = "PATH")]
     pub tee_enclave_socket: Option<PathBuf>,
+
+    /// Local node-to-enclave authorization protocol. This never changes the
+    /// genesis-fixed attestation policy and never provides a fallback. Use
+    /// `production-node-host` with a GramineDirectDev chain to run the
+    /// production enclave under real SGX with remote attestation disabled.
+    #[arg(
+        long = "tee-session-mode",
+        value_enum,
+        default_value_t = TeeSessionMode::PolicyDefault
+    )]
+    pub tee_session_mode: TeeSessionMode,
 
     /// Local liveness deadline (seconds) for the one-time TEE DKG + bootstrap on a
     /// fresh chain (block 0). The whole ceremony must finish before block 1; if it
@@ -356,9 +267,6 @@ pub struct ConsensusArgs {
     /// First block to project into a new managed database.
     #[arg(long = "projection.start-block", default_value_t = 1)]
     pub projection_start_block: u64,
-
-    #[command(flatten)]
-    pub ocomp: OcompArgs,
 }
 
 impl fmt::Debug for ConsensusArgs {
@@ -377,6 +285,7 @@ impl fmt::Debug for ConsensusArgs {
             .field("bls_key_backend", &self.bls_key_backend)
             .field("bls_passphrase_configured", &self.bls_passphrase.is_some())
             .field("tee_enclave_configured", &self.tee_enclave_socket.is_some())
+            .field("tee_session_mode", &self.tee_session_mode)
             .field(
                 "tee_renewal_relay_configured",
                 &self.tee_renewal_relay_key.is_some(),
@@ -393,10 +302,6 @@ impl fmt::Debug for ConsensusArgs {
                 &self.projection_mongodb_database,
             )
             .field("projection_start_block", &self.projection_start_block)
-            .field(
-                "ocomp_control_configured",
-                &self.ocomp.supervisor_socket.is_some(),
-            )
             .finish_non_exhaustive()
     }
 }
@@ -409,7 +314,6 @@ impl ConsensusArgs {
     /// - `--bls-key-backend encrypted` without `--bls-passphrase` → error
     pub fn validate(&self) -> eyre::Result<()> {
         self.offchain_data()?;
-        self.ocomp.node_control()?;
         if self.tee_renewal_poll_secs == 0 {
             eyre::bail!("--tee-renewal.poll-secs must be greater than zero");
         }
@@ -588,6 +492,7 @@ mod tests {
             bls_key_backend: "plaintext".to_string(),
             bls_passphrase: None,
             tee_enclave_socket: None,
+            tee_session_mode: TeeSessionMode::PolicyDefault,
             tee_bootstrap_timeout_secs: 60,
             tee_renewal_relay_key: None,
             tee_renewal_rpc_url: "http://127.0.0.1:8545".to_owned(),
@@ -599,7 +504,6 @@ mod tests {
             projection_mongodb_uri: Some("mongodb://localhost:27017".to_owned()),
             projection_mongodb_database: Some("outbe_projection".to_owned()),
             projection_start_block: 1,
-            ocomp: OcompArgs::default(),
         }
     }
 
@@ -609,25 +513,36 @@ mod tests {
     }
 
     #[test]
-    fn ocomp_node_control_is_all_or_nothing_and_uses_distinct_role_sockets() {
-        let mut args = default_args();
-        args.ocomp.supervisor_socket = Some("/tmp/supervisor.sock".into());
-        assert!(args.validate().is_err());
+    fn local_tee_session_mode_is_independent_from_attestation_policy() {
+        use outbe_primitives::tee_attestation_v1::AttestationMode;
 
-        args.ocomp.snapshot_exporter_socket = Some("/tmp/exporter.sock".into());
-        args.ocomp.supervisor_uid = Some(1001);
-        args.ocomp.snapshot_exporter_uid = Some(1002);
-        args.ocomp.protocol_bundle_hash = Some(B256::repeat_byte(0x11));
-        args.ocomp.boot_nonce = Some(B256::repeat_byte(0x22));
-        args.ocomp.key_path = Some("/tmp/ocomp-key.hex".into());
-        args.ocomp.validator_index = Some(2);
-        let config = args.ocomp.node_control().unwrap().unwrap();
-        assert_eq!(config.supervisor_uid, 1001);
-        assert_eq!(config.snapshot_exporter_uid, 1002);
-        assert_eq!(config.validator_index, 2);
-
-        args.ocomp.snapshot_exporter_socket = args.ocomp.supervisor_socket.clone();
-        assert!(args.ocomp.node_control().is_err());
+        assert_eq!(
+            TeeSessionMode::PolicyDefault
+                .resolve(AttestationMode::DcapRequired)
+                .unwrap(),
+            ResolvedTeeSession::ProductionNodeHost
+        );
+        assert_eq!(
+            TeeSessionMode::PolicyDefault
+                .resolve(AttestationMode::GramineDirectDev)
+                .unwrap(),
+            ResolvedTeeSession::Development
+        );
+        assert_eq!(
+            TeeSessionMode::ProductionNodeHost
+                .resolve(AttestationMode::GramineDirectDev)
+                .unwrap(),
+            ResolvedTeeSession::ProductionNodeHost
+        );
+        assert_eq!(
+            TeeSessionMode::Development
+                .resolve(AttestationMode::GramineDirectDev)
+                .unwrap(),
+            ResolvedTeeSession::Development
+        );
+        assert!(TeeSessionMode::Development
+            .resolve(AttestationMode::DcapRequired)
+            .is_err());
     }
 
     #[test]

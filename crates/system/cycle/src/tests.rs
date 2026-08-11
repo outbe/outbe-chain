@@ -23,6 +23,7 @@ use outbe_primitives::block::{BlockContext, BlockLifecycle, BlockRuntimeContext}
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::{MetadosisMutationPurposeTag, StorageHandle};
 use outbe_tribute::TributeRepositoryReader;
+use outbe_validatorset::contract::ValidatorSet;
 use std::sync::Arc;
 
 use crate::lifecycle::{CycleLifecycle, CycleLifecycleContext};
@@ -37,6 +38,27 @@ const GENESIS_TS: u64 = 1_704_067_200;
 const SECONDS_PER_DAY: u64 = 86_400;
 const EMISSION_LIMIT_1_ID: u32 = TriggerId::EmissionLimit1.as_u32();
 
+fn retained_days_before(
+    victim: outbe_common::WorldwideDay,
+    count: usize,
+) -> Vec<outbe_common::WorldwideDay> {
+    (0..count)
+        .map(|offset| {
+            let days_before = count - offset;
+            let seconds_before = u64::try_from(days_before)
+                .unwrap()
+                .checked_mul(SECONDS_PER_DAY)
+                .unwrap();
+            outbe_common::WorldwideDay::from_timestamp(
+                victim
+                    .start_timestamp()
+                    .checked_sub(seconds_before)
+                    .unwrap(),
+            )
+        })
+        .collect()
+}
+
 #[test]
 fn cycle_tick_metadosis_authority_budget_matches_all_fixed_handlers() {
     assert_eq!(
@@ -50,13 +72,14 @@ fn cycle_storage() -> HashMapStorageProvider {
 }
 
 fn cycle_storage_for(chain_id: u64) -> HashMapStorageProvider {
-    let mut storage = HashMapStorageProvider::new(chain_id);
+    let genesis_hash = B256::repeat_byte(0x11);
+    let mut storage = HashMapStorageProvider::new_with_chain_identity(chain_id, genesis_hash);
     storage.set_block_number(1);
     storage.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::ForkProfile);
     let install = outbe_metadosis::test_support::ForkInstallScenario::measurement_at(
         1,
         chain_id,
-        B256::repeat_byte(0x11),
+        genesis_hash,
     )
     .unwrap()
     .into_install();
@@ -65,6 +88,27 @@ fn cycle_storage_for(chain_id: u64) -> HashMapStorageProvider {
             BlockContext::empty_for_tests(1, GENESIS_TS, chain_id),
             handle,
         );
+        let owner = Address::repeat_byte(0xA0);
+        let founder = Address::repeat_byte(0xB0);
+        let consensus_key = [0x30; 48];
+        let mut validators = ValidatorSet::new(ctx.storage.clone());
+        validators.config_owner.write(owner).unwrap();
+        validators.set_config_max_validators(1).unwrap();
+        validators
+            .register_validator(owner, founder, &consensus_key)
+            .unwrap();
+        validators.mark_pending(founder).unwrap();
+        let registration = install.founder_registrations[0]
+            .encode_canonical(&outbe_metadosis::config::poc_schema_limits())
+            .unwrap();
+        validators
+            .confirm_validator_ready(founder, &registration)
+            .unwrap();
+        validators
+            .activate_validator_via_boundary_for_test(founder)
+            .unwrap();
+        outbe_oracle::api::register_pair(ctx.storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
+            .unwrap();
         outbe_metadosis::commands::install_fork_profile(&ctx, &install).unwrap();
     });
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 4);
@@ -751,11 +795,23 @@ fn noon_trigger_opens_offering_at_noon_not_next_midnight() {
     let devnet_ctx = |n: u64, ts: u64| BlockContext::new(n, ts, DEVNET, Address::ZERO, Vec::new());
 
     let mut storage = cycle_storage_for(DEVNET);
+    let parameters = outbe_chain_constants::GenesisProtocolParametersV1 {
+        // The regression needs a phase edge at Jan 2 12:00. Timing is now
+        // genesis-bound rather than inferred from the chain id.
+        metadosis_lookback_delay_seconds: 0,
+        ..Default::default()
+    };
+    storage.enter(|handle| {
+        for (slot, value) in parameters.genesis_storage_words() {
+            handle
+                .sstore(outbe_chain_constants::CHAIN_CONSTANTS_ADDRESS, slot, value)
+                .unwrap();
+        }
+    });
 
     // Block 1 just past midnight Jan 1: `CycleLifecycle::begin_block`
-    // creates the genesis day 20240101 (forming_start = Dec 31 10:00 UTC,
-    // forming_end = lookback_end = Jan 2 12:00 UTC) and anchors all
-    // triggers without firing.
+    // creates the genesis day 20240101 (forming_end = lookback_end = Jan 2
+    // 12:00 UTC) and anchors all triggers without firing.
     storage.enter(|handle| {
         let ctx1 = BlockRuntimeContext::new(devnet_ctx(1, GENESIS_TS + 60), handle);
         anchor_genesis(&ctx1);
@@ -926,8 +982,8 @@ fn noon_dispatcher_applies_exact_capacity_forfeiture_to_the_new_due_candidate() 
     use outbe_common::WorldwideDay;
     use outbe_metadosis::constants::MAX_RETAINED_WWDS;
 
-    let retained = [WorldwideDay::new(20_260_701), WorldwideDay::new(20_260_801)];
     let victim = WorldwideDay::new(20_260_910);
+    let retained = retained_days_before(victim, MAX_RETAINED_WWDS);
     let day_limit = U256::from(100);
     let mut storage = cycle_storage();
     storage.enter(|handle| {
@@ -936,41 +992,12 @@ fn noon_dispatcher_applies_exact_capacity_forfeiture_to_the_new_due_candidate() 
             .unwrap();
     });
 
-    let mut next_block = 2_u64;
-    for day in retained {
-        storage.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
-        let projection = storage.enter(|handle| {
-            let ctx = BlockRuntimeContext::new(
-                block_ctx(next_block, day.start_timestamp() + 2 * 3_600),
-                handle.clone(),
-            );
-            outbe_metadosis::commands::apply_cycle_day_limit(&ctx, day_limit).unwrap();
-            outbe_metadosis::api::worldwide_day(handle, day)
-                .unwrap()
-                .unwrap()
-        });
-        next_block += 1;
-        for boundary in [
-            projection.forming_end,
-            projection.lookback_end,
-            projection.offering_end,
-            projection.scheduled_process_time,
-        ] {
-            advance_metadosis_only(&mut storage, next_block, boundary).unwrap();
-            next_block += 1;
-        }
-        let projection = storage.enter(|handle| {
-            outbe_metadosis::api::worldwide_day(handle, day)
-                .unwrap()
-                .unwrap()
-        });
-        assert_eq!(projection.status, outbe_metadosis::WwdStatus::Ready);
-        assert_eq!(
-            projection.membership,
-            outbe_metadosis::WwdMembership::Active
-        );
-    }
+    storage.enter(|handle| {
+        outbe_metadosis::test_support::seed_ready_worldwide_days_for_capacity(handle, &retained)
+            .unwrap();
+    });
 
+    let mut next_block = 2_u64;
     storage.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
     let victim_projection = storage.enter(|handle| {
         let ctx = BlockRuntimeContext::new(
@@ -1079,14 +1106,37 @@ fn genesis_midday_first_cycle_at_next_midnight_settles_genesis_day() {
         // Block 1 at 10:00 — genesis anchor records genesis_utc_day = day D.
         let ctx_anchor = BlockRuntimeContext::new(block_ctx(1, DAY_D_10AM), handle.clone());
         anchor_genesis(&ctx_anchor);
-        dispatch_triggers(&ctx_anchor).unwrap();
+        run_cycle_lifecycle(&ctx_anchor).unwrap();
+        let canonical_wwd = outbe_common::WorldwideDay::new(20_240_102);
+        assert_eq!(
+            outbe_metadosis::api::worldwide_days(ctx_anchor.storage.clone())
+                .unwrap()
+                .into_iter()
+                .map(|day| day.worldwide_day)
+                .collect::<Vec<_>>(),
+            vec![canonical_wwd],
+            "block 1 at the UTC+14 boundary must create only the canonical WWD"
+        );
 
         // Block at 00:00:01 UTC day D+1 — CycleTick fires.
         // prev_day = D = genesis_utc_day → day_number_since_genesis = 0.
         let fire_ts = DAY_D_MIDNIGHT + SECONDS_PER_DAY + 1;
         let ctx_fire = BlockRuntimeContext::new(block_ctx(2, fire_ts), handle);
         account_parent(&ctx_fire, 2);
-        dispatch_triggers(&ctx_fire).unwrap();
+        run_cycle_lifecycle(&ctx_fire).unwrap();
+
+        assert_eq!(
+            outbe_metadosis::api::worldwide_days(ctx_fire.storage.clone())
+                .unwrap()
+                .into_iter()
+                .map(|day| day.worldwide_day)
+                .collect::<Vec<_>>(),
+            vec![
+                outbe_common::WorldwideDay::new(20_240_101),
+                canonical_wwd,
+            ],
+            "the first UTC midnight must retain the canonical genesis WWD and add only the explicitly settled previous UTC day"
+        );
 
         let rewards = ctx_fire
             .storage

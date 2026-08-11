@@ -315,6 +315,30 @@ impl OutbePrecompileExecutionContext {
     }
 }
 
+#[derive(Clone)]
+pub struct OutbePrecompileRuntime {
+    runtime_body_readers: Option<RuntimeBodyReaders>,
+    execution_scope: Arc<ExecutionScope>,
+    ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
+    ocomp_lifecycle_active: bool,
+}
+
+impl OutbePrecompileRuntime {
+    pub fn new(
+        runtime_body_readers: Option<RuntimeBodyReaders>,
+        execution_scope: Arc<ExecutionScope>,
+        ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
+        ocomp_lifecycle_active: bool,
+    ) -> Self {
+        Self {
+            runtime_body_readers,
+            execution_scope,
+            ocomp_finality_authority,
+            ocomp_lifecycle_active,
+        }
+    }
+}
+
 /// Register outbe stateful precompile dispatch on the given [`PrecompilesMap`]
 /// via the `set_ctx_dispatch_hook` fork extension.
 ///
@@ -329,10 +353,7 @@ impl OutbePrecompileExecutionContext {
 pub fn extend_outbe_precompiles<DB>(
     precompiles: &mut PrecompilesMap,
     execution_context: OutbePrecompileExecutionContext,
-    runtime_body_readers: Option<RuntimeBodyReaders>,
-    execution_scope: Arc<ExecutionScope>,
-    ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
-    ocomp_lifecycle_active: bool,
+    runtime: OutbePrecompileRuntime,
     ocomp_fork_install: Option<Arc<OcompForkInstallV1>>,
 ) where
     DB: Database + Debug,
@@ -343,6 +364,12 @@ pub fn extend_outbe_precompiles<DB>(
         genesis_hash,
         tee_attestation_v1,
     } = execution_context;
+    let OutbePrecompileRuntime {
+        runtime_body_readers,
+        execution_scope,
+        ocomp_finality_authority,
+        ocomp_lifecycle_active,
+    } = runtime;
     let ocomp_activation_block_meter = Arc::new(OcompActivationBlockMeter);
     precompiles.set_ctx_dispatch_hook(
         // handles: claim every outbe address.
@@ -570,10 +597,12 @@ where
         if let Some(readers) = runtime_body_readers {
             crate::begin_block_precompile::dispatch_with_readers_and_ocomp_install(
                 storage,
-                execution_scope.as_ref(),
-                readers,
-                ocomp_fork_install.as_deref(),
-                tee_attestation_v1,
+                crate::begin_block_precompile::SystemTxRuntime {
+                    scope: execution_scope.as_ref(),
+                    parent: readers,
+                    ocomp_fork_install: ocomp_fork_install.as_deref(),
+                    tee_attestation_v1,
+                },
                 data.as_ref(),
                 caller,
                 value,
@@ -664,19 +693,26 @@ pub(crate) struct OutbeSubCallPrecompiles<DB> {
 
 impl<DB> OutbeSubCallPrecompiles<DB> {
     pub(crate) fn new(
-        spec: SpecId,
-        genesis_hash: B256,
-        runtime_body_readers: Option<RuntimeBodyReaders>,
-        execution_scope: Arc<ExecutionScope>,
-        ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
+        execution_context: OutbePrecompileExecutionContext,
+        runtime: OutbePrecompileRuntime,
         ocomp_activation_block_meter: Arc<OcompActivationBlockMeter>,
-        ocomp_lifecycle_active: bool,
     ) -> Self {
+        let OutbePrecompileExecutionContext {
+            spec,
+            genesis_hash,
+            tee_attestation_v1,
+        } = execution_context;
+        let OutbePrecompileRuntime {
+            runtime_body_readers,
+            execution_scope,
+            ocomp_finality_authority,
+            ocomp_lifecycle_active,
+        } = runtime;
         Self {
             eth: EthPrecompiles::new(spec),
             spec,
             genesis_hash,
-            tee_attestation_v1: TeeAttestationChainSpecStateV1::Unbound,
+            tee_attestation_v1,
             runtime_body_readers,
             execution_scope,
             ocomp_finality_authority,

@@ -28,13 +28,19 @@ import { findLatestTicket } from "./ticket.js";
 
 const SALT = 0n;
 
-// Parse CLI args: [positionId] [envName]. When positionId is omitted it is read
-// from the latest pledge ticket (written by request-credis).
+// Parse CLI args: [positionId] [amount] [envName]. When positionId is omitted it is
+// read from the latest pledge ticket (written by request-credis). `amount` is in the
+// ERC20's smallest unit and defaults to exactly what the next installment still owes;
+// any amount is accepted — it settles installments in order and may leave the last one
+// partially paid. Overpaying is safe: only the outstanding balance is pulled.
 let positionIdArg: string | undefined;
+let amountArg: string | undefined;
 let envName = DEFAULT_ENV;
 for (const a of process.argv.slice(2)) {
-  if (/^\d+$/.test(a) || a.startsWith("0x")) positionIdArg = a;
-  else envName = a;
+  if (/^\d+$/.test(a) || a.startsWith("0x")) {
+    if (positionIdArg === undefined) positionIdArg = a;
+    else amountArg = a;
+  } else envName = a;
 }
 const ticketPositionId = findLatestTicket()?.ticket.positionId;
 if (!positionIdArg && !ticketPositionId) {
@@ -192,28 +198,36 @@ async function main() {
     process.exit(1);
   }
 
-  // Get next anadosis to determine approve amount
+  // Get next anadosis; its remaining balance is the default payment amount.
   const nextAnadosis = await credis.getNextAnadosis(positionId);
-  const anadosisAmount: bigint = nextAnadosis.anadosisAmount;
   console.log(`\nNext anadosis #${nextAnadosis.anadosisNumber}:`);
   console.log(`  Due:           ${formatDate(nextAnadosis.dueDate)}`);
-  console.log(`  Amount:        ${formatTokenMeta(anadosisAmount, erc20Meta)}`);
+  console.log(`  Amount:        ${formatTokenMeta(nextAnadosis.anadosisAmount, erc20Meta)}`);
+  console.log(`  Still owed:    ${formatTokenMeta(nextAnadosis.unpaidAmount, erc20Meta)}`);
   console.log(`  Gratis amount: ${formatToken(nextAnadosis.gratisAmount, 18, "GRATIS")}`);
 
+  // Cap at the position's outstanding balance — the chain only pulls what the
+  // schedule needs, so approving more than that would just be a dangling allowance.
+  const requested = amountArg !== undefined ? BigInt(amountArg) : nextAnadosis.unpaidAmount;
+  const anadosisAmount =
+    requested > position.outstandingAnadosisAmount ? position.outstandingAnadosisAmount : requested;
+  console.log(`  Paying:        ${formatTokenMeta(anadosisAmount, erc20Meta)}`);
+
   if (anadosisAmount === 0n) {
-    console.error("Next anadosis amount is 0. Nothing to pay.");
+    console.error("Nothing to pay.");
     process.exit(1);
   }
 
-  // On payment the chain automatically releases this installment's share of the
-  // pledged collateral (== nextAnadosis.gratisAmount == pledge / N) back to the
-  // ORIGINAL pledger's confidential Gratis balance — no reclaim note, no second
-  // transaction. The user reads their own (encrypted) balance with their view key.
+  // On payment the chain automatically releases the collateral share matching the
+  // debt just paid down back to the ORIGINAL pledger's confidential Gratis balance —
+  // no reclaim note, no second transaction. The user reads their own (encrypted)
+  // balance with their view key.
   const gratis = IGratis__factory.connect(gratisAddress, provider);
   const userKeys = await deriveGratisKeys(userWallet);
   const gratisBalBefore = decryptBalance(userKeys.viewKey, userAddress, await gratis.balanceOf(userAddress));
   console.log(
-    `\nThis installment unlocks ${formatToken(nextAnadosis.gratisAmount, 18, "GRATIS")} of collateral back to ${userAddress}.`,
+    `\nThis payment unlocks the matching share of collateral back to ${userAddress}` +
+      ` (up to ${formatToken(position.outstandingGratisAmount, 18, "GRATIS")} still locked).`,
   );
   console.log(`  User Gratis balance before: ${formatToken(gratisBalBefore, 18, "GRATIS")} (decrypted)`);
 
@@ -245,13 +259,13 @@ async function main() {
     console.log("  Deposited 0.05 COEN into EntryPoint");
   }
 
-  // Encode batch: [approve(credisFactory, anadosisAmount), anadosis(positionId)].
-  // The runtime pulls the stablecoin, advances the schedule, and releases this
-  // installment's collateral share back to the pledger's (userAddress) encrypted
-  // balance — the enclave recovers the EOA from the position's sealed ciphertext,
-  // so it is not passed in calldata.
+  // Encode batch: [approve(credisFactory, anadosisAmount), anadosis(positionId, anadosisAmount)].
+  // The runtime settles installments in order (the last one possibly partially), pulls
+  // only what the schedule needed, and releases the matching collateral share back to
+  // the pledger's (userAddress) encrypted balance — the enclave recovers the EOA from
+  // the position's sealed ciphertext, so it is not passed in calldata.
   const approveCalldata = IERC20__factory.createInterface().encodeFunctionData("approve", [credisFactoryAddress, anadosisAmount]);
-  const payCalldata = ICredisFactory__factory.createInterface().encodeFunctionData("anadosis", [positionId]);
+  const payCalldata = ICredisFactory__factory.createInterface().encodeFunctionData("anadosis", [positionId, anadosisAmount]);
 
   // Batch execution: execMode byte[0] = 0x01 (CALLTYPE_BATCH)
   const execModeBatch = "0x01" + "00".repeat(31);
@@ -390,9 +404,16 @@ async function main() {
   const gratisBalAfter = decryptBalance(userKeys.viewKey, userAddress, await gratis.balanceOf(userAddress));
   const unlocked = gratisBalAfter - gratisBalBefore;
   console.log(`  User Gratis:     ${formatTokenDiff(unlocked, 18, "GRATIS")} (collateral released to the pledger)`);
-  if (unlocked !== nextAnadosis.gratisAmount) {
+
+  // The release is proportional to the debt paid down, so it must be positive and can
+  // never exceed what the position still had locked.
+  const positionAfter = await credis.getPosition(positionId);
+  const debtPaid = position.outstandingAnadosisAmount - positionAfter.outstandingAnadosisAmount;
+  console.log(`  Debt paid:       ${formatTokenMeta(debtPaid, erc20Meta)}`);
+  if (unlocked <= 0n || unlocked > position.outstandingGratisAmount) {
     console.warn(
-      `  WARNING: unlocked ${formatToken(unlocked, 18, "GRATIS")} != expected ${formatToken(nextAnadosis.gratisAmount, 18, "GRATIS")}`,
+      `  WARNING: unlocked ${formatToken(unlocked, 18, "GRATIS")} outside the expected` +
+        ` (0, ${formatToken(position.outstandingGratisAmount, 18, "GRATIS")}] range`,
     );
   }
 }

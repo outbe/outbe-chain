@@ -19,6 +19,9 @@ use alloy_evm::{
 };
 use alloy_primitives::{keccak256, map::AddressMap, Address, Bytes, Log, B256, U256};
 use outbe_compressed_entities::ExecutionScope;
+use outbe_ocomp_protocol::system_carrier::{
+    classify_ocomp_system_carrier, OcompSystemCarrierView, OCOMP_SYSTEM_CARRIER_INTERNAL_GAS_LIMIT,
+};
 use outbe_offchain_data::{ExecutionReadBudgetGuard, RuntimeBodyReaders};
 use outbe_primitives::{
     block::{BlockContext, BlockLifecycle, BlockRuntimeContext},
@@ -223,6 +226,8 @@ pub mod marker_addresses {
 pub(crate) fn apply_boundary_outcome(
     storage: StorageHandle,
     boundary: &outbe_primitives::consensus::DkgBoundaryArtifact,
+    block_number: u64,
+    timestamp: u64,
 ) -> outbe_primitives::error::Result<()> {
     let reshare = &boundary.reshare;
 
@@ -265,12 +270,28 @@ pub(crate) fn apply_boundary_outcome(
 
     let vs_check = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
     let current_hash = vs_check.active_consensus_set_hash.read()?;
+    let current_epoch: u64 = vs_check
+        .epoch_number
+        .read()?
+        .try_into()
+        .map_err(|_| PrecompileError::Fatal("ValidatorSet epoch exceeds u64".into()))?;
 
     if current_hash != reshare.active_set_hash && !boundary.is_validator_set_change {
         return Err(PrecompileError::Fatal(format!(
             "boundary active_set_hash changed without validator-set change: current={current_hash}, boundary={}",
             reshare.active_set_hash
         )));
+    }
+
+    let advances_epoch =
+        validate_boundary_epoch_transition(current_epoch, boundary.epoch, block_number)?;
+
+    // The activated epoch, active membership/hash and its consensus+OCOMP
+    // snapshot are one state transition. A nominal epoch height is not
+    // activation authority; only this certified BoundaryOutcome is.
+    let activation_guard = storage.checkpoint_guard();
+    if advances_epoch {
+        outbe_validatorset::hooks::advance_epoch(storage.clone(), timestamp, block_number)?;
     }
 
     let inputs = outbe_validatorset::hooks::BoundaryActivationInputs {
@@ -281,8 +302,59 @@ pub(crate) fn apply_boundary_outcome(
         active_set_hash: reshare.active_set_hash,
         tee_expired_target_exclusions: boundary.tee_expired_target_exclusions.clone(),
     };
-    outbe_validatorset::hooks::activate_boundary_atomic(storage, &inputs)?;
+    outbe_validatorset::hooks::activate_boundary_atomic(storage.clone(), &inputs)?;
+    if advances_epoch {
+        outbe_validatorset::contract::ValidatorSet::new(storage).cleanup_inactive_validators(16)?;
+    }
+    activation_guard.commit();
     Ok(())
+}
+
+fn validate_boundary_epoch_transition(
+    current_epoch: u64,
+    incoming_epoch: u64,
+    block_number: u64,
+) -> outbe_primitives::error::Result<bool> {
+    if block_number == 1 && current_epoch == 0 && incoming_epoch == 0 {
+        return Ok(false);
+    }
+    let next_epoch = current_epoch.checked_add(1).ok_or_else(|| {
+        PrecompileError::Fatal("ValidatorSet epoch overflow at BoundaryOutcome".into())
+    })?;
+    if block_number > 1 && incoming_epoch == next_epoch {
+        return Ok(true);
+    }
+    Err(PrecompileError::Fatal(format!(
+        "BoundaryOutcome epoch must bootstrap epoch 0 at block 1 or activate current+1: current={current_epoch}, incoming={incoming_epoch}, block={block_number}"
+    )))
+}
+
+/// Resets outgoing-epoch counters only for a block that actually carries the
+/// next certified BoundaryOutcome. This runs before receipt-visible
+/// LateFinalizeCredits; the BoundaryOutcome later advances epoch/set/snapshot
+/// without erasing misses recorded by that earlier phase.
+pub(crate) fn prepare_boundary_epoch_counters(
+    storage: StorageHandle,
+    boundary: &outbe_primitives::consensus::DkgBoundaryArtifact,
+    block_number: u64,
+) -> outbe_primitives::error::Result<()> {
+    let validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+    let current_epoch: u64 = validators
+        .epoch_number
+        .read()?
+        .try_into()
+        .map_err(|_| PrecompileError::Fatal("ValidatorSet epoch exceeds u64".into()))?;
+    if !validate_boundary_epoch_transition(current_epoch, boundary.epoch, block_number)? {
+        return Ok(());
+    }
+    let addresses: Vec<Address> = validators
+        .get_all_validators()?
+        .into_iter()
+        .map(|validator| validator.validator_address)
+        .collect();
+    outbe_slashindicator::contract::SlashIndicator::new(storage.clone())
+        .reset_epoch_counters(&addresses)?;
+    outbe_validatorset::hooks::reset_epoch_counters(storage)
 }
 
 fn hash_boundary_active_set(addresses: &[Address]) -> B256 {
@@ -509,12 +581,10 @@ where
 /// 4. `RewardsLifecycle::begin_block` — locks in `genesis_utc_day` on
 ///    block 0; the per-block emission and per-day settle paths have
 ///    moved to the Cycle module.
-/// 3. Validator-set epoch boundary: reset slash indicator counters, transition
-///    epoch, cleanup stale INACTIVE validators (cap 16/epoch).
-/// 4. Metadosis WWD state machine has moved to the Cycle handler at
+/// 5. Metadosis WWD state machine has moved to the Cycle handler at
 ///    UTC midnight; no per-block hook here anymore.
-/// 5. Staking matured-unbonding processing.
-/// 6. `OracleLifecycle::begin_block` — tally + daily S-curve only.
+/// 6. Staking matured-unbonding processing.
+/// 7. `OracleLifecycle::begin_block` — tally + daily S-curve only.
 ///
 /// Oracle slash-window force-exits run later as the receipt-visible
 /// `OracleSlashWindow` begin-zone system phase, after optional `BoundaryOutcome`.
@@ -577,27 +647,6 @@ fn run_outbe_pre_execution_hooks_inner(
     // Cycle handler now owns the daily orchestration.
     <outbe_rewards::lifecycle::RewardsLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
 
-    if outbe_validatorset::hooks::is_epoch_boundary(hook_ctx.storage.clone(), block_number)? {
-        // Reset slash indicator per-epoch counters.
-        let vs = outbe_validatorset::contract::ValidatorSet::new(hook_ctx.storage.clone());
-        let all = vs.get_all_validators()?;
-        let addrs: Vec<Address> = all.iter().map(|v| v.validator_address).collect();
-        let mut si = outbe_slashindicator::contract::SlashIndicator::new(hook_ctx.storage.clone());
-        si.reset_epoch_counters(&addrs)?;
-
-        // Transition epoch (resets validator counters, increments epoch number).
-        outbe_validatorset::hooks::transition_epoch(
-            hook_ctx.storage.clone(),
-            timestamp,
-            block_number,
-        )?;
-
-        // Cleanup stale INACTIVE validator entries (cap 16 per epoch).
-        let mut vs_cleanup =
-            outbe_validatorset::contract::ValidatorSet::new(hook_ctx.storage.clone());
-        vs_cleanup.cleanup_inactive_validators(16)?;
-    }
-
     // Metadosis WWD state machine + lysis distribution moved to the
     // Cycle handler. The
     // legacy `MetadosisLifecycle::begin_block` lifecycle hook used to
@@ -612,7 +661,7 @@ fn run_outbe_pre_execution_hooks_inner(
     // force-exits run later in the receipt-visible OracleSlashWindow system phase
     // so Phase 3 BoundaryOutcome can activate its target set before Oracle marks
     // underperformers EXITING.
-    <outbe_oracle::hooks::OracleLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
+    <outbe_oracle::lifecycle::OracleLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
 
     // Nod qualification mutates compressed bucket bodies and therefore runs
     // later inside the receipt-visible CycleTick system transaction. Oracle
@@ -624,7 +673,7 @@ fn run_outbe_pre_execution_hooks_inner(
     // surface, so it must run after Oracle.
     <outbe_gem::GemLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
 
-    // INTEX: qualify matured Issued series whose floor < current COEN/0xUSD
+    // INTEX: qualify aged Issued series whose floor < current COEN/840
     // rate. Reads the same Oracle surface, so it runs after Oracle.
     <outbe_intexfactory::IntexLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
 
@@ -1263,6 +1312,14 @@ pub(crate) fn system_tx_failure_code_for_result(result: &ExecutionResult<HaltRea
     }
 }
 
+fn is_ocomp_deadline_passed_revert(result: &ExecutionResult<HaltReason>) -> bool {
+    matches!(
+        result,
+        ExecutionResult::Revert { output, .. }
+            if outbe_metadosis::is_deadline_passed_result_vote_revert_data(output.as_ref())
+    )
+}
+
 #[cfg(test)]
 mod system_tx_failure_code_tests {
     use super::*;
@@ -1287,6 +1344,20 @@ mod system_tx_failure_code_tests {
     #[test]
     fn revert_maps_to_201() {
         assert_eq!(system_tx_failure_code_for_result(&revert_result()), 201);
+    }
+
+    #[test]
+    fn only_the_exact_ocomp_deadline_revert_is_a_failed_carrier_receipt() {
+        let deadline = ExecutionResult::Revert {
+            gas: ResultGas::default(),
+            logs: Vec::new(),
+            output: outbe_metadosis::deadline_passed_result_vote_revert_data(),
+        };
+        assert!(is_ocomp_deadline_passed_revert(&deadline));
+        assert!(!is_ocomp_deadline_passed_revert(&revert_result()));
+        assert!(!is_ocomp_deadline_passed_revert(&halt_result(
+            HaltReason::OutOfGas(OutOfGasError::Precompile)
+        )));
     }
 
     #[test]
@@ -1465,6 +1536,48 @@ where
         Ok(())
     }
 
+    /// Prepares the exact CE roots consumed by the terminal OCOMP phase while
+    /// leaving the scope active for a possible failure retirement.
+    fn preview_compressed_entities(
+        &mut self,
+    ) -> Result<outbe_compressed_entities::SealOutput, BlockExecutionError> {
+        if !self.compressed_entities_started {
+            return Err(BlockExecutionError::msg(
+                "compressed-entity preview requested outside active lifecycle",
+            ));
+        }
+
+        let block_number = self.inner.evm.block().number().saturating_to::<u64>();
+        let timestamp = self.inner.evm.block().timestamp().saturating_to::<u64>();
+        let chain_id = self.inner.evm.chain_id();
+        let proposer = self.inner.evm.block().beneficiary();
+        let scope = self.compressed_entities_scope.clone();
+        let (changes, events, output) = {
+            let db = self.inner.evm.db_mut();
+            let ctx = build_block_context(
+                db,
+                block_number,
+                timestamp,
+                chain_id,
+                self.genesis_hash,
+                proposer,
+            )?;
+            run_atomic_storage_hook_with_output(db, ctx, |hook_ctx| {
+                let lifecycle = outbe_compressed_entities::CompressedEntitiesLifecycleContext::new(
+                    hook_ctx.clone(),
+                    scope.as_ref(),
+                );
+                outbe_compressed_entities::preview_lifecycle_end_block(&lifecycle)
+            })?
+        };
+        if !changes.is_empty() || !events.is_empty() {
+            return Err(BlockExecutionError::msg(
+                "compressed-entity preview unexpectedly mutated EVM state",
+            ));
+        }
+        Ok(output)
+    }
+
     /// Runs the standard Ethereum post-execution phase before the OCOMP
     /// terminal boundary.
     ///
@@ -1472,7 +1585,7 @@ where
     /// writes. The active OCOMP lifecycle requires a stricter order than the
     /// upstream executor exposes:
     ///
-    /// `Ethereum post-execution -> CE seal -> OSR2 -> read-only finish`.
+    /// `Ethereum post-execution -> CE preview -> OSR2 -> final CE seal`.
     ///
     /// The resulting EIP-7685 requests are retained for [`BlockExecutor::finish`],
     /// which assembles the result without invoking the upstream phase again.
@@ -1633,12 +1746,13 @@ where
                 BlockExecutionError::msg(format!("terminal system tx intrinsic gas: {error}"))
             })?;
 
-        // This is the ordering boundary: all ordinary transactions and
-        // standard Ethereum post-execution changes have finished, the final
-        // CE root is committed, and only then may the terminal request handler
-        // inspect sealed state. No semantic writer may follow OSR2.
+        // All ordinary and Ethereum post-execution changes are complete. The
+        // terminal request consumes exact provisional roots while CE remains
+        // active, so its failure path can retire the WWD Tribute partition as
+        // the last CE mutation. The sole committed seal follows the terminal
+        // decision.
         self.apply_ethereum_post_execution_before_ocomp_terminal()?;
-        self.finalize_compressed_entities()?;
+        self.preview_compressed_entities()?;
 
         let phase_context = PreloadedSystemTxContext {
             proposer,
@@ -1676,6 +1790,7 @@ where
             ));
         }
         let gas = self.commit_system_transaction(output, intrinsic_gas, 0, signed_gas_limit)?;
+        self.finalize_compressed_entities()?;
         self.ocomp_terminal_request_consumed = true;
         let execution_origin = if self.block_hash.is_some() {
             "canonical"
@@ -1694,7 +1809,7 @@ where
     /// Commits an Outbe begin-zone system transaction with separate internal
     /// and visible gas accounting.
     ///
-    /// The precompile executes under the internal 100M system-call budget.
+    /// The precompile executes under the separate internal system-work budget.
     /// The public Ethereum block gas lane charges the signed envelope's visible
     /// base gas (intrinsic plus any schedule-hashed protocol precharge) and any
     /// explicit compressed-entity gas, without exposing the internal execution
@@ -1721,16 +1836,11 @@ where
                     "system tx visible gas overflow".into(),
                 ))
             })?;
+        let system_cumulative_gas_used =
+            self.checked_system_tx_execution_gas(output.result.result.tx_gas_used())?;
 
-        let gas_output = self.inner.commit_transaction(output);
-        self.system_tx_execution_gas = self
-            .system_tx_execution_gas
-            .checked_add(gas_output.tx_gas_used())
-            .ok_or_else(|| {
-                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-                    "system tx execution gas overflow".into(),
-                ))
-            })?;
+        let _ = self.inner.commit_transaction(output);
+        self.system_tx_execution_gas = system_cumulative_gas_used;
 
         if let Some(receipt) = self.inner.receipts.last_mut() {
             receipt.cumulative_gas_used = visible_cumulative_tx_gas;
@@ -1741,6 +1851,29 @@ where
         self.inner.block_state_gas_used = user_state_gas.saturating_add(visible_gas_used);
 
         Ok(GasOutput::new(visible_gas_used))
+    }
+
+    fn checked_system_tx_execution_gas(&self, additional: u64) -> Result<u64, BlockExecutionError> {
+        let cumulative = self
+            .system_tx_execution_gas
+            .checked_add(additional)
+            .ok_or_else(|| {
+                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                    "internal system-work gas overflow".into(),
+                ))
+            })?;
+        let limit = outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT;
+        if cumulative > limit {
+            return Err(BlockExecutionError::Internal(
+                InternalBlockExecutionError::Other(
+                    format!(
+                        "internal system-work budget exceeded: cumulative={cumulative}, limit={limit}, additional={additional}"
+                    )
+                    .into(),
+                ),
+            ));
+        }
+        Ok(cumulative)
     }
 
     fn visible_system_gas_with_compressed_entities(
@@ -1810,14 +1943,8 @@ where
             input.code,
             input.reason,
         );
-        let system_cumulative_gas_used = self
-            .system_tx_execution_gas
-            .checked_add(input.internal_gas_used)
-            .ok_or_else(|| {
-                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-                    "system tx internal gas overflow".into(),
-                ))
-            })?;
+        let system_cumulative_gas_used =
+            self.checked_system_tx_execution_gas(input.internal_gas_used)?;
         let user_cumulative_gas_used = self
             .inner
             .cumulative_tx_gas_used
@@ -3163,6 +3290,15 @@ where
                 proposer,
             )?;
             run_atomic_storage_hooks(db, ctx, |hook_ctx| -> outbe_primitives::error::Result<()> {
+                if let Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)) =
+                    block_artifacts.consensus_header_artifact.as_ref()
+                {
+                    prepare_boundary_epoch_counters(
+                        hook_ctx.storage.clone(),
+                        boundary,
+                        block_number,
+                    )?;
+                }
                 let result = match self.runtime_body_readers.as_ref() {
                     Some(readers) => run_outbe_pre_execution_hooks_with_readers(
                         hook_ctx,
@@ -3527,8 +3663,11 @@ where
                     // emission/reshare, unrecorded parent accounting). The revert is a
                     // deterministic function of committed chain state, so every
                     // validator rejects the same block identically — no state-root
-                    // split. Non-critical phases (OracleSlashWindow, TeeBootstrap)
-                    // keep the soft-receipt skip.
+                    // split. Non-critical phases (OracleSlashWindow, HookEvents)
+                    // keep the soft-receipt skip for failures that fit within the
+                    // aggregate internal-work budget. An OOG consumes the full
+                    // system-call gas limit and therefore remains a hard aggregate
+                    // budget failure once earlier mandatory phases have run.
                     if expected_phase.revert_fails_block() {
                         let reason = format!(
                         "critical system tx {expected_phase:?} did not succeed (revert/halt) at \
@@ -3604,6 +3743,90 @@ where
                         );
                 }
                 return commit_outcome;
+            }
+
+            let ocomp_system_carrier = classify_ocomp_system_carrier(
+                OcompSystemCarrierView {
+                    is_eip1559: tx.tx_type() == alloy_consensus::TxType::Eip1559,
+                    to: tx.to(),
+                    value: tx.value(),
+                    input: tx.input().as_ref(),
+                    gas_limit: tx.gas_limit(),
+                    max_fee_per_gas: tx.max_fee_per_gas(),
+                    max_priority_fee_per_gas: tx.max_priority_fee_per_gas(),
+                },
+                &outbe_ocomp_protocol::profile::poc_schema_limits(),
+            )
+            .map_err(|error| {
+                BlockExecutionError::msg(format!("invalid OCOMP system carrier: {error}"))
+            })?;
+
+            if let Some(candidate) = ocomp_system_carrier {
+                if !self.ocomp_lifecycle_active {
+                    return Err(BlockExecutionError::msg(
+                        "OCOMP system carrier is not active for this block",
+                    ));
+                }
+                let block_number = self.inner.evm.block().number().saturating_to::<u64>();
+                let timestamp = self.inner.evm.block().timestamp().saturating_to::<u64>();
+                let chain_id = self.inner.evm.chain_id();
+                let proposer = self.inner.evm.block().beneficiary();
+                let authorized = {
+                    let db = self.inner.evm.db_mut();
+                    let ctx = BlockContext::new_with_genesis_hash(
+                        block_number,
+                        timestamp,
+                        chain_id,
+                        self.genesis_hash,
+                        proposer,
+                        Vec::new(),
+                    );
+                    let mut provider = DirectStorageProvider::new(db, ctx);
+                    let storage = StorageHandle::new(&mut provider);
+                    outbe_metadosis::resolve_historical_result_vote_carrier_signer(
+                        storage,
+                        &candidate.prefix,
+                        signer,
+                        &outbe_ocomp_protocol::profile::poc_schema_limits(),
+                    )
+                }
+                .map_err(|error| {
+                    BlockExecutionError::msg(format!(
+                        "OCOMP system carrier authorization failed: {error}"
+                    ))
+                })?;
+                if authorized.is_none() {
+                    return Err(BlockExecutionError::msg(
+                        "OCOMP system carrier signer is not authorized by its pinned snapshot",
+                    ));
+                }
+
+                let signed_gas_limit = tx.gas_limit();
+                let tx_type = tx.tx_type();
+                let snapshot = self.inner.evm.enable_zero_fee_overrides();
+                tx_env.gas_limit = OCOMP_SYSTEM_CARRIER_INTERNAL_GAS_LIMIT;
+                tx_env.gas_price = 0;
+                tx_env.gas_priority_fee = Some(0);
+                let execution = self.inner.execute_transaction_without_commit(WithTxEnv {
+                    tx_env,
+                    tx: Arc::new(recovered),
+                });
+                self.inner.evm.restore_zero_fee_overrides(snapshot);
+                let output = execution?;
+                let deadline_revert = is_ocomp_deadline_passed_revert(&output.result.result);
+                if !output.result.result.is_success() && !deadline_revert {
+                    return Err(BlockExecutionError::msg(format!(
+                        "OCOMP system carrier execution did not succeed: {:?}",
+                        output.result.result
+                    )));
+                }
+                if !f(&output).should_commit() {
+                    return Ok(None);
+                }
+                debug_assert_eq!(output.tx_type, tx_type);
+                return self
+                    .commit_system_transaction(output, 0, 0, signed_gas_limit)
+                    .map(Some);
             }
 
             if tx.gas_limit() < Self::SOFT_FAILURE_GAS {
@@ -4089,6 +4312,9 @@ mod tests {
         address, keccak256, logs_bloom, Address, Bytes, Log, Signature, TxKind, B256, U256,
     };
     use alloy_sol_types::{SolCall, SolEvent};
+    use outbe_chain_constants::{
+        GenesisProtocolParametersV1, CHAIN_CONSTANTS_ADDRESS, CHAIN_CONSTANTS_MARKER_CODE,
+    };
     use outbe_common::WorldwideDay;
     use outbe_compressed_entities::{
         CandidateCacheLimits, CeMdbx, CeWorkConfig, CompressedTreeService, EnvironmentIdentity,
@@ -4173,7 +4399,20 @@ mod tests {
         );
     }
 
+    /// The genesis-alloc chain constants every block hook reads; production
+    /// gets them from the genesis alloc, so tests have to seed them too.
+    fn seed_chain_constants_genesis(storage: &StorageHandle<'_>) {
+        for (slot, value) in
+            outbe_chain_constants::GenesisProtocolParametersV1::default().genesis_storage_words()
+        {
+            storage
+                .sstore(outbe_chain_constants::CHAIN_CONSTANTS_ADDRESS, slot, value)
+                .unwrap();
+        }
+    }
+
     fn seed_compressed_entities_genesis(storage: StorageHandle<'_>) {
+        seed_chain_constants_genesis(&storage);
         let root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
         storage
             .sstore(
@@ -4189,6 +4428,14 @@ mod tests {
                 U256::from_be_slice(root.as_slice()),
             )
             .unwrap();
+    }
+
+    fn seed_default_chain_constants(storage: StorageHandle<'_>) {
+        for (slot, value) in GenesisProtocolParametersV1::default().genesis_storage_words() {
+            storage
+                .sstore(CHAIN_CONSTANTS_ADDRESS, slot, value)
+                .expect("test chain constants seed succeeds");
+        }
     }
 
     #[test]
@@ -4347,6 +4594,7 @@ mod tests {
 
     fn test_ocomp_fork_install(
         chain_spec: &ChainSpec<OutbeHeader>,
+        founders: &[(Address, [u8; 48])],
     ) -> Arc<outbe_metadosis::config::OcompForkInstallV1> {
         Arc::new(
             outbe_metadosis::test_support::ForkInstallScenario::measurement_at(
@@ -4355,13 +4603,17 @@ mod tests {
                 chain_spec.genesis_hash(),
             )
             .unwrap()
+            .with_founder_validators(founders)
+            .unwrap()
             .into_install(),
         )
     }
 
-    fn seed_test_ocomp_profile(provider: &mut HashMapStorageProvider, restore_block_number: u64) {
-        let chain_spec = test_chain_spec();
-        let install = test_ocomp_fork_install(&chain_spec);
+    fn seed_test_ocomp_profile(
+        provider: &mut HashMapStorageProvider,
+        restore_block_number: u64,
+        install: &outbe_metadosis::config::OcompForkInstallV1,
+    ) {
         provider.set_block_number(1);
         provider.enable_metadosis_mutation_frame(
             outbe_primitives::storage::MetadosisMutationPurposeTag::ForkProfile,
@@ -4371,7 +4623,7 @@ mod tests {
                 BlockContext::empty_for_tests(1, 1_700_000_001, CHAIN_ID),
                 storage,
             );
-            outbe_metadosis::commands::install_fork_profile(&ctx, &install).unwrap();
+            outbe_metadosis::commands::install_fork_profile(&ctx, install).unwrap();
         });
         provider.set_block_number(restore_block_number);
     }
@@ -4412,17 +4664,36 @@ mod tests {
         proposer: Address,
         seed_ocomp: bool,
     ) -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
-        let mut seed_storage = HashMapStorageProvider::new(CHAIN_ID);
-        if seed_ocomp {
-            seed_test_ocomp_profile(&mut seed_storage, 0);
-        }
+        let chain_spec = test_chain_spec();
+        let mut seed_storage =
+            HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, chain_spec.genesis_hash());
+        let proposer_key = dummy_pubkey(0xA2);
+        let install = test_ocomp_fork_install(&chain_spec, &[(proposer, proposer_key)]);
         StorageHandle::enter(&mut seed_storage, |storage| {
+            seed_default_chain_constants(storage.clone());
             seed_compressed_entities_genesis(storage.clone());
-            seed_registered_active_validator(storage.clone(), proposer, &dummy_pubkey(0xA2));
+            seed_registered_active_validator_with_registration(
+                storage.clone(),
+                proposer,
+                &proposer_key,
+                &install.founder_registrations[0],
+            );
         });
+        if seed_ocomp {
+            seed_test_ocomp_profile(&mut seed_storage, 0, &install);
+        }
 
         let mut db = cache_db_from_storage(seed_storage);
         let marker_code = Bytecode::new_legacy([0xef].into());
+        let constants_marker_code = Bytecode::new_legacy(CHAIN_CONSTANTS_MARKER_CODE.into());
+        db.insert_account_info(
+            CHAIN_CONSTANTS_ADDRESS,
+            AccountInfo {
+                code_hash: constants_marker_code.hash_slow(),
+                code: Some(constants_marker_code),
+                ..Default::default()
+            },
+        );
         db.insert_account_info(
             outbe_primitives::addresses::VALIDATOR_SET_ADDRESS,
             AccountInfo {
@@ -4480,17 +4751,36 @@ mod tests {
         funded: Address,
         seed_ocomp: bool,
     ) -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
-        let mut seed_storage = HashMapStorageProvider::new(CHAIN_ID);
-        if seed_ocomp {
-            seed_test_ocomp_profile(&mut seed_storage, 0);
-        }
+        let chain_spec = test_chain_spec();
+        let mut seed_storage =
+            HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, chain_spec.genesis_hash());
+        let proposer_key = dummy_pubkey(0xA2);
+        let install = test_ocomp_fork_install(&chain_spec, &[(proposer, proposer_key)]);
         StorageHandle::enter(&mut seed_storage, |storage| {
+            seed_default_chain_constants(storage.clone());
             seed_compressed_entities_genesis(storage.clone());
-            seed_registered_active_validator(storage.clone(), proposer, &dummy_pubkey(0xA2));
+            seed_registered_active_validator_with_registration(
+                storage.clone(),
+                proposer,
+                &proposer_key,
+                &install.founder_registrations[0],
+            );
         });
+        if seed_ocomp {
+            seed_test_ocomp_profile(&mut seed_storage, 0, &install);
+        }
 
         let mut db = cache_db_from_storage(seed_storage);
         let marker_code = Bytecode::new_legacy([0xef].into());
+        let constants_marker_code = Bytecode::new_legacy(CHAIN_CONSTANTS_MARKER_CODE.into());
+        db.insert_account_info(
+            CHAIN_CONSTANTS_ADDRESS,
+            AccountInfo {
+                code_hash: constants_marker_code.hash_slow(),
+                code: Some(constants_marker_code),
+                ..Default::default()
+            },
+        );
         db.insert_account_info(
             outbe_primitives::addresses::VALIDATOR_SET_ADDRESS,
             AccountInfo {
@@ -4563,45 +4853,59 @@ mod tests {
         cycle_frames: u8,
         seed_extra: impl FnOnce(StorageHandle),
     ) -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
-        let mut seed_storage = HashMapStorageProvider::new(CHAIN_ID);
+        let chain_spec = test_chain_spec();
+        let mut seed_storage =
+            HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, chain_spec.genesis_hash());
+        let install = test_ocomp_fork_install(&chain_spec, validators);
         seed_storage.set_block_number(block_number);
-        seed_test_ocomp_profile(&mut seed_storage, block_number);
+        StorageHandle::enter(&mut seed_storage, |storage| {
+            seed_default_chain_constants(storage.clone());
+            seed_compressed_entities_genesis(storage.clone());
+            let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+            vs.config_owner.write(OWNER).unwrap();
+            vs.set_config_max_validators(128).unwrap();
+            vs.config_epoch_length_blocks.write(60).unwrap();
+            vs.config_is_initialized.write(true).unwrap();
+            for ((validator, pk), registration) in
+                validators.iter().zip(&install.founder_registrations)
+            {
+                register_and_activate_with_ocomp_registration(
+                    &mut vs,
+                    *validator,
+                    pk,
+                    registration,
+                );
+            }
+            seed_test_committee_snapshot(storage.clone(), validators);
+            // Seed the COEN/840 oracle pair + a 1.0 rate so begin-block
+            // NOD/GEM/INTEX floor-price promotion resolves a live rate instead
+            // of soft-skipping the scan. 840 is also pushed onto the reference
+            // currency list, matching genesis: the Nod qualifier reads its ISO
+            // from there, not from a hard-coded constant.
+            outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
+                .unwrap();
+            outbe_oracle::schema::OracleContract::new(storage.clone())
+                .reference_currencies
+                .push(outbe_oracle::api::DAY_TYPE_ISO)
+                .unwrap();
+            outbe_oracle::api::set_exchange_rate(
+                storage.clone(),
+                Address::ZERO,
+                outbe_oracle::api::DAY_TYPE_PAIR,
+                U256::from(1_000_000_000_000_000_000u128),
+                0,
+                0,
+            )
+            .unwrap();
+        });
+        seed_test_ocomp_profile(&mut seed_storage, block_number, &install);
         if cycle_frames != 0 {
             seed_storage.enable_metadosis_mutation_frames(
                 outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
                 cycle_frames,
             );
         }
-        StorageHandle::enter(&mut seed_storage, |storage| {
-            seed_compressed_entities_genesis(storage.clone());
-            let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-            vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
-            vs.config_epoch_length_blocks.write(60).unwrap();
-            vs.config_is_initialized.write(true).unwrap();
-            for (validator, pk) in validators {
-                vs.register_validator(OWNER, *validator, pk).unwrap();
-            }
-            let active: Vec<Address> = validators.iter().map(|(validator, _)| *validator).collect();
-            vs.activate_reshared_set(&active, B256::ZERO).unwrap();
-            seed_test_committee_snapshot(storage.clone(), validators);
-            // Seed the COEN/0xUSD oracle pair + a 1.0 rate so begin-block NOD/GEM/INTEX
-            // floor-price promotion reads a registered pair instead of reverting
-            // "pair not registered".
-            let mut oracle = outbe_oracle::contract::OracleContract::new(storage.clone());
-            oracle.register_pair("COEN", "0xUSD").unwrap();
-            oracle
-                .set_exchange_rate(
-                    Address::ZERO,
-                    "COEN",
-                    "0xUSD",
-                    U256::from(1_000_000_000_000_000_000u128),
-                    0,
-                    0,
-                )
-                .unwrap();
-            seed_extra(storage);
-        });
+        StorageHandle::enter(&mut seed_storage, seed_extra);
 
         let marker_addresses = [
             outbe_primitives::addresses::VALIDATOR_SET_ADDRESS,
@@ -4624,6 +4928,7 @@ mod tests {
             // seeded slot survives as live state here too (otherwise an empty
             // account's storage reads back as zero).
             outbe_primitives::addresses::ACCOUNTING_PROGRESS_ADDRESS,
+            CHAIN_CONSTANTS_ADDRESS,
         ];
         // `cache_db_from_storage` carries storage slots but not balances, and the
         // marker-info insert below overwrites `AccountInfo`. Capture any balance a
@@ -4665,42 +4970,64 @@ mod tests {
         candidate: Address,
         seed_extra: impl FnOnce(StorageHandle),
     ) -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
-        let mut seed_storage = HashMapStorageProvider::new(CHAIN_ID);
-        seed_test_ocomp_profile(&mut seed_storage, 0);
+        let chain_spec = test_chain_spec();
+        let mut seed_storage =
+            HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, chain_spec.genesis_hash());
+        let active_key = dummy_pubkey(0xA2);
+        let install = test_ocomp_fork_install(&chain_spec, &[(active, active_key)]);
         StorageHandle::enter(&mut seed_storage, |storage| {
+            seed_default_chain_constants(storage.clone());
             seed_compressed_entities_genesis(storage.clone());
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_epoch_length_blocks.write(60).unwrap();
             vs.config_is_initialized.write(true).unwrap();
-            vs.register_validator(OWNER, active, &dummy_pubkey(0xA2))
-                .unwrap();
+            register_and_activate_with_ocomp_registration(
+                &mut vs,
+                active,
+                &active_key,
+                &install.founder_registrations[0],
+            );
             vs.register_validator(OWNER, candidate, &dummy_pubkey(0xB3))
                 .unwrap();
-            vs.activate_reshared_set(&[active], B256::with_last_byte(0x01))
+            vs.admit_validator_for_boundary_for_test(candidate).unwrap();
+            seed_test_committee_snapshot(storage.clone(), &[(active, active_key)]);
+            // Seed the COEN/840 oracle pair + a 1.0 rate so begin-block
+            // NOD/GEM/INTEX floor-price promotion resolves a live rate instead
+            // of soft-skipping the scan. 840 is also pushed onto the reference
+            // currency list, matching genesis: the Nod qualifier reads its ISO
+            // from there, not from a hard-coded constant.
+            outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
                 .unwrap();
-            seed_test_committee_snapshot(storage.clone(), &[(active, dummy_pubkey(0xA2))]);
-            // Seed the COEN/0xUSD oracle pair + a 1.0 rate so begin-block NOD/GEM/INTEX
-            // floor-price promotion reads a registered pair instead of reverting
-            // "pair not registered".
-            let mut oracle = outbe_oracle::contract::OracleContract::new(storage.clone());
-            oracle.register_pair("COEN", "0xUSD").unwrap();
-            oracle
-                .set_exchange_rate(
-                    Address::ZERO,
-                    "COEN",
-                    "0xUSD",
-                    U256::from(1_000_000_000_000_000_000u128),
-                    0,
-                    0,
-                )
+            outbe_oracle::schema::OracleContract::new(storage.clone())
+                .reference_currencies
+                .push(outbe_oracle::api::DAY_TYPE_ISO)
                 .unwrap();
+            outbe_oracle::api::set_exchange_rate(
+                storage.clone(),
+                Address::ZERO,
+                outbe_oracle::api::DAY_TYPE_PAIR,
+                U256::from(1_000_000_000_000_000_000u128),
+                0,
+                0,
+            )
+            .unwrap();
             seed_extra(storage);
         });
+        seed_test_ocomp_profile(&mut seed_storage, 0, &install);
 
         let mut db = cache_db_from_storage(seed_storage);
         let marker_code = Bytecode::new_legacy([0xef].into());
+        let constants_marker_code = Bytecode::new_legacy(CHAIN_CONSTANTS_MARKER_CODE.into());
+        db.insert_account_info(
+            CHAIN_CONSTANTS_ADDRESS,
+            AccountInfo {
+                code_hash: constants_marker_code.hash_slow(),
+                code: Some(constants_marker_code),
+                ..Default::default()
+            },
+        );
         db.insert_account_info(
             outbe_primitives::addresses::VALIDATOR_SET_ADDRESS,
             AccountInfo {
@@ -5046,8 +5373,8 @@ mod tests {
     ) -> reth_ethereum::TransactionSigned {
         let input = outbe_oracle::precompile::IOracle::submitVoteCall {
             tuples: vec![outbe_oracle::precompile::IOracle::ExchangeRateTuple {
-                base: "COEN".to_string(),
-                quote: "0xUSD".to_string(),
+                base: outbe_oracle::api::COEN_ASSET,
+                quote: outbe_oracle::api::currency_address(840),
                 exchangeRate: U256::from(1_000_000_000_000_000_000u128),
                 volume: U256::from(10_000_000_000_000_000_000_000u128),
             }],
@@ -5067,6 +5394,70 @@ mod tests {
         }
         .into_signed(Signature::test_signature())
         .into()
+    }
+
+    fn test_ocomp_submit_result_vote_tx() -> reth_ethereum::TransactionSigned {
+        use outbe_ocomp_protocol::{
+            abi::{METADOSIS_ADDRESS, SUBMIT_LYSIS_RESULT_SELECTOR},
+            encode_envelope,
+            profile::poc_schema_limits,
+            registry::ObjectKind,
+        };
+
+        let mut body = Vec::new();
+        body.extend_from_slice(B256::repeat_byte(0x31).as_slice());
+        body.extend_from_slice(B256::repeat_byte(0x32).as_slice());
+        body.extend_from_slice(&3_u32.to_be_bytes());
+        body.extend_from_slice(&7_u64.to_be_bytes());
+        body.extend_from_slice(B256::repeat_byte(0x33).as_slice());
+        body.extend_from_slice(B256::repeat_byte(0x34).as_slice());
+        body.extend_from_slice(B256::repeat_byte(0x35).as_slice());
+        body.extend_from_slice(&1_u64.to_be_bytes());
+        body.resize(180, 0);
+        let payload = encode_envelope(ObjectKind::ResultVoteV1, &body, poc_schema_limits().codec)
+            .expect("canonical OCOMP prefix must encode");
+        let padded_len = (payload.len() + 31) & !31;
+        let mut input = vec![0_u8; 68 + padded_len];
+        input[..4].copy_from_slice(&SUBMIT_LYSIS_RESULT_SELECTOR);
+        input[4..36].copy_from_slice(&U256::from(32).to_be_bytes::<32>());
+        input[36..68].copy_from_slice(&U256::from(payload.len()).to_be_bytes::<32>());
+        input[68..68 + payload.len()].copy_from_slice(&payload);
+
+        TxEip1559 {
+            chain_id: CHAIN_ID,
+            nonce: 0,
+            gas_limit: outbe_ocomp_protocol::system_carrier::OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
+            max_fee_per_gas:
+                outbe_ocomp_protocol::system_carrier::MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS,
+            max_priority_fee_per_gas: 0,
+            to: TxKind::Call(METADOSIS_ADDRESS),
+            value: U256::ZERO,
+            input: input.into(),
+            access_list: Default::default(),
+        }
+        .into_signed(Signature::test_signature())
+        .into()
+    }
+
+    #[test]
+    fn executor_adapter_classifies_the_canonical_ocomp_system_carrier_prefix() {
+        let tx = test_ocomp_submit_result_vote_tx();
+        let candidate = outbe_ocomp_protocol::system_carrier::classify_ocomp_system_carrier(
+            outbe_ocomp_protocol::system_carrier::OcompSystemCarrierView {
+                is_eip1559: true,
+                to: tx.to(),
+                value: tx.value(),
+                input: tx.input().as_ref(),
+                gas_limit: tx.gas_limit(),
+                max_fee_per_gas: tx.max_fee_per_gas(),
+                max_priority_fee_per_gas: tx.max_priority_fee_per_gas(),
+            },
+            &outbe_ocomp_protocol::profile::poc_schema_limits(),
+        )
+        .expect("canonical OCOMP envelope must classify")
+        .expect("canonical OCOMP envelope must select the system carrier");
+
+        assert_eq!(candidate.prefix.ocomp_key_hash, B256::repeat_byte(0x35));
     }
 
     #[allow(dead_code)] // retained for follow-up tests
@@ -5766,7 +6157,7 @@ mod tests {
         let proposer = signer.address();
         let mut state = state_with_active_proposer_without_ocomp(proposer);
         let chain_spec = test_chain_spec();
-        let install = test_ocomp_fork_install(&chain_spec);
+        let install = test_ocomp_fork_install(&chain_spec, &[(proposer, dummy_pubkey(0xA2))]);
         let config = OutbeEvmConfig::new_with_runtime_body_readers(
             chain_spec,
             RuntimeBodyReaders::new(Arc::new(MemoryStorage::new())),
@@ -5850,7 +6241,7 @@ mod tests {
         assert_eq!(end.len(), 1);
         executor
             .execute_transaction(end.into_iter().next().unwrap())
-            .expect("terminal system tx executes after CE seal");
+            .expect("terminal system tx executes before the final CE seal");
 
         let writes_after_terminal = observed_writes.lock().unwrap().clone();
         let ethereum_post_block_index = writes_after_terminal
@@ -5860,15 +6251,15 @@ mod tests {
         let compressed_entities_seal_index = writes_after_terminal
             .iter()
             .position(|write| *write == ObservedWrite::CompressedEntitiesSeal)
-            .expect("compressed entities seal executes before OSR2");
+            .expect("compressed entities seal executes after OSR2");
         let terminal_transaction_index = writes_after_terminal
             .iter()
             .position(|write| *write == ObservedWrite::Transaction(begin.len()))
             .expect("OSR2 commits as the terminal transaction");
         assert!(
-            ethereum_post_block_index < compressed_entities_seal_index
-                && compressed_entities_seal_index < terminal_transaction_index,
-            "semantic write order must be Ethereum post-block -> CE seal -> OSR2; got \
+            ethereum_post_block_index < terminal_transaction_index
+                && terminal_transaction_index < compressed_entities_seal_index,
+            "semantic write order must be Ethereum post-block -> OSR2 -> final CE seal; got \
              {writes_after_terminal:?}"
         );
         assert!(executor.compressed_entities_seal_output().is_some());
@@ -5934,7 +6325,7 @@ mod tests {
             let mut state =
                 state_with_active_proposer_and_funded_account_without_ocomp(proposer, user_sender);
             let chain_spec = test_chain_spec();
-            let install = test_ocomp_fork_install(&chain_spec);
+            let install = test_ocomp_fork_install(&chain_spec, &[(proposer, dummy_pubkey(0xA2))]);
             let config = OutbeEvmConfig::new_with_runtime_body_readers(
                 chain_spec.clone(),
                 RuntimeBodyReaders::new(Arc::new(MemoryStorage::new())),
@@ -6195,7 +6586,7 @@ mod tests {
             let mut state = state_with_active_validators_seeded_at_block_with_cycle_frames(
                 &[(proposer, dummy_pubkey(0xA3))],
                 1,
-                14,
+                4,
                 |storage| {
                     outbe_compressed_entities::begin_block(storage.clone(), &seed_scope)
                         .expect("open CE seed block");
@@ -6206,45 +6597,21 @@ mod tests {
                     outbe_rewards::runtime::ensure_genesis_anchor(&genesis_ctx).unwrap();
                     let mut tribute = TributeContract::new(storage.clone());
                     tribute.initialize_fresh_ocomp_profile().unwrap();
-                    for day in [WorldwideDay::new(2023_0901), WorldwideDay::new(2023_1001)] {
-                        let ctx = BlockRuntimeContext::new(
-                            BlockContext::new(
-                                1,
-                                day.start_timestamp() + 2 * 3_600,
-                                CHAIN_ID,
-                                proposer,
-                                vec![proposer],
-                            ),
-                            storage.clone(),
-                        );
-                        outbe_metadosis::commands::apply_cycle_day_limit(&ctx, day_limit).unwrap();
-                        let projection = outbe_metadosis::api::worldwide_day(storage.clone(), day)
-                            .unwrap()
-                            .unwrap();
-                        for boundary in [
-                            projection.forming_end,
-                            projection.lookback_end,
-                            projection.offering_end,
-                            projection.scheduled_process_time,
-                        ] {
-                            let ctx = BlockRuntimeContext::new(
-                                BlockContext::new(1, boundary, CHAIN_ID, proposer, vec![proposer]),
-                                storage.clone(),
-                            );
-                            outbe_metadosis::commands::advance_active_worldwide_days(
-                                &ctx,
-                                &seed_scope,
+                    let retained = (0..outbe_metadosis::constants::MAX_RETAINED_WWDS)
+                        .map(|offset| {
+                            let days_before =
+                                outbe_metadosis::constants::MAX_RETAINED_WWDS - offset;
+                            WorldwideDay::from_timestamp(
+                                victim.start_timestamp()
+                                    - u64::try_from(days_before).unwrap() * SECONDS_PER_DAY,
                             )
-                            .unwrap();
-                        }
-                        assert_eq!(
-                            outbe_metadosis::api::worldwide_day(storage.clone(), day)
-                                .unwrap()
-                                .unwrap()
-                                .status,
-                            outbe_metadosis::api::WorldwideDayStatus::Ready
-                        );
-                    }
+                        })
+                        .collect::<Vec<_>>();
+                    outbe_metadosis::test_support::seed_ready_worldwide_days_for_capacity(
+                        storage.clone(),
+                        &retained,
+                    )
+                    .unwrap();
                     let victim_ctx = BlockRuntimeContext::new(
                         BlockContext::new(
                             1,
@@ -6754,13 +7121,10 @@ mod tests {
     }
 
     #[test]
-    fn gas_09_noncritical_system_oog_failure_is_soft_and_keeps_user_gas_lane_clean() {
+    fn gas_09_noncritical_system_oog_exhausts_aggregate_budget_atomically() {
         let signer = test_evm_signer();
         let proposer = signer.address();
-        let user_tx = test_regular_tx()
-            .try_into_recovered()
-            .expect("regular tx signer should recover");
-        let mut state = state_with_active_proposer_and_funded_account(proposer, user_tx.signer());
+        let mut state = state_with_active_proposer(proposer);
         let chain_spec = test_chain_spec();
         let receipt_builder = reth_ethereum::evm::RethReceiptBuilder::default();
         let config = OutbeEvmConfig::new(chain_spec.clone()).with_evm_signer(signer.clone());
@@ -6802,89 +7166,46 @@ mod tests {
             .next()
             .expect("OracleSlashWindow system tx should be present");
         let cycle_signed_gas_limit = cycle_tx.tx().gas_limit();
-        let oracle_visible_gas = oracle_tx.tx().gas_limit();
-
-        // CycleTick is consensus-critical (a revert/OOG there fails the
-        // block), so the soft-receipt path is exercised against
-        // OracleSlashWindow, a non-critical begin-zone phase whose OOG still
-        // soft-fails and keeps the user gas lane clean. CycleTick executes
-        // successfully first (receipt 0).
+        // A forced OOG does not model Oracle performing ten billion units of
+        // useful work: revm charges the complete system-call gas limit for any
+        // OOG. Because mandatory phases have already consumed internal work,
+        // accepting it as a soft failure would exceed the aggregate block
+        // budget. The failure must therefore be hard and atomic even though an
+        // ordinary OracleSlashWindow revert remains soft.
         let cycle_gas = executor
             .execute_transaction(cycle_tx)
             .expect("CycleTick should execute successfully")
             .tx_gas_used();
         assert!(cycle_gas <= cycle_signed_gas_limit);
-        let tee_bootstrap_gas = executor
+        let _tee_bootstrap_gas = executor
             .execute_transaction(tee_bootstrap_tx)
             .expect("mandatory TeeBootstrap should execute before the non-critical phase")
             .tx_gas_used();
 
-        let failure_gas = crate::factory::with_forced_outbe_system_call_oog_halt(|| {
+        let receipts_before = executor.receipts().len();
+        let cumulative_visible_gas_before = executor.inner.cumulative_tx_gas_used;
+        let internal_work_before = executor.system_tx_execution_gas;
+        let error = crate::factory::with_forced_outbe_system_call_oog_halt(|| {
             executor.execute_transaction(oracle_tx)
         })
-        .expect("forced non-critical system OOG must become a soft-failure receipt")
-        .tx_gas_used();
-        assert_eq!(
-            failure_gas, oracle_visible_gas,
-            "GAS-09: soft-failed OOG system tx should return visible envelope gas"
-        );
+        .expect_err("forced system OOG must exhaust the aggregate internal-work budget");
 
-        let failure_receipt = executor
-            .receipts()
-            .get(2)
-            .expect("soft-failed oracle tx must emit a receipt");
-        assert!(!failure_receipt.success);
-        assert_eq!(
-            failure_receipt.cumulative_gas_used,
-            cycle_gas + tee_bootstrap_gas + oracle_visible_gas
-        );
-        assert_eq!(failure_receipt.logs.len(), 1);
-        assert_eq!(failure_receipt.logs[0].address, OUTBE_SYSTEM_TX_ADDRESS);
-        assert_eq!(
-            failure_receipt.logs[0].data.topics().first(),
-            Some(&crate::failure_receipt::OUTBE_FAILURE_TOPIC0),
-            "GAS-09: system OOG soft-failure receipt must carry OutbeFailure"
-        );
-        let mut expected_code_topic = [0u8; 32];
-        expected_code_topic[31] = 202;
-        assert_eq!(
-            failure_receipt.logs[0].data.topics()[1].as_slice(),
-            expected_code_topic,
-            "GAS-09: system OOG soft-failure receipt must use OutbeFailure code 202"
-        );
-
-        let user_gas = executor
-            .execute_transaction(user_tx)
-            .expect("user tx must execute after OOG soft failure")
-            .tx_gas_used();
-        let expected_system_visible_gas = cycle_gas + tee_bootstrap_gas + oracle_visible_gas;
-        assert_eq!(
-            executor.inner.cumulative_tx_gas_used,
-            expected_system_visible_gas + user_gas,
-            "GAS-09: OOG soft failure must charge only visible system envelope gas"
-        );
-
-        executor
-            .finalize_compressed_entities()
-            .expect("compressed entities should finalize");
-        executor
-            .prepare_final_header_artifacts(0)
-            .expect("final extra_data should encode");
-        let (_evm, result) = executor.finish().expect("finish should succeed");
-        assert_eq!(
-            result.gas_used,
-            expected_system_visible_gas + user_gas,
-            "GAS-09: block/header gas must include only visible system envelope gas plus user gas"
-        );
-        assert_eq!(result.receipts.len(), 4);
-        assert_eq!(result.receipts[0].cumulative_gas_used, cycle_gas);
-        assert_eq!(
-            result.receipts[2].cumulative_gas_used,
-            expected_system_visible_gas
+        assert!(
+            error.to_string().contains("internal system-work budget"),
+            "GAS-09: OOG must fail through the aggregate budget guard: {error}"
         );
         assert_eq!(
-            result.receipts[3].cumulative_gas_used,
-            expected_system_visible_gas + user_gas
+            executor.receipts().len(),
+            receipts_before,
+            "GAS-09: aggregate exhaustion must not append a failure receipt"
+        );
+        assert_eq!(
+            executor.inner.cumulative_tx_gas_used, cumulative_visible_gas_before,
+            "GAS-09: aggregate exhaustion must not change visible gas accounting"
+        );
+        assert_eq!(
+            executor.system_tx_execution_gas, internal_work_before,
+            "GAS-09: aggregate exhaustion must not commit internal-work accounting"
         );
     }
 
@@ -7212,7 +7533,7 @@ mod tests {
     fn system_protocol_precharge_and_ce_gas_are_published_and_block_limited() {
         let signer = test_evm_signer();
         let proposer = signer.address();
-        let mut state = state_with_active_proposer(proposer);
+        let mut state = state_with_active_proposer_without_ocomp(proposer);
         let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer);
         let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
         let mut executor = config.create_executor(evm, execution_ctx(Some(0), Bytes::new()));
@@ -7264,6 +7585,41 @@ mod tests {
         assert_eq!(executor.receipts().len(), receipts_before);
         assert_eq!(executor.inner.cumulative_tx_gas_used, cumulative_before);
         assert_eq!(executor.system_tx_execution_gas, 123);
+    }
+
+    #[test]
+    fn system_internal_work_budget_rejects_before_receipt_or_state_accounting() {
+        let signer = test_evm_signer();
+        let proposer = signer.address();
+        let mut state = state_with_active_proposer_without_ocomp(proposer);
+        let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer);
+        let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
+        let mut executor = config.create_executor(evm, execution_ctx(Some(0), Bytes::new()));
+        executor.system_tx_execution_gas =
+            outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT - 1;
+
+        let receipts_before = executor.receipts().len();
+        let cumulative_before = executor.inner.cumulative_tx_gas_used;
+        let error = executor
+            .push_system_failure_receipt(SystemFailureReceiptInput {
+                tx_type: alloy_consensus::TxType::Eip1559,
+                log_address: outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
+                code: 299,
+                reason: "must not commit past the internal system-work budget".into(),
+                visible_base_gas: 0,
+                compressed_entities_gas: 0,
+                signed_gas_limit: 0,
+                internal_gas_used: 2,
+            })
+            .expect_err("system internal work must be bounded independently from user gas");
+
+        assert!(error.to_string().contains("internal system-work budget"));
+        assert_eq!(executor.receipts().len(), receipts_before);
+        assert_eq!(executor.inner.cumulative_tx_gas_used, cumulative_before);
+        assert_eq!(
+            executor.system_tx_execution_gas,
+            outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT - 1
+        );
     }
 
     #[test]
@@ -7749,8 +8105,8 @@ mod tests {
             // only `settle_voter`). At a single miss this is counter-only (no felony),
             // adding no balance effect — only the parity-checked miss counters.
             let mut seeded: Vec<(Address, [u8; 48])> = vec![(proposer, dummy_pubkey(0xA2))];
-            for (i, a) in addrs.iter().enumerate() {
-                seeded.push((*a, dummy_pubkey(0x50u8 + i as u8)));
+            for member in &snapshot.committee {
+                seeded.push((member.address, member.consensus_pubkey));
             }
             let mut state = state_with_active_validators_seeded(&seeded, move |storage| {
                 // The live credit's escrow binding is written by the N+K CPA
@@ -8017,7 +8373,9 @@ mod tests {
             1,
             B256::repeat_byte(0x91),
         );
-        let boundary = boundary_with(
+        // Block 2 activates current+1, so the boundary carries epoch 1.
+        let boundary = boundary_with_epoch(
+            1,
             true,
             vec![
                 (proposer, dummy_pubkey(0xA2)),
@@ -9486,7 +9844,7 @@ mod tests {
             .address();
         let mut state =
             state_with_active_and_registered_candidate_seeded(old_active, proposer, |storage| {
-                let oracle = outbe_oracle::contract::OracleContract::new(storage.clone());
+                let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
                 oracle.config_is_initialized.write(true).unwrap();
                 oracle.config_enabled.write(true).unwrap();
                 oracle.config_vote_period.write(0).unwrap();
@@ -9940,7 +10298,7 @@ mod tests {
             assert_eq!(record.status, outbe_validatorset::logic::status::ACTIVE);
             assert!(record.has_bls_share);
 
-            let oracle = outbe_oracle::contract::OracleContract::new(storage.clone());
+            let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
             assert_eq!(oracle.resolve_validator_for_feeder(feeder)?, validator);
             Ok::<_, outbe_primitives::error::PrecompileError>(())
         })
@@ -9980,7 +10338,7 @@ mod tests {
 
         let mut slot_storage = HashMapStorageProvider::new(CHAIN_ID);
         let vote_slot = StorageHandle::enter(&mut slot_storage, |storage| {
-            outbe_oracle::contract::OracleContract::new(storage.clone())
+            outbe_oracle::schema::OracleContract::new(storage.clone())
                 .vote_exists
                 .get(&validator)
                 .slot()
@@ -10574,26 +10932,88 @@ mod tests {
     fn seed_registered_active_validator(storage: StorageHandle, validator: Address, pk: &[u8; 48]) {
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         vs.config_owner.write(OWNER).unwrap();
-        vs.config_max_validators.write(128).unwrap();
+        vs.set_config_max_validators(128).unwrap();
         vs.config_epoch_length_blocks.write(60).unwrap();
         vs.config_is_initialized.write(true).unwrap();
         vs.register_validator(OWNER, validator, pk).unwrap();
-        vs.activate_reshared_set(&[validator], B256::ZERO).unwrap();
-        seed_test_committee_snapshot(storage.clone(), &[(validator, *pk)]);
-        // Seed COEN/0xUSD pair + 1.0 rate so begin-block NOD/GEM/INTEX promotion
-        // reads a registered pair instead of reverting "pair not registered".
-        let mut oracle = outbe_oracle::contract::OracleContract::new(storage);
-        oracle.register_pair("COEN", "0xUSD").unwrap();
-        oracle
-            .set_exchange_rate(
-                Address::ZERO,
-                "COEN",
-                "0xUSD",
-                U256::from(1_000_000_000_000_000_000u128),
-                0,
-                0,
-            )
+        vs.activate_validator_via_boundary_for_test(validator)
             .unwrap();
+        seed_test_committee_snapshot(storage.clone(), &[(validator, *pk)]);
+        // Seed COEN/840 pair + 1.0 rate so begin-block NOD/GEM/INTEX promotion
+        // reads a registered pair instead of reverting "pair not registered".
+        // 840 also goes on the reference currency list, matching genesis: the
+        // Nod qualifier reads its ISO from there.
+        outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
+            .unwrap();
+        outbe_oracle::schema::OracleContract::new(storage.clone())
+            .reference_currencies
+            .push(outbe_oracle::api::DAY_TYPE_ISO)
+            .unwrap();
+        outbe_oracle::api::set_exchange_rate(
+            storage,
+            Address::ZERO,
+            outbe_oracle::api::DAY_TYPE_PAIR,
+            U256::from(1_000_000_000_000_000_000u128),
+            0,
+            0,
+        )
+        .unwrap();
+    }
+
+    fn register_and_activate_with_ocomp_registration(
+        validators: &mut outbe_validatorset::contract::ValidatorSet<'_>,
+        validator: Address,
+        consensus_key: &[u8; 48],
+        registration: &outbe_ocomp_protocol::committee::OcompKeyRegistrationV1,
+    ) {
+        validators
+            .register_validator(OWNER, validator, consensus_key)
+            .unwrap();
+        validators.mark_pending(validator).unwrap();
+        let encoded = registration
+            .encode_canonical(&outbe_metadosis::config::poc_schema_limits())
+            .unwrap();
+        validators
+            .confirm_validator_ready(validator, &encoded)
+            .unwrap();
+        validators
+            .activate_validator_via_boundary_for_test(validator)
+            .unwrap();
+    }
+
+    fn seed_registered_active_validator_with_registration(
+        storage: StorageHandle,
+        validator: Address,
+        consensus_key: &[u8; 48],
+        registration: &outbe_ocomp_protocol::committee::OcompKeyRegistrationV1,
+    ) {
+        let mut validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+        validators.config_owner.write(OWNER).unwrap();
+        validators.set_config_max_validators(128).unwrap();
+        validators.config_epoch_length_blocks.write(60).unwrap();
+        validators.config_is_initialized.write(true).unwrap();
+        register_and_activate_with_ocomp_registration(
+            &mut validators,
+            validator,
+            consensus_key,
+            registration,
+        );
+        seed_test_committee_snapshot(storage.clone(), &[(validator, *consensus_key)]);
+        outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
+            .unwrap();
+        outbe_oracle::schema::OracleContract::new(storage.clone())
+            .reference_currencies
+            .push(outbe_oracle::api::DAY_TYPE_ISO)
+            .unwrap();
+        outbe_oracle::api::set_exchange_rate(
+            storage,
+            Address::ZERO,
+            outbe_oracle::api::DAY_TYPE_PAIR,
+            U256::from(1_000_000_000_000_000_000u128),
+            0,
+            0,
+        )
+        .unwrap();
     }
 
     #[test]
@@ -10665,7 +11085,7 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
             // Register and activate validators A, B, C.
@@ -10683,10 +11103,11 @@ mod tests {
             vs.register_validator(OWNER, val_d, &dummy_pubkey(0xD4))
                 .unwrap();
 
-            // Initial reshare: activate A, B, C (not D).
-            let old_hash = B256::with_last_byte(0x01);
-            vs.activate_reshared_set(&[val_a, val_b, val_c], old_hash)
-                .unwrap();
+            // Initial certified boundary: activate A, B, C (not D).
+            for validator in [val_a, val_b, val_c] {
+                vs.activate_validator_via_boundary_for_test(validator)
+                    .unwrap();
+            }
 
             // Step 1: Read old active set — should be [A, B, C].
             let old_set = vs.get_active_consensus_set().unwrap();
@@ -10701,7 +11122,6 @@ mod tests {
             // (We just verify the set is correct — actual slashing tested in Task 01 code.)
 
             // Step 4: NOW activate new reshare with [A, B, D] (C removed, D added).
-            let new_hash = B256::with_last_byte(0x02);
             // First deactivate C (simulate EXITING).
             vs.deactivate_validator(OWNER, val_c).unwrap();
 
@@ -10716,10 +11136,7 @@ mod tests {
             vs.record_participation(&[val_a, val_b], &[val_c]).unwrap();
 
             // Activate D.
-            vs.activate_validator(val_d).unwrap();
-            // Reshare with new set.
-            vs.activate_reshared_set(&[val_a, val_b, val_d], new_hash)
-                .unwrap();
+            vs.activate_validator_via_boundary_for_test(val_d).unwrap();
 
             // After reshare: active set is [A, B, D].
             let new_set = vs.get_active_consensus_set().unwrap();
@@ -10743,7 +11160,7 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
             let val_a = address!("0x1111111111111111111111111111111111111111");
@@ -10761,8 +11178,10 @@ mod tests {
                 .unwrap();
 
             // Old set: 3 validators [A, B, C].
-            vs.activate_reshared_set(&[val_a, val_b, val_c], B256::with_last_byte(0x01))
-                .unwrap();
+            for validator in [val_a, val_b, val_c] {
+                vs.activate_validator_via_boundary_for_test(validator)
+                    .unwrap();
+            }
             let old_set = vs.get_active_consensus_set().unwrap();
             assert_eq!(old_set.len(), 3, "old set must have 3 validators");
 
@@ -10779,9 +11198,7 @@ mod tests {
             .unwrap();
 
             // Now activate new set with 4 validators.
-            vs.activate_validator(val_d).unwrap();
-            vs.activate_reshared_set(&[val_a, val_b, val_c, val_d], B256::with_last_byte(0x02))
-                .unwrap();
+            vs.activate_validator_via_boundary_for_test(val_d).unwrap();
             let new_set = vs.get_active_consensus_set().unwrap();
             assert_eq!(new_set.len(), 4, "new set must have 4 validators");
 
@@ -10816,7 +11233,7 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
             let val_a = address!("0x1111111111111111111111111111111111111111");
@@ -10827,8 +11244,9 @@ mod tests {
             vs.register_validator(OWNER, val_b, &dummy_pubkey(0xB2))
                 .unwrap();
 
-            let hash = B256::with_last_byte(0x42);
-            vs.activate_reshared_set(&[val_a, val_b], hash).unwrap();
+            vs.activate_validator_via_boundary_for_test(val_a).unwrap();
+            vs.activate_validator_via_boundary_for_test(val_b).unwrap();
+            let hash = vs.active_consensus_set_hash.read().unwrap();
 
             // Read state after first activation.
             let set1 = vs.get_active_consensus_set().unwrap();
@@ -10841,9 +11259,7 @@ mod tests {
             assert_eq!(current_hash, hash, "hash must match after first activation");
 
             // Simulate executor's guard: skip if hash matches.
-            if current_hash != hash {
-                vs.activate_reshared_set(&[val_a, val_b], hash).unwrap();
-            }
+            assert_eq!(current_hash, hash);
             // State unchanged.
             let set2 = vs.get_active_consensus_set().unwrap();
             let hash2 = vs.active_consensus_set_hash.read().unwrap();
@@ -10890,7 +11306,7 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
             let val_a = address!("0x1111111111111111111111111111111111111111");
@@ -10909,8 +11325,10 @@ mod tests {
             }
             // Live active set is [A, B, D]; C is registered but no longer a
             // current consensus participant after a reshare.
-            vs.activate_reshared_set(&[val_a, val_b, val_d], B256::with_last_byte(0x02))
-                .unwrap();
+            for validator in [val_a, val_b, val_d] {
+                vs.activate_validator_via_boundary_for_test(validator)
+                    .unwrap();
+            }
             let live_active = vs.get_active_consensus_set().unwrap();
             let live_addrs: Vec<Address> =
                 live_active.iter().map(|v| v.validator_address).collect();
@@ -10928,7 +11346,7 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
             let val_a = address!("0x1111111111111111111111111111111111111111");
@@ -10937,8 +11355,10 @@ mod tests {
                 .unwrap();
             vs.register_validator(OWNER, val_b, &dummy_pubkey(0xB2))
                 .unwrap();
-            vs.activate_reshared_set(&[val_a, val_b], B256::with_last_byte(0x01))
-                .unwrap();
+            for validator in [val_a, val_b] {
+                vs.activate_validator_via_boundary_for_test(validator)
+                    .unwrap();
+            }
 
             let metadata = metadata_with(vec![val_a, val_b, val_a], vec![1, 1, 1], vec![]);
             let err = super::validate_finalized_metadata(storage.clone(), &metadata).unwrap_err();
@@ -10955,14 +11375,13 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
             let val_a = address!("0x1111111111111111111111111111111111111111");
             vs.register_validator(OWNER, val_a, &dummy_pubkey(0xA1))
                 .unwrap();
-            vs.activate_reshared_set(&[val_a], B256::with_last_byte(0x01))
-                .unwrap();
+            vs.activate_validator_via_boundary_for_test(val_a).unwrap();
 
             let stranger = address!("0x9999999999999999999999999999999999999999");
             let metadata = metadata_with(vec![val_a, stranger], vec![1, 1], vec![]);
@@ -10980,7 +11399,7 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
             let val_a = address!("0x1111111111111111111111111111111111111111");
@@ -10990,8 +11409,10 @@ mod tests {
                 vs.register_validator(OWNER, addr, &dummy_pubkey(seed))
                     .unwrap();
             }
-            vs.activate_reshared_set(&[val_a, val_b, val_c], B256::with_last_byte(0x01))
-                .unwrap();
+            for validator in [val_a, val_b, val_c] {
+                vs.activate_validator_via_boundary_for_test(validator)
+                    .unwrap();
+            }
 
             let metadata = metadata_with(vec![val_a, val_b], vec![1, 1], vec![val_c]);
             let err = super::validate_finalized_metadata(storage.clone(), &metadata).unwrap_err();
@@ -11008,14 +11429,13 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
             let val_a = address!("0x1111111111111111111111111111111111111111");
             vs.register_validator(OWNER, val_a, &dummy_pubkey(0xA1))
                 .unwrap();
-            vs.activate_reshared_set(&[val_a], B256::with_last_byte(0x01))
-                .unwrap();
+            vs.activate_validator_via_boundary_for_test(val_a).unwrap();
 
             let metadata = metadata_with(vec![val_a], vec![1, 0], vec![]);
             let err = super::validate_finalized_metadata(storage.clone(), &metadata).unwrap_err();
@@ -11027,6 +11447,14 @@ mod tests {
     }
 
     fn boundary_with(
+        is_validator_set_change: bool,
+        committee: Vec<(Address, [u8; 48])>,
+    ) -> outbe_primitives::consensus::DkgBoundaryArtifact {
+        boundary_with_epoch(0, is_validator_set_change, committee)
+    }
+
+    fn boundary_with_epoch(
+        epoch: u64,
         is_validator_set_change: bool,
         committee: Vec<(Address, [u8; 48])>,
     ) -> outbe_primitives::consensus::DkgBoundaryArtifact {
@@ -11047,10 +11475,10 @@ mod tests {
             vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
         };
         let active_set_hash = super::hash_boundary_active_set(&new_active_set);
-        let committee_set_hash = outbe_validatorset::committee_set_hash_v2(0, &snapshot);
+        let committee_set_hash = outbe_validatorset::committee_set_hash_v2(epoch, &snapshot);
         let vrf_group_public_key = keccak256(&vrf_group_public_key_bytes);
         outbe_primitives::consensus::DkgBoundaryArtifact {
-            epoch: 0,
+            epoch,
             dkg_cycle: 0,
             freeze_height: 0,
             planned_activation_height: 0,
@@ -11075,12 +11503,188 @@ mod tests {
     }
 
     #[test]
+    fn certified_delayed_boundary_atomically_advances_epoch_and_snapshot() {
+        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+        StorageHandle::enter(&mut storage, |storage| {
+            let validator = address!("0x1111111111111111111111111111111111111111");
+            let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+            vs.config_owner.write(OWNER).unwrap();
+            vs.set_config_max_validators(128).unwrap();
+            vs.config_is_initialized.write(true).unwrap();
+            vs.register_validator(OWNER, validator, &dummy_pubkey(0xA1))
+                .unwrap();
+            vs.activate_validator_via_boundary_for_test(validator)
+                .unwrap();
+            vs.epoch_number.write(U256::ZERO).unwrap();
+            vs.epoch_start_block.write(1).unwrap();
+            vs.epoch_start_timestamp
+                .write(TEST_BLOCK_TIMESTAMP_BASE)
+                .unwrap();
+            vs.val_missed_blocks.write(&validator, 7).unwrap();
+            vs.val_missed_votes.write(&validator, 8).unwrap();
+            vs.val_blocks_proposed.write(&validator, 9).unwrap();
+            drop(vs);
+            let slash = outbe_slashindicator::contract::SlashIndicator::new(storage.clone());
+            slash.proposer_miss_count.write(&validator, 10).unwrap();
+            slash.voter_miss_count.write(&validator, 11).unwrap();
+
+            let activation_block = 301;
+            let activation_timestamp = TEST_BLOCK_TIMESTAMP_BASE + 600;
+            let boundary = boundary_with_epoch(1, false, vec![(validator, dummy_pubkey(0xA1))]);
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::new(
+                    activation_block,
+                    activation_timestamp,
+                    CHAIN_ID,
+                    validator,
+                    vec![validator],
+                ),
+                storage.clone(),
+            );
+
+            super::prepare_boundary_epoch_counters(storage.clone(), &boundary, activation_block)
+                .expect("certified boundary must prepare outgoing counters");
+            crate::begin_block_precompile::run_boundary_outcome(&ctx, &boundary)
+                .expect("certified delayed boundary must activate");
+
+            let vs_after = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+            assert_eq!(vs_after.epoch_number.read().unwrap(), U256::from(1));
+            assert_eq!(vs_after.epoch_start_block.read().unwrap(), activation_block);
+            assert_eq!(
+                vs_after.epoch_start_timestamp.read().unwrap(),
+                activation_timestamp
+            );
+            assert_eq!(vs_after.val_missed_blocks.read(&validator).unwrap(), 0);
+            assert_eq!(vs_after.val_missed_votes.read(&validator).unwrap(), 0);
+            assert_eq!(vs_after.val_blocks_proposed.read(&validator).unwrap(), 0);
+            let slash_after = outbe_slashindicator::contract::SlashIndicator::new(storage.clone());
+            assert_eq!(slash_after.proposer_miss_count.read(&validator).unwrap(), 0);
+            assert_eq!(slash_after.voter_miss_count.read(&validator).unwrap(), 0);
+            let (_, extension) =
+                outbe_validatorset::read_ocomp_snapshot_extension_at_epoch(storage, 1)
+                    .unwrap()
+                    .expect("activated epoch must publish its OCOMP snapshot");
+            assert_eq!(extension.epoch, 1);
+            assert_eq!(extension.committee_set_hash, boundary.committee_set_hash);
+        });
+    }
+
+    #[test]
+    fn failed_boundary_snapshot_write_rolls_back_epoch_membership_and_counters() {
+        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+        StorageHandle::enter(&mut storage, |storage| {
+            let validator = address!("0x1111111111111111111111111111111111111111");
+            let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+            vs.config_owner.write(OWNER).unwrap();
+            vs.set_config_max_validators(128).unwrap();
+            vs.config_is_initialized.write(true).unwrap();
+            vs.register_validator(OWNER, validator, &dummy_pubkey(0xA1))
+                .unwrap();
+            vs.activate_validator_via_boundary_for_test(validator)
+                .unwrap();
+            vs.epoch_number.write(U256::ZERO).unwrap();
+            vs.epoch_start_block.write(1).unwrap();
+            vs.epoch_start_timestamp
+                .write(TEST_BLOCK_TIMESTAMP_BASE)
+                .unwrap();
+            vs.val_missed_blocks.write(&validator, 7).unwrap();
+            let active_hash_before = vs.active_consensus_set_hash.read().unwrap();
+            // Force the incoming snapshot writer to fail after the boundary
+            // transition has started. The enclosing activation checkpoint must
+            // restore every earlier epoch/set/counter write.
+            vs.val_ocomp_registration
+                .get_bytes(&validator)
+                .clear()
+                .unwrap();
+            drop(vs);
+            let slash = outbe_slashindicator::contract::SlashIndicator::new(storage.clone());
+            slash.proposer_miss_count.write(&validator, 10).unwrap();
+
+            let boundary = boundary_with_epoch(1, false, vec![(validator, dummy_pubkey(0xA1))]);
+            let block_guard = storage.checkpoint_guard();
+            super::prepare_boundary_epoch_counters(storage.clone(), &boundary, 301)
+                .expect("certified boundary must prepare outgoing counters");
+            let error = super::apply_boundary_outcome(
+                storage.clone(),
+                &boundary,
+                301,
+                TEST_BLOCK_TIMESTAMP_BASE + 600,
+            )
+            .expect_err("missing OCOMP registration must reject incoming snapshot");
+            assert!(error.to_string().contains("no admitted OCOMP registration"));
+            drop(block_guard);
+
+            let vs_after = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+            assert_eq!(vs_after.epoch_number.read().unwrap(), U256::ZERO);
+            assert_eq!(vs_after.epoch_start_block.read().unwrap(), 1);
+            assert_eq!(
+                vs_after.epoch_start_timestamp.read().unwrap(),
+                TEST_BLOCK_TIMESTAMP_BASE
+            );
+            assert_eq!(
+                vs_after.active_consensus_set_hash.read().unwrap(),
+                active_hash_before
+            );
+            assert_eq!(vs_after.val_missed_blocks.read(&validator).unwrap(), 7);
+            let slash_after = outbe_slashindicator::contract::SlashIndicator::new(storage.clone());
+            assert_eq!(
+                slash_after.proposer_miss_count.read(&validator).unwrap(),
+                10
+            );
+            assert!(
+                outbe_validatorset::read_ocomp_snapshot_extension_at_epoch(storage, 1)
+                    .unwrap()
+                    .is_none(),
+                "failed activation must not expose an epoch-1 snapshot"
+            );
+        });
+    }
+
+    #[test]
+    fn boundary_rejects_skipped_epoch_without_mutating_current_state() {
+        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+        StorageHandle::enter(&mut storage, |storage| {
+            let validator = address!("0x1111111111111111111111111111111111111111");
+            let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+            vs.config_owner.write(OWNER).unwrap();
+            vs.set_config_max_validators(128).unwrap();
+            vs.config_is_initialized.write(true).unwrap();
+            vs.register_validator(OWNER, validator, &dummy_pubkey(0xA1))
+                .unwrap();
+            vs.activate_validator_via_boundary_for_test(validator)
+                .unwrap();
+            vs.epoch_number.write(U256::ZERO).unwrap();
+            vs.epoch_start_block.write(1).unwrap();
+            drop(vs);
+
+            let boundary = boundary_with_epoch(2, false, vec![(validator, dummy_pubkey(0xA1))]);
+            let error = super::apply_boundary_outcome(
+                storage.clone(),
+                &boundary,
+                301,
+                TEST_BLOCK_TIMESTAMP_BASE + 600,
+            )
+            .expect_err("BoundaryOutcome must not skip activated epochs");
+            assert!(error.to_string().contains("activate current+1"));
+
+            let vs_after = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+            assert_eq!(vs_after.epoch_number.read().unwrap(), U256::ZERO);
+            assert_eq!(vs_after.epoch_start_block.read().unwrap(), 1);
+            assert!(
+                outbe_validatorset::read_ocomp_snapshot_extension_at_epoch(storage, 2)
+                    .unwrap()
+                    .is_none()
+            );
+        });
+    }
+
+    #[test]
     fn apply_boundary_outcome_fatals_on_hash_change_without_set_change() {
         let mut storage = HashMapStorageProvider::new(CHAIN_ID);
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
             let val_a = address!("0x1111111111111111111111111111111111111111");
@@ -11089,13 +11693,20 @@ mod tests {
                 .unwrap();
             vs.register_validator(OWNER, val_b, &dummy_pubkey(0xB2))
                 .unwrap();
-            let current_hash = super::hash_boundary_active_set(&[val_a, val_b]);
-            vs.activate_reshared_set(&[val_a, val_b], current_hash)
-                .unwrap();
+            for validator in [val_a, val_b] {
+                vs.activate_validator_via_boundary_for_test(validator)
+                    .unwrap();
+            }
 
             // Boundary claims membership unchanged but carries a different active set.
             let boundary = boundary_with(false, vec![(val_a, dummy_pubkey(0xA1))]);
-            let err = super::apply_boundary_outcome(storage.clone(), &boundary).unwrap_err();
+            let err = super::apply_boundary_outcome(
+                storage.clone(),
+                &boundary,
+                1,
+                TEST_BLOCK_TIMESTAMP_BASE,
+            )
+            .unwrap_err();
             assert!(
                 err.to_string()
                     .contains("active_set_hash changed without validator-set change"),
@@ -11110,7 +11721,7 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
             let val_a = address!("0x1111111111111111111111111111111111111111");
@@ -11120,9 +11731,11 @@ mod tests {
                 vs.register_validator(OWNER, addr, &dummy_pubkey(seed))
                     .unwrap();
             }
-            let current_hash = super::hash_boundary_active_set(&[val_a, val_b]);
-            vs.activate_reshared_set(&[val_a, val_b], current_hash)
-                .unwrap();
+            for validator in [val_a, val_b] {
+                vs.activate_validator_via_boundary_for_test(validator)
+                    .unwrap();
+            }
+            vs.admit_validator_for_boundary_for_test(val_c).unwrap();
 
             let boundary = boundary_with(
                 true,
@@ -11133,7 +11746,8 @@ mod tests {
                 ],
             );
             let new_hash = boundary.reshare.active_set_hash;
-            super::apply_boundary_outcome(storage.clone(), &boundary).unwrap();
+            super::apply_boundary_outcome(storage.clone(), &boundary, 1, TEST_BLOCK_TIMESTAMP_BASE)
+                .unwrap();
 
             let vs_after = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             let now_hash = vs_after.active_consensus_set_hash.read().unwrap();
@@ -11150,7 +11764,7 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
             let retained = address!("0x1111111111111111111111111111111111111111");
@@ -11159,9 +11773,10 @@ mod tests {
                 .unwrap();
             vs.register_validator(OWNER, expired, &dummy_pubkey(0xB2))
                 .unwrap();
-            let current_hash = super::hash_boundary_active_set(&[retained, expired]);
-            vs.activate_reshared_set(&[retained, expired], current_hash)
-                .unwrap();
+            for validator in [retained, expired] {
+                vs.activate_validator_via_boundary_for_test(validator)
+                    .unwrap();
+            }
 
             let mut boundary = boundary_with(true, vec![(retained, dummy_pubkey(0xA1))]);
             boundary.tee_expired_target_exclusions = vec![expired];
@@ -11170,7 +11785,8 @@ mod tests {
                     &boundary.tee_expired_target_exclusions,
                 )
                 .unwrap();
-            super::apply_boundary_outcome(storage.clone(), &boundary).unwrap();
+            super::apply_boundary_outcome(storage.clone(), &boundary, 1, TEST_BLOCK_TIMESTAMP_BASE)
+                .unwrap();
 
             let vs_after = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             assert_eq!(
@@ -11192,17 +11808,23 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
             let retained = address!("0x1111111111111111111111111111111111111111");
             vs.register_validator(OWNER, retained, &dummy_pubkey(0xA1))
                 .unwrap();
-            let hash = super::hash_boundary_active_set(&[retained]);
-            vs.activate_reshared_set(&[retained], hash).unwrap();
+            vs.activate_validator_via_boundary_for_test(retained)
+                .unwrap();
 
             let mut boundary = boundary_with(false, vec![(retained, dummy_pubkey(0xA1))]);
             boundary.tee_expired_target_exclusions_hash = B256::with_last_byte(0xFF);
-            let error = super::apply_boundary_outcome(storage.clone(), &boundary).unwrap_err();
+            let error = super::apply_boundary_outcome(
+                storage.clone(),
+                &boundary,
+                1,
+                TEST_BLOCK_TIMESTAMP_BASE,
+            )
+            .unwrap_err();
             assert!(error
                 .to_string()
                 .contains("TEE expiry exclusions commitment mismatch"));
@@ -11215,17 +11837,18 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
             let val_a = address!("0x1111111111111111111111111111111111111111");
             vs.register_validator(OWNER, val_a, &dummy_pubkey(0xA1))
                 .unwrap();
-            let hash = super::hash_boundary_active_set(&[val_a]);
-            vs.activate_reshared_set(&[val_a], hash).unwrap();
+            vs.activate_validator_via_boundary_for_test(val_a).unwrap();
+            let hash = vs.active_consensus_set_hash.read().unwrap();
 
             let boundary = boundary_with(false, vec![(val_a, dummy_pubkey(0xA1))]);
-            super::apply_boundary_outcome(storage.clone(), &boundary).unwrap();
+            super::apply_boundary_outcome(storage.clone(), &boundary, 1, TEST_BLOCK_TIMESTAMP_BASE)
+                .unwrap();
 
             let vs_after = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             assert_eq!(vs_after.active_consensus_set_hash.read().unwrap(), hash);
@@ -11255,19 +11878,24 @@ mod tests {
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(128).unwrap();
+            vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
             let val_a = address!("0x1111111111111111111111111111111111111111");
             vs.register_validator(OWNER, val_a, &dummy_pubkey(0xA1))
                 .unwrap();
-            let hash = super::hash_boundary_active_set(&[val_a]);
-            vs.activate_reshared_set(&[val_a], hash).unwrap();
+            vs.activate_validator_via_boundary_for_test(val_a).unwrap();
 
             let mut boundary = boundary_with(false, vec![(val_a, dummy_pubkey(0xA1))]);
             boundary.committee_set_hash = B256::with_last_byte(0xFE);
 
-            let err = super::apply_boundary_outcome(storage.clone(), &boundary).unwrap_err();
+            let err = super::apply_boundary_outcome(
+                storage.clone(),
+                &boundary,
+                1,
+                TEST_BLOCK_TIMESTAMP_BASE,
+            )
+            .unwrap_err();
             assert!(
                 err.to_string().contains("committee_set_hash mismatch"),
                 "expected committee_set_hash mismatch, got {err}"

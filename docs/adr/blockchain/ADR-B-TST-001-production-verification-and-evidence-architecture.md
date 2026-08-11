@@ -221,8 +221,10 @@ process domains, runtime block-1 WWD creation, finalized canonical `Advance`
 edges, public quorum apply and the terminal 257-record result on one genesis.
 Its only time control is the existing testnet
 `unix-time-offset-secs`, applied through two whole-committee restart barriers;
-the verifier requires continuous finalized heights and unchanged
-`50h/0h/48h/12h` phase durations. The generic-ledger regression tests are themselves required
+the verifier requires continuous finalized heights and phase durations equal to
+the immutable `GenesisProtocolParametersV1` decoded from the retained executed
+`genesis.json`. LocalNet may use short valid genesis values; post-launch state
+mutation and verifier-side duration literals are forbidden. The generic-ledger regression tests are themselves required
 runner rows, so exact revision/profile/lane and cross-pack fail-closed behavior
 cannot be bypassed by presenting only the policy adapter test. The final
 `verify` command reconstructs the complete `DomainEvidenceV1` from

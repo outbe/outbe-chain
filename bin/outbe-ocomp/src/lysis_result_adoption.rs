@@ -98,6 +98,7 @@ pub fn verify_lysis_root_reduce_phase_replay(
             limits,
             reader,
             inbox: replay_inbox,
+            cancelled: None,
         },
     )
     .map_err(|_| LysisResultAdoptionError::ReplayExecutionFailed)?;
