@@ -47,6 +47,7 @@ use crate::dkg_manager::Mailbox as DkgManagerMailbox;
 use crate::finalization::attestation::{
     validate_consensus_metadata_for_verify, AttestationValidationContext, AttestationVerdict,
 };
+use crate::finalization::state::FinalizationViewAccess;
 use crate::finalization::util::build_signer_bitmap;
 use crate::hybrid::election::{HybridElectorConfigProvider, HybridRandom};
 use crate::hybrid::{HybridScheme, HybridSchemeProvider};
@@ -62,6 +63,14 @@ use crate::application::epoch_boundary::{
 struct TestApplicationShared {
     shared: ApplicationShared,
     _projection_publisher: ProjectionReadinessPublisher,
+}
+
+struct FixedUnixTimeSource(u64);
+
+impl super::UnixTimeSource for FixedUnixTimeSource {
+    fn now_millis(&self) -> eyre::Result<u64> {
+        Ok(self.0)
+    }
 }
 
 impl std::ops::Deref for TestApplicationShared {
@@ -1045,6 +1054,73 @@ fn consensus_block_with_number(seed: u8, number: u64) -> ConsensusBlock {
     block.header.extra_data = Bytes::from(vec![seed]);
     let block = block.map_header(OutbeHeader::new);
     ConsensusBlock::from_sealed(SealedBlock::seal_slow(block))
+}
+
+fn consensus_block_with_timestamp(seed: u8, number: u64, timestamp_millis: u64) -> ConsensusBlock {
+    assert_eq!(timestamp_millis % 1_000, 0);
+    let mut block = Block::default();
+    block.header.number = number;
+    block.header.timestamp = timestamp_millis / 1_000;
+    block.header.extra_data = Bytes::from(vec![seed]);
+    let block = block.map_header(OutbeHeader::new);
+    ConsensusBlock::from_sealed(SealedBlock::seal_slow(block))
+}
+
+#[test]
+fn forfeited_build_does_not_advance_retry_timestamp_source() {
+    const BAND: u64 = outbe_primitives::consensus::MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS;
+    let parent_timestamp = 1_781_255_987_000u64;
+
+    commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30)).start(
+        |context| async move {
+            use commonware_runtime::Supervisor as _;
+            let clock = context.child("timestamp_retry");
+            let (marshal_mailbox, resolver_keepalive, actor_handle) =
+                start_marshal_without_available_block(context).await;
+            let mut shared =
+                finalizer_test_shared(marshal_mailbox, HybridSchemeProvider::<MinSig>::new());
+            shared.shared.unix_time_source = Arc::new(FixedUnixTimeSource(
+                parent_timestamp.saturating_add(10 * BAND),
+            ));
+            shared
+                .finalization_view
+                .advance_timestamp_floor(parent_timestamp);
+
+            let parent = consensus_block_with_timestamp(0x54, 42, parent_timestamp);
+            let parent_digest = parent.digest();
+            let proof_key = crate::finalization::parent_cert_store::CertifiedParentProofKey::new(
+                0,
+                1,
+                parent_digest.0,
+            );
+            let round = Round::new(Epoch::new(0), View::new(2));
+
+            for _ in 0..2 {
+                let outcome = shared
+                    .build_block(
+                        &clock,
+                        round,
+                        commonware_consensus::types::Height::new(parent.number()),
+                        parent_digest,
+                        Some(parent.clone()),
+                        Some(proof_key),
+                        std::time::SystemTime::now(),
+                        outbe_primitives::projection::ExecutionReadBudget::default(),
+                    )
+                    .await
+                    .expect("missing parent proof must forfeit without a handler failure");
+                assert!(matches!(
+                    outcome,
+                    super::BuildBlockOutcome::ParentProofUnavailable
+                ));
+                assert_eq!(shared.finalization_view.timestamp_floor(), parent_timestamp);
+            }
+
+            drop(resolver_keepalive);
+            actor_handle.abort();
+            let _ = actor_handle.await;
+        },
+    );
 }
 
 fn finalization_metadata_fixture(
