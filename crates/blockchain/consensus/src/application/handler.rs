@@ -118,6 +118,26 @@ fn clamp_proposed_timestamp_millis(
     std::cmp::max(now_millis, min_timestamp_millis).min(max_timestamp_millis)
 }
 
+/// Derive the proposal timestamp from the exact resolved parent block.
+///
+/// A missing parent is the existing genesis-child case. For every later block,
+/// the parent header is the sole source of the timestamp band: process-local
+/// observations from earlier build attempts cannot move it.
+fn proposal_timestamp_millis(
+    parent_block: Option<&ConsensusBlock>,
+    now_millis: u64,
+    band_millis: u64,
+    min_advance_millis: u64,
+) -> u64 {
+    let parent_timestamp_millis = parent_block.map_or(0, ConsensusBlock::timestamp_millis);
+    clamp_proposed_timestamp_millis(
+        parent_timestamp_millis,
+        now_millis,
+        band_millis,
+        min_advance_millis,
+    )
+}
+
 fn finalized_parent_attestation_from_phase1_system_tx(
     block: &ConsensusBlock,
 ) -> eyre::Result<Option<FinalizedParentAttestation>> {
@@ -1283,7 +1303,6 @@ impl ApplicationShared {
             return Ok(BuildBlockOutcome::EpochStale);
         }
 
-        let parent_timestamp_millis = self.finalization_view.timestamp_floor();
         let now_millis = self.unix_time_source.now_millis()?;
         // Clamp the proposed timestamp into the deterministic two-sided drift band
         // `[parent + MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
@@ -1299,22 +1318,18 @@ impl ApplicationShared {
         // self-heals, ratcheting time forward by at most one band per block until
         // it catches up to real time.
         //
-        // Exception — the genesis child: before any block has finalized,
-        // `finalization_view.last_timestamp_millis` is 0 (it is NOT seeded with
-        // the genesis header timestamp), so the band is meaningless and only
-        // monotonicity is enforced. The validator side uses the genuine genesis
-        // header timestamp and exempts the genesis parent (`parent.number() == 0`)
-        // from both band bounds, so block 1 (≈ genesis + now) always validates and
-        // no unbonding-lock bypass is possible at the first block.
-        let timestamp_millis = clamp_proposed_timestamp_millis(
-            parent_timestamp_millis,
+        // Exception — the genesis child has no resolved consensus parent block,
+        // so the band is meaningless and only monotonicity is enforced. The
+        // validator side exempts the genesis parent (`parent.number() == 0`) from
+        // both band bounds, so block 1 (≈ genesis + now) always validates and no
+        // unbonding-lock bypass is possible at the first block.
+        let timestamp_millis = proposal_timestamp_millis(
+            parent_block.as_ref(),
             now_millis,
             outbe_primitives::consensus::MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
             outbe_primitives::consensus::MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
         );
-        let prev_randao = self
-            .finalization_view
-            .advance_floor_and_read_prev_randao(timestamp_millis);
+        let prev_randao = self.finalization_view.prev_randao();
 
         // build header.extra_data only from consensus header
         // artifacts that affect block hashing (DKG boundary/dealer-log).
@@ -2224,7 +2239,12 @@ mod handler_tests;
 
 #[cfg(test)]
 mod clamp_tests {
-    use super::{apply_unix_time_offset_millis, clamp_proposed_timestamp_millis};
+    use super::{
+        apply_unix_time_offset_millis, clamp_proposed_timestamp_millis, proposal_timestamp_millis,
+    };
+    use alloy_primitives::Bytes;
+    use outbe_primitives::OutbeHeader;
+    use reth_ethereum::{primitives::SealedBlock, Block};
 
     const BAND: u64 = 60 * 60 * 1_000; // 1h, matches MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS
     const MIN: u64 = 1_000; // matches MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS
@@ -2288,6 +2308,22 @@ mod clamp_tests {
         assert_eq!(
             clamp_proposed_timestamp_millis(parent, parent + MIN, BAND, MIN),
             parent + MIN
+        );
+    }
+
+    #[test]
+    fn proposal_timestamp_is_derived_from_the_exact_parent_block() {
+        let parent_timestamp = 1_781_255_987_000u64;
+        let mut parent = Block::default();
+        parent.header.number = 42;
+        parent.header.timestamp = parent_timestamp / 1_000;
+        parent.header.extra_data = Bytes::from_static(b"exact-parent");
+        let parent = parent.map_header(OutbeHeader::new);
+        let parent = super::ConsensusBlock::from_sealed(SealedBlock::seal_slow(parent));
+
+        assert_eq!(
+            proposal_timestamp_millis(Some(&parent), parent_timestamp + 10 * BAND, BAND, MIN,),
+            parent_timestamp + BAND,
         );
     }
 }
