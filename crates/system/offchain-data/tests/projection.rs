@@ -253,6 +253,7 @@ fn nod_body(nod_id: EntityId36, owner: Address, bucket_key: B256) -> NodItemStat
         issuance_currency: 840,
         reference_currency: 978,
         issued_at: 123_456,
+        is_settled: false,
     }
 }
 

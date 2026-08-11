@@ -20,14 +20,20 @@ pub enum NodFactoryError {
     #[error("nod is not qualified")]
     NodNotQualified,
 
+    #[error("nod is already settled")]
+    NodAlreadySettled,
+
+    #[error("nod is not settled")]
+    NodNotSettled,
+
     #[error("insufficient proof of work")]
     InsufficientProofOfWork,
 
     #[error("nonce exceeds uint64 range")]
     NonceExceedsUint64Range,
 
-    #[error("invalid asset")]
-    InvalidAsset,
+    #[error("no settlement asset registered for reference currency {reference_currency}")]
+    NoSettlementAsset { reference_currency: u16 },
 }
 
 impl From<NodFactoryError> for PrecompileError {

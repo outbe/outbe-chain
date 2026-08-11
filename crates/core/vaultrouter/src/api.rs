@@ -28,6 +28,22 @@ pub fn deposit(storage: &StorageHandle<'_>, asset: Address, amount: U256) -> Res
         .map_err(|_| PrecompileError::Revert("deposit undecodable".into()))
 }
 
+/// `referenceCurrencyAssets`: every asset registered under an ISO 4217 code.
+/// Read-only, so this uses a staticcall. Order is not stable across removals.
+pub fn reference_currency_assets(
+    storage: &StorageHandle<'_>,
+    iso_code: u16,
+) -> Result<Vec<Address>> {
+    let ret = storage.staticcall(
+        VAULT_ROUTER_ADDRESS,
+        IVaultRouter::referenceCurrencyAssetsCall { isoCode: iso_code }
+            .abi_encode()
+            .into(),
+    )?;
+    IVaultRouter::referenceCurrencyAssetsCall::abi_decode_returns(&ret)
+        .map_err(|_| PrecompileError::Revert("referenceCurrencyAssets undecodable".into()))
+}
+
 /// `withdraw`: redeem `amount` of `asset` from its reserve vault and top
 /// it up into `receiver` via an EVM sub-call to the vault router, returning the
 /// burned shares.

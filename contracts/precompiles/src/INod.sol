@@ -38,6 +38,7 @@ interface INod {
         uint256 costOfGratisMinor;
         uint256 costAmountMinor;
         bool isQualified;
+        bool isSettled;
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
         uint64 issuedAt;

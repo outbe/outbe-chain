@@ -1,4 +1,7 @@
 //! ABI definitions for outbe precompile contracts.
+//!
+//! Every interface is generated from its canonical Solidity source under
+//! `contracts/precompiles/src/`.
 
 use alloy_primitives::{address, Address};
 use alloy_sol_types::sol;
@@ -25,241 +28,17 @@ pub const CYCLE_ADDR: Address = address!("0x000000000000000000000000000000000000
 #[cfg(test)]
 pub const OUTBE_SYSTEM_TX_ADDR: Address = address!("0xff00000000000000000000000000000000000001");
 
-sol! {
-    #[derive(Debug)]
-    interface IValidatorSet {
-        function getValidators() external view returns (address[] memory);
-        function getActiveValidators() external view returns (address[] memory);
-        function getActiveConsensusSet() external view returns (address[] memory);
-        function validatorByAddress(address addr) external view returns (
-            address validatorAddress,
-            bytes memory consensusPubkey,
-            uint256 stake,
-            uint8 status,
-            uint64 slashCount,
-            uint64 missedBlocks,
-            uint64 missedVotes,
-            uint64 blocksProposed,
-            uint64 joinedAtHeight,
-            uint64 deactivatedAtHeight,
-            uint64 unbondingEnd,
-            bool hasBLSShare
-        );
-        function validatorCount() external view returns (uint32);
-        function activeValidatorCount() external view returns (uint32);
-        function activeConsensusCount() external view returns (uint32);
-        function isValidator(address addr) external view returns (bool);
-        function isConsensusParticipant(address addr) external view returns (bool);
-        function hasPendingSetChange() external view returns (bool);
-        function getEpochNumber() external view returns (uint256);
-        function getEpochStartTimestamp() external view returns (uint64);
-        function getEpochStartBlock() external view returns (uint64);
-        function setDelegate(uint8 role, address delegate) external;
-        function revokeDelegate(uint8 role) external;
-        function getDelegate(address validator, uint8 role) external view returns (address);
-        function resolveValidator(uint8 role, address signer) external view returns (address);
-        function registerValidator(address validatorAddress, bytes calldata consensusPubkey, bytes calldata blsSignature) external;
-        function setP2pAddress(address validatorAddress, uint8 version, bytes calldata encoded) external;
-        function getP2pAddress(address validatorAddress) external view returns (uint8 version, bytes memory encoded);
-        function deactivateValidator(address validatorAddress) external;
-        function confirmValidatorReady(bytes calldata registration) external;
-        event ValidatorRegistered(address indexed validator, uint64 index);
-        event ValidatorActivated(address indexed validator);
-        event ValidatorDeactivated(address indexed validator, uint64 atHeight);
-        event ValidatorForcedExit(address indexed validator, uint64 atHeight);
-        event EpochTransition(uint256 indexed newEpochNumber, uint64 timestamp, uint32 activeValidatorCount);
-        event ConsensusSetUpdated(uint32 activeCount);
-    }
-
-    #[derive(Debug)]
-    interface ISlashIndicator {
-        function submitDoubleProposalEvidence(bytes calldata block1, bytes calldata block2) external;
-        function submitConflictingVoteEvidence(bytes calldata vote1, bytes calldata vote2) external;
-        function getProposerMissCount(address validator) external view returns (uint64);
-        function getVoterMissCount(address validator) external view returns (uint64);
-        function getFelonyCount(address validator) external view returns (uint64);
-
-        event ProposerFelony(address indexed validator, uint64 missCount, uint64 felonyCount);
-        event ProposerMisdemeanor(address indexed validator, uint64 missCount);
-        event VoterMisdemeanor(address indexed validator, uint64 missCount);
-        event EvidenceFelonyApplied(
-            address indexed validator,
-            address indexed submitter,
-            uint256 slashedAmount,
-            uint256 submitterReward
-        );
-        event ByzantineFelony(address indexed validator, uint256 slashedAmount, uint64 felonyCount);
-    }
-
-    #[derive(Debug)]
-    interface IStaking {
-        function stake(address validatorAddress, uint256 amount) external;
-        function unstake(uint256 amount) external;
-        function claimUnbonded() external;
-        function unjailValidator() external;
-        function getStake(address validator) external view returns (uint256);
-        function getTotalStaked() external view returns (uint256);
-    }
-
-    #[derive(Debug)]
-    interface ITribute {
-        function name() external view returns (string memory);
-        function symbol() external view returns (string memory);
-        function totalSupply() external view returns (uint256);
-        function balanceOf(address owner) external view returns (uint256);
-        function ownerOf(uint256 tokenId) external view returns (address owner);
-        function tokenURI(uint256 tokenId) external view returns (string memory);
-        function getDayTotals(uint32 worldwideDay)
-            external
-            view
-            returns (
-                uint32 tributeCount,
-                uint256 tributeNominalAmount,
-                uint256 totalGratisLoadMinor,
-                bool isSealed
-            );
-        function getTributesByOwner(address owner) external view returns (uint256[] memory tokenIds);
-        function getTributesByDay(uint32 worldwideDay) external view returns (uint256[] memory tokenIds);
-        function supportsInterface(bytes4 interfaceId) external view returns (bool);
-    }
-
-    #[derive(Debug)]
-    interface ITributeFactory {
-        function offerTribute(
-            bytes cipherText,
-            bytes nonce,
-            uint256 ephemeralPubkey,
-            uint16 referenceCurrency,
-            bool excludeFromIntexIssuance,
-            bytes zkProof,
-            bytes zkVerificationKey,
-            bytes zkPublicKey,
-            bytes zkMerkleRoot,
-            bytes signature
-        ) external returns (uint256 tributeId);
-    }
-
-    #[derive(Debug)]
-    interface ICycle {
-        event CycleTriggerExecuted(
-            uint32 indexed id,
-            uint64 scheduledAt,
-            uint64 blockTimestamp,
-            uint64 blockNumber
-        );
-    }
-
-    #[derive(Debug)]
-    interface INod {
-        // ERC-165
-        function supportsInterface(bytes4 interfaceId) external view returns (bool);
-
-        // ERC-721
-        function balanceOf(address owner) external view returns (uint256 balance);
-        function ownerOf(uint256 nodId) external view returns (address);
-
-        // ERC-721-metadata
-        function name() external view returns (string memory);
-        function symbol() external view returns (string memory);
-        function tokenURI(uint256 nodId) external view returns (string memory);
-
-        // ERC-721-enumerable
-        function totalSupply() external view returns (uint256);
-        function tokenByIndex(uint256 index) external view returns (uint256);
-        function tokenOfOwnerByIndex(address owner, uint256 index) external view returns (uint256);
-
-        // outbe-specific
-        function mineGratis(
-            uint256 nodId,
-            uint256 nonce,
-            address asset,
-            address vaultRouter
-        ) external returns (uint256);
-        function nodData(uint256 nodId) external view returns (
-            uint256 nodId,
-            address owner,
-            uint32 worldwideDay,
-            uint32 leagueId,
-            uint256 floorPriceMinor,
-            uint256 gratisLoadMinor,
-            uint256 costOfGratisMinor,
-            uint256 costAmountMinor,
-            bool isQualified,
-            uint32 settlementToken,
-        );
-
-        // backward compatibility
-        function tokens(address owner) external view returns (uint256[] memory);
-
-        event NodIssued(
-            address indexed owner,
-            string nodId,
-            uint32 worldwideDay,
-            uint256 leagueId,
-            uint256 floorPriceMinor,
-            uint256 gratisLoadMinor,
-            uint256 costOfGratisMinor,
-            uint256 costAmountMinor
-        );
-        event GratisMined(address indexed owner, string nodId, uint256 amount);
-        event NodBucketQualified(
-            bytes32 indexed bucketKey,
-            uint256 worldwideDay,
-            uint256 leagueId,
-            uint256 floorPriceMinor,
-            bool isQualified
-        );
-    }
-
-    #[derive(Debug)]
-    interface IOracle {
-        function getExchangeRate(address base, address quote) external view returns (uint256 rate);
-        function getExchangeRateData(address base, address quote) external view returns (uint256 rate, uint64 lastBlock, uint64 lastTimestamp);
-        function getCoenExchangeRateFor(uint16 isoCode) external view returns (uint256 rate);
-        function getVwap(address base, address quote, uint64 lookbackSeconds) external view returns (uint256 vwap);
-        function getVwapForTimeRange(address base, address quote, uint64 startTime, uint64 endTime) external view returns (uint256 vwap);
-        function getScurveValue(address base, address quote, uint64 timestamp) external view returns (uint256 value);
-        function getParams() external view returns (uint64 votePeriod, uint256 rewardBand, uint64 slashWindow, uint256 minValidPerWindow, uint256 slashFraction, uint64 lookbackDuration, bool enabled);
-        function getVotePenaltyCounter(address validator) external view returns (uint64 success, uint64 abstain, uint64 miss);
-        function getFeederDelegation(address validator) external view returns (address feeder);
-        function isVoteTarget(address base, address quote) external view returns (bool);
-        function getPairCount() external view returns (uint32 count);
-        function getPairByIndex(uint32 index) external view returns (address base, address quote);
-        function getVoteTargets() external view returns (address[] memory bases, address[] memory quotes);
-        function getAggregateVote(address validator) external view returns (bool exists, address[] memory bases, address[] memory quotes, uint256[] memory rates, uint256[] memory volumes);
-        function getSlashWindowProgress(address validator) external view returns (uint64 success, uint64 abstain, uint64 miss, uint64 slashWindow);
-        function getPriceSnapshotHistory(address base, address quote, uint32 count) external view returns (uint64[] memory timestamps, uint256[] memory rates, uint256[] memory volumes);
-        function getAllPriceSnapshotHistory(uint32 count) external view returns (uint64[] memory snapshotIds, uint64[] memory timestamps, address[] memory bases, address[] memory quotes, uint256[] memory rates, uint256[] memory volumes);
-        function getTwap(address base, address quote, uint64 lookbackSeconds) external view returns (uint256 twap);
-        function getTwaps(uint64 lookbackSeconds) external view returns (address[] memory bases, address[] memory quotes, uint256[] memory twaps, uint64[] memory lookbackSeconds);
-        function getDayVwap(address base, address quote) external view returns (uint256 vwap);
-        function getUtcDayVwap(address base, address quote, uint32 utcDay) external view returns (uint256 vwap);
-        function getWorldwideDayVwap(uint64 startTime, uint64 endTime) external view returns (address[] memory bases, address[] memory quotes, uint256[] memory vwaps, uint64[] memory lookbackSeconds);
-        function getWorldwideDayVwapSnapshot(uint32 worldwideDay) external view returns (uint64 startTime, uint64 endTime, address[] memory bases, address[] memory quotes, uint256[] memory vwaps, uint64[] memory lookbackSeconds);
-        function getScurveEntries(address base, address quote) external view returns (uint64[] memory peakDays, uint256[] memory peakPrices, uint256[] memory currentValues);
-        function getScurveValues(address base, address quote, uint64 timestamp) external view returns (uint64 targetDay, uint64[] memory peakDays, uint256[] memory peakPrices, uint256[] memory values);
-        function getAllScurveData() external view returns (address[] memory bases, address[] memory quotes, uint64[] memory peakDays, uint256[] memory peakPrices);
-        function getAllScurveDataForPair(address base, address quote) external view returns (uint64[] memory peakDays, uint256[] memory peakPrices);
-        function getNominalPrice(address base, address quote, uint64 timestamp) external view returns (uint256 price);
-        function getNominalPriceComponents(address base, address quote, uint64 timestamp) external view returns (uint256 nominalPrice, uint256 vwap, uint256 maxScurve, string memory source);
-        function delegateFeederConsent(address feeder) external;
-    }
-}
-
-sol!(
-    #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
-    "../../contracts/precompiles/src/IUpdate.sol"
-);
-
-sol!(
-    #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
-    "../../contracts/precompiles/src/IVote.sol"
-);
-
-sol!(
-    #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
-    "../../contracts/precompiles/src/IStablecoinPolicyRegistry.sol"
-);
+sol!("../../contracts/precompiles/src/IValidatorSet.sol");
+sol!("../../contracts/precompiles/src/ISlashIndicator.sol");
+sol!("../../contracts/precompiles/src/IStaking.sol");
+sol!("../../contracts/precompiles/src/ITribute.sol");
+sol!("../../contracts/precompiles/src/ITributeFactory.sol");
+sol!("../../contracts/precompiles/src/ICycle.sol");
+sol!("../../contracts/precompiles/src/INod.sol");
+sol!("../../contracts/precompiles/src/IOracle.sol");
+sol!("../../contracts/precompiles/src/IUpdate.sol");
+sol!("../../contracts/precompiles/src/IVote.sol");
+sol!("../../contracts/precompiles/src/IStablecoinPolicyRegistry.sol");
 
 pub const ORACLE_ADDR: Address = address!("0x000000000000000000000000000000000000EE05");
 
@@ -343,7 +122,7 @@ mod tests {
         );
         assert_eq!(
             INod::NodBucketQualified::SIGNATURE_HASH,
-            keccak256("NodBucketQualified(bytes32,uint256,uint256,uint256,bool)")
+            keccak256("NodBucketQualified(bytes32,uint256,uint256,bool)")
         );
         assert_eq!(
             ICycle::CycleTriggerExecuted::SIGNATURE_HASH,

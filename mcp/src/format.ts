@@ -1,5 +1,11 @@
 import { type AbiFunction, type AbiParameter, formatUnits } from "viem";
-import { currencyLabel, dayTypeName, gemStateName, statusName } from "./registry.js";
+import {
+  currencyLabel,
+  dayTypeName,
+  gemStateName,
+  proposalStatusName,
+  statusName,
+} from "./registry.js";
 
 /**
  * Turn viem-decoded contract return values into human-readable JSON, driven by
@@ -52,8 +58,15 @@ function isUint(type: string, bits?: number): boolean {
   return type.startsWith("uint");
 }
 
-/** Format a single (non-array, non-tuple) scalar value by name + type. */
-function formatScalar(name: string, type: string, value: unknown): unknown {
+/**
+ * Format a single (non-array, non-tuple) scalar value by name + type.
+ *
+ * `owner` is the enclosing tuple's `internalType` (e.g. `struct
+ * IGovernance.Proposal`) when there is one. A bare `status` byte means the
+ * WorldwideDay lifecycle everywhere except inside a governance proposal, which
+ * uses its own enum — so the owning struct disambiguates them.
+ */
+function formatScalar(name: string, type: string, value: unknown, owner?: string): unknown {
   const n = name ?? "";
 
   if (isUint(type, 32) && DATE_RE.test(n)) {
@@ -62,7 +75,8 @@ function formatScalar(name: string, type: string, value: unknown): unknown {
   }
   if (isUint(type, 8) && n === "status") {
     const v = Number(value);
-    return { code: v, name: statusName(v) };
+    const inProposal = owner !== undefined && /\bIGovernance\./.test(owner);
+    return { code: v, name: inProposal ? proposalStatusName(v) : statusName(v) };
   }
   if (isUint(type, 8) && n === "dayType") {
     const v = Number(value);
@@ -94,27 +108,31 @@ function formatScalar(name: string, type: string, value: unknown): unknown {
 }
 
 /** Recursively format a value against its ABI parameter metadata. */
-export function formatParam(param: AbiParameter, value: unknown): unknown {
+export function formatParam(param: AbiParameter, value: unknown, owner?: string): unknown {
   const { type } = param;
 
   if (type.endsWith("[]")) {
     const base = { ...param, type: type.slice(0, -2) } as AbiParameter;
-    return Array.isArray(value) ? value.map((v) => formatParam(base, v)) : value;
+    return Array.isArray(value) ? value.map((v) => formatParam(base, v, owner)) : value;
   }
 
   if (type === "tuple" && "components" in param && param.components) {
+    const structName =
+      "internalType" in param && typeof param.internalType === "string"
+        ? param.internalType
+        : owner;
     const out: Record<string, unknown> = {};
     param.components.forEach((c, i) => {
       const sub =
         value && typeof value === "object" && c.name && c.name in (value as object)
           ? (value as Record<string, unknown>)[c.name]
           : (value as unknown[])[i];
-      out[c.name || String(i)] = formatParam(c, sub);
+      out[c.name || String(i)] = formatParam(c, sub, structName);
     });
     return out;
   }
 
-  return formatScalar(param.name ?? "", type, value);
+  return formatScalar(param.name ?? "", type, value, owner);
 }
 
 /**

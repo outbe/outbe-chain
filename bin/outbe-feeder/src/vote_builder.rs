@@ -4,25 +4,12 @@
 //! into `submitVote(ExchangeRateTuple[])` calldata.
 
 use alloy_primitives::Address;
-use alloy_sol_types::{sol, SolCall};
+use alloy_sol_types::SolCall;
 use outbe_primitives::asset_type::AssetType;
 
+use crate::abi::IOracle;
 use crate::aggregator::AggregatedPrice;
 use crate::config::FeederConfig;
-
-sol! {
-    #[sol(alloy_sol_types = alloy_sol_types)]
-    interface IOracle {
-        struct ExchangeRateTuple {
-            address base;
-            address quote;
-            uint256 exchangeRate;
-            uint256 volume;
-        }
-
-        function submitVote(ExchangeRateTuple[] calldata tuples) external;
-    }
-}
 
 /// The provider-side symbol as an oracle asset address.
 ///

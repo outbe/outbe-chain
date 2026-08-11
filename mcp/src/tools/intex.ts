@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
+  type AbiEvent,
   type Account,
   type Address,
   type Chain,
@@ -8,10 +9,10 @@ import {
   type WalletClient,
   encodeFunctionData,
   formatUnits,
+  getAbiItem,
   getAddress,
   maxUint256,
   pad,
-  parseAbiItem,
   parseUnits,
 } from "viem";
 import { z } from "zod";
@@ -56,9 +57,7 @@ interface Network {
   wallet?: WalletClient;
 }
 
-const PROMIS_MINED_EVENT = parseAbiItem(
-  "event PromisMined(uint32 indexed seriesId, address indexed holder, uint256 amount, uint256 promisAmount)",
-);
+const PROMIS_MINED_EVENT = getAbiItem({ abi: FACTORY_ABI, name: "PromisMined" }) as AbiEvent;
 
 // Auction ids are worldwide days (yyyymmdd), one per day; the auction runs weeks
 // after its day, so active ids sit up to ~26 days in the past. Discovery probes
