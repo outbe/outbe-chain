@@ -1929,9 +1929,9 @@ fn first_touch_lists_preserve_the_exact_deterministic_operation_order() {
 
         let expected_indexes = [
             IndexRecord::owner(IndexKind::TributeByOwner, owner, second.tribute_id).key(),
-            IndexRecord::day(second.worldwide_day.value(), second.tribute_id).key(),
+            IndexRecord::day(second.worldwide_day, second.tribute_id).key(),
             IndexRecord::owner(IndexKind::TributeByOwner, owner, first.tribute_id).key(),
-            IndexRecord::day(first.worldwide_day.value(), first.tribute_id).key(),
+            IndexRecord::day(first.worldwide_day, first.tribute_id).key(),
         ];
         assert_eq!(schema.touched_index_deltas.len().unwrap(), 4);
         for (index, expected) in expected_indexes.into_iter().enumerate() {
@@ -2023,7 +2023,7 @@ fn exact_index_record_key_and_status_vectors_are_protocol_pinned() {
             b256!("0e268c587c867de1282d3fc167d077e5348c119a859d72f8244a179e5d7dbc1e"),
         ),
         (
-            IndexRecord::day(42, id),
+            IndexRecord::day(WorldwideDay::new(42), id),
             concat!(
                 "0102040000002a0000002a",
                 "1111111111111111111111111111111111111111111111111111111111111111"

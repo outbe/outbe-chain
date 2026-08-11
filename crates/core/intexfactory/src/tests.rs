@@ -54,7 +54,7 @@ fn with_factory<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
 fn sample(worldwide_day: u32) -> IssuanceParams {
     IssuanceParams {
         series_id: worldwide_day,
-        worldwide_day,
+        worldwide_day: worldwide_day.into(),
         issued_intex_count: 100,
         promis_load_minor: PROMIS_LOAD_MINOR,
         entry_price_minor: U256::from(ENTRY_PRICE),
@@ -792,7 +792,7 @@ fn try_call_excludes_pre_issuance_days() {
             &s,
             outbe_intex::CreateSeriesParams {
                 series_id: 8,
-                worldwide_day: 8,
+                worldwide_day: 8.into(),
                 issued_intex_count: 100,
                 promis_load_minor: PROMIS_LOAD_MINOR,
                 entry_price_minor: U256::from(ENTRY_PRICE),
@@ -851,7 +851,7 @@ fn seed_issued(s: &StorageHandle<'_>, id: u32) {
         s,
         outbe_intex::CreateSeriesParams {
             series_id: id,
-            worldwide_day: id,
+            worldwide_day: id.into(),
             issued_intex_count: 100,
             promis_load_minor: PROMIS_LOAD_MINOR,
             entry_price_minor: U256::from(ENTRY_PRICE),
@@ -1354,7 +1354,14 @@ fn distribute_pays_contributors_proportionally_with_dust_to_last() {
         let amount = U256::from(1000u64);
         s.increase_balance(INTEX_FACTORY_ADDRESS, amount).unwrap();
 
-        runtime::distribute(&s, crate::constants::ORIGIN_ROUTER_ADDRESS, 7, 10, amount).unwrap();
+        runtime::distribute(
+            &s,
+            crate::constants::ORIGIN_ROUTER_ADDRESS,
+            7.into(),
+            10,
+            amount,
+        )
+        .unwrap();
 
         // distribute only registers; nothing is paid until the begin-block drain.
         assert_eq!(s.balance(owners[0]).unwrap(), U256::ZERO);
@@ -1396,7 +1403,7 @@ fn distribute_waits_for_all_winning_chains_then_pays_the_sum() {
         runtime::distribute(
             &s,
             crate::constants::ORIGIN_ROUTER_ADDRESS,
-            7,
+            7.into(),
             10,
             U256::from(300u64),
         )
@@ -1410,7 +1417,7 @@ fn distribute_waits_for_all_winning_chains_then_pays_the_sum() {
         runtime::distribute(
             &s,
             crate::constants::ORIGIN_ROUTER_ADDRESS,
-            7,
+            7.into(),
             20,
             U256::from(500u64),
         )
@@ -1447,7 +1454,7 @@ fn distribute_deadline_forces_partial_payout_then_late_chain_supplements() {
         runtime::distribute(
             &s,
             crate::constants::ORIGIN_ROUTER_ADDRESS,
-            7,
+            7.into(),
             10,
             U256::from(200u64),
         )
@@ -1468,7 +1475,7 @@ fn distribute_deadline_forces_partial_payout_then_late_chain_supplements() {
         runtime::distribute(
             &s,
             crate::constants::ORIGIN_ROUTER_ADDRESS,
-            7,
+            7.into(),
             20,
             U256::from(400u64),
         )
@@ -1503,7 +1510,7 @@ fn late_top_up_during_final_round_reaches_creators() {
         runtime::distribute(
             &s,
             crate::constants::ORIGIN_ROUTER_ADDRESS,
-            7,
+            7.into(),
             10,
             U256::from(200u64),
         )
@@ -1522,7 +1529,7 @@ fn late_top_up_during_final_round_reaches_creators() {
         runtime::distribute(
             &s,
             crate::constants::ORIGIN_ROUTER_ADDRESS,
-            7,
+            7.into(),
             10,
             U256::from(400u64),
         )
@@ -1594,7 +1601,7 @@ fn distribute_rejects_non_origin_router() {
         outbe_intex::api::record_contributors(&s, 7, &[(contrib(1), U256::from(100u64))]).unwrap();
         s.increase_balance(INTEX_FACTORY_ADDRESS, U256::from(100u64))
             .unwrap();
-        let err = runtime::distribute(&s, holder(), 7, 10, U256::from(100u64)).unwrap_err();
+        let err = runtime::distribute(&s, holder(), 7.into(), 10, U256::from(100u64)).unwrap_err();
         assert!(err.to_string().to_lowercase().contains("origin router"));
     });
 }
@@ -1623,7 +1630,7 @@ fn distribute_no_contributors_burns() {
         runtime::distribute(
             &s,
             crate::constants::ORIGIN_ROUTER_ADDRESS,
-            7,
+            7.into(),
             10,
             U256::from(100u64),
         )

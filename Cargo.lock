@@ -7475,6 +7475,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "outbe-common",
  "outbe-intex",
  "outbe-intexfactory",
  "outbe-macros",
@@ -7864,6 +7865,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "outbe-common",
  "outbe-macros",
  "outbe-ocomp-protocol",
  "outbe-primitives",
@@ -7878,6 +7880,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "hex",
+ "outbe-common",
  "outbe-intex",
  "outbe-macros",
  "outbe-oracle",
