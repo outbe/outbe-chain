@@ -17,6 +17,8 @@ pub(crate) struct OfferTributeInput {
     pub cipher_text: Bytes,
     pub nonce: Bytes,
     pub ephemeral_pubkey: U256,
+    pub worldwide_day: WorldwideDay,
+    pub tribute_currency: u16,
     pub reference_currency: u16,
     pub exclude_from_intex_issuance: bool,
     pub zk_proof: Bytes,
@@ -25,14 +27,14 @@ pub(crate) struct OfferTributeInput {
 }
 
 impl TributeFactoryContract<'_> {
-    /// Single live offer path: an encrypted offer arrives; the host reads the COEN
-    /// price of every registered ISO pair at this block, hands the offer + price
-    /// map to the enclave (`ProcessTributeOfferBatch`), and issues the Tribute from
-    /// the returned `TributeOfferResult` without recomputing economics. The public
-    /// canonical identity is independently recomputed and checked before issuance.
-    /// `worldwide_day`/`currency` are NOT ABI args — they live in the encrypted
-    /// payload; the enclave reads them, prices the offer against the decrypted
-    /// currency, and they come back in the result.
+    /// Single live offer path: an encrypted offer arrives; the host validates the
+    /// cleartext day and currency, resolves the COEN price for that exact pair and
+    /// day, hands offer + price to the enclave (`ProcessTributeOfferBatch`), and
+    /// issues the Tribute from the returned `TributeOfferResult`. The enclave
+    /// returns only what it computed — the amounts, the draft-derived fields and
+    /// the Poseidon `token_id` — so everything public on the Tribute comes from
+    /// this function's own inputs. The canonical identity is independently
+    /// recomputed and checked before issuance.
     pub(crate) fn offer_tribute(
         &mut self,
         scope: &ExecutionScope,
@@ -44,6 +46,8 @@ impl TributeFactoryContract<'_> {
             cipher_text,
             nonce,
             ephemeral_pubkey,
+            worldwide_day,
+            tribute_currency,
             reference_currency,
             exclude_from_intex_issuance,
             zk_proof,
@@ -80,32 +84,42 @@ impl TributeFactoryContract<'_> {
             | outbe_l2registry::api::ZkOfferCheck::Disabled { .. } => None,
         };
 
-        // Current rates at this block. There is a single active OFFERING
-        // day, so its committed oracle prices are the current rates (identical on
-        // every validator).
-        // TODO wrong logic; resolve it matches tribute.wwd
-        let offering_day = *outbe_metadosis::api::offering_worldwide_days(self.storage.clone())?
-            .first()
-            .ok_or_else(|| PrecompileError::Revert("no worldwide day is OFFERING".to_string()))?;
+        // Everything below is settled from chain state before the enclave is
+        // contacted, so a bad day or an unpriceable currency costs no round trip.
+        if !worldwide_day.is_valid() {
+            return Err(TributeFactoryError::InvalidWorldwideDay { worldwide_day }.into());
+        }
+        if !outbe_metadosis::api::is_offering_day(self.storage.clone(), worldwide_day)? {
+            let status = outbe_metadosis::api::worldwide_day(self.storage.clone(), worldwide_day)?
+                .map(|projection| projection.status);
+            return Err(TributeFactoryError::WorldwideDayNotOffering {
+                worldwide_day,
+                // Preserve the established diagnostic byte without granting
+                // TributeFactory raw Metadosis schema access.
+                status: status.map_or(u8::MAX, |status| status as u8),
+            }
+            .into());
+        }
 
         outbe_oracle::api::check_reference_currency_with_storage(
             self.storage.clone(),
             reference_currency,
         )?;
 
-        // The offer is priced in its issuance currency, which lives in the
-        // encrypted payload — unreachable here. Ship every currency the Oracle can
-        // price for this day and let the enclave select the one it decrypts. An
-        // empty map means the Oracle is cold for the day, which no currency choice
-        // can rescue, so fail before paying for the enclave round trip.
-        let tribute_prices =
-            outbe_oracle::api::coen_pair_prices(self.storage.clone(), offering_day)?;
-        if tribute_prices.is_empty() {
-            return Err(TributeFactoryError::NominalPriceUnavailable {
-                worldwide_day: offering_day,
-            }
-            .into());
+        // Priced against the tribute's own day, not whichever day happens to be
+        // first in the OFFERING list.
+        let tribute_price_minor = outbe_oracle::api::coen_pair_price(
+            self.storage.clone(),
+            tribute_currency,
+            worldwide_day,
+        )?
+        .ok_or(TributeFactoryError::IssuanceCurrencyNotRegistered {
+            issuance_currency: tribute_currency,
+        })?;
+        if tribute_price_minor.is_zero() {
+            return Err(TributeFactoryError::NominalPriceUnavailable { worldwide_day }.into());
         }
+
         let zk_context = match zk_public_inputs {
             Some(public) => Some(TributeZkContext {
                 derived_owner: B256::from(public.derived_owner),
@@ -114,25 +128,24 @@ impl TributeFactoryContract<'_> {
             None => None,
         };
 
-        // Hand the encrypted offer + price map to the enclave. It decrypts, picks
-        // the rate for the decrypted issuance currency, computes economics (U256) +
-        // Poseidon token_id, and returns the public result. The host does not
-        // recompute private economics, but it can and must verify the public
-        // owner/day identity recipe.
+        // Hand the encrypted offer + its resolved price to the enclave. It
+        // decrypts, computes economics (U256) + Poseidon token_id, and returns
+        // only those. The host does not recompute private economics, but it can
+        // and must verify the public owner/day identity recipe.
         let offer = EncryptedTributeOffer {
             owner: caller,
             cipher_text: cipher_text.to_vec(),
             nonce: nonce.to_vec(),
             ephemeral_pubkey,
+            worldwide_day: worldwide_day.into(),
+            tribute_currency,
             reference_currency,
             exclude_from_intex_issuance,
+            tribute_price_minor,
             zk_context,
         };
-        let results = crate::enclave_offer::process_tribute_offer_batch_via_enclave(
-            &[offer],
-            &tribute_prices,
-        )
-        .map_err(|e| TributeFactoryError::DecryptionFailed(e.to_string()))?;
+        let results = crate::enclave_offer::process_tribute_offer_batch_via_enclave(&[offer])
+            .map_err(|e| TributeFactoryError::DecryptionFailed(e.to_string()))?;
         let result = results
             .into_iter()
             .next()
@@ -145,21 +158,9 @@ impl TributeFactoryContract<'_> {
             validate_zk_result(&zk_proof, public, result.zk_expected_hashes.as_ref())?;
         }
 
-        // The offer's (decrypted) day must be OFFERING.
-        let result_day = WorldwideDay::from(result.worldwide_day);
-        let wwd_status = outbe_metadosis::api::worldwide_day(self.storage.clone(), result_day)?
-            .map(|projection| projection.status);
-        if wwd_status != Some(outbe_metadosis::WwdStatus::Offering) {
-            return Err(TributeFactoryError::WorldwideDayNotOffering {
-                worldwide_day: result_day,
-                // Preserve the established diagnostic byte without granting
-                // TributeFactory raw Metadosis schema access.
-                status: wwd_status.map_or(u8::MAX, |status| status as u8),
-            }
-            .into());
-        }
-
-        let tribute_id = derive_poseidon_entity_id(caller, result_day)
+        // Recomputed from this call's own inputs, so it checks the enclave's
+        // Poseidon rather than the enclave's own consistency with itself.
+        let tribute_id = derive_poseidon_entity_id(caller, worldwide_day)
             .map_err(|error| PrecompileError::Fatal(error.to_string()))?;
         if result.owner != caller || result.token_id.0 != tribute_id.digest() {
             return Err(TributeFactoryError::InvalidCanonicalIdentity.into());
@@ -182,13 +183,13 @@ impl TributeFactoryContract<'_> {
             &TributeData {
                 tribute_id,
                 owner: caller,
-                worldwide_day: result_day,
+                worldwide_day,
                 issuance_amount_minor: result.issuance_amount_minor,
-                issuance_currency: result.issuance_currency,
+                issuance_currency: tribute_currency,
                 nominal_amount_minor: result.nominal_amount_minor,
-                reference_currency: result.reference_currency,
-                exclude_from_intex_issuance: result.exclude_from_intex_issuance,
-                tribute_price_minor: result.tribute_price_minor,
+                reference_currency,
+                exclude_from_intex_issuance,
+                tribute_price_minor,
             },
         )?;
 
@@ -201,7 +202,7 @@ impl TributeFactoryContract<'_> {
                         .map_err(|_| TributeFactoryError::InvalidWalletAddress {
                             address: addr_str.clone(),
                         })?;
-                agent_reward.increment_waa_tribute(result_day, addr)?;
+                agent_reward.increment_waa_tribute(worldwide_day, addr)?;
             }
             for addr_str in &result.sra_addresses {
                 let addr: Address =
@@ -210,7 +211,7 @@ impl TributeFactoryContract<'_> {
                         .map_err(|_| TributeFactoryError::InvalidSraAddress {
                             address: addr_str.clone(),
                         })?;
-                agent_reward.increment_sra_tribute(result_day, addr)?;
+                agent_reward.increment_sra_tribute(worldwide_day, addr)?;
             }
         }
 

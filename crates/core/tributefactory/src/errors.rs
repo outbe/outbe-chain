@@ -29,6 +29,9 @@ pub enum TributeFactoryError {
     #[error("ZK proof verification failed")]
     InvalidZkProof,
 
+    #[error("worldwide_day {worldwide_day} is not a valid YYYYMMDD calendar date")]
+    InvalidWorldwideDay { worldwide_day: WorldwideDay },
+
     #[error("worldwide_day {worldwide_day} is not in OFFERING status (status={status})")]
     WorldwideDayNotOffering {
         worldwide_day: WorldwideDay,

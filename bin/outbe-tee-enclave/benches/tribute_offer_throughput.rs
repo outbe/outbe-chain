@@ -20,8 +20,6 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Through
 use alloy_primitives::{Address, U256};
 use x25519_dalek::{PublicKey, StaticSecret};
 
-use std::collections::BTreeMap;
-
 use outbe_tee::protocol::EncryptedTributeOffer;
 use outbe_tee::OFFER_HKDF_SALT;
 use outbe_tee_enclave::compute::compute_token_id;
@@ -78,8 +76,11 @@ fn make_offer(owner: Address) -> EncryptedTributeOffer {
         cipher_text,
         nonce: NONCE.to_vec(),
         ephemeral_pubkey: U256::from_be_bytes(eph_pub),
+        worldwide_day: 20250115,
+        tribute_currency: 840,
         reference_currency: 840,
         exclude_from_intex_issuance: false,
+        tribute_price_minor: U256::from(2u64) * U256::from(1_000_000_000_000_000_000u64),
         zk_context: None,
     }
 }
@@ -93,14 +94,6 @@ fn make_batch(n: usize) -> Vec<EncryptedTributeOffer> {
             make_offer(Address::from(owner))
         })
         .collect()
-}
-
-/// The batch price map every bench prices against: one USD entry at 2.0.
-fn bench_prices() -> BTreeMap<u16, U256> {
-    BTreeMap::from([(
-        840u16,
-        U256::from(2u64) * U256::from(1_000_000_000_000_000_000u64),
-    )])
 }
 
 /// Component costs: isolate the two heavy primitives so the batch number can be
@@ -141,14 +134,9 @@ fn bench_components(c: &mut Criterion) {
     // Full single-offer path (decrypt + parse + economics + Poseidon).
     let one = vec![offer.clone()];
     let key = key_material();
-    let prices = bench_prices();
     g.bench_function("process_one_full", |b| {
         b.iter(|| {
-            process_tribute_offer_batch(
-                std::hint::black_box(&key),
-                std::hint::black_box(&one),
-                std::hint::black_box(&prices),
-            )
+            process_tribute_offer_batch(std::hint::black_box(&key), std::hint::black_box(&one))
         })
     });
 
@@ -159,18 +147,13 @@ fn bench_components(c: &mut Criterion) {
 /// transport. The per-block on-chain budget divided by this gives offers/block.
 fn bench_batch_throughput(c: &mut Criterion) {
     let key = key_material();
-    let prices = bench_prices();
     let mut g = c.benchmark_group("batch");
     for &n in &[1usize, 10, 100, 500] {
         let batch = make_batch(n);
         g.throughput(Throughput::Elements(n as u64));
         g.bench_with_input(BenchmarkId::from_parameter(n), &batch, |b, batch| {
             b.iter(|| {
-                process_tribute_offer_batch(
-                    std::hint::black_box(&key),
-                    std::hint::black_box(batch),
-                    std::hint::black_box(&prices),
-                )
+                process_tribute_offer_batch(std::hint::black_box(&key), std::hint::black_box(batch))
             })
         });
     }

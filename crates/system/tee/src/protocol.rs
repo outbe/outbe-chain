@@ -16,7 +16,6 @@
 //! secret-bearing parts to the enclave without decrypting them.
 
 use alloy_primitives::{Address, B256, U256};
-use std::collections::BTreeMap;
 
 /// Hard cap for the deterministic registry onboarding artifact. The current
 /// X25519/nonce/AEAD envelope is substantially smaller; this prevents a
@@ -30,22 +29,20 @@ pub const MIN_SEALED_OFFER_KEY_FOR_REGISTRY_BYTES: usize = 60;
 /// A single offer handed to the enclave.
 ///
 /// Fields mirror the part of `ITributeFactory.offerTribute` the enclave needs,
-/// plus the sender:
-///   - `cipherText`, `nonce`, `ephemeralPubkey`, `referenceCurrency`,
-///     `excludeFromIntexIssuance` (ABI);
+/// plus the sender and the node-resolved price:
+///   - `cipherText`, `nonce`, `ephemeralPubkey`, `worldwideDay`,
+///     `tributeCurrency`, `referenceCurrency`, `excludeFromIntexIssuance` (ABI);
 ///   - `owner` — the L1 `msg.sender`; the enclave binds it into the result and
-///     into the `token_id` (computed in-enclave, see `TributeOfferResult`).
+///     into the `token_id` (computed in-enclave, see `TributeOfferResult`);
+///   - `tribute_price_minor` — resolved by the node from committed Oracle state
+///     for `(tribute_currency, worldwide_day)`; not an ABI field.
 ///
 /// The ZK fields (`zkProof`/`zkVerificationKey`/`zkPublicKey`/`zkMerkleRoot`)
-/// are verified BEFORE the enclave call and are NOT forwarded. `worldwide_day`
-/// and `currency` are NOT wire inputs — they live in the encrypted payload and
-/// the enclave reads them from there.
+/// are verified BEFORE the enclave call and are NOT forwarded.
 ///
-/// The offer carries no price of its own: the issuance currency it must be
-/// priced in is encrypted, so the node ships the whole COEN price map for the
-/// OFFERING day once per batch (see
-/// [`EnclaveRequest::ProcessTributeOfferBatch`]) and the enclave selects the
-/// entry matching the decrypted `currency`.
+/// Every field here is public and host-supplied, so the enclave never echoes any
+/// of them back — [`TributeOfferResult`] carries only what the enclave itself
+/// computed from the decrypted payload.
 ///
 /// Price integrity: the enclave applies the rate but does not verify it against
 /// chain state; integrity is enforced by deterministic re-execution (a forged
@@ -61,12 +58,22 @@ pub struct EncryptedTributeOffer {
     /// ABI `ephemeralPubkey` (uint256): client ephemeral X25519 public key for
     /// ECDHE, big-endian.
     pub ephemeral_pubkey: U256,
-    /// ABI `referenceCurrency`.
+    /// ABI `worldwideDay`: UTC+14 day key (`YYYYMMDD`). Already checked for
+    /// calendar validity and OFFERING status by the node; the enclave binds it
+    /// into `token_id`.
+    pub worldwide_day: u32,
+    /// ABI `tributeCurrency`: ISO 4217 code the tribute amount is denominated
+    /// in, and the currency `tribute_price_minor` prices.
+    pub tribute_currency: u16,
+    /// ABI `referenceCurrency`. A separate axis from `tribute_currency` — it
+    /// drives gem/intex qualification, not pricing.
     pub reference_currency: u16,
     /// ABI `excludeFromIntexIssuance`: when true, the resulting Tribute is
-    /// excluded from Intex issuance. Unencrypted (public), like
-    /// `reference_currency` — the enclave echoes it back in the result.
+    /// excluded from Intex issuance.
     pub exclude_from_intex_issuance: bool,
+    /// Nominal COEN price for `COEN/<tribute_currency>` at `worldwide_day`,
+    /// 1e18 scaled, resolved by the node from committed Oracle state.
+    pub tribute_price_minor: U256,
     /// Public ZK claim context supplied only for registered L2 networks with
     /// ZK verification enabled. The owner is the first public input embedded
     /// in `zkProof`; the chain id is read from the local execution context.
@@ -100,23 +107,21 @@ pub enum TributeOfferStatus {
 /// decrypted data (it cannot be derived on the host, which never sees that
 /// data). `owner` is the L1 `msg.sender`, bound by the enclave. The remaining
 /// fields are the economics derived from the decrypted payload.
+///
+/// This carries **only what the enclave computed**. Values the host supplied in
+/// [`EncryptedTributeOffer`] — day, currencies, exclusion flag, price — are not
+/// echoed back: the host already holds them, so an echo would be one more thing
+/// to keep in agreement for no gain. `owner` is the exception and is deliberate:
+/// it is folded into `token_id`, so comparing it against `msg.sender` checks the
+/// enclave's computation rather than repeating an input.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TributeOfferResult {
     /// Poseidon(token_id preimage) — computed in-enclave from sensitive data.
     pub token_id: B256,
     /// L1 `msg.sender` (public, on-chain).
     pub owner: Address,
-    pub worldwide_day: u32,
     pub issuance_amount_minor: U256,
-    pub issuance_currency: u16,
     pub nominal_amount_minor: U256,
-    pub reference_currency: u16,
-    /// Echoed from the offer's unencrypted `excludeFromIntexIssuance` ABI flag
-    /// (see `EncryptedTributeOffer`); the host stores it on the Tribute.
-    pub exclude_from_intex_issuance: bool,
-    /// The price the enclave selected from the batch map for the decrypted
-    /// `issuance_currency`; the host stores it on the Tribute.
-    pub tribute_price_minor: U256,
     /// SU hashes (hex) — the host marks them used (replay prevention). Public
     /// on-chain as used-markers. The privacy-preserving markers-only form (rather
     /// than raw hashes) is a later slice (see `process.rs`).
@@ -700,28 +705,14 @@ pub enum EnclaveRequest {
         tribute_offer_epoch: u64,
     },
 
-    /// Decrypt a batch of offers, price each one, and return the canonical
-    /// Tribute results. A single transaction carries one offer today; the list
+    /// Decrypt a batch of offers, apply each one's node-resolved price, and
+    /// return the canonical Tribute results. Each `EncryptedTributeOffer` is
+    /// self-contained (its own owner, day, currencies and price), so the batch is
+    /// simply a list. A single transaction carries one offer today; the list
     /// future-proofs multi-offer txs. This is the sole offer-processing
     /// entrypoint (the enclave decrypts, applies the price, computes economics +
     /// Poseidon `token_id`, and returns `TributeOfferResult`).
-    ProcessTributeOfferBatch {
-        offers: Vec<EncryptedTributeOffer>,
-        /// Nominal COEN price for the OFFERING day keyed by ISO 4217 issuance
-        /// currency, 1e18 scaled, resolved by the node from committed Oracle
-        /// state. One snapshot serves the whole batch.
-        ///
-        /// The issuance currency lives in each offer's encrypted payload, so the
-        /// node cannot pick a single price — it ships every currency it can
-        /// price and the enclave selects. A currency missing from the map is
-        /// unsupported (unregistered, or registered with no VWAP and no active
-        /// S-curve) and its offer is rejected.
-        ///
-        /// `BTreeMap` and not `HashMap`: iteration order is key-sorted, which is
-        /// what makes both the postcard encoding and
-        /// [`inputs_canonical_hash`] deterministic across validators.
-        tribute_prices: BTreeMap<u16, U256>,
-    },
+    ProcessTributeOfferBatch { offers: Vec<EncryptedTributeOffer> },
 
     /// One-time on-chain onboarding: ingest the deterministic sealed offer-key
     /// artifact committed by `TeeRegistry`. This is not a peer handoff or a lost-key
@@ -825,9 +816,8 @@ pub fn fidelity_query_auth_message(chain_id: B256, account: Address, expiry: u64
     m
 }
 
-/// Deterministic hash over the canonical batch inputs — each offer's
-/// owner/cipher_text/nonce/ephemeral/reference-currency/exclude-from-intex, then
-/// the batch's price map. Length-prefixed to be unambiguous.
+/// Deterministic hash over the canonical batch inputs — every field of every
+/// offer. Length-prefixed to be unambiguous.
 ///
 /// Every field of `ProcessTributeOfferBatch` must be covered here: an input the
 /// hash skips is silently unattested, since the host's recompute and the
@@ -837,10 +827,7 @@ pub fn fidelity_query_auth_message(chain_id: B256, account: Address, expiry: u64
 /// recomputes it from the request it sent and compares — a mismatch is enclave
 /// non-determinism). Defining it once here keeps the two byte layouts from
 /// drifting. Diagnostic only — never written to chain state.
-pub fn inputs_canonical_hash(
-    offers: &[EncryptedTributeOffer],
-    tribute_prices: &BTreeMap<u16, U256>,
-) -> B256 {
+pub fn inputs_canonical_hash(offers: &[EncryptedTributeOffer]) -> B256 {
     let mut buf: Vec<u8> = Vec::new();
     buf.extend_from_slice(&(offers.len() as u32).to_be_bytes());
     for offer in offers {
@@ -850,8 +837,11 @@ pub fn inputs_canonical_hash(
         buf.extend_from_slice(&(offer.nonce.len() as u32).to_be_bytes());
         buf.extend_from_slice(&offer.nonce);
         buf.extend_from_slice(&offer.ephemeral_pubkey.to_be_bytes::<32>());
+        buf.extend_from_slice(&offer.worldwide_day.to_be_bytes());
+        buf.extend_from_slice(&offer.tribute_currency.to_be_bytes());
         buf.extend_from_slice(&offer.reference_currency.to_be_bytes());
         buf.push(u8::from(offer.exclude_from_intex_issuance));
+        buf.extend_from_slice(&offer.tribute_price_minor.to_be_bytes::<32>());
         match &offer.zk_context {
             Some(context) => {
                 buf.push(1);
@@ -860,12 +850,6 @@ pub fn inputs_canonical_hash(
             }
             None => buf.push(0),
         }
-    }
-    // BTreeMap iterates key-sorted, so no explicit ordering step is needed.
-    buf.extend_from_slice(&(tribute_prices.len() as u32).to_be_bytes());
-    for (iso_code, price) in tribute_prices {
-        buf.extend_from_slice(&iso_code.to_be_bytes());
-        buf.extend_from_slice(&price.to_be_bytes::<32>());
     }
     alloy_primitives::keccak256(buf)
 }

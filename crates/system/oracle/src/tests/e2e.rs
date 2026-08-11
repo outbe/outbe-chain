@@ -1261,31 +1261,49 @@ fn get_reference_currencies_precompile_returns_the_seeded_list() {
 }
 
 // -----------------------------------------------------------------------
-// COEN price map (`api::coen_pair_prices`)
+// COEN price lookup (`api::coen_pair_price`)
 // -----------------------------------------------------------------------
 
-/// The map is keyed by ISO code and covers only `COEN/<iso>` pairs: a pair COEN
-/// is not the base of, and a COEN pair quoted in an ERC20, are both skipped.
-/// A registered ISO pair with neither a day VWAP nor a live S-curve is omitted
-/// rather than mapped to zero — absence is the "unsupported currency" signal.
+/// `None` distinguishes "this chain cannot price that currency at all" from
+/// `Some(0)`, "the pair exists but the day has no data yet". TributeFactory maps
+/// the first to `IssuanceCurrencyNotRegistered` and the second to
+/// `NominalPriceUnavailable`, so the two must not collapse.
 #[test]
-fn coen_pair_prices_keys_by_iso_and_omits_unpriced_pairs() {
+fn coen_pair_price_separates_an_unregistered_pair_from_an_unpriced_day() {
+    let day = 20260302u32.into();
+
+    with_storage(|storage| {
+        assert_eq!(
+            crate::api::coen_pair_price(storage.clone(), 840, day).unwrap(),
+            None,
+            "no COEN/840 pair is registered"
+        );
+
+        OracleContract::new(storage.clone())
+            .register_pair(AddressPair::new_coen_to(840))
+            .unwrap();
+        assert_eq!(
+            crate::api::coen_pair_price(storage, 840, day).unwrap(),
+            Some(U256::ZERO),
+            "registered but with neither a day VWAP nor an S-curve entry"
+        );
+    });
+}
+
+/// Each currency is priced from its own `COEN/<iso>` pair, and a pair COEN is not
+/// the base of never leaks into the answer.
+#[test]
+fn coen_pair_price_reads_the_matching_coen_pair() {
     let eur: Address = AssetType::IsoCurrency(978).into();
-    let gbp_day = 20260302u32;
+    let day = 20260302u32;
 
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
         oracle.register_pair(AddressPair::new_coen_to(978)).unwrap();
-        // Registered but never priced.
-        oracle.register_pair(AddressPair::new_coen_to(826)).unwrap();
-        // COEN is not the base.
+        // COEN is not the base — must not be mistaken for a COEN/<iso> pair.
         oracle
             .register_pair(AddressPair::from_addresses(usd(), ETH))
-            .unwrap();
-        // COEN pair, but the quote is an ERC20 rather than an ISO currency.
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, USDT))
             .unwrap();
 
         oracle
@@ -1295,31 +1313,33 @@ fn coen_pair_prices_keys_by_iso_and_omits_unpriced_pairs() {
                     (pair_key(COEN, usd()), U256::from(110u64), U256::from(1u64)),
                     (pair_key(COEN, eur), U256::from(90u64), U256::from(1u64)),
                     (pair_key(usd(), ETH), U256::from(2_200u64), U256::from(1u64)),
-                    (pair_key(COEN, USDT), U256::from(115u64), U256::from(1u64)),
                 ],
             )
             .unwrap();
         oracle
-            .store_worldwide_day_vwap_snapshot(gbp_day.into(), 1_000, 3_000)
+            .store_worldwide_day_vwap_snapshot(day.into(), 1_000, 3_000)
             .unwrap();
 
-        let prices = crate::api::coen_pair_prices(storage, gbp_day.into()).unwrap();
-
         assert_eq!(
-            prices.keys().copied().collect::<Vec<_>>(),
-            vec![840u16, 978u16],
-            "only COEN/<iso> pairs with a price belong in the map"
+            crate::api::coen_pair_price(storage.clone(), 840, day.into()).unwrap(),
+            Some(U256::from(110u64))
         );
-        assert_eq!(prices[&840], U256::from(110u64));
-        assert_eq!(prices[&978], U256::from(90u64));
+        assert_eq!(
+            crate::api::coen_pair_price(storage.clone(), 978, day.into()).unwrap(),
+            Some(U256::from(90u64))
+        );
+        // ETH is quoted against USD, not COEN, so it is not a currency price.
+        assert_eq!(
+            crate::api::coen_pair_price(storage, 826, day.into()).unwrap(),
+            None
+        );
     });
 }
 
-/// Each currency takes `max(day VWAP, active S-curve)` independently, so an
-/// S-curve peak above the VWAP wins for its own currency without touching the
-/// others.
+/// The price is `max(day VWAP, active S-curve)` — an S-curve peak above the day's
+/// VWAP wins, and only for the currency it belongs to.
 #[test]
-fn coen_pair_prices_takes_the_max_of_vwap_and_scurve_per_currency() {
+fn coen_pair_price_takes_the_max_of_vwap_and_scurve() {
     let eur: Address = AssetType::IsoCurrency(978).into();
     let worldwide_day = outbe_common::WorldwideDay::from_timestamp(ATOMIC_DAY_START);
 
@@ -1354,35 +1374,15 @@ fn coen_pair_prices_takes_the_max_of_vwap_and_scurve_per_currency() {
         )
         .unwrap();
 
-        let prices = crate::api::coen_pair_prices(storage, worldwide_day).unwrap();
         assert_eq!(
-            prices[&840],
-            U256::from(500u64),
+            crate::api::coen_pair_price(storage.clone(), 840, worldwide_day).unwrap(),
+            Some(U256::from(500u64)),
             "S-curve peak wins for USD"
         );
-        assert_eq!(prices[&978], U256::from(90u64), "EUR keeps its own VWAP");
-    });
-}
-
-/// A cold Oracle yields an empty map, not a map of zeros. This is what
-/// TributeFactory turns into `NominalPriceUnavailable` before it calls the
-/// enclave.
-#[test]
-fn coen_pair_prices_is_empty_when_nothing_is_priced() {
-    with_storage(|storage| {
-        // No pairs at all.
-        assert!(
-            crate::api::coen_pair_prices(storage.clone(), 20260302u32.into())
-                .unwrap()
-                .is_empty()
+        assert_eq!(
+            crate::api::coen_pair_price(storage, 978, worldwide_day).unwrap(),
+            Some(U256::from(90u64)),
+            "EUR keeps its own VWAP"
         );
-
-        // Registered, but with no VWAP snapshot and no S-curve entry.
-        OracleContract::new(storage.clone())
-            .register_pair(AddressPair::new_coen_to(840))
-            .unwrap();
-        assert!(crate::api::coen_pair_prices(storage, 20260302u32.into())
-            .unwrap()
-            .is_empty());
     });
 }

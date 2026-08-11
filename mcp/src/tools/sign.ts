@@ -90,8 +90,6 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
 
       const payload = buildPayload({
         creator: ctx.account.address,
-        worldwide_day: day,
-        currency: cur,
         amount_base: amt,
       });
       const enc = encryptOffer(offerPub, payload);
@@ -100,7 +98,9 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
         bytesToHex(enc.cipherText),
         bytesToHex(enc.nonce),
         enc.ephemeralPubkey,
-        cur,
+        day, // worldwideDay
+        cur, // tributeCurrency
+        cur, // referenceCurrency — a separate axis, same value here
         excludeFromIntex,
         "0x" as Hex,
         "0x" as Hex,

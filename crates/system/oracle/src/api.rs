@@ -11,7 +11,6 @@ pub use crate::constants::{DAY_TYPE_ISO, DAY_TYPE_PAIR};
 pub use crate::types::{currency_address, AddressPair, AssetType, COEN_ASSET};
 
 use alloy_primitives::{Address, U256};
-use std::collections::BTreeMap;
 
 use outbe_common::WorldwideDay;
 use outbe_primitives::{
@@ -115,44 +114,30 @@ pub fn register_pair(storage: StorageHandle, pair: AddressPair) -> Result<PairIn
     oracle.register_pair(pair)
 }
 
-/// Nominal COEN price per ISO currency at `worldwide_day`, over every registered
-/// `COEN/<iso>` pair. Same `max(WorldwideDay VWAP, active S-curve)` formula the
-/// per-currency resolvers use, 1e18 scaled.
+/// Nominal COEN price for `COEN/<iso_code>` at `worldwide_day`, 1e18 scaled:
+/// `max(WorldwideDay VWAP, highest active S-curve value)`.
 ///
-/// Non-ISO pairs (ERC20 quotes) and pairs COEN is not the base of are skipped.
-/// A currency that prices to zero — no VWAP snapshot for the day and no live
-/// S-curve entry — is omitted rather than mapped to zero, so absence from the
-/// map is the single "unsupported currency" signal for callers.
-pub fn coen_pair_prices(
+/// `None` when no `COEN/<iso_code>` pair is registered — the currency is not one
+/// this chain can price at all. `Some(0)` when the pair exists but the day has
+/// neither a VWAP snapshot nor a live S-curve entry, which is a transient
+/// oracle-cold condition rather than an unknown currency. Callers that must
+/// distinguish "unsupported" from "not priced yet" get that for free.
+pub fn coen_pair_price(
     storage: StorageHandle,
+    iso_code: u16,
     worldwide_day: WorldwideDay,
-) -> Result<BTreeMap<u16, U256>> {
-    // ponytail: O(pairs × scurve_entries) — get_max_active_scurve_value rescans
-    // every S-curve entry per pair. Fine at today's pair count; if it bites,
-    // invert to one pass over the entries building a BTreeMap<AddressPair, U256>.
+) -> Result<Option<U256>> {
     let oracle: OracleContract<'_> = OracleContract::new(storage.clone());
-    let pair_count = oracle.pair_count.read()?;
-    let mut prices = BTreeMap::new();
-    for index in 1..=pair_count {
-        // Registration rejects non-canonical pairs and COEN is the zero address,
-        // so a COEN pair always reads back with COEN as `asset1`.
-        let pair = oracle.pair_at(index)?;
-        if pair.asset1() != AssetType::Native {
-            continue;
-        }
-        let AssetType::IsoCurrency(iso_code) = pair.asset2() else {
-            continue;
-        };
-        let vwap = oracle
-            .get_worldwide_day_vwap_for_pair(worldwide_day, index)?
-            .unwrap_or(U256::ZERO);
-        let max_scurve = get_max_active_scurve_value(storage.clone(), worldwide_day, pair)?;
-        let price = vwap.max(max_scurve);
-        if !price.is_zero() {
-            prices.insert(iso_code, price);
-        }
+    let pair = AddressPair::new_coen_to(iso_code);
+    let index = oracle.pair_index_of(pair)?;
+    if index == 0 {
+        return Ok(None);
     }
-    Ok(prices)
+    let vwap = oracle
+        .get_worldwide_day_vwap_for_pair(worldwide_day, index)?
+        .unwrap_or(U256::ZERO);
+    let max_scurve = get_max_active_scurve_value(storage, worldwide_day, pair)?;
+    Ok(Some(vwap.max(max_scurve)))
 }
 
 pub fn set_exchange_rate(
