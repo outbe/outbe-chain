@@ -21,7 +21,7 @@ Feature: Certified contributor payout authority
     When the committee logical clock reaches the fresh capacity processing time
     Then the same fresh capacity day advances through WAITING and READY
     Then Metadosis creates one finalized JobIntent from that public Tribute
-    When the validator supervisors submit results directly for that finalized JobIntent
+    When the production OCOMP domains process that finalized JobIntent
     Then three matching validator domains atomically apply Lysis and create the Nod
     And the certified contributor authority for that day is identical on every validator
     And that day has no open contributor payout round before proceeds arrive
