@@ -108,6 +108,8 @@ impl Localnet {
             "2",
             "--upstream",
             format!("http://localhost:{}", self.cfg.http_port(upstream_slot)),
+            "--consensus.listen-addr",
+            format!("127.0.0.1:{}", self.cfg.consensus_port(index)),
         ]);
         self.extend_real_sgx_startup_timeout(&mut args);
 
