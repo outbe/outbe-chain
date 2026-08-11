@@ -24,9 +24,8 @@ pub fn settle_nod(
     parent: &impl ParentBodySource,
     payer: Address,
     nod_id: EntityId36,
-    asset: Address,
 ) -> Result<U256> {
-    runtime::settle_nod(storage, scope, parent, payer, nod_id, asset)
+    runtime::settle_nod(storage, scope, parent, payer, nod_id)
 }
 
 pub fn mine_gratis(

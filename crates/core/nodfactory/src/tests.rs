@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use alloy_primitives::{address, Address, B256, U256};
-use alloy_sol_types::SolEvent;
+use alloy_primitives::{address, Address, Bytes, B256, U256};
+use alloy_sol_types::{SolCall, SolEvent};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{begin_block, EntityId36, ExecutionScope};
 use outbe_gratis::enclave_client::test_enclave;
@@ -18,7 +18,7 @@ use outbe_primitives::{
 use outbe_tee::protocol::GratisOp;
 use outbe_tee_enclave::gratis::{derive_modify_key, modify_mac};
 
-use crate::{api, errors::NodFactoryError, precompile::INodFactory, runtime};
+use crate::{api, errors::NodFactoryError, precompile::INodFactory, runtime, sol_ext::IERC20};
 
 fn dummy_auth() -> ModifyAuth {
     ModifyAuth {
@@ -74,6 +74,18 @@ fn params(owner: Address) -> NodIssueParams {
     }
 }
 
+/// Same Nod, but with a cost that forces the real payment path.
+fn paid_params(owner: Address) -> NodIssueParams {
+    NodIssueParams {
+        cost_amount_minor: U256::from(500),
+        ..params(owner)
+    }
+}
+
+fn word(value: U256) -> Bytes {
+    Bytes::from(value.to_be_bytes::<32>().to_vec())
+}
+
 fn find_valid_nonce(nod_id: EntityId36) -> U256 {
     (0_u64..100_000)
         .map(U256::from)
@@ -118,10 +130,40 @@ impl World {
     }
 
     fn settle(&mut self, nod_id: EntityId36, payer: Address) -> U256 {
-        self.enter(|storage, scope, parent| {
-            api::settle_nod(&storage, scope, parent, payer, nod_id, Address::ZERO)
-        })
-        .unwrap()
+        self.try_settle(nod_id, payer).unwrap()
+    }
+
+    fn try_settle(&mut self, nod_id: EntityId36, payer: Address) -> Result<U256, PrecompileError> {
+        self.enter(|storage, scope, parent| api::settle_nod(&storage, scope, parent, payer, nod_id))
+    }
+
+    /// Stubs the vault router's asset registry plus the ERC20 and deposit legs
+    /// the settlement path drives on the resolved asset.
+    fn register_settlement_asset(&mut self, asset: Address, deposited: U256) {
+        use outbe_vaultrouter::api::IVaultRouter;
+
+        self.provider.stub_sub_call_at_selector(
+            outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
+            IVaultRouter::referenceCurrencyAssetsCall::SELECTOR,
+            Bytes::from(
+                IVaultRouter::referenceCurrencyAssetsCall::abi_encode_returns(&vec![asset]),
+            ),
+        );
+        self.provider.stub_sub_call_at_selector(
+            asset,
+            IERC20::transferFromCall::SELECTOR,
+            word(U256::from(1)),
+        );
+        self.provider.stub_sub_call_at_selector(
+            asset,
+            IERC20::approveCall::SELECTOR,
+            word(U256::from(1)),
+        );
+        self.provider.stub_sub_call_at_selector(
+            outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
+            IVaultRouter::depositCall::SELECTOR,
+            word(deposited),
+        );
     }
 
     fn is_settled(&mut self, nod_id: EntityId36) -> bool {
@@ -402,16 +444,67 @@ fn settle_nod_rejects_double_settlement() {
     let nod_id = world.issue(&input);
     world.settle(nod_id, input.owner);
 
-    let error = world
-        .enter(|storage, scope, parent| {
-            api::settle_nod(&storage, scope, parent, input.owner, nod_id, Address::ZERO)
-        })
-        .unwrap_err();
+    let error = world.try_settle(nod_id, input.owner).unwrap_err();
     assert!(matches!(
         error,
         PrecompileError::Revert(ref reason)
             if reason == &NodFactoryError::NodAlreadySettled.to_string()
     ));
+}
+
+#[test]
+fn settle_nod_fails_when_the_reference_currency_has_no_registered_asset() {
+    use outbe_vaultrouter::api::IVaultRouter;
+
+    let mut world = World::new();
+    let input = paid_params(Address::repeat_byte(0x5c));
+    let nod_id = world.issue(&input);
+    world.provider.stub_sub_call_at_selector(
+        outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
+        IVaultRouter::referenceCurrencyAssetsCall::SELECTOR,
+        Bytes::from(IVaultRouter::referenceCurrencyAssetsCall::abi_encode_returns(&Vec::new())),
+    );
+
+    let error = world.try_settle(nod_id, input.owner).unwrap_err();
+    assert!(matches!(
+        error,
+        PrecompileError::Revert(ref reason)
+            if reason == &NodFactoryError::NoSettlementAsset {
+                reference_currency: input.reference_currency,
+            }
+            .to_string()
+    ));
+    // The settled flag is written before the asset sub-calls, so the checkpoint
+    // must have unwound it.
+    assert!(!world.is_settled(nod_id));
+}
+
+#[test]
+fn settle_nod_pays_the_cost_amount_with_the_registered_reference_currency_asset() {
+    let mut world = World::new();
+    let input = paid_params(Address::repeat_byte(0x5e));
+    let nod_id = world.issue(&input);
+    let asset = Address::repeat_byte(0x5f);
+    world.register_settlement_asset(asset, input.cost_amount_minor);
+    world.provider.clear_events(NOD_FACTORY_ADDRESS);
+
+    let paid = world.settle(nod_id, Address::repeat_byte(0x60));
+    assert_eq!(paid, input.cost_amount_minor);
+    assert!(world.is_settled(nod_id));
+
+    let settled: Vec<_> = world
+        .provider
+        .get_ordered_events()
+        .iter()
+        .filter(|event| event.address == NOD_FACTORY_ADDRESS)
+        .filter_map(|event| INodFactory::NodSettled::decode_log_data(&event.data).ok())
+        .collect();
+    assert_eq!(settled.len(), 1);
+    assert_eq!(
+        settled[0].asset, asset,
+        "the log must name the resolved asset"
+    );
+    assert_eq!(settled[0].amountPaid, input.cost_amount_minor);
 }
 
 #[test]

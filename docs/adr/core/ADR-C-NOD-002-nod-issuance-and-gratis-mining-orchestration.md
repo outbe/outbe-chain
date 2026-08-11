@@ -25,11 +25,13 @@ time, delegates authenticated ledger mutation to ADR-C-NOD-001 and emits `NodIss
 `INodFactory.settleNod` and `INodFactory.mineGratis` are the two user ABI commands.
 Both reject value and require an exact 36-byte Nod id.
 
-`settleNod` is deliberately unrestricted: any address may settle any live Nod at any
-point in its life, including before its bucket qualifies. It requires only that the
-Nod exists and is not already settled. For nonzero recorded cost it transfers the
-chosen asset from the payer to NodFactory, approves VaultRouter and deposits the
-exact cost; it then marks the authenticated Nod body settled and emits `NodSettled`.
+`settleNod` is deliberately unrestricted in payer, but takes no asset argument: any
+address may settle any live Nod at any point in its life, including before its bucket
+qualifies. It requires only that the Nod exists and is not already settled. For
+nonzero recorded cost the settlement asset is resolved from VaultRouter's
+`referenceCurrencyAssets` registry for the Nod's `reference_currency` — first entry,
+since registry order carries no meaning — then transferred from the payer to
+NodFactory, approved for VaultRouter and deposited as the exact cost; it then marks the authenticated Nod body settled and emits `NodSettled`.
 Settlement is recorded on the Nod body, so it dies with the Nod and cannot be
 inherited by a later Nod re-issued under the same derived identity.
 
@@ -46,9 +48,10 @@ currency codes. The Nod id and bucket key are derived, never caller-selected, an
 `issued_at` is the executing block timestamp. One owner/day identity can be issued
 only once while live.
 
-A successful settlement receipt proves that, when cost is nonzero, the configured
-asset moved exactly that amount into the registered reserve-vault path, and that
-the Nod body carries `is_settled` afterwards — atomically or not at all.
+A successful settlement receipt proves that, when cost is nonzero, a registry-resolved
+asset denominating the Nod's reference currency moved exactly that amount into the
+registered reserve-vault path, that `NodSettled` names that asset, and that the Nod
+body carries `is_settled` afterwards — atomically or not at all.
 
 A successful mining receipt proves all of:
 
@@ -117,8 +120,9 @@ Solidity interfaces, Lysis production caller, Nod verified-capability API,
 Gratisfactory/Fidelity mint path, VaultRouter authorization/deposit path and EVM
 subcall adapter. Current unit tests cover issuance overlay visibility, duplicate and
 owner rejection, qualified zero-cost removal, event order, the unsettled-mining
-rejection, third-party settlement and double-settlement rejection. They do not prove
-the nonzero-cost production path.
+rejection, third-party settlement, double-settlement rejection, empty-registry
+rollback and the stubbed nonzero-cost payment sequence. They do not prove the
+nonzero-cost path against real ERC20 and vault implementations.
 
 ## module audit profile
 
@@ -144,9 +148,12 @@ and Gratis/Fidelity are a separate authority and failure domain.
 
 ## Open questions and technical debt
 
-- Bind `asset` to the Nod's recorded `reference_currency` through an authoritative
-  currency/asset registry. The production code contains an explicit TODO and today
-  accepts any nonzero token address for a nonzero cost.
+- `settleNod` resolves its asset from VaultRouter's `referenceCurrencyAssets`
+  registry for the Nod's recorded `reference_currency`, so a caller can no longer
+  choose the payment token. Taking the first registry entry is arbitrary by design
+  (order is documented as meaningless); if several assets are ever registered for one
+  currency, whether the payer should be able to pick among them, and whether issuance
+  currency should ever take precedence as it does for Gem, are open.
 - Decode and require `true` from ERC20 `transferFrom` and `approve`; current raw
   `storage.call` treats a successful frame with `false` return data as success.
 - Define safe allowance handling for USDT-like zero-first tokens, fee-on-transfer,

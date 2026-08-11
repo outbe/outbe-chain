@@ -40,12 +40,15 @@ interface INodFactory {
 
     /// @notice Pay a Nod's `costAmountMinor` into the reserve vault and mark it
     ///         settled. Callable by anyone, for any Nod, at any point in its
-    ///         life; the payer does not have to be the owner. The caller MUST
-    ///         grant this precompile an ERC20 allowance of at least
-    ///         `costAmountMinor` in `asset` beforehand. A zero-cost Nod is
-    ///         settled without any transfer and ignores `asset`.
+    ///         life; the payer does not have to be the owner. The payment asset
+    ///         is not caller-selected: it is the first asset the VaultRouter has
+    ///         registered under the Nod's `referenceCurrency`, and settlement
+    ///         reverts if that currency has none. The caller MUST grant this
+    ///         precompile an ERC20 allowance of at least `costAmountMinor` in
+    ///         that asset beforehand; the `NodSettled` log names it. A zero-cost
+    ///         Nod is settled without any transfer and resolves no asset.
     /// @return The amount paid.
-    function settleNod(bytes calldata nodId, address asset) external returns (uint256);
+    function settleNod(bytes calldata nodId) external returns (uint256);
 
     /// @notice Burn the caller-owned, settled Nod and mint its gratis load to
     ///         the caller. Authorized by the caller's Gratis modify key: `mac =

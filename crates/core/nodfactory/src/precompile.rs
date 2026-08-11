@@ -31,14 +31,7 @@ pub fn dispatch(
         use INodFactory::INodFactoryCalls::*;
         match call {
             settleNod(c) => mutate(c, caller, |sender, c| {
-                runtime::settle_nod(
-                    &storage,
-                    scope,
-                    parent,
-                    sender,
-                    parse_entity_id(&c.nodId)?,
-                    c.asset,
-                )
+                runtime::settle_nod(&storage, scope, parent, sender, parse_entity_id(&c.nodId)?)
             }),
             mineGratis(c) => mutate(c, caller, |sender, c| {
                 let auth = outbe_gratisfactory::api::ModifyAuth {
@@ -61,7 +54,7 @@ pub fn dispatch(
 
 fn preflight_entity_id(data: &[u8]) -> Result<()> {
     for (selector, head_words) in [
-        (INodFactory::settleNodCall::SELECTOR, 2),
+        (INodFactory::settleNodCall::SELECTOR, 1),
         (INodFactory::mineGratisCall::SELECTOR, 4),
     ] {
         preflight_dynamic_bytes_len(data, selector, 0, head_words, EntityId36::LEN)?;

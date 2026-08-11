@@ -41,11 +41,6 @@
         "name": "nodId",
         "type": "bytes",
         "internalType": "bytes"
-      },
-      {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
       }
     ],
     "outputs": [

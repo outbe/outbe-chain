@@ -32,8 +32,8 @@ pub enum NodFactoryError {
     #[error("nonce exceeds uint64 range")]
     NonceExceedsUint64Range,
 
-    #[error("invalid asset")]
-    InvalidAsset,
+    #[error("no settlement asset registered for reference currency {reference_currency}")]
+    NoSettlementAsset { reference_currency: u16 },
 }
 
 impl From<NodFactoryError> for PrecompileError {

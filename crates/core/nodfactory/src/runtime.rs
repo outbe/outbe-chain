@@ -93,7 +93,13 @@ fn issue_nod_inner(
 /// its life, including before its bucket qualifies. Ownership, PoW, and
 /// qualification are `mine_gratis` concerns only.
 ///
-/// Payment pulls `cost_amount_minor` of `asset` from `payer` into the
+/// The payment asset is not caller-selected: it is resolved from the vault
+/// router's registry of assets denominating the Nod's recorded
+/// `reference_currency`, taking the first registered entry. Settling a
+/// nonzero-cost Nod whose reference currency has no registered asset fails
+/// with `NoSettlementAsset`.
+///
+/// Payment pulls `cost_amount_minor` of that asset from `payer` into the
 /// precompile address via `IERC20.transferFrom`, approves the reserve
 /// `VAULT_ROUTER_ADDRESS` for the same amount, and calls `IVaultRouter.deposit`
 /// declaring the `StablesSource::NodCostAmount` classifier. The payer MUST
@@ -101,15 +107,13 @@ fn issue_nod_inner(
 /// `cost_amount_minor` beforehand.
 ///
 /// When `cost_amount_minor == 0` the payment sequence is skipped entirely and
-/// `asset` is not validated, so settling a zero-cost Nod can pass
-/// `Address::ZERO`.
+/// no asset is resolved.
 pub fn settle_nod(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
     payer: Address,
     nod_id: EntityId36,
-    asset: Address,
 ) -> Result<U256> {
     let item =
         nod_api::load_item(storage, scope, parent, nod_id)?.ok_or(NodFactoryError::NodNotFound)?;
@@ -118,7 +122,7 @@ pub fn settle_nod(
     }
     storage
         .clone()
-        .with_checkpoint(|| settle_nod_inner(storage, scope, payer, nod_id, asset, item))
+        .with_checkpoint(|| settle_nod_inner(storage, scope, payer, nod_id, item))
 }
 
 fn settle_nod_inner(
@@ -126,21 +130,22 @@ fn settle_nod_inner(
     scope: &ExecutionScope,
     payer: Address,
     nod_id: EntityId36,
-    asset: Address,
     item: LoadedNodItem,
 ) -> Result<U256> {
     let owner = item.body().owner;
     let cost = item.body().cost_amount_minor;
+    let reference_currency = item.body().reference_currency;
 
-    // Effects before interactions: a reentrant `asset` sees the settled flag
+    // Effects before interactions: a reentrant asset sees the settled flag
     // and reverts instead of paying twice.
     nod_api::settle_nod(storage, scope, item)?;
 
+    let mut asset = Address::ZERO;
     if !cost.is_zero() {
-        // TODO check that asset aligns with reference_currency
-        if asset.is_zero() {
-            return Err(NodFactoryError::InvalidAsset.into());
-        }
+        // The cost amount is denominated in the Nod's reference currency, so the
+        // asset comes from the router's registry for that currency rather than
+        // from the caller.
+        asset = settlement_asset(storage, reference_currency)?;
 
         // 1) Pull stablecoin from the payer into the nodfactory precompile address.
         let transfer = IERC20::transferFromCall {
@@ -269,6 +274,16 @@ fn mine_gratis_inner(
     outbe_gratisfactory::api::mint(storage.clone(), owner, gratis_load_minor, auth)?;
 
     Ok(gratis_load_minor)
+}
+
+/// Resolves the settlement asset for a reference currency from the vault
+/// router's registry. Registry order carries no meaning, so the first entry is
+/// as good as any; an empty registry is a configuration error, not a payer one.
+fn settlement_asset(storage: &StorageHandle<'_>, reference_currency: u16) -> Result<Address> {
+    outbe_vaultrouter::api::reference_currency_assets(storage, reference_currency)?
+        .into_iter()
+        .next()
+        .ok_or_else(|| NodFactoryError::NoSettlementAsset { reference_currency }.into())
 }
 
 /// PoW gate for `mine_gratis`, delegating to the shared [`outbe_common::pow`]
