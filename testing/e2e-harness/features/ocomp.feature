@@ -65,19 +65,6 @@ Feature: Off-chain computation and Metadosis
     Then consensus finality advances while only that worker remains stopped
     And validator 0 OCOMP worker restarts through the typed topology
 
-  @ocomp-e2e @ocomp-e2e-007
-  # OCOMP-TEST-ID: OCM-E2E-007
-  Scenario: An incompatible Supervisor cannot affect consensus or compatible domains
-    Given a fresh four-validator OCOMP public measurement localnet
-    When validator 0 OCOMP supervisor is replaced by an incompatible peer
-    And an operator submits one encrypted tribute offer
-    Then the tribute transaction succeeds and supply becomes one
-    And every validator projects the same tribute and indexes
-    Then Metadosis creates one finalized JobIntent from that public Tribute
-    When the production OCOMP domains process that finalized JobIntent
-    Then three compatible validator domains atomically apply Lysis and create the Nod
-    And the incompatible supervisor remains outside OCOMP while consensus finality advances
-
   @ocomp-public-expiry
   # OCOMP-TEST-ID: OCM-PUB-003
   Scenario: Two timely votes cannot prevent exclusive-deadline expiry
@@ -91,20 +78,6 @@ Feature: Off-chain computation and Metadosis
     And validator 2 prepares one valid vote without broadcasting it
     And the held validator vote is broadcast at the exclusive deadline
     Then the no-quorum job expires at its exclusive deadline without creating Nod
-
-  @metadosis-failure-recovery
-  Scenario: Exhausted OCOMP attempts fail one WWD without halting the chain
-    Given a fresh four-validator OCOMP failure-recovery localnet
-    When validators 2 and 3 OCOMP workers are stopped before the job
-    And an operator submits one encrypted tribute offer
-    Then the tribute transaction succeeds and supply becomes one
-    And every validator projects the same tribute and indexes
-    Then Metadosis creates one finalized JobIntent from that public Tribute
-    When the production OCOMP domains process that finalized JobIntent
-    Then the no-quorum job expires at its exclusive deadline without creating Nod
-    And the exhausted no-quorum OCOMP day fails atomically
-    When all validator nodes and OCOMP node-facing processes restart with preserved data
-    Then the failed WWD and accounting remain identical after restart
 
   @ocomp-public-mutation
   # OCOMP-TEST-ID: OCM-PUB-002

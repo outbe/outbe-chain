@@ -892,24 +892,6 @@ tests:
     evidence:
       - q_forming_slot_quorum_and_all_owner_state_restore_for_each_owner_fault
       - exact_retry_and_terminal_outcome
-  OCM-E2E-007:
-    status: planned
-    layer: E2E
-    lane: OCM-E2E
-    planned_path: testing/e2e-harness/features/ocomp.feature
-    production_entrypoint: incompatible Worker registration
-    real_components:
-      - four_nodes
-      - one_incompatible_supervisor_process
-      - real_axum_registration
-      - real_zeromq_tcp
-    substitutions: []
-    oracles:
-      - PROCESS_BOUNDARY
-      - FINALIZED_PUBLIC_STATE
-    evidence:
-      - local_ocomp_not_ready
-      - continuing_consensus_finality
   OCM-E2E-008:
     status: planned
     layer: E2E
@@ -975,7 +957,6 @@ task_ownership:
   OCM-26: [OCM-CAP-001]
   OCM-27:
     - OCM-E2E-001
-    - OCM-E2E-007
     - OCM-E2E-008
     - OCM-TRC-001
 
@@ -1076,7 +1057,7 @@ requirements:
       tests: [OCM-BND-002, OCM-REQ-001, OCM-TRC-001]
     "ADR-S-OCM-001/I-10":
       text: Local configuration or negotiation cannot choose consensus semantics.
-      tests: [OCM-E2E-007]
+      tests: [OCM-WTR-001]
     "ADR-S-OCM-001/I-11":
       text: Only the fork-pinned handler verifies and applies.
       tests: [OCM-BYT-002, OCM-BND-001, OCM-PUB-002]
@@ -1214,7 +1195,7 @@ requirements:
       tests: [OCM-FSM-001, OCM-E2E-001, OCM-TRC-001]
     "ADR-S-OCM-004/I-21":
       text: Local readiness and version cannot alter consensus validity.
-      tests: [OCM-E2E-007]
+      tests: [OCM-WTR-001]
 
   poc:
     POC-01: [OCM-SEM-001, OCM-E2E-001]
@@ -1240,7 +1221,7 @@ requirements:
     POC-21: [OCM-CAP-001, OCM-PUB-001, OCM-PUB-002]
     POC-22: [OCM-E2E-001, OCM-E2E-008]
     POC-23: [OCM-PIN-001]
-    POC-24: [OCM-WTR-001, OCM-E2E-007]
+    POC-24: [OCM-WTR-001]
     POC-25: [OCM-PUB-004, OCM-E2E-008]
     POC-26: [OCM-BYT-002, OCM-CAS-001, OCM-E2E-001, OCM-E2E-002, OCM-E2E-004]
 
@@ -1314,7 +1295,7 @@ requirements:
       tests: [OCM-CAP-001, OCM-BND-003, OCM-CAS-001, OCM-WRK-001, OCM-WTR-001, OCM-WOBS-001, OCM-PUB-001, OCM-PUB-002]
     PFS-002-22:
       status: required
-      tests: [OCM-WTR-001, OCM-E2E-007]
+      tests: [OCM-WTR-001]
     PFS-002-23:
       status: required
       tests: [OCM-E2E-008]

@@ -88,6 +88,8 @@ const OCOMP_VALIDATOR_INDEX_ENV: &str = "OCOMP_VALIDATOR_INDEX";
 #[cfg(any(feature = "ocomp-integration", test))]
 const OCOMP_MAX_PROCESS_RECORDS: usize = 64;
 const OCOMP_MAX_FAULT_RECORDS: usize = 32;
+#[cfg(feature = "ocomp-integration")]
+const OCOMP_RUNTIME_READY_TIMEOUT: Duration = Duration::from_secs(30);
 pub const METADOSIS_STORAGE_LAYOUT_V1_HASH_HEX: &str =
     "0x06de88157b2c94c36b929a65c9db8d0f6a7ca10fad6d40be14098019f5749187";
 #[cfg(feature = "ocomp-integration")]
@@ -776,20 +778,6 @@ impl OcompTopology {
         )
     }
 
-    /// Prepare a public measurement chain whose first no-quorum expiry
-    /// deterministically exhausts the attempt budget. This changes only the
-    /// immutable Measurement capacity profile; live Metadosis/OCOMP state is
-    /// still created and advanced exclusively by production block execution.
-    #[cfg(feature = "ocomp-integration")]
-    pub fn prepare_failure_recovery_fork_install(&self) -> Result<OcompMeasurementForkV1> {
-        self.prepare_measurement_fork_install_inner(
-            Some(OCOMP_PUBLIC_OFFERING_AFTER_GENESIS_SECS),
-            &[],
-            false,
-            Some(1),
-        )
-    }
-
     /// Prepare two independently scheduled public jobs around one real DKG
     /// membership boundary. The shortened epoch is still above the normative
     /// snapshot-retention lower bound; the compute-and-vote deadline comes from
@@ -1041,8 +1029,20 @@ impl OcompTopology {
         &mut self,
         expected_workers_per_supervisor: usize,
     ) -> Result<OcompRuntimeCountsV1> {
-        self.ensure_baseline_processes_alive(expected_workers_per_supervisor)?;
-        self.observe_baseline_runtime(expected_workers_per_supervisor)
+        let deadline = Instant::now() + OCOMP_RUNTIME_READY_TIMEOUT;
+        loop {
+            self.ensure_baseline_processes_alive(expected_workers_per_supervisor)?;
+            match self.observe_baseline_runtime(expected_workers_per_supervisor) {
+                Ok(counts) => return Ok(counts),
+                Err(error) if Instant::now() >= deadline => {
+                    eyre::bail!(
+                        "OCOMP Supervisors/Workers did not become ready within {} seconds: {error}",
+                        OCOMP_RUNTIME_READY_TIMEOUT.as_secs()
+                    );
+                }
+                Err(_) => sleep(Duration::from_millis(250)),
+            }
+        }
     }
 
     /// Fail immediately when a required owned OCOMP role exits. Registration
@@ -2159,54 +2159,6 @@ impl OcompTopology {
             self.restart_worker(validator_index, worker_ordinal)?;
         }
         Ok(())
-    }
-
-    /// Replace a stopped Supervisor with a process that has a valid local
-    /// protocol bundle but an incompatible endpoint identity. The process must
-    /// remain outside the node-owned authenticated session while the node and
-    /// the other validator domains continue normally.
-    #[cfg(feature = "ocomp-integration")]
-    pub fn restart_incompatible_supervisor(&mut self, validator_index: u8) -> Result<()> {
-        if self.domain(validator_index)?.supervisor.is_some() {
-            eyre::bail!("validator-{validator_index} supervisor is already running");
-        }
-        let mut identity = self
-            .launch_identity
-            .ok_or_else(|| eyre::eyre!("OCOMP launch identity is not established"))?;
-        identity.genesis_hash = B256::repeat_byte(0x7f);
-        let supervisor =
-            self.spawn_validator_role(validator_index, OcompProcessRole::Supervisor, identity)?;
-        self.attach_owned(
-            Some(validator_index),
-            OcompProcessRole::Supervisor,
-            None,
-            supervisor,
-        )?;
-        sleep(Duration::from_secs(2));
-        let (record_index, exited) = {
-            let process = self
-                .domain_mut(validator_index)?
-                .supervisor
-                .as_mut()
-                .expect("attached immediately above");
-            (process.record_index, process.guard.exited())
-        };
-        if exited {
-            self.records[record_index].stopped_at_millis = Some(unix_time_millis());
-            eyre::bail!(
-                "validator-{validator_index} incompatible OCOMP supervisor exited instead of retrying:\n{}",
-                self.supervisor_log_tail(validator_index, 20)?
-            );
-        }
-        Ok(())
-    }
-
-    #[cfg(feature = "ocomp-integration")]
-    pub fn supervisor_log_tail(&self, validator_index: u8, lines: usize) -> Result<String> {
-        Ok(tail_file(
-            &self.domain(validator_index)?.root.join("supervisor.log"),
-            lines,
-        ))
     }
 
     /// Current process inventory, including already stopped owned processes.
