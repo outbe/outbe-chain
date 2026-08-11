@@ -124,8 +124,8 @@ contract PatternADeferTest is CrossChainTest {
         _deliverBridge(BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID_DAY));
 
         // First parked slot.
-        (uint32 seriesId, bool exists, bool done) = bnbRouter.pendingBidsRelays(0);
-        assertEq(seriesId, SERIES_ID_DAY, "deferred worldwideDay");
+        (uint32 worldwideDay, bool exists, bool done) = bnbRouter.pendingBidsRelays(0);
+        assertEq(worldwideDay, SERIES_ID_DAY, "deferred worldwideDay");
         assertTrue(exists);
         assertFalse(done);
         assertEq(bnbRouter.nextPendingBidsRelayIdx(), 1);

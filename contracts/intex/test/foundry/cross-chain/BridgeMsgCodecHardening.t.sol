@@ -8,7 +8,7 @@ import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 ///      can be asserted via `vm.expectRevert` from a test contract.
 contract BridgeMsgCodecHardeningHarness {
     function encodeBidsBatch(
-        uint32 seriesId,
+        uint32 worldwideDay,
         uint32 srcChainId,
         uint32 relayGeneration,
         uint16 batchIndex,
@@ -19,7 +19,7 @@ contract BridgeMsgCodecHardeningHarness {
         uint32[] calldata timestamps
     ) external pure returns (bytes memory) {
         return BridgeMsgCodec.encodeBidsBatch(
-            seriesId, srcChainId, relayGeneration, batchIndex, totalBatches, bidders, quantities, rates, timestamps
+            worldwideDay, srcChainId, relayGeneration, batchIndex, totalBatches, bidders, quantities, rates, timestamps
         );
     }
 
@@ -32,12 +32,12 @@ contract BridgeMsgCodecHardeningHarness {
     }
 
     function encodeRefundInstructions(
-        uint32 seriesId,
+        uint32 worldwideDay,
         address[] calldata bidders,
         uint128[] calldata refundedAmounts,
         uint128[] calldata paidAmounts
     ) external pure returns (bytes memory) {
-        return BridgeMsgCodec.encodeRefundInstructions(seriesId, bidders, refundedAmounts, paidAmounts);
+        return BridgeMsgCodec.encodeRefundInstructions(worldwideDay, bidders, refundedAmounts, paidAmounts);
     }
 
     function decodeRefundInstructions(bytes calldata m)
