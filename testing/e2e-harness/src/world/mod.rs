@@ -7,6 +7,7 @@
 //! work to `crate::internal`.
 
 pub mod forge;
+pub mod hardhat;
 pub mod localnet;
 pub mod mongodb;
 pub mod ocomp;

@@ -31,6 +31,8 @@ fn committee_chain_hosts_engine(world: &mut World) {
         ("ERC7786Bridge", contracts.bridge),
         ("LoopbackGatewayAdapter", contracts.loopback),
         ("OriginRouter", contracts.origin_router),
+        ("IntexNFT1155", contracts.intex_nft),
+        ("TargetRouter", contracts.target_router),
     ] {
         assert!(
             eth::code(&url, address).is_some_and(|code| !code.is_empty()),
