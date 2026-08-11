@@ -46,6 +46,41 @@ pub const ISO_4217_NUMERIC_CODES: &[u16] = &[
     990, 994, 997, 999,
 ];
 
+/// Alpha-3 codes positionally aligned with [`ISO_4217_NUMERIC_CODES`], from the
+/// same pinned snapshot.
+pub const ISO_4217_ALPHA: &[[u8; 3]] = &[
+    *b"ALL", *b"DZD", *b"ARS", *b"AUD", *b"BSD", *b"BHD", *b"BDT", *b"AMD", *b"BBD", *b"BMD",
+    *b"BTN", *b"BOB", *b"BWP", *b"BZD", *b"SBD", *b"BND", *b"MMK", *b"BIF", *b"KHR", *b"CAD",
+    *b"CVE", *b"KYD", *b"LKR", *b"CLP", *b"CNY", *b"COP", *b"KMF", *b"CRC", *b"CUP", *b"CZK",
+    *b"DKK", *b"DOP", *b"SVC", *b"ETB", *b"ERN", *b"FKP", *b"FJD", *b"DJF", *b"GMD", *b"GIP",
+    *b"GTQ", *b"GNF", *b"GYD", *b"HTG", *b"HNL", *b"HKD", *b"HUF", *b"ISK", *b"INR", *b"IDR",
+    *b"IRR", *b"IQD", *b"ILS", *b"JMD", *b"JPY", *b"XAD", *b"KZT", *b"JOD", *b"KES", *b"KPW",
+    *b"KRW", *b"KWD", *b"KGS", *b"LAK", *b"LBP", *b"LSL", *b"LRD", *b"LYD", *b"MOP", *b"MWK",
+    *b"MYR", *b"MVR", *b"MUR", *b"MXN", *b"MNT", *b"MDL", *b"MAD", *b"OMR", *b"NAD", *b"NPR",
+    *b"XCG", *b"AWG", *b"VUV", *b"NZD", *b"NIO", *b"NGN", *b"NOK", *b"PKR", *b"PAB", *b"PGK",
+    *b"PYG", *b"PEN", *b"PHP", *b"QAR", *b"RUB", *b"RWF", *b"SHP", *b"SAR", *b"SCR", *b"SGD",
+    *b"VND", *b"SOS", *b"ZAR", *b"SSP", *b"SZL", *b"SEK", *b"CHF", *b"SYP", *b"THB", *b"TOP",
+    *b"TTD", *b"AED", *b"TND", *b"UGX", *b"MKD", *b"EGP", *b"GBP", *b"TZS", *b"USD", *b"UYU",
+    *b"UZS", *b"WST", *b"YER", *b"TWD", *b"ZWG", *b"SLE", *b"VED", *b"UYW", *b"VES", *b"MRU",
+    *b"STN", *b"BYN", *b"TMT", *b"GHS", *b"SDG", *b"UYI", *b"RSD", *b"MZN", *b"AZN", *b"RON",
+    *b"CHE", *b"CHW", *b"TRY", *b"XAF", *b"XCD", *b"XOF", *b"XPF", *b"XBA", *b"XBB", *b"XBC",
+    *b"XBD", *b"XAU", *b"XDR", *b"XAG", *b"XPT", *b"XTS", *b"XPD", *b"XUA", *b"ZMW", *b"SRD",
+    *b"MGA", *b"COU", *b"AFN", *b"TJS", *b"AOA", *b"CDF", *b"BAM", *b"EUR", *b"MXV", *b"UAH",
+    *b"GEL", *b"BOV", *b"PLN", *b"BRL", *b"CLF", *b"XSU", *b"USN", *b"XXX",
+];
+
+const _: () = assert!(ISO_4217_ALPHA.len() == ISO_4217_NUMERIC_CODES.len());
+
+/// The alpha-3 code for an ISO 4217 numeric code, or `None` when the pinned list
+/// does not carry it. The two tables are positional, so the numeric list is both
+/// the index and the search key.
+pub fn iso_4217_alpha(iso_code: u16) -> Option<[u8; 3]> {
+    ISO_4217_NUMERIC_CODES
+        .binary_search(&iso_code)
+        .ok()
+        .map(|index| ISO_4217_ALPHA[index])
+}
+
 /// Validated fields carried by a canonical stablecoin-creation proposal.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StablecoinCreatePayload {
