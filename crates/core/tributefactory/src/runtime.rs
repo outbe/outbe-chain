@@ -83,6 +83,7 @@ impl TributeFactoryContract<'_> {
         // Current rates at this block. There is a single active OFFERING
         // day, so its committed oracle prices are the current rates (identical on
         // every validator).
+        // TODO wrong logic; resolve it matches tribute.wwd
         let offering_day = *outbe_metadosis::api::offering_worldwide_days(self.storage.clone())?
             .first()
             .ok_or_else(|| PrecompileError::Revert("no worldwide day is OFFERING".to_string()))?;
