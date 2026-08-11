@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
-use outbe_oracle::contract::OracleContract;
+use outbe_oracle::schema::{OracleContract, PairIndex};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},
@@ -28,16 +28,8 @@ use crate::state::QualifiedBinTree;
 /// Run the daily Called scan. Returns the number of series force-called.
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     let oracle = OracleContract::new(ctx.storage.clone());
-    let pair_hash = oracle
-        .settlement_iso_to_pair
-        .read(&QUALIFIER_REFERENCE_ISO)?;
-    if pair_hash.is_zero() {
-        return Ok(0);
-    }
-    let pair_id = oracle.pair_hash_to_id.read(&pair_hash)?;
-    if pair_id == 0 {
-        return Ok(0);
-    }
+    let (_, pair_index) =
+        outbe_oracle::api::require_coen_pair(ctx.storage.clone(), QUALIFIER_REFERENCE_ISO)?;
 
     // Most recent fully-closed UTC day (finalized VWAP).
     let last_closed_day = previous_date_key(timestamp_to_date_key(ctx.block.timestamp));
@@ -45,13 +37,14 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     // The Oracle begin-block hook finalizes that day earlier in this same
     // block; a lagging watermark means the ordering broke — skip loudly
     // instead of misreading an unfinalized day as empty.
+    // todo use api.rs
     let finalized = oracle.utc_day_vwap_last_finalized.read()?;
     if finalized < last_closed_day {
         tracing::warn!(target: "outbe::intexfactory", last_closed_day, finalized, "call scan: utc-day VWAP not finalized yet, skipping run");
         return Ok(0);
     }
 
-    let last_closed_vwap = match oracle.get_utc_day_vwap_for_pair_id(last_closed_day, pair_id)? {
+    let last_closed_vwap = match oracle.get_utc_day_vwap_for_pair(last_closed_day, pair_index)? {
         Some(v) if !v.is_zero() => v,
         _ => return Ok(0),
     };
@@ -66,7 +59,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     };
     let mut factory = IntexFactoryContract::new(ctx.storage.clone());
 
-    let mut vwaps = DayVwaps::new(pair_id);
+    let mut vwaps = DayVwaps::new(pair_index);
     vwaps.seed(last_closed_day, Some(last_closed_vwap));
 
     let mut called: u32 = 0;
@@ -127,14 +120,14 @@ pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
 
 /// Finalized per-day VWAPs of one oracle pair, read once per scan.
 pub(crate) struct DayVwaps {
-    pair_id: u32,
+    pair_index: PairIndex,
     days: BTreeMap<u32, Option<U256>>,
 }
 
 impl DayVwaps {
-    pub(crate) fn new(pair_id: u32) -> Self {
+    pub(crate) fn new(pair_index: PairIndex) -> Self {
         Self {
-            pair_id,
+            pair_index,
             days: BTreeMap::new(),
         }
     }
@@ -147,7 +140,7 @@ impl DayVwaps {
         if let Some(v) = self.days.get(&day) {
             return Ok(*v);
         }
-        let v = oracle.get_utc_day_vwap_for_pair_id(day, self.pair_id)?;
+        let v = oracle.get_utc_day_vwap_for_pair(day, self.pair_index)?;
         self.days.insert(day, v);
         Ok(v)
     }

@@ -1,6 +1,6 @@
 use alloy_primitives::{address, Address, B256, U256};
 use outbe_gem::{api as gem_api, GemContract, GemState};
-use outbe_oracle::contract::OracleContract;
+use outbe_oracle::schema::OracleContract;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::SCALE_1E18;
@@ -71,17 +71,19 @@ fn with_storage<R>(rate_1e18: Option<U256>, f: impl FnOnce(&StorageHandle) -> R)
     );
     StorageHandle::enter(&mut storage, |handle| {
         if let Some(rate) = rate_1e18 {
-            let mut oracle = OracleContract::new(handle.clone());
-            oracle.register_pair("COEN", "0xUSD").unwrap();
-            oracle
-                .set_exchange_rate(Address::ZERO, "COEN", "0xUSD", rate, 0, 0)
+            outbe_oracle::api::register_pair(handle.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
                 .unwrap();
+            outbe_oracle::api::set_exchange_rate(
+                handle.clone(),
+                Address::ZERO,
+                outbe_oracle::api::DAY_TYPE_PAIR,
+                rate,
+                0,
+                0,
+            )
+            .unwrap();
             // Register ISO 840 (USD) so mint_gem currency-validation passes.
-            let pair_hash = OracleContract::pair_hash("COEN", "0xUSD");
-            oracle
-                .settlement_iso_to_pair
-                .write(&840u16, pair_hash)
-                .unwrap();
+            let oracle = OracleContract::new(handle.clone());
             oracle.reference_currencies.push(840u16).unwrap();
         }
         f(&handle)

@@ -9,6 +9,7 @@ use std::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Mutex,
     },
+    time::Duration,
 };
 
 use alloy_primitives::{b256, keccak256, Bytes, Log, B256, U256};
@@ -223,6 +224,7 @@ impl FinalizedInputProofSource for ResponseWindowCompletedSource {
 struct TransientFinalitySource {
     inner: DeterministicProofSource,
     resolve_calls: Arc<AtomicUsize>,
+    failures_before_ready: usize,
 }
 
 impl FinalizedInputProofSource for TransientFinalitySource {
@@ -237,7 +239,7 @@ impl FinalizedInputProofSource for TransientFinalitySource {
         &self,
         candidate: CandidatePinV1,
     ) -> Result<CandidateFinalityV1, RetentionError> {
-        if self.resolve_calls.fetch_add(1, Ordering::SeqCst) == 0 {
+        if self.resolve_calls.fetch_add(1, Ordering::SeqCst) < self.failures_before_ready {
             return Err(RetentionError::Source(
                 "finalized candidate header is not persisted yet".to_owned(),
             ));
@@ -669,8 +671,8 @@ fn ocm_pin_001_old_tentative_survives_repeated_finality_misses_and_restart() {
     ));
 }
 
-#[test]
-fn ocm_pin_001_restart_reconciles_a_canonical_tentative_from_the_next_finalization() {
+#[tokio::test]
+async fn ocm_pin_001_restart_reconciles_a_canonical_tentative_from_the_recovered_tip() {
     let request = block(100, B256::repeat_byte(0x38), 8);
     let successor = block_extending(101, B256::repeat_byte(0x39), request.block_hash(), 9);
     let candidate = candidate(&request, B256::repeat_byte(0x47));
@@ -685,8 +687,29 @@ fn ocm_pin_001_restart_reconciles_a_canonical_tentative_from_the_next_finalizati
     );
     drop(coordinator);
 
-    let restarted = OcompRetentionCoordinator::open(root.path(), source.clone());
-    DeterministicConsensusDriver::finalize(source.as_ref(), &restarted, &successor);
+    source.observe_finalized(&successor);
+    let restarted = Arc::new(OcompRetentionCoordinator::open(root.path(), source));
+    let (service, handle, execution) =
+        OcompRetentionService::new_with_execution_readiness(restarted.clone(), None, 99);
+    let worker = tokio::spawn(service.run());
+    handle
+        .reconcile_finalized(&successor)
+        .expect("recovered marshal tip is queued exactly");
+    tokio::task::yield_now().await;
+    assert!(matches!(
+        ready_record(&restarted).state,
+        PinStateV1::Tentative { .. }
+    ));
+
+    execution
+        .notify_execution_finalized(successor.number())
+        .expect("recovered execution watermark reaches retention");
+    drop(handle);
+    drop(execution);
+    tokio::time::timeout(Duration::from_secs(1), worker)
+        .await
+        .expect("recovered retention worker finishes")
+        .expect("recovered retention worker task succeeds");
     assert_eq!(
         ready_record(&restarted),
         PinRecordV1 {
@@ -833,6 +856,62 @@ async fn ocm_pin_001_consensus_finality_notification_does_no_proof_or_disk_work_
 }
 
 #[tokio::test]
+async fn ocm_pin_001_finality_waits_for_exact_local_execution_without_dropping_the_block() {
+    let request = block(100, B256::repeat_byte(0x8a), 0x8b);
+    let candidate = candidate(&request, B256::repeat_byte(0x8c));
+    let job_id = B256::repeat_byte(0x8d);
+    let source = Arc::new(DeterministicProofSource::with_jobs([(candidate, job_id)]));
+    source.observe_finalized(&request);
+    let root = tempfile::tempdir().expect("validator journal root");
+    let coordinator = Arc::new(OcompRetentionCoordinator::open(root.path(), source));
+    coordinator
+        .prepare_candidate(&request)
+        .expect("candidate pin is durable before finality");
+
+    let (service, handle, execution) =
+        OcompRetentionService::new_with_execution_readiness(coordinator.clone(), None, 99);
+    let worker = tokio::spawn(service.run());
+
+    handle
+        .reconcile_finalized(&request)
+        .expect("consensus only queues the exact finalized block");
+    tokio::task::yield_now().await;
+    assert_eq!(
+        ready_record(&coordinator),
+        PinRecordV1 {
+            generation: 1,
+            state: PinStateV1::Tentative { candidate },
+        },
+        "finality must not read execution state before the exact block is locally ready"
+    );
+
+    execution
+        .notify_execution_finalized(request.number())
+        .expect("execution readiness reaches the retention worker");
+    drop(handle);
+    drop(execution);
+    tokio::time::timeout(Duration::from_secs(1), worker)
+        .await
+        .expect("retention worker finishes after its inputs close")
+        .expect("retention worker task succeeds");
+
+    assert_eq!(
+        ready_record(&coordinator),
+        PinRecordV1 {
+            generation: 2,
+            state: PinStateV1::Finalized {
+                candidate,
+                job_id,
+                finality_recorded_height: 100,
+                open_height: 104,
+                deadline_height: 114,
+            },
+        },
+        "the same exact finalized block must reconcile once execution is ready"
+    );
+}
+
+#[tokio::test]
 async fn ocm_pin_001_worker_retries_transient_finalized_header_unavailability() {
     let request = block(100, B256::repeat_byte(0x7d), 0x7e);
     let candidate = candidate(&request, B256::repeat_byte(0x7f));
@@ -843,6 +922,7 @@ async fn ocm_pin_001_worker_retries_transient_finalized_header_unavailability() 
     let source = Arc::new(TransientFinalitySource {
         inner,
         resolve_calls: resolve_calls.clone(),
+        failures_before_ready: 1,
     });
     let root = tempfile::tempdir().expect("validator journal root");
     let coordinator = Arc::new(OcompRetentionCoordinator::open(root.path(), source));
@@ -871,6 +951,44 @@ async fn ocm_pin_001_worker_retries_transient_finalized_header_unavailability() 
             },
         }
     );
+}
+
+#[tokio::test]
+async fn ocm_pin_001_worker_retains_exact_block_beyond_the_old_retry_limit() {
+    let request = block(100, B256::repeat_byte(0x8e), 0x8f);
+    let candidate = candidate(&request, B256::repeat_byte(0x90));
+    let job_id = B256::repeat_byte(0x91);
+    let inner = DeterministicProofSource::with_jobs([(candidate, job_id)]);
+    inner.observe_finalized(&request);
+    let resolve_calls = Arc::new(AtomicUsize::new(0));
+    let source = Arc::new(TransientFinalitySource {
+        inner,
+        resolve_calls: resolve_calls.clone(),
+        failures_before_ready: 8,
+    });
+    let root = tempfile::tempdir().expect("validator journal root");
+    let coordinator = Arc::new(OcompRetentionCoordinator::open(root.path(), source));
+    coordinator
+        .prepare_candidate(&request)
+        .expect("candidate pin is durable before finality");
+    let (service, handle) = OcompRetentionService::new(coordinator.clone());
+
+    handle
+        .reconcile_finalized(&request)
+        .expect("exact finalized block is queued");
+    drop(handle);
+    tokio::time::timeout(Duration::from_secs(5), service.run())
+        .await
+        .expect("retention continues beyond the former eight-attempt horizon");
+
+    assert_eq!(resolve_calls.load(Ordering::SeqCst), 9);
+    assert!(matches!(
+        ready_record(&coordinator).state,
+        PinStateV1::Finalized {
+            job_id: current,
+            ..
+        } if current == job_id
+    ));
 }
 
 #[tokio::test]

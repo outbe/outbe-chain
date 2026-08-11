@@ -303,6 +303,7 @@ fn is_free(port: u16, proto: Proto) -> bool {
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
+    use std::path::Path;
 
     use super::Service::*;
     use super::*;
@@ -325,6 +326,32 @@ mod tests {
         assert_eq!(p.port(OcompSupervisor, 0), 18552);
         assert_eq!(p.port(Http, 1), NODE_BASE + BLOCK);
         assert_eq!(p.port(Tee, 1), NODE_BASE + BLOCK + 1);
+    }
+
+    #[test]
+    fn canonical_ocomp_fixture_uses_the_current_static_consensus_ports() {
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("fixtures/ocomp-final-v1/base/validators.json");
+        let validators: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(fixture).expect("canonical validators fixture"))
+                .expect("canonical validators JSON");
+        let validators = validators.as_array().expect("validators array");
+        let ports = static_ports(validators.len());
+
+        for (index, validator) in validators.iter().enumerate() {
+            let address = validator["p2p_address"]
+                .as_str()
+                .expect("validator p2p_address");
+            let fixture_port = address
+                .rsplit_once(':')
+                .and_then(|(_, port)| port.parse::<u16>().ok())
+                .expect("validator p2p port");
+            assert_eq!(
+                fixture_port,
+                ports.port(Consensus, index),
+                "canonical validator-{index} consensus port drifted from the harness layout"
+            );
+        }
     }
 
     /// The reported bug: a node index past the committee used to panic. Blocks

@@ -28,6 +28,19 @@ use crate::internal::shell::Sh;
 
 use super::Localnet;
 
+fn validator_slot_node_log_path(root: &Path, slot: usize) -> PathBuf {
+    root.join(format!("validator-{slot}")).join("node.log")
+}
+
+fn read_required_node_log(path: &Path, node: &str) -> Result<String> {
+    fs::read_to_string(path).wrap_err_with(|| {
+        format!(
+            "read OCOMP runtime trace for {node} from owned log {}",
+            path.display()
+        )
+    })
+}
+
 /// One successful testnet startup-recovery span observed from a validator.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct CeStartupReplayObservationV1 {
@@ -495,14 +508,42 @@ impl Localnet {
         node: &str,
     ) -> Result<Vec<OcompRuntimeTraceMarkerV1>> {
         ensure!(
-            node == "follower"
-                || node
-                    .strip_prefix("validator-")
-                    .and_then(|index| index.parse::<usize>().ok())
-                    .is_some_and(|index| index < self.committee_size()),
+            node.strip_prefix("validator-")
+                .and_then(|index| index.parse::<usize>().ok())
+                .is_some_and(|index| index < self.committee_size()),
             "OCOMP trace probe refuses unknown node {node}"
         );
-        let log = self.node_log(node);
+        let path = self.cfg.dir.join(node).join("node.log");
+        self.ocomp_runtime_trace_markers_from_path(node, &path)
+    }
+
+    /// Parse OCOMP runtime markers for a named FullNode whose owned data lives
+    /// in one allocated validator slot rather than a directory named after the
+    /// process. The slot is the storage identity used by
+    /// `launch_dcap_full_node`; the display name only owns the child process.
+    pub fn ocomp_runtime_trace_markers_at_validator_slot(
+        &self,
+        node: &str,
+        slot: usize,
+    ) -> Result<Vec<OcompRuntimeTraceMarkerV1>> {
+        ensure!(
+            self.followers.contains_key(node),
+            "OCOMP trace probe refuses unowned follower {node}"
+        );
+        ensure!(
+            slot >= self.committee_size(),
+            "OCOMP follower trace slot {slot} overlaps the active committee"
+        );
+        let path = validator_slot_node_log_path(&self.cfg.dir, slot);
+        self.ocomp_runtime_trace_markers_from_path(node, &path)
+    }
+
+    fn ocomp_runtime_trace_markers_from_path(
+        &self,
+        node: &str,
+        path: &Path,
+    ) -> Result<Vec<OcompRuntimeTraceMarkerV1>> {
+        let log = read_required_node_log(path, node)?;
         let mut markers = Vec::new();
         for line in log.lines() {
             let Some(payload) = line.split_once("OCOMP_TRACE_V1 ").map(|(_, value)| value) else {
@@ -1186,9 +1227,33 @@ mod tests {
         accept_expected_dkg_reveal, accept_expected_update_fatal, exact_expected_dkg_reveal,
         exact_expected_update_fatal, expected_request_deadline_cancellations, is_runtime_log,
         parse_canonical_block_observed_at_micros, parse_canonical_block_processing_micros,
-        parse_ce_startup_replay, parse_finalized_block_observed_at_micros, unexpected_log_line,
-        CeStartupReplayObservationV1, LogCounts, RethLogTail,
+        parse_ce_startup_replay, parse_finalized_block_observed_at_micros, read_required_node_log,
+        unexpected_log_line, validator_slot_node_log_path, CeStartupReplayObservationV1, LogCounts,
+        RethLogTail,
     };
+
+    #[test]
+    fn follower_trace_path_uses_its_owned_validator_slot() {
+        let root = Path::new("/run/scenario-1");
+        assert_eq!(
+            validator_slot_node_log_path(root, 14),
+            root.join("validator-14/node.log")
+        );
+        assert_ne!(
+            validator_slot_node_log_path(root, 14),
+            root.join("follower/node.log")
+        );
+    }
+
+    #[test]
+    fn missing_owned_follower_trace_log_is_an_error() {
+        let root = tempfile::tempdir().unwrap();
+        let path = validator_slot_node_log_path(root.path(), 14);
+        let error = read_required_node_log(&path, "follower").unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("read OCOMP runtime trace for follower from owned log"));
+    }
 
     fn deadline_log_bundle(hash: &str, terminal_hash: &str) -> Vec<(PathBuf, String)> {
         let reth = format!(

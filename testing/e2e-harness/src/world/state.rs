@@ -206,7 +206,7 @@ pub struct FixtureState {
     /// paused in the dirty-operations acceptance lane.
     pub projection_outage_finalized_before: Option<u64>,
     /// Immutable activation height loaded from the scenario's prepared genesis
-    /// install. Fresh Measurement uses block 1; the frozen Final fixture uses 32.
+    /// install. Fresh Measurement activates at block 1.
     pub ocomp_activation_height: Option<u64>,
     /// Public, finalized Metadosis request observed identically on every
     /// validator. This is evidence only; the harness cannot create the job.

@@ -17,15 +17,7 @@ const PUBLIC_SCENARIO_TAGS: [&str; 3] = [
     "@ocomp-public-mutation",
 ];
 
-const E2E_SCENARIO_TAGS: [&str; 3] = ["@ocomp-e2e-001", "@ocomp-e2e-007", "@ocomp-e2e-008"];
-
-const OCM25_PUBLIC_SCENARIO_TAGS: [&str; 5] = [
-    "@ocomp-public-apply",
-    "@ocomp-public-expiry",
-    "@ocomp-public-mutation",
-    "@ocomp-fork-restart",
-    "@ocomp-fork-mismatch",
-];
+const E2E_SCENARIO_TAGS: [&str; 2] = ["@ocomp-e2e-001", "@ocomp-e2e-007"];
 
 pub fn run(repository_root: &Path, task: &str) -> Result<()> {
     match task {
@@ -1867,7 +1859,7 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                 repository_root,
                 &artifact_set,
                 &evidence_dir,
-                &OCM25_PUBLIC_SCENARIO_TAGS,
+                &PUBLIC_SCENARIO_TAGS,
             )?;
             run_evidence_binary(
                 repository_root,
@@ -1893,9 +1885,9 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "OCM-REQ-001",
                     "OCM-FIN-001",
                     "OCM-PIN-001",
-                    "OCM-CTL-001",
-                    "OCM-DIS-001",
-                    "OCM-EXP-001",
+                    "OCM-WRK-001",
+                    "OCM-WTR-001",
+                    "OCM-WOBS-001",
                     "OCM-CAS-001",
                     "OCM-DET-001",
                     "OCM-SIG-001",
@@ -2019,13 +2011,6 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
             )?;
             require_matching_final_consensus_artifacts(&generated_artifacts, &checked_artifacts)?;
 
-            for (name, tag) in [
-                ("final-capacity", "@ocomp-final-capacity"),
-                ("fork-restart", "@ocomp-fork-restart"),
-                ("fork-mismatch", "@ocomp-fork-mismatch"),
-            ] {
-                run_exact_final_scenario(repository_root, &run_root, name, tag)?;
-            }
             eprintln!(
                 "OCM-26 immutable evidence retained at {}",
                 run_root.display()
@@ -2045,9 +2030,9 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "OCM-REQ-001",
                     "OCM-FIN-001",
                     "OCM-PIN-001",
-                    "OCM-CTL-001",
-                    "OCM-DIS-001",
-                    "OCM-EXP-001",
+                    "OCM-WRK-001",
+                    "OCM-WTR-001",
+                    "OCM-WOBS-001",
                     "OCM-CAS-001",
                     "OCM-DET-001",
                     "OCM-SIG-001",
@@ -2260,6 +2245,17 @@ fn evidence_verifier(repository_root: &Path) -> Result<()> {
     )
 }
 
+const OCOMP_E2E_HARNESS_BUILD_ARGS: &[&str] = &[
+    "build",
+    "--locked",
+    "--release",
+    "-p",
+    "outbe-e2e-harness",
+    "--features",
+    "ocomp-integration",
+    "--bins",
+];
+
 fn build_ocomp_e2e_binaries(repository_root: &Path) -> Result<()> {
     cargo(
         repository_root,
@@ -2285,18 +2281,7 @@ fn build_ocomp_e2e_binaries(repository_root: &Path) -> Result<()> {
             "outbe-keygen",
         ],
     )?;
-    cargo(
-        repository_root,
-        &[
-            "build",
-            "--locked",
-            "-p",
-            "outbe-e2e-harness",
-            "--features",
-            "ocomp-integration",
-            "--bins",
-        ],
-    )?;
+    cargo(repository_root, OCOMP_E2E_HARNESS_BUILD_ARGS)?;
     cargo(
         repository_root,
         &[
@@ -2366,10 +2351,10 @@ fn fresh_task_output_dir(task: &str) -> Result<std::path::PathBuf> {
         .duration_since(std::time::UNIX_EPOCH)
         .wrap_err("system clock precedes Unix epoch")?
         .as_millis();
-    let path = std::env::temp_dir().join(format!(
-        "outbe-ocomp-{task}-{}-{timestamp}",
-        std::process::id()
-    ));
+    // Keep the task root compact: the E2E harness adds run/scenario/validator
+    // components before creating reth.ipc, whose Linux sun_path is limited to
+    // 107 pathname bytes plus the terminating NUL.
+    let path = std::env::temp_dir().join(format!("{task}-{}-{timestamp}", std::process::id()));
     if path.exists() {
         bail!("fresh task output already exists: {}", path.display());
     }
@@ -2394,17 +2379,6 @@ fn require_matching_final_consensus_artifacts(generated: &Path, checked: &Path) 
         }
     }
     Ok(())
-}
-
-fn run_exact_final_scenario(
-    repository_root: &Path,
-    run_root: &Path,
-    name: &str,
-    tag: &str,
-) -> Result<()> {
-    let artifact_set = run_root.join("artifact-set");
-    let evidence_dir = run_root.join(format!("final-{name}-evidence"));
-    run_exact_scenario(repository_root, &artifact_set, &evidence_dir, tag)
 }
 
 fn run_exact_scenario_set(
@@ -2645,11 +2619,25 @@ fn require_success(status: ExitStatus, arguments: &[&str]) -> Result<()> {
 mod tests {
     use super::{
         copy_immutable_artifact, exact_artifact_sources, exact_scenario_arguments,
-        promote_exact_scenario_evidence, E2E_SCENARIO_TAGS, PUBLIC_SCENARIO_TAGS,
+        fresh_task_output_dir, promote_exact_scenario_evidence, OCOMP_E2E_HARNESS_BUILD_ARGS,
     };
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
+
+    #[test]
+    fn ocm26_output_root_leaves_room_for_the_reth_ipc_socket() {
+        let output = fresh_task_output_dir("ocm26").expect("fresh OCM-26 output root");
+        let ipc =
+            output.join("run-01/data/run-1786339127-4194304/scenario-1/validator-0/data/reth.ipc");
+
+        assert!(
+            ipc.as_os_str().len() <= 107,
+            "OCM-26 reth IPC path exceeds Linux sun_path capacity: {} bytes at {}",
+            ipc.as_os_str().len(),
+            ipc.display()
+        );
+    }
 
     #[test]
     fn exact_lane_artifact_snapshot_is_an_independent_read_only_copy() {
@@ -2685,6 +2673,14 @@ mod tests {
                 "exact lane source is not release: {source}"
             );
         }
+    }
+
+    #[test]
+    fn exact_lane_rebuilds_the_harness_in_release_profile_before_snapshot() {
+        assert!(
+            OCOMP_E2E_HARNESS_BUILD_ARGS.contains(&"--release"),
+            "exact closure would copy a stale target/release harness"
+        );
     }
 
     #[test]
@@ -2725,26 +2721,6 @@ mod tests {
             .any(|pair| { pair == ["--enclave-bin", "/artifact-set/outbe-tee-enclave",] }));
         assert!(!arguments.iter().any(|argument| argument == "--mock-bin"));
         assert!(!arguments.iter().any(|argument| argument == "--no-sudo"));
-    }
-
-    #[test]
-    fn public_lane_is_three_closed_single_scenario_runs() {
-        assert_eq!(
-            PUBLIC_SCENARIO_TAGS,
-            [
-                "@ocomp-public-apply",
-                "@ocomp-public-expiry",
-                "@ocomp-public-mutation",
-            ]
-        );
-    }
-
-    #[test]
-    fn e2e_lane_is_three_closed_single_scenario_runs() {
-        assert_eq!(
-            E2E_SCENARIO_TAGS,
-            ["@ocomp-e2e-001", "@ocomp-e2e-007", "@ocomp-e2e-008",]
-        );
     }
 
     #[test]

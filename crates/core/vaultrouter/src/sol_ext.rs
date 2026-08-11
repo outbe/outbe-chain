@@ -30,10 +30,6 @@ sol! {
             external returns (uint256 shares);
     }
 
-    interface IReferenceCurrency {
-        function isoCode() external view returns (uint16);
-    }
-
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface ITokenBundle {
         function topUp(address sender, address token, uint256 amount) external;

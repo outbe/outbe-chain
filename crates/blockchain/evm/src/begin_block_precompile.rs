@@ -1013,7 +1013,7 @@ fn record_window_close_absentees(ctx: &BlockRuntimeContext, block_number: u64) -
 /// OracleSlashWindow system tx: run Oracle slash-window penalties after any
 /// same-block boundary activation but before user transactions observe state.
 pub(crate) fn run_oracle_slash_window(ctx: &BlockRuntimeContext) -> Result<()> {
-    outbe_oracle::hooks::run_slash_window(ctx)
+    outbe_oracle::lifecycle::run_slash_window(ctx)
 }
 
 /// HookEvents system tx: no-op marker. Whitelisted pre-exec hook logs are
@@ -1105,12 +1105,21 @@ fn u256_to_u64(name: &str, value: U256) -> Result<u64> {
 mod tests {
     use super::*;
     use alloy_primitives::{address, keccak256, B256};
+    use outbe_chain_constants::{GenesisProtocolParametersV1, CHAIN_CONSTANTS_ADDRESS};
     use outbe_primitives::{consensus::ReshareResult, storage::hashmap::HashMapStorageProvider};
 
     const CHAIN_ID: u64 = 2026;
     const GENESIS_HASH: B256 = B256::repeat_byte(0x11);
     const OWNER: Address = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
     const VALIDATOR: Address = address!("0x1111111111111111111111111111111111111111");
+
+    fn seed_default_chain_constants(storage: StorageHandle<'_>) {
+        for (slot, value) in GenesisProtocolParametersV1::default().genesis_storage_words() {
+            storage
+                .sstore(CHAIN_CONSTANTS_ADDRESS, slot, value)
+                .expect("test chain constants seed succeeds");
+        }
+    }
 
     fn metadata() -> CertifiedParentAccountingMetadata {
         CertifiedParentAccountingMetadata {
@@ -1204,6 +1213,7 @@ mod tests {
         .unwrap()
         .into_install();
         provider.enter(|storage| {
+            seed_default_chain_constants(storage.clone());
             let root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
             storage
                 .sstore(
@@ -1219,6 +1229,13 @@ mod tests {
                     U256::from_be_slice(root.as_slice()),
                 )
                 .unwrap();
+            for (slot, value) in outbe_chain_constants::GenesisProtocolParametersV1::default()
+                .genesis_storage_words()
+            {
+                storage
+                    .sstore(outbe_chain_constants::CHAIN_CONSTANTS_ADDRESS, slot, value)
+                    .unwrap();
+            }
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
             vs.set_config_max_validators(128).unwrap();
@@ -1233,9 +1250,8 @@ mod tests {
                 .unwrap();
             vs.activate_validator_via_boundary_for_test(VALIDATOR)
                 .unwrap();
-            let (base, quote) = outbe_oracle::api::DAY_TYPE_PAIR;
-            outbe_oracle::contract::OracleContract::new(storage.clone())
-                .register_pair(base, quote)
+
+            outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
                 .unwrap();
         });
         provider.set_block_number(1);

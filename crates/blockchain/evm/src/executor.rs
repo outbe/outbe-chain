@@ -661,7 +661,7 @@ fn run_outbe_pre_execution_hooks_inner(
     // force-exits run later in the receipt-visible OracleSlashWindow system phase
     // so Phase 3 BoundaryOutcome can activate its target set before Oracle marks
     // underperformers EXITING.
-    <outbe_oracle::hooks::OracleLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
+    <outbe_oracle::lifecycle::OracleLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
 
     // Nod qualification mutates compressed bucket bodies and therefore runs
     // later inside the receipt-visible CycleTick system transaction. Oracle
@@ -673,7 +673,7 @@ fn run_outbe_pre_execution_hooks_inner(
     // surface, so it must run after Oracle.
     <outbe_gem::GemLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
 
-    // INTEX: qualify aged Issued series whose floor < current COEN/0xUSD
+    // INTEX: qualify aged Issued series whose floor < current COEN/840
     // rate. Reads the same Oracle surface, so it runs after Oracle.
     <outbe_intexfactory::IntexLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
 
@@ -4312,6 +4312,9 @@ mod tests {
         address, keccak256, logs_bloom, Address, Bytes, Log, Signature, TxKind, B256, U256,
     };
     use alloy_sol_types::{SolCall, SolEvent};
+    use outbe_chain_constants::{
+        GenesisProtocolParametersV1, CHAIN_CONSTANTS_ADDRESS, CHAIN_CONSTANTS_MARKER_CODE,
+    };
     use outbe_common::WorldwideDay;
     use outbe_compressed_entities::{
         CandidateCacheLimits, CeMdbx, CeWorkConfig, CompressedTreeService, EnvironmentIdentity,
@@ -4396,7 +4399,20 @@ mod tests {
         );
     }
 
+    /// The genesis-alloc chain constants every block hook reads; production
+    /// gets them from the genesis alloc, so tests have to seed them too.
+    fn seed_chain_constants_genesis(storage: &StorageHandle<'_>) {
+        for (slot, value) in
+            outbe_chain_constants::GenesisProtocolParametersV1::default().genesis_storage_words()
+        {
+            storage
+                .sstore(outbe_chain_constants::CHAIN_CONSTANTS_ADDRESS, slot, value)
+                .unwrap();
+        }
+    }
+
     fn seed_compressed_entities_genesis(storage: StorageHandle<'_>) {
+        seed_chain_constants_genesis(&storage);
         let root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
         storage
             .sstore(
@@ -4412,6 +4428,14 @@ mod tests {
                 U256::from_be_slice(root.as_slice()),
             )
             .unwrap();
+    }
+
+    fn seed_default_chain_constants(storage: StorageHandle<'_>) {
+        for (slot, value) in GenesisProtocolParametersV1::default().genesis_storage_words() {
+            storage
+                .sstore(CHAIN_CONSTANTS_ADDRESS, slot, value)
+                .expect("test chain constants seed succeeds");
+        }
     }
 
     #[test]
@@ -4646,6 +4670,7 @@ mod tests {
         let proposer_key = dummy_pubkey(0xA2);
         let install = test_ocomp_fork_install(&chain_spec, &[(proposer, proposer_key)]);
         StorageHandle::enter(&mut seed_storage, |storage| {
+            seed_default_chain_constants(storage.clone());
             seed_compressed_entities_genesis(storage.clone());
             seed_registered_active_validator_with_registration(
                 storage.clone(),
@@ -4660,6 +4685,15 @@ mod tests {
 
         let mut db = cache_db_from_storage(seed_storage);
         let marker_code = Bytecode::new_legacy([0xef].into());
+        let constants_marker_code = Bytecode::new_legacy(CHAIN_CONSTANTS_MARKER_CODE.into());
+        db.insert_account_info(
+            CHAIN_CONSTANTS_ADDRESS,
+            AccountInfo {
+                code_hash: constants_marker_code.hash_slow(),
+                code: Some(constants_marker_code),
+                ..Default::default()
+            },
+        );
         db.insert_account_info(
             outbe_primitives::addresses::VALIDATOR_SET_ADDRESS,
             AccountInfo {
@@ -4723,6 +4757,7 @@ mod tests {
         let proposer_key = dummy_pubkey(0xA2);
         let install = test_ocomp_fork_install(&chain_spec, &[(proposer, proposer_key)]);
         StorageHandle::enter(&mut seed_storage, |storage| {
+            seed_default_chain_constants(storage.clone());
             seed_compressed_entities_genesis(storage.clone());
             seed_registered_active_validator_with_registration(
                 storage.clone(),
@@ -4737,6 +4772,15 @@ mod tests {
 
         let mut db = cache_db_from_storage(seed_storage);
         let marker_code = Bytecode::new_legacy([0xef].into());
+        let constants_marker_code = Bytecode::new_legacy(CHAIN_CONSTANTS_MARKER_CODE.into());
+        db.insert_account_info(
+            CHAIN_CONSTANTS_ADDRESS,
+            AccountInfo {
+                code_hash: constants_marker_code.hash_slow(),
+                code: Some(constants_marker_code),
+                ..Default::default()
+            },
+        );
         db.insert_account_info(
             outbe_primitives::addresses::VALIDATOR_SET_ADDRESS,
             AccountInfo {
@@ -4815,6 +4859,7 @@ mod tests {
         let install = test_ocomp_fork_install(&chain_spec, validators);
         seed_storage.set_block_number(block_number);
         StorageHandle::enter(&mut seed_storage, |storage| {
+            seed_default_chain_constants(storage.clone());
             seed_compressed_entities_genesis(storage.clone());
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
@@ -4832,21 +4877,26 @@ mod tests {
                 );
             }
             seed_test_committee_snapshot(storage.clone(), validators);
-            // Seed the COEN/0xUSD oracle pair + a 1.0 rate so begin-block NOD/GEM/INTEX
-            // floor-price promotion reads a registered pair instead of reverting
-            // "pair not registered".
-            let mut oracle = outbe_oracle::contract::OracleContract::new(storage.clone());
-            oracle.register_pair("COEN", "0xUSD").unwrap();
-            oracle
-                .set_exchange_rate(
-                    Address::ZERO,
-                    "COEN",
-                    "0xUSD",
-                    U256::from(1_000_000_000_000_000_000u128),
-                    0,
-                    0,
-                )
+            // Seed the COEN/840 oracle pair + a 1.0 rate so begin-block
+            // NOD/GEM/INTEX floor-price promotion resolves a live rate instead
+            // of soft-skipping the scan. 840 is also pushed onto the reference
+            // currency list, matching genesis: the Nod qualifier reads its ISO
+            // from there, not from a hard-coded constant.
+            outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
                 .unwrap();
+            outbe_oracle::schema::OracleContract::new(storage.clone())
+                .reference_currencies
+                .push(outbe_oracle::api::DAY_TYPE_ISO)
+                .unwrap();
+            outbe_oracle::api::set_exchange_rate(
+                storage.clone(),
+                Address::ZERO,
+                outbe_oracle::api::DAY_TYPE_PAIR,
+                U256::from(1_000_000_000_000_000_000u128),
+                0,
+                0,
+            )
+            .unwrap();
         });
         seed_test_ocomp_profile(&mut seed_storage, block_number, &install);
         if cycle_frames != 0 {
@@ -4878,6 +4928,7 @@ mod tests {
             // seeded slot survives as live state here too (otherwise an empty
             // account's storage reads back as zero).
             outbe_primitives::addresses::ACCOUNTING_PROGRESS_ADDRESS,
+            CHAIN_CONSTANTS_ADDRESS,
         ];
         // `cache_db_from_storage` carries storage slots but not balances, and the
         // marker-info insert below overwrites `AccountInfo`. Capture any balance a
@@ -4925,6 +4976,7 @@ mod tests {
         let active_key = dummy_pubkey(0xA2);
         let install = test_ocomp_fork_install(&chain_spec, &[(active, active_key)]);
         StorageHandle::enter(&mut seed_storage, |storage| {
+            seed_default_chain_constants(storage.clone());
             seed_compressed_entities_genesis(storage.clone());
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
@@ -4941,27 +4993,41 @@ mod tests {
                 .unwrap();
             vs.admit_validator_for_boundary_for_test(candidate).unwrap();
             seed_test_committee_snapshot(storage.clone(), &[(active, active_key)]);
-            // Seed the COEN/0xUSD oracle pair + a 1.0 rate so begin-block NOD/GEM/INTEX
-            // floor-price promotion reads a registered pair instead of reverting
-            // "pair not registered".
-            let mut oracle = outbe_oracle::contract::OracleContract::new(storage.clone());
-            oracle.register_pair("COEN", "0xUSD").unwrap();
-            oracle
-                .set_exchange_rate(
-                    Address::ZERO,
-                    "COEN",
-                    "0xUSD",
-                    U256::from(1_000_000_000_000_000_000u128),
-                    0,
-                    0,
-                )
+            // Seed the COEN/840 oracle pair + a 1.0 rate so begin-block
+            // NOD/GEM/INTEX floor-price promotion resolves a live rate instead
+            // of soft-skipping the scan. 840 is also pushed onto the reference
+            // currency list, matching genesis: the Nod qualifier reads its ISO
+            // from there, not from a hard-coded constant.
+            outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
                 .unwrap();
+            outbe_oracle::schema::OracleContract::new(storage.clone())
+                .reference_currencies
+                .push(outbe_oracle::api::DAY_TYPE_ISO)
+                .unwrap();
+            outbe_oracle::api::set_exchange_rate(
+                storage.clone(),
+                Address::ZERO,
+                outbe_oracle::api::DAY_TYPE_PAIR,
+                U256::from(1_000_000_000_000_000_000u128),
+                0,
+                0,
+            )
+            .unwrap();
             seed_extra(storage);
         });
         seed_test_ocomp_profile(&mut seed_storage, 0, &install);
 
         let mut db = cache_db_from_storage(seed_storage);
         let marker_code = Bytecode::new_legacy([0xef].into());
+        let constants_marker_code = Bytecode::new_legacy(CHAIN_CONSTANTS_MARKER_CODE.into());
+        db.insert_account_info(
+            CHAIN_CONSTANTS_ADDRESS,
+            AccountInfo {
+                code_hash: constants_marker_code.hash_slow(),
+                code: Some(constants_marker_code),
+                ..Default::default()
+            },
+        );
         db.insert_account_info(
             outbe_primitives::addresses::VALIDATOR_SET_ADDRESS,
             AccountInfo {
@@ -5307,8 +5373,8 @@ mod tests {
     ) -> reth_ethereum::TransactionSigned {
         let input = outbe_oracle::precompile::IOracle::submitVoteCall {
             tuples: vec![outbe_oracle::precompile::IOracle::ExchangeRateTuple {
-                base: "COEN".to_string(),
-                quote: "0xUSD".to_string(),
+                base: outbe_oracle::api::COEN_ASSET,
+                quote: outbe_oracle::api::currency_address(840),
                 exchangeRate: U256::from(1_000_000_000_000_000_000u128),
                 volume: U256::from(10_000_000_000_000_000_000_000u128),
             }],
@@ -8307,7 +8373,9 @@ mod tests {
             1,
             B256::repeat_byte(0x91),
         );
-        let boundary = boundary_with(
+        // Block 2 activates current+1, so the boundary carries epoch 1.
+        let boundary = boundary_with_epoch(
+            1,
             true,
             vec![
                 (proposer, dummy_pubkey(0xA2)),
@@ -9776,7 +9844,7 @@ mod tests {
             .address();
         let mut state =
             state_with_active_and_registered_candidate_seeded(old_active, proposer, |storage| {
-                let oracle = outbe_oracle::contract::OracleContract::new(storage.clone());
+                let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
                 oracle.config_is_initialized.write(true).unwrap();
                 oracle.config_enabled.write(true).unwrap();
                 oracle.config_vote_period.write(0).unwrap();
@@ -10230,7 +10298,7 @@ mod tests {
             assert_eq!(record.status, outbe_validatorset::logic::status::ACTIVE);
             assert!(record.has_bls_share);
 
-            let oracle = outbe_oracle::contract::OracleContract::new(storage.clone());
+            let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
             assert_eq!(oracle.resolve_validator_for_feeder(feeder)?, validator);
             Ok::<_, outbe_primitives::error::PrecompileError>(())
         })
@@ -10270,7 +10338,7 @@ mod tests {
 
         let mut slot_storage = HashMapStorageProvider::new(CHAIN_ID);
         let vote_slot = StorageHandle::enter(&mut slot_storage, |storage| {
-            outbe_oracle::contract::OracleContract::new(storage.clone())
+            outbe_oracle::schema::OracleContract::new(storage.clone())
                 .vote_exists
                 .get(&validator)
                 .slot()
@@ -10871,20 +10939,25 @@ mod tests {
         vs.activate_validator_via_boundary_for_test(validator)
             .unwrap();
         seed_test_committee_snapshot(storage.clone(), &[(validator, *pk)]);
-        // Seed COEN/0xUSD pair + 1.0 rate so begin-block NOD/GEM/INTEX promotion
+        // Seed COEN/840 pair + 1.0 rate so begin-block NOD/GEM/INTEX promotion
         // reads a registered pair instead of reverting "pair not registered".
-        let mut oracle = outbe_oracle::contract::OracleContract::new(storage);
-        oracle.register_pair("COEN", "0xUSD").unwrap();
-        oracle
-            .set_exchange_rate(
-                Address::ZERO,
-                "COEN",
-                "0xUSD",
-                U256::from(1_000_000_000_000_000_000u128),
-                0,
-                0,
-            )
+        // 840 also goes on the reference currency list, matching genesis: the
+        // Nod qualifier reads its ISO from there.
+        outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
+        outbe_oracle::schema::OracleContract::new(storage.clone())
+            .reference_currencies
+            .push(outbe_oracle::api::DAY_TYPE_ISO)
+            .unwrap();
+        outbe_oracle::api::set_exchange_rate(
+            storage,
+            Address::ZERO,
+            outbe_oracle::api::DAY_TYPE_PAIR,
+            U256::from(1_000_000_000_000_000_000u128),
+            0,
+            0,
+        )
+        .unwrap();
     }
 
     fn register_and_activate_with_ocomp_registration(
@@ -10926,18 +10999,21 @@ mod tests {
             registration,
         );
         seed_test_committee_snapshot(storage.clone(), &[(validator, *consensus_key)]);
-        let mut oracle = outbe_oracle::contract::OracleContract::new(storage);
-        oracle.register_pair("COEN", "0xUSD").unwrap();
-        oracle
-            .set_exchange_rate(
-                Address::ZERO,
-                "COEN",
-                "0xUSD",
-                U256::from(1_000_000_000_000_000_000u128),
-                0,
-                0,
-            )
+        outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
+        outbe_oracle::schema::OracleContract::new(storage.clone())
+            .reference_currencies
+            .push(outbe_oracle::api::DAY_TYPE_ISO)
+            .unwrap();
+        outbe_oracle::api::set_exchange_rate(
+            storage,
+            Address::ZERO,
+            outbe_oracle::api::DAY_TYPE_PAIR,
+            U256::from(1_000_000_000_000_000_000u128),
+            0,
+            0,
+        )
+        .unwrap();
     }
 
     #[test]

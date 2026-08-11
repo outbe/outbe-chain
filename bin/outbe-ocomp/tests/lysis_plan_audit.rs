@@ -149,15 +149,15 @@ fn synthetic_fixture_with_result_fault(
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
-    let mut settlement_isos = tributes
+    let mut reference_isos = tributes
         .iter()
         .map(|tribute| tribute.reference_currency)
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
-    settlement_isos.push(840);
-    settlement_isos.sort_unstable();
-    settlement_isos.dedup();
+    reference_isos.push(840);
+    reference_isos.sort_unstable();
+    reference_isos.dedup();
     let finalized_state_root = hash(0x32);
     let raw_opening = |address, slot_byte| RawContractOpeningProofV1 {
         contract_address: address,
@@ -171,7 +171,7 @@ fn synthetic_fixture_with_result_fault(
     };
     let mut fidelity_openings = Vec::new();
     let mut oracle_opening = None;
-    for subjects in partition_lysis_opening_subjects(&owners, &settlement_isos, &limits).unwrap() {
+    for subjects in partition_lysis_opening_subjects(&owners, &reference_isos, &limits).unwrap() {
         let openings = materialize_authenticated_openings(
             &LysisOpeningsProofV1 {
                 protocol_bundle_hash: bundle_hash,

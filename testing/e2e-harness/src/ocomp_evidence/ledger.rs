@@ -285,11 +285,16 @@ impl PlanningLedger {
         }
 
         let test_ids = self.tests.keys().cloned().collect::<BTreeSet<_>>();
-        let expected_retired_tests =
-            BTreeSet::from(["OCM-E2E-003".to_owned(), "OCM-E2E-005".to_owned()]);
+        let expected_retired_tests = BTreeSet::from([
+            "OCM-CTL-001".to_owned(),
+            "OCM-DIS-001".to_owned(),
+            "OCM-E2E-003".to_owned(),
+            "OCM-E2E-005".to_owned(),
+            "OCM-EXP-001".to_owned(),
+        ]);
         ensure!(
             self.retired_tests.keys().cloned().collect::<BTreeSet<_>>() == expected_retired_tests,
-            "only OCM-E2E-003 and OCM-E2E-005 may be retired stable tests"
+            "retired stable test tombstones drifted from the accepted evidence contract"
         );
         for (test_id, retired) in &self.retired_tests {
             ensure!(

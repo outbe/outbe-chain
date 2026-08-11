@@ -66,53 +66,15 @@
     },
     "pairs": [
       {
-        "base": "XAU",
-        "quote": "USD",
-        "initial_rate": "2400000000000000000000"
-      },
-      {
         "base": "COEN",
-        "quote": "USDC",
+        "quote": "840",
         "initial_rate": "1000000000000000000"
-      },
-      {
-        "base": "USDC",
-        "quote": "USD",
-        "initial_rate": "1000000000000000000"
-      },
-      {
-        "base": "USDT",
-        "quote": "USD",
-        "initial_rate": "1000000000000000000"
-      },
-      {
-        "base": "BTC",
-        "quote": "USDC",
-        "initial_rate": "65000000000000000000000"
-      },
-      {
-        "base": "ETH",
-        "quote": "USDC",
-        "initial_rate": "2500000000000000000000"
-      },
-      {
-        "base": "COEN",
-        "quote": "0xUSD",
-        "initial_rate": "1000000000000000000"
-      }
-    ],
-    "settlement_currencies": [
-      {
-        "iso_code": 840,
-        "denom": "0xUSD",
-        "pair_base": "COEN",
-        "pair_quote": "0xUSD"
       }
     ],
     "scurve_seeds": [
       {
         "pair_base": "COEN",
-        "pair_quote": "0xUSD",
+        "pair_quote": "840",
         "peak_day": 20241220,
         "peak_price": "1000000000000000000"
       }

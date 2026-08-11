@@ -843,11 +843,24 @@ mod tests {
             development_root: Some(root.path().to_path_buf()),
             supervisor_address: "127.0.0.1:9765".parse().unwrap(),
         };
-        let profile = RuntimeProfile::resolve(&args).unwrap();
-
-        assert_eq!(profile.owner_uid, effective_uid().unwrap());
-        assert!(profile.cas_root.starts_with(root.path()));
-        assert!(profile.protocol_bundle_path.starts_with(root.path()));
+        let resolved = RuntimeProfile::resolve(&args);
+        #[cfg(debug_assertions)]
+        {
+            let profile = resolved.expect("debug builds accept an explicit development root");
+            assert_eq!(profile.owner_uid, effective_uid().unwrap());
+            assert!(profile.cas_root.starts_with(root.path()));
+            assert!(profile.protocol_bundle_path.starts_with(root.path()));
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            let error = match resolved {
+                Ok(_) => panic!("release builds must reject --development-root"),
+                Err(error) => error,
+            };
+            assert!(error
+                .to_string()
+                .contains("unavailable in release outbe-ocomp builds"));
+        }
 
         let relative = RuntimeArgs {
             development_root: Some(PathBuf::from("relative-domain")),

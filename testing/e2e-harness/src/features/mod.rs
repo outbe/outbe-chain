@@ -5,8 +5,7 @@
 //! up. Each step drives the `crate::world` handles and nothing else.
 //!
 //! - [`common`] holds the shared localnet setup + parity steps.
-//! - [`update`] backs `features/update_operator.feature`.
-//! - [`governance`] backs `features/governance_oip_gip.feature`.
+//! - [`update`] and [`governance`] back `features/governance.feature`.
 //! - [`downtime`] / [`stale_join`] / [`lifecycle`] / [`restart`] / [`dkg`] /
 //!   [`follower`] back the S1-S7 + follower validator-lifecycle scenarios.
 

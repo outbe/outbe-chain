@@ -6,6 +6,7 @@
 
 use alloy_sol_types::sol;
 
+// TODO refactor this to link sol file instead of in-place copy
 sol! {
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IERC20 {
@@ -13,14 +14,5 @@ sol! {
             external returns (bool);
         function approve(address spender, uint256 amount)
             external returns (bool);
-    }
-}
-
-sol! {
-    #[sol(alloy_sol_types = alloy_sol_types)]
-    // Mirrors contracts/tokens/src/interfaces/IReferenceCurrency.sol. Implemented by
-    // asset tokens so the factory can derive the position's issuance currency.
-    interface IReferenceCurrency {
-        function isoCode() external view returns (uint16);
     }
 }

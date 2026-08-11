@@ -660,33 +660,69 @@ const INT_PLAN: &[CommandBatchV1] = &[
             "--lib",
             "ocomp::tests",
         ],
-        test_ids: &["OCM-PIN-001", "OCM-SIG-001"],
+        test_ids: &["OCM-PIN-001"],
     },
     CommandBatchV1 {
-        command_id: "int-ocomp",
+        command_id: "int-ocomp-sign-once",
         arguments: &[
             "test",
             "--locked",
             "-p",
             "outbe-ocomp",
             "--test",
-            "finalized_discovery",
-            "--test",
-            "finalized_export",
+            "sign_once",
+        ],
+        test_ids: &["OCM-SIG-001"],
+    },
+    CommandBatchV1 {
+        command_id: "int-ocomp-core",
+        arguments: &[
+            "test",
+            "--locked",
+            "-p",
+            "outbe-ocomp",
             "--test",
             "input_artifact_closure",
             "--test",
-            "control_protocol",
-            "--test",
             "deterministic_schedules",
         ],
-        test_ids: &[
-            "OCM-DIS-001",
-            "OCM-EXP-001",
-            "OCM-CAS-001",
-            "OCM-CTL-001",
-            "OCM-DET-001",
+        test_ids: &["OCM-CAS-001", "OCM-DET-001"],
+    },
+    CommandBatchV1 {
+        command_id: "int-ocomp-worker-process",
+        arguments: &[
+            "test",
+            "--locked",
+            "-p",
+            "outbe-ocomp",
+            "--test",
+            "worker_one_unit",
         ],
+        test_ids: &["OCM-WRK-001"],
+    },
+    CommandBatchV1 {
+        command_id: "int-ocomp-worker-transport",
+        arguments: &[
+            "test",
+            "--locked",
+            "-p",
+            "outbe-ocomp",
+            "--lib",
+            "worker_transport::tests",
+        ],
+        test_ids: &["OCM-WTR-001"],
+    },
+    CommandBatchV1 {
+        command_id: "int-ocomp-worker-observability",
+        arguments: &[
+            "test",
+            "--locked",
+            "-p",
+            "outbe-ocomp",
+            "--lib",
+            "worker_observability::tests",
+        ],
+        test_ids: &["OCM-WOBS-001"],
     },
 ];
 
@@ -807,6 +843,66 @@ mod tests {
             evidence.path(),
         )
         .expect("valid integration command receipt");
+    }
+
+    #[test]
+    fn integration_plan_uses_only_current_executable_ocomp_targets() {
+        let plan = command_plan("OCM-INT").expect("integration command plan");
+        let arguments = plan
+            .iter()
+            .flat_map(|batch| batch.arguments.iter().copied())
+            .collect::<Vec<_>>();
+        for removed in [
+            "finalized_discovery",
+            "finalized_export",
+            "control_protocol",
+            "public_rpc_input_path",
+        ] {
+            assert!(
+                !arguments.contains(&removed),
+                "integration lane must not execute removed or ignored target {removed}"
+            );
+        }
+
+        let planned_ids = plan
+            .iter()
+            .flat_map(|batch| batch.test_ids.iter().copied())
+            .collect::<std::collections::BTreeSet<_>>();
+        for current in ["OCM-WRK-001", "OCM-WTR-001", "OCM-WOBS-001"] {
+            assert!(
+                planned_ids.contains(current),
+                "integration lane omits current focused evidence {current}"
+            );
+        }
+
+        let sign_once = plan
+            .iter()
+            .find(|batch| batch.test_ids == ["OCM-SIG-001"])
+            .expect("OCM-SIG-001 must have one exact executable owner");
+        assert_eq!(
+            sign_once.arguments,
+            [
+                "test",
+                "--locked",
+                "-p",
+                "outbe-ocomp",
+                "--test",
+                "sign_once",
+            ],
+            "OCM-SIG-001 must execute its marked durability target"
+        );
+
+        let ledger = ledger();
+        for retired in ["OCM-DIS-001", "OCM-EXP-001", "OCM-CTL-001"] {
+            assert!(
+                ledger.retired_tests.contains_key(retired),
+                "deleted transport-era claim {retired} must remain a tombstone"
+            );
+            assert!(
+                !ledger.tests.contains_key(retired),
+                "deleted transport-era claim {retired} remains executable"
+            );
+        }
     }
 
     #[test]

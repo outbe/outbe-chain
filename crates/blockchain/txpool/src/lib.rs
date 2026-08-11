@@ -875,8 +875,8 @@ mod tests {
     fn oracle_submit_vote_input() -> Bytes {
         outbe_oracle::precompile::IOracle::submitVoteCall {
             tuples: vec![outbe_oracle::precompile::IOracle::ExchangeRateTuple {
-                base: "COEN".to_string(),
-                quote: "0xUSD".to_string(),
+                base: outbe_oracle::api::COEN_ASSET,
+                quote: outbe_oracle::api::currency_address(840),
                 exchangeRate: U256::from(1_000_000_000_000_000_000u128),
                 volume: U256::from(10_000_000_000_000_000_000_000u128),
             }],
