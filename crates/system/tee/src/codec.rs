@@ -94,6 +94,8 @@ mod tests {
                 cipher_text: vec![9, 9, 9],
                 nonce: vec![1; 12],
                 ephemeral_pubkey: U256::from(12345u64),
+                worldwide_day: 20250115,
+                tribute_currency: 840,
                 reference_currency: 840,
                 exclude_from_intex_issuance: false,
                 tribute_price_minor: U256::from(1u64),

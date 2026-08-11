@@ -16,8 +16,8 @@ use crate::crosschain;
 use crate::precompile::{dispatch, dispatch_crosschain};
 use crate::runtime;
 use crate::schema::VaultRouterContract;
+use crate::sol_ext::IReferenceCurrency;
 use crate::sol_ext::IVaultV2;
-use outbe_primitives::reference_currency_abi::IReferenceCurrency;
 
 const CHAIN_ID: u64 = 1;
 const USD_ISO_CODE: u16 = 840;

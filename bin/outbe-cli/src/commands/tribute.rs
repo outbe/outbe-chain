@@ -21,8 +21,8 @@ type TokenIdsReturn = <ITribute::getTributesByOwnerCall as SolCall>::Return;
 pub enum TributeCmd {
     /// Show tribute metadata via tokenURI JSON
     Show {
-        /// Tribute token ID
-        token_id: U256,
+        /// Tribute token ID (`0x`-hex)
+        token_id: Bytes,
     },
     /// Show aggregate totals for a WorldwideDay
     DayTotals {
@@ -43,8 +43,8 @@ pub enum TributeCmd {
     Supply,
     /// Show current owner for a Tribute token ID
     Owner {
-        /// Tribute token ID
-        token_id: U256,
+        /// Tribute token ID (`0x`-hex)
+        token_id: Bytes,
     },
     /// Submit an encrypted tribute offer (decrypted inside the SGX enclave).
     /// Encrypts to the DKG-derived offer key registered in the TeeRegistry and
@@ -133,14 +133,18 @@ async fn fetch_total_supply(client: &(impl Rpc + Sync)) -> Result<U256> {
     Ok(ITribute::totalSupplyCall::abi_decode_returns(&result)?)
 }
 
-async fn fetch_owner_of(client: &(impl Rpc + Sync), token_id: U256) -> Result<Address> {
-    let call = ITribute::ownerOfCall { tokenId: token_id };
+async fn fetch_owner_of(client: &(impl Rpc + Sync), token_id: Bytes) -> Result<Address> {
+    let call = ITribute::ownerOfCall {
+        tributeId: token_id,
+    };
     let result = client.eth_call(TRIBUTE_ADDR, &call.abi_encode()).await?;
     Ok(ITribute::ownerOfCall::abi_decode_returns(&result)?)
 }
 
-async fn fetch_token_uri(client: &(impl Rpc + Sync), token_id: U256) -> Result<String> {
-    let call = ITribute::tokenURICall { tokenId: token_id };
+async fn fetch_token_uri(client: &(impl Rpc + Sync), token_id: Bytes) -> Result<String> {
+    let call = ITribute::tokenURICall {
+        tributeId: token_id,
+    };
     let result = client.eth_call(TRIBUTE_ADDR, &call.abi_encode()).await?;
     Ok(ITribute::tokenURICall::abi_decode_returns(&result)?)
 }
@@ -178,10 +182,10 @@ async fn fetch_tributes_by_day(
     Ok(ITribute::getTributesByDayCall::abi_decode_returns(&result)?)
 }
 
-async fn show(client: &(impl Rpc + Sync), token_id: U256) -> Result<()> {
-    let token_uri = fetch_token_uri(client, token_id).await?;
+async fn show(client: &(impl Rpc + Sync), token_id: Bytes) -> Result<()> {
+    let token_uri = fetch_token_uri(client, token_id.clone()).await?;
 
-    println!("Token ID: {token_id:?}");
+    println!("Token ID: {token_id}");
     if let Some(json_payload) = token_uri.strip_prefix(TOKEN_URI_JSON_PREFIX) {
         match serde_json::from_str::<Value>(json_payload) {
             Ok(json) => println!("{}", serde_json::to_string_pretty(&json)?),
@@ -200,7 +204,6 @@ async fn day_totals(client: &(impl Rpc + Sync), worldwide_day: WorldwideDay) -> 
     println!("WorldwideDay:           {}", worldwide_day);
     println!("Tribute Count:          {}", ret.tributeCount);
     println!("Nominal Amount Minor:   {}", ret.tributeNominalAmount);
-    println!("Total Gratis Load:      {}", ret.totalGratisLoadMinor);
     println!("Sealed:                 {}", ret.isSealed);
     Ok(())
 }
@@ -233,9 +236,9 @@ async fn supply(client: &(impl Rpc + Sync)) -> Result<()> {
     Ok(())
 }
 
-async fn owner(client: &(impl Rpc + Sync), token_id: U256) -> Result<()> {
-    let token_owner = fetch_owner_of(client, token_id).await?;
-    println!("Token ID: {token_id:?}");
+async fn owner(client: &(impl Rpc + Sync), token_id: Bytes) -> Result<()> {
+    let token_owner = fetch_owner_of(client, token_id.clone()).await?;
+    println!("Token ID: {token_id}");
     println!("Owner:    {token_owner:?}");
     Ok(())
 }
@@ -298,14 +301,13 @@ async fn offer(
     // 2. Build the plaintext payload. `tribute_draft_id` + `su_hashes` are fresh
     //    random — su hashes must be unique per offer.
     let wwd: u32 = worldwide_day.into();
-    // worldwide_day + currency are the authoritative offer fields (encrypted);
-    // they also travel cleartext as ABI args so the node can resolve the price,
-    // and the enclave verifies the two copies match.
+    // worldwide_day + currency are cleartext ABI args (below) so the node can
+    // admit and price the offer without decrypting; the ciphertext carries only
+    // what must stay confidential. `referenceCurrency` is a separate axis again
+    // (it drives gem/intex qualification), not the pricing key.
     let payload = serde_json::json!({
         "creator": format!("{creator:?}"),
         "tribute_draft_id": tribute_draft_id,
-        "worldwide_day": wwd,
-        "currency": currency,
         "amount_base": amount_base,
         "amount_atto": "0",
         "su_hashes": [su_hash],
@@ -326,6 +328,8 @@ async fn offer(
         cipherText: cipher_text.into(),
         nonce: nonce.to_vec().into(),
         ephemeralPubkey: U256::from_be_bytes(eph_pub),
+        worldwideDay: wwd,
+        tributeCurrency: currency,
         referenceCurrency: currency,
         excludeFromIntexIssuance: exclude_from_intex_issuance,
         zkProof: zk_proof,
@@ -467,12 +471,15 @@ mod tests {
     use alloy_primitives::address;
     use std::collections::HashMap;
 
+    fn sample_token_id() -> Bytes {
+        Bytes::from_static(&[0xaa])
+    }
+
     fn tribute_mock() -> MockRpc {
-        let token_id = U256::from(0xaau64);
         let owner = address!("0x1111111111111111111111111111111111111111");
         let token_uri = "data:application/json;utf8,{\"name\":\"Tribute 170\",\"attributes\":[{\"trait_type\":\"worldwide_day\",\"value\":20241220}]}".to_string();
-        let day_totals = (2u32, U256::from(500u64), U256::from(75u64), true).into();
-        let token_ids = vec![token_id];
+        let day_totals = (2u32, U256::from(500u64), true).into();
+        let token_ids = vec![sample_token_id()];
 
         let mut map = HashMap::new();
         map.insert(
@@ -508,10 +515,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_fetch_token_uri_returns_metadata_json() {
-        let token_id = U256::from(0xaau64);
         let mock = tribute_mock();
 
-        let result = fetch_token_uri(&mock, token_id).await.unwrap();
+        let result = fetch_token_uri(&mock, sample_token_id()).await.unwrap();
         assert!(result.starts_with(TOKEN_URI_JSON_PREFIX));
         assert!(result.contains("worldwide_day"));
     }
@@ -523,26 +529,23 @@ mod tests {
         let result = fetch_day_totals(&mock, 20241220u32.into()).await.unwrap();
         assert_eq!(result.tributeCount, 2);
         assert_eq!(result.tributeNominalAmount, U256::from(500u64));
-        assert_eq!(result.totalGratisLoadMinor, U256::from(75u64));
         assert!(result.isSealed);
     }
 
     #[tokio::test]
     async fn test_fetch_tributes_by_owner_returns_token_ids() {
         let owner = address!("0x1111111111111111111111111111111111111111");
-        let expected = U256::from(0xaau64);
         let mock = tribute_mock();
 
         let result = fetch_tributes_by_owner(&mock, owner).await.unwrap();
-        assert_eq!(result, vec![expected]);
+        assert_eq!(result, vec![sample_token_id()]);
     }
 
     #[tokio::test]
     async fn test_show_uses_token_uri_without_error() {
-        let token_id = U256::from(0xaau64);
         let mock = tribute_mock();
 
-        show(&mock, token_id).await.unwrap();
+        show(&mock, sample_token_id()).await.unwrap();
     }
 
     #[tokio::test]

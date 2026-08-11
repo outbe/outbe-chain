@@ -2,76 +2,16 @@
 
 use alloy_sol_types::sol;
 
-sol! {
-    // `OriginRouter` sends are relay-float-funded: called with value 0, the router quotes and pays
-    // the bridge fee from its own native balance, so the precompile passes no fee/options/refund.
-    #[sol(alloy_sol_types = alloy_sol_types)]
-    interface IOriginRouter {
-        struct IssuanceInstructionsParams {
-            uint32 dstChainId;
-            bytes14 seriesId;
-            uint32 worldwideDay;
-            uint32 issuedIntexCount;
-            uint128 promisLoadMinor;
-            uint64 entryPriceMinor;
-            uint64 floorPriceMinor;
-            uint32 callNoticePeriod;
-            uint16 issuanceCurrency;
-            uint16 referenceCurrency;
-            uint32 callWindow;
-            uint32 callThreshold;
-            uint64 callPriceMinor;
-            address[] recipients;
-            uint256[] quantities;
-        }
+// `OriginRouter` sends are relay-float-funded: called with value 0, the router quotes and pays
+// the bridge fee from its own native balance, so the precompile passes no fee/options/refund.
+sol!("../../../contracts/intex/src/origin/interfaces/IOriginRouter.sol");
 
-        function sendIssuanceInstructions(IssuanceInstructionsParams calldata params)
-            external payable returns (bytes32 sendId);
+sol!("../../../contracts/tokens/src/interfaces/IERC20.sol");
 
-        function sendMarkQualified(bytes14 seriesId, uint32 worldwideDay) external payable returns (bytes32 sendId);
+sol!("../../../contracts/tokens/src/interfaces/IReferenceCurrency.sol");
 
-        function sendMarkCalled(bytes14 seriesId, uint32 worldwideDay) external payable returns (bytes32 sendId);
-    }
+sol!("../../../contracts/intex/src/shared/interfaces/IIntexNFT1155.sol");
 
-    #[sol(alloy_sol_types = alloy_sol_types)]
-    interface IERC20 {
-        function transferFrom(address from, address to, uint256 amount) external returns (bool);
-        function approve(address spender, uint256 amount) external returns (bool);
-        function balanceOf(address account) external view returns (uint256);
-        function decimals() external view returns (uint8);
-    }
-
-    #[sol(alloy_sol_types = alloy_sol_types)]
-    interface IReferenceCurrency {
-        function isoCode() external view returns (uint16);
-    }
-
-    #[sol(alloy_sol_types = alloy_sol_types)]
-    interface IIntexNFT1155 {
-        struct IntexCallTrigger {
-            uint32 callWindow;
-            uint32 callThreshold;
-            uint32 callNoticePeriod;
-        }
-
-        struct CreateSeriesParams {
-            bytes14 seriesId;
-            uint32 worldwideDay;
-            uint16 issuanceCurrency;
-            uint16 referenceCurrency;
-            uint32 issuedIntexCount;
-            uint128 promisLoadMinor;
-            uint64 entryPriceMinor;
-            uint64 floorPriceMinor;
-            uint64 callPriceMinor;
-            IntexCallTrigger callTrigger;
-        }
-
-        function createSeries(CreateSeriesParams params) external;
-        function balanceOf(address account, uint256 id) external view returns (uint256);
-        function settle(bytes14 seriesId, address from, address to, uint256 amount) external;
-        function burnSettled(address holder, bytes14 seriesId, uint256 amount) external;
-        function markQualified(bytes14 seriesId) external;
-        function markCalled(bytes14 seriesId) external;
-    }
-}
+// `balanceOf` on an Intex series is inherited from ERC-1155, which the `sol!`
+// path form cannot follow through `IIntexNFT1155.sol`'s `import`.
+sol!("../../../contracts/tokens/src/interfaces/IERC1155.sol");

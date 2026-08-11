@@ -62,6 +62,11 @@ pub struct NodItemState {
 
     #[attribute(order = 9)]
     pub issued_at: u64,
+
+    /// True once `cost_amount_minor` has been paid into the reserve vault
+    /// through `NodFactory.settleNod`. Mining requires it.
+    #[attribute(order = 10)]
+    pub is_settled: bool,
 }
 
 /// Bucket record exists while `total_nods > 0`; when the last NOD in the bucket is mined,

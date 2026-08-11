@@ -198,11 +198,10 @@ def main() -> None:
     if bool(args.wallet_address) != bool(args.sra_address):
         raise SystemExit("wallet-address and sra-address must be provided together or both omitted")
 
+    # worldwide_day + currency are cleartext ABI args, not payload fields.
     payload = {
         "creator": sender,
         "tribute_draft_id": "0x" + os.urandom(32).hex(),
-        "worldwide_day": args.wwd,
-        "currency": int(args.currency),
         "amount_base": amount_base,
         "amount_atto": args.amount_atto,
         "su_hashes": [random_hex32(), random_hex32()],
@@ -230,6 +229,8 @@ def main() -> None:
         print(f"CIPHER={cipher_text}")
         print(f"NONCE={nonce}")
         print(f"EPHEMERAL={ephemeral_pubkey}")
+        print(f"WORLDWIDE_DAY={int(args.wwd)}")
+        print(f"TRIBUTE_CURRENCY={int(args.currency)}")
         print(f"REFERENCE_CURRENCY={int(args.currency)}")
         print(f"EXCLUDE_FROM_INTEX_ISSUANCE={str(args.exclude_from_intex_issuance).lower()}")
         print(f"SENDER={sender}")
@@ -238,10 +239,12 @@ def main() -> None:
     result = run_cast(
         "send",
         FACTORY,
-        "offerTribute(bytes,bytes,uint256,uint16,bool,bytes,bytes,bytes,bytes,bytes)(uint256)",
+        "offerTribute(bytes,bytes,uint256,uint32,uint16,uint16,bool,bytes,bytes,bytes,bytes,bytes)(bytes)",
         cipher_text,
         nonce,
         ephemeral_pubkey,
+        str(args.wwd),
+        str(args.currency),
         str(args.currency),
         str(args.exclude_from_intex_issuance).lower(),
         "0x",

@@ -27,17 +27,6 @@ use outbe_poseidon::{Poseidon, PoseidonHasher};
 /// 10^18 fixed-point scale, identical to `outbe_primitives::units::SCALE_1E18`.
 pub const SCALE_1E18: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
 
-/// Only USD (ISO-4217 840) is accepted in the PoC, matching the host.
-pub const USD_ISO_4217: u16 = 840;
-
-/// Reject any currency other than USD (matches host `check_currency`).
-pub fn check_currency(currency: u16) -> Result<(), String> {
-    if currency != USD_ISO_4217 {
-        return Err(format!("iso_code {currency} is not a valid currency"));
-    }
-    Ok(())
-}
-
 /// Calendar validity of a `YYYYMMDD` worldwide-day key. Behaviour-equivalent to
 /// `outbe_common::WorldwideDay::is_valid` (Gregorian), hand-rolled to keep the
 /// enclave dependency surface minimal for reproducible `MRENCLAVE`.
@@ -247,12 +236,6 @@ mod tests {
             compute_nominal(amount, price).unwrap(),
             U256::from(50u64) * SCALE_1E18
         );
-    }
-
-    #[test]
-    fn currency_gate() {
-        assert!(check_currency(840).is_ok());
-        assert!(check_currency(978).is_err());
     }
 
     #[test]

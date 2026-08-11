@@ -60,7 +60,7 @@ fn key_material() -> TributeOfferKeyMaterial<'static> {
 /// Encrypt one offer exactly as a client would: ephemeral X25519 -> ECDHE with
 /// the offer public key -> HKDF -> ChaCha20Poly1305 over the JSON payload. This
 /// is the client's cost, done outside the timed region.
-fn make_offer(owner: Address, price: U256) -> EncryptedTributeOffer {
+fn make_offer(owner: Address) -> EncryptedTributeOffer {
     let eph_sk = [9u8; 32];
     let eph_pub = PublicKey::from(&StaticSecret::from(eph_sk)).to_bytes();
     let shared = StaticSecret::from(eph_sk).diffie_hellman(&PublicKey::from(offer_public()));
@@ -76,21 +76,22 @@ fn make_offer(owner: Address, price: U256) -> EncryptedTributeOffer {
         cipher_text,
         nonce: NONCE.to_vec(),
         ephemeral_pubkey: U256::from_be_bytes(eph_pub),
+        worldwide_day: 20250115,
+        tribute_currency: 840,
         reference_currency: 840,
         exclude_from_intex_issuance: false,
-        tribute_price_minor: price,
+        tribute_price_minor: U256::from(2u64) * U256::from(1_000_000_000_000_000_000u64),
         zk_context: None,
     }
 }
 
 /// Distinct owners so each offer yields a distinct `token_id` (realistic batch).
 fn make_batch(n: usize) -> Vec<EncryptedTributeOffer> {
-    let price = U256::from(2u64) * U256::from(1_000_000_000_000_000_000u64);
     (0..n)
         .map(|i| {
             let mut owner = [0u8; 20];
             owner[0..8].copy_from_slice(&(i as u64).to_be_bytes());
-            make_offer(Address::from(owner), price)
+            make_offer(Address::from(owner))
         })
         .collect()
 }
@@ -98,10 +99,7 @@ fn make_batch(n: usize) -> Vec<EncryptedTributeOffer> {
 /// Component costs: isolate the two heavy primitives so the batch number can be
 /// attributed (decrypt vs Poseidon vs the rest).
 fn bench_components(c: &mut Criterion) {
-    let offer = make_offer(
-        Address::repeat_byte(0xAB),
-        U256::from(2u64) * U256::from(1_000_000_000_000_000_000u64),
-    );
+    let offer = make_offer(Address::repeat_byte(0xAB));
     let ephemeral = offer.ephemeral_pubkey.to_be_bytes::<32>();
     let owner = Address::repeat_byte(0xAB);
 

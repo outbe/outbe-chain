@@ -9406,6 +9406,7 @@ mod tests {
                             issuance_currency: 840,
                             reference_currency: 840,
                             issued_at: 1,
+                            is_settled: false,
                         },
                         U256::from(450_000_000_000_000_000u128),
                     )
@@ -9713,6 +9714,7 @@ mod tests {
                             issuance_currency: 840,
                             reference_currency: 978,
                             issued_at: 15,
+                            is_settled: false,
                         },
                         U256::from(16),
                     )?;
@@ -9804,6 +9806,7 @@ mod tests {
                     issuance_currency: 840,
                     reference_currency: 978,
                     issued_at: 15,
+                    is_settled: false,
                 },
                 U256::from(16),
             )?;

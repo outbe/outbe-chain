@@ -13,13 +13,15 @@ run = '''
 echo 'Exporting ABI for smart contracts'
 mkdir -p ./abi-export
 rm -rf ./abi-export/*.json
+# Addressed as `<path>:<name>`, not via out/<name>.sol/: dependency interfaces
+# share a basename with ours (e.g. OpenZeppelin's IERC20.sol) and would
+# otherwise silently win the artifact slot.
 for sol_file in ./src/interfaces/I*.sol; do
   contract=$(basename "$sol_file" .sol)
-  file=$(ls -1 ./out/${contract}.sol/${contract}.json ./out/${contract}.sol/${contract}.*.json 2>/dev/null | tail -1)
-  if [ -n "$file" ]; then
-    jq -r '.abi' "$file" > ./abi-export/${contract}.json
+  if forge inspect "${sol_file#./}:${contract}" abi --json > ./abi-export/${contract}.json 2>/dev/null; then
     echo "  exported ${contract}"
   else
+    rm -f ./abi-export/${contract}.json
     echo "  WARNING: no compiled artifact for ${contract}" >&2
   fi
 done

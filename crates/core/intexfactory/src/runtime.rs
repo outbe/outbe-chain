@@ -18,7 +18,7 @@ use crate::constants::{
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
-use crate::sol_ext::{IIntexNFT1155, IOriginRouter, IReferenceCurrency, IERC20};
+use crate::sol_ext::{IIntexNFT1155, IOriginRouter, IReferenceCurrency, IERC1155, IERC20};
 
 /// Emit an IntexFactory event from `INTEX_FACTORY_ADDRESS`.
 pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> Result<()> {
@@ -515,11 +515,9 @@ pub fn settle(
 fn nft_balance_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Result<U256> {
     let ret = storage.staticcall(
         INTEX_NFT1155_ADDRESS,
-        IIntexNFT1155::balanceOfCall { account, id }
-            .abi_encode()
-            .into(),
+        IERC1155::balanceOfCall { account, id }.abi_encode().into(),
     )?;
-    IIntexNFT1155::balanceOfCall::abi_decode_returns(&ret)
+    IERC1155::balanceOfCall::abi_decode_returns(&ret)
         .map_err(|_| PrecompileError::Revert("NFT balanceOf undecodable".into()))
 }
 

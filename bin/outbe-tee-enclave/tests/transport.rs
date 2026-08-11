@@ -21,8 +21,6 @@ const OFFER_SALT: [u8; 32] = outbe_tee::OFFER_HKDF_SALT;
 const GOOD_JSON: &str = r#"{
     "creator": "alice",
     "tribute_draft_id": "0x1111111111111111111111111111111111111111111111111111111111111111",
-    "worldwide_day": 20250115,
-    "currency": 840,
     "amount_base": "100",
     "amount_atto": "0",
     "su_hashes": ["0x2222222222222222222222222222222222222222222222222222222222222222"]
@@ -50,6 +48,8 @@ fn encrypt_offer(
         cipher_text,
         nonce: nonce.to_vec(),
         ephemeral_pubkey: U256::from_be_bytes(eph_pub),
+        worldwide_day: 20250115,
+        tribute_currency: 840,
         reference_currency: 840,
         exclude_from_intex_issuance: false,
         tribute_price_minor: price,
@@ -99,7 +99,6 @@ fn handshake_and_offer_roundtrip_over_uds() {
             assert_eq!(results.len(), 1);
             assert_eq!(results[0].status, TributeOfferStatus::Created);
             assert_eq!(results[0].owner, owner);
-            assert_eq!(results[0].worldwide_day, 20250115);
             // 100 / 2.0 = 50 (nominal), in 1e18 minor units.
             assert_eq!(
                 results[0].nominal_amount_minor,

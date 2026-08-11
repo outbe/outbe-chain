@@ -6,24 +6,8 @@
 
 use alloy_sol_types::sol;
 
-sol! {
-    #[sol(alloy_sol_types = alloy_sol_types)]
-    interface IERC20 {
-        function transferFrom(address from, address to, uint256 amount)
-            external returns (bool);
-        function approve(address spender, uint256 amount)
-            external returns (bool);
-    }
+sol!("../../../contracts/tokens/src/interfaces/IERC20.sol");
 
-    #[sol(alloy_sol_types = alloy_sol_types)]
-    interface IIntexNFT1155 {
-        function parkIntex(address holder, bytes14 seriesId, uint256 amount) external returns (uint256);
-    }
-}
+sol!("../../../contracts/tokens/src/interfaces/IReferenceCurrency.sol");
 
-// `IReferenceCurrency` is generated directly from the canonical Solidity
-// interface (single source of truth) rather than hand-mirrored here.
-sol!(
-    #![sol(alloy_sol_types = alloy_sol_types)]
-    "../../../contracts/tokens/src/interfaces/IReferenceCurrency.sol"
-);
+sol!("../../../contracts/intex/src/shared/interfaces/IIntexNFT1155.sol");
