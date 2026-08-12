@@ -28,10 +28,21 @@ use outbe_primitives::signer::OutbeEvmSigner;
 use thiserror::Error;
 
 use crate::{
+    admission_catalog::VerifiedAdmissionCatalog,
     bundle::PinnedProtocolBundle,
-    cas::CasLimits,
+    cas::{CasLimits, FilesystemCasReader},
     control::effective_uid,
     inbox::WorkerInboxLimits,
+    input_artifacts::poc_input_list_limits,
+    input_ref_catalog::VerifiedInputChunkRefCatalog,
+    lysis_plan_audit::LocalLysisPlanAuditV1,
+    nod_materialization::{
+        build_nod_materialization_batch_with_references, MaterializationReferenceStoreV1,
+    },
+    nod_materialization_submitter::{
+        reconcile_finalized_materialization_references, NodMaterializationSubmissionConfigV1,
+        NodMaterializationSubmissionOutcomeV1, NodMaterializationSubmitterV1,
+    },
     result_attestation::LocalResultVoteAttesterV1,
     result_signer::OcompSigner,
     sign_once::SignOnceStore,
@@ -89,6 +100,8 @@ struct EmbeddedOcompLayoutV1 {
     job_root: PathBuf,
     local_result_root: PathBuf,
     vote_submission_root: PathBuf,
+    materialization_reference_root: PathBuf,
+    materialization_submission_root: PathBuf,
     sign_once_root: PathBuf,
     evm_key_path: PathBuf,
     result_key_path: PathBuf,
@@ -116,6 +129,8 @@ impl EmbeddedOcompLayoutV1 {
             job_root: supervisor.join("jobs"),
             local_result_root: node.join("local-results"),
             vote_submission_root: supervisor.join("vote-submissions"),
+            materialization_reference_root: supervisor.join("materialization-references"),
+            materialization_submission_root: supervisor.join("materialization-submissions"),
             sign_once_root: supervisor.join("sign-once"),
             evm_key_path: root.join("ocomp-evm-key.hex"),
             result_key_path: root.join("ocomp-key-v1.hex"),
@@ -125,21 +140,29 @@ impl EmbeddedOcompLayoutV1 {
     }
 }
 
-struct ValidatorVotePolicyV1 {
+struct ValidatorOcompPolicyV1 {
     preparer: Arc<LocalVoteTransactionPreparerV1>,
-    submission_gate: Arc<ValidatorVoteSubmissionGateV1>,
+    materialization_signer: OutbeEvmSigner,
+    submission_gate: Arc<ValidatorOcompSubmissionGateV1>,
     ocomp_key_hash: B256,
     rpc_url: String,
     journal_root: PathBuf,
+    materialization_reference_root: PathBuf,
+    materialization_submission_root: PathBuf,
+    cas_root: PathBuf,
+    cas_limits: CasLimits,
+    input_ref_root: PathBuf,
+    job_root: PathBuf,
+    protocol_bundle: PinnedProtocolBundle,
     chain_id: u64,
     sender_address: alloy_primitives::Address,
     limits: SchemaLimits,
 }
 
 #[derive(Default)]
-struct ValidatorVoteSubmissionGateV1(Mutex<()>);
+struct ValidatorOcompSubmissionGateV1(Mutex<()>);
 
-impl ValidatorVoteSubmissionGateV1 {
+impl ValidatorOcompSubmissionGateV1 {
     fn acquire(&self) -> Result<MutexGuard<'_, ()>, EmbeddedOcompRuntimeErrorV1> {
         self.0
             .lock()
@@ -155,7 +178,7 @@ pub struct EmbeddedOcompDomainV1 {
     runner: Arc<SupervisorJobRunnerV1>,
     adoption: SupervisorExportAdoptionConfig,
     local_results: Arc<LocalLysisResultStore>,
-    validator_vote: Option<ValidatorVotePolicyV1>,
+    validator_ocomp: Option<ValidatorOcompPolicyV1>,
     checkpoint_root: PathBuf,
     fatal_evidence_root: PathBuf,
 }
@@ -212,9 +235,9 @@ impl EmbeddedOcompDomainV1 {
             .map_err(|error| stage("open embedded OCOMP runner", error))?,
         );
         let adoption = SupervisorExportAdoptionConfig {
-            cas_root: layout.cas_root,
+            cas_root: layout.cas_root.clone(),
             cas_limits,
-            input_ref_root: layout.input_ref_root,
+            input_ref_root: layout.input_ref_root.clone(),
             receipt_root: layout.receipt_root,
             binding_root: layout.binding_root,
             protocol_bundle: config.protocol_bundle.clone(),
@@ -224,7 +247,7 @@ impl EmbeddedOcompDomainV1 {
             LocalLysisResultStore::open(&layout.local_result_root, config.limits)
                 .map_err(|error| stage("open embedded OCOMP local result store", error))?,
         );
-        let validator_vote = match config.policy {
+        let validator_ocomp = match config.policy {
             EmbeddedNodePolicyV1::FullNode => {
                 if config.validator_rpc_url.is_some() {
                     return Err(EmbeddedOcompRuntimeErrorV1::FullNodeVoteAuthority);
@@ -232,6 +255,13 @@ impl EmbeddedOcompDomainV1 {
                 None
             }
             EmbeddedNodePolicyV1::Validator => {
+                reconcile_finalized_materialization_references(
+                    &layout.materialization_submission_root,
+                    &layout.materialization_reference_root,
+                )
+                .map_err(|error| {
+                    stage("reconcile finalized NOD materialization references", error)
+                })?;
                 let rpc_url = config
                     .validator_rpc_url
                     .ok_or(EmbeddedOcompRuntimeErrorV1::MissingValidatorRpc)?;
@@ -255,20 +285,28 @@ impl EmbeddedOcompDomainV1 {
                 let ocomp_key_hash = attester.ocomp_key_hash();
                 let preparer = Arc::new(
                     LocalVoteTransactionPreparerV1::new(
-                        evm_signer,
+                        evm_signer.clone(),
                         attester,
                         config.identity.chain_id,
                         config.limits,
                     )
                     .map_err(|error| stage("open Validator OCOMP vote preparer", error))?,
                 );
-                Some(ValidatorVotePolicyV1 {
+                Some(ValidatorOcompPolicyV1 {
                     sender_address: preparer.sender_address(),
                     preparer,
-                    submission_gate: Arc::new(ValidatorVoteSubmissionGateV1::default()),
+                    materialization_signer: evm_signer,
+                    submission_gate: Arc::new(ValidatorOcompSubmissionGateV1::default()),
                     ocomp_key_hash,
                     rpc_url,
                     journal_root: layout.vote_submission_root,
+                    materialization_reference_root: layout.materialization_reference_root,
+                    materialization_submission_root: layout.materialization_submission_root,
+                    cas_root: layout.cas_root.clone(),
+                    cas_limits,
+                    input_ref_root: layout.input_ref_root.clone(),
+                    job_root: layout.job_root.clone(),
+                    protocol_bundle: config.protocol_bundle.clone(),
                     chain_id: config.identity.chain_id,
                     limits: config.limits,
                 })
@@ -279,7 +317,7 @@ impl EmbeddedOcompDomainV1 {
             runner,
             adoption,
             local_results,
-            validator_vote,
+            validator_ocomp,
             checkpoint_root: layout.checkpoint_root,
             fatal_evidence_root: layout.fatal_evidence_root,
         })
@@ -297,9 +335,16 @@ impl EmbeddedOcompDomainV1 {
 
     #[must_use]
     pub fn validator_ocomp_key_hash(&self) -> Option<B256> {
-        self.validator_vote
+        self.validator_ocomp
             .as_ref()
             .map(|policy| policy.ocomp_key_hash)
+    }
+
+    #[must_use]
+    pub fn validator_sender_address(&self) -> Option<alloy_primitives::Address> {
+        self.validator_ocomp
+            .as_ref()
+            .map(|policy| policy.sender_address)
     }
 
     pub fn commit_local_result(
@@ -402,7 +447,7 @@ impl EmbeddedOcompDomainV1 {
         sender: mpsc::Sender<EmbeddedVoteOutcomeV1>,
     ) -> Result<(), EmbeddedOcompRuntimeErrorV1> {
         let policy = self
-            .validator_vote
+            .validator_ocomp
             .as_ref()
             .ok_or(EmbeddedOcompRuntimeErrorV1::FullNodeVoteAuthority)?;
         let preparer = Arc::clone(&policy.preparer);
@@ -475,6 +520,128 @@ impl EmbeddedOcompDomainV1 {
             .map_err(|error| stage("spawn embedded OCOMP vote thread", error))?;
         Ok(())
     }
+
+    pub fn spawn_validator_materialization(
+        &self,
+        head: outbe_ocomp_protocol::nod_materialization::NodMaterializationHeadV1,
+        batch_subtree_height: u8,
+        sender: mpsc::Sender<EmbeddedMaterializationOutcomeV1>,
+    ) -> Result<(), EmbeddedOcompRuntimeErrorV1> {
+        let policy = self
+            .validator_ocomp
+            .as_ref()
+            .ok_or(EmbeddedOcompRuntimeErrorV1::FullNodeVoteAuthority)?;
+        let job_id = head.job_id;
+        let first_nod_ordinal = head.next_nod_ordinal;
+        let queue_sequence = head.queue_sequence;
+        let submission_gate = Arc::clone(&policy.submission_gate);
+        let rpc_url = policy.rpc_url.clone();
+        let signer = policy.materialization_signer.clone();
+        let sender_address = policy.sender_address;
+        let chain_id = policy.chain_id;
+        let limits = policy.limits;
+        let cas_root = policy.cas_root.clone();
+        let cas_limits = policy.cas_limits;
+        let input_ref_root = policy.input_ref_root.clone();
+        let job_root = policy.job_root.clone();
+        let bundle = policy.protocol_bundle.clone();
+        let reference_root = policy
+            .materialization_reference_root
+            .join(hex::encode(job_id.as_slice()))
+            .join(first_nod_ordinal.to_string());
+        let submission_root = policy
+            .materialization_submission_root
+            .join(hex::encode(job_id.as_slice()))
+            .join(first_nod_ordinal.to_string());
+        thread::Builder::new()
+            .name(format!("ocomp-nod-{}", short_job(job_id)))
+            .spawn(move || {
+                let run = || -> Result<bool, EmbeddedOcompRuntimeErrorV1> {
+                    let _submission_permit = submission_gate.acquire()?;
+                    let reader = FilesystemCasReader::open(&cas_root, cas_limits)
+                        .map_err(|error| stage("open NOD materialization CAS", error))?;
+                    let job_component = hex::encode(job_id.as_slice());
+                    let input_refs = VerifiedInputChunkRefCatalog::reopen(
+                        input_ref_root.join(&job_component),
+                        &reader,
+                        limits,
+                        poc_input_list_limits(),
+                    )
+                    .map_err(|error| stage("open NOD materialization inputs", error))?;
+                    let admissions = VerifiedAdmissionCatalog::reopen(
+                        job_root.join(&job_component).join("admissions"),
+                        &reader,
+                        limits,
+                    )
+                    .map_err(|error| stage("open NOD materialization admissions", error))?;
+                    let audit = LocalLysisPlanAuditV1::open(
+                        &admissions,
+                        &input_refs,
+                        &reader,
+                        &bundle,
+                        &limits,
+                    )
+                    .map_err(|error| stage("audit NOD materialization plan", error))?;
+                    let built = build_nod_materialization_batch_with_references(
+                        &audit,
+                        &head,
+                        batch_subtree_height,
+                    )
+                    .map_err(|error| stage("build NOD materialization batch", error))?;
+                    let references = MaterializationReferenceStoreV1::open(&reference_root)
+                        .map_err(|error| stage("open NOD materialization references", error))?;
+                    references
+                        .pin_exact(job_id, &built.dependencies)
+                        .map_err(|error| stage("pin NOD materialization references", error))?;
+                    let rpc = PublicVoteRpcClientV1::new(rpc_url, RPC_MAX_RESPONSE_BYTES)
+                        .map_err(|error| stage("open NOD materialization RPC", error))?;
+                    let mut submitter = NodMaterializationSubmitterV1::open(
+                        NodMaterializationSubmissionConfigV1 {
+                            journal_root: submission_root,
+                            expected_chain_id: chain_id,
+                            sender_address,
+                            limits,
+                        },
+                        rpc,
+                        signer,
+                    )
+                    .map_err(|error| stage("open NOD materialization submitter", error))?;
+                    loop {
+                        match submitter.reconcile(job_id, &built.batch) {
+                            Ok(NodMaterializationSubmissionOutcomeV1::Pending) => {
+                                thread::sleep(RETRY_INTERVAL);
+                            }
+                            Ok(NodMaterializationSubmissionOutcomeV1::Finalized { success }) => {
+                                references.release(job_id).map_err(|error| {
+                                    stage("release NOD materialization references", error)
+                                })?;
+                                return Ok(success);
+                            }
+                            Err(_error) => {
+                                thread::sleep(RETRY_INTERVAL);
+                            }
+                        }
+                    }
+                };
+                let outcome = match run() {
+                    Ok(success) => EmbeddedMaterializationOutcomeV1::Finalized {
+                        job_id,
+                        queue_sequence,
+                        first_nod_ordinal,
+                        success,
+                    },
+                    Err(error) => EmbeddedMaterializationOutcomeV1::Unavailable {
+                        job_id,
+                        queue_sequence,
+                        first_nod_ordinal,
+                        detail: error.to_string(),
+                    },
+                };
+                let _ = sender.send(outcome);
+            })
+            .map_err(|error| stage("spawn embedded NOD materialization thread", error))?;
+        Ok(())
+    }
 }
 
 pub enum EmbeddedComputeOutcomeV1 {
@@ -485,6 +652,21 @@ pub enum EmbeddedComputeOutcomeV1 {
 pub enum EmbeddedVoteOutcomeV1 {
     Finalized { job_id: B256, success: bool },
     Unrecoverable { job_id: B256, detail: String },
+}
+
+pub enum EmbeddedMaterializationOutcomeV1 {
+    Finalized {
+        job_id: B256,
+        queue_sequence: u64,
+        first_nod_ordinal: u32,
+        success: bool,
+    },
+    Unavailable {
+        job_id: B256,
+        queue_sequence: u64,
+        first_nod_ordinal: u32,
+        detail: String,
+    },
 }
 
 fn short_job(job_id: B256) -> String {
@@ -506,11 +688,11 @@ mod tests {
         time::Duration,
     };
 
-    use super::ValidatorVoteSubmissionGateV1;
+    use super::ValidatorOcompSubmissionGateV1;
 
     #[test]
-    fn one_validator_signer_serializes_two_live_job_votes() {
-        let gate = Arc::new(ValidatorVoteSubmissionGateV1::default());
+    fn one_validator_signer_serializes_vote_and_materialization_submissions() {
+        let gate = Arc::new(ValidatorOcompSubmissionGateV1::default());
         let (entered_tx, entered_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
 
@@ -519,26 +701,26 @@ mod tests {
         let first = thread::spawn(move || {
             let _permit = first_gate.acquire().expect("first signer permit");
             first_entered.send(1).expect("first entered signal");
-            release_rx.recv().expect("release first vote");
+            release_rx.recv().expect("release vote submission");
         });
         assert_eq!(entered_rx.recv().expect("first vote entered"), 1);
 
         let second_gate = Arc::clone(&gate);
         let second = thread::spawn(move || {
             let _permit = second_gate.acquire().expect("second signer permit");
-            entered_tx.send(2).expect("second entered signal");
+            entered_tx.send(2).expect("materialization entered signal");
         });
         assert!(entered_rx.recv_timeout(Duration::from_millis(50)).is_err());
 
-        release_tx.send(()).expect("release first vote");
+        release_tx.send(()).expect("release vote submission");
         assert_eq!(
             entered_rx
                 .recv_timeout(Duration::from_secs(1))
-                .expect("second vote entered after first finalized"),
+                .expect("materialization entered after vote submission"),
             2
         );
         first.join().expect("first vote thread");
-        second.join().expect("second vote thread");
+        second.join().expect("materialization thread");
     }
 }
 

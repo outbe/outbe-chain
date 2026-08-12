@@ -44,6 +44,20 @@ Feature: Off-chain computation and Metadosis
     When a late follower replays the finalized OCOMP request and quorum blocks
     Then runtime traces prove proposal import and historical replay without on-chain calculation
 
+  @ocomp-materialization
+  Scenario: A certified generation is materialized into user NODs in bounded batches
+    Given a fresh four-validator OCOMP public capacity localnet
+    When 10 capacity owners submit one encrypted Tribute each at no more than two per block
+    Then all validators observe exactly 10 public Tributes for the capacity day
+    When the committee logical clock reaches the public capacity processing time
+    Then Metadosis creates one finalized JobIntent from that public Tribute
+    When the production OCOMP domains process that finalized JobIntent
+    Then three matching validator domains atomically certify the Lysis generation
+    And the certified generation is materialized through at least two bounded transactions
+    And every capacity owner enumerates one ordinary NOD with matching nodData
+    When all validator nodes and OCOMP node-facing processes restart with preserved data
+    Then the completed materialization cursor and ordinary NOD set remain unchanged
+
   @ocomp-capacity
   Scenario: A shard-cap-plus-one public population is completely processed
     Given a fresh four-validator OCOMP public capacity localnet
@@ -54,6 +68,10 @@ Feature: Off-chain computation and Metadosis
     When the production OCOMP domains process that finalized JobIntent
     Then three matching validator domains atomically apply Lysis and create the Nod
     And the certified generation contains exactly 257 Tribute and Nod records
+    And the certified generation is materialized through at least two bounded transactions
+    And five deterministic capacity owners enumerate ordinary NODs with matching nodData
+    When all validator nodes and OCOMP node-facing processes restart with preserved data
+    Then the completed materialization cursor and ordinary NOD set remain unchanged
     And validator 0 reconstructs that certified generation from canonical history
 
   @ocomp-int-024

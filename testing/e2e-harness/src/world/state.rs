@@ -193,6 +193,8 @@ pub struct FixtureState {
     pub ocomp_capacity_tribute_private_keys: Vec<String>,
     /// Public transaction hashes submitted by those capacity owners.
     pub ocomp_capacity_tribute_tx_hashes: Vec<String>,
+    /// Public canonical NOD materialization evidence captured before restart.
+    pub ocomp_nod_materialization: Option<crate::world::rpc::NodMaterializationObservationV1>,
     /// Hash of a duplicate logical offer expected to be rejected without state changes.
     pub duplicate_tribute_tx_hash: Option<String>,
     /// Exact primary/owner/day Mongo documents before a duplicate offer.
@@ -356,6 +358,7 @@ impl Default for FixtureState {
             tribute_tx_hash: None,
             ocomp_capacity_tribute_private_keys: Vec::new(),
             ocomp_capacity_tribute_tx_hashes: Vec::new(),
+            ocomp_nod_materialization: None,
             duplicate_tribute_tx_hash: None,
             tribute_projection_before_duplicate: None,
             ocomp_finality_before_fault: None,

@@ -28,7 +28,8 @@ use crate::world::localnet::StartOpts;
 use crate::world::ocomp::{OcompMeasurementForkV1, OcompProcessFault, OcompProcessRole};
 use crate::world::ocomp::{
     OCOMP_CAPACITY_OFFERING_AFTER_GENESIS_SECS, OCOMP_DYNAMIC_DKG_PREPARE_WINDOW_BLOCKS,
-    OCOMP_DYNAMIC_VOTE_WINDOW_BLOCKS, OCOMP_TEST_EPOCH_LENGTH_BLOCKS,
+    OCOMP_DYNAMIC_VOTE_WINDOW_BLOCKS, OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE,
+    OCOMP_TEST_EPOCH_LENGTH_BLOCKS,
 };
 use crate::world::state::{
     MetadosisFinalizedPointV1, MetadosisFreshLifecycleObservationV1, MetadosisTimeControlEpochV1,
@@ -1529,19 +1530,19 @@ fn committee_clock_reaches_fresh_capacity_processing(world: &mut World) {
     // far as READY. Production settlement deliberately belongs to the daily
     // Cycle handler, so cross the first UTC midnight after the processing time
     // before expecting the READY day to become an OCOMP job.
-    let target = first_daily_cycle_after(scheduled_process_time);
+    let target = first_daily_cycle_at_or_after(scheduled_process_time);
     advance_fresh_metadosis_time(world, target, &[(0, 1), (1, 2), (2, 3), (3, 4)], 8);
 }
 
-fn first_daily_cycle_after(timestamp: u64) -> u64 {
+fn first_daily_cycle_at_or_after(timestamp: u64) -> u64 {
     const SECONDS_PER_DAY: u64 = 86_400;
 
     timestamp
-        .checked_div(SECONDS_PER_DAY)
-        .and_then(|day| day.checked_add(1))
+        .checked_add(SECONDS_PER_DAY - 1)
+        .and_then(|rounded| rounded.checked_div(SECONDS_PER_DAY))
         .and_then(|day| day.checked_mul(SECONDS_PER_DAY))
         .and_then(|midnight| midnight.checked_add(1))
-        .expect("first UTC daily Cycle after Metadosis processing time")
+        .expect("first UTC daily Cycle at or after Metadosis processing time")
 }
 
 #[then("the same fresh capacity day advances through WAITING and READY")]
@@ -1937,12 +1938,24 @@ fn submit_dynamic_membership_tributes(world: &mut World) {
 
 #[when("all 257 capacity owners submit one encrypted Tribute each")]
 fn capacity_owners_submit_257_public_tributes(world: &mut World) {
+    capacity_owners_submit_public_tributes(world, OCOMP_CAPACITY_TRIBUTE_COUNT);
+}
+
+#[when(
+    expr = "{int} capacity owners submit one encrypted Tribute each at no more than two per block"
+)]
+fn bounded_capacity_owners_submit_public_tributes(world: &mut World, count: usize) {
+    capacity_owners_submit_public_tributes(world, count);
+}
+
+fn capacity_owners_submit_public_tributes(world: &mut World, count: usize) {
     let private_keys = world.state.ocomp_capacity_tribute_private_keys.clone();
-    assert_eq!(
-        private_keys.len(),
-        OCOMP_CAPACITY_TRIBUTE_COUNT,
-        "capacity fixture did not retain exactly 257 funded owners"
+    assert!(
+        private_keys.len() >= count,
+        "capacity fixture retained only {} funded owners, expected at least {count}",
+        private_keys.len()
     );
+    let private_keys = &private_keys[..count];
     let worldwide_day = world
         .state
         .wwd
@@ -1957,14 +1970,20 @@ fn capacity_owners_submit_257_public_tributes(world: &mut World) {
                     let rpc = world.rpc.clone();
                     let worldwide_day = worldwide_day.clone();
                     scope.spawn(move || {
-                        rpc.tribute_offer(private_key, &worldwide_day)
-                            .ok_or_else(|| {
-                                format!(
-                                    "capacity owner {} did not return a public Tribute tx hash",
-                                    rpc.address_of(private_key)
-                                        .unwrap_or_else(|| "unknown".to_owned())
-                                )
-                            })
+                        rpc.tribute_offer_with_params(
+                            private_key,
+                            &worldwide_day,
+                            OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE,
+                            840,
+                            false,
+                        )
+                        .ok_or_else(|| {
+                            format!(
+                                "capacity owner {} did not return a public Tribute tx hash",
+                                rpc.address_of(private_key)
+                                    .unwrap_or_else(|| "unknown".to_owned())
+                            )
+                        })
                     })
                 })
                 .collect::<Vec<_>>()
@@ -1988,10 +2007,153 @@ fn capacity_owners_submit_257_public_tributes(world: &mut World) {
 
     assert_eq!(
         transaction_hashes.len(),
-        OCOMP_CAPACITY_TRIBUTE_COUNT,
+        count,
         "not every capacity owner submitted a public Tribute"
     );
     world.state.ocomp_capacity_tribute_tx_hashes = transaction_hashes;
+}
+
+#[then(expr = "all validators observe exactly {int} public Tributes for the capacity day")]
+fn all_validators_observe_public_tributes(world: &mut World, count: usize) {
+    assert_eq!(world.state.ocomp_capacity_tribute_tx_hashes.len(), count);
+    let expected_supply = count.to_string();
+    for port in world.validators.committee_ports() {
+        let deadline = Instant::now() + Duration::from_secs(240);
+        loop {
+            let supply_matches = world.rpc.supply(port).as_deref() == Some(&expected_supply);
+            let day_matches = world
+                .rpc
+                .tributes_by_day(port, world.state.wwd.as_ref().unwrap().parse().unwrap())
+                .is_some_and(|ids| ids.len() == count);
+            if supply_matches && day_matches {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "validator {port} did not expose {count} Tributes"
+            );
+            sleep(Duration::from_millis(250));
+        }
+    }
+}
+
+#[then("three matching validator domains atomically certify the Lysis generation")]
+fn validators_certify_lysis_generation(world: &mut World) {
+    quorum_applies_lysis_and_creates_nod(world);
+}
+
+#[then("mineGratis is rejected while that certified generation is incomplete")]
+fn mine_is_rejected_before_materialization_completion(world: &mut World) {
+    let private_key = world
+        .state
+        .ocomp_capacity_tribute_private_keys
+        .first()
+        .expect("first capacity owner key")
+        .clone();
+    let generation = world
+        .state
+        .ocomp_certified_generation
+        .clone()
+        .expect("certified generation before mining gate");
+    world
+        .rpc
+        .assert_certified_nod_mining_blocked(
+            world.validators.primary_port(),
+            &private_key,
+            &generation,
+        )
+        .expect("pre-completion certified NOD mining rejection");
+}
+
+#[then("the certified generation is materialized through at least two bounded transactions")]
+fn certified_generation_crosses_multiple_materialization_batches(world: &mut World) {
+    let generation = world
+        .state
+        .ocomp_certified_generation
+        .clone()
+        .expect("certified generation before materialization");
+    let observation = world
+        .rpc
+        .wait_for_completed_nod_materialization(world.validators.primary_port(), &generation, 300)
+        .expect("completed multi-batch NOD materialization");
+    assert!(observation.successful_batch_transactions >= 2);
+    world.state.ocomp_nod_materialization = Some(observation);
+}
+
+#[then("every capacity owner enumerates one ordinary NOD with matching nodData")]
+fn every_capacity_owner_has_one_materialized_nod(world: &mut World) {
+    assert_materialized_capacity_owners(world, usize::MAX);
+}
+
+#[then("five deterministic capacity owners enumerate ordinary NODs with matching nodData")]
+fn five_capacity_owners_have_materialized_nods(world: &mut World) {
+    assert_materialized_capacity_owners(world, 5);
+}
+
+fn assert_materialized_capacity_owners(world: &mut World, limit: usize) {
+    let count = world
+        .state
+        .ocomp_capacity_tribute_tx_hashes
+        .len()
+        .min(limit);
+    let completion_block_number = world
+        .state
+        .ocomp_nod_materialization
+        .as_ref()
+        .expect("materialization completion before owner reads")
+        .completion_block_number;
+    for private_key in &world.state.ocomp_capacity_tribute_private_keys[..count] {
+        let owner = world
+            .rpc
+            .address_of(private_key)
+            .expect("capacity owner address")
+            .parse()
+            .expect("capacity owner address format");
+        world
+            .rpc
+            .assert_one_materialized_nod_for_owner(
+                world.validators.primary_port(),
+                owner,
+                completion_block_number,
+            )
+            .expect("ordinary owner NOD and nodData");
+    }
+}
+
+#[then("mineGratis succeeds after the certified generation is completely materialized")]
+fn mine_succeeds_after_materialization_completion(world: &mut World) {
+    let private_key = world
+        .state
+        .ocomp_capacity_tribute_private_keys
+        .first()
+        .expect("first capacity owner key")
+        .clone();
+    world
+        .rpc
+        .mine_first_materialized_capacity_nod(world.validators.primary_port(), &private_key)
+        .expect("post-completion mineGratis");
+}
+
+#[then("the completed materialization cursor and ordinary NOD set remain unchanged")]
+fn completed_materialization_survives_restart(world: &mut World) {
+    let before = world
+        .state
+        .ocomp_nod_materialization
+        .clone()
+        .expect("materialization observation before restart");
+    let after = world
+        .rpc
+        .completed_nod_materialization(
+            world.validators.primary_port(),
+            world
+                .state
+                .ocomp_certified_generation
+                .as_ref()
+                .expect("certified generation after restart"),
+        )
+        .expect("materialization observation after restart");
+    assert_eq!(after, before);
+    assert_materialized_capacity_owners(world, 5);
 }
 
 #[then("all validators observe exactly 257 public Tributes for the capacity day")]
@@ -2113,7 +2275,7 @@ fn committee_clock_reaches_public_capacity_processing(world: &mut World) {
         "capacity WorldwideDay must remain in OFFERING until all 257 receipts and projections are observed"
     );
 
-    let target = first_daily_cycle_after(state.scheduled_process_time);
+    let target = first_daily_cycle_at_or_after(state.scheduled_process_time);
     let _ = restart_committee_at_logical_time(world, target);
 }
 
@@ -4108,10 +4270,20 @@ fn runtime_traces_cover_ocomp_execution_paths(world: &mut World) {
 #[cfg(test)]
 mod tests {
     use super::{
-        bounded_completion_decision, dynamic_live_ports_after_jail,
+        bounded_completion_decision, dynamic_live_ports_after_jail, first_daily_cycle_at_or_after,
         joiner_restart_is_in_safe_early_epoch_window, post_restart_convergence_target,
         BoundedCompletionDecision, OCOMP_CAPACITY_SUBMISSION_CONCURRENCY,
     };
+
+    #[test]
+    fn daily_cycle_keeps_an_exact_midnight_processing_boundary() {
+        assert_eq!(first_daily_cycle_at_or_after(172_800), 172_801);
+    }
+
+    #[test]
+    fn daily_cycle_rounds_a_non_boundary_processing_time_up() {
+        assert_eq!(first_daily_cycle_at_or_after(172_801), 259_201);
+    }
 
     #[test]
     fn capacity_completion_window_returns_as_soon_as_every_validator_is_done() {

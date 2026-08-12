@@ -121,8 +121,8 @@ fn full_node_stakes_confirms(world: &mut World) {
     world.localnet.stop_joiner_full_node(idx);
     world
         .localnet
-        .provision_joiner(idx)
-        .expect("provision synced full-node slot as validator");
+        .provision_existing_node_as_joiner(idx)
+        .expect("register the existing NodeHost as a validator");
     world
         .localnet
         .launch_joiner(idx, &[])
@@ -369,7 +369,7 @@ fn exits_and_demotes(world: &mut World) {
     assert!(
         world.localnet.log_has(
             idx,
-            "demoting to verifier-follower of the resharded committee"
+            "no threshold share for this epoch — running consensus engine in VERIFIER mode"
         ),
         "node did not demote to a verifier-follower"
     );
@@ -391,7 +391,7 @@ fn exits_and_demotes(world: &mut World) {
         .expect("v2 key");
     world.state.tribute_tx_hash = world
         .rpc
-        .offer_until_supply_hash(&v2, &wwd, primary, "3", 5);
+        .offer_until_supply_hash(&v2, &wwd, primary, "3", 20);
     assert!(
         world.state.tribute_tx_hash.is_some(),
         "post-exit offer did not land (supply != 3)"

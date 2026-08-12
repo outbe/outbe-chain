@@ -103,6 +103,8 @@ const OCOMP_PUBLIC_OFFERING_AFTER_GENESIS_SECS: u64 = 120;
 #[cfg(feature = "ocomp-integration")]
 pub(crate) const OCOMP_CAPACITY_OFFERING_AFTER_GENESIS_SECS: u64 = 3_600;
 #[cfg(feature = "ocomp-integration")]
+pub(crate) const OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE: &str = "0.000000000000000006";
+#[cfg(feature = "ocomp-integration")]
 const OCOMP_DYNAMIC_FIRST_OFFERING_AFTER_GENESIS_SECS: u64 = 180;
 #[cfg(feature = "ocomp-integration")]
 const OCOMP_DYNAMIC_SECOND_OFFERING_AFTER_GENESIS_SECS: u64 = 700;
@@ -2838,21 +2840,21 @@ fn schedule_public_measurement_day(
     provider.set_block_number(1);
     let changed = StorageHandle::enter(&mut provider, |storage| {
         let pair = outbe_oracle::api::DAY_TYPE_PAIR;
-        let previous_vwap = outbe_oracle::api::get_exchange_rate(
+        let seeded_rate = outbe_oracle::api::get_exchange_rate(
             storage.clone(),
             pair.address1(),
             pair.address2(),
         )?;
-        if previous_vwap.is_zero() {
+        if seeded_rate.is_zero() {
             return Err(outbe_primitives::error::PrecompileError::Fatal(
                 "OCOMP public measurement Oracle seed has zero COEN/0xUSD rate".into(),
             ));
         }
-        let current_vwap = previous_vwap.checked_mul(U256::from(2)).ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::Fatal(
-                "OCOMP public measurement VWAP overflow".into(),
-            )
-        })?;
+        // Keep this fixture's ordinary mineGratis path independent from the
+        // stablecoin/vault scenarios. Together with the six-atto Tribute
+        // amount, these prices produce non-zero Gratis and zero mining cost.
+        let previous_vwap = U256::ONE;
+        let current_vwap = U256::from(2);
         let previous_day = worldwide_day.previous_date_key();
         let previous_end = forming_start.checked_sub(1).ok_or_else(|| {
             outbe_primitives::error::PrecompileError::Fatal(
@@ -2861,6 +2863,16 @@ fn schedule_public_measurement_day(
         })?;
         let volume = U256::from(1_000_000_000_000_000_000_u128);
         let mut oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+        let inherited_scurve_expiry = genesis_timestamp
+            .checked_add(
+                (outbe_oracle::scurve::PERIOD as u64 + 1) * outbe_oracle::scurve::DAY_SECONDS,
+            )
+            .ok_or_else(|| {
+                outbe_primitives::error::PrecompileError::Fatal(
+                    "OCOMP public measurement S-curve expiry overflow".into(),
+                )
+            })?;
+        outbe_oracle::scurve::evict_expired_scurves(&mut oracle, inherited_scurve_expiry)?;
         oracle.write_snapshot(previous_end, &[(pair, previous_vwap, volume)])?;
         oracle.write_snapshot(forming_start, &[(pair, current_vwap, volume)])?;
         if !outbe_oracle::api::store_worldwide_day_vwap_snapshot(
@@ -2895,13 +2907,25 @@ fn schedule_public_measurement_day(
         } else {
             WwdDayType::Red
         };
-        let day_limit = U256::from(500)
-            .checked_mul(U256::from(1_000_000_000_000_000_000_u128))
-            .ok_or_else(|| {
-                outbe_primitives::error::PrecompileError::Fatal(
-                    "OCOMP public measurement day limit overflow".into(),
-                )
-            })?;
+        let entry_price = stored_current.max(outbe_oracle::api::get_max_active_scurve_value(
+            storage.clone(),
+            worldwide_day,
+            pair,
+        )?);
+        let qualification_rate = entry_price.checked_mul(U256::from(2)).ok_or_else(|| {
+            outbe_primitives::error::PrecompileError::Fatal(
+                "OCOMP public measurement qualification rate overflow".into(),
+            )
+        })?;
+        outbe_oracle::api::set_exchange_rate(
+            storage.clone(),
+            Address::ZERO,
+            pair,
+            qualification_rate,
+            1,
+            genesis_timestamp,
+        )?;
+        let day_limit = U256::from(500) * outbe_primitives::units::SCALE_1E18;
         let report = FreshDevnetGenesisBuilder::new()
             .seed_active_worldwide_day(GenesisWorldwideDay {
                 worldwide_day,
@@ -4222,10 +4246,40 @@ mod tests {
             )
             .unwrap()
             .unwrap();
-            let scurve =
-                outbe_oracle::api::get_max_active_scurve_value(storage, day.worldwide_day, pair)
+            let scurve = outbe_oracle::api::get_max_active_scurve_value(
+                storage.clone(),
+                day.worldwide_day,
+                pair,
+            )
+            .unwrap();
+            let entry_price = vwap.max(scurve);
+            assert!(entry_price > U256::ZERO);
+            assert_eq!(scurve, U256::ZERO);
+            let current_rate = outbe_oracle::api::coen_rate_for(storage, 840).unwrap();
+            assert_eq!(current_rate, entry_price * U256::from(2));
+            let scale = outbe_primitives::units::SCALE_1E18;
+            assert_eq!(day.metadosis_limit_amount, U256::from(500) * scale);
+            let issuance =
+                outbe_tee_enclave::compute::normalize_amount(OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE, "0")
                     .unwrap();
-            assert!(vwap.max(scurve) > U256::ZERO);
+            let nominal =
+                outbe_tee_enclave::compute::compute_nominal(issuance, day.current_vwap).unwrap();
+            for population in [10_u64, 257] {
+                let total_nominal = nominal * U256::from(population);
+                let allocation = total_nominal * U256::from(32) / U256::from(100);
+                assert!(allocation < day.metadosis_limit_amount);
+                let fraction = allocation * scale / total_nominal;
+                let gratis_load_minor = nominal * fraction / scale;
+                assert!(
+                    gratis_load_minor > U256::ZERO,
+                    "the {population}-Tribute fixture must not round its per-Tribute Gratis load to zero"
+                );
+                assert_eq!(
+                    day.previous_vwap * gratis_load_minor / scale,
+                    U256::ZERO,
+                    "the {population}-Tribute fixture must exercise the zero-cost mineGratis branch"
+                );
+            }
         });
         assert_eq!(
             prepared.install.request_profile.genesis_hash,

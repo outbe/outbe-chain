@@ -6,10 +6,26 @@
 use std::thread::sleep;
 use std::time::Duration;
 
-use cucumber::{then, when};
+use cucumber::{given, then, when};
 
+use crate::features::common::boot_localnet;
 use crate::world::rpc::Rpc;
 use crate::world::World;
+
+/// Put the freeze boundary inside the bounded restart scenario while leaving
+/// enough activation grace for a real-SGX ceremony to recover.
+#[given("a fresh localnet with a restartable DKG window")]
+fn restartable_dkg_setup(world: &mut World) {
+    boot_localnet(
+        world,
+        6,
+        &[
+            ("TESTNET_EPOCH_LENGTH_BLOCKS", "120".to_string()),
+            ("TESTNET_DKG_PREPARE_WINDOW_BLOCKS", "60".to_string()),
+            ("TESTNET_DKG_ACTIVATION_GRACE_BLOCKS", "120".to_string()),
+        ],
+    );
+}
 
 /// Lockstep probe (s4:46-48): both nodes make progress and converge within 3 blocks.
 ///
@@ -305,13 +321,9 @@ fn pending_dkg_recovers_and_activates(world: &mut World) {
     let expected_epoch = u64::try_from(old_epoch + 1).expect("epoch fits u64");
     assert_eq!(world.rpc.epoch_on(primary), Some(expected_epoch));
     assert!(
-        world.localnet.log_has(
-            idx,
-            "threshold material ready from durable pending DKG state and boundary snapshot",
-        ) || world.localnet.log_has(
-            idx,
-            "threshold material ready from promoted pending DKG state",
-        ),
+        world
+            .localnet
+            .log_has(idx, "recovered durable pending DKG boundary snapshot",),
         "restart did not use durable pending DKG recovery"
     );
     assert!(
@@ -428,9 +440,17 @@ fn interrupted_dkg_retries_without_partial_activation(world: &mut World) {
     assert_eq!(world.rpc.validator_status(primary, &addr), Some(2));
     assert_eq!(world.rpc.active_count(primary), Some(5));
     assert_eq!(world.rpc.epoch_on(primary), Some(expected_epoch));
+    let mut share_promoted = false;
+    for _ in 0..30 {
+        if world.localnet.has_share_file(idx) {
+            share_promoted = true;
+            break;
+        }
+        sleep(Duration::from_secs(1));
+    }
     assert!(
-        world.localnet.has_share_file(idx),
-        "retried DKG did not persist the joiner's share"
+        share_promoted,
+        "retried DKG did not promote the joiner's share after activation"
     );
     assert!(
         world

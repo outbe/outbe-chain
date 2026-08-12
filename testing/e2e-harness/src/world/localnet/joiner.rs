@@ -95,10 +95,17 @@ impl Localnet {
     /// Provision a joiner: keygen, fund, register, p2p, enclave, `tee join`
     /// (port of `e2e_provision_joiner`). Leaves keys under `validator-<index>/`.
     pub fn provision_joiner(&mut self, index: usize) -> Result<()> {
+        self.provision_existing_node_as_joiner(index)?;
+        self.join_node_enclave(index)
+    }
+
+    /// Add ValidatorSet and OCOMP material to an already joined role-neutral
+    /// NodeHost. This deliberately does not perform a second TEE join.
+    pub fn provision_existing_node_as_joiner(&mut self, index: usize) -> Result<()> {
         self.provision_joiner_registration(index)?;
         #[cfg(feature = "ocomp-integration")]
         crate::world::ocomp::stage_direct_joiner_domain_material(&self.cfg, index)?;
-        self.join_node_enclave(index)
+        Ok(())
     }
 
     /// Generate and register Validator/OCOMP identity without changing the
@@ -246,7 +253,7 @@ impl Localnet {
             "--private-key",
             key,
             "--timeout-secs",
-            if matches!(self.cfg.tee_mode, crate::env::TeeMode::Real) {
+            if self.cfg.tee_mode.passes_sgx_devices() {
                 "180"
             } else {
                 "60"

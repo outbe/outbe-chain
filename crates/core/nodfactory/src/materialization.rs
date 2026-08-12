@@ -216,11 +216,6 @@ pub(crate) fn materialize_after_attempt(
         ));
     }
     let block_number = storage.block_number()?;
-    nod.ocomp_materialization_next_nod_ordinal
-        .write(&worldwide_day, next_nod_ordinal)?;
-    nod.ocomp_materialization_last_progress_height
-        .write(&worldwide_day, block_number)?;
-
     let completed = next_nod_ordinal == head.nod_count;
     if completed {
         let stored_head = nod.ocomp_materialization_head_sequence.read()?;
@@ -236,6 +231,12 @@ pub(crate) fn materialize_after_attempt(
         nod.ocomp_materialization_queue_wwd
             .write(&stored_head, WorldwideDay::new(0))?;
         nod.ocomp_materialization_head_sequence.write(next_head)?;
+        nod.clear_ocomp_certified_generation(worldwide_day)?;
+    } else {
+        nod.ocomp_materialization_next_nod_ordinal
+            .write(&worldwide_day, next_nod_ordinal)?;
+        nod.ocomp_materialization_last_progress_height
+            .write(&worldwide_day, block_number)?;
     }
 
     storage.emit_event(

@@ -20,9 +20,9 @@ fn profile() -> NodMaterializationProfileV1 {
     }
 }
 
-fn action(ordinal: u32) -> NodActionV1 {
+fn action_for(materialization_wwd: u32, ordinal: u32) -> NodActionV1 {
     let owner = Address::from_word(B256::from(U256::from(ordinal + 1)));
-    let worldwide_day = WorldwideDay::new(MATERIALIZATION_WWD);
+    let worldwide_day = WorldwideDay::new(materialization_wwd);
     let floor_price_minor = U256::from(500);
     let tribute_id = EntityId36::new(worldwide_day, *B256::from(U256::from(ordinal + 1_000)));
     let nod_id = NodContract::generate_nod_id(owner, worldwide_day).unwrap();
@@ -31,7 +31,7 @@ fn action(ordinal: u32) -> NodActionV1 {
         tribute_id: ProtocolEntityId36(tribute_id.into_bytes()),
         nod_id: ProtocolEntityId36(nod_id.into_bytes()),
         owner,
-        wwd: MATERIALIZATION_WWD,
+        wwd: materialization_wwd,
         league_id: 1,
         floor_price_minor,
         gratis_load_minor: U256::from(1_000),
@@ -55,8 +55,14 @@ struct Population {
 }
 
 fn population(count: u32) -> Population {
+    population_for(MATERIALIZATION_WWD, count)
+}
+
+fn population_for(materialization_wwd: u32, count: u32) -> Population {
     let limits = poc_schema_limits();
-    let actions = (0..count).map(action).collect::<Vec<_>>();
+    let actions = (0..count)
+        .map(|ordinal| action_for(materialization_wwd, ordinal))
+        .collect::<Vec<_>>();
     let encoded = actions
         .iter()
         .map(|action| action.encode_canonical_record(&limits).unwrap())
@@ -87,8 +93,17 @@ fn population(count: u32) -> Population {
 }
 
 fn batch(population: &Population, first: u32, count: usize) -> NodMaterializationBatchV1 {
+    batch_for_sequence(population, 1, first, count)
+}
+
+fn batch_for_sequence(
+    population: &Population,
+    queue_sequence: u64,
+    first: u32,
+    count: usize,
+) -> NodMaterializationBatchV1 {
     NodMaterializationBatchV1 {
-        queue_sequence: 1,
+        queue_sequence,
         first_nod_ordinal: first,
         actions: population.actions[first as usize..first as usize + count].to_vec(),
         root_path: population.proofs[first as usize][3..].to_vec(),
@@ -96,13 +111,32 @@ fn batch(population: &Population, first: u32, count: usize) -> NodMaterializatio
 }
 
 fn seed_generation(world: &mut World, population: &Population) {
+    seed_projection(world, MATERIALIZATION_WWD, 1, population);
     world
         .enter(|storage, _, _| {
-            let worldwide_day = WorldwideDay::new(MATERIALIZATION_WWD);
+            let nod = NodContract::new(storage);
+            nod.ocomp_materialization_head_sequence.write(1)?;
+            nod.ocomp_materialization_tail_sequence.write(2)?;
+            nod.ocomp_materialization_queue_wwd
+                .write(&1, WorldwideDay::new(MATERIALIZATION_WWD))?;
+            Ok::<_, PrecompileError>(())
+        })
+        .unwrap();
+}
+
+fn seed_projection(
+    world: &mut World,
+    materialization_wwd: u32,
+    generation: u64,
+    population: &Population,
+) {
+    world
+        .enter(|storage, _, _| {
+            let worldwide_day = WorldwideDay::new(materialization_wwd);
             let nod = NodContract::new(storage);
             let projection = outbe_nod::NodCertifiedGenerationProjection {
                 worldwide_day,
-                generation: 1,
+                generation,
                 job_id: B256::repeat_byte(0x11),
                 program_semantics_hash: B256::repeat_byte(0x22),
                 nod_root: population.root,
@@ -139,10 +173,63 @@ fn seed_generation(world: &mut World, population: &Population) {
                 .write(&worldwide_day, 0)?;
             nod.ocomp_materialization_last_progress_height
                 .write(&worldwide_day, 1)?;
-            nod.ocomp_materialization_head_sequence.write(1)?;
-            nod.ocomp_materialization_tail_sequence.write(2)?;
-            nod.ocomp_materialization_queue_wwd
-                .write(&1, worldwide_day)?;
+            Ok::<_, PrecompileError>(())
+        })
+        .unwrap();
+}
+
+fn assert_projection_present(world: &mut World, materialization_wwd: u32) {
+    world
+        .enter(|storage, _, _| {
+            assert!(NodContract::new(storage)
+                .ocomp_certified_generation(WorldwideDay::new(materialization_wwd))?
+                .is_some());
+            Ok::<_, PrecompileError>(())
+        })
+        .unwrap();
+}
+
+fn assert_projection_cleared(world: &mut World, materialization_wwd: u32) {
+    world
+        .enter(|storage, _, _| {
+            let worldwide_day = WorldwideDay::new(materialization_wwd);
+            let nod = NodContract::new(storage);
+            assert_eq!(nod.ocomp_target_generation.read(&worldwide_day)?, 0);
+            assert_eq!(nod.ocomp_namespace_root.read(&worldwide_day)?, B256::ZERO);
+            assert_eq!(nod.ocomp_bucket_root.read(&worldwide_day)?, B256::ZERO);
+            assert_eq!(
+                nod.ocomp_output_manifest_root.read(&worldwide_day)?,
+                B256::ZERO
+            );
+            assert_eq!(
+                nod.ocomp_generation_metadata.read(&worldwide_day)?,
+                U256::ZERO
+            );
+            assert_eq!(nod.ocomp_nod_amount_total.read(&worldwide_day)?, U256::ZERO);
+            assert_eq!(
+                nod.ocomp_nod_gratis_consumed.read(&worldwide_day)?,
+                U256::ZERO
+            );
+            assert_eq!(
+                nod.ocomp_materialization_job_id.read(&worldwide_day)?,
+                B256::ZERO
+            );
+            assert_eq!(
+                nod.ocomp_materialization_program_semantics_hash
+                    .read(&worldwide_day)?,
+                B256::ZERO
+            );
+            assert_eq!(
+                nod.ocomp_materialization_next_nod_ordinal
+                    .read(&worldwide_day)?,
+                0
+            );
+            assert_eq!(
+                nod.ocomp_materialization_last_progress_height
+                    .read(&worldwide_day)?,
+                0
+            );
+            assert!(nod.ocomp_certified_generation(worldwide_day)?.is_none());
             Ok::<_, PrecompileError>(())
         })
         .unwrap();
@@ -316,12 +403,14 @@ fn multiple_batches_create_ordinary_nods_and_advance_fifo_atomically() {
         8
     );
     assert_eq!(head(&mut world).unwrap().next_nod_ordinal, 8);
+    assert_projection_present(&mut world, MATERIALIZATION_WWD);
 
     world.provider.set_block_number(2);
     let final_batch = apply(&mut world, &batch(&population, 8, 2)).unwrap();
     assert_eq!(final_batch.next_nod_ordinal, 10);
     assert!(final_batch.completed);
     assert!(head(&mut world).is_none());
+    assert_projection_cleared(&mut world, MATERIALIZATION_WWD);
     assert_eq!(
         world
             .enter(|storage, scope, parent| nod_api::list_all(&storage, scope, parent))
@@ -343,6 +432,15 @@ fn multiple_batches_create_ordinary_nods_and_advance_fifo_atomically() {
         .unwrap();
     assert_eq!(first_item.issued_at, 1_700_000_000);
     assert_ne!(first_item.issued_at, population.actions[0].issued_at);
+    assert_eq!(
+        world
+            .enter(|storage, scope, parent| {
+                nod_api::list_by_owner(&storage, scope, parent, population.actions[0].owner)
+            })
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 #[test]
@@ -384,6 +482,62 @@ fn a_duplicate_batch_after_cursor_progress_is_a_soft_stale_race() {
 }
 
 #[test]
+fn a_duplicate_final_batch_after_projection_cleanup_is_a_soft_stale_queue_race() {
+    let mut world = World::new();
+    let population = population(8);
+    seed_generation(&mut world, &population);
+    let final_batch = batch(&population, 0, 8);
+    apply(&mut world, &final_batch).unwrap();
+    let storage_after_completion = world.provider.storage.clone();
+    let events_after_completion = world.provider.get_ordered_events().to_vec();
+
+    world.provider.set_block_number(2);
+    let error = apply(&mut world, &final_batch).unwrap_err();
+    assert!(matches!(
+        error,
+        PrecompileError::Revert(ref reason)
+            if reason == &NodFactoryError::StaleMaterializationQueue.to_string()
+    ));
+    assert_eq!(world.provider.storage, storage_after_completion);
+    assert_eq!(world.provider.get_ordered_events(), events_after_completion);
+}
+
+#[test]
+fn completing_one_queued_generation_clears_only_its_projection() {
+    let mut world = World::new();
+    let first = population(8);
+    let second_wwd = MATERIALIZATION_WWD + 1;
+    let second = population_for(second_wwd, 8);
+    seed_generation(&mut world, &first);
+    seed_projection(&mut world, second_wwd, 2, &second);
+    world
+        .enter(|storage, _, _| {
+            let nod = NodContract::new(storage);
+            nod.ocomp_materialization_tail_sequence.write(3)?;
+            nod.ocomp_materialization_queue_wwd
+                .write(&2, WorldwideDay::new(second_wwd))?;
+            Ok::<_, PrecompileError>(())
+        })
+        .unwrap();
+
+    assert!(apply(&mut world, &batch(&first, 0, 8)).unwrap().completed);
+    assert_projection_cleared(&mut world, MATERIALIZATION_WWD);
+    assert_projection_present(&mut world, second_wwd);
+    let next = head(&mut world).unwrap();
+    assert_eq!(next.queue_sequence, 2);
+    assert_eq!(next.worldwide_day, second_wwd);
+
+    world.provider.set_block_number(2);
+    assert!(
+        apply(&mut world, &batch_for_sequence(&second, 2, 0, 8))
+            .unwrap()
+            .completed
+    );
+    assert_projection_cleared(&mut world, second_wwd);
+    assert!(head(&mut world).is_none());
+}
+
+#[test]
 fn failure_while_issuing_any_action_rolls_back_items_indexes_buckets_and_cursor() {
     let population = population(8);
     for failure_at in 0..24 {
@@ -401,6 +555,37 @@ fn failure_while_issuing_any_action_rolls_back_items_indexes_buckets_and_cursor(
                 "event {failure_at}"
             );
         }
+    }
+}
+
+#[test]
+fn every_final_batch_cleanup_failure_rolls_back_nods_projection_fifo_and_events() {
+    let population = population(10);
+    let final_batch = batch(&population, 8, 2);
+    let mut probe = World::new();
+    seed_generation(&mut probe, &population);
+    apply(&mut probe, &batch(&population, 0, 8)).unwrap();
+    probe.provider.set_block_number(2);
+    probe.provider.fail_after_mutation_at(usize::MAX);
+    apply(&mut probe, &final_batch).unwrap();
+    let mutation_count = probe.provider.clear_mutation_failure();
+
+    for failure_at in 0..mutation_count {
+        let mut world = World::new();
+        seed_generation(&mut world, &population);
+        apply(&mut world, &batch(&population, 0, 8)).unwrap();
+        world.provider.set_block_number(2);
+        let before = world.provider.storage.clone();
+        let events_before = world.provider.get_ordered_events().to_vec();
+        world.provider.fail_after_mutation_at(failure_at);
+
+        assert!(apply(&mut world, &final_batch).is_err());
+        assert_eq!(world.provider.storage, before, "mutation {failure_at}");
+        assert_eq!(
+            world.provider.get_ordered_events(),
+            events_before,
+            "event {failure_at}"
+        );
     }
 }
 

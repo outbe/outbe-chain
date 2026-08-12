@@ -43,10 +43,13 @@ roots, scalar effects, Tribute retirement, contributor state, carry-over, and
 Metadosis completion. On-chain activation does not iterate through all NOD
 actions and does not rerun Lysis.
 
-The certified `nod_root` is the authority for the ordered `NodActionV1` list.
-Individual NOD ledger entries are then created through the bounded materializer
-defined by ADR-C-NOD-002. Certification and materialization are therefore two
-parts of one user-visible outcome:
+The certified `nod_root` is the authority for the ordered `NodActionV1` list
+while materialization is pending. Individual NOD ledger entries are then
+created through the bounded materializer defined by ADR-C-NOD-002. The final
+batch clears the duplicate NOD-module root projection; Metadosis retains the
+historical certified result, while ordinary NOD bodies, indexes, and buckets
+become operational authority. Certification and materialization are therefore
+two parts of one user-visible outcome:
 
 ```text
 sealed Tributes
@@ -56,9 +59,10 @@ sealed Tributes
   -> ordinary enumerable and mineable NODs
 ```
 
-The generation is incomplete for mining until every certified NOD action has
-been materialized. This completion gate does not change the canonical Lysis
-result and does not introduce a replacement generation.
+The generation is incomplete for mining while its materialization projection
+exists. The final batch removes that projection only after every certified NOD
+action has been issued atomically. This completion transition does not change
+the canonical Lysis result and does not introduce a replacement generation.
 
 ## Merkle contract
 

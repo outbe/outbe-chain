@@ -38,7 +38,13 @@ fn fresh_lifecycle_localnet(world: &mut World, window: u64) {
     boot_localnet(
         world,
         window,
-        &[("TESTNET_UNBONDING_PERIOD_SECS", "8".to_string())],
+        &[
+            ("TESTNET_UNBONDING_PERIOD_SECS", "8".to_string()),
+            ("TESTNET_METADOSIS_OFFERING_SECONDS", "1800".to_string()),
+            ("TESTNET_EPOCH_LENGTH_BLOCKS", "120".to_string()),
+            ("TESTNET_DKG_PREPARE_WINDOW_BLOCKS", "60".to_string()),
+            ("TESTNET_DKG_ACTIVATION_GRACE_BLOCKS", "120".to_string()),
+        ],
     );
 }
 

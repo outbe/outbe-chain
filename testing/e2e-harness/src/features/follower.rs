@@ -311,8 +311,12 @@ fn warm_promotion(world: &mut World) {
         .expect("move the complete role-neutral node slot");
     world
         .localnet
-        .provision_joiner_registration(idx)
+        .provision_existing_node_as_joiner(idx)
         .expect("register the node's already provisioned EVM/BLS material");
+    world
+        .localnet
+        .restart_joiner_enclave(idx)
+        .expect("restart the moved role-neutral enclave");
 
     let key = world.validators.joiner().evm_key().expect("joiner key");
     let addr = world.rpc.address_of(&key).expect("joiner addr");

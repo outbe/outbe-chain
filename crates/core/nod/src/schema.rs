@@ -399,6 +399,34 @@ impl<'storage> NodContract<'storage> {
         }))
     }
 
+    /// Clears the transient proof authority after all certified NODs have been
+    /// materialized into the ordinary ledger.
+    pub fn clear_ocomp_certified_generation(
+        &self,
+        worldwide_day: WorldwideDay,
+    ) -> outbe_primitives::error::Result<()> {
+        self.ocomp_target_generation.write(&worldwide_day, 0)?;
+        self.ocomp_namespace_root
+            .write(&worldwide_day, B256::ZERO)?;
+        self.ocomp_bucket_root.write(&worldwide_day, B256::ZERO)?;
+        self.ocomp_output_manifest_root
+            .write(&worldwide_day, B256::ZERO)?;
+        self.ocomp_generation_metadata
+            .write(&worldwide_day, U256::ZERO)?;
+        self.ocomp_nod_amount_total
+            .write(&worldwide_day, U256::ZERO)?;
+        self.ocomp_nod_gratis_consumed
+            .write(&worldwide_day, U256::ZERO)?;
+        self.ocomp_materialization_job_id
+            .write(&worldwide_day, B256::ZERO)?;
+        self.ocomp_materialization_program_semantics_hash
+            .write(&worldwide_day, B256::ZERO)?;
+        self.ocomp_materialization_next_nod_ordinal
+            .write(&worldwide_day, 0)?;
+        self.ocomp_materialization_last_progress_height
+            .write(&worldwide_day, 0)
+    }
+
     /// Reads and validates the current canonical materialization FIFO head.
     pub fn ocomp_materialization_head(
         &self,

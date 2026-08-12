@@ -35,10 +35,12 @@ the existing public ABI.
 11. Every node verifies the same FIFO cursor, ordered actions, identities,
     economics, and shared root path. NodFactory calls `issue_nod` for every
     action inside one checkpoint.
-12. Successful batches advance the cursor. The final batch dequeues the
-    generation while preserving its certified projection.
+12. Successful batches advance the cursor. The final batch atomically dequeues
+    the generation and clears its pending NOD projection while preserving all
+    ordinary NOD bodies, indexes, buckets, and supply.
 13. After completion, owners use the ordinary NOD ABI, including
-    `tokenOfOwnerByIndex`, `nodData`, and `mineGratis`.
+    `tokenOfOwnerByIndex` and `nodData`. Historical certification remains
+    available through Metadosis.
 
 ## Canonical authority
 
@@ -46,8 +48,10 @@ The following are authoritative:
 
 - finalized `JobIntentV1` and its pinned ValidatorSet snapshot;
 - the quorum-selected `LysisResultV1`;
-- the certified NOD projection and `nod_root`;
-- the FIFO head and `next_nod_ordinal`;
+- the pending NOD projection, `nod_root`, FIFO head, and
+  `next_nod_ordinal` during materialization;
+- the Metadosis active generation and terminal job after completion;
+- ordinary NOD bodies, owner/global indexes, and buckets after completion;
 - the current ACTIVE OCOMP role for materialization submission.
 
 Events and local wakes are hints only. Supervisor files, process liveness,
@@ -85,10 +89,12 @@ owner indexes, buckets, events, or cursor progress.
 
 ## Restart behavior
 
-Chain state restores the job, generation, FIFO, cursor, and attempt state. The
-Supervisor restores the durable job reference and reconstructs only the current
-bounded proof from verified artifacts. Restart does not create a new generation,
-duplicate a queue entry, or skip an ordinal.
+Chain state restores the job, pending generation, FIFO, cursor, and attempt
+state. The Supervisor restores the durable job reference and reconstructs only
+the current bounded proof from verified artifacts. It also reconciles finalized
+submission journals so a crash after finalization but before local release
+cannot leak an artifact reference. Restart does not create a new generation,
+duplicate a queue entry, skip an ordinal, or retain a completed projection.
 
 ## Release acceptance
 
@@ -99,7 +105,7 @@ attestation disabled, chain ID `54322345`, and `--tee sgx-no-attest`. It must:
 - create more NODs than one materialization batch;
 - use real Metadosis, Workers, vote transactions, and quorum activation;
 - observe at least two materialization transactions;
-- prove mining rejection before completion;
-- restart and preserve progress; and
-- prove post-completion owner enumeration, `nodData`, and `mineGratis` without
-  direct result or state injection.
+- observe the final projection and FIFO entry disappear atomically;
+- restart and preserve the completed ordinary ledger; and
+- prove post-completion owner enumeration and `nodData` without direct result
+  or state injection.

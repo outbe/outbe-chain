@@ -137,13 +137,35 @@ sol! {
             uint256 nodGratisConsumed;
             uint64 issuedAt;
         }
+        function balanceOf(address owner) external view returns (uint256);
         function totalSupply() external view returns (uint256);
         function tokenByIndex(uint256 index) external view returns (bytes memory);
+        function tokenOfOwnerByIndex(address owner, uint256 index) external view returns (bytes memory);
         function nodData(bytes calldata nodId) external view returns (NodData memory);
         function certifiedGeneration(uint32 worldwideDay)
             external
             view
             returns (CertifiedGenerationData memory);
+    }
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    interface INodFactory {
+        event NodMaterializationProgress(
+            uint64 queueSequence,
+            uint32 worldwideDay,
+            uint64 generation,
+            uint32 firstNodOrdinal,
+            uint32 nextNodOrdinal,
+            bool completed,
+            uint64 blockNumber
+        );
+        function materializationHead() external view returns (bool exists, bytes memory canonicalHead);
+        function mineGratis(bytes calldata nodId, uint256 nonce, address asset, bytes32 mac, uint64 opNonce)
+            external
+            returns (uint256);
+    }
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IGratis {
+        function opNonceOf(address account) external view returns (uint64);
     }
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IMetadosis {
@@ -251,25 +273,62 @@ where
     rx.recv().expect("eth runtime dropped the task")
 }
 
-/// `eth_call` a view function and decode its return, or `None` on any transport /
-/// decode error (the analogue of the old `cast … 2>/dev/null`).
-pub(crate) fn read_call<C: SolCall>(url: &str, to: Address, call: &C) -> Option<C::Return>
+/// `eth_call` a view function and decode its return while preserving the failure.
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn read_call_result<C: SolCall>(
+    url: &str,
+    to: Address,
+    call: &C,
+) -> std::result::Result<C::Return, String>
 where
     C::Return: Send + 'static,
 {
     let url = url.to_string();
     let data = call.abi_encode();
     block_on(async move {
-        let provider = ProviderBuilder::new().connect_http(url.parse().ok()?);
+        let endpoint = url
+            .parse()
+            .map_err(|error| format!("invalid RPC URL: {error}"))?;
+        let provider = ProviderBuilder::new().connect_http(endpoint);
         let tx = TransactionRequest::default()
             .to(to)
             .input(Bytes::from(data).into());
-        // Pin state and block context to the canonical head. Omitting the block
-        // tag lets some RPC implementations execute against `pending`, whose
-        // timestamp can cross a UTC boundary before a block is canonical.
-        let out = provider.call(tx).block(BlockId::latest()).await.ok()?;
-        C::abi_decode_returns(&out).ok()
+        let out = provider
+            .call(tx)
+            .block(BlockId::latest())
+            .await
+            .map_err(|error| format!("eth_call failed: {error}"))?;
+        C::abi_decode_returns(&out).map_err(|error| format!("ABI decode failed: {error}"))
     })
+}
+
+/// `eth_call` a view function and decode its return, or `None` on any transport /
+/// decode error (the analogue of the old `cast … 2>/dev/null`).
+pub(crate) fn read_call<C: SolCall>(url: &str, to: Address, call: &C) -> Option<C::Return>
+where
+    C::Return: Send + 'static,
+{
+    #[cfg(feature = "ocomp-integration")]
+    {
+        read_call_result(url, to, call).ok()
+    }
+
+    #[cfg(not(feature = "ocomp-integration"))]
+    {
+        let url = url.to_string();
+        let data = call.abi_encode();
+        block_on(async move {
+            let provider = ProviderBuilder::new().connect_http(url.parse().ok()?);
+            let tx = TransactionRequest::default()
+                .to(to)
+                .input(Bytes::from(data).into());
+            // Pin state and block context to the canonical head. Omitting the block
+            // tag lets some RPC implementations execute against `pending`, whose
+            // timestamp can cross a UTC boundary before a block is canonical.
+            let out = provider.call(tx).block(BlockId::latest()).await.ok()?;
+            C::abi_decode_returns(&out).ok()
+        })
+    }
 }
 
 /// Execute a typed view against the exact canonical state at `height`.
@@ -440,6 +499,74 @@ pub(crate) fn raw_json_result(
             .await
             .map_err(Into::into)
     })
+}
+
+/// Request the caller's Gratis modify key through the production enclave RPC
+/// and open the sealed response with a fresh client X25519 key.
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn derive_gratis_modify_key(url: &str, key: &str) -> Result<[u8; 32]> {
+    use outbe_tee::protocol::{derive_account_keys_message, eip191_hash, Ledger};
+    use outbe_tee_enclave::crypto::{decrypt_share, x25519_public, EncryptedShare};
+    use rand_core::RngCore as _;
+
+    let signer: PrivateKeySigner = key
+        .parse()
+        .map_err(|error| eyre!("invalid private key: {error}"))?;
+    let account = signer.address();
+    let mut ephemeral_secret = [0_u8; 32];
+    rand_core::OsRng.fill_bytes(&mut ephemeral_secret);
+    let ephemeral_public = x25519_public(&ephemeral_secret);
+    let digest = eip191_hash(&derive_account_keys_message(
+        Ledger::Gratis,
+        account,
+        B256::from(ephemeral_public),
+    ));
+    let signature = signer
+        .sign_hash_sync(&digest)
+        .map_err(|error| eyre!("sign Gratis key request: {error}"))?;
+    let response = raw_json_result(
+        url,
+        "outbe_deriveKeys",
+        serde_json::json!([
+            "Gratis",
+            format!("{account:#x}"),
+            format!("{:#x}", B256::from(ephemeral_public)),
+            format!("0x{}", hex::encode(signature.as_bytes())),
+        ]),
+    )?;
+
+    let decode = |field: &'static str| -> Result<Vec<u8>> {
+        let value = response
+            .get(field)
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| eyre!("outbe_deriveKeys omitted {field}"))?;
+        hex::decode(value.trim_start_matches("0x"))
+            .map_err(|error| eyre!("decode outbe_deriveKeys {field}: {error}"))
+    };
+    let ephemeral_pubkey: [u8; 32] = decode("enclaveEphemeralPubkey")?
+        .try_into()
+        .map_err(|value: Vec<u8>| eyre!("enclave ephemeral key is {} bytes", value.len()))?;
+    let nonce: [u8; 12] = decode("nonce")?
+        .try_into()
+        .map_err(|value: Vec<u8>| eyre!("sealed-key nonce is {} bytes", value.len()))?;
+    let plaintext = decrypt_share(
+        &ephemeral_secret,
+        &EncryptedShare {
+            ephemeral_pub: ephemeral_pubkey,
+            nonce,
+            ciphertext: decode("sealed")?,
+        },
+    )
+    .map_err(|error| eyre!("open sealed Gratis keys: {error}"))?;
+    if plaintext.len() != 64 {
+        return Err(eyre!(
+            "outbe_deriveKeys plaintext is {} bytes instead of 64",
+            plaintext.len()
+        ));
+    }
+    plaintext[32..]
+        .try_into()
+        .map_err(|_| eyre!("Gratis modify key is not 32 bytes"))
 }
 
 /// Broadcast one already signed public transaction without reconstructing or

@@ -4,13 +4,15 @@
 //! validators to bootstrap, which enclave mode, whether we have `sudo`. Each
 //! Gherkin scenario declares what it *needs* via tags. The runner matches the
 //! two: a scenario the environment can't satisfy is **skipped**, or — with
-//! `--all` — turned into a **failure**.
+//! `--all` — turned into a **failure**. Explicit `@real-sgx` scenarios remain
+//! skipped outside the DCAP lane even under `--all`.
 //!
 //! Every requirement is a **tag** (matched on merged feature + scenario tags,
 //! `@`-less), so the Given text stays purely descriptive:
 //!   - `min-validators-N` → requires `--validators >= N` (N parsed from the tag).
 //!   - `tee`              → requires an enabled enclave mode.
 //!   - `sudo`             → requires `sudo` (no `--no-sudo`).
+//!   - `real-sgx`         → always skipped outside `--tee real`, regardless of `--all`.
 //!   - `todo`             → always skipped (unimplemented stub), regardless of `--all`.
 
 use std::path::{Path, PathBuf};
@@ -429,6 +431,7 @@ fn parse_min_validators_tag(tag: &str) -> Option<usize> {
 }
 
 /// What to do with a scenario given the environment.
+#[derive(Debug, Eq, PartialEq)]
 pub enum Decision {
     Run,
     Skip(String),
@@ -440,9 +443,17 @@ pub fn decide(feature: &Feature, scenario: &Scenario, env: &Environment) -> Deci
     if is_todo(feature, scenario) {
         return Decision::Skip("not implemented (@todo)".to_string());
     }
-    match unmet(feature, scenario, env) {
+    let requirement = unmet(feature, scenario, env);
+    let dcap_unavailable =
+        has_tag(feature, scenario, "real-sgx") && !matches!(env.tee_mode, TeeMode::Real);
+    decide_requirement(requirement, env.all, dcap_unavailable)
+}
+
+fn decide_requirement(requirement: Option<String>, run_all: bool, force_skip: bool) -> Decision {
+    match requirement {
         None => Decision::Run,
-        Some(reason) if env.all => {
+        Some(reason) if force_skip => Decision::Skip(reason),
+        Some(reason) if run_all => {
             // Run it; the `before` hook panics so it counts as a failure.
             let _ = reason;
             Decision::Run
@@ -522,5 +533,38 @@ mod tests {
         assert_eq!(parse_min_validators_tag("tee"), None);
         assert_eq!(parse_min_validators_tag("min-validators-"), None);
         assert_eq!(parse_min_validators_tag("min-validators-x"), None);
+    }
+
+    #[test]
+    fn real_sgx_requirement_stays_skipped_under_all() {
+        let reason = "needs DcapRequired".to_string();
+        assert_eq!(
+            decide_requirement(Some(reason.clone()), true, true),
+            Decision::Skip(reason)
+        );
+        assert_eq!(
+            decide_requirement(Some("ordinary requirement".to_string()), true, false),
+            Decision::Run
+        );
+    }
+
+    #[test]
+    fn parsed_real_sgx_scenario_is_skipped_by_sgx_no_attest_all_lane() {
+        let feature = Feature::parse_path(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("features/tee_onboarding.feature"),
+            cucumber::gherkin::GherkinEnv::default(),
+        )
+        .expect("parse TEE onboarding feature");
+        let scenario = feature.scenarios.first().expect("onboarding scenario");
+        let env = Environment {
+            tee_mode: TeeMode::SgxNoAttest,
+            all: true,
+            ..Environment::default()
+        };
+
+        assert!(matches!(
+            decide(&feature, scenario, &env),
+            Decision::Skip(_)
+        ));
     }
 }
