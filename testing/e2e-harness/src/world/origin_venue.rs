@@ -207,7 +207,15 @@ pub fn deliver_proceeds(
 ) -> Result<()> {
     forge::run(
         &repo.join("contracts/intex"),
-        &["script", "deploy/DriveProceeds.s.sol:DriveProceeds"],
+        // Loopback delivers the stage message inside the same transaction, so an
+        // unbounded estimate exceeds the block. The snapshot this needs is frozen
+        // before the fan-out and a send that runs out parks itself.
+        &[
+            "script",
+            "deploy/DriveProceeds.s.sol:DriveProceeds",
+            "--gas-limit",
+            "25000000",
+        ],
         &[
             ("ORIGIN_ROUTER", format!("{:?}", contracts.origin_router)),
             ("WCOEN", format!("{:?}", contracts.wcoen)),
