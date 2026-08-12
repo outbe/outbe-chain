@@ -9,6 +9,7 @@ build = "build.rs"
 [features]
 default = []
 test-marshal-drop = ["outbe-consensus/test-marshal-drop"]
+e2e-test = ["outbe-evm/e2e-test"]
 
 [[bin]]
 name = "outbe-chain"
