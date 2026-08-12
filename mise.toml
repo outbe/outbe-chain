@@ -48,6 +48,10 @@ run = "cargo auditable build --release"
 
 # ─── Format / Lint ──────────────────────────────────────────────────── #
 
+[tasks.export-abi]
+description = "Regenerate contracts/*/abi-export from Solidity (Rust reads the .sol; the MCP reads these JSONs)"
+run = "mise run -C contracts export-abi"
+
 [tasks.fmt]
 description = "Format all Rust code"
 run = "cargo fmt --all"

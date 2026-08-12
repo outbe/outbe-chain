@@ -1,18 +1,31 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { Ctx } from "../chain.js";
-import { CONTRACTS, proposalStatusName } from "../registry.js";
+import {
+  CONTRACTS,
+  PROPOSAL_STATUS,
+  type ProposalStatusName,
+  proposalStatusCode,
+  proposalStatusName,
+} from "../registry.js";
 import { handler, ok, view } from "./util.js";
 
 const addr = z.string().describe("0x-prefixed address");
 const wwd = z.number().int().describe("WorldwideDay as YYYYMMDD, e.g. 20260601");
 
-/** Attach the human-readable proposal status name (statusCode -> {code, name}). */
+/**
+ * Normalise the proposal status.
+ *
+ * `format.ts` already renders `status` as `{code, name}` for `IGovernance.*`
+ * structs; this only backfills the name when a caller hands over a raw code.
+ */
 function annotateProposal(p: unknown): Record<string, unknown> {
   const r = { ...(p as Record<string, unknown>) };
-  const code = Number(r.statusCode);
-  delete r.statusCode;
-  return { ...r, status: { code, name: proposalStatusName(code) } };
+  if (typeof r.status === "number" || typeof r.status === "bigint") {
+    const code = Number(r.status);
+    r.status = { code, name: proposalStatusName(code) };
+  }
+  return r;
 }
 
 export function registerViewTools(server: McpServer, ctx: Ctx): void {
@@ -36,14 +49,13 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "tribute_get",
     "Tribute metadata by token id: owner + decoded attributes (worldwide_day, currency, amounts).",
-    { id: z.string().describe("Tribute token id (decimal or 0x hex)") },
+    { id: z.string().describe("Tribute token id as 0x hex bytes") },
     handler(async ({ id }) => {
-      const tokenId = BigInt(id);
       const [metadata, owner] = await Promise.all([
-        view(ctx, "tribute", "tokenURI", [tokenId]),
-        view(ctx, "tribute", "ownerOf", [tokenId]),
+        view(ctx, "tribute", "tokenURI", [id]),
+        view(ctx, "tribute", "ownerOf", [id]),
       ]);
-      return ok({ tokenId: tokenId.toString(), owner, metadata });
+      return ok({ tokenId: id, owner, metadata });
     }),
   );
 
@@ -76,22 +88,29 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "nod_get",
     "Nod NFT data by token id (decoded) plus parsed tokenURI metadata.",
-    { id: z.string().describe("Nod token id (decimal or 0x hex)") },
+    { id: z.string().describe("Nod token id as 0x hex bytes") },
     handler(async ({ id }) => {
-      const nodId = BigInt(id);
       const [data, metadata] = await Promise.all([
-        view(ctx, "nod", "nodData", [nodId]),
-        view(ctx, "nod", "tokenURI", [nodId]),
+        view(ctx, "nod", "nodData", [id]),
+        view(ctx, "nod", "tokenURI", [id]),
       ]);
-      return ok({ nodId: nodId.toString(), data, metadata });
+      return ok({ nodId: id, data, metadata });
     }),
   );
 
   server.tool(
     "nods_by_owner",
-    "List Nod token ids owned by an address.",
+    "List Nod token ids owned by an address (Nod has no bulk getter, so this " +
+      "enumerates balanceOf -> tokenOfOwnerByIndex).",
     { owner: addr },
-    handler(async ({ owner }) => ok(await view(ctx, "nod", "tokens", [owner]))),
+    handler(async ({ owner }) => {
+      const balance = Number(await view(ctx, "nod", "balanceOf", [owner]));
+      const ids: unknown[] = [];
+      for (let i = 0; i < balance; i++) {
+        ids.push(await view(ctx, "nod", "tokenOfOwnerByIndex", [owner, i]));
+      }
+      return ok({ owner, count: balance, nodIds: ids });
+    }),
   );
 
   // --- Gem -------------------------------------------------------------------
@@ -270,13 +289,6 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
     }),
   );
 
-  server.tool(
-    "rewards_claimable",
-    "Pending validator rewards for an address (in COEN).",
-    { validator: addr },
-    handler(async ({ validator }) => ok(await view(ctx, "rewards", "pendingRewards", [validator]))),
-  );
-
   // --- Governance (canon, meta-canon, OIP, GIP) — read-only -----------------
   server.tool(
     "metacanon_get",
@@ -314,45 +326,38 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
 
   // Index-backed, PAGINATED listing (metadata only — omits the full text).
   // Exactly one of `author` / `status` must be given; each maps to a dedicated
-  // on-chain index (getByAuthor / getAccepted / getRejected). Returns `total`
-  // (the whole bucket size) plus the requested `[offset, offset+limit)` page.
+  // on-chain index (get*ByAuthor / get*ByStatus). Returns `total` (the whole
+  // bucket size) plus the requested `[offset, offset+limit)` page.
   const listFilter = {
     author: z.string().optional().describe("0x address — list this author's proposals"),
     status: z
-      .enum(["accepted", "rejected"])
+      .enum(PROPOSAL_STATUS)
       .optional()
-      .describe("'accepted' (Approved or Implemented) or 'rejected'"),
+      .describe(`proposal status: ${PROPOSAL_STATUS.join(" | ")}`),
     offset: z.number().int().min(0).optional().describe("page start (default 0)"),
     limit: z.number().int().min(1).max(1000).optional().describe("page size (default 100, max 1000)"),
   };
 
   async function listProposals(
     kind: "Oip" | "Gip",
-    args: { author?: string; status?: "accepted" | "rejected"; offset?: number; limit?: number },
+    args: { author?: string; status?: ProposalStatusName; offset?: number; limit?: number },
   ): Promise<{ total: number; offset: number; limit: number; items: unknown[] }> {
     const { author, status } = args;
     if ((author === undefined) === (status === undefined)) {
-      throw new Error("provide exactly one of `author` or `status` (accepted|rejected)");
+      throw new Error(
+        `provide exactly one of \`author\` or \`status\` (${PROPOSAL_STATUS.join("|")})`,
+      );
     }
     const offset = args.offset ?? 0;
     const limit = args.limit ?? 100;
-    let listFn: string;
-    let countFn: string;
-    let pageArgs: unknown[];
-    if (author !== undefined) {
-      listFn = `get${kind}sByAuthor`;
-      countFn = `${kind.toLowerCase()}CountByAuthor`;
-      pageArgs = [author, offset, limit];
-    } else {
-      const cap = status === "accepted" ? "Accepted" : "Rejected";
-      listFn = `get${cap}${kind}s`;
-      countFn = `${status}${kind}Count`; // acceptedOipCount / rejectedGipCount ...
-      pageArgs = [offset, limit];
-    }
-    const countCallArgs = author !== undefined ? [author] : [];
+    const byAuthor = author !== undefined;
+    const suffix = byAuthor ? "ByAuthor" : "ByStatus";
+    const key = byAuthor ? author : proposalStatusCode(status as ProposalStatusName);
     const [metas, total] = await Promise.all([
-      view(ctx, "governance", listFn, pageArgs) as Promise<unknown[]>,
-      view(ctx, "governance", countFn, countCallArgs),
+      view(ctx, "governance", `get${kind}s${suffix}`, [key, offset, limit]) as Promise<
+        unknown[]
+      >,
+      view(ctx, "governance", `${kind.toLowerCase()}Count${suffix}`, [key]),
     ]);
     return { total: Number(total), offset, limit, items: metas.map(annotateProposal) };
   }
@@ -360,7 +365,7 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "oip_list",
     "List OIPs by index, paginated (metadata only — omits the full text). Give `author` " +
-      "(their OIPs) or `status` = accepted | rejected, plus optional `offset`/`limit`.",
+      "(their OIPs) or `status` (a proposal status name), plus optional `offset`/`limit`.",
     listFilter,
     handler(async (args) => {
       const { total, offset, limit, items } = await listProposals("Oip", args);
@@ -371,7 +376,7 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "gip_list",
     "List GIPs by index, paginated (metadata only — omits the full text). Give `author` " +
-      "(their GIPs) or `status` = accepted | rejected, plus optional `offset`/`limit`.",
+      "(their GIPs) or `status` (a proposal status name), plus optional `offset`/`limit`.",
     listFilter,
     handler(async (args) => {
       const { total, offset, limit, items } = await listProposals("Gip", args);

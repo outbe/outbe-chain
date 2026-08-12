@@ -33,13 +33,13 @@ use outbe_primitives::reshare_artifact::decode_outbe_block_artifacts;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "ocomp-integration")]
-use crate::internal::eth::{IDesis, IGratis, IMetadosis, INodFactory, IPromisLimit};
+use crate::internal::eth::{IDesis, IGratis, INodFactory, IPromisLimit};
 use crate::internal::{
     addresses,
     config::Config,
     eth::{
-        self, IGovernance, IL2Registry, INod, IStaking, ITeeRegistry, ITribute, IUpdate,
-        IValidatorSet, IVote, IWorldwideDay, IZeroFee,
+        self, IGovernance, IL2Registry, IMetadosis, INod, IStaking, ITeeRegistryV1, ITribute,
+        IUpdate, IValidatorSet, IVote, IZeroFee,
     },
     parse::{self, ScheduledUpdate, VoteStatus},
     shell::Sh,
@@ -298,7 +298,6 @@ impl Rpc {
         let call = INodFactory::mineGratisCall {
             nodId: nod_id.into_bytes().to_vec().into(),
             nonce: U256::ZERO,
-            asset: Address::ZERO,
             mac: B256::ZERO,
             opNonce: 0,
         };
@@ -445,7 +444,6 @@ impl Rpc {
             &INodFactory::mineGratisCall {
                 nodId: nod_id.into(),
                 nonce,
-                asset: Address::ZERO,
                 mac: B256::from(mac),
                 opNonce: op_nonce,
             },
@@ -647,6 +645,7 @@ impl Rpc {
             },
             block_number,
         )
+        .map(|stage| stage as u8)
     }
 
     /// Canonical block hash at `height` on the node at `port`.
@@ -720,7 +719,7 @@ impl Rpc {
         eth::read_call(
             &self.cfg.rpc0,
             addresses::TEE_ADDR,
-            &ITeeRegistry::isBootstrappedCall {},
+            &ITeeRegistryV1::isBootstrappedCall {},
         )
         .unwrap_or(false)
     }
@@ -758,7 +757,9 @@ impl Rpc {
         let r = eth::read_call(
             rpc_url,
             addresses::UPDATE_ADDR,
-            &IUpdate::getScheduledUpdateCall { id: U256::from(id) },
+            &IUpdate::getScheduledUpdateCall {
+                proposalId: U256::from(id),
+            },
         )?;
         Some(ScheduledUpdate {
             version: r.version as u64,
@@ -1159,7 +1160,7 @@ impl Rpc {
         eth::read_call(
             &self.url(port),
             addresses::VS_ADDR,
-            &IValidatorSet::validatorByAddressCall { v },
+            &IValidatorSet::validatorByAddressCall { addr: v },
         )
     }
 
@@ -1227,7 +1228,7 @@ impl Rpc {
 
     /// Whether the validator holds a live DKG share.
     pub fn has_share(&self, port: u16, addr: &str) -> Option<bool> {
-        self.validator_record(port, addr).map(|r| r.hasShare)
+        self.validator_record(port, addr).map(|r| r.hasBLSShare)
     }
 
     /// Whether `addr` is a current consensus participant (ACTIVE or EXITING-with-share).
@@ -1238,7 +1239,7 @@ impl Rpc {
         eth::read_call(
             &self.url(port),
             addresses::VS_ADDR,
-            &IValidatorSet::isConsensusParticipantCall { v },
+            &IValidatorSet::isConsensusParticipantCall { addr: v },
         )
         .unwrap_or(false)
     }
@@ -1319,9 +1320,9 @@ impl Rpc {
         let r = eth::read_call(
             &self.url(port),
             addresses::WWD_ADDR,
-            &IWorldwideDay::getWorldwideDayCall { day },
+            &IMetadosis::getWorldwideDayCall { wwd: day },
         )?;
-        Some(r.f0.to_string())
+        Some(r.status.to_string())
     }
 
     #[cfg(feature = "ocomp-integration")]
@@ -1333,16 +1334,16 @@ impl Rpc {
         let r = eth::read_call(
             &self.url(port),
             addresses::WWD_ADDR,
-            &IWorldwideDay::getWorldwideDayCall { day },
+            &IMetadosis::getWorldwideDayCall { wwd: day },
         )?;
         Some(MetadosisWorldwideDayStateV1 {
-            status: r.f0,
-            day_type: r.f1,
-            forming_start: r.f2,
-            forming_end: r.f3,
-            lookback_end: r.f4,
-            offering_end: r.f5,
-            scheduled_process_time: r.f6,
+            status: r.status,
+            day_type: r.dayType,
+            forming_start: r.formingStart,
+            forming_end: r.formingEnd,
+            lookback_end: r.lookbackEnd,
+            offering_end: r.offeringEnd,
+            scheduled_process_time: r.scheduledProcessTime,
         })
     }
 
@@ -1386,17 +1387,17 @@ impl Rpc {
         let r = eth::read_call_at(
             &self.url(port),
             addresses::WWD_ADDR,
-            &IWorldwideDay::getWorldwideDayCall { day },
+            &IMetadosis::getWorldwideDayCall { wwd: day },
             block_number,
         )?;
         Some(MetadosisWorldwideDayStateV1 {
-            status: r.f0,
-            day_type: r.f1,
-            forming_start: r.f2,
-            forming_end: r.f3,
-            lookback_end: r.f4,
-            offering_end: r.f5,
-            scheduled_process_time: r.f6,
+            status: r.status,
+            day_type: r.dayType,
+            forming_start: r.formingStart,
+            forming_end: r.formingEnd,
+            lookback_end: r.lookbackEnd,
+            offering_end: r.offeringEnd,
+            scheduled_process_time: r.scheduledProcessTime,
         })
     }
 
@@ -1410,7 +1411,7 @@ impl Rpc {
         eth::read_call_reverts_at(
             &self.url(port),
             addresses::WWD_ADDR,
-            &IWorldwideDay::getWorldwideDaysByStatusCall { status },
+            &IMetadosis::getWorldwideDaysByStatusCall { status },
             block_number,
         )
     }
@@ -1520,7 +1521,7 @@ impl Rpc {
         let days: Vec<u32> = eth::read_call(
             &self.cfg.rpc0,
             addresses::WWD_ADDR,
-            &IWorldwideDay::getWorldwideDaysByStatusCall { status: OFFERING },
+            &IMetadosis::getWorldwideDaysByStatusCall { status: OFFERING },
         )?;
         let worldwide_day = *days.first()?;
         if days.len() > 1 {
@@ -2251,7 +2252,7 @@ impl Rpc {
             addresses::STK_ADDR,
             key,
             &IStaking::stakeCall {
-                v,
+                validatorAddress: v,
                 amount: base_units,
             },
             Some(base_units),
@@ -2313,7 +2314,9 @@ impl Rpc {
             &self.cfg.rpc0,
             addresses::VS_ADDR,
             caller_key,
-            &IValidatorSet::deactivateValidatorCall { v: validator },
+            &IValidatorSet::deactivateValidatorCall {
+                validatorAddress: validator,
+            },
             None,
         )?;
         if !self.wait_successful_receipt(&tx, 20) {

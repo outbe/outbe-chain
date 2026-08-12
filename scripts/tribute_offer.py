@@ -83,6 +83,8 @@ TRIBUTE_FACTORY_ABI = json.loads(
          {"type":"bytes","name":"cipherText"},
          {"type":"bytes","name":"nonce"},
          {"type":"uint256","name":"ephemeralPubkey"},
+         {"type":"uint32","name":"worldwideDay"},
+         {"type":"uint16","name":"tributeCurrency"},
          {"type":"uint16","name":"referenceCurrency"},
          {"type":"bool","name":"excludeFromIntexIssuance"},
          {"type":"bytes","name":"zkProof"},
@@ -91,7 +93,7 @@ TRIBUTE_FACTORY_ABI = json.loads(
          {"type":"bytes","name":"zkMerkleRoot"},
          {"type":"bytes","name":"signature"}
        ],
-       "outputs":[{"type":"uint256","name":"tributeId"}]}
+       "outputs":[{"type":"bytes","name":"tributeId"}]}
     ]"""
 )
 
@@ -163,12 +165,11 @@ def main() -> None:
     day = args.day if args.day is not None else pick_offering_day(w3)
     print(f"worldwide_day: {day}")
 
-    # 3. plaintext payload — draft id + su hash must be unique per offer
+    # 3. plaintext payload — draft id + su hash must be unique per offer.
+    #    worldwide_day + currency travel as cleartext ABI args, not in here.
     payload = {
         "creator": creator,
         "tribute_draft_id": "0x" + os.urandom(32).hex(),
-        "worldwide_day": int(day),
-        "currency": int(args.currency),
         "amount_base": str(args.amount),
         "amount_atto": "0",
         "su_hashes": ["0x" + os.urandom(32).hex()],
@@ -186,6 +187,8 @@ def main() -> None:
         cipher_text,
         nonce,
         int.from_bytes(eph_pub, "big"),
+        int(day),
+        int(args.currency),
         int(args.currency),
         args.exclude_from_intex_issuance,
         b"", b"", b"", b"", b"",

@@ -74,7 +74,7 @@ pub fn decode_response(bytes: &[u8]) -> Result<EnclaveResponse, TransportError> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{EnclaveRequest, EncryptedTributeOffer};
+    use crate::protocol::{EnclaveRequest, EncryptedTributeOffer, WorldwideDay};
     use alloy_primitives::{Address, U256};
 
     #[test]
@@ -94,6 +94,8 @@ mod tests {
                 cipher_text: vec![9, 9, 9],
                 nonce: vec![1; 12],
                 ephemeral_pubkey: U256::from(12345u64),
+                worldwide_day: WorldwideDay::new(20250115),
+                tribute_currency: 840,
                 reference_currency: 840,
                 exclude_from_intex_issuance: false,
                 tribute_price_minor: U256::from(1u64),

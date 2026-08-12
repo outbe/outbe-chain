@@ -3,6 +3,7 @@
 use alloy_primitives::{keccak256, Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 
+use outbe_common::WorldwideDay;
 use outbe_primitives::addresses::{INTEX_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
@@ -17,7 +18,7 @@ use crate::constants::{
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
-use crate::sol_ext::{IIntexNFT1155, IOriginRouter, IReferenceCurrency, IERC20};
+use crate::sol_ext::{IIntexNFT1155, IOriginRouter, IReferenceCurrency, IERC1155, IERC20};
 
 /// Emit an IntexFactory event from `INTEX_FACTORY_ADDRESS`.
 pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> Result<()> {
@@ -33,7 +34,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
     if params.issued_intex_count == 0 {
         // Zero-winner clearing: no series is created anywhere, so the day's
         // lysis-recorded contributor map would never distribute — discard it.
-        return outbe_intex::api::finalize_proceeds(storage, params.worldwide_day);
+        return outbe_intex::api::finalize_proceeds(storage, params.worldwide_day.value());
     }
 
     // u32 timestamp; bounded until 2106.
@@ -78,7 +79,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
         let router_params = IOriginRouter::IssuanceInstructionsParams {
             dstChainId: chain_id,
             seriesId: params.series_id,
-            worldwideDay: params.worldwide_day,
+            worldwideDay: params.worldwide_day.into(),
             issuedIntexCount: params.issued_intex_count,
             promisLoadMinor: params.promis_load_minor,
             entryPriceMinor: entry_price_minor_u64,
@@ -199,7 +200,7 @@ pub fn set_authorized_settler(
 pub fn distribute(
     storage: &StorageHandle<'_>,
     caller: Address,
-    worldwide_day: u32,
+    worldwide_day: WorldwideDay,
     src_chain_id: u32,
     amount: U256,
 ) -> Result<()> {
@@ -209,9 +210,9 @@ pub fn distribute(
     if amount.is_zero() {
         return Err(IntexFactoryError::ZeroAmount.into());
     }
-    outbe_intex::api::credit_proceeds(storage, worldwide_day, src_chain_id, amount)?;
+    outbe_intex::api::credit_proceeds(storage, worldwide_day.value(), src_chain_id, amount)?;
     let now = storage.timestamp()?.to::<u64>();
-    try_settle_proceeds(storage, worldwide_day, now)
+    try_settle_proceeds(storage, worldwide_day.value(), now)
 }
 
 /// Start a distribution round for a series if its proceeds fan-in is satisfied
@@ -514,11 +515,9 @@ pub fn settle(
 fn nft_balance_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Result<U256> {
     let ret = storage.staticcall(
         INTEX_NFT1155_ADDRESS,
-        IIntexNFT1155::balanceOfCall { account, id }
-            .abi_encode()
-            .into(),
+        IERC1155::balanceOfCall { account, id }.abi_encode().into(),
     )?;
-    IIntexNFT1155::balanceOfCall::abi_decode_returns(&ret)
+    IERC1155::balanceOfCall::abi_decode_returns(&ret)
         .map_err(|_| PrecompileError::Revert("NFT balanceOf undecodable".into()))
 }
 

@@ -1,10 +1,16 @@
 //! Canonical TributeDraft public-input derivation inside the enclave.
 //!
-//! The encrypted payload supplies every TributeDraft field except
+//! The claim is folded from the encrypted payload (draft id, amount, su ids),
+//! the cleartext offer (`worldwide_day`, `tribute_currency`) and
 //! `derived_owner`, which is public input zero of the submitted full proof.
 //! Keeping the fold here binds the proof claim to the plaintext the enclave
 //! actually decrypted without exposing the draft id or amount fields to the
 //! host.
+//!
+//! Because the day and currency are folded in, a caller who declares cleartext
+//! values that disagree with their L2-attested draft produces an `nft_hash` that
+//! does not match the proof's public input, and the offer is rejected. That is
+//! what keeps those two fields bound now that they no longer travel encrypted.
 
 use alloy_primitives::B256;
 use ark_bn254::Fr;
@@ -67,8 +73,8 @@ pub fn derive_expected_hashes(
     let draft = TributeDraftClaim {
         id,
         derived_owner: context.derived_owner,
-        worldwide_day: u64::from(payload.worldwide_day),
-        currency: payload.currency,
+        worldwide_day: offer.worldwide_day.into(),
+        currency: offer.tribute_currency,
         base,
         atto,
         su_ids,

@@ -75,9 +75,10 @@ pub fn init_enclave_client(socket: &Path) -> eyre::Result<()> {
 }
 
 /// Process a batch of offers through the enclave: it decrypts (offer key stays in
-/// SGX), applies the node-supplied oracle price, computes economics + Poseidon
+/// SGX), applies each offer's node-resolved price, computes economics + Poseidon
 /// `token_id`, and returns the public `TributeOfferResult[]`. The host then issues
-/// the Tributes from the returned fields (no host recompute).
+/// the Tributes from those fields plus its own request inputs (no host recompute
+/// of the private economics).
 ///
 /// The host recomputes `inputs_canonical_hash` from the request it sent and
 /// compares it to the enclave's — a mismatch is enclave non-determinism
@@ -153,6 +154,9 @@ fn validate_tribute_offer_batch_response(
 mod tests {
     use super::*;
     use alloy_primitives::{Address, U256};
+    use outbe_tee::protocol::WorldwideDay;
+
+    const NEXT_DAY: WorldwideDay = WorldwideDay::new(20250116);
 
     fn sample_tribute_offer() -> EncryptedTributeOffer {
         EncryptedTributeOffer {
@@ -160,6 +164,8 @@ mod tests {
             cipher_text: vec![1, 2, 3, 4],
             nonce: vec![0u8; 12],
             ephemeral_pubkey: U256::from(7u64),
+            worldwide_day: WorldwideDay::new(20250115),
+            tribute_currency: 840,
             reference_currency: 840,
             exclude_from_intex_issuance: false,
             tribute_price_minor: U256::from(1_000u64),
@@ -187,5 +193,36 @@ mod tests {
             err.to_string().contains("tee_enclave_nondeterminism"),
             "unexpected error: {err}"
         );
+    }
+
+    /// The day, currency and price are request inputs the node resolved, so a
+    /// response hashed over different values must not validate — otherwise they
+    /// ride to the enclave unattested.
+    #[test]
+    fn validate_binds_the_priced_request_fields() {
+        let offers = vec![sample_tribute_offer()];
+
+        for mutate in [
+            (|o: &mut EncryptedTributeOffer| o.worldwide_day = NEXT_DAY) as fn(&mut _),
+            |o: &mut EncryptedTributeOffer| o.tribute_currency = 978,
+            |o: &mut EncryptedTributeOffer| o.tribute_price_minor = U256::from(2_000u64),
+        ] {
+            let mut other = offers.clone();
+            mutate(&mut other[0]);
+            let hash_of_other = outbe_tee::protocol::inputs_canonical_hash(&other);
+
+            let err = validate_tribute_offer_batch_response(
+                &offers,
+                Vec::new(),
+                hash_of_other,
+                &[0u8; 32],
+                &[],
+            )
+            .expect_err("a hash over different request fields must be rejected");
+            assert!(
+                err.to_string().contains("tee_enclave_nondeterminism"),
+                "unexpected error: {err}"
+            );
+        }
     }
 }

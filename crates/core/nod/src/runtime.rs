@@ -46,6 +46,7 @@ impl NodContract<'_> {
             worldwideDay: U256::from(u32::from(bucket.worldwide_day)),
             floorPriceMinor: bucket.floor_price_minor,
             isQualified: true,
+            referenceCurrency: bucket.reference_currency,
         })
     }
 

@@ -40,7 +40,7 @@ fn action_for(materialization_wwd: u32, ordinal: u32) -> NodActionV1 {
         issuance_currency: 840,
         reference_currency: 840,
         issued_at: 1_600_000_000,
-        bucket_key: NodContract::bucket_key(worldwide_day, floor_price_minor),
+        bucket_key: NodContract::bucket_key(worldwide_day, floor_price_minor, 840),
     }
 }
 
@@ -605,7 +605,6 @@ fn certified_nods_cannot_be_mined_until_the_generation_is_complete() {
                 population.actions[0].owner,
                 nod_id,
                 U256::ZERO,
-                Address::ZERO,
                 dummy_auth(),
             )
         })
@@ -619,6 +618,11 @@ fn certified_nods_cannot_be_mined_until_the_generation_is_complete() {
     world.provider.set_block_number(2);
     apply(&mut world, &batch(&population, 8, 2)).unwrap();
     world.qualify(nod_id);
+    world
+        .enter(|storage, scope, parent| {
+            api::settle_nod(&storage, scope, parent, population.actions[0].owner, nod_id)
+        })
+        .unwrap();
     let nonce = find_valid_nonce(nod_id);
     assert_eq!(
         world
@@ -630,7 +634,6 @@ fn certified_nods_cannot_be_mined_until_the_generation_is_complete() {
                     population.actions[0].owner,
                     nod_id,
                     nonce,
-                    Address::ZERO,
                     mine_auth(
                         population.actions[0].owner,
                         population.actions[0].gratis_load_minor,

@@ -263,6 +263,7 @@ fn subcall_reaches_nod_with_the_same_runtime_body_readers() {
             is_qualified: true,
             total_nods: 1,
             entry_price_minor: U256::from(9),
+            reference_currency: 978,
         })
         .unwrap();
     let item = NodItemState {
@@ -277,6 +278,7 @@ fn subcall_reaches_nod_with_the_same_runtime_body_readers() {
         issuance_currency: 840,
         reference_currency: 978,
         issued_at: 1_700_000_000,
+        is_settled: false,
     };
     repository.put_nod(&item).unwrap();
     let payload = encode_nod_item_v1(&outbe_nod::canonical_item(&item)).unwrap();

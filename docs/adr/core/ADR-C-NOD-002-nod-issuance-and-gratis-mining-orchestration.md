@@ -1,26 +1,31 @@
-# ADR-C-NOD-002: NodFactory materializes certified NOD generations and orchestrates Gratis mining
+# ADR-C-NOD-002: NodFactory materializes certified NOD generations and orchestrates settlement and Gratis mining
 
-- **Status:** Accepted
+- **Status:** Accepted; settlement implementation remains subject to the technical debt below
 - **Date:** 2026-08-12
 - **Owners:** `crates/core/nod`, `crates/core/nodfactory`
 - **Depends on:** ADR-C-LYS-001, ADR-C-NOD-001, ADR-C-GRT-002,
-  ADR-C-FID-001, ADR-C-VLT-001
+  ADR-C-FID-001, ADR-C-VLT-001, ADR-C-LBM-001
 
 ## Context
 
 Lysis commits a complete generation of NOD actions through `nod_root`. A root is
-not itself a usable NOD ledger: owners must be able to enumerate ordinary NODs,
-read their data, and mine them through the existing public ABI. Materializing an
-unbounded generation in the quorum-forming transaction would make block
-execution unbounded, while allowing an unproved action would break the certified
+not itself a usable NOD ledger: owners must be able to enumerate ordinary NODs
+and read their data through the existing public ABI. Materializing an unbounded
+generation in the quorum-forming transaction would make block execution
+unbounded, while accepting an unproved action would break the certified
 generation authority.
 
-## Decision
+NodFactory also owns the economically critical boundaries around NOD issuance,
+third-party settlement, and owner-authorized Gratis mining. The NOD module owns
+the authenticated ledger; NodFactory coordinates the bounded cross-module
+effects.
+
+## Certified generation materialization
 
 NodFactory materializes each certified generation in FIFO order through bounded,
 proof-backed batches. The current genesis profile uses a subtree height of three,
-which yields eight NODs per full batch. The capacity is always derived from the
-resolved profile; it is not a protocol literal in consumers.
+which yields eight NODs per full batch. Capacity is always derived from the
+resolved profile and is not duplicated as a consumer constant.
 
 The first certified generation for a WorldwideDay atomically installs:
 
@@ -29,18 +34,18 @@ The first certified generation for a WorldwideDay atomically installs:
 - one FIFO entry for the WorldwideDay.
 
 An exact installation replay is an idempotent no-op while the generation is
-pending materialization. Metadosis terminal state is the permanent authority
-that rejects a repeated or different result after completion. Replacement and
-delta generations do not exist.
+pending. Metadosis terminal state is the permanent authority that rejects a
+repeated or different result after completion. Replacement and delta generations
+do not exist.
 
 The FIFO starts at `head_sequence = tail_sequence = 1` in genesis. Sequence zero
 is invalid. Missing queue entries, invalid bounds, projection mismatches, and
 counter overflow are canonical storage corruption and therefore fatal.
 
-## Materialization transaction
+### Materialization transaction
 
-`materializeCertifiedNods(bytes canonical_batch)` accepts
-`NodMaterializationBatchV1`:
+`materializeCertifiedNods(bytes canonicalBatch)` accepts a canonical
+`NodMaterializationBatchV1` containing:
 
 - FIFO sequence;
 - first NOD ordinal;
@@ -55,7 +60,7 @@ The handler performs, in order:
 4. exact FIFO head, projection, cursor, and profile validation;
 5. batch shape, ordinal, identity, bucket, and Merkle-root verification;
 6. one outer checkpoint containing every `issue_nod` call;
-7. cursor advancement and one progress event; or, for the final batch, FIFO
+7. cursor advancement and one progress event, or, for the final batch, FIFO
    dequeue and complete removal of the per-WWD pending projection.
 
 `issue_nod` remains the only ledger issuance implementation. Each verified
@@ -68,58 +73,109 @@ If any item fails, all NOD records, owner indexes, buckets, events, cursor,
 projection, and queue changes roll back. Stale races, invalid proof or shape,
 duplicate NODs, and excess same-block attempts return a typed failed receipt
 while the block continues. Unauthorized signers and malformed system-carrier
-envelopes are not valid for inclusion. Canonical storage corruption remains
-fatal.
+envelopes are invalid for inclusion. Canonical storage corruption remains fatal.
 
 The pending projection consists of the generation selector, roots, packed
 counts and issuance metadata, totals, job and program bindings, cursor, and
 last-progress height. The final valid batch clears every one of those fields in
 the same checkpoint that issues the remaining NODs and advances the FIFO head.
-No NOD-module terminal marker is retained. Ordinary NOD bodies, owner and
-global indexes, buckets, and supply are the terminal operational state.
+No NOD-module terminal marker is retained. Ordinary NOD bodies, owner and global
+indexes, buckets, and supply are the terminal operational state.
 
 Metadosis retains `ActiveGenerationV1`, the terminal job, completed binding,
 quorum, receipt, and canonical events. Those records are the historical result,
 replay, and conflict authority after the NOD projection has been cleared.
 
-## Public NOD behavior
+### Authorization, liveness, and restart
 
-Materialized entries are ordinary NOD ledger entries. The complete existing NOD
-ABI continues to apply, including supply, ownership, enumeration, approval,
-metadata, bucket, and mining reads and mutations. Release acceptance proves
-`tokenOfOwnerByIndex` and `nodData` on NODs produced by the real OCOMP path;
-mining behavior is outside this materialization acceptance.
-
-If a WorldwideDay has a certified but incomplete generation, `mineGratis`
-returns `NodGenerationNotMaterialized`. Completion removes the pending
-projection, after which the ordinary NOD path applies. Legacy NOD mining is
-unchanged.
-
-## Authorization and liveness
-
-The proposer is only a local, nonblocking wake source. It is not execution
+The proposer is only a local, nonblocking wake source; it is not execution
 authority. Any current ACTIVE validator's OCOMP delegate may submit the first
-valid batch, and ordinary deterministic execution verifies it on every node.
-Duplicate or delayed wakes are harmless because the canonical FIFO cursor is the
-authority.
+valid batch, and deterministic execution verifies it on every node. Duplicate or
+delayed wakes are harmless because the canonical FIFO cursor is authoritative.
 
-The public view `materializationHead()` returns `exists` plus canonical
+`materializationHead()` returns `exists` plus canonical
 `NodMaterializationHeadV1` bytes while work is pending. `certifiedGeneration`
-is likewise a pending-materialization view: after completion both views report
+is also a pending-materialization view: after completion both views report
 absence. Historical certification remains available from Metadosis.
 
 Supervisor transaction journals and artifact references are durable local
-state. Startup and finalized-block reconciliation must release a reference when
-the corresponding transaction is already finalized, including a crash after
+state. Startup and finalized-block reconciliation release a reference when the
+corresponding transaction is already finalized, including a crash after
 finalization but before the submitting thread performed its local release.
+
+## Ordinary NOD issuance and settlement
+
+`issue_nod` is a system-only typed command intended for Lysis materialization.
+It validates owner and uniqueness, derives the canonical NOD and currency-bound
+bucket identities, stamps canonical block time, delegates authenticated ledger
+mutation to ADR-C-NOD-001, and emits `NodIssued`.
+
+`INodFactory.settleNod` and `INodFactory.mineGratis` are the user ABI commands.
+Both reject value and require an exact 36-byte NOD id.
+
+`settleNod` is unrestricted in payer and takes no asset argument. Any address
+may settle any live NOD, including before its bucket qualifies. For nonzero cost,
+the asset is resolved from VaultRouter's `referenceCurrencyAssets` registry for
+the NOD's `reference_currency`, transferred from the payer to NodFactory,
+approved for VaultRouter, and deposited as the exact recorded cost. The NOD body
+is then marked settled and `NodSettled` identifies the asset. Settlement is part
+of the authenticated NOD body and therefore cannot leak to a later NOD issued
+under a reused derived identity.
+
+`mineGratis` requires caller ownership, valid bounded PoW, a qualified bucket,
+a settled NOD, and no incomplete certified generation for that WorldwideDay. It
+moves no value, consumes the NOD, emits `NodBurned`, and mints exactly the
+recorded `gratis_load_minor` through Gratisfactory, including the Fidelity
+cohort update. NOD deletion is the mining replay guard.
+
+Materialized entries are ordinary NOD ledger entries. Supply, ownership,
+enumeration, metadata, bucket, settlement, and mining behavior therefore use the
+existing ABI and authenticated storage. Current materialization acceptance proves
+`tokenOfOwnerByIndex` and `nodData` through the real OCOMP path; mining is outside
+that acceptance lane.
+
+## Atomicity and determinism
+
+The outer EVM transaction journal is the rollback domain. A failure in transfer,
+approval, vault deposit, settlement write, NOD issuance or removal, event
+emission, Gratis mint, or Fidelity mutation reverts all preceding effects in the
+same command. `settleNod` follows checks-effects-interactions so re-entry for the
+same NOD observes the settled flag. `mineGratis` performs no external payment
+calls before consuming its replay guard.
+
+NOD identity and bucket identity are derived rather than caller-selected.
+Issuance economics come from certified Lysis output and are transported without
+a second formula. Block timestamp, currency registry, and asset mapping come
+from canonical execution inputs. PoW uses the shared `outbe_common::pow` scheme
+over the exact encoded NOD id and a big-endian `u64` nonce.
 
 ## Consequences
 
 - Quorum certification remains constant-size and atomic.
 - NOD creation is bounded per transaction and restart-safe.
 - All nodes converge through ordinary transaction execution.
-- Completed generations do not leave duplicate per-WWD materialization state.
-- Materialization can take arbitrarily many batches without inventing a second
-  generation state machine or deadline.
+- Completed generations leave no duplicate per-WWD materialization state.
+- Materialization may span arbitrarily many batches without a second deadline
+  state machine.
+- Settlement and mining remain separate from the authenticated NOD ledger while
+  committing their effects atomically.
 - Scaling to extremely large generations requires a separate design; it is not
-  hidden behind this V1 interface.
+  hidden behind the V1 interface.
+
+## Open questions and technical debt
+
+- When multiple assets are registered for one reference currency,
+  `settleNod` currently selects the first even though registry order has no
+  economic meaning. A future policy must define payer choice or canonical
+  selection.
+- ERC20 `transferFrom` and `approve` return data must be decoded and required to
+  be true. Allowance handling for zero-first, fee-on-transfer, rebasing, and
+  malicious tokens needs production evidence.
+- VaultRouter share results and exact received value need an explicit receipt if
+  economic conservation depends on them.
+- `issue_nod` remains a conventional Rust capability. A future revision may bind
+  it to an unforgeable Lysis receipt without adding a public issuance selector.
+- Reentrancy, rollback, and nonzero-cost settlement require tests against real
+  ERC20 and vault implementations.
+- PoW difficulty and preimage versioning must state whether existing NODs retain
+  issuance-era rules across a protocol update.

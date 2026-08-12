@@ -35,6 +35,9 @@ pub fn dispatch(
     dispatch_call(data, INodFactory::INodFactoryCalls::abi_decode, |call| {
         use INodFactory::INodFactoryCalls::*;
         match call {
+            settleNod(c) => mutate(c, caller, |sender, c| {
+                runtime::settle_nod(&storage, scope, parent, sender, parse_entity_id(&c.nodId)?)
+            }),
             mineGratis(c) => mutate(c, caller, |sender, c| {
                 let auth = outbe_gratisfactory::api::ModifyAuth {
                     mac: c.mac.0,
@@ -47,7 +50,6 @@ pub fn dispatch(
                     sender,
                     parse_entity_id(&c.nodId)?,
                     c.nonce,
-                    c.asset,
                     auth,
                 )
             }),
@@ -99,13 +101,13 @@ fn dispatch_materialization(
 }
 
 fn preflight_entity_id(data: &[u8]) -> Result<()> {
-    preflight_dynamic_bytes_len(
-        data,
-        INodFactory::mineGratisCall::SELECTOR,
-        0,
-        3,
-        EntityId36::LEN,
-    )
+    for (selector, head_words) in [
+        (INodFactory::settleNodCall::SELECTOR, 1),
+        (INodFactory::mineGratisCall::SELECTOR, 4),
+    ] {
+        preflight_dynamic_bytes_len(data, selector, 0, head_words, EntityId36::LEN)?;
+    }
+    Ok(())
 }
 
 fn parse_entity_id(bytes: &Bytes) -> Result<EntityId36> {

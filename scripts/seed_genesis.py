@@ -918,85 +918,6 @@ def seed_tribute_day_totals(storage: StorageBuilder, days: list[int]):
         storage.set_mapping(1, u32_bytes(wwd), 1)
 
 
-def nod_id_gen(owner: str, worldwide_day: int, index: int) -> bytes:
-    """Generate nod_id = keccak256(owner_20B ++ wwd_4B ++ index_4B)."""
-    buf = address_bytes(owner) + u32_bytes(worldwide_day) + u32_bytes(index)
-    return keccak256(buf)
-
-
-def nod_bucket_key(wwd: int, league_id: int, floor_price: int) -> bytes:
-    """Compute bucket key = keccak256(wwd_4B ++ league_id_4B ++ floor_price_32B)."""
-    buf = u32_bytes(wwd) + u32_bytes(league_id) + to_be32(floor_price)
-    return keccak256(buf)
-
-
-def seed_nods(storage: StorageBuilder, nods: list):
-    """
-    Nod storage layout:
-      slot 0: total_supply (u64)
-      slot 1: mapping(B256 => Address) item_owners
-      slot 2: mapping(B256 => U256) item_gratis_loads
-      slot 3: mapping(B256 => u32) item_worldwide_days
-      slot 4: mapping(B256 => u32) item_league_ids
-      slot 5: mapping(B256 => U256) item_floor_prices
-      slot 6: mapping(B256 => B256) item_bucket_keys
-      slot 7: mapping(B256 => U256) bucket_floor_prices
-      slot 8: mapping(B256 => u64) bucket_total_nods
-      slot 9: mapping(B256 => bool) bucket_is_qualified
-      slot 10: mapping(Address => u32) owner_nod_counts
-      slot 11: mapping(B256 => B256) owner_nod_ids
-    """
-    # Track counters
-    owner_counts: dict[str, int] = {}
-    # bucket totals: keyed by bucket_key bytes
-    bucket_totals: dict[bytes, int] = {}
-
-    for i, nod in enumerate(nods):
-        owner = nod["owner"]
-        gratis_load = parse_int(nod["gratis_load"])
-        wwd = nod["worldwide_day"]
-        league_id = nod["league_id"]
-        floor_price = parse_int(nod["floor_price"])
-
-        # Generate nod_id
-        nod_id = nod_id_gen(owner, wwd, i)
-
-        # Bucket key
-        bk = nod_bucket_key(wwd, league_id, floor_price)
-
-        # Item fields
-        storage.set_mapping(1, nod_id, address_as_u256(owner))
-        storage.set_mapping(2, nod_id, gratis_load)
-        storage.set_mapping(3, nod_id, wwd)
-        storage.set_mapping(4, nod_id, league_id)
-        storage.set_mapping(5, nod_id, floor_price)
-        storage.set_mapping_b256(6, nod_id, bk)
-
-        # Bucket
-        bk_tuple = bytes(bk)
-        bucket_totals[bk_tuple] = bucket_totals.get(bk_tuple, 0) + 1
-        # Store floor price for this bucket (idempotent)
-        storage.set_mapping(7, bk, floor_price)
-
-        # Owner index (slots 10-11)
-        owner_lower = owner.lower()
-        oi = owner_counts.get(owner_lower, 0)
-        oi_key = owner_index_key(owner, oi)
-        storage.set_mapping_b256(11, oi_key, nod_id)
-        owner_counts[owner_lower] = oi + 1
-
-    # Write bucket totals
-    for bk_bytes, total in bucket_totals.items():
-        storage.set_mapping(8, bk_bytes, total)
-
-    # Write owner counts
-    for owner, count in owner_counts.items():
-        storage.set_mapping(10, address_bytes(owner), count)
-
-    # Total supply
-    storage.set_slot(0, len(nods))
-
-
 def seed_nod_materialization_fifo(storage: StorageBuilder):
     """Initialize the canonical NOD materialization FIFO bounds."""
     # Pinned by `materialization_fifo_slots_match_the_genesis_seeder` in
@@ -1666,9 +1587,6 @@ def override_worldwide_day(seed: dict, day: int) -> None:
         w["wwd"] = day
     for s in seed.get("oracle", {}).get("scurve_seeds", []):
         s["peak_day"] = day
-    for n in seed.get("nods", []):
-        if "worldwide_day" in n:
-            n["worldwide_day"] = day
 
 
 def main():
@@ -1928,16 +1846,13 @@ def main():
               f"{len(offering_days)} offering day_totals init, "
               f"{len(tribute_storage.entries)} storage entries")
 
-    # Seed NODs and the canonical materialization FIFO. The FIFO exists even
-    # when the genesis contains no legacy NOD records.
+    # Initialize the canonical materialization FIFO. NOD bodies are stored in
+    # compressed-entity storage and are not seeded into EVM slots.
     nod_storage = StorageBuilder()
-    if "nods" in seed:
-        seed_nods(nod_storage, seed["nods"])
     seed_nod_materialization_fifo(nod_storage)
     entry = alloc[NOD_ADDRESS]
     entry.setdefault("storage", {}).update(nod_storage.entries)
-    print(f"  Nod: {len(seed.get('nods', []))} nods, "
-          f"{len(nod_storage.entries)} storage entries")
+    print(f"  Nod: {len(nod_storage.entries)} storage entries")
 
     # Seed Metadosis
     if "metadosis" in seed:

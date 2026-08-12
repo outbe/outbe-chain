@@ -1837,13 +1837,8 @@ mod tests {
         let results = vec![TributeOfferResult {
             token_id: B256::repeat_byte(0x11),
             owner: Address::repeat_byte(0x22),
-            worldwide_day: 20_240,
             issuance_amount_minor: U256::from(1_000u64),
-            issuance_currency: 1,
             nominal_amount_minor: U256::from(2_000u64),
-            reference_currency: 2,
-            exclude_from_intex_issuance: false,
-            tribute_price_minor: U256::from(3u64),
             su_hashes: vec!["0xabc".to_string()],
             wallet_addresses: vec![],
             sra_addresses: vec![],

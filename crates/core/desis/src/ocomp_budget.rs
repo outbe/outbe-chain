@@ -6,6 +6,7 @@
 //! receipt.
 
 use alloy_primitives::{B256, U256};
+use outbe_common::WorldwideDay;
 use outbe_ocomp_protocol::receipts::desis_request_brief_hash;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
@@ -17,7 +18,7 @@ use crate::runtime;
 pub fn apply_request_auction_base(
     storage: StorageHandle<'_>,
     protocol_bundle_hash: B256,
-    worldwide_day: u32,
+    worldwide_day: WorldwideDay,
     auction_base: U256,
     auction_entry_price: U256,
     logical_anchor: u64,
@@ -27,7 +28,7 @@ pub fn apply_request_auction_base(
     })?;
     let brief_hash = desis_request_brief_hash(
         protocol_bundle_hash,
-        worldwide_day,
+        worldwide_day.value(),
         auction_base,
         auction_entry_price,
         logical_anchor,

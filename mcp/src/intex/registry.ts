@@ -1,4 +1,18 @@
-import { type Abi, type Address, getAddress, parseAbi } from "viem";
+import { type Abi, type Address, getAddress } from "viem";
+import IDesisJson from "../../../contracts/precompiles/abi-export/IDesis.json";
+import IIntexJson from "../../../contracts/precompiles/abi-export/IIntex.json";
+import IIntexFactoryJson from "../../../contracts/precompiles/abi-export/IIntexFactory.json";
+import IVaultRouterJson from "../../../contracts/precompiles/abi-export/IVaultRouter.json";
+import EscrowAdapterJson from "../../../contracts/intex/abi-export/EscrowAdapter.json";
+import IntexAuctionJson from "../../../contracts/intex/abi-export/IntexAuction.json";
+import IIntexNFT1155Json from "../../../contracts/intex/abi-export/IIntexNFT1155.json";
+import IIntexNFT1155BridgeJson from "../../../contracts/intex/abi-export/IIntexNFT1155Bridge.json";
+import IOriginRouterJson from "../../../contracts/intex/abi-export/IOriginRouter.json";
+import IERC20Json from "../../../contracts/tokens/abi-export/IERC20.json";
+
+/** contracts/intex exports as `{ contractName, abi }`; the others as a bare array. */
+const abiOf = (json: unknown): Abi =>
+  (Array.isArray(json) ? json : (json as { abi: unknown }).abi) as Abi;
 
 /**
  * Addresses + ABIs for the Intex tools (auction commit/reveal, escrow, NFT,
@@ -8,10 +22,12 @@ import { type Abi, type Address, getAddress, parseAbi } from "viem";
  * today, more later); the series ledger (Intex), settlement
  * (IntexFactory) and Promis live on outbe as runtime precompiles. Addresses are
  * embedded constants, keyed by network so a new target chain is an added branch,
- * not a rewrite. The MCP never reads JSON at runtime.
+ * not a rewrite. The ABI JSON is inlined at build time, never read at runtime.
  *
- * ABIs are embedded as viem human-readable signatures (no Solidity compile step),
- * matching the convention in src/registry.ts and src/intent/registry.ts.
+ * ABIs are generated from Solidity (contracts/{intex,precompiles,tokens}), never
+ * hand-written — matching the convention in src/registry.ts. Where a method is
+ * only on the concrete contract and not its interface, the concrete artifact is
+ * used.
  */
 
 export interface NetworkDef {
@@ -117,89 +133,31 @@ export function bridgeDstChainId(network: string): number {
 // --- ABIs ------------------------------------------------------------------
 
 /** IntexAuction (BSC): commit/reveal + auction views. */
-export const AUCTION_ABI: Abi = parseAbi([
-  "function commitBid(uint32 worldwideDay, bytes32 commitHash)",
-  "function revealBid(uint32 worldwideDay, uint16 quantity, uint32 bidRate, uint64 chainId, bytes signature)",
-  "function cancelCommit(uint32 worldwideDay)",
-  "function claimCommitBond(uint32 worldwideDay, address bidder)",
-  "function getAuctionStage(uint32 worldwideDay) view returns (uint8)",
-  "function getAuctionInfo(uint32 worldwideDay) view returns ((uint8 worldwideDayState, (uint32 commitEnd, uint32 revealEnd, uint32 issuanceEnd) schedule, (uint16 issuanceCurrency, uint16 referenceCurrency, uint128 promisLoadMinor, (uint32 callWindow, uint32 callThreshold, uint32 callNoticePeriod) callTrigger, uint32 minIntexBidRate, uint16 minIntexBidQuantity, uint64 entryPriceMinor, uint64 floorPriceMinor, uint64 callPriceMinor, uint128 commitBondMinor) params, (uint64 auctionClearingRate, uint32 wonBidsCount, uint32 issuedIntexCount, uint128 issuedIntexLoadedPromis) result) auctionData)",
-  "function committedBidsByHash(uint32 worldwideDay, address bidder) view returns (bytes32)",
-  "function revealedBidsByBidder(uint32 worldwideDay, address bidder) view returns (bool)",
-  "function escrowContract() view returns (address)",
-  "event AuctionStageUpdated(uint32 indexed worldwideDay, uint8 auctionStage, uint32 timestamp, string reason)",
-]);
+export const AUCTION_ABI: Abi = abiOf(IntexAuctionJson);
 
 /** IntexNFT1155 (BSC + outbe): holder-facing reads. */
-export const NFT_ABI: Abi = parseAbi([
-  "function getOwnedSeriesWithBalances(address owner) view returns (uint256[] ownedTokenIds, uint256[] balances)",
-  "function getAuctionWonCount(uint32 worldwideDay, address account) view returns (uint16)",
-  "function statusOf(uint256 tokenId) view returns (uint8)",
-  "function balanceOf(address account, uint256 id) view returns (uint256)",
-  "function tokenIds(uint32 seriesId) view returns (uint256 issued, uint256 settled)",
-  "function readData(uint32 seriesId) view returns ((uint16 issuanceCurrency, uint16 referenceCurrency, uint32 issuedIntexCount, uint128 promisLoadMinor, uint64 entryPriceMinor, uint64 floorPriceMinor, uint64 callPriceMinor, (uint32 callWindow, uint32 callThreshold, uint32 callNoticePeriod) callTrigger, uint32 issuedAt, uint32 calledAt, uint32 totalSupply, uint8 status, uint8 state, uint32 worldwideDay) data)",
-  "function uri(uint256 tokenId) view returns (string)",
-  "function contractURI() view returns (string)",
-  "function isApprovedForAll(address account, address operator) view returns (bool)",
-  "function setApprovalForAll(address operator, bool approved)",
-]);
+export const NFT_ABI: Abi = abiOf(IIntexNFT1155Json);
 
 /** Intex (outbe precompile): canonical cross-chain series ledger. */
-export const INTEX_ABI: Abi = parseAbi([
-  "function seriesData(uint32 seriesId) view returns ((uint32 seriesId, uint256 promisLoadMinor, uint256 entryPriceMinor, uint256 floorPriceMinor, uint32 issuedIntexCount, uint32 callWindow, uint32 callThreshold, uint256 callPriceMinor, uint8 state, uint32 issuedAt, uint32 calledAt, uint32 callNoticePeriod, uint16 issuanceCurrency, uint16 referenceCurrency, uint32 worldwideDay, uint256 costAmountMinor) data)",
-  "function seriesExists(uint32 seriesId) view returns (bool)",
-  "function totalSeries() view returns (uint64)",
-  "function seriesAt(uint64 index) view returns (uint32)",
-]);
+export const INTEX_ABI: Abi = abiOf(IIntexJson);
 
 /** IntexNFT1155Bridge: the cross-chain NFT bridge (BSC <-> outbe) over ERC-7786. */
-export const NFT_BRIDGE_ABI: Abi = parseAbi([
-  "function quoteSend((uint32 dstChainId, bytes32 to, uint256 tokenId, uint256 amount) sendParam) view returns (uint256 fee)",
-  "function send((uint32 dstChainId, bytes32 to, uint256 tokenId, uint256 amount) sendParam) payable returns (bytes32 sendId)",
-]);
+export const NFT_BRIDGE_ABI: Abi = abiOf(IIntexNFT1155BridgeJson);
 
 /** IntexFactory (outbe precompile): holder-facing settlement + Promis mining. */
-export const FACTORY_ABI: Abi = parseAbi([
-  "function settle(uint32 seriesId, address intexHolder, uint256 amount, address paymentToken)",
-  "function quoteCostAmount(uint32 seriesId, address paymentToken) view returns (uint256 costAmountMinor)",
-  "function minePromis(uint32 seriesId, uint256 amount, uint256 nonce, bytes32 mac, uint64 opNonce) returns (uint256 promisAmount)",
-  "function setAuthorizedSettler(uint32 seriesId, address settler)",
-  "event PromisMined(uint32 indexed seriesId, address indexed holder, uint256 amount, uint256 promisAmount)",
-]);
+export const FACTORY_ABI: Abi = abiOf(IIntexFactoryJson);
 
 /** Desis (outbe precompile): auction stage + per-chain bid fan-in views. */
-export const DESIS_ABI: Abi = parseAbi([
-  "function getAuctionStage(uint32 worldwideDay) view returns (uint8)",
-  "function getBidsCount(uint32 worldwideDay) view returns (uint256)",
-  "function getChainBidsCount(uint32 worldwideDay, uint32 srcChainId) view returns (uint256)",
-  "function isChainDone(uint32 worldwideDay, uint32 srcChainId) view returns (bool)",
-]);
+export const DESIS_ABI: Abi = abiOf(IDesisJson);
 
 /** OriginRouter (outbe): the auction's target-chain registry + per-day snapshot. */
-export const ORIGIN_ROUTER_ABI: Abi = parseAbi([
-  "function targets() view returns (uint32[])",
-  "function targetsOf(uint32 worldwideDay) view returns (uint32[])",
-]);
+export const ORIGIN_ROUTER_ABI: Abi = abiOf(IOriginRouterJson);
 
 /** EscrowAdapter (target chains): bid locks, commit bonds and refunds. */
-export const ESCROW_ABI: Abi = parseAbi([
-  "function getBidLock(uint32 worldwideDay, address bidder) view returns ((uint128 lockedAmount, uint32 lockedAt, uint8 status, uint128 failedRefund, bool splitRecorded) lock)",
-  "function getCommitBond(uint32 worldwideDay, address bidder) view returns ((uint128 amount, uint32 lockedAt) bond)",
-  "function auctionEscrowState(uint32 worldwideDay) view returns (uint128 totalLocked, uint32 lockCount, uint32 finalizedAt, bool finalized)",
-  "function UNFINALIZED_REFUND_DELAY() view returns (uint32)",
-  "function claimRefund(uint32 worldwideDay, address bidder)",
-]);
+export const ESCROW_ABI: Abi = abiOf(EscrowAdapterJson);
 
 /** VaultRouter (outbe precompile): the reserve asset registry. */
-export const VAULT_ROUTER_ABI: Abi = parseAbi([
-  "function referenceCurrencyAssets(uint16 isoCode) view returns (address[] assets)",
-]);
+export const VAULT_ROUTER_ABI: Abi = abiOf(IVaultRouterJson);
 
-/** Minimal ERC20 (BSC payment token; outbe Promis balance). */
-export const ERC20_ABI: Abi = parseAbi([
-  "function decimals() view returns (uint8)",
-  "function symbol() view returns (string)",
-  "function balanceOf(address account) view returns (uint256)",
-  "function allowance(address owner, address spender) view returns (uint256)",
-  "function approve(address spender, uint256 amount) returns (bool)",
-]);
+/** ERC20 (BSC payment token; outbe Promis balance). */
+export const ERC20_ABI: Abi = abiOf(IERC20Json);

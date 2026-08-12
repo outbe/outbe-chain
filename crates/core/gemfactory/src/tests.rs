@@ -1,4 +1,5 @@
 use alloy_primitives::{address, Address, B256, U256};
+use outbe_common::WorldwideDay;
 use outbe_gem::{api as gem_api, GemContract, GemState};
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
@@ -450,7 +451,7 @@ fn seed_and_park(storage: &StorageHandle, entry: U256, floor: U256, promis_load:
         storage,
         outbe_intex::CreateSeriesParams {
             series_id: SOURCE_INTEX_ID,
-            worldwide_day: 0,
+            worldwide_day: WorldwideDay::new(0),
             issued_intex_count: PARK_UNITS as u32,
             promis_load_minor: promis_load,
             entry_price_minor: entry,

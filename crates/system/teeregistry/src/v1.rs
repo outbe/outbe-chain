@@ -5,7 +5,6 @@
 //! capability and cannot replace enclave-resident production verification.
 
 use alloy_primitives::{Address, B256, U256};
-use alloy_sol_types::sol;
 use outbe_primitives::{
     error::{PrecompileError, Result},
     tee_attestation_v1::{NodeIdV1, TeePolicyV1, MAX_TEE_POLICY_BYTES},
@@ -27,70 +26,10 @@ use outbe_tee::dcap_protocol::{
     DcapVerificationOutcomeV1,
 };
 
-sol! {
-    /// Fixed-size consensus event. Evidence, collateral, advisories and signatures
-    /// are deliberately excluded so a registration cannot create an unbounded log.
-    #[derive(Debug)]
-    event EnclaveRegisteredV1(
-        bytes32 indexed nodeIdHash,
-        bytes32 indexed enclaveId,
-        bytes32 indexed bindingId,
-        uint64 validUntil,
-        uint64 bindingVersion
-    );
-
-    #[derive(Debug)]
-    event EnclaveRenewedV1(
-        bytes32 indexed nodeIdHash,
-        bytes32 indexed enclaveId,
-        bytes32 indexed bindingId,
-        uint64 validUntil,
-        uint64 registrationVersion,
-        uint64 renewalNonce
-    );
-
-    #[derive(Debug)]
-    event EnclaveBindingReplacedV1(
-        bytes32 indexed nodeIdHash,
-        bytes32 indexed enclaveId,
-        bytes32 indexed bindingId,
-        uint64 validUntil,
-        uint64 bindingVersion
-    );
-
-    #[derive(Debug)]
-    event EnclaveMeasurementTransitionedV1(
-        bytes32 indexed nodeIdHash,
-        bytes32 indexed enclaveId,
-        bytes32 indexed bindingId,
-        bytes32 policyHash,
-        uint64 validUntil,
-        uint64 bindingVersion,
-        uint64 transitionNonce
-    );
-
-    #[derive(Debug)]
-    event ValidatorNodeHostBoundV1(
-        address indexed validator,
-        bytes32 indexed nodeIdHash
-    );
-
-    /// One-time permanent offer-key onboarding artifact for a newly created
-    /// V1 binding. Renewal, replacement and idempotent replay never emit it.
-    #[derive(Debug)]
-    event OfferKeySealedForRegistryV1(
-        bytes32 indexed nodeIdHash,
-        bytes sealedOfferKey
-    );
-
-    #[derive(Debug)]
-    event TeePolicyActivatedV1(
-        uint256 indexed proposalId,
-        bytes32 indexed policyHash,
-        uint64 policyVersion,
-        uint64 activationHeight
-    );
-}
+pub use outbe_primitives::tee_registry_abi_v1::ITeeRegistryV1::{
+    EnclaveBindingReplacedV1, EnclaveMeasurementTransitionedV1, EnclaveRegisteredV1,
+    EnclaveRenewedV1, OfferKeySealedForRegistryV1, TeePolicyActivatedV1, ValidatorNodeHostBoundV1,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum V1RegistrationOutcome {

@@ -52,12 +52,18 @@ mod l2_zk_gate {
         Address::repeat_byte(0x77)
     }
 
+    /// A valid calendar day; whether it is OFFERING depends on Metadosis state,
+    /// which these fixtures leave empty.
+    pub(super) const DAY: u32 = 20250115;
+
     fn offer(zk_merkle_root: &[u8], signature: &[u8]) -> OfferTributeInput {
         OfferTributeInput {
             caller: caller(),
             cipher_text: Bytes::new(),
             nonce: Bytes::new(),
             ephemeral_pubkey: U256::ZERO,
+            worldwide_day: DAY.into(),
+            tribute_currency: 840,
             reference_currency: 840,
             exclude_from_intex_issuance: false,
             zk_proof: Bytes::new(),
@@ -129,7 +135,7 @@ mod l2_zk_gate {
             let err = factory
                 .offer_tribute(&scope, &NoParentBodies, valid_gate)
                 .unwrap_err();
-            assert!(revert_message(err).contains("no worldwide day is OFFERING"));
+            assert!(revert_message(err).contains("is not in OFFERING status"));
         });
     }
 
@@ -197,7 +203,7 @@ mod l2_zk_gate {
             let err = factory
                 .offer_tribute(&scope, &NoParentBodies, offer(&[], &[]))
                 .unwrap_err();
-            assert!(revert_message(err).contains("no worldwide day is OFFERING"));
+            assert!(revert_message(err).contains("is not in OFFERING status"));
 
             // Registered but zk disabled: still no signature requirement.
             let mut registry = L2RegistryContract::new(storage.clone());
@@ -208,7 +214,57 @@ mod l2_zk_gate {
             let err = factory
                 .offer_tribute(&scope, &NoParentBodies, offer(&[], &[]))
                 .unwrap_err();
-            assert!(revert_message(err).contains("no worldwide day is OFFERING"));
+            assert!(revert_message(err).contains("is not in OFFERING status"));
+        });
+    }
+
+    /// `worldwideDay` and `tributeCurrency` are cleartext ABI arguments precisely
+    /// so a bad one costs no enclave round trip. These fixtures configure no
+    /// enclave client at all, so reaching the sidecar would surface as
+    /// `tee_sidecar_unavailable` — the assertions below are what prove the host
+    /// rejected first.
+    #[test]
+    fn host_rejects_an_invalid_calendar_day_before_the_enclave() {
+        let mut storage = HashMapStorageProvider::new(super::CHAIN_ID);
+        StorageHandle::enter(&mut storage, |storage| {
+            let scope = ExecutionScope::new();
+            let mut bad_day = offer(&[], &[]);
+            bad_day.worldwide_day = 20250230u32.into(); // February 30th
+
+            let mut factory = TributeFactoryContract::new(storage);
+            let err = factory
+                .offer_tribute(&scope, &NoParentBodies, bad_day)
+                .unwrap_err();
+            let message = revert_message(err);
+            assert!(
+                message.contains("not a valid YYYYMMDD calendar date"),
+                "unexpected revert: {message}"
+            );
+        });
+    }
+
+    /// The day check runs before the currency check, so this case needs the day to
+    /// be OFFERING first — which these fixtures cannot arrange. Assert the ordering
+    /// instead: an unregistered currency paired with a non-OFFERING day still
+    /// reports the day, proving the currency lookup is not reached and therefore
+    /// that neither reaches the enclave.
+    #[test]
+    fn host_rejects_a_non_offering_day_before_pricing() {
+        let mut storage = HashMapStorageProvider::new(super::CHAIN_ID);
+        StorageHandle::enter(&mut storage, |storage| {
+            let scope = ExecutionScope::new();
+            let mut unpriced = offer(&[], &[]);
+            unpriced.tribute_currency = 999; // never registered
+
+            let mut factory = TributeFactoryContract::new(storage);
+            let err = factory
+                .offer_tribute(&scope, &NoParentBodies, unpriced)
+                .unwrap_err();
+            let message = revert_message(err);
+            assert!(
+                message.contains("is not in OFFERING status"),
+                "unexpected revert: {message}"
+            );
         });
     }
 }

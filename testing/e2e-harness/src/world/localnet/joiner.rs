@@ -168,9 +168,9 @@ impl Localnet {
         let v0 = read_evm_key(&self.cfg.validator_dir(0))?;
         eth::send_value(&self.cfg.rpc0, addr, &v0, eth::coen(2000))?;
         let registration = IValidatorSet::registerValidatorCall {
-            v: addr,
-            pubkey: Bytes::from(hex::decode(&bls)?),
-            sig: Bytes::from(hex::decode(&sig)?),
+            validatorAddress: addr,
+            consensusPubkey: Bytes::from(hex::decode(&bls)?),
+            blsSignature: Bytes::from(hex::decode(&sig)?),
         };
         let unrelated = read_evm_key(&self.cfg.validator_dir(1))?;
         let unauthorized = eth::send_call(
@@ -209,9 +209,9 @@ impl Localnet {
             addresses::VS_ADDR,
             &key,
             &IValidatorSet::setP2pAddressCall {
-                v: addr,
-                kind: 1,
-                addr: Bytes::from(hex::decode("00047f00000176c4")?),
+                validatorAddress: addr,
+                version: 1,
+                encoded: Bytes::from(hex::decode("00047f00000176c4")?),
             },
             None,
         )?;

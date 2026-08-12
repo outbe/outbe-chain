@@ -20,7 +20,16 @@ pub fn issue_nod(
     runtime::issue_nod(storage, scope, parent, params)
 }
 
-#[allow(clippy::too_many_arguments)]
+pub fn settle_nod(
+    storage: &StorageHandle<'_>,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+    payer: Address,
+    nod_id: EntityId36,
+) -> Result<U256> {
+    runtime::settle_nod(storage, scope, parent, payer, nod_id)
+}
+
 pub fn mine_gratis(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
@@ -28,10 +37,9 @@ pub fn mine_gratis(
     caller: Address,
     nod_id: EntityId36,
     nonce: U256,
-    asset: Address,
     auth: outbe_gratisfactory::api::ModifyAuth,
 ) -> Result<U256> {
-    runtime::mine_gratis(storage, scope, parent, caller, nod_id, nonce, asset, auth)
+    runtime::mine_gratis(storage, scope, parent, caller, nod_id, nonce, auth)
 }
 
 /// Authorizes and atomically applies one canonical certified-NOD batch.

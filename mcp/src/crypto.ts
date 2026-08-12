@@ -51,19 +51,19 @@ export function encryptOffer(offerPub: Uint8Array, plaintext: Uint8Array): Encry
 
 export interface OfferPayload {
   creator: string;
-  worldwide_day: number;
-  currency: number;
   amount_base: string;
 }
 
-/** Build the plaintext JSON payload (fresh draft id + su hash per offer). */
+/**
+ * Build the plaintext JSON payload (fresh draft id + su hash per offer).
+ * `worldwide_day` and `currency` are cleartext `offerTribute` arguments, not
+ * payload fields — the node needs them to admit and price the offer.
+ */
 export function buildPayload(p: OfferPayload): Uint8Array {
   const hex32 = () => `0x${Buffer.from(randomBytes(32)).toString("hex")}`;
   const obj = {
     creator: p.creator,
     tribute_draft_id: hex32(),
-    worldwide_day: p.worldwide_day,
-    currency: p.currency,
     amount_base: p.amount_base,
     amount_atto: "0",
     su_hashes: [hex32()],
