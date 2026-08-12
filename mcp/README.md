@@ -130,8 +130,10 @@ Reads the DKG-derived offer key from the TeeRegistry, auto-detects the OFFERING
 WorldwideDay (or takes `worldwide_day`), encrypts the payload (X25519 ECDHE +
 HKDF-SHA256, salt `[0x03;32]`, info `"tribute-factory-encryption"` +
 ChaCha20Poly1305) — **byte-identical to the enclave decrypt path** — and sends
-`offerTribute`. The token id is derived from `(caller, worldwide_day)`, so one
-tribute per account per day.
+`offerTribute`. `worldwide_day` and the currency travel as cleartext ABI
+arguments, not inside the ciphertext: the node needs both to admit and price the
+offer, and both are public on-chain once the Tribute is issued. The token id is
+derived from `(caller, worldwide_day)`, so one tribute per account per day.
 
 ## Intent (cross-chain orders)
 

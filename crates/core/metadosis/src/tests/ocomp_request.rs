@@ -269,7 +269,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
         assert_eq!(
             DesisContract::new(storage.clone())
                 .auction_stage
-                .read(&wwd.value())
+                .read(&wwd)
                 .unwrap(),
             AuctionStage::Briefed as u8
         );
@@ -280,7 +280,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
             .unwrap();
         let desis_supply_before = DesisContract::new(storage.clone())
             .pending_supply_promis
-            .read(&wwd.value())
+            .read(&wwd)
             .unwrap();
         let finality_recorded_height = block_number + 2;
         let finalized = MetadosisContract::new(storage.clone())
@@ -334,7 +334,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
         assert_eq!(
             DesisContract::new(storage.clone())
                 .pending_supply_promis
-                .read(&wwd.value())
+                .read(&wwd)
                 .unwrap(),
             desis_supply_before
         );
@@ -435,7 +435,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
         assert_eq!(
             DesisContract::new(storage.clone())
                 .pending_supply_promis
-                .read(&wwd.value())
+                .read(&wwd)
                 .unwrap(),
             desis_supply_before
         );
@@ -936,7 +936,7 @@ fn nonzero_owner_projections_are_snapshotted_in_the_created_intent() {
             &storage,
             outbe_intex::CreateSeriesParams {
                 series_id: outbe_intex::SeriesId::pack(fixture.wwd.value(), *b"USD", b'U').unwrap(),
-                worldwide_day: fixture.wwd.value(),
+                worldwide_day: fixture.wwd,
                 issued_intex_count: 1,
                 promis_load_minor: 1,
                 entry_price_minor: U256::from(1),
@@ -1404,11 +1404,11 @@ fn request_observables(
             .unwrap(),
         desis_stage: DesisContract::new(storage.clone())
             .auction_stage
-            .read(&wwd.value())
+            .read(&wwd)
             .unwrap(),
         desis_supply: DesisContract::new(storage.clone())
             .pending_supply_promis
-            .read(&wwd.value())
+            .read(&wwd)
             .unwrap(),
         nod_supply: NodContract::new(storage.clone()).total_supply().unwrap(),
         tribute_supply: TributeContract::new(storage.clone())

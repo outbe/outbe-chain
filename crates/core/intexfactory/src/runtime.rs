@@ -3,6 +3,7 @@
 use alloy_primitives::{keccak256, Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 
+use outbe_common::WorldwideDay;
 use outbe_intex::{SeriesId, SERIES_ID_LEN};
 use outbe_primitives::addresses::{INTEX_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
@@ -77,7 +78,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
         let router_params = IOriginRouter::IssuanceInstructionsParams {
             dstChainId: chain_id,
             seriesId: params.series_id.into(),
-            worldwideDay: params.worldwide_day,
+            worldwideDay: params.worldwide_day.into(),
             issuedIntexCount: params.issued_intex_count,
             promisLoadMinor: params.promis_load_minor,
             entryPriceMinor: entry_price_minor_u64,
@@ -113,7 +114,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
         .saturating_add(PROCEEDS_FANIN_TIMEOUT_SECS);
     outbe_intex::api::arm_proceeds(
         storage,
-        params.worldwide_day,
+        params.worldwide_day.value(),
         &params.recipient_chains,
         deadline,
     )?;
@@ -207,7 +208,7 @@ pub fn set_authorized_settler(
 pub fn distribute(
     storage: &StorageHandle<'_>,
     caller: Address,
-    worldwide_day: u32,
+    worldwide_day: WorldwideDay,
     src_chain_id: u32,
     amount: U256,
 ) -> Result<()> {
@@ -217,9 +218,9 @@ pub fn distribute(
     if amount.is_zero() {
         return Err(IntexFactoryError::ZeroAmount.into());
     }
-    outbe_intex::api::credit_proceeds(storage, worldwide_day, src_chain_id, amount)?;
+    outbe_intex::api::credit_proceeds(storage, worldwide_day.value(), src_chain_id, amount)?;
     let now = storage.timestamp()?.to::<u64>();
-    try_settle_proceeds(storage, worldwide_day, now)
+    try_settle_proceeds(storage, worldwide_day.value(), now)
 }
 
 /// Start a distribution round for a series if its proceeds fan-in is satisfied

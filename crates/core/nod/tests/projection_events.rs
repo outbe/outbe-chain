@@ -95,6 +95,7 @@ fn assert_bucket_roundtrip(record: NodBucketState) {
     assert_eq!(reconstructed.is_qualified, record.is_qualified);
     assert_eq!(reconstructed.total_nods, record.total_nods);
     assert_eq!(reconstructed.entry_price_minor, record.entry_price_minor);
+    assert_eq!(reconstructed.reference_currency, record.reference_currency);
 }
 
 #[test]
@@ -136,6 +137,7 @@ fn stored_events_carry_exact_canonical_nod_bodies_and_commitments() {
         is_qualified: false,
         total_nods: 0,
         entry_price_minor: U256::ZERO,
+        reference_currency: 0,
     });
     assert_bucket_roundtrip(NodBucketState {
         bucket_key: B256::repeat_byte(u8::MAX),
@@ -144,6 +146,7 @@ fn stored_events_carry_exact_canonical_nod_bodies_and_commitments() {
         is_qualified: true,
         total_nods: u64::MAX,
         entry_price_minor: U256::MAX,
+        reference_currency: u16::MAX,
     });
 }
 

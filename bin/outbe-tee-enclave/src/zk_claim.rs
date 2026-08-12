@@ -73,7 +73,7 @@ pub fn derive_expected_hashes(
     let draft = TributeDraftClaim {
         id,
         derived_owner: context.derived_owner,
-        worldwide_day: u64::from(offer.worldwide_day),
+        worldwide_day: offer.worldwide_day.into(),
         currency: offer.tribute_currency,
         base,
         atto,

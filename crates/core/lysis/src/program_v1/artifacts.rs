@@ -12,7 +12,9 @@ use outbe_ocomp_protocol::registry::{HashDomain, ListKind};
 use outbe_ocomp_protocol::unit::UnitPhase;
 use outbe_ocomp_protocol::{hash_framed, CanonicalReader, CanonicalWriter, SchemaLimits};
 
-use super::execute::{nod_bucket_key, validate_canonical_tributes};
+use outbe_nod::NodContract;
+
+use super::execute::validate_canonical_tributes;
 use super::phases::{
     AmountRecordV1, AmountRunV1, FidelityAggregateV1, FidelityLeaguePartialV1, FidelityMapOutputV1,
     FidelityObservationV1, FinalizedContributorV1, FinalizedOutputRecordV1, FinalizedOutputRunV1,
@@ -1290,7 +1292,13 @@ fn validate_finalized_output_run(run: &FinalizedOutputRunV1) -> Result<(), Lysis
             || nod.worldwide_day.value() == 0
             || nod.gratis_load_minor.is_zero()
             || nod.entry_price_minor.is_zero()
-            || nod.bucket_key != nod_bucket_key(nod.worldwide_day, nod.floor_price_minor)
+            || nod.reference_currency == 0
+            || nod.bucket_key
+                != NodContract::bucket_key(
+                    nod.worldwide_day,
+                    nod.floor_price_minor,
+                    nod.reference_currency,
+                )
             || nod.issued_at == 0
             || derive_poseidon_entity_id(nod.owner, nod.worldwide_day)
                 .map_err(|_| LysisArtifactErrorV1::InvalidEncoding("finalized Nod identity"))?

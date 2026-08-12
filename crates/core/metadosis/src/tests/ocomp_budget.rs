@@ -82,11 +82,14 @@ fn green_request_commits_exact_auction_base_and_canonical_receipt() {
 
         let desis = DesisContract::new(storage.clone());
         assert_eq!(
-            desis.auction_stage.read(&request.wwd).unwrap(),
+            desis.auction_stage.read(&request.wwd.into()).unwrap(),
             AuctionStage::Briefed as u8
         );
         assert_eq!(
-            desis.pending_supply_promis.read(&request.wwd).unwrap(),
+            desis
+                .pending_supply_promis
+                .read(&request.wwd.into())
+                .unwrap(),
             U256::from(60)
         );
         assert_eq!(
@@ -119,7 +122,7 @@ fn red_request_skips_desis_and_credits_exact_auction_base() {
         assert_eq!(receipt.desis_brief_hash, None);
         assert_eq!(receipt.carry_over_credit, U256::from(60));
         let desis = DesisContract::new(storage.clone());
-        assert_eq!(desis.auction_stage.read(&request.wwd).unwrap(), 0);
+        assert_eq!(desis.auction_stage.read(&request.wwd.into()).unwrap(), 0);
         assert_eq!(
             PromisLimitContract::new(storage)
                 .get_total_unallocated()
@@ -156,7 +159,7 @@ fn retry_reuses_original_receipt_without_repeating_either_request_effect() {
         let desis = DesisContract::new(storage.clone());
         assert_eq!(desis.sched_active_count.read().unwrap(), 1);
         assert_eq!(
-            desis.pending_supply_promis.read(&green.wwd).unwrap(),
+            desis.pending_supply_promis.read(&green.wwd.into()).unwrap(),
             U256::from(60)
         );
 
@@ -227,7 +230,7 @@ fn retry_rejects_tampered_or_future_receipts_without_writing() {
 #[test]
 fn strict_desis_refusal_leaves_the_existing_brief_and_carry_over_unchanged() {
     with_storage(|storage| {
-        let wwd = 20_260_105;
+        let wwd = outbe_common::WorldwideDay::new(20_260_105);
         outbe_desis::api::dispatch_auction_brief(
             storage.clone(),
             wwd,
@@ -245,7 +248,7 @@ fn strict_desis_refusal_leaves_the_existing_brief_and_carry_over_unchanged() {
             .unwrap();
         let request = RequestBudgetEffect {
             protocol_bundle_hash: B256::repeat_byte(0x41),
-            wwd,
+            wwd: wwd.into(),
             pending_nonce: 1,
             day_type: DayType::Green,
             day_limit: U256::from(100),
@@ -299,7 +302,7 @@ fn red_carry_over_overflow_reverts_without_a_partial_request_effect() {
         assert_eq!(
             DesisContract::new(storage)
                 .auction_stage
-                .read(&request.wwd)
+                .read(&request.wwd.into())
                 .unwrap(),
             0
         );

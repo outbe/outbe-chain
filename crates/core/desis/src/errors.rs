@@ -1,10 +1,11 @@
 use alloy_primitives::Address;
+use outbe_common::WorldwideDay;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum DesisError {
     #[error("invalid worldwide day: {0}")]
-    InvalidWorldwideDay(u32),
+    InvalidWorldwideDay(WorldwideDay),
 
     #[error("invalid stage transition")]
     InvalidStageTransition,
@@ -13,7 +14,7 @@ pub enum DesisError {
     StaleBidsGeneration { incoming: u32, last: u32 },
 
     #[error("pending clearing data missing for series {0}")]
-    PendingClearingDataMissing(u32),
+    PendingClearingDataMissing(WorldwideDay),
 
     #[error("unauthorized origin: {0}")]
     UnauthorizedOrigin(Address),

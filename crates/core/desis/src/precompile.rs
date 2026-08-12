@@ -43,7 +43,7 @@ pub fn dispatch(
                 runtime::process_bids_batch(
                     storage.clone(),
                     sender,
-                    c.worldwideDay,
+                    c.worldwideDay.into(),
                     c.srcChainId,
                     c.relayGeneration,
                     c.batchIndex,
@@ -55,7 +55,7 @@ pub fn dispatch(
                 runtime::process_bids_done(
                     storage.clone(),
                     sender,
-                    c.worldwideDay,
+                    c.worldwideDay.into(),
                     c.srcChainId,
                     c.relayGeneration,
                     c.totalBatches,
@@ -65,27 +65,27 @@ pub fn dispatch(
             getAuctionStage(c) => view(c, |c| {
                 use crate::schema::DesisContract;
                 let contract = storage.contract::<DesisContract>();
-                let stage = contract.read_stage(c.worldwideDay)?;
+                let stage = contract.read_stage(c.worldwideDay.into())?;
                 Ok(IDesis::AuctionStage::try_from(stage as u8)
                     .unwrap_or(IDesis::AuctionStage::None))
             }),
             getBidsCount(c) => view(c, |c| {
                 use crate::schema::DesisContract;
                 let contract = storage.contract::<DesisContract>();
-                let count = contract.day_bid_count.read(&c.worldwideDay)?;
+                let count = contract.day_bid_count.read(&c.worldwideDay.into())?;
                 Ok(U256::from(count))
             }),
             getChainBidsCount(c) => view(c, |c| {
                 use crate::schema::DesisContract;
                 let contract = storage.contract::<DesisContract>();
-                let key = DesisContract::chain_key(c.worldwideDay, c.srcChainId);
+                let key = DesisContract::chain_key(c.worldwideDay.into(), c.srcChainId);
                 let count = contract.chain_bid_count.read(&key)?;
                 Ok(U256::from(count))
             }),
             isChainDone(c) => view(c, |c| {
                 use crate::schema::DesisContract;
                 let contract = storage.contract::<DesisContract>();
-                let key = DesisContract::chain_key(c.worldwideDay, c.srcChainId);
+                let key = DesisContract::chain_key(c.worldwideDay.into(), c.srcChainId);
                 Ok(contract.chain_done.read(&key)? != 0)
             }),
             supportsInterface(c) => view(c, |c| {

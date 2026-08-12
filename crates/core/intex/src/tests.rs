@@ -120,7 +120,7 @@ fn sid(worldwide_day: u32) -> SeriesId {
 fn sample_params(worldwide_day: u32) -> CreateSeriesParams {
     CreateSeriesParams {
         series_id: sid(worldwide_day),
-        worldwide_day,
+        worldwide_day: worldwide_day.into(),
         issued_intex_count: 100,
         promis_load_minor: PROMIS_LOAD_MINOR,
         entry_price_minor: U256::from(2_000u64),
@@ -145,7 +145,7 @@ fn sample_params(worldwide_day: u32) -> CreateSeriesParams {
 fn create_then_read_round_trip() {
     with_registry(|s| {
         let mut p = sample_params(7);
-        p.worldwide_day = 20260101;
+        p.worldwide_day = 20260101.into();
         api::create_series(&s, p).unwrap();
 
         let r = api::read_series(&s, sid(7)).unwrap();
@@ -166,7 +166,7 @@ fn create_then_read_round_trip() {
         assert_eq!(r.lifecycle_state().unwrap(), IntexState::Issued);
         assert_eq!(r.issued_at, ISSUED_AT);
         assert_eq!(r.called_at, 0);
-        assert_eq!(r.worldwide_day, 20260101);
+        assert_eq!(r.worldwide_day, 20260101.into());
         // The ledger stores the call period verbatim; defaulting is the
         // caller's job.
         assert_eq!(r.call_notice_period, CALL_NOTICE_PERIOD);

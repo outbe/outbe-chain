@@ -2,6 +2,7 @@
 //! unqualified-series bin index. Canonical series state lives in Intex.
 
 use alloy_primitives::{keccak256, Address, B256, U256};
+use outbe_common::WorldwideDay;
 use outbe_intex::{SeriesId, SERIES_ID_LEN};
 use outbe_macros::{contract, storage_schema};
 use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
@@ -10,7 +11,7 @@ use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IssuanceParams {
     pub series_id: SeriesId,
-    pub worldwide_day: u32,
+    pub worldwide_day: WorldwideDay,
     pub issued_intex_count: u32,
     pub promis_load_minor: u128,
     /// Entry price (per-unit, reference currency, 1e18 oracle scale); cost/floor/call derive from it.

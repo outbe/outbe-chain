@@ -122,7 +122,7 @@ mod tests {
         );
         assert_eq!(
             INod::NodBucketQualified::SIGNATURE_HASH,
-            keccak256("NodBucketQualified(bytes32,uint256,uint256,bool)")
+            keccak256("NodBucketQualified(bytes32,uint256,uint256,bool,uint16)")
         );
         assert_eq!(
             ICycle::CycleTriggerExecuted::SIGNATURE_HASH,

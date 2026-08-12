@@ -2,6 +2,7 @@
 //! identity + lifecycle ledger. One record per `seriesId`.
 
 use alloy_primitives::{keccak256, Address, FixedBytes, B256, U256};
+use outbe_common::WorldwideDay;
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::INTEX_ADDRESS;
 use outbe_primitives::stablecoin::iso_4217_alpha;
@@ -177,7 +178,7 @@ impl From<FixedBytes<SERIES_ID_LEN>> for SeriesId {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateSeriesParams {
     pub series_id: SeriesId,
-    pub worldwide_day: u32,
+    pub worldwide_day: WorldwideDay,
     pub issued_intex_count: u32,
     /// Promis tokens per Intex unit (18 decimals); bounded by source `uint128`.
     pub promis_load_minor: u128,
@@ -246,8 +247,8 @@ pub struct SeriesRecord {
     pub state: u8,
 
     /// Worldwide day whose tributes fed this series; also the id's leading digits.
-    #[attribute(order = 13, default = 0)]
-    pub worldwide_day: u32,
+    #[attribute(order = 13, default = WorldwideDay::new(0))]
+    pub worldwide_day: WorldwideDay,
 }
 
 impl SeriesRecord {

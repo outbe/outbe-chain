@@ -156,7 +156,7 @@ pub(crate) fn try_qualify(
     // Notify the target chain of the Qualified transition via ERC-7786; best-effort.
     // OriginRouter failure (e.g. exhausted relay float) does not revert the
     // state transition. The target chain can reconcile series state from the origin chain.
-    let _ = notify_qualified(storage, series_id, series.worldwide_day);
+    let _ = notify_qualified(storage, series_id, series.worldwide_day.value());
 
     crate::runtime::emit_event(
         storage,

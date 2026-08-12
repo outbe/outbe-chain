@@ -69,8 +69,8 @@ pub struct NodItemState {
     pub is_settled: bool,
 }
 
-/// Bucket record exists while `total_nods > 0`; when the last NOD in the bucket is mined,
-/// `nod_buckets.delete(bucket_key)` drops the entry.
+/// Bucket record exists while `total_nods > 0`; the body is dropped when the
+/// last NOD in the bucket is mined.
 #[derive(Serialize, Deserialize)]
 #[storage_record(exists_field = total_nods)]
 pub struct NodBucketState {
@@ -91,6 +91,12 @@ pub struct NodBucketState {
 
     #[attribute(order = 4)]
     pub entry_price_minor: U256,
+
+    /// Denomination of `floor_price_minor`, propagated from the Nods in the
+    /// bucket. The qualifier compares the floor against the COEN rate for this
+    /// currency only, and the bin index is namespaced by it.
+    #[attribute(order = 5)]
+    pub reference_currency: u16,
 }
 
 /// Immutable owner projection frozen into one OCOMP activation precondition.
@@ -141,15 +147,21 @@ impl NodCertifiedGenerationProjection {
 
 /// EVM storage layout for the Nod NFT contract.
 ///
-/// NodItem fields keyed by nod_id (U256).
-/// NodBucketState keyed by bucket_key (B256).
-/// Bucket key = keccak256(abi.encode(worldwide_day, floor_price_minor)).
+/// Nod item and bucket bodies live in the compressed-entity store, not here.
+/// Bucket key = keccak256(worldwide_day ++ floor_price_minor ++ reference_currency).
 ///
 /// Unqualified buckets are tracked by a PancakeSwap-Liquidity-Book-style
 /// 3-level radix-256 bitmap trie indexed by `floor_price_minor`. Each set
 /// leaf bit identifies a non-empty price bin; per-bin bucket lists live in
-/// `unqualified_bin_count` + `unqualified_bin_buckets`. See
-/// `crates/core/nod/src/bin_tree.rs` for the LB-port traversal helpers.
+/// `unqualified_bin_count` + `unqualified_bin_buckets`.
+///
+/// Prices in different currencies are not comparable, so every bin column is
+/// namespaced by the bucket's `reference_currency` and each currency gets its
+/// own independent trie. See `state::CurrencyBins`.
+///
+/// Field offsets are dense in `order` sequence, so this struct occupies slots
+/// 0..=14 in declaration order. `tests::nod_contract_slot_layout_is_pinned`
+/// is the tripwire.
 #[storage_schema]
 #[contract(addr = NOD_ADDRESS)]
 pub struct NodContract {
@@ -159,38 +171,40 @@ pub struct NodContract {
 
     // --- Unqualified-bucket bin index (PancakeSwap LB-style trie) ---
 
-    // slot 18: top-level 256-bit bitmap. Bit `i` is set iff `bin_tree_mid[i]`
-    // is non-zero. Indexed by bits [16:24] of bin_id.
+    // slot 1: top-level 256-bit bitmap per currency. Bit `i` is set iff
+    // `bin_tree_mid[(iso, i)]` is non-zero. Indexed by bits [16:24] of bin_id.
     #[attribute(order = 10)]
-    pub bin_tree_root: outbe_primitives::storage::dsl::Value<U256>,
+    pub bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
 
-    // slot 19: mid-level bitmaps. Key = bits [16:24] of bin_id (kept as u32
-    // because StorageKey is only impl'd for u32/u64/U256 in this workspace).
-    // Bit `j` is set iff `bin_tree_leaf[(key << 8) | j]` is non-zero.
+    // slot 2: mid-level bitmaps. Key = `state::scoped(iso, bits [16:24] of
+    // bin_id)`. Bit `j` is set iff `bin_tree_leaf[(key << 8) | j]` is non-zero.
     #[attribute(order = 11)]
-    pub bin_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub bin_tree_mid: outbe_primitives::storage::dsl::Map<u64, U256>,
 
-    // slot 20: leaf-level bitmaps. Key = bits [8:24] of bin_id (u16 worth of
-    // address space, encoded as u32 for StorageKey). Bit `k` is set iff bin
-    // `(key << 8) | k` currently holds at least one bucket_key.
+    // slot 3: leaf-level bitmaps. Key = `state::scoped(iso, bits [8:24] of
+    // bin_id)`. Bit `k` is set iff bin `(key << 8) | k` currently holds at
+    // least one bucket_key.
     #[attribute(order = 12)]
-    pub bin_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub bin_tree_leaf: outbe_primitives::storage::dsl::Map<u64, U256>,
 
-    // slot 21: per-bin count of bucket_keys parked in the bin.
+    // slot 4: per-bin count of bucket_keys parked in the bin, keyed by
+    // `state::scoped(iso, bin_id)`.
     #[attribute(order = 13)]
-    pub unqualified_bin_count: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub unqualified_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
 
-    // slot 22: per-bin bucket index — keccak(bin_id ++ index) → bucket_key.
-    // Insertion-ordered; on qualification, the bin is either drained
-    // wholesale (count := 0, bit cleared) or compacted (survivors moved up).
+    // slot 5: per-bin bucket index — keccak(iso ++ bin_id ++ index) →
+    // bucket_key. Insertion-ordered; on qualification, the bin is either
+    // drained wholesale (count := 0, bit cleared) or compacted (survivors
+    // moved up).
     #[attribute(order = 14)]
     pub unqualified_bin_buckets: outbe_primitives::storage::dsl::Map<B256, B256>,
 
-    // slot 25: next bucket position to inspect in a partially processed bin.
-    // This keeps begin-block qualification bounded without starving later
-    // buckets when the tail bin contains more work than one block can inspect.
+    // slot 6: next bucket position to inspect in a partially processed bin,
+    // keyed by `state::scoped(iso, bin_id)`. This keeps begin-block
+    // qualification bounded without starving later buckets when the tail bin
+    // contains more work than one block can inspect.
     #[attribute(order = 17)]
-    pub unqualified_bin_scan_cursor: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub unqualified_bin_scan_cursor: outbe_primitives::storage::dsl::Map<u64, u32>,
 
     // Compact reversible WWD prefix for bucket identities parked by bucket_key.
     #[attribute(order = 18)]
@@ -232,12 +246,24 @@ impl<'storage> NodContract<'storage> {
         self.storage.clone()
     }
 
-    /// Computes the bucket key from (worldwide_day, floor_price_minor).
-    pub fn bucket_key(worldwide_day: WorldwideDay, floor_price_minor: U256) -> B256 {
+    /// Computes the bucket key from
+    /// `(worldwide_day, floor_price_minor, reference_currency)`.
+    ///
+    /// The currency is part of the preimage because `floor_price_minor` is
+    /// denominated in it: two Nods sharing a day and a floor value in
+    /// different currencies are priced against different oracle rates and must
+    /// not share a bucket. This is the single derivation — the Lysis program
+    /// calls it too, so the off-chain and on-chain keys cannot drift.
+    pub fn bucket_key(
+        worldwide_day: WorldwideDay,
+        floor_price_minor: U256,
+        reference_currency: u16,
+    ) -> B256 {
         use alloy_primitives::keccak256;
-        let mut buf = [0u8; 36];
+        let mut buf = [0u8; 38];
         buf[0..4].copy_from_slice(worldwide_day.key_bytes().as_slice());
         buf[4..36].copy_from_slice(&floor_price_minor.to_be_bytes::<32>());
+        buf[36..38].copy_from_slice(&reference_currency.to_be_bytes());
         keccak256(buf)
     }
 

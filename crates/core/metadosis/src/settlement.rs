@@ -263,7 +263,7 @@ fn dispatch_brief(
     let brief_supply = if is_green { supply } else { U256::ZERO };
     let receipt = outbe_desis::api::dispatch_auction_brief(
         ctx.storage.clone(),
-        u32::from(wwd),
+        wwd,
         brief_supply,
         reference_prices,
         is_green,

@@ -49,7 +49,11 @@ fn issue_nod_inner(
 ) -> Result<EntityId36> {
     let nod_id = NodContract::generate_nod_id(params.owner, params.worldwide_day)?;
 
-    let bucket_key = NodContract::bucket_key(params.worldwide_day, params.floor_price_minor);
+    let bucket_key = NodContract::bucket_key(
+        params.worldwide_day,
+        params.floor_price_minor,
+        params.reference_currency,
+    );
 
     let issued_at = storage.timestamp()?.to::<u64>();
 

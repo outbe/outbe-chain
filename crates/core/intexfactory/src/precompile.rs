@@ -84,7 +84,13 @@ pub fn dispatch(
                 // from the source chain into the day's pot.
                 distribute(c) => {
                     mutate_void_payable(c, PAYABLE_SELECTORS, caller, value, |sender, c, val| {
-                        runtime::distribute(&storage, sender, c.worldwideDay, c.srcChainId, val)
+                        runtime::distribute(
+                            &storage,
+                            sender,
+                            c.worldwideDay.into(),
+                            c.srcChainId,
+                            val,
+                        )
                     })
                 }
             }

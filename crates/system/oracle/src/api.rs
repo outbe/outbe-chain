@@ -89,6 +89,25 @@ pub fn coen_rate_for(storage: StorageHandle, iso_code: u16) -> Result<U256> {
     oracle.get_exchange_rate(COEN_ASSET, currency_address(iso_code))
 }
 
+/// Current COEN price to currency `iso_code`, or `None` when the pair is not
+/// registered or carries no published rate.
+///
+/// [`get_all_reference_currencies`] lists currencies independently of whether
+/// their `COEN/<iso>` pair has been registered and priced, so a block hook
+/// walking that registry needs a read that reports "not priceable yet" instead
+/// of reverting and halting the block. Storage faults still propagate.
+pub fn coen_rate_for_opt(storage: StorageHandle, iso_code: u16) -> Result<Option<U256>> {
+    let oracle: OracleContract<'_> = OracleContract::new(storage);
+    // `COEN_ASSET` is the zero address, so `new_coen_to` is always canonical
+    // and the stored rate needs no reciprocal inversion.
+    let index = oracle.pair_index_of(AddressPair::new_coen_to(iso_code))?;
+    if index == 0 {
+        return Ok(None);
+    }
+    let stored = oracle.exchange_rate.read(&index)?;
+    Ok((!stored.is_zero()).then_some(stored))
+}
+
 pub fn get_exchange_rate(storage: StorageHandle, base: Address, quote: Address) -> Result<U256> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
     oracle.get_exchange_rate(base, quote)

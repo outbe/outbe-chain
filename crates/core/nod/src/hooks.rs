@@ -21,19 +21,29 @@
 //!   they drain wholesale; the tail bin (`bin_id == r_bin`) checks each
 //!   bucket's exact `floor_price_minor < rate` so a coarse bin neither
 //!   qualifies a bucket above the rate nor one priced exactly at it.
+//!
+//! Multi-currency: a floor is only comparable to the rate of its own
+//! `reference_currency`, so every bin column is namespaced by ISO code and
+//! each reference currency walks an independent trie. The block reads the
+//! oracle's whole reference-currency registry, prices each one in registry
+//! order, and shares a single `MAX_BUCKET_QUALIFICATIONS_PER_BLOCK` budget
+//! across them. A currency whose COEN pair is unregistered or unpriced is
+//! skipped for the block rather than halting it.
 
 use alloy_primitives::U256;
 use outbe_compressed_entities::{
     EntityId36, ExecutionScope, ParentBodySource, ParentBodySourceRef,
 };
-use outbe_oracle::api::{coen_rate_for, get_all_reference_currencies};
+use outbe_oracle::api::{coen_rate_for_opt, get_all_reference_currencies};
 use outbe_primitives::{
     block::{BlockLifecycle, BlockRuntimeContext},
     error::Result,
     math::{constants::MAX_BIN_ID, tree_math},
 };
 
-use crate::{api, constants::MAX_BUCKET_QUALIFICATIONS_PER_BLOCK, schema::NodContract};
+use crate::{
+    api, constants::MAX_BUCKET_QUALIFICATIONS_PER_BLOCK, schema::NodContract, state::CurrencyBins,
+};
 
 pub struct NodLifecycle;
 
@@ -73,76 +83,83 @@ impl BlockLifecycle for NodLifecycle {
 }
 
 /// Qualifies Nod buckets using the same block scope and parent source as transactions.
+///
+/// Reads every reference currency the oracle knows about and qualifies each
+/// one's buckets against its own COEN rate. An uninitialized registry does no
+/// work. A currency whose COEN pair is unregistered or carries no published
+/// rate is skipped for this block rather than halting it — the registry lists
+/// currencies independently of whether a pair has been priced yet.
 pub fn qualify_nods(
     ctx: &BlockRuntimeContext,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
 ) -> Result<()> {
-    // The oracle's first reference currency is COEN/840 by genesis order. An
-    // uninitialized registry yields no rate and skips this block's scan
-    // (`qualify_buckets_with_rate` returns early on zero) rather than halting
-    // the block, matching the gem and intexfactory qualifiers.
-    //
-    // TODO(nod): qualify against every reference currency, not just the first.
-    // `floor_price_minor` is denominated in the entity's own
-    // `reference_currency`, but `NodBucketState` does not carry it and
-    // `NodContract::bucket_key` hashes only `(worldwide_day, floor_price_minor)`
-    // — so floors in different currencies collide into one bucket and there is
-    // nothing to match a per-currency rate against. Gem guards the same mismatch
-    // at `outbe_gem::runtime::GemContract::qualify` (`item.reference_currency !=
-    // QUALIFIER_REFERENCE_ISO` → skip). Making Nod currency-aware needs
-    // `reference_currency` as a `NodBucketState` attribute *and* a `bucket_key`
-    // input, plus a per-currency bin index: a storage-layout change with a
-    // replay boundary, landing in its own PR.
-    let rate = match get_all_reference_currencies(ctx)?.first() {
-        Some(&iso_code) => coen_rate_for(ctx.storage.clone(), iso_code)?,
-        None => U256::ZERO,
-    };
-    qualify_buckets_with_rate(ctx, scope, parent, rate)
+    let mut budget = MAX_BUCKET_QUALIFICATIONS_PER_BLOCK;
+    for iso_code in get_all_reference_currencies(ctx)? {
+        if budget == 0 {
+            break;
+        }
+        let Some(rate) = coen_rate_for_opt(ctx.storage.clone(), iso_code)? else {
+            continue;
+        };
+        let inspected = qualify_buckets_with_rate(ctx, scope, parent, iso_code, rate, budget)?;
+        budget = budget.saturating_sub(inspected);
+    }
+    Ok(())
 }
 
-/// Qualification entry point used by the block executor and behavioral tests.
+/// Qualifies one reference currency's buckets, inspecting at most `budget`
+/// bucket bodies. Returns how many it inspected so the caller can share one
+/// per-block budget across currencies.
+///
+/// Entry point used by the block executor and behavioral tests.
 pub fn qualify_buckets_with_rate(
     ctx: &BlockRuntimeContext,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
+    iso_code: u16,
     rate: U256,
-) -> Result<()> {
-    if rate.is_zero() {
-        return Ok(());
+    budget: u32,
+) -> Result<u32> {
+    if rate.is_zero() || budget == 0 {
+        return Ok(0);
     }
     let r_bin = NodContract::price_to_bin(rate)?;
     let mut nod = NodContract::new(ctx.storage.clone());
     let mut bin_cursor = 0_u32;
     let mut inspected = 0_u32;
     loop {
-        if inspected == MAX_BUCKET_QUALIFICATIONS_PER_BLOCK {
+        if inspected == budget {
             break;
         }
-        let next = match tree_math::find_first_left_inclusive(&nod, bin_cursor)? {
+        let next = match tree_math::find_first_left_inclusive(
+            &CurrencyBins(&nod, iso_code),
+            bin_cursor,
+        )? {
             Some(bin) if bin <= r_bin => bin,
             _ => break,
         };
+        let scoped = NodContract::scoped(iso_code, next);
         let strict = next < r_bin;
-        let mut count = nod.unqualified_bin_count.read(&next)?;
+        let mut count = nod.unqualified_bin_count.read(&scoped)?;
         if count == 0 {
             return Err(
                 outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                    "Nod bin tree references empty bin {next}"
+                    "Nod bin tree references empty bin {iso_code}:{next}"
                 )),
             );
         }
-        let mut index = nod.unqualified_bin_scan_cursor.read(&next)?;
+        let mut index = nod.unqualified_bin_scan_cursor.read(&scoped)?;
         if index >= count {
             index = 0;
         }
-        while index < count && inspected < MAX_BUCKET_QUALIFICATIONS_PER_BLOCK {
-            let key = NodContract::bin_index_key(next, index);
+        while index < count && inspected < budget {
+            let key = NodContract::bin_index_key(iso_code, next, index);
             let bucket_key = nod.unqualified_bin_buckets.read(&key)?;
             if bucket_key.is_zero() {
                 return Err(
                     outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                        "Nod unqualified-bin entry {next}:{index} has an empty bucket key"
+                        "Nod unqualified-bin entry {iso_code}:{next}:{index} has an empty bucket key"
                     )),
                 );
             }
@@ -151,14 +168,17 @@ pub fn qualify_buckets_with_rate(
             let loaded =
                 api::load_bucket(&ctx.storage, scope, parent, bucket_id)?.ok_or_else(|| {
                     outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                    "Nod unqualified-bin entry {next}:{index} references missing bucket {bucket_id}"
+                    "Nod unqualified-bin entry {iso_code}:{next}:{index} references missing bucket {bucket_id}"
                 ))
                 })?;
             let bucket = loaded.body();
-            if bucket.is_qualified || NodContract::price_to_bin(bucket.floor_price_minor)? != next {
+            if bucket.is_qualified
+                || bucket.reference_currency != iso_code
+                || NodContract::price_to_bin(bucket.floor_price_minor)? != next
+            {
                 return Err(
                     outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                        "Nod unqualified-bin entry {next}:{index} mismatches bucket {bucket_key}"
+                        "Nod unqualified-bin entry {iso_code}:{next}:{index} mismatches bucket {bucket_key}"
                     )),
                 );
             }
@@ -170,39 +190,38 @@ pub fn qualify_buckets_with_rate(
             nod.qualify_bucket_loaded(scope, loaded)?;
             let last = count.checked_sub(1).ok_or_else(|| {
                 outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                    "Nod bin {next} count underflow"
+                    "Nod bin {iso_code}:{next} count underflow"
                 ))
             })?;
             if index != last {
                 let replacement = nod
                     .unqualified_bin_buckets
-                    .read(&NodContract::bin_index_key(next, last))?;
+                    .read(&NodContract::bin_index_key(iso_code, next, last))?;
                 if replacement.is_zero() {
                     return Err(
                         outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                            "Nod unqualified-bin entry {next}:{last} has an empty bucket key"
+                            "Nod unqualified-bin entry {iso_code}:{next}:{last} has an empty bucket key"
                         )),
                     );
                 }
                 nod.unqualified_bin_buckets.write(&key, replacement)?;
             }
             nod.unqualified_bin_buckets.write(
-                &NodContract::bin_index_key(next, last),
+                &NodContract::bin_index_key(iso_code, next, last),
                 alloy_primitives::B256::ZERO,
             )?;
             count = last;
             inspected += 1;
         }
 
-        nod.unqualified_bin_count.write(&next, count)?;
+        nod.unqualified_bin_count.write(&scoped, count)?;
         if count == 0 {
-            nod.unqualified_bin_scan_cursor.write(&next, 0)?;
-            nod.unqualified_bin_count.write(&next, 0)?;
-            tree_math::remove(&nod, next)?;
+            nod.unqualified_bin_scan_cursor.write(&scoped, 0)?;
+            tree_math::remove(&CurrencyBins(&nod, iso_code), next)?;
         } else if index >= count {
-            nod.unqualified_bin_scan_cursor.write(&next, 0)?;
+            nod.unqualified_bin_scan_cursor.write(&scoped, 0)?;
         } else {
-            nod.unqualified_bin_scan_cursor.write(&next, index)?;
+            nod.unqualified_bin_scan_cursor.write(&scoped, index)?;
             break;
         }
 
@@ -211,5 +230,5 @@ pub fn qualify_buckets_with_rate(
             _ => break,
         };
     }
-    Ok(())
+    Ok(inspected)
 }
