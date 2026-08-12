@@ -48,7 +48,22 @@ sol! {
         function tokenBridge() external view returns (address);
         function wcoen() external view returns (address);
     }
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IParkedProceeds {
+        struct ParkedProceeds {
+            uint32 worldwideDay;
+            uint32 srcChainId;
+            uint128 amount;
+            bool settled;
+        }
+        function parkedProceeds(uint256 idx) external view returns (ParkedProceeds memory);
+    }
 }
+
+/// A day the scenario owns outright, so nothing else can have opened it.
+const PROCEEDS_DAY: u32 = 20_260_101;
+/// Small enough that the deployer's genesis balance covers it comfortably.
+const PROCEEDS_AMOUNT_WEI: u128 = 1_000_000_000_000_000_000;
 
 #[then("the origin router knows where proceeds come from")]
 fn origin_router_knows_proceeds_route(world: &mut World) {
@@ -72,5 +87,47 @@ fn origin_router_knows_proceeds_route(world: &mut World) {
     assert!(
         !bridge.is_zero() && token == contracts.wcoen,
         "proceeds route is unset: bridge {bridge}, token {token}"
+    );
+}
+
+#[when("auction proceeds arrive for a day")]
+fn proceeds_arrive(world: &mut World) {
+    let url = world.rpc.url(world.validators.primary_port());
+    let contracts = world
+        .state
+        .origin_contracts
+        .clone()
+        .expect("a deploy recorded its addresses");
+    origin_venue::deliver_proceeds(
+        &environment().repo,
+        &url,
+        &contracts,
+        PROCEEDS_DAY,
+        PROCEEDS_AMOUNT_WEI,
+    )
+    .expect("deliver auction proceeds to the origin router");
+}
+
+#[then("the router handed those proceeds to the factory")]
+fn router_handed_proceeds_on(world: &mut World) {
+    let url = world.rpc.url(world.validators.primary_port());
+    let contracts = world
+        .state
+        .origin_contracts
+        .clone()
+        .expect("a deploy recorded its addresses");
+
+    // A delivery the factory refused is parked rather than lost, so an empty
+    // park is what tells the two apart: the seam carried the value through.
+    let parked = eth::read_call(
+        &url,
+        contracts.origin_router,
+        &IParkedProceeds::parkedProceedsCall {
+            idx: alloy_primitives::U256::ZERO,
+        },
+    );
+    assert!(
+        parked.is_none_or(|entry| entry.amount == 0),
+        "proceeds were parked instead of reaching the factory"
     );
 }

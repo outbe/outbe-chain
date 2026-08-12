@@ -190,3 +190,32 @@ fn wire(intex: &Path, contracts: &OriginContracts, url: &str, chain_id: u64) -> 
         chain_id,
     )
 }
+
+/// Deliver auction proceeds for `worldwide_day` without running an auction.
+///
+/// The router guards the path three ways — registered token bridge, source in
+/// the day's frozen target snapshot, sender equal to the registered peer — and
+/// the snapshot is frozen only by a stage start. The script takes the roles the
+/// precompiles hold in production so the whole metadosis path is not needed to
+/// exercise the proceeds seam.
+pub fn deliver_proceeds(
+    repo: &Path,
+    url: &str,
+    contracts: &OriginContracts,
+    worldwide_day: u32,
+    amount_wei: u128,
+) -> Result<()> {
+    forge::run(
+        &repo.join("contracts/intex"),
+        &["script", "deploy/DriveProceeds.s.sol:DriveProceeds"],
+        &[
+            ("ORIGIN_ROUTER", format!("{:?}", contracts.origin_router)),
+            ("WCOEN", format!("{:?}", contracts.wcoen)),
+            ("TARGET_ROUTER", format!("{:?}", contracts.target_router)),
+            ("WORLDWIDE_DAY", worldwide_day.to_string()),
+            ("PROCEEDS_AMOUNT", amount_wei.to_string()),
+        ],
+        url,
+    )
+    .map(|_| ())
+}
