@@ -64,3 +64,10 @@ pub const CALL_THRESHOLD: u32 = 21 * 24 * 3600;
 
 /// Commit-entry bond on the target-chain auction: 100M wCOEN (18-dec minor units).
 pub const COMMIT_BOND_MINOR: u128 = 100_000_000 * 10u128.pow(18);
+
+/// How old a COEN rate may be and still convert a settlement into the issuance
+/// currency. Fixed seconds on purpose: a bound derived from the vote period
+/// would be denominated in blocks and would loosen exactly when the chain is
+/// congested. Past it the issuance option disappears and the reference
+/// currency, which needs no rate at all, still settles.
+pub const FX_RATE_MAX_AGE_SECONDS: u64 = 6 * 3600;

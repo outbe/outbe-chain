@@ -12,8 +12,10 @@ interface IIntexFactory {
     /// @notice Settle `amount` Issued Intexes of `seriesId` held by
     ///         `intexHolder`. Caller must be the holder or its authorized
     ///         settler. Allowed in Qualified (voluntary) and Called (forced).
-    ///         `paymentToken` must be registered with the vault router under the
-    ///         series' reference currency.
+    ///         `paymentToken` must be registered with the vault router under
+    ///         either of the series' currencies. Paying in the reference
+    ///         currency needs no rate; paying in the issuance currency converts
+    ///         through COEN and needs a fresh rate for both.
     function settle(bytes14 seriesId, address intexHolder, uint256 amount, address paymentToken)
         external;
 

@@ -14,8 +14,8 @@ use outbe_vaultrouter::api::IVaultRouter;
 
 use crate::config;
 use crate::constants::{
-    DIST_CHUNK_LIMIT, INTEX_NFT1155_ADDRESS, ORACLE_TO_WIRE_SCALE, ORIGIN_ROUTER_ADDRESS,
-    POW_DIFFICULTY, PRICE_RATE_DEN, PROCEEDS_FANIN_TIMEOUT_SECS,
+    DIST_CHUNK_LIMIT, FX_RATE_MAX_AGE_SECONDS, INTEX_NFT1155_ADDRESS, ORACLE_TO_WIRE_SCALE,
+    ORIGIN_ROUTER_ADDRESS, POW_DIFFICULTY, PRICE_RATE_DEN, PROCEEDS_FANIN_TIMEOUT_SECS,
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
@@ -449,15 +449,11 @@ pub fn settle(
         return Err(IntexFactoryError::NotAuthorized.into());
     }
 
-    accept_payment_token(storage, payment_token, series.reference_currency)?;
+    let currency = accept_payment_token(storage, payment_token, &series)?;
 
-    let payment = derived_cost_amount(
-        series.entry_price_minor,
-        series.promis_load_minor,
-        erc20_decimals(storage, payment_token)?,
-    )?
-    .checked_mul(amount)
-    .ok_or_else(|| PrecompileError::Revert("settlement cost overflow".into()))?;
+    let payment = cost_in_token(storage, &series, payment_token, currency)?
+        .checked_mul(amount)
+        .ok_or_else(|| PrecompileError::Revert("settlement cost overflow".into()))?;
 
     // Pull payment from the settler, deposit into the reserve vault.
     // Fee-on-transfer safe: measure the received delta.
@@ -541,22 +537,89 @@ pub fn quote_cost_amount(
     payment_token: Address,
 ) -> Result<U256> {
     let series = outbe_intex::api::read_series(storage, series_id)?;
-    accept_payment_token(storage, payment_token, series.reference_currency)?;
-    derived_cost_amount(
-        series.entry_price_minor,
-        series.promis_load_minor,
-        erc20_decimals(storage, payment_token)?,
-    )
+    let currency = accept_payment_token(storage, payment_token, &series)?;
+    cost_in_token(storage, &series, payment_token, currency)
+}
+
+/// Which of the series' two currencies a payment token is denominated in.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PaymentCurrency {
+    Reference,
+    Issuance,
+}
+
+/// Per-Intex cost in `token`'s minor units.
+///
+/// The cost is quoted in the series' reference currency, so paying in it needs
+/// no rate at all. Paying in the issuance currency converts through COEN as the
+/// pivot: `cost_iss = cost_ref * rate(COEN/iss) / rate(COEN/ref)`. Both the
+/// conversion and the decimals scaling collapse into a single division, so the
+/// result is rounded once — rounding the conversion first and the decimals after
+/// would round twice and let a quote disagree with the charge it pays.
+fn cost_in_token(
+    storage: &StorageHandle<'_>,
+    series: &outbe_intex::SeriesRecord,
+    token: Address,
+    currency: PaymentCurrency,
+) -> Result<U256> {
+    let payment_decimals = erc20_decimals(storage, token)?;
+    if currency == PaymentCurrency::Reference {
+        return derived_cost_amount(
+            series.entry_price_minor,
+            series.promis_load_minor,
+            payment_decimals,
+        );
+    }
+
+    // entry_price and promis_load are both 1e18-scaled, so their product carries 1e36.
+    let scaled = series
+        .entry_price_minor
+        .checked_mul(series.promis_load_minor)
+        .ok_or_else(|| PrecompileError::Revert("cost amount overflow".into()))?;
+    let exp = 36u32.checked_sub(u32::from(payment_decimals)).ok_or(
+        IntexFactoryError::UnsupportedPaymentDecimals(payment_decimals),
+    )?;
+
+    let now = storage.timestamp()?.to::<u64>();
+    let rate_issuance = fresh_coen_rate(storage, series.issuance_currency, now)?;
+    let rate_reference = fresh_coen_rate(storage, series.reference_currency, now)?;
+    let numerator = scaled
+        .checked_mul(rate_issuance)
+        .ok_or_else(|| PrecompileError::Revert("settlement fx overflow".into()))?;
+    let denominator = U256::from(10u64)
+        .pow(U256::from(exp))
+        .checked_mul(rate_reference)
+        .ok_or_else(|| PrecompileError::Revert("settlement fx overflow".into()))?;
+    Ok(numerator.div_ceil(denominator))
+}
+
+/// The oracle's COEN price in `iso_code`, refused when absent or older than
+/// [`FX_RATE_MAX_AGE_SECONDS`].
+fn fresh_coen_rate(storage: &StorageHandle<'_>, iso_code: u16, now: u64) -> Result<U256> {
+    let Ok((_, pair_index)) = outbe_oracle::api::require_coen_pair(storage.clone(), iso_code)
+    else {
+        return Err(IntexFactoryError::FxRateUnavailable(iso_code).into());
+    };
+    let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+    let rate = oracle.exchange_rate.read(&pair_index)?;
+    if rate.is_zero() {
+        return Err(IntexFactoryError::FxRateUnavailable(iso_code).into());
+    }
+    let published = oracle.exchange_rate_timestamp.read(&pair_index)?;
+    if now.saturating_sub(published) > FX_RATE_MAX_AGE_SECONDS {
+        return Err(IntexFactoryError::FxRateStale(iso_code).into());
+    }
+    Ok(rate)
 }
 
 /// Rejects `token` unless the router holds a vault for it and the token reports
-/// `reference_currency`. Registration is checked first: an unregistered token
-/// need not implement `isoCode()` at all.
+/// one of the series' two currencies; returns which one. Registration is checked
+/// first: an unregistered token need not implement `isoCode()` at all.
 fn accept_payment_token(
     storage: &StorageHandle<'_>,
     token: Address,
-    reference_currency: u16,
-) -> Result<()> {
+    series: &outbe_intex::SeriesRecord,
+) -> Result<PaymentCurrency> {
     let ret = storage.staticcall(
         VAULT_ROUTER_ADDRESS,
         IVaultRouter::assetVaultsCountCall { asset: token }
@@ -570,11 +633,13 @@ fn accept_payment_token(
     }
 
     let iso = asset_iso_code(storage, token)?;
-    // TODO: accept the issuance currency once an FX rule converts the amount.
-    if iso != reference_currency {
-        return Err(IntexFactoryError::SettlementCurrencyMismatch(iso).into());
+    if iso == series.reference_currency {
+        return Ok(PaymentCurrency::Reference);
     }
-    Ok(())
+    if iso == series.issuance_currency {
+        return Ok(PaymentCurrency::Issuance);
+    }
+    Err(IntexFactoryError::SettlementCurrencyMismatch(iso).into())
 }
 
 fn asset_iso_code(storage: &StorageHandle<'_>, token: Address) -> Result<u16> {
