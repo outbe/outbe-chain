@@ -85,6 +85,28 @@ sol! {
     }
 }
 
+/// What Desis itself thinks the day reached, so a venue that never heard of the
+/// auction can be told apart from a day Desis never scheduled.
+fn desis_stage(url: &str, worldwide_day: u32) -> String {
+    let desis = origin_venue::DESIS
+        .parse()
+        .expect("desis precompile address");
+    match eth::read_call(
+        url,
+        desis,
+        &IAuctionStage::getAuctionStageCall {
+            worldwideDay: worldwide_day,
+        },
+    ) {
+        Some(0) => "no brief ever reached Desis".to_owned(),
+        Some(1) => "Desis holds the brief but never started the auction".to_owned(),
+        Some(2) => "Desis started it, so the message never reached the venue".to_owned(),
+        Some(6) => "Desis cancelled the day as red".to_owned(),
+        Some(other) => format!("Desis stage {other}"),
+        None => "Desis did not answer".to_owned(),
+    }
+}
+
 /// Desis dispatches the start on its own schedule tick, which lands some blocks
 /// after the day settles.
 const AUCTION_START_TIMEOUT: Duration = Duration::from_secs(300);
@@ -124,8 +146,9 @@ fn auction_opens_on_target(world: &mut World) {
         }
         assert!(
             Instant::now() < deadline,
-            "day {worldwide_day} settled but no auction ever opened on the venue at {}",
-            contracts.intex_auction
+            "day {worldwide_day} settled but no auction ever opened on the venue at {}: {}",
+            contracts.intex_auction,
+            desis_stage(&url, worldwide_day)
         );
         sleep(Duration::from_secs(2));
     }
