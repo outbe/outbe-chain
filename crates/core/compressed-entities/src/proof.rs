@@ -774,6 +774,7 @@ mod tests {
             is_qualified: true,
             total_nods: 3,
             entry_price_minor: U256::from(11),
+            reference_currency: 840,
         };
         let id = body.entity_id();
         let stored = StoredBody::new_v1(encode_nod_bucket_v1(&body).unwrap()).unwrap();
@@ -1034,6 +1035,7 @@ mod tests {
             is_qualified: true,
             total_nods: 3,
             entry_price_minor: U256::from(11),
+            reference_currency: 840,
         };
         assert_eq!(changed.entity_id(), id);
         let (wrong_leaf_body, _) = stored_body(id, encode_nod_bucket_v1(&changed).unwrap());

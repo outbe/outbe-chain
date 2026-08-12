@@ -231,7 +231,11 @@ fn second_same_block_issue_updates_the_pending_bucket_without_parent_projection(
     let second_id = world.issue(&second);
     assert_ne!(first_id, second_id);
 
-    let bucket_key = NodContract::bucket_key(first.worldwide_day, first.floor_price_minor);
+    let bucket_key = NodContract::bucket_key(
+        first.worldwide_day,
+        first.floor_price_minor,
+        first.reference_currency,
+    );
     let bucket_id = EntityId36::new(first.worldwide_day, bucket_key.0);
     let bucket = world
         .enter(|storage, scope, parent| nod_api::get_bucket(&storage, scope, parent, bucket_id))
@@ -357,7 +361,11 @@ fn qualified_mine_deletes_item_and_last_bucket_then_emits_burn() {
         .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
         .unwrap()
         .is_none());
-    let bucket_key = NodContract::bucket_key(input.worldwide_day, input.floor_price_minor);
+    let bucket_key = NodContract::bucket_key(
+        input.worldwide_day,
+        input.floor_price_minor,
+        input.reference_currency,
+    );
     let bucket_id = EntityId36::new(input.worldwide_day, bucket_key.0);
     assert!(world
         .enter(|storage, scope, parent| { nod_api::get_bucket(&storage, scope, parent, bucket_id) })

@@ -15,9 +15,7 @@ interface INodFactory {
 
     event NodBurned(address indexed owner, bytes nodId, uint256 gratisLoadMinor);
 
-    event NodSettled(
-        address indexed owner, address indexed payer, bytes nodId, address asset, uint256 amountPaid
-    );
+    event NodSettled(address indexed owner, address indexed payer, bytes nodId, address asset, uint256 amountPaid);
 
     /// @notice Constant-size owner event for one certified OCOMP generation.
     ///         There is deliberately no matching public installation selector.
@@ -55,7 +53,5 @@ interface INodFactory {
     ///         HMAC(modifyKey, op-preimage)` where `opNonce` MUST equal the
     ///         caller's current on-chain gratis op-nonce. The Nod owner is the
     ///         gratis recipient, so they can always supply this authorization.
-    function mineGratis(bytes calldata nodId, uint256 nonce, bytes32 mac, uint64 opNonce)
-        external
-        returns (uint256);
+    function mineGratis(bytes calldata nodId, uint256 nonce, bytes32 mac, uint64 opNonce) external returns (uint256);
 }

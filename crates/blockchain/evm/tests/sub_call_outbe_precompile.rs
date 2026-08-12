@@ -263,6 +263,7 @@ fn subcall_reaches_nod_with_the_same_runtime_body_readers() {
             is_qualified: true,
             total_nods: 1,
             entry_price_minor: U256::from(9),
+            reference_currency: 978,
         })
         .unwrap();
     let item = NodItemState {

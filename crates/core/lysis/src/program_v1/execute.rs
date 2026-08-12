@@ -4,9 +4,10 @@ use std::collections::BTreeMap;
 #[cfg(test)]
 use std::collections::HashMap;
 
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{Address, U256};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::derive_poseidon_entity_id;
+use outbe_nod::NodContract;
 use outbe_primitives::units::SCALE_1E18;
 
 use crate::algorithm::calc_fraction_distribution_fp;
@@ -280,7 +281,11 @@ impl ProgramExecutionV1 {
                     message: error.to_string(),
                 }
             })?;
-        let bucket_key = nod_bucket_key(tribute.worldwide_day, floor_price_minor);
+        let bucket_key = NodContract::bucket_key(
+            tribute.worldwide_day,
+            floor_price_minor,
+            tribute.reference_currency,
+        );
         if !nod_target_available || tribute.owner.is_zero() {
             return Err(ProgramErrorV1::InvalidNodTarget { ordinal });
         }
@@ -468,13 +473,6 @@ pub(crate) fn validate_entry_price(
         return Err(ProgramErrorV1::ZeroEntryPrice { ordinal, currency });
     }
     Ok(())
-}
-
-pub(crate) fn nod_bucket_key(worldwide_day: WorldwideDay, floor_price_minor: U256) -> B256 {
-    let mut bytes = [0_u8; 36];
-    bytes[..4].copy_from_slice(&u32::from(worldwide_day).to_be_bytes());
-    bytes[4..].copy_from_slice(&floor_price_minor.to_be_bytes::<32>());
-    keccak256(bytes)
 }
 
 pub(crate) fn validate_required_gratis(
