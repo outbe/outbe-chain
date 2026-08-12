@@ -72,23 +72,26 @@ impl IntexFactoryContract<'_> {
         price_helper::get_id_from_price(p, BIN_STEP_BP)
     }
 
-    pub(crate) fn bin_index_key(bin_id: u32, index: u32) -> B256 {
-        let mut buf = [0u8; 8];
-        buf[0..4].copy_from_slice(&bin_id.to_be_bytes());
-        buf[4..8].copy_from_slice(&index.to_be_bytes());
+    pub(crate) fn bin_index_key(reference_currency: u16, bin_id: u32, index: u32) -> B256 {
+        let mut buf = [0u8; 10];
+        buf[0..2].copy_from_slice(&reference_currency.to_be_bytes());
+        buf[2..6].copy_from_slice(&bin_id.to_be_bytes());
+        buf[6..10].copy_from_slice(&index.to_be_bytes());
         keccak256(buf)
     }
 
     pub(crate) fn insert_unqualified(
         &mut self,
         series_id: SeriesId,
+        reference_currency: u16,
         floor_price: U256,
     ) -> Result<()> {
         insert_bin(
             &self.unqualified_bin_count,
             &self.unqualified_bin_series,
-            &*self,
+            &UnqualifiedBinTree(&*self, reference_currency),
             series_id,
+            reference_currency,
             floor_price,
         )
     }
@@ -96,13 +99,15 @@ impl IntexFactoryContract<'_> {
     pub(crate) fn remove_unqualified(
         &mut self,
         series_id: SeriesId,
+        reference_currency: u16,
         floor_price: U256,
     ) -> Result<()> {
         remove_bin(
             &self.unqualified_bin_count,
             &self.unqualified_bin_series,
-            &*self,
+            &UnqualifiedBinTree(&*self, reference_currency),
             series_id,
+            reference_currency,
             floor_price,
         )
     }
@@ -112,13 +117,15 @@ impl IntexFactoryContract<'_> {
     pub(crate) fn insert_qualified(
         &mut self,
         series_id: SeriesId,
+        reference_currency: u16,
         trigger_price: U256,
     ) -> Result<()> {
         insert_bin(
             &self.qualified_bin_count,
             &self.qualified_bin_series,
-            &QualifiedBinTree(&*self),
+            &QualifiedBinTree(&*self, reference_currency),
             series_id,
+            reference_currency,
             trigger_price,
         )
     }
@@ -126,33 +133,37 @@ impl IntexFactoryContract<'_> {
     pub(crate) fn remove_qualified(
         &mut self,
         series_id: SeriesId,
+        reference_currency: u16,
         trigger_price: U256,
     ) -> Result<()> {
         remove_bin(
             &self.qualified_bin_count,
             &self.qualified_bin_series,
-            &QualifiedBinTree(&*self),
+            &QualifiedBinTree(&*self, reference_currency),
             series_id,
+            reference_currency,
             trigger_price,
         )
     }
 }
 
-/// Insert `series_id` into the `price` bin of an index and set the trie bit.
+/// Insert `series_id` into the `price` bin of its currency's index and set the trie bit.
 fn insert_bin(
-    count_map: &Map<u32, u32>,
+    count_map: &Map<u64, u32>,
     series_map: &Map<B256, U256>,
     tree: &impl BinTreeStorage,
     series_id: SeriesId,
+    reference_currency: u16,
     price: U256,
 ) -> Result<()> {
     let bin_id = IntexFactoryContract::price_to_bin(price)?;
-    let count = count_map.read(&bin_id)?;
+    let scoped = IntexFactoryContract::scoped(reference_currency, bin_id);
+    let count = count_map.read(&scoped)?;
     series_map.write(
-        &IntexFactoryContract::bin_index_key(bin_id, count),
+        &IntexFactoryContract::bin_index_key(reference_currency, bin_id, count),
         series_id.to_word(),
     )?;
-    count_map.write(&bin_id, count + 1)?;
+    count_map.write(&scoped, count + 1)?;
     tree_math::add(tree, bin_id)?;
     Ok(())
 }
@@ -160,21 +171,24 @@ fn insert_bin(
 /// Remove `series_id` from its `price` bin (swap-and-pop); clear the trie bit
 /// when the bin empties. No-op if absent.
 fn remove_bin(
-    count_map: &Map<u32, u32>,
+    count_map: &Map<u64, u32>,
     series_map: &Map<B256, U256>,
     tree: &impl BinTreeStorage,
     series_id: SeriesId,
+    reference_currency: u16,
     price: U256,
 ) -> Result<()> {
     let bin_id = IntexFactoryContract::price_to_bin(price)?;
-    let count = count_map.read(&bin_id)?;
+    let scoped = IntexFactoryContract::scoped(reference_currency, bin_id);
+    let count = count_map.read(&scoped)?;
     if count == 0 {
         return Ok(());
     }
+    let key_at =
+        |index: u32| IntexFactoryContract::bin_index_key(reference_currency, bin_id, index);
     let mut found: Option<u32> = None;
     for i in 0..count {
-        if series_map.read(&IntexFactoryContract::bin_index_key(bin_id, i))? == series_id.to_word()
-        {
+        if series_map.read(&key_at(i))? == series_id.to_word() {
             found = Some(i);
             break;
         }
@@ -183,63 +197,87 @@ fn remove_bin(
         return Ok(());
     };
     let last = count - 1;
-    let last_key = IntexFactoryContract::bin_index_key(bin_id, last);
+    let last_key = key_at(last);
     if idx != last {
         let last_id = series_map.read(&last_key)?;
-        series_map.write(&IntexFactoryContract::bin_index_key(bin_id, idx), last_id)?;
+        series_map.write(&key_at(idx), last_id)?;
     }
     series_map.clear(&last_key)?;
-    count_map.write(&bin_id, last)?;
+    count_map.write(&scoped, last)?;
     if last == 0 {
         tree_math::remove(tree, bin_id)?;
     }
     Ok(())
 }
 
-/// Adapter between the contract's qualified bin-tree slots and `BinTreeStorage`,
-/// so the call-trigger index reuses `tree_math` without a second trait impl on
-/// the contract itself.
-pub(crate) struct QualifiedBinTree<'a, 'b>(pub(crate) &'a IntexFactoryContract<'b>);
+// Adapters between one currency's slice of a bin-tree's three columns and
+// `BinTreeStorage`, so both indexes reuse `tree_math` and neither currency can
+// see another's bins. Construct the view inline at each `tree_math` call rather
+// than binding it, so it never conflicts with a `&mut IntexFactoryContract`.
 
-impl BinTreeStorage for QualifiedBinTree<'_, '_> {
+/// The unqualified (floor-price) trie of one reference currency.
+pub(crate) struct UnqualifiedBinTree<'a, 'b>(
+    pub(crate) &'a IntexFactoryContract<'b>,
+    pub(crate) u16,
+);
+
+impl BinTreeStorage for UnqualifiedBinTree<'_, '_> {
     fn read_root(&self) -> Result<U256> {
-        self.0.qualified_bin_tree_root.read()
+        self.0.bin_tree_root.read(&self.1)
     }
     fn write_root(&self, value: U256) -> Result<()> {
-        self.0.qualified_bin_tree_root.write(value)
+        self.0.bin_tree_root.write(&self.1, value)
     }
     fn read_mid(&self, key: u32) -> Result<U256> {
-        self.0.qualified_bin_tree_mid.read(&key)
+        self.0
+            .bin_tree_mid
+            .read(&IntexFactoryContract::scoped(self.1, key))
     }
     fn write_mid(&self, key: u32, value: U256) -> Result<()> {
-        self.0.qualified_bin_tree_mid.write(&key, value)
+        self.0
+            .bin_tree_mid
+            .write(&IntexFactoryContract::scoped(self.1, key), value)
     }
     fn read_leaf(&self, key: u32) -> Result<U256> {
-        self.0.qualified_bin_tree_leaf.read(&key)
+        self.0
+            .bin_tree_leaf
+            .read(&IntexFactoryContract::scoped(self.1, key))
     }
     fn write_leaf(&self, key: u32, value: U256) -> Result<()> {
-        self.0.qualified_bin_tree_leaf.write(&key, value)
+        self.0
+            .bin_tree_leaf
+            .write(&IntexFactoryContract::scoped(self.1, key), value)
     }
 }
 
-// Adapter between the contract's three bin-tree slots and `BinTreeStorage`.
-impl BinTreeStorage for IntexFactoryContract<'_> {
+/// The qualified (call-trigger) trie of one reference currency.
+pub(crate) struct QualifiedBinTree<'a, 'b>(pub(crate) &'a IntexFactoryContract<'b>, pub(crate) u16);
+
+impl BinTreeStorage for QualifiedBinTree<'_, '_> {
     fn read_root(&self) -> Result<U256> {
-        self.bin_tree_root.read()
+        self.0.qualified_bin_tree_root.read(&self.1)
     }
     fn write_root(&self, value: U256) -> Result<()> {
-        self.bin_tree_root.write(value)
+        self.0.qualified_bin_tree_root.write(&self.1, value)
     }
     fn read_mid(&self, key: u32) -> Result<U256> {
-        self.bin_tree_mid.read(&key)
+        self.0
+            .qualified_bin_tree_mid
+            .read(&IntexFactoryContract::scoped(self.1, key))
     }
     fn write_mid(&self, key: u32, value: U256) -> Result<()> {
-        self.bin_tree_mid.write(&key, value)
+        self.0
+            .qualified_bin_tree_mid
+            .write(&IntexFactoryContract::scoped(self.1, key), value)
     }
     fn read_leaf(&self, key: u32) -> Result<U256> {
-        self.bin_tree_leaf.read(&key)
+        self.0
+            .qualified_bin_tree_leaf
+            .read(&IntexFactoryContract::scoped(self.1, key))
     }
     fn write_leaf(&self, key: u32, value: U256) -> Result<()> {
-        self.bin_tree_leaf.write(&key, value)
+        self.0
+            .qualified_bin_tree_leaf
+            .write(&IntexFactoryContract::scoped(self.1, key), value)
     }
 }

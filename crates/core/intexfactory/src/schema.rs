@@ -45,31 +45,33 @@ pub struct IntexFactoryContract {
     pub mine_seq: outbe_primitives::storage::dsl::Map<B256, u32>,
 
     // Unqualified-series bin index (by floor_price_minor) for begin_block qualify.
+    // A floor is only comparable to the rate of its own reference currency, so
+    // every column is namespaced by ISO code and each currency walks its own trie.
     #[attribute(order = 3)]
-    pub bin_tree_root: outbe_primitives::storage::dsl::Value<U256>,
+    pub bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
     #[attribute(order = 4)]
-    pub bin_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub bin_tree_mid: outbe_primitives::storage::dsl::Map<u64, U256>,
     #[attribute(order = 5)]
-    pub bin_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
-    /// bin_id -> count of series in the bin.
+    pub bin_tree_leaf: outbe_primitives::storage::dsl::Map<u64, U256>,
+    /// `scoped(iso, bin_id)` -> count of series in the bin.
     #[attribute(order = 6)]
-    pub unqualified_bin_count: outbe_primitives::storage::dsl::Map<u32, u32>,
-    /// `keccak256(bin_id_be32 ++ index_be32)` -> series_id.
+    pub unqualified_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
+    /// `keccak256(iso_be16 ++ bin_id_be32 ++ index_be32)` -> series_id.
     #[attribute(order = 7)]
     pub unqualified_bin_series: outbe_primitives::storage::dsl::Map<B256, U256>,
 
     // Qualified-series bin index (by call_price_minor) for the daily
     // Called scan. A series moves here from the unqualified index on qualify.
     #[attribute(order = 8)]
-    pub qualified_bin_tree_root: outbe_primitives::storage::dsl::Value<U256>,
+    pub qualified_bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
     #[attribute(order = 9)]
-    pub qualified_bin_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub qualified_bin_tree_mid: outbe_primitives::storage::dsl::Map<u64, U256>,
     #[attribute(order = 10)]
-    pub qualified_bin_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
-    /// bin_id -> count of series in the bin.
+    pub qualified_bin_tree_leaf: outbe_primitives::storage::dsl::Map<u64, U256>,
+    /// `scoped(iso, bin_id)` -> count of series in the bin.
     #[attribute(order = 11)]
-    pub qualified_bin_count: outbe_primitives::storage::dsl::Map<u32, u32>,
-    /// `keccak256(bin_id_be32 ++ index_be32)` -> series_id.
+    pub qualified_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
+    /// `keccak256(iso_be16 ++ bin_id_be32 ++ index_be32)` -> series_id.
     #[attribute(order = 12)]
     pub qualified_bin_series: outbe_primitives::storage::dsl::Map<B256, U256>,
 
@@ -77,10 +79,10 @@ pub struct IntexFactoryContract {
     #[attribute(order = 13)]
     pub config_profile: outbe_primitives::storage::dsl::Value<u8>,
 
-    // Begin-block qualify-scan cursor: unqualified bin to resume from next block so per-block
-    // work is capped. 0 = start a fresh sweep.
+    // Begin-block qualify-scan cursor per reference currency: the unqualified bin to
+    // resume that currency's sweep from, so per-block work stays capped. 0 = fresh sweep.
     #[attribute(order = 14)]
-    pub qualify_scan_cursor: outbe_primitives::storage::dsl::Value<u32>,
+    pub qualify_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u32>,
 }
 
 impl IntexFactoryContract<'_> {
@@ -90,6 +92,11 @@ impl IntexFactoryContract<'_> {
         buf[0..20].copy_from_slice(holder.as_slice());
         buf[20..].copy_from_slice(series_id.as_bytes());
         keccak256(buf)
+    }
+
+    /// Namespace a bin-index column by the reference currency its prices are in.
+    pub(crate) const fn scoped(reference_currency: u16, key: u32) -> u64 {
+        ((reference_currency as u64) << 32) | key as u64
     }
 
     /// Composite key for `mine_seq`: `keccak256(series_id ++ holder)`.

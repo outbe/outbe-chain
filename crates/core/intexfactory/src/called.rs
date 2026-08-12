@@ -22,16 +22,20 @@ use outbe_primitives::{
 
 use outbe_intex::IntexState;
 
-use crate::constants::{ORIGIN_ROUTER_ADDRESS, QUALIFIER_REFERENCE_ISO};
+use crate::constants::ORIGIN_ROUTER_ADDRESS;
+use crate::qualified::MAX_SERIES_PER_BLOCK;
 use crate::schema::IntexFactoryContract;
 use crate::sol_ext::IOriginRouter;
 use crate::state::QualifiedBinTree;
 
 /// Run the daily Called scan. Returns the number of series force-called.
+///
+/// A call trigger is only comparable to the VWAP of its own reference currency,
+/// so each currency is scanned against its own pair, in oracle registry order,
+/// sharing one [`MAX_SERIES_PER_BLOCK`] budget. A currency without a registered
+/// or finalized pair is skipped for the run rather than halting it.
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     let oracle = OracleContract::new(ctx.storage.clone());
-    let (_, pair_index) =
-        outbe_oracle::api::require_coen_pair(ctx.storage.clone(), QUALIFIER_REFERENCE_ISO)?;
 
     // Most recent fully-closed UTC day (finalized VWAP).
     let last_closed_day = previous_date_key(timestamp_to_date_key(ctx.block.timestamp));
@@ -46,17 +50,46 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
         return Ok(0);
     }
 
+    let mut budget = MAX_SERIES_PER_BLOCK;
+    let mut called: u32 = 0;
+    for iso_code in outbe_oracle::api::get_all_reference_currencies(ctx)? {
+        if budget == 0 {
+            break;
+        }
+        let Ok((_, pair_index)) =
+            outbe_oracle::api::require_coen_pair(ctx.storage.clone(), iso_code)
+        else {
+            continue;
+        };
+        let (calls, inspected) =
+            call_currency(ctx, &oracle, iso_code, pair_index, last_closed_day, budget)?;
+        called = called.saturating_add(calls);
+        budget = budget.saturating_sub(inspected);
+    }
+    Ok(called)
+}
+
+/// Scans one reference currency's qualified series, visiting at most `budget` of
+/// them. Returns `(called, visited)` so the caller can share one run budget.
+fn call_currency(
+    ctx: &BlockRuntimeContext,
+    oracle: &OracleContract,
+    iso_code: u16,
+    pair_index: PairIndex,
+    last_closed_day: u32,
+    budget: u32,
+) -> Result<(u32, u32)> {
     let last_closed_vwap = match oracle.get_utc_day_vwap_for_pair(last_closed_day, pair_index)? {
         Some(v) if !v.is_zero() => v,
-        _ => return Ok(0),
+        _ => return Ok((0, 0)),
     };
 
-    // Deterministic out-of-range VWAP: skip this daily scan instead of halting the block.
+    // Deterministic out-of-range VWAP: skip this currency instead of halting the block.
     let v_bin = match IntexFactoryContract::price_to_bin(last_closed_vwap) {
         Ok(b) => b,
         Err(e) => {
-            tracing::warn!(target: "outbe::intexfactory", error = ?e, "call scan: vwap out of range, skipping run");
-            return Ok(0);
+            tracing::warn!(target: "outbe::intexfactory", iso_code, error = ?e, "call scan: vwap out of range, skipping currency");
+            return Ok((0, 0));
         }
     };
     let mut factory = IntexFactoryContract::new(ctx.storage.clone());
@@ -65,22 +98,30 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     vwaps.seed(last_closed_day, Some(last_closed_vwap));
 
     let mut called: u32 = 0;
+    let mut visited: u32 = 0;
     let mut cursor: u32 = 0;
     loop {
-        let next = match tree_math::find_first_left_inclusive(&QualifiedBinTree(&factory), cursor)?
-        {
+        if visited >= budget {
+            break;
+        }
+        let next = match tree_math::find_first_left_inclusive(
+            &QualifiedBinTree(&factory, iso_code),
+            cursor,
+        )? {
             Some(b) if b <= v_bin => b,
             _ => break,
         };
 
         // Snapshot before mutating: try_call removes Called series.
-        let count = factory.qualified_bin_count.read(&next)?;
+        let count = factory
+            .qualified_bin_count
+            .read(&IntexFactoryContract::scoped(iso_code, next))?;
         let mut series: Vec<SeriesId> = Vec::with_capacity(count as usize);
         for i in 0..count {
             series.push(SeriesId::from_word(
                 factory
                     .qualified_bin_series
-                    .read(&IntexFactoryContract::bin_index_key(next, i))?,
+                    .read(&IntexFactoryContract::bin_index_key(iso_code, next, i))?,
             ));
         }
         for series_id in series {
@@ -90,7 +131,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
                 try_call(
                     &ctx.storage,
                     &mut factory,
-                    &oracle,
+                    oracle,
                     &mut vwaps,
                     series_id,
                     last_closed_day,
@@ -105,13 +146,14 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
                 }
             }
         }
+        visited = visited.saturating_add(count);
 
         cursor = match next.checked_add(1) {
             Some(c) if c <= MAX_BIN_ID => c,
             _ => break,
         };
     }
-    Ok(called)
+    Ok((called, visited))
 }
 
 /// Cycle daily-trigger entry: runs the Called scan, discarding the count.
@@ -160,9 +202,6 @@ pub(crate) fn try_call(
     now_ts: u64,
 ) -> Result<bool> {
     let series = outbe_intex::api::read_series(storage, series_id)?;
-    if series.reference_currency != QUALIFIER_REFERENCE_ISO {
-        return Ok(false);
-    }
     if series.lifecycle_state()? != IntexState::Qualified {
         return Ok(false);
     }
@@ -198,7 +237,7 @@ pub(crate) fn try_call(
     let called_at = u32::try_from(now_ts)
         .map_err(|_| PrecompileError::Revert("block timestamp exceeds u32".into()))?;
     outbe_intex::api::mark_called(storage, series_id, called_at)?;
-    factory.remove_qualified(series_id, trigger)?;
+    factory.remove_qualified(series_id, series.reference_currency, trigger)?;
 
     // Notify the target chain of the Called transition via ERC-7786; best-effort.
     // OriginRouter failure (e.g. exhausted relay float) does not revert the

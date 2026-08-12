@@ -104,7 +104,11 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
     }
 
     // Enroll into the unqualified floor-bin index for begin_block qualify.
-    factory.insert_unqualified(params.series_id, floor_price_minor)?;
+    factory.insert_unqualified(
+        params.series_id,
+        params.reference_currency,
+        floor_price_minor,
+    )?;
 
     // Arm the creator-reward proceeds fan-in: the winning chains are expected to
     // route proceeds; creators are paid once all arrive or the deadline passes.

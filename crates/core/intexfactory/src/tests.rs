@@ -524,7 +524,12 @@ fn issue_enrolls_in_floor_bin() {
         runtime::issue(&s, sample(7)).unwrap();
         let f = IntexFactoryContract::new(s.clone());
         let bin = IntexFactoryContract::price_to_bin(U256::from(EXPECTED_FLOOR)).unwrap();
-        assert_eq!(f.unqualified_bin_count.read(&bin).unwrap(), 1);
+        assert_eq!(
+            f.unqualified_bin_count
+                .read(&IntexFactoryContract::scoped(QUALIFIER_REFERENCE_ISO, bin))
+                .unwrap(),
+            1
+        );
     });
 }
 
@@ -534,13 +539,32 @@ fn insert_remove_unqualified_roundtrip() {
         let mut f = IntexFactoryContract::new(s.clone());
         let floor = U256::from(2_000u64);
         let bin = IntexFactoryContract::price_to_bin(floor).unwrap();
-        f.insert_unqualified(sid(11), floor).unwrap();
-        f.insert_unqualified(sid(22), floor).unwrap();
-        assert_eq!(f.unqualified_bin_count.read(&bin).unwrap(), 2);
-        f.remove_unqualified(sid(11), floor).unwrap();
-        assert_eq!(f.unqualified_bin_count.read(&bin).unwrap(), 1);
-        f.remove_unqualified(sid(22), floor).unwrap();
-        assert_eq!(f.unqualified_bin_count.read(&bin).unwrap(), 0);
+        f.insert_unqualified(sid(11), QUALIFIER_REFERENCE_ISO, floor)
+            .unwrap();
+        f.insert_unqualified(sid(22), QUALIFIER_REFERENCE_ISO, floor)
+            .unwrap();
+        assert_eq!(
+            f.unqualified_bin_count
+                .read(&IntexFactoryContract::scoped(QUALIFIER_REFERENCE_ISO, bin))
+                .unwrap(),
+            2
+        );
+        f.remove_unqualified(sid(11), QUALIFIER_REFERENCE_ISO, floor)
+            .unwrap();
+        assert_eq!(
+            f.unqualified_bin_count
+                .read(&IntexFactoryContract::scoped(QUALIFIER_REFERENCE_ISO, bin))
+                .unwrap(),
+            1
+        );
+        f.remove_unqualified(sid(22), QUALIFIER_REFERENCE_ISO, floor)
+            .unwrap();
+        assert_eq!(
+            f.unqualified_bin_count
+                .read(&IntexFactoryContract::scoped(QUALIFIER_REFERENCE_ISO, bin))
+                .unwrap(),
+            0
+        );
     });
 }
 
@@ -586,7 +610,12 @@ fn try_qualify_gates_qualification_floor_and_latches() {
             outbe_intex::IntexState::Qualified
         );
         let bin = IntexFactoryContract::price_to_bin(floor).unwrap();
-        assert_eq!(f.unqualified_bin_count.read(&bin).unwrap(), 0);
+        assert_eq!(
+            f.unqualified_bin_count
+                .read(&IntexFactoryContract::scoped(QUALIFIER_REFERENCE_ISO, bin))
+                .unwrap(),
+            0
+        );
         // Already Qualified -> false.
         assert!(!qualified::try_qualify(
             &s,
@@ -681,6 +710,17 @@ fn qualify_series<'a>(
 /// columns are keyed by it.
 const PAIR_ID: u32 = 1;
 
+/// List the qualifier currency in the oracle's reference registry, which the
+/// scans walk to decide which currencies to price this block.
+fn list_reference(oracle: &OracleContract) {
+    if oracle.reference_currencies.len().unwrap() == 0 {
+        oracle
+            .reference_currencies
+            .push(QUALIFIER_REFERENCE_ISO)
+            .unwrap();
+    }
+}
+
 fn setup_pair(oracle: &OracleContract) -> AddressPair {
     let pair = outbe_oracle::api::AddressPair::new_coen_to(QUALIFIER_REFERENCE_ISO);
     let pair_id = PAIR_ID;
@@ -691,6 +731,7 @@ fn setup_pair(oracle: &OracleContract) -> AddressPair {
     oracle.pair_count.write(pair_id).unwrap();
     oracle.pair_by_index.write_pair(&pair_id, pair).unwrap();
     oracle.vote_target.write(&pair, true).unwrap();
+    list_reference(oracle);
     pair
 }
 
@@ -724,8 +765,24 @@ fn qualify_enrolls_in_call_trigger_bin() {
         // Moved out of the floor index, into the call-trigger index.
         let floor_bin = IntexFactoryContract::price_to_bin(U256::from(EXPECTED_FLOOR)).unwrap();
         let trig_bin = IntexFactoryContract::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
-        assert_eq!(f.unqualified_bin_count.read(&floor_bin).unwrap(), 0);
-        assert_eq!(f.qualified_bin_count.read(&trig_bin).unwrap(), 1);
+        assert_eq!(
+            f.unqualified_bin_count
+                .read(&IntexFactoryContract::scoped(
+                    QUALIFIER_REFERENCE_ISO,
+                    floor_bin
+                ))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            f.qualified_bin_count
+                .read(&IntexFactoryContract::scoped(
+                    QUALIFIER_REFERENCE_ISO,
+                    trig_bin
+                ))
+                .unwrap(),
+            1
+        );
     });
 }
 
@@ -735,13 +792,32 @@ fn insert_remove_qualified_roundtrip() {
         let mut f = IntexFactoryContract::new(s.clone());
         let trigger = U256::from(EXPECTED_TRIGGER);
         let bin = IntexFactoryContract::price_to_bin(trigger).unwrap();
-        f.insert_qualified(sid(11), trigger).unwrap();
-        f.insert_qualified(sid(22), trigger).unwrap();
-        assert_eq!(f.qualified_bin_count.read(&bin).unwrap(), 2);
-        f.remove_qualified(sid(11), trigger).unwrap();
-        assert_eq!(f.qualified_bin_count.read(&bin).unwrap(), 1);
-        f.remove_qualified(sid(22), trigger).unwrap();
-        assert_eq!(f.qualified_bin_count.read(&bin).unwrap(), 0);
+        f.insert_qualified(sid(11), QUALIFIER_REFERENCE_ISO, trigger)
+            .unwrap();
+        f.insert_qualified(sid(22), QUALIFIER_REFERENCE_ISO, trigger)
+            .unwrap();
+        assert_eq!(
+            f.qualified_bin_count
+                .read(&IntexFactoryContract::scoped(QUALIFIER_REFERENCE_ISO, bin))
+                .unwrap(),
+            2
+        );
+        f.remove_qualified(sid(11), QUALIFIER_REFERENCE_ISO, trigger)
+            .unwrap();
+        assert_eq!(
+            f.qualified_bin_count
+                .read(&IntexFactoryContract::scoped(QUALIFIER_REFERENCE_ISO, bin))
+                .unwrap(),
+            1
+        );
+        f.remove_qualified(sid(22), QUALIFIER_REFERENCE_ISO, trigger)
+            .unwrap();
+        assert_eq!(
+            f.qualified_bin_count
+                .read(&IntexFactoryContract::scoped(QUALIFIER_REFERENCE_ISO, bin))
+                .unwrap(),
+            0
+        );
     });
 }
 
@@ -775,7 +851,12 @@ fn try_call_marks_called_when_threshold_met() {
             outbe_intex::IntexState::Called
         );
         let bin = IntexFactoryContract::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
-        assert_eq!(f.qualified_bin_count.read(&bin).unwrap(), 0);
+        assert_eq!(
+            f.qualified_bin_count
+                .read(&IntexFactoryContract::scoped(QUALIFIER_REFERENCE_ISO, bin))
+                .unwrap(),
+            0
+        );
     });
 }
 
@@ -908,7 +989,7 @@ fn seed_issued(s: &StorageHandle<'_>, id: u32) {
     )
     .unwrap();
     IntexFactoryContract::new(s.clone())
-        .insert_unqualified(sid(id), U256::from(EXPECTED_FLOOR))
+        .insert_unqualified(sid(id), QUALIFIER_REFERENCE_ISO, U256::from(EXPECTED_FLOOR))
         .unwrap();
 }
 
@@ -959,8 +1040,12 @@ fn call_survives_router_failure() {
         seed_issued(&s, 7);
         outbe_intex::api::mark_qualified(&s, sid(7)).unwrap();
         let mut f = IntexFactoryContract::new(s.clone());
-        f.insert_qualified(sid(7), U256::from(EXPECTED_TRIGGER))
-            .unwrap();
+        f.insert_qualified(
+            sid(7),
+            QUALIFIER_REFERENCE_ISO,
+            U256::from(EXPECTED_TRIGGER),
+        )
+        .unwrap();
 
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
@@ -1012,6 +1097,7 @@ fn scan_and_qualify_promotes_aged_series() {
             .exchange_rate
             .write(&PAIR_ID, U256::from(EXPECTED_FLOOR) + U256::from(1))
             .unwrap();
+        list_reference(&oracle);
 
         let mature_ts = ISSUED_AT as u64 + 21 * DAY + 1;
         let ctx = BlockRuntimeContext::new(
@@ -1027,7 +1113,15 @@ fn scan_and_qualify_promotes_aged_series() {
         );
         let f = IntexFactoryContract::new(s.clone());
         let trig_bin = IntexFactoryContract::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
-        assert_eq!(f.qualified_bin_count.read(&trig_bin).unwrap(), 1);
+        assert_eq!(
+            f.qualified_bin_count
+                .read(&IntexFactoryContract::scoped(
+                    QUALIFIER_REFERENCE_ISO,
+                    trig_bin
+                ))
+                .unwrap(),
+            1
+        );
     });
 }
 
@@ -1130,6 +1224,7 @@ fn scan_does_not_halt_on_overflow_rate() {
         oracle.pair_to_index.write(&pair, PAIR_ID).unwrap();
         // Out-of-range rate: price_to_bin overflows.
         oracle.exchange_rate.write(&PAIR_ID, U256::MAX).unwrap();
+        list_reference(&oracle);
 
         let mature_ts = ISSUED_AT as u64 + 21 * DAY + 1;
         let ctx = BlockRuntimeContext::new(
@@ -1155,7 +1250,11 @@ fn scan_isolates_bad_series() {
         // A bin entry whose series record does not exist: read_series errors -> the series must be
         // skipped (logged), not halt the block.
         IntexFactoryContract::new(s.clone())
-            .insert_unqualified(sid(999), U256::from(EXPECTED_FLOOR))
+            .insert_unqualified(
+                sid(999),
+                QUALIFIER_REFERENCE_ISO,
+                U256::from(EXPECTED_FLOOR),
+            )
             .unwrap();
 
         let oracle = OracleContract::new(s.clone());
@@ -1167,6 +1266,7 @@ fn scan_isolates_bad_series() {
             .exchange_rate
             .write(&PAIR_ID, U256::from(EXPECTED_FLOOR) + U256::from(1))
             .unwrap();
+        list_reference(&oracle);
 
         let mature_ts = ISSUED_AT as u64 + 21 * DAY + 1;
         let ctx = BlockRuntimeContext::new(
@@ -1225,6 +1325,7 @@ fn scan_caps_work_per_block_and_resumes_via_cursor() {
             .exchange_rate
             .write(&PAIR_ID, U256::from(EXPECTED_FLOOR) * U256::from(1000))
             .unwrap();
+        list_reference(&oracle);
 
         // Two distinct bins: the first holds exactly MAX_SERIES_PER_BLOCK entries, the second a few.
         // Bogus ids (no series record) are per-series skipped but still count toward the cap.
@@ -1234,10 +1335,14 @@ fn scan_caps_work_per_block_and_resumes_via_cursor() {
         {
             let mut factory = IntexFactoryContract::new(s.clone());
             for id in 1..=cap {
-                factory.insert_unqualified(sid(id), f1).unwrap();
+                factory
+                    .insert_unqualified(sid(id), QUALIFIER_REFERENCE_ISO, f1)
+                    .unwrap();
             }
             for id in 1001..=1005u32 {
-                factory.insert_unqualified(sid(id), f2).unwrap();
+                factory
+                    .insert_unqualified(sid(id), QUALIFIER_REFERENCE_ISO, f2)
+                    .unwrap();
             }
         }
         let bin2 = IntexFactoryContract::price_to_bin(f2).unwrap();
@@ -1250,13 +1355,13 @@ fn scan_caps_work_per_block_and_resumes_via_cursor() {
         qualified::scan_and_qualify(&ctx).unwrap();
         let cursor1 = IntexFactoryContract::new(s.clone())
             .qualify_scan_cursor
-            .read()
+            .read(&QUALIFIER_REFERENCE_ISO)
             .unwrap();
         assert!(cursor1 > 0, "cursor advanced past the capped bin");
         assert_eq!(
             IntexFactoryContract::new(s.clone())
                 .unqualified_bin_count
-                .read(&bin2)
+                .read(&IntexFactoryContract::scoped(QUALIFIER_REFERENCE_ISO, bin2))
                 .unwrap(),
             5,
             "second bin untouched in block 1"
@@ -1266,7 +1371,7 @@ fn scan_caps_work_per_block_and_resumes_via_cursor() {
         qualified::scan_and_qualify(&ctx).unwrap();
         let cursor2 = IntexFactoryContract::new(s.clone())
             .qualify_scan_cursor
-            .read()
+            .read(&QUALIFIER_REFERENCE_ISO)
             .unwrap();
         assert_eq!(cursor2, 0, "cursor wrapped after a full sweep");
     });
@@ -1856,5 +1961,113 @@ fn distribute_receives_the_call_value() {
             ),
             "a funded distribute must reach the handler with the value, got {funded:?}"
         );
+    });
+}
+
+// ---------------------------------------------------------------------
+// Monitoring per reference currency
+// ---------------------------------------------------------------------
+
+/// A second reference currency, priced by its own pair at its own index.
+const EUR_ISO: u16 = 978;
+const EUR_PAIR_ID: u32 = 2;
+
+fn eur_series(worldwide_day: u32) -> IssuanceParams {
+    IssuanceParams {
+        series_id: SeriesId::pack(worldwide_day, *b"EUR", b'E').unwrap(),
+        reference_currency: EUR_ISO,
+        issuance_currency: EUR_ISO,
+        ..sample(worldwide_day)
+    }
+}
+
+fn write_rate(oracle: &OracleContract, iso_code: u16, pair_id: u32, rate: U256) {
+    let pair = outbe_oracle::api::AddressPair::new_coen_to(iso_code);
+    oracle.pair_to_index.write(&pair, pair_id).unwrap();
+    oracle.exchange_rate.write(&pair_id, rate).unwrap();
+}
+
+#[test]
+fn a_currency_rate_never_qualifies_another_currency_series() {
+    with_factory(|s| {
+        // Both series carry the same entry price, so their floors land in the
+        // same bin: only the currency namespace keeps them apart.
+        runtime::issue(&s, sample(7)).unwrap();
+        runtime::issue(&s, eur_series(8)).unwrap();
+
+        let oracle = OracleContract::new(s.clone());
+        oracle
+            .reference_currencies
+            .push(QUALIFIER_REFERENCE_ISO)
+            .unwrap();
+        oracle.reference_currencies.push(EUR_ISO).unwrap();
+        let above = U256::from(EXPECTED_FLOOR) + U256::from(1);
+        let below = U256::from(EXPECTED_FLOOR) - U256::from(1);
+        write_rate(&oracle, QUALIFIER_REFERENCE_ISO, PAIR_ID, above);
+        write_rate(&oracle, EUR_ISO, EUR_PAIR_ID, below);
+
+        let mature_ts = ISSUED_AT as u64 + 21 * DAY + 1;
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, mature_ts, CHAIN_ID),
+            s.clone(),
+        );
+        assert_eq!(qualified::scan_and_qualify(&ctx).unwrap(), 1);
+
+        // The euro series shares the dollar series' bin and sits below its own
+        // rate, so a scan that crossed the currency border would have taken it.
+        assert_eq!(
+            outbe_intex::api::read_series(&s, sid(7))
+                .unwrap()
+                .lifecycle_state()
+                .unwrap(),
+            outbe_intex::IntexState::Qualified
+        );
+        let eur_id = eur_series(8).series_id;
+        assert_eq!(
+            outbe_intex::api::read_series(&s, eur_id)
+                .unwrap()
+                .lifecycle_state()
+                .unwrap(),
+            outbe_intex::IntexState::Issued
+        );
+
+        // Its own rate crossing the floor is what qualifies it.
+        write_rate(&oracle, EUR_ISO, EUR_PAIR_ID, above);
+        assert_eq!(qualified::scan_and_qualify(&ctx).unwrap(), 1);
+        assert_eq!(
+            outbe_intex::api::read_series(&s, eur_id)
+                .unwrap()
+                .lifecycle_state()
+                .unwrap(),
+            outbe_intex::IntexState::Qualified
+        );
+    });
+}
+
+#[test]
+fn an_unpriced_reference_currency_is_skipped_not_fatal() {
+    with_factory(|s| {
+        runtime::issue(&s, sample(7)).unwrap();
+        let oracle = OracleContract::new(s.clone());
+        // Listed before its pair exists — the registry and the pair registry are
+        // populated independently.
+        oracle.reference_currencies.push(EUR_ISO).unwrap();
+        oracle
+            .reference_currencies
+            .push(QUALIFIER_REFERENCE_ISO)
+            .unwrap();
+        write_rate(
+            &oracle,
+            QUALIFIER_REFERENCE_ISO,
+            PAIR_ID,
+            U256::from(EXPECTED_FLOOR) + U256::from(1),
+        );
+
+        let mature_ts = ISSUED_AT as u64 + 21 * DAY + 1;
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, mature_ts, CHAIN_ID),
+            s.clone(),
+        );
+        assert_eq!(qualified::scan_and_qualify(&ctx).unwrap(), 1);
     });
 }
