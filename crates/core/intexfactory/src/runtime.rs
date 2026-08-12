@@ -13,8 +13,8 @@ use outbe_vaultrouter::api::IVaultRouter;
 
 use crate::config;
 use crate::constants::{
-    DIST_CHUNK_LIMIT, INTEX_NFT1155_ADDRESS, ORIGIN_ROUTER_ADDRESS, POW_DIFFICULTY, PRICE_RATE_DEN,
-    PROCEEDS_FANIN_TIMEOUT_SECS, WIRE_PRICE_DIVISOR,
+    DIST_CHUNK_LIMIT, INTEX_NFT1155_ADDRESS, ORACLE_TO_WIRE_SCALE, ORIGIN_ROUTER_ADDRESS,
+    POW_DIFFICULTY, PRICE_RATE_DEN, PROCEEDS_FANIN_TIMEOUT_SECS,
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
@@ -153,7 +153,7 @@ pub(crate) fn issuance_legs(params: &IssuanceParams) -> Vec<(u32, Vec<Address>, 
 /// price is the entry price marked up, the auction stops working once COEN
 /// passes roughly 8 — silently, by reverting the day and retrying forever.
 pub fn to_wire_price(price_minor: U256) -> Result<u64> {
-    u64::try_from(price_minor / U256::from(WIRE_PRICE_DIVISOR))
+    u64::try_from(price_minor / U256::from(ORACLE_TO_WIRE_SCALE))
         .map_err(|_| PrecompileError::Revert("price exceeds the wire scale".into()))
 }
 

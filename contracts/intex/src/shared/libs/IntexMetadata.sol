@@ -15,7 +15,9 @@ library IntexMetadata {
     string internal constant DESCRIPTION =
         "Intex is the core cross-chain asset of the Outbe network. Each series is born from a Worldwide Day auction held across all connected chains; its transferable Issued tokens settle into soulbound Settled tokens that mine Promis.";
 
-    /// @dev Prices arrive on the 1e9 wire scale; six fraction digits resolve sub-cent COEN rates.
+    /// @dev Prices arrive on the 1e9 wire scale, set by `ORACLE_TO_WIRE_SCALE` on the origin
+    ///      side; the two are one decision and must move together. Six fraction digits resolve
+    ///      sub-cent COEN rates.
     uint8 private constant PRICE_DECIMALS = 9;
     uint8 private constant PRICE_PRECISION = 6;
     /// @dev Scale carried by `promisLoadMinor` (PROMIS * 1e18); unrelated to the price scale above.
