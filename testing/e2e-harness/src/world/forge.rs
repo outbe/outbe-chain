@@ -57,11 +57,14 @@ pub(crate) fn run_with_ctor(
     }
     let out = cmd.output()?;
     if !out.status.success() {
+        // Forge reports the failing call and its estimate on stdout, so a
+        // stderr-only error hides which transaction was too heavy.
         bail!(
-            "forge {} in {} failed: {}",
+            "forge {} in {} failed: {}\n--- stdout ---\n{}",
             args.join(" "),
             dir.display(),
-            String::from_utf8_lossy(&out.stderr)
+            String::from_utf8_lossy(&out.stderr),
+            String::from_utf8_lossy(&out.stdout)
         );
     }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
