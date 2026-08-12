@@ -119,13 +119,7 @@ impl NodContract<'_> {
                 item.nod_id
             )));
         }
-        // ISO 0 is not a currency, and its bin namespace aliases the
-        // un-namespaced key while never appearing in the oracle's
-        // reference-currency registry — a bucket parked there would be
-        // invisible to the qualifier forever.
-        if item.reference_currency == 0 {
-            return Err(NodError::ZeroReferenceCurrency.into());
-        }
+
         let canonical_bucket_key = Self::bucket_key(
             item.worldwide_day,
             item.floor_price_minor,

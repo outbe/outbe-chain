@@ -23,9 +23,6 @@ pub enum NodError {
 
     #[error("nod query exceeds the runtime result limit")]
     QueryLimitExceeded,
-
-    #[error("reference currency must be a nonzero ISO 4217 numeric code")]
-    ZeroReferenceCurrency,
 }
 
 impl From<NodError> for PrecompileError {
