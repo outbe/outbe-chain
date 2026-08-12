@@ -311,9 +311,10 @@ pub fn active_dist_at(storage: &StorageHandle<'_>, index: u32) -> Result<u32> {
 // Creator-reward: multi-chain proceeds fan-in aggregation
 // -------------------------------------------------------------------------
 
-/// Arm proceeds fan-in for a series: mark the winning chains expected (deduped),
-/// set the fan-in `deadline`, and enroll the series in the awaiting-proceeds set
-/// the begin-block sweep watches. Called once at issuance.
+/// Arm proceeds fan-in for a day: mark the winning chains expected (deduped),
+/// set the fan-in `deadline`, and enroll the day in the awaiting-proceeds set the
+/// begin-block sweep watches. A day may issue several series, so this accumulates
+/// into the union of their winning chains rather than replacing the previous arm.
 pub fn arm_proceeds(
     storage: &StorageHandle<'_>,
     worldwide_day: u32,
@@ -329,9 +330,10 @@ pub fn arm_proceeds(
             expected += 1;
         }
     }
+    let already_expected = registry.proceeds_expected_count.read(&worldwide_day)?;
     registry
         .proceeds_expected_count
-        .write(&worldwide_day, expected)?;
+        .write(&worldwide_day, already_expected + expected)?;
     registry.proceeds_deadline.write(&worldwide_day, deadline)?;
     registry.push_awaiting_proceeds(worldwide_day)
 }

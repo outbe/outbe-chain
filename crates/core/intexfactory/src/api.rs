@@ -18,6 +18,13 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
     runtime::issue(storage, params)
 }
 
+/// Discard a day's contributor map. The clearing engine calls this for a day
+/// that issued nothing at all: with no series anywhere, the recorded creator
+/// rewards can never be distributed.
+pub fn discard_day_contributors(storage: &StorageHandle<'_>, worldwide_day: u32) -> Result<()> {
+    outbe_intex::api::finalize_proceeds(storage, worldwide_day)
+}
+
 /// Resolved IntexFactory protocol parameters (genesis profile). The clearing
 /// engine (Desis) reads these to source floor%/call%/call-trigger at auction
 /// start, keeping a single source of truth instead of hardcoding them.

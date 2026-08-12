@@ -32,9 +32,10 @@ pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> 
 /// NFT call here.
 pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> {
     if params.issued_intex_count == 0 {
-        // Zero-winner clearing: no series is created anywhere, so the day's
-        // lysis-recorded contributor map would never distribute — discard it.
-        return outbe_intex::api::finalize_proceeds(storage, params.worldwide_day);
+        // Nothing to issue. Whether the day as a whole distributes is the
+        // caller's decision — a day may issue several series, and one empty
+        // group must not touch the state its siblings armed.
+        return Ok(());
     }
 
     // u32 timestamp; bounded until 2106.

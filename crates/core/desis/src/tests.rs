@@ -1855,6 +1855,31 @@ fn test_iface_id_matches_selector_xor() {
 // --- Config construction ---
 
 #[test]
+fn clearing_without_winners_discards_the_day_contributor_map() {
+    let chain = 10u32;
+    with_targets(&[chain], |s| {
+        open_clearing(&s, 2);
+        outbe_intex::api::record_contributors(
+            &s,
+            WORLDWIDE_DAY,
+            &[(bidder(1), U256::from(100u64))],
+        )
+        .unwrap();
+
+        // The only chain never reports, so the deadline clears the day with no bids.
+        let deadline = ANCHOR + 2 * 86_400 + crate::constants::BIDS_FANIN_TIMEOUT_SECS;
+        let result = runtime::force_clear(s.clone(), WORLDWIDE_DAY, deadline + 1)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.issued_intex_count, 0);
+        assert_eq!(
+            outbe_intex::api::contributor_count(&s, WORLDWIDE_DAY).unwrap(),
+            0
+        );
+    });
+}
+
+#[test]
 fn escrow_basis_is_promis_load() {
     // wCOEN escrow basis = promis_load per Intex; entry no longer drives it.
     let cfg = AuctionConfig::from_reference_prices(vec![crate::schema::ReferencePrice {
