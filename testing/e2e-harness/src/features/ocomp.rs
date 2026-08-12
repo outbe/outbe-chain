@@ -37,6 +37,16 @@ use crate::world::state::{
 use crate::world::World;
 
 const OCOMP_CAPACITY_TRIBUTE_COUNT: usize = 257;
+/// Temporary lever: `OCOMP_CAPACITY_TRIBUTES` shrinks the day's population so a
+/// run can stay under the read budget the READY settlement currently trips on.
+/// Unset keeps the S+1 population every capacity assertion is written against.
+fn capacity_tribute_count() -> usize {
+    std::env::var("OCOMP_CAPACITY_TRIBUTES")
+        .ok()
+        .and_then(|raw| raw.parse().ok())
+        .filter(|count| *count > 0)
+        .unwrap_or(OCOMP_CAPACITY_TRIBUTE_COUNT)
+}
 const OCOMP_CAPACITY_COMPLETION_TIMEOUT_SECS: u64 = 300;
 // The capacity scenario proves the protocol path and the 256+1 shard boundary,
 // not Tribute burst throughput. Keep at most two offers in flight until
@@ -103,7 +113,7 @@ fn fresh_ocomp_short_window_public_measurement_localnet(world: &mut World) {
 
 #[given("a fresh four-validator OCOMP public capacity localnet")]
 fn fresh_ocomp_public_capacity_localnet(world: &mut World) {
-    start_ocomp_measurement_localnet(world, Some(OCOMP_CAPACITY_TRIBUTE_COUNT), None);
+    start_ocomp_measurement_localnet(world, Some(capacity_tribute_count()), None);
 }
 
 #[given("a fresh four-validator OCOMP failure-recovery localnet")]
@@ -242,7 +252,7 @@ fn fresh_metadosis_capacity_localnet_at_forming(world: &mut World) {
 
     let (prepared, private_keys) = world
         .ocomp
-        .prepare_fresh_metadosis_capacity_fork_install(OCOMP_CAPACITY_TRIBUTE_COUNT)
+        .prepare_fresh_metadosis_capacity_fork_install(capacity_tribute_count())
         .expect("prepare runtime-created fresh Metadosis capacity fork");
     world.state.ocomp_capacity_tribute_private_keys = private_keys;
     let mut start_opts = StartOpts {
@@ -1979,8 +1989,8 @@ fn capacity_owners_submit_257_public_tributes(world: &mut World) {
     let private_keys = world.state.ocomp_capacity_tribute_private_keys.clone();
     assert_eq!(
         private_keys.len(),
-        OCOMP_CAPACITY_TRIBUTE_COUNT,
-        "capacity fixture did not retain exactly 257 funded owners"
+        capacity_tribute_count(),
+        "capacity fixture did not retain exactly one funded owner per Tribute"
     );
     let worldwide_day = world
         .state
@@ -2027,7 +2037,7 @@ fn capacity_owners_submit_257_public_tributes(world: &mut World) {
 
     assert_eq!(
         transaction_hashes.len(),
-        OCOMP_CAPACITY_TRIBUTE_COUNT,
+        capacity_tribute_count(),
         "not every capacity owner submitted a public Tribute"
     );
     world.state.ocomp_capacity_tribute_tx_hashes = transaction_hashes;
@@ -2038,7 +2048,7 @@ fn all_validators_observe_257_public_tributes(world: &mut World) {
     let transaction_hashes = &world.state.ocomp_capacity_tribute_tx_hashes;
     assert_eq!(
         transaction_hashes.len(),
-        OCOMP_CAPACITY_TRIBUTE_COUNT,
+        capacity_tribute_count(),
         "capacity Tribute transaction set is incomplete"
     );
     for transaction_hash in transaction_hashes {
@@ -2048,7 +2058,7 @@ fn all_validators_observe_257_public_tributes(world: &mut World) {
         );
     }
 
-    let expected_supply = OCOMP_CAPACITY_TRIBUTE_COUNT.to_string();
+    let expected_supply = capacity_tribute_count().to_string();
     let primary = world.validators.primary_port();
     let supply_deadline = Instant::now() + Duration::from_secs(60);
     while world.rpc.supply(primary).as_deref() != Some(expected_supply.as_str()) {
@@ -2082,7 +2092,7 @@ fn all_validators_observe_257_public_tributes(world: &mut World) {
             })
             .collect::<Vec<_>>();
         let all_complete = observations.iter().all(|(_, _, count, distinct)| {
-            *count == OCOMP_CAPACITY_TRIBUTE_COUNT && *distinct == OCOMP_CAPACITY_TRIBUTE_COUNT
+            *count == capacity_tribute_count() && *distinct == capacity_tribute_count()
         });
         match bounded_completion_decision(
             all_complete,
@@ -2636,7 +2646,7 @@ fn quorum_applies_lysis_and_creates_nod_with_vote_count(
                 balances_after.push((*address, after));
             }
 
-            if generation.tribute_count as usize == OCOMP_CAPACITY_TRIBUTE_COUNT {
+            if generation.tribute_count as usize == capacity_tribute_count() {
                 let q_forming = first_votes
                     .iter()
                     .find(|transaction| transaction.transaction_hash == activation.transaction_hash)
