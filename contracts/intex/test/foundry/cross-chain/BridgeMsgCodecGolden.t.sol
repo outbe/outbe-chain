@@ -230,8 +230,8 @@ contract BridgeMsgCodecGoldenTest is Test {
         p.entryPriceMinor = 0x0A0B0C0D0E0F1011;
         p.floorPriceMinor = 0x99AABBCCDDEEFF00;
         p.callNoticePeriod = 0xCAFEBABE;
-        p.issuanceCurrency = 0x4321;
-        p.referenceCurrency = 0x1234;
+        p.issuanceCurrency = 840;
+        p.referenceCurrency = 978;
         p.callWindow = 0x5678;
         p.callThreshold = 0x9ABC;
         p.callPriceMinor = 0xA1B2C3D4E5F60718;
@@ -248,8 +248,8 @@ contract BridgeMsgCodecGoldenTest is Test {
         assertEq(d.entryPriceMinor, 0x0A0B0C0D0E0F1011, "entryPriceMinor");
         assertEq(d.floorPriceMinor, 0x99AABBCCDDEEFF00, "floorPriceMinor");
         assertEq(d.callNoticePeriod, 0xCAFEBABE, "callNoticePeriod");
-        assertEq(d.issuanceCurrency, 0x4321, "issuanceCurrency");
-        assertEq(d.referenceCurrency, 0x1234, "referenceCurrency");
+        assertEq(d.issuanceCurrency, 840, "issuanceCurrency");
+        assertEq(d.referenceCurrency, 978, "referenceCurrency");
         assertEq(d.callWindow, 0x5678, "callWindow");
         assertEq(d.callThreshold, 0x9ABC, "callThreshold");
         assertEq(d.callPriceMinor, 0xA1B2C3D4E5F60718, "callPriceMinor");

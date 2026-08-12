@@ -146,8 +146,8 @@ fn nod_item_v1_uses_one_strict_canonical_protobuf_representation() {
         floor_price_minor: U256::from(2),
         bucket_key: B256::repeat_byte(0x33),
         cost_amount_minor: U256::from(3),
-        issuance_currency: 3,
-        reference_currency: 4,
+        issuance_currency: 840,
+        reference_currency: 978,
         issued_at: 5,
         is_settled: false,
     };
@@ -163,8 +163,8 @@ fn nod_item_v1_uses_one_strict_canonical_protobuf_representation() {
         "3a20",
         "3333333333333333333333333333333333333333333333333333333333333333",
         "42200000000000000000000000000000000000000000000000000000000000000003",
-        "4803",
-        "5004",
+        "48c806",
+        "50d207",
         "5805"
     ))
     .unwrap();
@@ -374,8 +374,8 @@ fn protobuf_profile_rejects_order_length_width_wire_and_range_violations() {
         floor_price_minor: U256::from(2),
         bucket_key: B256::repeat_byte(0x33),
         cost_amount_minor: U256::from(3),
-        issuance_currency: 3,
-        reference_currency: 4,
+        issuance_currency: 840,
+        reference_currency: 978,
         issued_at: 5,
         is_settled: false,
     };

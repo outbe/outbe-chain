@@ -57,10 +57,16 @@ impl TributeFactoryContract<'_> {
         } = input;
 
         if iso_4217_alpha(tribute_currency).is_none() {
-            return Err(TributeFactoryError::InvalidCurrency {currency: tribute_currency}.into());
+            return Err(TributeFactoryError::InvalidCurrency {
+                currency: tribute_currency,
+            }
+            .into());
         }
         if iso_4217_alpha(reference_currency).is_none() {
-            return Err(TributeFactoryError::InvalidCurrency {currency: tribute_currency}.into());
+            return Err(TributeFactoryError::InvalidCurrency {
+                currency: tribute_currency,
+            }
+            .into());
         }
 
         // When the caller is a registered L2 operator with ZK verification
