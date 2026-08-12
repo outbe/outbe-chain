@@ -89,6 +89,7 @@ pub(crate) fn record_preflighted_brief(
     anchor: u32,
 ) -> Result<()> {
     let mut contract = storage.contract::<DesisContract>();
+    let reference_prices = keep_distinct_letters(&mut contract, worldwide_day, reference_prices)?;
     contract.write_auction_config(
         worldwide_day,
         &AuctionConfig::from_reference_prices(reference_prices),
@@ -103,6 +104,34 @@ pub(crate) fn record_preflighted_brief(
     contract.auction_at.write(&worldwide_day, anchor)?;
     contract.push_sched_active(worldwide_day)?;
     Ok(())
+}
+
+/// A series id spells its reference currency with a single letter, so two
+/// references sharing a first letter would produce one id for two series. The
+/// day keeps the first of them and drops the rest: a currency nobody can price
+/// in is a currency nobody can bid in, which is what keeps the collision out of
+/// clearing.
+fn keep_distinct_letters(
+    contract: &mut DesisContract<'_>,
+    worldwide_day: u32,
+    rows: Vec<ReferencePrice>,
+) -> Result<Vec<ReferencePrice>> {
+    let letter_of = |iso_code: u16| SeriesId::currency_code(iso_code)[0];
+    let mut kept: Vec<ReferencePrice> = Vec::with_capacity(rows.len());
+    for row in rows {
+        match kept
+            .iter()
+            .find(|k| letter_of(k.iso_code) == letter_of(row.iso_code))
+        {
+            Some(taken) => contract.emit(IDesis::ReferenceCurrencyLetterTaken {
+                worldwideDay: worldwide_day,
+                isoCode: row.iso_code,
+                takenBy: taken.iso_code,
+            })?,
+            None => kept.push(row),
+        }
+    }
+    Ok(kept)
 }
 
 /// Fold the prior-clearing bid floor and the genesis profile into the config,

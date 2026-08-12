@@ -62,6 +62,9 @@ interface IDesis {
     event AuctionCleared(uint32 indexed worldwideDay, uint32 issuedIntexCount, uint32 clearingRate, uint64 totalDemand);
     event AuctionClearedEmpty(uint32 indexed worldwideDay, uint64 totalDemand);
     event UnusedSupplyReported(uint32 indexed worldwideDay, uint256 unusedPromis);
+    /// @notice The day dropped a reference currency because `takenBy` already claimed
+    /// the letter a series id spells it with; no bid may price in it for this day.
+    event ReferenceCurrencyLetterTaken(uint32 indexed worldwideDay, uint16 indexed isoCode, uint16 indexed takenBy);
     /// @notice The only committed auction-brief rejection. Technical and
     /// invariant failures revert instead of being converted to business state.
     /// `reasonCode == 1` means the supply exceeds Desis' uint128 auction domain.

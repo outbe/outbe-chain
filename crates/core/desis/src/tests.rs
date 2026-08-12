@@ -1930,6 +1930,28 @@ fn clearing_issues_one_series_per_winning_currency_pair() {
     });
 }
 
+#[test]
+fn a_reference_currency_whose_letter_is_taken_is_dropped_from_the_day() {
+    // CHF and CNY both spell their series `C`, which would give one id to two
+    // series. Only the first survives the brief, so the second cannot be bid in.
+    with_storage(|s| {
+        open_clearing_priced(&s, 4, &[756, 156]);
+        let config = s
+            .contract::<DesisContract>()
+            .read_auction_config(WORLDWIDE_DAY)
+            .unwrap();
+        assert_eq!(
+            config
+                .reference_prices
+                .iter()
+                .map(|row| row.iso_code)
+                .collect::<Vec<_>>(),
+            vec![756]
+        );
+        assert!(config.entry_price_for(156).is_none());
+    });
+}
+
 // --- Config construction ---
 
 #[test]
